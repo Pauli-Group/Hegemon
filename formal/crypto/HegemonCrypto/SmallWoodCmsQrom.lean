@@ -1,23 +1,27 @@
+import HegemonCrypto.SecurityAuthority
 import HegemonCrypto.CmsAdaptiveClaimBridge
 import HegemonCrypto.CmsFinitePhaseSystem
 import HegemonCrypto.CmsLifting
 import HegemonCrypto.SmallWoodCmsExtraction
 
 /-!
-# End-to-end finite-QROM extraction for active SmallWood
+# Ideal logical-oracle finite-QROM extraction for active SmallWood
 
 This module instantiates the proved CMS compressed-oracle machinery with the exact active
-SmallWood logical transcript.  A final adversary workspace may adaptively select the verifier
+SmallWood logical transcript. A final adversary workspace may adaptively select the verifier
 query and oracle answer that certify an accepting transition without an extracted Hegemon
 witness.  The theorem bounds that event by the round-by-round knowledge error, first database
 collision probability, and one adaptive oracle/database claim.
 
-No generic BCS/QROM theorem is assumed.  Replacing the ideal logical oracle by the deployed
-domain-separated SHA-512 counter-mode sampler remains the explicit hash/XOF assumption.
+This is not an end-to-end deployed theorem. No generic BCS/QROM theorem is assumed, but replacing
+the ideal logical oracle by the deployed domain-separated SHA-512 counter-mode sampler remains an
+unproved hash/XOF assumption, and this module does not connect a compiled verifier execution to the
+modeled failure selector.
 -/
 
 namespace HegemonCrypto.SmallWood.CmsQrom
 
+open HegemonCrypto.SecurityAuthority
 open HegemonCrypto.FiniteOracleDatabase
 open HegemonCrypto.CmsAdaptiveClaimBridge
 open HegemonCrypto.CmsClassicalDatabase
@@ -96,7 +100,7 @@ theorem knowledge_failure_instability
 One final adversary workspace adaptively selects the oracle claim witnessing an accepting
 false-to-true semantic transition for which deterministic extraction yields no valid witness.
 -/
-structure FailureSelector
+structure IdealLogicalFailureSelector
     {statement : ActiveStatementType}
     (active : ActiveStatement statement)
     (Workspace : Type*) where
@@ -118,16 +122,16 @@ def failureClaims
     {statement : ActiveStatementType}
     {active : ActiveStatement statement}
     {Workspace : Type*}
-    (selector : FailureSelector active Workspace)
+    (selector : IdealLogicalFailureSelector active Workspace)
     (workspace : Workspace) :
     List (VerifierQuery statement × LogicalOutput statement) :=
   [(selector.query workspace, selector.output workspace)]
 
-def FailureEvent
+def IdealLogicalFailureEvent
     {statement : ActiveStatementType}
     {active : ActiveStatement statement}
     {Workspace : Type*}
-    (selector : FailureSelector active Workspace) :
+    (selector : IdealLogicalFailureSelector active Workspace) :
     Workspace ->
       Database (VerifierQuery statement) (LogicalOutput statement) -> Prop :=
   AdaptiveClaimsEvent selector.enabled (failureClaims selector)
@@ -136,7 +140,7 @@ theorem failure_claim_inputs_nodup
     {statement : ActiveStatementType}
     {active : ActiveStatement statement}
     {Workspace : Type*}
-    (selector : FailureSelector active Workspace)
+    (selector : IdealLogicalFailureSelector active Workspace)
     (workspace : Workspace) :
     ((failureClaims selector workspace).map Prod.fst).Nodup := by
   simp [failureClaims]
@@ -145,7 +149,7 @@ theorem failure_claim_length
     {statement : ActiveStatementType}
     {active : ActiveStatement statement}
     {Workspace : Type*}
-    (selector : FailureSelector active Workspace)
+    (selector : IdealLogicalFailureSelector active Workspace)
     (workspace : Workspace) :
     (failureClaims selector workspace).length = 1 := by
   simp [failureClaims]
@@ -154,10 +158,10 @@ theorem failure_event_implies_knowledge_failure
     {statement : ActiveStatementType}
     {active : ActiveStatement statement}
     {Workspace : Type*}
-    (selector : FailureSelector active Workspace)
+    (selector : IdealLogicalFailureSelector active Workspace)
     (workspace : Workspace)
     (database : Database (VerifierQuery statement) (LogicalOutput statement))
-    (failure : FailureEvent selector workspace database) :
+    (failure : IdealLogicalFailureEvent selector workspace database) :
     KnowledgeFailureProperty active database := by
   rcases failure with ⟨enabled, records⟩
   apply Or.inr
@@ -214,7 +218,7 @@ theorem initial_knowledge_failure_project_eq_zero
   · simp [project, partialRandomOracleState, records]
 
 /-- Exact real instability used by the concrete finite-QROM theorem. -/
-def activeInstability
+def idealLogicalInstability
     (statement : ActiveStatementType)
     (queries : Nat) : ℝ :=
   ((((queries : Rat) / Fintype.card (LogicalOutput statement)) +
@@ -227,31 +231,33 @@ theorem knowledge_failure_real_instability
     RealInstabilityBound
       (KnowledgeFailureProperty active)
       queryBound
-      (activeInstability statement queryBound) := by
-  unfold activeInstability
+      (idealLogicalInstability statement queryBound) := by
+  unfold idealLogicalInstability
   exact (knowledge_failure_instability active queryBound).toReal
 
 /-- One adaptive logical-oracle claim contributes `1 / |LogicalOutput|`. -/
-def activeBridgeLoss
+def idealLogicalBridgeLoss
     (statement : ActiveStatementType) : ℝ :=
   1 / (Fintype.card (LogicalOutput statement) : ℝ)
 
 /-- Final ideal logical-QROM extraction-failure bound. -/
-def activeQromFailureBound
+def idealLogicalQromFailureBound
     (statement : ActiveStatementType)
     (queries : Nat) : ℝ :=
   oracleLoss
-    (databaseLoss queries (activeInstability statement queries))
-    (activeBridgeLoss statement)
+    (databaseLoss queries (idealLogicalInstability statement queries))
+    (idealLogicalBridgeLoss statement)
 
 /--
-Final finite-QROM knowledge theorem.
+Ideal logical-oracle finite-QROM knowledge theorem.
 
 For every finite quantum adversary computation and every adaptive final-workspace selector,
 the probability that its selected transcript accepts while deterministic SmallWood extraction
-has no valid Hegemon witness is at most `activeQromFailureBound`.
+has no valid Hegemon witness is at most `idealLogicalQromFailureBound`. The event and bound are
+indexed only by the modeled logical oracle; no deployed SHA-512 or native-verifier premise appears
+in this API.
 -/
-theorem accepts_and_no_valid_witness_probability_le
+theorem ideal_logical_qrom_accepts_and_no_valid_witness_probability_le
     {statement : ActiveStatementType}
     {Phase : Type*}
     [Fintype Phase] [DecidableEq Phase]
@@ -274,13 +280,15 @@ theorem accepts_and_no_valid_witness_probability_le
       Subnormalized
         (partialRandomOracleState
           (Output := LogicalOutput statement) ∅ initialRegisters))
-    (selector : FailureSelector active Workspace) :
-    normSquared
-        (workspaceEventProjection (FailureEvent selector)
-          (totalOracleFamilyState
-            (oracleFamilyRun completePhaseSystem.system steps
-              (fun _oracle => initialRegisters)))) <=
-      activeQromFailureBound statement steps.length := by
+    (selector : IdealLogicalFailureSelector active Workspace) :
+    ScopedSecurityClaim .idealLogicalQrom
+      (normSquared
+          (workspaceEventProjection (IdealLogicalFailureEvent selector)
+            (totalOracleFamilyState
+              (oracleFamilyRun completePhaseSystem.system steps
+                (fun _oracle => initialRegisters)))) <=
+        idealLogicalQromFailureBound statement steps.length) := by
+  apply ScopedSecurityClaim.ofIdealLogicalQrom
   let system := completePhaseSystem.system
   let blindSteps :=
     steps.map DatabaseIndependentContraction.toDatabaseBlindContraction
@@ -315,7 +323,7 @@ theorem accepts_and_no_valid_witness_probability_le
           (project (KnowledgeFailureProperty active) steps.length
             compressedState) <=
         databaseLoss steps.length
-          (activeInstability statement steps.length) := by
+          (idealLogicalInstability statement steps.length) := by
     have lifted :=
       implemented_raw_database_game_le_database_loss
         system
@@ -351,13 +359,13 @@ theorem accepts_and_no_valid_witness_probability_le
       compressedBounded
       compressedSubnormalized
       (databaseLoss steps.length
-        (activeInstability statement steps.length))
+        (idealLogicalInstability statement steps.length))
       databaseGame
   have bridgeEq :
       ((1 : Nat) : ℝ) ^ 2 *
           (1 / (Fintype.card (LogicalOutput statement) : ℝ)) =
-        activeBridgeLoss statement := by
-    unfold activeBridgeLoss
+        idealLogicalBridgeLoss statement := by
+    unfold idealLogicalBridgeLoss
     rw [Nat.cast_one, one_pow, one_mul]
   change
     normSquared
@@ -366,8 +374,8 @@ theorem accepts_and_no_valid_witness_probability_le
           (totalOracleFamilyState family)) <=
       oracleLoss
         (databaseLoss steps.length
-          (activeInstability statement steps.length))
-        (activeBridgeLoss statement)
+          (idealLogicalInstability statement steps.length))
+        (idealLogicalBridgeLoss statement)
   rw [← bridgeEq]
   exact transferred
 

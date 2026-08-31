@@ -1,0 +1,50 @@
+{
+  "schema": "hegemon.strict-e256x2.security-manifest.v1",
+  "status": "research-only-fail-closed",
+  "pinned_binius_revision": "3f96163049f680b2909f6545690bd929f1b48c44",
+  "pinned_source": {
+    "ghash_sq_path": "crates/field/src/ghash_sq.rs",
+    "ghash_sq_sha256": "746b8df934cd665a93ff53c09dbabe867a05581f717179b5a2fa4e0366d06182",
+    "packed_ghash_sq_path": "crates/field/src/packed_ghash_sq.rs",
+    "packed_ghash_sq_sha256": "ab8e50ed20a7b82f9cde34aab6875fa03f5c0c038af9e9db8c1313ecafa1b82e"
+  },
+  "algebra": {
+    "committed_symbol_field": "GF(2)[X]/(X^128+X^7+X^2+X+1)",
+    "challenge_field_per_stream": "B128[Y]/(Y^2+X*Y+X)",
+    "challenge_field_bits_per_stream": 256,
+    "coefficient_basis": ["1", "Y"],
+    "canonical_e256_bytes": 32,
+    "stream_count": 2,
+    "streams_are_protocol_repetitions_not_one_field": true
+  },
+  "parameter_scaffold_not_a_reduction": {
+    "maximum_degree_log2_assumption": 120,
+    "single_stream_field_minus_degree_bits": 136,
+    "arithmetic_sum_for_two_streams_if_product_theorem_existed": 272,
+    "product_theorem_exists": false
+  },
+  "implemented_and_tested": {
+    "pinned_field_arithmetic_and_serialization": true,
+    "quadratic_irreducibility_trace_witness": true,
+    "two_domain_separated_shake256_challenge_streams": true,
+    "one_b128_table_root_shared_by_both_streams": true,
+    "shared_and_independent_query_schedule_models": true,
+    "canonical_exact_consuming_opening_parser": true,
+    "full_path_merkle_opening_kat": true,
+    "randomized_differential_tests": true
+  },
+  "capabilities": {
+    "e256_claims_bound_to_whole_table": false,
+    "pcs_binding_theorem": false,
+    "fri_proximity_or_degree_theorem": false,
+    "dual_stream_conditional_independence_theorem": false,
+    "product_soundness_theorem": false,
+    "complete_zero_knowledge": false,
+    "qrom_composition": false,
+    "strict_pq128": false,
+    "meets_current_384_bit_challenge_policy": false,
+    "production_frontier_eligible": false
+  },
+  "n15_wire_costs": "n15-wire-costs.json",
+  "verdict": "Arithmetic and byte topology are executable. Shared queries do not justify multiplying soundness errors; independent queries almost double this opening wire and still need a conditional-independence and QROM theorem. No strict or ZK promotion."
+}

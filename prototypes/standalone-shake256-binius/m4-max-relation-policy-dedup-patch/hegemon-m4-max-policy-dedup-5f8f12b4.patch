@@ -1,0 +1,338 @@
+diff --git a/prototypes/standalone-shake256-binius/m4-full-production-prototype/src/lib.rs b/prototypes/standalone-shake256-binius/m4-full-production-prototype/src/lib.rs
+index 89caaab3..397b8525 100644
+--- a/prototypes/standalone-shake256-binius/m4-full-production-prototype/src/lib.rs
++++ b/prototypes/standalone-shake256-binius/m4-full-production-prototype/src/lib.rs
+@@ -221,6 +221,14 @@ struct BalanceNote {
+     selectors: [Wire; BALANCE_SLOTS],
+ }
+ 
++#[derive(Clone, Debug)]
++struct PolicySelectors {
++    opening: AccumulatorWords,
++    threshold: Wire,
++    signer_count: Wire,
++    slot_active: [Wire; MAX_SIGNERS],
++}
++
+ impl ModeSelectors {
+     fn all(&self) -> [Wire; 5] {
+         [
+@@ -261,8 +269,8 @@ fn build_full_m4(expected_activation: &ActivationBinding) -> BuiltFullM4 {
+         auth,
+     };
+     constrain_transport(&builder, &wires, expected_activation);
+-    let modes = constrain_non_hash(&builder, &wires);
+-    constrain_hashes(&builder, &wires, &modes);
++    let (modes, policy) = constrain_non_hash(&builder, &wires);
++    constrain_hashes(&builder, &wires, &modes, &policy);
+     let circuit = builder.build_m4();
+     assert!(
+         circuit.chips.is_empty(),
+@@ -440,7 +448,10 @@ fn constrain_transport(
+     }
+ }
+ 
+-fn constrain_non_hash(builder: &CircuitBuilder, wires: &FullM4Wires) -> ModeSelectors {
++fn constrain_non_hash(
++    builder: &CircuitBuilder,
++    wires: &FullM4Wires,
++) -> (ModeSelectors, PolicySelectors) {
+     let zero = builder.add_constant_64(0);
+     let one = builder.add_constant_64(1);
+     let statement = &wires.statement;
+@@ -565,9 +576,21 @@ fn constrain_non_hash(builder: &CircuitBuilder, wires: &FullM4Wires) -> ModeSele
+         lock: builder.icmp_eq(mode, builder.add_constant_64(3)),
+         final_spend: builder.icmp_eq(mode, builder.add_constant_64(4)),
+     };
+-    constrain_auth_non_hash(builder, wires, &modes);
++    let policy_opening =
++        select_accumulator(builder, modes.init, &wires.auth.next, &wires.auth.current);
++    let policy_threshold = swap_bytes(builder, policy_opening.threshold_be);
++    let policy_signer_count = swap_bytes(builder, policy_opening.signer_count_be);
++    let policy = PolicySelectors {
++        opening: policy_opening,
++        threshold: policy_threshold,
++        signer_count: policy_signer_count,
++        slot_active: array::from_fn(|slot| {
++            builder.icmp_ult(builder.add_constant_64(slot as u64), policy_signer_count)
++        }),
++    };
++    constrain_auth_non_hash(builder, wires, &modes, &policy);
+     constrain_balance(builder, wires, &balance_inputs, &balance_outputs);
+-    modes
++    (modes, policy)
+ }
+ 
+ fn constrain_slots(builder: &CircuitBuilder, statement: &DecodedPublic) {
+@@ -773,7 +796,12 @@ fn constrain_note_and_selectors(
+     BalanceNote { value, selectors }
+ }
+ 
+-fn constrain_auth_non_hash(builder: &CircuitBuilder, wires: &FullM4Wires, modes: &ModeSelectors) {
++fn constrain_auth_non_hash(
++    builder: &CircuitBuilder,
++    wires: &FullM4Wires,
++    modes: &ModeSelectors,
++    policy: &PolicySelectors,
++) {
+     let zero = builder.add_constant_64(0);
+     let one = builder.add_constant_64(1);
+     let statement = &wires.statement;
+@@ -1039,30 +1067,26 @@ fn constrain_auth_non_hash(builder: &CircuitBuilder, wires: &FullM4Wires, modes:
+         &wires.auth.next.all_words(),
+         modes.final_spend,
+     );
+-    let final_threshold = swap_bytes(builder, wires.auth.current.threshold_be);
+     let final_approvals = swap_bytes(builder, wires.auth.current.approval_count_be);
+     assert_implies(
+         builder,
+         "auth.final.threshold_reached",
+         modes.final_spend,
+-        builder.icmp_uge(final_approvals, final_threshold),
++        builder.icmp_uge(final_approvals, policy.threshold),
+     );
+ 
+-    // Every non-single transition has exactly one canonical policy opening.
+-    constrain_policy_opening(
++    // Every non-single transition has one canonical policy structure. Init
++    // selects next; Approval/Lock/Final select current. In Approval, the
++    // current/next metadata equality above makes both lanes the same policy.
++    constrain_policy_structure(
+         builder,
+-        "auth.current",
+-        &wires.auth.current,
++        "auth.policy",
++        policy,
+         &wires.auth.signer_tags,
+-        or_msb(builder, &[modes.approval, modes.lock, modes.final_spend]),
+-    );
+-    constrain_policy_opening(
+-        builder,
+-        "auth.next",
+-        &wires.auth.next,
+-        &wires.auth.signer_tags,
+-        or_msb(builder, &[modes.init, modes.approval]),
++        modes.non_single(builder),
+     );
++    constrain_policy_approval_state(builder, "auth.current", &wires.auth.current, policy);
++    constrain_policy_approval_state(builder, "auth.next", &wires.auth.next, policy);
+ 
+     let mut changed_count = zero;
+     for slot in 0..MAX_SIGNERS {
+@@ -1089,98 +1113,106 @@ fn constrain_auth_non_hash(builder: &CircuitBuilder, wires: &FullM4Wires, modes:
+     );
+ }
+ 
+-fn constrain_policy_opening(
++fn constrain_policy_structure(
+     builder: &CircuitBuilder,
+     name: &str,
+-    opening: &AccumulatorWords,
++    policy: &PolicySelectors,
+     signer_tags: &[[Wire; DIGEST_WORDS]; MAX_SIGNERS],
+     active: Wire,
+ ) {
+-    let zero = builder.add_constant_64(0);
+     let one = builder.add_constant_64(1);
+     let six = builder.add_constant_64(MAX_SIGNERS as u64);
+-    let threshold = swap_bytes(builder, opening.threshold_be);
+-    let signer_count = swap_bytes(builder, opening.signer_count_be);
+-    let approval_count = swap_bytes(builder, opening.approval_count_be);
+     assert_implies(
+         builder,
+         &format!("{name}.signer_count.lower"),
+         active,
+-        builder.icmp_uge(signer_count, one),
++        builder.icmp_uge(policy.signer_count, one),
+     );
+     assert_implies(
+         builder,
+         &format!("{name}.signer_count.upper"),
+         active,
+-        builder.icmp_ule(signer_count, six),
++        builder.icmp_ule(policy.signer_count, six),
+     );
+     assert_implies(
+         builder,
+         &format!("{name}.threshold.lower"),
+         active,
+-        builder.icmp_uge(threshold, one),
++        builder.icmp_uge(policy.threshold, one),
+     );
+     assert_implies(
+         builder,
+         &format!("{name}.threshold.upper"),
+         active,
+-        builder.icmp_ule(threshold, signer_count),
++        builder.icmp_ule(policy.threshold, policy.signer_count),
+     );
+-    assert_implies(
++    assert_digest_nonzero_cond(
+         builder,
+-        &format!("{name}.approval_count"),
++        &format!("{name}.intent"),
++        &policy.opening.intent,
+         active,
+-        builder.icmp_ule(approval_count, signer_count),
+     );
+-    assert_digest_nonzero_cond(builder, &format!("{name}.intent"), &opening.intent, active);
+ 
+-    let mut approved_sum = zero;
+     for slot in 0..MAX_SIGNERS {
+-        let approved = swap_bytes(builder, opening.approved_be[slot]);
+-        assert_low_bool(builder, &format!("{name}.approved[{slot}]"), approved);
+-        let (sum, carry) = builder.iadd(approved_sum, approved);
+-        builder.assert_false(format!("{name}.approved_sum_overflow[{slot}]"), carry);
+-        approved_sum = sum;
+-
+-        let slot_active = builder.icmp_ult(builder.add_constant_64(slot as u64), signer_count);
+-        let required_tag = and_msb(builder, active, slot_active);
+-        let inactive_tag = and_msb(builder, active, builder.bnot(slot_active));
++        let slot_active = policy.slot_active[slot];
+         assert_digest_nonzero_cond(
+             builder,
+             &format!("{name}.tag[{slot}].nonzero"),
+             &signer_tags[slot],
+-            required_tag,
++            slot_active,
+         );
+         assert_digest_zero_cond(
+             builder,
+             &format!("{name}.tag[{slot}].inactive"),
+             &signer_tags[slot],
+-            inactive_tag,
+-        );
+-        builder.assert_eq_cond(
+-            format!("{name}.approved[{slot}].inactive"),
+-            approved,
+-            zero,
+-            inactive_tag,
++            builder.bnot(slot_active),
+         );
+ 
+         for previous in 0..slot {
+-            let previous_active =
+-                builder.icmp_ult(builder.add_constant_64(previous as u64), signer_count);
+             assert_digest_unequal_cond(
+                 builder,
+                 &format!("{name}.tags[{previous},{slot}].unique"),
+                 &signer_tags[previous],
+                 &signer_tags[slot],
+-                and_msb(builder, required_tag, previous_active),
++                slot_active,
+             );
+         }
+     }
+-    builder.assert_eq_cond(
++}
++
++fn constrain_policy_approval_state(
++    builder: &CircuitBuilder,
++    name: &str,
++    opening: &AccumulatorWords,
++    policy: &PolicySelectors,
++) {
++    let zero = builder.add_constant_64(0);
++    let approval_count = swap_bytes(builder, opening.approval_count_be);
++    builder.assert_true(
++        format!("{name}.approval_count"),
++        builder.icmp_ule(approval_count, policy.signer_count),
++    );
++
++    let mut approved_sum = zero;
++    for slot in 0..MAX_SIGNERS {
++        let approved = swap_bytes(builder, opening.approved_be[slot]);
++        // This check and the addition/carry chain were unconditional before
++        // the refactor and remain so.
++        assert_low_bool(builder, &format!("{name}.approved[{slot}]"), approved);
++        let (sum, carry) = builder.iadd(approved_sum, approved);
++        builder.assert_false(format!("{name}.approved_sum_overflow[{slot}]"), carry);
++        approved_sum = sum;
++        builder.assert_eq_cond(
++            format!("{name}.approved[{slot}].inactive"),
++            approved,
++            zero,
++            builder.bnot(policy.slot_active[slot]),
++        );
++    }
++    builder.assert_eq(
+         format!("{name}.approval_popcount"),
+         approved_sum,
+         approval_count,
+-        active,
+     );
+ }
+ 
+@@ -1352,7 +1384,12 @@ fn constrain_balance(
+     }
+ }
+ 
+-fn constrain_hashes(builder: &CircuitBuilder, wires: &FullM4Wires, modes: &ModeSelectors) {
++fn constrain_hashes(
++    builder: &CircuitBuilder,
++    wires: &FullM4Wires,
++    modes: &ModeSelectors,
++    policy: &PolicySelectors,
++) {
+     let statement = &wires.statement;
+     let in_active = statement
+         .input_flags
+@@ -1375,9 +1412,7 @@ fn constrain_hashes(builder: &CircuitBuilder, wires: &FullM4Wires, modes: &ModeS
+     // One policy pipeline is shared by all non-single modes. Init selects the
+     // next opening; Approval/Lock/Final select current. Single hashes a
+     // canonical all-zero opening but cannot consume the result.
+-    let policy_opening =
+-        select_accumulator(builder, modes.init, &wires.auth.next, &wires.auth.current);
+-    let policy_frame = policy_frame(builder, &policy_opening, &wires.auth.signer_tags);
++    let policy_frame = policy_frame(builder, &policy.opening, &wires.auth.signer_tags);
+     let policy_digest: [Wire; DIGEST_WORDS] = shake256_words(
+         builder,
+         &policy_frame.words,
+@@ -1390,7 +1425,7 @@ fn constrain_hashes(builder: &CircuitBuilder, wires: &FullM4Wires, modes: &ModeS
+         builder,
+         "auth.policy_root",
+         &policy_digest,
+-        &policy_opening.policy_root,
++        &policy.opening.policy_root,
+         modes.non_single(builder),
+     );
+ 
+@@ -1578,7 +1613,13 @@ fn constrain_hashes(builder: &CircuitBuilder, wires: &FullM4Wires, modes: &ModeS
+         modes.final_spend,
+     );
+ 
+-    constrain_approval_membership(builder, wires, modes.approval, &spend_auth[1]);
++    constrain_approval_membership(
++        builder,
++        wires,
++        modes.approval,
++        &spend_auth[1],
++        &policy.slot_active,
++    );
+ }
+ 
+ fn constrain_approval_membership(
+@@ -1586,13 +1627,12 @@ fn constrain_approval_membership(
+     wires: &FullM4Wires,
+     approval_mode: Wire,
+     signer_auth: &[Wire; DIGEST_WORDS],
++    slot_active: &[Wire; MAX_SIGNERS],
+ ) {
+-    let signer_count = swap_bytes(builder, wires.auth.current.signer_count_be);
+     for slot in 0..MAX_SIGNERS {
+         let current = swap_bytes(builder, wires.auth.current.approved_be[slot]);
+         let next = swap_bytes(builder, wires.auth.next.approved_be[slot]);
+         let changed = low_bool_msb(builder, builder.bxor(current, next));
+-        let slot_active = builder.icmp_ult(builder.add_constant_64(slot as u64), signer_count);
+         let tag_matches = digest_eq_msb(builder, signer_auth, &wires.auth.signer_tags[slot]);
+         assert_implies(
+             builder,
+@@ -1606,7 +1646,7 @@ fn constrain_approval_membership(
+             and_msb(
+                 builder,
+                 approval_mode,
+-                and_msb(builder, slot_active, tag_matches),
++                and_msb(builder, slot_active[slot], tag_matches),
+             ),
+             changed,
+         );

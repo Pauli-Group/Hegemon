@@ -1,6 +1,14 @@
 use anyhow::{anyhow, ensure, Context, Result};
 use blake3::Hasher;
 use hegemon_field::Goldilocks;
+use hegemon_hash384::{
+    blake2b_384_domain_hash,
+    domains::{
+        SUPERNEO_PROOF_ARTIFACT_V2, SUPERNEO_VERIFIER_PROFILE_V2, TRANSACTION_PROOF_ARTIFACT_V2,
+        TRANSACTION_PUBLIC_INPUTS_V2, TRANSACTION_STATEMENT_V2,
+    },
+    Blake2b384DomainHasher,
+};
 use protocol_versioning::{
     tx_proof_backend_for_version, TxProofBackend, VersionBinding, DEFAULT_TX_PROOF_BACKEND,
     SMALLWOOD_CANDIDATE_VERSION_BINDING,
@@ -17,7 +25,9 @@ use transaction_circuit::proof::{
     smallwood_arithmetization_from_backend_and_proof_bytes, transaction_proof_digest_from_parts,
     transaction_verifier_profile_digest_for_version, verify_transaction_proof_bytes_for_backend,
 };
-use transaction_circuit::SmallwoodArithmetization;
+use transaction_circuit::{
+    smallwood_blake2b384_boolean_relation_is_compiled, SmallwoodArithmetization,
+};
 use transaction_core::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS};
 use transaction_core::hashing_pq::bytes48_to_felts;
 use transaction_core::TransactionVerifierInputs;
@@ -27,9 +37,14 @@ const LEAF_ARTIFACT_WIRE_BYTES: usize = 2 + 32 + 32 + 48 + 48 + 48;
 const TX_PUBLIC_WIRE_BYTES: usize =
     4 + (MAX_INPUTS * 48) + 4 + (MAX_OUTPUTS * 48) + 4 + (MAX_OUTPUTS * 48) + 48 + 2 + 2;
 const MAX_NATIVE_TX_STARK_PROOF_BYTES: usize = 512 * 1024;
-const TX_STATEMENT_HASH_DOMAIN: &[u8] = b"tx-statement-v1";
-const TX_PROOF_DIGEST_DOMAIN: &[u8] = b"tx-proof-digest-v1";
-const TX_PUBLIC_INPUTS_DIGEST_DOMAIN: &[u8] = b"tx-public-inputs-digest-v1";
+const TX_STATEMENT_HASH_DOMAIN: &[u8] = TRANSACTION_STATEMENT_V2;
+const TX_PROOF_DIGEST_DOMAIN: &[u8] = TRANSACTION_PROOF_ARTIFACT_V2;
+const TX_PUBLIC_INPUTS_DIGEST_DOMAIN: &[u8] = TRANSACTION_PUBLIC_INPUTS_V2;
+const ROLE_BACKEND_PARAMS_V2: &[u8] = b"backend-params";
+const ROLE_COMMITMENT_ROWS_V2: &[u8] = b"commitment-rows";
+const ROLE_LEAF_PROOF_V2: &[u8] = b"leaf-proof";
+const ROLE_FOLD_STATEMENT_V2: &[u8] = b"fold-statement";
+const ROLE_FOLD_PROOF_V2: &[u8] = b"fold-proof";
 const GOLDILOCKS_MODULUS_I128: i128 = 18_446_744_069_414_584_321;
 const COEFF_CAPACITY_BITS: u16 = 60;
 
@@ -738,7 +753,7 @@ pub struct ReviewActiveTxProfile {
     pub proof_backend: String,
     pub arithmetization: String,
     pub public_value_count: usize,
-    pub verifier_profile_sha384_hex: String,
+    pub verifier_profile_blake2b384_hex: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -819,9 +834,9 @@ pub struct ReviewVectorCase {
     pub block_context: Option<ReviewBlockContext>,
 }
 
-const REVIEW_VECTOR_SCHEMA_VERSION: u32 = 1;
+const REVIEW_VECTOR_SCHEMA_VERSION: u32 = 2;
 const REVIEW_VECTOR_GENERATOR_ID: &str = "hegemon.superneo-bench.native-review";
-const ACTIVE_REVIEW_ARITHMETIZATION: SmallwoodArithmetization =
+const LEGACY_POSEIDON_REVIEW_ARITHMETIZATION: SmallwoodArithmetization =
     SmallwoodArithmetization::DirectPacked64CompressedLevel5;
 const ACTIVE_REVIEW_PUBLIC_VALUE_COUNT: usize = 78;
 
@@ -1451,6 +1466,10 @@ fn ref_review_contexts_match<T: Serialize>(left: &Option<T>, right: &Option<T>) 
 
 fn validate_ref_review_bundle_contract(bundle: &ReviewVectorBundle) -> Result<()> {
     ensure!(
+        smallwood_blake2b384_boolean_relation_is_compiled(),
+        "production BLAKE2b-384 Boolean transaction relation is unsupported; legacy Poseidon review bundles cannot authorize production"
+    );
+    ensure!(
         bundle.schema_version == REVIEW_VECTOR_SCHEMA_VERSION,
         "review bundle schema_version must be {REVIEW_VECTOR_SCHEMA_VERSION}"
     );
@@ -1522,8 +1541,8 @@ fn validate_ref_review_bundle_contract(bundle: &ReviewVectorBundle) -> Result<()
     )?
     .ok_or_else(|| anyhow!("review SmallWood artifact has no arithmetization"))?;
     ensure!(
-        arithmetization == ACTIVE_REVIEW_ARITHMETIZATION,
-        "review vectors must exercise the active V4 arithmetization"
+        arithmetization == LEGACY_POSEIDON_REVIEW_ARITHMETIZATION,
+        "review vectors must exercise the legacy Poseidon fixture arithmetization"
     );
     let expected_profile = ReviewActiveTxProfile {
         circuit_version: SMALLWOOD_CANDIDATE_VERSION_BINDING.circuit,
@@ -1531,9 +1550,9 @@ fn validate_ref_review_bundle_contract(bundle: &ReviewVectorBundle) -> Result<()
         proof_backend: format!("{:?}", valid_leaf.proof_backend),
         arithmetization: format!("{arithmetization:?}"),
         public_value_count: ACTIVE_REVIEW_PUBLIC_VALUE_COUNT,
-        verifier_profile_sha384_hex: hex::encode(transaction_verifier_profile_digest_for_version(
-            SMALLWOOD_CANDIDATE_VERSION_BINDING,
-        )),
+        verifier_profile_blake2b384_hex: hex::encode(
+            transaction_verifier_profile_digest_for_version(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        ),
     };
     ensure!(
         bundle.active_tx_profile == expected_profile,
@@ -2179,9 +2198,9 @@ fn native_tx_leaf_receipt_from_parts(
     let relation = TxLeafPublicRelation::default();
     Ok(CanonicalTxValidityReceipt {
         statement_hash: tx_statement_hash_from_tx_leaf_public(tx, stark_public_inputs)?,
-        proof_digest: digest48_with_parts(
+        proof_digest: blake2b_384_domain_hash(
             TX_PROOF_DIGEST_DOMAIN,
-            &[&[proof_backend.wire_id()], stark_proof],
+            [[proof_backend.wire_id()].as_slice(), stark_proof],
         ),
         public_inputs_digest: transaction_public_inputs_digest_from_serialized(stark_public_inputs)
             .map_err(|err| anyhow!("failed to hash transaction public inputs: {err}"))?,
@@ -2471,7 +2490,6 @@ fn tx_statement_hash_from_tx_leaf_public(
     stark_inputs: &SerializedStarkInputs,
 ) -> Result<[u8; 48]> {
     let mut message = Vec::new();
-    message.extend_from_slice(TX_STATEMENT_HASH_DOMAIN);
     message.extend_from_slice(&stark_inputs.merkle_root);
     extend_padded_digests(&mut message, &tx.nullifiers, MAX_INPUTS)?;
     extend_padded_digests(&mut message, &tx.commitments, MAX_OUTPUTS)?;
@@ -2498,7 +2516,10 @@ fn tx_statement_hash_from_tx_leaf_public(
     message.extend_from_slice(&stark_inputs.stablecoin_attestation_commitment);
     message.extend_from_slice(&stablecoin_issuance.to_le_bytes());
     message.extend_from_slice(&stark_inputs.stablecoin_policy_version.to_le_bytes());
-    Ok(blake3_384_bytes(&message))
+    Ok(blake2b_384_domain_hash(
+        TX_STATEMENT_HASH_DOMAIN,
+        [message.as_slice()],
+    ))
 }
 
 fn active_flag_count(flags: &[u8]) -> Result<usize> {
@@ -2994,23 +3015,27 @@ fn transaction_public_inputs_digest_from_serialized(
         stablecoin_attestation_commitment: &stark_inputs.stablecoin_attestation_commitment,
     })
     .map_err(|err| anyhow!("failed to serialize STARK public inputs: {err}"))?;
-    Ok(digest48_with_parts(
+    Ok(blake2b_384_domain_hash(
         TX_PUBLIC_INPUTS_DIGEST_DOMAIN,
-        &[&encoded],
+        [encoded.as_slice()],
     ))
 }
 
 fn digest_commitment_rows(rows: &[RingElem]) -> [u8; 48] {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.commitment-digest.v2");
-    hasher.update(&(rows.len() as u64).to_le_bytes());
+    let row_count = (rows.len() as u64).to_le_bytes();
+    let encoded_len = rows.iter().fold(0usize, |acc, row| {
+        acc.saturating_add(8 + row.coeffs.len().saturating_mul(8))
+    });
+    let mut encoded_rows = Vec::with_capacity(encoded_len);
     for row in rows {
-        hasher.update(&(row.coeffs.len() as u64).to_le_bytes());
+        encoded_rows.extend_from_slice(&(row.coeffs.len() as u64).to_le_bytes());
         for coeff in &row.coeffs {
-            hasher.update(&coeff.to_le_bytes());
+            encoded_rows.extend_from_slice(&coeff.to_le_bytes());
         }
     }
-    hash48(hasher)
+    let mut hasher = superneo_proof_artifact_hasher(ROLE_COMMITMENT_ROWS_V2);
+    hasher.update_part(&row_count).update_part(&encoded_rows);
+    hasher.finalize()
 }
 
 fn digest32_with_label(label: &[u8], bytes: &[u8]) -> [u8; 32] {
@@ -3336,30 +3361,43 @@ fn leaf_proof_digest(
     packed: &PackedWitness<u64>,
     commitment_digest: &[u8; 48],
 ) -> [u8; 48] {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.leaf-proof.v2");
-    hasher.update(&pk.params_fingerprint);
-    hasher.update(pk.ring_profile.label());
-    hasher.update(&pk.shape_digest.0);
-    hasher.update(&relation_id.0);
-    hasher.update(&pk.security_bits.to_le_bytes());
-    hasher.update(&pk.challenge_bits.to_le_bytes());
-    hasher.update(&pk.max_fold_arity.to_le_bytes());
-    hasher.update(&pk.transcript_domain_digest);
-    hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
-    hasher.update(&(pk.ring_degree as u64).to_le_bytes());
-    hasher.update(&pk.digit_bits.to_le_bytes());
-    hasher.update(&pk.opening_randomness_bits.to_le_bytes());
-    hasher.update(&statement_digest.0);
-    hasher.update(commitment_digest);
-    hasher.update(&(packed.original_len as u64).to_le_bytes());
-    hasher.update(&(packed.used_bits as u64).to_le_bytes());
-    hasher.update(&packed.coeff_capacity_bits.to_le_bytes());
-    hasher.update(&(packed.coeffs.len() as u64).to_le_bytes());
+    let security_bits = pk.security_bits.to_le_bytes();
+    let challenge_bits = pk.challenge_bits.to_le_bytes();
+    let max_fold_arity = pk.max_fold_arity.to_le_bytes();
+    let commitment_rows = (pk.commitment_rows as u64).to_le_bytes();
+    let ring_degree = (pk.ring_degree as u64).to_le_bytes();
+    let digit_bits = pk.digit_bits.to_le_bytes();
+    let opening_randomness_bits = pk.opening_randomness_bits.to_le_bytes();
+    let original_len = (packed.original_len as u64).to_le_bytes();
+    let used_bits = (packed.used_bits as u64).to_le_bytes();
+    let coeff_capacity_bits = packed.coeff_capacity_bits.to_le_bytes();
+    let coeff_count = (packed.coeffs.len() as u64).to_le_bytes();
+    let mut coeff_bytes = Vec::with_capacity(packed.coeffs.len() * 8);
     for coeff in &packed.coeffs {
-        hasher.update(&coeff.to_le_bytes());
+        coeff_bytes.extend_from_slice(&coeff.to_le_bytes());
     }
-    hash48(hasher)
+    let mut hasher = superneo_proof_artifact_hasher(ROLE_LEAF_PROOF_V2);
+    hasher
+        .update_part(&pk.params_fingerprint)
+        .update_part(pk.ring_profile.label())
+        .update_part(&pk.shape_digest.0)
+        .update_part(&relation_id.0)
+        .update_part(&security_bits)
+        .update_part(&challenge_bits)
+        .update_part(&max_fold_arity)
+        .update_part(&pk.transcript_domain_digest)
+        .update_part(&commitment_rows)
+        .update_part(&ring_degree)
+        .update_part(&digit_bits)
+        .update_part(&opening_randomness_bits)
+        .update_part(&statement_digest.0)
+        .update_part(commitment_digest)
+        .update_part(&original_len)
+        .update_part(&used_bits)
+        .update_part(&coeff_capacity_bits)
+        .update_part(&coeff_count)
+        .update_part(&coeff_bytes);
+    hasher.finalize()
 }
 
 fn fold_statement_digest(
@@ -3368,16 +3406,19 @@ fn fold_statement_digest(
     challenges: &[u64],
     parent_commitment_digest: &[u8; 48],
 ) -> StatementDigest {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.fold-statement.v3");
-    hasher.update(&(challenges.len() as u32).to_le_bytes());
+    let challenge_count = (challenges.len() as u32).to_le_bytes();
+    let mut challenge_bytes = Vec::with_capacity(challenges.len() * 8);
     for challenge in challenges {
-        hasher.update(&challenge.to_le_bytes());
+        challenge_bytes.extend_from_slice(&challenge.to_le_bytes());
     }
-    hasher.update(&left.0);
-    hasher.update(&right.0);
-    hasher.update(parent_commitment_digest);
-    StatementDigest(hash48(hasher))
+    let mut hasher = superneo_proof_artifact_hasher(ROLE_FOLD_STATEMENT_V2);
+    hasher
+        .update_part(&challenge_count)
+        .update_part(&challenge_bytes)
+        .update_part(&left.0)
+        .update_part(&right.0)
+        .update_part(parent_commitment_digest);
+    StatementDigest(hasher.finalize())
 }
 
 fn fold_proof_digest(
@@ -3389,67 +3430,96 @@ fn fold_proof_digest(
     parent_statement_digest: &StatementDigest,
     parent_rows: &[RingElem],
 ) -> [u8; 48] {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.fold-proof.v3");
-    hasher.update(&pk.params_fingerprint);
-    hasher.update(pk.ring_profile.label());
-    hasher.update(&pk.shape_digest.0);
-    hasher.update(&relation_id.0);
-    hasher.update(&pk.security_bits.to_le_bytes());
-    hasher.update(&pk.challenge_bits.to_le_bytes());
-    hasher.update(&pk.fold_challenge_count.to_le_bytes());
-    hasher.update(&pk.max_fold_arity.to_le_bytes());
-    hasher.update(&pk.transcript_domain_digest);
-    hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
-    hasher.update(&(pk.ring_degree as u64).to_le_bytes());
-    hasher.update(&pk.digit_bits.to_le_bytes());
-    hasher.update(&pk.opening_randomness_bits.to_le_bytes());
-    hasher.update(&(challenges.len() as u32).to_le_bytes());
+    let security_bits = pk.security_bits.to_le_bytes();
+    let challenge_bits = pk.challenge_bits.to_le_bytes();
+    let fold_challenge_count = pk.fold_challenge_count.to_le_bytes();
+    let max_fold_arity = pk.max_fold_arity.to_le_bytes();
+    let commitment_rows = (pk.commitment_rows as u64).to_le_bytes();
+    let ring_degree = (pk.ring_degree as u64).to_le_bytes();
+    let digit_bits = pk.digit_bits.to_le_bytes();
+    let opening_randomness_bits = pk.opening_randomness_bits.to_le_bytes();
+    let challenge_count = (challenges.len() as u32).to_le_bytes();
+    let mut challenge_bytes = Vec::with_capacity(challenges.len() * 8);
     for challenge in challenges {
-        hasher.update(&challenge.to_le_bytes());
+        challenge_bytes.extend_from_slice(&challenge.to_le_bytes());
     }
-    hasher.update(&left.statement_digest.0);
-    hasher.update(&right.statement_digest.0);
-    hasher.update(&left.witness_commitment.digest);
-    hasher.update(&right.witness_commitment.digest);
-    hasher.update(&parent_statement_digest.0);
-    hasher.update(&digest_commitment_rows(parent_rows));
-    hasher.update(&(parent_rows.len() as u64).to_le_bytes());
+    let parent_commitment_digest = digest_commitment_rows(parent_rows);
+    let parent_row_count = (parent_rows.len() as u64).to_le_bytes();
+    let encoded_len = parent_rows.iter().fold(0usize, |acc, row| {
+        acc.saturating_add(8 + row.coeffs.len().saturating_mul(8))
+    });
+    let mut encoded_parent_rows = Vec::with_capacity(encoded_len);
     for row in parent_rows {
-        hasher.update(&(row.coeffs.len() as u64).to_le_bytes());
+        encoded_parent_rows.extend_from_slice(&(row.coeffs.len() as u64).to_le_bytes());
         for coeff in &row.coeffs {
-            hasher.update(&coeff.to_le_bytes());
+            encoded_parent_rows.extend_from_slice(&coeff.to_le_bytes());
         }
     }
-    hash48(hasher)
+    let mut hasher = superneo_proof_artifact_hasher(ROLE_FOLD_PROOF_V2);
+    hasher
+        .update_part(&pk.params_fingerprint)
+        .update_part(pk.ring_profile.label())
+        .update_part(&pk.shape_digest.0)
+        .update_part(&relation_id.0)
+        .update_part(&security_bits)
+        .update_part(&challenge_bits)
+        .update_part(&fold_challenge_count)
+        .update_part(&max_fold_arity)
+        .update_part(&pk.transcript_domain_digest)
+        .update_part(&commitment_rows)
+        .update_part(&ring_degree)
+        .update_part(&digit_bits)
+        .update_part(&opening_randomness_bits)
+        .update_part(&challenge_count)
+        .update_part(&challenge_bytes)
+        .update_part(&left.statement_digest.0)
+        .update_part(&right.statement_digest.0)
+        .update_part(&left.witness_commitment.digest)
+        .update_part(&right.witness_commitment.digest)
+        .update_part(&parent_statement_digest.0)
+        .update_part(&parent_commitment_digest)
+        .update_part(&parent_row_count)
+        .update_part(&encoded_parent_rows);
+    hasher.finalize()
 }
 
 fn review_parameter_fingerprint(params: &NativeBackendParams) -> [u8; 48] {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.native-backend-params.v2");
-    hasher.update(params.manifest.family_label.as_bytes());
-    hasher.update(params.manifest.spec_label.as_bytes());
-    hasher.update(params.manifest.commitment_scheme_label.as_bytes());
-    hasher.update(params.manifest.challenge_schedule_label.as_bytes());
-    hasher.update(params.manifest.maturity_label.as_bytes());
-    hasher.update(&params.security_bits.to_le_bytes());
-    hasher.update(review_ring_profile_label(params.ring_profile));
-    hasher.update(&(params.matrix_rows as u64).to_le_bytes());
-    hasher.update(&(params.matrix_cols as u64).to_le_bytes());
-    hasher.update(&params.challenge_bits.to_le_bytes());
-    hasher.update(&params.fold_challenge_count.to_le_bytes());
-    hasher.update(&params.max_fold_arity.to_le_bytes());
-    hasher.update(params.transcript_domain_label.as_bytes());
-    hasher.update(&params.decomposition_bits.to_le_bytes());
-    hasher.update(&params.opening_randomness_bits.to_le_bytes());
-    hasher.update(&[match params.commitment_security_model {
+    let security_bits = params.security_bits.to_le_bytes();
+    let matrix_rows = (params.matrix_rows as u64).to_le_bytes();
+    let matrix_cols = (params.matrix_cols as u64).to_le_bytes();
+    let challenge_bits = params.challenge_bits.to_le_bytes();
+    let fold_challenge_count = params.fold_challenge_count.to_le_bytes();
+    let max_fold_arity = params.max_fold_arity.to_le_bytes();
+    let decomposition_bits = params.decomposition_bits.to_le_bytes();
+    let opening_randomness_bits = params.opening_randomness_bits.to_le_bytes();
+    let commitment_security_model = [match params.commitment_security_model {
         CommitmentSecurityModel::GeometryProxy => 0u8,
         CommitmentSecurityModel::BoundedKernelModuleSis => 1u8,
-    }]);
-    hasher.update(commitment_estimator_model_label(params.commitment_estimator_model).as_bytes());
-    hasher.update(&params.max_commitment_message_ring_elems.to_le_bytes());
-    hasher.update(&params.max_claimed_receipt_root_leaves.to_le_bytes());
-    hash48(hasher)
+    }];
+    let max_commitment_message_ring_elems = params.max_commitment_message_ring_elems.to_le_bytes();
+    let max_claimed_receipt_root_leaves = params.max_claimed_receipt_root_leaves.to_le_bytes();
+    let mut hasher = superneo_proof_artifact_hasher(ROLE_BACKEND_PARAMS_V2);
+    hasher
+        .update_part(params.manifest.family_label.as_bytes())
+        .update_part(params.manifest.spec_label.as_bytes())
+        .update_part(params.manifest.commitment_scheme_label.as_bytes())
+        .update_part(params.manifest.challenge_schedule_label.as_bytes())
+        .update_part(params.manifest.maturity_label.as_bytes())
+        .update_part(&security_bits)
+        .update_part(review_ring_profile_label(params.ring_profile))
+        .update_part(&matrix_rows)
+        .update_part(&matrix_cols)
+        .update_part(&challenge_bits)
+        .update_part(&fold_challenge_count)
+        .update_part(&max_fold_arity)
+        .update_part(params.transcript_domain_label.as_bytes())
+        .update_part(&decomposition_bits)
+        .update_part(&opening_randomness_bits)
+        .update_part(&commitment_security_model)
+        .update_part(commitment_estimator_model_label(params.commitment_estimator_model).as_bytes())
+        .update_part(&max_commitment_message_ring_elems)
+        .update_part(&max_claimed_receipt_root_leaves);
+    hasher.finalize()
 }
 
 fn review_spec_digest(params: &NativeBackendParams) -> [u8; 32] {
@@ -3486,16 +3556,16 @@ fn review_verifier_profile(
     shape_digest: &ShapeDigest,
     profile_label: &[u8],
 ) -> [u8; 48] {
-    digest48_with_parts(
-        b"hegemon.superneo.explicit-verifier-profile.v1",
-        &[
-            profile_label,
-            &review_parameter_fingerprint(params),
-            &review_spec_digest(params),
-            &relation_id.0,
-            &shape_digest.0,
-        ],
-    )
+    let params_fingerprint = review_parameter_fingerprint(params);
+    let spec_digest = review_spec_digest(params);
+    let mut hasher = Blake2b384DomainHasher::new(SUPERNEO_VERIFIER_PROFILE_V2);
+    hasher
+        .update_part(profile_label)
+        .update_part(&params_fingerprint)
+        .update_part(&spec_digest)
+        .update_part(&relation_id.0)
+        .update_part(&shape_digest.0);
+    hasher.finalize()
 }
 
 fn review_ring_profile_label(profile: RingProfile) -> &'static [u8] {
@@ -4282,21 +4352,13 @@ fn decode_hex_array<const N: usize>(value: &str) -> Result<[u8; N]> {
         .map_err(|_| anyhow!("hex string has {} bytes, expected {}", len, N))
 }
 
-fn digest48_with_parts(label: &[u8], parts: &[&[u8]]) -> [u8; 48] {
-    let mut hasher = Hasher::new();
-    hasher.update(label);
-    for part in parts {
-        hasher.update(part);
-    }
-    hash48(hasher)
+fn superneo_proof_artifact_hasher(role: &[u8]) -> Blake2b384DomainHasher {
+    let mut hasher = Blake2b384DomainHasher::new(SUPERNEO_PROOF_ARTIFACT_V2);
+    hasher.update_part(role);
+    hasher
 }
 
-fn blake3_384_bytes(bytes: &[u8]) -> [u8; 48] {
-    let mut hasher = Hasher::new();
-    hasher.update(bytes);
-    hash48(hasher)
-}
-
+#[cfg(test)]
 fn hash48(hasher: Hasher) -> [u8; 48] {
     let mut out = [0u8; 48];
     hasher.finalize_xof().fill(&mut out);
@@ -4405,8 +4467,138 @@ mod tests {
         load_bundle(&path).expect("load checked-in review bundle")
     }
 
+    fn production_stark_inputs(
+        inputs: &SerializedStarkInputs,
+    ) -> transaction_circuit::proof::SerializedStarkInputs {
+        transaction_circuit::proof::SerializedStarkInputs {
+            input_flags: inputs.input_flags.clone(),
+            output_flags: inputs.output_flags.clone(),
+            fee: inputs.fee,
+            value_balance_sign: inputs.value_balance_sign,
+            value_balance_magnitude: inputs.value_balance_magnitude,
+            merkle_root: inputs.merkle_root,
+            balance_slot_asset_ids: inputs.balance_slot_asset_ids.clone(),
+            stablecoin_enabled: inputs.stablecoin_enabled,
+            stablecoin_asset_id: inputs.stablecoin_asset_id,
+            stablecoin_policy_version: inputs.stablecoin_policy_version,
+            stablecoin_issuance_sign: inputs.stablecoin_issuance_sign,
+            stablecoin_issuance_magnitude: inputs.stablecoin_issuance_magnitude,
+            stablecoin_policy_hash: inputs.stablecoin_policy_hash,
+            stablecoin_oracle_commitment: inputs.stablecoin_oracle_commitment,
+            stablecoin_attestation_commitment: inputs.stablecoin_attestation_commitment,
+        }
+    }
+
     #[test]
-    fn parses_and_verifies_bundle_from_testdata() {
+    fn reference_receipt_v2_hashes_match_production_and_reject_legacy_statement_digest() {
+        let bundle = checked_in_review_bundle();
+        let mut case = bundle
+            .cases
+            .into_iter()
+            .find(|case| case.name == "native_tx_leaf_valid")
+            .expect("valid native tx-leaf case");
+        let context = case.tx_context.as_ref().expect("tx context");
+        let tx = tx_from_review(context).expect("reference tx");
+        let stark =
+            stark_inputs_from_review(&context.stark_public_inputs).expect("reference STARK inputs");
+        let value_balance = decode_signed_magnitude(
+            stark.value_balance_sign,
+            stark.value_balance_magnitude,
+            "value_balance",
+        )
+        .expect("value balance");
+        let stablecoin_issuance = decode_signed_magnitude(
+            stark.stablecoin_issuance_sign,
+            stark.stablecoin_issuance_magnitude,
+            "stablecoin_issuance",
+        )
+        .expect("stablecoin issuance");
+        let proof_bytes = [0x11, 0x22, 0x33, 0x44];
+        let receipt = native_tx_leaf_receipt_from_parts(
+            &tx,
+            &stark,
+            &proof_bytes,
+            TxProofBackend::SmallwoodCandidate,
+            &NativeBackendParams::default(),
+            ShapeDigest([0x55; 32]),
+        )
+        .expect("reference receipt");
+
+        assert_eq!(
+            receipt.statement_hash,
+            transaction_circuit::proof::transaction_statement_hash_from_parts(
+                &stark.merkle_root,
+                &tx.nullifiers,
+                &tx.commitments,
+                &tx.ciphertext_hashes,
+                stark.fee,
+                value_balance,
+                &tx.balance_tag,
+                tx.version.circuit,
+                tx.version.crypto,
+                stark.stablecoin_enabled,
+                stark.stablecoin_asset_id,
+                &stark.stablecoin_policy_hash,
+                &stark.stablecoin_oracle_commitment,
+                &stark.stablecoin_attestation_commitment,
+                stablecoin_issuance,
+                stark.stablecoin_policy_version,
+            )
+            .expect("production statement digest")
+        );
+        assert_eq!(
+            receipt.public_inputs_digest,
+            transaction_circuit::proof::transaction_public_inputs_digest_from_serialized(
+                &production_stark_inputs(&stark),
+            )
+            .expect("production public-input digest")
+        );
+        assert_eq!(
+            receipt.proof_digest,
+            transaction_proof_digest_from_parts(TxProofBackend::SmallwoodCandidate, &proof_bytes,)
+        );
+
+        let mut legacy_statement_payload = vec![];
+        legacy_statement_payload.extend_from_slice(b"tx-statement-v1");
+        legacy_statement_payload.extend_from_slice(&stark.merkle_root);
+        extend_padded_digests(&mut legacy_statement_payload, &tx.nullifiers, MAX_INPUTS)
+            .expect("legacy nullifiers");
+        extend_padded_digests(&mut legacy_statement_payload, &tx.commitments, MAX_OUTPUTS)
+            .expect("legacy commitments");
+        extend_padded_digests(
+            &mut legacy_statement_payload,
+            &tx.ciphertext_hashes,
+            MAX_OUTPUTS,
+        )
+        .expect("legacy ciphertext hashes");
+        legacy_statement_payload.extend_from_slice(&stark.fee.to_le_bytes());
+        legacy_statement_payload.extend_from_slice(&value_balance.to_le_bytes());
+        legacy_statement_payload.extend_from_slice(&tx.balance_tag);
+        legacy_statement_payload.extend_from_slice(&tx.version.circuit.to_le_bytes());
+        legacy_statement_payload.extend_from_slice(&tx.version.crypto.to_le_bytes());
+        legacy_statement_payload.push(stark.stablecoin_enabled);
+        legacy_statement_payload.extend_from_slice(&stark.stablecoin_asset_id.to_le_bytes());
+        legacy_statement_payload.extend_from_slice(&stark.stablecoin_policy_hash);
+        legacy_statement_payload.extend_from_slice(&stark.stablecoin_oracle_commitment);
+        legacy_statement_payload.extend_from_slice(&stark.stablecoin_attestation_commitment);
+        legacy_statement_payload.extend_from_slice(&stablecoin_issuance.to_le_bytes());
+        legacy_statement_payload.extend_from_slice(&stark.stablecoin_policy_version.to_le_bytes());
+        let mut legacy_hasher = Hasher::new();
+        legacy_hasher.update(&legacy_statement_payload);
+        let legacy_statement = hash48(legacy_hasher);
+        assert_ne!(legacy_statement, receipt.statement_hash);
+
+        case.tx_context
+            .as_mut()
+            .expect("tx context")
+            .receipt
+            .statement_hash_hex = hex::encode(legacy_statement);
+        let err = verify_case(&case).expect_err("legacy receipt digest must fail closed");
+        assert!(format!("{err:#}").contains("receipt mismatch"));
+    }
+
+    #[test]
+    fn checked_in_poseidon_review_bundle_is_not_production_authority() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("tools dir")
@@ -4416,21 +4608,22 @@ mod tests {
         if !root.exists() {
             return;
         }
-        let (summary, results) = verify_bundle_dir(&root).expect("bundle verification");
-        assert_eq!(
-            summary.failed_cases, 0,
-            "unexpected vector failures: {:?}",
-            results
-        );
+        let err = verify_bundle_dir(&root)
+            .expect_err("legacy Poseidon review bundle must not authorize production");
+        assert!(err
+            .to_string()
+            .contains("BLAKE2b-384 Boolean transaction relation is unsupported"));
     }
 
     #[test]
-    fn reference_contract_rejects_historical_v2_profile() {
+    fn reference_contract_rejects_legacy_poseidon_while_blake2b_relation_is_unsupported() {
         let mut bundle = checked_in_review_bundle();
         bundle.active_tx_profile.circuit_version = 2;
         let err = validate_ref_review_bundle_contract(&bundle)
-            .expect_err("historical V2 review profile must fail closed");
-        assert!(err.to_string().contains("active transaction profile"));
+            .expect_err("legacy Poseidon review profile must fail closed");
+        assert!(err
+            .to_string()
+            .contains("BLAKE2b-384 Boolean transaction relation is unsupported"));
     }
 
     #[test]
@@ -4440,7 +4633,9 @@ mod tests {
         bundle.cases[2].artifact_sha256 = bundle.cases[1].artifact_sha256.clone();
         let err = validate_ref_review_bundle_contract(&bundle)
             .expect_err("aliased negative artifact must fail closed");
-        assert!(err.to_string().contains("aliases another case artifact"));
+        assert!(err
+            .to_string()
+            .contains("BLAKE2b-384 Boolean transaction relation is unsupported"));
     }
 
     #[test]

@@ -20,3 +20,11 @@ name = "HegemonCrypto"
 [[lean_exe]]
 name = "gen_smallwood_proof_wire_vectors"
 root = "HegemonCrypto.GenerateSmallWoodProofWireVectors"
+
+[[lean_exe]]
+name = "gen_smallwood_smz8_proof_wire_vectors"
+root = "HegemonCrypto.GenerateSmallWoodSmz8ProofWireVectors"
+
+[[lean_exe]]
+name = "gen_smallwood_smz9_proof_wire_vectors"
+root = "HegemonCrypto.GenerateSmallWoodSmz9ProofWireVectors"

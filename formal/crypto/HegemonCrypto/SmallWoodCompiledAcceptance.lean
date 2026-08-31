@@ -16,7 +16,7 @@ The case split is exhaustive:
 1. the extracted witness already satisfies the production relation;
 2. a non-codeword commitment survives DECS degree enforcement;
 3. degree-bounded committed combinations match and every PIOP opening equation passes; or
-4. a false degree-bounded LVCS combination passes at all 20 sampled coordinates.
+4. a false degree-bounded LVCS combination passes at all 23 sampled coordinates.
 
 No probability or cryptographic assumption appears here.
 -/

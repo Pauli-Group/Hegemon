@@ -3,10 +3,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-use protocol_versioning::CRYPTO_SUITE_GAMMA;
+use hegemon_hash384::{blake2b_384_domain_hash, domains};
+use protocol_versioning::{CRYPTO_SUITE_ETA, CRYPTO_SUITE_GAMMA};
 use synthetic_crypto::{
     deterministic::expand_to_length,
-    hashes::{blake3_256, derive_prf_key},
     ml_dsa::MlDsaSecretKey,
     ml_kem::{MlKemCiphertext, MlKemKeyPair, MlKemPublicKey, MlKemSecretKey, MlKemSharedSecret},
     traits::{KemKeyPair, SigningKey, VerifyKey},
@@ -18,6 +18,8 @@ use crate::{address::ShieldedAddress, error::WalletError};
 const KEY_SIZE: usize = 32;
 const ADDRESS_VERSION: u8 = 3;
 const ADDRESS_CRYPTO_SUITE: u16 = CRYPTO_SUITE_GAMMA;
+const POSEIDON2_V8_ADDRESS_VERSION: u8 = 4;
+const POSEIDON2_V8_ADDRESS_CRYPTO_SUITE: u16 = CRYPTO_SUITE_ETA;
 
 /// Derive the legacy 32-byte account id from a deterministic ML-DSA seed.
 pub fn ml_dsa_account_id_from_seed(seed: &[u8; 32]) -> [u8; 32] {
@@ -91,6 +93,16 @@ impl DerivedKeys {
             &self.spend,
         )
     }
+
+    pub fn poseidon2_v8_address(&self, index: u32) -> Result<AddressKeyMaterial, WalletError> {
+        AddressKeyMaterial::derive_poseidon2_v8_with_spend(
+            index,
+            &self.view,
+            &self.encryption,
+            &self.diversifier,
+            &self.spend,
+        )
+    }
 }
 
 /// Spend key - used for authorizing transactions.
@@ -107,8 +119,17 @@ impl SpendKey {
         spend_auth_key_bytes(&self.0)
     }
 
+    pub fn poseidon2_v8_words(&self) -> Result<[u64; 4], WalletError> {
+        transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_spend_key_words(self.0)
+            .map_err(|error| {
+                WalletError::Serialization(format!(
+                    "V8 spend-key field derivation failed: {error:?}"
+                ))
+            })
+    }
+
     pub fn nullifier_key(&self) -> [u8; KEY_SIZE] {
-        derive_prf_key(&self.0)
+        wallet_kdf_v3(domains::WALLET_SPEND_NULLIFIER_KEY_V3, &[&self.0])
     }
 }
 
@@ -123,17 +144,11 @@ impl ViewKey {
     }
 
     pub fn nullifier_key(&self) -> [u8; KEY_SIZE] {
-        let mut material = Zeroizing::new(Vec::with_capacity(b"view_nf".len() + self.0.len()));
-        material.extend_from_slice(b"view_nf");
-        material.extend_from_slice(&self.0);
-        blake3_256(&material)
+        wallet_kdf_v3(domains::WALLET_VIEW_NULLIFIER_KEY_V3, &[&self.0])
     }
 
     pub fn pk_recipient(&self, diversifier: &[u8; KEY_SIZE]) -> [u8; KEY_SIZE] {
-        let mut material = Zeroizing::new(Vec::with_capacity(self.0.len() + diversifier.len()));
-        material.extend_from_slice(&self.0);
-        material.extend_from_slice(diversifier);
-        blake3_256(&material)
+        wallet_kdf_v3(domains::WALLET_RECIPIENT_KEY_V3, &[&self.0, diversifier])
     }
 }
 
@@ -189,6 +204,44 @@ impl AddressKeyMaterial {
         spend: &SpendKey,
     ) -> Result<Self, WalletError> {
         Self::derive_with_components(index, view, encryption, diversifier_key, spend.auth_key())
+    }
+
+    pub fn derive_poseidon2_v8_with_spend(
+        index: u32,
+        view: &ViewKey,
+        encryption: &EncryptionSeed,
+        diversifier_key: &DiversifierKey,
+        spend: &SpendKey,
+    ) -> Result<Self, WalletError> {
+        let diversifier = diversifier_key.derive(index);
+        let recipient_words =
+            transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_recipient_key_words(
+                view.pk_recipient(&diversifier),
+            )
+            .map_err(|error| {
+                WalletError::Serialization(format!(
+                    "V8 recipient-key field derivation failed: {error:?}"
+                ))
+            })?;
+        let spend_words = spend.poseidon2_v8_words()?;
+        let authorization_words = transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_single_key_authorization_key(spend_words)
+            .map_err(|error| WalletError::Serialization(format!("V8 authorization key derivation failed: {error:?}")))?;
+        let keypair = encryption.derive_keypair(&diversifier, index);
+        Ok(Self {
+            version: POSEIDON2_V8_ADDRESS_VERSION,
+            crypto_suite: POSEIDON2_V8_ADDRESS_CRYPTO_SUITE,
+            diversifier_index: index,
+            diversifier,
+            pk_recipient:
+                transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_words_to_bytes(
+                    recipient_words,
+                ),
+            pk_auth:
+                transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_words_to_bytes(
+                    authorization_words,
+                ),
+            keypair,
+        })
     }
 
     pub fn derive_with_components(
@@ -272,6 +325,19 @@ fn derive_subkey(label: &[u8], root: &[u8; KEY_SIZE]) -> [u8; KEY_SIZE] {
     out
 }
 
+/// Fresh-chain V3 wallet KDF profile.
+///
+/// The consensus-wide BLAKE2b-384 frame supplies domain/part separation. Key
+/// consumers require 32 bytes, so this explicitly takes the leading 32 bytes;
+/// that retains a 128-bit generic quantum preimage floor. It is not presented
+/// as a collision-binding 384-bit consensus identity.
+fn wallet_kdf_v3(domain: &[u8], parts: &[&[u8]]) -> [u8; KEY_SIZE] {
+    let digest = blake2b_384_domain_hash(domain, parts.iter().copied());
+    let mut out = [0u8; KEY_SIZE];
+    out.copy_from_slice(&digest[..KEY_SIZE]);
+    out
+}
+
 mod serde_bytes32 {
     use serde::{Deserialize, Deserializer, Serializer};
 
@@ -321,5 +387,66 @@ mod tests {
         assert_eq!(shield.diversifier_index, 5);
         assert_eq!(shield.pk_recipient, addr.pk_recipient);
         assert_eq!(shield.pk_auth, addr.pk_auth);
+    }
+
+    #[test]
+    fn poseidon2_v8_address_binds_relation_authorization_key() {
+        let root = RootSecret::from_bytes([0x31; 32]);
+        let keys = root.derive();
+        let material = keys.poseidon2_v8_address(7).unwrap();
+        let address = material.shielded_address();
+        assert_eq!(address.version, POSEIDON2_V8_ADDRESS_VERSION);
+        assert_eq!(address.crypto_suite, CRYPTO_SUITE_ETA);
+        let spend_words = keys.spend.poseidon2_v8_words().unwrap();
+        let expected = transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_single_key_authorization_key(spend_words).unwrap();
+        assert_eq!(
+            transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_words_from_canonical_bytes(address.pk_auth).unwrap(),
+            expected
+        );
+        assert_eq!(
+            ShieldedAddress::decode(&address.encode().unwrap()).unwrap(),
+            address
+        );
+    }
+
+    #[test]
+    fn wallet_v3_kdf_bytes_and_domains_are_pinned() {
+        let spend = SpendKey([0x11; KEY_SIZE]);
+        let view = ViewKey([0x22; KEY_SIZE]);
+        let diversifier = [0x33; KEY_SIZE];
+        let spend_nullifier = hex::encode(spend.nullifier_key());
+        let view_nullifier = hex::encode(view.nullifier_key());
+        let recipient = hex::encode(view.pk_recipient(&diversifier));
+        assert_eq!(
+            spend_nullifier,
+            "7835f812c65740582accb38200b4d07cbd4af58811368899f2bce89f85cc7d3b"
+        );
+        assert_eq!(
+            view_nullifier,
+            "7fac260d87b37c3b87426809cf222723d935f563a014565def10282648e2fc85"
+        );
+        assert_eq!(
+            recipient,
+            "1daed41a0b305bb68ab6e04ddc3e745fdae332aa5c4c171338e12df5dddc837b"
+        );
+
+        let same_key_material = [0x44; KEY_SIZE];
+        assert_ne!(
+            wallet_kdf_v3(
+                domains::WALLET_SPEND_NULLIFIER_KEY_V3,
+                &[&same_key_material]
+            ),
+            wallet_kdf_v3(domains::WALLET_VIEW_NULLIFIER_KEY_V3, &[&same_key_material])
+        );
+        assert_ne!(
+            wallet_kdf_v3(
+                domains::WALLET_SPEND_NULLIFIER_KEY_V3,
+                &[&same_key_material]
+            ),
+            wallet_kdf_v3(
+                domains::WALLET_RECIPIENT_KEY_V3,
+                &[&same_key_material, &same_key_material]
+            )
+        );
     }
 }

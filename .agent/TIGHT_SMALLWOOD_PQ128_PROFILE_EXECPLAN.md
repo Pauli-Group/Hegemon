@@ -22,6 +22,31 @@ release benchmark and by formal and Rust tests that recompute the same security 
 
 ## Progress
 
+- [x] (2026-08-30) Split the HGV8RP03 transaction semantic target from the executable relation
+  model, added universal Lean acceptance and rejection theorems factored through five named
+  refinement obligations, and added a Rust typed-lowering receipt replayed by all existing
+  2-input/2-output mask, authorization-mode, and stablecoin fixtures.  The cross-language receipt
+  deliberately records exact primitive interpretation refinement, universal accepted-witness
+  soundness, and production authority as false: arbitrary packed-witness decoding, the five
+  per-family proofs, and source refinement for the fixed primitive symbols are still absent.
+- [x] (2026-08-23) Rebuilt the exact HGV8RP03/SMZ9 witness-free whole-view simulator from
+  source, replayed its canonical verifier trace and both programmed-oracle seams, audited the
+  six concrete affine hiding-map ranks, and retained a deterministic 2,892-byte diagnostic
+  report.  Both adaptive-QROM and protocol-lifetime receipts remain structurally absent.
+- [x] (2026-08-23) Replaced the source security report's arbitrary unbounded-history prose
+  value with the exact evidence identity
+  `hegemon.formal.smallwood-smz9.global-sha512-qrom-lifetime.v1`, added conditional and
+  constructor-free Lean boundaries, and kept production authorization false.
+- [x] (2026-08-23) Evaluated a finite profile-retirement alternative without changing proof
+  bytes.  The exact conditional cap is already computed, but no consensus cap was added:
+  all four external whole-view losses are still unbounded.  If each is later proved at most
+  `2^-152`, the exact 128-bit cap is 4,166,198 accepted proofs; at `2^-151` it is 2,090,101.
+- [x] (2026-08-22) Re-audited the live branch after later proof-backend work and found a
+  concrete reporting regression: Lean and the deployed-profile checker still use the proved
+  fixed committed-support term `1 / |F|^eta`, while the Rust engine had reintroduced the
+  scalar-power support union for the active uniform challenge matrix.
+- [x] (2026-08-22) Reconciled the Rust calculation, status checker, tests, and security documentation so the
+  actual-parameter theorem, production status, and known attacks are three separate records.
 - [x] (2026-07-31) Confirmed that the proof itself regressed from the historical
   87.5--93.3 kB range to approximately 184.9 kB; native framing accounts for only 6,144 B.
 - [x] (2026-07-31) Isolated the incorrect support-union term while retaining the generic
@@ -42,6 +67,30 @@ release benchmark and by formal and Rust tests that recompute the same security 
   leaving 16 GiB free before the final commit.
 
 ## Surprises & Discoveries
+
+- Observation: program/interpreter equivalence is not transaction semantic adequacy.  The Rust
+  validator and honest assignment builder show that accepted typed witnesses lower to accepted
+  HGV8RP03 assignments, but an arbitrary 43,904-word accepted assignment does not yet come with a
+  checked decoder or proofs of public structure, witness shape, cryptographic links, per-asset
+  balance, and stablecoin transition. Lean now exposes those five obligations separately, fixes
+  rather than caller-selects the primitive symbols, and separately records that those symbols are
+  not yet refined to the exact Poseidon2, stablecoin, and BLAKE2b source functions.
+
+- Observation: A finite profile lifetime can replace an unbounded-history theorem only after
+  the missing external reductions have numeric losses and consensus stores and reorgs one
+  monotonically bounded accepted-proof count.  The present 4,096-block stablecoin epoch is not
+  a cryptographic reset and the source capability/state contains no such lifetime counter.
+  Evidence: the source report leaves all four external whole-view loss terms absent; its exact
+  arithmetic yields caps of 4,166,198 and 2,090,101 only under hypothetical equal 152-bit and
+  151-bit bounds respectively.
+
+- Observation: the live repository contained two different answers for the same active
+  parameter tuple.
+  Evidence: `SmallWoodDecsExtraction.lean` fixes a bad support from committed rows before the
+  uniform matrix and proves the `|F|^-eta` term, while
+  `report_smallwood_no_grinding_soundness_from_cfg` and its focused Rust test charged
+  `binomial(N, d + 2) / |F|^eta` to that same uniform-matrix profile. The latter formula is
+  retained only for historical scalar-power challenges.
 
 - Observation: The 191,019 B native artifact is not mainly packaging overhead.
   Evidence: the measured wrapped proof is 184,875 B and native context adds 6,144 B.
@@ -67,6 +116,33 @@ release benchmark and by formal and Rust tests that recompute the same security 
   commitment/opening surfaces are retained to preserve the PQ target and production relation.
 
 ## Decision Log
+
+- Decision: Do not add a profile-retirement counter yet.
+  Rationale: A counter would honestly solve only global history composition.  With adaptive
+  Merkle programming, final-PIOP programming, concrete SHA-512 QROM instantiation, and the
+  residual whole-view term still unbounded, no defensible maximum proof count exists to encode.
+  Date/Author: 2026-08-23, Codex.
+
+- Decision: Treat the executable SMZ9 simulator/rank report as necessary local refinement
+  evidence, not as complete zero knowledge or a QROM receipt.
+  Rationale: It proves canonical witness-free construction and replay for one source-rebuilt
+  profile, while the adaptive quantum-oracle hybrid and global deployed composition remain
+  separate cryptographic reductions.
+  Date/Author: 2026-08-23, Codex.
+
+- Decision: keep three independent status fields: the mathematical bound for the exact
+  parameters, the production integration status, and the strongest documented attack.
+  Rationale: a missing implementation/refinement proof does not erase the parameter theorem,
+  and a theorem is not an attack measurement. Conflating those facts produced the misleading
+  report that triggered this repair.
+  Date/Author: 2026-08-22, Codex.
+
+- Decision: apply the fixed-support theorem only to the full independent uniform DECS matrix;
+  retain the support union for every scalar-power profile.
+  Rationale: the prover commits all rows into the Merkle root before deriving the uniform
+  coefficients from that root. This is the ordering assumed by the theorem and is not true of
+  the historical scalar-power argument.
+  Date/Author: 2026-08-22, Codex.
 
 - Decision: Preserve and use the generic finite-QROM theorem, including its quadratic query
   loss, but correct the interactive uniform-matrix error supplied to it.
@@ -104,17 +180,23 @@ release benchmark and by formal and Rust tests that recompute the same security 
 
 ## Outcomes & Retrospective
 
-The active wrapped proof fell from 184,875 B to 118,006 B, a 36.2 percent reduction. Proving
-fell from 15.286 s to 2.553 s and verification from 31.602 ms to 10.781 ms on the same release
-benchmark path. The complete generated native transaction-leaf artifact is 124,022 B, down
-from 191,019 B. The selected profile's exact interactive floor is 262.377737 bits before the
-pinned generic QROM lifting theorem is applied.
+The 2026-07-31 benchmark reduced the then-current wrapped proof from 184,875 B to 118,006 B,
+with a complete native transaction-leaf artifact of 124,022 B. Those are retained benchmark
+measurements, not current production authorization.
 
-Both Lean libraries, the transaction-circuit release suite, formal-core checker, formal-crypto
-gate, release profile checks, native vectors, protocol compatibility tests, the adversarial
-proving campaign, and the 122-node security blueprint pass. This establishes consistency and
-the stated reduction relative to the pinned SHA-512, Poseidon2, and QRO assumptions. It does
-not substitute for independent cryptanalysis or external review of those assumptions.
+The 2026-08-22 reconciliation now computes the uniform committed-matrix DECS term proved by
+the extractor while preserving the larger support union for the historical scalar-power
+model. The retained actual parameters give a conditional 262.3777366-bit interactive bound.
+The production result is recorded separately as unavailable and disabled because the exact
+conventional-hash relation, complete zero knowledge, concrete hash reductions, and compiled
+verifier refinement are incomplete. Known attacks are also separate: no end-to-end SmallWood
+transaction forgery is recorded; SMW2 has a reproduced witness-privacy failure, and the
+retained Poseidon2 digest has a generic quantum collision limit near `2^128` queries.
+
+Focused validation passed for the Rust uniform and scalar challenge calculations, the compact
+profile's independent production gate, the deployed-profile status checker, and the Lean
+`SmallWoodDecsExtraction` target. Broader historical suite claims remain historical until the
+entire current worktree is rerun.
 
 ## Context and Orientation
 

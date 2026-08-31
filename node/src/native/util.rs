@@ -28,20 +28,6 @@ pub(crate) fn load_native_identity_seed(config: &NativeConfig) -> Result<[u8; 32
     load_or_create_identity_seed(&path)
 }
 
-pub(crate) fn load_native_miner_identity(config: &NativeConfig) -> Result<NativeMinerIdentity> {
-    let seed = if let Ok(raw) = std::env::var("HEGEMON_MINER_IDENTITY_SEED") {
-        parse_identity_seed_hex(&raw)
-            .ok_or_else(|| anyhow!("HEGEMON_MINER_IDENTITY_SEED must be 32-byte hex"))?
-    } else {
-        let path = std::env::var("HEGEMON_MINER_IDENTITY_SEED_PATH")
-            .ok()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| config.base_path.join(MINER_IDENTITY_SEED_FILE));
-        load_or_create_identity_seed(&path)?
-    };
-    Ok(NativeMinerIdentity::from_seed(&seed))
-}
-
 pub(crate) fn load_or_create_identity_seed(path: &Path) -> Result<[u8; 32]> {
     if path.exists() {
         tighten_identity_seed_permissions(path)?;
@@ -443,16 +429,42 @@ pub(crate) fn bincode_deserialize_native_block_meta_exact(
     ) {
         Ok(meta) => Ok(meta),
         Err(current_error) => {
-            match bincode_deserialize_exact_with_limit::<LegacyNativeBlockMetaV1>(
+            if bincode_deserialize_exact_with_limit::<LegacyIdentityNativeBlockMetaV2>(
                 bytes,
-                &format!("legacy {label}"),
+                &format!("interim identity-bearing {label}"),
                 MAX_NATIVE_BLOCK_META_BYTES,
-            ) {
-                Ok(meta) => Ok(meta.into()),
-                Err(legacy_error) => Err(anyhow!(
-                    "{label} did not decode as current or legacy native metadata: current={current_error}; legacy={legacy_error}"
-                )),
+            )
+            .is_ok()
+            {
+                return Err(anyhow!(
+                    "{label} uses forbidden interim identity-bearing V2 metadata; active V2 requires fresh genesis and contains no miner identity fields"
+                ));
             }
+            if bincode_deserialize_exact_with_limit::<LegacySignedNativeBlockMetaV1>(
+                bytes,
+                &format!("legacy signed {label}"),
+                MAX_NATIVE_BLOCK_META_BYTES,
+            )
+            .is_ok()
+            {
+                return Err(anyhow!(
+                    "{label} uses legacy signed V1 metadata; active V2 requires fresh genesis and does not upgrade legacy metadata"
+                ));
+            }
+            if bincode_deserialize_exact_with_limit::<LegacyNativeBlockMetaV1>(
+                bytes,
+                &format!("legacy unsigned {label}"),
+                MAX_NATIVE_BLOCK_META_BYTES,
+            )
+            .is_ok()
+            {
+                return Err(anyhow!(
+                    "{label} uses legacy unsigned V1 metadata; active V2 requires fresh genesis and does not upgrade legacy metadata"
+                ));
+            }
+            Err(anyhow!(
+                "{label} did not decode as active identity-free V2 native metadata: {current_error}"
+            ))
         }
     }
 }
@@ -521,55 +533,6 @@ pub(crate) fn validate_native_block_meta_bincode_budget_with_total_limit(
         }
     }
 
-    let Some(miner_commitment_len) = read_bincode_fixint_len(bytes, cursor)? else {
-        return Ok(());
-    };
-    if miner_commitment_len > 48 {
-        return Err(anyhow!(
-            "{label} miner commitment exceeds limit before bincode decode: {} > 48",
-            miner_commitment_len
-        ));
-    }
-    let Some(miner_cursor) = cursor
-        .checked_add(BINCODE_FIXINT_VEC_LEN_BYTES)
-        .and_then(|next| next.checked_add(miner_commitment_len))
-    else {
-        return Err(anyhow!("{label} bincode miner-field cursor overflow"));
-    };
-    if miner_cursor > bytes.len() {
-        return Ok(());
-    }
-    let Some(miner_public_key_len) = read_bincode_fixint_len(bytes, miner_cursor)? else {
-        return Ok(());
-    };
-    if miner_public_key_len > ML_DSA_PUBLIC_KEY_LEN {
-        return Err(anyhow!(
-            "{label} miner public key exceeds limit before bincode decode: {} > {}",
-            miner_public_key_len,
-            ML_DSA_PUBLIC_KEY_LEN
-        ));
-    }
-    let Some(after_public_key_len) = miner_cursor.checked_add(BINCODE_FIXINT_VEC_LEN_BYTES) else {
-        return Err(anyhow!("{label} bincode miner public-key cursor overflow"));
-    };
-    let Some(signature_cursor) = after_public_key_len.checked_add(miner_public_key_len) else {
-        return Err(anyhow!(
-            "{label} bincode miner public-key payload cursor overflow"
-        ));
-    };
-    if signature_cursor > bytes.len() {
-        return Ok(());
-    }
-    let Some(miner_signature_len) = read_bincode_fixint_len(bytes, signature_cursor)? else {
-        return Ok(());
-    };
-    if miner_signature_len > ML_DSA_SIGNATURE_LEN {
-        return Err(anyhow!(
-            "{label} miner signature exceeds limit before bincode decode: {} > {}",
-            miner_signature_len,
-            ML_DSA_SIGNATURE_LEN
-        ));
-    }
     Ok(())
 }
 

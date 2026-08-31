@@ -15,11 +15,10 @@ use tokio::task;
 
 use crate::{
     address::ShieldedAddress,
-    build_transaction,
-    is_ambiguous_submission_error,
+    build_transaction, is_ambiguous_submission_error,
+    node_rpc::BlockingNodeRpcClient as WalletRpcClient,
     notes::MemoPlaintext,
     provisional_pending_tx_id,
-    node_rpc::BlockingNodeRpcClient as WalletRpcClient,
     store::{
         PendingStatus, PendingTransaction, RecentTransaction, TransferRecipient, WalletMode,
         WalletStore,
@@ -264,7 +263,7 @@ fn snapshot_status(store: &Arc<WalletStore>) -> Result<WalletStatusResponse, Wal
 }
 
 fn render_transfer(tx: &PendingTransaction, latest_height: u64) -> TransferRecord {
-    let tx_id = hex::encode(tx.tx_id);
+    let tx_id = tx.tx_id.external_id();
     let amount: u64 = tx.recipients.iter().map(|rec| rec.value).sum();
     let address = tx
         .recipients
@@ -290,7 +289,7 @@ fn render_transfer(tx: &PendingTransaction, latest_height: u64) -> TransferRecor
 }
 
 fn render_recent_transfer(tx: &RecentTransaction, latest_height: u64) -> TransferRecord {
-    let tx_id = hex::encode(tx.tx_id);
+    let tx_id = tx.tx_id.external_id();
     let amount: u64 = tx.recipients.iter().map(|rec| rec.value).sum();
     let address = tx
         .recipients
@@ -350,7 +349,7 @@ fn process_transfer_submission(
         Err(err) => {
             if is_ambiguous_submission_error(&err) {
                 let provisional_tx_id = provisional_pending_tx_id(&built.bundle);
-                store.record_pending_submission(
+                store.record_provisional_pending_submission(
                     provisional_tx_id,
                     built.nullifiers.clone(),
                     built.spent_note_indexes.clone(),
@@ -458,5 +457,4 @@ mod tests {
         headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer secret"));
         require_auth(&headers, "secret").expect("auth accepted");
     }
-
 }

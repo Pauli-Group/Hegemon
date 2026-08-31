@@ -451,6 +451,15 @@ def DeployedSmallWoodBlockKnowledgeSoundnessEvidence
       DeployedSmallWoodKnowledgeSoundnessEvidence verifier proof.exactMap
         proof.proofBytes proof.serializedPublicInputBytes proof.verifierProfile proof.wrapper
 
+def DeployedSmallWoodBlockCanonicalSemanticRefinementEvidence
+    (codec : ProductionActionCodec DeployedSmallWoodProof)
+    (block : AcceptedCanonicalBlock) : Type :=
+  forall actions,
+    decodeCanonicalActionStream codec block.actionBytes = some actions ->
+    forall proof, proof ∈ canonicalTransfers actions ->
+      ProductionSmallWoodCanonicalSemanticRefinementAssumption
+        proof.exactMap proof.shape proof.merkleRoot
+
 def DeployedSmallWoodBlockTransactionRelationEvidence
     (codec : ProductionActionCodec DeployedSmallWoodProof)
     (verifier : ProductionSmallWoodProofVerifier)
@@ -460,15 +469,16 @@ def DeployedSmallWoodBlockTransactionRelationEvidence
     forall proof, proof ∈ canonicalTransfers actions ->
       ProductionAcceptedTransactionRelation verifier proof.exactMap
         (productionVerifierPublicValues proof.bound proof.statementFields)
-        proof.proofBytes proof.serializedPublicInputBytes proof.verifierProfile proof.wrapper
+        proof.shape proof.merkleRoot proof.proofBytes proof.serializedPublicInputBytes
+        proof.verifierProfile proof.wrapper
 
-def DeployedSmallWoodBlockPoseidon2HashCollisionResistance
+def DeployedSmallWoodBlockPoseidon2OutputSecurityAssumptions
     (codec : ProductionActionCodec DeployedSmallWoodProof)
     (block : AcceptedCanonicalBlock) : Prop :=
   forall actions,
     decodeCanonicalActionStream codec block.actionBytes = some actions ->
     forall proof, proof ∈ canonicalTransfers actions ->
-      ProductionPoseidon2HashCollisionResistance proof.noteHashSpec
+      ProductionPoseidon2OutputSecurityAssumptions proof.noteHashSpec
 
 structure IndependentCrossObjectIdentityFacts
     (hashes : ProductionIdentityFunctions)
@@ -672,21 +682,25 @@ theorem consensus_accepted_chain_supply_composition
       exact supply_facts_of_decoded_acceptance (of_decide_eq_true parentHash)
         (of_decide_eq_true nextHeight) (of_decide_eq_true parentSupply) accepted.2
 
-theorem deployed_smallwood_proof_yields_transaction_relation
+theorem deployed_smallwood_proof_under_canonical_semantic_refinement_yields_transaction_relation
     (verifier : ProductionSmallWoodProofVerifier)
     (hashes : ProductionIdentityFunctions)
     (proof : DeployedSmallWoodProof)
     (accepted : DeployedSmallWoodProofAccepted verifier hashes proof)
     (knowledgeSoundness :
       DeployedSmallWoodKnowledgeSoundnessEvidence verifier proof.exactMap
-        proof.proofBytes proof.serializedPublicInputBytes proof.verifierProfile proof.wrapper) :
+        proof.proofBytes proof.serializedPublicInputBytes proof.verifierProfile proof.wrapper)
+    (semanticRefinement :
+      ProductionSmallWoodCanonicalSemanticRefinementAssumption
+        proof.exactMap proof.shape proof.merkleRoot) :
     ProductionAcceptedTransactionRelation verifier proof.exactMap
       (productionVerifierPublicValues proof.bound proof.statementFields)
-      proof.proofBytes proof.serializedPublicInputBytes proof.verifierProfile proof.wrapper := by
-  exact accepted_smallwood_proof_yields_transaction_relation
+      proof.shape proof.merkleRoot proof.proofBytes proof.serializedPublicInputBytes
+      proof.verifierProfile proof.wrapper := by
+  exact accepted_smallwood_proof_under_canonical_semantic_refinement_yields_transaction_relation
     accepted.canonicalSurface.accepted accepted.exactArtifactAccepted
       accepted.constraintMapBound
-      accepted.constraintPublicValuesBound knowledgeSoundness
+      accepted.constraintPublicValuesBound knowledgeSoundness semanticRefinement
 
 structure DeployedNoCounterfeitCriticalPathCertificate
     (hashes : ProductionIdentityFunctions)
@@ -708,7 +722,8 @@ structure DeployedNoCounterfeitCriticalPathCertificate
         ∧ (forall proof, proof ∈ canonicalTransfers decodedActions ->
           ProductionAcceptedTransactionRelation verifier proof.exactMap
             (productionVerifierPublicValues proof.bound proof.statementFields)
-            proof.proofBytes proof.serializedPublicInputBytes proof.verifierProfile proof.wrapper)
+            proof.shape proof.merkleRoot proof.proofBytes proof.serializedPublicInputBytes
+            proof.verifierProfile proof.wrapper)
         ∧ (forall proof, proof ∈ canonicalTransfers decodedActions ->
           exists witnessValues,
             ExactProductionConstraintMapEvaluates proof.exactMap witnessValues
@@ -757,7 +772,7 @@ structure DeployedNoCounterfeitCriticalPathCertificate
         proof.statementFields.circuitVersion = activeSmallWoodCircuitVersion
           ∧ proof.statementFields.cryptoSuite = activeSmallWoodCryptoSuite
 
-theorem accepted_deployed_smallwood_block_of_transaction_relations_yields_no_counterfeit_critical_path
+theorem accepted_deployed_smallwood_block_of_assumed_transaction_relations_and_poseidon_boundaries_yields_no_counterfeit_critical_path
     {hashes : ProductionIdentityFunctions}
     {codec : ProductionActionCodec DeployedSmallWoodProof}
     {verifier : ProductionSmallWoodProofVerifier}
@@ -767,8 +782,8 @@ theorem accepted_deployed_smallwood_block_of_transaction_relations_yields_no_cou
       AcceptedDeployedSmallWoodBlock codec verifier hashes acceptedParent block)
     (transactionRelations :
       DeployedSmallWoodBlockTransactionRelationEvidence codec verifier block)
-    (poseidon2HashCollisionResistance :
-      DeployedSmallWoodBlockPoseidon2HashCollisionResistance codec block) :
+    (poseidon2OutputSecurity :
+      DeployedSmallWoodBlockPoseidon2OutputSecurityAssumptions codec block) :
     DeployedNoCounterfeitCriticalPathCertificate hashes codec verifier acceptedParent block := by
   obtain ⟨actions, decoded, identityFacts⟩ :=
     accepted_independent_cross_object_identity_refines_one_canonical_block
@@ -794,8 +809,8 @@ theorem accepted_deployed_smallwood_block_of_transaction_relations_yields_no_cou
           semanticConstraints.outputValidity output outputBound active
         refine ⟨acceptedImage, ?_⟩
         intro alternateWitness alternateImage
-        exact production_poseidon2_collision_resistance_binds_accepted_output_value_and_asset
-          (poseidon2HashCollisionResistance actions decoded proof membership)
+        exact production_poseidon2_no_collision_binds_accepted_output_value_and_asset
+          (poseidon2OutputSecurity actions decoded proof membership)
           acceptedImage alternateImage, by
         intro proof _
         exact deployed_smallwood_identity_uses_exact_transaction_hash_preimage hashes proof, by
@@ -810,7 +825,7 @@ theorem accepted_deployed_smallwood_block_of_transaction_relations_yields_no_cou
     let proofAccepted := accepted.decodedProofsAccepted actions decoded proof membership
     exact ⟨proofAccepted.activeCircuitVersion, proofAccepted.activeCryptoSuite⟩
 
-theorem accepted_deployed_smallwood_block_yields_no_counterfeit_critical_path
+theorem accepted_deployed_smallwood_block_under_explicit_semantic_and_poseidon_boundaries_yields_no_counterfeit_critical_path
     {hashes : ProductionIdentityFunctions}
     {codec : ProductionActionCodec DeployedSmallWoodProof}
     {verifier : ProductionSmallWoodProofVerifier}
@@ -820,17 +835,21 @@ theorem accepted_deployed_smallwood_block_yields_no_counterfeit_critical_path
       AcceptedDeployedSmallWoodBlock codec verifier hashes acceptedParent block)
     (knowledgeSoundness :
       DeployedSmallWoodBlockKnowledgeSoundnessEvidence codec verifier block)
-    (poseidon2HashCollisionResistance :
-      DeployedSmallWoodBlockPoseidon2HashCollisionResistance codec block) :
+    (semanticRefinement :
+      DeployedSmallWoodBlockCanonicalSemanticRefinementEvidence codec block)
+    (poseidon2OutputSecurity :
+      DeployedSmallWoodBlockPoseidon2OutputSecurityAssumptions codec block) :
     DeployedNoCounterfeitCriticalPathCertificate hashes codec verifier acceptedParent block := by
   exact
-    accepted_deployed_smallwood_block_of_transaction_relations_yields_no_counterfeit_critical_path
+    accepted_deployed_smallwood_block_of_assumed_transaction_relations_and_poseidon_boundaries_yields_no_counterfeit_critical_path
       accepted
       (fun actions decoded proof membership =>
-        deployed_smallwood_proof_yields_transaction_relation verifier hashes proof
+        deployed_smallwood_proof_under_canonical_semantic_refinement_yields_transaction_relation
+          verifier hashes proof
           (accepted.decodedProofsAccepted actions decoded proof membership)
-          (knowledgeSoundness actions decoded proof membership))
-      poseidon2HashCollisionResistance
+          (knowledgeSoundness actions decoded proof membership)
+          (semanticRefinement actions decoded proof membership))
+      poseidon2OutputSecurity
 
 def productionCompositionFieldMap : List String :=
   [ "transaction_hash_preimage_nullifiers",

@@ -4,14 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-crypto = { package = "synthetic-crypto", path = "../../crypto" }
-reed-solomon-erasure = "6"
+hegemon-hash384 = { path = "../../crypto/hash384" }
+reed-solomon-erasure = { version = "=6.0.0", path = "../../third_party/reed-solomon-erasure" }
 thiserror = "1"
 codec = { workspace = true }
 rand = "0.8"
 rand_chacha = "0.3"
 
 [dev-dependencies]
+blake2 = "0.10"
+hex = "0.4"
 
 [lints]
 workspace = true

@@ -1,21 +1,33 @@
-# Transaction Proof SmallWood Level-5 Soundness
+# Retained SmallWood Level-5 Soundness Status
 
 This note freezes the exact V4/Gamma statement, transcript, and no-grinding
-parameter profile selected for Hegemon's production `SmallwoodCandidate`
-backend. It distinguishes three different facts:
+parameter profile retained for Hegemon's compact `SmallwoodCandidate` path. It
+distinguishes three different facts:
 
-1. the deterministic relation and parser/verifier chain checked by Rust and Lean;
+1. the deterministic relation and finite parser/verifier conformance surfaces checked by Rust and Lean;
 2. the concrete interactive SmallWood error terms computed for that relation; and
 3. the cryptographic assumptions needed to carry those terms into the deployed
    SHA-512 Fiat-Shamir execution.
 
-It is not a claim that formalization proves SHA-512 or Poseidon2 cryptanalysis,
-the compiler, the CPU, storage durability, data availability, or network
-privacy.
+It is not a deployed end-to-end soundness claim. The formalization does not yet
+prove the exact-map-to-canonical-semantic bridge, universal compiled-verifier
+refinement, SHA-512 ideal-QROM instantiation, Poseidon2 cryptanalysis, the
+compiler, the CPU, storage durability, data availability, or network privacy.
 
-## Active production statement
+## Current status
 
-The active protocol binding is:
+| Question | Answer |
+| --- | --- |
+| What do the actual parameters prove? | Under the proved committed-support uniform-matrix theorem, the four-term interactive error is about `2^-262.3777366`. The ideal finite-QROM calculation passes the stated `2^64`-query/`2^-128` and `2^128`-query/half-success tests. |
+| What may production claim? | No composed production bit count is available. Production is disabled because the exact conventional-hash relation, complete zero knowledge, concrete hash reductions, and Rust-verifier refinement are incomplete. |
+| What attack is known? | No end-to-end SmallWood transaction forgery is recorded. The strongest documented generic component attack is quantum collision search against the retained 384-bit Poseidon2 semantic digest at about `2^128` queries; no retained construction turns that collision algorithm into an accepted transaction forgery. |
+
+The parameter calculation, production status, and attack record are separate.
+None may be substituted for another.
+
+## Retained profile statement
+
+The retained profile identity is:
 
 - circuit version `4`;
 - crypto suite `3` (`Gamma`);
@@ -24,7 +36,7 @@ The active protocol binding is:
 - transcript `hegemon.sha512-level5-field-xof.v1`; and
 - radix-2 DECS evaluation domain.
 
-The exact active relation has:
+The exact retained relation has:
 
 - `public_value_count = 78`;
 - `raw_witness_len = 241`;
@@ -33,11 +45,12 @@ The exact active relation has:
 - `effective_constraint_degree = 8`; and
 - `constraint_count = 890`.
 
-The V4 relation binds note openings, spend authorization, Merkle
+The V4 Rust relation constrains note openings, spend authorization, Merkle
 authentication, nullifiers, output ciphertext hashes, balance equations,
 61-bit monetary ranges, and Poseidon2 transitions. V2/Beta and V3/Beta proof
-formats remain verification-only historical replay surfaces; no new block
-authoring path selects them.
+formats remain compatibility decoders. Native block validity cannot reach them
+without an explicit inclusive historical authorization, and the production
+manifest currently authorizes none.
 
 The implementation lives in:
 
@@ -46,7 +59,7 @@ The implementation lives in:
 - [smallwood_semantics.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/smallwood_semantics.rs)
 - [proof.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/proof.rs)
 
-## Exact active profile
+## Exact retained profile
 
 The selected no-grinding profile is:
 
@@ -67,7 +80,7 @@ distinct.
 
 ## SmallWood parameter mapping
 
-Using the paper's notation for the active relation:
+Using the paper's notation for the retained relation:
 
 - `|F| = 2^64 - 2^32 + 1` (Goldilocks);
 - `s = 64`;
@@ -92,7 +105,7 @@ The derived dimensions are:
 - `n_cols = ceil(n_unstacked_cols / beta) = 375`; and
 - `n_decs = n_rows = 138`.
 
-The implementation computes these values from the exact production statement;
+The implementation computes these values from the exact retained statement;
 the release profile command and Rust/Lean conformance tests reject drift.
 
 ## Exact interactive terms
@@ -106,13 +119,13 @@ epsilon3 = falling(d_Q + s, ell') / falling(|F| - s, ell')
 epsilon4 = falling(n_cols + ell - 1, ell) / falling(N, ell)
 ```
 
-The first term is specific to the active full independent uniform coefficient
+The first term is specific to the retained full independent uniform coefficient
 matrix. The extractor selects one bad support from the committed rows before
 that matrix is sampled; failure is one codimension-`eta` affine fiber. Charging
 a union over every possible support is valid for the historical scalar-power
-challenge family but double-counts the active uniform-matrix failure event.
+challenge family but double-counts the retained uniform-matrix failure event.
 
-For the exact active profile, diagnostic base-2 floors are:
+For the exact retained profile, diagnostic base-2 floors are:
 
 - `epsilon1`: `319.9999999` bits;
 - `epsilon2`: `319.9999999` bits;
@@ -125,78 +138,129 @@ The exact integer comparisons, not those rounded decimals, enforce the strict
 QROM statement charges the explicit query-dependent loss rather than
 advertising the interactive floor as the deployed post-quantum security level.
 
-## Fiat-Shamir and extraction chain
+## Separate attack record
 
-The formal production chain is:
+The repository contains mutation campaigns and malformed proof constructions
+that the verifier rejects. Those are negative tests, not successful attacks.
+No retained artifact makes the verifier accept a transaction for which no
+valid witness exists.
+
+The strongest documented generic algorithm concerns the retained six-limb,
+384-bit Poseidon2 semantic digest. Generic collision search costs about
+`2^192` classical hash calls or `2^128` quantum hash queries. This leaves no
+generic quantum collision margin above 128 bits, but it is a hash component
+result. Calling it a SmallWood forgery would require a separate
+collision-to-counterfeit construction, and none is retained.
+
+The easiest interactive error term, about `2^-262.378`, suggests a generic
+quantum search scale near `2^131.189` verifier evaluations only if an attacker
+can first construct false proofs that attain that event. No such construction
+is known in this repository, so that estimate is not recorded as an attack.
+
+## Fiat-Shamir and extraction boundaries
+
+The intended deployment reduction is:
 
 ```text
-canonical proof bytes
-  -> exact V4/Gamma parser
-  -> accepted Rust verifier trace
+accepted compiled V4/Gamma proof bytes
+  -> compiled parser/verifier refinement
   -> exact SHA-512 counter-mode challenges and rejection sampling
+  -> ideal logical-QROM instantiation with quantified loss
   -> restored PCS/PIOP/DECS messages and authenticated Merkle rows
   -> round-by-round extractor
-  -> exact Hegemon transaction relation
+  -> exact production constraint map
+  -> canonical Hegemon transaction semantics
   -> ordered independent transactions
   -> accepted block supply transition
 ```
 
-`SmallWoodProductionAcceptanceClosure.lean` derives the transcript,
-reconstructed messages, rows, and accepted relation from canonical accepted
-proof bytes. `SmallWoodCmsQrom.lean` proves the finite compressed-oracle
-adaptive extraction bound. `SmallWoodProductionSupplyChain.lean` composes the
-extracted relation with transaction identity, fees, coinbase, and claimed
-supply. These modules are imported by the top-level `HegemonCrypto` library.
+The current theorems do not compose that full arrow chain.
+`SmallWoodProductionAcceptanceClosure.lean` proves consequences of a
+`CallerSuppliedVerifierEvidence` record; it does not construct that record from
+an arbitrary compiled Rust acceptance. `SmallWoodCmsQrom.lean` proves a finite
+compressed-oracle bound for an ideal logical-oracle game. No production module
+consumes that probability theorem. `SmallWoodProductionSupplyChain.lean`
+reaches transaction identity, fees, coinbase, claimed supply, and the
+no-counterfeit critical-path certificate only after callers separately provide
+per-proof extraction success and canonical semantic refinement, plus Poseidon2
+constraint-digest refinement and pair-local no-collision evidence.
 
-No generic BCS/QROM theorem is postulated in that final chain. The residual
-cryptographic assumptions are:
+The indexed formal security-authority type intentionally has no constructor for
+`deployedEndToEnd`. The open obligations are:
 
-- deployed domain-separated SHA-512 behaves as the modeled QRO with the
-  explicitly charged instantiation loss;
-- SHA-512 and Poseidon2 satisfy the required collision and preimage properties
-  in their exact deployed domains; and
-- the checked parser/verifier refinement corresponds to compiled Rust and its
-  machine environment.
+- construct the modeled verifier-evidence record from every accepted compiled
+  Rust execution;
+- compose the ideal logical-QROM failure event with the extractor used by the
+  block theorem and quantify deployed SHA-512 instantiation loss;
+- prove the exact production row model refines canonical transaction semantics;
+- prove production Poseidon2 constraint rows compute the deployed digest; and
+- retain SHA-512/Poseidon2 collision and preimage hardness assumptions in their
+  exact deployed domains.
 
 ## Size and performance selection
 
-The release sweep minimizes proof bytes subject to the strict interactive
-security gate, then rejects domain-size reductions that save only a few
-kilobytes while multiplying prover work. The size-only `N = 2^23` point
-projects to 118,910 bytes, but the selected `N = 2^20` point projects to
-124,982 bytes and avoids an eightfold DECS domain. Proof bytes depend on the
-transcript's compact Merkle-path overlap, so exact runs are observations rather
-than consensus constants.
+Candidate parameters remain benchmark-local until a profile is a strict proof
+size, prover-time, and verifier-time Pareto improvement under unchanged
+conservative security accounting. Exact proof bytes vary because compact
+authentication paths share nodes selected by randomized challenges, so compare
+bands and medians from the same run.
 
-The July 31, 2026 release-mode run on the development machine measured:
+The August 17, 2026 release-mode audit measured:
 
-| Profile | Wrapped proof | Prove | Verify | Interactive floor |
-| --- | ---: | ---: | ---: | ---: |
-| tightened V4/Gamma | 118,006 B | 2.553 s | 10.781 ms | 262.377737 bits |
-| prior overcounted V4 profile | 184,875 B | 15.286 s | 31.602 ms | 262.717776 bits |
+| Profile | Exact wrapped median | Combined prove + verify | Conditional `Q = 2^128` CMS envelope* |
+| --- | ---: | ---: | ---: |
+| retained `N=2^20,q=23` | 117,878 B | 3.070 s | 0.1443 |
+| `N=2^19,q=25` | 120,296 B | 1.720 s | 0.6995 (fails target) |
+| `N=2^19,q=26` | 122,337 B | 1.773 s | 0.000564 |
+| `N=2^21,q=21` | 115,076 B | 6.396 s | 0.4811 |
+| `N=2^22,q=20` | 114,379 B | 12.244 s | 0.002466 |
+| `N=2^23,q=19` | 113,490 B | 26.9 s | 0.0000799 |
 
-The tightened profile is 36.2% smaller, 6.0 times faster to prove, and 2.9
-times faster to verify in these runs. A second exact witness produced a
-118,070-byte wrapper. The deterministic proof ceiling is 124,982 bytes, and
-the regenerated complete native transaction-leaf artifact is 124,022 bytes.
+\* The envelope assumes the unproved fixed-prechallenge/full-oracle compiled
+reduction and excludes deployed SHA-512 instantiation loss. It is a pruning
+diagnostic, not deployed security authority.
+
+The smallest measured candidate saves about 3.7% but is roughly nine times
+slower. Faster candidates are larger, and the one smaller-domain candidate
+that approaches the active size fails even the conditional half-success
+criterion. No candidate improves both bytes and runtime, so the active
+`2/23/5` profile is retained. The three-sample active band was
+117,750--117,942 bytes; the `2^23/19` band was 113,234--113,554 bytes. The
+active current-row planner ceiling is
+124,982 B. A proposed shared-row planner is larger at 126,166 B and only
+242.153 interactive bits, so it is rejected. The planner now charges 64-byte
+SHA-512 digests for Level-5 paths; its former 32-byte accounting understated
+the active projection by 14,752 B.
+
+The active proof is dominated by opening payloads (about 39.2%), opened values
+(21.4%), transcript data (20.5%), and the compact Merkle commitment (18.9%).
+The checked-in complete native transaction-leaf artifact remains 124,022 B.
+The new balance-tag reconstruction adds no bytes and measured 23.94 us versus
+15.634 ms for full native fixture verification, about 0.153% of that path.
 Consensus enforces the 524,288-byte native transaction-leaf cap.
 
-Reproduce the active benchmark with:
+Reproduce the active and candidate measurements with:
 
 ```bash
 cargo test -p transaction-circuit \
   compressed_level5_radix2_roundtrip_benchmark \
   --release -- --ignored --nocapture
+
+cargo run -p transaction-circuit --release \
+  --example pq128_profile_bench -- 3
+
+cargo run -p superneo-bench --release \
+  --example native_tx_leaf_precheck_bench
 ```
 
 ## Product boundary
 
-The active proof is one independent proof per transaction. There is no
-authoring-time receipt-root, recursive-block, accumulation, or aggregation
-artifact added to new blocks. Historical decoders remain only for chain replay.
+The retained proof format is self-contained and does not require a receipt,
+aggregate, sidecar, or cache. It is not authorized for new production blocks.
+Historical replay requires an explicit release-owned binding and height range.
 
-This formal chain establishes the exact statement that must be secured and
-reduces the remaining cryptographic boundary to named hash/QRO and compiled
-implementation assumptions. It does not turn those assumptions into
-self-issued external review, and it does not prove zero knowledge or global
-unlinkability.
+The checked arithmetic and internal theorems establish useful pieces of the
+statement that must be secured. Until the obligations above are discharged,
+they remain conditional research evidence rather than production authorization.
+They do not turn assumptions into self-issued external review, and they do not
+prove zero knowledge or global unlinkability.

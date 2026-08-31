@@ -23,7 +23,9 @@ waiver. The generated-vector checker requires missing tracking, missing id,
 version mismatch, unused-waiver, and multi-finding exact-waiver cases to remain
 covered, and the production gate rejects expired waivers, future review dates,
 missing metadata, unwaived findings, and stale waivers that no longer match live
-`cargo audit` output.
+`cargo audit` output. The formal-core checker lockfile is audited separately with
+`cargo audit --deny warnings`, so informational unsoundness, unmaintained, and
+yanked findings fail that assurance-tooling gate as well.
 
 ## Current explicit waiver register
 
@@ -159,3 +161,26 @@ Summary:
     waived unsound RUSTSEC-2026-0097 rand 0.8.5 until 2026-08-31 (DEP-2026-0009)
     waived unsound RUSTSEC-2026-0097 rand 0.9.2 until 2026-08-31 (DEP-2026-0009)
     waived yanked yanked:keccak:0.1.5 keccak 0.1.5 until 2026-08-31 (DEP-2026-0008)
+
+## 2026-08-24
+
+Command: `./scripts/dependency-audit-gate.sh --offline`
+
+Exit status: 0
+
+Summary:
+
+    dependency audit findings: 4 total, 4 waived, 0 unwaived, 0 unused waivers
+    waived unmaintained RUSTSEC-2025-0141 bincode 1.3.3 until 2026-08-31 (DEP-2026-0002)
+    waived unmaintained RUSTSEC-2025-0057 fxhash 0.2.1 until 2026-08-31 (DEP-2026-0004)
+    waived unmaintained RUSTSEC-2024-0384 instant 0.1.13 until 2026-08-31 (DEP-2026-0005)
+    waived unmaintained RUSTSEC-2024-0436 paste 1.0.15 until 2026-08-31 (DEP-2026-0006)
+
+The release dependency graph was remediated rather than adding waivers:
+`h2` moved from 0.4.15 to 0.4.16 for RUSTSEC-2026-0258, the standalone
+formal-core checker moved from `anyhow` 1.0.102 to 1.0.103 for
+RUSTSEC-2026-0190, and Hegemon's source-pinned `reed-solomon-erasure` 6.0.0
+copy moved its decode-matrix cache from `lru` 0.7.8 to 0.18.2 for
+RUSTSEC-2026-0253. The erasure-code patch preserves the upstream MIT source
+apart from the dependency/API adaptation and is guarded by an exact parity and
+reconstruction vector in `state-da`.

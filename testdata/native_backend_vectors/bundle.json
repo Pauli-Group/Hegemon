@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "generator_id": "hegemon.superneo-bench.native-review",
   "active_tx_profile": {
     "circuit_version": 4,
@@ -7,7 +7,7 @@
     "proof_backend": "SmallwoodCandidate",
     "arithmetization": "DirectPacked64CompressedLevel5",
     "public_value_count": 78,
-    "verifier_profile_sha384_hex": "e1a09c264e3025034133c4f70a61da9f1f1ba5e535cd44f7c94e87f90ee712025385b0fba1338419c1b2b46ba71b1617"
+    "verifier_profile_blake2b384_hex": "e1a09c264e3025034133c4f70a61da9f1f1ba5e535cd44f7c94e87f90ee712025385b0fba1338419c1b2b46ba71b1617"
   },
   "parameter_fingerprint": "dc2fae3cd1f05cf81a446b46afa6ad70ed8582de8402e598bae1dd3bdf35b429acb87c9939969efa0c54b97b9920a0d7",
   "native_backend_params": {

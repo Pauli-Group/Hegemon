@@ -15,21 +15,50 @@
 
 pub mod constants;
 pub mod error;
+pub mod full_blake2b448_relation;
+pub mod full_shake448_relation;
+pub mod full_shake448_statement;
 pub mod hashing;
 pub mod hashing_pq;
+pub mod hx512_production_relation;
 pub mod keys;
 pub mod note;
 pub mod private_multisig_accumulator;
 pub mod proof;
 pub mod proof_options;
 pub mod public_inputs;
+pub mod smallwood_blake2b384;
+pub mod smallwood_blake2b384_lowering;
+pub mod smallwood_blake2b384_semantics;
 mod smallwood_engine;
 pub mod smallwood_frontend;
+pub mod smallwood_hx512_adapter;
+pub mod smallwood_hx512_engine;
+pub mod smallwood_hx512_topology;
+pub mod smallwood_hx512_transcript;
+pub mod smallwood_hx512_zk_certificate;
 pub mod smallwood_lppc_frontend;
 pub mod smallwood_native;
+pub mod smallwood_poseidon2_v8_coinbase;
+pub mod smallwood_poseidon2_v8_frontend;
+pub mod smallwood_poseidon2_v8_hash_constraints;
+pub mod smallwood_poseidon2_v8_hash_schedule;
+pub(crate) mod smallwood_poseidon2_v8_ir;
+pub mod smallwood_poseidon2_v8_program;
+pub mod smallwood_poseidon2_v8_relation;
+pub mod smallwood_poseidon2_v8_security;
+pub mod smallwood_poseidon2_v8_semantic_refinement;
+pub mod smallwood_poseidon2_v8_semantics;
+pub mod smallwood_poseidon2_v8_types;
+pub mod smallwood_poseidon2_v8_zk_refinement;
 mod smallwood_production_constraint_contract_generated;
 pub mod smallwood_recursive;
 mod smallwood_semantics;
+pub mod smallwood_shake256_full_relation;
+pub mod smallwood_v5_envelope;
+pub mod smallwood_v6_adapter;
+pub mod smallwood_v6_envelope;
+pub mod smallwood_v6_transcript;
 pub mod trace;
 pub mod witness;
 pub use transaction_core::poseidon_constants;
@@ -44,18 +73,37 @@ pub use proof::{TransactionProof, VerificationReport};
 pub use proof_options::TransactionProofParams;
 pub use protocol_versioning::{TxProofBackend, VersionBinding};
 pub use public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
+pub use smallwood_blake2b384_lowering::{
+    lower_smallwood_blake2b384_relation, smallwood_blake2b384_nonhash_compiler_complete,
+    SmallwoodBlake2b384ConstraintAdapter, SmallwoodBlake2b384LoweredRelation,
+    SmallwoodBlake2b384LoweringError, SmallwoodBlake2b384LoweringGeometry,
+    SMALLWOOD_BLAKE2B384_LOWERING_COMPILED, SMALLWOOD_BLAKE2B384_LOWERING_PRODUCTION_AUTHORIZED,
+    SMALLWOOD_BLAKE2B384_LOWERING_PROFILE, SMALLWOOD_BLAKE2B384_NONHASH_COMPILER_COMPLETE,
+};
 pub use smallwood_engine::{
+    build_smallwood_poseidon2_v8_compact448_q20_verifier_trace_v1,
+    build_smallwood_poseidon2_v8_compact448_verifier_trace_v1,
+    build_smallwood_poseidon2_v8_smz9_verifier_trace_v1,
     build_smallwood_poseidon2_verifier_trace_v1, decode_smallwood_proof_trace_prefix_v1,
-    decode_smallwood_proof_trace_v1, decs_commitment_transcript, decs_recompute_root,
-    derive_gamma_prime, encode_smallwood_proof_trace_v1, ensure_no_packing_collisions,
+    decode_smallwood_proof_trace_v1, decode_smallwood_smc7_proof_trace_v1,
+    decode_smallwood_smc8_proof_trace_v1, decode_smallwood_smz8_proof_trace_v1,
+    decode_smallwood_smz9_proof_trace_v1, decs_commitment_transcript, decs_recompute_root,
+    derive_gamma_prime, encode_smallwood_proof_trace_v1, encode_smallwood_smc7_proof_trace_v1,
+    encode_smallwood_smc8_proof_trace_v1, encode_smallwood_smz8_proof_trace_v1,
+    encode_smallwood_smz9_proof_trace_v1, ensure_no_packing_collisions,
     ensure_row_polynomial_arithmetization, hash_challenge_opening_decs, hash_piop_transcript,
-    interpolate_smallwood_consecutive_row_v1, lvcs_recompute_rows, pcs_build_coefficients,
+    interpolate_smallwood_consecutive_row_v1, lvcs_recompute_rows,
+    maximum_smallwood_compact_authentication_nodes_v1, pcs_build_coefficients,
     pcs_reconstruct_combi_heads, piop_recompute_transcript,
+    projected_poseidon2_v8_compact448_q20_inner_proof_bytes,
+    projected_poseidon2_v8_inner_proof_bytes, projected_poseidon2_v8_smz9_inner_proof_bytes,
     projected_smallwood_structural_proof_bytes_v1,
     projected_smallwood_structural_proof_bytes_with_backend_v1,
     prove_smallwood_structural_identity_witness_v1, report_smallwood_backend_opening_surface_v1,
     report_smallwood_lvcs_planner_projection_v1, report_smallwood_proof_size_v1,
-    report_smallwood_structural_no_grinding_soundness_v1, smallwood_binding_words_v1,
+    report_smallwood_sha512_field_xof_abort_bound_v1,
+    report_smallwood_structural_no_grinding_soundness_v1, simulate_smallwood_smz1_whole_view_v1,
+    simulate_smallwood_strict_whole_view_v1, smallwood_binding_words_v1,
     smallwood_no_grinding_exact_128_bit_aggregate_check,
     smallwood_no_grinding_exact_128_bit_term_checks,
     smallwood_no_grinding_exact_256_bit_aggregate_check,
@@ -71,17 +119,50 @@ pub use smallwood_engine::{
     smallwood_poseidon2_recompute_root_v1, smallwood_poseidon2_recompute_rows_v1,
     smallwood_proof_from_trace_v1, validate_proof_shape,
     validate_smallwood_poseidon2_verifier_trace_v1,
+    validate_smallwood_strict_whole_view_simulation_v1,
     verify_smallwood_structural_identity_witness_v1, xof_decs_opening, xof_piop_opening_points,
     SmallwoodArithmetization, SmallwoodBackendOpeningSurfaceReportV1, SmallwoodConfig,
-    SmallwoodLvcsPlannerGeometryKindV1, SmallwoodLvcsPlannerProjectionReportV1,
-    SmallwoodNoGrindingProfileV1, SmallwoodNoGrindingSoundnessReportV1,
-    SmallwoodPcsVerifierTraceV1, SmallwoodPiopVerifierTraceV1, SmallwoodProof,
-    SmallwoodProofSizeReportV1, SmallwoodProofTraceV1, SmallwoodTranscriptBackend,
-    SmallwoodTranscriptCallTraceV1, SmallwoodVerifierOperationProfileV1,
-    SmallwoodVerifierStageOperationProfileV1, SmallwoodVerifierTraceV1,
-    ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1, DIGEST_BYTES, NONCE_BYTES, SMALLWOOD_BETA,
-    SMALLWOOD_DECS_NB_EVALS, SMALLWOOD_DECS_NB_OPENED_EVALS, SMALLWOOD_DECS_POW_BITS,
-    SMALLWOOD_NB_OPENED_EVALS, SMALLWOOD_RHO,
+    SmallwoodDecsSoundnessModelV1, SmallwoodLvcsPlannerGeometryKindV1,
+    SmallwoodLvcsPlannerProjectionReportV1, SmallwoodNoGrindingProfileV1,
+    SmallwoodNoGrindingSoundnessReportV1, SmallwoodPcsVerifierTraceV1,
+    SmallwoodPiopVerifierTraceV1, SmallwoodProof, SmallwoodProofSizeReportV1,
+    SmallwoodProofTraceV1, SmallwoodProofWireIdentityV1, SmallwoodSha512FieldXofAbortBoundV1,
+    SmallwoodStrictZkProgrammedMerkleNodeV1, SmallwoodStrictZkWholeViewSimulationV1,
+    SmallwoodTranscriptBackend, SmallwoodTranscriptCallTraceV1,
+    SmallwoodVerifierOperationProfileV1, SmallwoodVerifierStageOperationProfileV1,
+    SmallwoodVerifierTraceV1, ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1, DIGEST_BYTES, NONCE_BYTES,
+    POSEIDON2_V8_COMPACT448_Q20_SMALLWOOD_NO_GRINDING_PROFILE,
+    POSEIDON2_V8_COMPACT448_SMALLWOOD_NO_GRINDING_PROFILE,
+    POSEIDON2_V8_SMALLWOOD_NO_GRINDING_PROFILE, POSEIDON2_V8_SMZ9_SMALLWOOD_NO_GRINDING_PROFILE,
+    SMALLWOOD_BETA, SMALLWOOD_DECS_NB_EVALS, SMALLWOOD_DECS_NB_OPENED_EVALS,
+    SMALLWOOD_DECS_POW_BITS, SMALLWOOD_NB_OPENED_EVALS,
+    SMALLWOOD_POSEIDON2_V8_COMPACT448_DECS_OPENED_LEAF_COUNT,
+    SMALLWOOD_POSEIDON2_V8_COMPACT448_DECS_OPENED_TAPE_BYTES,
+    SMALLWOOD_POSEIDON2_V8_COMPACT448_DIGEST_BYTES,
+    SMALLWOOD_POSEIDON2_V8_COMPACT448_MAX_COMPACT_AUTHENTICATION_NODES,
+    SMALLWOOD_POSEIDON2_V8_COMPACT448_MAX_COMPACT_AUTH_PATH_BYTES,
+    SMALLWOOD_POSEIDON2_V8_COMPACT448_MAX_INNER_PROOF_BYTES,
+    SMALLWOOD_POSEIDON2_V8_COMPACT448_Q20_DECS_OPENED_LEAF_COUNT,
+    SMALLWOOD_POSEIDON2_V8_COMPACT448_Q20_DECS_OPENED_TAPE_BYTES,
+    SMALLWOOD_POSEIDON2_V8_COMPACT448_Q20_MAX_COMPACT_AUTHENTICATION_NODES,
+    SMALLWOOD_POSEIDON2_V8_COMPACT448_Q20_MAX_COMPACT_AUTH_PATH_BYTES,
+    SMALLWOOD_POSEIDON2_V8_COMPACT448_Q20_MAX_INNER_PROOF_BYTES,
+    SMALLWOOD_POSEIDON2_V8_COMPACT448_Q20_SHA512_PROFILE_DOMAIN,
+    SMALLWOOD_POSEIDON2_V8_COMPACT448_SHA512_PROFILE_DOMAIN,
+    SMALLWOOD_POSEIDON2_V8_DECS_OPENED_LEAF_COUNT, SMALLWOOD_POSEIDON2_V8_DECS_OPENED_TAPE_BYTES,
+    SMALLWOOD_POSEIDON2_V8_MAX_COMPACT_AUTHENTICATION_NODES,
+    SMALLWOOD_POSEIDON2_V8_MAX_COMPACT_AUTH_PATH_BYTES,
+    SMALLWOOD_POSEIDON2_V8_MAX_INNER_PROOF_BYTES, SMALLWOOD_POSEIDON2_V8_SHA512_PROFILE_DOMAIN,
+    SMALLWOOD_POSEIDON2_V8_SMZ9_DECS_OPENED_LEAF_COUNT,
+    SMALLWOOD_POSEIDON2_V8_SMZ9_DECS_OPENED_TAPE_BYTES,
+    SMALLWOOD_POSEIDON2_V8_SMZ9_MAX_COMPACT_AUTHENTICATION_NODES,
+    SMALLWOOD_POSEIDON2_V8_SMZ9_MAX_COMPACT_AUTH_PATH_BYTES,
+    SMALLWOOD_POSEIDON2_V8_SMZ9_SHA512_PROFILE_DOMAIN, SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8,
+    SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_COMPACT448_Q20_SMC8,
+    SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_COMPACT448_SMC7,
+    SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_SMZ9, SMALLWOOD_RHO,
+    SMALLWOOD_SHA512_FIELD_XOF_EXTRA_CANDIDATE_WORDS_V1,
+    SMALLWOOD_SHA512_FIELD_XOF_MAX_OUTPUT_WORDS_V1,
 };
 pub use smallwood_frontend::{
     active_smallwood_production_profile_attestation,
@@ -98,8 +179,10 @@ pub use smallwood_frontend::{
     prove_smallwood_candidate, prove_smallwood_candidate_with_arithmetization,
     prove_smallwood_candidate_with_arithmetization_and_auth, prove_smallwood_candidate_with_auth,
     report_smallwood_candidate_proof_size, smallwood_accumulator_auth_key_bytes,
-    smallwood_policy_root_bytes, smallwood_private_auth_intent_digest_bytes,
-    smallwood_production_constraint_map, smallwood_production_constraint_map_for_public_values,
+    smallwood_blake2b384_boolean_relation_is_compiled, smallwood_policy_root_bytes,
+    smallwood_poseidon_relation_is_production_authorized,
+    smallwood_private_auth_intent_digest_bytes, smallwood_production_constraint_map,
+    smallwood_production_constraint_map_for_public_values,
     smallwood_production_constraint_map_for_verifier_inputs,
     smallwood_production_public_field_ranges,
     smallwood_production_public_statement_bytes_from_values,
@@ -113,7 +196,8 @@ pub use smallwood_frontend::{
     SmallwoodPoseidonLayout, SmallwoodPrivateAuthMode, SmallwoodPrivateAuthWitness,
     SmallwoodProductionConstraintMap, SmallwoodProductionProfileAttestation,
     SmallwoodProductionPublicFieldRange, SmallwoodProductionVerifierEvidenceV1,
-    SmallwoodPublicBindingMode, SmallwoodSignerTag, SMALLWOOD_MULTISIG_MAX_SIGNERS,
+    SmallwoodPublicBindingMode, SmallwoodSignerTag,
+    SMALLWOOD_BLAKE2B384_BOOLEAN_RELATION_PROFILE_V3, SMALLWOOD_MULTISIG_MAX_SIGNERS,
     SMALLWOOD_SIGNER_TAG_WORDS,
 };
 #[cfg(feature = "formal-generator")]
@@ -152,6 +236,63 @@ pub use smallwood_lppc_frontend::{
     SmallwoodSemanticLppcAuxiliaryPoseidonSpikeReport, SmallwoodSemanticLppcFrontendMaterial,
     SmallwoodSemanticLppcIdentitySpikeReport, SmallwoodSemanticLppcProfileAnalysisReport,
     SmallwoodSemanticLppcShape, SmallwoodSemanticLppcStatement,
+};
+pub use smallwood_poseidon2_v8_frontend::{
+    compile_and_prove_smallwood_poseidon2_v8_candidate,
+    compile_and_prove_smallwood_poseidon2_v8_compact448_candidate_v1,
+    compile_and_prove_smallwood_poseidon2_v8_compact448_q20_candidate_v1,
+    project_smallwood_poseidon2_v8_candidate_bytes,
+    project_smallwood_poseidon2_v8_compact448_candidate_bytes_v1,
+    project_smallwood_poseidon2_v8_compact448_q20_candidate_bytes_v1,
+    report_smallwood_poseidon2_v8_candidate, report_smallwood_poseidon2_v8_compact448_candidate_v1,
+    report_smallwood_poseidon2_v8_compact448_q20_candidate_v1,
+    smallwood_poseidon2_v8_exact_action_bytes, smallwood_poseidon2_v8_routed_proof_budget,
+    verify_smallwood_poseidon2_v8_candidate, verify_smallwood_poseidon2_v8_compact448_candidate_v1,
+    verify_smallwood_poseidon2_v8_compact448_q20_candidate_v1, SmallwoodPoseidon2V8BindingPreamble,
+    SmallwoodPoseidon2V8CandidateProof, SmallwoodPoseidon2V8Compact448CandidateProofV1,
+    SmallwoodPoseidon2V8Compact448Q20CandidateProofV1, SmallwoodPoseidon2V8FrontendRelation,
+    SmallwoodPoseidon2V8SourceRelationFactory, SmallwoodPoseidon2V8VerifierInput,
+    SmallwoodPoseidon2V8VerifierRelationFactory, SMALLWOOD_POSEIDON2_V8_BINDING_PREAMBLE_BYTES,
+    SMALLWOOD_POSEIDON2_V8_CIPHERTEXT_BYTES_PER_ACTIVE_OUTPUT,
+    SMALLWOOD_POSEIDON2_V8_COMPACT448_PROFILE_ID, SMALLWOOD_POSEIDON2_V8_COMPACT448_Q20_PROFILE_ID,
+    SMALLWOOD_POSEIDON2_V8_MAX_INLINE_CIPHERTEXT_BYTES,
+    SMALLWOOD_POSEIDON2_V8_MAX_ROUTED_PROOF_BYTES, SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS,
+    SMALLWOOD_POSEIDON2_V8_RELATION_BINDING_LIMBS,
+};
+pub use smallwood_poseidon2_v8_security::{
+    ensure_smallwood_poseidon2_v8_deployed_security_v1,
+    report_smallwood_poseidon2_v8_current_source_security_v1,
+    report_smallwood_poseidon2_v8_source_security_v1,
+    SmallwoodPoseidon2V8AdaptiveFirstProgramNoGoV2,
+    SmallwoodPoseidon2V8AdaptiveFullTreeProgrammingScreenV2,
+    SmallwoodPoseidon2V8AssumptionStatusV1, SmallwoodPoseidon2V8CandidateParameterScreenV2,
+    SmallwoodPoseidon2V8ClaimLedgerV2, SmallwoodPoseidon2V8CompositionBudgetV1,
+    SmallwoodPoseidon2V8ConditionalAdaptiveProgrammingScreenV2,
+    SmallwoodPoseidon2V8ExactLossTermV1, SmallwoodPoseidon2V8GlobalQueryWorkScreenV2,
+    SmallwoodPoseidon2V8KnownAttackV2, SmallwoodPoseidon2V8LazyMerkleProgrammingScreenV3,
+    SmallwoodPoseidon2V8LifetimeBindingV2, SmallwoodPoseidon2V8NoGrindingStatusV2,
+    SmallwoodPoseidon2V8SecurityReceiptsV1, SmallwoodPoseidon2V8SecurityReportV1,
+    SmallwoodPoseidon2V8WholeViewLossBitsV1, SMALLWOOD_POSEIDON2_V8_BLOCK_ACTION_BYTE_CAP,
+    SMALLWOOD_POSEIDON2_V8_FIRST_FAILING_CONDITIONAL_WORK_QUERY_LOG2,
+    SMALLWOOD_POSEIDON2_V8_MAX_ACTION_BYTES, SMALLWOOD_POSEIDON2_V8_MAX_PROOFS_PER_BLOCK,
+    SMALLWOOD_POSEIDON2_V8_PROJECTED_INNER_PROOF_BYTES, SMALLWOOD_POSEIDON2_V8_QROM_QUERY_LOG2,
+    SMALLWOOD_POSEIDON2_V8_SECURITY_EPOCH_BLOCKS, SMALLWOOD_POSEIDON2_V8_SECURITY_EPOCH_MAX_PROOFS,
+    SMALLWOOD_POSEIDON2_V8_SECURITY_REPORT_SCHEMA, SMALLWOOD_POSEIDON2_V8_SECURITY_TARGET_BITS,
+    SMALLWOOD_POSEIDON2_V8_STRONGEST_CONDITIONAL_WORK_QUERY_LOG2,
+    SMALLWOOD_POSEIDON2_V8_UNBOUNDED_HISTORY_THEOREM_REQUIRED,
+};
+pub use smallwood_poseidon2_v8_zk_refinement::{
+    audit_accepted_smallwood_poseidon2_v8_smz9_proof_honest_maps_v1,
+    audit_smallwood_poseidon2_v8_smz9_honest_maps_v1,
+    report_smallwood_poseidon2_v8_smz9_executable_zk_refinement_v1,
+    validate_accepted_smallwood_poseidon2_v8_smz9_refinement_v1,
+    SmallwoodPoseidon2V8Smz9AcceptedProofRefinementV1,
+    SmallwoodPoseidon2V8Smz9ExecutableZkRefinementV1, SmallwoodPoseidon2V8Smz9HonestMapAuditV1,
+    SMALLWOOD_POSEIDON2_V8_SMZ9_ACCEPTED_PROOF_REFINEMENT_SCHEMA,
+    SMALLWOOD_POSEIDON2_V8_SMZ9_ADAPTIVE_QROM_ZK_RECEIPT_ID,
+    SMALLWOOD_POSEIDON2_V8_SMZ9_EXECUTABLE_ZK_REFINEMENT_SCHEMA,
+    SMALLWOOD_POSEIDON2_V8_SMZ9_GLOBAL_QROM_LIFETIME_RECEIPT_ID,
+    SMALLWOOD_POSEIDON2_V8_SMZ9_LEAN_WIRE_MODEL,
 };
 pub use smallwood_recursive::{
     build_recursive_verifier_trace_v1, decode_smallwood_recursive_proof_envelope_v1,

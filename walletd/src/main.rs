@@ -23,9 +23,9 @@ use wallet::{
     parse_recipients, precheck_nullifiers, prepare_multisig_final_plan,
     store::{OutgoingDisclosureRecord, PendingStatus, TransferRecipient, WalletMode, WalletStore},
     submission::{is_ambiguous_submission_error, provisional_pending_tx_id},
-    transfer_recipients_from_specs, BuiltTransaction, ConsolidationPlan, LocalNoteOpeningRecord,
-    MultisigAccountRecord, MultisigIntentRecipient, MultisigSpendIntent, PreparedMultisigFinalPlan,
-    RecipientSpec, WalletError, MAX_INPUTS,
+    transfer_recipients_from_specs, ActionId48, BuiltTransaction, ConsolidationPlan,
+    LocalNoteOpeningRecord, MultisigAccountRecord, MultisigIntentRecipient, MultisigSpendIntent,
+    PreparedMultisigFinalPlan, RecipientSpec, WalletError, MAX_INPUTS,
 };
 
 const PROTOCOL_VERSION: u32 = 2;
@@ -1205,7 +1205,7 @@ fn asset_label(asset_id: u64) -> String {
 }
 
 fn render_pending(tx: &wallet::PendingTransaction, latest_height: u64) -> PendingEntry {
-    let tx_id = hex::encode(tx.tx_id);
+    let tx_id = tx.tx_id.external_id();
     let amount: u64 = tx.recipients.iter().map(|rec| rec.value).sum();
     let address = tx
         .recipients
@@ -1240,7 +1240,7 @@ fn render_pending(tx: &wallet::PendingTransaction, latest_height: u64) -> Pendin
 }
 
 fn render_recent(tx: &wallet::RecentTransaction, latest_height: u64) -> PendingEntry {
-    let tx_id = hex::encode(tx.tx_id);
+    let tx_id = tx.tx_id.external_id();
     let amount: u64 = tx.recipients.iter().map(|rec| rec.value).sum();
     let address = tx
         .recipients
@@ -1768,7 +1768,7 @@ fn parse_multisig_intent(params: MultisigIntentParams) -> WalletdResult<Multisig
 
 fn render_disclosure(record: &OutgoingDisclosureRecord) -> DisclosureRecord {
     DisclosureRecord {
-        tx_id: format!("0x{}", hex::encode(record.tx_id)),
+        tx_id: record.tx_id.external_id_with_0x(),
         output_index: record.output_index,
         recipient_address: record.recipient_address.clone(),
         value: record.note.value,
@@ -2006,7 +2006,7 @@ async fn submit_bundle_strict(
     try_signed_first: bool,
     use_da_sidecar: bool,
     use_proof_sidecar: bool,
-) -> Result<[u8; 32], WalletError> {
+) -> Result<ActionId48, WalletError> {
     if try_signed_first {
         if let Some(seed) = signing_seed {
             return client.submit_shielded_transfer_signed(bundle, &seed).await;
@@ -2019,23 +2019,14 @@ async fn submit_bundle_strict(
 
     if use_da_sidecar {
         eprintln!(
-            "[walletd] submitting unsigned shielded transfer via DA sidecar (proof_sidecar={})",
+            "[walletd] native V2 sidecar transfer route is inactive (proof_sidecar={} requested); falling back to canonical inline submission",
             use_proof_sidecar
         );
-        client
-            .submit_shielded_transfer_unsigned_sidecar_with_proof_mode(
-                bundle,
-                Some(use_proof_sidecar),
-            )
-            .await
-    } else {
-        eprintln!(
-            "[walletd] submitting unsigned self-contained kernel action (inline proof bytes)"
-        );
-        // Default to the kernel-action path so unsigned inline transfers use the same
-        // envelope and validation route as the main wallet API.
-        client.submit_transaction(bundle).await
     }
+    eprintln!("[walletd] submitting unsigned self-contained kernel action (inline proof bytes)");
+    // Native V2 defaults to the self-contained route because block gossip carries
+    // action bytes, not a separate authenticated sidecar body transport.
+    client.submit_transaction(bundle).await
 }
 
 fn submit_multisig_built_transaction<F>(
@@ -2140,7 +2131,7 @@ where
                     )
                     .map_err(WalletdError::internal)?;
                 Ok(MultisigTxResponse {
-                    tx_hash: format!("0x{}", hex::encode(tx_hash)),
+                    tx_hash: format!("0x{}", hex::encode(tx_hash.as_bytes())),
                     output_commitments,
                     recipients,
                 })
@@ -2152,14 +2143,14 @@ where
                     let provisional_tx_id = provisional_pending_tx_id(&built.bundle);
                     let genesis_hash = ensure_walletd_genesis_hash(&store, &client).await?;
                     store
-                        .record_outgoing_disclosures(
+                        .record_provisional_outgoing_disclosures(
                             provisional_tx_id,
                             genesis_hash,
                             built.outgoing_disclosures.clone(),
                         )
                         .map_err(WalletdError::internal)?;
                     store
-                        .record_pending_submission(
+                        .record_provisional_pending_submission(
                             provisional_tx_id,
                             built.nullifiers.clone(),
                             built.spent_note_indexes.clone(),
@@ -2171,7 +2162,7 @@ where
                         WalletdErrorCode::TransactionFailed,
                         format!(
                             "Multisig transaction submission status unknown after ambiguous RPC failure; recorded provisional pending transaction 0x{}: {err}",
-                            hex::encode(provisional_tx_id)
+                            hex::encode(provisional_tx_id.as_bytes())
                         ),
                     ));
                 }
@@ -2355,8 +2346,9 @@ fn tx_send(
             .mark_notes_pending(&built.spent_note_indexes, true)
             .map_err(WalletdError::internal)?;
 
-        // Default to inline ciphertext/proof transport for cross-miner
-        // portability. Operators can opt into sidecar mode explicitly.
+        // Native V2 always submits inline ciphertext/proof bytes; an explicitly
+        // requested legacy sidecar mode is logged and falls back in
+        // `submit_bundle_strict` until authenticated block sidecar carriage exists.
         let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", false);
         let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", false);
         let try_signed_first = env_bool("HEGEMON_WALLET_TRY_SIGNED_SUBMIT", false);
@@ -2395,7 +2387,7 @@ fn tx_send(
                         )
                         .map_err(WalletdError::internal)?;
                     return Ok(SendResponse {
-                        tx_hash: format!("0x{}", hex::encode(tx_hash)),
+                        tx_hash: format!("0x{}", hex::encode(tx_hash.as_bytes())),
                         recipients: metadata,
                     });
                 }
@@ -2598,14 +2590,14 @@ fn tx_send(
                         let provisional_tx_id = provisional_pending_tx_id(&built.bundle);
                         let genesis_hash = ensure_walletd_genesis_hash(&store, &client).await?;
                         store
-                            .record_outgoing_disclosures(
+                            .record_provisional_outgoing_disclosures(
                                 provisional_tx_id,
                                 genesis_hash,
                                 built.outgoing_disclosures.clone(),
                             )
                             .map_err(WalletdError::internal)?;
                         store
-                            .record_pending_submission(
+                            .record_provisional_pending_submission(
                                 provisional_tx_id,
                                 built.nullifiers.clone(),
                                 built.spent_note_indexes.clone(),
@@ -2617,7 +2609,7 @@ fn tx_send(
                             WalletdErrorCode::TransactionFailed,
                             format!(
                                 "Transaction submission status unknown after ambiguous RPC failure; recorded provisional pending transaction 0x{}: {err}",
-                                hex::encode(provisional_tx_id)
+                                hex::encode(provisional_tx_id.as_bytes())
                             ),
                         ));
                     }
@@ -2772,7 +2764,7 @@ fn disclosure_create(
         ));
     }
 
-    let tx_id = parse_hex_32(&params.tx_id)?;
+    let tx_id = ActionId48::new(parse_hex_48(&params.tx_id)?);
 
     runtime.block_on(async {
         let client = Arc::new(NodeRpcClient::connect(&params.ws_url).await.map_err(|e| {
@@ -3122,6 +3114,12 @@ mod tests {
             walletd_submission_failure_policy(&bad_proof),
             WalletdSubmissionFailurePolicy::UnlockSpentNotes
         );
+    }
+
+    #[test]
+    fn canonical_action_parser_rejects_provisional_external_ids() {
+        let provisional = format!("provisional:0x{}", "a5".repeat(48));
+        assert!(parse_hex_48(&provisional).is_err());
     }
 
     #[test]

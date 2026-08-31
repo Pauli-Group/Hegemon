@@ -1,0 +1,16 @@
+[package]
+name = "poseidon2-width16-p3-reference"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+p3-field = "=0.6.3"
+p3-goldilocks = "=0.6.3"
+p3-poseidon2 = "=0.6.3"
+p3-symmetric = "=0.6.3"
+transaction-core = { path = "../../circuits/transaction-core" }
+
+# Keep this evidence-only checker outside the production workspace dependency
+# graph. p3 0.6.3 requires a newer compiler than Hegemon's pinned 1.91.1.
+[workspace]

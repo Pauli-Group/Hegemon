@@ -1,0 +1,31 @@
+[package]
+name = "hegemon-standalone-shake256-binius-backend"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+binius-field = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-hash = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-spartan-frontend = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-spartan-prover = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-spartan-verifier = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-transcript = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+rand = { version = "0.10.1", default-features = false, features = ["std", "std_rng", "thread_rng"] }
+serde_json = "1.0.140"
+sha3 = "0.10.8"
+
+[dev-dependencies]
+hegemon-standalone-shake256-prototype = { path = "../../../circuits/standalone-shake256-prototype" }
+
+[profile.dev]
+opt-level = 1
+debug = 0
+incremental = false
+
+[profile.release]
+lto = "thin"
+debug = 0
+incremental = false

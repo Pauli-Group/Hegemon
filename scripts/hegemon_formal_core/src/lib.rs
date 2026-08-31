@@ -1,4 +1,5 @@
 use anyhow::{anyhow, ensure, Context, Result};
+use quote::ToTokens;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -33,6 +34,29 @@ const BLUEPRINT_REVIEW_SOURCE_BYTE_EXCLUSIONS: &[&str] = &[
 ];
 const MAX_BLUEPRINT_REVIEW_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_BLUEPRINT_REVIEW_EXPANDED_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
+const EXPECTED_V8_ATOMIC_RUNTIME_GATE_AST_BLAKE3: &str =
+    "f2738a82e854ef35fbbe1bd791dd5a2cf2bc70e5c530e187cc400286e8652755";
+const V8_ATOMIC_MANIFEST_RUNTIME_FUNCTIONS: &[&str] = &[
+    "evaluate_native_atomic_commit_manifest_admission",
+    "expected_atomic_block_record_writes",
+    "expected_atomic_height_index_writes",
+    "expected_atomic_best_pointer_writes",
+    "expected_atomic_canonical_index_cleared",
+    "expected_atomic_pending_tree_cleared",
+    "expected_atomic_pending_action_removals",
+    "expected_atomic_pending_action_writes",
+    "expected_atomic_commitment_writes",
+    "expected_atomic_nullifier_writes",
+    "expected_atomic_bridge_replay_writes",
+    "expected_atomic_ciphertext_index_writes",
+    "expected_atomic_ciphertext_archive_writes",
+    "expected_atomic_staged_ciphertext_removals",
+    "native_mined_block_commit_manifest",
+];
+const V8_ATOMIC_NODE_IMPL_RUNTIME_FUNCTIONS: &[&str] = &[
+    "native_canonical_suffix_reorg_commit_manifest",
+    "apply_poseidon2_v8_plan_and_admit_atomic_manifest_in_transaction",
+];
 const TARGET_REVIEW_STATUSES: &[&str] = &["needs_review", "blocked"];
 const STABLE_GOAL_MEASUREMENT_STATUSES: &[&str] = &["paused", "blocked", "complete"];
 const REQUIRED_SYSTEM_MODEL_GATE_CATEGORIES: &[&str] = &[
@@ -87,10 +111,7 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
     ),
     (
         "consensus.accepted-chain-supply-composition",
-        &[
-            "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.consensus_accepted_chain_supply_composition",
-            "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_deployed_smallwood_block_yields_no_counterfeit_critical_path",
-        ],
+        &[],
     ),
     (
         "native.raw-ingress-canonical-publication",
@@ -137,22 +158,11 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
     ),
     (
         "transaction.accepted-proof-exact-constraint-extraction",
-        &[
-            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_exact_semantic_constraints",
-            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_counterfeit_critical_linear_bindings_are_map_bound",
-            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_hash_linear_bindings_are_map_bound",
-            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_input_hash_linear_bindings_are_map_bound",
-            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_monetary_reconstruction_bindings_are_map_bound",
-        ],
+        &[],
     ),
     (
         "transaction.smallwood-air-row-implementation-equivalence",
-        &[
-            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_smallwood_air_rows_are_implementation_equivalent",
-            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_concrete_output_yields_accepted_hash_image",
-            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_input_hash_required_linear_binding_executes",
-            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_monetary_reconstruction_required_linear_binding_executes",
-        ],
+        &[],
     ),
     ("native.complete-parser-node-refinement", &[]),
     ("native.low-degree-unit-irreducibility", &[]),
@@ -162,14 +172,54 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
     ("system.da-storage-runtime-semantics", &[]),
 ];
 const EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3: &str =
-    "f1c17f67f300d3918910aac05f6c06ab78d6a906fd6325378f7ec21fc09e4767";
+    "51512c473f20c40c3a88b9f2a1ba0d2e81b9a25a6591c025967b306121801657";
 const EXPECTED_FORMAL_SOURCE_TREE_BLAKE3: &str =
-    "e5dcda8df57725aeb679aeed806644fac9ecd061a3b88fc9e74ac132af903a12";
+    "d09ce325d341c77315ceaf4e9209fc022191c538f0754addd756717bfd491715";
 const PROGRESS_PERCENT_EPSILON: f64 = 0.0001;
+const CLAIMS_SCHEMA_VERSION: u32 = 2;
+const BLUEPRINT_SCHEMA_VERSION: u32 = 2;
+const ACTIVE_GOAL_SCHEMA_VERSION: u32 = 2;
+const CLAIM_BASELINE_ID: &str = "hegemon-formal-security-claims-2026-08-17-v1";
+const EXPECTED_CLAIM_BASELINE_BLAKE3: &str =
+    "c27b47f4d9e82a86ad82b1a0b0d116586a35b7af47ea5755d98fd9e440d4841d";
+const CONDITIONAL_SMALLWOOD_CLAIM_ID: &str =
+    "formal.deployed-smallwood-no-counterfeit-critical-path";
+const REQUIRED_GOVERNANCE_GATE_ID: &str = "formal-governance-focused-tests";
+const REQUIRED_GOVERNANCE_GATE_COMMAND: &str =
+    "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_";
+const REQUIRED_GOVERNANCE_TEST_COUNT: u64 = 14;
+const GOVERNANCE_POLICY_INPUT_PATHS: &[&str] = &[
+    "scripts/hegemon_formal_core/Cargo.toml",
+    "scripts/hegemon_formal_core/Cargo.lock",
+    "scripts/hegemon_formal_core/src/lib.rs",
+    "scripts/hegemon_formal_core/src/main.rs",
+    "scripts/check_formal_core.sh",
+    "scripts/test_formal_gate_cli_args.sh",
+    "protocol/kernel/src/manifest.rs",
+    "protocol/versioning/src/lib.rs",
+    "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
+    "formal/lean/Hegemon/Native/GenerateAtomicCommitManifestAdmissionVectors.lean",
+    "node/src/native/mod.rs",
+    "node/src/native/block_flow.rs",
+    "node/src/native/node_impl.rs",
+    "node/src/native/poseidon2_v8_state.rs",
+];
+const MAX_GOVERNANCE_POLICY_INPUT_BYTES: u64 = 8 * 1024 * 1024;
+const CONDITIONAL_SMALLWOOD_ASSUMPTIONS: &[&str] = &[
+    "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.DeployedSmallWoodBlockKnowledgeSoundnessEvidence",
+    "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.DeployedSmallWoodKnowledgeSoundnessEvidence",
+    "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.DeployedSmallWoodBlockCanonicalSemanticRefinementEvidence",
+    "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.ProductionSmallWoodCanonicalSemanticRefinementAssumption",
+    "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.DeployedSmallWoodBlockPoseidon2OutputSecurityAssumptions",
+    "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.ProductionPoseidon2OutputSecurityAssumptions",
+    "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.ProductionPoseidon2ConstraintDigestRefinementAssumption",
+    "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.ProductionPoseidon2AcceptedOutputNoCollisionAssumption",
+];
 
 #[derive(Debug, Serialize)]
 pub struct ClaimsReport {
     pub claims: usize,
+    pub tombstones: usize,
     pub lean_theorem_claims: usize,
     pub named_lean_theorems: usize,
     pub production_eligible: usize,
@@ -242,6 +292,7 @@ struct ClaimProjection {
     production_eligible: bool,
     evidence_paths: BTreeSet<String>,
     lean_theorems: BTreeSet<String>,
+    authority: Option<ClaimAuthority>,
 }
 
 #[derive(Debug)]
@@ -255,7 +306,56 @@ struct ClaimIndex {
 struct ClaimsLedger {
     schema_version: u32,
     generated_for_branch: String,
+    claim_baseline: ClaimBaseline,
+    governance_gate_evidence: Vec<ExecutedGateEvidence>,
     claims: Vec<SecurityClaim>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClaimBaseline {
+    baseline_id: String,
+    baseline_claim_count: usize,
+    baseline_claim_ids_blake3: String,
+    tombstones: Vec<ClaimTombstone>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClaimTombstone {
+    claim_id: String,
+    retired_at: String,
+    reason: String,
+    approved_by: String,
+    approval_reference: String,
+    #[serde(default)]
+    replacement_claim_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct ClaimAuthority {
+    kind: String,
+    production_authorized: bool,
+    shipped_rust_verifier_refinement_proved: bool,
+    qrom_failure_bound_composed: bool,
+    deployed_hash_instantiation_loss_bounded: bool,
+    concrete_pq_security_bits: Option<u16>,
+    required_assumptions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ExecutedGateEvidence {
+    id: String,
+    evidence_kind: String,
+    command: String,
+    status: String,
+    exit_code: i32,
+    executed_at: String,
+    policy_inputs_blake3: String,
+    report: serde_json::Value,
+    report_blake3: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -268,6 +368,8 @@ struct SecurityClaim {
     status: String,
     proof_model: String,
     production_eligible: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    authority: Option<ClaimAuthority>,
     #[serde(default)]
     lean_theorems: Vec<String>,
     assumptions: Vec<String>,
@@ -293,6 +395,7 @@ struct FormalBlueprint {
     methodology: BlueprintMethodology,
     #[serde(default)]
     policy: BlueprintPolicy,
+    governance_gate_evidence: Vec<ExecutedGateEvidence>,
     nodes: Vec<BlueprintNode>,
 }
 
@@ -324,6 +427,8 @@ struct BlueprintNode {
     kind: String,
     formal_statement: String,
     informal_argument: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    authority: Option<ClaimAuthority>,
     depends_on: Vec<String>,
     implementation_paths: Vec<String>,
     #[serde(default)]
@@ -443,9 +548,17 @@ struct ActiveGoalProgressLedger {
     completed_property_count: usize,
     total_weight: u64,
     external_assumption_boundary: String,
-    acceptance_gates: Vec<String>,
+    claim_authority: ActiveGoalClaimAuthority,
+    acceptance_gates: Vec<ExecutedGateEvidence>,
     evidence_paths: Vec<String>,
     required_properties: Vec<ActiveGoalRequiredProperty>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ActiveGoalClaimAuthority {
+    claim_id: String,
+    authority: ClaimAuthority,
 }
 
 #[derive(Debug, Deserialize)]
@@ -507,7 +620,7 @@ struct HighestStandardMatrixProperty {
 pub fn check_claims_file(path: &Path) -> Result<ClaimsReport> {
     let root = repository_root_from(path);
     let ledger = read_claims_ledger(path)?;
-    validate_claims_ledger(&root, &ledger)
+    validate_claims_ledger(&root, path, &ledger)
 }
 
 pub fn check_blueprint_file(path: &Path, claims_path: &Path) -> Result<BlueprintReport> {
@@ -516,7 +629,7 @@ pub fn check_blueprint_file(path: &Path, claims_path: &Path) -> Result<Blueprint
     let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let blueprint: FormalBlueprint =
         serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
-    validate_blueprint(&root, &blueprint, &claim_index)
+    validate_blueprint(&root, path, &blueprint, &claim_index)
 }
 
 pub fn blueprint_review_digests_file(path: &Path) -> Result<BTreeMap<String, String>> {
@@ -531,14 +644,413 @@ pub fn blueprint_review_digests_file(path: &Path) -> Result<BTreeMap<String, Str
         .collect()
 }
 
+pub fn governance_policy_inputs_digest_file(path: &Path) -> Result<String> {
+    let root = repository_root_from(path);
+    let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let policy: serde_json::Value =
+        serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+    let evidence_field = if policy.get("governance_gate_evidence").is_some() {
+        "governance_gate_evidence"
+    } else if policy.get("acceptance_gates").is_some() {
+        "acceptance_gates"
+    } else {
+        return Err(anyhow!(
+            "governance policy {} has neither governance_gate_evidence nor acceptance_gates",
+            path.display()
+        ));
+    };
+    governance_policy_inputs_blake3(&root, path, evidence_field)
+}
+
 fn read_claims_ledger(path: &Path) -> Result<ClaimsLedger> {
     let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))
 }
 
-fn validate_claims_ledger(root: &Path, ledger: &ClaimsLedger) -> Result<ClaimsReport> {
+fn claim_id_set_blake3<'a>(ids: impl IntoIterator<Item = &'a str>) -> String {
+    let mut ids = ids.into_iter().collect::<Vec<_>>();
+    ids.sort_unstable();
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"hegemon.formal-security-claim-baseline.v1\0");
+    for id in ids {
+        hasher.update(&(id.len() as u64).to_le_bytes());
+        hasher.update(id.as_bytes());
+    }
+    hasher.finalize().to_hex().to_string()
+}
+
+fn expected_claim_baseline_blake3(baseline: &ClaimBaseline) -> Result<&str> {
+    if baseline.baseline_id == CLAIM_BASELINE_ID {
+        return Ok(EXPECTED_CLAIM_BASELINE_BLAKE3);
+    }
+    #[cfg(test)]
+    if baseline.baseline_id.starts_with("test-") {
+        return Ok(&baseline.baseline_claim_ids_blake3);
+    }
+    Err(anyhow!(
+        "unknown claim baseline id {}; update the independent Rust baseline policy before replacing it",
+        baseline.baseline_id
+    ))
+}
+
+fn validate_claim_baseline(baseline: &ClaimBaseline, active_ids: &BTreeSet<String>) -> Result<()> {
+    let expected_digest = expected_claim_baseline_blake3(baseline)?;
     ensure!(
-        ledger.schema_version == 1,
+        baseline.baseline_claim_ids_blake3 == expected_digest,
+        "claim baseline digest changed across the independent Rust policy boundary: expected {}, got {}",
+        expected_digest,
+        baseline.baseline_claim_ids_blake3
+    );
+    ensure!(
+        baseline.baseline_claim_count > 0,
+        "claim baseline count must be positive"
+    );
+
+    let mut tombstone_ids = BTreeSet::new();
+    for tombstone in &baseline.tombstones {
+        validate_id("claim tombstone id", &tombstone.claim_id)?;
+        ensure!(
+            tombstone_ids.insert(tombstone.claim_id.clone()),
+            "duplicate claim tombstone {}",
+            tombstone.claim_id
+        );
+        ensure!(
+            !active_ids.contains(&tombstone.claim_id),
+            "claim {} cannot be both active and tombstoned",
+            tombstone.claim_id
+        );
+        ensure!(
+            tombstone.retired_at.len() == 10
+                && tombstone.retired_at.as_bytes().get(4) == Some(&b'-')
+                && tombstone.retired_at.as_bytes().get(7) == Some(&b'-'),
+            "claim tombstone {} retired_at must be YYYY-MM-DD",
+            tombstone.claim_id
+        );
+        for (label, value) in [
+            ("reason", tombstone.reason.as_str()),
+            ("approved_by", tombstone.approved_by.as_str()),
+            ("approval_reference", tombstone.approval_reference.as_str()),
+        ] {
+            ensure!(
+                !value.trim().is_empty(),
+                "claim tombstone {} {} must be nonempty",
+                tombstone.claim_id,
+                label
+            );
+        }
+        if let Some(replacement) = &tombstone.replacement_claim_id {
+            validate_id("claim tombstone replacement id", replacement)?;
+            ensure!(
+                replacement != &tombstone.claim_id && active_ids.contains(replacement),
+                "claim tombstone {} replacement {} must name a different active claim",
+                tombstone.claim_id,
+                replacement
+            );
+        }
+    }
+
+    let baseline_ids = active_ids
+        .iter()
+        .map(String::as_str)
+        .chain(tombstone_ids.iter().map(String::as_str))
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        baseline_ids.len() == baseline.baseline_claim_count,
+        "active claims plus tombstones total {}, expected pinned baseline count {}; deleted claims require explicit tombstones",
+        baseline_ids.len(),
+        baseline.baseline_claim_count
+    );
+    let actual_digest = claim_id_set_blake3(baseline_ids.iter().copied());
+    ensure!(
+        actual_digest == baseline.baseline_claim_ids_blake3,
+        "active claims plus tombstones do not match the pinned claim baseline: expected {}, got {}; deleted claims require explicit tombstones",
+        baseline.baseline_claim_ids_blake3,
+        actual_digest
+    );
+    Ok(())
+}
+
+fn validate_pinned_conditional_claim_presence(
+    baseline_id: &str,
+    active_ids: &BTreeSet<String>,
+) -> Result<()> {
+    if baseline_id == CLAIM_BASELINE_ID {
+        ensure!(
+            active_ids.contains(CONDITIONAL_SMALLWOOD_CLAIM_ID),
+            "required conditional claim {} must remain active and cannot be tombstoned",
+            CONDITIONAL_SMALLWOOD_CLAIM_ID
+        );
+    }
+    Ok(())
+}
+
+fn executed_gate_report_blake3(report: &serde_json::Value) -> Result<String> {
+    let bytes = serde_json::to_vec(report).context("serialize executed gate report")?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"hegemon.executed-gate-report.v1\0");
+    hasher.update(&(bytes.len() as u64).to_le_bytes());
+    hasher.update(&bytes);
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn update_domain_separated_bytes(hasher: &mut blake3::Hasher, label: &str, bytes: &[u8]) {
+    hasher.update(&(label.len() as u64).to_le_bytes());
+    hasher.update(label.as_bytes());
+    hasher.update(&(bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
+}
+
+fn governance_policy_relative_path(root: &Path, policy_path: &Path) -> Result<String> {
+    let root_path = if root.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        root
+    };
+    let root = root_path
+        .canonicalize()
+        .context("canonicalize governance policy repository root")?;
+    let candidate = if policy_path.is_absolute() {
+        policy_path.to_path_buf()
+    } else {
+        root.join(policy_path)
+    };
+    let metadata = fs::symlink_metadata(&candidate)
+        .with_context(|| format!("inspect governance policy input {}", candidate.display()))?;
+    ensure!(
+        metadata.file_type().is_file(),
+        "governance policy input must be a non-symlink regular file: {}",
+        candidate.display()
+    );
+    let canonical = candidate.canonicalize().with_context(|| {
+        format!(
+            "canonicalize governance policy input {}",
+            candidate.display()
+        )
+    })?;
+    let relative = canonical.strip_prefix(&root).with_context(|| {
+        format!(
+            "governance policy input resolves outside repository: {}",
+            candidate.display()
+        )
+    })?;
+    relative.to_str().map(str::to_owned).ok_or_else(|| {
+        anyhow!(
+            "governance policy input path is not UTF-8: {}",
+            relative.display()
+        )
+    })
+}
+
+fn governance_policy_inputs_blake3_for_value(
+    root: &Path,
+    policy_relative_path: &str,
+    evidence_field: &str,
+    policy: &serde_json::Value,
+) -> Result<String> {
+    let mut policy = policy.clone();
+    let object = policy
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("governance policy input must be a JSON object"))?;
+    ensure!(
+        object.remove(evidence_field).is_some(),
+        "governance policy input is missing self-referential evidence field {}",
+        evidence_field
+    );
+    let policy_bytes = serde_json::to_vec(&policy).context("serialize governance policy input")?;
+
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"hegemon.governance-policy-inputs.v1\0");
+    for input_path in GOVERNANCE_POLICY_INPUT_PATHS {
+        let bytes = read_repo_relative_regular_file_bounded(
+            root,
+            input_path,
+            "governance checker policy input",
+            MAX_GOVERNANCE_POLICY_INPUT_BYTES,
+        )?;
+        update_domain_separated_bytes(&mut hasher, input_path, &bytes);
+    }
+    if evidence_field == "acceptance_gates" {
+        for (input_path, excluded_field) in [
+            (
+                "config/formal-security-claims.json",
+                Some("governance_gate_evidence"),
+            ),
+            (
+                "config/highest-standard-formal-verification-matrix.json",
+                None,
+            ),
+        ] {
+            let bytes = read_repo_relative_regular_file_bounded(
+                root,
+                input_path,
+                "active-goal governance policy input",
+                MAX_GOVERNANCE_POLICY_INPUT_BYTES,
+            )?;
+            let mut input: serde_json::Value = serde_json::from_slice(&bytes)
+                .with_context(|| format!("parse active-goal governance input {input_path}"))?;
+            if let Some(excluded_field) = excluded_field {
+                let object = input.as_object_mut().ok_or_else(|| {
+                    anyhow!("active-goal governance input {input_path} must be a JSON object")
+                })?;
+                ensure!(
+                    object.remove(excluded_field).is_some(),
+                    "active-goal governance input {} is missing excluded evidence field {}",
+                    input_path,
+                    excluded_field
+                );
+            }
+            let canonical = serde_json::to_vec(&input)
+                .with_context(|| format!("serialize active-goal governance input {input_path}"))?;
+            update_domain_separated_bytes(&mut hasher, input_path, &canonical);
+        }
+    }
+    update_domain_separated_bytes(
+        &mut hasher,
+        &format!("{policy_relative_path}#{evidence_field}"),
+        &policy_bytes,
+    );
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn governance_policy_inputs_blake3(
+    root: &Path,
+    policy_path: &Path,
+    evidence_field: &str,
+) -> Result<String> {
+    let policy_relative_path = governance_policy_relative_path(root, policy_path)?;
+    let raw = fs::read_to_string(policy_path)
+        .with_context(|| format!("read governance policy input {}", policy_path.display()))?;
+    let policy: serde_json::Value = serde_json::from_str(&raw)
+        .with_context(|| format!("parse governance policy input {}", policy_path.display()))?;
+    governance_policy_inputs_blake3_for_value(root, &policy_relative_path, evidence_field, &policy)
+}
+
+fn validate_governance_gate_evidence(
+    context: &str,
+    root: &Path,
+    policy_path: &Path,
+    evidence_field: &str,
+    evidence: &[ExecutedGateEvidence],
+) -> Result<()> {
+    ensure!(
+        !evidence.is_empty(),
+        "{} must contain machine-readable executed gate evidence",
+        context
+    );
+    let mut ids = BTreeSet::new();
+    for gate in evidence {
+        validate_id(&format!("{} gate evidence id", context), &gate.id)?;
+        ensure!(
+            ids.insert(gate.id.as_str()),
+            "{} repeats gate evidence id {}",
+            context,
+            gate.id
+        );
+        ensure!(
+            gate.evidence_kind == "executed_command",
+            "{} gate {} evidence_kind must be executed_command",
+            context,
+            gate.id
+        );
+        ensure!(
+            gate.status == "passed" && gate.exit_code == 0,
+            "{} gate {} must record passed status and exit_code 0",
+            context,
+            gate.id
+        );
+        ensure!(
+            gate.executed_at.ends_with('Z') && gate.executed_at.contains('T'),
+            "{} gate {} executed_at must be an ISO-8601 UTC timestamp",
+            context,
+            gate.id
+        );
+        ensure!(
+            gate.policy_inputs_blake3.len() == 64
+                && gate
+                    .policy_inputs_blake3
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+            "{} gate {} policy_inputs_blake3 must be a lowercase 64-character BLAKE3 digest",
+            context,
+            gate.id
+        );
+        ensure!(
+            gate.report
+                .get("passed")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true),
+            "{} gate {} report must contain passed=true",
+            context,
+            gate.id
+        );
+        let actual_report_blake3 = executed_gate_report_blake3(&gate.report)?;
+        ensure!(
+            gate.report_blake3 == actual_report_blake3,
+            "{} gate {} report_blake3 mismatch: recorded {}, actual {}",
+            context,
+            gate.id,
+            gate.report_blake3,
+            actual_report_blake3
+        );
+    }
+    let required = evidence
+        .iter()
+        .find(|gate| gate.id == REQUIRED_GOVERNANCE_GATE_ID)
+        .ok_or_else(|| {
+            anyhow!(
+                "{} is missing required executed gate evidence {}",
+                context,
+                REQUIRED_GOVERNANCE_GATE_ID
+            )
+        })?;
+    ensure!(
+        required.command == REQUIRED_GOVERNANCE_GATE_COMMAND,
+        "{} gate {} command must be {:?}",
+        context,
+        REQUIRED_GOVERNANCE_GATE_ID,
+        REQUIRED_GOVERNANCE_GATE_COMMAND
+    );
+    ensure!(
+        required
+            .report
+            .get("test_filter")
+            .and_then(serde_json::Value::as_str)
+            == Some("governance_")
+            && required
+                .report
+                .get("tests_failed")
+                .and_then(serde_json::Value::as_u64)
+                == Some(0)
+            && required
+                .report
+                .get("tests_passed")
+                .and_then(serde_json::Value::as_u64)
+                == Some(REQUIRED_GOVERNANCE_TEST_COUNT),
+        "{} gate {} report must record test_filter=governance_, tests_failed=0, and tests_passed={}",
+        context,
+        REQUIRED_GOVERNANCE_GATE_ID,
+        REQUIRED_GOVERNANCE_TEST_COUNT
+    );
+    let actual_policy_inputs_blake3 =
+        governance_policy_inputs_blake3(root, policy_path, evidence_field)?;
+    ensure!(
+        required.policy_inputs_blake3 == actual_policy_inputs_blake3,
+        "{} gate {} policy_inputs_blake3 mismatch: recorded {}, actual {}; rerun the gate after checker or policy changes",
+        context,
+        REQUIRED_GOVERNANCE_GATE_ID,
+        required.policy_inputs_blake3,
+        actual_policy_inputs_blake3
+    );
+    Ok(())
+}
+
+fn validate_claims_ledger(
+    root: &Path,
+    policy_path: &Path,
+    ledger: &ClaimsLedger,
+) -> Result<ClaimsReport> {
+    ensure!(
+        ledger.schema_version == CLAIMS_SCHEMA_VERSION,
         "unsupported claims schema version"
     );
     ensure!(
@@ -546,6 +1058,13 @@ fn validate_claims_ledger(root: &Path, ledger: &ClaimsLedger) -> Result<ClaimsRe
         "generated_for_branch must be set"
     );
     ensure!(!ledger.claims.is_empty(), "claims ledger must not be empty");
+    validate_governance_gate_evidence(
+        "formal security claims",
+        root,
+        policy_path,
+        "governance_gate_evidence",
+        &ledger.governance_gate_evidence,
+    )?;
 
     let mut ids = BTreeSet::new();
     let mut lean_theorem_claims = 0usize;
@@ -554,7 +1073,11 @@ fn validate_claims_ledger(root: &Path, ledger: &ClaimsLedger) -> Result<ClaimsRe
     let mut production_eligible = 0usize;
     for claim in &ledger.claims {
         let theorem_names = validate_claim(root, claim)?;
-        ensure!(ids.insert(&claim.id), "duplicate claim id {}", claim.id);
+        ensure!(
+            ids.insert(claim.id.clone()),
+            "duplicate claim id {}",
+            claim.id
+        );
         if claim.claim_class == "lean_theorem" {
             lean_theorem_claims += 1;
         }
@@ -564,9 +1087,12 @@ fn validate_claims_ledger(root: &Path, ledger: &ClaimsLedger) -> Result<ClaimsRe
             production_eligible += 1;
         }
     }
+    validate_pinned_conditional_claim_presence(&ledger.claim_baseline.baseline_id, &ids)?;
+    validate_claim_baseline(&ledger.claim_baseline, &ids)?;
 
     Ok(ClaimsReport {
         claims: ledger.claims.len(),
+        tombstones: ledger.claim_baseline.tombstones.len(),
         lean_theorem_claims,
         named_lean_theorems: named_lean_theorems.len(),
         production_eligible,
@@ -577,7 +1103,7 @@ fn validate_claims_ledger(root: &Path, ledger: &ClaimsLedger) -> Result<ClaimsRe
 
 fn validate_claims_for_blueprint(root: &Path, claims_path: &Path) -> Result<ClaimIndex> {
     let ledger = read_claims_ledger(claims_path)?;
-    validate_claims_ledger(root, &ledger)?;
+    validate_claims_ledger(root, claims_path, &ledger)?;
     let generated_for_branch = ledger.generated_for_branch.clone();
     let mut claims = BTreeMap::new();
     for claim in ledger.claims {
@@ -587,6 +1113,7 @@ fn validate_claims_for_blueprint(root: &Path, claims_path: &Path) -> Result<Clai
                 production_eligible: claim.production_eligible,
                 evidence_paths: claim.evidence_paths.into_iter().collect(),
                 lean_theorems: claim.lean_theorems.into_iter().collect(),
+                authority: claim.authority,
             },
         );
     }
@@ -848,7 +1375,7 @@ fn check_active_goal_progress_file_with_policy(
         serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
     let claims_path = root.join("config/formal-security-claims.json");
     let claims = read_claims_ledger(&claims_path)?;
-    validate_active_goal_progress(&root, &ledger, &claims, required_tracks)
+    validate_active_goal_progress(&root, path, &claims_path, &ledger, &claims, required_tracks)
 }
 
 fn verify_mechanized_assumption_theorems_with_lean(root: &Path) -> Result<()> {
@@ -986,12 +1513,14 @@ fn validate_system_model_gates(
 
 fn validate_active_goal_progress(
     root: &Path,
+    progress_path: &Path,
+    claims_path: &Path,
     ledger: &ActiveGoalProgressLedger,
     claims: &ClaimsLedger,
     required_tracks: &[(&str, &[&str])],
 ) -> Result<ActiveGoalProgressReport> {
     ensure!(
-        ledger.schema_version == 1,
+        ledger.schema_version == ACTIVE_GOAL_SCHEMA_VERSION,
         "unsupported active-goal progress schema version"
     );
     ensure!(
@@ -1043,9 +1572,13 @@ fn validate_active_goal_progress(
         !ledger.acceptance_gates.is_empty(),
         "acceptance_gates must not be empty"
     );
-    for gate in &ledger.acceptance_gates {
-        ensure!(!gate.trim().is_empty(), "acceptance gate must be nonempty");
-    }
+    validate_governance_gate_evidence(
+        "active-goal progress",
+        root,
+        progress_path,
+        "acceptance_gates",
+        &ledger.acceptance_gates,
+    )?;
     ensure!(
         !ledger.evidence_paths.is_empty(),
         "evidence_paths must not be empty"
@@ -1060,6 +1593,27 @@ fn validate_active_goal_progress(
     )?;
     let matrix_path = root.join(&ledger.source_matrix_path);
     let matrix = read_highest_standard_matrix(&matrix_path)?;
+    validate_claims_ledger(root, claims_path, claims)?;
+    ensure!(
+        ledger.claim_authority.claim_id == CONDITIONAL_SMALLWOOD_CLAIM_ID,
+        "active-goal claim_authority must target the pinned conditional claim {}",
+        CONDITIONAL_SMALLWOOD_CLAIM_ID
+    );
+    let authority_claim = claims
+        .claims
+        .iter()
+        .find(|claim| claim.id == ledger.claim_authority.claim_id)
+        .ok_or_else(|| {
+            anyhow!(
+                "active-goal claim_authority references missing claim {}",
+                ledger.claim_authority.claim_id
+            )
+        })?;
+    ensure!(
+        authority_claim.authority.as_ref() == Some(&ledger.claim_authority.authority),
+        "active-goal claim_authority must exactly match claims-ledger authority for {}",
+        authority_claim.id
+    );
     validate_progress_against_matrix(root, ledger, &matrix, claims, required_tracks)
 }
 
@@ -1086,7 +1640,7 @@ fn validate_progress_against_matrix(
         matrix.branch
     );
     ensure!(
-        claims.schema_version == 1,
+        claims.schema_version == CLAIMS_SCHEMA_VERSION,
         "unsupported formal security claims schema version"
     );
     ensure!(
@@ -1104,15 +1658,6 @@ fn validate_progress_against_matrix(
         "highest-standard matrix formal_surface_coverage_percent",
         matrix.formal_surface_coverage_percent,
     )?;
-    ensure!(
-        approx_percent_eq(
-            matrix.formal_surface_coverage_percent,
-            matrix.overall_completion_percent
-        ),
-        "matrix formal surface coverage {} does not match compatibility overall percent {}",
-        matrix.formal_surface_coverage_percent,
-        matrix.overall_completion_percent
-    );
     let claimed_lean_theorems = claimed_lean_theorem_names(claims)?;
     let assumption_closure = validate_mechanized_assumption_closure(
         root,
@@ -1297,13 +1842,33 @@ fn validate_progress_against_matrix(
     );
     ensure!(
         approx_percent_eq(
-            matrix.overall_completion_percent,
+            matrix.formal_surface_coverage_percent,
             weighted_completion_percent
         ),
-        "matrix overall percent {} does not match recomputed weighted percent {}",
-        matrix.overall_completion_percent,
+        "matrix formal surface coverage {} does not match recomputed weighted property percent {}",
+        matrix.formal_surface_coverage_percent,
         weighted_completion_percent
     );
+    let recomputed_overall = matrix
+        .formal_surface_coverage_percent
+        .min(assumption_closure.2);
+    ensure!(
+        approx_percent_eq(matrix.overall_completion_percent, recomputed_overall),
+        "matrix overall percent {} does not match min(formal surface {}, mechanized assumption closure {}) = {}",
+        matrix.overall_completion_percent,
+        matrix.formal_surface_coverage_percent,
+        assumption_closure.2,
+        recomputed_overall
+    );
+    if ledger.goal_status_when_measured == "complete" {
+        ensure!(
+            approx_percent_eq(ledger.overall_completion_percent, 100.0)
+                && approx_percent_eq(matrix.formal_surface_coverage_percent, 100.0)
+                && assumption_closure.0 == assumption_closure.1
+                && approx_percent_eq(assumption_closure.2, 100.0),
+            "active goal cannot be marked complete until overall completion, formal-surface coverage, and mechanized-assumption closure are all 100% with every required track closed"
+        );
+    }
 
     Ok(ActiveGoalProgressReport {
         goal_thread_id: ledger.goal_thread_id.clone(),
@@ -1891,7 +2456,110 @@ fn validate_claim(root: &Path, claim: &SecurityClaim) -> Result<BTreeSet<String>
     for risk in &claim.residual_risks {
         validate_residual_risk(&claim.id, risk)?;
     }
+    if let Some(authority) = &claim.authority {
+        validate_claim_authority(&claim.id, authority)?;
+        ensure!(
+            claim.production_eligible == authority.production_authorized,
+            "{} production_eligible must match machine-readable authority",
+            claim.id
+        );
+    }
+    if claim.id == CONDITIONAL_SMALLWOOD_CLAIM_ID {
+        validate_conditional_smallwood_claim(claim)?;
+    }
     Ok(theorem_names)
+}
+
+fn validate_claim_authority(claim_id: &str, authority: &ClaimAuthority) -> Result<()> {
+    ensure!(
+        authority.kind == "conditional_lean",
+        "{} authority kind must be conditional_lean",
+        claim_id
+    );
+    ensure!(
+        !authority.required_assumptions.is_empty(),
+        "{} authority must list required assumptions",
+        claim_id
+    );
+    let mut assumptions = BTreeSet::new();
+    for assumption in &authority.required_assumptions {
+        ensure!(
+            !assumption.trim().is_empty(),
+            "{} authority contains an empty required assumption",
+            claim_id
+        );
+        ensure!(
+            assumptions.insert(assumption.as_str()),
+            "{} authority repeats required assumption {}",
+            claim_id,
+            assumption
+        );
+    }
+    if !authority.production_authorized {
+        ensure!(
+            authority.concrete_pq_security_bits.is_none(),
+            "{} cannot state concrete PQ security bits without production authority",
+            claim_id
+        );
+    }
+    Ok(())
+}
+
+fn validate_conditional_smallwood_claim(claim: &SecurityClaim) -> Result<()> {
+    ensure!(
+        claim.status == "research_only" && !claim.production_eligible,
+        "{} must remain research_only and not production eligible until its explicit assumptions are discharged",
+        claim.id
+    );
+    ensure!(
+        claim.proof_model
+            == "conditional_lean_reduction_with_explicit_knowledge_soundness_semantic_refinement_and_poseidon_assumptions",
+        "{} proof_model must identify the conditional Lean authority",
+        claim.id
+    );
+    let authority = claim
+        .authority
+        .as_ref()
+        .ok_or_else(|| anyhow!("{} must carry machine-readable claim authority", claim.id))?;
+    ensure!(
+        !authority.production_authorized
+            && !authority.shipped_rust_verifier_refinement_proved
+            && !authority.qrom_failure_bound_composed
+            && !authority.deployed_hash_instantiation_loss_bounded
+            && authority.concrete_pq_security_bits.is_none(),
+        "{} authority overstates production, Rust-refinement, QROM-composition, hash-instantiation, or concrete-bit closure",
+        claim.id
+    );
+    let actual_assumptions = authority
+        .required_assumptions
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let expected_assumptions = CONDITIONAL_SMALLWOOD_ASSUMPTIONS
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        actual_assumptions == expected_assumptions,
+        "{} authority assumptions must exactly match the independent conditional-boundary policy",
+        claim.id
+    );
+    ensure!(
+        claim.summary.contains("conditional")
+            && claim.summary.contains("does not")
+            && claim
+                .summary
+                .contains("exact-map-to-canonical-semantic bridge is an explicit assumption")
+            && claim.summary.contains("128-bit"),
+        "{} summary must state its conditional and non-128-bit authority",
+        claim.id
+    );
+    ensure!(
+        !claim.residual_risks.is_empty(),
+        "{} must retain residual risks",
+        claim.id
+    );
+    Ok(())
 }
 
 fn validate_lean_theorem_evidence(root: &Path, claim: &SecurityClaim) -> Result<BTreeSet<String>> {
@@ -2111,11 +2779,12 @@ fn validate_lean_theorem_name(claim_id: &str, theorem: &str) -> Result<()> {
 
 fn validate_blueprint(
     root: &Path,
+    blueprint_path: &Path,
     blueprint: &FormalBlueprint,
     claim_index: &ClaimIndex,
 ) -> Result<BlueprintReport> {
     ensure!(
-        blueprint.schema_version == 1,
+        blueprint.schema_version == BLUEPRINT_SCHEMA_VERSION,
         "unsupported blueprint schema version"
     );
     ensure!(
@@ -2129,6 +2798,13 @@ fn validate_blueprint(
         claim_index.generated_for_branch
     );
     validate_methodology(&blueprint.methodology)?;
+    validate_governance_gate_evidence(
+        "formal security blueprint",
+        root,
+        blueprint_path,
+        "governance_gate_evidence",
+        &blueprint.governance_gate_evidence,
+    )?;
     ensure!(
         !blueprint.nodes.is_empty(),
         "blueprint node set must not be empty"
@@ -2378,6 +3054,20 @@ fn validate_blueprint_node(
         "{} scope_boundary missing",
         node.id
     );
+    ensure!(
+        node.authority == claim.authority,
+        "{} blueprint authority must exactly match its claims-ledger authority",
+        node.id
+    );
+    if node.id == CONDITIONAL_SMALLWOOD_CLAIM_ID {
+        ensure!(
+            node.formal_statement.contains("conditional")
+                && node.scope_boundary.contains("does not")
+                && node.scope_boundary.contains("128-bit"),
+            "{} blueprint must state its conditional, non-128-bit authority boundary",
+            node.id
+        );
+    }
     validate_target_review(root, node)?;
     ensure!(
         !node.implementation_paths.is_empty(),
@@ -2859,16 +3549,1741 @@ fn rust_binding_module_sources(root: &Path, raw_path: &str) -> Result<Vec<(Strin
     Ok(sources)
 }
 
-fn rust_binding_module_source(root: &Path, raw_path: &str) -> Result<String> {
-    let sources = rust_binding_module_sources(root, raw_path)?;
-    let mut combined = String::new();
-    for (_, source) in sources {
-        if !combined.is_empty() {
-            combined.push('\n');
+/// Prove that a direct-file implementation binding is reached from the crate's
+/// library root through only ordinary, unconditional external module
+/// declarations. This is deliberately stricter than Rust's full module
+/// selection grammar: a reviewed production caller must not disappear behind
+/// `cfg`, `cfg_attr`, `path`, an inline replacement module, or a different
+/// default source file while the checker continues to inspect stale text.
+fn validate_unconditional_rust_module_inclusion_chain(
+    root: &Path,
+    raw_path: &str,
+    claim_id: &str,
+    callee: &str,
+) -> Result<()> {
+    let source_path = Path::new(raw_path);
+    let src_dir = source_path
+        .ancestors()
+        .find(|path| path.file_name().is_some_and(|name| name == "src"))
+        .ok_or_else(|| {
+            anyhow!(
+                "{} implementation binding for {} must live below a crate src directory",
+                claim_id,
+                callee
+            )
+        })?;
+    let crate_root = src_dir.join("lib.rs");
+    ensure!(
+        rust_module_candidate_exists(root, &crate_root)?,
+        "{} implementation binding for {} requires an ordinary crate library root at {}",
+        claim_id,
+        callee,
+        crate_root.display()
+    );
+
+    let relative_target = source_path.strip_prefix(src_dir).with_context(|| {
+        format!(
+            "resolve {} implementation binding below {}",
+            source_path.display(),
+            src_dir.display()
+        )
+    })?;
+    let mut module_segments = relative_target
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .components()
+        .map(|component| {
+            component
+                .as_os_str()
+                .to_str()
+                .map(str::to_owned)
+                .ok_or_else(|| anyhow!("implementation binding module segment is not UTF-8"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let file_name = relative_target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow!("implementation binding target file name is not UTF-8"))?;
+    match file_name {
+        "lib.rs" => ensure!(
+            module_segments.is_empty(),
+            "{} implementation binding for {} has a nested lib.rs target",
+            claim_id,
+            callee
+        ),
+        "mod.rs" => {}
+        _ => {
+            let stem = relative_target
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .ok_or_else(|| anyhow!("implementation binding target stem is not UTF-8"))?;
+            module_segments.push(stem.to_owned());
         }
-        combined.push_str(&source);
     }
-    Ok(combined)
+
+    let mut current = crate_root;
+    if module_segments.is_empty() {
+        ensure!(
+            current == source_path,
+            "{} implementation binding for {} is not the ordinary crate root",
+            claim_id,
+            callee
+        );
+        return Ok(());
+    }
+    for module_name in module_segments {
+        let current_raw = current.to_str().ok_or_else(|| {
+            anyhow!(
+                "implementation binding inclusion path is not UTF-8: {}",
+                current.display()
+            )
+        })?;
+        let current_bytes = read_repo_relative_regular_file_bounded(
+            root,
+            current_raw,
+            "implementation binding module inclusion source",
+            MAX_BLUEPRINT_REVIEW_SOURCE_BYTES,
+        )?;
+        let current_source = String::from_utf8(current_bytes)
+            .with_context(|| format!("decode {current_raw} module inclusion source as UTF-8"))?;
+        let parsed = parse_rust_binding_module_source(&current_source, &current)?;
+        ensure!(
+            !parsed
+                .attrs
+                .iter()
+                .any(|attr| attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr")),
+            "{} implementation binding for {} requires an unconditional enclosing Rust module file {}",
+            claim_id,
+            callee,
+            current.display()
+        );
+        let declarations = parsed
+            .items
+            .iter()
+            .filter_map(|item| {
+                let syn::Item::Mod(module) = item else {
+                    return None;
+                };
+                (module.ident == module_name).then_some(module)
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            declarations.len() == 1,
+            "{} implementation binding for {} requires exactly one top-level module declaration for {} in {}",
+            claim_id,
+            callee,
+            module_name,
+            current.display()
+        );
+        let declaration = declarations[0];
+        ensure!(
+            declaration.attrs.is_empty() && declaration.content.is_none(),
+            "{} implementation binding for {} requires an attribute-free ordinary external module declaration for {} in {}",
+            claim_id,
+            callee,
+            module_name,
+            current.display()
+        );
+        let module_dir = rust_child_module_directory(&current)?;
+        let flat = module_dir.join(format!("{module_name}.rs"));
+        let directory = module_dir.join(&module_name).join("mod.rs");
+        let mut candidates = Vec::new();
+        for candidate in [flat, directory] {
+            if rust_module_candidate_exists(root, &candidate)? {
+                candidates.push(candidate);
+            }
+        }
+        ensure!(
+            candidates.len() == 1,
+            "{} implementation binding for {} module {} in {} must resolve to exactly one ordinary source file; found {}",
+            claim_id,
+            callee,
+            module_name,
+            current.display(),
+            candidates.len()
+        );
+        current = candidates.pop().expect("one module source established");
+    }
+    ensure!(
+        current == source_path,
+        "{} implementation binding for {} ordinary module chain resolves to {}, not {}",
+        claim_id,
+        callee,
+        current.display(),
+        source_path.display()
+    );
+    Ok(())
+}
+
+fn canonical_path(path: &Path, context: &str) -> Result<PathBuf> {
+    fs::canonicalize(path).with_context(|| format!("canonicalize {context} {}", path.display()))
+}
+
+fn validate_native_node_parent_struct(root: &Path) -> Result<()> {
+    let raw_path = "node/src/native/mod.rs";
+    let source = String::from_utf8(read_repo_relative_regular_file_bounded(
+        root,
+        raw_path,
+        "native parent type source",
+        MAX_BLUEPRINT_REVIEW_SOURCE_BYTES,
+    )?)
+    .context("decode native parent type source as UTF-8")?;
+    let parsed = parse_rust_binding_module_source(&source, Path::new(raw_path))?;
+    let structures = parsed
+        .items
+        .iter()
+        .filter_map(|item| {
+            let syn::Item::Struct(structure) = item else {
+                return None;
+            };
+            (structure.ident == "NativeNode").then_some(structure)
+        })
+        .collect::<Vec<_>>();
+    ensure!(
+        structures.len() == 1,
+        "native binding requires exactly one top-level NativeNode struct declaration"
+    );
+    let structure = structures[0];
+    ensure!(
+        structure.attrs.is_empty()
+            && matches!(structure.vis, syn::Visibility::Public(_))
+            && structure.generics.params.is_empty()
+            && structure.generics.where_clause.is_none(),
+        "native binding requires one unconditional nongeneric public NativeNode struct"
+    );
+    let syn::Fields::Named(fields) = &structure.fields else {
+        return Err(anyhow!("native binding requires named NativeNode fields"));
+    };
+    for expected in [
+        "meta_tree",
+        "height_tree",
+        "block_tree",
+        "commitment_tree",
+        "nullifier_tree",
+        "bridge_inbound_tree",
+        "ciphertext_index_tree",
+        "ciphertext_archive_tree",
+        "da_ciphertext_tree",
+        "action_tree",
+        "poseidon2_v8_tree",
+    ] {
+        let matches = fields
+            .named
+            .iter()
+            .filter(|field| field.ident.as_ref().is_some_and(|ident| ident == expected))
+            .collect::<Vec<_>>();
+        ensure!(
+            matches.len() == 1
+                && matches[0].attrs.is_empty()
+                && matches!(matches[0].vis, syn::Visibility::Inherited)
+                && syn_type_path_is_segments(&matches[0].ty, &["sled", "Tree"]),
+            "native binding requires private attribute-free sled::Tree field {} on NativeNode",
+            expected
+        );
+    }
+    ensure!(
+        !parsed.items.iter().any(|item| {
+            matches!(item, syn::Item::Type(alias) if alias.ident == "NativeNode")
+                || matches!(item, syn::Item::Enum(item) if item.ident == "NativeNode")
+                || matches!(item, syn::Item::Union(item) if item.ident == "NativeNode")
+        }),
+        "native binding rejects aliases or alternate top-level NativeNode declarations"
+    );
+    Ok(())
+}
+
+fn v8_atomic_runtime_gate_ast_blake3(
+    block_flow_functions: &[(&str, &syn::ItemFn)],
+    raw_apply: &syn::ImplItemFn,
+) -> String {
+    let mut hasher = blake3::Hasher::new();
+    for (name, function) in block_flow_functions {
+        update_domain_separated_bytes(
+            &mut hasher,
+            "v8-atomic-runtime-function-name-v1",
+            name.as_bytes(),
+        );
+        update_domain_separated_bytes(
+            &mut hasher,
+            "v8-atomic-runtime-function-signature-v1",
+            function.sig.to_token_stream().to_string().as_bytes(),
+        );
+        update_domain_separated_bytes(
+            &mut hasher,
+            "v8-atomic-runtime-function-body-v1",
+            function.block.to_token_stream().to_string().as_bytes(),
+        );
+    }
+    update_domain_separated_bytes(
+        &mut hasher,
+        "v8-atomic-runtime-function-name-v1",
+        b"Poseidon2V8StateStore::apply_canonical_plan_in_transaction",
+    );
+    update_domain_separated_bytes(
+        &mut hasher,
+        "v8-atomic-runtime-function-signature-v1",
+        raw_apply.sig.to_token_stream().to_string().as_bytes(),
+    );
+    update_domain_separated_bytes(
+        &mut hasher,
+        "v8-atomic-runtime-function-body-v1",
+        raw_apply.block.to_token_stream().to_string().as_bytes(),
+    );
+    hasher.finalize().to_hex().to_string()
+}
+
+fn validate_v8_atomic_runtime_gate_sources(
+    block_flow_source: &str,
+    node_impl_source: &str,
+    state_source: &str,
+) -> Result<()> {
+    let block_flow_raw = "node/src/native/block_flow.rs";
+    let block_flow =
+        parse_rust_binding_module_source(&block_flow_source, Path::new(block_flow_raw))?;
+    let mut bound_block_flow_functions =
+        Vec::with_capacity(V8_ATOMIC_MANIFEST_RUNTIME_FUNCTIONS.len());
+    for expected in V8_ATOMIC_MANIFEST_RUNTIME_FUNCTIONS {
+        let functions = block_flow
+            .items
+            .iter()
+            .filter_map(|item| {
+                let syn::Item::Fn(function) = item else {
+                    return None;
+                };
+                (function.sig.ident == expected).then_some(function)
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            functions.len() == 1
+                && functions[0].sig.constness.is_none()
+                && functions[0].sig.asyncness.is_none()
+                && functions[0].sig.unsafety.is_none()
+                && functions[0].sig.abi.is_none()
+                && functions[0].sig.generics.params.is_empty()
+                && functions[0].sig.generics.where_clause.is_none()
+                && !syn_item_fn_has_runtime_gate_variance(functions[0]),
+            "V8 atomic manifest source requires one synchronous macro-free cfg-invariant function {}",
+            expected
+        );
+        bound_block_flow_functions.push((*expected, functions[0]));
+    }
+
+    let node_impl_raw = "node/src/native/node_impl.rs";
+    let node_impl = parse_rust_binding_module_source(node_impl_source, Path::new(node_impl_raw))?;
+    for expected in V8_ATOMIC_NODE_IMPL_RUNTIME_FUNCTIONS {
+        let functions = node_impl
+            .items
+            .iter()
+            .filter_map(|item| {
+                let syn::Item::Fn(function) = item else {
+                    return None;
+                };
+                (function.sig.ident == expected).then_some(function)
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            functions.len() == 1
+                && functions[0].sig.constness.is_none()
+                && functions[0].sig.asyncness.is_none()
+                && functions[0].sig.unsafety.is_none()
+                && functions[0].sig.abi.is_none()
+                && functions[0].sig.generics.params.is_empty()
+                && functions[0].sig.generics.where_clause.is_none()
+                && !syn_item_fn_has_compiler_selection(functions[0]),
+            "V8 atomic manifest source requires one synchronous cfg-invariant function {}",
+            expected
+        );
+        bound_block_flow_functions.push((*expected, functions[0]));
+    }
+
+    let state_raw = "node/src/native/poseidon2_v8_state.rs";
+    let state = parse_rust_binding_module_source(&state_source, Path::new(state_raw))?;
+    let raw_apply = state
+        .items
+        .iter()
+        .filter_map(|item| {
+            let syn::Item::Impl(item_impl) = item else {
+                return None;
+            };
+            if item_impl.trait_.is_some()
+                || !syn_impl_self_type_is_one_segment(item_impl, "Poseidon2V8StateStore")
+            {
+                return None;
+            }
+            Some(item_impl)
+        })
+        .flat_map(|item_impl| {
+            item_impl.items.iter().filter_map(move |item| {
+                let syn::ImplItem::Fn(function) = item else {
+                    return None;
+                };
+                (function.sig.ident == "apply_canonical_plan_in_transaction")
+                    .then_some((item_impl, function))
+            })
+        })
+        .collect::<Vec<_>>();
+    ensure!(
+        raw_apply.len() == 1
+            && !syn_item_impl_has_compiler_selection_attribute(raw_apply[0].0)
+            && raw_apply[0].1.sig.constness.is_none()
+            && raw_apply[0].1.sig.asyncness.is_none()
+            && raw_apply[0].1.sig.unsafety.is_none()
+            && raw_apply[0].1.sig.abi.is_none()
+            && raw_apply[0].1.sig.generics.params.is_empty()
+            && raw_apply[0].1.sig.generics.where_clause.is_none()
+            && !syn_impl_item_fn_has_runtime_gate_variance(raw_apply[0].1),
+        "V8 atomic source requires one synchronous macro-free cfg-invariant raw typed-plan apply"
+    );
+    let actual_ast_blake3 =
+        v8_atomic_runtime_gate_ast_blake3(&bound_block_flow_functions, raw_apply[0].1);
+    ensure!(
+        actual_ast_blake3 == EXPECTED_V8_ATOMIC_RUNTIME_GATE_AST_BLAKE3,
+        "V8 atomic runtime AST changed without an explicit checker-policy update: expected {}, actual {}",
+        EXPECTED_V8_ATOMIC_RUNTIME_GATE_AST_BLAKE3,
+        actual_ast_blake3
+    );
+    Ok(())
+}
+
+fn validate_v8_atomic_runtime_gate_bodies(root: &Path) -> Result<()> {
+    let block_flow_raw = "node/src/native/block_flow.rs";
+    let block_flow_source = String::from_utf8(read_repo_relative_regular_file_bounded(
+        root,
+        block_flow_raw,
+        "V8 atomic manifest evaluator source",
+        MAX_BLUEPRINT_REVIEW_SOURCE_BYTES,
+    )?)
+    .context("decode V8 atomic manifest evaluator source as UTF-8")?;
+    let node_impl_raw = "node/src/native/node_impl.rs";
+    let node_impl_source = String::from_utf8(read_repo_relative_regular_file_bounded(
+        root,
+        node_impl_raw,
+        "V8 transaction-local atomic commit source",
+        MAX_BLUEPRINT_REVIEW_SOURCE_BYTES,
+    )?)
+    .context("decode V8 transaction-local atomic commit source as UTF-8")?;
+    let state_raw = "node/src/native/poseidon2_v8_state.rs";
+    let state_source = String::from_utf8(read_repo_relative_regular_file_bounded(
+        root,
+        state_raw,
+        "V8 typed plan apply source",
+        MAX_BLUEPRINT_REVIEW_SOURCE_BYTES,
+    )?)
+    .context("decode V8 typed plan apply source as UTF-8")?;
+    validate_v8_atomic_runtime_gate_sources(&block_flow_source, &node_impl_source, &state_source)?;
+    Ok(())
+}
+
+/// Pin the dedicated production binding to the workspace package and operator
+/// binary selected by Cargo, rather than trusting default-path source text in
+/// isolation. Cargo configuration, the Cargo executable, and final artifact
+/// deployment remain explicit supply-chain boundaries.
+fn validate_native_node_cargo_target_selection(root: &Path, raw_path: &str) -> Result<()> {
+    if raw_path != "node/src/native/node_impl.rs" {
+        return Ok(());
+    }
+    for required_source in [
+        "Cargo.toml",
+        "node/Cargo.toml",
+        "node/src/lib.rs",
+        "node/src/bin/native_node.rs",
+    ] {
+        let _ = read_repo_relative_regular_file_bounded(
+            root,
+            required_source,
+            "native cargo target source",
+            MAX_BLUEPRINT_REVIEW_SOURCE_BYTES,
+        )?;
+    }
+    validate_native_node_parent_struct(root)?;
+    validate_v8_atomic_runtime_gate_bodies(root)?;
+    let output = Command::new("cargo")
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--no-deps",
+            "--locked",
+            "--offline",
+        ])
+        .current_dir(root)
+        .output()
+        .context("run locked offline cargo metadata for native binding")?;
+    ensure!(
+        output.status.success(),
+        "native binding cargo metadata failed: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("parse native binding cargo metadata")?;
+    let workspace_members = metadata["workspace_members"]
+        .as_array()
+        .ok_or_else(|| anyhow!("native binding cargo metadata is missing workspace_members"))?
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<BTreeSet<_>>();
+    let packages = metadata["packages"]
+        .as_array()
+        .ok_or_else(|| anyhow!("native binding cargo metadata is missing packages"))?;
+    let node_packages = packages
+        .iter()
+        .filter(|package| {
+            package["name"].as_str() == Some("hegemon-node")
+                && package["id"]
+                    .as_str()
+                    .is_some_and(|id| workspace_members.contains(id))
+        })
+        .collect::<Vec<_>>();
+    ensure!(
+        node_packages.len() == 1,
+        "native binding cargo metadata must select exactly one hegemon-node workspace package"
+    );
+    let package = node_packages[0];
+    let manifest = package["manifest_path"]
+        .as_str()
+        .ok_or_else(|| anyhow!("hegemon-node cargo metadata is missing manifest_path"))?;
+    ensure!(
+        canonical_path(Path::new(manifest), "native package manifest")?
+            == canonical_path(
+                &root.join("node/Cargo.toml"),
+                "expected native package manifest"
+            )?,
+        "native binding cargo metadata selects the wrong hegemon-node manifest"
+    );
+    let targets = package["targets"]
+        .as_array()
+        .ok_or_else(|| anyhow!("hegemon-node cargo metadata is missing targets"))?;
+    let target_matches = |kind: &str, name: &str, expected_source: &str| -> Result<usize> {
+        let expected = canonical_path(&root.join(expected_source), "expected native target")?;
+        targets
+            .iter()
+            .filter(|target| {
+                target["name"].as_str() == Some(name)
+                    && target["kind"]
+                        .as_array()
+                        .is_some_and(|kinds| kinds.iter().any(|value| value.as_str() == Some(kind)))
+            })
+            .try_fold(0usize, |count, target| {
+                let source = target["src_path"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("native cargo target is missing src_path"))?;
+                ensure!(
+                    canonical_path(Path::new(source), "selected native target")? == expected,
+                    "native binding cargo metadata selects the wrong {kind} source for {name}"
+                );
+                Ok(count + 1)
+            })
+    };
+    ensure!(
+        target_matches("lib", "hegemon_node", "node/src/lib.rs")? == 1,
+        "native binding cargo metadata must select exactly one hegemon_node library"
+    );
+    ensure!(
+        target_matches("bin", "hegemon-node", "node/src/bin/native_node.rs")? == 1,
+        "native binding cargo metadata must select exactly one hegemon-node operator binary"
+    );
+    Ok(())
+}
+
+fn syn_impl_self_type_is_exact(item_impl: &syn::ItemImpl, expected: &str) -> bool {
+    let syn::Type::Path(type_path) = item_impl.self_ty.as_ref() else {
+        return false;
+    };
+    type_path.qself.is_none()
+        && type_path.path.leading_colon.is_none()
+        && type_path.path.segments.len() == 2
+        && type_path.path.segments[0].ident == "super"
+        && type_path.path.segments[1].ident == expected
+        && type_path
+            .path
+            .segments
+            .iter()
+            .all(|segment| matches!(segment.arguments, syn::PathArguments::None))
+}
+
+fn syn_impl_self_type_is_one_segment(item_impl: &syn::ItemImpl, expected: &str) -> bool {
+    let syn::Type::Path(type_path) = item_impl.self_ty.as_ref() else {
+        return false;
+    };
+    type_path.qself.is_none()
+        && type_path.path.leading_colon.is_none()
+        && type_path.path.segments.len() == 1
+        && type_path.path.segments[0].ident == expected
+        && matches!(
+            type_path.path.segments[0].arguments,
+            syn::PathArguments::None
+        )
+}
+
+fn syn_plain_path_is(expression: &syn::Expr, expected: &str) -> bool {
+    let syn::Expr::Path(path) = expression else {
+        return false;
+    };
+    path.attrs.is_empty()
+        && path.qself.is_none()
+        && path.path.leading_colon.is_none()
+        && path.path.segments.len() == 1
+        && path.path.segments[0].ident == expected
+        && matches!(path.path.segments[0].arguments, syn::PathArguments::None)
+}
+
+fn syn_path_is_segments(expression: &syn::Expr, expected: &[&str]) -> bool {
+    let syn::Expr::Path(path) = expression else {
+        return false;
+    };
+    path.attrs.is_empty()
+        && path.qself.is_none()
+        && path.path.leading_colon.is_none()
+        && path.path.segments.len() == expected.len()
+        && path
+            .path
+            .segments
+            .iter()
+            .zip(expected)
+            .all(|(segment, expected)| {
+                segment.ident == *expected && matches!(segment.arguments, syn::PathArguments::None)
+            })
+}
+
+fn syn_expr_contains_pinned_sled_transaction(expression: &syn::Expr) -> bool {
+    match expression {
+        syn::Expr::Call(call) => {
+            syn_path_is_segments(
+                &call.func,
+                &[
+                    "self",
+                    "__hegemon_pinned_sled",
+                    "transaction",
+                    "Transactional",
+                    "transaction",
+                ],
+            ) || syn_expr_contains_pinned_sled_transaction(&call.func)
+                || call
+                    .args
+                    .iter()
+                    .any(syn_expr_contains_pinned_sled_transaction)
+        }
+        syn::Expr::MethodCall(call) => {
+            syn_expr_contains_pinned_sled_transaction(&call.receiver)
+                || call
+                    .args
+                    .iter()
+                    .any(syn_expr_contains_pinned_sled_transaction)
+        }
+        syn::Expr::Try(try_expression) => {
+            syn_expr_contains_pinned_sled_transaction(&try_expression.expr)
+        }
+        syn::Expr::Await(await_expression) => {
+            syn_expr_contains_pinned_sled_transaction(&await_expression.base)
+        }
+        syn::Expr::Group(group) => syn_expr_contains_pinned_sled_transaction(&group.expr),
+        syn::Expr::Paren(paren) => syn_expr_contains_pinned_sled_transaction(&paren.expr),
+        syn::Expr::Reference(reference) => {
+            syn_expr_contains_pinned_sled_transaction(&reference.expr)
+        }
+        _ => false,
+    }
+}
+
+fn syn_direct_pinned_transaction_statement_indices(method: &syn::ImplItemFn) -> Vec<usize> {
+    method
+        .block
+        .stmts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, statement)| {
+            let syn::Stmt::Expr(expression, _) = statement else {
+                return None;
+            };
+            syn_expr_contains_pinned_sled_transaction(expression).then_some(index)
+        })
+        .collect()
+}
+
+#[derive(Default)]
+struct RustOuterEscapeVisitor {
+    closure_depth: usize,
+    found: bool,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for RustOuterEscapeVisitor {
+    fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
+        self.closure_depth += 1;
+        syn::visit::visit_expr_closure(self, closure);
+        self.closure_depth -= 1;
+    }
+
+    fn visit_expr_return(&mut self, expression: &'ast syn::ExprReturn) {
+        if self.closure_depth == 0 {
+            self.found = true;
+            return;
+        }
+        syn::visit::visit_expr_return(self, expression);
+    }
+
+    fn visit_expr_macro(&mut self, expression: &'ast syn::ExprMacro) {
+        if self.closure_depth == 0 {
+            self.found = true;
+            return;
+        }
+        syn::visit::visit_expr_macro(self, expression);
+    }
+
+    fn visit_stmt_macro(&mut self, statement: &'ast syn::StmtMacro) {
+        if self.closure_depth == 0 {
+            self.found = true;
+            return;
+        }
+        syn::visit::visit_stmt_macro(self, statement);
+    }
+}
+
+fn syn_statements_have_outer_return_or_macro(statements: &[syn::Stmt]) -> bool {
+    use syn::visit::Visit;
+
+    let mut visitor = RustOuterEscapeVisitor::default();
+    for statement in statements {
+        visitor.visit_stmt(statement);
+        if visitor.found {
+            return true;
+        }
+    }
+    false
+}
+
+#[derive(Default)]
+struct RustRuntimeGateVarianceVisitor {
+    found: bool,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for RustRuntimeGateVarianceVisitor {
+    fn visit_attribute(&mut self, attribute: &'ast syn::Attribute) {
+        if attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr") {
+            self.found = true;
+            return;
+        }
+        syn::visit::visit_attribute(self, attribute);
+    }
+
+    fn visit_macro(&mut self, _mac: &'ast syn::Macro) {
+        self.found = true;
+    }
+}
+
+fn syn_item_fn_has_runtime_gate_variance(function: &syn::ItemFn) -> bool {
+    use syn::visit::Visit;
+
+    let mut visitor = RustRuntimeGateVarianceVisitor::default();
+    visitor.visit_item_fn(function);
+    visitor.found
+}
+
+fn syn_item_fn_has_compiler_selection(function: &syn::ItemFn) -> bool {
+    use syn::visit::Visit;
+
+    #[derive(Default)]
+    struct CompilerSelectionVisitor {
+        found: bool,
+    }
+
+    impl<'ast> Visit<'ast> for CompilerSelectionVisitor {
+        fn visit_attribute(&mut self, attribute: &'ast syn::Attribute) {
+            if attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr") {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_attribute(self, attribute);
+        }
+
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            if mac.path.is_ident("cfg")
+                || mac.path.is_ident("env")
+                || mac.path.is_ident("option_env")
+            {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_macro(self, mac);
+        }
+    }
+
+    let mut visitor = CompilerSelectionVisitor::default();
+    visitor.visit_item_fn(function);
+    visitor.found
+}
+
+fn syn_impl_item_fn_has_runtime_gate_variance(function: &syn::ImplItemFn) -> bool {
+    use syn::visit::Visit;
+
+    let mut visitor = RustRuntimeGateVarianceVisitor::default();
+    visitor.visit_impl_item_fn(function);
+    visitor.found
+}
+
+fn syn_item_impl_has_compiler_selection_attribute(item_impl: &syn::ItemImpl) -> bool {
+    item_impl
+        .attrs
+        .iter()
+        .any(|attribute| attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr"))
+}
+
+fn syn_plain_reference_path_is(expression: &syn::Expr, expected: &str) -> bool {
+    let syn::Expr::Reference(reference) = expression else {
+        return false;
+    };
+    reference.attrs.is_empty()
+        && reference.mutability.is_none()
+        && syn_plain_path_is(&reference.expr, expected)
+}
+
+fn syn_parent_call_is<'a>(expression: &'a syn::Expr, expected: &str) -> Option<&'a syn::ExprCall> {
+    let syn::Expr::Call(call) = expression else {
+        return None;
+    };
+    (call.attrs.is_empty() && syn_path_is_segments(&call.func, &["super", expected]))
+        .then_some(call)
+}
+
+fn syn_self_call_is<'a>(expression: &'a syn::Expr, expected: &str) -> Option<&'a syn::ExprCall> {
+    let syn::Expr::Call(call) = expression else {
+        return None;
+    };
+    (call.attrs.is_empty() && syn_path_is_segments(&call.func, &["self", expected])).then_some(call)
+}
+
+fn syn_type_path_is_segments(ty: &syn::Type, expected: &[&str]) -> bool {
+    let syn::Type::Path(path) = ty else {
+        return false;
+    };
+    path.qself.is_none()
+        && path.path.leading_colon.is_none()
+        && path.path.segments.len() == expected.len()
+        && path
+            .path
+            .segments
+            .iter()
+            .zip(expected)
+            .all(|(segment, expected)| {
+                segment.ident == *expected && matches!(segment.arguments, syn::PathArguments::None)
+            })
+}
+
+fn syn_fn_arg_is_reference_path(
+    argument: &syn::FnArg,
+    binding: &str,
+    expected_type: &[&str],
+) -> bool {
+    let syn::FnArg::Typed(argument) = argument else {
+        return false;
+    };
+    let syn::Type::Reference(reference) = argument.ty.as_ref() else {
+        return false;
+    };
+    argument.attrs.is_empty()
+        && syn_plain_pat_ident_is(&argument.pat, binding)
+        && reference.lifetime.is_none()
+        && reference.mutability.is_none()
+        && syn_type_path_is_segments(&reference.elem, expected_type)
+}
+
+fn syn_fn_arg_is_reference_slice_path(
+    argument: &syn::FnArg,
+    binding: &str,
+    expected_element: &[&str],
+) -> bool {
+    let syn::FnArg::Typed(argument) = argument else {
+        return false;
+    };
+    let syn::Type::Reference(reference) = argument.ty.as_ref() else {
+        return false;
+    };
+    let syn::Type::Slice(slice) = reference.elem.as_ref() else {
+        return false;
+    };
+    argument.attrs.is_empty()
+        && syn_plain_pat_ident_is(&argument.pat, binding)
+        && reference.lifetime.is_none()
+        && reference.mutability.is_none()
+        && syn_type_path_is_segments(&slice.elem, expected_element)
+}
+
+fn syn_return_type_is_result_unit(output: &syn::ReturnType) -> bool {
+    let syn::ReturnType::Type(_, ty) = output else {
+        return false;
+    };
+    let syn::Type::Path(path) = ty.as_ref() else {
+        return false;
+    };
+    if path.qself.is_some()
+        || path.path.leading_colon.is_some()
+        || path.path.segments.len() != 1
+        || path.path.segments[0].ident != "Result"
+    {
+        return false;
+    }
+    let syn::PathArguments::AngleBracketed(arguments) = &path.path.segments[0].arguments else {
+        return false;
+    };
+    arguments.args.len() == 1
+        && matches!(arguments.args.first(), Some(syn::GenericArgument::Type(syn::Type::Tuple(tuple)))
+            if tuple.elems.is_empty())
+}
+
+fn validate_v8_atomic_method_signature(
+    method_name: &str,
+    method: &syn::ImplItemFn,
+    claim_id: &str,
+) -> Result<()> {
+    let signature = &method.sig;
+    let visibility_matches = match method_name {
+        "commit_reorg_suffix_atomically" => matches!(method.vis, syn::Visibility::Inherited),
+        "commit_mined_block_atomically" => {
+            matches!(&method.vis, syn::Visibility::Restricted(restricted)
+            if restricted.in_token.is_none()
+                && restricted.path.leading_colon.is_none()
+                && restricted.path.segments.len() == 1
+                && restricted.path.segments[0].ident == "crate"
+                && matches!(restricted.path.segments[0].arguments, syn::PathArguments::None))
+        }
+        _ => false,
+    };
+    ensure!(
+        method.attrs.is_empty()
+            && method.defaultness.is_none()
+            && visibility_matches
+            && signature.constness.is_none()
+            && signature.asyncness.is_none()
+            && signature.unsafety.is_none()
+            && signature.abi.is_none()
+            && signature.generics.params.is_empty()
+            && signature.generics.where_clause.is_none()
+            && signature.variadic.is_none()
+            && syn_return_type_is_result_unit(&signature.output),
+        "{} V8 atomic caller {} must keep its exact synchronous fallible signature",
+        claim_id,
+        method_name
+    );
+    let Some(syn::FnArg::Receiver(receiver)) = signature.inputs.first() else {
+        return Err(anyhow!(
+            "{} V8 atomic caller {} requires &self",
+            claim_id,
+            method_name
+        ));
+    };
+    ensure!(
+        receiver.attrs.is_empty()
+            && receiver
+                .reference
+                .as_ref()
+                .is_some_and(|(_, lifetime)| lifetime.is_none())
+            && receiver.mutability.is_none()
+            && receiver.colon_token.is_none(),
+        "{} V8 atomic caller {} requires an immutable &self receiver",
+        claim_id,
+        method_name
+    );
+    let inputs = signature.inputs.iter().collect::<Vec<_>>();
+    let exact = match method_name {
+        "commit_reorg_suffix_atomically" => {
+            inputs.len() == 4
+                && syn_fn_arg_is_reference_path(inputs[1], "plan", &["NativeReorgSuffixCommitPlan"])
+                && syn_fn_arg_is_reference_path(inputs[2], "best", &["NativeBlockMeta"])
+                && syn_fn_arg_is_reference_path(
+                    inputs[3],
+                    "next_nullifier_accumulator",
+                    &["NullifierAccumulator"],
+                )
+        }
+        "commit_mined_block_atomically" => {
+            inputs.len() == 8
+                && syn_fn_arg_is_reference_slice_path(inputs[1], "actions", &["PendingAction"])
+                && syn_fn_arg_is_reference_slice_path(
+                    inputs[2],
+                    "planned",
+                    &["NativePlannedActionEffect"],
+                )
+                && syn_fn_arg_is_reference_path(inputs[3], "meta", &["NativeBlockMeta"])
+                && syn_fn_arg_is_reference_path(
+                    inputs[4],
+                    "parent_nullifier_accumulator",
+                    &["NullifierAccumulator"],
+                )
+                && syn_fn_arg_is_reference_path(
+                    inputs[5],
+                    "next_nullifier_accumulator",
+                    &["NullifierAccumulator"],
+                )
+                && syn_fn_arg_is_reference_path(
+                    inputs[6],
+                    "checkpoint_rows",
+                    &["NativeCanonicalCheckpointRows"],
+                )
+                && syn_fn_arg_is_reference_slice_path(
+                    inputs[7],
+                    "additional_pending_action_removals",
+                    &["ActionId48"],
+                )
+        }
+        _ => false,
+    };
+    ensure!(
+        exact,
+        "{} V8 atomic caller {} parameter grammar changed",
+        claim_id,
+        method_name
+    );
+    Ok(())
+}
+
+fn syn_plain_reference_field_is(expression: &syn::Expr, base: &str, field: &str) -> bool {
+    let syn::Expr::Reference(reference) = expression else {
+        return false;
+    };
+    let syn::Expr::Field(field_expression) = reference.expr.as_ref() else {
+        return false;
+    };
+    reference.attrs.is_empty()
+        && field_expression.attrs.is_empty()
+        && reference.mutability.is_none()
+        && syn_plain_path_is(&field_expression.base, base)
+        && matches!(&field_expression.member, syn::Member::Named(ident) if ident == field)
+}
+
+fn syn_plain_pat_ident_is(pattern: &syn::Pat, expected: &str) -> bool {
+    let syn::Pat::Ident(ident) = pattern else {
+        return false;
+    };
+    ident.attrs.is_empty()
+        && ident.by_ref.is_none()
+        && ident.mutability.is_none()
+        && ident.subpat.is_none()
+        && ident.ident == expected
+}
+
+fn syn_plain_pat_path_is(pattern: &syn::Pat, expected: &str) -> bool {
+    if syn_plain_pat_ident_is(pattern, expected) {
+        return true;
+    }
+    let syn::Pat::Path(path) = pattern else {
+        return false;
+    };
+    path.attrs.is_empty()
+        && path.qself.is_none()
+        && path.path.leading_colon.is_none()
+        && path.path.segments.len() == 1
+        && path.path.segments[0].ident == expected
+        && matches!(path.path.segments[0].arguments, syn::PathArguments::None)
+}
+
+fn syn_tuple_struct_pat_is_one_ident(pattern: &syn::Pat, constructor: &str, binding: &str) -> bool {
+    let syn::Pat::TupleStruct(tuple) = pattern else {
+        return false;
+    };
+    tuple.attrs.is_empty()
+        && tuple.qself.is_none()
+        && tuple.path.leading_colon.is_none()
+        && tuple.path.segments.len() == 1
+        && tuple.path.segments[0].ident == constructor
+        && matches!(tuple.path.segments[0].arguments, syn::PathArguments::None)
+        && tuple.elems.len() == 1
+        && syn_plain_pat_ident_is(&tuple.elems[0], binding)
+}
+
+fn syn_integer_literal_is(expression: &syn::Expr, expected: &str) -> bool {
+    matches!(expression, syn::Expr::Lit(literal)
+        if literal.attrs.is_empty()
+            && matches!(&literal.lit, syn::Lit::Int(integer) if integer.base10_digits() == expected))
+}
+
+fn syn_call_path_is<'a>(expression: &'a syn::Expr, expected: &[&str]) -> Option<&'a syn::ExprCall> {
+    let syn::Expr::Call(call) = expression else {
+        return None;
+    };
+    (call.attrs.is_empty() && syn_path_is_segments(&call.func, expected)).then_some(call)
+}
+
+fn validate_transaction_local_v8_application_helper(
+    helper: &syn::ItemFn,
+    claim_id: &str,
+) -> Result<()> {
+    let statements = &helper.block.stmts;
+    ensure!(
+        statements.len() == 4,
+        "{} V8 transaction-local helper requires exactly four ordered statements",
+        claim_id
+    );
+    let syn::Stmt::Local(actual_local) = &statements[0] else {
+        return Err(anyhow!(
+            "{} V8 helper must bind the actual application count first",
+            claim_id
+        ));
+    };
+    ensure!(
+        actual_local.attrs.is_empty()
+            && syn_plain_pat_ident_is(&actual_local.pat, "actual_application_count"),
+        "{} V8 helper actual application count binding is not canonical",
+        claim_id
+    );
+    let Some(actual_init) = &actual_local.init else {
+        return Err(anyhow!(
+            "{} V8 helper actual count has no initializer",
+            claim_id
+        ));
+    };
+    let syn::Expr::Match(plan_match) = actual_init.expr.as_ref() else {
+        return Err(anyhow!(
+            "{} V8 helper actual count must match the plan",
+            claim_id
+        ));
+    };
+    ensure!(
+        plan_match.attrs.is_empty()
+            && syn_plain_path_is(&plan_match.expr, "plan")
+            && plan_match.arms.len() == 2,
+        "{} V8 helper plan match is not canonical",
+        claim_id
+    );
+    let some_arm = &plan_match.arms[0];
+    let none_arm = &plan_match.arms[1];
+    ensure!(
+        some_arm.attrs.is_empty()
+            && some_arm.guard.is_none()
+            && syn_tuple_struct_pat_is_one_ident(&some_arm.pat, "Some", "plan")
+            && none_arm.attrs.is_empty()
+            && none_arm.guard.is_none()
+            && syn_plain_pat_path_is(&none_arm.pat, "None")
+            && syn_integer_literal_is(&none_arm.body, "0"),
+        "{} V8 helper Some/None application-count arms are not canonical",
+        claim_id
+    );
+    let syn::Expr::Block(some_block) = some_arm.body.as_ref() else {
+        return Err(anyhow!(
+            "{} V8 helper Some arm must be an ordered block",
+            claim_id
+        ));
+    };
+    ensure!(
+        some_block.attrs.is_empty()
+            && some_block.label.is_none()
+            && some_block.block.stmts.len() == 2,
+        "{} V8 helper Some arm must contain only raw apply then literal one",
+        claim_id
+    );
+    let syn::Stmt::Expr(syn::Expr::Try(raw_try), Some(_)) = &some_block.block.stmts[0] else {
+        return Err(anyhow!(
+            "{} V8 helper raw apply must propagate as its first Some-arm statement",
+            claim_id
+        ));
+    };
+    ensure!(
+        raw_try.attrs.is_empty(),
+        "{} V8 helper raw apply expression must be unconditional",
+        claim_id
+    );
+    let Some(raw_apply) = syn_call_path_is(
+        &raw_try.expr,
+        &[
+            "super",
+            "poseidon2_v8_state",
+            "Poseidon2V8StateStore",
+            "apply_canonical_plan_in_transaction",
+        ],
+    ) else {
+        return Err(anyhow!(
+            "{} V8 helper calls the wrong raw typed apply",
+            claim_id
+        ));
+    };
+    ensure!(
+        raw_apply.args.len() == 2
+            && syn_plain_path_is(&raw_apply.args[0], "poseidon2_v8_tree")
+            && syn_plain_path_is(&raw_apply.args[1], "plan")
+            && matches!(&some_block.block.stmts[1], syn::Stmt::Expr(expression, None)
+                if syn_integer_literal_is(expression, "1")),
+        "{} V8 helper raw apply/count coupling is not canonical",
+        claim_id
+    );
+
+    let syn::Stmt::Local(observed_local) = &statements[1] else {
+        return Err(anyhow!(
+            "{} V8 helper must bind the observed manifest second",
+            claim_id
+        ));
+    };
+    ensure!(
+        observed_local.attrs.is_empty() && syn_plain_pat_ident_is(&observed_local.pat, "observed"),
+        "{} V8 helper observed manifest binding is not canonical",
+        claim_id
+    );
+    let Some(observed_init) = &observed_local.init else {
+        return Err(anyhow!(
+            "{} V8 helper observed manifest has no initializer",
+            claim_id
+        ));
+    };
+    let syn::Expr::Struct(observed) = observed_init.expr.as_ref() else {
+        return Err(anyhow!(
+            "{} V8 helper observed manifest must be a struct update",
+            claim_id
+        ));
+    };
+    ensure!(
+        observed.attrs.is_empty()
+            && observed.qself.is_none()
+            && observed.path.leading_colon.is_none()
+            && observed.path.segments.len() == 2
+            && observed.path.segments[0].ident == "super"
+            && observed.path.segments[1].ident == "NativeAtomicCommitManifestAdmissionInput"
+            && observed.fields.len() == 1
+            && observed.fields[0].attrs.is_empty()
+            && matches!(&observed.fields[0].member, syn::Member::Named(ident)
+                if ident == "poseidon2_v8_plan_application_count")
+            && syn_plain_path_is(&observed.fields[0].expr, "actual_application_count")
+            && observed
+                .rest
+                .as_ref()
+                .is_some_and(|rest| syn_plain_path_is(rest, "manifest")),
+        "{} V8 helper observed manifest must overwrite only the actual application count",
+        claim_id
+    );
+
+    let syn::Stmt::Expr(syn::Expr::Try(admission_try), Some(_)) = &statements[2] else {
+        return Err(anyhow!(
+            "{} V8 helper must propagate manifest admission third",
+            claim_id
+        ));
+    };
+    let syn::Expr::MethodCall(map_err) = admission_try.expr.as_ref() else {
+        return Err(anyhow!(
+            "{} V8 helper admission must map only the rejection",
+            claim_id
+        ));
+    };
+    ensure!(
+        admission_try.attrs.is_empty() && map_err.attrs.is_empty(),
+        "{} V8 helper manifest admission must be unconditional",
+        claim_id
+    );
+    let Some(admission) = syn_call_path_is(
+        &map_err.receiver,
+        &[
+            "super",
+            "block_flow",
+            "evaluate_native_atomic_commit_manifest_admission",
+        ],
+    ) else {
+        return Err(anyhow!(
+            "{} V8 helper calls the wrong manifest evaluator",
+            claim_id
+        ));
+    };
+    let Some(syn::Expr::Closure(rejection_map)) = map_err.args.first() else {
+        return Err(anyhow!(
+            "{} V8 helper admission rejection must use one closure",
+            claim_id
+        ));
+    };
+    ensure!(
+        map_err.method == "map_err"
+            && map_err.turbofish.is_none()
+            && map_err.args.len() == 1
+            && rejection_map.attrs.is_empty()
+            && rejection_map.inputs.len() == 1
+            && rejection_map
+                .inputs
+                .first()
+                .is_some_and(|pattern| syn_plain_pat_ident_is(pattern, "rejection"))
+            && admission.args.len() == 1
+            && syn_plain_path_is(&admission.args[0], "observed"),
+        "{} V8 helper manifest admission is not canonical",
+        claim_id
+    );
+    let syn::Expr::Block(rejection_block) = rejection_map.body.as_ref() else {
+        return Err(anyhow!(
+            "{} V8 helper must map rejection to a pinned sled transaction abort",
+            claim_id
+        ));
+    };
+    let abort_expression = match rejection_block.block.stmts.as_slice() {
+        [syn::Stmt::Expr(expression, None)] => expression,
+        _ => {
+            return Err(anyhow!(
+                "{} V8 helper must map rejection to a pinned sled transaction abort",
+                claim_id
+            ));
+        }
+    };
+    ensure!(
+        syn_call_path_is(
+            abort_expression,
+            &[
+                "self",
+                "__hegemon_pinned_sled",
+                "transaction",
+                "ConflictableTransactionError",
+                "Abort",
+            ],
+        )
+        .is_some_and(|abort| abort.args.len() == 1),
+        "{} V8 helper must map rejection to a pinned sled transaction abort",
+        claim_id
+    );
+    ensure!(
+        matches!(&statements[3], syn::Stmt::Expr(expression, None)
+        if syn_call_path_is(expression, &["Ok"]).is_some_and(|ok| {
+            ok.args.len() == 1
+                && syn_plain_path_is(&ok.args[0], "actual_application_count")
+        })),
+        "{} V8 helper must return only the transaction-produced application count",
+        claim_id
+    );
+    Ok(())
+}
+
+fn syn_pat_binds_identifier(pattern: &syn::Pat, expected: &str) -> bool {
+    match pattern {
+        syn::Pat::Ident(ident) => ident.ident == expected,
+        syn::Pat::Or(or) => or
+            .cases
+            .iter()
+            .any(|pattern| syn_pat_binds_identifier(pattern, expected)),
+        syn::Pat::Paren(paren) => syn_pat_binds_identifier(&paren.pat, expected),
+        syn::Pat::Reference(reference) => syn_pat_binds_identifier(&reference.pat, expected),
+        syn::Pat::Slice(slice) => slice
+            .elems
+            .iter()
+            .any(|pattern| syn_pat_binds_identifier(pattern, expected)),
+        syn::Pat::Struct(structure) => structure
+            .fields
+            .iter()
+            .any(|field| syn_pat_binds_identifier(&field.pat, expected)),
+        syn::Pat::Tuple(tuple) => tuple
+            .elems
+            .iter()
+            .any(|pattern| syn_pat_binds_identifier(pattern, expected)),
+        syn::Pat::TupleStruct(tuple) => tuple
+            .elems
+            .iter()
+            .any(|pattern| syn_pat_binds_identifier(pattern, expected)),
+        syn::Pat::Type(typed) => syn_pat_binds_identifier(&typed.pat, expected),
+        _ => false,
+    }
+}
+
+fn syn_pat_contains_macro(pattern: &syn::Pat) -> bool {
+    match pattern {
+        syn::Pat::Macro(_) => true,
+        syn::Pat::Or(or) => or.cases.iter().any(syn_pat_contains_macro),
+        syn::Pat::Paren(paren) => syn_pat_contains_macro(&paren.pat),
+        syn::Pat::Reference(reference) => syn_pat_contains_macro(&reference.pat),
+        syn::Pat::Slice(slice) => slice.elems.iter().any(syn_pat_contains_macro),
+        syn::Pat::Struct(structure) => structure
+            .fields
+            .iter()
+            .any(|field| syn_pat_contains_macro(&field.pat)),
+        syn::Pat::Tuple(tuple) => tuple.elems.iter().any(syn_pat_contains_macro),
+        syn::Pat::TupleStruct(tuple) => tuple.elems.iter().any(syn_pat_contains_macro),
+        syn::Pat::Type(typed) => syn_pat_contains_macro(&typed.pat),
+        _ => false,
+    }
+}
+
+fn syn_direct_local_bindings<'a>(
+    method: &'a syn::ImplItemFn,
+    expected: &str,
+) -> Vec<(usize, &'a syn::Local)> {
+    method
+        .block
+        .stmts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, statement)| {
+            let syn::Stmt::Local(local) = statement else {
+                return None;
+            };
+            syn_pat_binds_identifier(&local.pat, expected).then_some((index, local))
+        })
+        .collect()
+}
+
+fn syn_v8_plan_projection_is(
+    expression: &syn::Expr,
+    receiver: &str,
+    through_as_ref: bool,
+    projected_binding: &str,
+) -> bool {
+    let syn::Expr::MethodCall(map) = expression else {
+        return false;
+    };
+    if !map.attrs.is_empty()
+        || map.method != "map"
+        || !map.turbofish.is_none()
+        || map.args.len() != 1
+    {
+        return false;
+    }
+    let receiver_matches = if through_as_ref {
+        matches!(map.receiver.as_ref(), syn::Expr::MethodCall(as_ref)
+            if as_ref.attrs.is_empty()
+                && as_ref.method == "as_ref"
+                && as_ref.turbofish.is_none()
+                && as_ref.args.is_empty()
+                && syn_plain_path_is(&as_ref.receiver, receiver))
+    } else {
+        syn_plain_path_is(&map.receiver, receiver)
+    };
+    if !receiver_matches {
+        return false;
+    }
+    let Some(syn::Expr::Closure(closure)) = map.args.first() else {
+        return false;
+    };
+    if !closure.attrs.is_empty()
+        || closure.inputs.len() != 1
+        || !syn_plain_path_is(&closure.body, projected_binding)
+    {
+        return false;
+    }
+    let Some(syn::Pat::Tuple(tuple)) = closure.inputs.first() else {
+        return false;
+    };
+    tuple.attrs.is_empty()
+        && tuple.elems.len() == 2
+        && matches!(&tuple.elems[0], syn::Pat::Wild(_))
+        && syn_plain_pat_ident_is(&tuple.elems[1], projected_binding)
+}
+
+fn validate_v8_atomic_caller_provenance(
+    method_name: &str,
+    item_impl: &syn::ItemImpl,
+    method: &syn::ImplItemFn,
+    claim_id: &str,
+    bound_helper: &str,
+) -> Result<()> {
+    ensure!(
+        item_impl.attrs.is_empty()
+            && item_impl.defaultness.is_none()
+            && item_impl.unsafety.is_none()
+            && item_impl.generics.params.is_empty()
+            && item_impl.generics.where_clause.is_none(),
+        "{} V8 atomic caller requires an unconditional nongeneric inherent NativeNode impl",
+        claim_id
+    );
+    validate_v8_atomic_method_signature(method_name, method, claim_id)?;
+    ensure!(
+        syn_direct_local_bindings(method, bound_helper).is_empty(),
+        "{} V8 atomic caller must not shadow the bound helper",
+        claim_id
+    );
+    ensure!(
+        !method.block.stmts.iter().any(|statement| {
+            matches!(statement, syn::Stmt::Local(local) if syn_pat_contains_macro(&local.pat))
+        }),
+        "{} V8 atomic caller must not contain macro-expanded local patterns",
+        claim_id
+    );
+    ensure!(
+        !method
+            .block
+            .stmts
+            .iter()
+            .any(|statement| matches!(statement, syn::Stmt::Macro(_))),
+        "{} V8 atomic caller must not contain direct statement macros",
+        claim_id
+    );
+    let transaction_indices = syn_direct_pinned_transaction_statement_indices(method);
+    ensure!(
+        transaction_indices.len() == 1,
+        "{} V8 atomic caller requires one direct pinned sled transaction statement",
+        claim_id
+    );
+    let transaction_index = transaction_indices[0];
+    ensure!(
+        !syn_statements_have_outer_return_or_macro(&method.block.stmts[..transaction_index]),
+        "{} V8 atomic caller prefix must be return-free and macro-free outside closures",
+        claim_id
+    );
+    let planner_name = match method_name {
+        "commit_reorg_suffix_atomically" => "plan_poseidon2_v8_reorganization",
+        "commit_mined_block_atomically" => "plan_poseidon2_v8_block_against_parent",
+        _ => {
+            return Err(anyhow!(
+                "{} shared sled binding names unsupported production caller {}",
+                claim_id,
+                method_name
+            ));
+        }
+    };
+    let planners = item_impl
+        .items
+        .iter()
+        .filter_map(|item| {
+            let syn::ImplItem::Fn(planner) = item else {
+                return None;
+            };
+            (planner.sig.ident == planner_name).then_some(planner)
+        })
+        .collect::<Vec<_>>();
+    ensure!(
+        planners.len() == 1 && planners[0].attrs.is_empty(),
+        "{} V8 atomic caller requires one attribute-free inherent source planner {}",
+        claim_id,
+        planner_name
+    );
+    match method_name {
+        "commit_reorg_suffix_atomically" => {
+            let reorgs = syn_direct_local_bindings(method, "poseidon2_v8_reorg");
+            ensure!(
+                reorgs.len() == 1
+                    && reorgs[0].1.attrs.is_empty()
+                    && syn_plain_pat_ident_is(&reorgs[0].1.pat, "poseidon2_v8_reorg"),
+                "{} V8 suffix caller requires one immutable poseidon2_v8_reorg binding",
+                claim_id
+            );
+            let Some(reorg_init) = &reorgs[0].1.init else {
+                return Err(anyhow!(
+                    "{} V8 suffix planner binding has no initializer",
+                    claim_id
+                ));
+            };
+            let syn::Expr::Try(reorg_try) = reorg_init.expr.as_ref() else {
+                return Err(anyhow!(
+                    "{} V8 suffix planner must propagate failure",
+                    claim_id
+                ));
+            };
+            let syn::Expr::MethodCall(reorg_planner) = reorg_try.expr.as_ref() else {
+                return Err(anyhow!("{} V8 suffix plan uses the wrong source", claim_id));
+            };
+            ensure!(
+                reorg_try.attrs.is_empty()
+                    && reorg_planner.attrs.is_empty()
+                    && reorg_planner.method == "plan_poseidon2_v8_reorganization"
+                    && reorg_planner.turbofish.is_none()
+                    && syn_plain_path_is(&reorg_planner.receiver, "self")
+                    && reorg_planner.args.len() == 2
+                    && syn_plain_reference_field_is(&reorg_planner.args[0], "plan", "old_blocks")
+                    && syn_plain_reference_field_is(&reorg_planner.args[1], "plan", "new_blocks"),
+                "{} V8 suffix plan must come from the exact contextual source planner",
+                claim_id
+            );
+            let manifests = syn_direct_local_bindings(method, "suffix_manifest");
+            ensure!(
+                manifests.len() == 1
+                    && manifests[0].1.attrs.is_empty()
+                    && syn_plain_pat_ident_is(&manifests[0].1.pat, "suffix_manifest")
+                    && reorgs[0].0 < manifests[0].0
+                    && manifests[0].0 < transaction_index,
+                "{} V8 suffix caller requires one immutable suffix_manifest binding",
+                claim_id
+            );
+            let Some(init) = &manifests[0].1.init else {
+                return Err(anyhow!(
+                    "{} V8 suffix manifest binding has no initializer",
+                    claim_id
+                ));
+            };
+            let syn::Expr::Try(try_expression) = init.expr.as_ref() else {
+                return Err(anyhow!(
+                    "{} V8 suffix manifest builder must propagate failure",
+                    claim_id
+                ));
+            };
+            ensure!(
+                try_expression.attrs.is_empty(),
+                "{} V8 suffix manifest builder must be unconditional",
+                claim_id
+            );
+            let Some(call) = syn_self_call_is(
+                &try_expression.expr,
+                "native_canonical_suffix_reorg_commit_manifest",
+            ) else {
+                return Err(anyhow!(
+                    "{} V8 suffix manifest uses the wrong builder",
+                    claim_id
+                ));
+            };
+            ensure!(
+                call.args.len() == 2
+                    && syn_plain_path_is(&call.args[0], "plan")
+                    && syn_v8_plan_projection_is(
+                        &call.args[1],
+                        "poseidon2_v8_reorg",
+                        true,
+                        "v8_plan",
+                    ),
+                "{} V8 suffix manifest must consume the exact suffix plan projection",
+                claim_id
+            );
+        }
+        "commit_mined_block_atomically" => {
+            let commits = syn_direct_local_bindings(method, "v8_commit");
+            let manifests = syn_direct_local_bindings(method, "mined_manifest");
+            ensure!(
+                commits.len() == 1
+                    && commits[0].1.attrs.is_empty()
+                    && syn_plain_pat_ident_is(&commits[0].1.pat, "v8_commit")
+                    && manifests.len() == 1
+                    && manifests[0].1.attrs.is_empty()
+                    && syn_plain_pat_ident_is(&manifests[0].1.pat, "mined_manifest")
+                    && commits[0].0 < manifests[0].0
+                    && manifests[0].0 < transaction_index,
+                "{} V8 mined caller requires ordered immutable v8_commit and mined_manifest bindings",
+                claim_id
+            );
+            let Some(commit_init) = &commits[0].1.init else {
+                return Err(anyhow!(
+                    "{} V8 mined plan binding has no initializer",
+                    claim_id
+                ));
+            };
+            let syn::Expr::Try(commit_try) = commit_init.expr.as_ref() else {
+                return Err(anyhow!(
+                    "{} V8 mined planner must propagate failure",
+                    claim_id
+                ));
+            };
+            let syn::Expr::MethodCall(planner) = commit_try.expr.as_ref() else {
+                return Err(anyhow!("{} V8 mined plan uses the wrong source", claim_id));
+            };
+            ensure!(
+                commit_try.attrs.is_empty()
+                    && planner.attrs.is_empty()
+                    && planner.method == "plan_poseidon2_v8_block_against_parent"
+                    && planner.turbofish.is_none()
+                    && syn_plain_path_is(&planner.receiver, "self")
+                    && planner.args.len() == 3
+                    && syn_plain_reference_path_is(&planner.args[0], "parent_meta")
+                    && syn_plain_path_is(&planner.args[1], "meta")
+                    && syn_plain_path_is(&planner.args[2], "actions"),
+                "{} V8 mined plan must come from the exact contextual source planner",
+                claim_id
+            );
+            let Some(manifest_init) = &manifests[0].1.init else {
+                return Err(anyhow!(
+                    "{} V8 mined manifest binding has no initializer",
+                    claim_id
+                ));
+            };
+            let Some(call) =
+                syn_parent_call_is(&manifest_init.expr, "native_mined_block_commit_manifest")
+            else {
+                return Err(anyhow!(
+                    "{} V8 mined manifest uses the wrong builder",
+                    claim_id
+                ));
+            };
+            ensure!(
+                call.args.len() == 3
+                    && syn_plain_path_is(&call.args[0], "actions")
+                    && syn_plain_path_is(&call.args[1], "planned")
+                    && syn_v8_plan_projection_is(&call.args[2], "v8_commit", true, "plan"),
+                "{} V8 mined manifest must consume the exact mined plan projection",
+                claim_id
+            );
+        }
+        _ => unreachable!("caller kind checked before provenance validation"),
+    }
+    Ok(())
+}
+
+/// The dedicated sled obligation is intentionally scoped to ordinary symbols
+/// in the checked file's top-level module. Text in an attributed impl or an
+/// inline child module is not evidence that the production caller exists.
+fn validate_unconditional_shared_sled_symbols(
+    parsed: &syn::File,
+    claim_id: &str,
+    binding: &ImplementationBinding,
+) -> Result<()> {
+    let helpers = parsed
+        .items
+        .iter()
+        .filter_map(|item| {
+            let syn::Item::Fn(function) = item else {
+                return None;
+            };
+            (function.sig.ident == binding.callee).then_some(function)
+        })
+        .collect::<Vec<_>>();
+    ensure!(
+        helpers.len() == 1
+            && helpers[0]
+                .attrs
+                .iter()
+                .all(|attribute| attribute.path().is_ident("doc")),
+        "{} implementation binding for {} requires one top-level helper with doc-only attributes",
+        claim_id,
+        binding.callee
+    );
+    if binding.callee == "apply_poseidon2_v8_plan_and_admit_atomic_manifest_in_transaction" {
+        validate_transaction_local_v8_application_helper(helpers[0], claim_id)?;
+        let suffix_builders = parsed
+            .items
+            .iter()
+            .filter_map(|item| {
+                let syn::Item::Fn(function) = item else {
+                    return None;
+                };
+                (function.sig.ident == "native_canonical_suffix_reorg_commit_manifest")
+                    .then_some(function)
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            suffix_builders.len() == 1 && suffix_builders[0].attrs.is_empty(),
+            "{} V8 atomic source requires one attribute-free local suffix manifest builder",
+            claim_id
+        );
+    }
+
+    for caller in &binding.required_callers {
+        let (expected_type, method_name) = caller
+            .split_once("::")
+            .map_or((None, caller.as_str()), |(ty, method)| (Some(ty), method));
+        let mut matches = Vec::new();
+        for item in &parsed.items {
+            let syn::Item::Impl(item_impl) = item else {
+                continue;
+            };
+            if item_impl.trait_.is_some()
+                || expected_type
+                    .is_some_and(|expected| !syn_impl_self_type_is_exact(item_impl, expected))
+            {
+                continue;
+            }
+            for impl_item in &item_impl.items {
+                let syn::ImplItem::Fn(method) = impl_item else {
+                    continue;
+                };
+                if method.sig.ident == method_name {
+                    matches.push((item_impl, method));
+                }
+            }
+        }
+        ensure!(
+            matches.len() == 1,
+            "{} implementation binding caller {} requires one top-level inherent method in {}",
+            claim_id,
+            caller,
+            binding.path
+        );
+        let (item_impl, method) = matches[0];
+        ensure!(
+            item_impl.attrs.is_empty() && method.attrs.is_empty(),
+            "{} implementation binding caller {} requires an attribute-free top-level inherent impl and method",
+            claim_id,
+            caller
+        );
+        if expected_type == Some("NativeNode") {
+            validate_v8_atomic_caller_provenance(
+                method_name,
+                item_impl,
+                method,
+                claim_id,
+                &binding.callee,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn validate_rust_implementation_binding(
@@ -2876,7 +5291,15 @@ fn validate_rust_implementation_binding(
     claim_id: &str,
     binding: &ImplementationBinding,
 ) -> Result<()> {
-    let source = rust_binding_module_source(root, &binding.path)?;
+    let binding_sources = rust_binding_module_sources(root, &binding.path)?;
+    let binding_source_count = binding_sources.len();
+    let mut source = String::new();
+    for (_, module_source) in binding_sources {
+        if !source.is_empty() {
+            source.push('\n');
+        }
+        source.push_str(&module_source);
+    }
     let sanitized = sanitize_rust_source(&source);
     let test_module_spans = rust_cfg_test_module_spans(&sanitized);
     let macro_body_spans = rust_macro_body_spans(&sanitized);
@@ -2886,6 +5309,63 @@ fn validate_rust_implementation_binding(
         &binding.callee,
         binding.result_obligation.as_deref(),
     )?;
+    if result_obligation == ResultObligation::MustPropagateSharedSledTransactionResult {
+        validate_native_node_cargo_target_selection(root, &binding.path)?;
+        validate_unconditional_rust_module_inclusion_chain(
+            root,
+            &binding.path,
+            claim_id,
+            &binding.callee,
+        )?;
+        ensure!(
+            binding_source_count == 1,
+            "{} implementation binding for {} must target its single defining Rust source file",
+            claim_id,
+            binding.callee
+        );
+        let pinned_alias = "extern crate sled as __hegemon_pinned_sled;";
+        ensure!(
+            sanitized.matches(pinned_alias).count() == 1,
+            "{} implementation binding for {} requires one module-local external sled pin",
+            claim_id,
+            binding.callee
+        );
+        let parsed_binding_source = syn::parse_file(&source)
+            .context("parse single-source shared sled implementation binding")?;
+        let enclosing_cfg_attrs = parsed_binding_source
+            .attrs
+            .iter()
+            .filter(|attr| attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr"))
+            .count();
+        ensure!(
+            enclosing_cfg_attrs == 0,
+            "{} implementation binding for {} requires an unconditional enclosing Rust source file",
+            claim_id,
+            binding.callee
+        );
+        let unconditional_top_level_pins = parsed_binding_source
+            .items
+            .iter()
+            .filter(|item| {
+                let syn::Item::ExternCrate(extern_crate) = item else {
+                    return false;
+                };
+                extern_crate.attrs.is_empty()
+                    && extern_crate.ident == "sled"
+                    && extern_crate
+                        .rename
+                        .as_ref()
+                        .is_some_and(|(_, rename)| rename == "__hegemon_pinned_sled")
+            })
+            .count();
+        ensure!(
+            unconditional_top_level_pins == 1,
+            "{} implementation binding for {} requires an unconditional top-level external sled pin",
+            claim_id,
+            binding.callee
+        );
+        validate_unconditional_shared_sled_symbols(&parsed_binding_source, claim_id, binding)?;
+    }
     let non_test_callees = functions
         .iter()
         .filter(|function| {
@@ -2965,14 +5445,31 @@ fn validate_rust_implementation_binding(
             let closure_bodies = rust_closure_body_spans(body);
             let async_block_bodies = rust_async_block_body_spans(body);
             let macro_body_spans = rust_macro_body_spans(body);
+            let local_shadow = if result_obligation
+                == ResultObligation::MustPropagateSharedSledTransactionResult
+            {
+                rust_body_has_let_shadow(body, &binding.callee)
+                    || rust_body_has_for_shadow(body, &binding.callee)
+                    || rust_body_has_nested_fn_shadow(body, &binding.callee)
+                    || rust_body_has_callable_value_item_shadow(body, &binding.callee)
+                    || rust_body_has_use_shadow(body, &binding.callee)
+            } else {
+                rust_body_has_local_shadow_of_callee(body, &binding.callee)
+            };
             ensure!(
                 !rust_function_parameter_binds_callee(&sanitized, function, &binding.callee)
-                    && !rust_body_has_local_shadow_of_callee(body, &binding.callee),
-                "{} implementation binding caller {} in {} locally shadows bound callee {}",
+                    && !local_shadow,
+                "{} implementation binding caller {} in {} locally shadows bound callee {} (let={}, for={}, nested_fn={}, value_item={}, use={}, closure_parameter={})",
                 claim_id,
                 caller,
                 binding.path,
-                binding.callee
+                binding.callee,
+                rust_body_has_let_shadow(body, &binding.callee),
+                rust_body_has_for_shadow(body, &binding.callee),
+                rust_body_has_nested_fn_shadow(body, &binding.callee),
+                rust_body_has_callable_value_item_shadow(body, &binding.callee),
+                rust_body_has_use_shadow(body, &binding.callee),
+                rust_body_has_closure_parameter_shadow(body, &binding.callee),
             );
             let call_sites = rust_bound_callee_call_sites(
                 body,
@@ -2984,9 +5481,13 @@ fn validate_rust_implementation_binding(
             );
             ensure!(
                 !call_sites.is_empty()
+                    && (result_obligation
+                        != ResultObligation::MustPropagateSharedSledTransactionResult
+                        || call_sites.len() == 1)
                     && call_sites.iter().all(|call| {
                         rust_call_is_direct_binding_evidence(
                             body,
+                            raw_body,
                             call,
                             result_obligation,
                             &closure_bodies,
@@ -3080,13 +5581,27 @@ fn validate_rust_implementation_order(
         )
         .into_iter()
         .filter(|call| {
-            rust_call_is_direct_order_evidence(
-                body,
-                call,
-                &closure_bodies,
-                &async_block_bodies,
-                &macro_body_spans,
-            )
+            if constraint_result_obligation
+                == ResultObligation::MustPropagateSharedSledTransactionResult
+            {
+                rust_call_is_direct_binding_evidence(
+                    body,
+                    raw_body,
+                    call,
+                    constraint_result_obligation,
+                    &closure_bodies,
+                    &async_block_bodies,
+                    &macro_body_spans,
+                )
+            } else {
+                rust_call_is_direct_order_evidence(
+                    body,
+                    call,
+                    &closure_bodies,
+                    &async_block_bodies,
+                    &macro_body_spans,
+                )
+            }
         })
         .filter(|call| {
             call_satisfies_result_obligation(body, raw_body, call, constraint_result_obligation)
@@ -3121,12 +5636,23 @@ fn validate_rust_implementation_order(
                         callee_calls
                             .iter()
                             .any(|call| {
-                                rust_call_dominates_successor(
-                                    body,
-                                    call,
-                                    successor_call,
-                                    &closure_bodies,
-                                )
+                                if constraint_result_obligation
+                                    == ResultObligation::MustPropagateSharedSledTransactionResult
+                                {
+                                    rust_shared_sled_helper_dominates_successor(
+                                        body,
+                                        call,
+                                        successor_call,
+                                        &closure_bodies,
+                                    )
+                                } else {
+                                    rust_call_dominates_successor(
+                                        body,
+                                        call,
+                                        successor_call,
+                                        &closure_bodies,
+                                    )
+                                }
                             }),
                         "{} implementation binding order caller {} in {} does not dominate {} before {}",
                         claim_id,
@@ -3166,6 +5692,7 @@ fn validate_rust_implementation_order(
 enum ResultObligation {
     None,
     MustPropagateResult,
+    MustPropagateSharedSledTransactionResult,
     MustCheckResultFailClosed,
     MustReturnSubmitActionRejection,
     MustCheckResultLoopSkipFailClosed,
@@ -3186,6 +5713,9 @@ fn parse_result_obligation(
     match raw {
         None => Ok(ResultObligation::None),
         Some("must_propagate_result") => Ok(ResultObligation::MustPropagateResult),
+        Some("must_propagate_shared_sled_transaction_result") => {
+            Ok(ResultObligation::MustPropagateSharedSledTransactionResult)
+        }
         Some("must_check_result_fail_closed") => Ok(ResultObligation::MustCheckResultFailClosed),
         Some("must_return_submit_action_rejection") => {
             Ok(ResultObligation::MustReturnSubmitActionRejection)
@@ -3221,6 +5751,9 @@ fn result_obligation_error_suffix(obligation: ResultObligation) -> &'static str 
     match obligation {
         ResultObligation::None => "",
         ResultObligation::MustPropagateResult => " with propagated result",
+        ResultObligation::MustPropagateSharedSledTransactionResult => {
+            " with propagated shared sled transaction result"
+        }
         ResultObligation::MustCheckResultFailClosed => " with fail-closed result handling",
         ResultObligation::MustReturnSubmitActionRejection => {
             " with an exact submit-action rejection response"
@@ -4145,6 +6678,13 @@ fn rust_bound_callee_call_sites(
     functions: &[RustFunctionSpan],
 ) -> Vec<RustCallSite> {
     let mut calls = rust_unqualified_call_sites(body, ident);
+    calls.extend(rust_qualified_call_sites(
+        body,
+        &RustCallSelector {
+            segments: vec!["self".to_owned(), ident.to_owned()],
+            separators: vec![RustCallSelectorSeparator::Path],
+        },
+    ));
     if caller.impl_type.as_ref().is_some_and(|impl_type| {
         rust_same_impl_method_exists(full_source, test_module_spans, functions, impl_type, ident)
     }) {
@@ -4404,6 +6944,9 @@ fn call_satisfies_result_obligation(
     match obligation {
         ResultObligation::None => true,
         ResultObligation::MustPropagateResult => call_result_is_propagated(source, call),
+        ResultObligation::MustPropagateSharedSledTransactionResult => {
+            call_result_is_propagated(source, call)
+        }
         ResultObligation::MustCheckResultFailClosed => {
             call_result_is_propagated(source, call) || call_result_is_fail_closed(source, call)
         }
@@ -4851,6 +7394,156 @@ fn rust_call_is_member_invocation(source: &str, call: &RustCallSite) -> bool {
     before > 0 && source.as_bytes().get(before - 1) == Some(&b'.')
 }
 
+/// The dedicated shared-sled obligation recognizes only the canonical rooted
+/// sled UFCS transaction over the native tuple carrying both legacy canonical
+/// trees and the typed V8 tree. A wrapper, alias, incomplete tuple, deferred
+/// closure, or locally supplied method named `transaction` is not
+/// implementation-binding evidence. The ordinary result-obligation check
+/// separately requires `?` (or another accepted propagation form) on the inner
+/// helper.
+fn call_is_in_propagated_shared_sled_transaction_closure(
+    source: &str,
+    raw_source: &str,
+    call: &RustCallSite,
+    enclosing_closure: &RustClosureBody,
+) -> bool {
+    debug_assert_eq!(source.len(), raw_source.len());
+    let Some(transaction_call) = rust_call_sites(source, "transaction")
+        .into_iter()
+        .filter(|transaction_call| {
+            transaction_call.start < call.start && call.close_paren < transaction_call.close_paren
+        })
+        .min_by_key(|transaction_call| transaction_call.close_paren - transaction_call.start)
+    else {
+        return false;
+    };
+    let Some(transaction_body) = call_closure_body(source, &transaction_call, "transaction") else {
+        return false;
+    };
+    let context = rust_statement_context(source, transaction_call.start);
+    let transaction_statement_start = context.current_statement_start();
+    if find_rust_token(&source[..transaction_statement_start], "return", 0).is_some() {
+        return false;
+    }
+    let rooted_ufcs_path =
+        compact_ascii_whitespace(&source[transaction_statement_start..transaction_call.start])
+            == "self::__hegemon_pinned_sled::transaction::Transactional::";
+    let Some(open_paren) = rust_call_open_paren(source, &transaction_call, "transaction") else {
+        return false;
+    };
+    let Some(first_closure_bar) =
+        find_top_level_byte(source, open_paren + 1, transaction_call.close_paren, b'|')
+    else {
+        return false;
+    };
+    let Some(second_closure_bar) = find_top_level_byte(
+        source,
+        first_closure_bar + 1,
+        transaction_call.close_paren,
+        b'|',
+    ) else {
+        return false;
+    };
+    // This is intentionally an exact grammar, not a substring inventory. The
+    // production commit transaction carries these eleven trees in this order
+    // as the sole argument before the closure.
+    let canonical_shared_tree_argument =
+        compact_ascii_whitespace(&source[open_paren + 1..first_closure_bar])
+            == "&(&self.meta_tree,&self.height_tree,&self.block_tree,&self.commitment_tree,\
+        &self.nullifier_tree,&self.bridge_inbound_tree,&self.ciphertext_index_tree,\
+        &self.ciphertext_archive_tree,&self.da_ciphertext_tree,&self.action_tree,\
+        &self.poseidon2_v8_tree,),";
+    let canonical_transactional_tree_pattern =
+        compact_ascii_whitespace(&source[first_closure_bar + 1..second_closure_bar])
+            == "(meta_tree,height_tree,block_tree,commitment_tree,nullifier_tree,\
+        bridge_inbound_tree,ciphertext_index_tree,ciphertext_archive_tree,\
+        da_ciphertext_tree,action_tree,poseidon2_v8_tree,)";
+    let transaction_is_top_level_caller_statement = context.block_path.len() == 1;
+    let helper_is_first_top_level_statement = transaction_body.kind == RustClosureBodyKind::Block
+        && source[transaction_body.start..rust_call_expression_start(source, call.start)]
+            .trim()
+            .is_empty();
+    let Some(helper_open_paren) = source[call.start..call.close_paren]
+        .find('(')
+        .map(|relative| call.start + relative)
+    else {
+        return false;
+    };
+    let compact_helper_path = compact_ascii_whitespace(&source[call.start..helper_open_paren]);
+    let helper_is_module_anchored = compact_helper_path
+        .strip_prefix("self::")
+        .is_some_and(is_plain_rust_identifier);
+    let Some(first_helper_comma) =
+        find_top_level_byte(source, helper_open_paren + 1, call.close_paren, b',')
+    else {
+        return false;
+    };
+    let Some(second_helper_comma) =
+        find_top_level_byte(source, first_helper_comma + 1, call.close_paren, b',')
+    else {
+        return false;
+    };
+    let Some(third_helper_comma) =
+        find_top_level_byte(source, second_helper_comma + 1, call.close_paren, b',')
+    else {
+        return false;
+    };
+    let Some(fourth_helper_comma) =
+        find_top_level_byte(source, third_helper_comma + 1, call.close_paren, b',')
+    else {
+        return false;
+    };
+    let helper_tree = compact_ascii_whitespace(&source[helper_open_paren + 1..first_helper_comma]);
+    let helper_plan =
+        compact_ascii_whitespace(&source[first_helper_comma + 1..second_helper_comma]);
+    let helper_manifest =
+        compact_ascii_whitespace(&source[second_helper_comma + 1..third_helper_comma]);
+    let helper_context = raw_source[third_helper_comma + 1..fourth_helper_comma].trim();
+    let helper_has_exact_four_arguments = source[fourth_helper_comma + 1..call.close_paren]
+        .trim()
+        .is_empty();
+    let caller_specific_helper_arguments = helper_tree == "poseidon2_v8_tree"
+        && ((helper_plan == "poseidon2_v8_reorg.as_ref().map(|(_,v8_plan)|v8_plan)"
+            && helper_manifest == "suffix_manifest"
+            && helper_context == "\"native canonical suffix reorg manifest\"")
+            || (helper_plan == "v8_commit.as_ref().map(|(_,plan)|plan)"
+                && helper_manifest == "mined_manifest"
+                && helper_context == "\"native mined block commit manifest\""))
+        && helper_has_exact_four_arguments;
+    let helper_question = skip_ascii_whitespace(source, call.close_paren + 1);
+    let helper_semicolon = skip_ascii_whitespace(source, helper_question.saturating_add(1));
+    let helper_is_directly_propagated_statement = source.as_bytes().get(helper_question)
+        == Some(&b'?')
+        && source.as_bytes().get(helper_semicolon) == Some(&b';');
+    let typed_tree_is_not_touched_after_helper = helper_semicolon < transaction_body.end
+        && find_rust_identifier_from(
+            &source[helper_semicolon + 1..transaction_body.end],
+            "poseidon2_v8_tree",
+            0,
+        )
+        .is_none();
+    let accepted = rooted_ufcs_path
+        && canonical_shared_tree_argument
+        && canonical_transactional_tree_pattern
+        && transaction_is_top_level_caller_statement
+        && *enclosing_closure == transaction_body
+        && helper_is_first_top_level_statement
+        && helper_is_module_anchored
+        && caller_specific_helper_arguments
+        && helper_is_directly_propagated_statement
+        && typed_tree_is_not_touched_after_helper
+        && call_result_is_propagated(source, &transaction_call);
+    #[cfg(test)]
+    if !accepted {
+        eprintln!(
+            "shared sled rejection: rooted={rooted_ufcs_path} trees={canonical_shared_tree_argument} pattern={canonical_transactional_tree_pattern} top={transaction_is_top_level_caller_statement} closure={} first={helper_is_first_top_level_statement} args={caller_specific_helper_arguments} inner={helper_is_directly_propagated_statement} post_tree={typed_tree_is_not_touched_after_helper} outer={}",
+            *enclosing_closure == transaction_body,
+            call_result_is_propagated(source, &transaction_call),
+        );
+    }
+    accepted
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RustClosureBodyKind {
     Block,
@@ -4872,6 +7565,7 @@ struct RustSourceSpan {
 
 fn rust_call_is_direct_binding_evidence(
     source: &str,
+    raw_source: &str,
     call: &RustCallSite,
     obligation: ResultObligation,
     closures: &[RustClosureBody],
@@ -4890,6 +7584,15 @@ fn rust_call_is_direct_binding_evidence(
         .iter()
         .filter(|closure| closure.start <= call.start && call.start < closure.end)
         .collect::<Vec<_>>();
+    if obligation == ResultObligation::MustPropagateSharedSledTransactionResult {
+        return enclosing_closures.len() == 1
+            && call_is_in_propagated_shared_sled_transaction_closure(
+                source,
+                raw_source,
+                call,
+                enclosing_closures[0],
+            );
+    }
     if enclosing_closures.is_empty() {
         return true;
     }
@@ -6984,6 +9687,23 @@ fn rust_call_dominates_successor(
     false
 }
 
+fn rust_shared_sled_helper_dominates_successor(
+    source: &str,
+    helper: &RustCallSite,
+    successor: &RustCallSite,
+    closure_bodies: &[RustClosureBody],
+) -> bool {
+    let enclosing_helper_closures = closure_bodies
+        .iter()
+        .filter(|closure| closure.start <= helper.start && helper.start < closure.end)
+        .collect::<Vec<_>>();
+    enclosing_helper_closures.len() == 1
+        && enclosing_helper_closures[0].start <= successor.start
+        && successor.start < enclosing_helper_closures[0].end
+        && helper.start < successor.start
+        && !rust_call_is_in_short_circuit_rhs(source, helper)
+}
+
 fn rust_block_path_is_prefix(prefix: &[usize], path: &[usize]) -> bool {
     prefix.len() < path.len() && path.starts_with(prefix)
 }
@@ -7715,6 +10435,8 @@ mod tests {
         );
         assert_eq!(report.total_weight, 100);
         assert_eq!(report.weighted_completion_percent, 100.0);
+        assert_eq!(report.overall_completion_percent, 50.0);
+        assert_eq!(report.formal_surface_coverage_percent, 100.0);
         assert_eq!(report.mechanized_assumption_tracks, 2);
         assert_eq!(report.closed_mechanized_assumption_tracks, 1);
         assert_eq!(report.mechanized_assumption_closure_percent, 50.0);
@@ -7843,6 +10565,10 @@ mod tests {
     fn active_goal_progress_rejects_alternate_matrix_path() {
         let root = test_root("active-goal-progress-alternate-matrix");
         write_active_goal_progress_evidence(&root);
+        write_json(
+            &root.join("config/highest-standard-formal-verification-matrix.json"),
+            highest_standard_matrix_fixture(),
+        );
         let matrix_path = root.join("config/alternate-matrix.json");
         write_json(&matrix_path, highest_standard_matrix_fixture());
         let mut fixture = active_goal_progress_fixture();
@@ -8058,6 +10784,300 @@ mod tests {
     }
 
     #[test]
+    fn governance_claims_reject_coordinated_deletion_without_tombstone() {
+        let root = test_root("governance-claim-deletion");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        let mut claims = claims_fixture();
+        claims["claims"].as_array_mut().expect("claims array").pop();
+        let claims_path = root.join("claims.json");
+        write_json(&claims_path, claims);
+
+        let err = check_claims_file(&claims_path).unwrap_err();
+        assert!(format!("{err:#}").contains("deleted claims require explicit tombstones"));
+    }
+
+    #[test]
+    fn governance_claims_reject_tombstoned_required_conditional_target() {
+        let active_ids = BTreeSet::from(["some.other-claim".to_owned()]);
+        let err =
+            validate_pinned_conditional_claim_presence(CLAIM_BASELINE_ID, &active_ids).unwrap_err();
+        assert!(format!("{err:#}").contains("must remain active and cannot be tombstoned"));
+    }
+
+    #[test]
+    fn governance_claims_accept_explicit_tombstone_against_pinned_baseline() {
+        let root = test_root("governance-claim-tombstone");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        let mut claims = claims_fixture();
+        claims["claims"].as_array_mut().expect("claims array").pop();
+        claims["claim_baseline"]["tombstones"] = json!([{
+            "claim_id": "target.prod",
+            "retired_at": "2026-08-17",
+            "reason": "superseded in test",
+            "approved_by": "test-reviewer",
+            "approval_reference": "TEST-1",
+            "replacement_claim_id": "support.dep"
+        }]);
+        let claims_path = root.join("claims.json");
+        write_json(&claims_path, claims);
+
+        let report = check_claims_file(&claims_path).expect("explicit tombstone accepted");
+        assert_eq!(report.claims, 1);
+        assert_eq!(report.tombstones, 1);
+    }
+
+    #[test]
+    fn governance_claims_reject_unexecuted_gate_record() {
+        let root = test_root("governance-unexecuted-gate");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        let mut claims = claims_fixture();
+        claims["governance_gate_evidence"][0]["status"] = json!("not_run");
+        let claims_path = root.join("claims.json");
+        write_json(&claims_path, claims);
+
+        let err = check_claims_file(&claims_path).unwrap_err();
+        assert!(format!("{err:#}").contains("must record passed status and exit_code 0"));
+    }
+
+    #[test]
+    fn governance_gate_evidence_rejects_incomplete_test_report() {
+        let root = test_root("governance-incomplete-test-report");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        let mut claims = claims_fixture();
+        claims["governance_gate_evidence"][0]["report"]["tests_passed"] =
+            json!(REQUIRED_GOVERNANCE_TEST_COUNT - 1);
+        let report = claims["governance_gate_evidence"][0]["report"].clone();
+        claims["governance_gate_evidence"][0]["report_blake3"] =
+            json!(executed_gate_report_blake3(&report).expect("hash mutated test report"));
+        let claims_path = root.join("claims.json");
+        write_json(&claims_path, claims);
+
+        let err = check_claims_file(&claims_path).unwrap_err();
+        assert!(
+            format!("{err:#}").contains(&format!("tests_passed={REQUIRED_GOVERNANCE_TEST_COUNT}"))
+        );
+    }
+
+    #[test]
+    fn governance_gate_evidence_rejects_policy_source_mutations() {
+        for (case, path) in [
+            ("checker", "scripts/hegemon_formal_core/src/lib.rs"),
+            ("formal-core-runner", "scripts/check_formal_core.sh"),
+            (
+                "formal-gate-cli-args",
+                "scripts/test_formal_gate_cli_args.sh",
+            ),
+            ("kernel-manifest", "protocol/kernel/src/manifest.rs"),
+            ("protocol-versioning", "protocol/versioning/src/lib.rs"),
+            (
+                "atomic-manifest-lean",
+                "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
+            ),
+            (
+                "atomic-manifest-vectors",
+                "formal/lean/Hegemon/Native/GenerateAtomicCommitManifestAdmissionVectors.lean",
+            ),
+            ("native-module", "node/src/native/mod.rs"),
+            ("native-block-policy", "node/src/native/block_flow.rs"),
+            ("native-atomic-commit", "node/src/native/node_impl.rs"),
+            ("native-v8-state", "node/src/native/poseidon2_v8_state.rs"),
+        ] {
+            let root = test_root(&format!("governance-policy-source-mutation-{case}"));
+            write_repo_file(&root, "evidence/support.txt", "support");
+            write_repo_file(&root, "evidence/target.txt", "target");
+            let claims_path = root.join("claims.json");
+            write_json(&claims_path, claims_fixture());
+
+            check_claims_file(&claims_path).expect("fresh gate evidence must be accepted");
+            write_repo_file(&root, path, "// mutated governance policy source\n");
+
+            let err = check_claims_file(&claims_path).unwrap_err();
+            assert!(
+                format!("{err:#}").contains("policy_inputs_blake3 mismatch"),
+                "{path} mutation must invalidate executed governance evidence"
+            );
+        }
+    }
+
+    #[test]
+    fn governance_active_gate_evidence_rejects_matrix_mutation() {
+        let root = test_root("governance-active-matrix-mutation");
+        write_active_goal_progress_evidence(&root);
+        let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
+        write_json(&matrix_path, highest_standard_matrix_fixture());
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, active_goal_progress_fixture());
+
+        check_active_goal_progress_file_with_policy(
+            &progress_path,
+            TEST_MECHANIZED_ASSUMPTION_TRACKS,
+        )
+        .expect("fresh active-goal gate evidence must be accepted");
+        let mut matrix = highest_standard_matrix_fixture();
+        matrix["goal"] = json!("mutated governance matrix");
+        write_json(&matrix_path, matrix);
+
+        let err = check_active_goal_progress_file_with_policy(
+            &progress_path,
+            TEST_MECHANIZED_ASSUMPTION_TRACKS,
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("policy_inputs_blake3 mismatch"));
+    }
+
+    #[test]
+    fn governance_smallwood_conditional_tracks_remain_open_in_policy() {
+        let policy: BTreeMap<&str, &[&str]> = REQUIRED_MECHANIZED_ASSUMPTION_TRACKS
+            .iter()
+            .copied()
+            .collect();
+        for id in [
+            "consensus.accepted-chain-supply-composition",
+            "transaction.accepted-proof-exact-constraint-extraction",
+            "transaction.smallwood-air-row-implementation-equivalence",
+        ] {
+            assert!(
+                policy[id].is_empty(),
+                "{id} must remain open while its deployed evidence is assumption-bound"
+            );
+        }
+    }
+
+    #[test]
+    fn governance_conditional_matrix_track_rejects_closed_relabeling() {
+        let root = test_root("governance-conditional-track-relabeling");
+        write_active_goal_progress_evidence(&root);
+        let mut matrix = highest_standard_matrix_fixture();
+        matrix["mechanized_assumption_closure"]["tracks"][1]["status"] = json!("closed");
+        matrix["mechanized_assumption_closure"]["tracks"][1]["lean_theorems"] =
+            json!(["Hegemon.TestEvidence.unrelated_closed_track"]);
+        matrix["mechanized_assumption_closure"]["tracks"][1]["remaining_work"] = json!([]);
+        matrix["mechanized_assumption_closure"]["closed_tracks"] = json!(2);
+        matrix["mechanized_assumption_closure"]["closure_percent"] = json!(100.0);
+        matrix["overall_completion_percent"] = json!(100.0);
+        let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
+        write_json(&matrix_path, matrix);
+        let mut progress = active_goal_progress_fixture();
+        progress["overall_completion_percent"] = json!(100.0);
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, progress);
+
+        let err = check_active_goal_progress_file_with_policy(
+            &progress_path,
+            TEST_MECHANIZED_ASSUMPTION_TRACKS,
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("expected open from the independent closure policy"));
+    }
+
+    #[test]
+    fn governance_active_goal_rejects_string_only_gate_recipe() {
+        let root = test_root("governance-string-gate");
+        write_active_goal_progress_evidence(&root);
+        write_json(
+            &root.join("config/highest-standard-formal-verification-matrix.json"),
+            highest_standard_matrix_fixture(),
+        );
+        let mut progress = active_goal_progress_fixture();
+        progress["acceptance_gates"] = json!(["bash scripts/check_formal_core.sh"]);
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, progress);
+
+        let err = check_active_goal_progress_file_with_policy(
+            &progress_path,
+            TEST_MECHANIZED_ASSUMPTION_TRACKS,
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("parse"));
+    }
+
+    #[test]
+    fn governance_active_goal_rejects_authority_redirection() {
+        let root = test_root("governance-active-authority-redirection");
+        write_active_goal_progress_evidence(&root);
+        write_json(
+            &root.join("config/highest-standard-formal-verification-matrix.json"),
+            highest_standard_matrix_fixture(),
+        );
+        let mut progress = active_goal_progress_fixture();
+        progress["claim_authority"]["claim_id"] = json!("formal.some-other-claim");
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, progress);
+
+        let err = check_active_goal_progress_file_with_policy(
+            &progress_path,
+            TEST_MECHANIZED_ASSUMPTION_TRACKS,
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("must target the pinned conditional claim"));
+    }
+
+    #[test]
+    fn governance_active_goal_rejects_complete_at_partial_closure() {
+        let root = test_root("governance-active-incomplete-complete-status");
+        write_active_goal_progress_evidence(&root);
+        write_json(
+            &root.join("config/highest-standard-formal-verification-matrix.json"),
+            highest_standard_matrix_fixture(),
+        );
+        let mut progress = active_goal_progress_fixture();
+        progress["goal_status_when_measured"] = json!("complete");
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, progress);
+
+        let err = check_active_goal_progress_file_with_policy(
+            &progress_path,
+            TEST_MECHANIZED_ASSUMPTION_TRACKS,
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("cannot be marked complete"));
+    }
+
+    #[test]
+    fn governance_conditional_authority_cannot_be_marked_production_eligible() {
+        let root = test_root("governance-conditional-production");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        let mut claims = claims_fixture();
+        claims["claims"][1]["authority"] = conditional_authority_fixture();
+        let claims_path = root.join("claims.json");
+        write_json(&claims_path, claims);
+
+        let err = check_claims_file(&claims_path).unwrap_err();
+        assert!(format!("{err:#}")
+            .contains("production_eligible must match machine-readable authority"));
+    }
+
+    #[test]
+    fn governance_blueprint_rejects_claim_authority_mismatch() {
+        let root = test_root("governance-blueprint-authority");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        let mut claims = claims_fixture();
+        claims["claims"][1]["status"] = json!("research_only");
+        claims["claims"][1]["production_eligible"] = json!(false);
+        claims["claims"][1]["authority"] = conditional_authority_fixture();
+        claims["claims"][1]["residual_risks"] = json!([{
+            "id": "test-authority-residual",
+            "description": "test residual",
+            "status": "open",
+            "tracking": "evidence/target.txt"
+        }]);
+        let claims_path = root.join("claims.json");
+        write_json(&claims_path, claims);
+        let blueprint_path = root.join("blueprint.json");
+        write_json(
+            &blueprint_path,
+            blueprint_fixture("needs_review", &[], &["support.dep"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(format!("{err:#}").contains("blueprint authority must exactly match"));
+    }
+
+    #[test]
     fn blueprint_accepts_valid_claim_dag() {
         let root = test_root("valid-blueprint");
         write_repo_file(&root, "evidence/support.txt", "support");
@@ -8090,6 +11110,7 @@ mod tests {
         refresh_blueprint_review_digests(&root, &mut blueprint);
         blueprint["nodes"][1]["formal_statement"] =
             json!("Target production claim changed after review.");
+        refresh_governance_policy_input_digest(&root, &blueprint_path, &mut blueprint);
         write_json_without_review_refresh(&blueprint_path, blueprint);
 
         let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
@@ -9020,6 +12041,1574 @@ mod tests {
         let report = check_blueprint_file(&blueprint_path, &claims_path)
             .expect("propagated result implementation binding");
         assert_eq!(report.implementation_bindings, 1);
+    }
+
+    fn shared_sled_ufcs_test_invocation(closure_body: &str) -> String {
+        [
+            "self::__hegemon_pinned_sled::transaction::Transactional::transaction(\n\
+                 &(&self.meta_tree, &self.height_tree, &self.block_tree,\n\
+                   &self.commitment_tree, &self.nullifier_tree, &self.bridge_inbound_tree,\n\
+                   &self.ciphertext_index_tree, &self.ciphertext_archive_tree,\n\
+                   &self.da_ciphertext_tree, &self.action_tree, &self.poseidon2_v8_tree,),\n\
+                 |(meta_tree, height_tree, block_tree, commitment_tree, nullifier_tree,\n\
+                   bridge_inbound_tree, ciphertext_index_tree, ciphertext_archive_tree,\n\
+                   da_ciphertext_tree, action_tree, poseidon2_v8_tree,)| {\n",
+            closure_body,
+            "\n                 },\n\
+             ).map_err(|_| ())?;\n",
+        ]
+        .concat()
+    }
+
+    fn shared_sled_test_helper_expression() -> &'static str {
+        "self::verified_helper(\n\
+             poseidon2_v8_tree,\n\
+             poseidon2_v8_reorg.as_ref().map(|(_, v8_plan)| v8_plan),\n\
+             suffix_manifest,\n\
+             \"native canonical suffix reorg manifest\",\n\
+         )"
+    }
+
+    fn shared_sled_test_node_source(method_body: &str) -> String {
+        [
+            "extern crate sled as __hegemon_pinned_sled;\n\
+             fn verified_helper() -> Result<(), ()> { Ok(()) }\n\
+             fn legacy_write() -> Result<(), ()> { Ok(()) }\n\
+             struct Tree;\n\
+             struct Node { meta_tree: Tree, height_tree: Tree, block_tree: Tree,\n\
+                           commitment_tree: Tree, nullifier_tree: Tree, bridge_inbound_tree: Tree,\n\
+                           ciphertext_index_tree: Tree, ciphertext_archive_tree: Tree,\n\
+                           da_ciphertext_tree: Tree, action_tree: Tree, poseidon2_v8_tree: Tree }\n\
+             impl Node {\n\
+                 fn import_mined_block(&self) -> Result<(), ()> {\n",
+            method_body,
+            "\n                 }\n\
+             }\n",
+        ]
+        .concat()
+    }
+
+    fn write_shared_sled_test_module_root(root: &Path) {
+        write_repo_file(root, "src/lib.rs", "mod native;\n");
+    }
+
+    fn production_shared_sled_ast_fixture() -> String {
+        "extern crate sled as __hegemon_pinned_sled;\n\
+         /// Applies one typed plan and admits its manifest.\n\
+         fn verified_helper() {}\n\
+         fn native_canonical_suffix_reorg_commit_manifest(\n\
+             plan: &Plan,\n\
+             v8_plan: Option<&V8Plan>,\n\
+         ) -> Result<Manifest, ()> { todo!() }\n\
+         impl super::NativeNode {\n\
+             fn plan_poseidon2_v8_reorganization(\n\
+                 &self,\n\
+                 old_blocks: &[Block],\n\
+                 new_blocks: &[Block],\n\
+             ) -> Result<Option<(Store, V8Plan)>, ()> { todo!() }\n\
+             fn plan_poseidon2_v8_block_against_parent(\n\
+                 &self,\n\
+                 parent: &Meta,\n\
+                 meta: &Meta,\n\
+                 actions: &[PendingAction],\n\
+             ) -> Result<Option<(Store, V8Plan)>, ()> { todo!() }\n\
+             fn commit_reorg_suffix_atomically(\n\
+                 &self,\n\
+                 plan: &NativeReorgSuffixCommitPlan,\n\
+                 best: &NativeBlockMeta,\n\
+                 next_nullifier_accumulator: &NullifierAccumulator,\n\
+             ) -> Result<()> {\n\
+                 let poseidon2_v8_reorg = self\
+                     .plan_poseidon2_v8_reorganization(\n\
+                         &plan.old_blocks,\n\
+                         &plan.new_blocks,\n\
+                     )?;\n\
+                 let suffix_manifest = self::native_canonical_suffix_reorg_commit_manifest(\n\
+                     plan,\n\
+                     poseidon2_v8_reorg.as_ref().map(|(_, v8_plan)| v8_plan),\n\
+                 )?;\n\
+                 self::__hegemon_pinned_sled::transaction::Transactional::transaction(\n\
+                     &(),\n\
+                     |_| Ok(()),\n\
+                 ).map_err(|_| ())?;\n\
+                 Ok(())\n\
+             }\n\
+             pub(crate) fn commit_mined_block_atomically(\n\
+                 &self,\n\
+                 actions: &[PendingAction],\n\
+                 planned: &[NativePlannedActionEffect],\n\
+                 meta: &NativeBlockMeta,\n\
+                 parent_nullifier_accumulator: &NullifierAccumulator,\n\
+                 next_nullifier_accumulator: &NullifierAccumulator,\n\
+                 checkpoint_rows: &NativeCanonicalCheckpointRows,\n\
+                 additional_pending_action_removals: &[ActionId48],\n\
+             ) -> Result<()> {\n\
+                 let parent_meta = parent_meta;\n\
+                 let v8_commit = self\
+                     .plan_poseidon2_v8_block_against_parent(&parent_meta, meta, actions)?;\n\
+                 let mined_manifest = super::native_mined_block_commit_manifest(\n\
+                     actions,\n\
+                     planned,\n\
+                     v8_commit.as_ref().map(|(_, plan)| plan),\n\
+                 );\n\
+                 self::__hegemon_pinned_sled::transaction::Transactional::transaction(\n\
+                     &(),\n\
+                     |_| Ok(()),\n\
+                 ).map_err(|_| ())?;\n\
+                 Ok(())\n\
+             }\n\
+         }\n"
+        .to_owned()
+    }
+
+    fn production_shared_sled_ast_binding() -> ImplementationBinding {
+        ImplementationBinding {
+            path: "node/src/native/node_impl.rs".to_owned(),
+            callee: "verified_helper".to_owned(),
+            required_callers: vec![
+                "NativeNode::commit_reorg_suffix_atomically".to_owned(),
+                "NativeNode::commit_mined_block_atomically".to_owned(),
+            ],
+            result_obligation: Some("must_propagate_shared_sled_transaction_result".to_owned()),
+            call_order_constraints: Vec::new(),
+        }
+    }
+
+    fn assert_production_shared_sled_ast_rejected(source: &str, expected: &str) {
+        let parsed = syn::parse_file(source).expect("parse production shared sled AST fixture");
+        let err = validate_unconditional_shared_sled_symbols(
+            &parsed,
+            "native.atomic-commit-manifest-admission",
+            &production_shared_sled_ast_binding(),
+        )
+        .expect_err("mutated production shared sled AST must reject");
+        assert!(err.to_string().contains(expected), "{err:#}");
+    }
+
+    fn transaction_local_v8_helper_fixture() -> String {
+        "fn verified_helper(\n\
+             poseidon2_v8_tree: &Tree,\n\
+             plan: Option<&Plan>,\n\
+             manifest: Manifest,\n\
+             context: &'static str,\n\
+         ) -> Result<usize> {\n\
+             let actual_application_count = match plan {\n\
+                 Some(plan) => {\n\
+                     super::poseidon2_v8_state::Poseidon2V8StateStore::apply_canonical_plan_in_transaction(\n\
+                         poseidon2_v8_tree,\n\
+                         plan,\n\
+                     )?;\n\
+                     1\n\
+                 }\n\
+                 None => 0,\n\
+             };\n\
+             let observed = super::NativeAtomicCommitManifestAdmissionInput {\n\
+                 poseidon2_v8_plan_application_count: actual_application_count,\n\
+                 ..manifest\n\
+             };\n\
+             super::block_flow::evaluate_native_atomic_commit_manifest_admission(observed)\n\
+                 .map_err(|rejection| {\n\
+                     self::__hegemon_pinned_sled::transaction::ConflictableTransactionError::Abort(\n\
+                         format!(\"{context}: {}\", rejection.label())\n\
+                     )\n\
+                 })?;\n\
+             Ok(actual_application_count)\n\
+         }"
+            .to_owned()
+    }
+
+    fn assert_transaction_local_v8_helper_rejected(source: &str, expected: &str) {
+        let parsed = syn::parse_file(source).expect("parse transaction-local V8 helper fixture");
+        let helper = parsed
+            .items
+            .iter()
+            .find_map(|item| {
+                let syn::Item::Fn(function) = item else {
+                    return None;
+                };
+                (function.sig.ident == "verified_helper").then_some(function)
+            })
+            .expect("transaction-local V8 helper fixture");
+        let err = validate_transaction_local_v8_application_helper(
+            helper,
+            "native.atomic-commit-manifest-admission",
+        )
+        .expect_err("mutated transaction-local V8 helper must reject");
+        assert!(err.to_string().contains(expected), "{err:#}");
+    }
+
+    #[test]
+    fn transaction_local_v8_helper_ast_accepts_exact_apply_then_observe_then_admit() {
+        let parsed = syn::parse_file(&transaction_local_v8_helper_fixture())
+            .expect("parse transaction-local V8 helper fixture");
+        let helper = parsed
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) => Some(function),
+                _ => None,
+            })
+            .expect("transaction-local V8 helper fixture");
+        validate_transaction_local_v8_application_helper(
+            helper,
+            "native.atomic-commit-manifest-admission",
+        )
+        .expect("exact transaction-local V8 helper");
+    }
+
+    #[test]
+    fn transaction_local_v8_helper_ast_rejects_cfg_gated_security_steps() {
+        let raw_cfg = transaction_local_v8_helper_fixture().replacen(
+            "super::poseidon2_v8_state::Poseidon2V8StateStore::apply_canonical_plan_in_transaction(",
+            "#[cfg(test)]\n                     super::poseidon2_v8_state::Poseidon2V8StateStore::apply_canonical_plan_in_transaction(",
+            1,
+        );
+        assert_transaction_local_v8_helper_rejected(
+            &raw_cfg,
+            "raw apply expression must be unconditional",
+        );
+
+        let field_cfg = transaction_local_v8_helper_fixture().replacen(
+            "poseidon2_v8_plan_application_count: actual_application_count,",
+            "#[cfg(test)]\n                 poseidon2_v8_plan_application_count: actual_application_count,",
+            1,
+        );
+        assert_transaction_local_v8_helper_rejected(
+            &field_cfg,
+            "overwrite only the actual application count",
+        );
+
+        let evaluator_cfg = transaction_local_v8_helper_fixture().replacen(
+            "super::block_flow::evaluate_native_atomic_commit_manifest_admission(observed)",
+            "#[cfg_attr(test, allow(dead_code))]\n             super::block_flow::evaluate_native_atomic_commit_manifest_admission(observed)",
+            1,
+        );
+        assert_transaction_local_v8_helper_rejected(
+            &evaluator_cfg,
+            "manifest admission must be unconditional",
+        );
+    }
+
+    #[test]
+    fn transaction_local_v8_helper_ast_rejects_application_count_or_evaluator_substitution() {
+        let hard_coded_zero = transaction_local_v8_helper_fixture().replacen(
+            "let actual_application_count = match plan {",
+            "let actual_application_count = 0;\n             let _ignored_plan = match plan {",
+            1,
+        );
+        assert_transaction_local_v8_helper_rejected(
+            &hard_coded_zero,
+            "requires exactly four ordered statements",
+        );
+
+        let copied_source_count = transaction_local_v8_helper_fixture().replacen(
+            "poseidon2_v8_plan_application_count: actual_application_count,",
+            "poseidon2_v8_plan_application_count: manifest.source_poseidon2_v8_plan_count,",
+            1,
+        );
+        assert_transaction_local_v8_helper_rejected(
+            &copied_source_count,
+            "overwrite only the actual application count",
+        );
+
+        let count_two = transaction_local_v8_helper_fixture().replacen(")?;\n1\n", ")?;\n2\n", 1);
+        assert_transaction_local_v8_helper_rejected(
+            &count_two,
+            "raw apply/count coupling is not canonical",
+        );
+
+        let wrong_apply = transaction_local_v8_helper_fixture().replacen(
+            "apply_canonical_plan_in_transaction",
+            "skip_canonical_plan_in_transaction",
+            1,
+        );
+        assert_transaction_local_v8_helper_rejected(
+            &wrong_apply,
+            "calls the wrong raw typed apply",
+        );
+
+        let wrong_evaluator = transaction_local_v8_helper_fixture().replacen(
+            "evaluate_native_atomic_commit_manifest_admission",
+            "pretend_native_atomic_commit_manifest_admission",
+            1,
+        );
+        assert_transaction_local_v8_helper_rejected(
+            &wrong_evaluator,
+            "calls the wrong manifest evaluator",
+        );
+
+        let non_abort_rejection = transaction_local_v8_helper_fixture().replacen(
+            "ConflictableTransactionError::Abort(",
+            "ConflictableTransactionError::Conflict(",
+            1,
+        );
+        assert_transaction_local_v8_helper_rejected(
+            &non_abort_rejection,
+            "must map rejection to a pinned sled transaction abort",
+        );
+    }
+
+    #[test]
+    fn production_shared_sled_ast_accepts_exact_parent_type_and_plan_provenance() {
+        let parsed = syn::parse_file(&production_shared_sled_ast_fixture())
+            .expect("parse production shared sled AST fixture");
+        validate_unconditional_shared_sled_symbols(
+            &parsed,
+            "native.atomic-commit-manifest-admission",
+            &production_shared_sled_ast_binding(),
+        )
+        .expect("exact production shared sled AST");
+    }
+
+    #[test]
+    fn production_shared_sled_ast_rejects_async_atomic_caller() {
+        let source = production_shared_sled_ast_fixture().replacen(
+            "fn commit_reorg_suffix_atomically(",
+            "async fn commit_reorg_suffix_atomically(",
+            1,
+        );
+        assert_production_shared_sled_ast_rejected(
+            &source,
+            "must keep its exact synchronous fallible signature",
+        );
+    }
+
+    #[test]
+    fn production_shared_sled_ast_rejects_nested_outer_macro_before_transaction() {
+        let source = production_shared_sled_ast_fixture().replacen(
+            "self::__hegemon_pinned_sled::transaction::Transactional::transaction(",
+            "if skip { crate::early_ok!(); }\n\
+             self::__hegemon_pinned_sled::transaction::Transactional::transaction(",
+            1,
+        );
+        assert_production_shared_sled_ast_rejected(
+            &source,
+            "prefix must be return-free and macro-free outside closures",
+        );
+    }
+
+    #[test]
+    fn production_shared_sled_binding_accepts_current_node_source_and_cargo_targets() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("canonical repository root");
+        validate_rust_implementation_binding(
+            &root,
+            "native.atomic-commit-manifest-admission",
+            &ImplementationBinding {
+                path: "node/src/native/node_impl.rs".to_owned(),
+                callee: "apply_poseidon2_v8_plan_and_admit_atomic_manifest_in_transaction"
+                    .to_owned(),
+                required_callers: vec![
+                    "NativeNode::commit_reorg_suffix_atomically".to_owned(),
+                    "NativeNode::commit_mined_block_atomically".to_owned(),
+                ],
+                result_obligation: Some("must_propagate_shared_sled_transaction_result".to_owned()),
+                call_order_constraints: [
+                    "NativeNode::commit_reorg_suffix_atomically",
+                    "NativeNode::commit_mined_block_atomically",
+                ]
+                .into_iter()
+                .map(|caller| ImplementationCallOrderConstraint {
+                    caller: caller.to_owned(),
+                    callee_must_precede: vec!["block_tree.insert".to_owned()],
+                    result_obligation: None,
+                    must_dominate_successors: true,
+                    lean_theorems: Vec::new(),
+                })
+                .collect(),
+            },
+        )
+        .expect("current production shared sled binding");
+    }
+
+    fn native_node_parent_struct_fixture() -> String {
+        "pub struct NativeNode {\n\
+             meta_tree: sled::Tree,\n\
+             height_tree: sled::Tree,\n\
+             block_tree: sled::Tree,\n\
+             commitment_tree: sled::Tree,\n\
+             nullifier_tree: sled::Tree,\n\
+             bridge_inbound_tree: sled::Tree,\n\
+             ciphertext_index_tree: sled::Tree,\n\
+             ciphertext_archive_tree: sled::Tree,\n\
+             da_ciphertext_tree: sled::Tree,\n\
+             action_tree: sled::Tree,\n\
+             poseidon2_v8_tree: sled::Tree,\n\
+         }\n"
+        .to_owned()
+    }
+
+    #[test]
+    fn native_node_parent_struct_pin_rejects_alias_or_gated_tree_field() {
+        let valid_root = test_root("native-node-parent-struct-valid");
+        write_repo_file(
+            &valid_root,
+            "node/src/native/mod.rs",
+            &native_node_parent_struct_fixture(),
+        );
+        validate_native_node_parent_struct(&valid_root).expect("exact native parent struct");
+
+        let alias_root = test_root("native-node-parent-struct-alias");
+        let alias = native_node_parent_struct_fixture().replacen(
+            "pub struct NativeNode",
+            "pub struct Decoy",
+            1,
+        ) + "type NativeNode = Decoy;\n";
+        write_repo_file(&alias_root, "node/src/native/mod.rs", &alias);
+        let err = validate_native_node_parent_struct(&alias_root)
+            .expect_err("NativeNode alias must not satisfy production type binding");
+        assert!(
+            err.to_string()
+                .contains("exactly one top-level NativeNode struct"),
+            "{err:#}"
+        );
+
+        let gated_root = test_root("native-node-parent-struct-gated-tree");
+        let gated = native_node_parent_struct_fixture().replacen(
+            "poseidon2_v8_tree: sled::Tree,",
+            "#[cfg(test)] poseidon2_v8_tree: sled::Tree,",
+            1,
+        );
+        write_repo_file(&gated_root, "node/src/native/mod.rs", &gated);
+        let err = validate_native_node_parent_struct(&gated_root)
+            .expect_err("cfg-gated typed tree must not satisfy production type binding");
+        assert!(err.to_string().contains("poseidon2_v8_tree"), "{err:#}");
+    }
+
+    #[test]
+    fn v8_atomic_runtime_gate_variance_visitor_rejects_prod_test_divergence() {
+        let parsed = syn::parse_file(
+            "fn evaluator() { #[cfg(not(test))] return; }\n\
+             impl Store { fn apply() { #[cfg_attr(test, allow(dead_code))] let _row = 1; } }",
+        )
+        .expect("parse compiler-selection mutation fixture");
+        let evaluator = parsed
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) => Some(function),
+                _ => None,
+            })
+            .expect("evaluator fixture");
+        assert!(syn_item_fn_has_runtime_gate_variance(evaluator));
+        let raw_apply = parsed
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Impl(item_impl) => item_impl.items.iter().find_map(|item| match item {
+                    syn::ImplItem::Fn(function) => Some(function),
+                    _ => None,
+                }),
+                _ => None,
+            })
+            .expect("raw apply fixture");
+        assert!(syn_impl_item_fn_has_runtime_gate_variance(raw_apply));
+
+        let macro_selected = syn::parse_file(
+            "fn evaluator() { let skip = || cfg!(feature = \"skip-v8-atomic\"); if skip() { return; } }",
+        )
+        .expect("parse nested compiler-selection macro fixture");
+        let macro_selected = macro_selected
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) => Some(function),
+                _ => None,
+            })
+            .expect("macro-selected evaluator fixture");
+        assert!(syn_item_fn_has_runtime_gate_variance(macro_selected));
+
+        let ordinary = syn::parse_file("fn evaluator() { let _row = 1; }")
+            .expect("parse ordinary evaluator fixture");
+        let ordinary = ordinary
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) => Some(function),
+                _ => None,
+            })
+            .expect("ordinary evaluator fixture");
+        assert!(!syn_item_fn_has_runtime_gate_variance(ordinary));
+    }
+
+    fn current_v8_atomic_runtime_gate_sources() -> (String, String, String) {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("canonical repository root");
+        (
+            std::fs::read_to_string(root.join("node/src/native/block_flow.rs"))
+                .expect("read production atomic manifest evaluator source"),
+            std::fs::read_to_string(root.join("node/src/native/node_impl.rs"))
+                .expect("read production transaction-local atomic manifest source"),
+            std::fs::read_to_string(root.join("node/src/native/poseidon2_v8_state.rs"))
+                .expect("read production raw typed-plan apply source"),
+        )
+    }
+
+    fn assert_v8_atomic_runtime_gate_mutation_rejected(
+        block_flow_source: &str,
+        node_impl_source: &str,
+        state_source: &str,
+        expected: &str,
+    ) {
+        let err = validate_v8_atomic_runtime_gate_sources(
+            block_flow_source,
+            node_impl_source,
+            state_source,
+        )
+        .expect_err("mutated V8 atomic runtime source must reject");
+        assert!(err.to_string().contains(expected), "{err:#}");
+    }
+
+    #[test]
+    fn v8_atomic_runtime_gate_rejects_profile_macros_constants_and_environment_bypasses() {
+        let (block_flow, node_impl, state) = current_v8_atomic_runtime_gate_sources();
+        validate_v8_atomic_runtime_gate_sources(&block_flow, &node_impl, &state)
+            .expect("current V8 atomic runtime source");
+
+        let evaluator_marker =
+            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    if input.kind";
+        let evaluator_cfg = block_flow.replacen(
+            evaluator_marker,
+            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    if cfg!(not(test)) { return ::core::result::Result::Ok(()); }\n    if input.kind",
+            1,
+        );
+        assert_ne!(evaluator_cfg, block_flow);
+        assert_v8_atomic_runtime_gate_mutation_rejected(
+            &evaluator_cfg,
+            &node_impl,
+            &state,
+            "macro-free cfg-invariant",
+        );
+
+        let raw_marker =
+            ") -> ConflictableTransactionResult<(), String> {\n        let observed_tip";
+        let raw_environment = state.replacen(
+            raw_marker,
+            ") -> ConflictableTransactionResult<(), String> {\n        if option_env!(\"HEGEMON_SKIP_V8_ATOMIC\").is_some() { return ::core::result::Result::Ok(()); }\n        let observed_tip",
+            1,
+        );
+        assert_ne!(raw_environment, state);
+        assert_v8_atomic_runtime_gate_mutation_rejected(
+            &block_flow,
+            &node_impl,
+            &raw_environment,
+            "macro-free cfg-invariant",
+        );
+
+        let raw_profile_constant = state
+            .replacen(
+                "impl Poseidon2V8StateStore {",
+                "const SKIP_V8_ATOMIC: bool = cfg!(feature = \"skip-v8-atomic\");\n\nimpl Poseidon2V8StateStore {",
+                1,
+            )
+            .replacen(
+                raw_marker,
+                ") -> ConflictableTransactionResult<(), String> {\n        if SKIP_V8_ATOMIC { return ::core::result::Result::Ok(()); }\n        let observed_tip",
+                1,
+            );
+        assert_ne!(raw_profile_constant, state);
+        assert_v8_atomic_runtime_gate_mutation_rejected(
+            &block_flow,
+            &node_impl,
+            &raw_profile_constant,
+            "runtime AST changed",
+        );
+    }
+
+    #[test]
+    fn v8_atomic_runtime_gate_rejects_semantic_admission_or_apply_noops() {
+        let (block_flow, node_impl, state) = current_v8_atomic_runtime_gate_sources();
+        let evaluator_marker =
+            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    if input.kind";
+        let evaluator_noop = block_flow.replacen(
+            evaluator_marker,
+            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    return ::core::result::Result::Ok(());\n    if input.kind",
+            1,
+        );
+        assert_ne!(evaluator_noop, block_flow);
+        assert_v8_atomic_runtime_gate_mutation_rejected(
+            &evaluator_noop,
+            &node_impl,
+            &state,
+            "runtime AST changed",
+        );
+
+        let evaluator_err_shadow = block_flow
+            .replacen(
+                "use super::*;",
+                "use super::*;\n#[allow(non_upper_case_globals)]\n#[cfg(not(test))]\nconst Err: fn(NativeAtomicCommitManifestAdmissionRejection) -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> = |_| ::core::result::Result::Ok(());",
+                1,
+            )
+            .replacen("::core::result::Result::Err(", "Err(", 1);
+        assert_ne!(evaluator_err_shadow, block_flow);
+        assert_v8_atomic_runtime_gate_mutation_rejected(
+            &evaluator_err_shadow,
+            &node_impl,
+            &state,
+            "runtime AST changed",
+        );
+
+        let helper_noop = block_flow.replacen(
+            "NativeAtomicCommitKind::MinedBlockCommit => 1,",
+            "NativeAtomicCommitKind::MinedBlockCommit => input.block_record_writes,",
+            1,
+        );
+        assert_ne!(helper_noop, block_flow);
+        assert_v8_atomic_runtime_gate_mutation_rejected(
+            &helper_noop,
+            &node_impl,
+            &state,
+            "runtime AST changed",
+        );
+
+        let mined_manifest_tautology = block_flow.replacen(
+            "poseidon2_v8_plan_application_count:\n            UNOBSERVED_POSEIDON2_V8_PLAN_APPLICATION_COUNT,",
+            "poseidon2_v8_plan_application_count: poseidon2_v8_plan_count,",
+            1,
+        );
+        assert_ne!(mined_manifest_tautology, block_flow);
+        assert_v8_atomic_runtime_gate_mutation_rejected(
+            &mined_manifest_tautology,
+            &node_impl,
+            &state,
+            "runtime AST changed",
+        );
+
+        let suffix_manifest_tautology = node_impl.replacen(
+            "poseidon2_v8_plan_application_count:\n            UNOBSERVED_POSEIDON2_V8_PLAN_APPLICATION_COUNT,",
+            "poseidon2_v8_plan_application_count: poseidon2_v8_plan_count,",
+            1,
+        );
+        assert_ne!(suffix_manifest_tautology, node_impl);
+        assert_v8_atomic_runtime_gate_mutation_rejected(
+            &block_flow,
+            &suffix_manifest_tautology,
+            &state,
+            "runtime AST changed",
+        );
+
+        let helper_copies_source_count = node_impl.replacen(
+            "poseidon2_v8_plan_application_count: actual_application_count,",
+            "poseidon2_v8_plan_application_count: manifest.source_poseidon2_v8_plan_count,",
+            1,
+        );
+        assert_ne!(helper_copies_source_count, node_impl);
+        assert_v8_atomic_runtime_gate_mutation_rejected(
+            &block_flow,
+            &helper_copies_source_count,
+            &state,
+            "runtime AST changed",
+        );
+
+        let raw_marker =
+            ") -> ConflictableTransactionResult<(), String> {\n        let observed_tip";
+        let raw_noop = state.replacen(
+            raw_marker,
+            ") -> ConflictableTransactionResult<(), String> {\n        return ::core::result::Result::Ok(());\n        let observed_tip",
+            1,
+        );
+        assert_ne!(raw_noop, state);
+        assert_v8_atomic_runtime_gate_mutation_rejected(
+            &block_flow,
+            &node_impl,
+            &raw_noop,
+            "runtime AST changed",
+        );
+
+        let raw_err_shadow = state
+            .replacen(
+                "#![allow(dead_code)]",
+                "#![allow(dead_code)]\n#[allow(non_upper_case_globals)]\n#[cfg(not(test))]\nconst Err: fn(ConflictableTransactionError<String>) -> ConflictableTransactionResult<(), String> = |_| ::core::result::Result::Ok(());",
+                1,
+            )
+            .replacen("::core::result::Result::Err(", "Err(", 1);
+        assert_ne!(raw_err_shadow, state);
+        assert_v8_atomic_runtime_gate_mutation_rejected(
+            &block_flow,
+            &node_impl,
+            &raw_err_shadow,
+            "runtime AST changed",
+        );
+    }
+
+    #[test]
+    fn v8_atomic_runtime_gate_ast_ignores_comments_but_rejects_enclosing_cfg() {
+        let (block_flow, node_impl, state) = current_v8_atomic_runtime_gate_sources();
+        let evaluator_marker =
+            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    if input.kind";
+        let commented = block_flow.replacen(
+            evaluator_marker,
+            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    // Non-semantic review note.\n    if input.kind",
+            1,
+        );
+        assert_ne!(commented, block_flow);
+        validate_v8_atomic_runtime_gate_sources(&commented, &node_impl, &state)
+            .expect("comments do not change normalized V8 runtime AST");
+
+        let cfg_impl = state.replacen(
+            "impl Poseidon2V8StateStore {",
+            "#[cfg(not(test))]\nimpl Poseidon2V8StateStore {",
+            1,
+        );
+        assert_ne!(cfg_impl, state);
+        assert_v8_atomic_runtime_gate_mutation_rejected(
+            &block_flow,
+            &node_impl,
+            &cfg_impl,
+            "cfg-invariant raw typed-plan apply",
+        );
+    }
+
+    #[test]
+    fn production_shared_sled_ast_rejects_bare_or_qualified_decoy_type() {
+        for replacement in ["impl NativeNode {", "impl adversary::NativeNode {"] {
+            let source = production_shared_sled_ast_fixture().replacen(
+                "impl super::NativeNode {",
+                replacement,
+                1,
+            );
+            assert_production_shared_sled_ast_rejected(
+                &source,
+                "requires one top-level inherent method",
+            );
+        }
+    }
+
+    #[test]
+    fn production_shared_sled_ast_rejects_plan_and_manifest_shadows() {
+        let suffix_shadow = production_shared_sled_ast_fixture().replacen(
+            "let suffix_manifest =",
+            "let poseidon2_v8_reorg = None;\nlet suffix_manifest =",
+            1,
+        );
+        assert_production_shared_sled_ast_rejected(
+            &suffix_shadow,
+            "one immutable poseidon2_v8_reorg binding",
+        );
+
+        let mined_shadow = production_shared_sled_ast_fixture().replacen(
+            "let mined_manifest =",
+            "let v8_commit = None;\nlet mined_manifest =",
+            1,
+        );
+        assert_production_shared_sled_ast_rejected(
+            &mined_shadow,
+            "ordered immutable v8_commit and mined_manifest bindings",
+        );
+
+        let manifest_redirect = production_shared_sled_ast_fixture().replacen(
+            "poseidon2_v8_reorg.as_ref().map(|(_, v8_plan)| v8_plan)",
+            "None",
+            1,
+        );
+        assert_production_shared_sled_ast_rejected(
+            &manifest_redirect,
+            "exact suffix plan projection",
+        );
+    }
+
+    fn assert_shared_sled_binding_rejected(test_name: &str, method_body: &str) {
+        assert_shared_sled_source_rejected(test_name, &shared_sled_test_node_source(method_body));
+    }
+
+    fn assert_shared_sled_source_rejected(test_name: &str, source: &str) {
+        assert_shared_sled_source_rejected_with(
+            test_name,
+            source,
+            "does not call verified_helper with propagated shared sled transaction result",
+        );
+    }
+
+    fn assert_shared_sled_source_rejected_with(
+        test_name: &str,
+        source: &str,
+        expected_error: &str,
+    ) {
+        let root = test_root(test_name);
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_shared_sled_test_module_root(&root);
+        write_repo_file(&root, "src/native.rs", source);
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_shared_sled_transaction_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("invalid shared sled binding must reject");
+        assert!(err.to_string().contains(expected_error), "{err:#}");
+    }
+
+    fn assert_nested_shared_sled_source_rejected_with(
+        test_name: &str,
+        source: &str,
+        library_root: &str,
+        native_module_root: &str,
+        expected_error: &str,
+    ) {
+        let root = test_root(test_name);
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(&root, "src/lib.rs", library_root);
+        write_repo_file(&root, "src/native/mod.rs", native_module_root);
+        write_repo_file(&root, "src/native/node_impl.rs", source);
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        let mut blueprint = blueprint_fixture_with_result_binding(
+            "verified_helper",
+            &["import_mined_block"],
+            "must_propagate_shared_sled_transaction_result",
+        );
+        blueprint["nodes"][1]["implementation_paths"] =
+            json!(["evidence/target.txt", "src/native/node_impl.rs"]);
+        blueprint["nodes"][1]["implementation_bindings"][0]["path"] =
+            json!("src/native/node_impl.rs");
+        write_json(&blueprint_path, blueprint);
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("invalid nested shared sled binding must reject");
+        assert!(err.to_string().contains(expected_error), "{err:#}");
+    }
+
+    #[test]
+    fn blueprint_accepts_propagated_helper_inside_propagated_transaction_closure() {
+        let root = test_root("propagated-helper-inside-propagated-transaction");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_shared_sled_test_module_root(&root);
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "extern crate sled as __hegemon_pinned_sled;\n\
+             fn verified_helper() -> Result<(), ()> { Ok(()) }\n\
+             struct Tree;\n\
+             struct Node {\n\
+                 meta_tree: Tree,\n\
+                 height_tree: Tree,\n\
+                 block_tree: Tree,\n\
+                 commitment_tree: Tree,\n\
+                 nullifier_tree: Tree,\n\
+                 bridge_inbound_tree: Tree,\n\
+                 ciphertext_index_tree: Tree,\n\
+                 ciphertext_archive_tree: Tree,\n\
+                 da_ciphertext_tree: Tree,\n\
+                 action_tree: Tree,\n\
+                 poseidon2_v8_tree: Tree,\n\
+             }\n\
+             impl Node {\n\
+                 fn import_mined_block(&self) -> Result<(), ()> {\n\
+                     self::__hegemon_pinned_sled::transaction::Transactional::transaction(\n\
+                         &(&self.meta_tree, &self.height_tree, &self.block_tree,\n\
+                           &self.commitment_tree, &self.nullifier_tree, &self.bridge_inbound_tree,\n\
+                           &self.ciphertext_index_tree, &self.ciphertext_archive_tree,\n\
+                           &self.da_ciphertext_tree, &self.action_tree, &self.poseidon2_v8_tree,),\n\
+                         |(meta_tree, height_tree, block_tree, commitment_tree, nullifier_tree,\n\
+                           bridge_inbound_tree, ciphertext_index_tree, ciphertext_archive_tree,\n\
+                           da_ciphertext_tree, action_tree, poseidon2_v8_tree,)| {\n\
+                             self::verified_helper(\n\
+                                 poseidon2_v8_tree,\n\
+                                 poseidon2_v8_reorg.as_ref().map(|(_, v8_plan)| v8_plan),\n\
+                                 suffix_manifest,\n\
+                                 \"native canonical suffix reorg manifest\",\n\
+                             )?;\n\
+                             Ok(())\n\
+                         },\n\
+                     )\n\
+                         .map_err(|_| ())?;\n\
+                     Ok(())\n\
+                 }\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_shared_sled_transaction_result",
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("synchronously executed transaction helper is propagated twice");
+        assert_eq!(report.implementation_bindings, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_transaction_closure_when_outer_result_is_ignored() {
+        let root = test_root("ignored-outer-transaction-result");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_shared_sled_test_module_root(&root);
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "extern crate sled as __hegemon_pinned_sled;\n\
+             fn verified_helper() -> Result<(), ()> { Ok(()) }\n\
+             struct Tree;\n\
+             struct Node { meta_tree: Tree, height_tree: Tree, block_tree: Tree,\n\
+                           commitment_tree: Tree, nullifier_tree: Tree, bridge_inbound_tree: Tree,\n\
+                           ciphertext_index_tree: Tree, ciphertext_archive_tree: Tree,\n\
+                           da_ciphertext_tree: Tree, action_tree: Tree, poseidon2_v8_tree: Tree }\n\
+             impl Node {\n\
+                 fn import_mined_block(&self) -> Result<(), ()> {\n\
+                     let _ignored = self::__hegemon_pinned_sled::transaction::Transactional::transaction(\n\
+                         &(&self.meta_tree, &self.height_tree, &self.block_tree,\n\
+                           &self.commitment_tree, &self.nullifier_tree, &self.bridge_inbound_tree,\n\
+                           &self.ciphertext_index_tree, &self.ciphertext_archive_tree,\n\
+                           &self.da_ciphertext_tree, &self.action_tree, &self.poseidon2_v8_tree),\n\
+                         |(meta_tree, height_tree, block_tree, commitment_tree, nullifier_tree,\n\
+                           bridge_inbound_tree, ciphertext_index_tree, ciphertext_archive_tree,\n\
+                           da_ciphertext_tree, action_tree, poseidon2_v8_tree,)| {\n\
+                             verified_helper(\n\
+                                 poseidon2_v8_tree,\n\
+                                 poseidon2_v8_reorg.map(|(_, v8_plan)| v8_plan),\n\
+                                 suffix_manifest,\n\
+                                 \"native canonical suffix reorg manifest\",\n\
+                             )?;\n\
+                             Ok(())\n\
+                         },\n\
+                     );\n\
+                     Ok(())\n\
+                 }\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_shared_sled_transaction_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("ignored transaction result must not satisfy propagation");
+        assert!(
+            err.to_string().contains(
+                "does not call verified_helper with propagated shared sled transaction result"
+            ),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_transaction_closure_when_inner_result_is_ignored() {
+        let root = test_root("ignored-inner-transaction-helper-result");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_shared_sled_test_module_root(&root);
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "extern crate sled as __hegemon_pinned_sled;\n\
+             fn verified_helper() -> Result<(), ()> { Ok(()) }\n\
+             struct Tree;\n\
+             struct Node { meta_tree: Tree, height_tree: Tree, block_tree: Tree,\n\
+                           commitment_tree: Tree, nullifier_tree: Tree, bridge_inbound_tree: Tree,\n\
+                           ciphertext_index_tree: Tree, ciphertext_archive_tree: Tree,\n\
+                           da_ciphertext_tree: Tree, action_tree: Tree, poseidon2_v8_tree: Tree }\n\
+             impl Node {\n\
+                 fn import_mined_block(&self) -> Result<(), ()> {\n\
+                     self::__hegemon_pinned_sled::transaction::Transactional::transaction(\n\
+                         &(&self.meta_tree, &self.height_tree, &self.block_tree,\n\
+                           &self.commitment_tree, &self.nullifier_tree, &self.bridge_inbound_tree,\n\
+                           &self.ciphertext_index_tree, &self.ciphertext_archive_tree,\n\
+                           &self.da_ciphertext_tree, &self.action_tree, &self.poseidon2_v8_tree),\n\
+                         |(meta_tree, height_tree, block_tree, commitment_tree, nullifier_tree,\n\
+                           bridge_inbound_tree, ciphertext_index_tree, ciphertext_archive_tree,\n\
+                           da_ciphertext_tree, action_tree, poseidon2_v8_tree,)| {\n\
+                             let _ignored = verified_helper(\n\
+                                 poseidon2_v8_tree,\n\
+                                 poseidon2_v8_reorg.map(|(_, v8_plan)| v8_plan),\n\
+                                 suffix_manifest,\n\
+                                 \"native canonical suffix reorg manifest\",\n\
+                             );\n\
+                             Ok(())\n\
+                         },\n\
+                     )\n\
+                         .map_err(|_| ())?;\n\
+                     Ok(())\n\
+                 }\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_shared_sled_transaction_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("ignored inner helper result must not satisfy propagation");
+        assert!(
+            err.to_string().contains(
+                "does not call verified_helper with propagated shared sled transaction result"
+            ),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_nested_deferred_helper_inside_transaction_closure() {
+        let root = test_root("nested-deferred-helper-inside-transaction");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_shared_sled_test_module_root(&root);
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "extern crate sled as __hegemon_pinned_sled;\n\
+             fn verified_helper() -> Result<(), ()> { Ok(()) }\n\
+             struct Tree;\n\
+             struct Node { meta_tree: Tree, height_tree: Tree, block_tree: Tree,\n\
+                           commitment_tree: Tree, nullifier_tree: Tree, bridge_inbound_tree: Tree,\n\
+                           ciphertext_index_tree: Tree, ciphertext_archive_tree: Tree,\n\
+                           da_ciphertext_tree: Tree, action_tree: Tree, poseidon2_v8_tree: Tree }\n\
+             impl Node {\n\
+                 fn import_mined_block(&self) -> Result<(), ()> {\n\
+                     self::__hegemon_pinned_sled::transaction::Transactional::transaction(\n\
+                         &(&self.meta_tree, &self.height_tree, &self.block_tree,\n\
+                           &self.commitment_tree, &self.nullifier_tree, &self.bridge_inbound_tree,\n\
+                           &self.ciphertext_index_tree, &self.ciphertext_archive_tree,\n\
+                           &self.da_ciphertext_tree, &self.action_tree, &self.poseidon2_v8_tree),\n\
+                         |(meta_tree, height_tree, block_tree, commitment_tree, nullifier_tree,\n\
+                           bridge_inbound_tree, ciphertext_index_tree, ciphertext_archive_tree,\n\
+                           da_ciphertext_tree, action_tree, poseidon2_v8_tree,)| {\n\
+                             let _deferred = || verified_helper(\n\
+                                 poseidon2_v8_tree,\n\
+                                 poseidon2_v8_reorg.map(|(_, v8_plan)| v8_plan),\n\
+                                 suffix_manifest,\n\
+                                 \"native canonical suffix reorg manifest\",\n\
+                             )?;\n\
+                             Ok(())\n\
+                         },\n\
+                     ).map_err(|_| ())?;\n\
+                     Ok(())\n\
+                 }\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_shared_sled_transaction_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("nested deferred closure must not become transaction evidence");
+        assert!(
+            err.to_string().contains(
+                "does not call verified_helper with propagated shared sled transaction result"
+            ),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_transaction_result_recovery() {
+        let root = test_root("recovered-transaction-result");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_shared_sled_test_module_root(&root);
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "extern crate sled as __hegemon_pinned_sled;\n\
+             fn verified_helper() -> Result<(), ()> { Ok(()) }\n\
+             struct Tree;\n\
+             struct Node { meta_tree: Tree, height_tree: Tree, block_tree: Tree,\n\
+                           commitment_tree: Tree, nullifier_tree: Tree, bridge_inbound_tree: Tree,\n\
+                           ciphertext_index_tree: Tree, ciphertext_archive_tree: Tree,\n\
+                           da_ciphertext_tree: Tree, action_tree: Tree, poseidon2_v8_tree: Tree }\n\
+             impl Node {\n\
+                 fn import_mined_block(&self) -> Result<(), ()> {\n\
+                     self::__hegemon_pinned_sled::transaction::Transactional::transaction(\n\
+                         &(&self.meta_tree, &self.height_tree, &self.block_tree,\n\
+                           &self.commitment_tree, &self.nullifier_tree, &self.bridge_inbound_tree,\n\
+                           &self.ciphertext_index_tree, &self.ciphertext_archive_tree,\n\
+                           &self.da_ciphertext_tree, &self.action_tree, &self.poseidon2_v8_tree),\n\
+                         |(meta_tree, height_tree, block_tree, commitment_tree, nullifier_tree,\n\
+                           bridge_inbound_tree, ciphertext_index_tree, ciphertext_archive_tree,\n\
+                           da_ciphertext_tree, action_tree, poseidon2_v8_tree,)| {\n\
+                             verified_helper(\n\
+                                 poseidon2_v8_tree,\n\
+                                 poseidon2_v8_reorg.map(|(_, v8_plan)| v8_plan),\n\
+                                 suffix_manifest,\n\
+                                 \"native canonical suffix reorg manifest\",\n\
+                             )?;\n\
+                             Ok(())\n\
+                         },\n\
+                     )\n\
+                         .unwrap_or(());\n\
+                     Ok(())\n\
+                 }\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_shared_sled_transaction_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("transaction recovery must not satisfy propagation");
+        assert!(
+            err.to_string().contains(
+                "does not call verified_helper with propagated shared sled transaction result"
+            ),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_spoofed_transaction_receiver_for_shared_sled_obligation() {
+        let root = test_root("spoofed-shared-sled-transaction-receiver");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_shared_sled_test_module_root(&root);
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "extern crate sled as __hegemon_pinned_sled;\n\
+             fn verified_helper() -> Result<(), ()> { Ok(()) }\n\
+             fn fake<T>(value: T) -> T { value }\n\
+             struct Tree;\n\
+             struct Node { meta_tree: Tree, height_tree: Tree, block_tree: Tree,\n\
+                           commitment_tree: Tree, nullifier_tree: Tree, bridge_inbound_tree: Tree,\n\
+                           ciphertext_index_tree: Tree, ciphertext_archive_tree: Tree,\n\
+                           da_ciphertext_tree: Tree, action_tree: Tree, poseidon2_v8_tree: Tree }\n\
+             impl Node {\n\
+                 fn import_mined_block(&self) -> Result<(), ()> {\n\
+                     self::__hegemon_pinned_sled::transaction::Transactional::transaction(\n\
+                         &fake((&self.meta_tree, &self.height_tree, &self.block_tree,\n\
+                               &self.commitment_tree, &self.nullifier_tree,\n\
+                               &self.bridge_inbound_tree, &self.ciphertext_index_tree,\n\
+                               &self.ciphertext_archive_tree, &self.da_ciphertext_tree,\n\
+                               &self.action_tree, &self.poseidon2_v8_tree)),\n\
+                         |(meta_tree, height_tree, block_tree, commitment_tree, nullifier_tree,\n\
+                           bridge_inbound_tree, ciphertext_index_tree, ciphertext_archive_tree,\n\
+                           da_ciphertext_tree, action_tree, poseidon2_v8_tree,)| {\n\
+                             verified_helper(\n\
+                                 poseidon2_v8_tree,\n\
+                                 poseidon2_v8_reorg.map(|(_, v8_plan)| v8_plan),\n\
+                                 suffix_manifest,\n\
+                                 \"native canonical suffix reorg manifest\",\n\
+                             )?;\n\
+                             Ok(())\n\
+                         },\n\
+                     )\n\
+                         .map_err(|_| ())?;\n\
+                     Ok(())\n\
+                 }\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_shared_sled_transaction_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("arbitrary transaction method must not satisfy shared sled obligation");
+        assert!(
+            err.to_string().contains(
+                "does not call verified_helper with propagated shared sled transaction result"
+            ),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_conditional_helper_inside_shared_sled_transaction() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation =
+            shared_sled_ufcs_test_invocation(&format!("if skip_v8 {{ {helper}?; }}\nOk(())"));
+        assert_shared_sled_binding_rejected(
+            "conditional-helper-inside-shared-sled-transaction",
+            &format!("{invocation}Ok(())"),
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_helper_after_write_inside_shared_sled_transaction() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation =
+            shared_sled_ufcs_test_invocation(&format!("legacy_write()?;\n{helper}?;\nOk(())"));
+        assert_shared_sled_binding_rejected(
+            "helper-after-write-inside-shared-sled-transaction",
+            &format!("{invocation}Ok(())"),
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_typed_tree_write_after_shared_sled_helper() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!(
+            "{helper}?;\nposeidon2_v8_tree.remove(b\"tip\")?;\nOk(())"
+        ));
+        assert_shared_sled_binding_rejected(
+            "typed-tree-write-after-shared-sled-helper",
+            &format!("{invocation}Ok(())"),
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_captured_typed_tree_write_after_shared_sled_helper() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!(
+            "{helper}?;\nself.poseidon2_v8_tree.remove(b\"tip\")?;\nOk(())"
+        ));
+        assert_shared_sled_binding_rejected(
+            "captured-typed-tree-write-after-shared-sled-helper",
+            &format!("{invocation}Ok(())"),
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_shared_sled_helper_outside_transaction() {
+        let helper = shared_sled_test_helper_expression();
+        assert_shared_sled_binding_rejected(
+            "shared-sled-helper-outside-transaction",
+            &format!("{helper}?;\nOk(())"),
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_duplicate_shared_sled_transactions() {
+        let helper = shared_sled_test_helper_expression();
+        let first = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        let second = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        assert_shared_sled_binding_rejected(
+            "duplicate-shared-sled-transactions",
+            &format!("{first}{second}Ok(())"),
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_runtime_conditional_shared_sled_transaction() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        assert_shared_sled_binding_rejected(
+            "runtime-conditional-shared-sled-transaction",
+            &format!("if skip_commit {{ {invocation} }}\nOk(())"),
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_success_return_before_shared_sled_transaction() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        assert_shared_sled_binding_rejected(
+            "success-return-before-shared-sled-transaction",
+            &format!("if skip_commit {{ return Ok(()); }}\n{invocation}Ok(())"),
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_name_resolved_error_return_before_shared_sled_transaction() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        assert_shared_sled_binding_rejected(
+            "name-resolved-error-return-before-shared-sled-transaction",
+            &format!("if skip_commit {{ return Err(()); }}\n{invocation}Ok(())"),
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_reordered_shared_sled_closure_binding() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())")).replacen(
+            "da_ciphertext_tree, action_tree, poseidon2_v8_tree,",
+            "da_ciphertext_tree, poseidon2_v8_tree, action_tree,",
+            1,
+        );
+        assert_shared_sled_binding_rejected(
+            "reordered-shared-sled-closure-binding",
+            &format!("{invocation}Ok(())"),
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_wrong_tree_passed_to_shared_sled_helper() {
+        let helper =
+            shared_sled_test_helper_expression().replacen("poseidon2_v8_tree,", "meta_tree,", 1);
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        assert_shared_sled_binding_rejected(
+            "wrong-tree-passed-to-shared-sled-helper",
+            &format!("{invocation}Ok(())"),
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_mismatched_shared_sled_plan_and_manifest_arguments() {
+        let helper =
+            shared_sled_test_helper_expression().replace("suffix_manifest", "mined_manifest");
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        assert_shared_sled_binding_rejected(
+            "mismatched-shared-sled-plan-and-manifest-arguments",
+            &format!("{invocation}Ok(())"),
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_shared_sled_helper_context_expression() {
+        let helper = shared_sled_test_helper_expression().replace(
+            "\"native canonical suffix reorg manifest\"",
+            "{ return Ok(()) }",
+        );
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        assert_shared_sled_binding_rejected(
+            "shared-sled-helper-context-expression",
+            &format!("{invocation}Ok(())"),
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_unpinned_root_sled_transaction_path() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())")).replacen(
+            "self::__hegemon_pinned_sled::transaction::Transactional::transaction",
+            "::sled::transaction::Transactional::transaction",
+            1,
+        );
+        assert_shared_sled_binding_rejected(
+            "unpinned-root-sled-transaction-path",
+            &format!("{invocation}Ok(())"),
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_cfg_dead_sled_pin_with_live_fake_module() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        let source = shared_sled_test_node_source(&format!("{invocation}Ok(())")).replacen(
+            "extern crate sled as __hegemon_pinned_sled;",
+            "#[cfg(any())]\nextern crate sled as __hegemon_pinned_sled;\n\
+             mod __hegemon_pinned_sled { pub mod transaction { pub trait Transactional {} } }",
+            1,
+        );
+        assert_shared_sled_source_rejected_with(
+            "cfg-dead-sled-pin-with-live-fake-module",
+            &source,
+            "requires an unconditional top-level external sled pin",
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_nested_module_sled_pin() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        let source = shared_sled_test_node_source(&format!("{invocation}Ok(())")).replacen(
+            "extern crate sled as __hegemon_pinned_sled;",
+            "mod dormant { extern crate sled as __hegemon_pinned_sled; }",
+            1,
+        );
+        assert_shared_sled_source_rejected_with(
+            "nested-module-sled-pin",
+            &source,
+            "requires an unconditional top-level external sled pin",
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_multiline_cfg_dead_sled_pin() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        let source = shared_sled_test_node_source(&format!("{invocation}Ok(())")).replacen(
+            "extern crate sled as __hegemon_pinned_sled;",
+            "#[cfg(\n    any()\n)]\nextern crate sled as __hegemon_pinned_sled;",
+            1,
+        );
+        assert_shared_sled_source_rejected_with(
+            "multiline-cfg-dead-sled-pin",
+            &source,
+            "requires an unconditional top-level external sled pin",
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_cfg_dead_shared_sled_source_file() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        let source = format!(
+            "#![cfg(any())]\n{}",
+            shared_sled_test_node_source(&format!("{invocation}Ok(())"))
+        );
+        assert_shared_sled_source_rejected_with(
+            "cfg-dead-shared-sled-source-file",
+            &source,
+            "requires an unconditional enclosing Rust source file",
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_multiline_cfg_dead_shared_sled_source_file() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        let source = format!(
+            "#![cfg(\n    any()\n)]\n{}",
+            shared_sled_test_node_source(&format!("{invocation}Ok(())"))
+        );
+        assert_shared_sled_source_rejected_with(
+            "multiline-cfg-dead-shared-sled-source-file",
+            &source,
+            "requires an unconditional enclosing Rust source file",
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_cfg_attr_dead_shared_sled_source_file() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        let source = format!(
+            "#![cfg_attr(not(test), cfg(any()))]\n{}",
+            shared_sled_test_node_source(&format!("{invocation}Ok(())"))
+        );
+        assert_shared_sled_source_rejected_with(
+            "cfg-attr-dead-shared-sled-source-file",
+            &source,
+            "requires an unconditional enclosing Rust source file",
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_cfg_selected_crate_module_declaration() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        assert_nested_shared_sled_source_rejected_with(
+            "cfg-selected-crate-module-declaration",
+            &shared_sled_test_node_source(&format!("{invocation}Ok(())")),
+            "#[cfg(test)]\nmod native;\n",
+            "mod node_impl;\n",
+            "requires an attribute-free ordinary external module declaration",
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_path_selected_crate_module_declaration() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        assert_nested_shared_sled_source_rejected_with(
+            "path-selected-crate-module-declaration",
+            &shared_sled_test_node_source(&format!("{invocation}Ok(())")),
+            "#[path = \"alternate.rs\"]\nmod native;\n",
+            "mod node_impl;\n",
+            "requires an attribute-free ordinary external module declaration",
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_cfg_selected_intermediate_module_declaration() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        assert_nested_shared_sled_source_rejected_with(
+            "cfg-selected-intermediate-module-declaration",
+            &shared_sled_test_node_source(&format!("{invocation}Ok(())")),
+            "mod native;\n",
+            "#[cfg(any())]\nmod node_impl;\n",
+            "requires an attribute-free ordinary external module declaration",
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_cfg_dead_crate_module_file() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        assert_nested_shared_sled_source_rejected_with(
+            "cfg-dead-crate-module-file",
+            &shared_sled_test_node_source(&format!("{invocation}Ok(())")),
+            "#![cfg(any())]\nmod native;\n",
+            "mod node_impl;\n",
+            "requires an unconditional enclosing Rust module file",
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_cfg_dead_enclosing_shared_sled_impl() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        let source = shared_sled_test_node_source(&format!("{invocation}Ok(())")).replacen(
+            "impl Node {",
+            "#[cfg(any())]\nimpl Node {",
+            1,
+        );
+        assert_shared_sled_source_rejected_with(
+            "cfg-dead-enclosing-shared-sled-impl",
+            &source,
+            "requires an attribute-free top-level inherent impl and method",
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_cfg_attr_dead_enclosing_shared_sled_impl() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        let source = shared_sled_test_node_source(&format!("{invocation}Ok(())")).replacen(
+            "impl Node {",
+            "#[cfg_attr(not(test), cfg(any()))]\nimpl Node {",
+            1,
+        );
+        assert_shared_sled_source_rejected_with(
+            "cfg-attr-dead-enclosing-shared-sled-impl",
+            &source,
+            "requires an attribute-free top-level inherent impl and method",
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_shared_sled_symbols_hidden_in_inline_module() {
+        let helper = shared_sled_test_helper_expression();
+        let invocation = shared_sled_ufcs_test_invocation(&format!("{helper}?;\nOk(())"));
+        let nested = shared_sled_test_node_source(&format!("{invocation}Ok(())"));
+        let source = format!(
+            "extern crate sled as __hegemon_pinned_sled;\nmod hidden {{\n{}\n}}",
+            nested.replacen("extern crate sled as __hegemon_pinned_sled;", "", 1)
+        );
+        assert_shared_sled_source_rejected_with(
+            "shared-sled-symbols-hidden-in-inline-module",
+            &source,
+            "requires one top-level helper with doc-only attributes",
+        );
     }
 
     #[test]
@@ -13593,6 +18182,76 @@ mod tests {
         ));
         std::fs::create_dir_all(root.join(".git")).expect("create .git");
         std::fs::write(root.join("Cargo.toml"), "[workspace]\n").expect("write Cargo.toml");
+        write_repo_file(
+            &root,
+            "scripts/hegemon_formal_core/Cargo.toml",
+            "[package]\nname = \"test-formal-core\"\nversion = \"0.0.0\"\n",
+        );
+        write_repo_file(
+            &root,
+            "scripts/hegemon_formal_core/Cargo.lock",
+            "# test checker lock\n",
+        );
+        write_repo_file(
+            &root,
+            "scripts/hegemon_formal_core/src/lib.rs",
+            "// test governance checker\n",
+        );
+        write_repo_file(
+            &root,
+            "scripts/hegemon_formal_core/src/main.rs",
+            "fn main() {}\n",
+        );
+        write_repo_file(
+            &root,
+            "scripts/check_formal_core.sh",
+            "#!/usr/bin/env bash\n",
+        );
+        write_repo_file(
+            &root,
+            "scripts/test_formal_gate_cli_args.sh",
+            "#!/usr/bin/env bash\n",
+        );
+        write_repo_file(
+            &root,
+            "protocol/kernel/src/manifest.rs",
+            "// test kernel manifest policy\n",
+        );
+        write_repo_file(
+            &root,
+            "protocol/versioning/src/lib.rs",
+            "// test protocol version policy\n",
+        );
+        write_repo_file(
+            &root,
+            "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
+            "-- test atomic manifest policy\n",
+        );
+        write_repo_file(
+            &root,
+            "formal/lean/Hegemon/Native/GenerateAtomicCommitManifestAdmissionVectors.lean",
+            "-- test atomic manifest vectors\n",
+        );
+        write_repo_file(
+            &root,
+            "node/src/native/mod.rs",
+            "// test native module policy\n",
+        );
+        write_repo_file(
+            &root,
+            "node/src/native/block_flow.rs",
+            "// test native block policy\n",
+        );
+        write_repo_file(
+            &root,
+            "node/src/native/node_impl.rs",
+            "// test native atomic commit policy\n",
+        );
+        write_repo_file(
+            &root,
+            "node/src/native/poseidon2_v8_state.rs",
+            "// test native V8 state policy\n",
+        );
         root
     }
 
@@ -13620,9 +18279,36 @@ mod tests {
         }
     }
 
+    fn refresh_governance_policy_input_digest(root: &Path, path: &Path, value: &mut Value) {
+        let evidence_field = if value.get("governance_gate_evidence").is_some() {
+            "governance_gate_evidence"
+        } else if value.get("acceptance_gates").is_some() {
+            "acceptance_gates"
+        } else {
+            return;
+        };
+        let relative = path
+            .strip_prefix(root)
+            .expect("test policy path is inside repository")
+            .to_str()
+            .expect("test policy path is UTF-8");
+        let digest =
+            governance_policy_inputs_blake3_for_value(root, relative, evidence_field, value)
+                .expect("hash test governance policy inputs");
+        let Some(gates) = value.get_mut(evidence_field).and_then(Value::as_array_mut) else {
+            return;
+        };
+        for gate in gates {
+            if let Some(gate) = gate.as_object_mut() {
+                gate.insert("policy_inputs_blake3".to_owned(), json!(digest));
+            }
+        }
+    }
+
     fn write_json(path: &Path, mut value: Value) {
         let root = repository_root_from(path);
         refresh_blueprint_review_digests(&root, &mut value);
+        refresh_governance_policy_input_digest(&root, path, &mut value);
         write_json_without_review_refresh(path, value);
     }
 
@@ -13669,24 +18355,86 @@ mod tests {
         );
     }
 
+    fn conditional_authority_fixture() -> Value {
+        json!({
+            "kind": "conditional_lean",
+            "production_authorized": false,
+            "shipped_rust_verifier_refinement_proved": false,
+            "qrom_failure_bound_composed": false,
+            "deployed_hash_instantiation_loss_bounded": false,
+            "concrete_pq_security_bits": null,
+            "required_assumptions": ["test conditional assumption"]
+        })
+    }
+
+    fn conditional_smallwood_authority_fixture() -> Value {
+        json!({
+            "kind": "conditional_lean",
+            "production_authorized": false,
+            "shipped_rust_verifier_refinement_proved": false,
+            "qrom_failure_bound_composed": false,
+            "deployed_hash_instantiation_loss_bounded": false,
+            "concrete_pq_security_bits": null,
+            "required_assumptions": CONDITIONAL_SMALLWOOD_ASSUMPTIONS
+        })
+    }
+
+    fn governance_gate_evidence_fixture() -> Value {
+        let report = json!({
+            "passed": true,
+            "test_filter": "governance_",
+            "tests_failed": 0,
+            "tests_passed": REQUIRED_GOVERNANCE_TEST_COUNT
+        });
+        let report_blake3 = executed_gate_report_blake3(&report).expect("hash test gate report");
+        json!({
+            "id": REQUIRED_GOVERNANCE_GATE_ID,
+            "evidence_kind": "executed_command",
+            "command": REQUIRED_GOVERNANCE_GATE_COMMAND,
+            "status": "passed",
+            "exit_code": 0,
+            "executed_at": "2026-08-17T20:34:05Z",
+            "policy_inputs_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
+            "report": report,
+            "report_blake3": report_blake3
+        })
+    }
+
+    fn claim_baseline_fixture(ids: &[&str]) -> Value {
+        json!({
+            "baseline_id": "test-formal-security-claims-v1",
+            "baseline_claim_count": ids.len(),
+            "baseline_claim_ids_blake3": claim_id_set_blake3(ids.iter().copied()),
+            "tombstones": []
+        })
+    }
+
     fn active_goal_claims_fixture() -> Value {
         json!({
-            "schema_version": 1,
+            "schema_version": CLAIMS_SCHEMA_VERSION,
             "generated_for_branch": "codex/superneo-formal-verification",
+            "claim_baseline": claim_baseline_fixture(&[CONDITIONAL_SMALLWOOD_CLAIM_ID]),
+            "governance_gate_evidence": [governance_gate_evidence_fixture()],
             "claims": [
                 {
-                    "id": "formal.test-closure",
+                    "id": CONDITIONAL_SMALLWOOD_CLAIM_ID,
                     "component": "test closure",
                     "claim_class": "lean_theorem",
-                    "summary": "Test closure theorem.",
-                    "status": "enforced",
-                    "proof_model": "lean4_theorem_no_sorry",
-                    "production_eligible": true,
+                    "summary": "This conditional theorem does not establish production authority: the exact-map-to-canonical-semantic bridge is an explicit assumption, and no deployed 128-bit guarantee follows.",
+                    "status": "research_only",
+                    "proof_model": "conditional_lean_reduction_with_explicit_knowledge_soundness_semantic_refinement_and_poseidon_assumptions",
+                    "production_eligible": false,
+                    "authority": conditional_smallwood_authority_fixture(),
                     "lean_theorems": ["Hegemon.TestEvidence.test_closed_track"],
                     "assumptions": ["test assumption"],
                     "evidence_paths": ["formal/lean/TestEvidence.lean"],
                     "gates": ["test gate"],
-                    "residual_risks": []
+                    "residual_risks": [{
+                        "id": "test-residual",
+                        "description": "test residual",
+                        "status": "open",
+                        "tracking": "formal/lean/TestEvidence.lean"
+                    }]
                 }
             ]
         })
@@ -13704,7 +18452,7 @@ mod tests {
             })
             .collect();
         json!({
-            "schema_version": 1,
+            "schema_version": ACTIVE_GOAL_SCHEMA_VERSION,
             "generated_for_branch": "codex/superneo-formal-verification",
             "goal_thread_id": "019e6319-afca-7233-988d-63f8830fbc7a",
             "goal_status_when_measured": "paused",
@@ -13718,16 +18466,17 @@ mod tests {
             ],
             "source_matrix_path": "config/highest-standard-formal-verification-matrix.json",
             "measurement_method": "Recompute the weighted average of highest-standard matrix property completion percentages and require exact property, weight, evidence, and explicit-assumption agreement.",
-            "overall_completion_percent": 100.0,
+            "overall_completion_percent": 50.0,
             "weighted_completion_percent": 100.0,
             "total_property_count": REQUIRED_HIGHEST_STANDARD_PROPERTIES.len(),
             "completed_property_count": REQUIRED_HIGHEST_STANDARD_PROPERTIES.len(),
             "total_weight": 100,
             "external_assumption_boundary": "100% means complete under the matrix method with explicit named cryptographic and system-model assumptions, not assumption-free primitive security.",
-            "acceptance_gates": [
-                "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-active-goal-progress config/active-goal-progress.json",
-                "bash scripts/check_formal_core.sh"
-            ],
+            "claim_authority": {
+                "claim_id": CONDITIONAL_SMALLWOOD_CLAIM_ID,
+                "authority": conditional_smallwood_authority_fixture()
+            },
+            "acceptance_gates": [governance_gate_evidence_fixture()],
             "evidence_paths": [
                 "config/highest-standard-formal-verification-matrix.json",
                 ".agent/RESIDUAL_ASSUMPTION_CLOSURE_EXECPLAN.md",
@@ -13759,7 +18508,7 @@ mod tests {
             "branch": "codex/superneo-formal-verification",
             "goal": "Highest-standard Lean formal verification for Hegemon.",
             "completion_method": "Weighted average of property completion percentages.",
-            "overall_completion_percent": 100.0,
+            "overall_completion_percent": 50.0,
             "formal_surface_coverage_percent": 100.0,
             "mechanized_assumption_closure": {
                 "measurement_method": "Count explicit mechanized tracks independently from formal surface coverage.",
@@ -13816,8 +18565,10 @@ mod tests {
 
     fn claims_fixture() -> Value {
         json!({
-            "schema_version": 1,
+            "schema_version": CLAIMS_SCHEMA_VERSION,
             "generated_for_branch": "codex/formal-blueprint-dag",
+            "claim_baseline": claim_baseline_fixture(&["support.dep", "target.prod"]),
+            "governance_gate_evidence": [governance_gate_evidence_fixture()],
             "claims": [
                 {
                     "id": "support.dep",
@@ -13851,8 +18602,10 @@ mod tests {
 
     fn lean_claims_fixture(evidence_paths: &[&str], lean_theorems: &[&str]) -> Value {
         json!({
-            "schema_version": 1,
+            "schema_version": CLAIMS_SCHEMA_VERSION,
             "generated_for_branch": "codex/formal-blueprint-dag",
+            "claim_baseline": claim_baseline_fixture(&["formal.test-claim"]),
+            "governance_gate_evidence": [governance_gate_evidence_fixture()],
             "claims": [
                 {
                     "id": "formal.test-claim",
@@ -13905,8 +18658,9 @@ mod tests {
         target_deps: &[&str],
     ) -> Value {
         json!({
-            "schema_version": 1,
+            "schema_version": BLUEPRINT_SCHEMA_VERSION,
             "generated_for_branch": "codex/formal-blueprint-dag",
+            "governance_gate_evidence": [governance_gate_evidence_fixture()],
             "methodology": {
                 "name": "test-blueprint",
                 "summary": "Test blueprint.",

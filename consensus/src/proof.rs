@@ -34,12 +34,14 @@ use crate::types::{
     TxStatementBinding, TxValidityArtifact, TxValidityClaim, TxValidityReceipt,
     VerifierProfileDigest, da_root, kernel_root_from_shielded_root,
 };
-use crypto::hashes::blake3_384;
+#[cfg(test)]
+use crypto::hashes::{BLAKE2B_384_FRAME_V1, blake2b_384};
+use crypto::hashes::{blake2b_384_domain_hash, blake3_384};
 use parking_lot::Mutex;
 use rayon::prelude::*;
 #[cfg(test)]
 use std::any::Any;
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap};
 #[cfg(test)]
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, LazyLock};
@@ -223,15 +225,11 @@ struct NativeTxLeafAdmissionInput {
     receipt_verifier_profile_matches: bool,
     has_expected_artifact_hash: bool,
     expected_artifact_hash_matches: bool,
-    has_cache_entry: bool,
-    cache_receipt_matches: bool,
-    cache_transaction_matches: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeTxLeafAdmissionOutcome {
     NeedsBackendVerification,
-    CacheHit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -242,8 +240,6 @@ enum NativeTxLeafAdmissionRejection {
     ArtifactTooLarge,
     ReceiptVerifierProfileMismatch,
     ArtifactHashMismatch,
-    CacheReceiptMismatch,
-    CacheTransactionMismatch,
 }
 
 impl NativeTxLeafAdmissionOutcome {
@@ -251,7 +247,6 @@ impl NativeTxLeafAdmissionOutcome {
     fn label(self) -> &'static str {
         match self {
             Self::NeedsBackendVerification => "needs_backend_verification",
-            Self::CacheHit => "cache_hit",
         }
     }
 }
@@ -266,8 +261,6 @@ impl NativeTxLeafAdmissionRejection {
             Self::ArtifactTooLarge => "artifact_too_large",
             Self::ReceiptVerifierProfileMismatch => "receipt_verifier_profile_mismatch",
             Self::ArtifactHashMismatch => "artifact_hash_mismatch",
-            Self::CacheReceiptMismatch => "cache_receipt_mismatch",
-            Self::CacheTransactionMismatch => "cache_transaction_mismatch",
         }
     }
 }
@@ -293,17 +286,7 @@ fn evaluate_native_tx_leaf_admission(
     if input.has_expected_artifact_hash && !input.expected_artifact_hash_matches {
         return Err(NativeTxLeafAdmissionRejection::ArtifactHashMismatch);
     }
-    if input.has_cache_entry {
-        if !input.cache_receipt_matches {
-            return Err(NativeTxLeafAdmissionRejection::CacheReceiptMismatch);
-        }
-        if !input.cache_transaction_matches {
-            return Err(NativeTxLeafAdmissionRejection::CacheTransactionMismatch);
-        }
-        Ok(NativeTxLeafAdmissionOutcome::CacheHit)
-    } else {
-        Ok(NativeTxLeafAdmissionOutcome::NeedsBackendVerification)
-    }
+    Ok(NativeTxLeafAdmissionOutcome::NeedsBackendVerification)
 }
 
 fn native_tx_leaf_admission_error(
@@ -343,18 +326,6 @@ fn native_tx_leaf_admission_error(
             ProofError::AggregationProofInputsMismatch(
                 "receipt accumulation artifact hash mismatch".to_string(),
             )
-        }
-        NativeTxLeafAdmissionRejection::CacheReceiptMismatch => {
-            ProofError::TransactionProofInputsMismatch {
-                index: 0,
-                message: "native tx-leaf cache entry receipt mismatch".to_string(),
-            }
-        }
-        NativeTxLeafAdmissionRejection::CacheTransactionMismatch => {
-            ProofError::TransactionProofInputsMismatch {
-                index: 0,
-                message: "native tx-leaf cache entry transaction mismatch".to_string(),
-            }
         }
     }
 }
@@ -999,24 +970,32 @@ fn recursive_block_semantic_inputs_from_block(
 
 struct NativeTxLeafVerifyCache {
     capacity: usize,
-    order: VecDeque<[u8; 48]>,
-    entries: HashMap<[u8; 48], VerifiedNativeTxLeaf>,
+    least_recent: Option<[u8; 48]>,
+    most_recent: Option<[u8; 48]>,
+    entries: HashMap<[u8; 48], NativeTxLeafVerifyCacheEntry>,
+}
+
+struct NativeTxLeafVerifyCacheEntry {
+    value: Arc<VerifiedNativeTxLeaf>,
+    older: Option<[u8; 48]>,
+    newer: Option<[u8; 48]>,
 }
 
 impl NativeTxLeafVerifyCache {
     fn new(capacity: usize) -> Self {
         Self {
             capacity,
-            order: VecDeque::new(),
+            least_recent: None,
+            most_recent: None,
             entries: HashMap::new(),
         }
     }
 
-    fn get(&mut self, key: [u8; 48]) -> Option<VerifiedNativeTxLeaf> {
-        let value = self.entries.get(&key).cloned();
+    #[cfg(test)]
+    fn get(&mut self, key: [u8; 48]) -> Option<Arc<VerifiedNativeTxLeaf>> {
+        let value = self.entries.get(&key).map(|entry| Arc::clone(&entry.value));
         if value.is_some() {
-            self.order.retain(|entry| entry != &key);
-            self.order.push_back(key);
+            self.promote(key);
         }
         value
     }
@@ -1026,20 +1005,96 @@ impl NativeTxLeafVerifyCache {
             return;
         }
         if let Some(existing) = self.entries.get_mut(&key) {
-            *existing = value;
-            self.order.retain(|entry| entry != &key);
-            self.order.push_back(key);
+            existing.value = Arc::new(value);
+            self.promote(key);
             return;
         }
         while self.entries.len() >= self.capacity {
-            if let Some(oldest) = self.order.pop_front() {
+            if let Some(oldest) = self.least_recent {
+                self.detach(oldest);
                 self.entries.remove(&oldest);
             } else {
                 break;
             }
         }
-        self.entries.insert(key, value);
-        self.order.push_back(key);
+        self.entries.insert(
+            key,
+            NativeTxLeafVerifyCacheEntry {
+                value: Arc::new(value),
+                older: None,
+                newer: None,
+            },
+        );
+        self.attach_most_recent(key);
+    }
+
+    fn clear(&mut self) {
+        self.least_recent = None;
+        self.most_recent = None;
+        self.entries.clear();
+    }
+
+    fn promote(&mut self, key: [u8; 48]) {
+        if self.most_recent == Some(key) {
+            return;
+        }
+        self.detach(key);
+        self.attach_most_recent(key);
+    }
+
+    fn detach(&mut self, key: [u8; 48]) {
+        let Some((older, newer)) = self
+            .entries
+            .get(&key)
+            .map(|entry| (entry.older, entry.newer))
+        else {
+            return;
+        };
+        match older {
+            Some(older) => {
+                self.entries
+                    .get_mut(&older)
+                    .expect("native tx-leaf LRU older link exists")
+                    .newer = newer;
+            }
+            None => self.least_recent = newer,
+        }
+        match newer {
+            Some(newer) => {
+                self.entries
+                    .get_mut(&newer)
+                    .expect("native tx-leaf LRU newer link exists")
+                    .older = older;
+            }
+            None => self.most_recent = older,
+        }
+        let entry = self
+            .entries
+            .get_mut(&key)
+            .expect("native tx-leaf LRU detached entry exists");
+        entry.older = None;
+        entry.newer = None;
+    }
+
+    fn attach_most_recent(&mut self, key: [u8; 48]) {
+        let previous_most_recent = self.most_recent;
+        {
+            let entry = self
+                .entries
+                .get_mut(&key)
+                .expect("native tx-leaf LRU attached entry exists");
+            entry.older = previous_most_recent;
+            entry.newer = None;
+        }
+        if let Some(previous) = previous_most_recent {
+            self.entries
+                .get_mut(&previous)
+                .expect("native tx-leaf LRU tail exists")
+                .newer = Some(key);
+        } else {
+            self.least_recent = Some(key);
+        }
+        self.most_recent = Some(key);
     }
 }
 
@@ -1059,7 +1114,7 @@ static NATIVE_TX_LEAF_VERIFY_CACHE: LazyLock<Mutex<NativeTxLeafVerifyCache>> =
     });
 
 fn native_tx_leaf_artifact_hash(artifact_bytes: &[u8]) -> [u8; 48] {
-    blake3_384(artifact_bytes)
+    blake2b_384_domain_hash(b"hegemon-native-tx-leaf-verify-cache-v2", [artifact_bytes])
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1352,7 +1407,6 @@ fn verify_native_tx_leaf_artifact_record(
             && artifact.receipt.verifier_profile == native_profile;
         cheap_checks_pass.then(|| native_tx_leaf_artifact_hash(&envelope.artifact_bytes))
     });
-    let cached_record = artifact_hash.and_then(|hash| NATIVE_TX_LEAF_VERIFY_CACHE.lock().get(hash));
     let admission_input = NativeTxLeafAdmissionInput {
         has_envelope: envelope.is_some(),
         envelope_kind: envelope
@@ -1372,21 +1426,9 @@ fn verify_native_tx_leaf_artifact_record(
             (Some(_), None) => false,
             (None, _) => true,
         },
-        has_cache_entry: cached_record.is_some(),
-        cache_receipt_matches: cached_record
-            .as_ref()
-            .map(|record| record.receipt == artifact.receipt)
-            .unwrap_or(true),
-        cache_transaction_matches: cached_record
-            .as_ref()
-            .map(|record| record.tx == tx_view)
-            .unwrap_or(true),
     };
-    let admission = evaluate_native_tx_leaf_admission(admission_input)
+    evaluate_native_tx_leaf_admission(admission_input)
         .map_err(|rejection| native_tx_leaf_admission_error(admission_input, rejection))?;
-    if admission == NativeTxLeafAdmissionOutcome::CacheHit {
-        return Ok(cached_record.expect("cache-hit admission has cached record"));
-    }
     let envelope = envelope.expect("native tx-leaf admission requires an envelope");
     let artifact_hash = artifact_hash.expect("native tx-leaf admission requires artifact hash");
 
@@ -1460,7 +1502,9 @@ impl ArtifactVerifier for NativeTxLeafVerifier {
 }
 
 #[cfg(test)]
-struct ReceiptRootVerifier;
+struct ReceiptRootVerifier {
+    verified_records_fixture: Option<Vec<VerifiedNativeTxLeaf>>,
+}
 
 #[cfg(test)]
 impl ArtifactVerifier for ReceiptRootVerifier {
@@ -1502,7 +1546,29 @@ impl ArtifactVerifier for ReceiptRootVerifier {
         )?;
         let artifacts =
             tx_artifacts.expect("receipt-root artifact admission requires tx artifacts");
-        let verified_records = verify_native_tx_leaf_artifact_records(txs, artifacts)?;
+        let verified_records = if let Some(records) = &self.verified_records_fixture {
+            if records.len() != txs.len() {
+                return Err(ProofError::TransactionProofCountMismatch {
+                    expected: txs.len(),
+                    observed: records.len(),
+                });
+            }
+            for (index, ((tx, artifact), record)) in
+                txs.iter().zip(artifacts).zip(records).enumerate()
+            {
+                if record.tx != tx_leaf_public_tx_from_consensus_tx(tx)
+                    || record.receipt != artifact.receipt
+                {
+                    return Err(ProofError::TransactionProofInputsMismatch {
+                        index,
+                        message: "receipt-root test fixture record mismatch".to_string(),
+                    });
+                }
+            }
+            records.clone()
+        } else {
+            verify_native_tx_leaf_artifact_records(txs, artifacts)?
+        };
         let verified_bindings = verified_records
             .iter()
             .map(|record| record.binding.clone())
@@ -1817,9 +1883,7 @@ pub fn tx_validity_artifact_from_receipt(receipt: TxValidityReceipt) -> TxValidi
 }
 
 pub fn clear_verified_native_tx_leaf_store() {
-    let mut guard = NATIVE_TX_LEAF_VERIFY_CACHE.lock();
-    guard.order.clear();
-    guard.entries.clear();
+    NATIVE_TX_LEAF_VERIFY_CACHE.lock().clear();
 }
 
 pub fn prewarm_verified_native_tx_leaf_store(
@@ -3125,9 +3189,6 @@ mod tests {
         receipt_verifier_profile_matches: bool,
         has_expected_artifact_hash: bool,
         expected_artifact_hash_matches: bool,
-        has_cache_entry: bool,
-        cache_receipt_matches: bool,
-        cache_transaction_matches: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
         expected_outcome: Option<String>,
@@ -3390,6 +3451,7 @@ mod tests {
         stablecoin_issuance_magnitude: u64,
         stablecoin_policy_version: u32,
         expected_preimage_hex: String,
+        expected_transcript_hex: String,
         expected_valid: bool,
     }
 
@@ -3489,6 +3551,26 @@ mod tests {
             .strip_prefix("0x")
             .expect("Lean vector hex has 0x prefix");
         hex::decode(trimmed).expect("Lean vector hex decodes")
+    }
+
+    fn framed_blake2b_384_transcript(domain: &[u8], parts: &[&[u8]]) -> Vec<u8> {
+        let mut transcript = Vec::new();
+        transcript.extend_from_slice(BLAKE2B_384_FRAME_V1);
+        transcript.extend_from_slice(
+            &u64::try_from(domain.len())
+                .expect("test domain length fits u64")
+                .to_le_bytes(),
+        );
+        transcript.extend_from_slice(domain);
+        for part in parts {
+            transcript.extend_from_slice(
+                &u64::try_from(part.len())
+                    .expect("test part length fits u64")
+                    .to_le_bytes(),
+            );
+            transcript.extend_from_slice(part);
+        }
+        transcript
     }
 
     #[derive(Clone)]
@@ -3748,7 +3830,7 @@ mod tests {
             .expect("read generated Lean native tx-leaf admission vectors");
         let vectors: LeanNativeTxLeafAdmissionVectorFile = serde_json::from_str(&raw)
             .expect("parse generated Lean native tx-leaf admission vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
         assert!(
             !vectors.native_tx_leaf_admission_cases.is_empty(),
             "Lean native tx-leaf admission cases must not be empty"
@@ -4553,7 +4635,7 @@ mod tests {
             std::fs::read_to_string(&path).expect("read generated Lean statement-hash vectors");
         let vectors: LeanStatementHashVectorFile =
             serde_json::from_str(&raw).expect("parse generated Lean statement-hash vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
         assert!(
             !vectors.statement_hash_cases.is_empty(),
             "Lean statement-hash cases must not be empty"
@@ -4919,10 +5001,30 @@ mod tests {
                 "{} statement preimage bytes drifted from Lean spec",
                 case.name
             );
+            let actual_transcript = framed_blake2b_384_transcript(
+                crate::backend_interface::TX_STATEMENT_HASH_DOMAIN,
+                &[actual_preimage.as_slice()],
+            );
+            assert_eq!(
+                actual_transcript,
+                expected_hex_bytes(&case.expected_transcript_hex),
+                "{} statement hash framing drifted from Lean spec",
+                case.name
+            );
+            let expected_digest = blake2b_384_domain_hash(
+                crate::backend_interface::TX_STATEMENT_HASH_DOMAIN,
+                [actual_preimage.as_slice()],
+            );
             assert_eq!(
                 actual_hash.expect("valid statement hash"),
-                blake3_384(&expected_preimage),
+                expected_digest,
                 "{} statement hash digest no longer hashes the checked preimage",
+                case.name
+            );
+            assert_eq!(
+                expected_digest,
+                blake2b_384(&actual_transcript),
+                "{} central domain hash and explicit transcript diverged",
                 case.name
             );
         }
@@ -4967,9 +5069,6 @@ mod tests {
             receipt_verifier_profile_matches: case.receipt_verifier_profile_matches,
             has_expected_artifact_hash: case.has_expected_artifact_hash,
             expected_artifact_hash_matches: case.expected_artifact_hash_matches,
-            has_cache_entry: case.has_cache_entry,
-            cache_receipt_matches: case.cache_receipt_matches,
-            cache_transaction_matches: case.cache_transaction_matches,
         };
         let result = evaluate_native_tx_leaf_admission(input);
         assert_eq!(
@@ -5748,14 +5847,6 @@ mod tests {
         metadata: crate::types::ReceiptRootMetadata,
     }
 
-    struct NativeTxLeafCacheGuard;
-
-    impl Drop for NativeTxLeafCacheGuard {
-        fn drop(&mut self) {
-            clear_verified_native_tx_leaf_store();
-        }
-    }
-
     fn receipt_root_caller_fixture() -> ReceiptRootCallerFixture {
         static FIXTURE: OnceLock<ReceiptRootCallerFixture> = OnceLock::new();
         FIXTURE
@@ -5825,23 +5916,6 @@ mod tests {
         }
     }
 
-    fn install_receipt_root_fixture_cache(
-        fixture: &ReceiptRootCallerFixture,
-    ) -> NativeTxLeafCacheGuard {
-        clear_verified_native_tx_leaf_store();
-        for (artifact, record) in fixture.tx_artifacts.iter().zip(&fixture.verified_records) {
-            let artifact_bytes = &artifact
-                .proof
-                .as_ref()
-                .expect("fixture tx artifact has proof")
-                .artifact_bytes;
-            NATIVE_TX_LEAF_VERIFY_CACHE
-                .lock()
-                .insert(native_tx_leaf_artifact_hash(artifact_bytes), record.clone());
-        }
-        NativeTxLeafCacheGuard
-    }
-
     fn with_receipt_root_backend_override<T>(
         override_fn: ReceiptRootBackendOverride,
         body: impl FnOnce() -> T,
@@ -5892,7 +5966,9 @@ mod tests {
     fn receipt_root_artifact_kind_and_profile_mismatch_reject_before_backend() {
         let _guard = set_native_receipt_root_verify_mode("verified_records");
         let fixture = receipt_root_caller_fixture();
-        let verifier = ReceiptRootVerifier;
+        let verifier = ReceiptRootVerifier {
+            verified_records_fixture: None,
+        };
 
         let mut wrong_kind = fixture.envelope.clone();
         wrong_kind.kind = ProofArtifactKind::TxLeaf;
@@ -5931,12 +6007,14 @@ mod tests {
     fn receipt_root_statement_commitment_mismatch_rejects_before_backend() {
         let _guard = set_native_receipt_root_verify_mode("verified_records");
         let fixture = receipt_root_caller_fixture();
-        let _cache_guard = install_receipt_root_fixture_cache(&fixture);
         let mut wrong_commitment = fixture.statement_commitment;
         wrong_commitment[0] ^= 0x01;
 
         let err = expect_receipt_root_backend_not_called(|| {
-            ReceiptRootVerifier.verify_block_artifact(
+            ReceiptRootVerifier {
+                verified_records_fixture: Some(fixture.verified_records.clone()),
+            }
+            .verify_block_artifact(
                 &fixture.transactions,
                 Some(&fixture.tx_artifacts),
                 &wrong_commitment,
@@ -5954,7 +6032,6 @@ mod tests {
     fn receipt_root_verified_metadata_leaf_count_mismatch_rejects() {
         let _guard = set_native_receipt_root_verify_mode("verified_records");
         let fixture = receipt_root_caller_fixture();
-        let _cache_guard = install_receipt_root_fixture_cache(&fixture);
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_override = Arc::clone(&calls);
         let mut wrong_metadata = fixture.metadata.clone();
@@ -5970,14 +6047,16 @@ mod tests {
                 Ok(wrong_metadata.clone())
             }),
             || {
-                ReceiptRootVerifier
-                    .verify_block_artifact(
-                        &fixture.transactions,
-                        Some(&fixture.tx_artifacts),
-                        &fixture.statement_commitment,
-                        &fixture.envelope,
-                    )
-                    .expect_err("verified metadata leaf-count mismatch must reject")
+                ReceiptRootVerifier {
+                    verified_records_fixture: Some(fixture.verified_records.clone()),
+                }
+                .verify_block_artifact(
+                    &fixture.transactions,
+                    Some(&fixture.tx_artifacts),
+                    &fixture.statement_commitment,
+                    &fixture.envelope,
+                )
+                .expect_err("verified metadata leaf-count mismatch must reject")
             },
         );
         assert_eq!(
@@ -5993,7 +6072,7 @@ mod tests {
     }
 
     #[test]
-    fn native_tx_leaf_cache_hit_requires_same_transaction_view() {
+    fn native_tx_leaf_cache_entry_never_bypasses_backend_verification() {
         clear_verified_native_tx_leaf_store();
         let native_profile = experimental_native_tx_leaf_verifier_profile();
         let original_tx = tx_with_commitments(vec![[1u8; 48]]);
@@ -6027,14 +6106,98 @@ mod tests {
             .insert(native_tx_leaf_artifact_hash(&artifact_bytes), cached);
 
         let err = verify_native_tx_leaf_artifact_record(&mutated_tx, &artifact, None)
-            .expect_err("cache hit for a different transaction view must reject");
+            .expect_err("cached placeholder bytes must still reach and fail exact verification");
         match err {
-            ProofError::TransactionProofInputsMismatch { message, .. } => {
-                assert!(message.contains("transaction mismatch"));
+            ProofError::TransactionProofVerification { message, .. } => {
+                assert!(message.contains("native tx-leaf verification failed"));
+                assert!(!message.contains("cache"));
             }
-            other => panic!("unexpected cache mismatch error: {other:?}"),
+            other => panic!("cache must not influence acceptance: {other:?}"),
         }
         clear_verified_native_tx_leaf_store();
+    }
+
+    fn native_tx_leaf_cache_test_key(index: usize) -> [u8; 48] {
+        let mut key = [0u8; 48];
+        key[..8].copy_from_slice(&(index as u64).to_le_bytes());
+        key[8] = 0xa5;
+        key
+    }
+
+    fn native_tx_leaf_cache_test_record(index: usize) -> VerifiedNativeTxLeaf {
+        let tag = index as u8;
+        let tx = tx_with_commitments(vec![[tag; 48]]);
+        let receipt = TxValidityReceipt::new(
+            [tag.wrapping_add(1); 48],
+            [tag.wrapping_add(2); 48],
+            [tag.wrapping_add(3); 48],
+            experimental_native_tx_leaf_verifier_profile(),
+        );
+        VerifiedNativeTxLeaf {
+            tx: tx_leaf_public_tx_from_consensus_tx(&tx),
+            binding: TxStatementBinding {
+                statement_hash: receipt.statement_hash,
+                anchor: [tag.wrapping_add(4); 48],
+                fee: index as u64,
+                circuit_version: u32::from(tx.version.circuit),
+            },
+            receipt,
+            leaf: fake_native_tx_leaf_record(tag),
+        }
+    }
+
+    #[test]
+    fn native_tx_leaf_cache_evicts_exact_least_recent_entry_in_constant_time() {
+        let mut cache = NativeTxLeafVerifyCache::new(3);
+        for index in 0..3 {
+            cache.insert(
+                native_tx_leaf_cache_test_key(index),
+                native_tx_leaf_cache_test_record(index),
+            );
+        }
+        assert!(cache.get(native_tx_leaf_cache_test_key(0)).is_some());
+        cache.insert(
+            native_tx_leaf_cache_test_key(3),
+            native_tx_leaf_cache_test_record(3),
+        );
+
+        assert!(cache.get(native_tx_leaf_cache_test_key(1)).is_none());
+        assert!(cache.get(native_tx_leaf_cache_test_key(0)).is_some());
+        assert!(cache.get(native_tx_leaf_cache_test_key(2)).is_some());
+        assert!(cache.get(native_tx_leaf_cache_test_key(3)).is_some());
+        assert_eq!(cache.entries.len(), 3);
+    }
+
+    #[test]
+    fn native_tx_leaf_cache_parallel_520_unique_hits_are_exact_and_bounded() {
+        const CAPACITY: usize = 4096;
+        const HITS: usize = 520;
+        let cache = Arc::new(Mutex::new(NativeTxLeafVerifyCache::new(CAPACITY)));
+        for index in 0..CAPACITY {
+            cache.lock().insert(
+                native_tx_leaf_cache_test_key(index),
+                native_tx_leaf_cache_test_record(index),
+            );
+        }
+
+        let started = Instant::now();
+        let hits = (0..HITS)
+            .into_par_iter()
+            .map(|index| {
+                cache
+                    .lock()
+                    .get(native_tx_leaf_cache_test_key(index))
+                    .is_some()
+            })
+            .filter(|hit| *hit)
+            .count();
+        let elapsed = started.elapsed();
+        eprintln!(
+            "native tx-leaf O(1) LRU: {HITS} parallel unique hits at capacity {CAPACITY} in {} us",
+            elapsed.as_micros()
+        );
+        assert_eq!(hits, HITS);
+        assert_eq!(cache.lock().entries.len(), CAPACITY);
     }
 
     #[test]
@@ -6539,7 +6702,6 @@ mod tests {
     #[test]
     fn recursive_block_v2_product_wrapper_rejects_independent_artifact_mutations() {
         let fixture = receipt_root_caller_fixture();
-        let _cache_guard = install_receipt_root_fixture_cache(&fixture);
         let records = fixture
             .verified_records
             .iter()

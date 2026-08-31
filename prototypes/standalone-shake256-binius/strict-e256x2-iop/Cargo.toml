@@ -1,0 +1,22 @@
+[package]
+name = "hegemon-strict-e256x2-iop-prototype"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Isolated research crate. It is not a member of the Hegemon workspace and no
+# consensus or production-frontier code imports it.
+[workspace]
+resolver = "2"
+
+[dependencies]
+
+[profile.dev]
+opt-level = 1
+debug = 0
+incremental = false
+
+[profile.test]
+opt-level = 1
+debug = 0
+incremental = false

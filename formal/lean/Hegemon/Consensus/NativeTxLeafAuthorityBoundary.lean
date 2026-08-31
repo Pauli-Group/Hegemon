@@ -122,31 +122,6 @@ theorem native_leaf_integrity_cannot_replace_embedded_proof :
           nativeLeafIntegrityAccepted := true } = false := by
   decide
 
-structure VerifiedCacheRecord where
-  originalInput : BackendVerificationInput
-  originalBackendAcceptance : backendVerificationAccepts originalInput = true
-
-inductive AcceptedVerificationPath where
-  | uncached
-      (input : BackendVerificationInput)
-      (accepted : backendVerificationAccepts input = true)
-  | cacheHit (record : VerifiedCacheRecord)
-
-def AcceptedVerificationPath.embeddedTransactionProofAccepted :
-    AcceptedVerificationPath → Bool
-  | .uncached input _ => input.embeddedTransactionProofAccepted
-  | .cacheHit record => record.originalInput.embeddedTransactionProofAccepted
-
-theorem every_accepted_path_inherits_embedded_transaction_proof_acceptance
-    (path : AcceptedVerificationPath) :
-    path.embeddedTransactionProofAccepted = true := by
-  cases path with
-  | uncached input accepted =>
-      exact backend_acceptance_requires_embedded_transaction_proof accepted
-  | cacheHit record =>
-      exact backend_acceptance_requires_embedded_transaction_proof
-        record.originalBackendAcceptance
-
 inductive ProductionRegistryArtifactKind where
   | inlineTx
   | txLeaf

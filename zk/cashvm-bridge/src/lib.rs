@@ -683,7 +683,7 @@ mod tests {
     use super::*;
     use codec::Encode;
     use consensus_light_client::{
-        BridgeCheckpointOutputV1, HEGEMON_CHAIN_ID_V1, HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+        BridgeCheckpointOutputV1, HEGEMON_CHAIN_ID_V1, HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
     };
     use protocol_kernel::{bridge_payload_hash, BridgeMessageV1, BRIDGE_MINT_APP_FAMILY_ID_V1};
     use serde::Deserialize;
@@ -724,7 +724,7 @@ mod tests {
     fn hegemon_output(message: &BridgeMessageV1) -> BridgeCheckpointOutputV1 {
         BridgeCheckpointOutputV1 {
             source_chain_id: HEGEMON_CHAIN_ID_V1,
-            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
             trusted_checkpoint_digest: hash32(0x10),
             checkpoint_height: message.source_height,
             checkpoint_header_hash: hash32(0x11),

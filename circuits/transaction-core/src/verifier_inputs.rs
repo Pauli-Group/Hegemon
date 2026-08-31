@@ -5,7 +5,9 @@ use alloc::vec::Vec;
 
 use hegemon_field::Goldilocks;
 
-use crate::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID, POSEIDON2_RATE};
+use crate::constants::{
+    BALANCE_SLOTS, MAX_INPUTS, MAX_IN_CIRCUIT_VALUE, MAX_OUTPUTS, NATIVE_ASSET_ID, POSEIDON2_RATE,
+};
 
 pub type Felt = Goldilocks;
 
@@ -268,20 +270,55 @@ impl TransactionVerifierInputs {
         if self.value_balance_sign != zero && self.value_balance_sign != one {
             return Err("Value balance sign must be 0 or 1".into());
         }
+        if self.value_balance_sign == one && self.value_balance_magnitude == zero {
+            return Err("Value balance zero must use sign 0".into());
+        }
         if self.stablecoin_enabled != zero && self.stablecoin_enabled != one {
             return Err("Stablecoin enabled flag must be 0 or 1".into());
         }
         if self.stablecoin_issuance_sign != zero && self.stablecoin_issuance_sign != one {
             return Err("Stablecoin issuance sign must be 0 or 1".into());
         }
-        if self.stablecoin_enabled == one
-            && !self
+        if self.stablecoin_issuance_sign == one && self.stablecoin_issuance_magnitude == zero {
+            return Err("Stablecoin issuance zero must use sign 0".into());
+        }
+        for (label, value) in [
+            ("fee", self.fee),
+            ("value balance magnitude", self.value_balance_magnitude),
+            (
+                "stablecoin issuance magnitude",
+                self.stablecoin_issuance_magnitude,
+            ),
+        ] {
+            if u128::from(value.as_canonical_u64()) > MAX_IN_CIRCUIT_VALUE {
+                return Err(format!("{label} exceeds the in-circuit value range"));
+            }
+        }
+        if self.stablecoin_enabled == zero {
+            if self.stablecoin_asset != zero
+                || self.stablecoin_policy_version != zero
+                || self.stablecoin_issuance_sign != zero
+                || self.stablecoin_issuance_magnitude != zero
+                || !is_zero_hash(&self.stablecoin_policy_hash)
+                || !is_zero_hash(&self.stablecoin_oracle_commitment)
+                || !is_zero_hash(&self.stablecoin_attestation_commitment)
+            {
+                return Err("disabled stablecoin fields must be zero".into());
+            }
+        } else {
+            if self.stablecoin_asset == native || self.stablecoin_asset == padding {
+                return Err(
+                    "stablecoin asset must be canonical, non-native, and non-padding".into(),
+                );
+            }
+            if !self
                 .balance_slot_assets
                 .iter()
                 .skip(1)
                 .any(|asset| *asset == self.stablecoin_asset)
-        {
-            return Err("stablecoin asset must appear in a non-native balance slot".into());
+            {
+                return Err("stablecoin asset must appear in a non-native balance slot".into());
+            }
         }
         Ok(())
     }
@@ -289,4 +326,108 @@ impl TransactionVerifierInputs {
 
 fn array6(value: &[Felt]) -> [Felt; 6] {
     [value[0], value[1], value[2], value[3], value[4], value[5]]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn minimally_active_inputs() -> TransactionVerifierInputs {
+        let mut inputs = TransactionVerifierInputs::default();
+        inputs.input_flags[0] = Felt::ONE;
+        inputs.nullifiers[0][0] = Felt::ONE;
+        inputs
+    }
+
+    #[test]
+    fn enabled_stablecoin_asset_must_not_alias_native_or_padding() {
+        let padding = Felt::from_u64(u64::MAX);
+        let mut inputs = minimally_active_inputs();
+        inputs.stablecoin_enabled = Felt::ONE;
+
+        inputs.stablecoin_asset = Felt::from_u64(NATIVE_ASSET_ID);
+        assert!(inputs.validate().is_err());
+
+        inputs.stablecoin_asset = padding;
+        assert!(inputs.validate().is_err());
+
+        inputs.balance_slot_assets = [
+            Felt::from_u64(NATIVE_ASSET_ID),
+            Felt::from_u64(7),
+            padding,
+            padding,
+        ];
+        inputs.stablecoin_asset = Felt::from_u64(7);
+        inputs
+            .validate()
+            .expect("canonical non-native stablecoin slot must remain valid");
+    }
+
+    #[test]
+    fn monetary_fields_must_fit_the_smallwood_range() {
+        let mut inputs = minimally_active_inputs();
+        let oversized = Felt::from_u64(MAX_IN_CIRCUIT_VALUE as u64 + 1);
+        for field in 0..3 {
+            let mut mutated = inputs.clone();
+            match field {
+                0 => mutated.fee = oversized,
+                1 => mutated.value_balance_magnitude = oversized,
+                _ => mutated.stablecoin_issuance_magnitude = oversized,
+            }
+            assert!(mutated.validate().is_err());
+        }
+
+        inputs.fee = Felt::from_u64(MAX_IN_CIRCUIT_VALUE as u64);
+        inputs
+            .validate()
+            .expect("the exact in-circuit monetary bound must remain valid");
+    }
+
+    #[test]
+    fn signed_zero_must_use_the_canonical_positive_sign() {
+        let inputs = minimally_active_inputs();
+        inputs
+            .validate()
+            .expect("canonical positive zero balances must remain valid");
+
+        let mut negative_zero_balance = inputs.clone();
+        negative_zero_balance.value_balance_sign = Felt::ONE;
+        let err = negative_zero_balance
+            .validate()
+            .expect_err("negative-zero value balance must reject");
+        assert_eq!(err, "Value balance zero must use sign 0");
+
+        let padding = Felt::from_u64(u64::MAX);
+        let mut negative_zero_issuance = inputs;
+        negative_zero_issuance.balance_slot_assets = [
+            Felt::from_u64(NATIVE_ASSET_ID),
+            Felt::from_u64(7),
+            padding,
+            padding,
+        ];
+        negative_zero_issuance.stablecoin_enabled = Felt::ONE;
+        negative_zero_issuance.stablecoin_asset = Felt::from_u64(7);
+        negative_zero_issuance.stablecoin_issuance_sign = Felt::ONE;
+        let err = negative_zero_issuance
+            .validate()
+            .expect_err("negative-zero stablecoin issuance must reject");
+        assert_eq!(err, "Stablecoin issuance zero must use sign 0");
+
+        negative_zero_issuance.stablecoin_issuance_sign = Felt::ZERO;
+        negative_zero_issuance
+            .validate()
+            .expect("canonical positive-zero stablecoin issuance must remain valid");
+    }
+
+    #[test]
+    fn disabled_stablecoin_binding_must_be_zero() {
+        let inputs = minimally_active_inputs();
+        inputs
+            .validate()
+            .expect("default disabled stablecoin binding must remain valid");
+
+        let mut mutated = inputs;
+        mutated.stablecoin_policy_hash[0] = Felt::ONE;
+        assert!(mutated.validate().is_err());
+    }
 }

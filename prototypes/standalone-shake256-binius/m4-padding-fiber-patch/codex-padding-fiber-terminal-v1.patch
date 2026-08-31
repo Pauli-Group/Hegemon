@@ -1,0 +1,952 @@
+diff --git a/crates/iop-prover/src/basefold/channel.rs b/crates/iop-prover/src/basefold/channel.rs
+index 79c2020..82b5501 100644
+--- a/crates/iop-prover/src/basefold/channel.rs
++++ b/crates/iop-prover/src/basefold/channel.rs
+@@ -6,7 +6,10 @@ use std::ops::Deref;
+ 
+ use binius_compute::Allocator;
+ use binius_field::{BinaryField, Field, PackedField};
+-use binius_iop::{channel::OracleSpec, fri::FRIParams};
++use binius_iop::{
++	channel::{OracleSpec, OracleWireLayout},
++	fri::{FRIParams, PaddingFiberLayout, padding_fiber_index, padding_fiber_point},
++};
+ use binius_ip_prover::{
+ 	channel::{IPProverChannel, WordIPProverChannel},
+ 	sumcheck::{
+@@ -68,6 +71,33 @@ struct QueuedRelation<P: PackedField, Data: Deref<Target = [P]>> {
+ 	claim: P::Scalar,
+ }
+ 
++/// Copies a natural oracle into the exact PCS permutation that groups its zero padding into full
++/// terminal FRI fibers.
++fn permute_padding_fibers<P, A>(
++	alloc: &A,
++	message: FieldSlice<P>,
++	layout: PaddingFiberLayout,
++) -> FieldBuffer<P, A::Vec<P>>
++where
++	P: PackedField,
++	A: Allocator,
++{
++	assert_eq!(message.log_len(), layout.log_msg_len);
++	assert!(
++		message
++			.iter_scalars()
++			.skip(layout.active_values)
++			.all(|value| value == P::Scalar::ZERO),
++		"padding-fiber oracle suffix must be canonical zero"
++	);
++
++	let mut permuted = vec![P::Scalar::ZERO; message.len()];
++	for (index, value) in message.iter_scalars().enumerate() {
++		permuted[padding_fiber_index(index, layout.log_msg_len, layout.fold_vars)] = value;
++	}
++	FieldBuffer::from_values_in(alloc, &permuted)
++}
++
+ /// A prover channel that uses ZK BaseFold for all oracle commitments and openings.
+ ///
+ /// This channel owns an [`StdRng`] and generates random masks internally during
+@@ -373,6 +403,13 @@ fn prove_batch_zk_basefold<A, F, P, NTT, Channel>(
+ 
+ 		(combined, s_prime)
+ 	};
++	let padding_layout = fri_params.padding_fiber_layout();
++	let combined = match padding_layout {
++		Some(layout) => permute_padding_fibers(alloc, combined.to_ref(), layout),
++		None => combined,
++	};
++	let permuted_point = padding_layout.map(|layout| padding_fiber_point(point, layout.fold_vars));
++	let point = permuted_point.as_deref().unwrap_or(point);
+ 
+ 	// Codeword commitments in oracle-index order, matching `open_fri_params.input_oracles()`.
+ 	let committed_codewords = committed_oracles
+@@ -609,6 +646,25 @@ where
+ 			spec.log_msg_len,
+ 			buffer.log_len()
+ 		);
++		let padding_layout = self.fri_params.padding_fiber_layout();
++		match (spec.wire_layout, padding_layout) {
++			(OracleWireLayout::Natural, None) => {}
++			(OracleWireLayout::PaddingFibers { .. }, Some(_)) => {
++				assert!(!spec.is_zk, "padding-fiber oracle must not be masked");
++				assert_eq!(self.oracle_specs.len(), 1, "padding-fiber layout requires one oracle");
++				assert_eq!(
++					self.fri_params.input_oracles()[index].log_lift,
++					0,
++					"padding-fiber layout requires a zero-lift oracle"
++				);
++			}
++			_ => panic!("oracle wire layout and derived FRI layout disagree"),
++		}
++		let permuted_message = padding_layout
++			.map(|layout| permute_padding_fibers(&self.alloc, buffer.to_ref(), layout));
++		let wire_message = permuted_message
++			.as_ref()
++			.map_or_else(|| buffer.to_ref(), FieldBuffer::to_ref);
+ 
+ 		// Encode oracle `index` of the combined FRI parameters. ZK oracles interleave a fresh mask
+ 		// (`encode_masked`); non-ZK oracles encode the message alone (`encode_interleaved`).
+@@ -617,7 +673,7 @@ where
+ 				&self.fri_params,
+ 				index,
+ 				self.ntt,
+-				buffer.to_ref(),
++				wire_message,
+ 				&mut self.rng,
+ 				&self.alloc,
+ 			);
+@@ -628,7 +684,7 @@ where
+ 					&self.fri_params,
+ 					index,
+ 					self.ntt,
+-					buffer.to_ref(),
++					wire_message,
+ 					&self.alloc,
+ 				),
+ 				None,
+@@ -815,6 +871,63 @@ mod tests {
+ 		verifier_channel.finish().unwrap();
+ 	}
+ 
++	#[test]
++	fn test_basefold_channel_padding_fiber_oracle() {
++		type F = BinaryField128bGhash;
++		type P = PackedBinaryGhash1x128b;
++
++		let mut rng = StdRng::seed_from_u64(0x0050_4144_4449_4e47);
++		let n_vars = 8;
++		let active_values = 201;
++		let mut scalars = vec![F::ZERO; 1 << n_vars];
++		scalars[..active_values].copy_from_slice(&random_scalars::<F>(&mut rng, active_values));
++		let buffer = FieldBuffer::<P>::from_values(&scalars);
++		let evaluation_point = random_scalars::<F>(&mut rng, n_vars);
++		let transparent_poly = eq_ind_partial_eval::<P>(&evaluation_point);
++		let eval_claim = inner_product_buffers(&buffer, &transparent_poly);
++
++		let n_test_queries = calculate_n_test_queries(SECURITY_BITS, LOG_INV_RATE);
++		let verifier_compiler = BaseFoldVerifierCompiler::new(
++			&make_merkle_scheme(),
++			vec![OracleSpec::new_padding_fibers(n_vars, active_values)],
++			LOG_INV_RATE,
++			n_test_queries,
++			&MinProofSizeStrategy,
++		);
++
++		let ntt = make_ntt(verifier_compiler.max_log_domain_size());
++		let prover_compiler =
++			BaseFoldProverCompiler::<P, _>::from_verifier_compiler(&verifier_compiler, ntt);
++		let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
++		let mut prover_channel = prover_compiler
++			.create_channel_without_zk_from_transcript::<StdHashSuite, StdChallenger, _, _>(
++				&mut prover_transcript,
++				GlobalAllocator,
++			);
++		let oracle = prover_channel.send_oracle(buffer.to_ref());
++		prover_channel.prove_oracle_relation(oracle, transparent_poly.clone(), eval_claim);
++		prover_channel.finalize_oracle(oracle, buffer);
++		prover_channel.finish();
++
++		let mut verifier_transcript = prover_transcript.into_verifier();
++		let mut verifier_channel = verifier_compiler
++			.create_channel_from_transcript::<StdHashSuite, StdChallenger, _>(
++				&mut verifier_transcript,
++			);
++		let oracle = verifier_channel.recv_oracle(n_vars, true).unwrap();
++		verifier_channel
++			.verify_oracle_relation(
++				oracle,
++				Box::new(move |point: &[F]| {
++					let eq = eq_ind_partial_eval::<P>(point);
++					inner_product_buffers(&transparent_poly, &eq)
++				}),
++				eval_claim,
++			)
++			.unwrap();
++		verifier_channel.finish().unwrap();
++	}
++
+ 	#[test]
+ 	fn test_basefold_channel_two_oracles() {
+ 		type F = BinaryField128bGhash;
+diff --git a/crates/iop-prover/src/fri/fold.rs b/crates/iop-prover/src/fri/fold.rs
+index ee1dae1..5bc4dca 100644
+--- a/crates/iop-prover/src/fri/fold.rs
++++ b/crates/iop-prover/src/fri/fold.rs
+@@ -404,6 +404,7 @@ where
+ 		let index_bits = self.params.index_bits();
+ 		let log_terminal_dim = self.params.n_final_challenges();
+ 		let log_inv_rate = self.params.rs_code().log_inv_rate();
++		let padding_layout = self.params.padding_fiber_layout();
+ 		let ntt = self.ntt;
+ 		let (terminate_codeword, terminal_commitment, query_prover) = self.finalize();
+ 
+@@ -420,11 +421,27 @@ where
+ 			// Decommitment advice does not feed Fiat-Shamir. Authenticate the terminal message first,
+ 			// then use its queried codeword entries as division-free fold targets for the initial
+ 			// leaves.
+-			channel.send_committed_vector(&terminal_commitment, terminal_message.to_ref());
++			if let Some(layout) = padding_layout {
++				channel.send_committed_vector_with_known_zero_suffix(
++					&terminal_commitment,
++					terminal_message.to_ref(),
++					layout.terminal_wire_values,
++				);
++			} else {
++				channel.send_committed_vector(&terminal_commitment, terminal_message.to_ref());
++			}
+ 			query_prover.prove_queries_omitting_fold_targets(&indices, channel);
+ 		} else {
+ 			query_prover.prove_queries(&indices, channel);
+-			channel.send_committed_vector(&terminal_commitment, terminal_message.to_ref());
++			if let Some(layout) = padding_layout {
++				channel.send_committed_vector_with_known_zero_suffix(
++					&terminal_commitment,
++					terminal_message.to_ref(),
++					layout.terminal_wire_values,
++				);
++			} else {
++				channel.send_committed_vector(&terminal_commitment, terminal_message.to_ref());
++			}
+ 		}
+ 	}
+ }
+diff --git a/crates/iop-prover/src/merkle_channel.rs b/crates/iop-prover/src/merkle_channel.rs
+index fc04ae5..f106c16 100644
+--- a/crates/iop-prover/src/merkle_channel.rs
++++ b/crates/iop-prover/src/merkle_channel.rs
+@@ -108,6 +108,18 @@ pub trait MerkleIPProverChannel<F: Field>: WordIPProverChannel<F> {
+ 		commitment: &Self::Commitment,
+ 		data: FieldSlice<P>,
+ 	);
++
++	/// Sends only the nonzero-capable prefix of a vector whose remaining committed values are
++	/// verifier-prescribed zero.
++	///
++	/// The Merkle root still commits the complete `data`; this method only changes its
++	/// decommitment encoding. `wire_values` is fixed by public protocol parameters.
++	fn send_committed_vector_with_known_zero_suffix<P: PackedField<Scalar = F>>(
++		&mut self,
++		commitment: &Self::Commitment,
++		data: FieldSlice<P>,
++		wire_values: usize,
++	);
+ }
+ 
+ /// A [`MerkleIPProverChannel`] over a [`ProverTranscript`], committing with a
+@@ -449,6 +461,25 @@ where
+ 		let mut advice = self.transcript.borrow_mut().decommitment();
+ 		advice.write_scalar_iter(data.iter_scalars());
+ 	}
++
++	fn send_committed_vector_with_known_zero_suffix<P: PackedField<Scalar = F>>(
++		&mut self,
++		commitment: &Self::Commitment,
++		data: FieldSlice<P>,
++		wire_values: usize,
++	) {
++		debug_assert_eq!(commitment.depth, data.log_len() - commitment.log_leaf_size);
++		assert!(wire_values <= data.len(), "wire prefix must fit the committed vector");
++		assert!(
++			data.iter_scalars()
++				.skip(wire_values)
++				.all(|value| value == F::ZERO),
++			"omitted committed-vector suffix must be canonical zero"
++		);
++
++		let mut advice = self.transcript.borrow_mut().decommitment();
++		advice.write_scalar_iter(data.iter_scalars().take(wire_values));
++	}
+ }
+ 
+ #[cfg(test)]
+@@ -649,6 +680,70 @@ mod tests {
+ 		verifier_channel.into_transcript().finalize().unwrap();
+ 	}
+ 
++	#[test]
++	fn test_merkle_channel_omits_and_reconstructs_zero_suffix() {
++		let mut rng = StdRng::seed_from_u64(0x0050_4144_4449_4e47);
++		let wire_values = 201;
++		let mut scalars = vec![B128::ZERO; 1 << LOG_LEN];
++		scalars[..wire_values].copy_from_slice(&random_scalars(&mut rng, wire_values));
++		let data = FieldBuffer::<P, _>::from_values(&scalars);
++
++		let mut prover_channel =
++			ProverChannel::new(ProverTranscript::new(StdChallenger::default()));
++		let commitment = prover_channel.send_merkle_commitment(data.to_ref(), LEAF_SIZE);
++		prover_channel.send_committed_vector_with_known_zero_suffix(
++			&commitment,
++			data.to_ref(),
++			wire_values,
++		);
++
++		let transcript = prover_channel.into_transcript().into_verifier();
++		let mut verifier_channel = VerifierChannel::new(transcript);
++		let commitment = verifier_channel
++			.recv_merkle_commitment(LEAF_SIZE, DEPTH)
++			.unwrap();
++		let reconstructed = verifier_channel
++			.recv_committed_vector_with_known_zero_suffix(&commitment, wire_values)
++			.unwrap();
++		assert_eq!(reconstructed, scalars);
++		verifier_channel.into_transcript().finalize().unwrap();
++	}
++
++	#[test]
++	fn test_merkle_channel_rejects_nonzero_omitted_coordinate() {
++		let mut rng = StdRng::seed_from_u64(0x5a45_524f_5441_494c);
++		let wire_values = 201;
++		let mut canonical = vec![B128::ZERO; 1 << LOG_LEN];
++		canonical[..wire_values].copy_from_slice(&random_scalars(&mut rng, wire_values));
++		let canonical_data = FieldBuffer::<P, _>::from_values(&canonical);
++		let mut noncanonical = canonical.clone();
++		noncanonical[wire_values] = B128::ONE;
++		let noncanonical_data = FieldBuffer::<P, _>::from_values(&noncanonical);
++
++		// A malicious prover commits a nonzero first omitted coordinate, then places only the
++		// canonical prefix on the tape. The verifier must reconstruct zero and reject the root.
++		let mut prover_channel =
++			ProverChannel::new(ProverTranscript::new(StdChallenger::default()));
++		let commitment =
++			prover_channel.send_merkle_commitment(noncanonical_data.to_ref(), LEAF_SIZE);
++		prover_channel.send_committed_vector_with_known_zero_suffix(
++			&commitment,
++			canonical_data.to_ref(),
++			wire_values,
++		);
++
++		let transcript = prover_channel.into_transcript().into_verifier();
++		let mut verifier_channel = VerifierChannel::new(transcript);
++		let commitment = verifier_channel
++			.recv_merkle_commitment(LEAF_SIZE, DEPTH)
++			.unwrap();
++		assert!(
++			verifier_channel
++				.recv_committed_vector_with_known_zero_suffix(&commitment, wire_values)
++				.is_err()
++		);
++	}
++
+ 	#[test]
+ 	fn test_merkle_channel_rejects_wrong_fold_target() {
+ 		let mut rng = StdRng::seed_from_u64(0x5441_5247_4554);
+diff --git a/crates/iop/src/basefold/channel.rs b/crates/iop/src/basefold/channel.rs
+index 22b7135..09c4e53 100644
+--- a/crates/iop/src/basefold/channel.rs
++++ b/crates/iop/src/basefold/channel.rs
+@@ -19,7 +19,7 @@ use itertools::izip;
+ use crate::{
+ 	basefold,
+ 	channel::{Error, IOPVerifierChannel, OracleSpec, TransparentEvalFn},
+-	fri::FRIParams,
++	fri::{FRIParams, padding_fiber_point},
+ 	merkle_channel::MerkleIPVerifierChannel,
+ };
+ 
+@@ -241,13 +241,17 @@ where
+ 			eq_i * alpha_i * eq_ind_zero(&point[n_i..][..log_lift])
+ 		})
+ 		.sum::<Channel::Elem>();
++	let permuted_point = fri_params
++		.padding_fiber_layout()
++		.map(|layout| padding_fiber_point(&point, layout.fold_vars));
++	let opening_point = permuted_point.as_deref().unwrap_or(&point);
+ 
+ 	// The opening routine asserts the final FRI/MLE-check consistency internally.
+ 	basefold::verify_mlecheck_basefold(
+ 		fri_params,
+ 		oracle_commitments,
+ 		s_prime,
+-		&point,
++		opening_point,
+ 		gamma,
+ 		&outer_challenges,
+ 		channel,
+diff --git a/crates/iop/src/channel/mod.rs b/crates/iop/src/channel/mod.rs
+index a8e29b8..77b8935 100644
+--- a/crates/iop/src/channel/mod.rs
++++ b/crates/iop/src/channel/mod.rs
+@@ -36,6 +36,26 @@ pub struct OracleSpec {
+ 	/// ZK oracles interleave the message with a fresh mask and are folded by a shared masking
+ 	/// challenge γ in the batched BaseFold opening; non-ZK oracles are committed without a mask.
+ 	pub is_zk: bool,
++	/// The public wire layout used by the polynomial commitment.
++	///
++	/// This does not change the relation proved about the oracle. A non-natural layout is an exact,
++	/// public permutation applied only while committing and opening the oracle, together with the
++	/// inverse point permutation that preserves every multilinear evaluation.
++	pub wire_layout: OracleWireLayout,
++}
++
++/// Public layout of an oracle on the polynomial-commitment wire.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
++pub enum OracleWireLayout {
++	/// Commit the oracle in its ordinary low-to-high multilinear order.
++	#[default]
++	Natural,
++	/// Move the canonical zero padding into complete fibers of the FRI fold variables.
++	///
++	/// `active_values` is the exact number of leading field elements that may be nonzero in the
++	/// natural oracle. Every element from there to `2^log_msg_len` is verifier-prescribed zero.
++	/// This layout is valid only for a single, unmasked, zero-lift oracle.
++	PaddingFibers { active_values: usize },
+ }
+ 
+ impl OracleSpec {
+@@ -44,6 +64,7 @@ impl OracleSpec {
+ 		Self {
+ 			log_msg_len,
+ 			is_zk: false,
++			wire_layout: OracleWireLayout::Natural,
+ 		}
+ 	}
+ 
+@@ -52,6 +73,16 @@ impl OracleSpec {
+ 		Self {
+ 			log_msg_len,
+ 			is_zk: true,
++			wire_layout: OracleWireLayout::Natural,
++		}
++	}
++
++	/// A non-ZK oracle whose natural message has a verifier-prescribed zero suffix.
++	pub const fn new_padding_fibers(log_msg_len: usize, active_values: usize) -> Self {
++		Self {
++			log_msg_len,
++			is_zk: false,
++			wire_layout: OracleWireLayout::PaddingFibers { active_values },
+ 		}
+ 	}
+ }
+diff --git a/crates/iop/src/channel/oracle_setup.rs b/crates/iop/src/channel/oracle_setup.rs
+index aa50ae2..eec4eb3 100644
+--- a/crates/iop/src/channel/oracle_setup.rs
++++ b/crates/iop/src/channel/oracle_setup.rs
+@@ -236,6 +236,7 @@ impl<F: Field> IOPVerifierChannel<F> for OracleSetupChannel {
+ 		self.oracle_specs.push(OracleSpec {
+ 			log_msg_len,
+ 			is_zk: self.is_zk && is_witness_dependent,
++			wire_layout: Default::default(),
+ 		});
+ 		Ok(())
+ 	}
+diff --git a/crates/iop/src/channel/size_tracking.rs b/crates/iop/src/channel/size_tracking.rs
+index 0f5a92c..e2f0033 100644
+--- a/crates/iop/src/channel/size_tracking.rs
++++ b/crates/iop/src/channel/size_tracking.rs
+@@ -175,4 +175,15 @@ where
+ 		self.proof_size += len * F::BYTE_SIZE;
+ 		Ok(vec![F::ZERO; len])
+ 	}
++
++	fn recv_committed_vector_with_known_zero_suffix(
++		&mut self,
++		commitment: &Self::Commitment,
++		wire_values: usize,
++	) -> Result<Vec<F>, Error> {
++		let len = commitment.leaf_size << commitment.depth;
++		assert!(wire_values <= len, "wire prefix must fit the committed vector");
++		self.proof_size += wire_values * F::BYTE_SIZE;
++		Ok(vec![F::ZERO; len])
++	}
+ }
+diff --git a/crates/iop/src/fri/common.rs b/crates/iop/src/fri/common.rs
+index 86e6bf4..f6f575a 100644
+--- a/crates/iop/src/fri/common.rs
++++ b/crates/iop/src/fri/common.rs
+@@ -8,7 +8,11 @@ use binius_math::reed_solomon::ReedSolomonCode;
+ use binius_utils::checked_arithmetics::log2_ceil_usize;
+ use getset::{CopyGetters, Getters};
+ 
+-use crate::{channel::OracleSpec, merkle_tree::MerkleTreeScheme};
++use crate::{
++	channel::{OracleSpec, OracleWireLayout},
++	fri::PaddingFiberLayout,
++	merkle_tree::MerkleTreeScheme,
++};
+ 
+ /// Parameters for an FRI interleaved code proximity protocol.
+ ///
+@@ -41,6 +45,8 @@ pub struct FRIParams<F> {
+ 	/// The number oracle consistency queries required during the query phase.
+ 	#[getset(get_copy = "pub")]
+ 	n_test_queries: usize,
++	/// Optional exact terminal-wire compression for one canonical zero-padded oracle.
++	padding_fiber_layout: Option<PaddingFiberLayout>,
+ }
+ 
+ /// Specification of one committed codeword batched into the first-round FRI oracle.
+@@ -165,6 +171,7 @@ where
+ 			fold_arities,
+ 			log_terminal_dim,
+ 			n_test_queries,
++			padding_fiber_layout: None,
+ 		}
+ 	}
+ 
+@@ -258,10 +265,49 @@ where
+ 
+ 		let rs_code = ReedSolomonCode::new(reduced_log_dim, log_inv_rate);
+ 
+-		let params = Self::new_batch(rs_code, oracle_specs, fold_arities, n_test_queries);
++		let mut params = Self::new_batch(rs_code, oracle_specs, fold_arities, n_test_queries);
++		params.padding_fiber_layout = params.derive_padding_fiber_layout(oracles);
+ 		(params, proof_size)
+ 	}
+ 
++	/// Returns the compact-terminal layout, when this is the one supported padding-fiber profile.
++	pub const fn padding_fiber_layout(&self) -> Option<PaddingFiberLayout> {
++		self.padding_fiber_layout
++	}
++
++	fn derive_padding_fiber_layout(&self, oracles: &[OracleSpec]) -> Option<PaddingFiberLayout> {
++		let [oracle] = oracles else {
++			return None;
++		};
++		let OracleWireLayout::PaddingFibers { active_values } = oracle.wire_layout else {
++			return None;
++		};
++		assert!(!oracle.is_zk, "padding-fiber layout is invalid for a masked oracle");
++		assert_eq!(self.log_n_oracles, 0, "padding-fiber layout requires one oracle");
++		assert_eq!(
++			self.input_oracles[0].log_lift, 0,
++			"padding-fiber layout requires a zero-lift oracle"
++		);
++		assert_eq!(
++			self.max_log_msg_len, oracle.log_msg_len,
++			"padding-fiber message dimension must equal the FRI input dimension"
++		);
++		assert!(
++			active_values <= 1 << oracle.log_msg_len,
++			"active values must fit the oracle message"
++		);
++
++		let fold_vars = oracle.log_msg_len - self.log_terminal_dim;
++		let terminal_wire_values = active_values.div_ceil(1 << fold_vars);
++		assert!(terminal_wire_values <= 1 << self.log_terminal_dim);
++		Some(PaddingFiberLayout {
++			log_msg_len: oracle.log_msg_len,
++			fold_vars,
++			active_values,
++			terminal_wire_values,
++		})
++	}
++
+ 	/// Number of folding rounds in the FRI protocol.
+ 	///
+ 	/// This is the largest input message length, plus `log_n_oracles` extra rounds that fold the
+@@ -895,6 +941,35 @@ mod tests {
+ 		assert_eq!(proof_size(&params, &merkle_scheme), 277_920);
+ 	}
+ 
++	#[test]
++	fn padding_fiber_metadata_is_derived_after_the_unchanged_arity_search() {
++		let merkle_scheme = test_merkle_scheme();
++		let log_inv_rate = 3;
++		let n_test_queries = calculate_n_test_queries(96, log_inv_rate);
++		let natural = [OracleSpec::new(14)];
++		let compact = [OracleSpec::new_padding_fibers(14, 12_486)];
++
++		let (natural_params, natural_estimate) =
++			FRIParams::optimal_for_batch(&merkle_scheme, &natural, log_inv_rate, n_test_queries);
++		let (compact_params, compact_estimate) =
++			FRIParams::optimal_for_batch(&merkle_scheme, &compact, log_inv_rate, n_test_queries);
++
++		assert_eq!(compact_estimate, natural_estimate);
++		assert_eq!(compact_params.log_batch_size(), natural_params.log_batch_size());
++		assert_eq!(compact_params.fold_arities(), natural_params.fold_arities());
++		assert_eq!(compact_params.n_final_challenges(), natural_params.n_final_challenges());
++		assert_eq!(
++			compact_params.padding_fiber_layout(),
++			Some(PaddingFiberLayout {
++				log_msg_len: 14,
++				fold_vars: 4,
++				active_values: 12_486,
++				terminal_wire_values: 781,
++			})
++		);
++		assert_eq!(natural_params.padding_fiber_layout(), None);
++	}
++
+ 	#[test]
+ 	fn test_min_proof_size_strategy() {
+ 		let merkle_scheme = test_merkle_scheme();
+diff --git a/crates/iop/src/fri/mod.rs b/crates/iop/src/fri/mod.rs
+index dd7a278..52cd3e1 100644
+--- a/crates/iop/src/fri/mod.rs
++++ b/crates/iop/src/fri/mod.rs
+@@ -26,6 +26,7 @@
+ mod batch;
+ mod common;
+ mod error;
++mod padding_fibers;
+ pub mod fold;
+ mod size_estimation;
+ pub mod verify;
+@@ -33,4 +34,5 @@ pub mod verify;
+ pub use common::*;
+ pub use error::*;
+ pub use fold::FRIFoldVerifier;
++pub use padding_fibers::*;
+ pub use size_estimation::proof_size;
+diff --git a/crates/iop/src/fri/padding_fibers.rs b/crates/iop/src/fri/padding_fibers.rs
+new file mode 100644
+index 0000000..c1c2e75
+--- /dev/null
++++ b/crates/iop/src/fri/padding_fibers.rs
+@@ -0,0 +1,162 @@
++// Copyright 2026 The Binius Developers
++
++//! Exact PCS-only permutation that groups a natural message's zero padding into FRI fibers.
++
++/// Derived compact-terminal layout for one padding-fiber oracle.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct PaddingFiberLayout {
++	/// Natural message dimension.
++	pub log_msg_len: usize,
++	/// Number of message variables eliminated before the terminal message.
++	pub fold_vars: usize,
++	/// Number of leading natural message values that may be nonzero.
++	pub active_values: usize,
++	/// Number of terminal-message values carried on the wire.
++	pub terminal_wire_values: usize,
++}
++
++/// Reverses exactly `bits` low bits of `value`.
++const fn reverse_low_bits(value: usize, bits: usize) -> usize {
++	if bits == 0 {
++		0
++	} else {
++		value.reverse_bits() >> (usize::BITS as usize - bits)
++	}
++}
++
++/// Maps one natural multilinear index into padding-fiber PCS order.
++///
++/// For a message with `n = log_len` variables whose first `fold_vars = f` variables will be
++/// eliminated before the terminal FRI message, write `i = q·2^f + s`. The new index is
++///
++/// `P(i) = bit_reverse_{n-f}(q) + 2^{n-f}·s`.
++///
++/// The Reed–Solomon encoder subsequently bit-reverses all `n` index bits, giving
++/// `bit_reverse_n(P(i)) = q·2^f + bit_reverse_f(s)`. Consequently the `2^f` values belonging to
++/// one natural block `q` form one contiguous fold fiber.
++pub fn padding_fiber_index(index: usize, log_len: usize, fold_vars: usize) -> usize {
++	assert!(fold_vars <= log_len, "fold variables must fit the message dimension");
++	assert!(index < 1 << log_len, "index must fit the message dimension");
++	let terminal_vars = log_len - fold_vars;
++	let fiber_mask = (1 << fold_vars) - 1;
++	let block = index >> fold_vars;
++	let fiber = index & fiber_mask;
++	reverse_low_bits(block, terminal_vars) | (fiber << terminal_vars)
++}
++
++/// Inverse of [`padding_fiber_index`].
++pub fn inverse_padding_fiber_index(index: usize, log_len: usize, fold_vars: usize) -> usize {
++	assert!(fold_vars <= log_len, "fold variables must fit the message dimension");
++	assert!(index < 1 << log_len, "index must fit the message dimension");
++	let terminal_vars = log_len - fold_vars;
++	let terminal_mask = (1 << terminal_vars) - 1;
++	let block = reverse_low_bits(index & terminal_mask, terminal_vars);
++	let fiber = index >> terminal_vars;
++	(block << fold_vars) | fiber
++}
++
++/// Transforms a low-to-high multilinear evaluation point for padding-fiber PCS order.
++///
++/// If the natural point is `[r_0, …, r_{n-1}]`, the returned point is
++/// `[r_{n-1}, …, r_f, r_0, …, r_{f-1}]`. Evaluating the permuted message there is exactly the
++/// same as evaluating the natural message at the original point.
++pub fn padding_fiber_point<T: Clone>(point: &[T], fold_vars: usize) -> Vec<T> {
++	assert!(fold_vars <= point.len(), "fold variables must fit the evaluation point");
++	point[fold_vars..]
++		.iter()
++		.rev()
++		.chain(&point[..fold_vars])
++		.cloned()
++		.collect()
++}
++
++#[cfg(test)]
++mod tests {
++	use binius_field::{BinaryField128bGhash as B128, Field};
++	use binius_math::{
++		bit_reverse::bit_reverse_indices, multilinear::evaluate::evaluate_inplace_scalars,
++	};
++
++	use super::*;
++
++	#[test]
++	fn padding_fiber_permutation_is_a_bijection() {
++		for log_len in 0..=14 {
++			for fold_vars in 0..=log_len {
++				let mut seen = vec![false; 1 << log_len];
++				for index in 0..1 << log_len {
++					let permuted = padding_fiber_index(index, log_len, fold_vars);
++					assert!(!seen[permuted]);
++					seen[permuted] = true;
++					assert_eq!(inverse_padding_fiber_index(permuted, log_len, fold_vars), index);
++				}
++				assert!(seen.into_iter().all(|entry| entry));
++			}
++		}
++	}
++
++	#[test]
++	fn padding_fiber_permutation_preserves_multilinear_evaluation() {
++		let log_len = 8;
++		let fold_vars = 3;
++		let natural = (0..1 << log_len)
++			.map(|i| B128::new((i as u128 + 1).pow(3)))
++			.collect::<Vec<_>>();
++		let point = (0..log_len)
++			.map(|i| B128::new((17 + i) as u128))
++			.collect::<Vec<_>>();
++		let mut permuted = vec![B128::ZERO; natural.len()];
++		for (index, &value) in natural.iter().enumerate() {
++			permuted[padding_fiber_index(index, log_len, fold_vars)] = value;
++		}
++
++		let natural_eval = evaluate_inplace_scalars(natural, &point);
++		let permuted_eval =
++			evaluate_inplace_scalars(permuted, &padding_fiber_point(&point, fold_vars));
++		assert_eq!(permuted_eval, natural_eval);
++	}
++
++	#[test]
++	fn encoder_bit_reversal_groups_natural_fibers() {
++		let (log_len, fold_vars) = (14, 4);
++		for index in 0..1 << log_len {
++			let encoded = reverse_low_bits(padding_fiber_index(index, log_len, fold_vars), log_len);
++			let want = ((index >> fold_vars) << fold_vars)
++				| reverse_low_bits(index & ((1 << fold_vars) - 1), fold_vars);
++			assert_eq!(encoded, want);
++		}
++	}
++
++	#[test]
++	fn pay1x2_padding_fibers_give_an_exact_zero_terminal_suffix() {
++		let (log_len, fold_vars, active_values) = (14_usize, 4_usize, 12_486_usize);
++		let terminal_wire_values = active_values.div_ceil(1 << fold_vars);
++		assert_eq!(terminal_wire_values, 781);
++
++		let mut natural = vec![B128::ZERO; 1 << log_len];
++		for (index, value) in natural[..active_values].iter_mut().enumerate() {
++			*value = B128::new((index + 1) as u128);
++		}
++		let mut encoded_message = vec![B128::ZERO; natural.len()];
++		for (index, value) in natural.into_iter().enumerate() {
++			encoded_message[padding_fiber_index(index, log_len, fold_vars)] = value;
++		}
++		// `encode_batch` performs this exact message permutation before its NTT. Folding the first
++		// four encoded variables therefore evaluates each contiguous sixteen-value fiber.
++		bit_reverse_indices(&mut encoded_message);
++		let fold_point = (0..fold_vars)
++			.map(|i| B128::new((41 + i) as u128))
++			.collect::<Vec<_>>();
++		let terminal = encoded_message
++			.chunks(1 << fold_vars)
++			.map(|fiber| evaluate_inplace_scalars(fiber.to_vec(), &fold_point))
++			.collect::<Vec<_>>();
++
++		assert_eq!(terminal.len(), 1 << (log_len - fold_vars));
++		assert!(
++			terminal[terminal_wire_values..]
++				.iter()
++				.all(|&value| value == B128::ZERO)
++		);
++	}
++}
+diff --git a/crates/iop/src/fri/verify.rs b/crates/iop/src/fri/verify.rs
+index 286b83b..4cabcc2 100644
+--- a/crates/iop/src/fri/verify.rs
++++ b/crates/iop/src/fri/verify.rs
+@@ -238,7 +238,13 @@ where
+ 	{
+ 		let n_final_challenges = self.params.n_final_challenges();
+ 		let log_inv_rate = self.params.rs_code().log_inv_rate();
+-		let terminal_message = channel.recv_committed_vector(&self.terminal_commitment)?;
++		let terminal_message = match self.params.padding_fiber_layout() {
++			Some(layout) => channel.recv_committed_vector_with_known_zero_suffix(
++				&self.terminal_commitment,
++				layout.terminal_wire_values,
++			)?,
++			None => channel.recv_committed_vector(&self.terminal_commitment)?,
++		};
+ 		let domain_context = GaoMateerOnTheFly::generate(self.params.rs_code().log_len());
+ 		Ok(encode_terminal_message(
+ 			&domain_context,
+diff --git a/crates/iop/src/merkle_channel.rs b/crates/iop/src/merkle_channel.rs
+index 69dbcab..6c90094 100644
+--- a/crates/iop/src/merkle_channel.rs
++++ b/crates/iop/src/merkle_channel.rs
+@@ -96,6 +96,17 @@ pub trait MerkleIPVerifierChannel<F: Field>: WordIPVerifierChannel<F> {
+ 		&mut self,
+ 		commitment: &Self::Commitment,
+ 	) -> Result<Vec<Self::Elem>, Error>;
++
++	/// Receives a committed vector whose suffix is verifier-prescribed zero and omitted on wire.
++	///
++	/// `wire_values` is fixed by public protocol parameters. The returned vector still has the full
++	/// committed length; implementations append constants and authenticate that complete vector to
++	/// the original root. It is never a length supplied by the proof.
++	fn recv_committed_vector_with_known_zero_suffix(
++		&mut self,
++		commitment: &Self::Commitment,
++		wire_values: usize,
++	) -> Result<Vec<Self::Elem>, Error>;
+ }
+ 
+ /// A [`MerkleIPVerifierChannel`] over a [`VerifierTranscript`], verifying openings with a
+@@ -405,6 +416,24 @@ where
+ 			.verify_vector(&commitment.commitment.root, &data, commitment.leaf_size)?;
+ 		Ok(data)
+ 	}
++
++	fn recv_committed_vector_with_known_zero_suffix(
++		&mut self,
++		commitment: &Self::Commitment,
++		wire_values: usize,
++	) -> Result<Vec<F>, Error> {
++		let len = commitment.leaf_size << commitment.commitment.depth;
++		assert!(wire_values <= len, "wire prefix must fit the committed vector");
++		let mut data = self
++			.transcript
++			.borrow_mut()
++			.decommitment()
++			.read_scalar_slice::<F>(wire_values)?;
++		data.resize(len, F::ZERO);
++		self.scheme
++			.verify_vector(&commitment.commitment.root, &data, commitment.leaf_size)?;
++		Ok(data)
++	}
+ }
+ 
+ /// Error type for Merkle channel operations.
+diff --git a/crates/m4-verifier/src/composite.rs b/crates/m4-verifier/src/composite.rs
+index 73d373c..0a247eb 100644
+--- a/crates/m4-verifier/src/composite.rs
++++ b/crates/m4-verifier/src/composite.rs
+@@ -18,7 +18,11 @@ use binius_iop::{
+ use binius_ip::channel::WordIPVerifierChannel;
+ use binius_transcript::{VerifierTranscript, fiat_shamir::Challenger};
+ use binius_utils::{DeserializeBytes, checked_arithmetics::log2_ceil_usize};
+-use binius_verifier::{Error, SECURITY_BITS, config::B128, protocols::shift::WiringEvalClaim};
++use binius_verifier::{
++	Error, SECURITY_BITS,
++	config::{B128, LOG_WORDS_PER_ELEM},
++	protocols::shift::WiringEvalClaim,
++};
+ use digest::Output;
+ 
+ use crate::{
+@@ -103,8 +107,23 @@ impl IOPVerifierM4 {
+ 	///
+ 	/// A composite proof is transparent, so no oracle is masked.
+ 	pub fn oracle_specs(&self) -> Vec<OracleSpec> {
+-		self.main
+-			.oracle_specs(false)
++		let mut main_specs = self.main.oracle_specs(false);
++		// The compact padding-fiber wire is deliberately limited to the Pay1x2-shaped case: one
++		// transparent main trace and no chip oracles. A batched or lifted oracle would mix values
++		// into the would-be zero terminal suffix, and a mask would make it random rather than zero.
++		if self.chips.is_empty() {
++			let [main_spec] = main_specs.as_mut_slice() else {
++				panic!("padding-fiber M4 main must expose exactly one trace oracle");
++			};
++			let active_values = self
++				.main
++				.constraint_system()
++				.n_private
++				.div_ceil(1 << LOG_WORDS_PER_ELEM);
++			*main_spec = OracleSpec::new_padding_fibers(main_spec.log_msg_len, active_values);
++		}
++
++		main_specs
+ 			.into_iter()
+ 			.chain(self.chips.iter().flat_map(IOPVerifier::oracle_specs))
+ 			.collect()
+diff --git a/crates/recursion/src/channel.rs b/crates/recursion/src/channel.rs
+index abdb1dc..cebc674 100644
+--- a/crates/recursion/src/channel.rs
++++ b/crates/recursion/src/channel.rs
+@@ -388,6 +388,19 @@ impl MerkleIPVerifierChannel<B128> for Binius64BuilderChannel {
+ 		Ok(values)
+ 	}
+ 
++	fn recv_openings_with_fold_targets(
++		&mut self,
++		_commitment: &Commitment,
++		_indices: &[SymbolicWord],
++		_targets: &[SymbolicElem],
++		_fold_challenges: &[SymbolicElem],
++	) -> Result<Vec<SymbolicElem>, merkle_channel::Error> {
++		panic!(
++			"compact FRI fold-target openings are direct-verification only: their canonical Merkle \
++			 frontier depends on symbolic query indices and has no fixed recursive-circuit shape"
++		)
++	}
++
+ 	/// Receives the whole committed vector, checked by rebuilding its tree.
+ 	///
+ 	/// The data arrives in the clear, so there is no path to climb: the tree is rebuilt over it.
+@@ -406,6 +419,17 @@ impl MerkleIPVerifierChannel<B128> for Binius64BuilderChannel {
+ 
+ 		Ok(data.into_iter().map(|element| self.elem(element)).collect())
+ 	}
++
++	fn recv_committed_vector_with_known_zero_suffix(
++		&mut self,
++		_commitment: &Commitment,
++		_wire_values: usize,
++	) -> Result<Vec<SymbolicElem>, merkle_channel::Error> {
++		panic!(
++			"compact known-zero terminal suffixes are direct-verification only until the recursive \
++			 verifier has an explicitly matched compact-wire gadget"
++		)
++	}
+ }
+ 
+ #[cfg(test)]
+diff --git a/crates/recursion/src/filler.rs b/crates/recursion/src/filler.rs
+index a89024e..101db19 100644
+--- a/crates/recursion/src/filler.rs
++++ b/crates/recursion/src/filler.rs
+@@ -247,6 +247,19 @@ where
+ 		Ok(values)
+ 	}
+ 
++	fn recv_openings_with_fold_targets(
++		&mut self,
++		_commitment: &Self::Commitment,
++		_indices: &[Word],
++		_targets: &[B128],
++		_fold_challenges: &[B128],
++	) -> Result<Vec<B128>, merkle_channel::Error> {
++		panic!(
++			"compact FRI fold-target openings are direct-verification only and cannot fill the \
++			 current recursive circuit"
++		)
++	}
++
+ 	fn recv_committed_vector(
+ 		&mut self,
+ 		commitment: &Self::Commitment,
+@@ -263,4 +276,15 @@ where
+ 		}
+ 		Ok(data)
+ 	}
++
++	fn recv_committed_vector_with_known_zero_suffix(
++		&mut self,
++		_commitment: &Self::Commitment,
++		_wire_values: usize,
++	) -> Result<Vec<B128>, merkle_channel::Error> {
++		panic!(
++			"compact known-zero terminal suffixes are direct-verification only and cannot fill the \
++			 current recursive circuit"
++		)
++	}
+ }

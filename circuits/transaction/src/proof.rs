@@ -3,6 +3,15 @@
 //! This module provides the main interface for creating and verifying
 //! transaction proofs across the version-bound backend seam.
 
+#[cfg(test)]
+use hegemon_hash384::{blake2b_384, BLAKE2B_384_FRAME_V1};
+use hegemon_hash384::{
+    blake2b_384_domain_hash,
+    domains::{
+        TRANSACTION_PROOF_ARTIFACT_V2, TRANSACTION_PUBLIC_INPUTS_V2, TRANSACTION_STATEMENT_V2,
+        TRANSACTION_VERIFIER_PROFILE_V2,
+    },
+};
 use protocol_versioning::{
     tx_proof_backend_for_version, TxProofBackend, VersionBinding, DEFAULT_TX_PROOF_BACKEND,
     DEFAULT_VERSION_BINDING, LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING,
@@ -10,7 +19,6 @@ use protocol_versioning::{
 };
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
-use synthetic_crypto::hashes::blake3_384;
 
 use crate::smallwood_frontend::{
     decode_smallwood_candidate_proof_for_version, prove_smallwood_candidate_with_auth,
@@ -20,7 +28,8 @@ use crate::smallwood_frontend::{
 use crate::{
     constants::{
         is_balance_slot_padding_asset_id, is_canonical_asset_id, BALANCE_SLOTS,
-        BALANCE_SLOT_PADDING_FIELD_ID, MAX_INPUTS, MAX_NOTE_VALUE, MAX_OUTPUTS, NATIVE_ASSET_ID,
+        BALANCE_SLOT_PADDING_ASSET_ID, BALANCE_SLOT_PADDING_FIELD_ID, MAX_INPUTS, MAX_NOTE_VALUE,
+        MAX_OUTPUTS, NATIVE_ASSET_ID,
     },
     error::TransactionCircuitError,
     hashing_pq::{balance_commitment_bytes, bytes48_to_felts, Commitment},
@@ -277,11 +286,11 @@ pub fn decode_transaction_proof_bytes_exact(
     Ok(proof)
 }
 
-pub const TX_STATEMENT_HASH_DOMAIN: &[u8] = b"tx-statement-v1";
-pub const TX_PROOF_DIGEST_DOMAIN: &[u8] = b"tx-proof-digest-v1";
-pub const TX_PUBLIC_INPUTS_DIGEST_DOMAIN: &[u8] = b"tx-public-inputs-digest-v1";
-pub const TX_VERIFIER_PROFILE_DOMAIN: &[u8] = b"hegemon.inline-tx-p3-profile.v1";
-pub const PRODUCTION_CRYPTO_PROFILE_MARKER: &str = "HEGEMON_PRODUCTION_CRYPTO_PROFILE:CIRCUIT=4:CRYPTO=3:BACKEND=smallwood_candidate:ARITH=direct-packed64-compressed-level5:RHO=5:OPENINGS=5:BETA=7:DECS_EVALS=1048576:DECS_OPENINGS=20:DECS_ETA=33:FLOOR=260";
+pub const TX_STATEMENT_HASH_DOMAIN: &[u8] = TRANSACTION_STATEMENT_V2;
+pub const TX_PROOF_DIGEST_DOMAIN: &[u8] = TRANSACTION_PROOF_ARTIFACT_V2;
+pub const TX_PUBLIC_INPUTS_DIGEST_DOMAIN: &[u8] = TRANSACTION_PUBLIC_INPUTS_V2;
+pub const TX_VERIFIER_PROFILE_DOMAIN: &[u8] = TRANSACTION_VERIFIER_PROFILE_V2;
+pub const PRODUCTION_CRYPTO_PROFILE_MARKER: &str = "HEGEMON_PRODUCTION_CRYPTO_PROFILE:CIRCUIT=4:CRYPTO=3:BACKEND=smallwood_candidate:ARITH=direct-packed64-compressed-level5:RHO=5:OPENINGS=5:BETA=2:DECS_EVALS=1048576:DECS_OPENINGS=23:DECS_ETA=5:FLOOR=260";
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct ProductionCryptoProfileAttestation {
@@ -294,6 +303,8 @@ pub struct ProductionCryptoProfileAttestation {
     pub arithmetization: SmallwoodArithmetization,
     pub public_value_count: usize,
     pub exact_constraint_table_digest_hex: String,
+    /// Historical JSON field name retained for release tooling compatibility.
+    /// The value is the active domain-separated BLAKE2b-384 V2 profile digest.
     pub verifier_profile_sha384_hex: String,
     pub no_grinding_profile: SmallwoodNoGrindingProfileV1,
     pub soundness: SmallwoodNoGrindingSoundnessReportV1,
@@ -485,9 +496,18 @@ pub fn transaction_statement_hash_from_parts(
         stablecoin_issuance_delta,
         stablecoin_policy_version,
     )?;
-    Ok(blake3_384(&preimage))
+    Ok(blake2b_384_domain_hash(
+        TX_STATEMENT_HASH_DOMAIN,
+        [preimage.as_slice()],
+    ))
 }
 
+/// Return the fixed-order statement payload before the central BLAKE2b-384
+/// frame, domain, and single-part length are applied.
+///
+/// This is not itself the raw hash transcript. Consumers must call
+/// [`transaction_statement_hash_from_parts`] instead of hashing this payload
+/// with a component-local construction.
 #[allow(clippy::too_many_arguments)]
 pub fn transaction_statement_preimage_from_parts(
     merkle_root: &Commitment,
@@ -527,7 +547,6 @@ pub fn transaction_statement_preimage_from_parts(
     }
 
     let mut message = Vec::new();
-    message.extend_from_slice(TX_STATEMENT_HASH_DOMAIN);
     message.extend_from_slice(merkle_root);
     for nf in nullifiers {
         message.extend_from_slice(nf);
@@ -570,18 +589,21 @@ pub fn transaction_proof_digest_from_parts(
     backend: TxProofBackend,
     proof_bytes: &[u8],
 ) -> [u8; 48] {
-    blake3_384(&transaction_proof_digest_preimage_from_parts(
-        backend,
-        proof_bytes,
-    ))
+    let backend_wire_id = [backend.wire_id()];
+    blake2b_384_domain_hash(
+        TX_PROOF_DIGEST_DOMAIN,
+        [backend_wire_id.as_slice(), proof_bytes],
+    )
 }
 
+/// Return `backend_wire_id || proof_bytes`, the canonical artifact payload.
+/// The active digest frames these as two distinct parts, so this concatenation
+/// is for byte-spec/vector inspection only and must not be hashed directly.
 pub fn transaction_proof_digest_preimage_from_parts(
     backend: TxProofBackend,
     proof_bytes: &[u8],
 ) -> Vec<u8> {
-    let mut message = Vec::with_capacity(TX_PROOF_DIGEST_DOMAIN.len() + proof_bytes.len() + 1);
-    message.extend_from_slice(TX_PROOF_DIGEST_DOMAIN);
+    let mut message = Vec::with_capacity(proof_bytes.len() + 1);
     message.push(backend.wire_id());
     message.extend_from_slice(proof_bytes);
     message
@@ -590,11 +612,14 @@ pub fn transaction_proof_digest_preimage_from_parts(
 pub fn transaction_public_inputs_digest_from_serialized(
     stark_inputs: &SerializedStarkInputs,
 ) -> Result<[u8; 48], TransactionCircuitError> {
-    Ok(blake3_384(
-        &transaction_public_inputs_digest_preimage_from_serialized(stark_inputs)?,
+    let canonical = transaction_public_inputs_digest_preimage_from_serialized(stark_inputs)?;
+    Ok(blake2b_384_domain_hash(
+        TX_PUBLIC_INPUTS_DIGEST_DOMAIN,
+        [canonical.as_slice()],
     ))
 }
 
+/// Return canonical postcard bytes before the central V2 single-part frame.
 pub fn transaction_public_inputs_digest_preimage_from_serialized(
     stark_inputs: &SerializedStarkInputs,
 ) -> Result<Vec<u8>, TransactionCircuitError> {
@@ -603,10 +628,7 @@ pub fn transaction_public_inputs_digest_preimage_from_serialized(
             "failed to serialize STARK public inputs: {err}"
         ))
     })?;
-    let mut message = Vec::with_capacity(TX_PUBLIC_INPUTS_DIGEST_DOMAIN.len() + encoded.len());
-    message.extend_from_slice(TX_PUBLIC_INPUTS_DIGEST_DOMAIN);
-    message.extend_from_slice(&encoded);
-    Ok(message)
+    Ok(encoded)
 }
 
 pub fn transaction_public_inputs_digest(
@@ -627,8 +649,21 @@ pub fn transaction_verifier_profile_digest_for_version_and_backend(
     backend: TxProofBackend,
     smallwood_arithmetization: Option<SmallwoodArithmetization>,
 ) -> [u8; 48] {
+    let message = transaction_verifier_profile_preimage_for_version_and_backend(
+        version,
+        backend,
+        smallwood_arithmetization,
+    );
+    blake2b_384_domain_hash(TX_VERIFIER_PROFILE_DOMAIN, [message.as_slice()])
+}
+
+/// Return the canonical verifier-profile payload before central V2 framing.
+pub fn transaction_verifier_profile_preimage_for_version_and_backend(
+    version: VersionBinding,
+    backend: TxProofBackend,
+    smallwood_arithmetization: Option<SmallwoodArithmetization>,
+) -> Vec<u8> {
     let mut message = Vec::new();
-    message.extend_from_slice(TX_VERIFIER_PROFILE_DOMAIN);
     message.extend_from_slice(backend.label().as_bytes());
     message.extend_from_slice(&version.circuit.to_le_bytes());
     message.extend_from_slice(&version.crypto.to_le_bytes());
@@ -643,14 +678,14 @@ pub fn transaction_verifier_profile_digest_for_version_and_backend(
             arithmetization,
         ));
     }
-    blake3_384(&message)
+    message
 }
 
 fn smallwood_arithmetization_for_version(
     version: VersionBinding,
 ) -> Option<SmallwoodArithmetization> {
     if version == SMALLWOOD_CANDIDATE_VERSION_BINDING {
-        Some(SmallwoodArithmetization::DirectPacked64CompressedLevel5)
+        Some(SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1)
     } else if version == SMALLWOOD_V3_VERSION_BINDING {
         Some(SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2)
     } else if version == LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING {
@@ -712,9 +747,9 @@ pub fn production_crypto_profile_attestation(
         arithmetization,
         public_value_count: production.public_value_count,
         exact_constraint_table_digest_hex: hex::encode(production.exact_table_digest),
-        verifier_profile_sha384_hex: hex::encode(
-            transaction_verifier_profile_digest_for_version(version),
-        ),
+        verifier_profile_sha384_hex: hex::encode(transaction_verifier_profile_digest_for_version(
+            version,
+        )),
         no_grinding_profile: production.no_grinding_profile,
         soundness: production.soundness,
         required_soundness_floor_bits: 260,
@@ -755,7 +790,7 @@ pub fn transaction_verifier_profile_digest(
     ))
 }
 
-pub fn verify_transaction_proof_bytes_for_backend(
+fn verify_transaction_proof_bytes_for_backend_after_version_policy(
     backend: TxProofBackend,
     proof_bytes: &[u8],
     pub_inputs: &TransactionVerifierInputs,
@@ -769,6 +804,48 @@ pub fn verify_transaction_proof_bytes_for_backend(
             verify_smallwood_candidate_proof_bytes(proof_bytes, pub_inputs, version)
         }
     }
+}
+
+fn ensure_active_transaction_proof_version(
+    version: VersionBinding,
+) -> Result<(), TransactionCircuitError> {
+    if version == SMALLWOOD_CANDIDATE_VERSION_BINDING {
+        Ok(())
+    } else {
+        Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "production transaction proof verification requires active V4; {version:?} is historical-replay-only"
+        )))
+    }
+}
+
+fn ensure_historical_replay_transaction_proof_version(
+    version: VersionBinding,
+) -> Result<(), TransactionCircuitError> {
+    if matches!(
+        version,
+        LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING | SMALLWOOD_V3_VERSION_BINDING
+    ) {
+        Ok(())
+    } else {
+        Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "historical replay accepts only legacy V2/V3 transaction proofs; {version:?} is not historical"
+        )))
+    }
+}
+
+pub fn verify_transaction_proof_bytes_for_backend(
+    backend: TxProofBackend,
+    proof_bytes: &[u8],
+    pub_inputs: &TransactionVerifierInputs,
+    version: VersionBinding,
+) -> Result<(), TransactionCircuitError> {
+    ensure_active_transaction_proof_version(version)?;
+    verify_transaction_proof_bytes_for_backend_after_version_policy(
+        backend,
+        proof_bytes,
+        pub_inputs,
+        version,
+    )
 }
 
 /// Generate a SmallWood proof for a transaction.
@@ -812,11 +889,48 @@ pub fn verify(
     proof: &TransactionProof,
     _verifying_key: &VerifyingKey,
 ) -> Result<VerificationReport, TransactionCircuitError> {
+    ensure_active_transaction_proof_version(proof.version_binding())?;
+    verify_after_version_policy(proof)
+}
+
+fn verify_after_version_policy(
+    proof: &TransactionProof,
+) -> Result<VerificationReport, TransactionCircuitError> {
     match proof.backend {
         TxProofBackend::RetiredUnsupported => Err(TransactionCircuitError::ConstraintViolation(
             "retired transaction proof backend",
         )),
         TxProofBackend::SmallwoodCandidate => verify_smallwood_candidate_transaction_proof(proof),
+    }
+}
+
+/// Explicitly isolated verification entrypoints for historical chain replay.
+/// These functions reject active V4 and must never be used for mempool, block
+/// authoring, or current-state admission.
+pub mod historical_replay {
+    use super::*;
+
+    pub fn verify_transaction_proof_bytes_for_backend(
+        backend: TxProofBackend,
+        proof_bytes: &[u8],
+        pub_inputs: &TransactionVerifierInputs,
+        version: VersionBinding,
+    ) -> Result<(), TransactionCircuitError> {
+        ensure_historical_replay_transaction_proof_version(version)?;
+        verify_transaction_proof_bytes_for_backend_after_version_policy(
+            backend,
+            proof_bytes,
+            pub_inputs,
+            version,
+        )
+    }
+
+    pub fn verify(
+        proof: &TransactionProof,
+        _verifying_key: &VerifyingKey,
+    ) -> Result<VerificationReport, TransactionCircuitError> {
+        ensure_historical_replay_transaction_proof_version(proof.version_binding())?;
+        verify_after_version_policy(proof)
     }
 }
 
@@ -852,6 +966,7 @@ pub(crate) fn transaction_verifier_inputs_from_parts(
     stark_inputs: &SerializedStarkInputs,
 ) -> Result<TransactionVerifierInputs, TransactionCircuitError> {
     validate_serialized_stark_monetary_ranges(stark_inputs)?;
+    validate_serialized_stark_asset_canonicality(stark_inputs)?;
     let signed_magnitude_matches = |value: i128, sign: u8, magnitude: u64| -> bool {
         let expected_sign = u8::from(value < 0);
         let expected_magnitude = value.unsigned_abs();
@@ -860,15 +975,6 @@ pub(crate) fn transaction_verifier_inputs_from_parts(
     let normalize_balance_slot_asset_id =
         |asset_id: u64| Goldilocks::from_u64(asset_id).as_canonical_u64();
     validate_serialized_balance_slot_asset_ids(&public_inputs.balance_slots)?;
-    if !stark_inputs.balance_slot_asset_ids.is_empty() {
-        validate_raw_balance_slot_asset_ids(&stark_inputs.balance_slot_asset_ids)?;
-    }
-    if public_inputs.stablecoin.enabled && !is_canonical_asset_id(stark_inputs.stablecoin_asset_id)
-    {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "serialized stablecoin asset id is not canonical",
-        ));
-    }
 
     if public_inputs.merkle_root != stark_inputs.merkle_root {
         return Err(TransactionCircuitError::ConstraintViolation(
@@ -1056,6 +1162,46 @@ pub fn validate_serialized_stark_monetary_ranges(
     Ok(())
 }
 
+/// Reject non-canonical serialized asset identifiers before converting them to
+/// Goldilocks field elements.
+///
+/// This check must be shared by every verifier entry point. Performing only the
+/// post-conversion [`TransactionVerifierInputs::validate`] check would accept
+/// distinct raw `u64` identifiers that reduce to the same field element.
+pub fn validate_serialized_stark_asset_canonicality(
+    stark_inputs: &SerializedStarkInputs,
+) -> Result<(), TransactionCircuitError> {
+    if !stark_inputs.balance_slot_asset_ids.is_empty() {
+        validate_raw_balance_slot_asset_ids(&stark_inputs.balance_slot_asset_ids)?;
+    }
+
+    match stark_inputs.stablecoin_enabled {
+        0 => {
+            if stark_inputs.stablecoin_asset_id != 0 {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "serialized stablecoin asset id must be zero when disabled",
+                ));
+            }
+        }
+        1 => {
+            if stark_inputs.stablecoin_asset_id == NATIVE_ASSET_ID
+                || !is_canonical_asset_id(stark_inputs.stablecoin_asset_id)
+            {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "serialized stablecoin asset id is not canonical and non-native",
+                ));
+            }
+        }
+        _ => {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "serialized stablecoin enabled flag must be 0 or 1",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_serialized_balance_slot_asset_ids(
     slots: &[BalanceSlot],
 ) -> Result<(), TransactionCircuitError> {
@@ -1139,6 +1285,72 @@ fn validate_raw_balance_slot_asset_ids(asset_ids: &[u64]) -> Result<(), Transact
 
 fn default_bytes48() -> Commitment {
     [0u8; 48]
+}
+
+/// Reconstruct the canonical balance commitment from the exact fields proved by
+/// the transaction backend.
+///
+/// Native tx-leaf verification receives the compact verifier input vector rather
+/// than the full [`TransactionProof`] wrapper. Keeping this derivation here makes
+/// the wrapper and native verifier use the same balance commitment primitive and
+/// prevents an outer proof from binding an arbitrary, self-consistent tag.
+pub fn expected_balance_tag_from_verifier_inputs(
+    inputs: &TransactionVerifierInputs,
+) -> Result<Commitment, TransactionCircuitError> {
+    inputs.validate().map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "invalid verifier inputs for balance tag: {err}"
+        ))
+    })?;
+
+    let signed_value = |sign: Goldilocks,
+                        magnitude: Goldilocks,
+                        label: &str|
+     -> Result<i128, TransactionCircuitError> {
+        let magnitude = i128::from(magnitude.as_canonical_u64());
+        match sign.as_canonical_u64() {
+            0 => Ok(magnitude),
+            1 => Ok(-magnitude),
+            _ => Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "{label} sign must be 0 or 1"
+            ))),
+        }
+    };
+
+    let value_balance = signed_value(
+        inputs.value_balance_sign,
+        inputs.value_balance_magnitude,
+        "value balance",
+    )?;
+    let stablecoin_issuance = signed_value(
+        inputs.stablecoin_issuance_sign,
+        inputs.stablecoin_issuance_magnitude,
+        "stablecoin issuance",
+    )?;
+    let native_delta = i128::from(inputs.fee.as_canonical_u64()) - value_balance;
+    let stablecoin_enabled = inputs.stablecoin_enabled == Goldilocks::ONE;
+    let stablecoin_asset = inputs.stablecoin_asset.as_canonical_u64();
+
+    let slots: [BalanceSlot; BALANCE_SLOTS] = core::array::from_fn(|slot| {
+        let asset = inputs.balance_slot_assets[slot];
+        let field_asset = asset.as_canonical_u64();
+        let asset_id = if field_asset == BALANCE_SLOT_PADDING_FIELD_ID {
+            BALANCE_SLOT_PADDING_ASSET_ID
+        } else {
+            field_asset
+        };
+        let delta = if asset_id == NATIVE_ASSET_ID {
+            native_delta
+        } else if stablecoin_enabled && asset_id == stablecoin_asset {
+            stablecoin_issuance
+        } else {
+            0
+        };
+        BalanceSlot { asset_id, delta }
+    });
+
+    balance_commitment_bytes(native_delta, &slots)
+        .map_err(|err| TransactionCircuitError::BalanceDeltaOutOfRange(err.asset_id, err.magnitude))
 }
 
 /// Verify that balance_slots match public_inputs.balance_slots
@@ -1327,6 +1539,7 @@ mod tests {
         stablecoin_issuance_magnitude: u64,
         stablecoin_policy_version: u64,
         expected_preimage_hex: String,
+        expected_transcript_hex: String,
         expected_valid: bool,
     }
 
@@ -1350,6 +1563,7 @@ mod tests {
         stablecoin_oracle_commitment_seed: u64,
         stablecoin_attestation_commitment_seed: u64,
         expected_preimage_hex: String,
+        expected_transcript_hex: String,
         expected_valid: bool,
     }
 
@@ -1360,6 +1574,7 @@ mod tests {
         backend_wire_id: u8,
         proof_bytes_hex: String,
         expected_preimage_hex: String,
+        expected_transcript_hex: String,
         expected_valid: bool,
     }
 
@@ -1654,6 +1869,57 @@ mod tests {
             stark_proof: vec![1, 2, 3, 4],
             stark_public_inputs: Some(serialized),
         }
+    }
+
+    #[test]
+    fn verifier_input_balance_tag_matches_wrapper_semantics_for_native_and_stablecoin_slots() {
+        let padding = Goldilocks::from_u64(BALANCE_SLOT_PADDING_ASSET_ID);
+        let mut inputs = TransactionVerifierInputs {
+            input_flags: vec![Goldilocks::ONE, Goldilocks::ZERO],
+            balance_slot_assets: [
+                Goldilocks::from_u64(NATIVE_ASSET_ID),
+                Goldilocks::from_u64(118),
+                padding,
+                padding,
+            ],
+            fee: Goldilocks::from_u64(5),
+            ..TransactionVerifierInputs::default()
+        };
+        inputs.nullifiers[0][0] = Goldilocks::ONE;
+
+        let native_slots = vec![
+            BalanceSlot {
+                asset_id: NATIVE_ASSET_ID,
+                delta: 5,
+            },
+            BalanceSlot {
+                asset_id: 118,
+                delta: 0,
+            },
+            BalanceSlot {
+                asset_id: BALANCE_SLOT_PADDING_ASSET_ID,
+                delta: 0,
+            },
+            BalanceSlot {
+                asset_id: BALANCE_SLOT_PADDING_ASSET_ID,
+                delta: 0,
+            },
+        ];
+        assert_eq!(
+            expected_balance_tag_from_verifier_inputs(&inputs).expect("native balance tag"),
+            balance_commitment_bytes(5, &native_slots).expect("wrapper native balance tag")
+        );
+
+        inputs.stablecoin_enabled = Goldilocks::ONE;
+        inputs.stablecoin_asset = Goldilocks::from_u64(118);
+        inputs.stablecoin_issuance_sign = Goldilocks::ONE;
+        inputs.stablecoin_issuance_magnitude = Goldilocks::from_u64(7);
+        let mut stablecoin_slots = native_slots;
+        stablecoin_slots[1].delta = -7;
+        assert_eq!(
+            expected_balance_tag_from_verifier_inputs(&inputs).expect("stablecoin balance tag"),
+            balance_commitment_bytes(5, &stablecoin_slots).expect("wrapper stablecoin balance tag")
+        );
     }
 
     fn load_proof_wrapper_wire_vectors() -> LeanProofWrapperWireVectorFile {
@@ -2460,6 +2726,36 @@ mod tests {
             .collect()
     }
 
+    fn framed_blake2b_384_transcript(domain: &[u8], parts: &[&[u8]]) -> Vec<u8> {
+        let mut transcript = Vec::new();
+        transcript.extend_from_slice(BLAKE2B_384_FRAME_V1);
+        transcript.extend_from_slice(
+            &u64::try_from(domain.len())
+                .expect("test domain length fits u64")
+                .to_le_bytes(),
+        );
+        transcript.extend_from_slice(domain);
+        for part in parts {
+            transcript.extend_from_slice(
+                &u64::try_from(part.len())
+                    .expect("test part length fits u64")
+                    .to_le_bytes(),
+            );
+            transcript.extend_from_slice(part);
+        }
+        transcript
+    }
+
+    fn legacy_blake3_xof48(parts: &[&[u8]]) -> [u8; 48] {
+        let mut hasher = blake3::Hasher::new();
+        for part in parts {
+            hasher.update(part);
+        }
+        let mut out = [0u8; 48];
+        hasher.finalize_xof().fill(&mut out);
+        out
+    }
+
     fn signed_magnitude(sign: u8, magnitude: u64) -> Result<i128, TransactionCircuitError> {
         match sign {
             0 => Ok(i128::from(magnitude)),
@@ -2580,7 +2876,7 @@ mod tests {
         let mut proof = wrapper_admissible_dummy_proof();
         proof.backend = TxProofBackend::SmallwoodCandidate;
         proof.stark_proof = bincode::serialize(&SmallwoodCandidateProof {
-            arithmetization: SmallwoodArithmetization::DirectPacked64V1,
+            arithmetization: SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1,
             ark_proof: vec![1, 2, 3, 4],
             auxiliary_witness_words: Vec::new(),
         })
@@ -2590,7 +2886,7 @@ mod tests {
 
     #[test]
     fn verifier_profile_digest_matches_version_helper() {
-        let proof = dummy_smallwood_proof(SmallwoodArithmetization::DirectPacked64CompressedLevel5);
+        let proof = wrapper_admissible_dummy_smallwood_proof();
         assert_eq!(
             transaction_verifier_profile_digest(&proof).expect("profile digest"),
             transaction_verifier_profile_digest_for_version(proof.version_binding())
@@ -2598,31 +2894,55 @@ mod tests {
     }
 
     #[test]
-    fn production_crypto_profile_attestation_binds_active_v4_dispatch_and_floor() {
-        let profile = production_crypto_profile_attestation().expect("production profile");
-        assert_eq!(profile.schema_version, 1);
-        assert_eq!(profile.default_version, SMALLWOOD_CANDIDATE_VERSION_BINDING);
-        assert_eq!(profile.default_backend, "smallwood_candidate");
-        assert_eq!(profile.version_mapped_backend, "smallwood_candidate");
-        assert_eq!(
-            profile.arithmetization,
-            SmallwoodArithmetization::DirectPacked64CompressedLevel5
+    fn compact_smz1_testnet_profile_does_not_claim_production_attestation() {
+        let err = production_crypto_profile_attestation()
+            .expect_err("compact SMZ1 testnet profile must remain production-fail-closed");
+        assert!(
+            err.to_string()
+                .contains("production relation/security integration is not authorized"),
+            "unexpected production-attestation error: {err}"
         );
-        assert_eq!(profile.public_value_count, 78);
-        assert_eq!(profile.no_grinding_profile.rho, 5);
-        assert_eq!(profile.no_grinding_profile.nb_opened_evals, 5);
-        assert_eq!(profile.no_grinding_profile.beta, 2);
-        assert_eq!(profile.no_grinding_profile.decs_nb_evals, 1_048_576);
-        assert_eq!(profile.no_grinding_profile.decs_nb_opened_evals, 23);
-        assert_eq!(profile.no_grinding_profile.decs_eta, 5);
-        assert!(profile.soundness.meets_256_bit_floor);
-        assert!(profile.soundness.meets_260_bit_floor);
-        assert!(profile.soundness.security_floor_bits >= 260.0);
-        assert_eq!(profile.required_soundness_floor_bits, 260);
-        assert_eq!(
-            profile.compiled_profile_marker,
-            PRODUCTION_CRYPTO_PROFILE_MARKER
+
+        let mut proof = wrapper_admissible_dummy_smallwood_proof();
+        proof.stark_proof = bincode::serialize(&SmallwoodCandidateProof {
+            arithmetization: SmallwoodArithmetization::DirectPacked64V1,
+            ark_proof: vec![1, 2, 3, 4],
+            auxiliary_witness_words: Vec::new(),
+        })
+        .expect("encode historical SmallWood wrapper");
+        let verifier_inputs = transaction_verifier_inputs(&proof).expect("dummy verifier inputs");
+        let err = verify_transaction_proof_bytes_for_backend(
+            TxProofBackend::SmallwoodCandidate,
+            &proof.stark_proof,
+            &verifier_inputs,
+            SMALLWOOD_CANDIDATE_VERSION_BINDING,
+        )
+        .expect_err("active admission must reject every historical SmallWood profile");
+        assert!(
+            err.to_string().contains("is not accepted for version"),
+            "unexpected error: {err:?}"
         );
+    }
+
+    #[test]
+    fn production_and_historical_replay_verifiers_are_disjoint() {
+        let mut legacy = dummy_legacy_smallwood_proof(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        );
+        legacy.public_inputs.circuit_version = LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING.circuit;
+        legacy.public_inputs.crypto_suite = LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING.crypto;
+        let verifying_key = crate::keys::generate_keys().1;
+
+        let production_err = verify(&legacy, &verifying_key)
+            .expect_err("production verifier must reject historical V2 before proof work");
+        assert!(production_err
+            .to_string()
+            .contains("historical-replay-only"));
+
+        let active = wrapper_admissible_dummy_smallwood_proof();
+        let replay_err = historical_replay::verify(&active, &verifying_key)
+            .expect_err("historical replay verifier must reject active V4");
+        assert!(replay_err.to_string().contains("is not historical"));
     }
 
     #[test]
@@ -2662,20 +2982,22 @@ mod tests {
     }
 
     #[test]
-    fn smallwood_verifier_profile_digest_tracks_actual_arithmetization() {
-        let proof = dummy_smallwood_proof(SmallwoodArithmetization::DirectPacked64V1);
+    fn active_verifier_profile_digest_is_pinned_to_repaired_smz1_profile() {
+        let proof = dummy_smallwood_proof(
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1,
+        );
         let direct = transaction_verifier_profile_digest(&proof).expect("profile digest");
         let bridge = transaction_verifier_profile_digest_for_version(proof.version_binding());
-        assert_ne!(
+        assert_eq!(
             direct, bridge,
-            "proof-specific verifier profile digest must bind the actual Smallwood arithmetization"
+            "active profile must be pinned to the repaired SMZ1 relation and wire"
         );
         assert_eq!(
             direct,
             transaction_verifier_profile_digest_for_version_and_backend(
                 proof.version_binding(),
                 proof.backend,
-                Some(SmallwoodArithmetization::DirectPacked64V1),
+                Some(SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1,),
             )
         );
     }
@@ -2867,6 +3189,126 @@ mod tests {
     }
 
     #[test]
+    fn transaction_v2_digest_kat_rejects_legacy_and_interim_domains_without_proof_drift() {
+        const LEGACY_STATEMENT_DOMAIN: &[u8] = b"tx-statement-v1";
+        const LEGACY_PROOF_DOMAIN: &[u8] = b"tx-proof-digest-v1";
+        const LEGACY_PUBLIC_INPUTS_DOMAIN: &[u8] = b"tx-public-inputs-digest-v1";
+        const LEGACY_PROFILE_DOMAIN: &[u8] = b"hegemon.inline-tx-p3-profile.v1";
+
+        let proof = dummy_proof();
+        let exact_wrapper_before = bincode::serialize(&proof).expect("serialize proof wrapper");
+        let exact_proof_before = proof.stark_proof.clone();
+
+        let statement_payload = transaction_statement_preimage_from_parts(
+            &proof.public_inputs.merkle_root,
+            &proof.public_inputs.nullifiers,
+            &proof.public_inputs.commitments,
+            &proof.public_inputs.ciphertext_hashes,
+            proof.public_inputs.native_fee,
+            proof.public_inputs.value_balance,
+            &proof.public_inputs.balance_tag,
+            proof.public_inputs.circuit_version,
+            proof.public_inputs.crypto_suite,
+            proof.public_inputs.stablecoin.enabled as u8,
+            proof.public_inputs.stablecoin.asset_id,
+            &proof.public_inputs.stablecoin.policy_hash,
+            &proof.public_inputs.stablecoin.oracle_commitment,
+            &proof.public_inputs.stablecoin.attestation_commitment,
+            proof.public_inputs.stablecoin.issuance_delta,
+            proof.public_inputs.stablecoin.policy_version,
+        )
+        .expect("statement payload");
+        let proof_payload =
+            transaction_proof_digest_preimage_from_parts(proof.backend, proof.proof_bytes());
+        let public_payload = transaction_public_inputs_digest_preimage_from_serialized(
+            proof
+                .stark_public_inputs
+                .as_ref()
+                .expect("serialized inputs"),
+        )
+        .expect("public-input payload");
+        let profile_payload = transaction_verifier_profile_preimage_for_version_and_backend(
+            proof.version_binding(),
+            proof.backend,
+            Some(SmallwoodArithmetization::DirectPacked64CompressedLevel5),
+        );
+
+        let current_statement = transaction_statement_hash(&proof);
+        let current_proof = transaction_proof_digest(&proof);
+        let current_public = transaction_public_inputs_digest(&proof).expect("public-input digest");
+        let current_profile = transaction_verifier_profile_digest_for_version_and_backend(
+            proof.version_binding(),
+            proof.backend,
+            Some(SmallwoodArithmetization::DirectPacked64CompressedLevel5),
+        );
+
+        assert_eq!(
+            transaction_proof_digest_from_parts(
+                TxProofBackend::SmallwoodCandidate,
+                &[0, 1, 2, 3, 255],
+            )
+            .as_slice(),
+            decode_hex_bytes(
+                "0x900f308f9dfc505d7620740142b1fedd75c6b7f73ad147e7db475784d1def582d6c3fa2541c799d687f22b00e36120f2"
+            )
+        );
+
+        let backend_wire_id = [proof.backend.wire_id()];
+        assert_ne!(
+            current_statement,
+            legacy_blake3_xof48(&[LEGACY_STATEMENT_DOMAIN, statement_payload.as_slice()])
+        );
+        assert_ne!(
+            current_proof,
+            legacy_blake3_xof48(&[
+                LEGACY_PROOF_DOMAIN,
+                backend_wire_id.as_slice(),
+                proof.proof_bytes(),
+            ])
+        );
+        assert_ne!(
+            current_public,
+            legacy_blake3_xof48(&[LEGACY_PUBLIC_INPUTS_DOMAIN, public_payload.as_slice()])
+        );
+        assert_ne!(
+            current_profile,
+            legacy_blake3_xof48(&[LEGACY_PROFILE_DOMAIN, profile_payload.as_slice()])
+        );
+
+        assert_ne!(
+            current_statement,
+            blake2b_384_domain_hash(LEGACY_STATEMENT_DOMAIN, [statement_payload.as_slice()])
+        );
+        assert_ne!(
+            current_proof,
+            blake2b_384_domain_hash(
+                LEGACY_PROOF_DOMAIN,
+                [backend_wire_id.as_slice(), proof.proof_bytes()],
+            )
+        );
+        assert_ne!(
+            current_public,
+            blake2b_384_domain_hash(LEGACY_PUBLIC_INPUTS_DOMAIN, [public_payload.as_slice()])
+        );
+        assert_ne!(
+            current_profile,
+            blake2b_384_domain_hash(LEGACY_PROFILE_DOMAIN, [profile_payload.as_slice()])
+        );
+        assert_ne!(
+            current_proof,
+            blake2b_384_domain_hash(TX_PROOF_DIGEST_DOMAIN, [proof_payload.as_slice()],),
+            "collapsing backend and proof into one framed part must not alias the active two-part transcript"
+        );
+
+        assert_eq!(proof.stark_proof, exact_proof_before);
+        assert_eq!(
+            bincode::serialize(&proof).expect("reserialize proof wrapper"),
+            exact_wrapper_before,
+            "V2 receipt digests must not alter exact SmallWood proof or wrapper bytes"
+        );
+    }
+
+    #[test]
     fn lean_generated_statement_hash_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_STATEMENT_HASH_VECTORS") else {
             eprintln!(
@@ -2878,7 +3320,7 @@ mod tests {
             std::fs::read_to_string(&path).expect("read generated Lean statement hash vectors");
         let vectors: LeanStatementHashVectorFile =
             serde_json::from_str(&raw).expect("parse generated Lean statement hash vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
         assert!(
             !vectors.statement_hash_cases.is_empty(),
             "Lean statement hash cases must not be empty"
@@ -2908,6 +3350,16 @@ mod tests {
                 assert_eq!(
                     actual_preimage, expected_preimage,
                     "{} statement hash preimage drifted from Lean spec",
+                    case.name
+                );
+                let actual_transcript = framed_blake2b_384_transcript(
+                    TX_STATEMENT_HASH_DOMAIN,
+                    &[actual_preimage.as_slice()],
+                );
+                assert_eq!(
+                    actual_transcript,
+                    decode_hex_bytes(&case.expected_transcript_hex),
+                    "{} statement hash framing drifted from Lean spec",
                     case.name
                 );
                 let from_parts = statement_preimage_from_lean_case(case)
@@ -2965,7 +3417,11 @@ mod tests {
                         )
                     })
                     .expect("valid Lean case hashes");
-                assert_eq!(from_parts, blake3_384(&actual_preimage));
+                assert_eq!(
+                    from_parts,
+                    blake2b_384_domain_hash(TX_STATEMENT_HASH_DOMAIN, [actual_preimage.as_slice()],)
+                );
+                assert_eq!(from_parts, blake2b_384(&actual_transcript));
             }
         }
 
@@ -2990,12 +3446,30 @@ mod tests {
                     "{} public-input digest preimage drifted from Lean spec",
                     case.name
                 );
+                let actual_transcript = framed_blake2b_384_transcript(
+                    TX_PUBLIC_INPUTS_DIGEST_DOMAIN,
+                    &[actual_preimage.as_slice()],
+                );
+                assert_eq!(
+                    actual_transcript,
+                    decode_hex_bytes(&case.expected_transcript_hex),
+                    "{} public-input digest framing drifted from Lean spec",
+                    case.name
+                );
                 assert_eq!(
                     transaction_public_inputs_digest_from_serialized(&stark_inputs)
                         .expect("public-input digest"),
-                    blake3_384(&actual_preimage),
+                    blake2b_384_domain_hash(
+                        TX_PUBLIC_INPUTS_DIGEST_DOMAIN,
+                        [actual_preimage.as_slice()],
+                    ),
                     "{} public-input digest hash drifted from checked preimage",
                     case.name
+                );
+                assert_eq!(
+                    transaction_public_inputs_digest_from_serialized(&stark_inputs)
+                        .expect("public-input digest"),
+                    blake2b_384(&actual_transcript)
                 );
             }
         }
@@ -3021,11 +3495,29 @@ mod tests {
                     "{} proof digest preimage drifted from Lean spec",
                     case.name
                 );
+                let backend_wire_id = [backend.wire_id()];
+                let actual_transcript = framed_blake2b_384_transcript(
+                    TX_PROOF_DIGEST_DOMAIN,
+                    &[backend_wire_id.as_slice(), proof_bytes.as_slice()],
+                );
+                assert_eq!(
+                    actual_transcript,
+                    decode_hex_bytes(&case.expected_transcript_hex),
+                    "{} proof digest framing drifted from Lean spec",
+                    case.name
+                );
                 assert_eq!(
                     transaction_proof_digest_from_parts(backend, &proof_bytes),
-                    blake3_384(&actual_preimage),
+                    blake2b_384_domain_hash(
+                        TX_PROOF_DIGEST_DOMAIN,
+                        [backend_wire_id.as_slice(), proof_bytes.as_slice()],
+                    ),
                     "{} proof digest hash drifted from checked preimage",
                     case.name
+                );
+                assert_eq!(
+                    transaction_proof_digest_from_parts(backend, &proof_bytes),
+                    blake2b_384(&actual_transcript)
                 );
             }
         }

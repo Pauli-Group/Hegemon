@@ -458,7 +458,10 @@ impl PackedRowLayout {
                 }
             }
             SmallwoodArithmetization::DirectPacked64CompressedLevel5
-            | SmallwoodArithmetization::DirectPacked128CompressedLevel5 => Self {
+            | SmallwoodArithmetization::DirectPacked128CompressedLevel5
+            | SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3
+            | SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2
+            | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => Self {
                 input_rows: BASE_INPUT_ROWS,
                 output_rows: 2 + HASH_LIMBS + OUTPUT_AUTH_KEY_ROWS,
                 stable_binding_rows: 0,
@@ -477,6 +480,13 @@ impl PackedRowLayout {
                 skip_initial_mds_poseidon: false,
                 compressed_poseidon_wires: true,
             },
+            SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate => {
+                panic!("the fresh HX512 adapter must not use legacy Poseidon row layouts")
+            }
+            SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
+            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => {
+                panic!("the fresh Poseidon2 V8 adapter must use its dedicated width-16 row layout")
+            }
         }
     }
 
@@ -2606,9 +2616,13 @@ fn compute_constraints_ring<R: PrimeCharacteristicRing>(
 pub(crate) fn production_constraint_program(
     statement: &PackedStatement<'_>,
 ) -> Result<SmallwoodProductionConstraintProgram, TransactionCircuitError> {
-    if statement.arithmetization != SmallwoodArithmetization::DirectPacked64CompressedLevel5 {
+    if !matches!(
+        statement.arithmetization,
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5
+            | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1
+    ) {
         return Err(TransactionCircuitError::ConstraintViolation(
-            "production constraint program requires the active compressed Level-5 SmallWood relation",
+            "production constraint program requires the compact 64-lane Level-5 SmallWood relation",
         ));
     }
     if statement.public_values.len() != PUBLIC_VALUE_COUNT

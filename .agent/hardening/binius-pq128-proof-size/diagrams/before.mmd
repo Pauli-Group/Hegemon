@@ -1,0 +1,8 @@
+flowchart LR
+    W[Wallet witness] --> P[Per-action private proof]
+    P --> A[Action plus proof]
+    A --> M[Mempool verification]
+    A --> B[Canonical block]
+    B --> V[Validator verifies every proof]
+    V --> S[State transition]
+

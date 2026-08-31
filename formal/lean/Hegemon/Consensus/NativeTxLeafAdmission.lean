@@ -17,13 +17,10 @@ inductive AdmissionReject where
   | artifactTooLarge
   | receiptVerifierProfileMismatch
   | artifactHashMismatch
-  | cacheReceiptMismatch
-  | cacheTransactionMismatch
 deriving DecidableEq, Repr
 
 inductive AdmissionOutcome where
   | needsBackendVerification
-  | cacheHit
 deriving DecidableEq, Repr
 
 structure AdmissionInput where
@@ -35,9 +32,6 @@ structure AdmissionInput where
   receiptVerifierProfileMatches : Bool
   hasExpectedArtifactHash : Bool
   expectedArtifactHashMatches : Bool
-  hasCacheEntry : Bool
-  cacheReceiptMatches : Bool
-  cacheTransactionMatches : Bool
 deriving DecidableEq, Repr
 
 def evaluateAdmissionRejection (input : AdmissionInput) : Option AdmissionReject :=
@@ -53,18 +47,11 @@ def evaluateAdmissionRejection (input : AdmissionInput) : Option AdmissionReject
     some AdmissionReject.receiptVerifierProfileMismatch
   else if input.hasExpectedArtifactHash && input.expectedArtifactHashMatches = false then
     some AdmissionReject.artifactHashMismatch
-  else if input.hasCacheEntry && input.cacheReceiptMatches = false then
-    some AdmissionReject.cacheReceiptMismatch
-  else if input.hasCacheEntry && input.cacheTransactionMatches = false then
-    some AdmissionReject.cacheTransactionMismatch
   else
     none
 
-def admissionOutcome (input : AdmissionInput) : AdmissionOutcome :=
-  if input.hasCacheEntry then
-    AdmissionOutcome.cacheHit
-  else
-    AdmissionOutcome.needsBackendVerification
+def admissionOutcome (_input : AdmissionInput) : AdmissionOutcome :=
+  AdmissionOutcome.needsBackendVerification
 
 def evaluateAdmission (input : AdmissionInput) : Except AdmissionReject AdmissionOutcome :=
   match evaluateAdmissionRejection input with
@@ -84,10 +71,6 @@ def admissionPreconditions (input : AdmissionInput) : Bool :=
     false
   else if input.hasExpectedArtifactHash && input.expectedArtifactHashMatches = false then
     false
-  else if input.hasCacheEntry && input.cacheReceiptMatches = false then
-    false
-  else if input.hasCacheEntry && input.cacheTransactionMatches = false then
-    false
   else
     true
 
@@ -98,20 +81,23 @@ theorem accepts_iff_admission_preconditions (input : AdmissionInput) :
     admissionAccepts input = admissionPreconditions input := by
   cases input with
   | mk hasEnvelope envelopeKind envelopeVerifierProfileMatches artifactBytesLen maxArtifactBytes
-      receiptVerifierProfileMatches hasExpectedArtifactHash expectedArtifactHashMatches
-      hasCacheEntry cacheReceiptMatches cacheTransactionMatches =>
+      receiptVerifierProfileMatches hasExpectedArtifactHash expectedArtifactHashMatches =>
       unfold admissionAccepts admissionPreconditions evaluateAdmissionRejection
       by_cases oversized : artifactBytesLen > maxArtifactBytes
       · cases hasEnvelope <;> cases envelopeKind <;> cases envelopeVerifierProfileMatches <;>
           cases receiptVerifierProfileMatches <;> cases hasExpectedArtifactHash <;>
-          cases expectedArtifactHashMatches <;> cases hasCacheEntry <;>
-          cases cacheReceiptMatches <;> cases cacheTransactionMatches <;> simp [oversized]
+          cases expectedArtifactHashMatches <;> simp [oversized]
       · cases hasEnvelope <;> cases envelopeKind <;> cases envelopeVerifierProfileMatches <;>
           cases receiptVerifierProfileMatches <;> cases hasExpectedArtifactHash <;>
-          cases expectedArtifactHashMatches <;> cases hasCacheEntry <;>
-          cases cacheReceiptMatches <;> cases cacheTransactionMatches <;> simp [oversized]
+          cases expectedArtifactHashMatches <;> simp [oversized]
 
-def validUncached : AdmissionInput :=
+theorem accepted_admission_requires_backend_verification
+    (input : AdmissionInput)
+    (accepted : evaluateAdmissionRejection input = none) :
+    evaluateAdmission input = Except.ok AdmissionOutcome.needsBackendVerification := by
+  simp [evaluateAdmission, accepted, admissionOutcome]
+
+def validAdmission : AdmissionInput :=
   {
     hasEnvelope := true,
     envelopeKind := ArtifactKind.txLeaf,
@@ -120,75 +106,54 @@ def validUncached : AdmissionInput :=
     maxArtifactBytes := 512,
     receiptVerifierProfileMatches := true,
     hasExpectedArtifactHash := true,
-    expectedArtifactHashMatches := true,
-    hasCacheEntry := false,
-    cacheReceiptMatches := true,
-    cacheTransactionMatches := true
+    expectedArtifactHashMatches := true
   }
 
-def validCacheHit : AdmissionInput :=
-  { validUncached with hasCacheEntry := true, artifactBytesLen := 128 }
-
-theorem valid_uncached_requires_backend_verification :
-    evaluateAdmissionRejection validUncached = none ∧
-      admissionOutcome validUncached = AdmissionOutcome.needsBackendVerification := by
-  decide
-
-theorem valid_cache_hit_accepts :
-    evaluateAdmissionRejection validCacheHit = none ∧
-      admissionOutcome validCacheHit = AdmissionOutcome.cacheHit := by
+theorem valid_admission_requires_backend_verification :
+    evaluateAdmissionRejection validAdmission = none ∧
+      admissionOutcome validAdmission = AdmissionOutcome.needsBackendVerification := by
   decide
 
 theorem missing_envelope_rejects :
-    evaluateAdmissionRejection { validUncached with hasEnvelope := false } =
+    evaluateAdmissionRejection { validAdmission with hasEnvelope := false } =
       some AdmissionReject.missingEnvelope := by
   decide
 
 theorem wrong_artifact_kind_rejects :
-    evaluateAdmissionRejection { validUncached with envelopeKind := ArtifactKind.receiptRoot } =
+    evaluateAdmissionRejection { validAdmission with envelopeKind := ArtifactKind.receiptRoot } =
       some AdmissionReject.artifactKindMismatch := by
   decide
 
 theorem envelope_profile_mismatch_rejects :
-    evaluateAdmissionRejection { validUncached with envelopeVerifierProfileMatches := false } =
+    evaluateAdmissionRejection { validAdmission with envelopeVerifierProfileMatches := false } =
       some AdmissionReject.envelopeVerifierProfileMismatch := by
   decide
 
 theorem oversized_artifact_rejects :
-    evaluateAdmissionRejection { validUncached with artifactBytesLen := 513 } =
+    evaluateAdmissionRejection { validAdmission with artifactBytesLen := 513 } =
       some AdmissionReject.artifactTooLarge := by
   decide
 
 theorem receipt_profile_mismatch_rejects :
-    evaluateAdmissionRejection { validUncached with receiptVerifierProfileMatches := false } =
+    evaluateAdmissionRejection { validAdmission with receiptVerifierProfileMatches := false } =
       some AdmissionReject.receiptVerifierProfileMismatch := by
   decide
 
 theorem expected_hash_mismatch_rejects :
-    evaluateAdmissionRejection { validUncached with expectedArtifactHashMatches := false } =
+    evaluateAdmissionRejection { validAdmission with expectedArtifactHashMatches := false } =
       some AdmissionReject.artifactHashMismatch := by
   decide
 
 theorem missing_expected_hash_skips_hash_check :
     evaluateAdmissionRejection
-      { validUncached with
+      { validAdmission with
         hasExpectedArtifactHash := false,
         expectedArtifactHashMatches := false
       } = none := by
   decide
 
-theorem cache_receipt_mismatch_rejects :
-    evaluateAdmissionRejection { validCacheHit with cacheReceiptMatches := false } =
-      some AdmissionReject.cacheReceiptMismatch := by
-  decide
-
-theorem cache_transaction_mismatch_rejects :
-    evaluateAdmissionRejection { validCacheHit with cacheTransactionMatches := false } =
-      some AdmissionReject.cacheTransactionMismatch := by
-  decide
-
 theorem exact_size_limit_accepts :
-    evaluateAdmissionRejection { validUncached with artifactBytesLen := 512, maxArtifactBytes := 512 } =
+    evaluateAdmissionRejection { validAdmission with artifactBytesLen := 512, maxArtifactBytes := 512 } =
       none := by
   decide
 

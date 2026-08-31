@@ -251,7 +251,7 @@ theorem production_decs_selected_indices_toFinset
     HegemonCrypto.SmallWood.FixedSampling.selectedIndices,
     HegemonCrypto.SmallWood.FixedSampling.selectedIndexSet]
 
-/-- The fixed candidate pool produced all 20 required distinct indices. -/
+/-- The fixed candidate pool produced all 23 required distinct indices. -/
 def ProductionDecsSamplerSucceeds
     (rawOracle : RawOracle)
     (transcript : Transcript) : Prop :=

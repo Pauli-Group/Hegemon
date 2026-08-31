@@ -35,6 +35,8 @@ def serializedPublicInputsDigestCaseJson
     ++ toString fields.stablecoinAttestationCommitmentSeed ++ ",\n"
     ++ "      \"expected_preimage_hex\": \""
     ++ hexBytes (publicInputsDigestPreimage fields) ++ "\",\n"
+    ++ "      \"expected_transcript_hex\": \""
+    ++ hexBytes (publicInputsDigestTranscript fields) ++ "\",\n"
     ++ "      \"expected_valid\": true\n"
     ++ "    }"
 
@@ -47,11 +49,14 @@ def proofDigestCaseJson
     ++ "      \"proof_bytes_hex\": \"" ++ hexBytes fields.proofBytes ++ "\",\n"
     ++ "      \"expected_preimage_hex\": \""
     ++ hexBytes (proofDigestPreimage fields) ++ "\",\n"
+    ++ "      \"expected_transcript_hex\": \""
+    ++ hexBytes (proofDigestTranscript fields) ++ "\",\n"
     ++ "      \"expected_valid\": true\n"
     ++ "    }"
 
 def statementHashCaseJson (name : String) (fields : StatementFields) : String :=
   let preimage := statementPreimage fields
+  let transcript := statementHashTranscript fields
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
     ++ "      \"merkle_root_seed\": " ++ toString fields.merkleRootSeed ++ ",\n"
@@ -77,12 +82,14 @@ def statementHashCaseJson (name : String) (fields : StatementFields) : String :=
     ++ "      \"stablecoin_policy_version\": " ++ toString fields.stablecoinPolicyVersion ++ ",\n"
     ++ "      \"expected_preimage_hex\": \""
     ++ (match preimage with | some bytes => hexBytes bytes | none => "0x") ++ "\",\n"
+    ++ "      \"expected_transcript_hex\": \""
+    ++ (match transcript with | some bytes => hexBytes bytes | none => "0x") ++ "\",\n"
     ++ "      \"expected_valid\": " ++ boolJson preimage.isSome ++ "\n"
     ++ "    }"
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"statement_hash_cases\": [\n"
     ++ statementHashCaseJson "valid-full-width-negative-value" validFields ++ ",\n"
     ++ statementHashCaseJson "valid-active-vectors-padded" paddedFields ++ ",\n"

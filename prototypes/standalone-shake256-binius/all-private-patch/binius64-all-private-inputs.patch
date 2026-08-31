@@ -1,0 +1,52 @@
+diff --git a/crates/spartan-frontend/src/circuit_builder.rs b/crates/spartan-frontend/src/circuit_builder.rs
+--- a/crates/spartan-frontend/src/circuit_builder.rs
++++ b/crates/spartan-frontend/src/circuit_builder.rs
+@@ -258,6 +258,16 @@ impl<F: Field> ConstraintBuilder<F> {
+ 	pub const fn alloc_precommit(&mut self) -> ConstraintWire {
+ 		self.ir.precommit_alloc.alloc()
+ 	}
++
++	/// Allocates a pinned private input wire.
++	///
++	/// Unlike an operation output, this wire is supplied directly by the witness generator. It is
++	/// pinned so wire elimination cannot discard or renumber it before the caller assigns it.
++	pub fn alloc_private(&mut self) -> ConstraintWire {
++		let wire = self.ir.private_alloc.alloc();
++		self.ir.private_wires_status.push(WireStatus::Pinned);
++		wire
++	}
+ 
+ 	pub fn build(self) -> ConstraintSystemIR<F> {
+ 		self.ir
+@@ -467,6 +477,18 @@ impl<F: Field, LayoutRef: Deref<Target = WitnessLayout<F>>> WitnessGenerator<F,
+ 		self.write_value(wire, value)
+ 	}
+ 
++	/// Assigns the next pinned private input wire.
++	///
++	/// Private operation outputs share this allocator, so inputs must be written in allocation
++	/// order before evaluating operations that depend on them. The equality assertion catches a
++	/// circuit/witness traversal mismatch instead of silently aliasing an operation output.
++	pub fn write_private(&mut self, wire: ConstraintWire, value: F) -> WitnessWire<F> {
++		assert_eq!(wire.kind, WireKind::Private);
++		let allocated = self.private_alloc.alloc();
++		assert_eq!(allocated, wire, "private inputs must be assigned in allocation order");
++		self.write_value(wire, value)
++	}
++
+ 	pub fn build(self) -> Result<Witness<F>, WitnessError> {
+ 		if let Some(backtrace) = self.first_error {
+ 			Err(WitnessError { backtrace })
+@@ -615,6 +637,12 @@ impl<F: Field, LayoutRef: Deref<Target = WitnessLayout<F>>> InstanceGenerator<F
+ 		PublicWire(None)
+ 	}
+ 
++	/// Records a pinned private input as unknown to the verifier.
++	pub fn placeholder_private(&mut self, wire: ConstraintWire) -> PublicWire<F> {
++		assert_eq!(wire.kind, WireKind::Private);
++		PublicWire(None)
++	}
++
+ 	/// Writes `value` to the wire's public slot if it has one (i.e. it is alive), then returns the
+ 	/// wire carrying its value. Wires with no slot (pruned intermediates) are computed inline only.
+ 	fn write_public(&mut self, wire: ConstraintWire, value: F) -> PublicWire<F> {

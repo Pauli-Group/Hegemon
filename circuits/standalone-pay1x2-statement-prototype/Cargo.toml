@@ -1,0 +1,23 @@
+[package]
+name = "hegemon-standalone-pay1x2-statement-prototype"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# This is an isolated, prospective wire adapter. It is intentionally outside
+# the production workspace and cannot activate a consensus rule.
+[workspace]
+resolver = "2"
+
+[dependencies]
+hegemon-standalone-pay1x2-relation-prototype = { path = "../standalone-pay1x2-relation-prototype" }
+hegemon-standalone-shake256-prototype = { path = "../standalone-shake256-prototype" }
+sha3 = { version = "0.10.9", default-features = false }
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false

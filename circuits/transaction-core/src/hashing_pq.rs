@@ -8,12 +8,12 @@ use crate::constants::{
 use crate::poseidon2::poseidon2_permutation;
 pub use crate::poseidon2::Felt;
 use crate::types::BalanceSlot;
-use blake3::Hasher as Blake3Hasher;
+use hegemon_hash384::{blake2b_384_domain_hash, domains::TRANSACTION_CIPHERTEXT_HASH_V2};
 
 pub type HashFelt = [Felt; 6];
 pub type Commitment = [u8; 48];
 
-pub const CIPHERTEXT_HASH_DOMAIN: &[u8] = b"ct-v1";
+pub const CIPHERTEXT_HASH_DOMAIN: &[u8] = TRANSACTION_CIPHERTEXT_HASH_V2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BalanceCommitmentError {
@@ -243,11 +243,7 @@ pub fn balance_commitment_bytes(
 }
 
 pub fn ciphertext_hash_bytes(ciphertext: &[u8]) -> Commitment {
-    let mut hasher = Blake3Hasher::new();
-    hasher.update(CIPHERTEXT_HASH_DOMAIN);
-    hasher.update(ciphertext);
-    let mut digest = [0u8; 48];
-    hasher.finalize_xof().fill(&mut digest);
+    let digest = blake2b_384_domain_hash(CIPHERTEXT_HASH_DOMAIN, [ciphertext]);
 
     let mut felts = [Felt::ZERO; 6];
     for (idx, chunk) in digest.chunks(8).enumerate() {
@@ -264,4 +260,38 @@ pub fn signed_parts(value: i128) -> Option<(Felt, Felt)> {
     let mag_u64 = u64::try_from(magnitude).ok()?;
     let sign = if value < 0 { Felt::ONE } else { Felt::ZERO };
     Some((sign, Felt::from_u64(mag_u64)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ciphertext_hash_v2_known_answer_is_canonical_and_domain_bound() {
+        let digest = ciphertext_hash_bytes(b"hegemon ciphertext hash v2 KAT");
+        assert_eq!(
+            digest,
+            [
+                0x03, 0xcb, 0x27, 0x8f, 0x4e, 0x6b, 0x79, 0x9a, 0xac, 0x41, 0xa8, 0xe4, 0x4d, 0x53,
+                0xd4, 0xb0, 0xc1, 0x6b, 0x44, 0xe6, 0x99, 0xf5, 0x73, 0x5b, 0x0a, 0x1c, 0x52, 0xd9,
+                0xa0, 0xc1, 0x52, 0xd9, 0xad, 0x65, 0x40, 0xf1, 0xf1, 0xcc, 0x3e, 0x87, 0xa1, 0xc5,
+                0x3a, 0xe6, 0xbe, 0xd3, 0x96, 0x73,
+            ]
+        );
+        assert!(is_canonical_bytes48(&digest));
+        assert_ne!(
+            digest,
+            ciphertext_hash_bytes(b"hegemon ciphertext hash v2 KAU")
+        );
+        assert_ne!(
+            digest,
+            [
+                0x1d, 0x1e, 0x6c, 0x7b, 0x3f, 0x3c, 0x7a, 0x9b, 0xdb, 0xc3, 0x17, 0x6e, 0x36, 0xf8,
+                0x7c, 0x20, 0xc8, 0xee, 0x47, 0x1d, 0x36, 0x3f, 0x4b, 0x6a, 0x53, 0x84, 0x89, 0x6f,
+                0x79, 0x32, 0xe1, 0x51, 0xd0, 0x09, 0x2c, 0x3c, 0xc6, 0xfb, 0x56, 0xf4, 0x5b, 0xea,
+                0x57, 0xce, 0xf8, 0x29, 0xbc, 0x78,
+            ],
+            "the interim BLAKE2b construction under the legacy ct-v1 domain must not alias V2"
+        );
+    }
 }

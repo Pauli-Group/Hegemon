@@ -1,0 +1,25 @@
+{
+  "schema": "hegemon.cfw26.code-profile-mutations.v1",
+  "mutations": [
+    {"id": "oracle-count-104", "path": "section11_oracles/count", "replacement": 104},
+    {"id": "inner-count-77", "path": "section11_oracles/inner_count", "replacement": 77},
+    {"id": "main-block-below-dimension", "path": "section11_oracles/records/0/block_length_symbols", "replacement": 33554943},
+    {"id": "field-symbol-39-bytes", "path": "section11_oracles/records/1/canonical_symbol_bytes", "replacement": 39},
+    {"id": "main-query-randomness-mismatch", "path": "codes/main/queries", "replacement": 511},
+    {"id": "inner-effective-message-5", "path": "codes/inner/effective_message", "replacement": 5},
+    {"id": "outer-effective-message-7", "path": "codes/outer/effective_message", "replacement": 7},
+    {"id": "interactive-p-minus-one", "path": "interactive_proof/bits_p_of_x", "replacement": 53772852799},
+    {"id": "round-depth-34", "path": "interactive_proof/round_messages/0/authentication_path_depth", "replacement": 34},
+    {"id": "bcs-lambda-660", "path": "bcs_classical_privacy/selected_lambda_bits", "replacement": 660},
+    {"id": "bcs-digest-82", "path": "bcs_classical_privacy/selected_digest_bytes", "replacement": 82},
+    {"id": "bcs-salt-165", "path": "bcs_classical_privacy/selected_salt_bytes_per_leaf", "replacement": 165},
+    {"id": "repair-theorem-overclaim", "path": "security/cfw_theorem_inherited", "replacement": true},
+    {"id": "qro-inst-silently-zero", "path": "security/adv_qro_inst_shake256_664", "replacement": "0"},
+    {"id": "mca-silently-zero", "path": "base_iopp/mca_main_bound", "replacement": "0"},
+    {"id": "bit-wire-minus-one", "path": "bcs_bit_leaf_wire_projection/projected_wire_bytes", "replacement": 32252325377788},
+    {"id": "field-wire-minus-one", "path": "field_symbol_batching_projection/projected_wire_bytes", "replacement": 1458868873},
+    {"id": "proof-bytes-invented", "path": "proof_bytes", "replacement": 1458868874},
+    {"id": "admission-opened", "path": "admission/disqualified", "replacement": false},
+    {"id": "production-authorized", "path": "production_authorized", "replacement": true}
+  ]
+}

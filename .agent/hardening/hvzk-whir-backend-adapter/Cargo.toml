@@ -1,0 +1,16 @@
+[package]
+name = "hegemon-hvzk-whir-backend-adapter"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+
+# Keep this research crate detached from Hegemon's production workspace.  It
+# deliberately has no dependencies and is not a production proof backend.
+[workspace]
+

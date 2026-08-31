@@ -149,7 +149,6 @@ def Canonical (paths : AuthPathsWire) : Prop :=
   paths.rowCountBytes.length = 2
     ∧ paths.rowCount <= maximumCollectionRows
     ∧ paths.pathLengthBytes.length = paths.rowCount
-    ∧ (∀ lengthByte ∈ paths.pathLengthBytes, lengthByte.val ≠ 0)
     ∧ paths.nodeBytes.length = paths.nodeCount * digestBytes
 
 end AuthPathsWire
@@ -159,12 +158,9 @@ def decodeAuthPathsPrefix (input : List Byte) : Option (AuthPathsWire × List By
   let rows := decodeLE rowCountBytes
   if rows <= maximumCollectionRows then
     let (pathLengthBytes, afterLengths) ← readFixed rows afterRows
-    if ∀ lengthByte ∈ pathLengthBytes, lengthByte.val ≠ 0 then
-      let nodeCount := (pathLengthBytes.map Fin.val).sum
-      let (nodeBytes, suffix) ← readFixed (nodeCount * digestBytes) afterLengths
-      some ({ rowCountBytes, pathLengthBytes, nodeBytes }, suffix)
-    else
-      none
+    let nodeCount := (pathLengthBytes.map Fin.val).sum
+    let (nodeBytes, suffix) ← readFixed (nodeCount * digestBytes) afterLengths
+    some ({ rowCountBytes, pathLengthBytes, nodeBytes }, suffix)
   else
     none
 
@@ -174,18 +170,15 @@ theorem decodeAuthPathsPrefix_encode
     (canonical : paths.Canonical) :
     decodeAuthPathsPrefix (paths.encode ++ suffix) = some (paths, suffix) := by
   rcases canonical with
-    ⟨rows_length, rows_bound, path_lengths_length, paths_nonempty, nodes_length⟩
+    ⟨rows_length, rows_bound, path_lengths_length, nodes_length⟩
   change decodeLE paths.rowCountBytes <= maximumCollectionRows at rows_bound
   change paths.pathLengthBytes.length = decodeLE paths.rowCountBytes at path_lengths_length
   change
     paths.nodeBytes.length =
       (paths.pathLengthBytes.map Fin.val).sum * digestBytes
     at nodes_length
-  have no_zero : ¬(0 : Byte) ∈ paths.pathLengthBytes := by
-    intro zero_mem
-    exact paths_nonempty 0 zero_mem (by decide)
   simp [decodeAuthPathsPrefix, AuthPathsWire.encode, rows_length, rows_bound,
-    path_lengths_length, no_zero, nodes_length, List.append_assoc]
+    path_lengths_length, nodes_length, List.append_assoc]
 
 theorem decodeAuthPathsPrefix_sound
     {input : List Byte}
@@ -205,7 +198,6 @@ theorem decodeAuthPathsPrefix_sound
       | some lengthsPair =>
           rcases lengthsPair with ⟨pathLengthBytes, afterLengths⟩
           simp [lengthsResult] at decoded
-          rcases decoded with ⟨no_zero, decoded⟩
           cases nodesResult :
               readFixed
                 ((pathLengthBytes.map Fin.val).sum * digestBytes)
@@ -223,14 +215,9 @@ theorem decodeAuthPathsPrefix_sound
                 ⟨path_lengths_length, after_rows_eq⟩
               rcases readFixed_sound nodesResult with
                 ⟨nodes_length, after_lengths_eq⟩
-              have paths_nonempty :
-                  ∀ lengthByte ∈ pathLengthBytes, lengthByte.val ≠ 0 := by
-                intro lengthByte member value_zero
-                exact no_zero lengthByte member (Fin.ext value_zero)
               constructor
               · exact
-                  ⟨rows_length, rows_bound, path_lengths_length,
-                    paths_nonempty, nodes_length⟩
+                  ⟨rows_length, rows_bound, path_lengths_length, nodes_length⟩
               · simp only [AuthPathsWire.encode]
                 rw [input_eq, after_rows_eq, after_lengths_eq]
                 simp [List.append_assoc]

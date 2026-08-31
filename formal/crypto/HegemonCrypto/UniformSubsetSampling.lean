@@ -158,8 +158,8 @@ theorem active_epsilon3_is_uniform_root_subset_bound :
   exact desc_factorial_ratio_eq_choose_ratio (by decide)
 
 /--
-The active DECS opening term is exactly the probability bound for drawing all 20 leaves from a
-bad set of size `activeLvcsColumnCount + 19` inside the `2^20`-leaf commitment.
+The active DECS opening term is exactly the probability bound for drawing all 23 leaves from a
+bad set of size `activeLvcsColumnCount + 22` inside the `2^20`-leaf commitment.
 -/
 theorem active_epsilon4_is_uniform_bad_leaf_subset_bound :
     (epsilon4Numerator : Rat) / epsilon4Denominator =

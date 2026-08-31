@@ -88,7 +88,7 @@ theorem canonical_minimal_proof_is_canonical :
     MatrixWire.rowCount, MatrixWire.columnCount, AuthPathsWire.Canonical,
     AuthPathsWire.rowCount, AuthPathsWire.nodeCount,
     OpenedWitnessWire.Canonical, maximumCollectionRows, digestBytes,
-    fieldWordsCanonicalB, fieldOrder, encodeLE, decodeLE]
+    fieldWordsCanonicalB, fieldOrder, encodeLE_length, decodeLE_encodeLE]
 
 theorem canonical_minimal_proof_roundtrips :
     decodeProofExact canonicalMinimalProof.encode = some canonicalMinimalProof := by
@@ -114,9 +114,21 @@ theorem noncanonical_field_word_rejects :
     decodeProofExact noncanonicalFieldProof.encode = none := by
   decide
 
-theorem empty_auth_path_rejects :
-    decodeProofExact emptyAuthPathProof.encode = none := by
-  decide
+theorem zero_length_auth_path_is_canonical :
+    emptyAuthPathProof.Canonical := by
+  simp [ProofWire.Canonical, proofPayloadCodec, PrefixCodec.xmap,
+    PrefixCodec.pair, PrefixCodec.fixed, piopCodec, pcsCodec, decsCodec,
+    openedWitnessCodec, matrixCodec, authPathsCodec,
+    emptyAuthPathProof, canonicalMinimalProof, zeroPiop, zeroPcs, zeroDecs,
+    emptyPathAuthPaths, zeroMatrix, zeroBytes, matrix, MatrixWire.Canonical,
+    MatrixWire.rowCount, MatrixWire.columnCount, AuthPathsWire.Canonical,
+    AuthPathsWire.rowCount, AuthPathsWire.nodeCount,
+    OpenedWitnessWire.Canonical, maximumCollectionRows, digestBytes,
+    fieldWordsCanonicalB, fieldOrder, encodeLE_length, decodeLE_encodeLE]
+
+theorem zero_length_auth_path_roundtrips :
+    decodeProofExact emptyAuthPathProof.encode = some emptyAuthPathProof := by
+  exact decodeProofExact_encode emptyAuthPathProof zero_length_auth_path_is_canonical
 
 theorem invalid_opened_witness_mode_rejects :
     decodeProofExact invalidOpenedWitnessModeBytes = none := by

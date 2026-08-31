@@ -1,0 +1,32 @@
+{
+  "files": [
+    {
+      "path": "README.md",
+      "sha512": "6510f9e5edf60900dfb77d1dfa909d8e156099df1d23eb6c7b6cbe9b8b47613b0325a1ceb729abf92c42e1ab82d0057312220fa198959ff5b27d5faf705dbcaa"
+    },
+    {
+      "path": "cfw26_r1cs_ior.py",
+      "sha512": "ee74d47094dcb292a090f1b62aad5fc6fa3a89f243543cf29774816537526f3816d640c709f4a9ccf8f0196e1c171b22bd297012860ded3692d4527f6fc5faca"
+    },
+    {
+      "path": "check_cfw26_r1cs_ior.py",
+      "sha512": "54f73f57edf78f2f6d08524402ecc8caa4b183460540d8e09732d1cb961cc1c76c638907440790c6fdab8d11c05045224eb5b78ad942ce15d087b39043fc18a5"
+    },
+    {
+      "path": "mutation-ledger.json",
+      "sha512": "dd9002911a6409c6576f4ac115886acaf28f6aaf46036f9446d31729834d1cd19935ec7559aeb7c4370b4e2a1b8b1343bb451a4130c757f7047544eac2686db9"
+    },
+    {
+      "path": "test_cfw26_r1cs_ior.py",
+      "sha512": "daf90b971644d737fef640c5162e1f016299687187fae75108362d94d4687e26f8b66634c0cac41a904110051d8f0f8a39ad88c7216aad553c694a5afecfa422"
+    }
+  ],
+  "hash_algorithm": "SHA-512",
+  "paper": {
+    "pdf_sha256": "6a2092b7bc50e5ea68ec8e679c4b830f2fe260c961dc08ee7582b7e652a46f7c",
+    "pdf_sha512": "be9595b264ccbb6e5d848a10e24f907089ff478c7efe99967a5d0f236bffcaf87c53cc82eec53f74856a08a4db8a6884084c8238291f44d06aa2d703eef5c2dd",
+    "reviewed_on": "2026-08-22",
+    "url": "https://eprint.iacr.org/2026/391"
+  },
+  "schema": "hegemon.cfw26-section11-r1cs-ior.sources.v1"
+}

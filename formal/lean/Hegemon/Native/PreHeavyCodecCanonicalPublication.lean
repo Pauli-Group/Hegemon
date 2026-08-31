@@ -655,11 +655,11 @@ structure PreHeavyBoundedCodecCanonicalPublicationProductionOrderFacts
     exactDecodeAccepts metadataDecode.currentExact = true ->
       evaluateNativeMetadataDecode metadataDecode =
         Except.ok NativeMetadataDecodeSource.current
-  metadataLegacyFallbackOnlyAfterCurrentRejected :
+  metadataLegacyIdentifiedAndRejected :
     exactDecodeAccepts metadataDecode.currentExact = false ->
       exactDecodeAccepts metadataDecode.legacyExact = true ->
         evaluateNativeMetadataDecode metadataDecode =
-          Except.ok NativeMetadataDecodeSource.legacy
+          Except.error NativeMetadataDecodeReject.legacyForbidden
   metadataBothDecodersRejectFailClosed :
     exactDecodeAccepts metadataDecode.currentExact = false ->
       exactDecodeAccepts metadataDecode.legacyExact = false ->
@@ -794,8 +794,8 @@ theorem preheavy_bounded_codec_canonical_publication_certificate_exposes_product
     declaredRowsEqualPublishedWireRows :=
       binding.declaredRowsEqualPublishedWireRows,
     metadataCurrentBeforeLegacy := binding.metadataCurrentBeforeLegacy,
-    metadataLegacyFallbackOnlyAfterCurrentRejected :=
-      binding.metadataLegacyFallbackOnlyAfterCurrentRejected,
+    metadataLegacyIdentifiedAndRejected :=
+      binding.metadataLegacyIdentifiedAndRejected,
     metadataBothDecodersRejectFailClosed :=
       binding.metadataBothDecodersRejectFailClosed,
     parserCorrectnessAssumption :=

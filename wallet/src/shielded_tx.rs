@@ -53,7 +53,7 @@ use crate::address::ShieldedAddress;
 use crate::error::WalletError;
 use crate::keys::DerivedKeys;
 use crate::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
-use crate::prover::StarkProver;
+use crate::prover::{FreshTransactionProofAuthority, StarkProver};
 use crate::rpc::TransactionBundle;
 use crate::store::{SpendableNote, WalletMode, WalletStore};
 use crate::viewing::FullViewingKey;
@@ -279,6 +279,10 @@ impl<'a> ShieldedTxBuilder<'a> {
 
         // Build witness
         let witness_start = Instant::now();
+        let authority = FreshTransactionProofAuthority::from_wallet_store(
+            self.store,
+            protocol_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+        )?;
         let witness = self.build_witness(
             &derived,
             &fvk,
@@ -286,11 +290,15 @@ impl<'a> ShieldedTxBuilder<'a> {
             output_witnesses,
             ciphertext_hashes.clone(),
             fee,
+            authority.binding(),
         )?;
         stats.witness_build_time = witness_start.elapsed();
 
-        // Generate STARK proof
-        let proof_result = self.prover.prove(&witness)?;
+        // Generate the complete native tx-leaf artifact expected by node
+        // admission. A raw backend proof is not a submission artifact.
+        let proof_result = self
+            .prover
+            .prove_submission_artifact_with_authority(&witness, &authority)?;
         stats.proving_time = proof_result.proving_time;
         stats.proof_generation_time = proof_result.proof_generation_time;
         stats.local_self_check_time = proof_result.local_self_check_time;
@@ -491,6 +499,7 @@ impl<'a> ShieldedTxBuilder<'a> {
         outputs: Vec<OutputNoteWitness>,
         ciphertext_hashes: Vec<[u8; 48]>,
         fee: u64,
+        version: protocol_versioning::VersionBinding,
     ) -> Result<TransactionWitness, WalletError> {
         // Get Merkle tree for authentication paths
         let tree = self.store.commitment_tree()?;
@@ -533,7 +542,7 @@ impl<'a> ShieldedTxBuilder<'a> {
             fee,
             value_balance: 0,
             stablecoin: StablecoinPolicyBinding::default(),
-            version: TransactionWitness::default_version_binding(),
+            version,
         })
     }
 

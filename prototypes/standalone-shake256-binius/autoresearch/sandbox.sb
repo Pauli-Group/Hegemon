@@ -1,0 +1,24 @@
+(version 1)
+
+; Candidate code may execute normal compiler/prover processes and read the
+; pinned source/toolchain closure. Writes are limited to six exact controller-
+; supplied subdirectories. In particular, the disposable source tree and run
+; marker stay read-only while candidate Rust/build-script/test code executes.
+; The deny rules also keep candidate descendants in the controller-owned
+; process group and prevent them from signalling the controller.
+(allow default)
+(deny network*)
+(deny job-creation)
+(deny signal)
+(deny syscall-unix (syscall-number SYS_setpgid))
+(deny syscall-unix (syscall-number SYS_setsid))
+(deny file-write*)
+(allow file-write* (literal "/dev/null"))
+(allow file-write* (subpath (param "WRITE_A")))
+(allow file-write* (subpath (param "WRITE_B")))
+(allow file-write* (subpath (param "WRITE_C")))
+(allow file-write* (subpath (param "WRITE_D")))
+(allow file-write* (subpath (param "WRITE_E")))
+(allow file-write* (subpath (param "WRITE_F")))
+(deny file-read* (literal (param "MARKER")))
+(deny file-write* (literal (param "MARKER")))

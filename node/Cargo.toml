@@ -15,7 +15,7 @@ bs58 = "0.5"
 clap = { version = "4.5", features = ["derive", "env"] }
 consensus = { path = "../consensus", default-features = false }
 consensus-light-client = { path = "../consensus-light-client" }
-crypto = { path = "../crypto", package = "synthetic-crypto" }
+crypto = { path = "../crypto", package = "synthetic-crypto", features = ["hash384-codec", "hash384-serde"] }
 futures = "0.3"
 hex = "0.4"
 network = { path = "../network" }
@@ -54,8 +54,14 @@ codec = { workspace = true }
 
 [features]
 default = []
+hx512-working-proof = [
+    "transaction_circuit/hx512-working-proof-runner",
+    "wallet/hx512-working-proof",
+]
+poseidon2-v8-retained-test-support = ["wallet/poseidon2-v8-retained-test-support"]
 
 [dev-dependencies]
+blake2 = "0.10"
 rand = "0.8"
 tempfile = "3.8"
 tokio-tungstenite = "0.21"
@@ -65,6 +71,11 @@ reqwest = { version = "0.12", default-features = false, features = ["json"] }
 [[bin]]
 name = "hegemon-node"
 path = "src/bin/native_node.rs"
+
+[[example]]
+name = "hx512_lifecycle_replay"
+path = "examples/hx512_lifecycle_replay.rs"
+required-features = ["hx512-working-proof"]
 
 [lints]
 workspace = true

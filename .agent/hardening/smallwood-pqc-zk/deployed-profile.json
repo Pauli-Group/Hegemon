@@ -1,0 +1,99 @@
+{
+  "schema": "hegemon.smallwood.deployed-profile.v1",
+  "profile_id": "hegemon.smallwood.v4.gamma.level5.sha512.v1",
+  "deployment": {
+    "production_active": false,
+    "circuit_version": 4,
+    "crypto_suite": 3,
+    "backend": "SmallwoodCandidate",
+    "backend_wire_id": 2,
+    "arithmetization": "DirectPacked64CompressedLevel5",
+    "proof_wire_magic": "SMW2",
+    "transcript_domain": "hegemon.sha512-level5-field-xof.v1"
+  },
+  "protocol": {
+    "proof_system": "SmallWood-LPPC-PACS-PIOP-LVCS-DECS",
+    "challenge_field": {
+      "name": "Goldilocks",
+      "order": "18446744069414584321"
+    },
+    "transcript": {
+      "algorithm": "SHA-512",
+      "output_bits": 512,
+      "counter_mode": "sha512-counter-mode",
+      "physical_fiat_shamir_rounds": 4
+    },
+    "parameters": {
+      "rho": 5,
+      "piop_openings": 5,
+      "beta": 2,
+      "opening_pow_bits": 0,
+      "decs_domain_size": 1048576,
+      "decs_openings": 23,
+      "decs_eta": 5,
+      "decs_pow_bits": 0,
+      "packing_factor": 64,
+      "piop_nonce_trials": 16,
+      "decs_candidate_count": 50,
+      "canonical_first_valid_piop_nonce": true,
+      "fixed_first_distinct_decs_sampler": true,
+      "decs_evaluation_domain": "radix2-subgroup-v1",
+      "decs_leaf_index_bound": false,
+      "independent_decs_leaf_tapes": false
+    }
+  },
+  "hash_policy": {
+    "accepted_conventional_algorithms": [
+      "SHA-512",
+      "SHAKE256"
+    ],
+    "minimum_commitment_digest_bits": 384
+  },
+  "commitment": {
+    "algorithm": "SHA-512",
+    "output_bits": 512,
+    "bytes": 64,
+    "roles": [
+      "piop_digest",
+      "decs_leaf",
+      "merkle_node",
+      "merkle_root"
+    ]
+  },
+  "semantic_hash": {
+    "algorithm": "Poseidon2",
+    "output_bits": 384,
+    "limbs": 6,
+    "security_evidence_required": true
+  },
+  "relation": {
+    "public_value_count": 78,
+    "raw_witness_len": 241,
+    "merkle_depth": 32,
+    "note_commitment_bytes": 48,
+    "nullifier_bytes": 48
+  },
+  "geometry": {
+    "public_value_count": 78,
+    "raw_witness_len": 241,
+    "row_count": 699,
+    "constraint_count": 890,
+    "effective_constraint_degree": 8,
+    "witness_polynomial_degree": 68,
+    "consistency_discrepancy_degree": 544,
+    "pcs_polynomial_count": 709,
+    "lvcs_row_count": 138,
+    "lvcs_column_count": 375,
+    "base_game_arity_upper_bound": 1048576
+  },
+  "known_zk_boundary": {
+    "domain_disjoint_from_lvcs_points": false,
+    "leaf_index_and_tape_bound": false,
+    "witness_recovery_probability": {
+      "numerator": "23",
+      "denominator": "1048576"
+    },
+    "witness_recovery_probability_bits": "greater-than-2^-16",
+    "complete_zk_safe": false
+  }
+}

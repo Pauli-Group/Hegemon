@@ -7,6 +7,7 @@ on:
       - 'formal/crypto/**'
       - 'formal/lean/**'
       - '.github/workflows/formal-crypto-isolation.yml'
+      - '.github/workflows/ci.yml'
       - '.github/workflows/release.yml'
       - '**/Cargo.toml'
       - 'Cargo.lock'
@@ -14,25 +15,43 @@ on:
       - 'circuits/transaction/src/proof.rs'
       - 'circuits/transaction/src/smallwood_engine.rs'
       - 'circuits/transaction/src/smallwood_frontend.rs'
+      - 'circuits/transaction/src/smallwood_lppc_frontend.rs'
+      - 'circuits/transaction/src/smallwood_poseidon2_v8_program.rs'
+      - 'circuits/transaction/src/smallwood_poseidon2_v8_security.rs'
+      - 'circuits/transaction/src/smallwood_poseidon2_v8_semantics.rs'
+      - 'circuits/transaction/src/smallwood_poseidon2_v8_zk_refinement.rs'
       - 'circuits/transaction/src/smallwood_production_constraint_contract_generated.rs'
       - 'circuits/transaction/src/smallwood_semantics.rs'
       - 'config/formal-security-blueprint.json'
       - 'config/formal-security-claims.json'
+      - 'config/smallwood-v8-poseidon2-profile-manifest.json'
       - 'config/system-model-assumption-gates.json'
+      - 'docs/crypto/smallwood_poseidon2_v8_smz9_source_security_report.json'
+      - 'docs/crypto/smallwood_poseidon2_v8_smz9_executable_zk_refinement.json'
       - 'node/src/native/mod.rs'
       - 'protocol/versioning/src/lib.rs'
       - 'scripts/check_formal_core.sh'
       - 'scripts/check_formal_crypto.sh'
+      - 'scripts/check_transaction_proof_successor_authorization.py'
+      - 'scripts/test_check_transaction_proof_successor_authorization.py'
+      - 'scripts/check_ci_release_gate_policy.py'
+      - 'scripts/test_check_ci_release_gate_policy.py'
+      - 'scripts/check_release_crypto_profile.py'
+      - 'scripts/test_check_release_crypto_profile.py'
+      - 'scripts/check_smallwood_production_constraint_table.sh'
       - 'scripts/check_native_runtime_dependencies.sh'
       - 'scripts/hegemon_formal_core/**'
       - 'scripts/lean_axiom_audit.lean'
       - 'testdata/formal_crypto_vectors/smallwood_proof_wire.json'
+      - 'testdata/formal_crypto_vectors/smallwood_smz8_proof_wire.json'
+      - 'testdata/formal_crypto_vectors/smallwood_smz9_proof_wire.json'
       - '.github/workflows/formal-crypto.yml'
   pull_request:
     paths:
       - 'formal/crypto/**'
       - 'formal/lean/**'
       - '.github/workflows/formal-crypto-isolation.yml'
+      - '.github/workflows/ci.yml'
       - '.github/workflows/release.yml'
       - '**/Cargo.toml'
       - 'Cargo.lock'
@@ -40,19 +59,36 @@ on:
       - 'circuits/transaction/src/proof.rs'
       - 'circuits/transaction/src/smallwood_engine.rs'
       - 'circuits/transaction/src/smallwood_frontend.rs'
+      - 'circuits/transaction/src/smallwood_lppc_frontend.rs'
+      - 'circuits/transaction/src/smallwood_poseidon2_v8_program.rs'
+      - 'circuits/transaction/src/smallwood_poseidon2_v8_security.rs'
+      - 'circuits/transaction/src/smallwood_poseidon2_v8_semantics.rs'
+      - 'circuits/transaction/src/smallwood_poseidon2_v8_zk_refinement.rs'
       - 'circuits/transaction/src/smallwood_production_constraint_contract_generated.rs'
       - 'circuits/transaction/src/smallwood_semantics.rs'
       - 'config/formal-security-blueprint.json'
       - 'config/formal-security-claims.json'
+      - 'config/smallwood-v8-poseidon2-profile-manifest.json'
       - 'config/system-model-assumption-gates.json'
+      - 'docs/crypto/smallwood_poseidon2_v8_smz9_source_security_report.json'
+      - 'docs/crypto/smallwood_poseidon2_v8_smz9_executable_zk_refinement.json'
       - 'node/src/native/mod.rs'
       - 'protocol/versioning/src/lib.rs'
       - 'scripts/check_formal_core.sh'
       - 'scripts/check_formal_crypto.sh'
+      - 'scripts/check_transaction_proof_successor_authorization.py'
+      - 'scripts/test_check_transaction_proof_successor_authorization.py'
+      - 'scripts/check_ci_release_gate_policy.py'
+      - 'scripts/test_check_ci_release_gate_policy.py'
+      - 'scripts/check_release_crypto_profile.py'
+      - 'scripts/test_check_release_crypto_profile.py'
+      - 'scripts/check_smallwood_production_constraint_table.sh'
       - 'scripts/check_native_runtime_dependencies.sh'
       - 'scripts/hegemon_formal_core/**'
       - 'scripts/lean_axiom_audit.lean'
       - 'testdata/formal_crypto_vectors/smallwood_proof_wire.json'
+      - 'testdata/formal_crypto_vectors/smallwood_smz8_proof_wire.json'
+      - 'testdata/formal_crypto_vectors/smallwood_smz9_proof_wire.json'
       - '.github/workflows/formal-crypto.yml'
 
 permissions:
@@ -73,6 +109,17 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
+      - name: Setup Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: "formal-crypto"
+      - name: SMZ9 source-security report exact regression
+        run: cargo run --locked -p transaction-circuit --example smallwood_poseidon2_v8_security_report -- --check docs/crypto/smallwood_poseidon2_v8_smz9_source_security_report.json
+      - name: Transaction-proof successor authorization regression
+        run: python3 -I -B scripts/test_check_transaction_proof_successor_authorization.py
       - name: Install Lean toolchain manager
         env:
           ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
@@ -84,4 +131,12 @@ jobs:
       - name: Formal cryptography sanity gate
         env:
           HEGEMON_FORMAL_CRYPTO_MIN_FREE_GIB: '8'
-        run: bash scripts/check_formal_crypto.sh
+        run: bash scripts/check_formal_crypto.sh full
+      - name: Production parser/verifier refinement regression
+        run: ./scripts/run_exact_cargo_lib_test.sh transaction-circuit smallwood_engine::tests::lean_generated_smallwood_proof_wire_vectors_match_production_parser
+      - name: SMZ8 parser/verifier refinement regression
+        run: ./scripts/run_exact_cargo_lib_test.sh transaction-circuit smallwood_engine::tests::lean_generated_smz8_proof_wire_vectors_match_production_parser
+      - name: SMZ9 parser/verifier refinement regression
+        run: ./scripts/run_exact_cargo_lib_test.sh transaction-circuit smallwood_engine::tests::lean_generated_smz9_proof_wire_vectors_match_production_parser
+      - name: V8 PendingAction private-codec conformance regression
+        run: ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::protocol_v8_artifact_codec_matches_private_pending_action_v3_exactly

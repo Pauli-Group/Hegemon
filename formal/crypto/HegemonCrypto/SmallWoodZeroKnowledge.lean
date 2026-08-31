@@ -1,5 +1,8 @@
 import HegemonCrypto.SmallWoodRom
 import HegemonCrypto.SmallWoodProofWire
+import HegemonCrypto.SmallWoodSmz8ProofWire
+import HegemonCrypto.SecurityAuthority
+import Hegemon.Transaction.Poseidon2V8ConstraintRefinement
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 import Mathlib.Data.Fintype.Card
 import Mathlib.Tactic.Abel
@@ -12,7 +15,8 @@ This module separates four claims that must not be conflated:
 
 * canonical field sampling for prover masks;
 * information-theoretic masking of algebraic views;
-* simulation of the complete SmallWood proof in the classical random-oracle model; and
+* simulation of the complete SmallWood proof in the classical random-oracle model;
+* the exact receipt boundary for an SMZ8 whole-view adaptive-QROM theorem; and
 * network-level unlinkability.
 
 The deployed prover previously mapped one uniform 64-bit word to Goldilocks by one conditional
@@ -28,6 +32,13 @@ random-coin equivalences, which provide exact couplings rather than an informal 
 These algebraic results do not prove complete SmallWood zero knowledge.  The published simulator
 also requires DECS hiding and random-oracle programming.  Its exact classical-ROM failure bound is
 mechanized here and already misses a 128-bit floor at one simulated proof and one oracle query.
+
+The final section does not promote that classical bound to the QROM.  It instead binds a
+witness-free whole-view simulator to the exact SMZ8 decoder, a nonempty compiled-relation identity,
+the 120-word semantic target, the seven binding limbs, and Rust/Lean verifier replay.  Its
+adaptive-QROM theorem is conditional on separately supplied SHA-512 transcript, QROM
+instantiation, whole-view hybrid, relation-refinement, and independent-review receipts.  No such
+release receipt is constructed in this module.
 -/
 
 namespace HegemonCrypto.SmallWood.ZeroKnowledge
@@ -388,5 +399,376 @@ theorem positive_proof_and_query_budgets_do_not_support_128_zk_bits
   exact (not_lt_of_ge claimed) strictLower
 
 end ClassicalRomSimulationLoss
+
+section Smz8AdaptiveQromWholeView
+
+/-!
+The executable Rust harness records the canonical proof bytes, every lazily programmed Merkle
+node, the programmed final PIOP input and output, the raw-witness consumption count, and the
+concrete SHA-512 verifier result.  The structures below are the exact Lean-facing refinement and
+probability boundary for that complete view.  They do not infer an adaptive-QROM theorem from the
+classical-ROM arithmetic above.
+-/
+
+def smz8SemanticTargetId : String :=
+  "hegemon.smallwood.poseidon2-v8.stablecoin-relation.v2"
+
+def smz8PublicStatementWordCount : Nat :=
+  Hegemon.Transaction.Poseidon2V8ConstraintRefinement.publicStatementWordCount
+def smz8BindingLimbCount : Nat :=
+  Hegemon.Transaction.Poseidon2V8ConstraintRefinement.relationBindingLimbCount
+def smz8RelationRowCount : Nat :=
+  Hegemon.Transaction.Poseidon2V8ConstraintRefinement.relationRowCount
+def smz8ProofGeometryColumnCount : Nat :=
+  Hegemon.Transaction.Poseidon2V8ConstraintRefinement.proofGeometryColumnCount
+def smz8HashCallCount : Nat :=
+  Hegemon.Transaction.Poseidon2V8ConstraintRefinement.liveHashCallCount
+def smz8HashRowCount : Nat :=
+  Hegemon.Transaction.Poseidon2V8ConstraintRefinement.hashRowCount
+def smz8HashConstraintCount : Nat :=
+  Hegemon.Transaction.Poseidon2V8ConstraintRefinement.hashConstraintCount
+def smz8NonlinearIdentityCount : Nat :=
+  Hegemon.Transaction.Poseidon2V8ConstraintRefinement.nonlinearIdentityCount
+/-! These four counts belong to the historical HGV8RP02/SMZ8 rehearsal.  They
+must not follow the active HGV8RP03 constants: the repair added one linear
+identity and one family without changing the proof geometry. -/
+def smz8MinimumStatementLinearConstraintCount : Nat := 19898
+def smz8MaximumStatementLinearConstraintCount : Nat := 20472
+def smz8EnginePiopGammaWidth : Nat := 20472
+def smz8MaximumSummedIdentityUnionCount : Nat := 21302
+def smz8TranscriptDigestBytes : Nat := 64
+def smz8MaximumCompactAuthenticationNodes : Nat := 355
+def smz8MaximumAuthenticationPathSectionBytes : Nat :=
+  2 + SmallWoodSmz8ProofWire.openedLeafCount +
+    smz8MaximumCompactAuthenticationNodes * smz8TranscriptDigestBytes
+def smz8MaximumAuthenticationAndTapeBytes : Nat :=
+  smz8MaximumAuthenticationPathSectionBytes +
+    SmallWoodSmz8ProofWire.openedLeafTapesBytes
+def smz8QuantumTargetBits : Nat := 128
+
+def smz8AdaptiveQromTarget : ℚ :=
+  (1 : ℚ) / ((2 ^ smz8QuantumTargetBits : Nat) : ℚ)
+
+theorem smz8_whole_view_profile_is_exact :
+    smz8PublicStatementWordCount = 120
+      ∧ smz8BindingLimbCount = 7
+      ∧ SmallWoodSmz8ProofWire.openedLeafCount = 19
+      ∧ SmallWoodSmz8ProofWire.openedLeafTapeBytes = 64
+      ∧ SmallWoodSmz8ProofWire.openedLeafTapesBytes = 1216
+      ∧ SmallWoodSmz8ProofWire.maximumAuthPathDepth = 23
+      ∧ smz8RelationRowCount = 686
+      ∧ smz8ProofGeometryColumnCount = 368
+      ∧ smz8HashCallCount = 125
+      ∧ smz8HashRowCount = 364
+      ∧ smz8HashConstraintCount = 332
+      ∧ smz8NonlinearIdentityCount = 830
+      ∧ smz8MinimumStatementLinearConstraintCount = 19898
+      ∧ smz8MaximumStatementLinearConstraintCount = 20472
+      ∧ smz8EnginePiopGammaWidth = 20472
+      ∧ smz8MaximumSummedIdentityUnionCount = 21302
+      ∧ smz8MaximumCompactAuthenticationNodes = 355
+      ∧ smz8MaximumAuthenticationPathSectionBytes = 22741
+      ∧ smz8MaximumAuthenticationAndTapeBytes = 23957
+      ∧ SmallWoodSmz8ProofWire.maximumInnerProofBytes = 131072
+      ∧ SmallWoodSmz8ProofWire.proofMagic = [83, 77, 90, 56] := by
+  decide
+
+/--
+Exact compiled-relation-to-semantic-target receipt required by the SMZ8 theorem.  The relation id
+is deliberately data, not a caller-selected profile tag.  The embedded V8 compiler receipt binds
+the exact width-16 kernel, 120-word projection, program bytes, program SHA-512, and universal
+compiled acceptance equivalence.  The executable compiler alone does not inhabit that receipt:
+the checked-in artifact/refinement status remains unbound.
+-/
+structure CompiledSmz8RelationBinding (Statement Witness : Type*) where
+  v8CompilerRefinement :
+    Hegemon.Transaction.Poseidon2V8ConstraintRefinement.FullRelationCompilerRefinementReceipt
+      Statement Witness
+  relationId : List Byte
+  relationIdExactLength : relationId.length = 48
+  relationIdExact :
+    relationId.map Fin.val = v8CompilerRefinement.programSha512.take 48
+  semanticTargetId : String
+  semanticTargetIdExact : semanticTargetId = smz8SemanticTargetId
+  publicStatementWords : Statement → List CanonicalFieldWord
+  publicStatementWordsExact :
+    ∀ statement,
+      (publicStatementWords statement).length = smz8PublicStatementWordCount
+  bindingLimbs : Statement → List CanonicalFieldWord
+  bindingLimbsExact :
+    ∀ statement, (bindingLimbs statement).length = smz8BindingLimbCount
+  v8PublicStatementProjectionExact :
+    ∀ statement,
+      v8CompilerRefinement.publicStatementWords statement =
+        (publicStatementWords statement).map Fin.val
+  v8BindingProjectionExact :
+    ∀ statement,
+      v8CompilerRefinement.bindingLimbs statement =
+        (bindingLimbs statement).map Fin.val
+  semanticTarget : Statement → Witness → Prop
+  compiledAccepts : Statement → Witness → Bool
+  v8SemanticTargetExact :
+    ∀ statement witness,
+      v8CompilerRefinement.semanticTarget statement witness ↔
+        semanticTarget statement witness
+  v8CompiledAcceptanceExact :
+    ∀ statement witness,
+      v8CompilerRefinement.compiledAccepts statement witness =
+        compiledAccepts statement witness
+  compiledAcceptsIffSemanticTarget :
+    ∀ statement witness,
+      compiledAccepts statement witness = true ↔
+        semanticTarget statement witness
+
+theorem compiled_smz8_relation_binding_is_unavailable_from_checked_in_v8_status
+    (Statement Witness : Type*) :
+    ¬ Nonempty (CompiledSmz8RelationBinding Statement Witness) := by
+  intro evidence
+  rcases evidence with ⟨relation⟩
+  exact
+    (Hegemon.Transaction.Poseidon2V8ConstraintRefinement.full_relation_compiler_receipt_is_unavailable_from_checked_in_status
+        Statement Witness) ⟨relation.v8CompilerRefinement⟩
+
+/-- One programmed sibling subtree in the Rust whole-view simulator trace. -/
+structure Smz8ProgrammedMerkleNode where
+  level : Nat
+  nodeIndex : Nat
+  digestBytes : List Byte
+deriving DecidableEq, Repr
+
+def Smz8ProgrammedMerkleNode.Canonical
+    (node : Smz8ProgrammedMerkleNode) : Prop :=
+  node.digestBytes.length = smz8TranscriptDigestBytes
+
+/-- Lean model of every verifier-visible field recorded by the Rust whole-view harness. -/
+structure Smz8WholeView (VerifierTrace : Type*) where
+  proofBytes : List Byte
+  verifierTrace : VerifierTrace
+  programmedMerkleNodes : List Smz8ProgrammedMerkleNode
+  programmedFinalPiopInputWords : List CanonicalFieldWord
+  programmedFinalPiopOutputBytes : List Byte
+  rawWitnessWordsConsumed : Nat
+  concreteSha512Accepts : Bool
+deriving DecidableEq, Repr
+
+/-- Exact SMZ8 decoding, canonical encoding, digest widths, and witness-free execution. -/
+def Smz8WholeView.Canonical
+    {VerifierTrace : Type*} (view : Smz8WholeView VerifierTrace) : Prop :=
+  (∃ proof : SmallWoodSmz8ProofWire.ProofWire,
+      SmallWoodSmz8ProofWire.decodeProofExact view.proofBytes = some proof
+        ∧ proof.encode = view.proofBytes)
+    ∧ view.programmedMerkleNodes.Forall
+        Smz8ProgrammedMerkleNode.Canonical
+    ∧ view.programmedFinalPiopOutputBytes.length =
+        smz8TranscriptDigestBytes
+    ∧ view.rawWitnessWordsConsumed = 0
+
+/-- Serialized authentication nodes carried by one decoded SMZ8 proof. -/
+def smz8AuthenticationNodeCount
+    (proof : SmallWoodSmz8ProofWire.ProofWire) : Nat :=
+  proof.pcs.decs.authPaths.nodeCount
+
+/--
+Universal Rust/Lean refinement statement for the executable SMZ8 whole-view simulator.  The
+simulator takes a statement and simulator coins but no witness.  The final two fields bind the
+recorded oracle program and concrete acceptance result to an independently modeled verifier
+replay; a finite conformance vector cannot replace these universal equalities.
+-/
+structure RustLeanSmz8WholeViewRefinement
+    (Statement Witness SimulatorCoins VerifierTrace : Type*)
+    (relation : CompiledSmz8RelationBinding Statement Witness) where
+  simulator : Statement → SimulatorCoins → Smz8WholeView VerifierTrace
+  leanVerifierAccepts :
+    Statement → SmallWoodSmz8ProofWire.ProofWire → Bool
+  rustVerifierAccepts : Statement → List Byte → Bool
+  rebuildVerifierTrace : Statement → List Byte → VerifierTrace
+  programmingMatchesVerifierReplay :
+    Statement → Smz8WholeView VerifierTrace → Prop
+  simulatorCanonical :
+    ∀ statement coins, (simulator statement coins).Canonical
+  rustLeanVerifierReplayExact :
+    ∀ statement coins proof,
+      SmallWoodSmz8ProofWire.decodeProofExact
+          (simulator statement coins).proofBytes = some proof →
+        rustVerifierAccepts statement
+            (simulator statement coins).proofBytes =
+          leanVerifierAccepts statement proof
+  recordedVerifierTraceExact :
+    ∀ statement coins,
+      (simulator statement coins).verifierTrace =
+        rebuildVerifierTrace statement
+          (simulator statement coins).proofBytes
+  recordedConcreteAcceptanceExact :
+    ∀ statement coins,
+      (simulator statement coins).concreteSha512Accepts =
+        rustVerifierAccepts statement
+          (simulator statement coins).proofBytes
+  verifierAcceptanceEnforcesCompactAuthenticationBound :
+    ∀ statement proof,
+      leanVerifierAccepts statement proof = true →
+        smz8AuthenticationNodeCount proof ≤
+          smz8MaximumCompactAuthenticationNodes
+  oracleProgrammingReplayExact :
+    ∀ statement coins,
+      programmingMatchesVerifierReplay statement
+        (simulator statement coins)
+  relatedStatementsUseExactCompiledTarget :
+    ∀ statement witness,
+      relation.semanticTarget statement witness →
+        relation.compiledAccepts statement witness = true
+
+/-- The two oracle models are distinct in the theorem type. -/
+inductive WholeViewOracleModel where
+  | classicalRom
+  | adaptiveQrom
+deriving DecidableEq, Repr
+
+/--
+Exact real/simulated whole-view experiment for one related SMZ8 statement.  Probability evaluation
+is supplied by the selected formal QROM model; range proofs prevent an arbitrary signed quantity
+from being relabeled as a probability.
+-/
+structure Smz8WholeViewExperiment
+    (Statement Witness SimulatorCoins VerifierTrace Distinguisher : Type*)
+    (relation : CompiledSmz8RelationBinding Statement Witness)
+    (refinement :
+      RustLeanSmz8WholeViewRefinement Statement Witness SimulatorCoins
+        VerifierTrace relation) where
+  statement : Statement
+  witness : Witness
+  relationHolds : relation.semanticTarget statement witness
+  realAcceptanceProbability : Distinguisher → ℚ
+  simulatedAcceptanceProbability : Distinguisher → ℚ
+  realProbabilityInRange :
+    ∀ distinguisher,
+      0 ≤ realAcceptanceProbability distinguisher
+        ∧ realAcceptanceProbability distinguisher ≤ 1
+  simulatedProbabilityInRange :
+    ∀ distinguisher,
+      0 ≤ simulatedAcceptanceProbability distinguisher
+        ∧ simulatedAcceptanceProbability distinguisher ≤ 1
+
+/--
+Adaptive-QROM reduction receipt for the entire verifier-visible view.  Field rejection, canonical
+nonce/opening selection, DECS sampling, lazy Merkle programming, final PIOP programming, SHA-512
+instantiation, and residual-view losses are explicit and nonnegative.  None can be silently
+replaced by `activeClassicalRomSimulationLoss`.  The whole-view hybrid is indexed by the exact
+compiler receipt's nonlinear-identity, maximum statement-specialized linear-constraint, and
+maximum summed-identity-union counts.  The engine PIOP/gamma width is the maximum of the first two,
+whereas union terms use their sum; the compact 368-column proof geometry cannot be substituted for
+any of those inputs.
+-/
+structure Smz8AdaptiveQromWholeViewReduction
+    {Statement Witness SimulatorCoins VerifierTrace Distinguisher : Type*}
+    {relation : CompiledSmz8RelationBinding Statement Witness}
+    {refinement :
+      RustLeanSmz8WholeViewRefinement Statement Witness SimulatorCoins
+        VerifierTrace relation}
+    (experiment :
+      Smz8WholeViewExperiment Statement Witness SimulatorCoins VerifierTrace
+        Distinguisher relation refinement)
+    (HonestAffineViewRefinement Sha512TranscriptRefinement
+      Sha512QromInstantiation : Prop)
+    (AdaptiveWholeViewHybrid : Nat → Nat → Nat → Prop) where
+  oracleModel : WholeViewOracleModel
+  oracleModelExact : oracleModel = .adaptiveQrom
+  globalQuantumHashQueries : Nat
+  globalPriorProofInteractions : Nat
+  fieldSamplingAbortLoss : ℚ
+  canonicalNonceAndOpeningAbortLoss : ℚ
+  decsSamplingAbortLoss : ℚ
+  adaptiveMerkleProgrammingLoss : ℚ
+  adaptiveFinalPiopProgrammingLoss : ℚ
+  sha512InstantiationLoss : ℚ
+  residualWholeViewLoss : ℚ
+  totalLoss : ℚ
+  fieldSamplingAbortLossNonnegative : 0 ≤ fieldSamplingAbortLoss
+  canonicalNonceAndOpeningAbortLossNonnegative :
+    0 ≤ canonicalNonceAndOpeningAbortLoss
+  decsSamplingAbortLossNonnegative : 0 ≤ decsSamplingAbortLoss
+  adaptiveMerkleProgrammingLossNonnegative :
+    0 ≤ adaptiveMerkleProgrammingLoss
+  adaptiveFinalPiopProgrammingLossNonnegative :
+    0 ≤ adaptiveFinalPiopProgrammingLoss
+  sha512InstantiationLossNonnegative : 0 ≤ sha512InstantiationLoss
+  residualWholeViewLossNonnegative : 0 ≤ residualWholeViewLoss
+  totalLossExact :
+    totalLoss =
+      fieldSamplingAbortLoss + canonicalNonceAndOpeningAbortLoss +
+        decsSamplingAbortLoss + adaptiveMerkleProgrammingLoss +
+        adaptiveFinalPiopProgrammingLoss + sha512InstantiationLoss +
+        residualWholeViewLoss
+  honestAffineViewRefinement : HonestAffineViewRefinement
+  sha512TranscriptRefinement : Sha512TranscriptRefinement
+  sha512QromInstantiation : Sha512QromInstantiation
+  adaptiveWholeViewHybrid :
+    AdaptiveWholeViewHybrid
+      relation.v8CompilerRefinement.exactNonlinearIdentityCount
+      relation.v8CompilerRefinement.maximumStatementLinearConstraintCount
+      relation.v8CompilerRefinement.maximumSummedIdentityUnionCount
+  completeViewBound :
+    ∀ distinguisher,
+      |experiment.realAcceptanceProbability distinguisher -
+          experiment.simulatedAcceptanceProbability distinguisher| ≤
+        totalLoss
+
+/--
+Release receipt required in addition to executable refinement.  `IndependentReview` is a proof
+parameter, so merely naming a JSON field does not inhabit it.
+-/
+structure Smz8AdaptiveQromWholeViewReleaseReceipt
+    {Statement Witness SimulatorCoins VerifierTrace Distinguisher : Type*}
+    {relation : CompiledSmz8RelationBinding Statement Witness}
+    {refinement :
+      RustLeanSmz8WholeViewRefinement Statement Witness SimulatorCoins
+        VerifierTrace relation}
+    (experiment :
+      Smz8WholeViewExperiment Statement Witness SimulatorCoins VerifierTrace
+        Distinguisher relation refinement)
+    (HonestAffineViewRefinement Sha512TranscriptRefinement
+      Sha512QromInstantiation : Prop)
+    (AdaptiveWholeViewHybrid : Nat → Nat → Nat → Prop)
+    (IndependentReview : Prop) where
+  reduction :
+    Smz8AdaptiveQromWholeViewReduction experiment
+      HonestAffineViewRefinement Sha512TranscriptRefinement
+      Sha512QromInstantiation AdaptiveWholeViewHybrid
+  lossWithinTarget :
+    reduction.totalLoss ≤ smz8AdaptiveQromTarget
+  independentReview : IndependentReview
+
+/--
+Exact conditional adaptive-QROM whole-view theorem for SMZ8.  The conclusion is deliberately
+tagged `conditionalSupply`; this theorem cannot construct deployed end-to-end authority.
+-/
+theorem smz8_adaptive_qrom_whole_view_indistinguishability_given_release_receipt
+    {Statement Witness SimulatorCoins VerifierTrace Distinguisher : Type*}
+    {relation : CompiledSmz8RelationBinding Statement Witness}
+    {refinement :
+      RustLeanSmz8WholeViewRefinement Statement Witness SimulatorCoins
+        VerifierTrace relation}
+    (experiment :
+      Smz8WholeViewExperiment Statement Witness SimulatorCoins VerifierTrace
+        Distinguisher relation refinement)
+    {HonestAffineViewRefinement Sha512TranscriptRefinement
+      Sha512QromInstantiation : Prop}
+    {AdaptiveWholeViewHybrid : Nat → Nat → Nat → Prop}
+    {IndependentReview : Prop}
+    (receipt :
+      Smz8AdaptiveQromWholeViewReleaseReceipt experiment
+        HonestAffineViewRefinement Sha512TranscriptRefinement
+        Sha512QromInstantiation AdaptiveWholeViewHybrid
+        IndependentReview) :
+    SecurityAuthority.ScopedSecurityClaim .conditionalSupply
+      (∀ distinguisher,
+        |experiment.realAcceptanceProbability distinguisher -
+            experiment.simulatedAcceptanceProbability distinguisher| ≤
+          smz8AdaptiveQromTarget) := by
+  apply SecurityAuthority.ScopedSecurityClaim.ofConditionalSupply
+  intro distinguisher
+  exact (receipt.reduction.completeViewBound distinguisher).trans
+    receipt.lossWithinTarget
+
+end Smz8AdaptiveQromWholeView
 
 end HegemonCrypto.SmallWood.ZeroKnowledge

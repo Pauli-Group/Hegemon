@@ -168,8 +168,8 @@ def check_vectors(vectors: dict) -> int:
 
 
 def check_bundle(bundle: dict) -> tuple[int, int]:
-    if bundle.get("schema_version") != 1:
-        raise SystemExit("checked-in native backend vector bundle must use schema_version 1")
+    if bundle.get("schema_version") != 2:
+        raise SystemExit("checked-in native backend vector bundle must use schema_version 2")
     if bundle.get("generator_id") != "hegemon.superneo-bench.native-review":
         raise SystemExit("checked-in native backend vector bundle generator_id mismatch")
     active = bundle.get("active_tx_profile")
@@ -188,13 +188,13 @@ def check_bundle(bundle: dict) -> tuple[int, int]:
                 f"checked-in native backend vector bundle active profile {field} "
                 f"must be {expected!r}, got {active.get(field)!r}"
             )
-    profile_digest = active.get("verifier_profile_sha384_hex")
+    profile_digest = active.get("verifier_profile_blake2b384_hex")
     if not isinstance(profile_digest, str) or len(profile_digest) != 96:
-        raise SystemExit("active verifier_profile_sha384_hex must be 48-byte hex")
+        raise SystemExit("active verifier_profile_blake2b384_hex must be 48-byte hex")
     try:
         bytes.fromhex(profile_digest)
     except ValueError as exc:
-        raise SystemExit("active verifier_profile_sha384_hex is invalid hex") from exc
+        raise SystemExit("active verifier_profile_blake2b384_hex is invalid hex") from exc
 
     vector_cases = bundle.get("cases")
     if not isinstance(vector_cases, list) or len(vector_cases) != len(REQUIRED_CASES):

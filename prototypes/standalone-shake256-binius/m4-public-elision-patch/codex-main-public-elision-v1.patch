@@ -1,0 +1,458 @@
+diff --git a/crates/iop-prover/src/merkle_channel.rs b/crates/iop-prover/src/merkle_channel.rs
+index 53ca368..102bec9 100644
+--- a/crates/iop-prover/src/merkle_channel.rs
++++ b/crates/iop-prover/src/merkle_channel.rs
+@@ -249,7 +249,7 @@ where
+ 		// nodes whose subtree contains no queried leaf. Processing levels bottom-up and node
+ 		// indices in ascending order gives the verifier an implicit, unambiguous node schedule;
+ 		// no positions or bitmap need to be serialized.
+-		let mut unique_indices = indices.clone();
++		let mut unique_indices = indices;
+ 		unique_indices.sort_unstable();
+ 		unique_indices.dedup();
+ 		let mut advice = self.transcript.borrow_mut().decommitment();
+diff --git a/crates/iop/src/merkle_channel.rs b/crates/iop/src/merkle_channel.rs
+index b3bbd2a..d4127f1 100644
+--- a/crates/iop/src/merkle_channel.rs
++++ b/crates/iop/src/merkle_channel.rs
+@@ -284,7 +284,7 @@ where
+ 				.entry(leaf_index)
+ 				.or_default()
+ 				.entry(source_index.as_u64() as usize & (leaf_size - 1))
+-				.or_insert_with(|| known_value.clone());
++				.or_insert(*known_value);
+ 		}
+ 
+ 		let unique_indices = known_by_leaf.keys().copied().collect::<Vec<_>>();
+diff --git a/crates/m4-prover/src/composite.rs b/crates/m4-prover/src/composite.rs
+index a6902dc..d0660be 100644
+--- a/crates/m4-prover/src/composite.rs
++++ b/crates/m4-prover/src/composite.rs
+@@ -112,7 +112,8 @@ impl IOPProverM4 {
+ 			"the witness must hold one table per chip of the system this prover was built for"
+ 		);
+ 
+-		self.main.prove::<_, P, _>(&witness.main, channel, alloc)?;
++		self.main
++			.prove_main_public::<_, P, _>(&witness.main, channel, alloc)?;
+ 		for (prover, table) in iter::zip(&self.chips, &witness.tables) {
+ 			prover.prove_chip::<P, _, _, _>(table, channel, alloc);
+ 		}
+diff --git a/crates/m4-verifier/src/composite.rs b/crates/m4-verifier/src/composite.rs
+index e1da93e..73d373c 100644
+--- a/crates/m4-verifier/src/composite.rs
++++ b/crates/m4-verifier/src/composite.rs
+@@ -136,7 +136,7 @@ impl IOPVerifierM4 {
+ 		Channel: IOPVerifierChannel<B128> + WordIPVerifierChannel<B128>,
+ 		Channel::Elem: FieldOps<Scalar = B128> + From<B128>,
+ 	{
+-		let mut claims = vec![self.main.verify(inout, channel)?];
++		let mut claims = vec![self.main.verify_main_public(inout, channel)?];
+ 		for chip in &self.chips {
+ 			claims.push(chip.verify_chip(channel)?);
+ 		}
+diff --git a/crates/prover/src/prove.rs b/crates/prover/src/prove.rs
+index 540d9b8..0f2abe1 100644
+--- a/crates/prover/src/prove.rs
++++ b/crates/prover/src/prove.rs
+@@ -93,6 +93,36 @@ impl IOPProver {
+ 		channel: &mut Channel,
+ 		alloc: &A,
+ 	) -> Result<(), Error>
++	where
++		A: Allocator,
++		P: PackedField<Scalar = B128>,
++		Channel: IOPProverChannel<P, A> + WordIPProverChannel<B128, Word = Word>,
++	{
++		self.prove_with_public_mode(witness, channel, alloc, false)
++	}
++
++	/// Proves without serializing public-segment and wiring values the verifier can compute.
++	pub fn prove_main_public<A, P, Channel>(
++		&self,
++		witness: &ValueVec,
++		channel: &mut Channel,
++		alloc: &A,
++	) -> Result<(), Error>
++	where
++		A: Allocator,
++		P: PackedField<Scalar = B128>,
++		Channel: IOPProverChannel<P, A> + WordIPProverChannel<B128, Word = Word>,
++	{
++		self.prove_with_public_mode(witness, channel, alloc, true)
++	}
++
++	fn prove_with_public_mode<A, P, Channel>(
++		&self,
++		witness: &ValueVec,
++		channel: &mut Channel,
++		alloc: &A,
++		verifier_computes_public: bool,
++	) -> Result<(), Error>
+ 	where
+ 		A: Allocator,
+ 		P: PackedField<Scalar = B128>,
+@@ -312,13 +342,19 @@ impl IOPProver {
+ 		let witness_point = &eval_point[..eval_point.len() - 1];
+ 		let (r_j, r_y) = witness_point.split_at(Word::LOG_BITS);
+ 
+-		// Prove the public segment's evaluation claim, which the verifier's public-input check
+-		// consumes.
+-		ring_switch::prove_public_eval::<_, P, _>(alloc, witness.public(), r_j, r_y, &mut *channel);
++		if !verifier_computes_public {
++			// Prove the public segment's evaluation claim, which the generic verifier consumes.
++			ring_switch::prove_public_eval::<_, P, _>(
++				alloc,
++				witness.public(),
++				r_j,
++				r_y,
++				&mut *channel,
++			);
+ 
+-		// The wiring evaluation the verifier closes the shift check with, sent where it reads it:
+-		// after the public segment's claim.
+-		channel.send_public_claim(wiring_eval);
++			// The generic verifier reads this claim after the public-segment reduction.
++			channel.send_public_claim(wiring_eval);
++		}
+ 
+ 		// [phase] Ring-Switching + PCS Opening
+ 		let pcs_guard = tracing::info_span!(
+diff --git a/crates/verifier/src/protocols/shift/mod.rs b/crates/verifier/src/protocols/shift/mod.rs
+index 9fb2e22..874652d 100644
+--- a/crates/verifier/src/protocols/shift/mod.rs
++++ b/crates/verifier/src/protocols/shift/mod.rs
+@@ -48,6 +48,6 @@ mod verify;
+ pub use error::Error;
+ pub use shift_ind::evaluate_shift_inds;
+ pub use verify::{
+-	OperatorData, VerifyOutput, WiringEvalClaim, WiringEvalFn, check_eval, evaluate_words_mle,
+-	verify,
++	OperatorData, VerifyOutput, WiringEvalClaim, WiringEvalFn, check_eval,
++	check_eval_verifier_computed, evaluate_channel_words_mle, evaluate_words_mle, verify,
+ };
+diff --git a/crates/verifier/src/protocols/shift/verify.rs b/crates/verifier/src/protocols/shift/verify.rs
+index 3686802..141ba4d 100644
+--- a/crates/verifier/src/protocols/shift/verify.rs
++++ b/crates/verifier/src/protocols/shift/verify.rs
+@@ -9,7 +9,7 @@ use binius_core::{
+ };
+ use binius_field::{BinaryField, field::FieldOps, util::FieldFn};
+ use binius_ip::{
+-	channel::IPVerifierChannel,
++	channel::{IPVerifierChannel, WordIPVerifierChannel},
+ 	sumcheck::{SumcheckOutput, verify as verify_sumcheck},
+ };
+ use binius_math::{
+@@ -63,6 +63,31 @@ where
+ 		.sum()
+ }
+ 
++/// Evaluates a public word slice carried by the verifier channel.
++///
++/// The channel's `subset_sum` operation evaluates one word at the bit-index point without any
++/// prover message. Missing words in the power-of-two span contribute zero.
++pub fn evaluate_channel_words_mle<F, C>(
++	channel: &mut C,
++	words: &[C::Word],
++	r_j: &[C::Elem],
++	r_y: &[C::Elem],
++) -> C::Elem
++where
++	F: BinaryField,
++	C: WordIPVerifierChannel<F>,
++	C::Elem: FieldOps<Scalar = F> + From<F>,
++{
++	assert_eq!(r_j.len(), Word::LOG_BITS);
++	assert!(words.len() <= 1 << r_y.len());
++
++	let r_j_tensor = eq_ind_partial_eval_scalars(r_j);
++	let r_y_tensor = eq_ind_partial_eval_scalars(r_y);
++	iter::zip(words, r_y_tensor)
++		.map(|(word, weight)| weight * channel.subset_sum(&r_j_tensor, word))
++		.sum()
++}
++
+ /// Verifier data for an operation with the specified arity.
+ ///
+ /// Contains the challenge points and evaluation claims needed by the verifier.
+@@ -318,6 +343,82 @@ pub fn check_eval<'a, F, C>(
+ 	output: &VerifyOutput<C::Elem>,
+ 	channel: &mut C,
+ ) -> Result<WiringEvalClaim<'a, C::Elem>, Error>
++where
++	F: BinaryField,
++	C: IPVerifierChannel<F>,
++	C::Elem: FieldOps<Scalar = F> + From<F>,
++{
++	check_eval_impl(
++		constraint_system,
++		inout,
++		public_eval,
++		zero_data,
++		bitand_data,
++		intmul_data,
++		binmul_data,
++		subspace,
++		r_zhat_prime,
++		output,
++		channel,
++		false,
++	)
++}
++
++/// Checks the shift reduction with the wiring multilinear evaluation computed by the verifier.
++///
++/// This is reserved for a verifier that already holds the complete public statement and uses the
++/// native constraint-system evaluator. The ordinary [`check_eval`] path remains prover-claimed so
++/// generic and hidden-input protocols retain their existing transcript shape.
++#[allow(clippy::too_many_arguments)]
++pub fn check_eval_verifier_computed<'a, F, C>(
++	constraint_system: &'a ConstraintSystem,
++	inout: InoutSegment,
++	public_eval: C::Elem,
++	zero_data: &OperatorData<C::Elem, ZERO_ARITY>,
++	bitand_data: &OperatorData<C::Elem, BITAND_ARITY>,
++	intmul_data: &OperatorData<C::Elem, INTMUL_ARITY>,
++	binmul_data: &OperatorData<C::Elem, BINMUL_ARITY>,
++	subspace: &BinarySubspace<F>,
++	r_zhat_prime: &C::Elem,
++	output: &VerifyOutput<C::Elem>,
++	channel: &mut C,
++) -> Result<WiringEvalClaim<'a, C::Elem>, Error>
++where
++	F: BinaryField,
++	C: IPVerifierChannel<F>,
++	C::Elem: FieldOps<Scalar = F> + From<F>,
++{
++	check_eval_impl(
++		constraint_system,
++		inout,
++		public_eval,
++		zero_data,
++		bitand_data,
++		intmul_data,
++		binmul_data,
++		subspace,
++		r_zhat_prime,
++		output,
++		channel,
++		true,
++	)
++}
++
++#[allow(clippy::too_many_arguments)]
++fn check_eval_impl<'a, F, C>(
++	constraint_system: &'a ConstraintSystem,
++	inout: InoutSegment,
++	public_eval: C::Elem,
++	zero_data: &OperatorData<C::Elem, ZERO_ARITY>,
++	bitand_data: &OperatorData<C::Elem, BITAND_ARITY>,
++	intmul_data: &OperatorData<C::Elem, INTMUL_ARITY>,
++	binmul_data: &OperatorData<C::Elem, BINMUL_ARITY>,
++	subspace: &BinarySubspace<F>,
++	r_zhat_prime: &C::Elem,
++	output: &VerifyOutput<C::Elem>,
++	channel: &mut C,
++	verifier_computes_wiring: bool,
++) -> Result<WiringEvalClaim<'a, C::Elem>, Error>
+ where
+ 	F: BinaryField,
+ 	C: IPVerifierChannel<F>,
+@@ -354,21 +455,11 @@ where
+ 		evaluate_inplace_scalars(&mut evaluate_shift_inds(r_k, r_j, r_s_inner)[..], r_v_inner);
+ 	let shift_ind_eval = outer_ind_eval * inner_ind_eval;
+ 
+-	// The wiring multilinear's evaluation comes from the prover, as a claim the verifier could
+-	// compute for itself. Checking it against the constraint system is left to the caller, which is
+-	// handed the function that computes it below.
+-	let wiring_eval = channel.recv_public_claim()?;
+-
+-	// The three bit-index factors scale every shift scalar of the wiring multilinear; they multiply
+-	// the claim out here rather than entering the function, which keeps its input free of `r_i` and
+-	// `r_k`.
+-	let monster_eval = l_tilde_eval * shift_ind_eval * wiring_eval.clone();
+-
+ 	// The function the caller checks the claim with, and the flat input it reads. Every entry is a
+ 	// public-channel-derived element (`bitand_lambda`, `intmul_lambda`, the operator data's
+ 	// `r_x_prime` vectors, both shift slots' challenges, `r_y`); the constraint system it sums over
+ 	// is fixed.
+-	let claim = {
++	let (eval_fn, inputs) = {
+ 		let zero_r_x_prime_len = zero_data.r_x_prime.len();
+ 		let bitand_r_x_prime_len = bitand_data.r_x_prime.len();
+ 		let intmul_r_x_prime_len = intmul_data.r_x_prime.len();
+@@ -404,13 +495,23 @@ where
+ 			r_v_len,
+ 			r_y_len,
+ 		};
+-		WiringEvalClaim {
+-			eval_fn,
+-			inputs,
+-			claimed: wiring_eval,
+-		}
++		(eval_fn, inputs)
+ 	};
+ 
++	// The generic path reads this public claim from the prover. The M4 main-public path computes
++	// exactly the same function locally, so it removes one serialized field without changing the
++	// witness evaluation or any transcript challenge.
++	let wiring_eval = if verifier_computes_wiring {
++		FieldFn::<F>::call::<C::Elem>(&eval_fn, &inputs)
++	} else {
++		channel.recv_public_claim()?
++	};
++
++	// The three bit-index factors scale every shift scalar of the wiring multilinear; they multiply
++	// the claim out here rather than entering the function, which keeps its input free of `r_i` and
++	// `r_k`.
++	let monster_eval = l_tilde_eval * shift_ind_eval * wiring_eval.clone();
++
+ 	// Reconstruct the witness evaluation from its two segments.
+ 	let trace_eval = extrapolate_line(public_eval, witness_eval.clone(), r_segment.clone());
+ 
+@@ -422,7 +523,11 @@ where
+ 	let expected_eval = trace_eval * monster_eval;
+ 	channel.assert_zero(expected_eval - eval)?;
+ 
+-	Ok(claim)
++	Ok(WiringEvalClaim {
++		eval_fn,
++		inputs,
++		claimed: wiring_eval,
++	})
+ }
+ 
+ /// The prover's wiring multilinear evaluation, with what it takes to check it.
+diff --git a/crates/verifier/src/reduction.rs b/crates/verifier/src/reduction.rs
+index 1cfbdae..0a99e8e 100644
+--- a/crates/verifier/src/reduction.rs
++++ b/crates/verifier/src/reduction.rs
+@@ -161,6 +161,39 @@ pub fn reduce_constraints<'a, Channel>(
+ 	public: &[Channel::Word],
+ 	channel: &mut Channel,
+ ) -> Result<ReductionOutput<'a, Channel::Elem>, Error>
++where
++	Channel: IOPVerifierChannel<B128> + WordIPVerifierChannel<B128>,
++	Channel::Elem: FieldOps<Scalar = B128> + From<B128>,
++{
++	reduce_constraints_impl(cs, instances, inout, public, channel, false)
++}
++
++/// Reduces constraints while evaluating the verifier-owned public segment and wiring locally.
++///
++/// This removes only deterministic restatements of public data. The witness evaluation, all
++/// witness-dependent reduction messages, and the committed trace opening remain unchanged.
++pub fn reduce_constraints_main_public<'a, Channel>(
++	cs: &'a ConstraintSystem,
++	instances: Instances,
++	inout: InoutSegment,
++	public: &[Channel::Word],
++	channel: &mut Channel,
++) -> Result<ReductionOutput<'a, Channel::Elem>, Error>
++where
++	Channel: IOPVerifierChannel<B128> + WordIPVerifierChannel<B128>,
++	Channel::Elem: FieldOps<Scalar = B128> + From<B128>,
++{
++	reduce_constraints_impl(cs, instances, inout, public, channel, true)
++}
++
++fn reduce_constraints_impl<'a, Channel>(
++	cs: &'a ConstraintSystem,
++	instances: Instances,
++	inout: InoutSegment,
++	public: &[Channel::Word],
++	channel: &mut Channel,
++	verifier_computes_public: bool,
++) -> Result<ReductionOutput<'a, Channel::Elem>, Error>
+ where
+ 	Channel: IOPVerifierChannel<B128> + WordIPVerifierChannel<B128>,
+ 	Channel::Elem: FieldOps<Scalar = B128> + From<B128>,
+@@ -295,8 +328,17 @@ where
+ 			perfetto_category = "phase"
+ 		)
+ 		.entered();
+-		let public_eval = verify_public_eval(cs, inout, public, &shift, channel)?;
+-		shift::check_eval::<B128, _>(
++		let public_eval = if verifier_computes_public {
++			shift::evaluate_channel_words_mle::<B128, _>(channel, public, shift.r_j(), shift.r_y())
++		} else {
++			verify_public_eval(cs, inout, public, &shift, channel)?
++		};
++		let check = if verifier_computes_public {
++			shift::check_eval_verifier_computed::<B128, _>
++		} else {
++			shift::check_eval::<B128, _>
++		};
++		check(
+ 			cs,
+ 			inout,
+ 			public_eval,
+diff --git a/crates/verifier/src/verify.rs b/crates/verifier/src/verify.rs
+index 89a15e0..e8458c0 100644
+--- a/crates/verifier/src/verify.rs
++++ b/crates/verifier/src/verify.rs
+@@ -143,6 +143,32 @@ impl IOPVerifier {
+ 		inout: &[Channel::Word],
+ 		channel: &mut Channel,
+ 	) -> Result<WiringEvalClaim<'_, Channel::Elem>, Error>
++	where
++		Channel: IOPVerifierChannel<B128> + WordIPVerifierChannel<B128>,
++		Channel::Elem: FieldOps<Scalar = B128> + From<B128>,
++	{
++		self.verify_with_public_mode(inout, channel, false)
++	}
++
++	/// Verifies while computing deterministic public-segment messages locally.
++	pub fn verify_main_public<Channel>(
++		&self,
++		inout: &[Channel::Word],
++		channel: &mut Channel,
++	) -> Result<WiringEvalClaim<'_, Channel::Elem>, Error>
++	where
++		Channel: IOPVerifierChannel<B128> + WordIPVerifierChannel<B128>,
++		Channel::Elem: FieldOps<Scalar = B128> + From<B128>,
++	{
++		self.verify_with_public_mode(inout, channel, true)
++	}
++
++	fn verify_with_public_mode<Channel>(
++		&self,
++		inout: &[Channel::Word],
++		channel: &mut Channel,
++		verifier_computes_public: bool,
++	) -> Result<WiringEvalClaim<'_, Channel::Elem>, Error>
+ 	where
+ 		Channel: IOPVerifierChannel<B128> + WordIPVerifierChannel<B128>,
+ 		Channel::Elem: FieldOps<Scalar = B128> + From<B128>,
+@@ -177,13 +203,23 @@ impl IOPVerifier {
+ 		let trace_oracle = channel.recv_oracle(self.log_witness_elems(), true)?;
+ 
+ 		// Reduce every constraint to one claim on the committed trace.
+-		let reduction = reduce_constraints(
+-			self.constraint_system(),
+-			Instances::Single,
+-			InoutSegment::Public,
+-			&public,
+-			channel,
+-		)?;
++		let reduction = if verifier_computes_public {
++			crate::reduction::reduce_constraints_main_public(
++				self.constraint_system(),
++				Instances::Single,
++				InoutSegment::Public,
++				&public,
++				channel,
++			)?
++		} else {
++			reduce_constraints(
++				self.constraint_system(),
++				Instances::Single,
++				InoutSegment::Public,
++				&public,
++				channel,
++			)?
++		};
+ 
+ 		// [phase] Ring-Switching + Verify PCS Opening
+ 		let pcs_guard = tracing::info_span!(

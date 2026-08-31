@@ -7,6 +7,7 @@ description = "Shared no_std transaction circuit core logic."
 
 [dependencies]
 blake3 = { version = "1", default-features = false }
+hegemon-hash384 = { path = "../../crypto/hash384" }
 hegemon-field = { workspace = true }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 protocol-versioning = { path = "../../protocol/versioning", default-features = false }

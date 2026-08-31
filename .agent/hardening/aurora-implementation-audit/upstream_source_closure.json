@@ -1,0 +1,877 @@
+{
+  "closure": {
+    "bytes": 783493,
+    "files": 113,
+    "lines": 18818
+  },
+  "component_totals": {
+    "algebra_fft": {
+      "bytes": 139179,
+      "files": 27,
+      "lines": 4006
+    },
+    "aurora_composition": {
+      "bytes": 22154,
+      "files": 2,
+      "lines": 467
+    },
+    "bcs_merkle_transcript": {
+      "bytes": 222321,
+      "files": 22,
+      "lines": 4414
+    },
+    "common": {
+      "bytes": 2769,
+      "files": 3,
+      "lines": 100
+    },
+    "encoded_r1cs_iop": {
+      "bytes": 192158,
+      "files": 28,
+      "lines": 4537
+    },
+    "fri_ldt": {
+      "bytes": 64798,
+      "files": 8,
+      "lines": 1445
+    },
+    "iop_runtime": {
+      "bytes": 58800,
+      "files": 8,
+      "lines": 1585
+    },
+    "ldt_reducer": {
+      "bytes": 29721,
+      "files": 6,
+      "lines": 712
+    },
+    "r1cs_relation": {
+      "bytes": 39970,
+      "files": 7,
+      "lines": 1278
+    },
+    "snark_wrapper": {
+      "bytes": 11623,
+      "files": 2,
+      "lines": 274
+    }
+  },
+  "external_include_counts": {
+    "cxx_or_system": 224,
+    "libff": 38,
+    "libfqfft": 4,
+    "libsodium": 5
+  },
+  "files": [
+    {
+      "bytes": 1304,
+      "component": "algebra_fft",
+      "lines": 33,
+      "path": "libiop/algebra/exponentiation.hpp",
+      "sha512": "1c222b97bb716b71410dabee2e57ad9d432623a66ff28468876abd28491ee79b2f38f7baa83df525f6e71697ceebc624b938050139065d5ee334182e15bdea22"
+    },
+    {
+      "bytes": 2707,
+      "component": "algebra_fft",
+      "lines": 89,
+      "path": "libiop/algebra/exponentiation.tcc",
+      "sha512": "3aa84eb5bfe7e4daa26d79424a43f3bacb0c5b32a51c4777d983ad3493fb2f2bf92de5169a1d855f98bbe47e4dc6e8329cb0d1861794a23865238841a1399296"
+    },
+    {
+      "bytes": 4231,
+      "component": "algebra_fft",
+      "lines": 94,
+      "path": "libiop/algebra/fft.hpp",
+      "sha512": "2857f6faaef711328209b044a4ae3e23c7389ea5e14e7e4ddd3b64e47476d5bc0f0541f63ee231dd196cc26bea46f4e62713d4f744f6121fee428e963d1e23e1"
+    },
+    {
+      "bytes": 17783,
+      "component": "algebra_fft",
+      "lines": 477,
+      "path": "libiop/algebra/fft.tcc",
+      "sha512": "b9f5f5bc07f62b17feed0210dfe5a0914e80e2efd2fa53ebaf09ae3b8a989d1e7b8a4184a7f89435feddc2f5b5e419deeb62d8d1f3cccfeb4879c107c4fe3710"
+    },
+    {
+      "bytes": 1319,
+      "component": "algebra_fft",
+      "lines": 34,
+      "path": "libiop/algebra/field_subset/basis_utils.hpp",
+      "sha512": "e446c35873e57e5a97bfe692bd0fc3852f36081581458de560467edc1d9e6b23642e64e06619c9d78242fda1644373180ac1e7e8ffe715350611e83dc64b5893"
+    },
+    {
+      "bytes": 785,
+      "component": "algebra_fft",
+      "lines": 28,
+      "path": "libiop/algebra/field_subset/basis_utils.tcc",
+      "sha512": "eacd9a3e15fe7ba28a765c95762b66e1eda2b2c0f4a5d20405420a8b788e0e2ba8d2483d85bab22a2f534708067438adfcee5429a2f01cbffacdd3dc57b7cd73"
+    },
+    {
+      "bytes": 3435,
+      "component": "algebra_fft",
+      "lines": 83,
+      "path": "libiop/algebra/field_subset/field_subset.hpp",
+      "sha512": "a8613e32c5d5dd75b040799284f293ee217ecfb3266a15a2d1be9f5daf53f33b0fbc63ded19cd23e86e35d030cab9dfc71657c6f639c2cacf2a677357de6e3cc"
+    },
+    {
+      "bytes": 10170,
+      "component": "algebra_fft",
+      "lines": 327,
+      "path": "libiop/algebra/field_subset/field_subset.tcc",
+      "sha512": "ca2f82a5bdb35fc9572d103c1fe8659d2b0cbd8111ac06a9cace0e78c755c74222f42bfccaef390718dd74e3ea6f947b02ef1ac8ccb78c65a27b7ea6041929b4"
+    },
+    {
+      "bytes": 4589,
+      "component": "algebra_fft",
+      "lines": 111,
+      "path": "libiop/algebra/field_subset/subgroup.hpp",
+      "sha512": "c47ca191c95da3e16b6c5d3c277cd1b08aba4bab94fcc33bb477a41e8f5db97c57f5664115c1ba83a100842843cee61da36e34c017f2e6d9c85a72520ac154ed"
+    },
+    {
+      "bytes": 10379,
+      "component": "algebra_fft",
+      "lines": 329,
+      "path": "libiop/algebra/field_subset/subgroup.tcc",
+      "sha512": "a8edc4b14eb0bd23c2bdb8ed9a07aeeb123a73d4611dbf6a58cf1fcf29061bb4b0fd5303a75d976ad26155c83d0a4f98634de807a635031467668bd1c42f32dc"
+    },
+    {
+      "bytes": 2985,
+      "component": "algebra_fft",
+      "lines": 81,
+      "path": "libiop/algebra/field_subset/subspace.hpp",
+      "sha512": "5375f7dbd3b29372698aca78a0fd9d851432fff4a8be4e1693cf6157d9d8fa3e05a22906f6d62086d79cda65afd480f9e66472f4b1e3171041a295fc8174122d"
+    },
+    {
+      "bytes": 8088,
+      "component": "algebra_fft",
+      "lines": 280,
+      "path": "libiop/algebra/field_subset/subspace.tcc",
+      "sha512": "7824aaf679a3d5ab7f653f6ac9e9df2c96f4a6463196178b36c6223d5a9e2afb7b13c16f3f5010124f4036a9bc9567172410b32edc9c79dce9140519d775a91e"
+    },
+    {
+      "bytes": 3018,
+      "component": "algebra_fft",
+      "lines": 72,
+      "path": "libiop/algebra/lagrange.hpp",
+      "sha512": "696ee2dbe12fa05fec4e960937cd9b353fcda60713f82f685f26f4b1188aa8f0b54622d4fdb30bd561a5287002eee352bda3bdabfebf94a7cc935af04c7fb6d7"
+    },
+    {
+      "bytes": 9188,
+      "component": "algebra_fft",
+      "lines": 254,
+      "path": "libiop/algebra/lagrange.tcc",
+      "sha512": "90bffd596cad45c91f3c7f36a27e45c72d35151ea5cc9c91bc9aa7186fa4bf9437d317de14eb17c6d644e10e0235c69da406858d1b5ea31e76bb997cbd33751e"
+    },
+    {
+      "bytes": 2181,
+      "component": "algebra_fft",
+      "lines": 50,
+      "path": "libiop/algebra/polynomials/bivariate_lagrange_polynomial.hpp",
+      "sha512": "12c390ef529df0aeffa84fe968cd818fb37f4df343a7677bf4279f30edf942292b6b8c4d57838a5dee3e6c07f4cb83a49bfc430cf23f703e9bda2a160c8d52ce"
+    },
+    {
+      "bytes": 1446,
+      "component": "algebra_fft",
+      "lines": 40,
+      "path": "libiop/algebra/polynomials/bivariate_lagrange_polynomial.tcc",
+      "sha512": "544fc2aad73df8c65cb6077aa6570dc99c3f6c22f595bf2cfa8e4845adae22c945e97719133aa4adcde732c679fd2a52eb77579830de9412bfb98c82cbec2445"
+    },
+    {
+      "bytes": 2653,
+      "component": "algebra_fft",
+      "lines": 66,
+      "path": "libiop/algebra/polynomials/lagrange_polynomial.hpp",
+      "sha512": "8e00f1bf8ed87e4f1351a6ef78d287fb33175c8bbb6f7f1b04e9e455af6f687c596faf082af50d3cbdf7c634ebdd5adb4c53bec8d0e141710c501e586ef8c399"
+    },
+    {
+      "bytes": 5284,
+      "component": "algebra_fft",
+      "lines": 149,
+      "path": "libiop/algebra/polynomials/lagrange_polynomial.tcc",
+      "sha512": "2ba21a933a74d05e45fc254c884a5c94ac9431e173f68c5fda421e10b184d42fa42a1c18c09d36f016cb79455a1d24c5d661b33eb5b252b1678250383c53ec3d"
+    },
+    {
+      "bytes": 2986,
+      "component": "algebra_fft",
+      "lines": 73,
+      "path": "libiop/algebra/polynomials/linearized_polynomial.hpp",
+      "sha512": "17b421f083353c2b1e756ed631743fe588d76df8e517ee5d63d01828d6249fdeb0309db2a8a5344f9ac5dd17ba629dc515175ac8a4f6beb3a3bfbcbd1310fac7"
+    },
+    {
+      "bytes": 9129,
+      "component": "algebra_fft",
+      "lines": 291,
+      "path": "libiop/algebra/polynomials/linearized_polynomial.tcc",
+      "sha512": "47f234cf7d602095c4d57a08ea99d80693c77d5573ff707c8a4707c9788f48ec99991302a541f0143f20f5db0a463b25646afd9676e234e4c653906c8b4a3cac"
+    },
+    {
+      "bytes": 2807,
+      "component": "algebra_fft",
+      "lines": 80,
+      "path": "libiop/algebra/polynomials/polynomial.hpp",
+      "sha512": "94a0d19a0a72c86c918bbf10816c61322ff35bb4537bd9e10e53485adc21309bc7c79bede99d1aecdbb509de24451b90dc6f52d106936b6283837e4695e6b4c8"
+    },
+    {
+      "bytes": 6899,
+      "component": "algebra_fft",
+      "lines": 245,
+      "path": "libiop/algebra/polynomials/polynomial.tcc",
+      "sha512": "b623a75b269c8144873eac85e6beb9e5712992301216bc04b16d6528a76d3353ebd8d409f65e1cccd34a72de55e172dc870c90a1b23fd35108cc509754c5411b"
+    },
+    {
+      "bytes": 3450,
+      "component": "algebra_fft",
+      "lines": 81,
+      "path": "libiop/algebra/polynomials/vanishing_polynomial.hpp",
+      "sha512": "b86c0c25a1b4a4bf5ff714ebb9dd59b9d7879b65243206fbc2b8efabdd8c87e6825dc354948032d9465e445bdb5a6bfa7e96f69140f4ca3d4e75ca04117e8d41"
+    },
+    {
+      "bytes": 16096,
+      "component": "algebra_fft",
+      "lines": 397,
+      "path": "libiop/algebra/polynomials/vanishing_polynomial.tcc",
+      "sha512": "78cba228f0d7c0b9cb0a4ce131705a1f3c71d622aa4680d0b27c2ad520ab1bed00a6f7b135936a9d7c21f9372a205720eb003e6e958b665cd8aa819581d9330d"
+    },
+    {
+      "bytes": 146,
+      "component": "algebra_fft",
+      "lines": 11,
+      "path": "libiop/algebra/utils.cpp",
+      "sha512": "77abb40356f07f8073eebfed6403705fb0d779cdb4d9500fd244cbda89a97e51375e05a64e65704cdfb041bf27d3d4106d319899263ba02c8206dbe8f54c4d7f"
+    },
+    {
+      "bytes": 1391,
+      "component": "algebra_fft",
+      "lines": 46,
+      "path": "libiop/algebra/utils.hpp",
+      "sha512": "a56637d43191a05e8567d9b0ba63de9f331dfcd64c562501cb73cc656af4515515e1b79c68a66c6677fe2b1e8e75533101cde820d3bd5ce2126266464cdad160"
+    },
+    {
+      "bytes": 4730,
+      "component": "algebra_fft",
+      "lines": 185,
+      "path": "libiop/algebra/utils.tcc",
+      "sha512": "4f6b10ee5b612a889159f1a35c5c8e220b639af79dec0233cdf2f3564d46e32407d8a62126b29977897ffe6d9f4c850131a7e225508a7ac3ee86f81cdb2a1186"
+    },
+    {
+      "bytes": 8238,
+      "component": "bcs_merkle_transcript",
+      "lines": 192,
+      "path": "libiop/bcs/bcs_common.hpp",
+      "sha512": "3c179cb6fd4673caadcfde55b4dda5b2b52b097181967df9d05b8ee85d7ac30a4b61c8b1cee8912d80f7512065a441ef73c56075c4dd297c3da1c13471230a12"
+    },
+    {
+      "bytes": 31874,
+      "component": "bcs_merkle_transcript",
+      "lines": 829,
+      "path": "libiop/bcs/bcs_common.tcc",
+      "sha512": "8f4af4f53d75783e3b3535dd093f2037d00223df27feebd29a41c329f98a55d9aa3d4305dc4a8f37fc71a6a5148f66843b60c0e6e5fad7702aa2726cfb6c2e02"
+    },
+    {
+      "bytes": 2423,
+      "component": "bcs_merkle_transcript",
+      "lines": 60,
+      "path": "libiop/bcs/bcs_prover.hpp",
+      "sha512": "4c2df423f1d019cc46527a7793fdcc1ee76f0dbba6866ddebe0bae00aa4131600391493fa339fe5b35e76ed678d912fd5081725246ceee4a2456da9db7c06a9f"
+    },
+    {
+      "bytes": 10143,
+      "component": "bcs_merkle_transcript",
+      "lines": 261,
+      "path": "libiop/bcs/bcs_prover.tcc",
+      "sha512": "74e344c3f09c3f9e93f2e9644a0697dfc80661492f3ef6dadf531d8dfdb49105e9227d87c7f1e75d1329717572383f29383375ce30eefb04af9c89996fb60d3a"
+    },
+    {
+      "bytes": 2673,
+      "component": "bcs_merkle_transcript",
+      "lines": 62,
+      "path": "libiop/bcs/bcs_verifier.hpp",
+      "sha512": "54cd08b7c815f6d837c816b3f6daf35cea62e6aa3d5c5c24e1537c5942f363877ef532d75f03eb28f7d162301c9db32f16ff1d6da709c7941fbd7b713e376f14"
+    },
+    {
+      "bytes": 8962,
+      "component": "bcs_merkle_transcript",
+      "lines": 226,
+      "path": "libiop/bcs/bcs_verifier.tcc",
+      "sha512": "efcab5d6d8cd8306e1ff191050dded69509c10275ddb55db708b52b8fe6abf832606520e0f428aefb6f8586ac847878a9c8b467228bc634e48bdccb00ef8fea8"
+    },
+    {
+      "bytes": 1156,
+      "component": "bcs_merkle_transcript",
+      "lines": 33,
+      "path": "libiop/bcs/common_bcs_parameters.hpp",
+      "sha512": "fc2d1d439b26e485b75011bb8fc7938e0aed765590307f8ef0e87241075b586780fa869271bd5e83b615edf52ca2d7222c20270d4ad948b52f4aff6bb657a973"
+    },
+    {
+      "bytes": 1307,
+      "component": "bcs_merkle_transcript",
+      "lines": 29,
+      "path": "libiop/bcs/common_bcs_parameters.tcc",
+      "sha512": "420a16bfe2066d509d5e6edde55d788794271ad12df8f2b87f92ab0dd84c7c94f1a2ecd6a6745afe850cd13d961f3f7e093cbdbbce1be3c437b6de8de8669fa9"
+    },
+    {
+      "bytes": 5163,
+      "component": "bcs_merkle_transcript",
+      "lines": 139,
+      "path": "libiop/bcs/hashing/algebraic_sponge.hpp",
+      "sha512": "90deffaebe42daf73730fc72c27f3a1cff6e7e59b8fe51ea1de52069dd056671a2f9ae1aa7e4eb4308c23b004f38cf4204bbf52c1185a30604f011fc78bc759e"
+    },
+    {
+      "bytes": 11645,
+      "component": "bcs_merkle_transcript",
+      "lines": 333,
+      "path": "libiop/bcs/hashing/algebraic_sponge.tcc",
+      "sha512": "a4c55f637f3f931063ca0b66ec320c60a1d7973a6e7784ff0965381481bde045175ed9b6e4dd354b48cee892a599814bb0991f1a2de6ae9cded45b0fd0162880"
+    },
+    {
+      "bytes": 3075,
+      "component": "bcs_merkle_transcript",
+      "lines": 76,
+      "path": "libiop/bcs/hashing/blake2b.cpp",
+      "sha512": "ea3376fd20931e586291dea878d422156d4571cf84348b2c4c35038eb47e77aefa77f6db72b06a142a411f40bea315eb421de36f2c1e16082156e39ab2aaea03"
+    },
+    {
+      "bytes": 3638,
+      "component": "bcs_merkle_transcript",
+      "lines": 86,
+      "path": "libiop/bcs/hashing/blake2b.hpp",
+      "sha512": "42c8bbdbbeb2b6afb8a1a9b8fd925fc5b29aa1fc642ac096d53ee040b681f5208a89165f30869df4a7728ad12aa5d1408a8755a9f1d4c0e88fc8100897cef03b"
+    },
+    {
+      "bytes": 9633,
+      "component": "bcs_merkle_transcript",
+      "lines": 259,
+      "path": "libiop/bcs/hashing/blake2b.tcc",
+      "sha512": "44da54a60d5c3888485abd2e07c16dce21f01415decb29098487e108eabdd610ba924c15293c0b48c88bcd3ce6e17cde83f2849896fa23771cc4f2956a846382"
+    },
+    {
+      "bytes": 1824,
+      "component": "bcs_merkle_transcript",
+      "lines": 45,
+      "path": "libiop/bcs/hashing/hash_enum.hpp",
+      "sha512": "ffea14e478a5bbfd5e2fe0902d7c5bd798e4b34eefdbc33d542c54814b1b172e6ded2cf375e889c0d8093dcdcc15e42803fd1ab7b486be7d03b175be170c4c6c"
+    },
+    {
+      "bytes": 6719,
+      "component": "bcs_merkle_transcript",
+      "lines": 167,
+      "path": "libiop/bcs/hashing/hash_enum.tcc",
+      "sha512": "2a1e913b201ec30402efa7876bc5f2761f184437f71cef1aa5c7a7e0a75ae68fd1f98cb424350dde7c1a50012986e2a1bf9d53dec61e124c1978747ea5b8f4a6"
+    },
+    {
+      "bytes": 2775,
+      "component": "bcs_merkle_transcript",
+      "lines": 86,
+      "path": "libiop/bcs/hashing/hashing.hpp",
+      "sha512": "a368ce971de584afee81b104910759969980aedd5ecffd626f789111d33c742fbd3ca602aa5413825ef82ee8320809e1df3789194ee3081542a3b5559683d7e1"
+    },
+    {
+      "bytes": 3260,
+      "component": "bcs_merkle_transcript",
+      "lines": 93,
+      "path": "libiop/bcs/hashing/poseidon.hpp",
+      "sha512": "adceef03ca17c9b97d3cfebdb05d149b4a03a6d0db7a4da80a182bc456106276709625b8e8ccb13130557da06e3a9f7f7b4868ef586eedfccdf813d4878598d5"
+    },
+    {
+      "bytes": 74253,
+      "component": "bcs_merkle_transcript",
+      "lines": 528,
+      "path": "libiop/bcs/hashing/poseidon.tcc",
+      "sha512": "f79c4afa0f58624cb6644c74b9b153c1abc9305450d77d878334b69a88a1ea923b872cceb1a8bc164699a5846e7498a4f58819246cf82f18c793335577d9b923"
+    },
+    {
+      "bytes": 5360,
+      "component": "bcs_merkle_transcript",
+      "lines": 128,
+      "path": "libiop/bcs/merkle_tree.hpp",
+      "sha512": "7f43bf12ab9b199d69a6b39d9127915d1ae5f7ce355b1bf16f73cfc467684a959a6a20bf203a6352a21563f4e51eb9f9c33c2eb8de682c696192310f3b12cd9e"
+    },
+    {
+      "bytes": 19890,
+      "component": "bcs_merkle_transcript",
+      "lines": 542,
+      "path": "libiop/bcs/merkle_tree.tcc",
+      "sha512": "02791aa46f1feead816f4a7859bf4968c188b4d9a785cccb2b0c8d15dbf8f34d8a188727c05db3d139fa27519f9b9d02dfcf17f19472d8a992d979f916dc5746"
+    },
+    {
+      "bytes": 2969,
+      "component": "bcs_merkle_transcript",
+      "lines": 79,
+      "path": "libiop/bcs/pow.hpp",
+      "sha512": "036c1b3f6899525ac6561fc9ce939d33d4e01535e49897d4ab03b6445e221cd5d2619939699a72bf2d06ffcc4b51f75bc437abef6c033d6646eca71b9fbcb81e"
+    },
+    {
+      "bytes": 5341,
+      "component": "bcs_merkle_transcript",
+      "lines": 161,
+      "path": "libiop/bcs/pow.tcc",
+      "sha512": "a778df4cd359f5bb63a5e41de95b2ae81051224183ef17febb307e4e808821eedbdc07074f509e6e747a89b8190e99c4ed918b29bf5f4f7d39e3a7a46c07c5b4"
+    },
+    {
+      "bytes": 449,
+      "component": "common",
+      "lines": 18,
+      "path": "libiop/common/common.cpp",
+      "sha512": "95cba85048b783318b8882b7506006a617730b166a24eeeac49492b7a08c1ede3ba395129d4e3ac52a83630b6cf1be2a1e189a044649e89772c79d1c38707180"
+    },
+    {
+      "bytes": 1000,
+      "component": "common",
+      "lines": 33,
+      "path": "libiop/common/common.hpp",
+      "sha512": "3a7458041d6c1f03bccec2f68ae026752e9e9bd063513eae99f1ce482209ff8ef970dea96f1724b5a697e93bd43f06d35b5da43ce0833eaadda8e486a4170af0"
+    },
+    {
+      "bytes": 1320,
+      "component": "common",
+      "lines": 49,
+      "path": "libiop/common/cpp17_bits.hpp",
+      "sha512": "a563083c65e6a410c887d17a29226b67393c007fb76049a5896d5c911f3047610697575be6e264991a7569f010119daf60519bf3375689b98a1a2ef6d85f0b76"
+    },
+    {
+      "bytes": 17842,
+      "component": "iop_runtime",
+      "lines": 450,
+      "path": "libiop/iop/iop.hpp",
+      "sha512": "0768ca0e631b8169d3e7665e2cbfd1bb135baaa99e2ff835931fce066d5970524c968ac39ff49710d457449f83df2bb76bfa341ce7d118469ea69032d21bba93"
+    },
+    {
+      "bytes": 31013,
+      "component": "iop_runtime",
+      "lines": 828,
+      "path": "libiop/iop/iop.tcc",
+      "sha512": "9eec405ed68e68e0c040e4674c9f90d4444bd7e7f519ebbce6291720306e9a41c6a4236bbcc72a81092fffff278358aee9e2d97c4bb3eb987e73ae3cd8b32ddb"
+    },
+    {
+      "bytes": 3421,
+      "component": "iop_runtime",
+      "lines": 98,
+      "path": "libiop/iop/oracles.hpp",
+      "sha512": "155f11bb328ed44368bea3857422a14ca4cc2110d549e62e97973c85f2b2954e43ac5e5fc0dbecdd1ffb6022869ea67b513c8870f0650476736da4fc3017fb5a"
+    },
+    {
+      "bytes": 443,
+      "component": "iop_runtime",
+      "lines": 20,
+      "path": "libiop/iop/utilities/batching.cpp",
+      "sha512": "bdce101aa5b2fb2b0fe17062917332cdc343e1ae5593a9971946dc1d3fc917e27bdcff5e59d22f5d584fb08e15d3e5b5f923356fa9f58ea4b18cb9a92534d18e"
+    },
+    {
+      "bytes": 1823,
+      "component": "iop_runtime",
+      "lines": 54,
+      "path": "libiop/iop/utilities/batching.hpp",
+      "sha512": "c3ea78552db658afe7ed306c65d45f8c4b803fcf4e91bdded90be8c0f638820fed5d7889fcfbc857127d15ffd916070af9ebf11b77712634b157b2b4851e82d7"
+    },
+    {
+      "bytes": 2301,
+      "component": "iop_runtime",
+      "lines": 77,
+      "path": "libiop/iop/utilities/batching.tcc",
+      "sha512": "11f90570f721b66b9e6db5072e1c3ea0a5afca75e1ea78c8958c54491b0584dc1f27a3185c4aea4378d3bcec1fc0c3bbb3d917c6a2a048684b199097866d45ec"
+    },
+    {
+      "bytes": 1050,
+      "component": "iop_runtime",
+      "lines": 32,
+      "path": "libiop/iop/utilities/query_positions.hpp",
+      "sha512": "67e3a7de0ccd0cb2a86f3c9c3e1c77108a7b756181084065ef414cbb5326979beb886279a87560a14b3f07fd5dbd4ac9d76014a725d7feee54c707e1ed3c5643"
+    },
+    {
+      "bytes": 907,
+      "component": "iop_runtime",
+      "lines": 26,
+      "path": "libiop/iop/utilities/query_positions.tcc",
+      "sha512": "ae8f85d080ca03f1e82bbfaf42cbc6b54414b76a0655ba3ecdb616032bbae90a675d78cbed5ce73dfbd683c923aaa42f4780a9019204e9f4af18c43242edaad9"
+    },
+    {
+      "bytes": 3707,
+      "component": "aurora_composition",
+      "lines": 107,
+      "path": "libiop/protocols/aurora_iop.hpp",
+      "sha512": "08f896010a1ac338fff8fa98e433f15538a335d28f4a21c45bd9f160678b38f03e57f0950290c5d3c309d3ec7515147cda26d87fb70a2bb09617dcbbc415ffdc"
+    },
+    {
+      "bytes": 18447,
+      "component": "aurora_composition",
+      "lines": 360,
+      "path": "libiop/protocols/aurora_iop.tcc",
+      "sha512": "fd70ee2a35c874bed7be6ff7a0587fb3b5de7f68950768b23ad0a84151b3d57f3aee336f4761920932c6136fdf2d08b94f260f4646b9e5d08d3a38034786eaaf"
+    },
+    {
+      "bytes": 2442,
+      "component": "encoded_r1cs_iop",
+      "lines": 58,
+      "path": "libiop/protocols/encoded/common/boundary_constraint.hpp",
+      "sha512": "8a1b6dd01ca5009ec28e52d8138ba8061161f6e36784413af2c3152c066d9bf1e43bf1d066c4d63a630f9358ac79fd7436a5dc23b9c7af4cda753db2e0e29c17"
+    },
+    {
+      "bytes": 3039,
+      "component": "encoded_r1cs_iop",
+      "lines": 82,
+      "path": "libiop/protocols/encoded/common/boundary_constraint.tcc",
+      "sha512": "1ea1cc94c4a7d13e685e5fc370f9798a1d0e38f5d6741d7267c6e62e1302b6a377e0ec51d7120e420ed3eebadae4c3561ebd88e59ea6d755f95f9e5be3119589"
+    },
+    {
+      "bytes": 1583,
+      "component": "encoded_r1cs_iop",
+      "lines": 41,
+      "path": "libiop/protocols/encoded/common/random_linear_combination.hpp",
+      "sha512": "2c616f3b65002234009fe54aaab7778959a2b88f243cba3d5a099a405a32bdd60050b1df89ef7dc65ceb5dbb862a2382d608ff92d139bf0fb3edc00517a8b701"
+    },
+    {
+      "bytes": 3000,
+      "component": "encoded_r1cs_iop",
+      "lines": 83,
+      "path": "libiop/protocols/encoded/common/random_linear_combination.tcc",
+      "sha512": "eb4d53c8e37eb0473a85c99903f5ea121fa4c597b07813272137da1572152114a294f9632c7d46e79c93a10fb264e6cc1b456e7e0e2fdb83c9158aa56270f300"
+    },
+    {
+      "bytes": 3681,
+      "component": "encoded_r1cs_iop",
+      "lines": 90,
+      "path": "libiop/protocols/encoded/common/rational_linear_combination.hpp",
+      "sha512": "465e148334cf7000e8eeeab6db8a5e49eb4a50c0e1db3030cb8313c7fde082d9b9d7c67daf41c1e98c4cb6f4fb3dde0c991cd1b0f5e0464d539ea8b61dee3a9a"
+    },
+    {
+      "bytes": 8707,
+      "component": "encoded_r1cs_iop",
+      "lines": 239,
+      "path": "libiop/protocols/encoded/common/rational_linear_combination.tcc",
+      "sha512": "65bb0841c02f89f4587fc8cabd5f9c9d3fc05141fc5ed0621c1f2b2cc44eb73876f880ec3ae20602edcc70dc6e90b9f5c24c1c7ed8e9c86d468ddda4a66401f0"
+    },
+    {
+      "bytes": 1571,
+      "component": "encoded_r1cs_iop",
+      "lines": 43,
+      "path": "libiop/protocols/encoded/common/rowcheck.hpp",
+      "sha512": "e42a1d6329f03156f551cf61b506ff03867e452a000a8928f07c16b022ca200306e0c67299f66ad3676b4600ab8133c09622387189cc8151f725d8bea761167c"
+    },
+    {
+      "bytes": 4624,
+      "component": "encoded_r1cs_iop",
+      "lines": 110,
+      "path": "libiop/protocols/encoded/common/rowcheck.tcc",
+      "sha512": "410ad97c18ce5db7fdd83f490de0cf519e7d405597ff9d78ddd9747452160aae359ff739189c896f2d45b0892e337cf3f4d8688fa9a92f2fbec6f1a84b0be400"
+    },
+    {
+      "bytes": 4128,
+      "component": "encoded_r1cs_iop",
+      "lines": 106,
+      "path": "libiop/protocols/encoded/lincheck/basic_lincheck.hpp",
+      "sha512": "76fce349efb64217c76fdbf7d598b464745bcd4ea1ee76e516b0e779491673b926663e803e5b99fbc0c937eb6ee7a4094e362c23a35410feb182e7db03c3db8a"
+    },
+    {
+      "bytes": 13342,
+      "component": "encoded_r1cs_iop",
+      "lines": 289,
+      "path": "libiop/protocols/encoded/lincheck/basic_lincheck.tcc",
+      "sha512": "68bfff6af853e6da0e9e6d0634fc700dd312c53c86c35561f4b02b02ecc4fb01909ce877dea2dfd9b78b418b0e692e54f3ab823fa41e7e1cd776f44630b84fe3"
+    },
+    {
+      "bytes": 3706,
+      "component": "encoded_r1cs_iop",
+      "lines": 82,
+      "path": "libiop/protocols/encoded/lincheck/basic_lincheck_aux.hpp",
+      "sha512": "03d7360ea2760a44fa91f486de056b38fb0432f788d17a5b64343a6c24d0f9678e075b562ce67ec4e5bbafdc21cda240a28ff71bc7bc53de5e5559bea0eae5b3"
+    },
+    {
+      "bytes": 8466,
+      "component": "encoded_r1cs_iop",
+      "lines": 185,
+      "path": "libiop/protocols/encoded/lincheck/basic_lincheck_aux.tcc",
+      "sha512": "f2fb687b20d342a126dee9950646289cb082fca7a5bb098c1e66dd94cae3ab523274bfd528c62a85ca9559f8f620cb220d9c0c35562bb649cb8848ab5c53a31d"
+    },
+    {
+      "bytes": 1297,
+      "component": "encoded_r1cs_iop",
+      "lines": 38,
+      "path": "libiop/protocols/encoded/lincheck/common.hpp",
+      "sha512": "40f8be39259932bb850bb73c2c35d26f960c9b33226e9eb04576f495b8020b11853cded061ff0dd14b025436519589cda3bba574bbe26b748e945a829e0145bc"
+    },
+    {
+      "bytes": 1466,
+      "component": "encoded_r1cs_iop",
+      "lines": 38,
+      "path": "libiop/protocols/encoded/lincheck/common.tcc",
+      "sha512": "72e4754d4cee09345e3e48457b2d845de8806201121f5868edab8d0a02ec240179081ae21be99a764b7e383fbc4023ba43cef9f79573442f96bd19abd90271a6"
+    },
+    {
+      "bytes": 6587,
+      "component": "encoded_r1cs_iop",
+      "lines": 163,
+      "path": "libiop/protocols/encoded/lincheck/holographic_lincheck.hpp",
+      "sha512": "2b706c02304918d8145cb8e965f2d39ac217d205892fe96aae8b9a5e2bdcdff26c3bef4283988743db7a9325b9d01f940593bdab15f88a8b9ea0fd59dc2bad03"
+    },
+    {
+      "bytes": 27203,
+      "component": "encoded_r1cs_iop",
+      "lines": 581,
+      "path": "libiop/protocols/encoded/lincheck/holographic_lincheck.tcc",
+      "sha512": "46d4d8f1820fc904c71cb314f7c3fffc727f7a1271369033fdc5dd8e5fec2ad813d8c6518493d0c31fc83e97b05237e9d385748452f7ce07c56589927987ccb4"
+    },
+    {
+      "bytes": 3358,
+      "component": "encoded_r1cs_iop",
+      "lines": 86,
+      "path": "libiop/protocols/encoded/lincheck/holographic_lincheck_aux.hpp",
+      "sha512": "3df6ea69ad79e85b23d9dfafd6a5070209995f287f40ecd25e9109e20220585e77426bdf64434174b2ab4545effd8f4d8cd7b44d3d4013ed28d73efef1cc9303"
+    },
+    {
+      "bytes": 6832,
+      "component": "encoded_r1cs_iop",
+      "lines": 160,
+      "path": "libiop/protocols/encoded/lincheck/holographic_lincheck_aux.tcc",
+      "sha512": "a04362fc5f8d22d11bbdefec78b8b20ed37d4616c33c5af41ca2b7ffefd8271220bbe0c3e948c3a546e0ff63b2e9201844b331876bbc82a82d25189bfbf82922"
+    },
+    {
+      "bytes": 3370,
+      "component": "encoded_r1cs_iop",
+      "lines": 84,
+      "path": "libiop/protocols/encoded/r1cs_rs_iop/fractal_indexer.hpp",
+      "sha512": "bc832d5e7af3c778ab5f9988268d88e204482b34fe1583876a2ee7b0d35cff17f6289d11f7ef1732e8d0a425ce93c19f0ceeba0cbbc902eb4bb5c6972f2dde54"
+    },
+    {
+      "bytes": 7956,
+      "component": "encoded_r1cs_iop",
+      "lines": 193,
+      "path": "libiop/protocols/encoded/r1cs_rs_iop/fractal_indexer.tcc",
+      "sha512": "263405520154d6549ea9529d6bcf79f80bdb6f041f65627c3cfe95244de872ee71254f06501bf62627ddd0ffd23dc577ca7372a1e49e17af911bb43c5b7d3687"
+    },
+    {
+      "bytes": 6750,
+      "component": "encoded_r1cs_iop",
+      "lines": 164,
+      "path": "libiop/protocols/encoded/r1cs_rs_iop/r1cs_rs_iop.hpp",
+      "sha512": "5844ce992f970f2d9d826bc5d10d6231aeadef225ae78cb6ec91e26872812230bcd8035638f0ec414fbeb2ba27308558f8d5a8574057d34d7292192a6b34f0bb"
+    },
+    {
+      "bytes": 28693,
+      "component": "encoded_r1cs_iop",
+      "lines": 670,
+      "path": "libiop/protocols/encoded/r1cs_rs_iop/r1cs_rs_iop.tcc",
+      "sha512": "f9bdb6bce2bb57a3f3f9de9c8c8b3167c77614cf667b789673a6135fe25e55a0ece376f8488eaebe62a8f9de681643537123d37cc816e7884a405360c03cf137"
+    },
+    {
+      "bytes": 3252,
+      "component": "encoded_r1cs_iop",
+      "lines": 87,
+      "path": "libiop/protocols/encoded/sumcheck/rational_sumcheck.hpp",
+      "sha512": "8d906903ab46fa631748d9c2c92de68d289e4452ba91194dc7b66e115385719f2e60deeba7e76492735a7b2b15a4abc38841ee75dce319ed262a78ae39b8465e"
+    },
+    {
+      "bytes": 11932,
+      "component": "encoded_r1cs_iop",
+      "lines": 280,
+      "path": "libiop/protocols/encoded/sumcheck/rational_sumcheck.tcc",
+      "sha512": "0b06b0acbc470dbfb03e6663c52e1c89ba36562c37635363908d70c4b2f933a95d5ab52c24f3d7442eaf5e6ffcad5feec438ecaadd610664ce4d5cec207e1d2c"
+    },
+    {
+      "bytes": 4250,
+      "component": "encoded_r1cs_iop",
+      "lines": 108,
+      "path": "libiop/protocols/encoded/sumcheck/sumcheck.hpp",
+      "sha512": "0728f0dc7a78153b55cfa9528b2b2d25bd1a54a7c5a308e0e6c578a0371634d0c91f9aa1ecc215f94889c15496298f26894f1b5f30593406d05b2560ec93b2aa"
+    },
+    {
+      "bytes": 18283,
+      "component": "encoded_r1cs_iop",
+      "lines": 414,
+      "path": "libiop/protocols/encoded/sumcheck/sumcheck.tcc",
+      "sha512": "d4fce64da5ec0056ce8a72739bd05973b0c2bde2fa3c041d0efe07df28c571c45e42a280827b9ba300ce6c680799db78bc97eaae82b44e9d170748e4d0daa27f"
+    },
+    {
+      "bytes": 1070,
+      "component": "encoded_r1cs_iop",
+      "lines": 29,
+      "path": "libiop/protocols/encoded/sumcheck/sumcheck_aux.hpp",
+      "sha512": "c0755c5c2c1ca97ecf294a14caf8cd1ab3a71d43e4100182f399290abec0eee1ae9e06880f1cc079aa36fb2cdb5d051b933deedb3f9980a5fe995fccdd706ff2"
+    },
+    {
+      "bytes": 1570,
+      "component": "encoded_r1cs_iop",
+      "lines": 34,
+      "path": "libiop/protocols/encoded/sumcheck/sumcheck_aux.tcc",
+      "sha512": "89c751f4d6cf5eaba9562cb78225a0b394ba6973abca7ac9e09a6b3157488e9d67266d26c3cffe3a2dd0f0f0891abbd7b0f5f2c99a622fd4d29f66d0b37fbce3"
+    },
+    {
+      "bytes": 1364,
+      "component": "fri_ldt",
+      "lines": 43,
+      "path": "libiop/protocols/ldt/fri/fri_aux.cpp",
+      "sha512": "5c6d92cddf30fce5280067523b1e2fcac93caae66e60a5be025945c047d05fead59d4778f338d805cb9121c49c9714a09adcec26ef09861943b2fe3fcb4c10ee"
+    },
+    {
+      "bytes": 2680,
+      "component": "fri_ldt",
+      "lines": 71,
+      "path": "libiop/protocols/ldt/fri/fri_aux.hpp",
+      "sha512": "5fa584157b5c672cdcd37e2cd948232cf8582a509fa02ba68f914209e14982f7ce8facbc73f221a6e0c480ca9507380a0cdf1a86ecb0660fd4bb664b1e28e8ed"
+    },
+    {
+      "bytes": 17260,
+      "component": "fri_ldt",
+      "lines": 391,
+      "path": "libiop/protocols/ldt/fri/fri_aux.tcc",
+      "sha512": "ae252578212ec2a0d653f1d2aca5596e9e2363c838b4ba3a0436a74c88b2a3ead49397b25c044158644b2ad731ab384b85036c275e66830be0ad319ca2a42bcb"
+    },
+    {
+      "bytes": 435,
+      "component": "fri_ldt",
+      "lines": 19,
+      "path": "libiop/protocols/ldt/fri/fri_ldt.cpp",
+      "sha512": "ccbe01c2254fa21f6f1e879676febec67522ac97d5e5aa6ce19e6b3db073b676e0cdf104ff18444056f779114d3386c9a8a3ce68f00d298b686faa0bb2d0c028"
+    },
+    {
+      "bytes": 8479,
+      "component": "fri_ldt",
+      "lines": 197,
+      "path": "libiop/protocols/ldt/fri/fri_ldt.hpp",
+      "sha512": "6e9f7f20a83f5ae325e6623143a4a36824ec9a78d7ef4daaf85fd38c0d804e01317ff7b963287db261e65399fc5f2208419f7a36250fb9f54d93e425d3483f72"
+    },
+    {
+      "bytes": 31729,
+      "component": "fri_ldt",
+      "lines": 644,
+      "path": "libiop/protocols/ldt/fri/fri_ldt.tcc",
+      "sha512": "0eedb66eb0e3b28a92b9e20ed69835bf4839d755a6d81af5ce07eca7f94df3353ce7915bd5e15c75d9933500edeec551f02a82467306285168346b7c5eb0353e"
+    },
+    {
+      "bytes": 1906,
+      "component": "fri_ldt",
+      "lines": 45,
+      "path": "libiop/protocols/ldt/fri/localizer_polynomial.hpp",
+      "sha512": "7e9eab3666dba13968c20467f63c2837dfde6577a9370b1c90aa580639b4a7aa968edee7aaa717641cdb28641c899a3d26e24d81e737d63b036c768e2cae8982"
+    },
+    {
+      "bytes": 945,
+      "component": "fri_ldt",
+      "lines": 35,
+      "path": "libiop/protocols/ldt/fri/localizer_polynomial.tcc",
+      "sha512": "5dc0e8ace60175f492435e4d2650ec9618b13f5dac0cbbbc9a64607d0ae99ebed5ceaa5b5f0fb096f71f4ffeb902750af2e570e4c121d8d66492c3610b1a5d0a"
+    },
+    {
+      "bytes": 473,
+      "component": "ldt_reducer",
+      "lines": 21,
+      "path": "libiop/protocols/ldt/ldt_reducer.cpp",
+      "sha512": "4a65c8dcf7efd40508b2b90cec14ffed1b4aeaaec448d4e8c4f0a7f0edfebd8e5549cc6c927c49e34abc95e204ffac09123a0e10647aa40e29abb8cc2a155f1e"
+    },
+    {
+      "bytes": 4908,
+      "component": "ldt_reducer",
+      "lines": 121,
+      "path": "libiop/protocols/ldt/ldt_reducer.hpp",
+      "sha512": "fadb978b89f6e82fe2f727206d17a2fca2e015c03aab48097342b622bd1565b95056729054095fc2938b8b385c61d57d9863b3f1619149dd37f6678edb7e708b"
+    },
+    {
+      "bytes": 13722,
+      "component": "ldt_reducer",
+      "lines": 288,
+      "path": "libiop/protocols/ldt/ldt_reducer.tcc",
+      "sha512": "c8d2969c2c971c565a2d3c57ac7151975aa376af7d786a216199534de3e3ce1519973569b7879c9e3213c5ce8b01a7eabdf3af0bb4b7d03889e2b26d775b8eeb"
+    },
+    {
+      "bytes": 2189,
+      "component": "ldt_reducer",
+      "lines": 60,
+      "path": "libiop/protocols/ldt/ldt_reducer_aux.hpp",
+      "sha512": "1d1c1bb00c034cd0b6a1af7fd9e485a4bce61220a4e6d595e42d20021be2a89fe5d966be96f83f4906cd70985d3f97962895ec710c4fa2c7ed43aa9e665fa1b1"
+    },
+    {
+      "bytes": 6839,
+      "component": "ldt_reducer",
+      "lines": 171,
+      "path": "libiop/protocols/ldt/ldt_reducer_aux.tcc",
+      "sha512": "98283c4c5887da75f5eb6fbc688b4c943e00fe7fdd61dd69a66efaa6a730b67226446a1297e7d049d6461790eee610f861c227e38e27cba6028f2bd6632c58c7"
+    },
+    {
+      "bytes": 1590,
+      "component": "ldt_reducer",
+      "lines": 51,
+      "path": "libiop/protocols/ldt/multi_ldt_base.hpp",
+      "sha512": "21d00fe2a3d97dc478ff77f895f770f74a810e5bdfed4af395cdc362aa154e92dfb1f58b01d49f27f1453551ba074527fcd33f114836e44ee115306164852fa3"
+    },
+    {
+      "bytes": 5327,
+      "component": "r1cs_relation",
+      "lines": 163,
+      "path": "libiop/relations/r1cs.hpp",
+      "sha512": "f3ce9409fcd883a2dd4339f0e3db2f5e625188e543efbd733cc7eb86633b72b6cd90cb3f73903c04fd8ad7bc89bf63a930082da581e371fed15bd9e7e34fe7e7"
+    },
+    {
+      "bytes": 10137,
+      "component": "r1cs_relation",
+      "lines": 302,
+      "path": "libiop/relations/r1cs.tcc",
+      "sha512": "1ac99e35c7b7764f2ba3393a411e97d8f4bfbd6ae062e4ab529a221ffd125eda1a3be60958f25d2e5d902e26a1ba36df31be1f7c8d9039f69bf15da5754f4bb7"
+    },
+    {
+      "bytes": 221,
+      "component": "r1cs_relation",
+      "lines": 9,
+      "path": "libiop/relations/sparse_matrix.cpp",
+      "sha512": "4bc91bfab06206252d095d52ff71733506e32baa351b7b5316127ada7dc474b0f9a3d26f2b057543b26b6ed69c16ad0bf4a9cc13d29318da88980a18179e770a"
+    },
+    {
+      "bytes": 1933,
+      "component": "r1cs_relation",
+      "lines": 61,
+      "path": "libiop/relations/sparse_matrix.hpp",
+      "sha512": "6a7343f4e20650e4707fc04f4cd3f2af8a0aa674ddb3c545d128fc736e859db0956526d932c246bde225cfdb5165b79354fd1b272b4bea54220f782b34ced74e"
+    },
+    {
+      "bytes": 1783,
+      "component": "r1cs_relation",
+      "lines": 61,
+      "path": "libiop/relations/sparse_matrix.tcc",
+      "sha512": "8d473acefe3e62773e22c4fc2c1b2e04c3d78b4ed9250c05c726fd0c0d65ebe1d42a86aa79f5a900e3b2b4c01170249e3c9ffad60afdc4c8fa66a34b9d4cf01e"
+    },
+    {
+      "bytes": 7242,
+      "component": "r1cs_relation",
+      "lines": 210,
+      "path": "libiop/relations/variable.hpp",
+      "sha512": "41c1a47c57173fad7e1fc3b1e66d91b79ec9ffdc0bebdff57a6e633f4da14f3d1a4c35f742ba3d87ffaf10fe5ca5ccedae4e90b1f6f55e816f63e7db33ef3afc"
+    },
+    {
+      "bytes": 13327,
+      "component": "r1cs_relation",
+      "lines": 472,
+      "path": "libiop/relations/variable.tcc",
+      "sha512": "51582f414f33474c2c318ea547470097150714c90270dab2c28b7b92329dd9f828c9d0d9f64bd8f3942c92b68d095fadd9de98dd9098ece4eb96cdee33a16bab"
+    },
+    {
+      "bytes": 3956,
+      "component": "snark_wrapper",
+      "lines": 93,
+      "path": "libiop/snark/aurora_snark.hpp",
+      "sha512": "84b3afe6e10439b9b8584c6b62d669e427f19a160cae836c541718686090cdc3ef588d2accd6a3d4938b619ca4fa6a86e42adca8deb544e49ef3317f70414052"
+    },
+    {
+      "bytes": 7667,
+      "component": "snark_wrapper",
+      "lines": 181,
+      "path": "libiop/snark/aurora_snark.tcc",
+      "sha512": "c10cd94cbd61f96433936bf9d741ebf3f3ffdd2e031e0e2c47f88b8f71abc56a550078295d514a6224002737ac9b26715dfc0a8b2e12b9f5a061cec281bcd8c2"
+    }
+  ],
+  "missing_local_includes": [],
+  "roots": [
+    "libiop/snark/aurora_snark.hpp",
+    "libiop/common/common.cpp",
+    "libiop/bcs/hashing/blake2b.cpp",
+    "libiop/protocols/ldt/ldt_reducer.cpp",
+    "libiop/protocols/ldt/fri/fri_ldt.cpp",
+    "libiop/protocols/ldt/fri/fri_aux.cpp",
+    "libiop/relations/sparse_matrix.cpp",
+    "libiop/iop/utilities/batching.cpp",
+    "libiop/algebra/utils.cpp"
+  ],
+  "schema": "hegemon.aurora.libiop-source-closure.v1",
+  "source": {
+    "license_sha512": "05c7b8c925af9cc8a58c056f9cb2b9eeccd85146786396c798842448475a4019a9ff82168e9126ff466a0e8b76b929a2b8452833b90ae6b938589b680033ba44",
+    "license_spdx": "MIT",
+    "repository": "https://github.com/scipr-lab/libiop",
+    "revision": "a2ed2ec2f3e85f29b6035951553b02cb737c817a"
+  }
+}

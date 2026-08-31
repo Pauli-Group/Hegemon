@@ -1,0 +1,74 @@
+{
+  "schema": "hegemon-hx512-formal-refinement-v1",
+  "frozen_sources": {
+    "circuits/transaction/src/smallwood_hx512_transcript.rs": {
+      "sha512": "a33f9c8962ab6127ccc6866bafe1166186d4a3875843d55b7ac612b62e7ae5154726696ad35725f1d5eab22d53a343a9796de11b70fafce8f958b27846742b7c"
+    },
+    "formal/crypto/HegemonCrypto/SmallWoodHx512Refinement.lean": {
+      "sha512": "df2a2de79c68fcf6252be3c3c45ab9b0e79919f416e4d9261b54ee2d824e9829ce3b783974974feb1bc469c898e7ed6358edc1cd91f778574af7c90bc6f84868"
+    },
+    "circuits/transaction/src/smallwood_engine.rs": {
+      "sha512": null,
+      "reason": "fresh HX512 engine writer has not handed off a quiescent source snapshot"
+    }
+  },
+  "codec": {
+    "digest_bytes": 64,
+    "deferred_prefix_bytes": 192,
+    "prefix_fields": [
+      "raw_decs_root64",
+      "h3_piop_input64",
+      "h5_piop_transcript64"
+    ],
+    "nonce_serialized": false,
+    "u32_byte_order": "big",
+    "u64_field_byte_order": "big",
+    "field_modulus": 18446744069414584321,
+    "decs_query_count": 48,
+    "leaf_tape_bytes": 72,
+    "authentication_path_maximum_depth": 20,
+    "exact_consumption": true
+  },
+  "transcript": {
+    "event_count": 8,
+    "event_order": [
+      "decs_root_binding_sha512",
+      "decs_coefficient_challenge_shake256",
+      "piop_input_binding_sha512",
+      "piop_coefficient_challenge_shake256",
+      "piop_transcript_binding_sha512",
+      "piop_opening_challenge_shake256",
+      "decs_opening_binding_sha512",
+      "decs_query_challenge_shake256"
+    ],
+    "deferred_readback_order": [
+      "raw_decs_root",
+      "h3_piop_input",
+      "h5_piop_transcript"
+    ],
+    "terminal_ninth_event": false,
+    "decs_root_request_message_bytes": 136,
+    "xof_requests": {
+      "decs_coefficients": "eta_times_lvcs_rows_goldilocks",
+      "piop_coefficients": "rho_times_max_nonlinear_linear_goldilocks",
+      "piop_openings": 6,
+      "decs_queries": 48,
+      "decs_query_domain": 1048576,
+      "decs_queries_sorted_distinct": true
+    }
+  },
+  "rust_to_lean": {
+    "transcript_source_readback": true,
+    "engine_source_readback": false,
+    "exact_engine_geometry_frozen": false,
+    "fresh_core_codec_conformance": false,
+    "sha512_request_framing_refinement": false,
+    "shake256_count_modulus_distinct_sampler_refinement": false,
+    "abstract_oracle_output_width_refinement": false,
+    "smallwood_equation14_high_degree_codeword_weight_discharged": false,
+    "eager_deferred_schedule_refinement": false,
+    "compiled_relation_refinement": false,
+    "canonical_protocol_identity_allocated": false,
+    "production_authorized": false
+  }
+}

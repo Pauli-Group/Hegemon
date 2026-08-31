@@ -11,10 +11,9 @@ set_option exponentiation.threshold 1024
 /-!
 # SmallWood BCS/QROM instantiation boundary
 
-This module applies the security-accounting method used by mature STARK implementations: every
-loss has a stable label, a proof status, and an exact contribution to one sum.  It then maps the
-deployed SmallWood PACS-PIOP plus DECS/LVCS transcript to the round-by-round BCS theorem shape of
-Chiesa, Manohar, and Spooner (TCC 2019).
+This module gives every loss a stable label, an authority status, and a numeric value only where a
+bound exists. It maps the modeled active SmallWood PACS-PIOP plus DECS/LVCS transcript to the
+round-by-round BCS theorem shape of Chiesa, Manohar, and Spooner (TCC 2019).
 
 The CMS lifting lemmas contribute the exact factor `6 * t^2`; the oracle/database bridge is a
 square-root inequality.  The active arithmetic below uses those exact expressions and a proved
@@ -26,9 +25,9 @@ field elements are a deterministic rejection-sampled view of that same oracle, m
 `SmallWoodSha512Xof`.  The older ideal field-XOF remains useful for algebraic round proofs but is
 not the production hash boundary.
 
-The remaining production obligations are the exact rejection-sampling transfer, the adaptive CMS
-game instantiation, and native-verifier refinement.  Those obligations stay visible as typed
-hypotheses rather than being replaced by optimistic labels.
+The remaining deployment obligations include SHA-512/QROM instantiation, binding, transcript
+compatibility, and native-verifier refinement. Those obligations stay visible as caller-supplied
+losses rather than being replaced by optimistic proved-zero labels.
 -/
 
 namespace HegemonCrypto.SmallWood.BcsQrom
@@ -560,7 +559,7 @@ theorem directAdaptiveInstantiation
 
 end RoundByRoundKnowledge
 
-section SecurityLedger
+section ConditionalSecurityLedger
 
 /-- Stable labels prevent a security report from silently dropping a term. -/
 inductive LossLabel where
@@ -573,22 +572,31 @@ inductive LossLabel where
   | nativeVerifierRefinement
 deriving DecidableEq, Repr
 
-/-- A numeric term receives production credit only after its mathematical dependency is proved. -/
+/-- Proven ideal-model terms are distinct from caller-supplied deployment assumptions. -/
 inductive EvidenceStatus where
-  | proved
-  | hashAssumption
+  | provedIdealModel
+  | callerSuppliedCryptographicAssumption
+  | unquantifiedImplementationAssumption
 deriving DecidableEq, Repr
 
 structure LossEntry where
   label : LossLabel
   status : EvidenceStatus
-  value : Rat
+  value : Option Rat
 deriving DecidableEq, Repr
 
-/-- Computational loss for replacing the ideal 512-bit oracle by the deployed hash construction. -/
-structure HashAssumptionLoss where
-  randomOracleInstantiation : Rat
-  nonnegative : 0 <= randomOracleInstantiation
+/--
+Caller-supplied cryptographic losses at unproved deployment boundaries. Neither
+field is discharged by the ideal-QROM development. Supplying zero is an
+assumption, not a Lean proof of perfect binding or SHA-512/QROM instantiation.
+Transcript compatibility and compiled-native refinement are not assigned numeric
+losses at all.
+-/
+structure AssumedCryptographicLosses where
+  commitmentBinding : Rat
+  sha512QromInstantiation : Rat
+  commitmentBindingNonnegative : 0 <= commitmentBinding
+  sha512QromInstantiationNonnegative : 0 <= sha512QromInstantiation
 deriving DecidableEq, Repr
 
 /-- RBR contribution in the proved `2 * databaseLoss` rational envelope. -/
@@ -618,42 +626,54 @@ def cmsOracleBridgeEnvelopeLoss
     (baseGameArity oracleBits : Nat) : Rat :=
   (2 * baseGameArity ^ 2 : Nat) / (2 ^ oracleBits : Nat)
 
-/-- Complete labeled BCS/QROM accounting surface. -/
-def securityLedger
+/--
+Conditional deployment accounting surface. The first three values are proved
+inside the ideal logical-oracle model, two values are caller-supplied
+cryptographic assumptions, and the two implementation boundaries are explicitly
+unquantified. No theorem in this module transfers the ideal-QROM probability
+bound to deployed SHA-512 using this ledger.
+-/
+def conditionalDeploymentSecurityLedger
     (queries oracleBits baseGameArity : Nat)
     (rbrKnowledgeError : Rat)
-    (hashLoss : HashAssumptionLoss) : List LossEntry :=
+    (assumed : AssumedCryptographicLosses) : List LossEntry :=
   [ { label := .rbrKnowledgeAmplification,
-      status := .proved,
-      value := cmsRbrEnvelopeLoss queries rbrKnowledgeError },
+      status := .provedIdealModel,
+      value := some (cmsRbrEnvelopeLoss queries rbrKnowledgeError) },
     { label := .collisionInstability,
-      status := .proved,
-      value := cmsCollisionEnvelopeLoss queries oracleBits },
+      status := .provedIdealModel,
+      value := some (cmsCollisionEnvelopeLoss queries oracleBits) },
     { label := .oracleDatabaseBridge,
-      status := .proved,
-      value := cmsOracleBridgeEnvelopeLoss baseGameArity oracleBits },
+      status := .provedIdealModel,
+      value := some (cmsOracleBridgeEnvelopeLoss baseGameArity oracleBits) },
     { label := .commitmentBinding,
-      status := .proved,
-      value := 0 },
+      status := .callerSuppliedCryptographicAssumption,
+      value := some assumed.commitmentBinding },
     { label := .randomOracleInstantiation,
-      status := .hashAssumption,
-      value := hashLoss.randomOracleInstantiation },
+      status := .callerSuppliedCryptographicAssumption,
+      value := some assumed.sha512QromInstantiation },
     { label := .transcriptCompatibility,
-      status := .proved,
-      value := 0 },
+      status := .unquantifiedImplementationAssumption,
+      value := none },
     { label := .nativeVerifierRefinement,
-      status := .proved,
-      value := 0 } ]
+      status := .unquantifiedImplementationAssumption,
+      value := none } ]
 
-def ledgerTotal (entries : List LossEntry) : Rat :=
-  (entries.map LossEntry.value).sum
+/-- A ledger has a numeric total only when every entry has a numeric bound. -/
+def quantifiedLedgerTotal : List LossEntry → Option Rat
+  | [] => some 0
+  | entry :: entries =>
+      match entry.value, quantifiedLedgerTotal entries with
+      | some value, some total => some (value + total)
+      | _, _ => none
 
 /-- The report contains each named attack surface exactly once and in a fixed order. -/
-theorem security_ledger_labels_are_complete
+theorem conditional_security_ledger_labels_are_complete
     (queries oracleBits baseGameArity : Nat)
     (rbrKnowledgeError : Rat)
-    (hashLoss : HashAssumptionLoss) :
-    (securityLedger queries oracleBits baseGameArity rbrKnowledgeError hashLoss).map
+    (assumed : AssumedCryptographicLosses) :
+    (conditionalDeploymentSecurityLedger
+        queries oracleBits baseGameArity rbrKnowledgeError assumed).map
         LossEntry.label =
       [ .rbrKnowledgeAmplification,
         .collisionInstability,
@@ -664,71 +684,87 @@ theorem security_ledger_labels_are_complete
         .nativeVerifierRefinement ] := by
   rfl
 
-/-- The ledger total is exactly the proved conservative CMS envelope plus the hash assumption. -/
-theorem security_ledger_total_exact
+/-- The API records the authority status of every entry in fixed order. -/
+theorem conditional_security_ledger_statuses_are_explicit
     (queries oracleBits baseGameArity : Nat)
     (rbrKnowledgeError : Rat)
-    (hashLoss : HashAssumptionLoss) :
-    ledgerTotal
-        (securityLedger queries oracleBits baseGameArity rbrKnowledgeError hashLoss) =
-      cmsRbrEnvelopeLoss queries rbrKnowledgeError +
-        cmsCollisionEnvelopeLoss queries oracleBits +
-        cmsOracleBridgeEnvelopeLoss baseGameArity oracleBits +
-        hashLoss.randomOracleInstantiation := by
-  simp [ledgerTotal, securityLedger]
-  ring
+    (assumed : AssumedCryptographicLosses) :
+    (conditionalDeploymentSecurityLedger
+        queries oracleBits baseGameArity rbrKnowledgeError assumed).map
+        LossEntry.status =
+      [ .provedIdealModel,
+        .provedIdealModel,
+        .provedIdealModel,
+        .callerSuppliedCryptographicAssumption,
+        .callerSuppliedCryptographicAssumption,
+        .unquantifiedImplementationAssumption,
+        .unquantifiedImplementationAssumption ] := by
+  rfl
 
-end SecurityLedger
+/--
+The conditional deployment ledger has no numeric total while transcript
+compatibility and native-verifier refinement remain unquantified assumptions.
+-/
+theorem conditional_security_ledger_has_no_numeric_total
+    (queries oracleBits baseGameArity : Nat)
+    (rbrKnowledgeError : Rat)
+    (assumed : AssumedCryptographicLosses) :
+    quantifiedLedgerTotal
+        (conditionalDeploymentSecurityLedger
+          queries oracleBits baseGameArity rbrKnowledgeError assumed) = none := by
+  rfl
+
+end ConditionalSecurityLedger
 
 section ConcreteBound
 
 /--
-Conservative base-game arity cap. The accepted proof cannot authenticate more leaves than the
-entire committed oracle. The production refinement proves that the verifier trace fits this cap;
-using the cap instead of the exact trace count only weakens the bound.
+Conservative base-game arity cap for the modeled active transcript. It cannot authenticate more
+leaves than the entire committed oracle; using the cap instead of the exact modeled trace count
+only weakens the ideal-model bound. This does not prove compiled-verifier refinement.
 -/
 def activeBaseGameArityUpperBound : Nat := activeCommittedOracleLength
 
-def activeCmsEnvelopeLoss (queries : Nat) : Rat :=
+def idealActiveCmsEnvelopeLoss (queries : Nat) : Rat :=
   cmsRbrEnvelopeLoss queries
       ((aggregateErrorNumerator : Rat) / aggregateErrorDenominator) +
     cmsCollisionEnvelopeLoss queries 512 +
     cmsOracleBridgeEnvelopeLoss activeBaseGameArityUpperBound 512
 
-def activeCmsEnvelopeNumerator (queries : Nat) : Nat :=
+def idealActiveCmsEnvelopeNumerator (queries : Nat) : Nat :=
   12 * queries ^ 2 * aggregateErrorNumerator * 2 ^ 512 +
     (48 * queries ^ 3 + 2 * activeBaseGameArityUpperBound ^ 2) *
       aggregateErrorDenominator
 
-def activeCmsEnvelopeDenominator : Nat :=
+def idealActiveCmsEnvelopeDenominator : Nat :=
   aggregateErrorDenominator * 2 ^ 512
 
-def supportsActiveCmsEnvelopeBits (bits queries : Nat) : Prop :=
-  2 ^ bits * activeCmsEnvelopeNumerator queries <= activeCmsEnvelopeDenominator
+def supportsIdealActiveCmsEnvelopeBits (bits queries : Nat) : Prop :=
+  2 ^ bits * idealActiveCmsEnvelopeNumerator queries <= idealActiveCmsEnvelopeDenominator
 
-theorem active_cms_envelope_loss_eq_common_fraction (queries : Nat) :
-    activeCmsEnvelopeLoss queries =
-      (activeCmsEnvelopeNumerator queries : Rat) /
-        activeCmsEnvelopeDenominator := by
+theorem ideal_active_cms_envelope_loss_eq_common_fraction (queries : Nat) :
+    idealActiveCmsEnvelopeLoss queries =
+      (idealActiveCmsEnvelopeNumerator queries : Rat) /
+        idealActiveCmsEnvelopeDenominator := by
   have aggregatePositive : 0 < aggregateErrorDenominator := by decide
   have oraclePositive : 0 < (2 ^ 512 : Nat) := by positivity
   have aggregateNonzero : (aggregateErrorDenominator : Rat) ≠ 0 := by
     exact_mod_cast aggregatePositive.ne'
   have oracleNonzero : ((2 ^ 512 : Nat) : Rat) ≠ 0 := by
     exact_mod_cast oraclePositive.ne'
-  unfold activeCmsEnvelopeLoss cmsRbrEnvelopeLoss cmsCollisionEnvelopeLoss
-    cmsOracleBridgeEnvelopeLoss activeCmsEnvelopeNumerator
-    activeCmsEnvelopeDenominator
+  unfold idealActiveCmsEnvelopeLoss cmsRbrEnvelopeLoss cmsCollisionEnvelopeLoss
+    cmsOracleBridgeEnvelopeLoss idealActiveCmsEnvelopeNumerator
+    idealActiveCmsEnvelopeDenominator
   push_cast
   field_simp
   ring
 
-theorem supports_active_cms_envelope_bits_iff (bits queries : Nat) :
-    supportsActiveCmsEnvelopeBits bits queries ↔
-      activeCmsEnvelopeLoss queries <= (1 : Rat) / 2 ^ bits := by
-  rw [active_cms_envelope_loss_eq_common_fraction]
-  unfold supportsActiveCmsEnvelopeBits
-  have denominatorPositive : 0 < activeCmsEnvelopeDenominator := by
+theorem supports_ideal_active_cms_envelope_bits_iff (bits queries : Nat) :
+    supportsIdealActiveCmsEnvelopeBits bits queries ↔
+      idealActiveCmsEnvelopeLoss queries <= (1 : Rat) / 2 ^ bits := by
+  rw [ideal_active_cms_envelope_loss_eq_common_fraction]
+  unfold supportsIdealActiveCmsEnvelopeBits
+  have denominatorPositive : 0 < idealActiveCmsEnvelopeDenominator := by
     exact Nat.mul_pos (by decide) (by positivity)
   have scalePositive : 0 < 2 ^ bits := by positivity
   rw [div_le_div_iff₀ (by exact_mod_cast denominatorPositive)
@@ -738,14 +774,15 @@ theorem supports_active_cms_envelope_bits_iff (bits queries : Nat) :
 
 /--
 The proved CMS constants and conservative state-level bridge retain at least
-128 bits at a `2^64` quantum-query budget, before adding the deployed-hash
-instantiation loss. The remaining cryptographic boundary is replacing the
-ideal logical oracle by the deployed domain-separated SHA-512 construction.
+128 bits at a `2^64` quantum-query budget inside the ideal logical-oracle model.
+This theorem excludes the caller-supplied losses in `AssumedCryptographicLosses`
+and both unquantified implementation boundaries, so it is not a deployed 128-bit
+security claim.
 -/
-theorem active_cms_2pow64_queries_support_128_bits :
-    supportsActiveCmsEnvelopeBits 128 (2 ^ 64) := by
-  unfold supportsActiveCmsEnvelopeBits activeCmsEnvelopeNumerator
-    activeCmsEnvelopeDenominator activeBaseGameArityUpperBound
+theorem ideal_active_cms_2pow64_queries_support_128_bits :
+    supportsIdealActiveCmsEnvelopeBits 128 (2 ^ 64) := by
+  unfold supportsIdealActiveCmsEnvelopeBits idealActiveCmsEnvelopeNumerator
+    idealActiveCmsEnvelopeDenominator activeBaseGameArityUpperBound
     activeCommittedOracleLength
   set_option exponentiation.threshold 1024 in
     set_option maxRecDepth 100000 in

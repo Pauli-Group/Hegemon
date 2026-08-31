@@ -1,0 +1,193 @@
+{
+  "schema": "hegemon.cfw26-parametric-repair-proof.source-dependency-map.v1",
+  "claim_boundary": "Every dependency listed here was read from the pinned local primary-source snapshots. Page anchors identify source statements; they do not authorize Hegemon's repairs.",
+  "sources": {
+    "cfw26": {
+      "citation": "Chiesa, Fenzi, and Weng, Zero-Knowledge IOPPs for Constrained Interleaved Codes, IACR ePrint 2026/391",
+      "url": "https://eprint.iacr.org/2026/391",
+      "pdf_path": "/private/tmp/hvzk-whir-2026-391.pdf",
+      "pdf_bytes": 972446,
+      "pdf_pages": 82,
+      "pdf_sha512": "be9595b264ccbb6e5d848a10e24f907089ff478c7efe99967a5d0f236bffcaf87c53cc82eec53f74856a08a4db8a6884084c8238291f44d06aa2d703eef5c2dd",
+      "text_path": "/private/tmp/hvzk-whir-2026-391.txt",
+      "text_bytes": 344345,
+      "text_sha512": "927135c9820fe0f5344601074837f3742b310cb16d8031ec2e9753900b458b72d0c3fabfc6183de1cee54ee6ecbdf378962b3f93211427f52e539b7d5204167d"
+    },
+    "acfy25_whir": {
+      "citation": "Arnon, Chiesa, Fenzi, and Yogev, WHIR: Reed-Solomon Proximity Testing with Super-Fast Verification, EUROCRYPT 2025",
+      "pdf_path": "/private/tmp/hegemon-pq-whir.pdf",
+      "pdf_bytes": 1271126,
+      "pdf_pages": 83,
+      "pdf_sha512": "0b5fceaa077ee4ff3dc3cbe1ef9d68ec67761a2778c4c7a6caf7bde8dd5b1c3eef42c9c9373303bba997726e836620b508fd470b926475c86c6736fa272d58d9",
+      "text_path": "/private/tmp/hegemon-pq-whir.txt",
+      "text_bytes": 294823,
+      "text_sha512": "52212249956b2827e481b98fc20ff88514516e63d0e13eb7a092dea0eb23f15c76aa6193b5b0ade182bd3be0154969816b3e63aaecf39d819d0885cd6f532f44"
+    }
+  },
+  "dependencies": [
+    {
+      "id": "cfw26-claim-3.1-lemma-3.2",
+      "source": "cfw26",
+      "printed_page": 26,
+      "rendered_file": "source-pages/cfw26-26.png",
+      "role": "multilinear interpolation and the polynomial identity bound used by completeness/RBR",
+      "read": true
+    },
+    {
+      "id": "cfw26-definition-3.3",
+      "source": "cfw26",
+      "printed_page": 26,
+      "rendered_file": "source-pages/cfw26-26.png",
+      "role": "zero-evader premise and final rho error",
+      "read": true
+    },
+    {
+      "id": "cfw26-definitions-3.4-3.7",
+      "source": "cfw26",
+      "printed_pages": [26, 27],
+      "rendered_files": ["source-pages/cfw26-26.png", "source-pages/cfw26-27.png"],
+      "role": "perfect completeness, knowledge-state function, and RBR extraction definition",
+      "read": true
+    },
+    {
+      "id": "cfw26-code-list-definitions",
+      "source": "cfw26",
+      "printed_pages": [27, 28],
+      "rendered_files": ["source-pages/cfw26-27.png", "source-pages/cfw26-28.png"],
+      "role": "codes, interleaving, distance, list sizes, and MCA terms used in source analogies",
+      "read": true
+    },
+    {
+      "id": "cfw26-definition-3.16",
+      "source": "cfw26",
+      "printed_page": 29,
+      "rendered_file": "source-pages/cfw26-29.png",
+      "role": "fixed-query-set zero-knowledge encoding simulator and error zeta",
+      "read": true
+    },
+    {
+      "id": "cfw26-definitions-4.1-4.2",
+      "source": "cfw26",
+      "printed_page": 32,
+      "rendered_file": "source-pages/cfw26-32.png",
+      "role": "whole extended view and HVZK definition",
+      "read": true
+    },
+    {
+      "id": "cfw26-theorem-4.5-construction-4.6",
+      "source": "cfw26",
+      "printed_pages": [32, 33, 34],
+      "rendered_files": [
+        "source-pages/cfw26-32.png",
+        "source-pages/cfw26-33.png",
+        "source-pages/cfw26-34.png"
+      ],
+      "role": "composition context and simulator-wise distinguisher classes",
+      "read": true
+    },
+    {
+      "id": "cfw26-definition-4.7",
+      "source": "cfw26",
+      "printed_page": 34,
+      "rendered_file": "source-pages/cfw26-34.png",
+      "role": "D<=t is explicitly nonadaptive and decomposes into D0 query selection then D1",
+      "read": true
+    },
+    {
+      "id": "cfw26-definitions-5.1-5.6",
+      "source": "cfw26",
+      "printed_page": 35,
+      "rendered_file": "source-pages/cfw26-35.png",
+      "role": "identity, scalar-multiplied, and zero-evader-batched succinct linear forms",
+      "read": true
+    },
+    {
+      "id": "cfw26-definition-5.8",
+      "source": "cfw26",
+      "printed_page": 36,
+      "rendered_file": "source-pages/cfw26-36.png",
+      "role": "base constrained-code relation extended by Definition 11.1",
+      "read": true
+    },
+    {
+      "id": "cfw26-construction-6.3-lemma-6.4",
+      "source": "cfw26",
+      "printed_pages": [37, 38, 39],
+      "rendered_files": [
+        "source-pages/cfw26-37.png",
+        "source-pages/cfw26-38.png",
+        "source-pages/cfw26-39.png"
+      ],
+      "role": "masked sumcheck, outer affine-image rank proof, nonadaptive query handling, and encoding hybrids",
+      "read": true
+    },
+    {
+      "id": "cfw26-lemma-6.5",
+      "source": "cfw26",
+      "printed_pages": [40, 41, 42],
+      "rendered_files": [
+        "source-pages/cfw26-40.png",
+        "source-pages/cfw26-41.png",
+        "source-pages/cfw26-42.png"
+      ],
+      "role": "the fully stated RBR extractor/state proof cited only by analogy in Section 11",
+      "read": true
+    },
+    {
+      "id": "cfw26-definitions-11.1-11.2-theorem-11.3",
+      "source": "cfw26",
+      "printed_pages": [66, 67],
+      "rendered_files": ["source-pages/cfw26-66.png", "source-pages/cfw26-67.png"],
+      "role": "target relation, R1CS source relation, theorem premises, error vector, and claimed forms",
+      "read": true
+    },
+    {
+      "id": "cfw26-construction-11.4",
+      "source": "cfw26",
+      "printed_pages": [68, 69, 70],
+      "rendered_files": [
+        "source-pages/cfw26-68.png",
+        "source-pages/cfw26-69.png",
+        "source-pages/cfw26-70.png"
+      ],
+      "role": "all ten protocol steps, endpoint state, coefficient conflict, final check, and joint output relation",
+      "read": true
+    },
+    {
+      "id": "cfw26-theorem-11.3-proof-sketch",
+      "source": "cfw26",
+      "printed_pages": [70, 71],
+      "rendered_files": ["source-pages/cfw26-70.png", "source-pages/cfw26-71.png"],
+      "role": "RBR source analogy, formal simulator, outer transcript claim, value claim, and encoding union bound",
+      "read": true
+    },
+    {
+      "id": "acfy25-appendix-a-definition-construction",
+      "source": "acfy25_whir",
+      "printed_pages": [70, 71],
+      "rendered_files": [
+        "source-pages/acfy25-whir-70.png",
+        "source-pages/acfy25-whir-71.png"
+      ],
+      "role": "the unmasked generalized-R1CS Sigma-IOP explicitly cited by the Section 11 RBR sketch",
+      "read": true
+    },
+    {
+      "id": "acfy25-theorem-a.3",
+      "source": "acfy25_whir",
+      "printed_pages": [72, 73],
+      "rendered_files": [
+        "source-pages/acfy25-whir-72.png",
+        "source-pages/acfy25-whir-73.png"
+      ],
+      "role": "full unmasked RBR knowledge-state/extractor proof and its dimension-dependent polynomial error",
+      "read": true
+    }
+  ],
+  "coverage": {
+    "all_listed_dependencies_read": true,
+    "external_acfy25_appendix_read": true,
+    "published_section11_rbr_is_only_a_sketch": true,
+    "author_erratum_or_repair_selected": false
+  }
+}

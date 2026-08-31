@@ -1,0 +1,57 @@
+{
+  "schema": "hegemon.hx512_radix4_topology_checkpoint.v1",
+  "date": "2026-08-22",
+  "source": {
+    "path": "circuits/transaction/src/smallwood_hx512_topology.rs",
+    "sha512": "a4b7c3e5fcbe43aeac37abf268bdfd7e736ea3e0dcba935595518c3bcbc16b329f6831fc97e92cb36fc2e6c27439b09d49c0ccc052f2968d6fa24afb2897a9a0",
+    "sha256": "2f162700e9d0a20705ad9b241a20b318656bba4285c70bd7d088dd057062bac2"
+  },
+  "inputs": {
+    "semantic_grammar_sha512": "9a5e18d3706a3770faf245717e62b414a5b97534d2a3188d76e808e2e5daaef7db8933bfe42314073d71a24015b64dd80dbee30b8797c0c36b136ab77114ba35",
+    "stable_transition_sha256": "c533ff732b68b02a2ded89770f20385ad570ad7c5653f42580635d0fb50a4df9",
+    "stable_source_sha256": "53c7f957d8729a60be84e648e00bf49ac36c381554f1f496bdda011e5e4c1400"
+  },
+  "geometry": {
+    "radix": 4,
+    "packing_factor": 1024,
+    "typed_calls": 95,
+    "compressions": 226,
+    "source_bits": 103032,
+    "source_rows": 51,
+    "message_rows": 113,
+    "core_rows": 11728,
+    "direct_hash_base_rows": 11892,
+    "cells": 12177408,
+    "explicit_padding_cells": 2500,
+    "operations": 285744,
+    "mode_selected_control_positions": 8,
+    "mode_selected_digest_calls": 4,
+    "rfc_zero_padding_bytes_by_authorization_mode": [8748, 8494, 8240, 8570, 8316]
+  },
+  "identity": {
+    "production_identity_allocated": false,
+    "production_shape_digest_sha512": null,
+    "test_only_identity_shape_digest_sha512": "9f86ae65cfc4ad7208597595fac33adbf089ef0be5c42180f8f7c9dc0d16c25fae59a5a4ddd0d37bc20d0a59848a2e19392914a65b7fb51d69fdf39c8dba3a95"
+  },
+  "independent_checks": {
+    "root_rustc_harness_tests": {
+      "passed": 10,
+      "failed": 0,
+      "all_activity_masks": 16,
+      "all_authorization_modes": 5,
+      "all_stable_directions": 3
+    },
+    "source_hash_replayed": true,
+    "scoped_diff_check": true
+  },
+  "claim_boundary": {
+    "topology_compiler_implemented": true,
+    "topology_to_executable_adapter_refined": false,
+    "complete_nonhash_relation_included": false,
+    "proof_profile_bound": false,
+    "complete_relation_rows": null,
+    "complete_zero_knowledge": false,
+    "composed_pq_qrom_bits": null,
+    "production_authorized": false
+  }
+}

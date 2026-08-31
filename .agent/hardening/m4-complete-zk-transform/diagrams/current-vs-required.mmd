@@ -1,0 +1,20 @@
+flowchart LR
+  subgraph Current[Retained M4/BaseFold: disqualified]
+    M[message] --> RSm[RS message]
+    R[random mask] --> RSr[RS mask]
+    RSm --> L[opened leaf: message coordinate and mask coordinate]
+    RSr --> L
+    L --> Leak[project first lane: witness-dependent value]
+  end
+
+  subgraph Required[Theorem-valid replacement]
+    M2[message] --> Join[randomized message: m plus fresh coefficients]
+    R2[fresh coefficients] --> Join
+    Join --> Enc[single randomized codeword]
+    Enc --> Share[open only simulator-samplable shares]
+    Share --> Fold[masked sumcheck, private OOD, code switch]
+    Fold --> Base[masked terminal case]
+  end
+
+  Leak -. cannot be repaired by wider field .-> Required
+

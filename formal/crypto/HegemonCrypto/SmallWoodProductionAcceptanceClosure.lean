@@ -1,3 +1,4 @@
+import HegemonCrypto.SecurityAuthority
 import HegemonCrypto.SmallWoodNativeLvcsReconstruction
 import HegemonCrypto.SmallWoodNativeDecsReconstruction
 import HegemonCrypto.SmallWoodNativePiopReconstruction
@@ -12,26 +13,30 @@ set_option maxHeartbeats 0
 set_option maxRecDepth 100000
 
 /-!
-# Production compiled-acceptance closure
+# Caller-supplied production-verifier evidence closure
 
-This is the deterministic theorem joining the deployed SmallWood verifier surfaces:
+This is the deterministic theorem joining the modeled SmallWood verifier surfaces from a
+caller-supplied evidence record:
 
 * compact SHA-512 Merkle multi-opening;
 * canonical pointwise-oracle extraction;
 * DECS degree-check consequence;
 * native nonlinear and sparse-linear PIOP equations;
-* LVCS equations at all 20 sampled coordinates; and
+* LVCS equations at all 23 sampled coordinates; and
 * the four-round interactive semantic state consumed by the CMS/QROM extractor.
 
-The theorem does not assume a generic native-verifier Boolean. Each field of the execution-evidence
-record is an exact field/hash equation, canonical decoder result, measured-database inclusion, or a
-previously proved semantic consequence. The separate compiled-Rust refinement boundary is that an
-arbitrary successful production verifier execution constructs this record. Probability enters
-afterward through extraction failure and hash-database collisions.
+The theorem does not assume a generic native-verifier Boolean. Each field of the evidence record is
+an exact field/hash equation, canonical decoder result, measured-database inclusion, or a previously
+proved semantic consequence. Lean does not prove that arbitrary successful compiled-Rust verifier
+execution constructs this record. Naming the record and theorem as caller-supplied evidence keeps
+that unproved refinement boundary visible in their compile-time API. Any later probabilistic
+composition would also have to account for extraction failure and hash-database collisions; no
+such deployed composition theorem is supplied here.
 -/
 
 namespace HegemonCrypto.SmallWood.ProductionAcceptanceClosure
 
+open HegemonCrypto.SecurityAuthority
 open HegemonCrypto.FiniteOracleDatabase
 open HegemonCrypto.SmallWood.BcsQrom
 open HegemonCrypto.SmallWood.CompiledAcceptance
@@ -190,13 +195,14 @@ theorem production_opening_coordinates_exactly_challenge
     production_opening_coordinates_cover_challenge success⟩
 
 /--
-Evidence for one successful production verifier execution. All challenges, both restored
+Caller-supplied evidence describing one modeled verifier execution. All challenges, both restored
 polynomial messages, the authenticated rows, and the accepted trace are deterministic projections
 of this record. `compactClaimsRecorded` records the measured-oracle queries used to extract those
-rows; it is not itself a verifier Boolean. Collision freedom and successful extraction are supplied
-separately by later probabilistic arguments.
+rows; it is not itself a verifier Boolean. There is intentionally no constructor theorem from a
+compiled-Rust acceptance result. Collision freedom and successful extraction are supplied
+separately by later conditional arguments.
 -/
-structure ProductionVerifierAccepted
+structure CallerSuppliedVerifierEvidence
     (proofBytes : List HegemonCrypto.CanonicalBytes.Byte)
     (statement : Statement)
     (rawOracle : RawOracle)
@@ -293,26 +299,26 @@ structure ProductionVerifierAccepted
               pcsMessage) =
       some piopMessage
 
-noncomputable def ProductionVerifierAccepted.coordinates
+noncomputable def CallerSuppliedVerifierEvidence.coordinates
     {proofBytes : List HegemonCrypto.CanonicalBytes.Byte}
     {statement : Statement}
     {rawOracle : RawOracle}
     {fallback : ActiveDigest}
     {database : ProductionHashDatabase}
     (accepted :
-      ProductionVerifierAccepted
+      CallerSuppliedVerifierEvidence
         proofBytes statement rawOracle fallback database) :
     ProductionOpeningCoordinates :=
   productionOpeningCoordinates accepted.decsSamplerSucceeds
 
-theorem ProductionVerifierAccepted.coordinatesExactlyChallenge
+theorem CallerSuppliedVerifierEvidence.coordinatesExactlyChallenge
     {proofBytes : List HegemonCrypto.CanonicalBytes.Byte}
     {statement : Statement}
     {rawOracle : RawOracle}
     {fallback : ActiveDigest}
     {database : ProductionHashDatabase}
     (accepted :
-      ProductionVerifierAccepted
+      CallerSuppliedVerifierEvidence
         proofBytes statement rawOracle fallback database) :
     CoordinatesExactlyChallenge accepted.coordinates
       (productionDecsOpening accepted.decsSamplerSucceeds) :=
@@ -326,7 +332,7 @@ noncomputable def acceptedTrace
     {fallback : ActiveDigest}
     {database : ProductionHashDatabase}
     (accepted :
-      ProductionVerifierAccepted
+      CallerSuppliedVerifierEvidence
         proofBytes statement rawOracle fallback database) :
     AcceptedTrace accepted.salt database accepted.root
       (productionDecsChallenge rawOracle accepted.transcript)
@@ -368,27 +374,30 @@ noncomputable def acceptedTrace
       accepted.coordinatesExactlyChallenge)
 
 /--
-An accepted production transcript with a collision-free recorded hash database reaches the exact
-fourth-round interactive accepting state for the canonical extracted oracle.
+Caller-supplied modeled-verifier evidence with a collision-free recorded hash database reaches the
+exact fourth-round interactive accepting state for the canonical extracted oracle. This theorem is
+not a refinement theorem from compiled-Rust acceptance.
 -/
-theorem production_acceptance_implies_fourth_round_good
+theorem caller_supplied_verifier_evidence_implies_fourth_round_good
     {proofBytes : List HegemonCrypto.CanonicalBytes.Byte}
     {statement : Statement}
     {rawOracle : RawOracle}
     {fallback : ActiveDigest}
     {database : ProductionHashDatabase}
     (accepted :
-      ProductionVerifierAccepted
+      CallerSuppliedVerifierEvidence
         proofBytes statement rawOracle fallback database)
     (hashDatabaseCollisionFree : CollisionFree database) :
-    FourthRoundGood statement accepted.active
-      (accumulatedCommittedOracle (acceptedTrace accepted))
-      (productionDecsChallenge rawOracle accepted.transcript)
-      (productionPiopChallenge rawOracle accepted.transcript statement)
-      accepted.piopMessage
-      (productionPiopOpening accepted.canonicalOpeningNonce)
-      accepted.pcsMessage
-      (productionDecsOpening accepted.decsSamplerSucceeds) := by
+    ScopedSecurityClaim .callerSuppliedVerifier
+      (FourthRoundGood statement accepted.active
+        (accumulatedCommittedOracle (acceptedTrace accepted))
+        (productionDecsChallenge rawOracle accepted.transcript)
+        (productionPiopChallenge rawOracle accepted.transcript statement)
+        accepted.piopMessage
+        (productionPiopOpening accepted.canonicalOpeningNonce)
+        accepted.pcsMessage
+        (productionDecsOpening accepted.decsSamplerSucceeds)) := by
+  apply ScopedSecurityClaim.ofCallerSuppliedVerifier
   apply acceptance_predicates_imply_fourth_round_good
     statement accepted.active
       (accumulatedCommittedOracle (acceptedTrace accepted))

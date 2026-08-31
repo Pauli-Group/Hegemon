@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "params_fingerprint_hex": "cfabb908c622efe47b06f367d3fd3058c70b74c5875b199d823def9f7fc4db970163c3d295cbb225992ce639eef95773",
+  "spec_digest_hex": "c441d06521bf6e604fda75378aea05e341ad3f4a8769d74a9cca4e3ff582eb23",
+  "relation_id_hex": "ba7f5dba84ccaf5fda90cd92396fb6f80dd0d9fae48553bcc35494cb2a6ef85f",
+  "shape_digest_hex": "d1d9f89aa40713425c667017fa7fc7867538bd98b85a2c6e91d5bb42c5006786",
+  "tx_leaf_artifact_version": 64250,
+  "receipt_root_artifact_version": 39840,
+  "tx_leaf_verifier_profile_hex": "665af51d1ed830225d10bc21d0216791a70d62aed1542aa2d3b15dae326fe7e34d28218c91989ae96790f8421938f95f",
+  "hash_domains": {
+    "verifier_profile": "hegemon.superneo.verifier-profile.v2",
+    "proof_artifact": "hegemon.superneo.proof-artifact.v2",
+    "verify_cache": "hegemon.superneo.verify-cache.v2"
+  },
+  "policy": {
+    "identity_selection": "compiled-single-release-target",
+    "attacker_selected_registry": false,
+    "pre_proof_exact_match_required": true,
+    "fixed_32_byte_target_quantum_preimage_bits": 128
+  }
+}

@@ -1,0 +1,1397 @@
+diff --git a/crates/iop-prover/src/basefold/channel.rs b/crates/iop-prover/src/basefold/channel.rs
+index 96ea2348..76e3e9e6 100644
+--- a/crates/iop-prover/src/basefold/channel.rs
++++ b/crates/iop-prover/src/basefold/channel.rs
+@@ -11,8 +11,8 @@ use binius_ip_prover::{
+ 	channel::{IPProverChannel, WordIPProverChannel},
+ 	sumcheck::{
+ 		self, PaddedSumcheckDecorator, batch::BatchSumcheckOutput,
+-		bivariate_product_evaluator::BivariateProductEvaluator, mle_store::MleStore,
+-		round_evaluator::SharedSumcheckProver,
++		bivariate_product_evaluator::BivariateProductEvaluator, grouped::GroupedSumcheckProver,
++		mle_store::MleStore, round_evaluator::SharedSumcheckProver,
+ 	},
+ };
+ use binius_math::{
+@@ -68,6 +68,18 @@ struct QueuedRelation<P: PackedField, Data: Deref<Target = [P]>> {
+ 	claim: P::Scalar,
+ }
+ 
++/// One term in an aggregate relation spanning distinct committed oracles.
++struct QueuedGroupedTerm<P: PackedField, Data: Deref<Target = [P]>> {
++	oracle_index: usize,
++	transparent: FieldBuffer<P, Data>,
++}
++
++/// One claim of the form `sum_i <oracle_i, transparent_i> = claim`.
++struct QueuedGroupedRelation<P: PackedField, Data: Deref<Target = [P]>> {
++	terms: Vec<QueuedGroupedTerm<P, Data>>,
++	claim: P::Scalar,
++}
++
+ /// A prover channel that uses ZK BaseFold for all oracle commitments and openings.
+ ///
+ /// This channel owns an [`StdRng`] and generates random masks internally during
+@@ -105,6 +117,9 @@ where
+ 	/// index and opened together in [`Self::finish`]. One entry per committed oracle, so its
+ 	/// length is also the number of oracles committed so far.
+ 	queue: Vec<Vec<QueuedRelation<P, A::Vec<P>>>>,
++	/// Cross-oracle claims stay separate so per-oracle batching cannot materialize hidden term
++	/// claims.
++	grouped_queue: Vec<QueuedGroupedRelation<P, A::Vec<P>>>,
+ 	rng: StdRng,
+ 	/// The allocator every codeword, mask and encode temporary is drawn from.
+ 	alloc: A,
+@@ -138,6 +153,7 @@ where
+ 			fri_params,
+ 			committed_oracles: Vec::new(),
+ 			queue: Vec::new(),
++			grouped_queue: Vec::new(),
+ 			rng: StdRng::from_rng(&mut rng),
+ 			alloc,
+ 		}
+@@ -160,6 +176,7 @@ where
+ 			fri_params,
+ 			committed_oracles,
+ 			queue,
++			grouped_queue,
+ 			rng: _,
+ 			alloc,
+ 		} = self;
+@@ -167,7 +184,7 @@ where
+ 		let n_remaining = oracle_specs.len() - queue.len();
+ 		assert!(n_remaining == 0, "finish called but {n_remaining} oracle specs remaining",);
+ 
+-		if queue.iter().all(Vec::is_empty) {
++		if queue.iter().all(Vec::is_empty) && grouped_queue.is_empty() {
+ 			return;
+ 		}
+ 
+@@ -178,6 +195,7 @@ where
+ 			&fri_params,
+ 			committed_oracles,
+ 			queue,
++			grouped_queue,
+ 			&alloc,
+ 		);
+ 	}
+@@ -201,6 +219,7 @@ fn prove_batch_zk_basefold<A, F, P, NTT, Channel>(
+ 	fri_params: &FRIParams<F>,
+ 	mut committed_oracles: Vec<CommittedOracleData<P, Channel::Commitment, A::Vec<P>>>,
+ 	relations: Vec<Vec<QueuedRelation<P, A::Vec<P>>>>,
++	grouped_relations: Vec<QueuedGroupedRelation<P, A::Vec<P>>>,
+ 	alloc: &A,
+ ) where
+ 	A: Allocator,
+@@ -213,12 +232,18 @@ fn prove_batch_zk_basefold<A, F, P, NTT, Channel>(
+ 	assert_eq!(oracle_specs.len(), n_committed);
+ 	assert_eq!(relations.len(), n_committed);
+ 
+-	// TODO: Remove this limitation, it shouldn't be necessary. It is currently because of how the
+-	// sumcheck reduces to the multilinear evaluations (alphas): an oracle with no relation gets no
+-	// sumcheck prover, so its α would have to come from a plain multilinear evaluation.
++	let mut covered = relations
++		.iter()
++		.map(|ordinary| !ordinary.is_empty())
++		.collect::<Vec<_>>();
++	for relation in &grouped_relations {
++		for term in &relation.terms {
++			covered[term.oracle_index] = true;
++		}
++	}
+ 	assert!(
+-		relations.iter().all(|relations| !relations.is_empty()),
+-		"expects at least one relation per committed oracle",
++		covered.into_iter().all(|is_covered| is_covered),
++		"every committed oracle must occur in exactly one ordinary or grouped relation",
+ 	);
+ 
+ 	// Take ownership of the committed messages π_i, leaving the masks and codewords in place. Every
+@@ -234,9 +259,24 @@ fn prove_batch_zk_basefold<A, F, P, NTT, Channel>(
+ 		})
+ 		.collect::<Vec<_>>();
+ 
+-	// Batch each oracle's claims into one, so everything below runs exactly one relation per
+-	// committed oracle.
+-	let relations = batch_relations_per_oracle::<A, _, _, _>(channel, relations);
++	// Batch ordinary claims per oracle, then represent each surviving ordinary claim as a one-term
++	// grouped relation. Cross-oracle relations remain intact and never acquire individual public
++	// term claims.
++	let ordinary_relations = batch_relations_per_oracle::<A, _, _, _>(channel, relations);
++	let mut relations = ordinary_relations
++		.into_iter()
++		.enumerate()
++		.filter_map(|(oracle_index, relation)| {
++			relation.map(|QueuedRelation { transparent, claim }| QueuedGroupedRelation {
++				terms: vec![QueuedGroupedTerm {
++					oracle_index,
++					transparent,
++				}],
++				claim,
++			})
++		})
++		.collect::<Vec<_>>();
++	relations.extend(grouped_relations);
+ 
+ 	// `𝐧 = max_i log_msg_len_i`, the variable count of the combined opening / materialized buffer.
+ 	let max_n = oracle_specs
+@@ -246,17 +286,45 @@ fn prove_batch_zk_basefold<A, F, P, NTT, Channel>(
+ 		.expect("at least one oracle");
+ 
+ 	// === Masking step (whitepaper 7.2) ===
+-	// Only ZK oracles are masked. Send their σ_i = ⟨ω_i, T_i⟩ against the batched transparent (one
+-	// per ZK oracle), then sample the single shared masking challenge γ — skipped entirely when no
+-	// ZK oracle is present.
+-	let any_zk_openings = oracle_specs.iter().any(|spec| spec.is_zk);
++	// A multi-oracle relation must consist entirely of hiding commitments. Send one aggregate
++	// sigma_j = sum_i <omega_i, T_i> for each hiding relation, then use one gamma for every hiding
++	// oracle. Sending the per-term sigmas would recreate the linear leakage the grouped relation
++	// removes.
++	let relation_is_zk = relations
++		.iter()
++		.map(|relation| {
++			let first = oracle_specs[relation.terms[0].oracle_index].is_zk;
++			assert!(
++				relation
++					.terms
++					.iter()
++					.all(|term| oracle_specs[term.oracle_index].is_zk == first),
++				"a grouped relation may not mix hiding and non-hiding oracles"
++			);
++			assert!(
++				relation.terms.len() == 1 || first,
++				"every oracle in a multi-oracle grouped relation must be hiding"
++			);
++			first
++		})
++		.collect::<Vec<_>>();
++	let any_zk_openings = relation_is_zk.iter().any(|&is_zk| is_zk);
+ 	let (sigmas, gamma) = if any_zk_openings {
+ 		let _scope = tracing::debug_span!("Compute ZK mask opening values").entered();
+-		let sigmas = izip!(&relations, oracle_specs, &committed_oracles)
+-			.filter(|(_, spec, _)| spec.is_zk)
+-			.map(|(relation, _, committed)| {
+-				let mask = committed.mask.as_ref().expect("ZK oracle carries a mask");
+-				inner_product_par(mask, &relation.transparent)
++		let sigmas = izip!(&relations, &relation_is_zk)
++			.filter(|(_, is_zk)| **is_zk)
++			.map(|(relation, _)| {
++				relation
++					.terms
++					.iter()
++					.map(|term| {
++						let mask = committed_oracles[term.oracle_index]
++							.mask
++							.as_ref()
++							.expect("ZK oracle carries a mask");
++						inner_product_par(mask, &term.transparent)
++					})
++					.sum::<F>()
+ 			})
+ 			.collect::<Vec<_>>();
+ 		channel.send_many(&sigmas);
+@@ -288,32 +356,64 @@ fn prove_batch_zk_basefold<A, F, P, NTT, Channel>(
+ 		}
+ 	}
+ 
+-	// === Phase A: batched sumcheck on the masked claims ⟨π_i', T_i⟩ = s_i' ===
+-	// One prover per committed oracle, in oracle-index order, each padded to `max_n`.
++	// === Phase A: batched sumcheck on the masked relation claims ===
++	// Each term keeps its native message size and is padded independently to max_n. The grouped
++	// prover adds the term round polynomials before serialization, so only the aggregate claim is
++	// visible.
+ 	let mut sigma_iter = sigmas.into_iter();
+-	let provers = izip!(relations, &messages, oracle_specs)
+-		.map(|(QueuedRelation { transparent, claim }, message, spec)| {
+-			let n_i = spec.log_msg_len;
+-			assert_eq!(transparent.log_len(), n_i); // pre-condition
+-
+-			// ZK oracle: mask the claim with σ_i.
+-			// Non-ZK oracle: the claim passes through unmasked.
+-			let sum_prime = if spec.is_zk {
+-				let sigma = sigma_iter.next().expect("one σ per ZK oracle");
++	let mut relation_oracle_indices = Vec::with_capacity(relations.len());
++	let provers = izip!(relations, relation_is_zk)
++		.map(|(QueuedGroupedRelation { terms, claim }, is_zk)| {
++			let sum_prime = if is_zk {
++				let sigma = sigma_iter.next().expect("one sigma per ZK relation");
+ 				let gamma = gamma.expect("γ sampled when ZK oracles present");
+ 				extrapolate_line(claim, sigma, gamma)
+ 			} else {
+ 				claim
+ 			};
+ 
+-			let mut store = MleStore::new(n_i, alloc);
+-			let message_col = store.push(message.to_ref());
+-			let transparent_col = store.push_owned(transparent);
+-			let inner = SharedSumcheckProver::new(
+-				store,
+-				[(sum_prime, BivariateProductEvaluator::new([message_col, transparent_col]))],
++			relation_oracle_indices.push(
++				terms
++					.iter()
++					.map(|term| term.oracle_index)
++					.collect::<Vec<_>>(),
+ 			);
+-			PaddedSumcheckDecorator::new(inner, max_n - n_i, vec![sum_prime])
++			let term_claims = if terms.len() == 1 {
++				vec![sum_prime]
++			} else {
++				let claims = terms
++					.iter()
++					.map(|term| inner_product_par(&messages[term.oracle_index], &term.transparent))
++					.collect::<Vec<_>>();
++				assert_eq!(
++					claims.iter().copied().sum::<F>(),
++					sum_prime,
++					"the grouped relation claim must equal the sum of its terms"
++				);
++				claims
++			};
++
++			let term_provers = terms
++				.into_iter()
++				.zip(term_claims)
++				.map(|(term, term_claim)| {
++					let n_i = oracle_specs[term.oracle_index].log_msg_len;
++					assert_eq!(term.transparent.log_len(), n_i);
++					let mut store = MleStore::new(n_i, alloc);
++					let message_col = store.push(messages[term.oracle_index].to_ref());
++					let transparent_col = store.push_owned(term.transparent);
++					let inner = SharedSumcheckProver::new(
++						store,
++						[(
++							term_claim,
++							BivariateProductEvaluator::new([message_col, transparent_col]),
++						)],
++					);
++					let padded = PaddedSumcheckDecorator::new(inner, max_n - n_i, vec![term_claim]);
++					(term_claim, padded)
++				})
++				.collect::<Vec<_>>();
++			GroupedSumcheckProver::new(term_provers, sum_prime)
+ 		})
+ 		.collect::<Vec<_>>();
+ 
+@@ -326,10 +426,26 @@ fn prove_batch_zk_basefold<A, F, P, NTT, Channel>(
+ 		sumcheck::batch_prove(provers, channel)
+ 	};
+ 
+-	// Reduced oracle evaluations α_i = π_i'(ρ_i), one per committed oracle in oracle-index order.
+-	let alphas = multilinear_evals
+-		.iter()
+-		.map(|evals| evals[0])
++	// Recover one reduced message evaluation alpha_i per oracle. The queue contract makes grouped
++	// and ordinary ownership disjoint; the duplicate check remains a fail-closed invariant if that
++	// contract ever drifts.
++	let mut alphas = vec![None; n_committed];
++	for (evals, oracle_indices) in izip!(multilinear_evals, relation_oracle_indices) {
++		assert_eq!(evals.len(), 2 * oracle_indices.len());
++		for (term_index, oracle_index) in oracle_indices.into_iter().enumerate() {
++			let alpha = evals[2 * term_index];
++			assert!(
++				alphas[oracle_index].replace(alpha).is_none(),
++				"an oracle occurred in more than one Phase-A relation"
++			);
++		}
++	}
++	let alphas = alphas
++		.into_iter()
++		.enumerate()
++		.map(|(index, alpha)| {
++			alpha.unwrap_or_else(|| panic!("oracle {index} is not covered by a relation"))
++		})
+ 		.collect::<Vec<_>>();
+ 	channel.send_many(&alphas);
+ 
+@@ -413,7 +529,7 @@ fn prove_batch_zk_basefold<A, F, P, NTT, Channel>(
+ fn batch_relations_per_oracle<A, F, P, Channel>(
+ 	channel: &mut Channel,
+ 	relations: Vec<Vec<QueuedRelation<P, A::Vec<P>>>>,
+-) -> Vec<QueuedRelation<P, A::Vec<P>>>
++) -> Vec<Option<QueuedRelation<P, A::Vec<P>>>>
+ where
+ 	A: Allocator,
+ 	F: BinaryField,
+@@ -426,9 +542,9 @@ where
+ 		.into_iter()
+ 		.map(|relations| {
+ 			let mut relations = relations.into_iter();
+-			let mut batched = relations
+-				.next()
+-				.expect("pre-condition: every committed oracle carries at least one relation");
++			let Some(mut batched) = relations.next() else {
++				return None;
++			};
+ 
+ 			// Powers λ, λ², … scale the oracle's remaining relations into the first. An oracle
+ 			// carrying a single relation folds nothing.
+@@ -445,7 +561,7 @@ where
+ 				batched.claim += coeff * relation.claim;
+ 				coeff *= lambda;
+ 			}
+-			batched
++			Some(batched)
+ 		})
+ 		.collect()
+ }
+@@ -660,6 +776,13 @@ where
+ 		transparent: FieldVec<P, A>,
+ 		claim: P::Scalar,
+ 	) {
++		assert!(
++			self.grouped_queue.iter().all(|relation| relation
++				.terms
++				.iter()
++				.all(|term| term.oracle_index != oracle.index)),
++			"a grouped oracle may not also carry ordinary relations"
++		);
+ 		// Queue the relation under its oracle; the actual opening (masking + sumcheck + combined
+ 		// FRI) happens once, over all committed oracles, in [`Self::finish`].
+ 		let n_committed = self.queue.len();
+@@ -671,6 +794,67 @@ where
+ 			.push(QueuedRelation { transparent, claim });
+ 	}
+ 
++	fn prove_grouped_oracle_relation(
++		&mut self,
++		terms: Vec<(Self::Oracle, FieldVec<P, A>)>,
++		claim: P::Scalar,
++	) {
++		assert_eq!(
++			self.queue.len(),
++			self.oracle_specs.len(),
++			"all oracles must be committed before a grouped relation is queued"
++		);
++		assert!(terms.len() >= 2, "a grouped relation must span at least two oracles");
++
++		let mut indices = terms
++			.iter()
++			.map(|(oracle, _)| oracle.index)
++			.collect::<Vec<_>>();
++		indices.sort_unstable();
++		indices.dedup();
++		assert_eq!(
++			indices.len(),
++			terms.len(),
++			"a grouped relation may contain each oracle at most once"
++		);
++		for &index in &indices {
++			let spec = self
++				.oracle_specs
++				.get(index)
++				.unwrap_or_else(|| panic!("oracle index {index} out of bounds"));
++			assert!(spec.is_zk, "every grouped oracle must use a hiding commitment");
++			assert!(
++				self.queue[index].is_empty(),
++				"a grouped oracle may not also carry ordinary relations"
++			);
++			assert!(
++				self.grouped_queue
++					.iter()
++					.all(|relation| relation.terms.iter().all(|term| term.oracle_index != index)),
++				"a grouped oracle may occur in only one grouped relation"
++			);
++		}
++
++		let terms = terms
++			.into_iter()
++			.map(|(oracle, transparent)| {
++				let spec = &self.oracle_specs[oracle.index];
++				assert_eq!(
++					transparent.log_len(),
++					spec.log_msg_len,
++					"grouped transparent length must match oracle {}",
++					oracle.index
++				);
++				QueuedGroupedTerm {
++					oracle_index: oracle.index,
++					transparent,
++				}
++			})
++			.collect();
++		self.grouped_queue
++			.push(QueuedGroupedRelation { terms, claim });
++	}
++
+ 	fn finalize_oracle(&mut self, oracle: Self::Oracle, buffer: FieldVec<P, A>) {
+ 		let committed = self
+ 			.committed_oracles
+@@ -900,6 +1084,93 @@ mod tests {
+ 		verifier_channel.finish().unwrap();
+ 	}
+ 
++	fn run_grouped_two_oracles(tamper_aggregate: bool) -> bool {
++		type F = BinaryField128bGhash;
++		type P = PackedBinaryGhash1x128b;
++
++		let mut rng = StdRng::seed_from_u64(0x4752_4f55_5045_44);
++		let n_vars_1 = 5;
++		let n_vars_2 = 8;
++		let (buffer_1, transparent_1, claim_1) =
++			generate_zk_oracle_data::<F, P, _>(&mut rng, n_vars_1);
++		let (buffer_2, transparent_2, claim_2) =
++			generate_zk_oracle_data::<F, P, _>(&mut rng, n_vars_2);
++		let aggregate_claim = claim_1 + claim_2;
++
++		let n_test_queries = calculate_n_test_queries(SECURITY_BITS, LOG_INV_RATE);
++		let verifier_compiler = BaseFoldVerifierCompiler::new(
++			&make_merkle_scheme(),
++			vec![OracleSpec::new_zk(n_vars_1), OracleSpec::new_zk(n_vars_2)],
++			LOG_INV_RATE,
++			n_test_queries,
++			&MinProofSizeStrategy,
++		);
++		let ntt = make_ntt(verifier_compiler.max_log_domain_size());
++		let prover_compiler =
++			BaseFoldProverCompiler::<P, _>::from_verifier_compiler(&verifier_compiler, ntt);
++
++		let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
++		let mut prover_channel = prover_compiler
++			.create_channel_from_transcript::<StdHashSuite, StdChallenger, _, _>(
++				&mut prover_transcript,
++				StdRng::seed_from_u64(7),
++				GlobalAllocator,
++			);
++		let oracle_1 = prover_channel.send_oracle(buffer_1.to_ref());
++		let oracle_2 = prover_channel.send_oracle(buffer_2.to_ref());
++		prover_channel.prove_grouped_oracle_relation(
++			vec![
++				(oracle_1, transparent_1.clone()),
++				(oracle_2, transparent_2.clone()),
++			],
++			aggregate_claim,
++		);
++		prover_channel.finalize_oracle(oracle_1, buffer_1);
++		prover_channel.finalize_oracle(oracle_2, buffer_2);
++		prover_channel.finish();
++
++		let mut verifier_transcript = prover_transcript.into_verifier();
++		let mut verifier_channel = verifier_compiler
++			.create_channel_from_transcript::<StdHashSuite, StdChallenger, _>(
++				&mut verifier_transcript,
++			);
++		let verifier_oracle_1 = verifier_channel.recv_oracle(n_vars_1, true).unwrap();
++		let verifier_oracle_2 = verifier_channel.recv_oracle(n_vars_2, true).unwrap();
++		let verifier_claim = aggregate_claim + if tamper_aggregate { F::ONE } else { F::ZERO };
++		verifier_channel
++			.verify_grouped_oracle_relation(
++				vec![
++					(
++						verifier_oracle_1,
++						Box::new(move |point: &[F]| {
++							let eq = eq_ind_partial_eval::<P>(point);
++							inner_product_buffers(&transparent_1, &eq)
++						}),
++					),
++					(
++						verifier_oracle_2,
++						Box::new(move |point: &[F]| {
++							let eq = eq_ind_partial_eval::<P>(point);
++							inner_product_buffers(&transparent_2, &eq)
++						}),
++					),
++				],
++				verifier_claim,
++			)
++			.expect("grouped relation only queues");
++		verifier_channel.finish().is_ok()
++	}
++
++	#[test]
++	fn grouped_two_oracles_with_unequal_lengths_proves() {
++		assert!(run_grouped_two_oracles(false));
++	}
++
++	#[test]
++	fn grouped_aggregate_claim_mutation_rejects() {
++		assert!(!run_grouped_two_oracles(true));
++	}
++
+ 	/// Runs a full prove/verify cycle of the Batched ZK BaseFold channel over oracles of the given
+ 	/// sizes. If `tamper`, the verifier's claim on the first oracle is corrupted; verification must
+ 	/// then fail. Returns whether verification accepted.
+diff --git a/crates/iop-prover/src/channel/mod.rs b/crates/iop-prover/src/channel/mod.rs
+index d9d4514f..2a4ab665 100644
+--- a/crates/iop-prover/src/channel/mod.rs
++++ b/crates/iop-prover/src/channel/mod.rs
+@@ -86,6 +86,21 @@ pub trait IOPProverChannel<P: PackedField, A: Allocator>: IPProverChannel<P::Sca
+ 		claim: P::Scalar,
+ 	);
+ 
++	/// Generates one opening proof for an aggregate relation spanning distinct oracles.
++	///
++	/// The relation is `sum_i <oracle_i, transparent_i> = claim`. The API deliberately carries no
++	/// individual term claims: a channel must either prove the aggregate directly or fail closed.
++	/// Decomposing it into ordinary relations would disclose exactly the linear functionals this
++	/// interface exists to keep hidden.
++	fn prove_grouped_oracle_relation(
++		&mut self,
++		terms: Vec<(Self::Oracle, FieldVec<P, A>)>,
++		claim: P::Scalar,
++	) {
++		let _ = (terms, claim);
++		panic!("this prover channel does not support grouped oracle relations")
++	}
++
+ 	/// Generates an opening proof for an oracle multilinear-evaluation relation.
+ 	///
+ 	/// This is the narrower form of [`Self::prove_oracle_relation`] where `transparent` is an
+diff --git a/crates/iop-prover/src/channel/naive.rs b/crates/iop-prover/src/channel/naive.rs
+index da399f53..5a0ec9b7 100644
+--- a/crates/iop-prover/src/channel/naive.rs
++++ b/crates/iop-prover/src/channel/naive.rs
+@@ -15,7 +15,7 @@ use binius_transcript::{
+ use crate::channel::IOPProverChannel;
+ 
+ /// Oracle handle returned by [`NaiveProverChannel::send_oracle`].
+-#[derive(Debug, Clone, Copy)]
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub struct NaiveOracle {
+ 	index: usize,
+ }
+@@ -180,6 +180,32 @@ where
+ 		let _point: Vec<F> = CanSample::sample_vec(&mut self.transcript, log_msg_len);
+ 	}
+ 
++	fn prove_grouped_oracle_relation(
++		&mut self,
++		terms: Vec<(Self::Oracle, FieldBuffer<P>)>,
++		_claim: P::Scalar,
++	) {
++		assert!(terms.len() >= 2, "a grouped relation must span at least two oracles");
++		let mut indices = terms
++			.iter()
++			.map(|(oracle, _)| oracle.index)
++			.collect::<Vec<_>>();
++		indices.sort_unstable();
++		indices.dedup();
++		assert_eq!(indices.len(), terms.len(), "grouped oracle handles must be distinct");
++
++		for (oracle, transparent) in terms {
++			let index = oracle.index;
++			assert!(index < self.n_committed, "oracle index {index} out of bounds");
++			let log_msg_len = self.oracle_specs[index].log_msg_len;
++			assert_eq!(transparent.log_len(), log_msg_len);
++			self.transcript
++				.message()
++				.write_scalar_iter(transparent.iter_scalars());
++			let _point: Vec<F> = CanSample::sample_vec(&mut self.transcript, log_msg_len);
++		}
++	}
++
+ 	/// Drops the buffer.
+ 	///
+ 	/// `send_oracle` already wrote the message to the transcript, so this channel needs no copy of
+diff --git a/crates/iop/src/basefold/channel.rs b/crates/iop/src/basefold/channel.rs
+index e13cecea..0cf674c6 100644
+--- a/crates/iop/src/basefold/channel.rs
++++ b/crates/iop/src/basefold/channel.rs
+@@ -37,6 +37,18 @@ struct QueuedRelation<Elem> {
+ 	claim: Elem,
+ }
+ 
++/// One term in an aggregate relation spanning distinct committed oracles.
++struct QueuedGroupedTerm<Elem> {
++	oracle_index: usize,
++	transparent: TransparentEvalFn<Elem>,
++}
++
++/// One aggregate claim whose individual term claims never enter the verifier interface.
++struct QueuedGroupedRelation<Elem> {
++	terms: Vec<QueuedGroupedTerm<Elem>>,
++	claim: Elem,
++}
++
+ /// A verifier channel that uses ZK BaseFold for all oracle commitments and openings.
+ ///
+ /// This channel always applies zero-knowledge blinding. The FRI parameters must be set up
+@@ -62,6 +74,7 @@ where
+ 	/// oracle index and opened together in [`Self::finish`]. One entry per received oracle, so its
+ 	/// length is also the number of oracles received so far.
+ 	queue: Vec<Vec<QueuedRelation<Channel::Elem>>>,
++	grouped_queue: Vec<QueuedGroupedRelation<Channel::Elem>>,
+ }
+ 
+ impl<'a, F, Channel> BaseFoldVerifierChannel<'a, F, Channel>
+@@ -85,6 +98,7 @@ where
+ 			fri_params,
+ 			oracle_commitments: Vec::new(),
+ 			queue: Vec::new(),
++			grouped_queue: Vec::new(),
+ 		}
+ 	}
+ 
+@@ -107,18 +121,20 @@ where
+ 			fri_params,
+ 			oracle_commitments,
+ 			queue,
++			grouped_queue,
+ 		} = self;
+ 
+ 		let n_remaining = oracle_specs.len() - queue.len();
+ 		assert!(n_remaining == 0, "finish called but {n_remaining} oracle specs remaining",);
+ 
+-		if !queue.iter().all(Vec::is_empty) {
++		if !queue.iter().all(Vec::is_empty) || !grouped_queue.is_empty() {
+ 			verify_batch_zk_basefold(
+ 				&mut channel,
+ 				oracle_specs,
+ 				fri_params,
+ 				&oracle_commitments,
+ 				queue,
++				grouped_queue,
+ 			)?;
+ 		}
+ 
+@@ -147,6 +163,7 @@ fn verify_batch_zk_basefold<F, Channel>(
+ 	fri_params: &FRIParams<F>,
+ 	oracle_commitments: &[Channel::Commitment],
+ 	relations: Vec<Vec<QueuedRelation<Channel::Elem>>>,
++	grouped_relations: Vec<QueuedGroupedRelation<Channel::Elem>>,
+ ) -> Result<(), Error>
+ where
+ 	F: BinaryField,
+@@ -155,10 +172,18 @@ where
+ 	let n_committed = oracle_commitments.len();
+ 	assert_eq!(relations.len(), n_committed);
+ 
+-	// The prover's opening assumes every committed oracle is opened; see the matching assert there.
++	let mut covered = relations
++		.iter()
++		.map(|ordinary| !ordinary.is_empty())
++		.collect::<Vec<_>>();
++	for relation in &grouped_relations {
++		for term in &relation.terms {
++			covered[term.oracle_index] = true;
++		}
++	}
+ 	assert!(
+-		relations.iter().all(|relations| !relations.is_empty()),
+-		"expects at least one relation per committed oracle",
++		covered.into_iter().all(|is_covered| is_covered),
++		"every committed oracle must occur in an ordinary or grouped relation",
+ 	);
+ 
+ 	// `𝐧 = max_i log_msg_len_i`, the variable count of the combined opening / materialized buffer.
+@@ -168,24 +193,54 @@ where
+ 		.max()
+ 		.expect("at least one oracle");
+ 
+-	// Batch each oracle's claims into one, so everything below runs exactly one relation per
+-	// committed oracle.
+-	let relations = batch_relations_per_oracle(channel, relations);
++	let ordinary_relations = batch_relations_per_oracle(channel, relations);
++	let mut relations = ordinary_relations
++		.into_iter()
++		.enumerate()
++		.filter_map(|(oracle_index, relation)| {
++			relation.map(|QueuedRelation { transparent, claim }| QueuedGroupedRelation {
++				terms: vec![QueuedGroupedTerm {
++					oracle_index,
++					transparent,
++				}],
++				claim,
++			})
++		})
++		.collect::<Vec<_>>();
++	relations.extend(grouped_relations);
+ 
+ 	// === Masking step ===
+-	// Only ZK oracles are masked: read their σ_i (one per ZK oracle) and sample the single shared
+-	// γ. With no ZK oracle, γ is never sampled.
+-	let n_zk = oracle_specs.iter().filter(|spec| spec.is_zk).count();
+-	let sigmas = channel.recv_many(n_zk)?;
++	// One aggregate sigma is received per hiding relation. The prover never serializes the term
++	// sigmas of a cross-oracle relation.
++	let relation_is_zk = relations
++		.iter()
++		.map(|relation| {
++			let first = oracle_specs[relation.terms[0].oracle_index].is_zk;
++			assert!(
++				relation
++					.terms
++					.iter()
++					.all(|term| oracle_specs[term.oracle_index].is_zk == first),
++				"a grouped relation may not mix hiding and non-hiding oracles"
++			);
++			assert!(
++				relation.terms.len() == 1 || first,
++				"every oracle in a multi-oracle grouped relation must be hiding"
++			);
++			first
++		})
++		.collect::<Vec<_>>();
++	let n_zk_relations = relation_is_zk.iter().filter(|&&is_zk| is_zk).count();
++	let sigmas = channel.recv_many(n_zk_relations)?;
+ 	let gamma = (!sigmas.is_empty()).then(|| channel.sample());
+ 
+ 	// Masked claim per relation: ZK → s_i' = extrapolate_line(claim, σ_i, γ); non-ZK → s_i' =
+ 	// claim.
+ 	let mut sigma_iter = sigmas.into_iter();
+-	let sum_primes = izip!(&relations, oracle_specs)
+-		.map(|(relation, spec)| {
+-			if spec.is_zk {
+-				let sigma = sigma_iter.next().expect("one σ per ZK oracle");
++	let sum_primes = izip!(&relations, &relation_is_zk)
++		.map(|(relation, is_zk)| {
++			if *is_zk {
++				let sigma = sigma_iter.next().expect("one sigma per ZK relation");
+ 				extrapolate_line(
+ 					relation.claim.clone(),
+ 					sigma,
+@@ -211,13 +266,22 @@ where
+ 	let mut point = sumcheck_challenges;
+ 	point.reverse();
+ 
+-	// Reduce the batched claim: each oracle contributes α_i · T_i(ρ_i) · eq(0^extra, padding).
+-	let contributions = izip!(relations, oracle_specs, &alphas)
+-		.map(|(relation, spec, alpha_i)| {
+-			let (eval_coords, padding_coords) = point.split_at(spec.log_msg_len);
+-			let pad_eq = eq_ind_zero(padding_coords);
+-			let transparent_eval = (relation.transparent)(eval_coords);
+-			alpha_i.clone() * transparent_eval * pad_eq
++	// Reduce every relation as the sum of its native-size terms. Each oracle's single alpha is
++	// reused directly, and each short term receives exactly its own eq-to-zero padding factor.
++	let contributions = relations
++		.into_iter()
++		.map(|relation| {
++			relation
++				.terms
++				.into_iter()
++				.map(|term| {
++					let spec = &oracle_specs[term.oracle_index];
++					let (eval_coords, padding_coords) = point.split_at(spec.log_msg_len);
++					let pad_eq = eq_ind_zero(padding_coords);
++					let transparent_eval = (term.transparent)(eval_coords);
++					alphas[term.oracle_index].clone() * transparent_eval * pad_eq
++				})
++				.sum::<Channel::Elem>()
+ 		})
+ 		.collect::<Vec<_>>();
+ 	let expected = evaluate_univariate(&contributions, &sumcheck_batch_coeff);
+@@ -276,7 +340,7 @@ where
+ fn batch_relations_per_oracle<F, Channel>(
+ 	channel: &mut Channel,
+ 	relations: Vec<Vec<QueuedRelation<Channel::Elem>>>,
+-) -> Vec<QueuedRelation<Channel::Elem>>
++) -> Vec<Option<QueuedRelation<Channel::Elem>>>
+ where
+ 	F: BinaryField,
+ 	Channel: MerkleIPVerifierChannel<F, Elem: From<F> + 'static>,
+@@ -286,11 +350,12 @@ where
+ 	relations
+ 		.into_iter()
+ 		.map(|mut relations| {
++			if relations.is_empty() {
++				return None;
++			}
+ 			// An oracle carrying a single relation folds nothing.
+-			if relations.len() <= 1 {
+-				return relations
+-					.pop()
+-					.expect("pre-condition: every committed oracle carries at least one relation");
++			if relations.len() == 1 {
++				return relations.pop();
+ 			}
+ 
+ 			let (transparents, claims): (Vec<_>, Vec<_>) = relations
+@@ -300,7 +365,7 @@ where
+ 			let claim = evaluate_univariate(&claims, &lambda);
+ 			let lambda = lambda.clone();
+ 
+-			QueuedRelation {
++			Some(QueuedRelation {
+ 				transparent: Box::new(move |point: &[Channel::Elem]| {
+ 					let evals = transparents
+ 						.iter()
+@@ -309,7 +374,7 @@ where
+ 					evaluate_univariate(&evals, &lambda)
+ 				}),
+ 				claim,
+-			}
++			})
+ 		})
+ 		.collect()
+ }
+@@ -441,6 +506,13 @@ where
+ 		transparent: TransparentEvalFn<Self::Elem>,
+ 		claim: Self::Elem,
+ 	) -> Result<(), Error> {
++		assert!(
++			self.grouped_queue.iter().all(|relation| relation
++				.terms
++				.iter()
++				.all(|term| term.oracle_index != oracle.index)),
++			"a grouped oracle may not also carry ordinary relations"
++		);
+ 		// Queue the relation under its oracle; the actual opening (masking + sumcheck + combined
+ 		// FRI) happens once, over all committed oracles, in [`Self::finish`].
+ 		let n_committed = self.queue.len();
+@@ -452,4 +524,57 @@ where
+ 			.push(QueuedRelation { transparent, claim });
+ 		Ok(())
+ 	}
++
++	fn verify_grouped_oracle_relation(
++		&mut self,
++		terms: Vec<(Self::Oracle, TransparentEvalFn<Self::Elem>)>,
++		claim: Self::Elem,
++	) -> Result<(), Error> {
++		assert_eq!(
++			self.queue.len(),
++			self.oracle_specs.len(),
++			"all oracles must be received before a grouped relation is queued"
++		);
++		assert!(terms.len() >= 2, "a grouped relation must span at least two oracles");
++
++		let mut indices = terms
++			.iter()
++			.map(|(oracle, _)| oracle.index)
++			.collect::<Vec<_>>();
++		indices.sort_unstable();
++		indices.dedup();
++		assert_eq!(
++			indices.len(),
++			terms.len(),
++			"a grouped relation may contain each oracle at most once"
++		);
++		for &index in &indices {
++			let spec = self
++				.oracle_specs
++				.get(index)
++				.unwrap_or_else(|| panic!("oracle index {index} out of bounds"));
++			assert!(spec.is_zk, "every grouped oracle must use a hiding commitment");
++			assert!(
++				self.queue[index].is_empty(),
++				"a grouped oracle may not also carry ordinary relations"
++			);
++			assert!(
++				self.grouped_queue
++					.iter()
++					.all(|relation| relation.terms.iter().all(|term| term.oracle_index != index)),
++				"a grouped oracle may occur in only one grouped relation"
++			);
++		}
++
++		let terms = terms
++			.into_iter()
++			.map(|(oracle, transparent)| QueuedGroupedTerm {
++				oracle_index: oracle.index,
++				transparent,
++			})
++			.collect();
++		self.grouped_queue
++			.push(QueuedGroupedRelation { terms, claim });
++		Ok(())
++	}
+ }
+diff --git a/crates/iop/src/channel/mod.rs b/crates/iop/src/channel/mod.rs
+index 78e207b0..73ebe1b3 100644
+--- a/crates/iop/src/channel/mod.rs
++++ b/crates/iop/src/channel/mod.rs
+@@ -24,6 +24,8 @@ pub enum Error {
+ 	Sumcheck(#[from] binius_ip::sumcheck::Error),
+ 	#[error("Merkle channel error: {0}")]
+ 	Merkle(#[from] crate::merkle_channel::Error),
++	#[error("this verifier channel does not support grouped oracle relations")]
++	UnsupportedGroupedRelation,
+ }
+ 
+ /// Specification for an oracle to be committed in the IOP.
+@@ -146,6 +148,20 @@ pub trait IOPVerifierChannel<F: Field>: IPVerifierChannel<F, Elem: 'static> {
+ 		claim: Self::Elem,
+ 	) -> Result<(), Error>;
+ 
++	/// Queues one aggregate relation spanning distinct committed oracles.
++	///
++	/// The verifier receives only `sum_i <oracle_i, transparent_i> = claim`; no individual term
++	/// claim exists on this interface or the transcript. Implementations that cannot preserve that
++	/// boundary reject rather than silently decomposing the relation.
++	fn verify_grouped_oracle_relation(
++		&mut self,
++		terms: Vec<(Self::Oracle, TransparentEvalFn<Self::Elem>)>,
++		claim: Self::Elem,
++	) -> Result<(), Error> {
++		let _ = (terms, claim);
++		Err(Error::UnsupportedGroupedRelation)
++	}
++
+ 	/// Queues one oracle multilinear-evaluation relation to be opened.
+ 	///
+ 	/// The supplied `mask_coefficient` is the transparent's Boolean-hypercube sum. A channel may use
+diff --git a/crates/iop/src/channel/naive.rs b/crates/iop/src/channel/naive.rs
+index ca0a47f5..47d222cc 100644
+--- a/crates/iop/src/channel/naive.rs
++++ b/crates/iop/src/channel/naive.rs
+@@ -13,7 +13,7 @@ use binius_transcript::{
+ use crate::channel::{Error, IOPVerifierChannel, OracleSpec, TransparentEvalFn};
+ 
+ /// Oracle handle returned by [`NaiveVerifierChannel::recv_oracle`].
+-#[derive(Debug, Clone, Copy)]
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub struct NaiveOracle {
+ 	index: usize,
+ }
+@@ -217,4 +217,41 @@ where
+ 
+ 		Ok(())
+ 	}
++
++	fn verify_grouped_oracle_relation(
++		&mut self,
++		terms: Vec<(Self::Oracle, TransparentEvalFn<F>)>,
++		claim: F,
++	) -> Result<(), Error> {
++		assert!(terms.len() >= 2, "a grouped relation must span at least two oracles");
++		let mut indices = terms
++			.iter()
++			.map(|(oracle, _)| oracle.index)
++			.collect::<Vec<_>>();
++		indices.sort_unstable();
++		indices.dedup();
++		assert_eq!(indices.len(), terms.len(), "grouped oracle handles must be distinct");
++
++		let mut actual = F::ZERO;
++		for (oracle, transparent) in terms {
++			let index = oracle.index;
++			assert!(index < self.stored_polynomials.len(), "oracle index {index} out of bounds");
++			let log_msg_len = self.oracle_specs[index].log_msg_len;
++			let transparent_values = self
++				.transcript
++				.message()
++				.read_scalar_slice(1 << log_msg_len)
++				.map_err(|_| Error::ProofEmpty)?;
++			let transparent_poly = FieldBuffer::from_values(&transparent_values);
++			actual +=
++				inner_product_buffers(&self.stored_polynomials[index].to_ref(), &transparent_poly);
++
++			let point: Vec<F> = CanSample::sample_vec(&mut self.transcript, log_msg_len);
++			let expected_eval =
++				binius_math::multilinear::evaluate::evaluate_inplace(transparent_poly, &point);
++			self.assert_zero(transparent(&point) - expected_eval)?;
++		}
++		self.assert_zero(actual - claim)?;
++		Ok(())
++	}
+ }
+diff --git a/crates/iop/src/channel/oracle_setup.rs b/crates/iop/src/channel/oracle_setup.rs
+index aa50ae29..4c9ec660 100644
+--- a/crates/iop/src/channel/oracle_setup.rs
++++ b/crates/iop/src/channel/oracle_setup.rs
+@@ -248,4 +248,13 @@ impl<F: Field> IOPVerifierChannel<F> for OracleSetupChannel {
+ 	) -> Result<(), Error> {
+ 		Ok(())
+ 	}
++
++	fn verify_grouped_oracle_relation(
++		&mut self,
++		_terms: Vec<(Self::Oracle, TransparentEvalFn<Self::Elem>)>,
++		_claim: Self::Elem,
++	) -> Result<(), Error> {
++		// Setup records only oracle shapes. The real verifier channel enforces the grouped relation.
++		Ok(())
++	}
+ }
+diff --git a/crates/ip-prover/src/sumcheck/grouped.rs b/crates/ip-prover/src/sumcheck/grouped.rs
+new file mode 100644
+index 00000000..73ba6771
+--- /dev/null
++++ b/crates/ip-prover/src/sumcheck/grouped.rs
+@@ -0,0 +1,161 @@
++// Copyright 2026 The Binius Developers
++
++//! A sumcheck prover for one claim that is the sum of several independently represented terms.
++//!
++//! [`GroupedSumcheckProver`] is only a round combiner. Each inner prover retains its own
++//! multilinear representation, including its own native variable count before padding. The
++//! wrapper adds round polynomials coefficient-wise and folds every term at the same challenge.
++//! No per-term claim is serialized.
++
++use std::marker::PhantomData;
++
++use binius_field::Field;
++use binius_ip::sumcheck::RoundCoeffs;
++
++use super::common::SumcheckProver;
++
++/// Proves one sumcheck claim equal to the sum of several one-claim inner provers.
++pub struct GroupedSumcheckProver<F: Field, Inner> {
++	inners: Vec<Inner>,
++	_marker: PhantomData<F>,
++}
++
++impl<F: Field, Inner: SumcheckProver<F>> GroupedSumcheckProver<F, Inner> {
++	/// Builds one aggregate prover from `(term_claim, term_prover)` pairs.
++	///
++	/// The claims are supplied separately because [`SumcheckProver`] intentionally does not expose
++	/// them. Their sum must equal `aggregate_claim`, and every inner prover must expose the same
++	/// number of rounds after any caller-owned padding.
++	pub fn new(terms: impl IntoIterator<Item = (F, Inner)>, aggregate_claim: F) -> Self {
++		let (claims, inners): (Vec<_>, Vec<_>) = terms.into_iter().unzip();
++		assert!(!inners.is_empty(), "a grouped sumcheck must contain at least one term");
++		assert_eq!(
++			claims.iter().copied().sum::<F>(),
++			aggregate_claim,
++			"the term claims must sum to the aggregate claim"
++		);
++		let n_vars = inners[0].n_vars();
++		assert!(
++			inners.iter().all(|inner| inner.n_vars() == n_vars),
++			"all grouped sumcheck terms must expose the same number of variables"
++		);
++
++		Self {
++			inners,
++			_marker: PhantomData,
++		}
++	}
++}
++
++impl<F, Inner> SumcheckProver<F> for GroupedSumcheckProver<F, Inner>
++where
++	F: Field,
++	Inner: SumcheckProver<F>,
++{
++	fn n_vars(&self) -> usize {
++		self.inners[0].n_vars()
++	}
++
++	fn execute(&mut self) -> Vec<RoundCoeffs<F>> {
++		let aggregate = self
++			.inners
++			.iter_mut()
++			.map(|inner| {
++				let [coeffs]: [RoundCoeffs<F>; 1] = inner
++					.execute()
++					.try_into()
++					.expect("each grouped term must carry exactly one claim");
++				coeffs
++			})
++			.sum();
++		vec![aggregate]
++	}
++
++	fn fold(&mut self, challenge: F) {
++		for inner in &mut self.inners {
++			inner.fold(challenge);
++		}
++	}
++
++	fn finish(self) -> Vec<F> {
++		self.inners
++			.into_iter()
++			.flat_map(SumcheckProver::finish)
++			.collect()
++	}
++}
++
++#[cfg(test)]
++mod tests {
++	use binius_compute::GlobalAllocator;
++	use binius_field::arch::{OptimalB128 as F, OptimalPackedB128 as P};
++	use binius_ip::sumcheck::verify;
++	use binius_math::{inner_product::inner_product_par, test_utils::random_field_buffer};
++	use binius_transcript::{ProverTranscript, fiat_shamir::HasherChallenger};
++	use rand::{SeedableRng, rngs::StdRng};
++
++	use super::*;
++	use crate::sumcheck::{
++		PaddedSumcheckDecorator, bivariate_product_evaluator::bivariate_product_prover,
++		prove_single,
++	};
++
++	type StdChallenger = HasherChallenger<sha2::Sha256>;
++
++	#[test]
++	fn grouped_roundtrip_supports_unequal_native_variable_counts() {
++		let alloc = GlobalAllocator;
++		let mut rng = StdRng::seed_from_u64(0);
++		let short_n = 4;
++		let long_n = 7;
++
++		let a0 = random_field_buffer::<P>(&mut rng, short_n);
++		let b0 = random_field_buffer::<P>(&mut rng, short_n);
++		let a1 = random_field_buffer::<P>(&mut rng, long_n);
++		let b1 = random_field_buffer::<P>(&mut rng, long_n);
++		let claim0 = inner_product_par(&a0, &b0);
++		let claim1 = inner_product_par(&a1, &b1);
++		let aggregate_claim = claim0 + claim1;
++
++		let short = PaddedSumcheckDecorator::new(
++			bivariate_product_prover(&alloc, [a0, b0], claim0),
++			long_n - short_n,
++			vec![claim0],
++		);
++		let long = PaddedSumcheckDecorator::new(
++			bivariate_product_prover(&alloc, [a1, b1], claim1),
++			0,
++			vec![claim1],
++		);
++		let grouped =
++			GroupedSumcheckProver::new([(claim0, short), (claim1, long)], aggregate_claim);
++
++		let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
++		let output = prove_single(grouped, &mut prover_transcript);
++		assert_eq!(output.multilinear_evals.len(), 4);
++
++		let mut verifier_transcript = prover_transcript.into_verifier();
++		let reduced = verify(long_n, 2, aggregate_claim, &mut verifier_transcript)
++			.expect("the aggregate sumcheck must verify");
++		let [a0_eval, b0_eval, a1_eval, b1_eval]: [F; 4] = output
++			.multilinear_evals
++			.try_into()
++			.expect("two product terms emit four multilinear evaluations");
++		let mut variable_point = reduced.challenges;
++		variable_point.reverse();
++		let padding = binius_math::multilinear::eq::eq_ind_zero(&variable_point[short_n..]);
++		assert_eq!(reduced.eval, a0_eval * b0_eval * padding + a1_eval * b1_eval);
++	}
++
++	#[test]
++	#[should_panic(expected = "term claims must sum")]
++	fn wrong_aggregate_claim_fails_closed() {
++		let alloc = GlobalAllocator;
++		let mut rng = StdRng::seed_from_u64(1);
++		let a = random_field_buffer::<P>(&mut rng, 3);
++		let b = random_field_buffer::<P>(&mut rng, 3);
++		let claim = inner_product_par(&a, &b);
++		let inner = bivariate_product_prover(&alloc, [a, b], claim);
++		let _ = GroupedSumcheckProver::new([(claim, inner)], claim + F::ONE);
++	}
++}
+diff --git a/crates/ip-prover/src/sumcheck/mod.rs b/crates/ip-prover/src/sumcheck/mod.rs
+index a5d6e090..89789aa0 100644
+--- a/crates/ip-prover/src/sumcheck/mod.rs
++++ b/crates/ip-prover/src/sumcheck/mod.rs
+@@ -7,6 +7,7 @@ pub mod bivariate_product_mle;
+ pub mod common;
+ mod drive;
+ pub mod eq_tracker;
++pub mod grouped;
+ pub mod mle_store;
+ mod mle_to_sumcheck;
+ pub mod multilinear_eval;
+diff --git a/crates/spartan-prover/src/lib.rs b/crates/spartan-prover/src/lib.rs
+index 19262ebf..7d394eea 100644
+--- a/crates/spartan-prover/src/lib.rs
++++ b/crates/spartan-prover/src/lib.rs
+@@ -296,21 +296,14 @@ impl<F: Field> IOPProver<F> {
+ 			r_x_tensor.as_ref(),
+ 		);
+ 
+-		// Compute the precommit segment's contribution to the wiring check.
+-		// The prover sends this as a scalar; the oracle relation then verifies it.
++		// Fold the secret precommit and private wiring constraints independently, but prove their
++		// sum as one cross-oracle relation. No scalar functional of the random precommit segment is
++		// sent on its own.
+ 		let precommit_wiring_poly =
+ 			fold_constraints(alloc, &self.precommit_wiring_transpose, lambda, r_x_tensor.as_ref());
+-		let precommit_claim = binius_math::inner_product::inner_product_buffers(
+-			&precommit_packed.to_ref(),
+-			&precommit_wiring_poly,
+-		);
+-		channel.send_one(precommit_claim);
+-
+-		let private_claim = batched_sum - public_eval - precommit_claim;
+-
+-		// Fold private wiring constraints
+ 		let private_wiring_poly =
+ 			fold_constraints(alloc, &self.private_wiring_transpose, lambda, r_x_tensor.as_ref());
++		let secret_wiring_claim = batched_sum - public_eval;
+ 
+ 		// Compute the mask folding polynomial (libra_eval tensor)
+ 		let n_vars = r_x.len();
+@@ -319,13 +312,14 @@ impl<F: Field> IOPProver<F> {
+ 
+ 		// Prove all oracle relations, handing the channel each committed buffer for the combined
+ 		// opening.
+-		channel.prove_oracle_relation(
+-			precommit_oracle.clone(),
+-			precommit_wiring_poly,
+-			precommit_claim,
++		channel.prove_grouped_oracle_relation(
++			vec![
++				(precommit_oracle.clone(), precommit_wiring_poly),
++				(private_oracle.clone(), private_wiring_poly),
++			],
++			secret_wiring_claim,
+ 		);
+ 		channel.finalize_oracle(precommit_oracle, precommit_packed);
+-		channel.prove_oracle_relation(private_oracle.clone(), private_wiring_poly, private_claim);
+ 		channel.finalize_oracle(private_oracle, private_packed);
+ 		channel.prove_oracle_relation(mask_oracle.clone(), libra_eval_tensor, mask_eval);
+ 		channel.finalize_oracle(mask_oracle, masks_buffer);
+diff --git a/crates/spartan-prover/src/wrapper/replay_channel.rs b/crates/spartan-prover/src/wrapper/replay_channel.rs
+index c7e1ab4b..6e554b95 100644
+--- a/crates/spartan-prover/src/wrapper/replay_channel.rs
++++ b/crates/spartan-prover/src/wrapper/replay_channel.rs
+@@ -263,6 +263,22 @@ impl<F: Field> IOPVerifierChannel<F> for ReplayChannel<F> {
+ 		Ok(())
+ 	}
+ 
++	fn verify_grouped_oracle_relation(
++		&mut self,
++		_terms: Vec<(Self::Oracle, TransparentEvalFn<Self::Elem>)>,
++		claim: Self::Elem,
++	) -> Result<(), binius_iop::channel::Error> {
++		assert!(
++			!self.evaluation_mask_active,
++			"evaluation-masked oracle does not support grouped relations"
++		);
++		// Consume the same single aggregate bridge allocated by the symbolic builder. There is no
++		// replay event for either individual term.
++		let decrypted_claim = self.next_inout_elem();
++		self.assert_zero(claim - decrypted_claim)?;
++		Ok(())
++	}
++
+ 	fn verify_oracle_evaluation_relation(
+ 		&mut self,
+ 		_oracle: Self::Oracle,
+diff --git a/crates/spartan-prover/src/wrapper/zk_wrapped_prover_channel.rs b/crates/spartan-prover/src/wrapper/zk_wrapped_prover_channel.rs
+index 1bf91253..e9768357 100644
+--- a/crates/spartan-prover/src/wrapper/zk_wrapped_prover_channel.rs
++++ b/crates/spartan-prover/src/wrapper/zk_wrapped_prover_channel.rs
+@@ -456,6 +456,27 @@ where
+ 			.prove_oracle_relation(oracle, transparent, claim)
+ 	}
+ 
++	fn prove_grouped_oracle_relation(
++		&mut self,
++		terms: Vec<(Self::Oracle, FieldVec<P, A>)>,
++		claim: P::Scalar,
++	) {
++		assert!(
++			terms.iter().all(|(oracle, _)| self
++				.evaluation_mask
++				.as_ref()
++				.is_none_or(|state| state.oracle != *oracle)),
++			"evaluation-masked oracle does not support grouped relations"
++		);
++
++		// Bridge only the aggregate claim into the wrapper circuit. Sending one claim per term would
++		// recreate the exact clear linear functionals that the grouped relation removes.
++		self.inner_channel.send_one(claim);
++		self.interaction.push(claim);
++		self.inner_channel
++			.prove_grouped_oracle_relation(terms, claim);
++	}
++
+ 	fn prove_oracle_evaluation_relation(
+ 		&mut self,
+ 		oracle: Self::Oracle,
+diff --git a/crates/spartan-verifier/src/lib.rs b/crates/spartan-verifier/src/lib.rs
+index 63577169..f5eef287 100644
+--- a/crates/spartan-verifier/src/lib.rs
++++ b/crates/spartan-verifier/src/lib.rs
+@@ -209,10 +209,9 @@ impl<F: Field> IOPVerifier<F> {
+ 		let public_eval =
+ 			wiring::evaluate_wiring_mle_public(cs.mul_constraints(), public, &lambda, &r_x_tensor);
+ 
+-		// Prover sends the precommit segment's contribution to the operand evaluations.
+-		let precommit_claim = channel.recv_one()?;
+-
+-		let private_claim = batched_sum - public_eval - precommit_claim.clone();
++		// The secret precommit and private contributions are proved only through their public total.
++		// No precommit-only functional is received.
++		let secret_wiring_claim = batched_sum - public_eval;
+ 
+ 		// Build one transparent closure per oracle relation.
+ 		// The two wiring closures share the multiplication constraints through a single `Rc`.
+@@ -229,8 +228,13 @@ impl<F: Field> IOPVerifier<F> {
+ 		let mask_transparent = mask_transparent(cs, &r_x);
+ 
+ 		// Verify all oracle relations
+-		channel.verify_oracle_relation(precommit_oracle, precommit_transparent, precommit_claim)?;
+-		channel.verify_oracle_relation(private_oracle, private_transparent, private_claim)?;
++		channel.verify_grouped_oracle_relation(
++			vec![
++				(precommit_oracle, precommit_transparent),
++				(private_oracle, private_transparent),
++			],
++			secret_wiring_claim,
++		)?;
+ 		channel.verify_oracle_relation(mask_oracle, mask_transparent, mask_eval)?;
+ 
+ 		Ok(())
+diff --git a/crates/spartan-verifier/src/wrapper/builder_channel.rs b/crates/spartan-verifier/src/wrapper/builder_channel.rs
+index 173e6761..2eceb7e0 100644
+--- a/crates/spartan-verifier/src/wrapper/builder_channel.rs
++++ b/crates/spartan-verifier/src/wrapper/builder_channel.rs
+@@ -225,6 +225,22 @@ impl<F: Field> IOPVerifierChannel<F> for IronSpartanBuilderChannel<F> {
+ 		Ok(())
+ 	}
+ 
++	fn verify_grouped_oracle_relation(
++		&mut self,
++		_terms: Vec<(Self::Oracle, TransparentEvalFn<Self::Elem>)>,
++		claim: Self::Elem,
++	) -> Result<(), binius_iop::channel::Error> {
++		assert!(
++			!self.evaluation_mask_active,
++			"evaluation-masked oracle does not support grouped relations"
++		);
++		// Allocate exactly one public bridge for the aggregate. Individual term claims never exist
++		// in the symbolic wrapper interface.
++		let decrypted_claim = self.alloc_inout_elem();
++		self.assert_zero(claim - decrypted_claim)?;
++		Ok(())
++	}
++
+ 	fn verify_oracle_evaluation_relation(
+ 		&mut self,
+ 		_oracle: Self::Oracle,
+diff --git a/crates/spartan-verifier/src/wrapper/zk_wrapped_channel.rs b/crates/spartan-verifier/src/wrapper/zk_wrapped_channel.rs
+index 45e1dca3..a6459ed5 100644
+--- a/crates/spartan-verifier/src/wrapper/zk_wrapped_channel.rs
++++ b/crates/spartan-verifier/src/wrapper/zk_wrapped_channel.rs
+@@ -414,6 +414,48 @@ where
+ 			.verify_oracle_relation(oracle, Box::new(eval_fn), decrypted_value)
+ 	}
+ 
++	fn verify_grouped_oracle_relation(
++		&mut self,
++		terms: Vec<(Self::Oracle, TransparentEvalFn<Self::Elem>)>,
++		claim: Self::Elem,
++	) -> Result<(), binius_iop::channel::Error> {
++		assert!(
++			terms.iter().all(|(oracle, _)| self
++				.evaluation_mask_oracle
++				.is_none_or(|masked| masked != *oracle)),
++			"evaluation-masked oracle does not support grouped relations"
++		);
++
++		// The native BaseFold verifier needs the aggregate scalar value. Bind exactly that one value
++		// to the wrapper circuit; exposing one bridge per term would defeat grouping.
++		let decrypted_value = self.inner_channel.recv_one()?;
++		let decrypted_claim = self.alloc_inout_elem(decrypted_value);
++		self.assert_zero(claim - decrypted_claim)?;
++
++		let native_terms = terms
++			.into_iter()
++			.map(|(oracle, transparent)| {
++				let eval_fn = move |vals: &[F]| {
++					let wrapped_vals = vals
++						.iter()
++						.map(|val| CircuitElem::Constant(*val))
++						.collect::<Vec<_>>();
++
++					match transparent(&wrapped_vals) {
++						CircuitElem::Constant(val) => val,
++						CircuitElem::Wire { wire, .. } => wire.value().expect(
++							"precondition: the transparent polynomial evaluation must depend only on known values (constants or sampled challenges)",
++						),
++					}
++				};
++				(oracle, Box::new(eval_fn) as TransparentEvalFn<F>)
++			})
++			.collect();
++
++		self.inner_channel
++			.verify_grouped_oracle_relation(native_terms, decrypted_value)
++	}
++
+ 	fn verify_oracle_evaluation_relation(
+ 		&mut self,
+ 		oracle: Self::Oracle,

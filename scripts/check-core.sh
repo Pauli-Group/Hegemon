@@ -30,6 +30,7 @@ EOF
 run_lint() {
   cargo fmt --all -- --check
   python3 scripts/check_native_startup_policy.py
+  python3 -B scripts/check_smallwood_v5_candidate_gate.py
   cargo clippy \
     -p hegemon-node \
     -p protocol-kernel \
@@ -70,6 +71,9 @@ run_test_base() {
   cargo test --test security_pipeline -- --nocapture
   python3 -B scripts/test_release_artifact_manifest.py
   python3 -B scripts/test_check_release_crypto_profile.py
+  python3 -B .agent/hardening/smallwood-pqc-zk/test_strict_profile.py
+  python3 -B scripts/test_check_smallwood_v5_candidate_gate.py
+  python3 -B scripts/check_smallwood_v5_candidate_gate.py
 }
 
 run_test_transaction_lib() {

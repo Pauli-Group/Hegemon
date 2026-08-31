@@ -166,15 +166,21 @@ theorem plain_action_ignores_sidecar_metadata :
 structure MineableSelectionAction where
   actionId : Nat
   transferRoute : Bool
+  sidecarTransferRoute : Bool
   transferMineable : Bool
   candidateArtifactRoute : Bool
+  activeV3RouteAllowed : Bool
   candidateTxCount : Nat
 deriving DecidableEq, Repr
 
 def mineableTransferCount : List MineableSelectionAction -> Nat
   | [] => 0
   | action :: rest =>
-      (if action.transferRoute && action.transferMineable then 1 else 0)
+      (if action.transferRoute && !action.sidecarTransferRoute &&
+          action.activeV3RouteAllowed && action.transferMineable then
+        1
+      else
+        0)
         + mineableTransferCount rest
 
 def selectedCandidateForOrderedActions
@@ -185,6 +191,10 @@ def selectionActionAccepts
     (_actions : List MineableSelectionAction)
     (action : MineableSelectionAction) : Bool :=
   if action.candidateArtifactRoute then
+    false
+  else if action.sidecarTransferRoute then
+    false
+  else if !action.activeV3RouteAllowed then
     false
   else if action.transferRoute then
     action.transferMineable
@@ -216,14 +226,29 @@ structure MineableSelectionFacts
     ∀ action,
       action.candidateArtifactRoute = true ->
       selectionActionAccepts actions action = false
-  transferAcceptanceMatchesMineability :
+  sidecarTransfersRejected :
     ∀ action,
       action.candidateArtifactRoute = false ->
+      action.sidecarTransferRoute = true ->
+      selectionActionAccepts actions action = false
+  inactiveV3RoutesRejected :
+    ∀ action,
+      action.candidateArtifactRoute = false ->
+      action.sidecarTransferRoute = false ->
+      action.activeV3RouteAllowed = false ->
+      selectionActionAccepts actions action = false
+  inlineTransferAcceptanceMatchesMineability :
+    ∀ action,
+      action.candidateArtifactRoute = false ->
+      action.sidecarTransferRoute = false ->
+      action.activeV3RouteAllowed = true ->
       action.transferRoute = true ->
       selectionActionAccepts actions action = action.transferMineable
   plainActionAccepted :
     ∀ action,
       action.candidateArtifactRoute = false ->
+      action.sidecarTransferRoute = false ->
+      action.activeV3RouteAllowed = true ->
       action.transferRoute = false ->
       selectionActionAccepts actions action = true
 
@@ -244,19 +269,42 @@ theorem selection_accepts_transfer_iff_mineable
     (actions : List MineableSelectionAction)
     (action : MineableSelectionAction)
     (notCandidate : action.candidateArtifactRoute = false)
+    (notSidecar : action.sidecarTransferRoute = false)
+    (activeRoute : action.activeV3RouteAllowed = true)
     (transfer : action.transferRoute = true) :
     selectionActionAccepts actions action = action.transferMineable := by
   unfold selectionActionAccepts
-  simp [notCandidate, transfer]
+  simp [notCandidate, notSidecar, activeRoute, transfer]
+
+theorem selection_rejects_sidecar
+    (actions : List MineableSelectionAction)
+    (action : MineableSelectionAction)
+    (notCandidate : action.candidateArtifactRoute = false)
+    (sidecar : action.sidecarTransferRoute = true) :
+    selectionActionAccepts actions action = false := by
+  unfold selectionActionAccepts
+  simp [notCandidate, sidecar]
+
+theorem selection_rejects_inactive_v3_route
+    (actions : List MineableSelectionAction)
+    (action : MineableSelectionAction)
+    (notCandidate : action.candidateArtifactRoute = false)
+    (notSidecar : action.sidecarTransferRoute = false)
+    (inactiveRoute : action.activeV3RouteAllowed = false) :
+    selectionActionAccepts actions action = false := by
+  unfold selectionActionAccepts
+  simp [notCandidate, notSidecar, inactiveRoute]
 
 theorem selection_accepts_plain_action
     (actions : List MineableSelectionAction)
     (action : MineableSelectionAction)
     (notCandidate : action.candidateArtifactRoute = false)
+    (notSidecar : action.sidecarTransferRoute = false)
+    (activeRoute : action.activeV3RouteAllowed = true)
     (notTransfer : action.transferRoute = false) :
     selectionActionAccepts actions action = true := by
   unfold selectionActionAccepts
-  simp [notCandidate, notTransfer]
+  simp [notCandidate, notSidecar, activeRoute, notTransfer]
 
 theorem candidate_prune_drops_candidates_when_transfer_pending
     (actions : List MineableSelectionAction)
@@ -293,15 +341,24 @@ def ordered_mineable_selection_facts
       transferCountMatches := rfl,
       selectedCandidateMatches := rfl,
       candidateArtifactsRejected := ?_,
-      transferAcceptanceMatchesMineability := ?_,
+      sidecarTransfersRejected := ?_,
+      inactiveV3RoutesRejected := ?_,
+      inlineTransferAcceptanceMatchesMineability := ?_,
       plainActionAccepted := ?_
     }
   · intro action candidate
     exact selection_rejects_candidate actions action candidate
-  · intro action notCandidate transfer
-    exact selection_accepts_transfer_iff_mineable actions action notCandidate transfer
-  · intro action notCandidate notTransfer
-    exact selection_accepts_plain_action actions action notCandidate notTransfer
+  · intro action notCandidate sidecar
+    exact selection_rejects_sidecar actions action notCandidate sidecar
+  · intro action notCandidate notSidecar inactiveRoute
+    exact selection_rejects_inactive_v3_route
+      actions action notCandidate notSidecar inactiveRoute
+  · intro action notCandidate notSidecar activeRoute transfer
+    exact selection_accepts_transfer_iff_mineable
+      actions action notCandidate notSidecar activeRoute transfer
+  · intro action notCandidate notSidecar activeRoute notTransfer
+    exact selection_accepts_plain_action
+      actions action notCandidate notSidecar activeRoute notTransfer
 
 end MineableActionAdmission
 end Native

@@ -50,7 +50,7 @@ async fn main() {
         fin_root_hex, anchor_valid_best
     );
     match client.submit_shielded_transfer_unsigned(&bundle).await {
-        Ok(h) => println!("submitted: 0x{}", hex::encode(h)),
+        Ok(h) => println!("submitted: 0x{}", hex::encode(h.as_bytes())),
         Err(e) => println!("submit error: {}", e),
     }
 }

@@ -1,0 +1,39 @@
+{
+  "schema": "hegemon.smallwood_engine_repair.v1",
+  "date": "2026-08-22",
+  "files": [
+    {
+      "path": "circuits/transaction/src/smallwood_engine.rs",
+      "bytes": 385263,
+      "sha512": "c7f8b6d0fcea7cdc763306b77028c8768df51e5bd46d73a048469abef3c45a9daca08ad62d0969838a84f018e888b4372d72e5baf7308d06bec87bf59ef265c3"
+    },
+    {
+      "path": "circuits/transaction/src/smallwood_v6_transcript.rs",
+      "bytes": 66023,
+      "sha512": "513af16777429d0407c24675c08e77038ec30ea22827745873db3f45be11e8190fb47c6987b483191dd87bfd1cd68284baf1456e1001c6ea9e4757b706e4f533"
+    }
+  ],
+  "independent_checks": {
+    "zero_correction_regression": {"passed": 1, "failed": 0},
+    "complete_zk_domain_wire_tests": {"passed": 6, "failed": 0},
+    "v6_transcript_parser_tests": {"passed": 6, "failed": 0},
+    "transaction_circuit_lib_check": true,
+    "git_diff_check": true,
+    "disk_available_kib_after_checks": 31566036
+  },
+  "repairs": [
+    "one prover/verifier PIOP opening admissibility predicate rejects zero linear-correction factors",
+    "canonical disjoint-coset geometry and derived shift are validated and transcript-bound",
+    "stale geometry, wrong domain, wrong shift, packing collision, leaf-index, tape, and cross-domain mutations reject"
+  ],
+  "claim_boundary": {
+    "concrete_completeness_repair": true,
+    "exact_domain_binding_repair": true,
+    "complete_zero_knowledge": false,
+    "whole_proof_simulator": false,
+    "bcs_p_bits": null,
+    "composed_pq_qrom_bits": null,
+    "production_authorized": false,
+    "note": "SMZ2 is not the exact BCS IOP-to-NIROP transform. With a 512-bit output, the BCS statistical term is at most 126 bits even for p=1. This repair is retained negative infrastructure, not the final strict-ZK wire."
+  }
+}

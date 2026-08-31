@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "crypto",
+    "crypto/hash384",
+    "crypto/hash448",
     "circuits/hegemon-field",
     "circuits/transaction",
     "circuits/transaction-core",
@@ -32,6 +34,10 @@ members = [
     "zk/cashvm-bridge",
     "fuzz",
 ]
+exclude = [
+    "circuits/standalone-full-shake256-relation-prototype",
+    "third_party/reed-solomon-erasure",
+]
 resolver = "2"
 
 [workspace.lints.clippy]
@@ -49,6 +55,16 @@ deprecated = "allow"
 authors = ["Pauli Group Inc."]
 license = "MIT"
 repository = "https://github.com/Pauli-Group/Hegemon"
+
+# Retained transaction-proof artifacts must be generated and independently
+# verified by byte-identical optimized binaries.  A named nonincremental,
+# single-codegen-unit profile makes that supply-chain premise executable.
+[profile.retained-proof]
+inherits = "release"
+incremental = false
+codegen-units = 1
+debug = 0
+strip = "debuginfo"
 
 
 [workspace.dependencies]

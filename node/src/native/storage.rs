@@ -2,6 +2,788 @@
 
 use super::*;
 
+const SLED_DEFAULT_TREE_NAME: &[u8] = b"__sled__default";
+pub(crate) const NATIVE_PERSISTENT_TREE_NAMES: [&[u8]; 12] = [
+    b"meta",
+    b"block_hash_by_height",
+    b"block_meta_by_hash",
+    b"mempool_actions",
+    b"shielded_nullifiers",
+    b"shielded_commitments",
+    b"bridge_inbound_messages",
+    b"shielded_ciphertext_index",
+    b"shielded_ciphertexts_by_index",
+    b"da_pending_ciphertexts",
+    b"da_pending_proofs",
+    poseidon2_v8_state::POSEIDON2_V8_STATE_TREE_NAME,
+];
+
+/// SCALE collection prefixes are at most five bytes for the bounded u32
+/// lengths used by `Vec<Vec<u8>>`.  The limit admits every consensus-valid
+/// action body and rejects a corrupt length before allocating its vectors.
+pub(crate) const MAX_NATIVE_ACTION_BODY_V3_BYTES: usize =
+    MAX_NATIVE_BLOCK_ACTION_BYTES + 5 * (MAX_NATIVE_BLOCK_ACTIONS + 1);
+
+/// Immutable, self-authenticating result of one exact V3 full-body encoding.
+/// Its fields are private to this storage codec module, so persistence and
+/// transport can share the bytes but cannot forge or mutate the provenance.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EncodedNativeBlockBodyV3 {
+    hash: BodyHash48,
+    len: u64,
+    bytes: Arc<[u8]>,
+    /// Exact SCALE binding of every fixed metadata field, including the
+    /// action count and action root.
+    meta_fixed_binding: Vec<u8>,
+}
+
+impl EncodedNativeBlockBodyV3 {
+    pub(crate) const fn hash(&self) -> BodyHash48 {
+        self.hash
+    }
+
+    pub(crate) const fn len(&self) -> u64 {
+        self.len
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub(crate) fn shared_bytes(&self) -> Arc<[u8]> {
+        Arc::clone(&self.bytes)
+    }
+}
+
+fn decode_canonical_compact_u32(cursor: &mut &[u8], label: &str) -> Result<u32> {
+    let bytes = *cursor;
+    let first = *bytes
+        .first()
+        .ok_or_else(|| anyhow!("decode {label} failed: empty compact integer"))?;
+    let (value, consumed) = match first & 0b11 {
+        0 => (u32::from(first >> 2), 1),
+        1 => {
+            let encoded = bytes.get(..2).ok_or_else(|| {
+                anyhow!("decode {label} failed: truncated two-byte compact integer")
+            })?;
+            let value = u16::from_le_bytes([encoded[0], encoded[1]]) as u32 >> 2;
+            if value < 1 << 6 {
+                return Err(anyhow!("{label} is not canonical SCALE compact-u32"));
+            }
+            (value, 2)
+        }
+        2 => {
+            let encoded = bytes.get(..4).ok_or_else(|| {
+                anyhow!("decode {label} failed: truncated four-byte compact integer")
+            })?;
+            let value = u32::from_le_bytes([encoded[0], encoded[1], encoded[2], encoded[3]]) >> 2;
+            if value < 1 << 14 {
+                return Err(anyhow!("{label} is not canonical SCALE compact-u32"));
+            }
+            (value, 4)
+        }
+        _ => {
+            if first != 0b11 {
+                return Err(anyhow!(
+                    "decode {label} failed: compact-u32 length exceeds four bytes"
+                ));
+            }
+            let encoded = bytes.get(1..5).ok_or_else(|| {
+                anyhow!("decode {label} failed: truncated five-byte compact integer")
+            })?;
+            let value = u32::from_le_bytes([encoded[0], encoded[1], encoded[2], encoded[3]]);
+            if value <= 0x3fff_ffff {
+                return Err(anyhow!("{label} is not canonical SCALE compact-u32"));
+            }
+            (value, 5)
+        }
+    };
+    *cursor = &bytes[consumed..];
+    Ok(value)
+}
+
+fn preflight_native_action_body_v3(bytes: &[u8]) -> Result<usize> {
+    if bytes.len() > MAX_NATIVE_ACTION_BODY_V3_BYTES {
+        return Err(anyhow!(
+            "native V3 action body bytes exceed limit: {} > {}",
+            bytes.len(),
+            MAX_NATIVE_ACTION_BODY_V3_BYTES
+        ));
+    }
+    let mut cursor = bytes;
+    let action_count = decode_canonical_compact_u32(&mut cursor, "native V3 action count")?;
+    let action_count = usize::try_from(action_count)
+        .map_err(|_| anyhow!("native V3 action count exceeds usize"))?;
+    if action_count > MAX_NATIVE_BLOCK_ACTIONS {
+        return Err(anyhow!(
+            "native V3 action body count exceeds limit: {} > {}",
+            action_count,
+            MAX_NATIVE_BLOCK_ACTIONS
+        ));
+    }
+
+    let mut payload_bytes = 0usize;
+    for index in 0..action_count {
+        let payload_len = decode_canonical_compact_u32(&mut cursor, "native V3 action length")?;
+        let payload_len = usize::try_from(payload_len)
+            .map_err(|_| anyhow!("native V3 action {index} length exceeds usize"))?;
+        if payload_len > MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES {
+            return Err(anyhow!(
+                "native V3 action {index} payload exceeds limit: {} > {}",
+                payload_len,
+                MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES
+            ));
+        }
+        payload_bytes = payload_bytes
+            .checked_add(payload_len)
+            .ok_or_else(|| anyhow!("native V3 action payload byte total overflow"))?;
+        if payload_bytes > MAX_NATIVE_BLOCK_ACTION_BYTES {
+            return Err(anyhow!(
+                "native V3 action payload bytes exceed aggregate limit: {} > {}",
+                payload_bytes,
+                MAX_NATIVE_BLOCK_ACTION_BYTES
+            ));
+        }
+        let Some(remaining) = cursor.get(payload_len..) else {
+            return Err(anyhow!(
+                "native V3 action {index} payload is truncated: declared {}, remaining {}",
+                payload_len,
+                cursor.len()
+            ));
+        };
+        cursor = remaining;
+    }
+    if !cursor.is_empty() {
+        return Err(anyhow!(
+            "native V3 action body has {} trailing bytes",
+            cursor.len()
+        ));
+    }
+    Ok(action_count)
+}
+
+/// Return one exact action payload from the canonical SCALE action-body blob
+/// without allocating or decoding any sibling payload. The full outer/inner
+/// framing is still scanned and canonicality/budgets/trailing bytes are
+/// checked before the borrowed slice is released.
+pub(crate) fn native_action_body_v3_action_at(
+    encoded_body: &[u8],
+    action_index: u32,
+) -> Result<&[u8]> {
+    if encoded_body.len() > MAX_NATIVE_ACTION_BODY_V3_BYTES {
+        return Err(anyhow!(
+            "native V3 action body bytes exceed limit: {} > {}",
+            encoded_body.len(),
+            MAX_NATIVE_ACTION_BODY_V3_BYTES
+        ));
+    }
+    let mut cursor = encoded_body;
+    let action_count = decode_canonical_compact_u32(&mut cursor, "native V3 action count")?;
+    let action_count_usize = usize::try_from(action_count)
+        .map_err(|_| anyhow!("native V3 action count exceeds usize"))?;
+    if action_count_usize > MAX_NATIVE_BLOCK_ACTIONS {
+        return Err(anyhow!(
+            "native V3 action body count exceeds limit: {} > {}",
+            action_count_usize,
+            MAX_NATIVE_BLOCK_ACTIONS
+        ));
+    }
+    if action_index >= action_count {
+        return Err(anyhow!(
+            "native V3 action index {} is out of range for {} actions",
+            action_index,
+            action_count
+        ));
+    }
+
+    let mut selected = None;
+    let mut payload_bytes = 0usize;
+    for index in 0..action_count_usize {
+        let payload_len = decode_canonical_compact_u32(&mut cursor, "native V3 action length")?;
+        let payload_len = usize::try_from(payload_len)
+            .map_err(|_| anyhow!("native V3 action {index} length exceeds usize"))?;
+        if payload_len > MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES {
+            return Err(anyhow!(
+                "native V3 action {index} payload exceeds limit: {} > {}",
+                payload_len,
+                MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES
+            ));
+        }
+        payload_bytes = payload_bytes
+            .checked_add(payload_len)
+            .ok_or_else(|| anyhow!("native V3 action payload byte total overflow"))?;
+        if payload_bytes > MAX_NATIVE_BLOCK_ACTION_BYTES {
+            return Err(anyhow!(
+                "native V3 action payload bytes exceed aggregate limit: {} > {}",
+                payload_bytes,
+                MAX_NATIVE_BLOCK_ACTION_BYTES
+            ));
+        }
+        let payload = cursor.get(..payload_len).ok_or_else(|| {
+            anyhow!(
+                "native V3 action {index} payload is truncated: declared {}, remaining {}",
+                payload_len,
+                cursor.len()
+            )
+        })?;
+        if u32::try_from(index).ok() == Some(action_index) {
+            selected = Some(payload);
+        }
+        cursor = &cursor[payload_len..];
+    }
+    if !cursor.is_empty() {
+        return Err(anyhow!(
+            "native V3 action body has {} trailing bytes",
+            cursor.len()
+        ));
+    }
+    selected.ok_or_else(|| anyhow!("native V3 action index disappeared during exact preflight"))
+}
+
+/// Encode and bind the internal action-body blob once.  The hash input is the
+/// exact canonical SCALE encoding of `Vec<Vec<u8>>`; the generic hash384 frame
+/// commits its byte length, so callers must not add a competing length frame.
+pub(crate) fn encode_native_action_body_v3(
+    action_bytes: &[Vec<u8>],
+) -> Result<EncodedNativeActionBodyV3> {
+    let action_count = u32::try_from(action_bytes.len())
+        .map_err(|_| anyhow!("native V3 action count exceeds u32"))?;
+    validate_block_action_byte_budget(
+        action_count,
+        action_bytes.len(),
+        action_bytes.iter().map(Vec::len),
+    )?;
+    let bytes = action_bytes.encode();
+    preflight_native_action_body_v3(&bytes)?;
+    let len = u64::try_from(bytes.len())
+        .map_err(|_| anyhow!("native V3 action body length exceeds u64"))?;
+    let hash = ActionBodyHash48::new(crypto::hash384::blake2b_384_domain_hash(
+        crypto::hash384::domains::NATIVE_ACTION_BODY_V3,
+        [bytes.as_slice()],
+    ));
+    Ok(EncodedNativeActionBodyV3 { hash, len, bytes })
+}
+
+pub(crate) fn decode_native_action_body_v3(bytes: &[u8]) -> Result<Vec<Vec<u8>>> {
+    let expected_count = preflight_native_action_body_v3(bytes)?;
+    let decoded = decode_scale_exact::<Vec<Vec<u8>>>(bytes, "native V3 action body")?;
+    if decoded.len() != expected_count {
+        return Err(anyhow!(
+            "native V3 action body preflight/decode count mismatch"
+        ));
+    }
+    Ok(decoded)
+}
+
+pub(crate) fn native_block_body_hash_v3(canonical_body: &[u8]) -> BodyHash48 {
+    BodyHash48::new(crypto::hash384::blake2b_384_domain_hash(
+        crypto::hash384::domains::NATIVE_BLOCK_BODY_V3,
+        [canonical_body],
+    ))
+}
+
+/// Fixed-int bincode offsets in `NativeBlockMetaV3`. Every V3 digest/root is a
+/// fixed tuple, including the domain-typed 48-byte V3 state root.
+pub(crate) const NATIVE_BLOCK_META_V3_STATE_ROOT_OFFSET: usize = 32 + 48 + 8 + 48 + 48;
+pub(crate) const NATIVE_BLOCK_META_V3_ACTION_BYTES_OFFSET: usize = 32
+    + 48
+    + 8
+    + 48
+    + 48
+    + 48
+    + 48
+    + 48
+    + 48
+    + 48
+    + 48
+    + 48
+    + 48
+    + 48
+    + 4
+    + 48
+    + 8
+    + 8
+    + 4
+    + 32
+    + 48
+    + 64
+    + 16
+    + 4;
+
+/// Fixed bytes after the V3 action vector: DA root plus exact tier metadata.
+const NATIVE_BLOCK_META_V3_AFTER_ACTION_BYTES: usize = 48 + 4 + 4 + 8 + 4;
+
+fn validate_native_block_meta_v3_bincode_budget(bytes: &[u8], label: &str) -> Result<()> {
+    if bytes.len() > MAX_NATIVE_BLOCK_META_BYTES {
+        return Err(anyhow!(
+            "{label} bytes exceed native V3 block metadata limit: {} > {}",
+            bytes.len(),
+            MAX_NATIVE_BLOCK_META_BYTES
+        ));
+    }
+    let Some(action_count) =
+        read_bincode_fixint_len(bytes, NATIVE_BLOCK_META_V3_ACTION_BYTES_OFFSET)?
+    else {
+        return Ok(());
+    };
+    if action_count > MAX_NATIVE_BLOCK_ACTIONS {
+        return Err(anyhow!(
+            "{label} action byte count exceeds limit before V3 bincode decode: {} > {}",
+            action_count,
+            MAX_NATIVE_BLOCK_ACTIONS
+        ));
+    }
+    let mut cursor = NATIVE_BLOCK_META_V3_ACTION_BYTES_OFFSET
+        .checked_add(BINCODE_FIXINT_VEC_LEN_BYTES)
+        .ok_or_else(|| anyhow!("{label} V3 bincode action cursor overflow"))?;
+    let mut total_action_bytes = 0usize;
+    for index in 0..action_count {
+        let Some(action_len) = read_bincode_fixint_len(bytes, cursor)? else {
+            return Ok(());
+        };
+        if action_len > MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES {
+            return Err(anyhow!(
+                "{label} action payload {index} exceeds limit before V3 bincode decode: {} > {}",
+                action_len,
+                MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES
+            ));
+        }
+        total_action_bytes = total_action_bytes
+            .checked_add(action_len)
+            .ok_or_else(|| anyhow!("{label} V3 action byte total overflow"))?;
+        if total_action_bytes > MAX_NATIVE_BLOCK_ACTION_BYTES {
+            return Err(anyhow!(
+                "{label} action bytes exceed aggregate limit before V3 bincode decode: {} > {}",
+                total_action_bytes,
+                MAX_NATIVE_BLOCK_ACTION_BYTES
+            ));
+        }
+        cursor = cursor
+            .checked_add(BINCODE_FIXINT_VEC_LEN_BYTES)
+            .and_then(|next| next.checked_add(action_len))
+            .ok_or_else(|| anyhow!("{label} V3 bincode action cursor overflow"))?;
+        if cursor > bytes.len() {
+            return Ok(());
+        }
+    }
+    let expected_len = cursor
+        .checked_add(NATIVE_BLOCK_META_V3_AFTER_ACTION_BYTES)
+        .ok_or_else(|| anyhow!("{label} V3 bincode body length overflow"))?;
+    if expected_len != bytes.len() {
+        return Err(anyhow!(
+            "{label} V3 bincode structural length mismatch: expected {}, got {}",
+            expected_len,
+            bytes.len()
+        ));
+    }
+    Ok(())
+}
+
+fn serialize_native_block_meta_v3(meta: &NativeBlockMetaV3) -> Result<Vec<u8>> {
+    bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .reject_trailing_bytes()
+        .serialize(meta)
+        .context("encode canonical native V3 block body")
+}
+
+/// Bounded, fixed-int, trailing-byte-rejecting decoder for the full V3
+/// network/canonical body. Fixed-width scalar fields have a unique bincode
+/// representation; the structural preflight fixes every vector boundary; and
+/// action-root validation below exact-reencodes each SCALE action. Therefore
+/// canonicality is established without allocating and serializing a second
+/// potentially 67 MiB full body. No default bincode decoder is permitted on
+/// this consensus surface.
+pub(crate) fn decode_native_block_meta_v3_exact(
+    bytes: &[u8],
+    label: &str,
+) -> Result<NativeBlockMetaV3> {
+    validate_native_block_meta_v3_bincode_budget(bytes, label)?;
+    let meta: NativeBlockMetaV3 = bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .with_limit(MAX_NATIVE_BLOCK_META_BYTES as u64)
+        .reject_trailing_bytes()
+        .deserialize(bytes)
+        .map_err(|err| anyhow!("decode {label} failed: {err}"))?;
+    if usize::try_from(meta.tx_count).ok() != Some(meta.action_bytes.len()) {
+        return Err(anyhow!(
+            "native V3 metadata action count mismatch: declared {}, bodies {}",
+            meta.tx_count,
+            meta.action_bytes.len()
+        ));
+    }
+    if native_action_root_v3_from_action_bytes(&meta.action_bytes)? != meta.extrinsics_root {
+        return Err(anyhow!("native V3 metadata action root mismatch"));
+    }
+    Ok(meta)
+}
+
+/// Decode and seal an exact received V3 body while computing its BodyHash48
+/// exactly once. The returned immutable token can be shared with transport
+/// and passed into persistence preparation without a rehash or reserialization.
+pub(crate) fn decode_and_bind_native_block_body_v3_exact(
+    bytes: Arc<[u8]>,
+    expected_hash: BodyHash48,
+    label: &str,
+) -> Result<(NativeBlockMetaV3, EncodedNativeBlockBodyV3)> {
+    let actual_hash = native_block_body_hash_v3(&bytes);
+    if actual_hash != expected_hash {
+        return Err(anyhow!("{label} BodyHash48 mismatch"));
+    }
+    let meta = decode_native_block_meta_v3_exact(&bytes, label)?;
+    let len = u64::try_from(bytes.len()).map_err(|_| anyhow!("{label} length exceeds u64"))?;
+    let meta_fixed_binding = native_block_meta_fixed_binding_v3(&meta);
+    let encoded = EncodedNativeBlockBodyV3 {
+        hash: actual_hash,
+        len,
+        bytes,
+        meta_fixed_binding,
+    };
+    Ok((meta, encoded))
+}
+
+/// Allocation-bounded identity for all V3 metadata outside `action_bytes`.
+/// `extrinsics_root` and `tx_count` bind the omitted vector after its exact
+/// canonical actions have been decoded and their embedded ActionId48 values
+/// recomputed. Keeping this token beside the once-serialized full body lets a
+/// persistence worker prove it is storing the same metadata without encoding
+/// the full body again.
+#[derive(Encode)]
+struct NativeBlockMetaFixedBindingV3<'a> {
+    schema_version: u16,
+    chain_id: &'a [u8; 32],
+    rules_hash: &'a RulesHash48,
+    height: u64,
+    hash: &'a BlockId48,
+    parent_hash: &'a BlockId48,
+    state_root: &'a StateRoot48,
+    kernel_root: &'a KernelRoot48,
+    nullifier_root: &'a NullifierAccumulatorRoot48,
+    proof_commitment: &'a ProofCommitment48,
+    extrinsics_root: &'a ActionRoot48,
+    tx_statements_commitment: &'a TransactionStatementsCommitment48,
+    version_commitment: &'a VersionCommitment48,
+    fee_commitment: &'a FeeCommitment48,
+    message_root: &'a BridgeMessageRoot48,
+    message_count: u32,
+    header_mmr_root: &'a HeaderMmrHash48,
+    header_mmr_len: u64,
+    timestamp_ms: u64,
+    pow_bits: u32,
+    nonce: &'a [u8; 32],
+    work_hash: &'a WorkHash48,
+    cumulative_work: &'a Work64,
+    supply_digest: u128,
+    tx_count: u32,
+    da_root: &'a DaRoot48,
+    da_chunk_size: u32,
+    da_sample_count: u32,
+    da_blob_len: u64,
+    da_chunk_count: u32,
+}
+
+fn native_block_meta_fixed_binding_v3(meta: &NativeBlockMetaV3) -> Vec<u8> {
+    NativeBlockMetaFixedBindingV3 {
+        schema_version: NATIVE_STORED_BLOCK_META_SCHEMA_V3,
+        chain_id: &meta.chain_id,
+        rules_hash: &meta.rules_hash,
+        height: meta.height,
+        hash: &meta.hash,
+        parent_hash: &meta.parent_hash,
+        state_root: &meta.state_root,
+        kernel_root: &meta.kernel_root,
+        nullifier_root: &meta.nullifier_root,
+        proof_commitment: &meta.proof_commitment,
+        extrinsics_root: &meta.extrinsics_root,
+        tx_statements_commitment: &meta.tx_statements_commitment,
+        version_commitment: &meta.version_commitment,
+        fee_commitment: &meta.fee_commitment,
+        message_root: &meta.message_root,
+        message_count: meta.message_count,
+        header_mmr_root: &meta.header_mmr_root,
+        header_mmr_len: meta.header_mmr_len,
+        timestamp_ms: meta.timestamp_ms,
+        pow_bits: meta.pow_bits,
+        nonce: &meta.nonce,
+        work_hash: &meta.work_hash,
+        cumulative_work: &meta.cumulative_work,
+        supply_digest: meta.supply_digest,
+        tx_count: meta.tx_count,
+        da_root: &meta.da_root,
+        da_chunk_size: meta.da_chunk_size,
+        da_sample_count: meta.da_sample_count,
+        da_blob_len: meta.da_blob_len,
+        da_chunk_count: meta.da_chunk_count,
+    }
+    .encode()
+}
+
+/// Serialize and hash a full self-contained V3 network/canonical body once.
+/// The action root is recomputed from the exact embedded action bytes before
+/// either the body bytes or their locator identity can be published.
+pub(crate) fn encode_native_block_body_v3(
+    meta: &NativeBlockMetaV3,
+) -> Result<EncodedNativeBlockBodyV3> {
+    if usize::try_from(meta.tx_count).ok() != Some(meta.action_bytes.len()) {
+        return Err(anyhow!(
+            "native V3 metadata action count mismatch: declared {}, bodies {}",
+            meta.tx_count,
+            meta.action_bytes.len()
+        ));
+    }
+    let action_root = native_action_root_v3_from_action_bytes(&meta.action_bytes)?;
+    if action_root != meta.extrinsics_root {
+        return Err(anyhow!("native V3 metadata action root mismatch"));
+    }
+    let bytes = serialize_native_block_meta_v3(meta)?;
+    if bytes.len() > MAX_NATIVE_BLOCK_META_BYTES {
+        return Err(anyhow!(
+            "canonical native V3 block body exceeds limit: {} > {}",
+            bytes.len(),
+            MAX_NATIVE_BLOCK_META_BYTES
+        ));
+    }
+    let len = u64::try_from(bytes.len())
+        .map_err(|_| anyhow!("native V3 block body length exceeds u64"))?;
+    let hash = native_block_body_hash_v3(&bytes);
+    let meta_fixed_binding = native_block_meta_fixed_binding_v3(meta);
+    Ok(EncodedNativeBlockBodyV3 {
+        hash,
+        len,
+        bytes: Arc::from(bytes),
+        meta_fixed_binding,
+    })
+}
+
+/// Build the slim sled row and content-addressed action blob from a canonical
+/// full body that was already serialized during transport or verification.
+///
+/// The full bytes are length/hash checked, every fixed metadata field is
+/// compared against the provenance captured by the canonical encoder, and the
+/// exact action count/root is independently recomputed from `meta`. Therefore
+/// this path cannot pair a body with different metadata while avoiding a
+/// second full-body serialization.
+pub(crate) fn store_native_block_meta_v3_with_canonical_body(
+    meta: &NativeBlockMetaV3,
+    canonical_body: &EncodedNativeBlockBodyV3,
+) -> Result<(StoredNativeBlockMetaV3, EncodedNativeActionBodyV3)> {
+    let actual_body_len = u64::try_from(canonical_body.bytes.len())
+        .map_err(|_| anyhow!("canonical native V3 block body length exceeds u64"))?;
+    if canonical_body.bytes.len() > MAX_NATIVE_BLOCK_META_BYTES {
+        return Err(anyhow!(
+            "canonical native V3 block body exceeds limit: {} > {}",
+            canonical_body.bytes.len(),
+            MAX_NATIVE_BLOCK_META_BYTES
+        ));
+    }
+    if actual_body_len != canonical_body.len {
+        return Err(anyhow!(
+            "canonical native V3 block body length binding mismatch: expected {}, got {}",
+            canonical_body.len,
+            actual_body_len
+        ));
+    }
+    // `canonical_body` is sealed by this module: its hash, length, immutable
+    // bytes, and fixed-field provenance were created in the same one-pass
+    // encoder. Rehashing here would add a redundant 67 MiB pass.
+    if native_block_meta_fixed_binding_v3(meta) != canonical_body.meta_fixed_binding {
+        return Err(anyhow!(
+            "canonical native V3 block body fixed metadata binding mismatch"
+        ));
+    }
+    if usize::try_from(meta.tx_count).ok() != Some(meta.action_bytes.len()) {
+        return Err(anyhow!(
+            "native V3 metadata action count mismatch: declared {}, bodies {}",
+            meta.tx_count,
+            meta.action_bytes.len()
+        ));
+    }
+    let action_root = native_action_root_v3_from_action_bytes(&meta.action_bytes)?;
+    if action_root != meta.extrinsics_root {
+        return Err(anyhow!("native V3 metadata action root mismatch"));
+    }
+    let body = encode_native_action_body_v3(&meta.action_bytes)?;
+    let stored = StoredNativeBlockMetaV3 {
+        schema_version: NATIVE_STORED_BLOCK_META_SCHEMA_V3,
+        chain_id: meta.chain_id,
+        rules_hash: meta.rules_hash,
+        height: meta.height,
+        hash: meta.hash,
+        parent_hash: meta.parent_hash,
+        state_root: meta.state_root,
+        kernel_root: meta.kernel_root,
+        nullifier_root: meta.nullifier_root,
+        proof_commitment: meta.proof_commitment,
+        extrinsics_root: meta.extrinsics_root,
+        tx_statements_commitment: meta.tx_statements_commitment,
+        version_commitment: meta.version_commitment,
+        fee_commitment: meta.fee_commitment,
+        message_root: meta.message_root,
+        message_count: meta.message_count,
+        header_mmr_root: meta.header_mmr_root,
+        header_mmr_len: meta.header_mmr_len,
+        timestamp_ms: meta.timestamp_ms,
+        pow_bits: meta.pow_bits,
+        nonce: meta.nonce,
+        work_hash: meta.work_hash,
+        cumulative_work: meta.cumulative_work,
+        supply_digest: meta.supply_digest,
+        tx_count: meta.tx_count,
+        body_hash: canonical_body.hash,
+        body_len: canonical_body.len,
+        action_body_hash: body.hash,
+        action_body_len: body.len,
+        da_root: meta.da_root,
+        da_chunk_size: meta.da_chunk_size,
+        da_sample_count: meta.da_sample_count,
+        da_blob_len: meta.da_blob_len,
+        da_chunk_count: meta.da_chunk_count,
+    };
+    Ok((stored, body))
+}
+
+pub(crate) fn store_native_block_meta_v3(
+    meta: &NativeBlockMetaV3,
+) -> Result<(
+    StoredNativeBlockMetaV3,
+    EncodedNativeActionBodyV3,
+    EncodedNativeBlockBodyV3,
+)> {
+    let canonical_body = encode_native_block_body_v3(meta)?;
+    let (stored, body) = store_native_block_meta_v3_with_canonical_body(meta, &canonical_body)?;
+    Ok((stored, body, canonical_body))
+}
+
+pub(crate) fn restore_native_block_meta_v3(
+    stored: &StoredNativeBlockMetaV3,
+    action_body: &[u8],
+) -> Result<NativeBlockMetaV3> {
+    if stored.schema_version != NATIVE_STORED_BLOCK_META_SCHEMA_V3 {
+        return Err(anyhow!(
+            "stored native block metadata schema mismatch: expected {}, got {}",
+            NATIVE_STORED_BLOCK_META_SCHEMA_V3,
+            stored.schema_version
+        ));
+    }
+    let body_len = u64::try_from(action_body.len())
+        .map_err(|_| anyhow!("stored native V3 action body length exceeds u64"))?;
+    if body_len != stored.action_body_len {
+        return Err(anyhow!(
+            "stored native V3 action body length mismatch: expected {}, got {}",
+            stored.action_body_len,
+            body_len
+        ));
+    }
+    let body_hash = ActionBodyHash48::new(crypto::hash384::blake2b_384_domain_hash(
+        crypto::hash384::domains::NATIVE_ACTION_BODY_V3,
+        [action_body],
+    ));
+    if body_hash != stored.action_body_hash {
+        return Err(anyhow!("stored native V3 action body hash mismatch"));
+    }
+    let action_bytes = decode_native_action_body_v3(action_body)?;
+    if usize::try_from(stored.tx_count).ok() != Some(action_bytes.len()) {
+        return Err(anyhow!(
+            "stored native V3 metadata action count mismatch: declared {}, bodies {}",
+            stored.tx_count,
+            action_bytes.len()
+        ));
+    }
+    let action_root = native_action_root_v3_from_action_bytes(&action_bytes)?;
+    if action_root != stored.extrinsics_root {
+        return Err(anyhow!("stored native V3 metadata action root mismatch"));
+    }
+    let meta = NativeBlockMetaV3 {
+        chain_id: stored.chain_id,
+        rules_hash: stored.rules_hash,
+        height: stored.height,
+        hash: stored.hash,
+        parent_hash: stored.parent_hash,
+        state_root: stored.state_root,
+        kernel_root: stored.kernel_root,
+        nullifier_root: stored.nullifier_root,
+        proof_commitment: stored.proof_commitment,
+        extrinsics_root: stored.extrinsics_root,
+        tx_statements_commitment: stored.tx_statements_commitment,
+        version_commitment: stored.version_commitment,
+        fee_commitment: stored.fee_commitment,
+        message_root: stored.message_root,
+        message_count: stored.message_count,
+        header_mmr_root: stored.header_mmr_root,
+        header_mmr_len: stored.header_mmr_len,
+        timestamp_ms: stored.timestamp_ms,
+        pow_bits: stored.pow_bits,
+        nonce: stored.nonce,
+        work_hash: stored.work_hash,
+        cumulative_work: stored.cumulative_work,
+        supply_digest: stored.supply_digest,
+        tx_count: stored.tx_count,
+        action_bytes,
+        da_root: stored.da_root,
+        da_chunk_size: stored.da_chunk_size,
+        da_sample_count: stored.da_sample_count,
+        da_blob_len: stored.da_blob_len,
+        da_chunk_count: stored.da_chunk_count,
+    };
+    let canonical_body = encode_native_block_body_v3(&meta)?;
+    if canonical_body.len != stored.body_len {
+        return Err(anyhow!(
+            "stored native V3 full body length mismatch: expected {}, got {}",
+            stored.body_len,
+            canonical_body.len
+        ));
+    }
+    if canonical_body.hash != stored.body_hash {
+        return Err(anyhow!("stored native V3 full body hash mismatch"));
+    }
+    Ok(meta)
+}
+
+/// Classify the sled namespace before any `open_tree` call can create a name.
+/// A fresh database has no named trees and an empty default tree. An existing
+/// database must have the exact current native namespace, so a legacy, partial,
+/// renamed, or unknown tree cannot be mutated during a failed V2 startup.
+pub(crate) fn validate_native_tree_namespace_before_open(db: &sled::Db) -> Result<()> {
+    let observed = db
+        .tree_names()
+        .into_iter()
+        .filter(|name| name.as_ref() != SLED_DEFAULT_TREE_NAME)
+        .map(|name| name.to_vec())
+        .collect::<BTreeSet<_>>();
+    if observed.is_empty() && db.is_empty() {
+        return Ok(());
+    }
+    if !db.is_empty() {
+        return Err(anyhow!(
+            "native sled default tree is nonempty; V2 requires an untouched fresh database or the exact native tree namespace"
+        ));
+    }
+
+    let expected = NATIVE_PERSISTENT_TREE_NAMES
+        .iter()
+        .map(|name| name.to_vec())
+        .collect::<BTreeSet<_>>();
+    let pre_v8_expected = expected
+        .iter()
+        .filter(|name| name.as_slice() != poseidon2_v8_state::POSEIDON2_V8_STATE_TREE_NAME)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if observed == expected || observed == pre_v8_expected {
+        return Ok(());
+    }
+    let missing = expected
+        .difference(&observed)
+        .map(|name| String::from_utf8_lossy(name).into_owned())
+        .collect::<Vec<_>>();
+    let unexpected = observed
+        .difference(&expected)
+        .map(|name| String::from_utf8_lossy(name).into_owned())
+        .collect::<Vec<_>>();
+    Err(anyhow!(
+        "native sled tree namespace is partial, legacy, or unknown; refusing to create trees before V2 startup validation (missing={missing:?}, unexpected={unexpected:?})"
+    ))
+}
+
 pub(crate) fn publish_mined_state(state: &mut NativeState, next_state: NativeState) {
     *state = next_state;
 }
@@ -42,12 +824,67 @@ pub(crate) fn load_best_or_genesis(
     pow_bits: u32,
 ) -> Result<NativeBlockMeta> {
     if let Some(bytes) = meta_tree.get(META_BEST_KEY)? {
-        return bincode_deserialize_native_block_meta_exact(&bytes, "native best metadata");
+        let best = bincode_deserialize_native_block_meta_exact(&bytes, "native best metadata")?;
+        if best.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE {
+            let profile = if best.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_V1 {
+                "legacy V1"
+            } else {
+                "unknown"
+            };
+            return Err(anyhow!(
+                "stored native database uses {profile} consensus rules; adaptive-DA V2 requires a fresh genesis and a new base path (stored rules_hash={}, active rules_hash={})",
+                hex32(&best.rules_hash),
+                hex32(&HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE),
+            ));
+        }
+        return Ok(best);
+    }
+
+    // A missing best pointer is not proof of a fresh database.  Refuse to
+    // bootstrap V2 over partial/legacy canonical rows; doing so would mutate
+    // evidence before startup validation can diagnose the required reset.
+    let mut nonempty_tree = (!db.is_empty()).then_some("__sled__default".to_string());
+    if nonempty_tree.is_none() {
+        for name in db.tree_names() {
+            if name.as_ref() == SLED_DEFAULT_TREE_NAME {
+                continue;
+            }
+            let tree = db.open_tree(&name)?;
+            if !tree.is_empty() {
+                nonempty_tree = Some(String::from_utf8_lossy(&name).into_owned());
+                break;
+            }
+        }
+    }
+    if nonempty_tree.is_some()
+        || !meta_tree.is_empty()
+        || !height_tree.is_empty()
+        || !block_tree.is_empty()
+    {
+        return Err(anyhow!(
+            "stored native database has canonical rows but no best pointer; V2 fresh genesis requires every persistent tree to be empty and a new base path (nonempty tree: {})",
+            nonempty_tree.as_deref().unwrap_or("core canonical tree")
+        ));
     }
 
     let genesis = genesis_meta(pow_bits)?;
-    persist_block(meta_tree, height_tree, block_tree, &genesis)?;
-    meta_tree.insert(META_GENESIS_KEY, genesis.hash.as_slice())?;
+    let genesis_record = bincode::serialize(&genesis)?;
+    let empty_nullifier_accumulator = NullifierAccumulator::new()
+        .encode()
+        .map_err(|err| anyhow!("encode genesis nullifier accumulator failed: {err}"))?;
+    let genesis_result: sled::transaction::TransactionResult<(), std::convert::Infallible> =
+        (meta_tree, height_tree, block_tree).transaction(|(meta_tree, height_tree, block_tree)| {
+            block_tree.insert(genesis.hash.to_vec(), genesis_record.clone())?;
+            height_tree.insert(height_key(0).to_vec(), genesis.hash.to_vec())?;
+            meta_tree.insert(META_BEST_KEY.to_vec(), genesis_record.clone())?;
+            meta_tree.insert(META_GENESIS_KEY.to_vec(), genesis.hash.to_vec())?;
+            meta_tree.insert(
+                META_NULLIFIER_ACCUMULATOR_KEY.to_vec(),
+                empty_nullifier_accumulator.clone(),
+            )?;
+            Ok(())
+        });
+    genesis_result.map_err(|err| anyhow!("atomic native genesis bootstrap failed: {err}"))?;
     flush_native_db_durability_barrier(
         db,
         "native genesis bootstrap",
@@ -90,12 +927,21 @@ pub(crate) fn append_header_mmr_peak_state(
 pub(crate) fn genesis_meta(pow_bits: u32) -> Result<NativeBlockMeta> {
     let state_root = CommitmentTreeState::default().root();
     let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
-    let nullifier_root = nullifier_root_from_set(&BTreeSet::new());
+    let nullifier_root = NullifierAccumulator::new().root();
     let timestamp_ms = NATIVE_GENESIS_TIMESTAMP_MS;
     let extrinsics_root = empty_extrinsics_root(0);
     let message_root = empty_bridge_message_root();
+    let da_params = native_da_params_for_transactions(&[])?;
+    let da_encoding = consensus::encode_da_blob(&[], da_params)
+        .map_err(|err| anyhow!("encode native genesis DA blob failed: {err}"))?;
+    let da_blob_len = u64::try_from(da_encoding.data_len())
+        .map_err(|_| anyhow!("native genesis DA blob length exceeds u64"))?;
+    let da_chunk_count = u32::try_from(da_encoding.chunks().len())
+        .map_err(|_| anyhow!("native genesis DA chunk count exceeds u32"))?;
     let hash = hash32_with_parts(&[
-        b"hegemon-native-genesis-v1",
+        b"hegemon-native-genesis-v2",
+        &HEGEMON_CHAIN_ID_V1,
+        &HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
         &state_root,
         &kernel_root,
         &nullifier_root,
@@ -106,7 +952,7 @@ pub(crate) fn genesis_meta(pow_bits: u32) -> Result<NativeBlockMeta> {
 
     Ok(NativeBlockMeta {
         chain_id: HEGEMON_CHAIN_ID_V1,
-        rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+        rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
         height: 0,
         hash,
         parent_hash: [0u8; 32],
@@ -126,12 +972,15 @@ pub(crate) fn genesis_meta(pow_bits: u32) -> Result<NativeBlockMeta> {
         supply_digest: 0,
         tx_count: 0,
         action_bytes: Vec::new(),
-        miner_commitment: [0u8; 48],
-        miner_public_key: Vec::new(),
-        miner_signature: Vec::new(),
+        da_root: da_encoding.root(),
+        da_chunk_size: da_params.chunk_size,
+        da_sample_count: da_params.sample_count,
+        da_blob_len,
+        da_chunk_count,
     })
 }
 
+#[cfg(test)]
 pub(crate) fn persist_block(
     meta_tree: &sled::Tree,
     height_tree: &sled::Tree,
@@ -146,6 +995,7 @@ pub(crate) fn persist_block(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn persist_block_record(block_tree: &sled::Tree, meta: &NativeBlockMeta) -> Result<()> {
     block_tree.insert(meta.hash.as_slice(), bincode::serialize(meta)?)?;
     block_tree.flush()?;
@@ -460,7 +1310,7 @@ pub(crate) fn evaluate_native_pending_action_reload(
 
 pub(crate) fn native_pending_action_reload_error(
     rejection: NativePendingActionReloadRejection,
-    hash: Option<[u8; 32]>,
+    hash: Option<ActionId48>,
     action: Option<&PendingAction>,
 ) -> anyhow::Error {
     match rejection {
@@ -473,8 +1323,8 @@ pub(crate) fn native_pending_action_reload_error(
             let action = action.expect("pending action exists after decode");
             anyhow!(
                 "stored pending action key/hash mismatch: key={} embedded={} ({})",
-                hex32(&hash),
-                hex32(&action.tx_hash),
+                hex48(hash.as_bytes()),
+                hex48(action.tx_hash.as_bytes()),
                 rejection.label()
             )
         }
@@ -482,7 +1332,7 @@ pub(crate) fn native_pending_action_reload_error(
             let hash = hash.expect("pending action hash exists after key-shape validation");
             anyhow!(
                 "stored pending action hash mismatch: key={} ({})",
-                hex32(&hash),
+                hex48(hash.as_bytes()),
                 rejection.label()
             )
         }
@@ -490,7 +1340,7 @@ pub(crate) fn native_pending_action_reload_error(
             let hash = hash.expect("pending action hash exists after key-shape validation");
             anyhow!(
                 "duplicate stored pending action {} ({})",
-                hex32(&hash),
+                hex48(hash.as_bytes()),
                 rejection.label()
             )
         }
@@ -534,13 +1384,12 @@ pub(crate) fn evaluate_native_staged_proof_reload(
 }
 
 pub(crate) fn validate_loaded_block_indexes(
-    db: &sled::Db,
     best: &NativeBlockMeta,
     meta_tree: &sled::Tree,
     height_tree: &sled::Tree,
     block_tree: &sled::Tree,
     pow_bits: u32,
-) -> Result<()> {
+) -> Result<NativeBlockIndexReloadAdmission> {
     let expected_genesis = genesis_meta(pow_bits)?;
     let chain = load_chain_to_hash(block_tree, best.hash)?;
 
@@ -567,7 +1416,7 @@ pub(crate) fn validate_loaded_block_indexes(
         if meta.chain_id != HEGEMON_CHAIN_ID_V1 {
             canonical_chain_ids_match = false;
         }
-        if meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_V1 {
+        if meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE {
             canonical_rules_hashes_match = false;
         }
         if meta.hash != meta.work_hash {
@@ -662,14 +1511,6 @@ pub(crate) fn validate_loaded_block_indexes(
     })
     .map_err(native_block_index_reload_error)?;
 
-    if admission.repair_missing_genesis_marker {
-        meta_tree.insert(META_GENESIS_KEY, expected_genesis.hash.as_slice())?;
-        flush_native_db_durability_barrier(
-            db,
-            "native genesis marker repair",
-            NativeStorageDurabilityOperation::GenesisMarkerRepair,
-        )?;
-    }
     for index in 0..chain.len() {
         let parent = if index == 0 {
             None
@@ -697,7 +1538,25 @@ pub(crate) fn validate_loaded_block_indexes(
         )?;
     }
 
-    Ok(())
+    Ok(admission)
+}
+
+pub(crate) fn apply_native_block_index_reload_repairs(
+    db: &sled::Db,
+    meta_tree: &sled::Tree,
+    pow_bits: u32,
+    admission: NativeBlockIndexReloadAdmission,
+) -> Result<()> {
+    if !admission.repair_missing_genesis_marker {
+        return Ok(());
+    }
+    let expected_genesis = genesis_meta(pow_bits)?;
+    meta_tree.insert(META_GENESIS_KEY, expected_genesis.hash.as_slice())?;
+    flush_native_db_durability_barrier(
+        db,
+        "native genesis marker repair",
+        NativeStorageDurabilityOperation::GenesisMarkerRepair,
+    )
 }
 
 pub(crate) fn load_staged_sizes(db: &sled::Db, tree: &sled::Tree) -> Result<BTreeMap<String, u32>> {
@@ -928,12 +1787,14 @@ pub(crate) fn load_staged_proofs_with_limits(
     Ok(entries)
 }
 
-pub(crate) fn load_pending_actions(tree: &sled::Tree) -> Result<BTreeMap<[u8; 32], PendingAction>> {
+pub(crate) fn load_pending_actions(
+    tree: &sled::Tree,
+) -> Result<BTreeMap<ActionId48, PendingAction>> {
     let mut actions = BTreeMap::new();
     let mut semantic_hashes = BTreeSet::new();
     for item in tree.iter() {
         let (key, value) = item?;
-        if key.len() != 32 {
+        if key.len() != 48 {
             return Err(native_pending_action_reload_error(
                 evaluate_native_pending_action_reload(NativePendingActionReloadInput {
                     key_well_formed: false,
@@ -946,20 +1807,21 @@ pub(crate) fn load_pending_actions(tree: &sled::Tree) -> Result<BTreeMap<[u8; 32
                 None,
             ));
         }
-        let mut hash = [0u8; 32];
-        hash.copy_from_slice(&key);
-        let action: PendingAction = decode_scale_exact(&value, "pending action")?;
+        let hash = ActionId48::try_from(key.as_ref())
+            .map_err(|_| anyhow!("stored pending action key has invalid length"))?;
+        let action = decode_pending_action_v3_exact(&value, "persisted pending action")?;
+        validate_active_pending_action_canonicality(&action)?;
         if action.encode().as_slice() != value.as_ref() {
             return Err(anyhow!(
                 "pending action {} has noncanonical SCALE encoding",
-                hex32(&hash)
+                hex48(hash.as_bytes())
             ));
         }
         validate_loaded_pending_action_hash(hash, &action, !actions.contains_key(&hash))?;
         if !semantic_hashes.insert(pending_action_semantic_hash(&action)) {
             return Err(anyhow!(
                 "duplicate semantic stored pending action {}",
-                hex32(&hash)
+                hex48(hash.as_bytes())
             ));
         }
         actions.insert(hash, action);
@@ -968,10 +1830,11 @@ pub(crate) fn load_pending_actions(tree: &sled::Tree) -> Result<BTreeMap<[u8; 32
 }
 
 pub(crate) fn validate_loaded_pending_action_hash(
-    hash: [u8; 32],
+    hash: ActionId48,
     action: &PendingAction,
     action_hash_unique: bool,
 ) -> Result<()> {
+    validate_active_pending_action_canonicality(action)?;
     evaluate_native_pending_action_reload(NativePendingActionReloadInput {
         key_well_formed: true,
         embedded_hash_matches_key: action.tx_hash == hash,
@@ -986,13 +1849,14 @@ pub(crate) fn build_validated_startup_state(
     action_tree: &sled::Tree,
     best: NativeBlockMeta,
     header_mmr_peaks: Vec<Hash32>,
-    pending_actions: BTreeMap<[u8; 32], PendingAction>,
+    pending_actions: BTreeMap<ActionId48, PendingAction>,
     commitment_tree: CommitmentTreeState,
-    nullifiers: BTreeSet<[u8; 48]>,
-    consumed_bridge_messages: BTreeSet<[u8; 48]>,
+    nullifiers: PersistentKeySet48,
+    nullifier_accumulator: NullifierAccumulator,
+    consumed_bridge_messages: PersistentKeySet48,
     staged_ciphertexts: BTreeMap<String, u32>,
     staged_proofs: BTreeMap<String, Vec<u8>>,
-    prune_persisted_coinbase_actions: bool,
+    _prune_persisted_coinbase_actions: bool,
 ) -> Result<NativeState> {
     build_validated_startup_state_with_limits(
         db,
@@ -1002,10 +1866,11 @@ pub(crate) fn build_validated_startup_state(
         pending_actions,
         commitment_tree,
         nullifiers,
+        nullifier_accumulator,
         consumed_bridge_messages,
         staged_ciphertexts,
         staged_proofs,
-        prune_persisted_coinbase_actions,
+        true,
         MAX_NATIVE_MEMPOOL_ACTIONS,
         MAX_NATIVE_MEMPOOL_ACTION_BYTES,
     )
@@ -1016,13 +1881,14 @@ pub(crate) fn build_validated_startup_state_with_limits(
     action_tree: &sled::Tree,
     best: NativeBlockMeta,
     header_mmr_peaks: Vec<Hash32>,
-    pending_actions: BTreeMap<[u8; 32], PendingAction>,
+    pending_actions: BTreeMap<ActionId48, PendingAction>,
     commitment_tree: CommitmentTreeState,
-    nullifiers: BTreeSet<[u8; 48]>,
-    consumed_bridge_messages: BTreeSet<[u8; 48]>,
+    nullifiers: PersistentKeySet48,
+    nullifier_accumulator: NullifierAccumulator,
+    consumed_bridge_messages: PersistentKeySet48,
     staged_ciphertexts: BTreeMap<String, u32>,
     staged_proofs: BTreeMap<String, Vec<u8>>,
-    prune_persisted_coinbase_actions: bool,
+    _prune_persisted_coinbase_actions: bool,
     max_pending_actions: usize,
     max_pending_action_bytes: usize,
 ) -> Result<NativeState> {
@@ -1030,42 +1896,57 @@ pub(crate) fn build_validated_startup_state_with_limits(
         best,
         header_mmr_peaks,
         pending_actions: BTreeMap::new(),
+        pending_action_semantic_index: BTreeMap::new(),
+        pending_action_order_index: BTreeSet::new(),
+        pending_nullifiers: BTreeSet::new(),
+        pending_bridge_replay_keys: PersistentKeySet48::new(),
+        pending_mempool_bytes: 0,
         commitment_tree,
         nullifiers,
+        nullifier_accumulator,
         consumed_bridge_messages,
         stablecoin_policy_authorizations: BTreeSet::new(),
         staged_ciphertexts,
         staged_proofs,
     };
+    let (non_coinbase_actions, coinbase_actions): (Vec<_>, Vec<_>) = pending_actions
+        .into_iter()
+        .partition(|(_, action)| !is_coinbase_action(action));
     let mut dropped_pending = Vec::new();
-    for (hash, action) in pending_actions {
+    for (hash, action) in non_coinbase_actions.into_iter().chain(coinbase_actions) {
+        if is_coinbase_action(&action) {
+            debug!(
+                tx_hash = %hex48(hash.as_bytes()),
+                "dropping persisted coinbase action before startup mempool budgeting"
+            );
+            dropped_pending.push(hash);
+            continue;
+        }
         if state.pending_actions.len() >= max_pending_actions {
             dropped_pending.push(hash);
             continue;
         }
         if let Err(err) = validate_startup_pending_action_against_mempool_state(&state, &action) {
             debug!(
-                tx_hash = %hex32(&hash),
+                tx_hash = %hex48(hash.as_bytes()),
                 error = %err,
                 "dropping semantically invalid persisted pending action during startup"
             );
             dropped_pending.push(hash);
             continue;
         }
-        if let Err(err) = validate_startup_mempool_byte_budget(
-            &state.pending_actions,
-            &action,
-            max_pending_action_bytes,
-        ) {
+        if let Err(err) =
+            validate_startup_mempool_byte_budget(&state, &action, max_pending_action_bytes)
+        {
             debug!(
-                tx_hash = %hex32(&hash),
+                tx_hash = %hex48(hash.as_bytes()),
                 error = %err,
                 "dropping over-budget persisted pending action during startup"
             );
             dropped_pending.push(hash);
             continue;
         }
-        state.pending_actions.insert(hash, action);
+        insert_pending_action_into_state(&mut state, action)?;
     }
     let pending_before_transfer_candidate_prune =
         state.pending_actions.keys().copied().collect::<Vec<_>>();
@@ -1082,20 +1963,20 @@ pub(crate) fn build_validated_startup_state_with_limits(
             dropped_pending.push(hash);
         }
     }
-    if prune_persisted_coinbase_actions {
-        let pending_before_coinbase_prune =
-            state.pending_actions.keys().copied().collect::<Vec<_>>();
-        prune_auto_coinbase_actions_from_pending(&mut state, "startup");
-        for hash in pending_before_coinbase_prune {
-            if !state.pending_actions.contains_key(&hash) {
-                dropped_pending.push(hash);
-            }
+    let pending_before_coinbase_prune = state.pending_actions.keys().copied().collect::<Vec<_>>();
+    prune_auto_coinbase_actions_from_pending(&mut state, "startup");
+    for hash in pending_before_coinbase_prune {
+        if !state.pending_actions.contains_key(&hash) {
+            dropped_pending.push(hash);
         }
     }
     if !dropped_pending.is_empty() {
         for hash in dropped_pending {
-            action_tree.remove(hash.as_slice()).with_context(|| {
-                format!("remove invalid persisted pending action {}", hex32(&hash))
+            action_tree.remove(hash.as_ref()).with_context(|| {
+                format!(
+                    "remove invalid persisted pending action {}",
+                    hex48(hash.as_bytes())
+                )
             })?;
         }
         flush_native_db_durability_barrier(
@@ -1115,17 +1996,49 @@ pub(crate) fn validate_startup_pending_action_against_mempool_state(
 }
 
 pub(crate) fn validate_startup_mempool_byte_budget(
-    pending: &BTreeMap<[u8; 32], PendingAction>,
+    state: &NativeState,
     candidate: &PendingAction,
     max_bytes: usize,
 ) -> Result<()> {
-    validate_mempool_byte_budget(pending, candidate, max_bytes)
+    validate_mempool_byte_budget_for_state(state, candidate, max_bytes)
 }
 
 pub(crate) fn validate_pending_action_against_mempool_state(
     state: &NativeState,
     action: &PendingAction,
 ) -> Result<()> {
+    validate_pending_action_against_mempool_state_inner(state, action, true)
+}
+
+#[cfg(test)]
+pub(crate) fn validate_pending_action_against_mempool_state_for_group_engine_test(
+    state: &NativeState,
+    action: &PendingAction,
+) -> Result<()> {
+    validate_pending_action_against_mempool_state_inner(state, action, false)
+}
+
+fn validate_pending_action_against_mempool_state_inner(
+    state: &NativeState,
+    action: &PendingAction,
+    enforce_active_route: bool,
+) -> Result<()> {
+    if enforce_active_route {
+        ensure_native_v3_active_action_route(action, false)?;
+    }
+    #[cfg(test)]
+    let skip_v8_group_engine_authoring_policy =
+        !enforce_active_route && is_poseidon2_v8_action(action);
+    #[cfg(not(test))]
+    let skip_v8_group_engine_authoring_policy = false;
+    if !skip_v8_group_engine_authoring_policy {
+        validate_native_action_authoring_version_policy(
+            state.best.height,
+            action.binding,
+            action.family_id,
+            action.action_id,
+        )?;
+    }
     match evaluate_native_action_scope_admission(native_action_scope_admission_input(action))
         .map_err(native_action_scope_admission_error)?
     {
@@ -1149,16 +2062,56 @@ pub(crate) fn validate_pending_action_against_mempool_state(
             }
             Ok(())
         }
-        NativeActionScopeAdmissionRoute::CandidateArtifact => {
-            validate_candidate_action_payload(action)?;
-            Ok(())
-        }
+        NativeActionScopeAdmissionRoute::CandidateArtifact => Err(anyhow!(
+            "candidate artifact submissions are retired; blocks carry independent SmallWood transaction proofs"
+        )),
         NativeActionScopeAdmissionRoute::Coinbase => {
             validate_coinbase_action_payload(action)?;
             Ok(())
         }
         NativeActionScopeAdmissionRoute::Transfer => {
             validate_transfer_action_payload(action)?;
+            if is_poseidon2_v8_action(action) {
+                let pending_v8_count = state
+                    .pending_actions
+                    .values()
+                    .filter(|pending| is_poseidon2_v8_action(pending))
+                    .count();
+                if pending_v8_count >= MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK {
+                    return Err(anyhow!(
+                        "native mempool already contains the source-owned maximum of {MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK} Poseidon2 V8 actions"
+                    ));
+                }
+                #[cfg(test)]
+                if !enforce_active_route {
+                    // The direct group-engine test seam supplies an exact
+                    // verified-tip token but deliberately has no production
+                    // capability. This lets concurrency tests reach the
+                    // authoritative aggregate V8 count/byte checks without making a
+                    // test boolean an authorization path in production.
+                    return Ok(());
+                }
+                let height = state
+                    .best
+                    .height
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow!("native V8 mempool candidate height overflow"))?;
+                let production =
+                    poseidon2_v8_verifier::Poseidon2V8ProductionBinding::require_source_at(height)
+                        .map_err(|error| {
+                            anyhow!("native V8 mempool authority rejected: {error}")
+                        })?;
+                poseidon2_v8_verifier::Poseidon2V8ActionView::from_pending(
+                    production, height, action,
+                )
+                .map_err(|error| anyhow!("native V8 mempool action rejected: {error}"))?;
+
+                // The caller additionally runs the proof and typed-state
+                // preflight before group commit. The historical 48-byte
+                // anchor/nullifier state below is never a projection of the
+                // seven-limb V8 relation.
+                return Ok(());
+            }
             let input = native_transfer_state_admission_input_for_mempool(state, action);
             evaluate_native_transfer_state_admission(input).map_err(|rejection| {
                 native_transfer_state_admission_error(
@@ -1171,8 +2124,18 @@ pub(crate) fn validate_pending_action_against_mempool_state(
     }
 }
 
-pub(crate) fn load_nullifiers(tree: &sled::Tree) -> Result<BTreeSet<[u8; 48]>> {
-    let mut nullifiers = BTreeSet::new();
+pub(crate) struct LoadedNullifierState {
+    pub(crate) nullifiers: PersistentKeySet48,
+    pub(crate) accumulator: NullifierAccumulator,
+}
+
+pub(crate) fn load_nullifiers(
+    tree: &sled::Tree,
+    meta_tree: &sled::Tree,
+) -> Result<LoadedNullifierState> {
+    let row_count =
+        u64::try_from(tree.len()).map_err(|_| anyhow!("stored nullifier row count exceeds u64"))?;
+    let mut indexed = BTreeMap::new();
     let mut nullifier_keys_well_formed = true;
     let mut nullifier_markers_valid = true;
     for item in tree.iter() {
@@ -1181,14 +2144,28 @@ pub(crate) fn load_nullifiers(tree: &sled::Tree) -> Result<BTreeSet<[u8; 48]>> {
             nullifier_keys_well_formed = false;
             continue;
         }
-        if value.as_ref() != b"1" {
+        if value.len() != 8 {
             nullifier_markers_valid = false;
             continue;
         }
 
         let mut nullifier = [0u8; 48];
         nullifier.copy_from_slice(&key);
-        nullifiers.insert(nullifier);
+        let mut index_bytes = [0u8; 8];
+        index_bytes.copy_from_slice(&value);
+        let index = u64::from_be_bytes(index_bytes);
+        if index >= row_count || indexed.insert(index, nullifier).is_some() {
+            nullifier_markers_valid = false;
+        }
+    }
+    if indexed.len() as u64 != row_count
+        || indexed
+            .keys()
+            .copied()
+            .enumerate()
+            .any(|(expected, observed)| u64::try_from(expected).ok() != Some(observed))
+    {
+        nullifier_markers_valid = false;
     }
     evaluate_native_canonical_state_reload(NativeCanonicalStateReloadInput {
         nullifier_keys_well_formed,
@@ -1201,7 +2178,31 @@ pub(crate) fn load_nullifiers(tree: &sled::Tree) -> Result<BTreeSet<[u8; 48]>> {
         nullifier_root_matches_best: true,
     })
     .map_err(native_canonical_state_reload_error)?;
-    Ok(nullifiers)
+
+    let mut nullifiers = PersistentKeySet48::new();
+    let mut rebuilt = NullifierAccumulator::new();
+    for nullifier in indexed.into_values() {
+        if !nullifiers.insert(nullifier) {
+            return Err(anyhow!("stored nullifier rows contain a duplicate key"));
+        }
+        rebuilt
+            .append(nullifier)
+            .map_err(|err| anyhow!("rebuild stored nullifier accumulator failed: {err}"))?;
+    }
+    let encoded = meta_tree
+        .get(META_NULLIFIER_ACCUMULATOR_KEY)?
+        .ok_or_else(|| anyhow!("stored nullifier accumulator state is missing"))?;
+    let stored = NullifierAccumulator::decode(&encoded)
+        .map_err(|err| anyhow!("decode stored nullifier accumulator failed: {err}"))?;
+    if stored != rebuilt {
+        return Err(anyhow!(
+            "stored nullifier accumulator state does not match indexed nullifier rows"
+        ));
+    }
+    Ok(LoadedNullifierState {
+        nullifiers,
+        accumulator: stored,
+    })
 }
 
 pub(crate) fn load_consumed_bridge_messages(tree: &sled::Tree) -> Result<BTreeSet<[u8; 48]>> {
@@ -1304,10 +2305,13 @@ pub(crate) fn load_commitment_tree(tree: &sled::Tree) -> Result<CommitmentTreeSt
 pub(crate) fn validate_loaded_canonical_state(
     best: &NativeBlockMeta,
     commitment_state: &CommitmentTreeState,
-    nullifiers: &BTreeSet<[u8; 48]>,
+    nullifiers: &PersistentKeySet48,
+    nullifier_accumulator: &NullifierAccumulator,
 ) -> Result<()> {
     let commitment_root = commitment_state.root();
-    let nullifier_root = nullifier_root_from_set(nullifiers);
+    let nullifier_root = nullifier_accumulator.root();
+    let nullifier_count_matches =
+        usize::try_from(nullifier_accumulator.leaf_count()).ok() == Some(nullifiers.len());
     let admission = evaluate_native_canonical_state_reload(NativeCanonicalStateReloadInput {
         nullifier_keys_well_formed: true,
         nullifier_markers_valid: true,
@@ -1316,7 +2320,8 @@ pub(crate) fn validate_loaded_canonical_state(
         commitment_indexes_contiguous: true,
         commitment_tree_rebuilt: true,
         commitment_root_matches_best: commitment_root == best.state_root,
-        nullifier_root_matches_best: nullifier_root == best.nullifier_root,
+        nullifier_root_matches_best: nullifier_count_matches
+            && nullifier_root == best.nullifier_root,
     });
     if let Err(rejection) = admission {
         return match rejection {
@@ -1369,18 +2374,18 @@ pub(crate) fn expected_consumed_bridge_messages_from_chain(
 pub(crate) fn validate_loaded_bridge_replay_state(
     best: &NativeBlockMeta,
     block_tree: &sled::Tree,
-    consumed_bridge_messages: &BTreeSet<[u8; 48]>,
+    consumed_bridge_messages: &PersistentKeySet48,
 ) -> Result<()> {
     let chain = load_chain_to_hash(block_tree, best.hash)?;
     let expected_state = expected_consumed_bridge_messages_from_chain(&chain)?;
     let expected = &expected_state.consumed;
     let missing = expected
-        .difference(consumed_bridge_messages)
-        .next()
+        .iter()
+        .find(|key| !consumed_bridge_messages.contains(key))
         .copied();
     let extra = consumed_bridge_messages
-        .difference(expected)
-        .next()
+        .iter()
+        .find(|key| !expected.contains(*key))
         .copied();
     let admission = evaluate_native_bridge_replay_reload(NativeBridgeReplayReloadInput {
         replay_keys_well_formed: true,

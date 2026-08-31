@@ -25,6 +25,7 @@ use crate::multisig::{
 #[cfg(feature = "rpc-client")]
 use crate::node_rpc::NodeRpcClient;
 use crate::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
+use crate::prover::FreshTransactionProofAuthority;
 use crate::rpc::TransactionBundle;
 use crate::store::{
     LocalMultisigAccumulatorOpening, LocalMultisigValueLockOpening, OutgoingDisclosureDraft,
@@ -79,19 +80,35 @@ struct SubmissionProofMaterial {
     value_balance: i128,
 }
 
+fn fresh_inline_proof_authority(
+    store: &WalletStore,
+) -> Result<FreshTransactionProofAuthority, WalletError> {
+    FreshTransactionProofAuthority::from_wallet_store(
+        store,
+        protocol_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+    )
+}
+
 fn submission_proof_material_from_witness(
     witness: &TransactionWitness,
+    authority: &FreshTransactionProofAuthority,
 ) -> Result<SubmissionProofMaterial, WalletError> {
     submission_proof_material_from_witness_with_auth(
         witness,
         &SmallwoodPrivateAuthWitness::default(),
+        authority,
     )
 }
 
 fn submission_proof_material_from_witness_with_auth(
     witness: &TransactionWitness,
     auth: &SmallwoodPrivateAuthWitness,
+    authority: &FreshTransactionProofAuthority,
 ) -> Result<SubmissionProofMaterial, WalletError> {
+    authority.ensure_route(
+        protocol_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+        witness.version,
+    )?;
     witness
         .validate()
         .map_err(|err| WalletError::InvalidArgument(Box::leak(err.to_string().into_boxed_str())))?;
@@ -324,6 +341,7 @@ pub fn build_transaction_with_binding(
         .iter()
         .map(|ct| ct.to_da_bytes().map(|bytes| ciphertext_hash_bytes(&bytes)))
         .collect::<Result<Vec<_>, _>>()?;
+    let authority = fresh_inline_proof_authority(store)?;
     let witness = TransactionWitness {
         inputs,
         outputs,
@@ -333,10 +351,10 @@ pub fn build_transaction_with_binding(
         fee,
         value_balance: 0,
         stablecoin: stablecoin.clone(),
-        version: TransactionWitness::default_version_binding(),
+        version: authority.binding(),
     };
 
-    let submission = submission_proof_material_from_witness(&witness)?;
+    let submission = submission_proof_material_from_witness(&witness, &authority)?;
 
     // Compute binding hash commitment (domain-separated Blake2-256 of public inputs)
     let binding_hash = compute_binding_hash(
@@ -432,6 +450,7 @@ pub fn build_multisig_initial_accumulator_transaction(
     )?;
     let ciphertext_hashes = ciphertext_hashes(&ciphertexts)?;
     let tree = store.commitment_tree()?;
+    let authority = fresh_inline_proof_authority(store)?;
     let witness = TransactionWitness {
         inputs: vec![checked_input_witness(store, &tree, &funding_note)?],
         outputs,
@@ -441,11 +460,12 @@ pub fn build_multisig_initial_accumulator_transaction(
         fee,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
-        version: TransactionWitness::default_version_binding(),
+        version: authority.binding(),
     };
     let built = built_transaction_from_witness(
         &witness,
         &SmallwoodPrivateAuthWitness::default(),
+        &authority,
         &ciphertexts,
         vec![funding_note.index],
         outgoing_disclosures,
@@ -552,6 +572,7 @@ pub fn build_multisig_approval_transaction(
         checked_input_witness(store, &tree, &signer_note)?,
     ];
     let ciphertext_hashes = ciphertext_hashes(&ciphertexts)?;
+    let authority = fresh_inline_proof_authority(store)?;
     let witness = TransactionWitness {
         inputs,
         outputs,
@@ -561,7 +582,7 @@ pub fn build_multisig_approval_transaction(
         fee,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
-        version: TransactionWitness::default_version_binding(),
+        version: authority.binding(),
     };
     let auth = SmallwoodPrivateAuthWitness {
         mode: SmallwoodPrivateAuthMode::ApprovalStep,
@@ -572,6 +593,7 @@ pub fn build_multisig_approval_transaction(
     let built = built_transaction_from_witness(
         &witness,
         &auth,
+        &authority,
         &ciphertexts,
         vec![current_note.index, signer_note.index],
         outgoing_disclosures,
@@ -677,6 +699,7 @@ fn prepare_multisig_final_plan_for_note(
     let dummy_acc_note = dummy_accumulator_input(&dummy_accumulator)?;
     let mut value_input = value_note.recovered.to_input_witness(value_note.position);
     value_input.merkle_path = Default::default();
+    let authority = fresh_inline_proof_authority(store)?;
     let witness = TransactionWitness {
         inputs: vec![value_input, dummy_acc_note],
         outputs: outputs.clone(),
@@ -690,7 +713,7 @@ fn prepare_multisig_final_plan_for_note(
         fee,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
-        version: TransactionWitness::default_version_binding(),
+        version: authority.binding(),
     };
     let auth = SmallwoodPrivateAuthWitness {
         mode: SmallwoodPrivateAuthMode::FinalThresholdSpend,
@@ -842,6 +865,7 @@ pub fn build_multisig_value_lock_transaction(
     let ciphertexts = vec![locked_ciphertext];
     let ciphertext_hashes = ciphertext_hashes(&ciphertexts)?;
     let tree = store.commitment_tree()?;
+    let authority = fresh_inline_proof_authority(store)?;
     let witness = TransactionWitness {
         inputs: vec![checked_input_witness(store, &tree, &source_note)?],
         outputs: vec![locked_output],
@@ -851,11 +875,12 @@ pub fn build_multisig_value_lock_transaction(
         fee: lock_fee,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
-        version: TransactionWitness::default_version_binding(),
+        version: authority.binding(),
     };
     let built = built_transaction_from_witness(
         &witness,
         &SmallwoodPrivateAuthWitness::default(),
+        &authority,
         &ciphertexts,
         vec![source_note.index],
         Vec::new(),
@@ -944,6 +969,7 @@ pub fn build_multisig_final_transaction_from_plan(
         checked_input_witness(store, &tree, &value_note)?,
         checked_input_witness(store, &tree, &accumulator_note)?,
     ];
+    let authority = fresh_inline_proof_authority(store)?;
     let witness = TransactionWitness {
         inputs,
         outputs: plan.outputs.clone(),
@@ -953,7 +979,7 @@ pub fn build_multisig_final_transaction_from_plan(
         fee: plan.fee,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
-        version: TransactionWitness::default_version_binding(),
+        version: authority.binding(),
     };
     let auth = SmallwoodPrivateAuthWitness {
         mode: SmallwoodPrivateAuthMode::FinalThresholdSpend,
@@ -971,6 +997,7 @@ pub fn build_multisig_final_transaction_from_plan(
     built_transaction_from_witness(
         &witness,
         &auth,
+        &authority,
         &plan.ciphertexts,
         vec![value_note.index, accumulator_note.index],
         plan.outgoing_disclosures.clone(),
@@ -1104,6 +1131,7 @@ pub fn build_stablecoin_burn(
         .iter()
         .map(|ct| ct.to_da_bytes().map(|bytes| ciphertext_hash_bytes(&bytes)))
         .collect::<Result<Vec<_>, _>>()?;
+    let authority = fresh_inline_proof_authority(store)?;
     let witness = TransactionWitness {
         inputs,
         outputs,
@@ -1113,10 +1141,10 @@ pub fn build_stablecoin_burn(
         fee,
         value_balance: 0,
         stablecoin: stablecoin.clone(),
-        version: TransactionWitness::default_version_binding(),
+        version: authority.binding(),
     };
 
-    let submission = submission_proof_material_from_witness(&witness)?;
+    let submission = submission_proof_material_from_witness(&witness, &authority)?;
 
     let binding_hash = compute_binding_hash(
         &submission.anchor,
@@ -1281,6 +1309,7 @@ pub fn build_consolidation_transaction(
     }
 
     let ciphertext_hashes = vec![ciphertext_hash_bytes(&ciphertext.to_da_bytes()?)];
+    let authority = fresh_inline_proof_authority(store)?;
     let witness = TransactionWitness {
         inputs,
         outputs: vec![output],
@@ -1290,10 +1319,10 @@ pub fn build_consolidation_transaction(
         fee,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
-        version: TransactionWitness::default_version_binding(),
+        version: authority.binding(),
     };
 
-    let submission = submission_proof_material_from_witness(&witness)?;
+    let submission = submission_proof_material_from_witness(&witness, &authority)?;
 
     let binding_hash = compute_binding_hash(
         &submission.anchor,
@@ -1371,11 +1400,12 @@ fn to_chain_stablecoin_binding(
 fn built_transaction_from_witness(
     witness: &TransactionWitness,
     auth: &SmallwoodPrivateAuthWitness,
+    authority: &FreshTransactionProofAuthority,
     ciphertexts: &[NoteCiphertext],
     spent_note_indexes: Vec<usize>,
     outgoing_disclosures: Vec<OutgoingDisclosureDraft>,
 ) -> Result<BuiltTransaction, WalletError> {
-    let submission = submission_proof_material_from_witness_with_auth(witness, auth)?;
+    let submission = submission_proof_material_from_witness_with_auth(witness, auth, authority)?;
     let binding_hash = compute_binding_hash(
         &submission.anchor,
         &submission.nullifiers,
@@ -2931,6 +2961,23 @@ mod tests {
 
         assert_eq!(decoded_hashes, ciphertext_hashes);
         assert_eq!(bundle.binding_hash, expected.data);
+    }
+
+    #[test]
+    fn fresh_transaction_builder_rejects_direct_artifact_bypass_before_proving() {
+        let (sender, recipient_store, _) = seeded_sender_and_recipient(776);
+        let recipient = Recipient {
+            address: recipient_store.primary_address().unwrap(),
+            value: 160_000_000,
+            asset_id: NATIVE_ASSET_ID,
+            memo: MemoPlaintext::new(b"authority bypass regression".to_vec()),
+        };
+
+        let error = build_transaction(&sender, &[recipient], 0)
+            .expect_err("direct tx-builder artifact construction must fail closed");
+        assert!(error
+            .to_string()
+            .contains("no fresh transaction proof authority"));
     }
 
     #[test]

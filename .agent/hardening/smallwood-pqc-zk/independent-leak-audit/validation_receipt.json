@@ -1,0 +1,87 @@
+{
+  "schema": "hegemon.security-validation-receipt.v1",
+  "finding": "smallwood-radix2-lvcs-coordinate-leak",
+  "validated_at_utc": "2026-08-22T07:48:58Z",
+  "scope": "legacy active SmallWood Level-5 699-row 375+23 LVCS geometry",
+  "base_head": "038ec2d1275d7c1d7de4325d071f43a1fd8e66a1",
+  "observed_source": {
+    "path": "circuits/transaction/src/smallwood_engine.rs",
+    "sha256": "00875607506f4f3dd301448bf341130f25c7db4862988f155dfac7b84e12f264",
+    "shared_checkout_dirty": true
+  },
+  "verdict": "validated",
+  "severity_basis": "complete zero knowledge fails with per-proof leakage probability about 2^-15.476 for two full packed witness rows",
+  "rubric": [
+    {
+      "criterion": "exact index-to-field mapping",
+      "status": "pass",
+      "evidence": "h^163840 mod p = 64 and h has exact order 2^20"
+    },
+    {
+      "criterion": "exact serialized reveal surface",
+      "status": "pass",
+      "evidence": "subset_evals exposes LVCS rows 5..68 and 74..137; five row_scalars expose PIOP evaluations; no tape is serialized"
+    },
+    {
+      "criterion": "rank and recovery for witness polynomials 41 and 416",
+      "status": "pass",
+      "evidence": "69x69 rank 69; exact coefficients and 64 packed evaluations recovered for both; four-opening negative control rank 68"
+    },
+    {
+      "criterion": "fixed-sampler probability",
+      "status": "pass",
+      "evidence": "conditioned on success, exact inclusion probability is 23/1048576 = 2^-15.476438043942988"
+    },
+    {
+      "criterion": "proposed repair sufficiency",
+      "status": "fail",
+      "evidence": "coset shift 398 is collision-free and algebraically sound but active profile still selects subgroup; leaf index/tapes/wire/QROM simulator are absent"
+    }
+  ],
+  "poc_results": {
+    "subgroup_generator": 3511170319078647661,
+    "vulnerable_leaf_index": 163840,
+    "vulnerable_field_point": 64,
+    "old_interpolation_collisions": [1, 8, 64],
+    "five_opening_rank": 69,
+    "four_opening_rank": 68,
+    "target_witness_polynomials": [41, 416],
+    "recovered_coefficients_per_target": 69,
+    "recovered_packed_values_per_target": 64,
+    "fixed_leaf_probability": "23/1048576",
+    "negative_log2_probability": 15.476438043942988,
+    "disjoint_coset_shift": 398,
+    "shifted_vulnerable_leaf_point": 25472,
+    "coset_collision_count_over_interpolation_coordinates": 0,
+    "coset_shift_wire_bytes": 0,
+    "opened_tape_wire_bytes_16": 368,
+    "opened_tape_wire_bytes_32": 736,
+    "opened_tape_wire_bytes_64": 1472
+  },
+  "artifacts": [
+    {
+      "path": ".agent/hardening/smallwood-pqc-zk/independent-leak-audit/README.md",
+      "sha256": "2a6a221370937bdfba892a50e3d778cb4c4ee091600660066094a424d8880556"
+    },
+    {
+      "path": ".agent/hardening/smallwood-pqc-zk/independent-leak-audit/poc.py",
+      "sha256": "fcff9641f4ce89f3eae56ad01090ed61c13cc4495e44f37e5aab926aed55b643"
+    },
+    {
+      "path": ".agent/hardening/smallwood-pqc-zk/independent-leak-audit/test_poc.py",
+      "sha256": "ec87eb2455a019ef656d4b79ba689d461caf2202c536b5720286dfbc7c167971"
+    },
+    {
+      "path": ".agent/hardening/smallwood-pqc-zk/independent-leak-audit/validation_report.md",
+      "sha256": "009ef0ad02d093b642c9681041c662b68207529fe197e574945953071fb1f8b2"
+    }
+  ],
+  "verification": {
+    "command": "python3 -m unittest discover -s .agent/hardening/smallwood-pqc-zk/independent-leak-audit -p 'test_*.py' -v",
+    "tests_run": 6,
+    "tests_passed": 6,
+    "tests_failed": 0,
+    "heavy_build_performed": false
+  },
+  "production_authorized": false
+}

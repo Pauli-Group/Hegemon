@@ -44,16 +44,47 @@ pub struct Transaction {
     pub ciphertext_hashes: Vec<[u8; 48]>,
 }
 
+/// Exact byte length of [`build_da_blob`] without materializing the blob.
+///
+/// Returns `None` if a count cannot be represented by the canonical u32 wire
+/// grammar or if host-size arithmetic overflows.
+pub fn checked_da_blob_len(transactions: &[Transaction]) -> Option<usize> {
+    u32::try_from(transactions.len()).ok()?;
+    transactions
+        .iter()
+        .try_fold(std::mem::size_of::<u32>(), |blob_len, transaction| {
+            u32::try_from(transaction.ciphertexts.len()).ok()?;
+            transaction.ciphertexts.iter().try_fold(
+                blob_len.checked_add(std::mem::size_of::<u32>())?,
+                |transaction_len, ciphertext| {
+                    u32::try_from(ciphertext.len()).ok()?;
+                    transaction_len
+                        .checked_add(std::mem::size_of::<u32>())?
+                        .checked_add(ciphertext.len())
+                },
+            )
+        })
+}
+
 pub fn build_da_blob(transactions: &[Transaction]) -> Vec<u8> {
-    let mut blob = Vec::new();
-    blob.extend_from_slice(&(transactions.len() as u32).to_le_bytes());
+    let exact_len = checked_da_blob_len(transactions)
+        .expect("DA blob counts must fit u32 and exact length must fit usize");
+    let transaction_count =
+        u32::try_from(transactions.len()).expect("DA transaction count checked before encoding");
+    let mut blob = Vec::with_capacity(exact_len);
+    blob.extend_from_slice(&transaction_count.to_le_bytes());
     for tx in transactions {
-        blob.extend_from_slice(&(tx.ciphertexts.len() as u32).to_le_bytes());
+        let ciphertext_count = u32::try_from(tx.ciphertexts.len())
+            .expect("DA ciphertext count checked before encoding");
+        blob.extend_from_slice(&ciphertext_count.to_le_bytes());
         for ciphertext in &tx.ciphertexts {
-            blob.extend_from_slice(&(ciphertext.len() as u32).to_le_bytes());
+            let ciphertext_len = u32::try_from(ciphertext.len())
+                .expect("DA ciphertext length checked before encoding");
+            blob.extend_from_slice(&ciphertext_len.to_le_bytes());
             blob.extend_from_slice(ciphertext);
         }
     }
+    debug_assert_eq!(blob.len(), exact_len);
     blob
 }
 

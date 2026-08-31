@@ -3,10 +3,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CRYPTO_ROOT="$ROOT/formal/crypto"
+if [ "$#" -gt 1 ]; then
+  printf 'usage: %s [full|--isolation-only]\n' "$0" >&2
+  exit 2
+fi
 MODE="${1:-full}"
 
 if [ "$MODE" != "full" ] && [ "$MODE" != "--isolation-only" ]; then
-  printf 'usage: %s [--isolation-only]\n' "$0" >&2
+  printf 'usage: %s [full|--isolation-only]\n' "$0" >&2
   exit 2
 fi
 
@@ -156,6 +160,10 @@ PY
   lake build HegemonCrypto
   lake env lean --run HegemonCrypto/GenerateSmallWoodProofWireVectors.lean \
     > "$WORK_DIR/smallwood-proof-wire.json"
+  lake env lean --run HegemonCrypto/GenerateSmallWoodSmz8ProofWireVectors.lean \
+    > "$WORK_DIR/smallwood-smz8-proof-wire.json"
+  lake env lean --run HegemonCrypto/GenerateSmallWoodSmz9ProofWireVectors.lean \
+    > "$WORK_DIR/smallwood-smz9-proof-wire.json"
   lake env lean --run "$ROOT/scripts/lean_axiom_audit.lean" \
     "$CRYPTO_ROOT/credited-declarations.txt" HegemonCrypto > "$WORK_DIR/axioms.json"
 )
@@ -164,6 +172,20 @@ if ! diff -u \
     "$ROOT/testdata/formal_crypto_vectors/smallwood_proof_wire.json" \
     "$WORK_DIR/smallwood-proof-wire.json"; then
   printf 'Lean-generated SmallWood proof-wire vectors are stale\n' >&2
+  exit 1
+fi
+
+if ! diff -u \
+    "$ROOT/testdata/formal_crypto_vectors/smallwood_smz8_proof_wire.json" \
+    "$WORK_DIR/smallwood-smz8-proof-wire.json"; then
+  printf 'Lean-generated SmallWood SMZ8 proof-wire vectors are stale\n' >&2
+  exit 1
+fi
+
+if ! diff -u \
+    "$ROOT/testdata/formal_crypto_vectors/smallwood_smz9_proof_wire.json" \
+    "$WORK_DIR/smallwood-smz9-proof-wire.json"; then
+  printf 'Lean-generated SmallWood SMZ9 proof-wire vectors are stale\n' >&2
   exit 1
 fi
 

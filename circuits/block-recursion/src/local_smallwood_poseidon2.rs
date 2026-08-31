@@ -243,7 +243,13 @@ pub fn ensure_row_polynomial_arithmetization(
             Ok(())
         }
         SmallwoodArithmetization::DirectPacked64CompressedLevel5
-        | SmallwoodArithmetization::DirectPacked128CompressedLevel5 => {
+        | SmallwoodArithmetization::DirectPacked128CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3
+        | SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1
+        | SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => {
             Err(TransactionCircuitError::ConstraintViolation(
                 "historical block recursion does not accept Level-5 transaction proofs",
             ))
@@ -379,7 +385,15 @@ fn transcript_xof_words(
             }
             out
         }
-        SmallwoodTranscriptBackend::Blake3 | SmallwoodTranscriptBackend::Sha512Level5 => {
+        SmallwoodTranscriptBackend::Blake3
+        | SmallwoodTranscriptBackend::Sha512Level5
+        | SmallwoodTranscriptBackend::FullSha512First48CommitmentV3
+        | SmallwoodTranscriptBackend::Sha512V6
+        | SmallwoodTranscriptBackend::Hx512Candidate
+        | SmallwoodTranscriptBackend::Sha512Poseidon2V8
+        | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9
+        | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7
+        | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Q20Smc8 => {
             panic!("block-recursion local verifier only supports Poseidon2")
         }
     }

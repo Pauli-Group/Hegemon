@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "title": "Strict-PQ standalone transaction proof compression",
+  "status": "selected_for_standalone_implementation",
+  "decision": "Reject off-block leaf proofs and block-aggregate consensus authority; require one self-contained standalone proof per canonical transaction.",
+  "implementation_plan": ".agent/STANDALONE_SHAKE256_BINARY_PROOF_EXECPLAN.md",
+  "security_target": {
+    "post_quantum_bits_min": 128,
+    "poseidon_active": false,
+    "semantic_hash": "SHAKE256-448",
+        "proof_hash": "SHAKE256-512",
+        "challenge_field": "GF(2^384)",
+        "fri_classical_starting_bits": 264,
+        "spend_secret_entropy_bits_min": 384,
+        "note_randomness_entropy_bits_min": 384,
+        "rho_entropy_bits_min": 384,
+        "release_requires_composed_qrom_calculation": true
+  },
+  "byte_gates": {
+    "current_action_bytes": 128992,
+    "current_artifact_bytes": 124022,
+    "historical_max_artifact_bytes_for_520_48byte_schema": 124080,
+    "standalone_artifact_target_bytes": 524288,
+    "standalone_artifact_hard_cap_bytes": 1048576,
+    "measured_520_leaf_bytes_min": 155118080,
+    "measured_520_leaf_bytes_max": 166982400
+  },
+  "rejected": [
+    {
+      "option": "Poseidon repair",
+      "reason": "Does not currently have an independently reviewed strict-PQ parameter set."
+    },
+    {
+      "option": "Flock direct private transaction proof",
+      "reason": "Current implementation is non-ZK and tops out at a 120-bit profile."
+    },
+    {
+            "option": "Unmodified upstream IronSpartan at the historical 520-action ceiling",
+            "reason": "The current SHA-256/GF(2^128)/96-bit profile is not release-qualified, and naive strict-profile field widening projects above the 1 MiB fresh-profile cap. The direct architecture remains the prototype base only with compact commitments and wide challenges."
+    },
+    {
+      "option": "Current wrapped Binius ZK per action",
+      "reason": "Measured 298304 to 321120 bytes at an insufficient 96-bit/SHA-256 profile."
+    }
+  ],
+  "required_controls": [
+    "Canonical byte-native statement and fixed-layout SHAKE256 relation",
+    "One unchanged standalone proof remains in every canonical transaction",
+    "Peers validate the proof before relay and miners include the same bytes",
+    "Fresh nodes validate canonical blocks without sidecars, caches, or aggregates",
+        "Concrete composed QROM calculator reports at least 128 bits",
+        "Spend secrets, note randomness, and rho each carry at least 384 bits of entropy",
+    "Maximum-shape standalone artifact is at most 1048576 bytes with a 524288-byte optimization target",
+    "Fresh rules hash and genesis; old profiles decode-only"
+  ]
+}

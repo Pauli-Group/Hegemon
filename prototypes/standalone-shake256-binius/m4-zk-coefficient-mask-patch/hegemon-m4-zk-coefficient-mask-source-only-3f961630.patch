@@ -1,0 +1,2281 @@
+diff --git a/crates/iop-prover/src/basefold/channel.rs b/crates/iop-prover/src/basefold/channel.rs
+index 79c20207..96ea2348 100644
+--- a/crates/iop-prover/src/basefold/channel.rs
++++ b/crates/iop-prover/src/basefold/channel.rs
+@@ -40,7 +40,7 @@ use crate::{
+ };
+ 
+ /// Oracle handle returned by [`BaseFoldProverChannel::send_oracle`].
+-#[derive(Debug, Clone, Copy)]
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub struct BaseFoldOracle {
+ 	index: usize,
+ }
+diff --git a/crates/iop-prover/src/channel/mod.rs b/crates/iop-prover/src/channel/mod.rs
+index 51f94ec3..d9d4514f 100644
+--- a/crates/iop-prover/src/channel/mod.rs
++++ b/crates/iop-prover/src/channel/mod.rs
+@@ -27,6 +27,15 @@ use binius_math::{FieldSlice, FieldVec};
+ pub trait IOPProverChannel<P: PackedField, A: Allocator>: IPProverChannel<P::Scalar> {
+ 	type Oracle: Clone;
+ 
++	/// Whether this channel applies the constant trace-evaluation mask transform.
++	///
++	/// Ordinary channels return `false` and retain the original one-challenge-per-coordinate ring
++	/// switch. The ZK wrapper overrides this to select the dedicated two-candidate final-trace
++	/// variant. This is a channel capability, never a prover-controlled transcript value.
++	fn evaluation_masking_enabled(&self) -> bool {
++		false
++	}
++
+ 	/// Returns the specifications for the remaining oracles to be committed.
+ 	///
+ 	/// This slice shrinks as oracles are committed via `send_oracle()`.
+@@ -40,6 +49,23 @@ pub trait IOPProverChannel<P: PackedField, A: Allocator>: IPProverChannel<P::Sca
+ 	/// * `buffer.log_len()` must match the expected length from the next oracle spec.
+ 	fn send_oracle(&mut self, buffer: FieldSlice<P>) -> Self::Oracle;
+ 
++	/// Commits an oracle whose sole supported opening is an equality-tensor evaluation that may
++	/// be protected by a fresh constant mask.
++	///
++	/// A wrapping channel may commit `buffer + k * 1` for a fresh pre-challenge scalar `k`, then
++	/// replace the eventual evaluation claim `s` by `s + k*c`, where `c` is the supplied non-zero
++	/// Boolean-hypercube sum of the transparent. The default implementation preserves the ordinary
++	/// commitment and is used by channels that do not implement this masking transform.
++	///
++	/// # Preconditions
++	///
++	/// * Every precondition of [`Self::send_oracle`] holds.
++	/// * The caller must open this handle exactly once through
++	///   [`Self::prove_oracle_evaluation_relation`], and must not queue any other relation on it.
++	fn send_evaluation_masked_oracle(&mut self, buffer: FieldSlice<P>) -> Self::Oracle {
++		self.send_oracle(buffer)
++	}
++
+ 	/// Generates an opening proof for one oracle linear relation.
+ 	///
+ 	/// The relation asserts that `<oracle_poly, transparent> = claim`. An oracle may carry any
+@@ -60,6 +86,30 @@ pub trait IOPProverChannel<P: PackedField, A: Allocator>: IPProverChannel<P::Sca
+ 		claim: P::Scalar,
+ 	);
+ 
++	/// Generates an opening proof for an oracle multilinear-evaluation relation.
++	///
++	/// This is the narrower form of [`Self::prove_oracle_relation`] where `transparent` is an
++	/// relation whose Boolean-hypercube sum is the supplied `mask_coefficient`. Channels that mask
++	/// an entire committed oracle by a fresh constant may override this method and shift `claim` by
++	/// `key * mask_coefficient`. The coefficient must be non-zero; otherwise the clear claim loses
++	/// its one-time pad. The default implementation preserves the ordinary channel behavior.
++	///
++	/// # Preconditions
++	///
++	/// * Every precondition of [`Self::prove_oracle_relation`] holds.
++	/// * `transparent.iter_scalars().sum() == mask_coefficient`.
++	/// * `mask_coefficient != P::Scalar::ZERO`.
++	fn prove_oracle_evaluation_relation(
++		&mut self,
++		oracle: Self::Oracle,
++		transparent: FieldVec<P, A>,
++		claim: P::Scalar,
++		mask_coefficient: P::Scalar,
++	) {
++		let _ = mask_coefficient;
++		self.prove_oracle_relation(oracle, transparent, claim);
++	}
++
+ 	/// Gives ownership of the oracle buffer to the channel.
+ 	///
+ 	/// The [`Self::send_oracle`] method takes a borrowed reference to an oracle buffer and returns
+diff --git a/crates/iop/src/basefold/channel.rs b/crates/iop/src/basefold/channel.rs
+index 22b7135e..e13cecea 100644
+--- a/crates/iop/src/basefold/channel.rs
++++ b/crates/iop/src/basefold/channel.rs
+@@ -24,7 +24,7 @@ use crate::{
+ };
+ 
+ /// Oracle handle returned by [`BaseFoldVerifierChannel::recv_oracle`].
+-#[derive(Debug, Clone, Copy)]
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub struct BaseFoldOracle {
+ 	index: usize,
+ }
+diff --git a/crates/iop/src/channel/mod.rs b/crates/iop/src/channel/mod.rs
+index a8e29b8e..78e207b0 100644
+--- a/crates/iop/src/channel/mod.rs
++++ b/crates/iop/src/channel/mod.rs
+@@ -80,6 +80,15 @@ pub type TransparentEvalFn<Elem> = Box<dyn Fn(&[Elem]) -> Elem + 'static>;
+ pub trait IOPVerifierChannel<F: Field>: IPVerifierChannel<F, Elem: 'static> {
+ 	type Oracle: Clone;
+ 
++	/// Whether this channel applies the constant trace-evaluation mask transform.
++	///
++	/// Ordinary channels return `false` and retain the original ring-switch schedule. The wrapped
++	/// verifier, symbolic builder, and replay channel all override this with the same constant
++	/// `true` capability so their verifier control flow and public-input layout remain identical.
++	fn evaluation_masking_enabled(&self) -> bool {
++		false
++	}
++
+ 	/// Returns the specifications for the remaining oracles to be received.
+ 	///
+ 	/// This slice shrinks as oracles are received via `recv_oracle()`.
+@@ -100,6 +109,27 @@ pub trait IOPVerifierChannel<F: Field>: IPVerifierChannel<F, Elem: 'static> {
+ 		is_witness_dependent: bool,
+ 	) -> Result<Self::Oracle, Error>;
+ 
++	/// Receives an oracle whose sole supported opening is an equality-tensor evaluation that may
++	/// be protected by a fresh constant mask.
++	///
++	/// A wrapping channel may interpret this as a commitment to `oracle + k * 1`, where `k` is a
++	/// fresh pre-challenge scalar hidden in an outer proof. The matching evaluation claim is then
++	/// shifted by `k*c`, for the explicitly supplied non-zero hypercube sum `c`. The default
++	/// implementation preserves the ordinary oracle behavior.
++	///
++	/// # Preconditions
++	///
++	/// * Every precondition of [`Self::recv_oracle`] holds.
++	/// * The caller must open this handle exactly once through
++	///   [`Self::verify_oracle_evaluation_relation`], and must not queue any other relation on it.
++	fn recv_evaluation_masked_oracle(
++		&mut self,
++		log_msg_len: usize,
++		is_witness_dependent: bool,
++	) -> Result<Self::Oracle, Error> {
++		self.recv_oracle(log_msg_len, is_witness_dependent)
++	}
++
+ 	/// Queues one oracle linear relation to be opened.
+ 	///
+ 	/// Implementations may either verify the relation immediately, or queue it and defer the
+@@ -115,4 +145,21 @@ pub trait IOPVerifierChannel<F: Field>: IPVerifierChannel<F, Elem: 'static> {
+ 		transparent: TransparentEvalFn<Self::Elem>,
+ 		claim: Self::Elem,
+ 	) -> Result<(), Error>;
++
++	/// Queues one oracle multilinear-evaluation relation to be opened.
++	///
++	/// The supplied `mask_coefficient` is the transparent's Boolean-hypercube sum. A channel may use
++	/// this explicit contract to apply a fresh constant mask to the full committed oracle and shift
++	/// the evaluation claim by `key * mask_coefficient`. The coefficient must be non-zero. The
++	/// default implementation preserves ordinary channel behavior.
++	fn verify_oracle_evaluation_relation(
++		&mut self,
++		oracle: Self::Oracle,
++		transparent: TransparentEvalFn<Self::Elem>,
++		claim: Self::Elem,
++		mask_coefficient: Self::Elem,
++	) -> Result<(), Error> {
++		let _ = mask_coefficient;
++		self.verify_oracle_relation(oracle, transparent, claim)
++	}
+ }
+diff --git a/crates/ip-prover/src/channel.rs b/crates/ip-prover/src/channel.rs
+index 9a41c7e4..57a3af4f 100644
+--- a/crates/ip-prover/src/channel.rs
++++ b/crates/ip-prover/src/channel.rs
+@@ -70,6 +70,23 @@ pub trait IPProverChannel<F: Field> {
+ 	/// the current transcript state, matching what the verifier will sample.
+ 	fn sample(&mut self) -> F;
+ 
++	/// Samples a challenge unequal to one from two fixed-shape candidates.
++	///
++	/// Both candidates are consumed unconditionally. A typed error is the explicit rejection event
++	/// where both equal one; callers must propagate it rather than silently use one. A wrapper may
++	/// override this to expose only the selected value to its outer circuit while consuming both
++	/// candidates in the native inner transcript.
++	fn sample_non_one_pair(&mut self) -> Result<F, binius_ip::channel::Error> {
++		let [first, second] = self.sample_array::<2>();
++		if first != F::ONE {
++			Ok(first)
++		} else if second != F::ONE {
++			Ok(second)
++		} else {
++			Err(binius_ip::channel::Error::ChallengeAbort)
++		}
++	}
++
+ 	/// Samples `n` random challenges.
+ 	fn sample_many(&mut self, n: usize) -> Vec<F> {
+ 		std::iter::repeat_with(|| self.sample()).take(n).collect()
+diff --git a/crates/ip/src/channel.rs b/crates/ip/src/channel.rs
+index e9f3708b..52cb8301 100644
+--- a/crates/ip/src/channel.rs
++++ b/crates/ip/src/channel.rs
+@@ -78,6 +78,30 @@ pub trait IPVerifierChannel<F: Field> {
+ 	/// the current transcript state.
+ 	fn sample(&mut self) -> Self::Elem;
+ 
++	/// Samples a challenge unequal to one from two fixed-shape candidates.
++	///
++	/// Both candidates are consumed unconditionally. The default algebraic selection works for
++	/// native and symbolic elements, and `assert_zero` rejects the sole bad event where both equal
++	/// one. Wrappers may override this to do the selection against their native transcript and
++	/// expose only the selected public value to an outer circuit.
++	fn sample_non_one_pair(&mut self) -> Result<Self::Elem, Error> {
++		let first = self.sample();
++		let second = self.sample();
++		let one = Self::Elem::one();
++		let first_delta = first.clone() - &one;
++		let first_nonzero = first_delta.clone() * first_delta.invert_or_zero();
++		let first_is_one = one.clone() - first_nonzero;
++		let second_delta = second.clone() - &one;
++		let second_nonzero = second_delta.clone() * second_delta.invert_or_zero();
++		let second_is_one = one - second_nonzero;
++		match self.assert_zero(first_is_one.clone() * second_is_one) {
++			Ok(()) => {}
++			Err(Error::InvalidAssert) => return Err(Error::ChallengeAbort),
++			Err(error) => return Err(error),
++		}
++		Ok(first.clone() + first_is_one * (second - first))
++	}
++
+ 	/// Samples `n` random challenges.
+ 	fn sample_many(&mut self, n: usize) -> Vec<Self::Elem> {
+ 		repeat_with(|| self.sample()).take(n).collect()
+@@ -317,4 +341,8 @@ pub enum Error {
+ 	ProofEmpty,
+ 	#[error("invalid assertion: value is not zero")]
+ 	InvalidAssert,
++	#[error(
++		"fixed-shape challenge selection aborted because both candidates equal the rejected value"
++	)]
++	ChallengeAbort,
+ }
+diff --git a/crates/ip/src/fracaddcheck.rs b/crates/ip/src/fracaddcheck.rs
+index 292e4757..4376610e 100644
+--- a/crates/ip/src/fracaddcheck.rs
++++ b/crates/ip/src/fracaddcheck.rs
+@@ -139,6 +139,7 @@ impl From<crate::channel::Error> for Error {
+ 		match err {
+ 			crate::channel::Error::ProofEmpty => VerificationError::TranscriptIsEmpty.into(),
+ 			crate::channel::Error::InvalidAssert => VerificationError::InvalidAssert.into(),
++			crate::channel::Error::ChallengeAbort => VerificationError::ChallengeAbort.into(),
+ 		}
+ 	}
+ }
+@@ -155,4 +156,6 @@ pub enum VerificationError {
+ 	TranscriptIsEmpty,
+ 	#[error("invalid assertion: value is not zero")]
+ 	InvalidAssert,
++	#[error("both fixed-shape challenge candidates equal the rejected value")]
++	ChallengeAbort,
+ }
+diff --git a/crates/ip/src/prodcheck.rs b/crates/ip/src/prodcheck.rs
+index 69f1d915..d0695bfb 100644
+--- a/crates/ip/src/prodcheck.rs
++++ b/crates/ip/src/prodcheck.rs
+@@ -104,6 +104,7 @@ impl From<crate::channel::Error> for Error {
+ 		match err {
+ 			crate::channel::Error::ProofEmpty => VerificationError::TranscriptIsEmpty.into(),
+ 			crate::channel::Error::InvalidAssert => VerificationError::InvalidAssert.into(),
++			crate::channel::Error::ChallengeAbort => VerificationError::ChallengeAbort.into(),
+ 		}
+ 	}
+ }
+@@ -118,4 +119,6 @@ pub enum VerificationError {
+ 	TranscriptIsEmpty,
+ 	#[error("invalid assertion: value is not zero")]
+ 	InvalidAssert,
++	#[error("both fixed-shape challenge candidates equal the rejected value")]
++	ChallengeAbort,
+ }
+diff --git a/crates/ip/src/sumcheck/error.rs b/crates/ip/src/sumcheck/error.rs
+index b7341791..9d221abe 100644
+--- a/crates/ip/src/sumcheck/error.rs
++++ b/crates/ip/src/sumcheck/error.rs
+@@ -18,6 +18,8 @@ pub enum VerificationError {
+ 	TranscriptIsEmpty,
+ 	#[error("invalid assertion: value is not zero")]
+ 	InvalidAssert,
++	#[error("both fixed-shape challenge candidates equal the rejected value")]
++	ChallengeAbort,
+ }
+ 
+ impl From<TranscriptError> for Error {
+@@ -34,6 +36,7 @@ impl From<channel::Error> for Error {
+ 		match err {
+ 			channel::Error::ProofEmpty => VerificationError::TranscriptIsEmpty.into(),
+ 			channel::Error::InvalidAssert => VerificationError::InvalidAssert.into(),
++			channel::Error::ChallengeAbort => VerificationError::ChallengeAbort.into(),
+ 		}
+ 	}
+ }
+diff --git a/crates/m4-prover/benches/prove_hash_primitives.rs b/crates/m4-prover/benches/prove_hash_primitives.rs
+index 2ef39dfe..eadbc5b4 100644
+--- a/crates/m4-prover/benches/prove_hash_primitives.rs
++++ b/crates/m4-prover/benches/prove_hash_primitives.rs
+@@ -85,7 +85,9 @@ fn bench_primitive<C: TestCircuit>(
+ 			.populate_batch_parallel(&alloc, log_instances, fill)
+ 			.expect("witness inputs satisfy the circuit");
+ 		let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
+-		prover.prove_chip(&table, &mut prover_transcript);
++		prover
++			.prove_chip(&table, &mut prover_transcript)
++			.expect("fixed-shape row challenge selection succeeds");
+ 
+ 		// Replay the same transcript; a faithful proof verifies and leaves no trailing data.
+ 		let mut verifier_transcript = prover_transcript.into_verifier();
+@@ -107,7 +109,9 @@ fn bench_primitive<C: TestCircuit>(
+ 				.populate_batch_parallel(&alloc, log_instances, fill)
+ 				.unwrap();
+ 			let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
+-			prover.prove_chip(&table, &mut prover_transcript);
++			prover
++				.prove_chip(&table, &mut prover_transcript)
++				.expect("fixed-shape row challenge selection succeeds");
+ 			prover_transcript
+ 		});
+ 	});
+diff --git a/crates/m4-prover/src/composite.rs b/crates/m4-prover/src/composite.rs
+index a6902dc7..a64c9103 100644
+--- a/crates/m4-prover/src/composite.rs
++++ b/crates/m4-prover/src/composite.rs
+@@ -92,7 +92,9 @@ impl IOPProverM4 {
+ 	///
+ 	/// # Errors
+ 	///
+-	/// Returns an error if the main chip's witness does not fit its committed shape.
++	/// Returns an error if the main chip's witness does not fit its committed shape or if an
++	/// evaluation-masking sub-channel rejects both fixed-shape row-challenge candidates. After any
++	/// error, the caller must discard the partially consumed transcript.
+ 	pub fn prove<P, Channel, A>(
+ 		&self,
+ 		witness: &WitnessM4,
+@@ -114,7 +116,7 @@ impl IOPProverM4 {
+ 
+ 		self.main.prove::<_, P, _>(&witness.main, channel, alloc)?;
+ 		for (prover, table) in iter::zip(&self.chips, &witness.tables) {
+-			prover.prove_chip::<P, _, _, _>(table, channel, alloc);
++			prover.prove_chip::<P, _, _, _>(table, channel, alloc)?;
+ 		}
+ 		Ok(())
+ 	}
+@@ -185,7 +187,9 @@ where
+ 	///
+ 	/// # Errors
+ 	///
+-	/// Returns an error if the main chip's witness does not fit its committed shape.
++	/// Returns an error if the main chip's witness does not fit its committed shape or if an
++	/// evaluation-masking sub-channel rejects both fixed-shape row-challenge candidates. After any
++	/// error, the caller must discard the partially consumed transcript.
+ 	pub fn prove<Challenger_>(
+ 		&self,
+ 		witness: &WitnessM4,
+diff --git a/crates/m4-prover/src/prove.rs b/crates/m4-prover/src/prove.rs
+index 1bbddb39..b0131ff0 100644
+--- a/crates/m4-prover/src/prove.rs
++++ b/crates/m4-prover/src/prove.rs
+@@ -27,12 +27,12 @@ use binius_math::{
+ 	univariate::lagrange_evals_scalars,
+ };
+ use binius_prover::{
+-	and_reduction,
++	Error, and_reduction,
+ 	protocols::{
+ 		binmul, intmul,
+ 		shift::{KeyCollection, OperatorClaims, OperatorData, build_key_collection},
+ 	},
+-	ring_switch::{self, RingSwitchOutput},
++	ring_switch::{self, MaskedTraceRingSwitchOutput, RingSwitchOutput},
+ };
+ use binius_transcript::{ProverTranscript, fiat_shamir::Challenger};
+ use binius_utils::SerializeBytes;
+@@ -76,7 +76,9 @@ pub(crate) type ProverNtt = NeighborsLastMultiThread<GaoMateerPreExpanded<B128>>
+ /// Evaluating its instance coordinates at `r_rho` performs that fold.
+ /// So the ring-switch opens the trace at `r_j || r_rho || r_y`, matching the reduced claim.
+ ///
+-/// The trace oracle is not ZK, so the channel masks nothing and needs no randomness.
++/// An ordinary channel leaves the trace transparent. A wrapping channel may opt into the
++/// experimental constant trace-evaluation mask, but that transform is not a complete
++/// zero-knowledge claim without the separate simulator and composition proof.
+ ///
+ /// With IMUL constraints the reduction commits one further oracle: the IntMul logup* pushforward.
+ /// The IntMul check queues that oracle's opening itself.
+@@ -112,12 +114,19 @@ impl IOPProver {
+ 	///
+ 	/// This is the core proving logic, independent of the specific IOP compilation strategy. For
+ 	/// most users, [`Prover::prove_chip`] is the simpler interface.
++	///
++	/// # Errors
++	///
++	/// Returns an error if an evaluation-masking channel exhausts both fixed-shape row-challenge
++	/// candidates. The caller must discard that partially consumed transcript and restart with
++	/// fresh prover randomness.
+ 	pub fn prove_chip<P, Channel, A, Data>(
+ 		&self,
+ 		table: &ValueTable<Data>,
+ 		channel: &mut Channel,
+ 		alloc: &A,
+-	) where
++	) -> Result<(), Error>
++	where
+ 		P: PackedField<Scalar = B128>,
+ 		Channel: IOPProverChannel<P, A>,
+ 		A: Allocator,
+@@ -132,7 +141,7 @@ impl IOPProver {
+ 		};
+ 		let trace_oracle = {
+ 			let _scope = tracing::debug_span!("Commit trace").entered();
+-			channel.send_oracle(trace_packed.to_ref())
++			channel.send_evaluation_masked_oracle(trace_packed.to_ref())
+ 		};
+ 
+ 		// One base domain shared by the AND-check and the shift, consistent by construction.
+@@ -341,23 +350,30 @@ impl IOPProver {
+ 		// after the public segment's claim.
+ 		channel.send_public_claim(witness_claim.wiring_eval);
+ 
+-		let RingSwitchOutput {
+-			rs_eq_ind,
+-			sumcheck_claim,
+-		} = {
++		let trace_point = [r_j, r_rho.as_slice(), r_y].concat();
++		if channel.evaluation_masking_enabled() {
+ 			let _scope = tracing::debug_span!("Ring-switching reduction").entered();
+-
+-			// Ring-switch the reduced claim onto the committed trace.
+-			// The point is `r_j || r_rho || r_y`.
+-			// Its instance coordinates fold the trace at `r_rho`.
+-			let trace_point = [r_j, r_rho.as_slice(), r_y].concat();
+-			ring_switch::prove(alloc, trace_packed.to_ref(), &trace_point, channel)
+-		};
+-
+-		// Queue the trace opening against the ring-switch's transparent multilinear.
+-		// The final call runs the single combined FRI opening and writes it to the transcript.
+-		channel.prove_oracle_relation(trace_oracle.clone(), rs_eq_ind, sumcheck_claim);
++			let MaskedTraceRingSwitchOutput {
++				rs_eq_ind,
++				sumcheck_claim,
++				mask_coefficient,
++			} = ring_switch::prove_masked_trace(alloc, trace_packed.to_ref(), &trace_point, channel)?;
++			channel.prove_oracle_evaluation_relation(
++				trace_oracle.clone(),
++				rs_eq_ind,
++				sumcheck_claim,
++				mask_coefficient,
++			);
++		} else {
++			let _scope = tracing::debug_span!("Ring-switching reduction").entered();
++			let RingSwitchOutput {
++				rs_eq_ind,
++				sumcheck_claim,
++			} = ring_switch::prove(alloc, trace_packed.to_ref(), &trace_point, channel);
++			channel.prove_oracle_relation(trace_oracle.clone(), rs_eq_ind, sumcheck_claim);
++		}
+ 		channel.finalize_oracle(trace_oracle, trace_packed);
++		Ok(())
+ 	}
+ }
+ 
+@@ -428,11 +444,18 @@ where
+ 	///
+ 	/// Creates the IOP channel from the transcript, delegates to [`IOPProver::prove_chip`], then
+ 	/// finishes the channel with the combined FRI opening.
++	///
++	/// # Errors
++	///
++	/// Returns an error if a channel-selected masked trace ring switch rejects its fixed-shape
++	/// challenge candidates. The caller must discard the partially consumed transcript. The
++	/// ordinary channel constructed by this method does not enable that experimental mode.
+ 	pub fn prove_chip<Challenger_, Data>(
+ 		&self,
+ 		table: &ValueTable<Data>,
+ 		transcript: &mut ProverTranscript<Challenger_>,
+-	) where
++	) -> Result<(), Error>
++	where
+ 		Challenger_: Challenger,
+ 		Data: Deref<Target = [Word]>,
+ 	{
+@@ -443,10 +466,11 @@ where
+ 			.basefold_compiler
+ 			.create_channel_without_zk_from_transcript::<H, Challenger_, _, _>(transcript, alloc);
+ 		self.iop_prover
+-			.prove_chip::<P, _, _, _>(table, &mut channel, &alloc);
++			.prove_chip::<P, _, _, _>(table, &mut channel, &alloc)?;
+ 
+ 		let _scope = tracing::debug_span!("PCS opening").entered();
+ 		channel.finish();
++		Ok(())
+ 	}
+ }
+ 
+@@ -781,7 +805,9 @@ mod tests {
+ 		// One prover, two proofs of the same table: the second reuses the first's freed blocks.
+ 		let prove_once = || {
+ 			let mut transcript = ProverTranscript::new(StdChallenger::default());
+-			prover.prove_chip(&table, &mut transcript);
++			prover
++				.prove_chip(&table, &mut transcript)
++				.expect("fixed-shape row challenge selection succeeds");
+ 			transcript.finalize()
+ 		};
+ 		let first = prove_once();
+@@ -852,7 +878,9 @@ mod tests {
+ 		let prover = Prover::<P, StdHashSuite>::setup(&verifier);
+ 
+ 		let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
+-		prover.prove_chip(&table, &mut prover_transcript);
++		prover
++			.prove_chip(&table, &mut prover_transcript)
++			.expect("fixed-shape row challenge selection succeeds");
+ 
+ 		let mut verifier_transcript = prover_transcript.into_verifier();
+ 		verifier
+@@ -908,7 +936,9 @@ mod tests {
+ 		let prover = Prover::<P, StdHashSuite>::setup(&verifier);
+ 
+ 		let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
+-		prover.prove_chip(&table, &mut prover_transcript);
++		prover
++			.prove_chip(&table, &mut prover_transcript)
++			.expect("fixed-shape row challenge selection succeeds");
+ 
+ 		let mut verifier_transcript = prover_transcript.into_verifier();
+ 		assert!(
+@@ -931,7 +961,9 @@ mod tests {
+ 
+ 		// Prover: commit, reduce, and open on a fresh transcript.
+ 		let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
+-		prover.prove_chip(&table, &mut prover_transcript);
++		prover
++			.prove_chip(&table, &mut prover_transcript)
++			.expect("fixed-shape row challenge selection succeeds");
+ 
+ 		// Verifier: replay the same transcript end to end.
+ 		let mut verifier_transcript = prover_transcript.into_verifier();
+@@ -990,7 +1022,9 @@ mod tests {
+ 
+ 		// Prover: commit both oracles, reduce, and open on a fresh transcript.
+ 		let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
+-		prover.prove_chip(&table, &mut prover_transcript);
++		prover
++			.prove_chip(&table, &mut prover_transcript)
++			.expect("fixed-shape row challenge selection succeeds");
+ 
+ 		// Verifier: replay the same transcript end to end.
+ 		let mut verifier_transcript = prover_transcript.into_verifier();
+@@ -1054,7 +1088,9 @@ mod tests {
+ 		let prover = Prover::<P, StdHashSuite>::setup(&verifier);
+ 
+ 		let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
+-		prover.prove_chip(&table, &mut prover_transcript);
++		prover
++			.prove_chip(&table, &mut prover_transcript)
++			.expect("fixed-shape row challenge selection succeeds");
+ 
+ 		let mut verifier_transcript = prover_transcript.into_verifier();
+ 		verifier
+@@ -1120,7 +1156,9 @@ mod tests {
+ 		let prover = Prover::<P, StdHashSuite>::setup(&verifier);
+ 
+ 		let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
+-		prover.prove_chip(&table, &mut prover_transcript);
++		prover
++			.prove_chip(&table, &mut prover_transcript)
++			.expect("fixed-shape row challenge selection succeeds");
+ 
+ 		let mut verifier_transcript = prover_transcript.into_verifier();
+ 		verifier
+@@ -1185,7 +1223,9 @@ mod tests {
+ 		let prover = Prover::<WideP, StdHashSuite>::setup(&verifier);
+ 
+ 		let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
+-		prover.prove_chip(&table, &mut prover_transcript);
++		prover
++			.prove_chip(&table, &mut prover_transcript)
++			.expect("fixed-shape row challenge selection succeeds");
+ 
+ 		let mut verifier_transcript = prover_transcript.into_verifier();
+ 		verifier
+@@ -1240,7 +1280,9 @@ mod tests {
+ 
+ 		// Prover: commit the trace, reduce, and open on a fresh transcript.
+ 		let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
+-		prover.prove_chip(&table, &mut prover_transcript);
++		prover
++			.prove_chip(&table, &mut prover_transcript)
++			.expect("fixed-shape row challenge selection succeeds");
+ 
+ 		// Verifier: replay the same transcript end to end.
+ 		let mut verifier_transcript = prover_transcript.into_verifier();
+@@ -1314,7 +1356,9 @@ mod tests {
+ 		let prover = Prover::<WideP, StdHashSuite>::setup(&verifier);
+ 
+ 		let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
+-		prover.prove_chip(&table, &mut prover_transcript);
++		prover
++			.prove_chip(&table, &mut prover_transcript)
++			.expect("fixed-shape row challenge selection succeeds");
+ 
+ 		let mut verifier_transcript = prover_transcript.into_verifier();
+ 		verifier
+@@ -1381,7 +1425,9 @@ mod tests {
+ 		let prover = Prover::<P, StdHashSuite>::setup(&verifier);
+ 
+ 		let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
+-		prover.prove_chip(&table, &mut prover_transcript);
++		prover
++			.prove_chip(&table, &mut prover_transcript)
++			.expect("fixed-shape row challenge selection succeeds");
+ 
+ 		let mut verifier_transcript = prover_transcript.into_verifier();
+ 		verifier
+@@ -1403,7 +1449,9 @@ mod tests {
+ 
+ 		// Produce a faithful proof, then collect its bytes.
+ 		let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
+-		prover.prove_chip(&table, &mut prover_transcript);
++		prover
++			.prove_chip(&table, &mut prover_transcript)
++			.expect("fixed-shape row challenge selection succeeds");
+ 		let mut proof = prover_transcript.finalize();
+ 
+ 		// Flip one bit in the last byte, which lands in a FRI query's Merkle opening.
+@@ -1451,7 +1499,9 @@ mod tests {
+ 		let prover = Prover::<P, StdHashSuite>::setup(&verifier);
+ 
+ 		let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
+-		prover.prove_chip(&table, &mut prover_transcript);
++		prover
++			.prove_chip(&table, &mut prover_transcript)
++			.expect("fixed-shape row challenge selection succeeds");
+ 		let mut proof = prover_transcript.finalize();
+ 
+ 		// Flip a bit early in the proof, in the IntMul check's first message. The verifier then
+diff --git a/crates/m4-prover/tests/prove_hash_primitives.rs b/crates/m4-prover/tests/prove_hash_primitives.rs
+index aea0f400..725b3488 100644
+--- a/crates/m4-prover/tests/prove_hash_primitives.rs
++++ b/crates/m4-prover/tests/prove_hash_primitives.rs
+@@ -128,13 +128,15 @@ fn prove_once<C: TestCircuit>(name: &str, log_instances: usize) {
+ 	// prover's scratch buffers — so the timed run below measures steady-state proving.
+ 	let mut warmup_transcript = ProverTranscript::new(StdChallenger::default());
+ 	info_span!("prove_warmup", primitive = name)
+-		.in_scope(|| prover.prove_chip(&table, &mut warmup_transcript));
++		.in_scope(|| prover.prove_chip(&table, &mut warmup_transcript))
++		.expect("fixed-shape row challenge selection succeeds");
+ 
+ 	// Prove in a span.
+ 	// The prover's commit, reduction, and opening spans nest beneath it.
+ 	let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
+ 	info_span!("prove", primitive = name)
+-		.in_scope(|| prover.prove_chip(&table, &mut prover_transcript));
++		.in_scope(|| prover.prove_chip(&table, &mut prover_transcript))
++		.expect("fixed-shape row challenge selection succeeds");
+ 
+ 	// The proof must verify.
+ 	// It must also leave no trailing transcript data.
+diff --git a/crates/m4-verifier/src/verify.rs b/crates/m4-verifier/src/verify.rs
+index 0d6949d4..1bfa6e73 100644
+--- a/crates/m4-verifier/src/verify.rs
++++ b/crates/m4-verifier/src/verify.rs
+@@ -122,9 +122,11 @@ impl IOPVerifier {
+ 		Channel: IOPVerifierChannel<B128> + WordIPVerifierChannel<B128>,
+ 		Channel::Elem: FieldOps<Scalar = B128> + From<B128>,
+ 	{
+-		// Receive the trace commitment.
+-		// The witness is committed without zero-knowledge.
+-		let trace_oracle = channel.recv_oracle(self.layout.log_witness_elems, true)?;
++		// Receive the trace commitment. Ordinary M4 channels use the transparent default; a wrapping
++		// channel may select the dedicated evaluation-masked form under its fail-closed one-oracle
++		// scope. That transform alone is not a complete zero-knowledge claim.
++		let trace_oracle =
++			channel.recv_evaluation_masked_oracle(self.layout.log_witness_elems, true)?;
+ 
+ 		// Reduce every instance's constraints to one claim on the committed trace.
+ 		// A batch hides its inout words, so the public data is the shared constants alone. They are
+@@ -147,22 +149,41 @@ impl IOPVerifier {
+ 
+ 		// Ring-switch the reduced claim onto the committed trace.
+ 		let trace_point = reduction.trace_point();
+-		let RingSwitchVerifyOutput {
+-			eq_r_double_prime,
+-			sumcheck_claim,
+-		} = ring_switch::verify(reduction.shift.witness_eval.clone(), &trace_point, channel)?;
+-
+ 		// Open the trace oracle against the ring-switch's transparent multilinear.
+ 		// BaseFold reduces to a challenge point where the transparent evaluates as below.
+ 		let log_packing = <B128 as ExtensionField<B1>>::LOG_DEGREE;
+ 		let eval_point_high = trace_point[log_packing..].to_vec();
+-		channel.verify_oracle_relation(
+-			trace_oracle,
+-			Box::new(move |pt: &[Channel::Elem]| {
+-				ring_switch::eval_rs_eq(&eval_point_high, pt, &eq_r_double_prime)
+-			}),
+-			sumcheck_claim,
+-		)?;
++		if channel.evaluation_masking_enabled() {
++			let ring_switch::MaskedTraceRingSwitchVerifyOutput {
++				eq_r_double_prime,
++				sumcheck_claim,
++				mask_coefficient,
++			} = ring_switch::verify_masked_trace(
++				reduction.shift.witness_eval.clone(),
++				&trace_point,
++				channel,
++			)?;
++			channel.verify_oracle_evaluation_relation(
++				trace_oracle,
++				Box::new(move |pt: &[Channel::Elem]| {
++					ring_switch::eval_rs_eq(&eval_point_high, pt, &eq_r_double_prime)
++				}),
++				sumcheck_claim,
++				mask_coefficient,
++			)?;
++		} else {
++			let RingSwitchVerifyOutput {
++				eq_r_double_prime,
++				sumcheck_claim,
++			} = ring_switch::verify(reduction.shift.witness_eval.clone(), &trace_point, channel)?;
++			channel.verify_oracle_relation(
++				trace_oracle,
++				Box::new(move |pt: &[Channel::Elem]| {
++					ring_switch::eval_rs_eq(&eval_point_high, pt, &eq_r_double_prime)
++				}),
++				sumcheck_claim,
++			)?;
++		}
+ 
+ 		Ok(reduction.wiring)
+ 	}
+diff --git a/crates/prover/src/error.rs b/crates/prover/src/error.rs
+index aa7edb80..53b30ce5 100644
+--- a/crates/prover/src/error.rs
++++ b/crates/prover/src/error.rs
+@@ -1,6 +1,6 @@
+ // Copyright 2025 Irreducible Inc.
+ 
+-use crate::protocols::intmul;
++use crate::{protocols::intmul, ring_switch};
+ 
+ #[derive(Debug, thiserror::Error)]
+ pub enum Error {
+@@ -10,4 +10,6 @@ pub enum Error {
+ 	Transcript(#[from] binius_transcript::Error),
+ 	#[error("integer multiplication error: {0}")]
+ 	IntMul(#[from] intmul::Error),
++	#[error("masked trace ring-switch error: {0}")]
++	RingSwitch(#[from] ring_switch::Error),
+ }
+diff --git a/crates/prover/src/prove.rs b/crates/prover/src/prove.rs
+index 540d9b8c..d586ead1 100644
+--- a/crates/prover/src/prove.rs
++++ b/crates/prover/src/prove.rs
+@@ -117,7 +117,7 @@ impl IOPProver {
+ 		let witness_commit_guard = tracing::info_span!("Commit witness").entered();
+ 
+ 		// Commit witness via channel
+-		let trace_oracle = channel.send_oracle(witness_packed.to_ref());
++		let trace_oracle = channel.send_evaluation_masked_oracle(witness_packed.to_ref());
+ 
+ 		drop(witness_commit_guard);
+ 
+@@ -330,14 +330,32 @@ impl IOPProver {
+ 
+ 		// Ring-switching reduction of the witness claim, at the point above less its segment
+ 		// selector — the verifier consumes that when reconstructing the full witness evaluation.
+-		let ring_switch::RingSwitchOutput {
+-			rs_eq_ind,
+-			sumcheck_claim,
+-		} = ring_switch::prove(alloc, witness_packed.to_ref(), witness_point, &mut *channel);
+-
+ 		// Prove oracle relations via channel (runs BaseFold internally). The intmul pushforward
+ 		// relation, when the IntMul reduction ran, was already queued inside phase 5.
+-		channel.prove_oracle_relation(trace_oracle.clone(), rs_eq_ind, sumcheck_claim);
++		if channel.evaluation_masking_enabled() {
++			let ring_switch::MaskedTraceRingSwitchOutput {
++				rs_eq_ind,
++				sumcheck_claim,
++				mask_coefficient,
++			} = ring_switch::prove_masked_trace(
++				alloc,
++				witness_packed.to_ref(),
++				witness_point,
++				&mut *channel,
++			)?;
++			channel.prove_oracle_evaluation_relation(
++				trace_oracle.clone(),
++				rs_eq_ind,
++				sumcheck_claim,
++				mask_coefficient,
++			);
++		} else {
++			let ring_switch::RingSwitchOutput {
++				rs_eq_ind,
++				sumcheck_claim,
++			} = ring_switch::prove(alloc, witness_packed.to_ref(), witness_point, &mut *channel);
++			channel.prove_oracle_relation(trace_oracle.clone(), rs_eq_ind, sumcheck_claim);
++		}
+ 		channel.finalize_oracle(trace_oracle, witness_packed);
+ 
+ 		drop(pcs_guard);
+diff --git a/crates/prover/src/ring_switch.rs b/crates/prover/src/ring_switch.rs
+index dc7f717a..d59dde3b 100644
+--- a/crates/prover/src/ring_switch.rs
++++ b/crates/prover/src/ring_switch.rs
+@@ -270,6 +270,102 @@ pub struct RingSwitchOutput<A: Allocator, P: PackedField> {
+ 	pub sumcheck_claim: P::Scalar,
+ }
+ 
++/// Output of the dedicated final trace ring switch used by the evaluation-mask experiment.
++pub struct MaskedTraceRingSwitchOutput<A: Allocator, P: PackedField> {
++	/// The ring-switching equality indicator MLE (transparent poly for BaseFold).
++	pub rs_eq_ind: FieldVec<P, A>,
++	/// The unmasked sumcheck claim.
++	pub sumcheck_claim: P::Scalar,
++	/// The Boolean-hypercube sum of `rs_eq_ind`. The trace wrapper multiplies its uniform mask by
++	/// this coefficient; fixed-shape challenge rejection guarantees it is non-zero.
++	pub mask_coefficient: P::Scalar,
++}
++
++/// Error returned by the dedicated masked-trace ring switch.
++#[derive(Debug, thiserror::Error)]
++pub enum Error {
++	#[error("channel: {0}")]
++	Channel(#[from] binius_ip::channel::Error),
++	#[error("selected row-batching challenges produced a zero trace-mask coefficient")]
++	ZeroMaskCoefficient,
++}
++
++struct PreparedRingSwitch {
++	eq_lo: FieldBuffer<B128>,
++	eq_hi: FieldBuffer<B128>,
++	s_hat_u: Vec<B128>,
++}
++
++fn prepare_ring_switch<P, Channel>(
++	packed_witness: FieldSlice<P>,
++	eval_point: &[B128],
++	channel: &mut Channel,
++) -> PreparedRingSwitch
++where
++	P: PackedField<Scalar = B128>,
++	Channel: IPProverChannel<B128>,
++{
++	let log_packing = <B128 as ExtensionField<B1>>::LOG_DEGREE;
++	assert_eq!(packed_witness.log_len() + log_packing, eval_point.len());
++
++	let eval_point_suffix = &eval_point[log_packing..];
++	let (eq_lo, eq_hi) = tracing::debug_span!("Expand evaluation suffix query")
++		.in_scope(|| expand_tensor_factors(eval_point_suffix));
++
++	let s_hat_v = tracing::debug_span!("Compute ring-switching partial evaluations")
++		.in_scope(|| fold_1b_rows_for_b128_split(&packed_witness, &eq_lo, &eq_hi));
++	channel.send_many(s_hat_v.as_ref());
++
++	let s_hat_u = TensorAlgebra::<B1, B128>::new(s_hat_v.as_ref().to_vec())
++		.transpose()
++		.elems;
++
++	PreparedRingSwitch {
++		eq_lo,
++		eq_hi,
++		s_hat_u,
++	}
++}
++
++fn finish_ring_switch<A, P>(
++	alloc: &A,
++	prepared: PreparedRingSwitch,
++	r_double_prime: &[B128],
++) -> RingSwitchOutput<A, P>
++where
++	A: Allocator,
++	P: PackedField<Scalar = B128>,
++{
++	let eq_r_double_prime = eq_ind_partial_eval::<B128>(r_double_prime);
++	let sumcheck_claim =
++		inner_product(prepared.s_hat_u, eq_r_double_prime.as_ref().iter().copied());
++	let rs_eq_ind =
++		tracing::debug_span!("Compute ring-switching equality indicator").in_scope(|| {
++			rs_eq_ind_from_factors::<A, P>(
++				alloc,
++				&prepared.eq_lo,
++				&prepared.eq_hi,
++				&eq_r_double_prime,
++			)
++		});
++
++	RingSwitchOutput {
++		rs_eq_ind,
++		sumcheck_claim,
++	}
++}
++
++/// Samples every fixed-shape candidate pair before propagating the first rejection.
++fn sample_non_one_pairs<Channel>(channel: &mut Channel, n: usize) -> Result<Vec<B128>, Error>
++where
++	Channel: IPProverChannel<B128>,
++{
++	let sampled = (0..n)
++		.map(|_| channel.sample_non_one_pair())
++		.collect::<Vec<_>>();
++	Ok(sampled.into_iter().collect::<Result<Vec<_>, _>>()?)
++}
++
+ /// Prove the ring-switching reduction.
+ ///
+ /// Takes the packed witness and evaluation point from shift reduction, and:
+@@ -303,37 +399,51 @@ where
+ 	Channel: IPProverChannel<B128>,
+ {
+ 	let log_packing = <B128 as ExtensionField<B1>>::LOG_DEGREE;
+-	assert_eq!(packed_witness.log_len() + log_packing, eval_point.len());
+-
+-	let eval_point_suffix = &eval_point[log_packing..];
+-	let (eq_lo, eq_hi) = tracing::debug_span!("Expand evaluation suffix query")
+-		.in_scope(|| expand_tensor_factors(eval_point_suffix));
+-
+-	// Ring-switching partial evaluations (Method of Four Russians)
+-	let s_hat_v = tracing::debug_span!("Compute ring-switching partial evaluations")
+-		.in_scope(|| fold_1b_rows_for_b128_split(&packed_witness, &eq_lo, &eq_hi));
+-	channel.send_many(s_hat_v.as_ref());
+-
+-	// Basis transpose
+-	let s_hat_u = TensorAlgebra::<B1, B128>::new(s_hat_v.as_ref().to_vec())
+-		.transpose()
+-		.elems;
+-
+-	// Sample row-batching challenges
++	let prepared = prepare_ring_switch(packed_witness, eval_point, channel);
+ 	let r_double_prime = channel.sample_many(log_packing);
+-	let eq_r_double_prime = eq_ind_partial_eval::<B128>(&r_double_prime);
++	finish_ring_switch(alloc, prepared, &r_double_prime)
++}
+ 
+-	// Compute sumcheck claim
+-	let sumcheck_claim = inner_product(s_hat_u, eq_r_double_prime.as_ref().iter().copied());
++/// Proves the final private-trace ring switch with a nonzero opening-mask coefficient.
++///
++/// This variant alone consumes two challenge candidates for each row-batching coordinate. It
++/// samples all candidate pairs before returning a typed rejection, so the abort path has the same
++/// fixed transcript shape at every coordinate. Ordinary and public ring switches continue to use
++/// [`prove`] and retain the upstream one-candidate schedule.
++pub fn prove_masked_trace<A, P, Channel>(
++	alloc: &A,
++	packed_witness: FieldSlice<P>,
++	eval_point: &[B128],
++	channel: &mut Channel,
++) -> Result<MaskedTraceRingSwitchOutput<A, P>, Error>
++where
++	A: Allocator,
++	P: PackedField<Scalar = B128>,
++	Channel: IPProverChannel<B128>,
++{
++	let log_packing = <B128 as ExtensionField<B1>>::LOG_DEGREE;
++	let prepared = prepare_ring_switch(packed_witness, eval_point, channel);
++	let r_double_prime = sample_non_one_pairs(channel, log_packing)?;
++	let mask_coefficient = r_double_prime
++		.iter()
++		.copied()
++		.map(|challenge| B128::ONE - challenge)
++		.product::<B128>();
++	if mask_coefficient == B128::ZERO {
++		return Err(Error::ZeroMaskCoefficient);
++	}
+ 
+-	// Compute ring-switching equality indicator (transparent poly)
+-	let rs_eq_ind = tracing::debug_span!("Compute ring-switching equality indicator")
+-		.in_scope(|| rs_eq_ind_from_factors::<A, P>(alloc, &eq_lo, &eq_hi, &eq_r_double_prime));
++	let RingSwitchOutput {
++		rs_eq_ind,
++		sumcheck_claim,
++	} = finish_ring_switch(alloc, prepared, &r_double_prime);
++	debug_assert_eq!(mask_coefficient, rs_eq_ind.iter_scalars().sum());
+ 
+-	RingSwitchOutput {
++	Ok(MaskedTraceRingSwitchOutput {
+ 		rs_eq_ind,
+ 		sumcheck_claim,
+-	}
++		mask_coefficient,
++	})
+ }
+ 
+ /// Proves the public segment's evaluation claim.
+@@ -394,10 +504,12 @@ pub fn prove_public_eval<A, P, Channel>(
+ 
+ #[cfg(test)]
+ mod test {
++	use std::collections::VecDeque;
++
+ 	use binius_compute::GlobalAllocator;
+ 	use binius_field::{
+-		BinaryField128bGhash, ExtensionField, PackedBinaryGhash2x128b, PackedBinaryGhash4x128b,
+-		PackedField, PackedSubfield, cast_ext,
++		BinaryField128bGhash, ExtensionField, Field, PackedBinaryGhash2x128b,
++		PackedBinaryGhash4x128b, PackedField, PackedSubfield, cast_ext,
+ 	};
+ 	use binius_math::{
+ 		FieldBuffer,
+@@ -412,6 +524,91 @@ mod test {
+ 
+ 	type F = BinaryField128bGhash;
+ 
++	struct FixedSampleChannel {
++		samples: VecDeque<F>,
++		n_samples: usize,
++	}
++
++	impl FixedSampleChannel {
++		fn new(samples: impl IntoIterator<Item = F>) -> Self {
++			Self {
++				samples: samples.into_iter().collect(),
++				n_samples: 0,
++			}
++		}
++	}
++
++	impl IPProverChannel<F> for FixedSampleChannel {
++		fn send_one(&mut self, _elem: F) {}
++
++		fn observe_one(&mut self, _val: F) {}
++
++		fn sample(&mut self) -> F {
++			self.n_samples += 1;
++			self.samples.pop_front().expect("fixture sample")
++		}
++	}
++
++	#[test]
++	fn fixed_shape_non_one_selection_cases() {
++		let a = F::new(7);
++		let b = F::new(9);
++		let mut first = FixedSampleChannel::new([a, b]);
++		assert_eq!(first.sample_non_one_pair().unwrap(), a);
++		assert_eq!(first.n_samples, 2);
++		let mut fallback = FixedSampleChannel::new([F::ONE, b]);
++		assert_eq!(fallback.sample_non_one_pair().unwrap(), b);
++		assert_eq!(fallback.n_samples, 2);
++		let mut rejected = FixedSampleChannel::new([F::ONE, F::ONE]);
++		assert!(matches!(
++			rejected.sample_non_one_pair(),
++			Err(binius_ip::channel::Error::ChallengeAbort)
++		));
++		assert_eq!(rejected.n_samples, 2);
++	}
++
++	#[test]
++	fn masked_sampler_consumes_all_pairs_before_rejection() {
++		let mut channel =
++			FixedSampleChannel::new([F::ONE, F::ONE, F::new(2), F::new(3), F::ONE, F::new(4)]);
++		assert!(matches!(
++			sample_non_one_pairs(&mut channel, 3),
++			Err(Error::Channel(binius_ip::channel::Error::ChallengeAbort))
++		));
++		assert_eq!(channel.n_samples, 6);
++		assert!(channel.samples.is_empty());
++	}
++
++	#[test]
++	fn selected_row_batch_coefficient_is_nonzero() {
++		let selected = [F::new(2), F::new(3), F::new(4)];
++		let coefficient = selected
++			.into_iter()
++			.map(|challenge| F::ONE - challenge)
++			.product::<F>();
++		assert_ne!(coefficient, F::ZERO);
++		let tensor = eq_ind_partial_eval::<F>(&selected);
++		assert_eq!(coefficient, tensor.get(0));
++	}
++
++	#[test]
++	fn uniform_trace_shift_scales_by_hypercube_sum() {
++		let mut rng = StdRng::seed_from_u64(0x5a17);
++		let trace = random_field_buffer::<F>(&mut rng, 5);
++		let transparent = random_field_buffer::<F>(&mut rng, 5);
++		let key = F::new(0x1234);
++		let coefficient = transparent.iter_scalars().sum::<F>();
++
++		let mut shifted = trace.clone();
++		for index in 0..shifted.len() {
++			shifted.set(index, shifted.get(index) + key);
++		}
++		assert_eq!(
++			inner_product_buffers(&shifted, &transparent),
++			inner_product_buffers(&trace, &transparent) + key * coefficient
++		);
++	}
++
+ 	// The row fold, written straight from its definition:
+ 	//
+ 	//     out[b] = sum_r eq[r] * bit_b(row r)
+@@ -492,6 +689,11 @@ mod test {
+ 
+ 			let rs_eq_ind =
+ 				rs_eq_ind_from_factors::<_, P>(&GlobalAllocator, &eq_lo, &eq_hi, &row_batch_query);
++			assert_eq!(
++				rs_eq_ind.iter_scalars().sum::<F>(),
++				row_batch_query.get(0),
++				"hypercube sum must equal eq_r_double_prime[0] at split_at={split_at}"
++			);
+ 
+ 			for index in 0..1 << log_len {
+ 				let expected = eval_rs_eq::<F>(
+diff --git a/crates/recursion/src/filler.rs b/crates/recursion/src/filler.rs
+index a89024ec..f2526978 100644
+--- a/crates/recursion/src/filler.rs
++++ b/crates/recursion/src/filler.rs
+@@ -5,7 +5,7 @@
+ use std::{borrow::BorrowMut, marker::PhantomData};
+ 
+ use binius_core::word::Word;
+-use binius_field::BinaryField128bGhash as B128;
++use binius_field::{BinaryField128bGhash as B128, Field};
+ use binius_frontend::WitnessFiller;
+ use binius_hash::binary_merkle_tree::HashSuite;
+ use binius_iop::{
+@@ -121,6 +121,22 @@ where
+ 		IPVerifierChannel::<B128>::sample(self.transcript.borrow_mut())
+ 	}
+ 
++	fn sample_non_one_pair(&mut self) -> Result<B128, binius_ip::channel::Error> {
++		// `assert_zero` is deliberately deferred to the recursion circuit below, so the trait's
++		// algebraic default cannot enforce the transcript-level rejection event here. Consume both
++		// concrete Fiat--Shamir candidates directly and return the same typed abort as the native
++		// verifier. This keeps recursive witness filling on the exact fixed-shape schedule.
++		let first = self.sample();
++		let second = self.sample();
++		if first != B128::ONE {
++			Ok(first)
++		} else if second != B128::ONE {
++			Ok(second)
++		} else {
++			Err(binius_ip::channel::Error::ChallengeAbort)
++		}
++	}
++
+ 	fn observe_one(&mut self, val: B128) -> B128 {
+ 		let value = self.transcript.borrow_mut().observe_one(val);
+ 		self.fill_elem("observe_one", value);
+diff --git a/crates/spartan-prover/src/wrapper/replay_channel.rs b/crates/spartan-prover/src/wrapper/replay_channel.rs
+index 69bed8c1..c7e1ab4b 100644
+--- a/crates/spartan-prover/src/wrapper/replay_channel.rs
++++ b/crates/spartan-prover/src/wrapper/replay_channel.rs
+@@ -42,6 +42,10 @@ pub struct ReplayChannel<F: Field> {
+ 	precommit_alloc: WireAllocator,
+ 	keys: VecIntoIter<F>,
+ 	events: VecIntoIter<F>,
++	n_oracles: usize,
++	evaluation_mask_key: Option<CircuitElem<F, WitnessGenerator<F>>>,
++	evaluation_mask_active: bool,
++	evaluation_mask_relation_verified: bool,
+ }
+ 
+ impl<F: Field> ReplayChannel<F> {
+@@ -59,6 +63,10 @@ impl<F: Field> ReplayChannel<F> {
+ 			precommit_alloc: WireAllocator::new(WireKind::Precommit),
+ 			keys: keys.into_iter(),
+ 			events: events.into_iter(),
++			n_oracles: 0,
++			evaluation_mask_key: None,
++			evaluation_mask_active: false,
++			evaluation_mask_relation_verified: false,
+ 		}
+ 	}
+ 
+@@ -95,6 +103,20 @@ impl<F: Field> ReplayChannel<F> {
+ 
+ 	/// Consumes the channel and builds the outer witness.
+ 	pub fn finish(self) -> Result<Witness<F>, WitnessError> {
++		assert!(
++			!self.evaluation_mask_active || self.evaluation_mask_relation_verified,
++			"evaluation-masked oracle must have exactly one verified relation"
++		);
++		assert_eq!(
++			self.keys.len(),
++			0,
++			"replay must consume every committed precommit key exactly once"
++		);
++		assert_eq!(
++			self.events.len(),
++			0,
++			"replay must consume every recorded transcript event exactly once"
++		);
+ 		Rc::try_unwrap(self.witness_gen)
+ 			.expect("CircuitElem values should only hold Weak references")
+ 			.into_inner()
+@@ -121,6 +143,12 @@ impl<F: Field> IPVerifierChannel<F> for ReplayChannel<F> {
+ 		self.next_inout_elem()
+ 	}
+ 
++	fn sample_non_one_pair(&mut self) -> Result<Self::Elem, binius_ip::channel::Error> {
++		// The recorded event is the selected public value. Candidate sampling and rejection happen
++		// in the native wrapped transcript, outside replay, matching the symbolic builder's shape.
++		Ok(self.next_inout_elem())
++	}
++
+ 	fn observe_one(&mut self, _val: F) -> Self::Elem {
+ 		self.next_inout_elem()
+ 	}
+@@ -179,6 +207,10 @@ impl<F: BinaryField> WordIPVerifierChannel<F> for ReplayChannel<F> {
+ impl<F: Field> IOPVerifierChannel<F> for ReplayChannel<F> {
+ 	type Oracle = ();
+ 
++	fn evaluation_masking_enabled(&self) -> bool {
++		true
++	}
++
+ 	fn remaining_oracle_specs(&self) -> &[OracleSpec] {
+ 		&[]
+ 	}
+@@ -188,6 +220,28 @@ impl<F: Field> IOPVerifierChannel<F> for ReplayChannel<F> {
+ 		_log_msg_len: usize,
+ 		_is_witness_dependent: bool,
+ 	) -> Result<Self::Oracle, binius_iop::channel::Error> {
++		assert!(
++			!self.evaluation_mask_active,
++			"no ordinary oracle may follow the evaluation-masked trace oracle"
++		);
++		self.n_oracles += 1;
++		Ok(())
++	}
++
++	fn recv_evaluation_masked_oracle(
++		&mut self,
++		_log_msg_len: usize,
++		is_witness_dependent: bool,
++	) -> Result<Self::Oracle, binius_iop::channel::Error> {
++		assert!(
++			is_witness_dependent,
++			"evaluation masking is only valid for the witness-dependent trace oracle"
++		);
++		assert_eq!(self.n_oracles, 0, "evaluation-masked trace oracle must be first");
++		assert!(!self.evaluation_mask_active, "only one evaluation-masked oracle is supported");
++		self.n_oracles = 1;
++		self.evaluation_mask_active = true;
++		self.evaluation_mask_key = Some(self.next_precommit_elem());
+ 		Ok(())
+ 	}
+ 
+@@ -197,6 +251,10 @@ impl<F: Field> IOPVerifierChannel<F> for ReplayChannel<F> {
+ 		_transparent: TransparentEvalFn<Self::Elem>,
+ 		claim: Self::Elem,
+ 	) -> Result<(), binius_iop::channel::Error> {
++		assert!(
++			!self.evaluation_mask_active,
++			"evaluation-masked oracle accepts only its single equality-tensor relation"
++		);
+ 		// For each oracle opening, the prover sends the decrypted evaluation. The outer verifier
+ 		// checks in the circuit equality of this value with the expected expression over encrypted
+ 		// values.
+@@ -204,6 +262,28 @@ impl<F: Field> IOPVerifierChannel<F> for ReplayChannel<F> {
+ 		self.assert_zero(claim - decrypted_claim)?;
+ 		Ok(())
+ 	}
++
++	fn verify_oracle_evaluation_relation(
++		&mut self,
++		_oracle: Self::Oracle,
++		_transparent: TransparentEvalFn<Self::Elem>,
++		claim: Self::Elem,
++		mask_coefficient: Self::Elem,
++	) -> Result<(), binius_iop::channel::Error> {
++		assert!(self.evaluation_mask_active, "no evaluation-masked oracle was received");
++		assert!(
++			!self.evaluation_mask_relation_verified,
++			"evaluation-masked relation verified twice"
++		);
++		let key = self
++			.evaluation_mask_key
++			.take()
++			.expect("evaluation mask key must be allocated with the oracle");
++		let masked_claim = self.next_inout_elem();
++		self.assert_zero(masked_claim - claim - key * mask_coefficient)?;
++		self.evaluation_mask_relation_verified = true;
++		Ok(())
++	}
+ }
+ 
+ #[cfg(test)]
+@@ -211,10 +291,12 @@ mod tests {
+ 	use std::{cell::RefCell, rc::Rc, sync::Arc};
+ 
+ 	use binius_field::{
+-		BinaryField1b as B1, BinaryField128bGhash as B128, ExtensionField, field::FieldOps,
++		BinaryField1b as B1, BinaryField128bGhash as B128, ExtensionField, Field, field::FieldOps,
+ 	};
++	use binius_iop::channel::IOPVerifierChannel;
+ 	use binius_spartan_frontend::circuit_builder::{ConstraintBuilder, WitnessGenerator};
+-	use binius_spartan_verifier::wrapper::circuit_elem::CircuitElem;
++	use binius_spartan_frontend::compiler::compile;
++	use binius_spartan_verifier::wrapper::{IronSpartanBuilderChannel, circuit_elem::CircuitElem};
+ 
+ 	type BuildElem = CircuitElem<B128, ConstraintBuilder<B128>>;
+ 	type WitnessElem = CircuitElem<B128, WitnessGenerator<B128>>;
+@@ -279,4 +361,55 @@ mod tests {
+ 
+ 		cs.validate(&witness);
+ 	}
++
++	fn masked_trace_fixture(masked_claim_delta: B128) -> bool {
++		let claim = B128::new(11);
++		let key = B128::new(13);
++		let coefficient = B128::new(17);
++		let masked_claim = claim + key * coefficient + masked_claim_delta;
++
++		let mut builder = IronSpartanBuilderChannel::<B128>::new();
++		builder
++			.recv_evaluation_masked_oracle(3, true)
++			.expect("symbolic trace receive");
++		builder
++			.verify_oracle_evaluation_relation(
++				(),
++				Box::new(|_| BuildElem::Constant(B128::ZERO)),
++				BuildElem::Constant(claim),
++				BuildElem::Constant(coefficient),
++			)
++			.expect("symbolic relation");
++		let (cs, layout) = compile(builder.finish());
++
++		let mut replay = ReplayChannel::new(Arc::new(layout), vec![key], vec![masked_claim]);
++		replay
++			.recv_evaluation_masked_oracle(3, true)
++			.expect("replay trace receive");
++		replay
++			.verify_oracle_evaluation_relation(
++				(),
++				Box::new(|_| WitnessElem::Constant(B128::ZERO)),
++				WitnessElem::Constant(claim),
++				WitnessElem::Constant(coefficient),
++			)
++			.expect("replay relation");
++		match replay.finish() {
++			Ok(witness) => {
++				cs.validate(&witness);
++				true
++			}
++			Err(_) => false,
++		}
++	}
++
++	#[test]
++	fn masked_trace_replay_accepts_exact_claim() {
++		assert!(masked_trace_fixture(B128::ZERO));
++	}
++
++	#[test]
++	fn masked_trace_replay_rejects_mutated_claim() {
++		assert!(!masked_trace_fixture(B128::ONE));
++	}
+ }
+diff --git a/crates/spartan-prover/src/wrapper/zk_wrapped_prover_channel.rs b/crates/spartan-prover/src/wrapper/zk_wrapped_prover_channel.rs
+index e0db8b26..1bf91253 100644
+--- a/crates/spartan-prover/src/wrapper/zk_wrapped_prover_channel.rs
++++ b/crates/spartan-prover/src/wrapper/zk_wrapped_prover_channel.rs
+@@ -29,6 +29,15 @@ use rand::CryptoRng;
+ 
+ use crate::{Error, IOPProver, pack_and_blind_witness, wrapper::ReplayChannel};
+ 
++/// State for the one inner trace oracle whose equality evaluation is protected by a constant
++/// one-time mask. The mask is part of the already committed outer precommit segment, so it is
++/// fixed before the inner verifier samples the evaluation point.
++struct EvaluationMaskState<F> {
++	oracle: BaseFoldOracle,
++	key: F,
++	relation_queued: bool,
++}
++
+ /// A prover channel that wraps a [`BaseFoldProverChannel`] and an outer Spartan IOP prover.
+ ///
+ /// This channel records all channel values. On
+@@ -57,10 +66,20 @@ where
+ 	keys: Vec<P::Scalar>,
+ 	next_key_idx: usize,
+ 	interaction: Vec<P::Scalar>,
++	/// Tracks every Fiat--Shamir draw, including word-sized draws that are not recorded in
++	/// `interaction`. The masked trace commitment must precede all of them.
++	challenge_sampled: bool,
++	/// The sole inner oracle committed as `pi + key * 1`. This wrapper deliberately supports
++	/// exactly one equality-tensor relation on that oracle; any other relation fails closed.
++	evaluation_mask: Option<EvaluationMaskState<P::Scalar>>,
++	/// Remains true after the masked oracle is finalized, so [`Self::finish`] can distinguish the
++	/// dedicated one-oracle transform from legacy wrapper uses that commit ordinary oracles.
++	evaluation_mask_applied: bool,
++	/// Number of inner oracles committed through this wrapper. The masked trace must be first.
++	n_inner_oracles: usize,
+ 	/// Handle to the outer precommit oracle committed at construction time. The buffer
+-	/// (`precommit_packed`) is purely random — it is the one-time-pad encryption key for the
+-	/// outer encrypted transcript (to be wired up in a follow-up; for now the outer circuit has
+-	/// no precommit wires that reference it).
++	/// (`precommit_packed`) is purely random. Its first used scalar is the constant mask for the
++	/// inner trace oracle; every later used scalar is a one-time-pad key for one inner message.
+ 	precommit_oracle: BaseFoldOracle,
+ 	precommit_packed: FieldVec<P, A>,
+ 	/// Number of outer oracles still to be committed on `inner_channel` during `finish` (the
+@@ -80,8 +99,9 @@ where
+ 	///
+ 	/// Commits the outer prover's precommit oracle on the inner channel as part of construction:
+ 	/// a random [`FieldBuffer<P>`](binius_math::FieldBuffer) the size of the outer precommit oracle
+-	/// segment is sent to the channel and kept for use in [`Self::finish`]. This random buffer is
+-	/// the one-time-pad encryption key for the (future) outer encrypted transcript.
++	/// segment is sent to the channel and kept for use in [`Self::finish`]. The first allocated key
++	/// masks the sole inner trace oracle by a constant; subsequent keys one-time-pad private inner
++	/// transcript elements.
+ 	///
+ 	/// The inner channel's oracle specs are expected to be laid out as
+ 	/// `[outer_precommit, inner..., outer_private, outer_mask]`.
+@@ -93,7 +113,7 @@ where
+ 	/// * `outer_prover` - The IOP prover for the outer (wrapper) constraint system
+ 	/// * `outer_layout` - The witness layout for the outer constraint system
+ 	/// * `alloc` - Allocator for the outer proof's working buffers, borrowed from the owning prover
+-	/// * `rng` - RNG used to generate the random precommit buffer (the future OTP key)
++	/// * `rng` - RNG used to generate the random trace mask and transcript OTP keys
+ 	/// * `replay_fn` - Closure called during [`finish`](Self::finish) with a [`ReplayChannel`] to
+ 	///   replay the inner verification and fill the outer witness
+ 	pub fn new(
+@@ -117,6 +137,10 @@ where
+ 			all_specs[0], outer_oracle_specs[0],
+ 			"outer precommit oracle spec must be the first spec on the channel",
+ 		);
++		assert!(
++			all_specs[0].is_zk,
++			"the trace-mask key/OTP precommit oracle must use BaseFold hiding",
++		);
+ 		let suffix_len = n_outer - 1;
+ 		assert_eq!(
+ 			&all_specs[all_specs.len() - suffix_len..],
+@@ -138,6 +162,10 @@ where
+ 			keys,
+ 			next_key_idx: 0,
+ 			interaction: Vec::new(),
++			challenge_sampled: false,
++			evaluation_mask: None,
++			evaluation_mask_applied: false,
++			n_inner_oracles: 0,
+ 			precommit_oracle,
+ 			precommit_packed,
+ 			n_outer_suffix_oracles: suffix_len,
+@@ -177,11 +205,21 @@ where
+ 	}
+ 
+ 	fn next_key(&mut self) -> F {
++		assert!(self.next_key_idx < self.keys.len(), "outer precommit key segment exhausted");
+ 		let key = self.keys[self.next_key_idx];
+ 		self.next_key_idx += 1;
+ 		key
+ 	}
+ 
++	fn shift_buffer(&self, buffer: FieldSlice<P>, key: F) -> FieldVec<P, A> {
++		let mut shifted = FieldVec::<P, A>::clone_from_slice(self.alloc, buffer);
++		for index in 0..shifted.len() {
++			let value = shifted.get(index);
++			shifted.set(index, value + key);
++		}
++		shifted
++	}
++
+ 	/// Consumes the channel and runs the outer proof.
+ 	///
+ 	/// This should be called after the inner proof has been run through this channel.
+@@ -193,6 +231,21 @@ where
+ 	where
+ 		ReplayFn: FnOnce(&mut ReplayChannel<F>),
+ 	{
++		assert!(
++			self.evaluation_mask.is_none(),
++			"evaluation-masked oracle must be opened and finalized before wrapper finish"
++		);
++		if self.evaluation_mask_applied {
++			assert_eq!(
++				self.n_inner_oracles, 1,
++				"evaluation masking requires exactly one inner trace oracle"
++			);
++		}
++		assert_eq!(
++			self.next_key_idx,
++			self.keys.len(),
++			"every committed precommit key must be consumed exactly once"
++		);
+ 		let Self {
+ 			mut inner_channel,
+ 			outer_prover,
+@@ -265,10 +318,21 @@ where
+ 	}
+ 
+ 	fn sample(&mut self) -> F {
++		self.challenge_sampled = true;
+ 		let val = self.inner_channel.sample();
+ 		self.interaction.push(val);
+ 		val
+ 	}
++
++	fn sample_non_one_pair(&mut self) -> Result<F, binius_ip::channel::Error> {
++		self.challenge_sampled = true;
++		let val = self.inner_channel.sample_non_one_pair()?;
++		// Both candidates were consumed by the native inner transcript. The outer verifier
++		// independently repeats that selection, so the wrapper circuit needs only the selected
++		// public value and keeps the same one-wire shape as an ordinary challenge.
++		self.interaction.push(val);
++		Ok(val)
++	}
+ }
+ 
+ impl<F, P, NTT, Channel, ReplayFn, A> WordIPProverChannel<F>
+@@ -289,6 +353,7 @@ where
+ 	}
+ 
+ 	fn sample_bits(&mut self, bits: usize) -> Self::Word {
++		self.challenge_sampled = true;
+ 		self.inner_channel.sample_bits(bits)
+ 	}
+ }
+@@ -304,6 +369,10 @@ where
+ {
+ 	type Oracle = BaseFoldOracle;
+ 
++	fn evaluation_masking_enabled(&self) -> bool {
++		true
++	}
++
+ 	fn remaining_oracle_specs(&self) -> &[OracleSpec] {
+ 		let remaining = self.inner_channel.remaining_oracle_specs();
+ 		let n_inner_remaining = remaining.len() - self.n_outer_suffix_oracles;
+@@ -311,11 +380,58 @@ where
+ 	}
+ 
+ 	fn send_oracle(&mut self, buffer: FieldSlice<P>) -> Self::Oracle {
++		assert!(
++			self.evaluation_mask.is_none() && !self.evaluation_mask_applied,
++			"no ordinary inner oracle may follow the evaluation-masked trace oracle"
++		);
+ 		assert!(
+ 			!self.remaining_oracle_specs().is_empty(),
+ 			"send_oracle called but no inner oracle specs remaining"
+ 		);
+-		self.inner_channel.send_oracle(buffer)
++		let oracle = self.inner_channel.send_oracle(buffer);
++		self.n_inner_oracles += 1;
++		oracle
++	}
++
++	fn send_evaluation_masked_oracle(&mut self, buffer: FieldSlice<P>) -> Self::Oracle {
++		assert_eq!(self.n_inner_oracles, 0, "evaluation-masked trace oracle must be first");
++		assert!(
++			self.evaluation_mask.is_none(),
++			"only one evaluation-masked inner oracle is supported"
++		);
++		assert_eq!(
++			self.remaining_oracle_specs().len(),
++			1,
++			"evaluation masking supports exactly one inner oracle"
++		);
++		assert!(
++			self.remaining_oracle_specs()[0].is_zk,
++			"evaluation-masked trace oracle must also use BaseFold hiding"
++		);
++		assert_eq!(
++			self.next_key_idx, 0,
++			"the evaluation-mask key must be the first precommitted key, before any sampled challenge or message OTP"
++		);
++		assert!(
++			self.interaction.is_empty(),
++			"evaluation-mask key must be committed before any inner field interaction"
++		);
++		assert!(
++			!self.challenge_sampled,
++			"evaluation-masked trace oracle must be committed before any Fiat--Shamir challenge"
++		);
++
++		let key = self.next_key();
++		let shifted = self.shift_buffer(buffer, key);
++		let oracle = self.inner_channel.send_oracle(shifted.to_ref());
++		self.evaluation_mask = Some(EvaluationMaskState {
++			oracle,
++			key,
++			relation_queued: false,
++		});
++		self.evaluation_mask_applied = true;
++		self.n_inner_oracles = 1;
++		oracle
+ 	}
+ 
+ 	fn prove_oracle_relation(
+@@ -324,6 +440,12 @@ where
+ 		transparent: FieldVec<P, A>,
+ 		claim: P::Scalar,
+ 	) {
++		assert!(
++			self.evaluation_mask
++				.as_ref()
++				.is_none_or(|state| state.oracle != oracle),
++			"evaluation-masked oracle accepts only its single equality-tensor relation"
++		);
+ 		// For each oracle opening, the prover sends the decrypted evaluation. The outer verifier
+ 		// checks in the circuit equality of this value with the expected expression over encrypted
+ 		// values.
+@@ -334,7 +456,56 @@ where
+ 			.prove_oracle_relation(oracle, transparent, claim)
+ 	}
+ 
++	fn prove_oracle_evaluation_relation(
++		&mut self,
++		oracle: Self::Oracle,
++		transparent: FieldVec<P, A>,
++		claim: P::Scalar,
++		mask_coefficient: P::Scalar,
++	) {
++		let transparent_sum = transparent
++			.iter_scalars()
++			.fold(F::ZERO, |sum, value| sum + value);
++		assert_eq!(
++			transparent_sum, mask_coefficient,
++			"the supplied mask coefficient must equal the transparent's hypercube sum"
++		);
++		assert_ne!(mask_coefficient, F::ZERO, "the evaluation-mask coefficient must be non-zero");
++
++		let state = self
++			.evaluation_mask
++			.as_mut()
++			.expect("evaluation-masked relation requires a masked oracle commitment");
++		assert_eq!(state.oracle, oracle, "evaluation-masked oracle handle mismatch");
++		assert!(!state.relation_queued, "evaluation-masked relation queued twice");
++
++		let masked_claim = claim + state.key * mask_coefficient;
++		state.relation_queued = true;
++		self.inner_channel.send_one(masked_claim);
++		self.interaction.push(masked_claim);
++		self.inner_channel
++			.prove_oracle_relation(oracle, transparent, masked_claim);
++	}
++
+ 	fn finalize_oracle(&mut self, oracle: Self::Oracle, buffer: FieldVec<P, A>) {
+-		self.inner_channel.finalize_oracle(oracle, buffer)
++		if self
++			.evaluation_mask
++			.as_ref()
++			.is_some_and(|state| state.oracle == oracle)
++		{
++			let state = self
++				.evaluation_mask
++				.take()
++				.expect("evaluation mask checked above");
++			assert!(state.relation_queued, "evaluation-masked oracle finalized unopened");
++			let shifted = self.shift_buffer(buffer.to_ref(), state.key);
++			self.inner_channel.finalize_oracle(oracle, shifted);
++		} else {
++			assert!(
++				self.evaluation_mask.is_none(),
++				"unexpected oracle finalized while evaluation-masked oracle is pending"
++			);
++			self.inner_channel.finalize_oracle(oracle, buffer);
++		}
+ 	}
+ }
+diff --git a/crates/spartan-verifier/src/wrapper/builder_channel.rs b/crates/spartan-verifier/src/wrapper/builder_channel.rs
+index f3bef3a2..173e6761 100644
+--- a/crates/spartan-verifier/src/wrapper/builder_channel.rs
++++ b/crates/spartan-verifier/src/wrapper/builder_channel.rs
+@@ -29,6 +29,10 @@ use super::circuit_elem::CircuitElem;
+ ///    constraints
+ pub struct IronSpartanBuilderChannel<F: Field> {
+ 	builder: Rc<RefCell<ConstraintBuilder<F>>>,
++	n_oracles: usize,
++	evaluation_mask_key: Option<CircuitElem<F, ConstraintBuilder<F>>>,
++	evaluation_mask_active: bool,
++	evaluation_mask_relation_verified: bool,
+ }
+ 
+ impl<F: Field> Default for IronSpartanBuilderChannel<F> {
+@@ -42,6 +46,10 @@ impl<F: Field> IronSpartanBuilderChannel<F> {
+ 	pub fn new() -> Self {
+ 		Self {
+ 			builder: Rc::new(RefCell::new(ConstraintBuilder::new())),
++			n_oracles: 0,
++			evaluation_mask_key: None,
++			evaluation_mask_active: false,
++			evaluation_mask_relation_verified: false,
+ 		}
+ 	}
+ 
+@@ -60,6 +68,10 @@ impl<F: Field> IronSpartanBuilderChannel<F> {
+ 	/// This must be called after all `CircuitElem` values derived from this channel have been
+ 	/// dropped, as it requires sole ownership of the builder via `Rc::try_unwrap`.
+ 	pub fn finish(self) -> ConstraintBuilder<F> {
++		assert!(
++			!self.evaluation_mask_active || self.evaluation_mask_relation_verified,
++			"evaluation-masked oracle must have exactly one verified relation"
++		);
+ 		Rc::try_unwrap(self.builder)
+ 			.expect("CircuitElem values should only hold Weak references")
+ 			.into_inner()
+@@ -89,6 +101,12 @@ impl<F: Field> IPVerifierChannel<F> for IronSpartanBuilderChannel<F> {
+ 		self.alloc_inout_elem()
+ 	}
+ 
++	fn sample_non_one_pair(&mut self) -> Result<Self::Elem, binius_ip::channel::Error> {
++		// The concrete wrapped verifier consumes both native transcript candidates and supplies the
++		// selected value as this public input. No branch or zero-test belongs in the outer circuit.
++		Ok(self.alloc_inout_elem())
++	}
++
+ 	fn observe_one(&mut self, _val: F) -> Self::Elem {
+ 		self.alloc_inout_elem()
+ 	}
+@@ -151,6 +169,10 @@ impl<F: BinaryField> WordIPVerifierChannel<F> for IronSpartanBuilderChannel<F> {
+ impl<F: Field> IOPVerifierChannel<F> for IronSpartanBuilderChannel<F> {
+ 	type Oracle = ();
+ 
++	fn evaluation_masking_enabled(&self) -> bool {
++		true
++	}
++
+ 	fn remaining_oracle_specs(&self) -> &[OracleSpec] {
+ 		&[]
+ 	}
+@@ -160,6 +182,28 @@ impl<F: Field> IOPVerifierChannel<F> for IronSpartanBuilderChannel<F> {
+ 		_log_msg_len: usize,
+ 		_is_witness_dependent: bool,
+ 	) -> Result<Self::Oracle, binius_iop::channel::Error> {
++		assert!(
++			!self.evaluation_mask_active,
++			"no ordinary oracle may follow the evaluation-masked trace oracle"
++		);
++		self.n_oracles += 1;
++		Ok(())
++	}
++
++	fn recv_evaluation_masked_oracle(
++		&mut self,
++		_log_msg_len: usize,
++		is_witness_dependent: bool,
++	) -> Result<Self::Oracle, binius_iop::channel::Error> {
++		assert!(
++			is_witness_dependent,
++			"evaluation masking is only valid for the witness-dependent trace oracle"
++		);
++		assert_eq!(self.n_oracles, 0, "evaluation-masked trace oracle must be first");
++		assert!(!self.evaluation_mask_active, "only one evaluation-masked oracle is supported");
++		self.n_oracles = 1;
++		self.evaluation_mask_active = true;
++		self.evaluation_mask_key = Some(self.alloc_precommit_elem());
+ 		Ok(())
+ 	}
+ 
+@@ -169,6 +213,10 @@ impl<F: Field> IOPVerifierChannel<F> for IronSpartanBuilderChannel<F> {
+ 		_transparent: TransparentEvalFn<Self::Elem>,
+ 		claim: Self::Elem,
+ 	) -> Result<(), binius_iop::channel::Error> {
++		assert!(
++			!self.evaluation_mask_active,
++			"evaluation-masked oracle accepts only its single equality-tensor relation"
++		);
+ 		// For each oracle opening, the prover sends the decrypted evaluation. The outer verifier
+ 		// checks in the circuit equality of this value with the expected expression over encrypted
+ 		// values.
+@@ -176,4 +224,26 @@ impl<F: Field> IOPVerifierChannel<F> for IronSpartanBuilderChannel<F> {
+ 		self.assert_zero(claim - decrypted_claim)?;
+ 		Ok(())
+ 	}
++
++	fn verify_oracle_evaluation_relation(
++		&mut self,
++		_oracle: Self::Oracle,
++		_transparent: TransparentEvalFn<Self::Elem>,
++		claim: Self::Elem,
++		mask_coefficient: Self::Elem,
++	) -> Result<(), binius_iop::channel::Error> {
++		assert!(self.evaluation_mask_active, "no evaluation-masked oracle was received");
++		assert!(
++			!self.evaluation_mask_relation_verified,
++			"evaluation-masked relation verified twice"
++		);
++		let key = self
++			.evaluation_mask_key
++			.take()
++			.expect("evaluation mask key must be allocated with the oracle");
++		let masked_claim = self.alloc_inout_elem();
++		self.assert_zero(masked_claim - claim - key * mask_coefficient)?;
++		self.evaluation_mask_relation_verified = true;
++		Ok(())
++	}
+ }
+diff --git a/crates/spartan-verifier/src/wrapper/zk_wrapped_channel.rs b/crates/spartan-verifier/src/wrapper/zk_wrapped_channel.rs
+index 989b1c17..45e1dca3 100644
+--- a/crates/spartan-verifier/src/wrapper/zk_wrapped_channel.rs
++++ b/crates/spartan-verifier/src/wrapper/zk_wrapped_channel.rs
+@@ -60,6 +60,12 @@ where
+ 	/// wire ids align with the outer layout.
+ 	inout_alloc: WireAllocator,
+ 	precommit_alloc: WireAllocator,
++	/// The one inner trace oracle committed as `pi + key * 1`, plus the hidden key represented by
++	/// the first matching outer-precommit wire.
++	evaluation_mask_oracle: Option<BaseFoldOracle>,
++	evaluation_mask_key: Option<CircuitElem<F, InstanceGenerator<F>>>,
++	evaluation_mask_relation_verified: bool,
++	n_inner_oracles: usize,
+ 	/// Number of outer oracles still to be received on `inner_channel` after inner verification
+ 	/// completes (i.e. the outer verifier's non-precommit oracles — private and mask).
+ 	n_outer_suffix_oracles: usize,
+@@ -106,6 +112,10 @@ where
+ 			channel_oracle_specs[0], outer_oracle_specs[0],
+ 			"outer precommit oracle spec must be the first spec on the channel"
+ 		);
++		assert!(
++			channel_oracle_specs[0].is_zk,
++			"the trace-mask key/OTP precommit oracle must use BaseFold hiding"
++		);
+ 		let suffix_len = n_outer - 1;
+ 		assert_eq!(
+ 			&channel_oracle_specs[n_total - suffix_len..],
+@@ -123,6 +133,10 @@ where
+ 			instance_gen: Rc::new(RefCell::new(InstanceGenerator::new(outer_layout))),
+ 			inout_alloc: WireAllocator::new(WireKind::InOut),
+ 			precommit_alloc: WireAllocator::new(WireKind::Precommit),
++			evaluation_mask_oracle: None,
++			evaluation_mask_key: None,
++			evaluation_mask_relation_verified: false,
++			n_inner_oracles: 0,
+ 			n_outer_suffix_oracles: suffix_len,
+ 		})
+ 	}
+@@ -160,6 +174,16 @@ where
+ 	/// Reads the outer public-input vector `[constants | inout | derived]` from the
+ 	/// [`InstanceGenerator`] and runs [`IOPVerifier::verify`] against the inner channel.
+ 	pub fn finish(self) -> Result<(), Error> {
++		if self.evaluation_mask_oracle.is_some() {
++			assert_eq!(
++				self.n_inner_oracles, 1,
++				"evaluation masking requires exactly one inner trace oracle"
++			);
++		}
++		assert!(
++			self.evaluation_mask_oracle.is_none() || self.evaluation_mask_relation_verified,
++			"evaluation-masked oracle must have exactly one verified relation"
++		);
+ 		// The instance generator produced every public value (inout + alive-derived) as the inner
+ 		// verifier ran, so the public segment is already final here — read it by borrow. We must
+ 		// NOT consume the generator: the oracle relations queued onto `inner_channel` carry
+@@ -211,6 +235,11 @@ where
+ 		self.alloc_inout_elem(val)
+ 	}
+ 
++	fn sample_non_one_pair(&mut self) -> Result<Self::Elem, binius_ip::channel::Error> {
++		let val = self.inner_channel.sample_non_one_pair()?;
++		Ok(self.alloc_inout_elem(val))
++	}
++
+ 	fn observe_one(&mut self, val: F) -> Self::Elem {
+ 		let elem = self.inner_channel.observe_one(val);
+ 		self.alloc_inout_elem(elem)
+@@ -277,6 +306,10 @@ where
+ {
+ 	type Oracle = BaseFoldOracle;
+ 
++	fn evaluation_masking_enabled(&self) -> bool {
++		true
++	}
++
+ 	fn remaining_oracle_specs(&self) -> &[OracleSpec] {
+ 		let all = self.inner_channel.remaining_oracle_specs();
+ 		let n_remaining_inner = all.len() - self.n_outer_suffix_oracles;
+@@ -288,12 +321,48 @@ where
+ 		log_msg_len: usize,
+ 		is_witness_dependent: bool,
+ 	) -> Result<Self::Oracle, binius_iop::channel::Error> {
++		assert!(
++			self.evaluation_mask_oracle.is_none(),
++			"no ordinary inner oracle may follow the evaluation-masked trace oracle"
++		);
+ 		assert!(
+ 			!self.remaining_oracle_specs().is_empty(),
+ 			"recv_oracle called but no remaining inner oracle specs"
+ 		);
+-		self.inner_channel
+-			.recv_oracle(log_msg_len, is_witness_dependent)
++		let oracle = self
++			.inner_channel
++			.recv_oracle(log_msg_len, is_witness_dependent)?;
++		self.n_inner_oracles += 1;
++		Ok(oracle)
++	}
++
++	fn recv_evaluation_masked_oracle(
++		&mut self,
++		log_msg_len: usize,
++		is_witness_dependent: bool,
++	) -> Result<Self::Oracle, binius_iop::channel::Error> {
++		assert_eq!(self.n_inner_oracles, 0, "evaluation-masked trace oracle must be first");
++		assert!(
++			self.evaluation_mask_oracle.is_none(),
++			"only one evaluation-masked inner oracle is supported"
++		);
++		assert_eq!(
++			self.remaining_oracle_specs().len(),
++			1,
++			"evaluation masking supports exactly one inner oracle"
++		);
++		assert!(
++			is_witness_dependent && self.remaining_oracle_specs()[0].is_zk,
++			"evaluation-masked trace oracle must be witness-dependent and use BaseFold hiding"
++		);
++		let oracle = self
++			.inner_channel
++			.recv_oracle(log_msg_len, is_witness_dependent)?;
++		let key = self.alloc_precommit_elem();
++		self.n_inner_oracles = 1;
++		self.evaluation_mask_oracle = Some(oracle);
++		self.evaluation_mask_key = Some(key);
++		Ok(oracle)
+ 	}
+ 
+ 	fn verify_oracle_relation(
+@@ -302,6 +371,11 @@ where
+ 		transparent: TransparentEvalFn<Self::Elem>,
+ 		claim: Self::Elem,
+ 	) -> Result<(), binius_iop::channel::Error> {
++		assert!(
++			self.evaluation_mask_oracle
++				.is_none_or(|masked| masked != oracle),
++			"evaluation-masked oracle accepts only its single equality-tensor relation"
++		);
+ 		// For each oracle opening, the prover sends the decrypted evaluation. Allocate it as an
+ 		// inout wire (written into the public segment) and attest `claim == decrypted_claim`,
+ 		// exactly as the symbolic `IronSpartanBuilderChannel` does. The assertion is a no-op on
+@@ -339,4 +413,46 @@ where
+ 		self.inner_channel
+ 			.verify_oracle_relation(oracle, Box::new(eval_fn), decrypted_value)
+ 	}
++
++	fn verify_oracle_evaluation_relation(
++		&mut self,
++		oracle: Self::Oracle,
++		transparent: TransparentEvalFn<Self::Elem>,
++		claim: Self::Elem,
++		mask_coefficient: Self::Elem,
++	) -> Result<(), binius_iop::channel::Error> {
++		assert_eq!(
++			self.evaluation_mask_oracle,
++			Some(oracle),
++			"evaluation-masked oracle handle mismatch"
++		);
++		assert!(
++			!self.evaluation_mask_relation_verified,
++			"evaluation-masked relation verified twice"
++		);
++		let key = self
++			.evaluation_mask_key
++			.take()
++			.expect("evaluation mask key must be allocated with the oracle");
++		let masked_value = self.inner_channel.recv_one()?;
++		let masked_claim = self.alloc_inout_elem(masked_value);
++		self.assert_zero(masked_claim - claim - key * mask_coefficient)?;
++		self.evaluation_mask_relation_verified = true;
++
++		let eval_fn = move |vals: &[F]| {
++			let wrapped_vals = vals
++				.iter()
++				.map(|val| CircuitElem::Constant(*val))
++				.collect::<Vec<_>>();
++
++			match transparent(&wrapped_vals) {
++				CircuitElem::Constant(val) => val,
++				CircuitElem::Wire { wire, .. } => wire.value().expect(
++					"precondition: the transparent polynomial evaluation must depend only on known values (constants or sampled challenges)",
++				),
++			}
++		};
++		self.inner_channel
++			.verify_oracle_relation(oracle, Box::new(eval_fn), masked_value)
++	}
+ }
+diff --git a/crates/verifier/src/ring_switch.rs b/crates/verifier/src/ring_switch.rs
+index 0f27fe1a..2c8ab81c 100644
+--- a/crates/verifier/src/ring_switch.rs
++++ b/crates/verifier/src/ring_switch.rs
+@@ -25,6 +25,64 @@ pub struct RingSwitchVerifyOutput<F: FieldOps> {
+ 	pub sumcheck_claim: F,
+ }
+ 
++/// Output of the dedicated final trace ring switch used by the evaluation-mask experiment.
++pub struct MaskedTraceRingSwitchVerifyOutput<F: FieldOps> {
++	/// The row-batching challenges (expanded via eq_ind).
++	pub eq_r_double_prime: Vec<F>,
++	/// The verified, unmasked sumcheck claim for BaseFold.
++	pub sumcheck_claim: F,
++	/// The Boolean-hypercube sum of the final transparent relation. Fixed-shape challenge rejection
++	/// proves this value is non-zero before it is used as the trace-mask coefficient.
++	pub mask_coefficient: F,
++}
++
++struct PreparedRingSwitchVerify<F: FieldOps> {
++	s_hat_u: Vec<F>,
++}
++
++fn prepare_ring_switch<F, C>(
++	evaluation_claim: C::Elem,
++	eval_point: &[C::Elem],
++	channel: &mut C,
++) -> Result<PreparedRingSwitchVerify<C::Elem>, Error>
++where
++	F: BinaryField + PackedField<Scalar = F>,
++	C: IPVerifierChannel<F>,
++	C::Elem: FieldOps<Scalar = F> + From<F>,
++{
++	let log_packing = F::LOG_DEGREE;
++	let (eval_point_low, _eval_point_high) = eval_point.split_at(log_packing);
++	let s_hat_v = channel.recv_many(1 << log_packing)?;
++	let computed_claim = evaluate_inplace_scalars(s_hat_v.clone(), eval_point_low);
++	channel.assert_zero(evaluation_claim - computed_claim)?;
++	let s_hat_u = TensorAlgebra::<B1, C::Elem>::new(s_hat_v).transpose().elems;
++	Ok(PreparedRingSwitchVerify { s_hat_u })
++}
++
++fn finish_ring_switch<F: FieldOps>(
++	prepared: PreparedRingSwitchVerify<F>,
++	r_double_prime: &[F],
++) -> RingSwitchVerifyOutput<F> {
++	let eq_r_double_prime = eq_ind_partial_eval_scalars(r_double_prime);
++	let sumcheck_claim = evaluate_inplace_scalars(prepared.s_hat_u, r_double_prime);
++	RingSwitchVerifyOutput {
++		eq_r_double_prime,
++		sumcheck_claim,
++	}
++}
++
++/// Samples every fixed-shape candidate pair before propagating the first rejection.
++fn sample_non_one_pairs<F, C>(channel: &mut C, n: usize) -> Result<Vec<C::Elem>, Error>
++where
++	F: BinaryField,
++	C: IPVerifierChannel<F>,
++{
++	let sampled = (0..n)
++		.map(|_| channel.sample_non_one_pair())
++		.collect::<Vec<_>>();
++	Ok(sampled.into_iter().collect::<Result<Vec<_>, _>>()?)
++}
++
+ /// Verify the ring-switching reduction.
+ ///
+ /// Takes the expected evaluation claim and eval point, and:
+@@ -56,28 +114,41 @@ where
+ 	C::Elem: FieldOps<Scalar = F> + From<F>,
+ {
+ 	let log_packing = F::LOG_DEGREE;
+-	let (eval_point_low, _eval_point_high) = eval_point.split_at(log_packing);
+-
+-	// Receive s_hat_v
+-	let s_hat_v = channel.recv_many(1 << log_packing)?;
+-
+-	// Verify partial eval matches expected claim
+-	let computed_claim = evaluate_inplace_scalars(s_hat_v.clone(), eval_point_low);
+-	channel.assert_zero(evaluation_claim - computed_claim)?;
+-
+-	// Basis transpose
+-	let s_hat_u = TensorAlgebra::<B1, C::Elem>::new(s_hat_v).transpose();
+-
+-	// Sample r_double_prime
++	let prepared = prepare_ring_switch::<F, C>(evaluation_claim, eval_point, channel)?;
+ 	let r_double_prime = channel.sample_many(log_packing);
+-	let eq_r_double_prime = eq_ind_partial_eval_scalars(&r_double_prime);
++	Ok(finish_ring_switch(prepared, &r_double_prime))
++}
+ 
+-	// Compute sumcheck claim
+-	let sumcheck_claim = evaluate_inplace_scalars(s_hat_u.elems, &r_double_prime);
++/// Verifies the final private-trace ring switch with a nonzero opening-mask coefficient.
++///
++/// This variant alone consumes two challenge candidates for each row-batching coordinate. It
++/// samples all candidate pairs before propagating rejection, while ordinary and public ring
++/// switches continue to use [`verify`] and retain the upstream transcript schedule.
++pub fn verify_masked_trace<F, C>(
++	evaluation_claim: C::Elem,
++	eval_point: &[C::Elem],
++	channel: &mut C,
++) -> Result<MaskedTraceRingSwitchVerifyOutput<C::Elem>, Error>
++where
++	F: BinaryField + PackedField<Scalar = F>,
++	C: IPVerifierChannel<F>,
++	C::Elem: FieldOps<Scalar = F> + From<F>,
++{
++	let log_packing = F::LOG_DEGREE;
++	let prepared = prepare_ring_switch::<F, C>(evaluation_claim, eval_point, channel)?;
++	let r_double_prime = sample_non_one_pairs::<F, C>(channel, log_packing)?;
++	let RingSwitchVerifyOutput {
++		eq_r_double_prime,
++		sumcheck_claim,
++	} = finish_ring_switch(prepared, &r_double_prime);
++	// Entry zero of the equality tensor is exactly Π_j(1-r''_j). Reuse it rather than rebuilding
++	// the product in the outer circuit; fixed-shape selection proves every factor nonzero.
++	let mask_coefficient = eq_r_double_prime[0].clone();
+ 
+-	Ok(RingSwitchVerifyOutput {
++	Ok(MaskedTraceRingSwitchVerifyOutput {
+ 		eq_r_double_prime,
+ 		sumcheck_claim,
++		mask_coefficient,
+ 	})
+ }
+ 
+@@ -122,3 +193,80 @@ where
+ 
+ 	tensor_eval.fold_vertical(expanded_row_batch_query)
+ }
++
++#[cfg(test)]
++mod tests {
++	use std::collections::VecDeque;
++
++	use binius_field::{BinaryField128bGhash as B128, Field};
++
++	use super::*;
++
++	struct FixedSampleChannel {
++		samples: VecDeque<B128>,
++		n_samples: usize,
++	}
++
++	impl FixedSampleChannel {
++		fn new(samples: impl IntoIterator<Item = B128>) -> Self {
++			Self {
++				samples: samples.into_iter().collect(),
++				n_samples: 0,
++			}
++		}
++	}
++
++	impl IPVerifierChannel<B128> for FixedSampleChannel {
++		type Elem = B128;
++
++		fn recv_one(&mut self) -> Result<Self::Elem, binius_ip::channel::Error> {
++			Err(binius_ip::channel::Error::ProofEmpty)
++		}
++
++		fn sample(&mut self) -> Self::Elem {
++			self.n_samples += 1;
++			self.samples.pop_front().expect("fixture sample")
++		}
++
++		fn observe_one(&mut self, val: B128) -> Self::Elem {
++			val
++		}
++
++		fn assert_zero(&mut self, val: Self::Elem) -> Result<(), binius_ip::channel::Error> {
++			if val == B128::ZERO {
++				Ok(())
++			} else {
++				Err(binius_ip::channel::Error::InvalidAssert)
++			}
++		}
++	}
++
++	#[test]
++	fn masked_sampler_selects_first_then_fallback() {
++		let mut channel =
++			FixedSampleChannel::new([B128::new(2), B128::new(3), B128::ONE, B128::new(4)]);
++		assert_eq!(
++			sample_non_one_pairs::<B128, _>(&mut channel, 2).unwrap(),
++			[B128::new(2), B128::new(4)]
++		);
++		assert_eq!(channel.n_samples, 4);
++	}
++
++	#[test]
++	fn masked_sampler_consumes_all_pairs_before_rejection() {
++		let mut channel = FixedSampleChannel::new([
++			B128::ONE,
++			B128::ONE,
++			B128::new(2),
++			B128::new(3),
++			B128::ONE,
++			B128::new(4),
++		]);
++		assert!(matches!(
++			sample_non_one_pairs::<B128, _>(&mut channel, 3),
++			Err(Error::Channel(binius_ip::channel::Error::ChallengeAbort))
++		));
++		assert_eq!(channel.n_samples, 6);
++		assert!(channel.samples.is_empty());
++	}
++}
+diff --git a/crates/verifier/src/verify.rs b/crates/verifier/src/verify.rs
+index 89a15e04..5c049053 100644
+--- a/crates/verifier/src/verify.rs
++++ b/crates/verifier/src/verify.rs
+@@ -174,7 +174,7 @@ impl IOPVerifier {
+ 
+ 		// Receive the trace oracle commitment via channel. The trace is the witness, so it is
+ 		// witness-dependent (masked in a ZK proof).
+-		let trace_oracle = channel.recv_oracle(self.log_witness_elems(), true)?;
++		let trace_oracle = channel.recv_evaluation_masked_oracle(self.log_witness_elems(), true)?;
+ 
+ 		// Reduce every constraint to one claim on the committed trace.
+ 		let reduction = reduce_constraints(
+@@ -195,22 +195,41 @@ impl IOPVerifier {
+ 
+ 		// Ring-switching verification of the witness claim.
+ 		let eval_point = reduction.trace_point();
+-		let ring_switch::RingSwitchVerifyOutput {
+-			eq_r_double_prime,
+-			sumcheck_claim,
+-		} = ring_switch::verify(reduction.shift.witness_eval().clone(), &eval_point, channel)?;
+-
+ 		let log_packing = <B128 as ExtensionField<B1>>::LOG_DEGREE;
+ 		let eval_point_high = eval_point[log_packing..].to_vec();
+ 
+-		let transparent = Box::new(move |point: &[Channel::Elem]| {
+-			ring_switch::eval_rs_eq(&eval_point_high, point, eq_r_double_prime.as_ref())
+-		});
+-
+ 		// Verify oracle relations (runs BaseFold internally and verifies the product check). The
+ 		// intmul pushforward relation, when the IntMul reduction ran, was already queued inside
+ 		// phase 5.
+-		channel.verify_oracle_relation(trace_oracle, transparent, sumcheck_claim)?;
++		if channel.evaluation_masking_enabled() {
++			let ring_switch::MaskedTraceRingSwitchVerifyOutput {
++				eq_r_double_prime,
++				sumcheck_claim,
++				mask_coefficient,
++			} = ring_switch::verify_masked_trace(
++				reduction.shift.witness_eval().clone(),
++				&eval_point,
++				channel,
++			)?;
++			let transparent = Box::new(move |point: &[Channel::Elem]| {
++				ring_switch::eval_rs_eq(&eval_point_high, point, eq_r_double_prime.as_ref())
++			});
++			channel.verify_oracle_evaluation_relation(
++				trace_oracle,
++				transparent,
++				sumcheck_claim,
++				mask_coefficient,
++			)?;
++		} else {
++			let ring_switch::RingSwitchVerifyOutput {
++				eq_r_double_prime,
++				sumcheck_claim,
++			} = ring_switch::verify(reduction.shift.witness_eval().clone(), &eval_point, channel)?;
++			let transparent = Box::new(move |point: &[Channel::Elem]| {
++				ring_switch::eval_rs_eq(&eval_point_high, point, eq_r_double_prime.as_ref())
++			});
++			channel.verify_oracle_relation(trace_oracle, transparent, sumcheck_claim)?;
++		}
+ 
+ 		drop(pcs_guard);
+ 
+diff --git a/crates/verifier/src/zk_config.rs b/crates/verifier/src/zk_config.rs
+index 063ee45b..ade440f2 100644
+--- a/crates/verifier/src/zk_config.rs
++++ b/crates/verifier/src/zk_config.rs
+@@ -75,6 +75,21 @@ where
+ 		let log_public_words = constraint_system.log_public_words(InoutSegment::Public);
+ 
+ 		let inner_iop_verifier = IOPVerifier::new(constraint_system, log_public_words);
++		// This is a fail-closed scope gate for the coefficient-aware trace-mask experiment, not a
++		// complete-ZK theorem. Promotion still requires a joint BaseFold/outer-wrapper simulator for
++		// the correlated trace and precommit oracles and a composed Fiat--Shamir/QROM bound.
++		assert_eq!(
++			inner_iop_verifier.oracle_specs(true).len(),
++			1,
++			"the constant evaluation-mask transform supports exactly one inner trace oracle"
++		);
++		assert!(
++			inner_iop_verifier
++				.constraint_system()
++				.imul_constraints
++				.is_empty(),
++			"the constant evaluation-mask transform supports exactly one trace relation; IntMul adds a second relation"
++		);
+ 
+ 		// Symbolically execute the inner verifier to build the outer constraint system.
+ 		let dummy_inout_words =

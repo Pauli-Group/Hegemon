@@ -309,6 +309,7 @@ structure NativeTxLeafArtifactCanonicalProjectionAssumptions
       ∧ txLeaf.outputCountMatches = true
   nativeScalarGates :
     txLeaf.versionMatches = true
+      ∧ txLeaf.merkleRootMatchesAnchor = true
       ∧ txLeaf.feeMatches = true
       ∧ txLeaf.stablecoinPayloadMatches = true
       ∧ txLeaf.balanceTagMatches = true
@@ -457,6 +458,7 @@ structure ParsedTxLeafArtifactNativeBindingGateFacts
       ∧ txLeaf.outputCountMatches = true
   nativeScalarGates :
     txLeaf.versionMatches = true
+      ∧ txLeaf.merkleRootMatchesAnchor = true
       ∧ txLeaf.feeMatches = true
       ∧ txLeaf.stablecoinPayloadMatches = true
       ∧ txLeaf.balanceTagMatches = true
@@ -821,12 +823,13 @@ theorem tx_leaf_projection_assumptions_accept_binding
     ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
       hOutputCount⟩
   rcases projection.nativeScalarGates with
-    ⟨hVersion, hFee, hStablecoin, hBalanceTag⟩
+    ⟨hVersion, hMerkleRootAnchor, hFee, hStablecoin, hBalanceTag⟩
   rcases projection.nativeStatementProofGates with
     ⟨hReceipt, hPublicInputs, hProofDigest, hProofBackend,
       hCiphertextPayload⟩
   simp [txLeafActionBindingPreconditions, hNullifiers, hCommitments,
-    hCiphertextHashes, hInputCount, hOutputCount, hVersion, hFee,
+    hCiphertextHashes, hInputCount, hOutputCount, hVersion,
+    hMerkleRootAnchor, hFee,
     hStablecoin, hBalanceTag, hReceipt, hPublicInputs, hProofDigest,
     hProofBackend, hCiphertextPayload]
 
@@ -914,7 +917,8 @@ theorem parsed_tx_leaf_artifact_projects_native_binding_gates
     tx_leaf_action_accepts_implies_binding_facts accepted
   rcases gateFacts with
     ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
-      hOutputCount, hVersion, hFee, hStablecoin, hBalanceTag,
+      hOutputCount, hVersion, hMerkleRootAnchor, hFee,
+      hStablecoin, hBalanceTag,
       hReceipt, hPublicInputs, hProofDigest, hProofBackend,
       hCiphertextPayload⟩
   exact
@@ -923,7 +927,7 @@ theorem parsed_tx_leaf_artifact_projects_native_binding_gates
         ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
           hOutputCount⟩
       nativeScalarGates :=
-        ⟨hVersion, hFee, hStablecoin, hBalanceTag⟩
+        ⟨hVersion, hMerkleRootAnchor, hFee, hStablecoin, hBalanceTag⟩
       nativeStatementProofGates :=
         ⟨hReceipt, hPublicInputs, hProofDigest, hProofBackend,
           hCiphertextPayload⟩ }

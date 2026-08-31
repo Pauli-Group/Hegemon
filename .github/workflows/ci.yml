@@ -151,6 +151,63 @@ jobs:
           test "$VECTORS_RESULT" = success
           test "$POLICY_RESULT" = success
 
+  formal-crypto-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Reject research dependencies in production authority
+        run: bash scripts/check_formal_crypto.sh --isolation-only
+
+  formal-crypto-sanity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: formal-crypto-isolation
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
+      - name: Setup Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: "formal-crypto"
+      - name: SMZ9 source-security report exact regression
+        run: cargo run --locked -p transaction-circuit --example smallwood_poseidon2_v8_security_report -- --check docs/crypto/smallwood_poseidon2_v8_smz9_source_security_report.json
+      - name: Transaction-proof successor authorization regression
+        run: python3 -I -B scripts/test_check_transaction_proof_successor_authorization.py
+      - name: Install Lean toolchain manager
+        env:
+          ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
+        run: |
+          ELAN_INIT="$RUNNER_TEMP/elan-init.sh"
+          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o "$ELAN_INIT"
+          printf '%s  %s\n' "$ELAN_INIT_SHA256" "$ELAN_INIT" | sha256sum -c -
+          sh "$ELAN_INIT" -y --default-toolchain none
+      - name: Complete formal cryptography gate
+        env:
+          HEGEMON_FORMAL_CRYPTO_MIN_FREE_GIB: '8'
+        run: bash scripts/check_formal_crypto.sh full
+      - name: Production parser/verifier refinement regression
+        run: ./scripts/run_exact_cargo_lib_test.sh transaction-circuit smallwood_engine::tests::lean_generated_smallwood_proof_wire_vectors_match_production_parser
+      - name: SMZ8 parser/verifier refinement regression
+        run: ./scripts/run_exact_cargo_lib_test.sh transaction-circuit smallwood_engine::tests::lean_generated_smz8_proof_wire_vectors_match_production_parser
+      - name: SMZ9 parser/verifier refinement regression
+        run: ./scripts/run_exact_cargo_lib_test.sh transaction-circuit smallwood_engine::tests::lean_generated_smz9_proof_wire_vectors_match_production_parser
+      - name: V8 PendingAction private-codec conformance regression
+        run: ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::protocol_v8_artifact_codec_matches_private_pending_action_v3_exactly
+
   core-test-shards:
     name: core-tests / ${{ matrix.shard }}
     runs-on: ubuntu-latest
@@ -219,8 +276,10 @@ jobs:
       - name: Native shipped-path integration gate
         run: |
           ./scripts/run_exact_cargo_lib_test.sh wallet tx_builder::tests::build_transaction_can_emit_native_tx_leaf_payloads --release
-          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::prepare_work_keeps_sidecar_transfer_with_matching_staged_ciphertext --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::submit_sidecar_action_rejects_before_consuming_embedded_staged_proof --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::pending_action_startup_durably_quarantines_inactive_sidecar_with_matching_ciphertext --no-default-features
           ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::coinbase_action_mints_shielded_output_and_updates_supply --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh transaction-circuit smallwood_frontend::tests::production_verifier_evidence_matches_active_verifier --release
           ./scripts/run_exact_ignored_cargo_lib_test.sh transaction-circuit smallwood_engine::tests::verifier_rejects_forged_self_consistent_pcs_layer --release
           ./scripts/run_exact_cargo_lib_test.sh block-recursion tests::recursive_proof_envelope_component_checks_reject_tampered_envelope
           ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::imported_block_actions_require_canonical_transfer_order --no-default-features
@@ -370,6 +429,8 @@ jobs:
       - rust-lints
       - dependency-audit
       - formal-core
+      - formal-crypto-isolation
+      - formal-crypto-sanity
       - core-tests
       - native-path-tests
       - app-no-ssh-e2e
@@ -382,6 +443,8 @@ jobs:
           RUST_LINTS_RESULT: ${{ needs.rust-lints.result }}
           DEPENDENCY_AUDIT_RESULT: ${{ needs.dependency-audit.result }}
           FORMAL_CORE_RESULT: ${{ needs.formal-core.result }}
+          FORMAL_CRYPTO_ISOLATION_RESULT: ${{ needs.formal-crypto-isolation.result }}
+          FORMAL_CRYPTO_SANITY_RESULT: ${{ needs.formal-crypto-sanity.result }}
           CORE_TESTS_RESULT: ${{ needs.core-tests.result }}
           NATIVE_PATH_TESTS_RESULT: ${{ needs.native-path-tests.result }}
           APP_NO_SSH_E2E_RESULT: ${{ needs.app-no-ssh-e2e.result }}
@@ -392,6 +455,8 @@ jobs:
           test "$RUST_LINTS_RESULT" = success
           test "$DEPENDENCY_AUDIT_RESULT" = success
           test "$FORMAL_CORE_RESULT" = success
+          test "$FORMAL_CRYPTO_ISOLATION_RESULT" = success
+          test "$FORMAL_CRYPTO_SANITY_RESULT" = success
           test "$CORE_TESTS_RESULT" = success
           test "$NATIVE_PATH_TESTS_RESULT" = success
           test "$APP_NO_SSH_E2E_RESULT" = success

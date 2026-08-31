@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "profile_id": "smallwood-v5-conventional-hash-inline-v1",
+  "strict_security_profile_id": "hegemon.smallwood.v5-delta.shake256-448-sha512.strict.v1",
+  "identity": {
+    "circuit": 5,
+    "crypto_suite": 4,
+    "backend_wire_id": 2,
+    "envelope_magic_ascii": "SWV5",
+    "envelope_version": 1,
+    "profile_wire_id": 1,
+    "proof_mode": "inline_only",
+    "family_id": 1,
+    "action_id": 7,
+    "public_value_count": 78,
+    "public_values_bytes": 624,
+    "balance_tag_bytes": 48,
+    "statement_bytes": 672,
+    "header_bytes": 80,
+    "max_envelope_bytes": 524288,
+    "max_proof_bytes": 523536
+  },
+  "production_active": false,
+  "capabilities": {
+    "production_version_mapping_enabled": false,
+    "kernel_manifest_enabled": false,
+    "proof_system_implemented": false,
+    "complete_zero_knowledge_proved": false,
+    "proof_of_knowledge_extraction_proved": false,
+    "complete_transcript_simulator_proved": false,
+    "abort_conditioned_zk_proved": false,
+    "compiled_prover_distribution_refinement_proved": false,
+    "composed_qrom_pq128_proved": false,
+    "global_multi_target_qrom_composition_bounded": false,
+    "deployed_hash_instantiation_bounded": false,
+    "relation_hash_collision_preimage_losses_bounded": false,
+    "rust_verifier_refinement_proved": false,
+    "formal_relation_refinement_proved": false,
+    "byte_artifact_verified": false,
+    "end_to_end_identical_bytes_verified": false
+  },
+  "security": {
+    "concrete_pq_security_bits": null,
+    "relation_hash_output_bits": null,
+    "proof_transcript_hash_output_bits": null
+  },
+  "relation_binding_hex": null,
+  "measured_proof_bytes": null,
+  "artifacts": {
+    "proof": null,
+    "zero_knowledge_simulator": null,
+    "proof_of_knowledge_extraction": null,
+    "qrom_security": null,
+    "relation_hash_security": null,
+    "formal_relation_refinement": null,
+    "rust_verifier_refinement": null,
+    "end_to_end_identical_bytes": null,
+    "strict_security_evaluation": null
+  },
+  "claim_boundary": "Candidate identity, exact self-contained parser/binder, inactive route, and fail-closed evidence gates only. No implemented proof-system, complete zero-knowledge, PQ128, formal/refinement closure, measured proof artifact, live wallet/action/consensus route, or production authorization claim."
+}

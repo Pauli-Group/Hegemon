@@ -1,0 +1,16 @@
+{
+  "schema": "hegemon.proof-autoresearch.candidate.v1",
+  "id": "baseline-all-private-r3",
+  "parent_id": null,
+  "hypothesis": "The existing all-private oracle layout and inverse-rate three are the current measured byte baseline for the exact full Pay1x2 relation.",
+  "relation_claims": {
+    "full_v5_delta_pay1x2": true,
+    "geometry_proxy": false,
+    "standalone_proof": true,
+    "aggregation": false,
+    "sidecar_authority": false
+  },
+  "candidate_patch": null,
+  "seed_measurement": "prototypes/standalone-shake256-binius/all-private-patch/full-pay1x2-measurement-2026-08-19.json",
+  "seed_measurement_sha256": "72bcfb21168f3034dff033f3c91e3348246e8e63c4f8ac20d78296fe74182cee"
+}

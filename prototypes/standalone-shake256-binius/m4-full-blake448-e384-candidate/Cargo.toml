@@ -1,0 +1,61 @@
+[package]
+name = "hegemon-m4-full-blake448-e384-candidate"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Isolated research crate: it is not a member of the production workspace and
+# cannot be selected by consensus admission.
+[workspace]
+resolver = "2"
+
+[features]
+default = []
+# Narrow bridge used only by the isolated repeated-ZK baseline executable. It
+# exposes the already-built chip-free main constraint system and matching
+# fixture witness, never a verifier capability or production admission route.
+strict-baseline-material = []
+# Explicit negative control only. The pinned upstream backend is transparent
+# and targets 96 bits, so it cannot authorize the statement's pq128 profile.
+prototype-weak = [
+    "dep:binius-hash",
+    "dep:binius-m4-prover",
+    "dep:binius-m4-verifier",
+    "dep:binius-prover",
+    "dep:binius-transcript",
+    "dep:binius-verifier",
+]
+
+[dependencies]
+binius-circuits = { path = "../binius64/crates/circuits" }
+binius-core = { path = "../binius64/crates/core" }
+binius-frontend = { path = "../binius64/crates/frontend" }
+binius-hash = { path = "../binius64/crates/hash", optional = true }
+binius-m4-prover = { path = "../binius64/crates/m4-prover", optional = true }
+binius-m4-verifier = { path = "../binius64/crates/m4-verifier", optional = true }
+binius-prover = { path = "../binius64/crates/prover", optional = true }
+binius-transcript = { path = "../binius64/crates/transcript", optional = true }
+binius-verifier = { path = "../binius64/crates/verifier", optional = true }
+hegemon-standalone-full-shake256-relation-prototype = { path = "../../../circuits/standalone-full-shake256-relation-prototype" }
+hegemon-strict-mixed-field-prototype = { path = "../strict-mixed-field" }
+transaction-circuit = { path = "../../../circuits/transaction" }
+protocol-kernel = { path = "../../../protocol/kernel" }
+sha2 = "0.10"
+
+[dev-dependencies]
+blake2 = "0.10"
+sha3 = "0.10"
+
+[[bin]]
+name = "hegemon-m4-full-blake448-e384-candidate"
+path = "src/main.rs"
+
+[profile.dev]
+opt-level = 1
+debug = 0
+incremental = false
+
+[profile.test]
+opt-level = 1
+debug = 0
+incremental = false

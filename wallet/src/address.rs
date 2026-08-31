@@ -1,7 +1,7 @@
 use bech32::{self, FromBase32, ToBase32, Variant};
 use serde::{Deserialize, Serialize};
 
-use protocol_versioning::CRYPTO_SUITE_GAMMA;
+use protocol_versioning::{CRYPTO_SUITE_ETA, CRYPTO_SUITE_GAMMA};
 use synthetic_crypto::{
     ml_kem::{MlKemKeyPair, MlKemPublicKey, ML_KEM_PUBLIC_KEY_LEN},
     traits::{KemKeyPair, KemPublicKey},
@@ -10,7 +10,16 @@ use synthetic_crypto::{
 use crate::error::WalletError;
 
 const ADDRESS_HRP: &str = "shca";
-const SUPPORTED_ADDRESS_VERSION: u8 = 3;
+pub const LEGACY_ADDRESS_VERSION: u8 = 3;
+pub const POSEIDON2_V8_ADDRESS_VERSION: u8 = 4;
+
+const fn supported_address_identity(version: u8, crypto_suite: u16) -> bool {
+    matches!(
+        (version, crypto_suite),
+        (LEGACY_ADDRESS_VERSION, CRYPTO_SUITE_GAMMA)
+            | (POSEIDON2_V8_ADDRESS_VERSION, CRYPTO_SUITE_ETA)
+    )
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShieldedAddress {
@@ -30,7 +39,7 @@ impl Default for ShieldedAddress {
         // Generate a dummy address for testing purposes
         let keypair = MlKemKeyPair::generate_deterministic(b"test-default-address");
         Self {
-            version: SUPPORTED_ADDRESS_VERSION,
+            version: LEGACY_ADDRESS_VERSION,
             crypto_suite: CRYPTO_SUITE_GAMMA,
             diversifier_index: 0,
             pk_recipient: [0u8; 32],
@@ -84,21 +93,14 @@ impl ShieldedAddress {
             )));
         }
         let version = bytes[0];
-        if version != SUPPORTED_ADDRESS_VERSION {
-            return Err(WalletError::AddressEncoding(format!(
-                "unsupported address version: {}",
-                version
-            )));
-        }
         let crypto_suite = u16::from_le_bytes(
             bytes[1..3]
                 .try_into()
                 .map_err(|_| WalletError::AddressEncoding("crypto suite parse failed".into()))?,
         );
-        if crypto_suite != CRYPTO_SUITE_GAMMA {
+        if !supported_address_identity(version, crypto_suite) {
             return Err(WalletError::AddressEncoding(format!(
-                "unsupported crypto suite: {}",
-                crypto_suite
+                "unsupported address version/crypto suite: {version}/{crypto_suite}"
             )));
         }
         let mut index_bytes = [0u8; 4];
@@ -108,6 +110,17 @@ impl ShieldedAddress {
         pk_recipient.copy_from_slice(&bytes[7..39]);
         let mut pk_auth = [0u8; 32];
         pk_auth.copy_from_slice(&bytes[39..71]);
+        if version == POSEIDON2_V8_ADDRESS_VERSION {
+            let recipient = transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_words_from_canonical_bytes(pk_recipient)
+                .map_err(|_| WalletError::AddressEncoding("non-canonical V8 recipient key".into()))?;
+            let authorization = transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_words_from_canonical_bytes(pk_auth)
+                .map_err(|_| WalletError::AddressEncoding("non-canonical V8 authorization key".into()))?;
+            if recipient == [0; 4] || authorization == [0; 4] {
+                return Err(WalletError::AddressEncoding(
+                    "zero V8 recipient or authorization key".into(),
+                ));
+            }
+        }
         let pk_start = 71;
         let pk_end = pk_start + ML_KEM_PUBLIC_KEY_LEN;
         let pk_enc = MlKemPublicKey::from_bytes(&bytes[pk_start..pk_end])

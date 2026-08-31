@@ -9,6 +9,7 @@ use crate::node_rpc::NodeRpcClient;
 use crate::store::{TransferRecipient, WalletStore};
 use crate::submission::{is_ambiguous_submission_error, provisional_pending_tx_id};
 use crate::tx_builder::build_consolidation_transaction;
+use crate::ActionId48;
 use std::sync::Arc;
 
 /// Native asset ID (HGM)
@@ -153,7 +154,9 @@ fn is_proof_sidecar_rejection(msg: &str) -> bool {
 
 fn is_sidecar_method_unavailable(msg: &str) -> bool {
     let lower = msg.to_ascii_lowercase();
-    lower.contains("method not found") || lower.contains("unknown method")
+    lower.contains("method not found")
+        || lower.contains("unknown method")
+        || lower.contains("sidecar transfer route is decode-compatible but inactive")
 }
 
 async fn submit_consolidation_bundle(
@@ -161,7 +164,7 @@ async fn submit_consolidation_bundle(
     bundle: &crate::rpc::TransactionBundle,
     config: &mut ConsolidationBatchConfig,
     verbose: bool,
-) -> Result<[u8; 32], WalletError> {
+) -> Result<ActionId48, WalletError> {
     if !config.use_da_sidecar {
         return rpc.submit_transaction(bundle).await;
     }
@@ -188,7 +191,9 @@ async fn submit_consolidation_bundle(
         }
         Err(WalletError::Rpc(msg)) if is_sidecar_method_unavailable(&msg) => {
             if verbose {
-                println!("    DA sidecar RPC unavailable; retrying with inline submission.");
+                println!(
+                    "    DA sidecar transfer is inactive on native V2; retrying with canonical inline submission."
+                );
             }
             config.use_da_sidecar = false;
             config.use_proof_sidecar = false;
@@ -474,7 +479,7 @@ pub async fn execute_consolidation(
                     if is_ambiguous_submission_error(&err) {
                         let provisional_tx_id = provisional_pending_tx_id(&built.bundle);
                         let recipient_address = store.primary_address()?.encode()?;
-                        store.record_pending_submission(
+                        store.record_provisional_pending_submission(
                             provisional_tx_id,
                             built.nullifiers.clone(),
                             built.spent_note_indexes.clone(),
@@ -506,7 +511,7 @@ pub async fn execute_consolidation(
 
             if let Some(hash) = hash {
                 if verbose {
-                    println!("    Submitted: 0x{}", hex::encode(&hash[..8]));
+                    println!("    Submitted: 0x{}", hex::encode(&hash.as_bytes()[..8]));
                 }
 
                 if let Some(genesis_hash) = store.genesis_hash()? {

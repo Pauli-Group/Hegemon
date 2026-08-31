@@ -1,0 +1,31 @@
+{
+  "artifact_schema": "hegemon.hx512b01.binary-r1cs.negative-certificate.v1",
+  "verdict": "NO_EXECUTABLE_CHARACTERISTIC_TWO_SPARSE_R1CS",
+  "relation_manifest_file": "relation_manifest.json",
+  "relation_manifest_canonical_bytes": 6968,
+  "relation_manifest_canonical_sha512": "c659754a3ec064157fe37d548281455f28999f19faaaabf1d3a526c16bead4534be6eddd39cddfd229d17df85dfbbe9f81d974f9fd6e8ddb3ef8e4e803b1d311",
+  "last_reproducible_projection": {
+    "claim_boundary": "source-macro counts only; not final geometry and not retained A/B/C coordinates",
+    "source_odd_field_m_constraints": 29509133,
+    "m_constraints": 37364095,
+    "n_nonconstant_variables": 21531353,
+    "l_public_variables": 9704,
+    "matrix_nonzeros_total": 156526483,
+    "characteristic_two_row_delta": 7854962,
+    "characteristic_two_variable_delta": 16,
+    "characteristic_two_nonzero_delta": 33331943,
+    "expanded_coordinates_retained": false,
+    "verified_ir_to_matrix_lowering": false
+  },
+  "corrected_final_geometry": {
+    "m_constraints": null,
+    "n_nonconstant_variables": null,
+    "l_public_variables": 9704,
+    "matrix_nonzeros_total": null,
+    "reason": "policy-master repair and executable IR never froze; no corrected binary lowering exists"
+  },
+  "proof_bytes": null,
+  "security_bits": null,
+  "all_authority_false": true,
+  "production_authorized": false
+}

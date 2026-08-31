@@ -1,0 +1,13 @@
+diff --git a/crates/ip/src/channel.rs b/crates/ip/src/channel.rs
+index 52cb830..9177aaa 100644
+--- a/crates/ip/src/channel.rs
++++ b/crates/ip/src/channel.rs
+@@ -20,7 +20,7 @@
+ use std::{iter::repeat_with, ops::Shr};
+ 
+ use binius_core::word::Word;
+-use binius_field::{BinaryField, Field, field::FieldOps};
++use binius_field::{BinaryField, Field, arithmetic_traits::InvertOrZero, field::FieldOps};
+ use binius_transcript::{
+ 	VerifierTranscript,
+ 	fiat_shamir::{CanSample, CanSampleBits, Challenger},

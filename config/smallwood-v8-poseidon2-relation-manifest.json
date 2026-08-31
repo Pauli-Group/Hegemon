@@ -1,0 +1,76 @@
+{
+  "claim_boundary": "The source encoder, Lean specification, generated vector, checked-in canonical program artifact, and Rust conformance test agree on the 852305-byte HGV8RP03 executable program identity, SHA-512 8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e46a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3, and 48-byte relation id 8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e46a8b7cadc557dba4a1e4ccdfe572e5b2. HGV8RP03 encodes the typed executable nonlinear formula IR and every CSR attempt consumed by the verifier/compiler, including exact zero transparent value balance and Disabled stablecoin contextual height and root pass-through; numeric statement values are excluded. The historical HGV8RP01 and HGV8RP02 programs remain non-authoritative history. No independent digest receipt, universal Rust-to-Lean acceptance equivalence, semantic-target refinement, source supply-chain manifest, complete adaptive zero knowledge, concrete QROM composition, retained proof measurement, lifecycle receipt, or independent release review is present. This file cannot authorize proving, verification, wallet admission, kernel routing, consensus use, or release.",
+  "compiled_relation": {
+    "canonical_artifact_frozen": true,
+    "canonical_program_transcript": "HGV8RP03",
+    "canonical_program_transcript_spec": "formal/lean/Hegemon/Transaction/Poseidon2V8RelationProgram.lean",
+    "compiler_executable": true,
+    "compiler_source_path": "circuits/transaction/src/smallwood_poseidon2_v8_semantics.rs",
+    "exact_table_digest": null,
+    "maximum_constraint_degree": 8,
+    "maximum_statement_specialized_linear_constraint_count": 20473,
+    "maximum_summed_identity_union_count": 21303,
+    "minimum_statement_specialized_linear_constraint_count": 19899,
+    "nonlinear_identity_count": 830,
+    "program_bytes": 852305,
+    "program_path": "testdata/formal_core_vectors/poseidon2_v8_relation_program.bin",
+    "program_sha512": "8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e46a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3",
+    "proof_geometry_columns": 368,
+    "relation_id": "8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e46a8b7cadc557dba4a1e4ccdfe572e5b2",
+    "relation_id_derivation": "program_sha512_prefix_48",
+    "row_count": 686,
+    "statement_independent_linear_compiler_family_count": 86
+  },
+  "historical_descriptor_kat": {
+    "exact_executable_formula_binding": false,
+    "lean_vector": null,
+    "magic": "HGV8RP01",
+    "production_evidence_eligible": false,
+    "program_bytes": 89310,
+    "program_sha512": "5895f13048cc2d44dd599e8ee779b0be2c7996c0a5888d71ac280956e7c8c7bfa78c2ce5e753a18ca88eaca7edbb71d1f7adfce6999a983eeb68e8efe6b8779f",
+    "relation_id": "5895f13048cc2d44dd599e8ee779b0be2c7996c0a5888d71ac280956e7c8c7bfa78c2ce5e753a18ca88eaca7edbb71d1"
+  },
+  "poseidon2": {
+    "capacity": 8,
+    "digest_felts": 7,
+    "parameter_manifest_sha512": "4ea0fa2e43969afedc30cff23f8a0b8016574d41453f40548088c33299d45ebe0b26b6c3bf98f28c781cd658aff1ea0ccf3f50230026778b968f61c36fed1e1c",
+    "parameter_set_id": "hegemon-p2w16-v1-114a4e7eb2684d29",
+    "parameter_set_sha256": "114a4e7eb2684d293d13d306a756b03fc734f19edbfb80a07126ab1b2ad9e529",
+    "rate": 8,
+    "width": 16
+  },
+  "posture": "candidate_fail_closed",
+  "production_evidence_eligible": false,
+  "profile_id": "hegemon.smallwood.poseidon2.v8-eta.smz9.v1",
+  "program_conformance": {
+    "lean_generator": "formal/lean/Hegemon/Transaction/GeneratePoseidon2V8RelationProgramVectors.lean",
+    "lean_spec": "formal/lean/Hegemon/Transaction/Poseidon2V8RelationProgram.lean",
+    "lean_vector": "testdata/formal_core_vectors/poseidon2_v8_relation_program_transcript.json",
+    "production_authority": false,
+    "rust_descriptor_inventory_test": "smallwood_poseidon2_v8_program::tests::program_descriptor_inventory_is_exact_and_gap_free",
+    "rust_executable_csr_cursor_test": "smallwood_poseidon2_v8_program::tests::csr_family_cursor_detects_source_order_count_and_emission_drift",
+    "rust_executable_formula_binding_test": "smallwood_poseidon2_v8_program::tests::executable_formula_fields_are_relation_id_bound",
+    "rust_framing_test": "smallwood_poseidon2_v8_program::tests::program_framing_is_exactly_nine_canonical_sections",
+    "rust_known_answer_test": "smallwood_poseidon2_v8_program::tests::program_digest_known_answer_and_descriptor_mutation",
+    "rust_lean_vector_test": "smallwood_poseidon2_v8_program::tests::lean_generated_v8_relation_program_vectors_match_source",
+    "rust_shared_formula_ir_test": "smallwood_poseidon2_v8_semantics::tests::executable_csr_program_is_numeric_authority_and_rejects_emission_drift",
+    "statement_values_hashed": false
+  },
+  "refinement_receipts": {
+    "lean_compiled_relation_semantic_refinement": null,
+    "lean_poseidon2_relation_refinement": null,
+    "rust_lean_verifier_conformance": null,
+    "rust_verifier_acceptance_refinement": null
+  },
+  "schema": "hegemon.smallwood.poseidon2-relation-manifest.v1",
+  "semantic_target": {
+    "binding_limbs": 7,
+    "field": "goldilocks",
+    "id": "hegemon.smallwood.poseidon2-v8.stablecoin-relation.v2",
+    "statement_words": 120
+  },
+  "source_supply_chain_manifest": {
+    "path": "config/smallwood-v8-poseidon2-relation-source-manifest.json",
+    "sha512": null
+  }
+}

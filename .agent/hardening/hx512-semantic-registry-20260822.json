@@ -1,0 +1,69 @@
+{
+  "schema": "hegemon.hx512_semantic_registry_checkpoint.v1",
+  "date": "2026-08-22",
+  "files": [
+    {
+      "path": "circuits/transaction/src/hx512_production_relation.rs",
+      "sha512": "9a5e18d3706a3770faf245717e62b414a5b97534d2a3188d76e808e2e5daaef7db8933bfe42314073d71a24015b64dd80dbee30b8797c0c36b136ab77114ba35"
+    },
+    {
+      "path": "protocol/kernel/src/stablecoin_transition_v3.rs",
+      "sha256": "c533ff732b68b02a2ded89770f20385ad570ad7c5653f42580635d0fb50a4df9"
+    },
+    {
+      "path": "protocol/kernel/src/stablecoin_source_v3.rs",
+      "sha256": "53c7f957d8729a60be84e648e00bf49ac36c381554f1f496bdda011e5e4c1400"
+    }
+  ],
+  "wire": {
+    "statement_bytes": 983,
+    "verifier_context_bytes": 136,
+    "private_witness_bytes": 11760,
+    "stable_public_bytes": 315,
+    "stable_witness_bytes": 1240
+  },
+  "authorization_surface": {
+    "activity_masks": 16,
+    "authorization_modes": 5,
+    "accepted_pairs": 26,
+    "rejected_pairs": 54
+  },
+  "hash_registry": {
+    "algorithm": "RFC7693-BLAKE2b-512",
+    "typed_slots": 95,
+    "maximum_compressions": 226,
+    "disabled": {
+      "calls": 83,
+      "compressions": 206
+    },
+    "mint": {
+      "calls": 95,
+      "compressions": 226
+    },
+    "burn": {
+      "calls": 93,
+      "compressions": 222
+    },
+    "proof_profile_parameters_bound": false
+  },
+  "independent_checks": {
+    "isolated_current_source_tests": {
+      "command": "cargo test --manifest-path /tmp/hx512-relation-check/Cargo.toml",
+      "passed": 7,
+      "failed": 0
+    },
+    "scoped_diff_check": true,
+    "source_hash_replayed": true
+  },
+  "claim_boundary": {
+    "stable_surface_frozen": true,
+    "semantic_hash_registry_frozen": true,
+    "overall_relation_grammar_frozen": false,
+    "executable_relation_compiler_complete": false,
+    "rust_verifier_refinement_complete": false,
+    "complete_zero_knowledge": false,
+    "composed_pq_qrom_bits": null,
+    "consensus_route_authorized": false,
+    "production_authorized": false
+  }
+}

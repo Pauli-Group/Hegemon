@@ -13,7 +13,7 @@ use consensus::{
 use protocol_versioning::VersionBinding;
 
 #[test]
-fn version_schedule_controls_activation() {
+fn version_schedule_cannot_create_proof_authority() {
     let validators = make_validators(4, 10);
     let validator_set = validator_set(&validators);
     let genesis_tree = CommitmentTreeState::default();
@@ -70,5 +70,8 @@ fn version_schedule_controls_activation() {
         supply_digest: 0,
     };
     let (block, _, _) = assemble_bft_block(params).expect("block");
-    consensus.apply_block(block).expect("version allowed");
+    let err = consensus
+        .apply_block(block)
+        .expect_err("schedule-only upgrade must remain unauthorized");
+    assert!(matches!(err, ConsensusError::UnsupportedVersion { .. }));
 }

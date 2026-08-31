@@ -1,0 +1,16 @@
+{
+  "schema": "hegemon.standalone-shake256.backend-core-baseline.v1",
+  "profile": "pay1x2",
+  "measurement_stage": "pre_hgs2_adapter",
+  "canonical_proof_bytes": 380496,
+  "envelope_bytes": 380508,
+  "selected_log_inverse_rate": 3,
+  "compiled_constraints": 1881048,
+  "padded_constraints": 2097152,
+  "private_witness_bytes": 2448,
+  "public_core_bytes": 232,
+  "prove_ms": 2034.392333,
+  "verify_ms": 162.404959,
+  "peak_rss_bytes": 5458149376,
+  "note": "Real full cryptographic-core proof before replacing the 232-byte core public vector with the canonical network-bound HGS2 adapter. The final adapter-bound proof remains the authoritative artifact."
+}

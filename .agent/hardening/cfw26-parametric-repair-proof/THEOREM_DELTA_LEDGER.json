@@ -1,0 +1,238 @@
+{
+  "schema": "hegemon.cfw26-parametric-repair-proof.theorem-delta-ledger.v1",
+  "subject": "independent nonzero-coefficient restatement of CFW26 Construction 11.4",
+  "hegemon_selection": {
+    "c": 1,
+    "inner_joint_form": "times(identity)",
+    "inner_endpoint_state": "(pow(0),pow(1))^T",
+    "main_form": "row_M(M,alpha)[b]=Mhat(alpha,(b,1))",
+    "author_erratum_or_authority": false,
+    "requires_new_relation_domain_version": true
+  },
+  "overall_verdict": "The repaired construction has perfect completeness and conditional formal nonadaptive HVZK, but the printed theorem is not inherited: literal completeness and the first RBR coordinate are false, full corrected RBR is open, and adaptive complete ZK/QROM/PQ128/production are absent.",
+  "obligations": [
+    {
+      "id": "primary-source-dependency-closure",
+      "source_anchor": "SOURCE_DEPENDENCY_MAP.json",
+      "premise_or_goal": "read every local and cited dependency of Theorem 11.3",
+      "status": "closed",
+      "evidence": "CFW26 pages 26-42 and 66-71 plus ACFY25 Appendix A pages 70-73 are pinned and retained",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "source-r1cs-relation",
+      "source_anchor": "CFW26 Definition 11.2, page 66",
+      "premise_or_goal": "ell=n0, ell is a power of two, and every row of (Az)*(Bz)=Cz",
+      "status": "restated_exactly",
+      "evidence": "THEOREM_DELTA.md Entire repaired construction C11.4(c)",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "target-relation-typing",
+      "source_anchor": "CFW26 Definition 11.1 pages 65-66; Definitions 5.1-5.6 page 35",
+      "premise_or_goal": "all main, inner-joint, inner-endpoint, and outer forms have exact message dimensions",
+      "status": "closed_for_independent_restatement",
+      "evidence": "row_M has ell outputs; times(identity) consumes (pow(alpha_i),c*z_M); endpoint identity consumes a 2 by L_in state",
+      "printed_literal_status": "false",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "printed-endpoint-state",
+      "source_anchor": "CFW26 Construction 11.4 Step 1, page 68",
+      "premise_or_goal": "the endpoint target must enforce s(0)=s(1)=0",
+      "status": "falsified_and_repaired",
+      "evidence": "s=X^2-X passes both sampled endpoint conditions but printed st2=(0,1,0,...) returns -1; pow(1) returns zero",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "nonzero-coefficient-propagation",
+      "source_anchor": "CFW26 Construction 11.4 Steps 3, 6, 8, 9 pages 68-69; proof page 71",
+      "premise_or_goal": "use one c in every occurrence of each inner mask",
+      "status": "closed_for_local_algebra",
+      "evidence": "factor_occurrence_ledger() and the direct joint equality in THEOREM_DELTA.md",
+      "constraint": "c must be nonzero for the value-distribution lemma",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "structural-factors-two",
+      "source_anchor": "CFW26 Theorem 11.3 and Lemma 6.4 pages 38-39",
+      "premise_or_goal": "do not replace Boolean multiplicities, dimension twos, endpoint cardinalities, degree twos, or the odd-characteristic premise by c",
+      "status": "closed_audit",
+      "evidence": "factor_occurrence_ledger() classifies all semantically distinct factor-two sites",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "perfect-completeness",
+      "source_anchor": "CFW26 Definition 3.4 page 26 and Construction 11.4 pages 68-70",
+      "premise_or_goal": "an honest valid R1CS execution always outputs a target-relation witness",
+      "status": "closed_for_independent_restatement",
+      "evidence": "endpoint vanishing, exact sumcheck telescoping, typed final factor values, and exact joint equality are proved in THEOREM_DELTA.md",
+      "printed_literal_status": "false",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "per-round-polynomial-degree",
+      "source_anchor": "CFW26 Construction 11.4 Step 6 pages 68-69",
+      "premise_or_goal": "each h_j belongs to F^{<L_out}[X]",
+      "status": "closed_when_L_out_at_least_2L_in",
+      "evidence": "degree is at most 2L_in-1, while F^{<L_out} permits maximum degree L_out-1",
+      "c_effect": "none",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "value-distribution",
+      "source_anchor": "CFW26 Theorem 11.3 proof page 71",
+      "premise_or_goal": "(v_A,v_B,v_C) is uniform and witness-independent",
+      "status": "closed_for_c_nonzero",
+      "evidence": "the final endpoint-zero mask evaluation is surjective at alpha_d outside {0,1}; exhaustive F_5, F_7, F_11 checks agree",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "outer-affine-transcript",
+      "source_anchor": "CFW26 Lemma 6.4 pages 38-39 and Theorem 11.3 proof pages 70-71",
+      "premise_or_goal": "uniform outer masks induce the uniform distribution on T(v)",
+      "status": "closed_in_odd_characteristic",
+      "evidence": "the Section-11 map has domain and target-affine dimension d*L_out and is injective because revealed m_j kill the constant kernel; 36 odd-field rank checks pass",
+      "c_effect": "none",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "formal-distinguisher-class",
+      "source_anchor": "CFW26 Definition 4.7 page 34",
+      "premise_or_goal": "D<=t chooses all query sets before oracle answers",
+      "status": "closed_nonadaptive_only",
+      "evidence": "Definition 4.7 explicitly writes D=(D0,D1)",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "encoding-zero-knowledge-premises",
+      "source_anchor": "CFW26 Definition 3.16 page 29 and Theorem 11.3 pages 67-68",
+      "premise_or_goal": "Enc_C, Enc_Cin, and Enc_Cout each simulate every fixed set of at most t queries within zeta",
+      "status": "assumed_by_reduction_not_instantiated_here",
+      "evidence": null,
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "fixed-set-encoding-hybrids",
+      "source_anchor": "CFW26 Lemma 6.4 page 39 and Theorem 11.3 proof page 71",
+      "premise_or_goal": "replace 3d inner, d outer, and one main encoding one at a time",
+      "status": "conditionally_closed",
+      "evidence": "there are 4d+1=4log2(ell)+5 hybrids, hence error at most (4log2(ell)+5)zeta under Definition 3.16",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "whole-formal-hvzk",
+      "source_anchor": "CFW26 Definitions 4.1-4.2 page 32, Definition 4.7 page 34, Theorem 11.3 pages 70-71",
+      "premise_or_goal": "simulate the entire extended view for formal D<=t",
+      "status": "conditionally_closed_nonadaptive",
+      "evidence": "uniform values plus uniform outer transcript give exact public-view simulation, followed by the fixed-set encoding hybrids",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "adaptive-query-hvzk",
+      "source_anchor": "CFW26 proof sketch page 70 says adaptive, while Definition 4.7 page 34 is nonadaptive",
+      "premise_or_goal": "answer queries online consistently",
+      "status": "not_implied_and_open",
+      "evidence": "the injective F_11 pointer encoding has universal fixed-two-query error 2/11 but adaptive two-query distance 1",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "zero-evader-terminal-step",
+      "source_anchor": "CFW26 Definition 3.3 page 26 and Theorem 11.3 proof sketch page 70",
+      "premise_or_goal": "a nonzero three-coordinate final discrepancy survives ze batching except with epsilon_zero",
+      "status": "conditionally_closed_local_step",
+      "evidence": "D_M=(v_M-u_M)-(q_M+c*S_M) is the exact repaired discrepancy vector",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "initial-rbr-coordinate",
+      "source_anchor": "CFW26 Theorem 11.3 pages 67 and 70; ACFY25 Theorem A.3 pages 72-73",
+      "premise_or_goal": "first transition error is at most (L_out+1)*N/|F|",
+      "status": "falsified_under_printed_premises",
+      "evidence": "F_101, d=10, L_in=4, L_out=8 sparse invalid R1CS accepts with probability 1-(100/101)^11 greater than 9/101 and produces a valid downstream target",
+      "necessary_numerical_repair": "use (d+1)*N/|F| or add L_out>=d",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "per-round-rbr-polynomial-tests",
+      "source_anchor": "CFW26 Lemma 6.5 pages 40-42 and Theorem 11.3 proof sketch page 70",
+      "premise_or_goal": "each false univariate equality survives with the printed degree/domain probability",
+      "status": "locally_compatible_after_repair",
+      "evidence": "c changes no degree; the last challenge domain still excludes both endpoints",
+      "limitation": "no full Section-11 knowledge state or candidate-transition proof is supplied",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "outer-mask-rbr-lists-and-erasure",
+      "source_anchor": "CFW26 Lemma 6.5 pages 40-42 and Section 11 proof sketch page 70",
+      "premise_or_goal": "carry every decoded outer/inner candidate through the relaxed relation with the claimed runtime and list factors",
+      "status": "open",
+      "evidence": null,
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "full-corrected-rbr",
+      "source_anchor": "CFW26 Definitions 3.6-3.7 pages 26-27 and Theorem 11.3 page 67",
+      "premise_or_goal": "give an exact knowledge-state function and deterministic extractor for every verifier round",
+      "status": "open",
+      "evidence": "Section 11 is only a proof sketch; this artifact does not fill all list-candidate, relaxed-witness, and erasure-correction transitions",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "error-vector-cardinality",
+      "source_anchor": "CFW26 Theorem 11.3 and proof sketch pages 67 and 70",
+      "premise_or_goal": "count the printed RBR vector and encoding hybrids exactly",
+      "status": "closed_count_only",
+      "evidence": "for ell=2^25, d=26: RBR has d+3=29 coordinates and encoding HVZK has 4d+1=105 hybrid terms",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "communication-and-runtime",
+      "source_anchor": "CFW26 Theorem 11.3 page 67",
+      "premise_or_goal": "retain the published asymptotic communication/runtime",
+      "status": "message_shape_unchanged_but_not_implemented_or_measured",
+      "evidence": "c and repaired states add no prover message, but exact serialization and verifier implementation are outside this audit",
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "fiat-shamir-qrom",
+      "source_anchor": "outside CFW26 Theorem 11.3",
+      "premise_or_goal": "compile the interactive reduction with a conventional-hash QROM theorem",
+      "status": "absent",
+      "evidence": null,
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "pq128-composition",
+      "source_anchor": "outside CFW26 Theorem 11.3",
+      "premise_or_goal": "compose PCS, IOP, Fiat-Shamir, hashes, grinding, and union terms above 128 post-quantum bits",
+      "status": "absent",
+      "evidence": null,
+      "closes_entire_theorem": false
+    },
+    {
+      "id": "implementation-refinement",
+      "source_anchor": "outside CFW26 Theorem 11.3",
+      "premise_or_goal": "prove parser/prover/verifier code refines the repaired relation and version binding",
+      "status": "absent",
+      "evidence": null,
+      "closes_entire_theorem": false
+    }
+  ],
+  "admission": {
+    "all_source_dependencies_read": true,
+    "typed_parametric_restatement": true,
+    "repaired_perfect_completeness": true,
+    "formal_nonadaptive_hvzk_conditional_on_encoding_zk": true,
+    "author_repair_selected": false,
+    "printed_theorem_11_3_validated": false,
+    "full_corrected_rbr": false,
+    "adaptive_query_hvzk": false,
+    "theorem_11_3_inherited": false,
+    "complete_zero_knowledge": false,
+    "fiat_shamir_qrom": false,
+    "pq128_composition": false,
+    "implementation_refinement": false,
+    "production_authorized": false
+  }
+}

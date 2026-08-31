@@ -1,0 +1,29 @@
+[package]
+name = "hegemon-hash384"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Minimal no_std RFC 7693 BLAKE2b-384 consensus hashing for Hegemon"
+
+[dependencies]
+blake2 = { version = "0.10", default-features = false }
+codec = { workspace = true, optional = true }
+serde = { version = "1", default-features = false, optional = true }
+scale-info = { workspace = true, optional = true }
+
+[dev-dependencies]
+bincode = "1.3"
+blake3 = "1"
+sha2 = "0.10"
+sha3 = "0.10"
+
+[features]
+default = []
+codec = ["dep:codec"]
+serde = ["dep:serde"]
+type-info = ["dep:scale-info"]
+
+[lints]
+workspace = true

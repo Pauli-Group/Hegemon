@@ -2,15 +2,15 @@
   "schema_version": 1,
   "branch": "codex/smallwood-pq128-experiment",
   "baseline_commit": "86a6469f466763cb0df055284bb4abadf51b99da",
-  "goal": "Production-bound SmallWood V4/Gamma verification from canonical proof bytes through finite-QROM extraction, exact transaction semantics, and accepted-block supply, with measured 64/128-lane performance and no active aggregation or Plonky3 authoring surface.",
-  "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap. The active-goal release ledger separately binds the complete Lean source tree and authenticates the fixed closure theorem set through aggregate elaboration and axiom audit.",
-  "overall_completion_percent": 100.0,
+  "goal": "Audit the conditional SmallWood V4/Gamma proof chain from modeled verifier acceptance through exact production rows and accepted-block supply while the production consensus manifest authorizes active V4/Gamma only, with no V2/V3 or recursive historical ranges, and formal security/release authority remains false; keep knowledge-soundness evidence construction, canonical-semantic refinement, Poseidon2 constraint-to-digest refinement, finite-QROM/deployed-hash composition, and concrete 128-bit production authority explicitly open.",
+  "completion_method": "Formal-surface coverage is the weighted average of property completion percentages. Mechanized-assumption closure independently counts only tracks whose claimed obligation is proved without leaving that obligation as a premise. Overall completion is the minimum of formal-surface coverage and mechanized-assumption closure, so conditional production bridges cannot be hidden behind a 100% surface inventory. The active-goal ledger binds the complete Lean source tree and authenticates the fixed open/closed track policy through aggregate elaboration and axiom audit.",
+  "overall_completion_percent": 50.0,
   "formal_surface_coverage_percent": 100.0,
   "mechanized_assumption_closure": {
-    "measurement_method": "Equal-count inventory of explicit mechanized security tracks, authenticated against the formal-core checker's fixed track and closed-theorem policy. A closed track requires the exact pinned Lean theorem identities for the stated narrow obligation, coverage by the formal security claims ledger, a matching complete-Lean-source digest in the active-goal ledger, and successful aggregate Hegemon elaboration plus axiom audit; merely naming an assumption or a theorem-like source declaration does not close it. This score is independent from formal surface coverage and does not assign credit for external primitive or system-model assumptions that remain open.",
+    "measurement_method": "Equal-count inventory of explicit mechanized security tracks, authenticated against the formal-core checker's fixed track and closed-theorem policy. A closed track requires the exact pinned Lean theorem identities for the stated narrow obligation, coverage by the formal security claims ledger, a matching complete-Lean-source digest in the active-goal ledger, and successful aggregate Hegemon elaboration plus axiom audit. A theorem that takes the claimed production refinement, knowledge soundness, digest refinement, or collision boundary as a premise leaves that track open; merely naming an assumption or theorem-like declaration does not close it.",
     "total_tracks": 20,
-    "closed_tracks": 13,
-    "closure_percent": 65.0,
+    "closed_tracks": 10,
+    "closure_percent": 50.0,
     "tracks": [
       {
         "id": "transaction.smallwood-semantic-implication",
@@ -67,7 +67,7 @@
       },
       {
         "id": "consensus.accepted-chain-supply-composition",
-        "status": "closed",
+        "status": "open",
         "evidence_paths": [
           "formal/lean/Hegemon/Consensus/AcceptedSmallWoodBlockComposition.lean",
           "formal/lean/Hegemon/Consensus/GenerateAcceptedSmallWoodBlockCompositionVectors.lean",
@@ -75,11 +75,10 @@
           "node/src/native/tests.rs",
           "scripts/check_formal_core.sh"
         ],
-        "lean_theorems": [
-          "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.consensus_accepted_chain_supply_composition",
-          "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_deployed_smallwood_block_yields_no_counterfeit_critical_path"
-        ],
-        "remaining_work": []
+        "lean_theorems": [],
+        "remaining_work": [
+          "This track remains open and receives no mechanized-closure credit: the modeled supply-composition theorem is checked, but production no-counterfeit closure is assumption-bound. Construct `DeployedSmallWoodBlockKnowledgeSoundnessEvidence`, `DeployedSmallWoodBlockCanonicalSemanticRefinementEvidence` (including `ProductionSmallWoodCanonicalSemanticRefinementAssumption`), and `DeployedSmallWoodBlockPoseidon2OutputSecurityAssumptions` (including `ProductionPoseidon2ConstraintDigestRefinementAssumption` and pair-local no collision) from the shipped accepted-block path before closing this track."
+        ]
       },
       {
         "id": "native.raw-ingress-canonical-publication",
@@ -184,7 +183,7 @@
       },
       {
         "id": "transaction.accepted-proof-exact-constraint-extraction",
-        "status": "closed",
+        "status": "open",
         "evidence_paths": [
           "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintModel.lean",
           "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintTableGenerated.lean",
@@ -193,18 +192,14 @@
           "circuits/transaction/src/smallwood_frontend.rs",
           "scripts/check_formal_core.sh"
         ],
-        "lean_theorems": [
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_exact_semantic_constraints",
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_counterfeit_critical_linear_bindings_are_map_bound",
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_hash_linear_bindings_are_map_bound",
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_input_hash_linear_bindings_are_map_bound",
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_monetary_reconstruction_bindings_are_map_bound"
-        ],
-        "remaining_work": []
+        "lean_theorems": [],
+        "remaining_work": [
+          "This track remains open and receives no mechanized-closure credit. Construct `DeployedSmallWoodKnowledgeSoundnessEvidence` from shipped Rust verifier acceptance; the current accepted-proof extraction theorem consumes that evidence and therefore leaves the deployed extraction obligation assumption-bound."
+        ]
       },
       {
         "id": "transaction.smallwood-air-row-implementation-equivalence",
-        "status": "closed",
+        "status": "open",
         "evidence_paths": [
           "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintModel.lean",
           "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintTableGenerated.lean",
@@ -213,13 +208,10 @@
           "circuits/transaction/src/smallwood_frontend.rs",
           "scripts/check_formal_core.sh"
         ],
-        "lean_theorems": [
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_smallwood_air_rows_are_implementation_equivalent",
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_concrete_output_yields_accepted_hash_image",
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_input_hash_required_linear_binding_executes",
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_monetary_reconstruction_required_linear_binding_executes"
-        ],
-        "remaining_work": []
+        "lean_theorems": [],
+        "remaining_work": [
+          "This track remains open and receives no mechanized-closure credit. Prove the shipped Rust constraint builder and verifier refine the exact Lean map for arbitrary accepted inputs, discharge `ProductionSmallWoodCanonicalSemanticRefinementAssumption`, and prove `ProductionPoseidon2ConstraintDigestRefinementAssumption`; exact table vectors and internal production-family implications leave universal AIR/row implementation equivalence assumption-bound."
+        ]
       },
       {
         "id": "native.complete-parser-node-refinement",
@@ -290,7 +282,7 @@
   "last_full_formal_core": {
     "date": "2026-06-19T08:43:23Z",
     "commit": "50710d33",
-    "status": "passed locally on the working tree based on 50710d33 after adding the active-goal progress gate; every matrix property remains closed under the checked internal theorem/production-binding method, and the active-goal percentage is recomputed from the checked theorem matrix while primitive crypto, proof-system, bridge, storage, scanner, live-release, and global-privacy dependencies remain explicit external assumptions rather than hidden missing work",
+    "status": "historical formal-core run on 50710d33; it predates the fail-closed mechanized-assumption-closure inventory and therefore does not establish current production closure. The current matrix reports 100% formal-surface coverage, 50% mechanized-assumption closure, and 50% overall completion.",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 121,
     "named_lean_theorems": 2557,
@@ -338,7 +330,7 @@
     "known_limitations": [
       "The live dev node intentionally had zero external peers during validation, so live sync health was checked as syncing=false with peers=0; peer catch-up/restart reload was exercised on disposable two-node dev instances.",
       "The service environment logged HEGEMON_SEEDS= for this isolated native-devnet-host branch-test node; shared mining and testnet operators must use the approved common seed list and NTP/chrony to avoid partitions, forks, and future-skew timestamp rejection.",
-      "Primitive hash/crypto assumptions, proof-system soundness assumptions, external bridge proof soundness, advisory database/scanner completeness, DA retention, storage hardware semantics, and complete native-node equivalence remain explicit external assumptions in the 100% certificate."
+      "Primitive hash/crypto assumptions, proof-system soundness assumptions, canonical-semantic and Poseidon2 refinement assumptions, external bridge proof soundness, advisory database/scanner completeness, DA retention, storage hardware semantics, and complete native-node equivalence remain open. The 100% figure is formal-surface inventory coverage; mechanized-assumption closure and overall completion are 50%."
     ]
   },
   "last_coordinator_audit": {
@@ -357,7 +349,7 @@
   "last_theorem_slice": {
     "name": "highest_standard_completion_certificate_100",
     "date": "2026-06-18T00:00:00-06:00",
-    "summary": "Added the top-level Lean completion certificate tying the internal critical theorem bundle, explicit external-assumption bundle, and production release gate into one no-sorry closure surface. Completion is 100% under the matrix method: every internal critical theorem target is proved/production-bound or carried as an explicit external assumption field; the certificate does not claim unconditional primitive cryptographic security, external bridge soundness, live GitHub enforcement, storage hardware durability, or complete native-node equivalence without those assumptions.",
+    "summary": "The historical Lean certificate ties an internal theorem bundle, explicit assumption bundle, and release-gate predicate into one no-sorry term, but theorem parameters do not discharge the obligations they represent. Under the current fail-closed method, formal-surface inventory coverage is 100%, mechanized-assumption closure is 50%, and overall completion is 50%. Production no-counterfeit closure remains conditional on shipped-verifier knowledge-soundness evidence, canonical-semantic refinement, Poseidon2 constraint-to-digest refinement and accepted-output no-collision, plus the other named external boundaries.",
     "lean_theorems": [
       "Hegemon.Release.HighestStandardCompletionCertificate.accepted_internal_bundle_and_release_gate_yield_highest_standard_completion_certificate",
       "Hegemon.Release.HighestStandardCompletionCertificate.completion_certificate_exposes_critical_chain_security_and_residuals",
@@ -368,7 +360,9 @@
       "Hegemon.Network.FrameResourceAdmission.pq_transcript_magic_distinct_from_handshake"
     ],
     "weighted_completion_percent": 100.0,
-    "push_gate_delta_from_99_5945": 0.4055
+    "overall_completion_percent": 50.0,
+    "formal_surface_coverage_percent": 100.0,
+    "mechanized_assumption_closure_percent": 50.0
   },
   "last_production_binding_slice": {
     "date": "2026-06-17",
@@ -617,7 +611,7 @@
       "performance_constraint": "Proof-side theorem only; production should continue verifying the same proof/artifact bytes.",
       "explicit_external_assumptions": [
         "Discharge the split spend-only deployed verifier soundness assumption with mechanized deployed verifier/AIR soundness and Rust verifier refinement.",
-        "Prove that the complete circuit/AIR constraints imply the full spend-authorization relation, beyond the now-production-bound SmallWood active auth-link, input row-boundary, output row-boundary, and composed verifier-envelope slices."
+        "Prove that the complete shipped circuit/AIR and Rust verifier refine the full spend-authorization relation. The current SmallWood auth-link, input/output row boundaries, and composed verifier envelope are modeled and vector-checked slices whose production closure remains assumption-bound."
       ],
       "remaining_work": []
     },
@@ -906,13 +900,13 @@
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean now derives the parser-to-canonical projection assumption package from parser bytes, explicit count evidence, canonical statement facts, and accepted native binding gates",
         "circuits/transaction/src/smallwood_frontend.rs now enforces inactive public-nullifier zero constraints and active nullifier-rho linkage inside the deployed inline-Merkle SmallWood verifier surface",
         "formal/lean/Hegemon/Transaction/AirBalanceBoundary.lean packages the balance/public-field consequences for value-balance, stablecoin issuance, selector asset binding, disabled metadata, and non-selected slot zeroing",
-        "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintRefinement.lean and the generated exact-map gate bind those balance consequences to the complete production V4 constraint map for default and stablecoin witnesses",
+        "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintRefinement.lean and the generated exact-map gate check production-family balance equations against the V4 generated map for bounded default and stablecoin witnesses; canonical balance semantics and universal Rust refinement remain assumption-bound",
         "native-devnet-host at 247638ff passed the generated AIR balance vector gate against the VPS checkout",
         "circuits/transaction/src/smallwood_frontend.rs packed_smallwood_inline_merkle_rejects_public_balance_mutation and packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation prove the production SmallWood constraint surface rejects verifier-facing balance and stablecoin public-field drift",
         "formal/lean/Hegemon/Transaction/SmallWoodTranscriptBinding.lean models the SmallWood transcript/profile byte boundary and proves the transcript starts with the domain, includes verifier profile material, uses the active 23-DECS-opening profile only for the shipped inline-Merkle arithmetization, uses the legacy 25-opening profile for the legacy family, distinguishes every production-recognized arithmetization tag, includes serialized statement bytes, and pads to eight-byte alignment",
         "formal/lean/Hegemon/Transaction/GenerateSmallWoodTranscriptBindingVectors.lean emits transcript/profile vectors checked by circuits/transaction/src/smallwood_frontend.rs so production transcript binding includes domain, profile material, every deployed/legacy arithmetization label/profile split, serialized statement bytes, and padding exactly as modeled",
         "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean proves accepted wrapper metadata projection cannot alter the bound statement/public-input projection or add public nullifier, ciphertext, or asset rows outside the statement boundary; generated vectors are checked by transaction-circuit production wrapper admission tests.",
-        "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean proves exact/canonical current-vs-legacy SmallWood candidate wrapper selection, current-first precedence, legacy fallback only after current rejection, and empty inner ARK proof rejection; generated vectors are checked against circuits/transaction/src/smallwood_frontend.rs before profile routing.",
+        "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean proves exact/canonical current-vs-legacy SmallWood candidate decoder selection, current-first precedence, explicit legacy rejection after current decode failure, and empty inner ARK proof rejection; generated vectors are checked before profile routing, but the production manifest's historical and recursive ranges remain empty and these decoder facts grant no V2/V3 authority.",
         "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean proves accepted provided TxValidityClaims exactly match verified backend artifact receipts and statement bindings; generated vectors are checked against consensus/src/proof.rs before aggregation or recursive block paths trust provided claims.",
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean now defines `CanonicalProofSystemNoTheftBoundaryFacts` and proves split deployed soundness assumptions imply the packaged no-theft/public-conservation boundary plus live-policy-authorized stablecoin exception surface",
         "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean now composes accepted SmallWood candidate wrapper admission, transcript/profile binding, active auth-link, input/output row boundaries, modeled balance-row facts, canonical deployed-verifier facts, and `CanonicalProofSystemNoTheftBoundaryFacts` into one verifier-surface envelope",
@@ -1179,17 +1173,17 @@
         "formal/lean/Hegemon/Network/FrameResourceAdmission.lean proves frame decode acceptance iff size, marker, postcard decode, and no-trailing-byte preconditions, plus encode marker/body bounds; network/src/wire.rs and pq-noise/src/codec.rs consume generated vectors.",
         "network/src/wire.rs and pq-noise/src/codec.rs now include arbitrary-byte mutation-oracle corpora that compare production frame decode acceptance to independent marker, bound, postcard success, and full-consumption oracle semantics across malformed, marker-prefixed, oversized, truncated, trailing-byte, and mutated-valid frames; scripts/check_formal_core.sh runs both gates.",
         "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean and lean_generated_smallwood_candidate_wrapper_admission_vectors_match_production bind current and legacy SmallWood candidate proof wrappers to exact/canonical decode, no trailing bytes, and nonempty inner proof bytes before verifier profile routing.",
-        "formal/lean/Hegemon/Native/CodecAdmission.lean now proves current-first/legacy-fallback native metadata decode facts, and schema-v2 generated vectors check current metadata selection, legacy fallback only after current rejection, and trailing-byte rejection for both formats against production bincode_deserialize_native_block_meta_exact.",
+        "formal/lean/Hegemon/Native/CodecAdmission.lean now proves current-only native metadata decode with explicit retired-format rejection facts, and schema-v4 generated vectors check current metadata selection, explicit legacy rejection after current decode failure, and trailing-byte rejection for both formats against production bincode_deserialize_native_block_meta_exact.",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean ciphertext path-family content theorem lifts canonical ciphertext index/archive projections through accepted exact-decode row-equivalence packages, keeping parser internals as the remaining residual",
         "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean sync_path_accepts_implies_preheavy_bounds now carries sync exact-decode/no-trailing-byte facts with response range/count/resource caps before sync import work",
         "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean `accepted_pending_action_codec_canonical_publication_non_malleability_facts` ties exact pending-action decode, block-action exactness, sync non-malleability, canonical publication, and malformed rejection precedence to the same accepted publication certificate",
         "formal/lean/Hegemon/Native/PreHeavyCodecCanonicalPublication.lean `accepted_preheavy_codec_canonical_publication_certificate` composes exact/canonical pending-action and block-action publication with the pre-heavy DoS/resource certificate on one accepted sync/import publication surface",
-        "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean `accepted_pending_action_codec_canonical_publication_with_metadata_non_malleability_facts` carries native metadata current-first/legacy-fallback exact-decode facts with the pending/block-action canonical publication certificate",
-        "formal/lean/Hegemon/Native/CodecAdmission.lean proves `native_metadata_bincode_budget_acceptance_excludes_overruns` and generated schema-v3 codec vectors bind native metadata bincode budget cases to node/src/native/mod.rs, which pre-scans current/legacy metadata bytes and rejects oversized action counts, action payload lengths, aggregate action bytes, miner public keys, and miner signatures before allocation-heavy bincode work while preserving signed current and legacy exact decode",
+        "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean `accepted_pending_action_codec_canonical_publication_with_metadata_non_malleability_facts` carries native metadata current-only with explicit legacy rejection exact-decode facts with the pending/block-action canonical publication certificate",
+        "formal/lean/Hegemon/Native/CodecAdmission.lean proves `native_metadata_bincode_budget_acceptance_excludes_overruns` and generated schema-v4 codec vectors bind native metadata bincode budget cases to node/src/native/mod.rs, which pre-scans metadata bytes and rejects oversized action counts, action payload lengths, and aggregate action bytes before allocation-heavy bincode work while accepting only exact current identity-free metadata and explicitly rejecting recognized retired encodings",
         "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean `accepted_bounded_canonical_codec_gate_certificate` ties concrete PendingAction, MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs, OutboundBridgeArgsV1, InboundBridgeArgsV1, and BridgeVerifierRegistrationV1 SCALE wire facts, PendingAction exact-decode adapter equality, metadata ordering, and canonical publication facts into one bounded codec gate",
         "formal/lean/Hegemon/Native/PreHeavyCodecCanonicalPublication.lean `accepted_preheavy_bounded_codec_canonical_publication_certificate` composes pre-heavy resource bounds, concrete PendingAction, MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs, OutboundBridgeArgsV1, InboundBridgeArgsV1, and BridgeVerifierRegistrationV1 SCALE witnesses, metadata ordering, PendingAction exact-decode adapter equality, and canonical publication",
         "formal/lean/Hegemon/Native/BridgeMintPayloadRawAdmission.lean separately binds raw BridgeMintPayloadV1 SCALE exact decode, full consumption, canonical re-encoding, payload-hash binding, receipt-message binding, and decoded mint-payload policy facts for the future positive bridge mint handoff",
-        "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean `bounded_canonical_codec_gate_certificate_exposes_production_binding` and `accepted_bounded_canonical_codec_gate_binds_production_wires` project the bounded gate into exact route-wire decode, full consumption, canonical re-encode, block-action declared/decoded/published row equality, and metadata current-before-legacy facts on one production review surface",
+        "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean `bounded_canonical_codec_gate_certificate_exposes_production_binding` and `accepted_bounded_canonical_codec_gate_binds_production_wires` project the bounded gate into exact route-wire decode, full consumption, canonical re-encode, block-action declared/decoded/published row equality, and current-format acceptance and legacy-rejection facts on one production review surface",
         "formal/lean/Hegemon/Native/PreHeavyCodecCanonicalPublication.lean `preheavy_bounded_codec_canonical_publication_certificate_exposes_production_order` and `accepted_preheavy_bounded_codec_canonical_publication_binds_production_order` carry that route-wire production binding through the pre-heavy resource/DoS certificate before expensive semantic/proof work",
         "formal/lean/Hegemon/Native/SidecarUploadRawJsonProjection.lean models representative raw da_submitCiphertexts/da_submitProofs JSON request bytes for valid ciphertext upload, malformed JSON, unknown fields, missing/non-array upload fields, too-many arrays, invalid ciphertext/proof bytes, missing/invalid proof metadata, and empty proof bytes, with generated vectors checked against production serde_json, strict deny-unknown-field request decoding, byte parsing, and sidecar admission order",
         "Wallet ciphertext archive publication rejects malformed public archive index shape through a checked Lean/Rust admission table.",
@@ -1589,6 +1583,8 @@
         ".github/workflows/release.yml security-gates and per-platform hegemon-node/wallet/walletd binary audits",
         "formal/lean/Hegemon/Release/CiReleaseGate.lean",
         "scripts/check_ci_release_gate_policy.py",
+        "scripts/check_smallwood_production_authorization.py tag-only fail-closed authority gate",
+        "scripts/test_check_smallwood_production_authorization.py positive/negative authority fixtures",
         "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean",
         "formal/lean/Hegemon/Release/PqBinaryPolicy.lean",
         "native backend review-policy and release-posture gates",
@@ -1614,6 +1610,7 @@
         "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean current-review and fail-closed theorems expose waiver identity, tracking, owner, remediation, review date, expiry, exact finding match, malformed waiver rejection, unwaived finding rejection, and unused waiver rejection",
         "formal/lean/Hegemon/Release/CiReleaseGate.lean `accepted_ci_release_gate_binds_dependency_audit_to_release_build` binds dependency audit and waiver gate presence to release-build security dependency facts",
         "formal/lean/Hegemon/Release/ReleasePostureCertificate.lean production release-gate theorems expose current review policy and dependency-audit/CI release binding directly from the production certificate",
+        ".github/workflows/release.yml runs `python3 scripts/check_smallwood_production_authorization.py config/formal-security-claims.json` before tag release jobs; the current conditional claim intentionally rejects because production authorization is false and concrete security bits are null",
         "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean binds this internal theorem surface into the final completion certificate with explicit external-assumption fields and the production release gate."
       ],
       "missing_work": [],
@@ -1623,13 +1620,14 @@
         "Add binary scanner completeness review and external accepted-artifact provenance evidence.",
         "Move any remaining advisory drift that is outside cargo-audit visibility into mandatory CI evidence.",
         "Prove or externally attest live GitHub enforcement of the checked ruleset export on the protected remote repository.",
+        "Do not authorize a SmallWood production tag until the underlying proof/refinement, QROM/hash-loss composition, review, and operational obligations justify every authority field and at least 128 concrete post-quantum security bits; the syntactic release lock does not prove those facts.",
         "Scanner-pattern completeness, live GitHub branch-protection enforcement, advisory database completeness, upstream dependency-review quality, and remediation-plan sufficiency remain external release assumptions."
       ]
     }
   ],
   "last_codec_metadata_decode_slice": {
-    "date": "2026-06-17",
-    "summary": "Added Lean theorem and generated-vector coverage for native metadata current-first/legacy-fallback bincode exact decode and bound it to production helper behavior. Added a formal-core policy ratchet that caps broad full-claim theorem-indexed order constraints at the current 129 constraints / 2412 theorem refs, forcing future per-gate theorem references to get narrower rather than broader.",
+    "date": "2026-08-23",
+    "summary": "Added Lean theorem and generated-vector coverage for native metadata current-only bincode exact decode with explicit legacy rejection and bound it to production helper behavior. Added a formal-core policy ratchet that caps broad full-claim theorem-indexed order constraints at the current 129 constraints / 2412 theorem refs, forcing future per-gate theorem references to get narrower rather than broader.",
     "lean_modules": [
       "formal/lean/Hegemon/Native/CodecAdmission.lean",
       "formal/lean/Hegemon/Native/GenerateCodecAdmissionVectors.lean"
@@ -1637,18 +1635,18 @@
     "top_level_theorems": [
       "Hegemon.Native.CodecAdmission.native_metadata_decode_accepts_iff_preconditions",
       "Hegemon.Native.CodecAdmission.native_metadata_current_exact_decode_precedes_legacy",
-      "Hegemon.Native.CodecAdmission.native_metadata_legacy_decode_requires_current_rejection",
+      "Hegemon.Native.CodecAdmission.native_metadata_legacy_decode_is_identified_and_rejected",
       "Hegemon.Native.CodecAdmission.native_metadata_decode_rejects_when_current_and_legacy_reject",
       "Hegemon.Native.CodecAdmission.native_metadata_decode_facts"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.CodecAdmission passed locally; lake exe gen_codec_admission_vectors emitted schema-v2 JSON with native_metadata_decode_cases.",
-      "targeted_rust": "HEGEMON_LEAN_CODEC_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_codec_admission_vectors_match_production --lib --no-default-features -- --nocapture passed locally.",
-      "checker_ratchet": "cargo test --manifest-path scripts/hegemon_formal_core/Cargo.toml blueprint_policy_rejects_full_claim_order -- --nocapture passed locally; blueprint budget set to 129 full-claim order constraints and 2412 theorem refs.",
-      "full_formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-17T12:39:17Z with 118 claims, 1950 named Lean theorem declarations, 887 axiom-free declarations, zero temporary axiom dependencies, 144/144 theorem-indexed order constraints, 130/130 theorem-indexed dominance constraints, and full-claim theorem-list budgets of 129 constraints / 2412 theorem refs."
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.CodecAdmission Hegemon.Native.CodecCanonicalPublicationBoundary Hegemon.Native.PreHeavyCodecCanonicalPublication passed locally; lake exe gen_codec_admission_vectors emitted schema-v4 JSON with explicit legacy_forbidden cases.",
+      "targeted_rust": "The schema-v4 generated-vector conformance test, native_metadata_ tests, native_block_meta_ tests, legacy unsigned rejection test, and signed-V1/interim-identity-V2 rejection test passed locally with --no-default-features.",
+      "claims_gate": "cargo run --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed locally with 122 claims, 2658 named Lean theorems, and zero tombstones.",
+      "full_formal_core": "Not claimed by this focused codec-consistency repair; the complete formal-core command remains a separate release gate."
     },
     "known_limitations": [
-      "This proves fallback source selection around exact decode predicates and generated fixtures. It does not prove bincode implementation correctness for all arbitrary bytes, sled durability, disk integrity, hash security, or complete native-node equivalence."
+      "This proves current-format acceptance and explicit legacy rejection around exact decode predicates and generated fixtures. It does not prove bincode implementation correctness for all arbitrary bytes, sled durability, disk integrity, hash security, or complete native-node equivalence."
     ]
   },
   "last_residual_assumption_closure_slice": {

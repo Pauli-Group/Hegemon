@@ -1,0 +1,199 @@
+{
+  "authority": {
+    "adaptive_query_simulator": false,
+    "both_mask_coefficient_branches_executable": true,
+    "bounded_consensus_parser": false,
+    "canonical_json_transcript_parser": true,
+    "complete_zk": false,
+    "derived_branch_output_relation_diagnostic": true,
+    "deterministic_honest_transcript": true,
+    "direct_sumcheck_verifier": true,
+    "exact_padding_parser_refinement": false,
+    "full_hegemon_section11_carrier": false,
+    "paper_hvzk_reduction_instantiated": false,
+    "paper_output_relation_unambiguous": false,
+    "pcs_commitment_opening_simulator": false,
+    "plonky3_section11_carrier": false,
+    "production_authorized": false,
+    "public_only_affine_view_simulator": true,
+    "public_sampler_distributional_proof": false,
+    "rbr_bound_instantiated": false,
+    "section11_padding_arithmetic_diagnostic": true,
+    "strict_pq128": false,
+    "typed_succinct_linear_form_diagnostic": true,
+    "unequal_geometry_native_paper_carrier": false,
+    "whole_fiat_shamir_view_simulator": false
+  },
+  "branches": {
+    "construction_literal_coefficient_1": {
+      "factor": 1,
+      "joint_mu": "1e1995fe60591aa1",
+      "transcript_bytes": 6837,
+      "transcript_sha512": "eddd6b491e0e3e193a63c01b60d403ca3dfa1fd21b8c0e6c3041970f248826b81e1db893d4052f346219a5d8e8afd47fa6a2e4ff2433cdc3891492ed79002b50"
+    },
+    "proof_sketch_coefficient_2": {
+      "factor": 2,
+      "joint_mu": "9eb066d48f7f753b",
+      "transcript_bytes": 6829,
+      "transcript_sha512": "fd5dfd4cade58eae46845b1664ae746a87c90d54795e47d1d8ccdff4befde6dceca9feba06203fd724c6adf01538dda7b49b313f7b6c86c58d40bcbeec1a5805"
+    }
+  },
+  "decision": {
+    "candidate_eligible": false,
+    "production_authorized": false,
+    "status": "BRANCH_RELATIVE_DIAGNOSTIC_ONLY",
+    "theorem_authority": false
+  },
+  "fixture": {
+    "compiler_binding_digest": "f83dbba3f17e8f174d8b04057f2823e921d5ef9e195ce3c4b718be98dec5a8f7cb27b1c7d3f9d712a45c18a21ddd20d67cb66cdfacb2a42c92762dde27575d01",
+    "dimensions": {
+      "boolean_index_width": 3,
+      "direct_prover_field_elements": 31,
+      "ell": 4,
+      "hvzk_encoding_hybrid_count": 13,
+      "inner_block_length": 10,
+      "inner_message_length": 4,
+      "inner_oracle_count": 9,
+      "inner_oracle_field_elements": 90,
+      "inner_randomness_length": 1,
+      "main_block_length": 10,
+      "main_message_length": 4,
+      "main_oracle_field_elements": 10,
+      "main_randomness_length": 1,
+      "n0": 4,
+      "oracle_prover_field_elements": 154,
+      "other_direct_field_elements": 4,
+      "outer_block_length": 18,
+      "outer_evaluation_field_elements": 3,
+      "outer_message_length": 8,
+      "outer_oracle_count": 3,
+      "outer_oracle_field_elements": 54,
+      "outer_randomness_length": 1,
+      "query_bound_per_oracle": 1,
+      "r1cs_constraint_count": 8,
+      "r1cs_matrix_side": 8,
+      "r1cs_variable_count": 8,
+      "sumcheck_polynomial_field_elements": 24,
+      "sumcheck_variables": 3,
+      "total_prover_field_elements": 185,
+      "verifier_field_elements": 8
+    },
+    "field_modulus": 18446744069414584321,
+    "instance_digest": "35ae2228a125a8ae112b00362f037455b269e7f67b4e225792df0fa1c7e90ad184a66d1405b1eab264fa83ba21dcf04da698edf58310643c65324f5b3678b659",
+    "profile_digest": "a656fdaa13fd9754f10c31727bf7108553a9cc65ba181fcf24c911d85a8b7251d658fd0236b574865bbe0428b32a58f221cdb98f918c9af154968493b668c5a7",
+    "seed_hex": "63667732362d7265666572656e63652d66697874757265",
+    "unit_test_count": 27
+  },
+  "mutations": {
+    "case_count": 56,
+    "ledger_sha512": "dd9002911a6409c6576f4ac115886acaf28f6aaf46036f9446d31729834d1cd19935ec7559aeb7c4370b4e2a1b8b1343bb451a4130c757f7047544eac2686db9",
+    "negative_outcomes_fail_closed": true
+  },
+  "paper": {
+    "anchors": [
+      {
+        "id": "RS_QUERY_ZK",
+        "location": "printed page 29, Proposition 3.19",
+        "observation": "RS polynomial dimension is message length plus t random coefficients; error is zero for at most t queries"
+      },
+      {
+        "id": "NONADAPTIVE_DISTINGUISHERS",
+        "location": "printed page 34, Definition 4.7",
+        "observation": "the query-bounded distinguishers used by the theorem are non-adaptive"
+      },
+      {
+        "id": "SUCCINCT_LINEAR_FORM_TYPES",
+        "location": "printed page 35, Definitions 5.1, 5.2, and 5.4",
+        "observation": "a succinct form returns a t-by-n matrix, identity takes that matrix as state, and scalar multiplication is a distinct form"
+      },
+      {
+        "id": "TARGET_OUTPUT_RELATION",
+        "location": "printed pages 35-36, Definition 5.8",
+        "observation": "the main and mask messages are constrained by their typed succinct linear-form matrices and targets"
+      },
+      {
+        "id": "R1CS_IOR_THEOREM",
+        "location": "printed pages 66-67, Theorem 11.3",
+        "observation": "ell equals n0, ell is a power of two, the IOR is queryless, and HVZK has explicit odd-characteristic and code premises"
+      },
+      {
+        "id": "LITERAL_MASK_FACTOR",
+        "location": "printed page 67, Construction 11.4 Steps 1-3",
+        "observation": "inner masks vanish at zero and one and Step 3 adds one copy of each inner-mask sum"
+      },
+      {
+        "id": "OUTER_MASK_SUMCHECK",
+        "location": "printed pages 67-69, Construction 11.4 Steps 4-7",
+        "observation": "outer masks define the affine sumcheck messages, final non-Boolean challenge, and outer evaluation targets"
+      },
+      {
+        "id": "COEFFICIENT_CONTRADICTION",
+        "location": "printed page 69, Construction 11.4 Step 8",
+        "observation": "the first displayed equality contains one mask sum and the immediately following equality contains two"
+      },
+      {
+        "id": "OUTPUT_STATE_TYPE",
+        "location": "printed pages 69-70, Construction 11.4 Steps 9-10",
+        "observation": "Step 9 pairs inner sl_id with a pair-valued state and main sl_id with an entire matrix instead of the required one-by-ell alpha-fixed row; Step 10 exports those unresolved claims"
+      },
+      {
+        "id": "HVZK_VALUE_CLAIM",
+        "location": "printed pages 70-71, proof sketch of Theorem 11.3",
+        "observation": "the simulator samples the affine space and the value claim relies on coefficient two and odd characteristic; the hybrid count is 4 log ell plus 5"
+      }
+    ],
+    "coefficient_branch_selected": false,
+    "pdf_sha256": "6a2092b7bc50e5ea68ec8e679c4b830f2fe260c961dc08ee7582b7e652a46f7c",
+    "pdf_sha512": "be9595b264ccbb6e5d848a10e24f907089ff478c7efe99967a5d0f236bffcaf87c53cc82eec53f74856a08a4db8a6884084c8238291f44d06aa2d703eef5c2dd",
+    "printed_step9_state_typechecks": false,
+    "public_erratum_identified": false,
+    "reviewed_on": "2026-08-22",
+    "title": "Zero-Knowledge IOPPs for Constrained Interleaved Codes",
+    "url": "https://eprint.iacr.org/2026/391"
+  },
+  "reported_hegemon_section11_projection": {
+    "authoritative_carrier": false,
+    "candidate_embedded_matrix_nonzeros": 123057296,
+    "carrier_matrix_side": 67108864,
+    "carrier_nonconstant_variables": 67108863,
+    "ell": 33554432,
+    "matrix_embedding_constructed": false,
+    "n0": 33554432,
+    "parser_padding_binding_proved": false,
+    "public_zero_padding_elements": 33544279,
+    "remaining_zero_rows": 32398608,
+    "section11_hvzk_oracle_hybrid_count": 105,
+    "section11_main_message_elements": 33554432,
+    "section11_sumcheck_variables": 26,
+    "semantic_refinement_proved": false,
+    "source_constraints": 20457227,
+    "source_matrix_nonzeros": 94551238,
+    "source_nonconstant_variables": 19311555,
+    "source_public_variables": 10152,
+    "source_witness_variables": 19301403,
+    "whir_codeword_elements_defined": false,
+    "witness_zero_padding_elements_and_rows": 14253029
+  },
+  "schema": "hegemon.cfw26-section11-r1cs-ior.certificate.v1",
+  "simulator": {
+    "adaptive_queries": false,
+    "affine_public_sampler": true,
+    "distributional_proof": false,
+    "fixed_nonadaptive_query_plan": true,
+    "pcs_commitment_opening_simulator": false,
+    "whole_fiat_shamir_view_simulator": false
+  },
+  "source_manifest_sha512": "410db0d60fe6bd5091def488af821f10291e170b2bee295783cf76b024e9c6f15affe779b71396b82ef38aeea08be64dbf7d1c6d02d8f0c70c2f3b8ebcdb8c46",
+  "typed_output": {
+    "paper_printed_state_errors": [
+      "inner identity receives a pair instead of a t-by-n matrix",
+      "main identity receives an entire square matrix instead of a one-by-ell alpha-fixed witness-column row"
+    ],
+    "repairs": [
+      "identity_premultiplied_state",
+      "scaled_identity_form"
+    ],
+    "repairs_agree_for_both_diagnostic_branches": true,
+    "theorem_authority": false
+  }
+}

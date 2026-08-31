@@ -10,6 +10,7 @@ repository.workspace = true
 anyhow = "1"
 blake3 = "1"
 hegemon-field = { workspace = true }
+hegemon-hash384 = { path = "../../crypto/hash384" }
 serde = { version = "1", features = ["derive"] }
 
 [lints]

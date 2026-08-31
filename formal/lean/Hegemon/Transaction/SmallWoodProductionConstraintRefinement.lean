@@ -1,5 +1,6 @@
 import Hegemon.Transaction.SmallWoodSemanticClosure
 import Hegemon.Transaction.NoteCommitmentInputs
+import Hegemon.Transaction.Poseidon2NoteCommitment
 import Hegemon.Transaction.PublicInputBinding
 import Hegemon.Transaction.SmallWoodProductionSemanticSpec
 import Hegemon.Transaction.StatementHash
@@ -466,10 +467,16 @@ theorem production_note_preimage_has_exact_deployed_word_count
     (productionNotePreimage opening).length = 18 := by
   simp [productionNotePreimage, productionWords4]
 
-opaque productionPoseidon2Sponge : Nat -> List Nat -> Digest
+def productionPoseidon2Sponge (domainTag : Nat) (preimage : List Nat) : List Nat :=
+  Poseidon2NoteCommitment.deployedPoseidon2Sponge domainTag preimage
+
+def productionPoseidon2DigestEncoding (digestFelts : List Nat) : Digest :=
+  digestFelts.foldl
+    (fun digest limb => digest * goldilocksModulus + fieldValue limb) 0
 
 def productionNoteHash (opening : ProductionNoteOpening) : Digest :=
-  productionPoseidon2Sponge 1 (productionNotePreimage opening)
+  productionPoseidon2DigestEncoding
+    (productionPoseidon2Sponge 1 (productionNotePreimage opening))
 
 def ProductionHashCollisionResistance (spec : ProductionNoteHashSpec) : Prop :=
   deployedProductionNoteHashSpecAccepts spec = true
@@ -1929,6 +1936,12 @@ def productionOutputCommitmentFelts
   (List.range 6).map fun limb =>
     publicValueAt map.publicValues (16 + output * 6 + limb)
 
+def productionOutputCommitmentDigest
+    (map : ProductionConstraintMap)
+    (output : Nat) : Digest :=
+  (productionOutputCommitmentFelts map output).foldl
+    (fun digest limb => digest * goldilocksModulus + fieldValue limb) 0
+
 def productionOutputHashTraceValue
     (map : ProductionConstraintMap)
     (witnessValues : List Nat)
@@ -2120,17 +2133,70 @@ structure ProductionAcceptedOutputHashImage
     forall binding,
       binding < (productionOutputHashRequiredLinearSpecs map output).length →
         ProductionLinearConstraintSpecExecuted map witnessValues
-          ((productionOutputHashRequiredLinearSpecs map output).getD binding
-            zeroProductionLinearConstraintSpec)
+            ((productionOutputHashRequiredLinearSpecs map output).getD binding
+              zeroProductionLinearConstraintSpec)
 
-def ProductionPoseidon2HashCollisionResistance
-    (spec : ProductionNoteHashSpec) : Prop :=
+def productionDeployedPoseidon2Digest
+    (spec : ProductionNoteHashSpec)
+    (preimage : List Nat) : List Nat :=
+  productionPoseidon2Sponge spec.domainTag preimage
+
+def ProductionPoseidon2NoCollisionFor
+    (spec : ProductionNoteHashSpec)
+    (leftPreimage rightPreimage : List Nat) : Prop :=
   deployedProductionNoteHashSpecAccepts spec = true
-    ∧ forall map leftWitness rightWitness output,
-      ProductionAcceptedOutputHashImage map leftWitness output →
+    ∧ (productionDeployedPoseidon2Digest spec leftPreimage =
+          productionDeployedPoseidon2Digest spec rightPreimage →
+        leftPreimage = rightPreimage)
+
+def ProductionAcceptedOutputHashDigestBinding
+    (spec : ProductionNoteHashSpec)
+    (map : ProductionConstraintMap)
+    (witnessValues : List Nat)
+    (output : Nat) : Prop :=
+  productionDeployedPoseidon2Digest spec
+      (productionOutputHashPreimage map witnessValues output) =
+    productionOutputCommitmentFelts map output
+
+/--
+Explicit implementation-refinement boundary: accepted constraint rows must compute the same
+six-limb deployed Poseidon2 digest as the six public commitment limbs. The exact-map equation
+families do not presently prove this bridge.
+-/
+def ProductionPoseidon2ConstraintDigestRefinementAssumption
+    (spec : ProductionNoteHashSpec) : Prop :=
+  ∀ map witnessValues output,
+    ProductionAcceptedOutputHashImage map witnessValues output →
+      ProductionAcceptedOutputHashDigestBinding spec map witnessValues output
+
+def ProductionPoseidon2AcceptedOutputNoCollisionAssumption
+    (spec : ProductionNoteHashSpec) : Prop :=
+  ∀ map leftWitness rightWitness output,
+    ProductionAcceptedOutputHashImage map leftWitness output →
       ProductionAcceptedOutputHashImage map rightWitness output →
-      productionOutputHashPreimage map leftWitness output =
-        productionOutputHashPreimage map rightWitness output
+        ProductionPoseidon2NoCollisionFor spec
+          (productionOutputHashPreimage map leftWitness output)
+          (productionOutputHashPreimage map rightWitness output)
+
+structure ProductionPoseidon2OutputSecurityAssumptions
+    (spec : ProductionNoteHashSpec) : Prop where
+  constraintDigestRefinement : ProductionPoseidon2ConstraintDigestRefinementAssumption spec
+  noCollisionForAcceptedOutputs : ProductionPoseidon2AcceptedOutputNoCollisionAssumption spec
+
+theorem production_accepted_output_hash_digest_bindings_have_equal_deployed_digest
+    {spec : ProductionNoteHashSpec}
+    {map : ProductionConstraintMap}
+    {leftWitness rightWitness : List Nat}
+    {output : Nat}
+    (leftBinding :
+      ProductionAcceptedOutputHashDigestBinding spec map leftWitness output)
+    (rightBinding :
+      ProductionAcceptedOutputHashDigestBinding spec map rightWitness output) :
+    productionDeployedPoseidon2Digest spec
+        (productionOutputHashPreimage map leftWitness output) =
+      productionDeployedPoseidon2Digest spec
+        (productionOutputHashPreimage map rightWitness output) := by
+  exact leftBinding.trans rightBinding.symm
 
 theorem production_output_hash_preimage_equality_binds_value_and_asset
     {map : ProductionConstraintMap}
@@ -2153,9 +2219,9 @@ theorem production_output_hash_preimage_equality_binds_value_and_asset
   · simpa [productionOutputHashPreimage] using firstEqual
   · simpa [productionOutputHashPreimage] using secondEqual
 
-theorem production_poseidon2_collision_resistance_binds_accepted_output_value_and_asset
+theorem production_poseidon2_no_collision_binds_accepted_output_value_and_asset
     {spec : ProductionNoteHashSpec}
-    (collisionResistance : ProductionPoseidon2HashCollisionResistance spec)
+    (security : ProductionPoseidon2OutputSecurityAssumptions spec)
     {map : ProductionConstraintMap}
     {leftWitness rightWitness : List Nat}
     {output : Nat}
@@ -2170,7 +2236,11 @@ theorem production_poseidon2_collision_resistance_binds_accepted_output_value_an
           productionOutputAsset map rightWitness
             (productionOutputCommitmentLane map output 0) output := by
   apply production_output_hash_preimage_equality_binds_value_and_asset
-  exact collisionResistance.2 map leftWitness rightWitness output leftImage rightImage
+  apply (security.noCollisionForAcceptedOutputs
+    map leftWitness rightWitness output leftImage rightImage).2
+  exact production_accepted_output_hash_digest_bindings_have_equal_deployed_digest
+    (security.constraintDigestRefinement map leftWitness output leftImage)
+    (security.constraintDigestRefinement map rightWitness output rightImage)
 
 def ProductionLinearConstraintEquations
     (map : ProductionConstraintMap)
@@ -2535,10 +2605,60 @@ theorem accepted_smallwood_proof_yields_exact_semantic_constraints
   exact ⟨witnessValues,
     production_smallwood_air_rows_are_implementation_equivalent mapBound exactRows⟩
 
+structure ProductionSmallWoodCanonicalSemanticProjection where
+  spendWitnesses : List Nat → List InputSpendWitness
+  inputRows : List Nat → List SmallWoodInputConstraintRow
+  outputWitnesses : List Nat → List SmallWoodOutputWitness
+  outputRows : List Nat → List SmallWoodOutputConstraintRow
+  balanceWitness : List Nat → BalanceWitness
+  balanceSlots : List Nat → List BalanceSlot
+
+/--
+Explicit same-witness specification-refinement boundary. The production map currently exposes
+packed field rows, while `SmallWoodSemanticClosure` uses typed witnesses and its legacy semantic
+hash/Merkle model; no fieldwise decoder/refinement theorem between those models is available.
+-/
+structure ProductionSmallWoodCanonicalSemanticRefinementAssumption
+    (exactMap : ProductionConstraintMap)
+    (shape : PublicInputShape)
+    (merkleRoot : Digest) where
+  projection : ProductionSmallWoodCanonicalSemanticProjection
+  exactRowsRefine :
+    ∀ witnessValues,
+      ProductionSmallWoodSemanticConstraintsSatisfied exactMap witnessValues →
+        SmallWoodSemanticConstraintsSatisfied
+          shape
+          merkleRoot
+          (projection.spendWitnesses witnessValues)
+          (projection.inputRows witnessValues)
+          (projection.outputWitnesses witnessValues)
+          (projection.outputRows witnessValues)
+          (projection.balanceWitness witnessValues)
+          (projection.balanceSlots witnessValues)
+
+def ProductionSmallWoodSameWitnessCanonicalSemanticClosure
+    (exactMap : ProductionConstraintMap)
+    (shape : PublicInputShape)
+    (merkleRoot : Digest) : Prop :=
+  ∃ projection : ProductionSmallWoodCanonicalSemanticProjection,
+    ∃ witnessValues,
+      ProductionSmallWoodSemanticConstraintsSatisfied exactMap witnessValues
+        ∧ SmallWoodSemanticConstraintsSatisfied
+          shape
+          merkleRoot
+          (projection.spendWitnesses witnessValues)
+          (projection.inputRows witnessValues)
+          (projection.outputWitnesses witnessValues)
+          (projection.outputRows witnessValues)
+          (projection.balanceWitness witnessValues)
+          (projection.balanceSlots witnessValues)
+
 structure ProductionAcceptedTransactionRelation
     (verifier : ProductionSmallWoodProofVerifier)
     (exactMap : ProductionConstraintMap)
     (canonicalPublicValues : List Nat)
+    (shape : PublicInputShape)
+    (merkleRoot : Digest)
     (proofBytes serializedPublicInputBytes : List Byte)
     (verifierProfile : Digest)
     (wrapper : ProofWrapperInput) : Prop where
@@ -2547,14 +2667,15 @@ structure ProductionAcceptedTransactionRelation
     verifier.accepts proofBytes serializedPublicInputBytes verifierProfile wrapper = true
   constraintMapBound : ProductionConstraintMapBound exactMap
   canonicalPublicValuesBound : exactMap.publicValues = canonicalPublicValues
-  exactSemanticConstraints :
-    exists witnessValues,
-      ProductionSmallWoodSemanticConstraintsSatisfied exactMap witnessValues
+  sameWitnessCanonicalSemanticClosure :
+    ProductionSmallWoodSameWitnessCanonicalSemanticClosure exactMap shape merkleRoot
 
-theorem accepted_smallwood_proof_yields_transaction_relation
+theorem accepted_smallwood_proof_under_canonical_semantic_refinement_yields_transaction_relation
     {verifier : ProductionSmallWoodProofVerifier}
     {exactMap : ProductionConstraintMap}
     {canonicalPublicValues : List Nat}
+    {shape : PublicInputShape}
+    {merkleRoot : Digest}
     {proofBytes serializedPublicInputBytes : List Byte}
     {verifierProfile : Digest}
     {wrapper : ProofWrapperInput}
@@ -2565,33 +2686,89 @@ theorem accepted_smallwood_proof_yields_transaction_relation
     (publicValuesBound : exactMap.publicValues = canonicalPublicValues)
     (knowledgeSoundness :
       DeployedSmallWoodKnowledgeSoundnessEvidence verifier exactMap proofBytes
-        serializedPublicInputBytes verifierProfile wrapper) :
+        serializedPublicInputBytes verifierProfile wrapper)
+    (semanticRefinement :
+      ProductionSmallWoodCanonicalSemanticRefinementAssumption exactMap shape merkleRoot) :
     ProductionAcceptedTransactionRelation verifier exactMap canonicalPublicValues
-      proofBytes serializedPublicInputBytes verifierProfile wrapper :=
-  { wrapperAccepted
-    exactProofArtifactAccepted := artifactAccepted
-    constraintMapBound := mapBound
-    canonicalPublicValuesBound := publicValuesBound
-    exactSemanticConstraints :=
-      accepted_smallwood_proof_yields_exact_semantic_constraints
-        artifactAccepted mapBound knowledgeSoundness }
+      shape merkleRoot proofBytes serializedPublicInputBytes verifierProfile wrapper := by
+  obtain ⟨witnessValues, exactSemanticConstraints⟩ :=
+    accepted_smallwood_proof_yields_exact_semantic_constraints
+      artifactAccepted mapBound knowledgeSoundness
+  exact
+    { wrapperAccepted
+      exactProofArtifactAccepted := artifactAccepted
+      constraintMapBound := mapBound
+      canonicalPublicValuesBound := publicValuesBound
+      sameWitnessCanonicalSemanticClosure :=
+        ⟨semanticRefinement.projection, witnessValues, exactSemanticConstraints,
+          semanticRefinement.exactRowsRefine witnessValues exactSemanticConstraints⟩ }
 
-theorem production_accepted_transaction_relation_exposes_same_witness_semantics
+theorem production_accepted_transaction_relation_exposes_canonical_transaction_semantics
     {verifier : ProductionSmallWoodProofVerifier}
     {exactMap : ProductionConstraintMap}
     {canonicalPublicValues : List Nat}
+    {shape : PublicInputShape}
+    {merkleRoot : Digest}
     {proofBytes serializedPublicInputBytes : List Byte}
     {verifierProfile : Digest}
     {wrapper : ProofWrapperInput}
     (relation :
       ProductionAcceptedTransactionRelation verifier exactMap canonicalPublicValues
-        proofBytes serializedPublicInputBytes verifierProfile wrapper) :
+        shape merkleRoot proofBytes serializedPublicInputBytes verifierProfile wrapper) :
+    ∃ spendWitnesses : List InputSpendWitness,
+      ∃ inputRows : List SmallWoodInputConstraintRow,
+        ∃ outputWitnesses : List SmallWoodOutputWitness,
+          ∃ outputRows : List SmallWoodOutputConstraintRow,
+            ∃ balanceWitness : BalanceWitness,
+              ∃ slots : List BalanceSlot,
+                SmallWoodSemanticConstraintsSatisfied
+                    shape
+                    merkleRoot
+                    spendWitnesses
+                    inputRows
+                    outputWitnesses
+                    outputRows
+                    balanceWitness
+                    slots
+                  ∧ AcceptedTransactionRelation
+                    wrapper
+                    shape
+                    merkleRoot
+                    spendWitnesses
+                    balanceWitness
+                    slots := by
+  rcases relation.sameWitnessCanonicalSemanticClosure with
+    ⟨projection, witnessValues, _, semanticConstraints⟩
+  exact
+    ⟨projection.spendWitnesses witnessValues,
+      projection.inputRows witnessValues,
+      projection.outputWitnesses witnessValues,
+      projection.outputRows witnessValues,
+      projection.balanceWitness witnessValues,
+      projection.balanceSlots witnessValues,
+      semanticConstraints,
+      accepted_proof_and_semantic_constraints_imply_transaction_relation
+        relation.wrapperAccepted semanticConstraints⟩
+
+theorem production_accepted_transaction_relation_exposes_same_witness_semantics
+    {verifier : ProductionSmallWoodProofVerifier}
+    {exactMap : ProductionConstraintMap}
+    {canonicalPublicValues : List Nat}
+    {shape : PublicInputShape}
+    {merkleRoot : Digest}
+    {proofBytes serializedPublicInputBytes : List Byte}
+    {verifierProfile : Digest}
+    {wrapper : ProofWrapperInput}
+    (relation :
+      ProductionAcceptedTransactionRelation verifier exactMap canonicalPublicValues
+        shape merkleRoot proofBytes serializedPublicInputBytes verifierProfile wrapper) :
     exists witnessValues,
       ExactProductionConstraintMapEvaluates exactMap witnessValues
         ∧ ProductionSpendAuthorizationConstraintRelation exactMap witnessValues
         ∧ ProductionOutputValidityConstraintRelation exactMap witnessValues
         ∧ ProductionBalanceConservationConstraintRelation exactMap witnessValues := by
-  obtain ⟨witnessValues, semanticConstraints⟩ := relation.exactSemanticConstraints
+  obtain ⟨_, witnessValues, semanticConstraints, _⟩ :=
+    relation.sameWitnessCanonicalSemanticClosure
   exact
     ⟨witnessValues, semanticConstraints.exactConstraintEvaluation,
       semanticConstraints.spendAuthorization,

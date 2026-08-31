@@ -1,0 +1,49 @@
+{
+  "schema": "hegemon.m4-terminal-target-leaf.v1",
+  "date": "2026-08-21",
+  "upstream_revision": "3f96163049f680b2909f6545690bd929f1b48c44",
+  "base_selected_wire_patch_sha256": "fa442ca4fd18fec239e874134c4cd41d82e2caafacfe987c9ea5867ededd45ee",
+  "main_public_elision_patch_sha256": "8607f483270187ff32d2802b5a4584dd208150b31ee8c333b8201b33d9ee0d9c",
+  "terminal_target_patch_sha256": "d0bfabb7bffcab6097af635913e662506afc73d2b354382158d9350b827fcee9",
+  "log_inverse_rate": 3,
+  "proof_bytes": 69456,
+  "envelope_bytes": 69468,
+  "previous_proof_bytes": 71280,
+  "saved_bytes": 1824,
+  "distinct_initial_query_leaves": 114,
+  "proof_sha256": "394bcefc53b774b31e4e4e4f9d964051590891bf3d66912226678e157915d401",
+  "relation": {
+    "full_pay1x2": true,
+    "single_main": true,
+    "chips": 0,
+    "shake256_permutations": 40,
+    "private_witness_bytes": 2448,
+    "canonical_public_statement_bytes": 478,
+    "and_constraints": 24160,
+    "committed_tier": 32768
+  },
+  "verification": {
+    "honest_roundtrip": true,
+    "all_public_mutations_rejected": true,
+    "proof_mutation_rejected": true,
+    "trailing_bytes_rejected": true,
+    "division_free_roundtrip": true,
+    "duplicate_queries_verified": true,
+    "wrong_target_rejected": true,
+    "scalar_circuit_differentials": 16,
+    "clippy_deny_warnings": true
+  },
+  "security": {
+    "transparent_not_zero_knowledge": true,
+    "upstream_query_bits": 96,
+    "commitment_hash": "SHA-256",
+    "challenge_field": "GF(2^128)",
+    "strict_pq128": false,
+    "production_authorized": false
+  },
+  "compatibility": {
+    "native_direct_verifier": true,
+    "recursive_channels_updated": false,
+    "generic_size_estimator_updated": false
+  }
+}

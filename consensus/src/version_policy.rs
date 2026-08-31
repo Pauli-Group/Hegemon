@@ -1,4 +1,8 @@
-use protocol_versioning::{DEFAULT_VERSION_BINDING, VersionBinding};
+use protocol_versioning::{
+    HEGEMON_PROOF_NETWORK_ID, ProofAuthorityClass, ProofAuthorityContext, ProofAuthorityDecision,
+    ProofAuthorityOperation, VersionBinding, fresh_transaction_proof_capabilities,
+    proof_authority_decision,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -28,7 +32,20 @@ pub struct VersionSchedule {
 
 impl Default for VersionSchedule {
     fn default() -> Self {
-        Self::new(vec![DEFAULT_VERSION_BINDING])
+        let mut schedule = Self::new([]);
+        for capability in fresh_transaction_proof_capabilities() {
+            schedule
+                .activations
+                .entry(capability.activation_height())
+                .or_default()
+                .push(capability.binding());
+            schedule
+                .retirements
+                .entry(capability.deactivation_height_exclusive())
+                .or_default()
+                .push(capability.binding());
+        }
+        schedule
     }
 }
 
@@ -65,7 +82,7 @@ impl VersionSchedule {
         self.proposals.push(proposal);
     }
 
-    pub fn allowed_at(&self, height: u64) -> BTreeSet<VersionBinding> {
+    fn scheduled_at(&self, height: u64) -> BTreeSet<VersionBinding> {
         let mut allowed = self.initial.clone();
         for (_height, versions) in self.activations.range(..=height) {
             for version in versions {
@@ -78,6 +95,41 @@ impl VersionSchedule {
             }
         }
         allowed
+    }
+
+    /// Bind the configurable timing schedule to the source-owned proof
+    /// capability registry. Schedule mutation may narrow or delay a release,
+    /// but it cannot create proof authority for an arbitrary decoder binding.
+    /// Historical replay is deliberately absent because this surface has no
+    /// authenticated chain/checkpoint context.
+    pub fn allowed_at(&self, height: u64) -> BTreeSet<VersionBinding> {
+        let scheduled = self.scheduled_at(height);
+        let source_authorized = fresh_transaction_proof_capabilities()
+            .into_iter()
+            .filter(|capability| {
+                matches!(
+                    proof_authority_decision(
+                        ProofAuthorityOperation::BlockAcceptance,
+                        ProofAuthorityContext {
+                            network_id: HEGEMON_PROOF_NETWORK_ID,
+                            height,
+                            binding: capability.binding(),
+                            family_id: capability.family_id(),
+                            action_id: capability.action_id(),
+                            proof_class: ProofAuthorityClass::Transaction,
+                            historical_chain: None,
+                        },
+                        &[],
+                    ),
+                    ProofAuthorityDecision::Fresh(_)
+                )
+            })
+            .map(|capability| capability.binding())
+            .collect::<BTreeSet<_>>();
+        scheduled
+            .intersection(&source_authorized)
+            .copied()
+            .collect()
     }
 
     pub fn is_allowed(&self, version: VersionBinding, height: u64) -> bool {
@@ -112,6 +164,44 @@ impl VersionSchedule {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_schedule_contains_only_source_authorized_fresh_bindings() {
+        let expected = fresh_transaction_proof_capabilities()
+            .into_iter()
+            .filter(|capability| capability.active_at(0))
+            .map(|capability| capability.binding())
+            .collect::<BTreeSet<_>>();
+        let schedule = VersionSchedule::default();
+
+        assert_eq!(schedule.allowed_at(0), expected);
+        assert!(
+            !schedule.is_allowed(protocol_versioning::DEFAULT_VERSION_BINDING, 0),
+            "the V4 decoder default must not become fresh consensus authority"
+        );
+    }
+
+    #[test]
+    fn arbitrary_schedule_entries_cannot_create_proof_authority() {
+        let decoder_only = protocol_versioning::DEFAULT_VERSION_BINDING;
+        let invented = VersionBinding::new(
+            decoder_only.circuit.saturating_add(100),
+            decoder_only.crypto,
+        );
+        let mut schedule = VersionSchedule::new([decoder_only]);
+        schedule.register(VersionProposal {
+            binding: invented,
+            activates_at: 0,
+            retires_at: None,
+            upgrade: None,
+        });
+
+        assert!(schedule.scheduled_at(0).contains(&decoder_only));
+        assert!(schedule.scheduled_at(0).contains(&invented));
+        assert!(schedule.allowed_at(0).is_empty());
+        assert!(!schedule.is_allowed(decoder_only, 0));
+        assert!(!schedule.is_allowed(invented, 0));
+    }
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -183,7 +273,9 @@ mod tests {
                 .extend(event.versions.iter().copied());
         }
 
-        let allowed = schedule.allowed_at(case.height);
+        // The generated vectors model schedule arithmetic only. Production
+        // `allowed_at` additionally intersects this set with source authority.
+        let allowed = schedule.scheduled_at(case.height);
         let expected_allowed = case
             .expected_allowed
             .iter()
@@ -195,7 +287,12 @@ mod tests {
             case.name
         );
 
-        let result = schedule.validate_versions(case.height, case.tx_versions.iter().copied());
+        let first_unsupported = case
+            .tx_versions
+            .iter()
+            .copied()
+            .find(|version| !allowed.contains(version));
+        let result = first_unsupported.map_or(Ok(()), Err);
         assert_eq!(
             result.is_ok(),
             case.expected_valid,

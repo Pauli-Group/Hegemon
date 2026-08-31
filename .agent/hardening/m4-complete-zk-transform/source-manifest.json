@@ -1,0 +1,68 @@
+{
+  "schema": "hegemon.m4-complete-zk-transform.sources.v1",
+  "review_date": "2026-08-22",
+  "pinned_binius_revision": "3f961630",
+  "local_sources": [
+    {
+      "path": "prototypes/standalone-shake256-binius/strict-mixed-field/src/complete_zk.rs",
+      "sha256": "0babc2344eedaa9cfefb03312a086e2b69f041579fbb7f6d21ffa338423e8780"
+    },
+    {
+      "path": "prototypes/standalone-shake256-binius/strict-mixed-field/src/mixed_basefold_pcs.rs",
+      "sha256": "dd2f249a3834f3fe5cbe303d939c267296101f9a1541849bca990eb88e4cf29f"
+    },
+    {
+      "path": ".agent/hardening/ligerito-e384-veil-complete-zk/certificate.json",
+      "sha256": "5d81df1f2ee6c08038a28f8b35c50fa73719a391a2acd3c215255a2ba9d03624"
+    },
+    {
+      "path": ".agent/hardening/smallwood-pqc-zk/README.md",
+      "sha256": "611dfaacb4c77a7e52e75c4ddac7dc58f58185c36d4dd56b2b7de76029f22569"
+    }
+  ],
+  "pinned_upstream_sources": [
+    {
+      "path": "crates/iop-prover/src/fri/encode.rs",
+      "sha256": "e01fb55d6f75cfbd714536a0c1df86b667e6543c6a1981961e4e2e7efe632a65"
+    },
+    {
+      "path": "crates/iop-prover/src/merkle_channel.rs",
+      "sha256": "aea4681ca9538622cb25d2fc936eb2a38abb01283a525e52f48ec5d293193bac"
+    },
+    {
+      "path": "crates/iop-prover/src/basefold/channel.rs",
+      "sha256": "7f1f5204619e0b3ceb7ddbb49a9f463b0bc56248bc59070d1f189f19d04820b0"
+    },
+    {
+      "path": "crates/spartan-prover/src/wrapper/zk_wrapped_prover_channel.rs",
+      "sha256": "e8024d566c533445f7d2a8a09e4a39028b3a5c319a985f4626bb7eeb590b217f"
+    },
+    {
+      "path": "crates/m4-prover/src/composite.rs",
+      "sha256": "d2ac41db2809f2c394c239c0de24fddf89d808775842a7333d00918261d08e77"
+    }
+  ],
+  "external_primary_sources": [
+    {
+      "url": "https://eprint.iacr.org/2026/391",
+      "role": "CFW26 HVZK constrained-interleaved-code IOPP and RBR/straightline-extractor theorem scope"
+    },
+    {
+      "url": "https://github.com/Plonky3/Plonky3/pull/1767",
+      "role": "merged full HidingWhirPcs architecture, parallel carried relation, and reported benchmark scope"
+    },
+    {
+      "url": "https://github.com/Plonky3/Plonky3/issues/1584",
+      "role": "t-query randomized RS encoding by appending t random coefficients"
+    },
+    {
+      "url": "https://github.com/Plonky3/Plonky3/issues/1585",
+      "role": "private zero-evader with full-rank random block"
+    },
+    {
+      "url": "https://github.com/Plonky3/Plonky3/issues/1587",
+      "role": "fresh per-round ZK code, private OOD values, HVZK and RBR lemmas"
+    }
+  ],
+  "network_artifacts_vendored": false
+}

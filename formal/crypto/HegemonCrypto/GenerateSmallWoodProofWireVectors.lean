@@ -20,7 +20,7 @@ def cases : List WireCase :=
     { name := "zero-nonzero-matrix-shape", bytes := invalidZeroShapeProof.encode },
     { name := "excessive-matrix-rows", bytes := excessiveRowsProof.encode },
     { name := "noncanonical-field-word", bytes := noncanonicalFieldProof.encode },
-    { name := "empty-auth-path", bytes := emptyAuthPathProof.encode },
+    { name := "zero-length-auth-path", bytes := emptyAuthPathProof.encode },
     { name := "invalid-opened-witness-mode", bytes := invalidOpenedWitnessModeBytes } ]
 
 def accepted (bytes : List Byte) : Bool :=

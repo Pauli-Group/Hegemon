@@ -438,7 +438,7 @@ fn smallwood_backend_opening_surface_report() {
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
     let report = exact_smallwood_candidate_backend_opening_surface_report_from_witness(
         &witness,
-        SmallwoodArithmetization::DirectPacked64CompressedLevel5,
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1,
         ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
     )
     .expect("backend opening-surface report");
@@ -454,6 +454,15 @@ fn smallwood_backend_opening_surface_report() {
         "exact wrapped candidate bytes must stay at or below the projected structural upper bound: exact={} projected={}",
         report.exact_total_bytes,
         report.structural_upper_bound_bytes
+    );
+    assert_eq!(
+        report.structural_upper_bound_bytes, 126_454,
+        "the generated SMZ1 opening-surface report must include the exact 1,472-byte opened-tape payload"
+    );
+    assert_eq!(
+        report.backend.decs_leaf_tapes_bytes,
+        23 * 64,
+        "the generated SMZ1 opening-surface report must expose every opened leaf tape"
     );
     assert_eq!(
         report.backend.decs_opened_leaf_count,
@@ -609,19 +618,28 @@ fn smallwood_candidate_proof_stays_below_native_tx_leaf_cap() {
 }
 
 #[test]
-fn smallwood_candidate_default_projection_tracks_committed_inline_merkle_arithmetization() {
+fn smallwood_candidate_default_projection_accounts_for_smz1_opened_leaf_tapes() {
     let mut witness = sample_witness();
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
     let default_bytes = projected_smallwood_candidate_proof_bytes(&witness)
         .expect("projected smallwood candidate proof bytes");
-    let compressed_level5_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
+    let historical_smw2_bytes = projected_smallwood_candidate_proof_bytes_for_arithmetization(
         &witness,
         SmallwoodArithmetization::DirectPacked64CompressedLevel5,
     )
-    .expect("projected compressed Level-5 SmallWood candidate proof bytes");
+    .expect("projected historical SMW2 compressed Level-5 proof bytes");
     assert_eq!(
-        default_bytes, compressed_level5_bytes,
-        "default SmallWood candidate projection must stay pinned to the compressed Level-5 V4 arithmetization"
+        default_bytes, 126_454,
+        "the strict SMZ1 structural ceiling must include all 23 opened 64-byte leaf tapes"
+    );
+    assert_eq!(
+        default_bytes - historical_smw2_bytes,
+        23 * 64,
+        "SMZ1 must add exactly one 64-byte hiding tape for each of the 23 opened DECS leaves"
+    );
+    assert!(
+        default_bytes <= 128 * 1024,
+        "the conservative SMZ1 structural ceiling must remain within 128 KiB"
     );
 }
 

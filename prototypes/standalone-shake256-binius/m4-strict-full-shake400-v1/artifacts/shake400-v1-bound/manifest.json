@@ -1,0 +1,76 @@
+{
+  "artifact": {
+    "canonical_envelope_bytes": 1344828,
+    "canonical_envelope_sha256": "c4c5507558265dfde68df7038142e9516ca7fa96bf7d0fa6d97595fd675de72d",
+    "canonical_envelope_shake256_512": "7b8a85ecf4d4b464dae03b3a122756277b1b718a2b147674212bc424fe64ac57cd26fb2ddce33064993cde034181700f1204cf95ec0b06de5d1412b51c22f71c",
+    "forgery_control_envelope_bytes": 1344828,
+    "forgery_control_envelope_sha256": "ed3a67193d54c7eaa13038a7b37bcee574476957d3039636c4c3e1fba0363e12",
+    "per_repetition_proof_bytes": [
+      448224,
+      448224,
+      448224
+    ],
+    "statement_sha256": "e3b67fdc45f0a925bc693f9611be1790c25560d748b17d8d31cf0ea8be677eac"
+  },
+  "backend": {
+    "buffer_pool_patch_sha256": "0fff3fcb6cbdf2086a4bdef73f5085c77389116ffa945f454ac57f23d7c9667f",
+    "challenge_field_per_copy": "BinaryField128bGhash",
+    "coefficient_patch_sha256": "684ad2cde0d49fcb095fd542990dd3dcfa246d7a0378b7ec8f7377fcfa9d2c54",
+    "grouped_patch_sha256": "37dfdee589e476c09fe5c955bd46942cd5aa293a3177d7a43d07f14aeb8ef9df",
+    "hash_suite": "StrictShake256HashSuite",
+    "log_inverse_rate": 3,
+    "proof_hash": "SHAKE256-400",
+    "sequential_repetitions": 3,
+    "source_bundle_sha256": "41a16dcc9ee2bb706b9aee7bf67e02b9c1adb253f76a3909e7a7aef993fea76e",
+    "upstream_revision": "3f96163049f680b2909f6545690bd929f1b48c44"
+  },
+  "gates": {
+    "each_repetition_transcript_finalized": true,
+    "exact_envelope_consumption": true,
+    "fresh_alternate_statement_proof_verified": true,
+    "fresh_alternate_statement_replay_rejected": true,
+    "honest_roundtrip": true,
+    "proof_mutations_rejected": true,
+    "statement_mutation_rejected": true,
+    "trailing_bytes_rejected": true,
+    "truncation_rejected": true
+  },
+  "relation": {
+    "and_constraints": 51449,
+    "keccak_f": 83,
+    "maximum_full_m4": true,
+    "numbered_chips": 0,
+    "private_words": 52374,
+    "public_words": 114,
+    "statement_bytes": 853
+  },
+  "schema": "hegemon.full-m4.shake400-repeated-zk-baseline.v1",
+  "security": {
+    "complete_zk_established": false,
+    "composed_arithmetic_screen_bits": 133.33242406618365,
+    "domain_separated_sequential_repetition": true,
+    "fresh_os_randomness_per_repetition": true,
+    "grouped_precommit_private_relation_active": true,
+    "per_copy_classical_bits": 96.0,
+    "production_authorized": false,
+    "proof_hash_quantum_collision_bits": 133.33333333333334,
+    "qrom_square_root_protocol_bits": 144.0,
+    "remaining_release_gates": [
+      "independent review of the grouped joint simulator and QROM direct-product reduction",
+      "arbitrary-input Rust/M4 refinement certificate",
+      "production action and wallet parser integration",
+      "proof must satisfy the production 512-KiB envelope cap"
+    ],
+    "repeated_classical_bits": 288.0,
+    "security_claim_established": false,
+    "semantic_hash_quantum_collision_bits": 149.33333333333334,
+    "stock_wrapper_without_grouped_repair": false,
+    "zk_wrapper_basis": "pinned upstream ZK wrapper plus grouped precommit/private Phase-A relation; sequential copies use independent honest-prover coins"
+  },
+  "status": "full-m4-zk-wrapper-pq128-screen-not-production-authorized",
+  "timing_ms": {
+    "canonical_prove": 2830.6621659999996,
+    "forgery_control_prove": 3227.001917,
+    "setup": 338.470208
+  }
+}

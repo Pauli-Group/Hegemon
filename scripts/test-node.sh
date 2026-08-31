@@ -438,7 +438,8 @@ two_node_restart() {
 wallet_send() {
   ensure_binary
   log "running native wallet submission compatibility test"
-  cargo test -p hegemon-node --lib --no-default-features prepare_work_keeps_sidecar_transfer_with_matching_staged_ciphertext
+  cargo test -p hegemon-node --lib --no-default-features submit_sidecar_action_rejects_before_consuming_embedded_staged_proof
+  cargo test -p hegemon-node --lib --no-default-features pending_action_startup_durably_quarantines_inactive_sidecar_with_matching_ciphertext
 }
 
 usage() {

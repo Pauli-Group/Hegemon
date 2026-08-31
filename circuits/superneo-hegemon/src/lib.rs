@@ -4,10 +4,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use anyhow::{ensure, Result};
-use blake3::Hasher;
 use hegemon_field::Goldilocks;
+use hegemon_hash384::{
+    domains::{SUPERNEO_PROOF_ARTIFACT_V2, SUPERNEO_VERIFIER_PROFILE_V2, SUPERNEO_VERIFY_CACHE_V2},
+    Blake2b384DomainHasher,
+};
 use protocol_versioning::{
     tx_proof_backend_for_version, TxProofBackend, VersionBinding, DEFAULT_TX_PROOF_BACKEND,
+    LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING, SMALLWOOD_CANDIDATE_VERSION_BINDING,
+    SMALLWOOD_V3_VERSION_BINDING,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -25,15 +30,15 @@ use transaction_circuit::hashing_pq::{bytes48_to_felts, felts_to_bytes48};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{InputNoteWitness, OutputNoteWitness, MERKLE_TREE_DEPTH};
 use transaction_circuit::proof::{
-    prove_with_params as prove_transaction_with_params,
+    expected_balance_tag_from_verifier_inputs, prove_with_params as prove_transaction_with_params,
     prove_with_params_and_smallwood_auth as prove_transaction_with_params_and_smallwood_auth,
     smallwood_arithmetization_from_backend_and_proof_bytes, transaction_proof_digest,
     transaction_proof_digest_from_parts, transaction_public_inputs_digest,
     transaction_public_inputs_digest_from_serialized, transaction_statement_hash_checked,
     transaction_statement_hash_from_parts, transaction_statement_hash_from_public_inputs_checked,
-    transaction_verifier_profile_digest, validate_serialized_stark_monetary_ranges,
-    verify as verify_transaction_proof, verify_transaction_proof_bytes_for_backend,
-    SerializedStarkInputs, TransactionProof,
+    transaction_verifier_profile_digest, validate_serialized_stark_asset_canonicality,
+    validate_serialized_stark_monetary_ranges, verify as verify_transaction_proof,
+    verify_transaction_proof_bytes_for_backend, SerializedStarkInputs, TransactionProof,
 };
 use transaction_circuit::public_inputs::TransactionPublicInputs;
 use transaction_circuit::TransactionProofParams;
@@ -45,6 +50,15 @@ pub const MAX_RECEIPT_BYTES: usize = 96;
 pub const MAX_TRACE_BITS: usize = 256;
 pub const TX_LEAF_ARTIFACT_VERSION: u16 = 1;
 pub const RECEIPT_ROOT_DIGEST_WIDTH: usize = 4;
+
+const ROLE_TX_RECEIPT_STATEMENT_V2: &[u8] = b"tx-receipt-statement";
+const ROLE_TX_RECEIPT_PROOF_V2: &[u8] = b"tx-receipt-proof";
+const ROLE_TX_RECEIPT_PUBLIC_INPUTS_V2: &[u8] = b"tx-receipt-public-inputs";
+const ROLE_TX_RECEIPT_VERIFICATION_TRACE_V2: &[u8] = b"tx-receipt-verification-trace";
+const ROLE_TX_RECEIPT_VERIFIER_PROFILE_V2: &[u8] = b"tx-receipt-verifier-profile";
+const ROLE_NATIVE_LEAF_REVIEW_PROOF_V2: &[u8] = b"native-leaf-review-proof";
+const ROLE_NATIVE_RECEIPT_ROOT_LEAF_CACHE_V2: &[u8] = b"native-receipt-root-leaf";
+const ROLE_NATIVE_RECEIPT_ROOT_CHUNK_CACHE_V2: &[u8] = b"native-receipt-root-chunk";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeReceiptRootBuildCacheStats {
@@ -1016,6 +1030,21 @@ pub struct BuiltReceiptRootArtifact {
     pub metadata: ReceiptRootMetadata,
 }
 
+/// Compiled release identities that 32-byte SuperNeo identifiers must match
+/// before any attacker-supplied proof is verified. These values are fixed
+/// targets, never registry keys selected by proof bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeSuperneoFixedIdentityV2 {
+    pub schema_version: u16,
+    pub params_fingerprint: [u8; 48],
+    pub spec_digest: [u8; 32],
+    pub relation_id: [u8; 32],
+    pub shape_digest: [u8; 32],
+    pub tx_leaf_artifact_version: u16,
+    pub receipt_root_artifact_version: u16,
+    pub tx_leaf_verifier_profile: [u8; 48],
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeReceiptRootHierarchyNode {
     pub leaf_start: u32,
@@ -1322,14 +1351,14 @@ impl Relation<Goldilocks> for TxProofReceiptRelation {
             MAX_TRACE_BITS
         );
         ensure!(
-            digest48(b"hegemon.superneo.proof-bytes.v1", &witness.receipt_bytes)
+            superneo_proof_artifact_digest(ROLE_TX_RECEIPT_PROOF_V2, &[&witness.receipt_bytes],)
                 == statement.proof_digest,
             "receipt witness does not match proof digest"
         );
         ensure!(
-            digest48(
-                b"hegemon.superneo.verification-trace.v1",
-                &witness.verification_trace_bits,
+            superneo_proof_artifact_digest(
+                ROLE_TX_RECEIPT_VERIFICATION_TRACE_V2,
+                &[&witness.verification_trace_bits],
             ) == statement.verification_trace_digest,
             "verification trace witness does not match trace digest"
         );
@@ -1373,17 +1402,18 @@ pub fn build_tx_proof_receipt(
         !verifier_profile.is_empty(),
         "verifier profile must not be empty"
     );
-    let tx_statement_digest = digest48_with_parts(
-        b"hegemon.superneo.tx-statement.v1",
+    let tx_statement_digest = superneo_proof_artifact_digest(
+        ROLE_TX_RECEIPT_STATEMENT_V2,
         &[public_inputs, verifier_profile],
     );
-    let proof_digest = digest48(b"hegemon.superneo.proof-bytes.v1", proof_bytes);
+    let proof_digest = superneo_proof_artifact_digest(ROLE_TX_RECEIPT_PROOF_V2, &[proof_bytes]);
     let verifier_profile_digest =
-        digest48(b"hegemon.superneo.verifier-profile.v1", verifier_profile);
-    let public_inputs_digest = digest48(b"hegemon.superneo.public-inputs.v1", public_inputs);
-    let verification_trace_digest = digest48(
-        b"hegemon.superneo.verification-trace.v1",
-        verification_trace_bits,
+        superneo_verifier_profile_digest(ROLE_TX_RECEIPT_VERIFIER_PROFILE_V2, &[verifier_profile]);
+    let public_inputs_digest =
+        superneo_proof_artifact_digest(ROLE_TX_RECEIPT_PUBLIC_INPUTS_V2, &[public_inputs]);
+    let verification_trace_digest = superneo_proof_artifact_digest(
+        ROLE_TX_RECEIPT_VERIFICATION_TRACE_V2,
+        &[verification_trace_bits],
     );
 
     Ok(TxProofReceipt {
@@ -1469,6 +1499,31 @@ fn native_tx_leaf_setup_context_with_params(
     NATIVE_TX_LEAF_SETUP_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
     guard.insert(key, Arc::clone(&built));
     Ok(built)
+}
+
+fn native_superneo_fixed_identity_v2_for_params(
+    params: &NativeBackendParams,
+) -> Result<NativeSuperneoFixedIdentityV2> {
+    let context = native_tx_leaf_setup_context_with_params(params)?;
+    Ok(NativeSuperneoFixedIdentityV2 {
+        schema_version: 2,
+        params_fingerprint: params.parameter_fingerprint(),
+        spec_digest: params.spec_digest(),
+        relation_id: context.relation.relation_id().0,
+        shape_digest: context.pk.shape_digest.0,
+        tx_leaf_artifact_version: native_tx_leaf_artifact_version(params),
+        receipt_root_artifact_version: receipt_root_artifact_version(params),
+        tx_leaf_verifier_profile: derive_verifier_profile(
+            params,
+            &context.relation.relation_id(),
+            &context.pk.shape_digest,
+            b"native-tx-leaf",
+        ),
+    })
+}
+
+pub fn native_superneo_fixed_identity_v2() -> Result<NativeSuperneoFixedIdentityV2> {
+    native_superneo_fixed_identity_v2_for_params(&native_backend_params())
 }
 
 pub fn native_tx_leaf_setup_cache_stats() -> NativeTxLeafSetupCacheStats {
@@ -1735,6 +1790,8 @@ fn transaction_verifier_inputs_from_tx_leaf_public(
 ) -> Result<TransactionVerifierInputs> {
     validate_serialized_stark_monetary_ranges(stark_inputs)
         .map_err(|err| anyhow::anyhow!("invalid tx-leaf monetary range: {err}"))?;
+    validate_serialized_stark_asset_canonicality(stark_inputs)
+        .map_err(|err| anyhow::anyhow!("invalid tx-leaf asset encoding: {err}"))?;
     ensure!(
         tx.nullifiers.len() <= MAX_INPUTS,
         "tx nullifier length {} exceeds {}",
@@ -2602,12 +2659,13 @@ fn derive_verifier_profile(
     shape_digest: &superneo_ccs::ShapeDigest,
     profile_label: &[u8],
 ) -> [u8; 48] {
-    digest48_with_parts(
-        b"hegemon.superneo.explicit-verifier-profile.v1",
+    let params_fingerprint = params.parameter_fingerprint();
+    let spec_digest = params.spec_digest();
+    superneo_verifier_profile_digest(
+        profile_label,
         &[
-            profile_label,
-            &params.parameter_fingerprint(),
-            &params.spec_digest(),
+            &params_fingerprint,
+            &spec_digest,
             &relation_id.0,
             &shape_digest.0,
         ],
@@ -2622,20 +2680,11 @@ pub fn experimental_receipt_root_verifier_profile() -> [u8; 48] {
     let (pk, _) = backend
         .setup(&security, relation.shape())
         .expect("experimental receipt-root setup must succeed");
-    let mut material = Vec::with_capacity(32 + 32 + 32 + 32);
-    material.extend_from_slice(b"hegemon.superneo.receipt-root-profile.v1");
-    material.extend_from_slice(&params.spec_digest());
-    material.extend_from_slice(&relation.relation_id().0);
-    material.extend_from_slice(&pk.shape_digest.0);
-    material.extend_from_slice(&pk.security_bits.to_le_bytes());
-    material.extend_from_slice(&pk.challenge_bits.to_le_bytes());
-    material.extend_from_slice(&pk.fold_challenge_count.to_le_bytes());
-    material.extend_from_slice(&pk.max_fold_arity.to_le_bytes());
-    material.extend_from_slice(&pk.transcript_domain_digest);
-    material.extend_from_slice(&pk.opening_randomness_bits.to_le_bytes());
-    digest48(
-        b"hegemon.superneo.receipt-root-profile.digest.v1",
-        &material,
+    derive_verifier_profile(
+        &params,
+        &relation.relation_id(),
+        &pk.shape_digest,
+        b"receipt-root",
     )
 }
 
@@ -2647,18 +2696,12 @@ pub fn experimental_tx_leaf_verifier_profile() -> [u8; 48] {
     let (pk, _) = backend
         .setup(&security, relation.shape())
         .expect("experimental tx-leaf setup must succeed");
-    let mut material = Vec::with_capacity(32 + 32 + 32 + 32);
-    material.extend_from_slice(b"hegemon.superneo.tx-leaf-profile.v1");
-    material.extend_from_slice(&params.spec_digest());
-    material.extend_from_slice(&relation.relation_id().0);
-    material.extend_from_slice(&pk.shape_digest.0);
-    material.extend_from_slice(&pk.security_bits.to_le_bytes());
-    material.extend_from_slice(&pk.challenge_bits.to_le_bytes());
-    material.extend_from_slice(&pk.fold_challenge_count.to_le_bytes());
-    material.extend_from_slice(&pk.max_fold_arity.to_le_bytes());
-    material.extend_from_slice(&pk.transcript_domain_digest);
-    material.extend_from_slice(&pk.opening_randomness_bits.to_le_bytes());
-    digest48(b"hegemon.superneo.tx-leaf-profile.digest.v1", &material)
+    derive_verifier_profile(
+        &params,
+        &relation.relation_id(),
+        &pk.shape_digest,
+        b"tx-leaf",
+    )
 }
 
 pub fn experimental_native_tx_leaf_verifier_profile_for_params(
@@ -2835,10 +2878,11 @@ fn native_leaf_proof_digest(
     commitment_digest: &[u8; 48],
     opening_digest: &[u8; 48],
 ) -> [u8; 48] {
-    digest48_with_parts(
-        b"hegemon.superneo.native-leaf-proof.v1",
+    let params_fingerprint = params.parameter_fingerprint();
+    superneo_proof_artifact_digest(
+        ROLE_NATIVE_LEAF_REVIEW_PROOF_V2,
         &[
-            &params.parameter_fingerprint(),
+            &params_fingerprint,
             &relation_id.0,
             &statement_digest.0,
             commitment_digest,
@@ -2863,15 +2907,39 @@ pub fn native_leaf_proof_digest_for_review(
     )
 }
 
+fn ensure_active_transaction_version(version: VersionBinding) -> Result<()> {
+    ensure!(
+        version == SMALLWOOD_CANDIDATE_VERSION_BINDING,
+        "production native transaction artifact API requires active V4; {version:?} is historical-replay-only"
+    );
+    Ok(())
+}
+
+fn ensure_historical_replay_transaction_version(version: VersionBinding) -> Result<()> {
+    ensure!(
+        version == LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING
+            || version == SMALLWOOD_V3_VERSION_BINDING,
+        "historical replay accepts only legacy V2/V3 transaction artifacts; {version:?} is not historical"
+    );
+    Ok(())
+}
+
 pub fn build_tx_leaf_artifact_bytes(proof: &TransactionProof) -> Result<BuiltTxLeafArtifact> {
+    ensure_active_transaction_version(proof.version_binding())?;
+    verify_transaction_proof(proof, transaction_verifying_key())
+        .map_err(|err| anyhow::anyhow!("transaction proof verification failed: {err}"))?;
+    build_tx_leaf_artifact_bytes_after_verification(proof)
+}
+
+fn build_tx_leaf_artifact_bytes_after_verification(
+    proof: &TransactionProof,
+) -> Result<BuiltTxLeafArtifact> {
     let relation = TxLeafPublicRelation::default();
     let backend = LatticeBackend::default();
     let security = backend.security_params();
     let packer = GoldilocksPayPerBitPacker::new(GoldilocksPackingConfig::default());
     let (pk, _) = backend.setup(&security, relation.shape())?;
 
-    verify_transaction_proof(proof, transaction_verifying_key())
-        .map_err(|err| anyhow::anyhow!("transaction proof verification failed: {err}"))?;
     let receipt = canonical_tx_validity_receipt_from_transaction_proof(proof)?;
     let witness = tx_leaf_public_witness_from_transaction_proof(proof)?;
     let encoding = relation.encode_statement(&receipt)?;
@@ -2929,6 +2997,14 @@ pub fn build_native_tx_leaf_artifact_bytes_with_params(
     params: &NativeBackendParams,
     witness: &TransactionWitness,
 ) -> Result<BuiltNativeTxLeafArtifact> {
+    ensure_active_transaction_version(witness.version)?;
+    build_native_tx_leaf_artifact_bytes_with_params_after_version_policy(params, witness)
+}
+
+fn build_native_tx_leaf_artifact_bytes_with_params_after_version_policy(
+    params: &NativeBackendParams,
+    witness: &TransactionWitness,
+) -> Result<BuiltNativeTxLeafArtifact> {
     let proof = prove_transaction_with_params(
         witness,
         transaction_proving_key(),
@@ -2939,6 +3015,17 @@ pub fn build_native_tx_leaf_artifact_bytes_with_params(
 }
 
 pub fn build_native_tx_leaf_artifact_bytes_with_params_and_auth(
+    params: &NativeBackendParams,
+    witness: &TransactionWitness,
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<BuiltNativeTxLeafArtifact> {
+    ensure_active_transaction_version(witness.version)?;
+    build_native_tx_leaf_artifact_bytes_with_params_and_auth_after_version_policy(
+        params, witness, auth,
+    )
+}
+
+fn build_native_tx_leaf_artifact_bytes_with_params_and_auth_after_version_policy(
     params: &NativeBackendParams,
     witness: &TransactionWitness,
     auth: &SmallwoodPrivateAuthWitness,
@@ -2960,7 +3047,15 @@ fn build_native_tx_leaf_artifact_from_transaction_proof_with_params(
     let context = native_tx_leaf_setup_context_with_params(params)?;
 
     if native_tx_leaf_self_verify_enabled() {
-        verify_transaction_proof(proof, transaction_verifying_key())
+        let verification = if proof.version_binding() == SMALLWOOD_CANDIDATE_VERSION_BINDING {
+            verify_transaction_proof(proof, transaction_verifying_key())
+        } else {
+            transaction_circuit::proof::historical_replay::verify(
+                proof,
+                transaction_verifying_key(),
+            )
+        };
+        verification
             .map_err(|err| anyhow::anyhow!("transaction proof verification failed: {err}"))?;
     }
     let tx = tx_leaf_public_tx_from_transaction_proof(proof)?;
@@ -3396,6 +3491,15 @@ pub fn verify_tx_leaf_artifact_bytes(
     receipt: &CanonicalTxValidityReceipt,
     artifact_bytes: &[u8],
 ) -> Result<TxLeafMetadata> {
+    ensure_active_transaction_version(tx.version)?;
+    verify_tx_leaf_artifact_bytes_after_version_policy(tx, receipt, artifact_bytes)
+}
+
+fn verify_tx_leaf_artifact_bytes_after_version_policy(
+    tx: &TxLeafPublicTx,
+    receipt: &CanonicalTxValidityReceipt,
+    artifact_bytes: &[u8],
+) -> Result<TxLeafMetadata> {
     let artifact = decode_tx_leaf_artifact_bytes(artifact_bytes)?;
     ensure!(
         artifact.version == TX_LEAF_ARTIFACT_VERSION,
@@ -3489,6 +3593,23 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
     receipt: &CanonicalTxValidityReceipt,
     artifact_bytes: &[u8],
 ) -> Result<NativeTxLeafMetadata> {
+    ensure_active_transaction_version(tx.version)?;
+    verify_native_tx_leaf_artifact_bytes_with_params_after_version_policy(
+        params,
+        tx,
+        receipt,
+        artifact_bytes,
+        false,
+    )
+}
+
+fn verify_native_tx_leaf_artifact_bytes_with_params_after_version_policy(
+    params: &NativeBackendParams,
+    tx: &TxLeafPublicTx,
+    receipt: &CanonicalTxValidityReceipt,
+    artifact_bytes: &[u8],
+    historical_replay: bool,
+) -> Result<NativeTxLeafMetadata> {
     let artifact = decode_native_tx_leaf_artifact_with_params(params, artifact_bytes)?;
     ensure_native_tx_leaf_artifact_canonical_encoding(&artifact, artifact_bytes)?;
     ensure!(
@@ -3559,12 +3680,30 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
     );
     let verifier_inputs =
         transaction_verifier_inputs_from_tx_leaf_public(tx, &artifact.stark_public_inputs)?;
-    verify_embedded_transaction_proof_for_native_tx_leaf(
-        artifact.proof_backend,
-        &artifact.stark_proof,
-        &verifier_inputs,
-        tx.version,
-    )?;
+    let expected_balance_tag = expected_balance_tag_from_verifier_inputs(&verifier_inputs)
+        .map_err(|err| {
+            anyhow::anyhow!("native tx-leaf balance tag reconstruction failed: {err}")
+        })?;
+    ensure!(
+        tx.balance_tag == expected_balance_tag,
+        "native tx-leaf balance tag does not match proved balance inputs"
+    );
+    if historical_replay {
+        transaction_circuit::proof::historical_replay::verify_transaction_proof_bytes_for_backend(
+            artifact.proof_backend,
+            &artifact.stark_proof,
+            &verifier_inputs,
+            tx.version,
+        )
+        .map_err(|err| anyhow::anyhow!("native tx-leaf proof verification failed: {err}"))?;
+    } else {
+        verify_embedded_transaction_proof_for_native_tx_leaf(
+            artifact.proof_backend,
+            &artifact.stark_proof,
+            &verifier_inputs,
+            tx.version,
+        )?;
+    }
 
     let witness = tx_leaf_public_witness_from_parts(
         tx,
@@ -3617,6 +3756,95 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
         stark_public_inputs: artifact.stark_public_inputs,
         commitment: expected_commitment,
     })
+}
+
+/// Historical chain replay only. These APIs reject active V4 and must not be
+/// used for current-state admission, mempool validation, or block authoring.
+pub mod historical_replay {
+    use super::*;
+
+    pub fn build_tx_leaf_artifact_bytes(proof: &TransactionProof) -> Result<BuiltTxLeafArtifact> {
+        ensure_historical_replay_transaction_version(proof.version_binding())?;
+        transaction_circuit::proof::historical_replay::verify(proof, transaction_verifying_key())
+            .map_err(|err| {
+            anyhow::anyhow!("historical transaction proof verification failed: {err}")
+        })?;
+        build_tx_leaf_artifact_bytes_after_verification(proof)
+    }
+
+    pub fn build_native_tx_leaf_artifact_bytes(
+        witness: &TransactionWitness,
+    ) -> Result<BuiltNativeTxLeafArtifact> {
+        build_native_tx_leaf_artifact_bytes_with_params(&native_backend_params(), witness)
+    }
+
+    pub fn build_native_tx_leaf_artifact_bytes_with_auth(
+        witness: &TransactionWitness,
+        auth: &SmallwoodPrivateAuthWitness,
+    ) -> Result<BuiltNativeTxLeafArtifact> {
+        build_native_tx_leaf_artifact_bytes_with_params_and_auth(
+            &native_backend_params(),
+            witness,
+            auth,
+        )
+    }
+
+    pub fn build_native_tx_leaf_artifact_bytes_with_params(
+        params: &NativeBackendParams,
+        witness: &TransactionWitness,
+    ) -> Result<BuiltNativeTxLeafArtifact> {
+        ensure_historical_replay_transaction_version(witness.version)?;
+        build_native_tx_leaf_artifact_bytes_with_params_after_version_policy(params, witness)
+    }
+
+    pub fn build_native_tx_leaf_artifact_bytes_with_params_and_auth(
+        params: &NativeBackendParams,
+        witness: &TransactionWitness,
+        auth: &SmallwoodPrivateAuthWitness,
+    ) -> Result<BuiltNativeTxLeafArtifact> {
+        ensure_historical_replay_transaction_version(witness.version)?;
+        build_native_tx_leaf_artifact_bytes_with_params_and_auth_after_version_policy(
+            params, witness, auth,
+        )
+    }
+
+    pub fn verify_native_tx_leaf_artifact_bytes(
+        tx: &TxLeafPublicTx,
+        receipt: &CanonicalTxValidityReceipt,
+        artifact_bytes: &[u8],
+    ) -> Result<NativeTxLeafMetadata> {
+        verify_native_tx_leaf_artifact_bytes_with_params(
+            &native_backend_params(),
+            tx,
+            receipt,
+            artifact_bytes,
+        )
+    }
+
+    pub fn verify_tx_leaf_artifact_bytes(
+        tx: &TxLeafPublicTx,
+        receipt: &CanonicalTxValidityReceipt,
+        artifact_bytes: &[u8],
+    ) -> Result<TxLeafMetadata> {
+        ensure_historical_replay_transaction_version(tx.version)?;
+        verify_tx_leaf_artifact_bytes_after_version_policy(tx, receipt, artifact_bytes)
+    }
+
+    pub fn verify_native_tx_leaf_artifact_bytes_with_params(
+        params: &NativeBackendParams,
+        tx: &TxLeafPublicTx,
+        receipt: &CanonicalTxValidityReceipt,
+        artifact_bytes: &[u8],
+    ) -> Result<NativeTxLeafMetadata> {
+        ensure_historical_replay_transaction_version(tx.version)?;
+        verify_native_tx_leaf_artifact_bytes_with_params_after_version_policy(
+            params,
+            tx,
+            receipt,
+            artifact_bytes,
+            true,
+        )
+    }
 }
 
 fn verified_native_receipt_root_leaf_from_artifact_bytes_with_params(
@@ -3691,7 +3919,8 @@ fn cached_native_receipt_root_leaf_from_artifact_with_params(
     artifact: &NativeTxLeafArtifact,
 ) -> Result<CachedNativeReceiptRootLeaf> {
     let artifact_bytes = encode_native_tx_leaf_artifact(artifact)?;
-    let artifact_hash = blake3_384_bytes(&artifact_bytes);
+    let artifact_hash =
+        superneo_verify_cache_digest(ROLE_NATIVE_RECEIPT_ROOT_LEAF_CACHE_V2, &[&artifact_bytes]);
     let cache_key = native_receipt_root_leaf_cache_key(params, artifact_hash);
     if let Ok(mut guard) = NATIVE_RECEIPT_ROOT_LEAF_BUILD_CACHE.lock() {
         if let Some(verified) = guard.get(cache_key) {
@@ -3732,14 +3961,19 @@ fn native_receipt_root_chunk_cache_key(
     params: &NativeBackendParams,
     child_hashes: &[[u8; 48]],
 ) -> [u8; 48] {
-    let mut material = Vec::with_capacity(64 + (child_hashes.len() * 48));
-    material.extend_from_slice(b"hegemon.native-receipt-root.chunk.v1");
-    material.extend_from_slice(&params.parameter_fingerprint());
-    material.extend_from_slice(&(child_hashes.len() as u32).to_le_bytes());
+    let params_fingerprint = params.parameter_fingerprint();
+    let child_count = (child_hashes.len() as u32).to_le_bytes();
+    let mut hasher = superneo_domain_hasher(
+        SUPERNEO_VERIFY_CACHE_V2,
+        ROLE_NATIVE_RECEIPT_ROOT_CHUNK_CACHE_V2,
+    );
+    hasher
+        .update_part(&params_fingerprint)
+        .update_part(&child_count);
     for child_hash in child_hashes {
-        material.extend_from_slice(child_hash);
+        hasher.update_part(child_hash);
     }
-    blake3_384_bytes(&material)
+    hasher.finalize()
 }
 
 fn build_receipt_root_chunk_levels(
@@ -5409,27 +5643,30 @@ fn bytes48_to_goldilocks(bytes: &[u8; 48]) -> Vec<Goldilocks> {
         .collect()
 }
 
-fn digest48(label: &[u8], bytes: &[u8]) -> [u8; 48] {
-    digest48_with_parts(label, &[bytes])
+fn superneo_domain_hasher(domain: &[u8], role: &[u8]) -> Blake2b384DomainHasher {
+    let mut hasher = Blake2b384DomainHasher::new(domain);
+    hasher.update_part(role);
+    hasher
 }
 
-fn digest48_with_parts(label: &[u8], parts: &[&[u8]]) -> [u8; 48] {
-    let mut hasher = Hasher::new();
-    hasher.update(label);
+fn superneo_domain_digest(domain: &[u8], role: &[u8], parts: &[&[u8]]) -> [u8; 48] {
+    let mut hasher = superneo_domain_hasher(domain, role);
     for part in parts {
-        hasher.update(part);
+        hasher.update_part(part);
     }
-    let mut out = [0u8; 48];
-    hasher.finalize_xof().fill(&mut out);
-    out
+    hasher.finalize()
 }
 
-fn blake3_384_bytes(bytes: &[u8]) -> [u8; 48] {
-    let mut hasher = Hasher::new();
-    hasher.update(bytes);
-    let mut out = [0u8; 48];
-    hasher.finalize_xof().fill(&mut out);
-    out
+fn superneo_proof_artifact_digest(role: &[u8], parts: &[&[u8]]) -> [u8; 48] {
+    superneo_domain_digest(SUPERNEO_PROOF_ARTIFACT_V2, role, parts)
+}
+
+fn superneo_verifier_profile_digest(role: &[u8], parts: &[&[u8]]) -> [u8; 48] {
+    superneo_domain_digest(SUPERNEO_VERIFIER_PROFILE_V2, role, parts)
+}
+
+fn superneo_verify_cache_digest(role: &[u8], parts: &[&[u8]]) -> [u8; 48] {
+    superneo_domain_digest(SUPERNEO_VERIFY_CACHE_V2, role, parts)
 }
 
 #[cfg(test)]
@@ -5439,7 +5676,10 @@ mod tests {
     use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
     use superneo_backend_lattice::BackendManifest;
     use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
-    use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
+    use transaction_circuit::constants::{
+        BALANCE_SLOT_PADDING_ASSET_ID, BALANCE_SLOT_PADDING_FIELD_ID, CIRCUIT_MERKLE_DEPTH,
+        FIELD_MODULUS_U64, NATIVE_ASSET_ID,
+    };
     use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
     use transaction_circuit::keys::generate_keys;
     use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
@@ -6197,6 +6437,172 @@ mod tests {
     }
 
     #[test]
+    fn tx_receipt_v2_rejects_legacy_digest_and_domains_do_not_alias() {
+        let relation = TxProofReceiptRelation::default();
+        let proof_bytes = vec![7u8; 48];
+        let public_inputs = vec![3u8; 24];
+        let verifier_profile = b"inline-tx-v1";
+        let witness = TxProofReceiptWitness {
+            receipt_bytes: proof_bytes.clone(),
+            verification_trace_bits: vec![1, 0, 1, 0],
+        };
+        let statement = build_tx_proof_receipt(
+            &proof_bytes,
+            &public_inputs,
+            verifier_profile,
+            &witness.verification_trace_bits,
+        )
+        .unwrap();
+        let payload = b"same-superneo-payload";
+        let artifact = superneo_proof_artifact_digest(b"cross-domain", &[payload]);
+        let profile = superneo_verifier_profile_digest(b"cross-domain", &[payload]);
+        let cache = superneo_verify_cache_digest(b"cross-domain", &[payload]);
+        assert_ne!(artifact, profile);
+        assert_ne!(artifact, cache);
+        assert_ne!(profile, cache);
+
+        let mut legacy_hasher = blake3::Hasher::new();
+        legacy_hasher.update(b"hegemon.superneo.proof-bytes.v1");
+        legacy_hasher.update(&proof_bytes);
+        let mut legacy_digest = [0u8; 48];
+        legacy_hasher.finalize_xof().fill(&mut legacy_digest);
+        assert_ne!(statement.proof_digest, legacy_digest);
+        let mut legacy_statement = statement;
+        legacy_statement.proof_digest = legacy_digest;
+        assert!(
+            relation
+                .build_assignment(&legacy_statement, &witness)
+                .is_err(),
+            "legacy BLAKE3-XOF48 receipt proof bindings must reject"
+        );
+    }
+
+    #[test]
+    fn receipt_root_chunk_cache_key_commits_to_order_count_and_role() {
+        let params = native_backend_params();
+        let children = [[1u8; 48], [2u8; 48]];
+        let ordered = native_receipt_root_chunk_cache_key(&params, &children);
+        let reordered = native_receipt_root_chunk_cache_key(&params, &[children[1], children[0]]);
+        let truncated = native_receipt_root_chunk_cache_key(&params, &children[..1]);
+        assert_ne!(ordered, reordered);
+        assert_ne!(ordered, truncated);
+
+        let params_fingerprint = params.parameter_fingerprint();
+        let child_count = (children.len() as u32).to_le_bytes();
+        let wrong_role = superneo_verify_cache_digest(
+            ROLE_NATIVE_RECEIPT_ROOT_LEAF_CACHE_V2,
+            &[
+                &params_fingerprint,
+                &child_count,
+                &children[0],
+                &children[1],
+            ],
+        );
+        assert_ne!(ordered, wrong_role);
+    }
+
+    #[test]
+    fn fixed_identity_policy_matches_compiled_release_constants() {
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/fixed_identity_policy_v2.json"))
+                .expect("parse fixed SuperNeo identity policy");
+        let identity = native_superneo_fixed_identity_v2().expect("compiled fixed identity");
+
+        assert_eq!(manifest["schema_version"], identity.schema_version);
+        assert_eq!(
+            manifest["params_fingerprint_hex"],
+            hex::encode(identity.params_fingerprint)
+        );
+        assert_eq!(
+            manifest["spec_digest_hex"],
+            hex::encode(identity.spec_digest)
+        );
+        assert_eq!(
+            manifest["relation_id_hex"],
+            hex::encode(identity.relation_id)
+        );
+        assert_eq!(
+            manifest["shape_digest_hex"],
+            hex::encode(identity.shape_digest)
+        );
+        assert_eq!(
+            manifest["tx_leaf_artifact_version"],
+            identity.tx_leaf_artifact_version
+        );
+        assert_eq!(
+            manifest["receipt_root_artifact_version"],
+            identity.receipt_root_artifact_version
+        );
+        assert_eq!(
+            manifest["tx_leaf_verifier_profile_hex"],
+            hex::encode(identity.tx_leaf_verifier_profile)
+        );
+        assert_eq!(
+            manifest["hash_domains"]["verifier_profile"],
+            std::str::from_utf8(SUPERNEO_VERIFIER_PROFILE_V2).unwrap()
+        );
+        assert_eq!(
+            manifest["hash_domains"]["proof_artifact"],
+            std::str::from_utf8(SUPERNEO_PROOF_ARTIFACT_V2).unwrap()
+        );
+        assert_eq!(
+            manifest["hash_domains"]["verify_cache"],
+            std::str::from_utf8(SUPERNEO_VERIFY_CACHE_V2).unwrap()
+        );
+        assert_eq!(
+            manifest["policy"]["fixed_32_byte_target_quantum_preimage_bits"],
+            128
+        );
+        assert_eq!(manifest["policy"]["attacker_selected_registry"], false);
+        assert_eq!(manifest["policy"]["pre_proof_exact_match_required"], true);
+    }
+
+    #[test]
+    fn fixed_identity_checks_dominate_embedded_proof_verification() {
+        let built = sample_native_tx_leaf_artifact();
+        let canonical = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes)
+            .expect("decode canonical native tx-leaf artifact");
+        let tx = canonical.tx.clone();
+        let receipt = canonical.receipt.clone();
+
+        let cases: [(&str, &str, fn(&mut NativeTxLeafArtifact)); 4] = [
+            (
+                "params",
+                "parameter fingerprint mismatch",
+                |artifact: &mut NativeTxLeafArtifact| artifact.params_fingerprint[0] ^= 1,
+            ),
+            (
+                "spec",
+                "spec digest mismatch",
+                |artifact: &mut NativeTxLeafArtifact| artifact.spec_digest[0] ^= 1,
+            ),
+            (
+                "relation",
+                "relation id mismatch",
+                |artifact: &mut NativeTxLeafArtifact| artifact.relation_id[0] ^= 1,
+            ),
+            (
+                "shape",
+                "shape digest mismatch",
+                |artifact: &mut NativeTxLeafArtifact| artifact.shape_digest[0] ^= 1,
+            ),
+        ];
+        for (label, expected, mutate) in cases {
+            let mut artifact = canonical.clone();
+            artifact.stark_proof[0] ^= 0x80;
+            mutate(&mut artifact);
+            let bytes = encode_native_tx_leaf_artifact(&artifact)
+                .expect("encode identity/proof double mutation");
+            let err = verify_native_tx_leaf_artifact_bytes(&tx, &receipt, &bytes)
+                .expect_err("mutated fixed identity must reject");
+            assert!(
+                err.to_string().contains(expected),
+                "{label} identity check did not dominate proof verification: {err}"
+            );
+        }
+    }
+
+    #[test]
     fn tx_receipt_rejects_trace_digest_mismatch() {
         let relation = TxProofReceiptRelation::default();
         let proof_bytes = vec![7u8; 48];
@@ -6343,6 +6749,35 @@ mod tests {
             err.to_string()
                 .contains("balance slot assets must be strictly increasing"),
             "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn native_tx_leaf_projection_rejects_negative_zero_signed_magnitudes() {
+        let artifact = sample_decoded_native_tx_leaf_artifact();
+        assert_eq!(artifact.stark_public_inputs.value_balance_magnitude, 0);
+        let mut negative_zero_balance = artifact.stark_public_inputs;
+        negative_zero_balance.value_balance_sign = 1;
+        let err =
+            transaction_verifier_inputs_from_tx_leaf_public(&artifact.tx, &negative_zero_balance)
+                .expect_err("native projection must reject negative-zero value balance");
+        assert!(
+            err.to_string()
+                .contains("Value balance zero must use sign 0"),
+            "unexpected error: {err}"
+        );
+
+        let artifact = sample_decoded_stablecoin_native_tx_leaf_artifact();
+        let mut negative_zero_issuance = artifact.stark_public_inputs;
+        negative_zero_issuance.stablecoin_issuance_sign = 1;
+        negative_zero_issuance.stablecoin_issuance_magnitude = 0;
+        let err =
+            transaction_verifier_inputs_from_tx_leaf_public(&artifact.tx, &negative_zero_issuance)
+                .expect_err("native projection must reject negative-zero stablecoin issuance");
+        assert!(
+            err.to_string()
+                .contains("Stablecoin issuance zero must use sign 0"),
+            "unexpected error: {err}"
         );
     }
 
@@ -6574,6 +7009,193 @@ mod tests {
     }
 
     #[test]
+    fn native_tx_leaf_rejects_balance_tag_not_derived_from_stark_balance_inputs() {
+        let params = native_backend_params();
+        let context = native_tx_leaf_setup_context_with_params(&params).expect("native setup");
+        let original = sample_decoded_native_tx_leaf_artifact();
+        let mut tx = original.tx.clone();
+        tx.balance_tag[47] ^= 1;
+        let receipt = native_tx_leaf_receipt_from_parts(
+            &tx,
+            &original.stark_public_inputs,
+            &original.stark_proof,
+            original.proof_backend,
+            &params,
+        )
+        .expect("mutated receipt");
+        let witness = tx_leaf_public_witness_from_parts(
+            &tx,
+            &original.stark_public_inputs,
+            original.proof_backend,
+            smallwood_arithmetization_from_backend_and_proof_bytes(
+                original.proof_backend,
+                &original.stark_proof,
+                tx.version,
+            )
+            .expect("original SmallWood arithmetization"),
+        );
+        let encoding = context
+            .relation
+            .encode_statement(&receipt)
+            .expect("mutated statement");
+        let assignment = tx_leaf_public_witness_assignment(&witness).expect("mutated assignment");
+        let packed = context
+            .packer
+            .pack(context.relation.shape(), &assignment)
+            .expect("mutated packed witness");
+        let commitment = context
+            .backend
+            .commit_witness(&context.pk, &packed)
+            .expect("mutated commitment");
+        let leaf_proof = context
+            .backend
+            .prove_leaf(
+                &context.pk,
+                &context.relation.relation_id(),
+                &encoding,
+                &packed,
+                &commitment,
+            )
+            .expect("mutated outer proof");
+        let artifact = NativeTxLeafArtifact {
+            version: native_tx_leaf_artifact_version(&params),
+            params_fingerprint: params.parameter_fingerprint(),
+            spec_digest: params.spec_digest(),
+            relation_id: context.relation.relation_id().0,
+            shape_digest: context.pk.shape_digest.0,
+            statement_digest: encoding.statement_digest.0,
+            receipt: receipt.clone(),
+            stark_public_inputs: original.stark_public_inputs,
+            tx: tx.clone(),
+            proof_backend: original.proof_backend,
+            stark_proof: original.stark_proof,
+            commitment: commitment.clone(),
+            leaf: LeafArtifact {
+                version: native_tx_leaf_artifact_version(&params),
+                relation_id: context.relation.relation_id(),
+                shape_digest: context.pk.shape_digest,
+                statement_digest: encoding.statement_digest,
+                proof: leaf_proof,
+            },
+        };
+        let artifact_bytes = encode_native_tx_leaf_artifact(&artifact).expect("mutated artifact");
+        let err = verify_native_tx_leaf_artifact_bytes(&tx, &receipt, &artifact_bytes)
+            .expect_err("balance tag not derived from the proved balance inputs must reject");
+        assert!(
+            err.to_string().contains("balance tag"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn native_tx_leaf_rejects_rewrapped_noncanonical_balance_asset_alias() {
+        let mut artifact = sample_decoded_native_tx_leaf_artifact();
+        let canonical_asset = artifact.stark_public_inputs.balance_slot_asset_ids[1];
+        assert!(canonical_asset < FIELD_MODULUS_U64);
+        let alias = FIELD_MODULUS_U64
+            .checked_add(canonical_asset)
+            .expect("fixture asset must have a representable non-canonical alias");
+        assert_eq!(
+            Goldilocks::from_u64(alias),
+            Goldilocks::from_u64(canonical_asset),
+            "regression must preserve the inner SmallWood field statement"
+        );
+        artifact.stark_public_inputs.balance_slot_asset_ids[1] = alias;
+
+        let (tx, receipt, artifact_bytes) = rewrap_native_tx_leaf_artifact(artifact);
+        let err = verify_native_tx_leaf_artifact_bytes(&tx, &receipt, &artifact_bytes)
+            .expect_err("pre-reduction balance-slot alias must reject");
+        assert!(
+            err.to_string().contains("asset encoding"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn native_tx_leaf_rejects_rewrapped_negative_zero_signed_magnitudes() {
+        let mut artifact = sample_decoded_native_tx_leaf_artifact();
+        assert_eq!(artifact.stark_public_inputs.value_balance_magnitude, 0);
+        artifact.stark_public_inputs.value_balance_sign = 1;
+        let (tx, receipt, artifact_bytes) = rewrap_native_tx_leaf_artifact(artifact);
+        let err = verify_native_tx_leaf_artifact_bytes(&tx, &receipt, &artifact_bytes)
+            .expect_err("rewrapped negative-zero value balance must reject");
+        assert!(
+            err.to_string()
+                .contains("Value balance zero must use sign 0"),
+            "unexpected error: {err}"
+        );
+
+        let mut artifact = sample_decoded_stablecoin_native_tx_leaf_artifact();
+        artifact.stark_public_inputs.stablecoin_issuance_sign = 1;
+        artifact.stark_public_inputs.stablecoin_issuance_magnitude = 0;
+        let (tx, receipt, artifact_bytes) = rewrap_native_tx_leaf_artifact(artifact);
+        let err = verify_native_tx_leaf_artifact_bytes(&tx, &receipt, &artifact_bytes)
+            .expect_err("rewrapped negative-zero stablecoin issuance must reject");
+        assert!(
+            err.to_string()
+                .contains("Stablecoin issuance zero must use sign 0"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn native_tx_leaf_rejects_rewrapped_noncanonical_padding_alias() {
+        let mut artifact = sample_decoded_native_tx_leaf_artifact();
+        let padding_slot = artifact
+            .stark_public_inputs
+            .balance_slot_asset_ids
+            .iter()
+            .position(|asset| *asset == BALANCE_SLOT_PADDING_FIELD_ID)
+            .expect("sample artifact must contain padding");
+        assert_eq!(
+            Goldilocks::from_u64(BALANCE_SLOT_PADDING_ASSET_ID),
+            Goldilocks::from_u64(BALANCE_SLOT_PADDING_FIELD_ID),
+            "regression must preserve the inner SmallWood padding field"
+        );
+        artifact.stark_public_inputs.balance_slot_asset_ids[padding_slot] =
+            BALANCE_SLOT_PADDING_ASSET_ID;
+
+        let (tx, receipt, artifact_bytes) = rewrap_native_tx_leaf_artifact(artifact);
+        let err = verify_native_tx_leaf_artifact_bytes(&tx, &receipt, &artifact_bytes)
+            .expect_err("non-canonical serialized padding alias must reject");
+        assert!(
+            err.to_string().contains("asset encoding"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn native_tx_leaf_preserves_stablecoin_and_rejects_rewrapped_asset_alias() {
+        let original = sample_decoded_stablecoin_native_tx_leaf_artifact();
+        verify_native_tx_leaf_artifact_bytes(
+            &original.tx,
+            &original.receipt,
+            &encode_native_tx_leaf_artifact(&original).expect("stablecoin artifact"),
+        )
+        .expect("canonical stablecoin native tx-leaf must verify");
+        assert_eq!(original.stark_public_inputs.stablecoin_enabled, 1);
+
+        let mut artifact = original;
+        let canonical_asset = artifact.stark_public_inputs.stablecoin_asset_id;
+        let alias = FIELD_MODULUS_U64
+            .checked_add(artifact.stark_public_inputs.stablecoin_asset_id)
+            .expect("fixture stablecoin asset must have a representable non-canonical alias");
+        assert_eq!(
+            Goldilocks::from_u64(alias),
+            Goldilocks::from_u64(canonical_asset),
+            "regression must preserve the inner SmallWood stablecoin field"
+        );
+        artifact.stark_public_inputs.stablecoin_asset_id = alias;
+        let (tx, receipt, artifact_bytes) = rewrap_native_tx_leaf_artifact(artifact);
+        let err = verify_native_tx_leaf_artifact_bytes(&tx, &receipt, &artifact_bytes)
+            .expect_err("pre-reduction stablecoin asset alias must reject");
+        assert!(
+            err.to_string().contains("asset encoding"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn native_tx_leaf_setup_cache_hits_on_repeated_builds() {
         clear_native_tx_leaf_setup_cache();
         clear_native_tx_leaf_setup_cache_stats();
@@ -6678,6 +7300,36 @@ mod tests {
     }
 
     #[test]
+    fn native_receipt_root_leaf_cache_never_accepts_mutated_artifact() {
+        clear_native_receipt_root_build_caches();
+        clear_native_receipt_root_build_cache_stats();
+
+        let params = native_backend_params();
+        let artifact = sample_decoded_native_tx_leaf_artifact();
+        cached_native_receipt_root_leaf_from_artifact_with_params(&params, &artifact)
+            .expect("valid artifact must populate the verified leaf cache");
+        let populated = native_receipt_root_build_cache_stats();
+        assert_eq!(populated.leaf_cache_misses, 1);
+
+        let mut mutated = artifact;
+        mutated.leaf.proof.proof_digest[0] ^= 1;
+        assert!(
+            cached_native_receipt_root_leaf_from_artifact_with_params(&params, &mutated).is_err(),
+            "a byte-distinct invalid artifact must miss the cache and fail verification"
+        );
+        let after_mutation = native_receipt_root_build_cache_stats();
+        assert_eq!(
+            after_mutation.leaf_cache_hits, populated.leaf_cache_hits,
+            "invalid artifact must not hit a cache entry for a valid artifact"
+        );
+        assert_eq!(
+            after_mutation.leaf_cache_misses,
+            populated.leaf_cache_misses + 1,
+            "invalid artifact must execute the verification path"
+        );
+    }
+
+    #[test]
     fn native_tx_leaf_artifact_canonical_admission_rejects_missing_backend() {
         let witness = sample_witness(SAMPLE_TRANSACTION_PROOF_SEED);
         let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
@@ -6693,6 +7345,84 @@ mod tests {
             "unexpected error: {err}"
         );
         assert!(decode_native_tx_leaf_artifact_canonical_bytes(&legacy_bytes).is_err());
+    }
+
+    #[test]
+    fn native_tx_leaf_artifact_wire_sections_and_width16_projection_v2() {
+        let built = sample_native_tx_leaf_artifact();
+        let artifact = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes)
+            .expect("decode canonical native tx-leaf artifact");
+        let candidate: transaction_circuit::SmallwoodCandidateProof =
+            bincode::deserialize(&artifact.stark_proof)
+                .expect("decode canonical SmallWood candidate wrapper");
+        let inner = transaction_circuit::report_smallwood_proof_size_v1(&candidate.ark_proof)
+            .expect("report canonical SmallWood proof fields");
+        eprintln!(
+            "native_tx_leaf_artifact_bytes={} stark_proof_bytes={} ark_proof_bytes={} inner={}",
+            built.artifact_bytes.len(),
+            artifact.stark_proof.len(),
+            candidate.ark_proof.len(),
+            serde_json::to_string(&inner).expect("serialize proof-size report")
+        );
+
+        // The native wrapper is fixed-width for a canonical two-input,
+        // two-output transaction. Compact SmallWood authentication paths are
+        // deliberately variable because their sibling sharing depends on the
+        // transcript-selected query set, so no fresh proof may be ground until
+        // it happens to hit the checked-in fixture length.
+        const HEADER_BYTES: usize = 2 + 48 + 32 + 32 + 32 + 48;
+        const RECEIPT_BYTES: usize = 4 * 48;
+        const SERIALIZED_STARK_INPUTS_BYTES: usize = 279;
+        const TX_PUBLIC_BYTES: usize = 352;
+        const PROOF_LENGTH_BYTES: usize = 4;
+        const LATTICE_COMMITMENT_BYTES: usize = 48 + 4 + 11 * (4 + 54 * 8);
+        const LEAF_BYTES: usize = 2 + 32 + 32 + 48 + 48 + 48;
+        const BACKEND_BYTES: usize = 1;
+        const FIXED_OUTER_BYTES: usize = HEADER_BYTES
+            + RECEIPT_BYTES
+            + SERIALIZED_STARK_INPUTS_BYTES
+            + TX_PUBLIC_BYTES
+            + PROOF_LENGTH_BYTES
+            + LATTICE_COMMITMENT_BYTES
+            + LEAF_BYTES
+            + BACKEND_BYTES;
+        assert_eq!(FIXED_OUTER_BYTES, 6_080);
+        assert_eq!(
+            built.artifact_bytes.len(),
+            artifact.stark_proof.len() + 6_080
+        );
+        assert_eq!(artifact.stark_proof.len(), candidate.ark_proof.len() + 20);
+
+        // These sections are independent of compact authentication-path
+        // overlap and pin the current production serializer geometry.
+        assert_eq!(inner.transcript_bytes, 24_192);
+        assert_eq!(inner.opened_values_bytes, 25_160);
+        assert_eq!(inner.opening_payload_bytes, 46_145);
+        assert_eq!(inner.opened_witness_bytes, 28_373);
+        assert_eq!(inner.pcs_rcombi_tails_bytes, 1_844);
+        assert_eq!(inner.pcs_subset_evals_bytes, 23_556);
+        assert_eq!(inner.pcs_partial_evals_bytes, 1_604);
+        assert_eq!(inner.decs_masking_evals_bytes, 924);
+        assert_eq!(inner.decs_high_coeffs_bytes, 15_004);
+        assert_eq!(inner.other_bytes, 0);
+        assert_eq!(inner.total_bytes, candidate.ark_proof.len());
+
+        // Width-16/rate-9/capacity-7 grows the exact LPPC relation from 699
+        // to 831 rows. SmallWood serializes exact matrices, not a padded 1024
+        // row bucket: five opened evaluations gain 132 row-polynomial
+        // scalars, and beta=2 grows the DECS column width from 375 to 441 for
+        // each of eta=5 high-coefficient rows.
+        const ROW_DELTA: usize = 831 - 699;
+        const OPENED_EVALS: usize = 5;
+        const DECS_ETA: usize = 5;
+        const LVCS_COLUMN_DELTA: usize = 441 - 375;
+        const OPENED_WITNESS_DELTA_BYTES: usize = OPENED_EVALS * ROW_DELTA * 8;
+        const HIGH_COEFFICIENT_DELTA_BYTES: usize = DECS_ETA * LVCS_COLUMN_DELTA * 8;
+        const WIDTH16_INNER_PROOF_DELTA_BYTES: usize =
+            OPENED_WITNESS_DELTA_BYTES + HIGH_COEFFICIENT_DELTA_BYTES;
+        assert_eq!(OPENED_WITNESS_DELTA_BYTES, 5_280);
+        assert_eq!(HIGH_COEFFICIENT_DELTA_BYTES, 2_640);
+        assert_eq!(WIDTH16_INNER_PROOF_DELTA_BYTES, 7_920);
     }
 
     #[test]
@@ -8043,6 +8773,63 @@ mod tests {
         }
     }
 
+    #[test]
+    fn production_and_historical_native_artifact_apis_are_disjoint() {
+        let mut legacy_proof = oversized_public_inputs_proof();
+        legacy_proof.public_inputs.circuit_version =
+            LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING.circuit;
+        legacy_proof.public_inputs.crypto_suite = LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING.crypto;
+        let production_build_err = build_tx_leaf_artifact_bytes(&legacy_proof)
+            .expect_err("production builder must reject historical V2 before proof work");
+        assert!(production_build_err
+            .to_string()
+            .contains("historical-replay-only"));
+
+        let active_proof = oversized_public_inputs_proof();
+        let replay_build_err = historical_replay::build_tx_leaf_artifact_bytes(&active_proof)
+            .expect_err("historical builder must reject active V4");
+        assert!(replay_build_err.to_string().contains("is not historical"));
+
+        let receipt = CanonicalTxValidityReceipt {
+            statement_hash: [0; 48],
+            proof_digest: [0; 48],
+            public_inputs_digest: [0; 48],
+            verifier_profile: [0; 48],
+        };
+        let legacy_tx = TxLeafPublicTx {
+            nullifiers: Vec::new(),
+            commitments: Vec::new(),
+            ciphertext_hashes: Vec::new(),
+            balance_tag: [0; 48],
+            version: LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING,
+        };
+        let production_verify_err = verify_native_tx_leaf_artifact_bytes(&legacy_tx, &receipt, &[])
+            .expect_err("production verifier must reject historical V2 before decoding");
+        assert!(production_verify_err
+            .to_string()
+            .contains("historical-replay-only"));
+        let production_outer_verify_err = verify_tx_leaf_artifact_bytes(&legacy_tx, &receipt, &[])
+            .expect_err("production outer verifier must reject historical V2 before decoding");
+        assert!(production_outer_verify_err
+            .to_string()
+            .contains("historical-replay-only"));
+
+        let active_tx = TxLeafPublicTx {
+            version: SMALLWOOD_CANDIDATE_VERSION_BINDING,
+            ..legacy_tx
+        };
+        let replay_verify_err =
+            historical_replay::verify_native_tx_leaf_artifact_bytes(&active_tx, &receipt, &[])
+                .expect_err("historical verifier must reject active V4 before decoding");
+        assert!(replay_verify_err.to_string().contains("is not historical"));
+        let replay_outer_verify_err =
+            historical_replay::verify_tx_leaf_artifact_bytes(&active_tx, &receipt, &[])
+                .expect_err("historical outer verifier must reject active V4 before decoding");
+        assert!(replay_outer_verify_err
+            .to_string()
+            .contains("is not historical"));
+    }
+
     fn serialized_stark_inputs_for_receipt_hash_regression() -> SerializedStarkInputs {
         SerializedStarkInputs {
             input_flags: vec![0; MAX_INPUTS],
@@ -8082,6 +8869,97 @@ mod tests {
     fn sample_decoded_native_tx_leaf_artifact() -> NativeTxLeafArtifact {
         decode_native_tx_leaf_artifact_bytes(&sample_native_tx_leaf_artifact().artifact_bytes)
             .expect("decode sample native tx-leaf artifact")
+    }
+
+    fn sample_decoded_stablecoin_native_tx_leaf_artifact() -> NativeTxLeafArtifact {
+        static ARTIFACT: std::sync::OnceLock<NativeTxLeafArtifact> = std::sync::OnceLock::new();
+        ARTIFACT
+            .get_or_init(|| {
+                let mut witness = sample_witness(SAMPLE_TRANSACTION_PROOF_SEED);
+                witness.outputs[1].note.value = 4;
+                witness.stablecoin = StablecoinPolicyBinding {
+                    enabled: true,
+                    asset_id: SAMPLE_TRANSACTION_PROOF_SEED + 100,
+                    policy_hash: [1u8; 48],
+                    oracle_commitment: [2u8; 48],
+                    attestation_commitment: [3u8; 48],
+                    issuance_delta: 1,
+                    policy_version: 1,
+                };
+                let built = build_native_tx_leaf_artifact_bytes(&witness)
+                    .expect("sample stablecoin native tx-leaf artifact");
+                decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes)
+                    .expect("decode sample stablecoin native tx-leaf artifact")
+            })
+            .clone()
+    }
+
+    fn rewrap_native_tx_leaf_artifact(
+        mut artifact: NativeTxLeafArtifact,
+    ) -> (TxLeafPublicTx, CanonicalTxValidityReceipt, Vec<u8>) {
+        let params = native_backend_params();
+        let context = native_tx_leaf_setup_context_with_params(&params).expect("native setup");
+        let tx = artifact.tx.clone();
+        let receipt = native_tx_leaf_receipt_from_parts(
+            &tx,
+            &artifact.stark_public_inputs,
+            &artifact.stark_proof,
+            artifact.proof_backend,
+            &params,
+        )
+        .expect("rewrapped receipt");
+        let witness = tx_leaf_public_witness_from_parts(
+            &tx,
+            &artifact.stark_public_inputs,
+            artifact.proof_backend,
+            smallwood_arithmetization_from_backend_and_proof_bytes(
+                artifact.proof_backend,
+                &artifact.stark_proof,
+                tx.version,
+            )
+            .expect("original SmallWood arithmetization"),
+        );
+        let encoding = context
+            .relation
+            .encode_statement(&receipt)
+            .expect("rewrapped statement");
+        let assignment = tx_leaf_public_witness_assignment(&witness).expect("rewrapped assignment");
+        let packed = context
+            .packer
+            .pack(context.relation.shape(), &assignment)
+            .expect("rewrapped packed witness");
+        let commitment = context
+            .backend
+            .commit_witness(&context.pk, &packed)
+            .expect("rewrapped commitment");
+        let leaf_proof = context
+            .backend
+            .prove_leaf(
+                &context.pk,
+                &context.relation.relation_id(),
+                &encoding,
+                &packed,
+                &commitment,
+            )
+            .expect("rewrapped outer proof");
+
+        artifact.version = native_tx_leaf_artifact_version(&params);
+        artifact.params_fingerprint = params.parameter_fingerprint();
+        artifact.spec_digest = params.spec_digest();
+        artifact.relation_id = context.relation.relation_id().0;
+        artifact.shape_digest = context.pk.shape_digest.0;
+        artifact.statement_digest = encoding.statement_digest.0;
+        artifact.receipt = receipt.clone();
+        artifact.commitment = commitment.clone();
+        artifact.leaf = LeafArtifact {
+            version: native_tx_leaf_artifact_version(&params),
+            relation_id: context.relation.relation_id(),
+            shape_digest: context.pk.shape_digest,
+            statement_digest: encoding.statement_digest,
+            proof: leaf_proof,
+        };
+        let bytes = encode_native_tx_leaf_artifact(&artifact).expect("rewrapped artifact");
+        (tx, receipt, bytes)
     }
 
     fn receipt_root_fixture_artifact(seed: u64) -> NativeTxLeafArtifact {

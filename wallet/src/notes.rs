@@ -103,6 +103,7 @@ impl NotePlaintext {
 /// Size of the ciphertext portion in chain format
 pub const CHAIN_CIPHERTEXT_SIZE: usize = 579;
 const NOTE_ENCRYPTION_VERSION: u8 = 3;
+const POSEIDON2_V8_NOTE_ENCRYPTION_VERSION: u8 = 4;
 pub const NOTE_CIPHERTEXT_KEM_RANDOMNESS_LEN: usize = 32;
 pub const NOTE_CIPHERTEXT_AEAD_KEY_LEN: usize = 32;
 pub const NOTE_CIPHERTEXT_AEAD_NONCE_LEN: usize = 12;
@@ -125,11 +126,20 @@ pub fn note_ciphertext_aad_bytes(
     aad
 }
 
-fn validate_note_ciphertext_version(version: u8) -> Result<(), WalletError> {
-    if version != NOTE_ENCRYPTION_VERSION {
+fn validate_note_ciphertext_identity(version: u8, crypto_suite: u16) -> Result<(), WalletError> {
+    let supported = matches!(
+        (version, crypto_suite),
+        (
+            NOTE_ENCRYPTION_VERSION,
+            protocol_versioning::CRYPTO_SUITE_GAMMA
+        ) | (
+            POSEIDON2_V8_NOTE_ENCRYPTION_VERSION,
+            protocol_versioning::CRYPTO_SUITE_ETA
+        )
+    );
+    if !supported {
         return Err(WalletError::Serialization(format!(
-            "Unsupported note ciphertext version: expected {}, got {}",
-            NOTE_ENCRYPTION_VERSION, version
+            "Unsupported note ciphertext version/crypto suite: {version}/{crypto_suite}"
         )));
     }
     Ok(())
@@ -137,7 +147,7 @@ fn validate_note_ciphertext_version(version: u8) -> Result<(), WalletError> {
 
 pub(crate) fn expected_kem_ciphertext_len(crypto_suite: u16) -> Result<usize, WalletError> {
     match crypto_suite {
-        protocol_versioning::CRYPTO_SUITE_GAMMA => {
+        protocol_versioning::CRYPTO_SUITE_GAMMA | protocol_versioning::CRYPTO_SUITE_ETA => {
             Ok(synthetic_crypto::ml_kem::ML_KEM_CIPHERTEXT_LEN)
         }
         _ => Err(WalletError::Serialization(format!(
@@ -171,12 +181,12 @@ impl NoteCiphertext {
         }
 
         let version = ciphertext_bytes[0];
-        validate_note_ciphertext_version(version)?;
         let crypto_suite = u16::from_le_bytes(
             ciphertext_bytes[1..3]
                 .try_into()
                 .map_err(|_| WalletError::Serialization("crypto suite parse failed".into()))?,
         );
+        validate_note_ciphertext_identity(version, crypto_suite)?;
         let diversifier_index = u32::from_le_bytes(
             ciphertext_bytes[3..7]
                 .try_into()
@@ -255,7 +265,7 @@ impl NoteCiphertext {
     }
 
     fn build_ciphertext_container(&self) -> Result<[u8; CHAIN_CIPHERTEXT_SIZE], WalletError> {
-        validate_note_ciphertext_version(self.version)?;
+        validate_note_ciphertext_identity(self.version, self.crypto_suite)?;
 
         let mut ciphertext = [0u8; CHAIN_CIPHERTEXT_SIZE];
         let mut offset = 0;
@@ -468,7 +478,7 @@ impl NoteCiphertext {
         let crypto_ct =
             CryptoNoteCiphertext::from_bytes(bytes).map_err(|_| WalletError::DecryptionFailure)?;
         let ciphertext = Self::from_crypto(crypto_ct);
-        validate_note_ciphertext_version(ciphertext.version)?;
+        validate_note_ciphertext_identity(ciphertext.version, ciphertext.crypto_suite)?;
         Ok(ciphertext)
     }
 

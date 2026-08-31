@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hegemon.smallwood.blake2b384.e2e.v1",
+  "title": "Hegemon full BLAKE2b-384 SmallWood E2E measurement",
+  "description": "Schema for an exact compiled-prover artifact measurement. A record is emitted only after a real full-relation prover and verifier have run; projected sizes, source-only row counts, mock proof bytes, and production authorization are not valid records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "status",
+    "relation_profile",
+    "relation_schedule_digest_hex",
+    "production_authorized",
+    "lowering_compiled",
+    "actual_backend_invoked",
+    "witness",
+    "geometry",
+    "statement_bytes",
+    "proof_bytes",
+    "envelope_bytes",
+    "proof_blake2b384_hex",
+    "envelope_blake2b384_hex",
+    "prove_ms",
+    "verify_ms",
+    "restart_verify_ms",
+    "mutation_gates"
+  ],
+  "properties": {
+    "schema": { "const": "hegemon.smallwood.blake2b384.e2e.v1" },
+    "status": { "const": "measured" },
+    "relation_profile": { "const": "hegemon.smallwood.blake2b-384.full-relation.v5" },
+    "relation_schedule_digest_hex": { "type": "string", "pattern": "^[0-9a-f]{96}$" },
+    "production_authorized": { "const": false },
+    "lowering_compiled": { "const": true },
+    "actual_backend_invoked": { "const": true },
+    "witness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input_count",
+        "output_count",
+        "activity_mask",
+        "hash_call_count",
+        "framed_message_bytes",
+        "compression_block_count",
+        "output_bit_binding_constraints",
+        "digest_reduction_constraints",
+        "balance_slots"
+      ],
+      "properties": {
+        "input_count": { "const": 2 },
+        "output_count": { "const": 2 },
+        "activity_mask": { "const": 15 },
+        "hash_call_count": { "type": "integer", "minimum": 1 },
+        "framed_message_bytes": { "type": "integer", "minimum": 1 },
+        "compression_block_count": { "type": "integer", "minimum": 1 },
+        "output_bit_binding_constraints": { "type": "integer", "minimum": 1 },
+        "digest_reduction_constraints": { "type": "integer", "minimum": 1 },
+        "balance_slots": { "const": 4 }
+      }
+    },
+    "geometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "row_count",
+        "packing_factor",
+        "constraint_degree",
+        "constraint_count",
+        "public_value_count",
+        "witness_value_count",
+        "lane_homogeneous_packing",
+        "verifier_owned_witness_independent_constraints"
+      ],
+      "properties": {
+        "row_count": { "type": "integer", "minimum": 1 },
+        "packing_factor": { "type": "integer", "minimum": 1 },
+        "constraint_degree": { "type": "integer", "minimum": 2 },
+        "constraint_count": { "type": "integer", "minimum": 1 },
+        "public_value_count": { "const": 78 },
+        "witness_value_count": { "type": "integer", "minimum": 1 },
+        "lane_homogeneous_packing": { "const": true },
+        "verifier_owned_witness_independent_constraints": { "const": true }
+      }
+    },
+    "statement_bytes": { "const": 672 },
+    "proof_bytes": { "type": "integer", "minimum": 1 },
+    "envelope_bytes": { "type": "integer", "minimum": 753 },
+    "proof_blake2b384_hex": { "type": "string", "pattern": "^[0-9a-f]{96}$" },
+    "envelope_blake2b384_hex": { "type": "string", "pattern": "^[0-9a-f]{96}$" },
+    "prove_ms": { "type": "integer", "minimum": 0 },
+    "verify_ms": { "type": "integer", "minimum": 0 },
+    "restart_verify_ms": { "type": "integer", "minimum": 0 },
+    "mutation_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "proof_byte_mutation_rejected",
+        "statement_mutation_rejected",
+        "truncated_envelope_rejected",
+        "trailing_envelope_bytes_rejected"
+      ],
+      "properties": {
+        "proof_byte_mutation_rejected": { "const": true },
+        "statement_mutation_rejected": { "const": true },
+        "truncated_envelope_rejected": { "const": true },
+        "trailing_envelope_bytes_rejected": { "const": true }
+      }
+    }
+  }
+}

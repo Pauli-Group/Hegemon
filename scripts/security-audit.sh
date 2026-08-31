@@ -332,7 +332,9 @@ if [ "$REQUIRE_BINARY" = true ]; then
         echo -e "${RED}❌ EXACT ARTIFACT SET REQUIRED${NC}"
         echo "  Expected node, wallet, and walletd paths"
         VIOLATIONS=$((VIOLATIONS + 1))
-    elif python3 "$PROJECT_ROOT/scripts/release_artifact_manifest.py" verify \
+    elif python3 -B "$PROJECT_ROOT/scripts/check_smallwood_v5_candidate_gate.py" \
+        --root "$PROJECT_ROOT" >/dev/null && \
+        python3 "$PROJECT_ROOT/scripts/release_artifact_manifest.py" verify \
         --manifest "$BINARY_MANIFEST" \
         --expect "hegemon-node:hegemon-node:${RELEASE_BINS[0]}" \
         --expect "wallet:wallet:${RELEASE_BINS[1]}" \

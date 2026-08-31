@@ -31,7 +31,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use codec::{Decode, Encode};
+use codec::{Decode, DecodeWithMemLimit, Encode};
+use hegemon_hash384::{blake2b_384_domain_hash, domains};
 use jsonrpsee_core::client::{ClientT, Error as RpcError, Subscription, SubscriptionClientT};
 use jsonrpsee_core::rpc_params;
 use jsonrpsee_core::traits::ToRpcParams;
@@ -39,12 +40,36 @@ use jsonrpsee_http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee_ws_client::{WsClient, WsClientBuilder};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use superneo_hegemon::decode_native_tx_leaf_artifact_bytes;
 use tokio::sync::RwLock;
 
 use crate::error::WalletError;
+use crate::hx512_lifecycle::Hx512CandidateRpcRequest;
 use crate::notes::NoteCiphertext;
+use crate::poseidon2_v8_sync::{canonical_action_id_exact, Poseidon2V8CanonicalBlock};
+use crate::prover::FreshTransactionProofAuthority;
 use crate::rpc::TransactionBundle;
 use crate::store::NoteSource;
+use crate::ActionId48;
+use protocol_shielded_pool::poseidon2_production_transport::{
+    decode_poseidon2_production_smz9_envelope_exact, encode_poseidon2_production_smz9_envelope,
+    encode_poseidon2_production_smz9_inline_args, encode_poseidon2_production_smz9_native_leaf,
+    preflight_poseidon2_production_smz9_envelope_exact,
+    preflight_poseidon2_production_smz9_native_leaf_exact, Poseidon2ProductionExpectedContext,
+    POSEIDON2_PRODUCTION_CIPHERTEXT_BYTES, POSEIDON2_PRODUCTION_PUBLIC_STATEMENT_WORDS,
+    POSEIDON2_PRODUCTION_RELATION_BALANCE_BINDING_LIMBS,
+    POSEIDON2_PRODUCTION_SMZ9_INNER_PROOF_MAGIC,
+};
+#[cfg(test)]
+use protocol_shielded_pool::poseidon2_production_transport::{
+    decode_poseidon2_production_smz9_inline_args_exact,
+    encode_historical_poseidon2_v8_smz8_envelope, encode_historical_poseidon2_v8_smz8_inline_args,
+    encode_historical_poseidon2_v8_smz8_native_leaf,
+};
+#[cfg(test)]
+use protocol_shielded_pool::smallwood_v5_transport::decode_smallwood_v5_inline_args_exact;
+use protocol_shielded_pool::smallwood_v5_transport::encode_smallwood_v5_inline_args;
+use transaction_circuit::smallwood_v5_envelope::decode_envelope_exact;
 use transaction_circuit::StablecoinPolicyBinding;
 
 fn is_method_unavailable(error: &WalletError, method: &str) -> bool {
@@ -141,6 +166,15 @@ fn env_u64(name: &str) -> Option<u64> {
 const NULLIFIER_PAGE_LIMIT: u64 = 1024;
 const DEFAULT_MAX_NULLIFIERS: u64 = 1_000_000;
 const MAX_RPC_STORAGE_VALUE_BYTES: usize = 64 * 1024;
+const NATIVE_ACTION_BODY_CHUNK_RPC_SCHEMA: &str = "hegemon.native.action-body-chunk-v1";
+const MAX_NATIVE_ACTION_BODY_CHUNK_BYTES: usize = 1024 * 1024;
+const MAX_NATIVE_BLOCK_ACTIONS: usize = 10_000;
+const MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES: usize = 2 * 1024 * 1024 + 16 * 1024;
+const MAX_NATIVE_BLOCK_ACTION_BYTES: usize = 64 * 1024 * 1024;
+const MAX_NATIVE_ACTION_BODY_BYTES: usize =
+    MAX_NATIVE_BLOCK_ACTION_BYTES + 5 * (MAX_NATIVE_BLOCK_ACTIONS + 1);
+const MAX_NATIVE_ACTION_BODY_CHUNKS: usize =
+    MAX_NATIVE_ACTION_BODY_BYTES.div_ceil(MAX_NATIVE_ACTION_BODY_CHUNK_BYTES);
 
 fn max_nullifier_fetch() -> u64 {
     env_u64("HEGEMON_WALLET_MAX_NULLIFIERS")
@@ -324,6 +358,34 @@ pub struct LatestBlock {
     /// Block timestamp (unix seconds)
     #[serde(default)]
     pub timestamp: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct CanonicalActionBodyChunkResponse {
+    schema: String,
+    block_hash: String,
+    height: u64,
+    parent_hash: String,
+    tx_count: u32,
+    extrinsics_root: String,
+    action_body_hash: String,
+    action_body_len: u64,
+    chunk_index: u32,
+    chunk_count: u32,
+    chunk_len: u64,
+    chunk: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CanonicalActionBodyBinding {
+    block_hash: [u8; 32],
+    height: u64,
+    parent_hash: [u8; 32],
+    tx_count: u32,
+    extrinsics_root: [u8; 32],
+    action_body_hash: [u8; 48],
+    action_body_len: usize,
+    chunk_count: u32,
 }
 
 /// Pagination parameters for RPC calls
@@ -862,6 +924,79 @@ impl NodeRpcClient {
         response.map(|hash| hex_to_array(&hash)).transpose()
     }
 
+    /// Fetch one exact canonical native block action body by verified chunks.
+    ///
+    /// Every 1 MiB-or-smaller response is hash-addressed and carries one
+    /// immutable body binding. The wallet caps the declared total before
+    /// allocation, reassembles chunks strictly in order, checks the exact
+    /// action-body hash, decodes canonical SCALE, recomputes every ActionId48
+    /// and the ordered 32-byte header root, then rechecks height canonicality.
+    pub async fn canonical_block_actions(
+        &self,
+        height: u64,
+    ) -> Result<Option<Poseidon2V8CanonicalBlock>, WalletError> {
+        let Some(hash) = self.block_hash(height).await? else {
+            return Ok(None);
+        };
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        let request_hash = format!("0x{}", hex::encode(hash));
+        let first: CanonicalActionBodyChunkResponse = client
+            .request(
+                "chain_getBlockActionsChunk",
+                rpc_params![request_hash.clone(), 0u32],
+            )
+            .await
+            .map_err(|error| {
+                WalletError::Rpc(format!(
+                    "chain_getBlockActionsChunk({height}, 0) failed: {error}"
+                ))
+            })?;
+        let (binding, first_bytes) =
+            validate_canonical_action_body_chunk(first, hash, height, 0, None)?;
+        let mut body = Vec::with_capacity(binding.action_body_len);
+        body.extend_from_slice(&first_bytes);
+        for chunk_index in 1..binding.chunk_count {
+            let response: CanonicalActionBodyChunkResponse = client
+                .request(
+                    "chain_getBlockActionsChunk",
+                    rpc_params![request_hash.clone(), chunk_index],
+                )
+                .await
+                .map_err(|error| {
+                    WalletError::Rpc(format!(
+                        "chain_getBlockActionsChunk({height}, {chunk_index}) failed: {error}"
+                    ))
+                })?;
+            let (_, bytes) = validate_canonical_action_body_chunk(
+                response,
+                hash,
+                height,
+                chunk_index,
+                Some(binding),
+            )?;
+            body.extend_from_slice(&bytes);
+        }
+        drop(client);
+        if body.len() != binding.action_body_len {
+            return Err(WalletError::InvalidState(
+                "canonical action body length differs after chunk reassembly",
+            ));
+        }
+        let action_bytes = decode_and_bind_canonical_action_body(&body, binding)?;
+        if self.block_hash(height).await? != Some(hash) {
+            return Err(WalletError::InvalidState(
+                "canonical block changed during wallet fetch",
+            ));
+        }
+        Ok(Some(Poseidon2V8CanonicalBlock {
+            height,
+            hash,
+            parent_hash: binding.parent_hash,
+            action_bytes,
+        }))
+    }
+
     /// Submit a shielded transaction to the network
     ///
     /// This builds a kernel action envelope and submits it through
@@ -873,15 +1008,18 @@ impl NodeRpcClient {
     ///
     /// # Returns
     ///
-    /// The transaction hash (32 bytes) if successful.
+    /// The canonical 48-byte action id if successful.
     pub async fn submit_transaction(
         &self,
         bundle: &TransactionBundle,
-    ) -> Result<[u8; 32], WalletError> {
-        self.ensure_connected().await?;
+    ) -> Result<ActionId48, WalletError> {
+        let authority = self
+            .fresh_submission_authority(
+                protocol_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+            )
+            .await?;
+        let request = SubmitActionRequest::from_bundle(bundle, &authority)?;
         let client = self.client.read().await;
-
-        let request = SubmitActionRequest::from_bundle(bundle)?;
 
         let response: SubmitActionResponse = client
             .request("hegemon_submitAction", rpc_params![request])
@@ -901,13 +1039,35 @@ impl NodeRpcClient {
             .tx_hash
             .ok_or_else(|| WalletError::Rpc("Missing tx_hash in response".to_string()))?;
 
-        hex_to_array(&tx_hash)
+        hex_to_action_id(&tx_hash)
+    }
+
+    pub(crate) async fn fresh_submission_authority(
+        &self,
+        action_id: protocol_shielded_pool::family::ActionId,
+    ) -> Result<FreshTransactionProofAuthority, WalletError> {
+        // With an empty source manifest, fail locally before any network or DA
+        // side effect. A future declared route still has to pass the exact live
+        // next-height and remote-genesis decision below.
+        FreshTransactionProofAuthority::ensure_source_route_declared(action_id)?;
+        let metadata = self.get_chain_metadata().await?;
+        let height = metadata
+            .block_number
+            .checked_add(1)
+            .ok_or(WalletError::InvalidState(
+                "wallet submission proof-authority height overflow",
+            ))?;
+        FreshTransactionProofAuthority::from_source_at(
+            height,
+            Some(metadata.genesis_hash),
+            action_id,
+        )
     }
 
     async fn submit_shielded_transfer_via_rpc(
         &self,
         bundle: &TransactionBundle,
-    ) -> Result<[u8; 32], WalletError> {
+    ) -> Result<ActionId48, WalletError> {
         self.submit_transaction(bundle).await
     }
 
@@ -1265,7 +1425,7 @@ impl NodeRpcClient {
                 return Ok(nullifiers
                     .iter()
                     .map(|nullifier| spent.contains(nullifier))
-                    .collect())
+                    .collect());
             }
             Err(err) if is_method_unavailable(&err, "hegemon_walletNullifiers") => {}
             Err(err) => return Err(err),
@@ -1302,11 +1462,11 @@ impl NodeRpcClient {
     ///
     /// # Returns
     ///
-    /// The transaction hash (32 bytes) if accepted into the pool.
+    /// The canonical 48-byte action id if accepted into the pool.
     pub async fn submit_opaque_transaction(
         &self,
         _payload: &[u8],
-    ) -> Result<[u8; 32], WalletError> {
+    ) -> Result<ActionId48, WalletError> {
         Err(WalletError::Rpc(
             "generic author submission removed; use Hegemon shielded RPC".to_string(),
         ))
@@ -1321,12 +1481,12 @@ impl NodeRpcClient {
     ///
     /// # Returns
     ///
-    /// The transaction hash (32 bytes) if accepted into the pool.
+    /// The canonical 48-byte action id if accepted into the pool.
     pub async fn submit_shielded_transfer_signed(
         &self,
         bundle: &TransactionBundle,
         _signing_seed: &[u8; 32],
-    ) -> Result<[u8; 32], WalletError> {
+    ) -> Result<ActionId48, WalletError> {
         self.submit_shielded_transfer_via_rpc(bundle).await
     }
 
@@ -1345,12 +1505,209 @@ impl NodeRpcClient {
     ///
     /// # Returns
     ///
-    /// The transaction hash (32 bytes) if accepted into the pool.
+    /// The canonical 48-byte action id if accepted into the pool.
     pub async fn submit_shielded_transfer_unsigned(
         &self,
         bundle: &TransactionBundle,
-    ) -> Result<[u8; 32], WalletError> {
+    ) -> Result<ActionId48, WalletError> {
         self.submit_shielded_transfer_via_rpc(bundle).await
+    }
+
+    /// Submit one dormant SmallWood V5 envelope through the canonical inline
+    /// action wrapper. The node currently rejects action 7 before staging; the
+    /// method exists so a future authorized release can exercise the same
+    /// wallet-to-RPC byte path without introducing a second proof format.
+    pub async fn submit_smallwood_v5_candidate_envelope(
+        &self,
+        envelope_bytes: &[u8],
+        new_nullifiers: Vec<[u8; 48]>,
+    ) -> Result<ActionId48, WalletError> {
+        let authority = self
+            .fresh_submission_authority(
+                protocol_shielded_pool::smallwood_v5_transport::SMALLWOOD_V5_TRANSPORT_ACTION_ID,
+            )
+            .await?;
+        authority.ensure_route(
+            protocol_shielded_pool::smallwood_v5_transport::SMALLWOOD_V5_TRANSPORT_ACTION_ID,
+            protocol_versioning::SMALLWOOD_V5_CONVENTIONAL_HASH_VERSION_BINDING,
+        )?;
+        decode_envelope_exact(envelope_bytes).map_err(|error| {
+            WalletError::Serialization(format!("invalid SmallWood V5 envelope: {error}"))
+        })?;
+        let public_args = encode_smallwood_v5_inline_args(envelope_bytes).map_err(|error| {
+            WalletError::Serialization(format!("invalid SmallWood V5 envelope: {error}"))
+        })?;
+        let envelope = build_shielded_envelope(
+            authority.binding(),
+            protocol_shielded_pool::smallwood_v5_transport::SMALLWOOD_V5_TRANSPORT_ACTION_ID,
+            new_nullifiers,
+            public_args,
+        );
+        let request = SubmitActionRequest::from_envelope(&envelope)?;
+        let client = self.client.read().await;
+        let response: SubmitActionResponse = client
+            .request("hegemon_submitAction", rpc_params![request])
+            .await
+            .map_err(|error| WalletError::Rpc(format!("hegemon_submitAction failed: {error}")))?;
+        if !response.success {
+            return Err(WalletError::Http(format!(
+                "SmallWood V5 candidate action rejected: {}",
+                response
+                    .error
+                    .unwrap_or_else(|| "inactive candidate route".to_string())
+            )));
+        }
+        let tx_hash = response
+            .tx_hash
+            .ok_or_else(|| WalletError::Rpc("Missing tx_hash in response".to_string()))?;
+        hex_to_action_id(&tx_hash)
+    }
+
+    /// Submit one exact `HGV8TX02` native leaf through the additive SMZ9
+    /// transport. The node currently rejects action 10 at its fixed route
+    /// discriminator because production authority is false.
+    ///
+    /// The context must come from the source-owned V8 relation module. The
+    /// wallet does not synthesize or accept a zero relation digest. V8's
+    /// seven-limb nullifiers live only in the proof-public HGV8 statement;
+    /// the incompatible legacy 48-byte outer-nullifier list is always empty.
+    pub async fn submit_poseidon2_production_native_leaf(
+        &self,
+        native_leaf: &[u8],
+    ) -> Result<ActionId48, WalletError> {
+        preflight_poseidon2_smz9_native_leaf_before_rpc(native_leaf)?;
+        let height = self
+            .get_chain_metadata()
+            .await?
+            .block_number
+            .checked_add(1)
+            .ok_or(WalletError::InvalidState(
+                "SmallWood Poseidon2 V8 candidate height overflow",
+            ))?;
+        let expected = crate::poseidon2_v8::poseidon2_v8_production_context_at(height)?;
+        let envelope =
+            encode_poseidon2_production_smz9_envelope(expected, native_leaf).map_err(|error| {
+                WalletError::Serialization(format!(
+                    "invalid SmallWood Poseidon2 V8/SMZ9 native leaf: {error}"
+                ))
+            })?;
+        self.submit_poseidon2_production_envelope(&envelope).await
+    }
+
+    /// Construct the self-contained `HGV8TX02` leaf around exact ciphertexts
+    /// and one unchanged `SMZ9` proof, then submit the canonical V8 wrapper.
+    pub async fn submit_poseidon2_production_transaction(
+        &self,
+        public_statement: &[u64; POSEIDON2_PRODUCTION_PUBLIC_STATEMENT_WORDS],
+        relation_balance_binding: &[u64; POSEIDON2_PRODUCTION_RELATION_BALANCE_BINDING_LIMBS],
+        ciphertexts: [Option<&[u8; POSEIDON2_PRODUCTION_CIPHERTEXT_BYTES]>; 2],
+        proof: &[u8],
+    ) -> Result<ActionId48, WalletError> {
+        preflight_poseidon2_smz9_proof_before_rpc(proof)?;
+        let height = self
+            .get_chain_metadata()
+            .await?
+            .block_number
+            .checked_add(1)
+            .ok_or(WalletError::InvalidState(
+                "SmallWood Poseidon2 V8 candidate height overflow",
+            ))?;
+        let expected = crate::poseidon2_v8::poseidon2_v8_production_context_at(height)?;
+        let native_leaf = encode_poseidon2_production_smz9_native_leaf(
+            expected,
+            public_statement,
+            relation_balance_binding,
+            ciphertexts,
+            proof,
+        )
+        .map_err(|error| {
+            WalletError::Serialization(format!(
+                "invalid SmallWood Poseidon2 V8/SMZ9 transaction: {error}"
+            ))
+        })?;
+        self.submit_poseidon2_production_native_leaf(&native_leaf)
+            .await
+    }
+
+    /// Submit one prebuilt `SWP8LC02` envelope without changing its native-leaf
+    /// or nested SMZ9 proof bytes.
+    pub async fn submit_poseidon2_production_envelope(
+        &self,
+        envelope_bytes: &[u8],
+    ) -> Result<ActionId48, WalletError> {
+        let authority = self
+            .fresh_submission_authority(
+                protocol_shielded_pool::family::ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE,
+            )
+            .await?;
+        authority.ensure_route(
+            protocol_shielded_pool::family::ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE,
+            protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING,
+        )?;
+        preflight_poseidon2_smz9_envelope_before_rpc(envelope_bytes)?;
+        let expected = crate::poseidon2_v8::poseidon2_v8_production_context_at(authority.height())?;
+        let request = prepare_poseidon2_smz9_submit_request(expected, envelope_bytes)?;
+        let client = self.client.read().await;
+        let response: SubmitActionResponse = client
+            .request("hegemon_submitAction", rpc_params![request])
+            .await
+            .map_err(|error| WalletError::Rpc(format!("hegemon_submitAction failed: {error}")))?;
+        if !response.success {
+            return Err(WalletError::Http(format!(
+                "SmallWood Poseidon2 V8 action rejected: {}",
+                response
+                    .error
+                    .unwrap_or_else(|| "production authority disabled".to_string())
+            )));
+        }
+        let tx_hash = response
+            .tx_hash
+            .ok_or_else(|| WalletError::Rpc("Missing tx_hash in response".to_string()))?;
+        hex_to_action_id(&tx_hash)
+    }
+
+    /// Submit HX512 only after its exact route receives source authority.
+    ///
+    /// The request was constructed by `prepare_hx512_candidate_rpc_request`
+    /// from one verifier-admitted raw action. The current source manifest
+    /// rejects its unallocated route locally before RPC. A future success
+    /// response is itself an error because the
+    /// current RPC result contains a legacy 48-byte action id and must never be
+    /// reinterpreted as the future W64 identity.
+    pub async fn submit_hx512_candidate_action_inactive(
+        &self,
+        request: Hx512CandidateRpcRequest,
+    ) -> Result<(), WalletError> {
+        if request.family_id() != protocol_shielded_pool::family::FAMILY_SHIELDED_POOL {
+            return Err(WalletError::InvalidState(
+                "HX512 candidate family differs from the proof-authority family",
+            ));
+        }
+        let authority = self.fresh_submission_authority(request.action_id()).await?;
+        authority.ensure_route(
+            request.action_id(),
+            protocol_versioning::VersionBinding::new(
+                request.binding_circuit(),
+                request.binding_crypto(),
+            ),
+        )?;
+        let client = self.client.read().await;
+        let response: SubmitActionResponse = client
+            .request("hegemon_submitAction", rpc_params![request])
+            .await
+            .map_err(|error| WalletError::Rpc(format!("hegemon_submitAction failed: {error}")))?;
+        if response.success {
+            return Err(WalletError::Rpc(
+                "inactive HX512 route unexpectedly returned a legacy 48-byte success identity"
+                    .to_owned(),
+            ));
+        }
+        Err(WalletError::Http(format!(
+            "inactive HX512 candidate action rejected: {}",
+            response
+                .error
+                .unwrap_or_else(|| "unallocated candidate route".to_owned())
+        )))
     }
 
     /// Submit a pure shielded-to-shielded transfer (unsigned, DA sidecar variant).
@@ -1364,7 +1721,7 @@ impl NodeRpcClient {
     pub async fn submit_shielded_transfer_unsigned_sidecar(
         &self,
         bundle: &TransactionBundle,
-    ) -> Result<[u8; 32], WalletError> {
+    ) -> Result<ActionId48, WalletError> {
         self.submit_shielded_transfer_unsigned_sidecar_with_proof_mode(bundle, None)
             .await
     }
@@ -1374,10 +1731,19 @@ impl NodeRpcClient {
         &self,
         bundle: &TransactionBundle,
         force_proof_sidecar: Option<bool>,
-    ) -> Result<[u8; 32], WalletError> {
+    ) -> Result<ActionId48, WalletError> {
         use base64::Engine;
 
-        self.ensure_connected().await?;
+        let authority = self
+            .fresh_submission_authority(
+                protocol_shielded_pool::family::ACTION_SHIELDED_TRANSFER_SIDECAR,
+            )
+            .await?;
+        ensure_bundle_matches_fresh_authority(
+            bundle,
+            &authority,
+            protocol_shielded_pool::family::ACTION_SHIELDED_TRANSFER_SIDECAR,
+        )?;
         let client = self.client.read().await;
 
         let decoded_notes = bundle.decode_notes()?;
@@ -1472,7 +1838,7 @@ impl NodeRpcClient {
         };
 
         let envelope = build_shielded_envelope(
-            protocol_versioning::DEFAULT_VERSION_BINDING,
+            authority.binding(),
             protocol_shielded_pool::family::ACTION_SHIELDED_TRANSFER_SIDECAR,
             bundle.nullifiers.clone(),
             args.encode(),
@@ -1495,7 +1861,7 @@ impl NodeRpcClient {
         let tx_hash = response
             .tx_hash
             .ok_or_else(|| WalletError::Rpc("Missing tx_hash in response".to_string()))?;
-        hex_to_array(&tx_hash)
+        hex_to_action_id(&tx_hash)
     }
 
     /// Batch shielded transfer submission is not currently exposed through the
@@ -1512,7 +1878,7 @@ impl NodeRpcClient {
     ///
     /// # Returns
     ///
-    /// The transaction hash (32 bytes) if accepted into the pool.
+    /// The canonical 48-byte action id if accepted into the pool.
     pub async fn submit_batch_shielded_transfer(
         &self,
         batch_size: u32,
@@ -1521,7 +1887,7 @@ impl NodeRpcClient {
         ciphertexts: Vec<Vec<u8>>,
         anchor: [u8; 48],
         total_fee: u128,
-    ) -> Result<[u8; 32], WalletError> {
+    ) -> Result<ActionId48, WalletError> {
         let _ = (
             batch_size,
             nullifiers,
@@ -1696,7 +2062,15 @@ struct DaSubmitProofsItem {
 }
 
 impl SubmitActionRequest {
-    fn from_bundle(bundle: &TransactionBundle) -> Result<Self, WalletError> {
+    fn from_bundle(
+        bundle: &TransactionBundle,
+        authority: &FreshTransactionProofAuthority,
+    ) -> Result<Self, WalletError> {
+        ensure_bundle_matches_fresh_authority(
+            bundle,
+            authority,
+            protocol_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+        )?;
         let ciphertexts = bundle
             .decode_notes()?
             .into_iter()
@@ -1733,7 +2107,7 @@ impl SubmitActionRequest {
         };
 
         let envelope = build_shielded_envelope(
-            protocol_versioning::DEFAULT_VERSION_BINDING,
+            authority.binding(),
             protocol_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
             bundle.nullifiers.clone(),
             args.encode(),
@@ -1784,6 +2158,19 @@ impl SubmitActionRequest {
     }
 }
 
+fn ensure_bundle_matches_fresh_authority(
+    bundle: &TransactionBundle,
+    authority: &FreshTransactionProofAuthority,
+    action_id: protocol_shielded_pool::family::ActionId,
+) -> Result<(), WalletError> {
+    let artifact = decode_native_tx_leaf_artifact_bytes(&bundle.proof_bytes).map_err(|error| {
+        WalletError::Serialization(format!(
+            "invalid native tx-leaf submission artifact: {error}"
+        ))
+    })?;
+    authority.ensure_route(action_id, artifact.tx.version)
+}
+
 fn build_shielded_envelope(
     binding: protocol_versioning::VersionBinding,
     action_id: protocol_shielded_pool::family::ActionId,
@@ -1805,6 +2192,242 @@ fn build_shielded_envelope(
     }
 }
 
+fn preflight_poseidon2_smz9_proof_before_rpc(proof: &[u8]) -> Result<(), WalletError> {
+    if proof.len() < POSEIDON2_PRODUCTION_SMZ9_INNER_PROOF_MAGIC.len()
+        || proof[..POSEIDON2_PRODUCTION_SMZ9_INNER_PROOF_MAGIC.len()]
+            != POSEIDON2_PRODUCTION_SMZ9_INNER_PROOF_MAGIC
+    {
+        return Err(WalletError::Serialization(
+            "invalid SmallWood Poseidon2 V8 proof: expected fresh SMZ9 wire".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn preflight_poseidon2_smz9_native_leaf_before_rpc(native_leaf: &[u8]) -> Result<(), WalletError> {
+    preflight_poseidon2_production_smz9_native_leaf_exact(native_leaf)
+        .map(|_| ())
+        .map_err(|error| {
+            WalletError::Serialization(format!(
+                "invalid SmallWood Poseidon2 V8/SMZ9 native leaf: {error}"
+            ))
+        })
+}
+
+fn preflight_poseidon2_smz9_envelope_before_rpc(envelope_bytes: &[u8]) -> Result<(), WalletError> {
+    preflight_poseidon2_production_smz9_envelope_exact(envelope_bytes)
+        .map(|_| ())
+        .map_err(|error| {
+            WalletError::Serialization(format!(
+                "invalid SmallWood Poseidon2 V8/SMZ9 envelope: {error}"
+            ))
+        })
+}
+
+/// Parse and package the additive SMZ9 envelope without contacting RPC.
+/// Keeping this synchronous boundary separate makes the old SMZ8 rejection
+/// and exact base64 readback testable before any connection attempt.
+fn prepare_poseidon2_smz9_submit_request(
+    expected: Poseidon2ProductionExpectedContext,
+    envelope_bytes: &[u8],
+) -> Result<SubmitActionRequest, WalletError> {
+    decode_poseidon2_production_smz9_envelope_exact(expected, envelope_bytes).map_err(|error| {
+        WalletError::Serialization(format!(
+            "invalid SmallWood Poseidon2 V8/SMZ9 envelope: {error}"
+        ))
+    })?;
+    let public_args = encode_poseidon2_production_smz9_inline_args(expected, envelope_bytes)
+        .map_err(|error| {
+            WalletError::Serialization(format!(
+                "invalid SmallWood Poseidon2 V8/SMZ9 envelope: {error}"
+            ))
+        })?;
+    let envelope = build_shielded_envelope(
+        protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING,
+        protocol_shielded_pool::family::ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE,
+        Vec::new(),
+        public_args,
+    );
+    SubmitActionRequest::from_envelope(&envelope)
+}
+
+/// Return the exact wallet JSON request projection for the retained V8
+/// lifecycle integration test. This surface is absent unless the explicit
+/// test-support Cargo feature is enabled. It packages bytes only: it neither
+/// obtains nor grants production proof authority.
+#[cfg(feature = "poseidon2-v8-retained-test-support")]
+pub fn prepare_poseidon2_smz9_submit_request_json_for_retained_test(
+    expected: Poseidon2ProductionExpectedContext,
+    envelope_bytes: &[u8],
+) -> Result<serde_json::Value, WalletError> {
+    let request = prepare_poseidon2_smz9_submit_request(expected, envelope_bytes)?;
+    serde_json::to_value(request).map_err(|error| {
+        WalletError::Serialization(format!(
+            "encode retained SmallWood Poseidon2 V8 RPC request JSON: {error}"
+        ))
+    })
+}
+
+fn validate_canonical_action_body_chunk(
+    response: CanonicalActionBodyChunkResponse,
+    expected_hash: [u8; 32],
+    expected_height: u64,
+    expected_index: u32,
+    expected_binding: Option<CanonicalActionBodyBinding>,
+) -> Result<(CanonicalActionBodyBinding, Vec<u8>), WalletError> {
+    if response.schema != NATIVE_ACTION_BODY_CHUNK_RPC_SCHEMA {
+        return Err(WalletError::InvalidState(
+            "canonical action-body chunk schema mismatch",
+        ));
+    }
+    let action_body_len = usize::try_from(response.action_body_len)
+        .map_err(|_| WalletError::InvalidState("canonical action body length overflow"))?;
+    if action_body_len == 0 || action_body_len > MAX_NATIVE_ACTION_BODY_BYTES {
+        return Err(WalletError::InvalidState(
+            "canonical action body length exceeds wallet consensus cap",
+        ));
+    }
+    let expected_chunk_count = action_body_len.div_ceil(MAX_NATIVE_ACTION_BODY_CHUNK_BYTES);
+    if expected_chunk_count == 0
+        || expected_chunk_count > MAX_NATIVE_ACTION_BODY_CHUNKS
+        || usize::try_from(response.chunk_count).ok() != Some(expected_chunk_count)
+    {
+        return Err(WalletError::InvalidState(
+            "canonical action-body chunk count mismatch",
+        ));
+    }
+    if response.tx_count as usize > MAX_NATIVE_BLOCK_ACTIONS {
+        return Err(WalletError::InvalidState(
+            "canonical action count exceeds wallet consensus cap",
+        ));
+    }
+    let binding = CanonicalActionBodyBinding {
+        block_hash: hex_to_array(&response.block_hash)?,
+        height: response.height,
+        parent_hash: hex_to_array(&response.parent_hash)?,
+        tx_count: response.tx_count,
+        extrinsics_root: hex_to_array(&response.extrinsics_root)?,
+        action_body_hash: hex_to_array48(&response.action_body_hash)?,
+        action_body_len,
+        chunk_count: response.chunk_count,
+    };
+    if binding.block_hash != expected_hash || binding.height != expected_height {
+        return Err(WalletError::InvalidState(
+            "canonical action-body chunk block binding mismatch",
+        ));
+    }
+    if expected_binding.is_some_and(|expected| expected != binding) {
+        return Err(WalletError::InvalidState(
+            "canonical action-body metadata changed between chunks",
+        ));
+    }
+    if response.chunk_index != expected_index || response.chunk_index >= binding.chunk_count {
+        return Err(WalletError::InvalidState(
+            "canonical action-body chunk is duplicated or out of order",
+        ));
+    }
+    let chunk_index = usize::try_from(response.chunk_index)
+        .map_err(|_| WalletError::InvalidState("canonical chunk index overflow"))?;
+    let chunk_start = chunk_index
+        .checked_mul(MAX_NATIVE_ACTION_BODY_CHUNK_BYTES)
+        .ok_or(WalletError::InvalidState("canonical chunk offset overflow"))?;
+    let expected_chunk_len = action_body_len
+        .checked_sub(chunk_start)
+        .ok_or(WalletError::InvalidState(
+            "canonical chunk begins past body",
+        ))?
+        .min(MAX_NATIVE_ACTION_BODY_CHUNK_BYTES);
+    let declared_chunk_len = usize::try_from(response.chunk_len)
+        .map_err(|_| WalletError::InvalidState("canonical chunk length overflow"))?;
+    if declared_chunk_len != expected_chunk_len {
+        return Err(WalletError::InvalidState(
+            "canonical action-body chunk length mismatch",
+        ));
+    }
+    let encoded = response.chunk.strip_prefix("0x").ok_or_else(|| {
+        WalletError::Serialization("canonical action-body chunk lacks hex prefix".into())
+    })?;
+    ensure_hex_encoded_max_bytes(
+        encoded,
+        MAX_NATIVE_ACTION_BODY_CHUNK_BYTES,
+        "canonical action-body chunk",
+    )?;
+    let bytes = hex::decode(encoded).map_err(|error| {
+        WalletError::Serialization(format!("invalid canonical action-body chunk hex: {error}"))
+    })?;
+    if bytes.len() != expected_chunk_len {
+        return Err(WalletError::InvalidState(
+            "decoded canonical action-body chunk length mismatch",
+        ));
+    }
+    Ok((binding, bytes))
+}
+
+fn decode_and_bind_canonical_action_body(
+    body: &[u8],
+    binding: CanonicalActionBodyBinding,
+) -> Result<Vec<Vec<u8>>, WalletError> {
+    if body.len() != binding.action_body_len || body.len() > MAX_NATIVE_ACTION_BODY_BYTES {
+        return Err(WalletError::InvalidState(
+            "canonical action body violates its declared bounded length",
+        ));
+    }
+    let observed_body_hash = blake2b_384_domain_hash(domains::NATIVE_ACTION_BODY_V3, [body]);
+    if observed_body_hash != binding.action_body_hash {
+        return Err(WalletError::InvalidState(
+            "canonical action-body digest mismatch",
+        ));
+    }
+    let mut cursor = body;
+    let actions = Vec::<Vec<u8>>::decode_with_mem_limit(&mut cursor, MAX_NATIVE_ACTION_BODY_BYTES)
+        .map_err(|error| {
+            WalletError::Serialization(format!("decode canonical SCALE action body: {error}"))
+        })?;
+    if !cursor.is_empty() || actions.encode().as_slice() != body {
+        return Err(WalletError::Serialization(
+            "canonical action body has noncanonical or trailing SCALE bytes".into(),
+        ));
+    }
+    if actions.len() != binding.tx_count as usize || actions.len() > MAX_NATIVE_BLOCK_ACTIONS {
+        return Err(WalletError::InvalidState(
+            "canonical action-body count differs from the header",
+        ));
+    }
+    let mut total = 0usize;
+    let mut ids = Vec::with_capacity(actions.len());
+    let mut unique_ids = HashSet::with_capacity(actions.len());
+    for action in &actions {
+        if action.len() > MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES {
+            return Err(WalletError::InvalidState(
+                "canonical action exceeds the per-action consensus cap",
+            ));
+        }
+        total = total
+            .checked_add(action.len())
+            .ok_or(WalletError::InvalidState(
+                "canonical action byte total overflow",
+            ))?;
+        if total > MAX_NATIVE_BLOCK_ACTION_BYTES {
+            return Err(WalletError::InvalidState(
+                "canonical action bytes exceed the aggregate consensus cap",
+            ));
+        }
+        let id = canonical_action_id_exact(action)?;
+        if !unique_ids.insert(id) {
+            return Err(WalletError::InvalidState(
+                "canonical action body contains a duplicate action id",
+            ));
+        }
+        ids.push(id);
+    }
+    if protocol_kernel::compute_native_action_root_v1(&ids) != binding.extrinsics_root {
+        return Err(WalletError::InvalidState(
+            "canonical action-id order/count root differs from the header",
+        ));
+    }
+    Ok(actions)
+}
+
 fn hex_to_array(hex_str: &str) -> Result<[u8; 32], WalletError> {
     let trimmed = hex_str.strip_prefix("0x").unwrap_or(hex_str);
     ensure_hex_encoded_exact_bytes(trimmed, 32, "hash")?;
@@ -1816,6 +2439,16 @@ fn hex_to_array(hex_str: &str) -> Result<[u8; 32], WalletError> {
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
     Ok(out)
+}
+
+fn hex_to_action_id(hex_str: &str) -> Result<ActionId48, WalletError> {
+    let trimmed = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    ensure_hex_encoded_exact_bytes(trimmed, 48, "action id")?;
+    let bytes = hex::decode(trimmed)
+        .map_err(|e| WalletError::Serialization(format!("Invalid hex: {}", e)))?;
+    ActionId48::try_from(bytes.as_slice()).map_err(|error| {
+        WalletError::Serialization(format!("invalid canonical action id: {error}"))
+    })
 }
 
 fn hex_to_array48(hex_str: &str) -> Result<[u8; 48], WalletError> {
@@ -2068,7 +2701,10 @@ impl BlockingNodeRpcClient {
     }
 
     /// Submit transaction
-    pub fn submit_transaction(&self, bundle: &TransactionBundle) -> Result<[u8; 32], WalletError> {
+    pub fn submit_transaction(
+        &self,
+        bundle: &TransactionBundle,
+    ) -> Result<ActionId48, WalletError> {
         self.runtime.block_on(self.inner.submit_transaction(bundle))
     }
 
@@ -2244,6 +2880,41 @@ mod tests {
         let prefixed = format!("0x{bare}");
         assert_eq!(hex_to_array48(&prefixed).unwrap(), [0x11; 48]);
         assert_eq!(hex_to_array48(&bare).unwrap(), [0x11; 48]);
+    }
+
+    #[test]
+    fn action_id_response_requires_exact_48_byte_width() {
+        let expected = ActionId48::new(core::array::from_fn(|index| index as u8));
+        let bare = hex::encode(expected.as_bytes());
+        let prefixed = format!("0x{bare}");
+        assert_eq!(hex_to_action_id(&bare).unwrap(), expected);
+        assert_eq!(hex_to_action_id(&prefixed).unwrap(), expected);
+
+        for wrong_width in [32usize, 47, 49] {
+            let encoded = "a5".repeat(wrong_width);
+            assert!(
+                hex_to_action_id(&encoded).is_err(),
+                "{wrong_width}-byte response must not be accepted as an action id"
+            );
+        }
+    }
+
+    #[test]
+    fn action_id_response_preserves_tail_mutations_and_rejects_malformed_nibbles() {
+        let original = ActionId48::new([0x11; 48]);
+        let mut mutated_bytes = original.into_bytes();
+        mutated_bytes[47] ^= 0x01;
+        let mutated = hex_to_action_id(&hex::encode(mutated_bytes)).unwrap();
+        assert_ne!(
+            mutated, original,
+            "tail bytes must never be truncated to 32 bytes"
+        );
+        assert_eq!(mutated.as_bytes(), &mutated_bytes);
+
+        let mut malformed = hex::encode(original.as_bytes()).into_bytes();
+        malformed[95] = b'g';
+        let malformed = String::from_utf8(malformed).unwrap();
+        assert!(hex_to_action_id(&malformed).is_err());
     }
 
     fn sample_stablecoin_policy(asset_id: u32) -> StablecoinPolicyStorage {
@@ -2584,7 +3255,7 @@ mod tests {
             fee: 7,
         };
         let envelope = build_shielded_envelope(
-            protocol_versioning::DEFAULT_VERSION_BINDING,
+            protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING,
             protocol_shielded_pool::family::ACTION_SHIELDED_TRANSFER_SIDECAR,
             vec![[0x55u8; 48]],
             args.encode(),
@@ -2598,5 +3269,353 @@ mod tests {
         )
         .expect("sidecar args decode");
         assert_eq!(decoded, args);
+    }
+
+    #[test]
+    fn fresh_submission_refuses_locally_when_source_authority_is_empty() {
+        let error = FreshTransactionProofAuthority::ensure_source_route_declared(
+            protocol_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+        )
+        .expect_err("empty source authority must reject before an RPC client is consulted");
+        assert!(error
+            .to_string()
+            .contains("no fresh transaction proof authority"));
+    }
+
+    #[test]
+    fn hypothetical_future_submission_uses_exact_authorized_binding() {
+        let authority = FreshTransactionProofAuthority::test_only(
+            41,
+            [0x5a; 32],
+            protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING,
+            protocol_shielded_pool::family::ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE,
+        );
+        let envelope = build_shielded_envelope(
+            authority.binding(),
+            authority.action_id(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let request = SubmitActionRequest::from_envelope(&envelope).expect("request");
+        assert_eq!(request.binding_circuit, authority.binding().circuit);
+        assert_eq!(request.binding_crypto, authority.binding().crypto);
+        assert_eq!(request.action_id, authority.action_id());
+        assert_ne!(
+            authority.binding(),
+            protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING
+        );
+        assert!(authority
+            .ensure_route(
+                protocol_shielded_pool::family::ACTION_SHIELDED_TRANSFER_SIDECAR,
+                authority.binding(),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn smallwood_v5_request_preserves_canonical_envelope_and_proof_bytes() {
+        let statement = transaction_circuit::smallwood_v5_envelope::canonical_statement_from_values_and_balance_tag(
+            &[0u64; transaction_circuit::smallwood_v5_envelope::SMALLWOOD_V5_PUBLIC_VALUE_COUNT],
+            [0x22; transaction_circuit::smallwood_v5_envelope::SMALLWOOD_V5_BALANCE_TAG_BYTES],
+        )
+        .expect("canonical statement");
+        let proof = vec![0xa5; 31];
+        let envelope = transaction_circuit::smallwood_v5_envelope::encode_envelope(
+            7,
+            [0x11; transaction_circuit::smallwood_v5_envelope::SMALLWOOD_V5_RELATION_BINDING_BYTES],
+            &statement,
+            &proof,
+        )
+        .expect("canonical envelope");
+        let public_args = encode_smallwood_v5_inline_args(&envelope).expect("transport args");
+        let action = build_shielded_envelope(
+            protocol_versioning::SMALLWOOD_V5_CONVENTIONAL_HASH_VERSION_BINDING,
+            protocol_shielded_pool::smallwood_v5_transport::SMALLWOOD_V5_TRANSPORT_ACTION_ID,
+            vec![[0x33; 48]],
+            public_args,
+        );
+        let request = SubmitActionRequest::from_envelope(&action).expect("RPC request");
+        let rpc_args = base64::engine::general_purpose::STANDARD
+            .decode(request.public_args)
+            .expect("RPC public args");
+        let decoded = decode_smallwood_v5_inline_args_exact(&rpc_args).expect("decoded args");
+        assert_eq!(decoded.envelope, envelope);
+        let proof_start =
+            transaction_circuit::smallwood_v5_envelope::SMALLWOOD_V5_ENVELOPE_HEADER_BYTES
+                + transaction_circuit::smallwood_v5_envelope::SMALLWOOD_V5_STATEMENT_BYTES;
+        assert_eq!(&decoded.envelope[proof_start..], proof.as_slice());
+    }
+
+    #[test]
+    fn poseidon2_v8_smz9_request_preserves_exact_native_leaf_and_nested_proof_region() {
+        let expected = Poseidon2ProductionExpectedContext::new(17, [0x42; 48]).unwrap();
+        let ciphertexts = [
+            [0x41; POSEIDON2_PRODUCTION_CIPHERTEXT_BYTES],
+            [0x42; POSEIDON2_PRODUCTION_CIPHERTEXT_BYTES],
+        ];
+        let mut statement = [0; POSEIDON2_PRODUCTION_PUBLIC_STATEMENT_WORDS];
+        statement[119] = 119;
+        statement[0] = 1;
+        statement[1] = 1;
+        for (index, word) in statement[4..18].iter_mut().enumerate() {
+            *word = 0x1000 + index as u64;
+        }
+        for output_slot in 0..2 {
+            statement[2 + output_slot] = 1;
+            let digest =
+                transaction_circuit::hashing_pq::ciphertext_hash_bytes(&ciphertexts[output_slot]);
+            for (limb, bytes) in digest.chunks_exact(8).enumerate() {
+                statement[32 + output_slot * 6 + limb] =
+                    u64::from_be_bytes(bytes.try_into().expect("digest limb"));
+            }
+        }
+        let binding = core::array::from_fn(|index| 1_000 + index as u64);
+        let mut proof = vec![0xa5; 113];
+        proof[..4].copy_from_slice(b"SMZ9");
+        preflight_poseidon2_smz9_proof_before_rpc(&proof).expect("preflight SMZ9 proof");
+        let native_leaf = encode_poseidon2_production_smz9_native_leaf(
+            expected,
+            &statement,
+            &binding,
+            [Some(&ciphertexts[0]), Some(&ciphertexts[1])],
+            &proof,
+        )
+        .expect("canonical SMZ9 leaf");
+        preflight_poseidon2_smz9_native_leaf_before_rpc(&native_leaf)
+            .expect("preflight SMZ9 native leaf");
+        assert_eq!(&native_leaf[..8], b"HGV8TX02");
+        assert_eq!(native_leaf[19], 6);
+        let envelope = encode_poseidon2_production_smz9_envelope(expected, &native_leaf)
+            .expect("canonical SMZ9 envelope");
+        preflight_poseidon2_smz9_envelope_before_rpc(&envelope).expect("preflight SMZ9 envelope");
+        assert_eq!(&envelope[..8], b"SWP8LC02");
+        assert_eq!(envelope[19], 6);
+        let request = prepare_poseidon2_smz9_submit_request(expected, &envelope)
+            .expect("canonical SMZ9 RPC request");
+        assert!(request.new_nullifiers.is_empty());
+        assert_eq!(request.binding_circuit, protocol_versioning::CIRCUIT_V8);
+        assert_eq!(
+            request.binding_crypto,
+            protocol_versioning::CRYPTO_SUITE_ETA
+        );
+        assert_eq!(
+            request.action_id,
+            protocol_shielded_pool::family::ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
+        );
+        let rpc_args = base64::engine::general_purpose::STANDARD
+            .decode(request.public_args)
+            .expect("RPC public args");
+        let decoded = decode_poseidon2_production_smz9_inline_args_exact(expected, &rpc_args)
+            .expect("exact SMZ9 action args");
+        assert_eq!(decoded.raw(), rpc_args.as_slice());
+        assert_eq!(decoded.envelope().raw(), envelope.as_slice());
+        assert_eq!(decoded.envelope().native_leaf(), native_leaf.as_slice());
+        assert_eq!(decoded.envelope().declared_proof_len(), proof.len());
+        assert_eq!(
+            decoded.envelope().decoded_native_leaf().ciphertext(0),
+            Some(&ciphertexts[0])
+        );
+        assert_eq!(
+            decoded.envelope().decoded_native_leaf().ciphertext(1),
+            Some(&ciphertexts[1])
+        );
+        assert_eq!(
+            decoded.envelope().decoded_native_leaf().proof(),
+            proof.as_slice()
+        );
+        for (index, expected_word) in statement[4..18].iter().copied().enumerate() {
+            assert_eq!(
+                decoded
+                    .envelope()
+                    .decoded_native_leaf()
+                    .statement_word(4 + index),
+                Some(expected_word)
+            );
+        }
+    }
+
+    #[test]
+    fn frozen_smz8_proof_and_transport_reject_before_rpc_request_creation() {
+        let expected = Poseidon2ProductionExpectedContext::new(17, [0x42; 48]).unwrap();
+        let statement = [0; POSEIDON2_PRODUCTION_PUBLIC_STATEMENT_WORDS];
+        let binding = [0; POSEIDON2_PRODUCTION_RELATION_BALANCE_BINDING_LIMBS];
+        let mut old_proof = vec![0xa5; 113];
+        old_proof[..4].copy_from_slice(b"SMZ8");
+
+        assert!(preflight_poseidon2_smz9_proof_before_rpc(&old_proof).is_err());
+        assert!(encode_poseidon2_production_smz9_native_leaf(
+            expected,
+            &statement,
+            &binding,
+            [None, None],
+            &old_proof,
+        )
+        .is_err());
+
+        let old_leaf = encode_historical_poseidon2_v8_smz8_native_leaf(
+            expected,
+            &statement,
+            &binding,
+            [None, None],
+            &old_proof,
+        )
+        .expect("construct frozen SMZ8 leaf for rejection test");
+        let old_envelope = encode_historical_poseidon2_v8_smz8_envelope(expected, &old_leaf)
+            .expect("construct frozen SMZ8 envelope for rejection test");
+        let old_args = encode_historical_poseidon2_v8_smz8_inline_args(expected, &old_envelope)
+            .expect("construct frozen SMZ8 args for rejection test");
+
+        assert!(preflight_poseidon2_smz9_native_leaf_before_rpc(&old_leaf).is_err());
+        assert!(preflight_poseidon2_smz9_envelope_before_rpc(&old_envelope).is_err());
+        assert!(prepare_poseidon2_smz9_submit_request(expected, &old_envelope).is_err());
+        assert!(decode_poseidon2_production_smz9_inline_args_exact(expected, &old_args).is_err());
+    }
+
+    fn canonical_body_fixture(actions: Vec<Vec<u8>>) -> (Vec<u8>, CanonicalActionBodyBinding) {
+        let body = actions.encode();
+        let ids = actions
+            .iter()
+            .map(|action| canonical_action_id_exact(action).unwrap())
+            .collect::<Vec<_>>();
+        let binding = CanonicalActionBodyBinding {
+            block_hash: [0x31; 32],
+            height: 7,
+            parent_hash: [0x30; 32],
+            tx_count: actions.len() as u32,
+            extrinsics_root: protocol_kernel::compute_native_action_root_v1(&ids),
+            action_body_hash: blake2b_384_domain_hash(
+                domains::NATIVE_ACTION_BODY_V3,
+                [body.as_slice()],
+            ),
+            action_body_len: body.len(),
+            chunk_count: body.len().div_ceil(MAX_NATIVE_ACTION_BODY_CHUNK_BYTES) as u32,
+        };
+        (body, binding)
+    }
+
+    #[test]
+    fn canonical_action_body_binding_rejects_order_count_action_and_trailing_mutations() {
+        let actions = vec![
+            crate::poseidon2_v8_sync::canonical_test_action_bytes(1),
+            crate::poseidon2_v8_sync::canonical_test_action_bytes(2),
+        ];
+        let (body, binding) = canonical_body_fixture(actions.clone());
+        assert_eq!(
+            decode_and_bind_canonical_action_body(&body, binding).unwrap(),
+            actions
+        );
+
+        let mut bad_hash = binding;
+        bad_hash.action_body_hash[0] ^= 1;
+        assert!(decode_and_bind_canonical_action_body(&body, bad_hash).is_err());
+
+        let mut bad_count = binding;
+        bad_count.tx_count = 1;
+        assert!(decode_and_bind_canonical_action_body(&body, bad_count).is_err());
+
+        let mut reordered = actions.clone();
+        reordered.swap(0, 1);
+        let reordered_body = reordered.encode();
+        let mut reordered_binding = binding;
+        reordered_binding.action_body_hash =
+            blake2b_384_domain_hash(domains::NATIVE_ACTION_BODY_V3, [reordered_body.as_slice()]);
+        assert!(decode_and_bind_canonical_action_body(&reordered_body, reordered_binding).is_err());
+
+        let mut mutated_actions = actions.clone();
+        mutated_actions[0][0] ^= 1;
+        let mutated_body = mutated_actions.encode();
+        let mut mutated_binding = binding;
+        mutated_binding.action_body_hash =
+            blake2b_384_domain_hash(domains::NATIVE_ACTION_BODY_V3, [mutated_body.as_slice()]);
+        assert!(decode_and_bind_canonical_action_body(&mutated_body, mutated_binding).is_err());
+
+        let mut trailing = body.clone();
+        trailing.push(0);
+        let mut trailing_binding = binding;
+        trailing_binding.action_body_len = trailing.len();
+        trailing_binding.action_body_hash =
+            blake2b_384_domain_hash(domains::NATIVE_ACTION_BODY_V3, [trailing.as_slice()]);
+        assert!(decode_and_bind_canonical_action_body(&trailing, trailing_binding).is_err());
+    }
+
+    #[test]
+    fn canonical_action_body_chunk_rejects_index_count_size_and_metadata_mutations() {
+        let actions = vec![crate::poseidon2_v8_sync::canonical_test_action_bytes(3)];
+        let (body, binding) = canonical_body_fixture(actions);
+        let response = CanonicalActionBodyChunkResponse {
+            schema: NATIVE_ACTION_BODY_CHUNK_RPC_SCHEMA.to_owned(),
+            block_hash: format!("0x{}", hex::encode(binding.block_hash)),
+            height: binding.height,
+            parent_hash: format!("0x{}", hex::encode(binding.parent_hash)),
+            tx_count: binding.tx_count,
+            extrinsics_root: format!("0x{}", hex::encode(binding.extrinsics_root)),
+            action_body_hash: format!("0x{}", hex::encode(binding.action_body_hash)),
+            action_body_len: body.len() as u64,
+            chunk_index: 0,
+            chunk_count: 1,
+            chunk_len: body.len() as u64,
+            chunk: format!("0x{}", hex::encode(&body)),
+        };
+        let (observed, bytes) = validate_canonical_action_body_chunk(
+            response.clone(),
+            binding.block_hash,
+            binding.height,
+            0,
+            None,
+        )
+        .unwrap();
+        assert_eq!(observed, binding);
+        assert_eq!(bytes, body);
+
+        let mut wrong_index = response.clone();
+        wrong_index.chunk_index = 1;
+        assert!(validate_canonical_action_body_chunk(
+            wrong_index,
+            binding.block_hash,
+            binding.height,
+            0,
+            None,
+        )
+        .is_err());
+        let mut wrong_count = response.clone();
+        wrong_count.chunk_count = 2;
+        assert!(validate_canonical_action_body_chunk(
+            wrong_count,
+            binding.block_hash,
+            binding.height,
+            0,
+            None,
+        )
+        .is_err());
+        let mut wrong_len = response.clone();
+        wrong_len.chunk_len += 1;
+        assert!(validate_canonical_action_body_chunk(
+            wrong_len,
+            binding.block_hash,
+            binding.height,
+            0,
+            None,
+        )
+        .is_err());
+        let mut oversized = response.clone();
+        oversized.action_body_len = (MAX_NATIVE_ACTION_BODY_BYTES as u64) + 1;
+        assert!(validate_canonical_action_body_chunk(
+            oversized,
+            binding.block_hash,
+            binding.height,
+            0,
+            None,
+        )
+        .is_err());
+        let mut changed_metadata = response;
+        changed_metadata.parent_hash = format!("0x{}", hex::encode([0x99; 32]));
+        assert!(validate_canonical_action_body_chunk(
+            changed_metadata,
+            binding.block_hash,
+            binding.height,
+            0,
+            Some(binding),
+        )
+        .is_err());
     }
 }
