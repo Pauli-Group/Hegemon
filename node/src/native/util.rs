@@ -431,6 +431,60 @@ pub(crate) const NATIVE_BLOCK_META_ACTION_BYTES_OFFSET: usize = 32
     + 16
     + 4;
 
+pub(crate) const NATIVE_BLOCK_META_SCHEMA_LEGACY_V1: u8 = 1;
+pub(crate) const NATIVE_BLOCK_META_SCHEMA_CURRENT_V2: u8 = 2;
+
+pub(crate) fn bincode_deserialize_current_native_block_meta_exact(
+    bytes: &[u8],
+    label: &str,
+) -> Result<NativeBlockMeta> {
+    validate_native_block_meta_bincode_budget(bytes, label)?;
+    bincode_deserialize_exact_with_limit::<NativeBlockMeta>(
+        bytes,
+        label,
+        MAX_NATIVE_BLOCK_META_BYTES,
+    )
+}
+
+pub(crate) fn bincode_deserialize_legacy_v1_native_block_meta_exact(
+    bytes: &[u8],
+    label: &str,
+) -> Result<NativeBlockMeta> {
+    validate_native_block_meta_bincode_budget(bytes, label)?;
+    bincode_deserialize_exact_with_limit::<LegacyNativeBlockMetaV1>(
+        bytes,
+        label,
+        MAX_NATIVE_BLOCK_META_BYTES,
+    )
+    .map(Into::into)
+}
+
+pub(crate) fn detect_bincode_native_block_meta_schema_exact(
+    bytes: &[u8],
+    label: &str,
+) -> Result<(NativeBlockMeta, u8)> {
+    validate_native_block_meta_bincode_budget(bytes, label)?;
+    match bincode_deserialize_exact_with_limit::<NativeBlockMeta>(
+        bytes,
+        label,
+        MAX_NATIVE_BLOCK_META_BYTES,
+    ) {
+        Ok(meta) => Ok((meta, NATIVE_BLOCK_META_SCHEMA_CURRENT_V2)),
+        Err(current_error) => {
+            match bincode_deserialize_exact_with_limit::<LegacyNativeBlockMetaV1>(
+                bytes,
+                &format!("legacy {label}"),
+                MAX_NATIVE_BLOCK_META_BYTES,
+            ) {
+                Ok(meta) => Ok((meta.into(), NATIVE_BLOCK_META_SCHEMA_LEGACY_V1)),
+                Err(legacy_error) => Err(anyhow!(
+                    "{label} did not decode as current or legacy native metadata: current={current_error}; legacy={legacy_error}"
+                )),
+            }
+        }
+    }
+}
+
 pub(crate) fn bincode_deserialize_native_block_meta_exact(
     bytes: &[u8],
     label: &str,

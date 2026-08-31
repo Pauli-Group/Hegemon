@@ -59,7 +59,7 @@ pub(crate) async fn health_handler(State(node): State<Arc<NativeNode>>) -> Respo
         StatusCode::OK,
         json!({
             "ok": true,
-            "height": node.best_meta().height,
+            "height": node.best_height(),
             "syncing": false,
         }),
     )
@@ -190,7 +190,7 @@ pub(crate) fn dispatch_rpc_method(
             "height": null,
             "pre_hash": null,
             "parent_hash": null,
-            "network_difficulty": node.best_meta().pow_bits,
+            "network_difficulty": best_pow_bits(node),
             "share_difficulty": null,
             "reason": "native pool RPC is not enabled in milestone 1",
         })),
@@ -200,7 +200,7 @@ pub(crate) fn dispatch_rpc_method(
             "height": null,
             "pre_hash": null,
             "parent_hash": null,
-            "network_bits": node.best_meta().pow_bits,
+            "network_bits": best_pow_bits(node),
             "share_bits": null,
             "reason": "native compact-job RPC is not enabled in milestone 1",
         })),
@@ -216,7 +216,7 @@ pub(crate) fn dispatch_rpc_method(
         })),
         "hegemon_poolStatus" => Ok(json!({
             "available": false,
-            "network_difficulty": node.best_meta().pow_bits,
+            "network_difficulty": best_pow_bits(node),
             "share_difficulty": null,
             "accepted_shares": 0u64,
             "rejected_shares": 0u64,
@@ -244,17 +244,23 @@ pub(crate) fn dispatch_rpc_method(
 }
 
 pub(crate) fn chain_get_header(node: &NativeNode, params: Value) -> Result<Value> {
-    let meta = match first_param(&params) {
+    match first_param(&params) {
         Some(Value::String(hash_hex)) => {
             let Some(hash) = parse_hash32(hash_hex) else {
                 return Ok(Value::Null);
             };
-            node.header_by_hash(&hash)?
+            Ok(node
+                .header_by_hash(&hash)?
+                .as_ref()
+                .map(header_json)
+                .unwrap_or(Value::Null))
         }
-        Some(Value::Null) | None => Some(node.best_meta()),
-        Some(_) => return Ok(Value::Null),
-    };
-    Ok(meta.as_ref().map(header_json).unwrap_or(Value::Null))
+        Some(Value::Null) | None => {
+            let state = node.state.read();
+            Ok(header_json(&state.best))
+        }
+        Some(_) => Ok(Value::Null),
+    }
 }
 
 pub(crate) fn chain_get_block_hash(node: &NativeNode, params: Value) -> Result<Value> {
@@ -267,7 +273,7 @@ pub(crate) fn chain_get_block_hash(node: &NativeNode, params: Value) -> Result<V
             Some(height) => node.hash_by_height(height)?,
             None => None,
         },
-        Some(Value::Null) | None => Some(node.best_meta().hash),
+        Some(Value::Null) | None => Some(best_hash(node)),
         Some(_) => None,
     };
     Ok(hash.map(|hash| json!(hex32(&hash))).unwrap_or(Value::Null))
@@ -281,7 +287,7 @@ pub(crate) fn chain_get_block(node: &NativeNode, params: Value) -> Result<Value>
             };
             hash
         }
-        Some(Value::Null) | None => node.best_meta().hash,
+        Some(Value::Null) | None => best_hash(node),
         Some(_) => return Ok(Value::Null),
     };
     let Some(meta) = node.header_by_hash(&hash)? else {
@@ -323,16 +329,15 @@ pub(crate) fn block_timestamps(
     mined_only: bool,
 ) -> Result<Value> {
     if mined_only {
-        let best = node.best_meta();
-        if best.height == 0 {
+        let best_height = node.best_height();
+        if best_height == 0 {
             return Ok(Value::Array(Vec::new()));
         }
-        let start = best
-            .height
+        let start = best_height
             .saturating_sub(MAX_NATIVE_TIMESTAMP_ROWS.saturating_sub(1))
             .max(1);
         let mut rows = Vec::new();
-        for height in start..=best.height {
+        for height in start..=best_height {
             if let Some(meta) = timestamp_meta_by_height(node, height)? {
                 rows.push(json!({
                     "height": meta.height,
@@ -377,7 +382,7 @@ pub(crate) fn timestamp_meta_by_height(
     height: u64,
 ) -> Result<Option<NativeBlockMeta>> {
     if node.hash_by_height(height)?.is_none() {
-        if height <= node.best_meta().height {
+        if height <= node.best_height() {
             return Err(anyhow!(
                 "missing canonical height index for native block {height}"
             ));
@@ -446,7 +451,14 @@ pub(crate) fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<
         }
         _ => None,
     };
-    let best = node.best_meta();
+    let (best_header, best_checkpoint) = {
+        let state = node.state.read();
+        (
+            pow_header_from_meta(&state.best),
+            checkpoint_from_meta(&state.best),
+        )
+    };
+    let best_height = best_header.height;
     let confirmations_checked =
         evaluate_native_bridge_witness_export_admission(NativeBridgeWitnessExportAdmissionInput {
             block_hash_parameter_valid: true,
@@ -461,8 +473,8 @@ pub(crate) fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<
                     && canonical_height_present
                     && block_is_canonical
                     && message_index_in_bounds),
-            best_height: best.height,
-            message_height: meta.as_ref().map(|meta| meta.height).unwrap_or(best.height),
+            best_height,
+            message_height: meta.as_ref().map(|meta| meta.height).unwrap_or(best_height),
             max_explicit_history: MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS,
             max_materialized_history: MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS,
         })
@@ -485,7 +497,7 @@ pub(crate) fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<
         })?;
     let header = pow_header_from_meta(&meta);
     let parent_checkpoint = checkpoint_from_meta(&parent);
-    let long_range_trusted_checkpoint = if best.height > meta.height {
+    let long_range_trusted_checkpoint = if best_height > meta.height {
         let genesis_hash = node
             .hash_by_height(0)?
             .ok_or_else(|| anyhow!("missing genesis hash for bridge witness"))?;
@@ -500,7 +512,6 @@ pub(crate) fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<
         .as_ref()
         .unwrap_or(&parent_checkpoint);
     let message_checkpoint = checkpoint_from_meta(&meta);
-    let best_checkpoint = checkpoint_from_meta(&best);
     let output = bridge_checkpoint_output_with_tip_from_anchor(
         output_anchor,
         &message_checkpoint,
@@ -531,7 +542,7 @@ pub(crate) fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<
     let long_range_proof = build_long_range_bridge_proof(
         node,
         &meta,
-        &best,
+        &best_header,
         &messages,
         message_index,
         output.clone(),
@@ -588,13 +599,12 @@ pub(crate) fn latest_bridge_message_block_hash(
     node: &NativeNode,
     message_index: usize,
 ) -> Result<Hash32> {
-    let best = node.best_meta();
-    let min_height = best
-        .height
-        .saturating_sub(MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS.saturating_sub(1));
+    let best_height = node.best_height();
+    let min_height =
+        best_height.saturating_sub(MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS.saturating_sub(1));
     let mut entries = Vec::new();
     let mut hashes = Vec::new();
-    for height in (min_height..=best.height).rev() {
+    for height in (min_height..=best_height).rev() {
         let mut entry = NativeBridgeWitnessBackscanEntry {
             height,
             canonical_hash_present: false,
@@ -646,12 +656,12 @@ pub(crate) fn latest_bridge_message_block_hash(
 pub(crate) fn build_long_range_bridge_proof(
     node: &NativeNode,
     message_meta: &NativeBlockMeta,
-    tip_meta: &NativeBlockMeta,
+    tip_header: &PowHeaderV1,
     messages: &[BridgeMessageV1],
     message_index: usize,
     output: BridgeCheckpointOutputV1,
 ) -> Result<Option<HegemonLongRangeProofV1>> {
-    if tip_meta.height <= message_meta.height {
+    if tip_header.height <= message_meta.height {
         return Ok(None);
     }
     let genesis_hash = node
@@ -660,12 +670,11 @@ pub(crate) fn build_long_range_bridge_proof(
     let genesis = node
         .header_by_hash(&genesis_hash)?
         .ok_or_else(|| anyhow!("missing genesis header for bridge witness"))?;
-    let tip_history = node.header_hashes_to_hash(tip_meta.parent_hash)?;
+    let tip_history = node.header_hashes_to_hash(tip_header.parent_hash)?;
     let message_header = pow_header_from_meta(message_meta);
-    let tip_header = pow_header_from_meta(tip_meta);
     let tip_parent_opening = header_mmr_opening_from_hashes(
         &tip_history,
-        tip_meta
+        tip_header
             .height
             .checked_sub(1)
             .ok_or_else(|| anyhow!("bridge witness tip has no parent"))?,
@@ -682,11 +691,11 @@ pub(crate) fn build_long_range_bridge_proof(
     )
     .map_err(|err| anyhow!("build message parent MMR opening failed: {err:?}"))?;
     let sample_indices = flyclient_sample_indices(
-        tip_meta.header_mmr_root,
-        tip_meta.hash,
+        tip_header.header_mmr_root,
+        tip_header.pow_hash(),
         message_meta.hash,
         genesis.height.saturating_add(1),
-        tip_meta.height,
+        tip_header.height,
         DEFAULT_BRIDGE_FLYCLIENT_SAMPLE_COUNT,
     );
     let mut sample_headers = Vec::with_capacity(sample_indices.len());
@@ -715,7 +724,7 @@ pub(crate) fn build_long_range_bridge_proof(
     Ok(Some(HegemonLongRangeProofV1 {
         verifier_hash: HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1,
         trusted_checkpoint: checkpoint_from_meta(&genesis),
-        tip_header,
+        tip_header: tip_header.clone(),
         tip_parent_opening,
         message_header,
         message_header_opening,
@@ -728,6 +737,14 @@ pub(crate) fn build_long_range_bridge_proof(
         sample_count: DEFAULT_BRIDGE_FLYCLIENT_SAMPLE_COUNT,
         output,
     }))
+}
+
+fn best_hash(node: &NativeNode) -> Hash32 {
+    node.state.read().best.hash
+}
+
+fn best_pow_bits(node: &NativeNode) -> u32 {
+    node.state.read().best.pow_bits
 }
 
 pub(crate) fn header_json(meta: &NativeBlockMeta) -> Value {

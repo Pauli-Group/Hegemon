@@ -164,7 +164,7 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
 const EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3: &str =
     "48241181e5d729f606709afbb568c1074d2852de838c13bacadd7a519aa6f9b5";
 const EXPECTED_FORMAL_SOURCE_TREE_BLAKE3: &str =
-    "ac8698e700262a49b65538267b0906227c2cdbedd73e01adc9fd2c8369be6a54";
+    "7da36c0e85641ba44e21d193ed0218e265ba57d081d87d02b172d29a3e73b52f";
 const PROGRESS_PERCENT_EPSILON: f64 = 0.0001;
 
 #[derive(Debug, Serialize)]
@@ -1616,6 +1616,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/GenerateActionRequestProjectionAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateAtomicCommitManifestAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/CanonicalReorgPersistenceAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCanonicalReorgPersistenceAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/ActionHashAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateActionHashAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/ActionRootTranscript.lean",
@@ -1738,9 +1740,15 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/SidecarUploadAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateSidecarUploadAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/SyncAdmission.lean",
+        "formal/lean/Hegemon/Native/SyncBlockChunkAdmission.lean",
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean",
+        "formal/lean/Hegemon/Native/SyncBlockRangePublicationAdmission.lean",
+        "formal/lean/Hegemon/Native/SyncRawIngress.lean",
         "formal/lean/Hegemon/Native/SyncResponseImport.lean",
         "formal/lean/Hegemon/Native/GenerateSyncAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/GenerateSyncBlockChunkAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/GenerateSyncBlockRangePublicationAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/GenerateSyncRawIngressVectors.lean",
         "formal/lean/Hegemon/Native/GenerateSyncResponseImportVectors.lean",
         "formal/lean/Hegemon/Network/SecureChannel.lean",
         "formal/lean/Hegemon/Network/GenerateSecureChannelVectors.lean",

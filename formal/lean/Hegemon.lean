@@ -67,6 +67,7 @@ import Hegemon.Native.CandidateArtifactCouplingAdmission
 import Hegemon.Native.CandidateArtifactResourceAdmission
 import Hegemon.Native.CandidateArtifactScaleWire
 import Hegemon.Native.CanonicalReorgChainAdmission
+import Hegemon.Native.CanonicalReorgPersistenceAdmission
 import Hegemon.Native.CodecAdmission
 import Hegemon.Native.CoinbaseActionPayloadAdmission
 import Hegemon.Native.CoinbaseActionPayloadScaleWire
@@ -122,6 +123,7 @@ import Hegemon.Native.StablecoinPolicyAuthorization
 import Hegemon.Native.StablecoinPolicyLiveAuthorization
 import Hegemon.Native.StorageDurabilityAdmission
 import Hegemon.Native.SyncAdmission
+import Hegemon.Native.SyncBlockChunkAdmission
 import Hegemon.Native.SyncBlockReplayPublication
 import Hegemon.Native.SyncBlockRangePublicationAdmission
 import Hegemon.Native.SyncRawIngress

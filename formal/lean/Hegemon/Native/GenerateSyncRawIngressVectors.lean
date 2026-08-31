@@ -19,6 +19,9 @@ def kindJson : SyncRawIngressKind -> String
   | SyncRawIngressKind.request => "\"request\""
   | SyncRawIngressKind.response => "\"response\""
   | SyncRawIngressKind.pendingAction => "\"pending_action\""
+  | SyncRawIngressKind.requestBlockChunk => "\"request_block_chunk\""
+  | SyncRawIngressKind.blockChunk => "\"block_chunk\""
+  | SyncRawIngressKind.announceTip => "\"announce_tip\""
   | SyncRawIngressKind.decodeError => "\"decode_error\""
 
 def rejectionJson : Option SyncRawIngressReject -> String
@@ -32,6 +35,9 @@ def rejectionJson : Option SyncRawIngressReject -> String
 def outcomeJson : SyncResponseImportOutcome -> String
   | SyncResponseImportOutcome.imported => "\"imported\""
   | SyncResponseImportOutcome.alreadyKnown => "\"already_known\""
+  | SyncResponseImportOutcome.storedNoncanonical =>
+      "\"stored_noncanonical\""
+  | SyncResponseImportOutcome.missingParent => "\"missing_parent\""
   | SyncResponseImportOutcome.error => "\"error\""
 
 def outcomeListJson : List SyncResponseImportOutcome -> String
@@ -84,7 +90,7 @@ def caseJson (name : String) (case : SyncRawIngressCase) : String :=
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"sync_raw_ingress_cases\": [\n"
     ++ caseJson "valid-raw-sync-request-capped-range" validRawRequest ++ ",\n"
     ++ caseJson "raw-sync-request-trailing-rejected" trailingRawRequest ++ ",\n"
@@ -94,6 +100,17 @@ def vectorJson : String :=
       unknownVariantRawMessage ++ ",\n"
     ++ caseJson "raw-sync-empty-pending-action-rejected"
       emptyPendingActionRelay ++ ",\n"
+    ++ caseJson "valid-raw-sync-block-chunk-request"
+      validRawBlockChunkRequest ++ ",\n"
+    ++ caseJson "valid-raw-sync-block-chunk" validRawBlockChunk ++ ",\n"
+    ++ caseJson "valid-raw-sync-tip-announcement"
+      validRawTipAnnouncement ++ ",\n"
+    ++ caseJson "raw-sync-truncated-block-chunk-request-rejected"
+      truncatedRawBlockChunkRequest ++ ",\n"
+    ++ caseJson "raw-sync-trailing-block-chunk-rejected"
+      trailingRawBlockChunk ++ ",\n"
+    ++ caseJson "raw-sync-trailing-tip-announcement-rejected"
+      trailingRawTipAnnouncement ++ ",\n"
     ++ caseJson "valid-empty-raw-sync-response" validEmptyRawResponse ++ "\n"
     ++ "  ]\n"
     ++ "}\n"

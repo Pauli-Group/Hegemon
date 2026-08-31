@@ -2,6 +2,324 @@
 
 use super::*;
 
+pub(crate) fn load_native_sync_response_prefix_with<F>(
+    best_height: u64,
+    range: NativeSyncRange,
+    initial_parent_hash: Option<[u8; 32]>,
+    mut load_block: F,
+) -> Result<(Vec<NativeBlockMeta>, bool, Option<NativeSyncChunkOffer>)>
+where
+    F: FnMut(u64) -> Result<NativeBlockMeta>,
+{
+    let mut blocks = Vec::new();
+    let mut wire_sizer = NativeSyncResponseWireSizer::new(best_height)?;
+    let mut expected_parent_hash = initial_parent_hash;
+    let mut previous_parent_anchor_verified = range.from_height == 0;
+    let mut oversized_first_block = None;
+
+    for height in range.from_height..=range.to_height {
+        let meta = load_block(height)?;
+        if let Some(expected_parent_hash) = expected_parent_hash {
+            if meta.parent_hash != expected_parent_hash {
+                return Err(anyhow!(
+                    "canonical native block parent mismatch at height {}: expected {}, got {}",
+                    height,
+                    hex32(&expected_parent_hash),
+                    hex32(&meta.parent_hash)
+                ));
+            }
+            if height == range.from_height {
+                previous_parent_anchor_verified = true;
+            }
+        }
+
+        let wire_bytes = match wire_sizer.try_push_block(&meta)? {
+            Some(wire_bytes) => wire_bytes,
+            None => {
+                if blocks.is_empty() {
+                    oversized_first_block = Some(NativeSyncChunkOffer {
+                        height: meta.height,
+                        block_hash: meta.hash,
+                    });
+                }
+                break;
+            }
+        };
+        if wire_bytes > MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES && !blocks.is_empty() {
+            break;
+        }
+        expected_parent_hash = Some(meta.hash);
+        blocks.push(meta);
+        if wire_bytes > MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES {
+            // Preserve the historical guarantee that a single publishable
+            // block can cross the soft response target. The hard encrypted
+            // transport cap was already checked by `try_push_block`.
+            break;
+        }
+    }
+
+    Ok((
+        blocks,
+        previous_parent_anchor_verified,
+        oversized_first_block,
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+struct NativeStoredPowPrefix<'a> {
+    chain_id: [u8; 32],
+    rules_hash: [u8; 32],
+    height: u64,
+    hash: [u8; 32],
+    parent_hash: [u8; 32],
+    #[serde(borrow, with = "serde_bytes")]
+    state_root: &'a [u8; 48],
+    #[serde(borrow, with = "serde_bytes")]
+    kernel_root: &'a [u8; 48],
+    #[serde(borrow, with = "serde_bytes")]
+    nullifier_root: &'a [u8; 48],
+    extrinsics_root: [u8; 32],
+    #[serde(borrow, with = "serde_bytes")]
+    message_root: &'a [u8; 48],
+    message_count: u32,
+    header_mmr_root: [u8; 32],
+    header_mmr_len: u64,
+    timestamp_ms: u64,
+    pow_bits: u32,
+    nonce: [u8; 32],
+    work_hash: [u8; 32],
+    #[serde(borrow, with = "serde_bytes")]
+    cumulative_work: &'a [u8; 48],
+    supply_digest: u128,
+    tx_count: u32,
+}
+
+impl NativeStoredPowPrefix<'_> {
+    fn matches(&self, meta: &NativeBlockMeta) -> bool {
+        self.chain_id == meta.chain_id
+            && self.rules_hash == meta.rules_hash
+            && self.height == meta.height
+            && self.hash == meta.hash
+            && self.parent_hash == meta.parent_hash
+            && *self.state_root == meta.state_root
+            && *self.kernel_root == meta.kernel_root
+            && *self.nullifier_root == meta.nullifier_root
+            && self.extrinsics_root == meta.extrinsics_root
+            && *self.message_root == meta.message_root
+            && self.message_count == meta.message_count
+            && self.header_mmr_root == meta.header_mmr_root
+            && self.header_mmr_len == meta.header_mmr_len
+            && self.timestamp_ms == meta.timestamp_ms
+            && self.pow_bits == meta.pow_bits
+            && self.nonce == meta.nonce
+            && self.work_hash == meta.work_hash
+            && *self.cumulative_work == meta.cumulative_work
+            && self.supply_digest == meta.supply_digest
+            && self.tx_count == meta.tx_count
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativePowMetaProjection {
+    chain_id: [u8; 32],
+    rules_hash: [u8; 32],
+    height: u64,
+    hash: [u8; 32],
+    parent_hash: [u8; 32],
+    timestamp_ms: u64,
+    pow_bits: u32,
+    work_hash: [u8; 32],
+    cumulative_work: [u8; 48],
+}
+
+impl From<&NativeBlockMeta> for NativePowMetaProjection {
+    fn from(meta: &NativeBlockMeta) -> Self {
+        Self {
+            chain_id: meta.chain_id,
+            rules_hash: meta.rules_hash,
+            height: meta.height,
+            hash: meta.hash,
+            parent_hash: meta.parent_hash,
+            timestamp_ms: meta.timestamp_ms,
+            pow_bits: meta.pow_bits,
+            work_hash: meta.work_hash,
+            cumulative_work: meta.cumulative_work,
+        }
+    }
+}
+
+#[cfg(test)]
+struct NativeStreamingStoredMetaDecodeGuard<'a> {
+    node: &'a NativeNode,
+}
+
+#[cfg(test)]
+impl Drop for NativeStreamingStoredMetaDecodeGuard<'_> {
+    fn drop(&mut self) {
+        let previous = self
+            .node
+            .streaming_replay_live_stored_meta_count
+            .fetch_sub(1, Ordering::Relaxed);
+        debug_assert!(
+            previous > 0,
+            "streaming replay stored-meta counter underflow"
+        );
+    }
+}
+
+fn required_bincode_len(
+    bytes: &[u8],
+    cursor: &mut usize,
+    label: &str,
+    field: &str,
+) -> Result<usize> {
+    let len = read_bincode_fixint_len(bytes, *cursor)?
+        .ok_or_else(|| anyhow!("{label} is truncated before {field} length"))?;
+    *cursor = cursor
+        .checked_add(BINCODE_FIXINT_VEC_LEN_BYTES)
+        .ok_or_else(|| anyhow!("{label} {field} length cursor overflow"))?;
+    Ok(len)
+}
+
+fn required_bincode_bytes<'a>(
+    bytes: &'a [u8],
+    cursor: &mut usize,
+    len: usize,
+    label: &str,
+    field: &str,
+) -> Result<&'a [u8]> {
+    let end = cursor
+        .checked_add(len)
+        .ok_or_else(|| anyhow!("{label} {field} payload cursor overflow"))?;
+    if end > bytes.len() {
+        return Err(anyhow!(
+            "{label} is truncated in {field} payload: need {end} bytes, got {}",
+            bytes.len()
+        ));
+    }
+    let payload = &bytes[*cursor..end];
+    *cursor = end;
+    Ok(payload)
+}
+
+fn inspect_native_pow_metadata_bincode_exact(
+    bytes: &[u8],
+    expected: Option<&NativeBlockMeta>,
+    label: &str,
+) -> Result<(NativePowMetaProjection, bool)> {
+    validate_native_block_meta_bincode_budget(bytes, label)?;
+    let prefix_bytes = bytes
+        .get(..NATIVE_BLOCK_META_ACTION_BYTES_OFFSET)
+        .ok_or_else(|| anyhow!("{label} is truncated before its action byte count"))?;
+    let prefix: NativeStoredPowPrefix<'_> = bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .reject_trailing_bytes()
+        .with_limit(NATIVE_BLOCK_META_ACTION_BYTES_OFFSET as u64)
+        .deserialize(prefix_bytes)
+        .map_err(|err| anyhow!("decode {label} PoW metadata prefix failed: {err}"))?;
+    let mut cursor = NATIVE_BLOCK_META_ACTION_BYTES_OFFSET;
+
+    let projection = NativePowMetaProjection {
+        chain_id: prefix.chain_id,
+        rules_hash: prefix.rules_hash,
+        height: prefix.height,
+        hash: prefix.hash,
+        parent_hash: prefix.parent_hash,
+        timestamp_ms: prefix.timestamp_ms,
+        pow_bits: prefix.pow_bits,
+        work_hash: prefix.work_hash,
+        cumulative_work: *prefix.cumulative_work,
+    };
+    let mut exact_match = expected.is_none_or(|meta| prefix.matches(meta));
+
+    let action_count = required_bincode_len(bytes, &mut cursor, label, "action byte count")?;
+    if action_count > MAX_NATIVE_BLOCK_ACTIONS {
+        return Err(anyhow!(
+            "{label} action byte count exceeds limit: {action_count} > {MAX_NATIVE_BLOCK_ACTIONS}"
+        ));
+    }
+    if let Some(meta) = expected {
+        exact_match &= action_count == meta.action_bytes.len();
+    }
+    for index in 0..action_count {
+        let action_len = required_bincode_len(bytes, &mut cursor, label, "action byte payload")?;
+        if action_len > MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES {
+            return Err(anyhow!(
+                "{label} action payload {index} exceeds limit: {action_len} > {MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES}"
+            ));
+        }
+        let action =
+            required_bincode_bytes(bytes, &mut cursor, action_len, label, "action byte payload")?;
+        if let Some(meta) = expected {
+            exact_match &= meta
+                .action_bytes
+                .get(index)
+                .is_some_and(|expected_action| expected_action.as_slice() == action);
+        }
+    }
+
+    if cursor == bytes.len() {
+        if let Some(meta) = expected {
+            exact_match &= meta.miner_commitment == NATIVE_EMPTY_DIGEST48
+                && meta.miner_public_key.is_empty()
+                && meta.miner_signature.is_empty();
+        }
+        return Ok((projection, exact_match));
+    }
+
+    let commitment_len = required_bincode_len(bytes, &mut cursor, label, "miner commitment")?;
+    if commitment_len != 48 {
+        return Err(anyhow!(
+            "{label} miner commitment has invalid length {commitment_len}, expected 48"
+        ));
+    }
+    let miner_commitment = required_bincode_bytes(
+        bytes,
+        &mut cursor,
+        commitment_len,
+        label,
+        "miner commitment",
+    )?;
+    let miner_public_key_len = required_bincode_len(bytes, &mut cursor, label, "miner public key")?;
+    if miner_public_key_len > ML_DSA_PUBLIC_KEY_LEN {
+        return Err(anyhow!(
+            "{label} miner public key exceeds limit: {miner_public_key_len} > {ML_DSA_PUBLIC_KEY_LEN}"
+        ));
+    }
+    let miner_public_key = required_bincode_bytes(
+        bytes,
+        &mut cursor,
+        miner_public_key_len,
+        label,
+        "miner public key",
+    )?;
+    let miner_signature_len = required_bincode_len(bytes, &mut cursor, label, "miner signature")?;
+    if miner_signature_len > ML_DSA_SIGNATURE_LEN {
+        return Err(anyhow!(
+            "{label} miner signature exceeds limit: {miner_signature_len} > {ML_DSA_SIGNATURE_LEN}"
+        ));
+    }
+    let miner_signature = required_bincode_bytes(
+        bytes,
+        &mut cursor,
+        miner_signature_len,
+        label,
+        "miner signature",
+    )?;
+    if cursor != bytes.len() {
+        return Err(anyhow!(
+            "{label} has {} trailing bytes after native metadata",
+            bytes.len().saturating_sub(cursor)
+        ));
+    }
+    if let Some(meta) = expected {
+        exact_match &= meta.miner_commitment.as_slice() == miner_commitment
+            && meta.miner_public_key.as_slice() == miner_public_key
+            && meta.miner_signature.as_slice() == miner_signature;
+    }
+    Ok((projection, exact_match))
+}
+
 impl NativeNode {
     pub fn open(config: NativeConfig) -> Result<Arc<Self>> {
         let startup_started = Instant::now();
@@ -33,7 +351,7 @@ impl NativeNode {
 
         let best =
             load_best_or_genesis(&db, &meta_tree, &height_tree, &block_tree, config.pow_bits)?;
-        validate_loaded_block_indexes(
+        let canonical_chain = validate_loaded_block_indexes(
             &db,
             &best,
             &meta_tree,
@@ -47,10 +365,10 @@ impl NativeNode {
         let commitment_state = load_commitment_tree(&commitment_tree)?;
         validate_loaded_canonical_state(&best, &commitment_state, &nullifiers)?;
         let consumed_bridge_messages = load_consumed_bridge_messages(&bridge_inbound_tree)?;
-        validate_loaded_bridge_replay_state(&best, &block_tree, &consumed_bridge_messages)?;
+        validate_loaded_bridge_replay_state(&canonical_chain, &consumed_bridge_messages)?;
         let staged_ciphertexts = load_staged_sizes(&db, &da_ciphertext_tree)?;
         let staged_proofs = load_staged_proofs(&db, &da_proof_tree)?;
-        let header_mmr_peaks = load_header_mmr_peaks_for_best(&block_tree, &best)?;
+        let header_mmr_peaks = load_header_mmr_peaks_for_best(&canonical_chain, &best)?;
         let startup_state = build_validated_startup_state(
             &db,
             &action_tree,
@@ -99,6 +417,9 @@ impl NativeNode {
             sync_target_observed: AtomicBool::new(initial_mining_sync_gate_open),
             sync_target_peer: Mutex::new(None),
             sync_target_hash: Mutex::new(None),
+            sync_target_unverified_peer_hint: AtomicBool::new(false),
+            sync_unverified_target_deferred_during_import: Mutex::new(None),
+            sync_unverified_target_cooldowns: Mutex::new(BTreeMap::new()),
             sync_reorg_backfill_blocks: AtomicU64::new(NATIVE_SYNC_REORG_BACKFILL_BLOCKS),
             mining_sync_gate_open: AtomicBool::new(initial_mining_sync_gate_open),
             sync_import_in_flight: AtomicBool::new(false),
@@ -108,14 +429,31 @@ impl NativeNode {
             sync_request_rate_limits: Mutex::new(BTreeMap::new()),
             sync_response_in_flight_peers: Mutex::new(BTreeMap::new()),
             outbound_sync_requests: Mutex::new(BTreeMap::new()),
+            sync_recovery_cursor: Mutex::new(None),
+            sync_chunk_sessions: Mutex::new(NativeSyncChunkSessions::default()),
+            sync_chunk_receive_in_flight_peers: Mutex::new(BTreeSet::new()),
             mining_tasks: Mutex::new(Vec::new()),
             sync_tx: Mutex::new(None),
             miner_identity,
-            prepared_mining_actions: Mutex::new(BTreeMap::new()),
             prepared_candidate_actions: Mutex::new(BTreeMap::new()),
             prepared_candidate_build_lock: Mutex::new(()),
+            #[cfg(test)]
+            block_meta_load_count: AtomicU64::new(0),
+            #[cfg(test)]
+            block_meta_decode_count: AtomicU64::new(0),
+            #[cfg(test)]
+            chain_reconstruction_count: AtomicU64::new(0),
+            #[cfg(test)]
+            streaming_replay_live_stored_meta_count: AtomicU64::new(0),
+            #[cfg(test)]
+            streaming_replay_peak_stored_meta_count: AtomicU64::new(0),
+            #[cfg(test)]
+            sync_chunk_record_load_count: AtomicU64::new(0),
+            #[cfg(test)]
+            sync_chunk_record_decode_count: AtomicU64::new(0),
         });
-        Self::ensure_ciphertext_archive_index(&node)?;
+        Self::ensure_ciphertext_archive_index(&node, &canonical_chain)?;
+        drop(canonical_chain);
         Ok(node)
     }
 
@@ -148,24 +486,231 @@ impl NativeNode {
             .unwrap_or_default()
     }
 
+    fn prune_native_sync_unverified_target_cooldowns(
+        cooldowns: &mut BTreeMap<PeerId, Instant>,
+        now: Instant,
+    ) {
+        cooldowns.retain(|_, expires_at| *expires_at > now);
+    }
+
+    fn native_sync_peer_has_unverified_target_cooldown(&self, peer_id: PeerId) -> bool {
+        let now = Instant::now();
+        let mut cooldowns = self.sync_unverified_target_cooldowns.lock();
+        Self::prune_native_sync_unverified_target_cooldowns(&mut cooldowns, now);
+        cooldowns.contains_key(&peer_id)
+    }
+
+    fn quarantine_native_sync_unverified_target_peer(&self, peer_id: PeerId, now: Instant) {
+        let mut cooldowns = self.sync_unverified_target_cooldowns.lock();
+        Self::prune_native_sync_unverified_target_cooldowns(&mut cooldowns, now);
+        if MAX_NATIVE_SYNC_UNVERIFIED_TARGET_COOLDOWNS == 0 {
+            return;
+        }
+        if cooldowns.len() >= MAX_NATIVE_SYNC_UNVERIFIED_TARGET_COOLDOWNS
+            && !cooldowns.contains_key(&peer_id)
+        {
+            if let Some(evicted_peer) = cooldowns
+                .iter()
+                .min_by_key(|(_, expires_at)| **expires_at)
+                .map(|(peer_id, _)| *peer_id)
+            {
+                cooldowns.remove(&evicted_peer);
+            }
+        }
+        cooldowns.insert(
+            peer_id,
+            now.checked_add(NATIVE_SYNC_UNVERIFIED_TARGET_COOLDOWN)
+                .unwrap_or(now),
+        );
+    }
+
+    fn native_sync_outbound_request_is_fresh(
+        request: &NativeOutboundSyncRequest,
+        now: Instant,
+    ) -> bool {
+        request.state == NativeOutboundSyncRequestState::ChunkFallback
+            || (request.state == NativeOutboundSyncRequestState::InFlight
+                && now.saturating_duration_since(request.requested_at)
+                    <= NATIVE_SYNC_REQUEST_RETRY_AFTER)
+    }
+
+    fn native_sync_target_peer_has_fresh_request(&self, peer_id: PeerId) -> bool {
+        let now = Instant::now();
+        self.outbound_sync_requests
+            .lock()
+            .get(&Some(peer_id))
+            .is_some_and(|request| Self::native_sync_outbound_request_is_fresh(request, now))
+    }
+
+    pub(crate) fn outbound_sync_request_target_tip(
+        &self,
+        peer_id: PeerId,
+    ) -> Option<(u64, [u8; 32])> {
+        let requests = self.outbound_sync_requests.lock();
+        [Some(peer_id), None].into_iter().find_map(|target| {
+            requests
+                .get(&target)
+                .and_then(|request| request.context.target_tip)
+        })
+    }
+
+    fn rebind_native_sync_target_peer_state(
+        &self,
+        previous_peer: PeerId,
+        next_peer: PeerId,
+        target_height: u64,
+        target_hash: [u8; 32],
+    ) {
+        // A request authorized for the previous peer must not keep suppressing
+        // an exact-target retry after that peer has timed out. A late response
+        // from the previous peer will consequently fail request matching.
+        self.outbound_sync_requests
+            .lock()
+            .remove(&Some(previous_peer));
+
+        let mut cursor = self.sync_recovery_cursor.lock();
+        let Some(current) = cursor.as_mut() else {
+            return;
+        };
+        if current.peer_id == Some(previous_peer)
+            && current.target_height == target_height
+            && current.target_hash == Some(target_hash)
+        {
+            // The exact target hash commits the same recovery branch, so the
+            // range and expected-parent binding remain valid for the new peer.
+            current.peer_id = Some(next_peer);
+        } else {
+            // Never carry a peer-bound cursor across a different target tuple.
+            *cursor = None;
+        }
+    }
+
     pub(crate) fn observe_verified_sync_peer_height(&self, peer_best_height: u64) {
-        self.sync_target_observed.store(true, Ordering::SeqCst);
-        let best = self.best_meta();
+        self.observe_verified_sync_peer_tip(None, peer_best_height, None);
+    }
+
+    pub(crate) fn observe_verified_sync_peer_tip(
+        &self,
+        peer_id: Option<PeerId>,
+        peer_best_height: u64,
+        peer_best_hash: Option<[u8; 32]>,
+    ) {
+        let best_height = self.state.read().best.height;
         let target_before = self.sync_target_height.load(Ordering::Relaxed);
+        let mut target_peer_rebind = None;
         if peer_best_height > target_before {
+            let mut target_hash = self.sync_target_hash.lock();
+            let mut target_peer = self.sync_target_peer.lock();
+            let current_target_height = self.sync_target_height.load(Ordering::Relaxed);
+            if peer_best_height <= current_target_height {
+                if peer_best_height == current_target_height {
+                    if let Some(peer_best_hash) = peer_best_hash {
+                        if target_hash.is_none_or(|current_hash| current_hash == peer_best_hash) {
+                            let newly_anchored = target_hash.is_none();
+                            let previous_peer = *target_peer;
+                            self.mining_sync_gate_open.store(false, Ordering::SeqCst);
+                            *target_hash = Some(peer_best_hash);
+                            *target_peer = peer_id;
+                            self.sync_target_unverified_peer_hint
+                                .store(false, Ordering::Relaxed);
+                            if let (Some(previous_peer), Some(next_peer)) = (previous_peer, peer_id)
+                            {
+                                if previous_peer != next_peer {
+                                    self.rebind_native_sync_target_peer_state(
+                                        previous_peer,
+                                        next_peer,
+                                        current_target_height,
+                                        peer_best_hash,
+                                    );
+                                }
+                            } else if newly_anchored || previous_peer != peer_id {
+                                self.clear_sync_recovery_cursor();
+                            }
+                            drop(target_peer);
+                            drop(target_hash);
+                            self.sync_target_observed.store(true, Ordering::SeqCst);
+                            self.refresh_mining_sync_gate();
+                        }
+                    }
+                }
+                return;
+            }
+            self.mining_sync_gate_open.store(false, Ordering::SeqCst);
             self.sync_target_height
                 .store(peer_best_height, Ordering::Relaxed);
-        } else if peer_best_height <= best.height {
+            self.sync_target_unverified_peer_hint
+                .store(false, Ordering::Relaxed);
+            // A verified height without that height's hash is still useful
+            // progress evidence, but it must become an unanchored tuple.  In
+            // particular, never carry the prior height's hash or peer forward.
+            *target_hash = peer_best_hash;
+            *target_peer = peer_best_hash.and(peer_id);
+            self.clear_sync_recovery_cursor();
+            drop(target_peer);
+            drop(target_hash);
+        } else if peer_best_height == target_before {
+            if let Some(peer_best_hash) = peer_best_hash {
+                let mut target_hash = self.sync_target_hash.lock();
+                let mut target_peer = self.sync_target_peer.lock();
+                if self.sync_target_height.load(Ordering::Relaxed) != target_before {
+                    return;
+                }
+                if target_hash.is_some_and(|current_hash| current_hash != peer_best_hash) {
+                    drop(target_peer);
+                    drop(target_hash);
+                    self.refresh_mining_sync_gate();
+                    return;
+                }
+                if let (Some(current_peer), Some(observed_peer), Some(current_hash)) =
+                    (*target_peer, peer_id, *target_hash)
+                {
+                    if current_peer != observed_peer {
+                        debug_assert_eq!(current_hash, peer_best_hash);
+                        target_peer_rebind = Some((
+                            current_peer,
+                            observed_peer,
+                            peer_best_height,
+                            peer_best_hash,
+                        ));
+                    }
+                }
+                self.mining_sync_gate_open.store(false, Ordering::SeqCst);
+                self.sync_target_unverified_peer_hint
+                    .store(false, Ordering::Relaxed);
+                *target_hash = Some(peer_best_hash);
+                *target_peer = peer_id;
+                if let Some((previous_peer, next_peer, target_height, target_hash)) =
+                    target_peer_rebind
+                {
+                    self.rebind_native_sync_target_peer_state(
+                        previous_peer,
+                        next_peer,
+                        target_height,
+                        target_hash,
+                    );
+                }
+            }
+        } else if peer_best_height <= best_height {
             self.clear_unanchored_sync_target_to_local_tip(
                 peer_best_height,
                 "verified local-tip sync evidence",
             );
         }
-        let target = self.sync_target_height.load(Ordering::Relaxed);
-        if target <= best.height && peer_best_height <= best.height {
-            *self.sync_target_peer.lock() = None;
-            *self.sync_target_hash.lock() = None;
+        if peer_best_height <= best_height {
+            let mut target_hash = self.sync_target_hash.lock();
+            let mut target_peer = self.sync_target_peer.lock();
+            let target = self.sync_target_height.load(Ordering::Relaxed);
+            if target <= best_height {
+                *target_hash = None;
+                *target_peer = None;
+                self.sync_target_unverified_peer_hint
+                    .store(false, Ordering::Relaxed);
+                self.clear_sync_recovery_cursor();
+                drop(target_peer);
+                drop(target_hash);
+            }
         }
+        self.sync_target_observed.store(true, Ordering::SeqCst);
         self.refresh_mining_sync_gate();
     }
 
@@ -174,20 +719,28 @@ impl NativeNode {
         evidence_peer_height: u64,
         reason: &'static str,
     ) -> bool {
-        let best = self.best_meta();
+        let best_height = self.state.read().best.height;
+        let target_hash = self.sync_target_hash.lock();
+        let mut target_peer = self.sync_target_peer.lock();
         let target = self.sync_target_height.load(Ordering::Relaxed);
-        if target <= best.height {
+        if target <= best_height {
             return false;
         }
-        if self.sync_target_hash.lock().is_some() {
+        if target_hash.is_some() {
             return false;
         }
+        self.mining_sync_gate_open.store(false, Ordering::SeqCst);
         self.sync_target_height
-            .store(best.height, Ordering::Relaxed);
-        *self.sync_target_peer.lock() = None;
+            .store(best_height, Ordering::Relaxed);
+        *target_peer = None;
+        self.sync_target_unverified_peer_hint
+            .store(false, Ordering::Relaxed);
+        self.clear_sync_recovery_cursor();
+        drop(target_peer);
+        drop(target_hash);
         info!(
             target,
-            local_height = best.height,
+            local_height = best_height,
             evidence_peer_height,
             reason,
             "cleared unanchored native sync target"
@@ -201,25 +754,33 @@ impl NativeNode {
         evidence_hash: [u8; 32],
         reason: &'static str,
     ) -> bool {
-        let best = self.best_meta();
+        let best_height = self.state.read().best.height;
+        let mut target_hash = self.sync_target_hash.lock();
+        let mut target_peer = self.sync_target_peer.lock();
         let target = self.sync_target_height.load(Ordering::Relaxed);
-        if target <= best.height {
+        if target < best_height {
             return false;
         }
-        let Some(target_hash) = *self.sync_target_hash.lock() else {
+        let Some(observed_target_hash) = *target_hash else {
             return false;
         };
-        if target_hash != evidence_hash {
+        if observed_target_hash != evidence_hash {
             return false;
         }
+        self.mining_sync_gate_open.store(false, Ordering::SeqCst);
         self.sync_target_height
-            .store(best.height, Ordering::Relaxed);
-        *self.sync_target_peer.lock() = None;
-        *self.sync_target_hash.lock() = None;
+            .store(best_height, Ordering::Relaxed);
+        *target_peer = None;
+        *target_hash = None;
+        self.sync_target_unverified_peer_hint
+            .store(false, Ordering::Relaxed);
+        self.clear_sync_recovery_cursor();
+        drop(target_peer);
+        drop(target_hash);
         self.refresh_mining_sync_gate();
         info!(
             target,
-            local_height = best.height,
+            local_height = best_height,
             evidence_peer_height,
             evidence_hash = %hex32(&evidence_hash),
             reason,
@@ -228,36 +789,61 @@ impl NativeNode {
         true
     }
 
-    pub(crate) fn clear_nonwinning_sync_target_response_to_local_tip(
+    pub(crate) fn clear_stored_nonwinning_sync_target_to_local_tip(
         &self,
         peer_best_height: u64,
-        blocks: &[NativeBlockMeta],
-    ) -> bool {
-        let best = self.best_meta();
-        let target = self.sync_target_height.load(Ordering::Relaxed);
-        if target <= best.height {
-            return false;
-        }
-        let Some(target_hash) = *self.sync_target_hash.lock() else {
-            return false;
+        expected_target: (u64, [u8; 32]),
+    ) -> Result<bool> {
+        // The response copy is untrusted until import has completed. Reload the
+        // exact durable row so forged cumulative work or other supplied fields
+        // can never resolve a target or reopen mining.
+        let Some(target_meta) = self.header_by_hash(&expected_target.1)? else {
+            return Ok(false);
         };
-        let Some(target_meta) = blocks
-            .iter()
-            .rev()
-            .find(|meta| meta.height == target && meta.hash == target_hash)
-        else {
-            return false;
-        };
-        if native_meta_better_than(target_meta, &best) {
-            return false;
+        if target_meta.height != expected_target.0 {
+            return Err(anyhow!(
+                "stored native sync target height mismatch for {}: expected {}, observed {}",
+                hex32(&expected_target.1),
+                expected_target.0,
+                target_meta.height
+            ));
         }
-        self.clear_hash_anchored_sync_target_to_local_tip(
-            peer_best_height,
-            target_hash,
-            "non-winning native sync target response",
-        )
+
+        let state = self.state.read();
+        if native_meta_better_than(&target_meta, &state.best) {
+            return Ok(false);
+        }
+        let best_height = state.best.height;
+        let mut target_hash = self.sync_target_hash.lock();
+        let mut target_peer = self.sync_target_peer.lock();
+        let target_height = self.sync_target_height.load(Ordering::Relaxed);
+        if target_height != expected_target.0 || *target_hash != Some(expected_target.1) {
+            return Ok(false);
+        }
+
+        self.mining_sync_gate_open.store(false, Ordering::SeqCst);
+        self.sync_target_height
+            .store(best_height, Ordering::Relaxed);
+        *target_peer = None;
+        *target_hash = None;
+        self.sync_target_unverified_peer_hint
+            .store(false, Ordering::Relaxed);
+        self.clear_sync_recovery_cursor();
+        drop(target_peer);
+        drop(target_hash);
+        drop(state);
+        self.refresh_mining_sync_gate();
+        info!(
+            target = expected_target.0,
+            local_height = best_height,
+            evidence_peer_height = peer_best_height,
+            evidence_hash = %hex32(&expected_target.1),
+            "cleared hash-anchored native sync target from validated durable non-winning evidence"
+        );
+        Ok(true)
     }
 
+    #[cfg(test)]
     pub(crate) fn observe_pending_sync_peer_height(&self, peer_best_height: u64) {
         self.observe_pending_sync_peer_tip(None, peer_best_height, None);
     }
@@ -267,29 +853,340 @@ impl NativeNode {
         peer_id: Option<PeerId>,
         peer_best_height: u64,
         peer_best_hash: Option<[u8; 32]>,
-    ) {
-        let best = self.best_meta();
-        let unresolved_equal_height_tip =
-            peer_best_height == best.height && peer_best_hash.is_some_and(|hash| hash != best.hash);
-        if peer_best_height < best.height
-            || (peer_best_height == best.height && !unresolved_equal_height_tip)
+    ) -> bool {
+        self.observe_pending_sync_peer_tip_with_provenance(
+            peer_id,
+            peer_best_height,
+            peer_best_hash,
+            peer_id.is_some() && peer_best_hash.is_some(),
+        )
+    }
+
+    pub(crate) fn observe_scheduled_sync_peer_tip(
+        &self,
+        peer_id: Option<PeerId>,
+        peer_best_height: u64,
+        peer_best_hash: Option<[u8; 32]>,
+    ) -> bool {
+        // Scheduling another page cannot upgrade an unverified target. Only
+        // exact imported/stored evidence may do that through the verified path.
+        self.observe_pending_sync_peer_tip_with_provenance(
+            peer_id,
+            peer_best_height,
+            peer_best_hash,
+            false,
+        )
+    }
+
+    fn observe_pending_sync_peer_tip_with_provenance(
+        &self,
+        peer_id: Option<PeerId>,
+        peer_best_height: u64,
+        peer_best_hash: Option<[u8; 32]>,
+        unverified_peer_hint: bool,
+    ) -> bool {
+        if unverified_peer_hint
+            && peer_id.is_some_and(|peer_id| {
+                self.native_sync_peer_has_unverified_target_cooldown(peer_id)
+            })
         {
-            return;
+            return false;
         }
+        let (best_height, best_hash) = {
+            let state = self.state.read();
+            (state.best.height, state.best.hash)
+        };
+        let unresolved_equal_height_tip =
+            peer_best_height == best_height && peer_best_hash.is_some_and(|hash| hash != best_hash);
+        if peer_best_height < best_height
+            || (peer_best_height == best_height && !unresolved_equal_height_tip)
+        {
+            return false;
+        }
+        let mut target_hash = self.sync_target_hash.lock();
+        let mut target_peer = self.sync_target_peer.lock();
+        if unverified_peer_hint
+            && peer_id.is_some_and(|peer_id| {
+                self.native_sync_peer_has_unverified_target_cooldown(peer_id)
+            })
+        {
+            return false;
+        }
+        let target_before = self.sync_target_height.load(Ordering::Relaxed);
+        let target_was_anchored = target_hash.is_some();
+        let target_was_unverified = self
+            .sync_target_unverified_peer_hint
+            .load(Ordering::Relaxed);
+        let mut target_peer_rebind = None;
+
+        if peer_best_height < target_before {
+            return false;
+        }
+        if unverified_peer_hint && peer_best_height > target_before {
+            if let (Some(current_peer), Some(observed_peer)) = (*target_peer, peer_id) {
+                if current_peer != observed_peer
+                    && target_hash.is_some()
+                    && self.native_sync_target_peer_has_fresh_request(current_peer)
+                {
+                    // Do not let a second unauthenticated hint supersede an
+                    // exact target while its current peer is making progress.
+                    return false;
+                }
+            }
+        }
+        if peer_best_height == target_before {
+            if let (Some(current_hash), Some(observed_hash)) = (*target_hash, peer_best_hash) {
+                if current_hash != observed_hash {
+                    return false;
+                }
+            }
+            if let (Some(current_peer), Some(observed_peer)) = (*target_peer, peer_id) {
+                if current_peer != observed_peer && target_hash.is_some() {
+                    let exact_same_target = peer_best_hash
+                        .zip(*target_hash)
+                        .is_some_and(|(observed_hash, current_hash)| observed_hash == current_hash);
+                    if !exact_same_target
+                        || self.native_sync_target_peer_has_fresh_request(current_peer)
+                    {
+                        return false;
+                    }
+                    target_peer_rebind = Some((
+                        current_peer,
+                        observed_peer,
+                        peer_best_height,
+                        peer_best_hash.expect("checked exact native sync target hash"),
+                    ));
+                }
+            }
+        } else if peer_best_hash.is_none() && target_hash.is_some() {
+            // A height-only response cannot move a hash-anchored target: doing
+            // so would pair the new height with the previous height's hash.
+            return false;
+        }
+
+        let next_target_peer = if peer_best_height > target_before {
+            peer_id
+        } else {
+            peer_id.or(*target_peer)
+        };
+        let target_peer_changed = *target_peer != next_target_peer;
+
         self.sync_target_observed.store(true, Ordering::SeqCst);
-        self.sync_target_height
-            .fetch_max(peer_best_height, Ordering::Relaxed);
-        if let Some(peer_id) = peer_id {
-            *self.sync_target_peer.lock() = Some(peer_id);
-        }
-        if let Some(peer_best_hash) = peer_best_hash {
-            *self.sync_target_hash.lock() = Some(peer_best_hash);
-        }
         self.mining_sync_gate_open.store(false, Ordering::SeqCst);
+        self.sync_target_height
+            .store(peer_best_height, Ordering::Relaxed);
+        let next_unverified_peer_hint = if peer_best_height > target_before
+            || (!target_was_anchored && peer_best_hash.is_some())
+        {
+            unverified_peer_hint
+        } else {
+            target_was_unverified
+        };
+        self.sync_target_unverified_peer_hint
+            .store(next_unverified_peer_hint, Ordering::Relaxed);
+        if peer_best_height > target_before {
+            // Replace a growing target as one coherent evidence tuple.  In
+            // particular, do not retain the prior height's peer or hash when
+            // the new observation did not provide one.
+            *target_peer = peer_id;
+            *target_hash = peer_best_hash;
+        } else {
+            if let Some(peer_id) = peer_id {
+                *target_peer = Some(peer_id);
+            }
+            if let Some(peer_best_hash) = peer_best_hash {
+                *target_hash = Some(peer_best_hash);
+            }
+        }
+        if let Some((previous_peer, next_peer, target_height, target_hash)) = target_peer_rebind {
+            self.rebind_native_sync_target_peer_state(
+                previous_peer,
+                next_peer,
+                target_height,
+                target_hash,
+            );
+        } else if target_peer_changed {
+            self.clear_sync_recovery_cursor();
+        }
+        drop(target_peer);
+        drop(target_hash);
+        true
+    }
+
+    pub(crate) fn sync_target_tip_snapshot(&self) -> (u64, Option<PeerId>, Option<[u8; 32]>) {
+        let snapshot = self.sync_target_evidence_snapshot();
+        (snapshot.height, snapshot.peer_id, snapshot.hash)
+    }
+
+    pub(crate) fn sync_target_evidence_snapshot(&self) -> NativeSyncTargetSnapshot {
+        // Use the writer's lock order and load the height while both tuple
+        // fields are stable, so readers cannot combine two observations.
+        let target_hash = self.sync_target_hash.lock();
+        let target_peer = self.sync_target_peer.lock();
+        let target_height = self.sync_target_height.load(Ordering::Relaxed);
+        let unverified_peer_hint = self
+            .sync_target_unverified_peer_hint
+            .load(Ordering::Relaxed);
+        NativeSyncTargetSnapshot {
+            height: target_height,
+            peer_id: *target_peer,
+            hash: *target_hash,
+            unverified_peer_hint,
+        }
+    }
+
+    pub(crate) fn defer_unverified_sync_target_during_import(
+        &self,
+        peer_id: PeerId,
+        target_height: u64,
+        target_hash: [u8; 32],
+    ) -> bool {
+        let snapshot = self.sync_target_evidence_snapshot();
+        let expected = NativeSyncTargetSnapshot {
+            height: target_height,
+            peer_id: Some(peer_id),
+            hash: Some(target_hash),
+            unverified_peer_hint: true,
+        };
+        if snapshot != expected {
+            return false;
+        }
+        *self.sync_unverified_target_deferred_during_import.lock() = Some(snapshot);
+        true
+    }
+
+    fn consume_exact_deferred_unverified_sync_target(
+        &self,
+        current: NativeSyncTargetSnapshot,
+    ) -> bool {
+        let mut deferred = self.sync_unverified_target_deferred_during_import.lock();
+        let matches = deferred
+            .as_ref()
+            .is_some_and(|deferred| *deferred == current);
+        // The grace is deliberately one-shot. If scheduling cannot establish
+        // a fresh request on this tick, ordinary expiry evicts on the next.
+        *deferred = None;
+        matches
+    }
+
+    fn evict_unverified_sync_target_exact(
+        &self,
+        peer_id: PeerId,
+        expected_target: (u64, [u8; 32]),
+        only_if_request_not_fresh: bool,
+        reason: &'static str,
+    ) -> bool {
+        let best_height = self.state.read().best.height;
+        let mut target_hash = self.sync_target_hash.lock();
+        let mut target_peer = self.sync_target_peer.lock();
+        let target_height = self.sync_target_height.load(Ordering::Relaxed);
+        let current_snapshot = NativeSyncTargetSnapshot {
+            height: target_height,
+            peer_id: *target_peer,
+            hash: *target_hash,
+            unverified_peer_hint: self
+                .sync_target_unverified_peer_hint
+                .load(Ordering::Relaxed),
+        };
+        if current_snapshot
+            != (NativeSyncTargetSnapshot {
+                height: expected_target.0,
+                peer_id: Some(peer_id),
+                hash: Some(expected_target.1),
+                unverified_peer_hint: true,
+            })
+        {
+            return false;
+        }
+
+        let now = Instant::now();
+        let mut requests = self.outbound_sync_requests.lock();
+        if only_if_request_not_fresh
+            && requests
+                .get(&Some(peer_id))
+                .is_some_and(|request| Self::native_sync_outbound_request_is_fresh(request, now))
+        {
+            return false;
+        }
+
+        // Keep the gate closed throughout eviction. A failed peer is not
+        // evidence that the local tip has resolved the advertised target.
+        self.mining_sync_gate_open.store(false, Ordering::SeqCst);
+        requests.remove(&Some(peer_id));
+        if requests
+            .get(&None)
+            .is_some_and(|request| request.context.target_tip == Some(expected_target))
+        {
+            requests.remove(&None);
+        }
+        let mut cursor = self.sync_recovery_cursor.lock();
+        if cursor
+            .as_ref()
+            .is_some_and(|cursor| cursor.peer_id == Some(peer_id))
+        {
+            *cursor = None;
+        }
+        self.quarantine_native_sync_unverified_target_peer(peer_id, now);
+
+        self.sync_target_height
+            .store(best_height, Ordering::Relaxed);
+        *target_peer = None;
+        *target_hash = None;
+        self.sync_target_unverified_peer_hint
+            .store(false, Ordering::Relaxed);
+        self.sync_target_observed.store(false, Ordering::SeqCst);
+
+        drop(cursor);
+        drop(requests);
+        drop(target_peer);
+        drop(target_hash);
+        info!(
+            peer = %hex32(&peer_id),
+            target_height,
+            target_hash = %hex32(&expected_target.1),
+            local_height = best_height,
+            reason,
+            "evicted unverified native sync target"
+        );
+        true
+    }
+
+    pub(crate) fn evict_unverified_sync_target_after_terminal_failure(
+        &self,
+        peer_id: PeerId,
+        expected_target: (u64, [u8; 32]),
+        reason: &'static str,
+    ) -> bool {
+        self.evict_unverified_sync_target_exact(peer_id, expected_target, false, reason)
+    }
+
+    pub(crate) fn expire_unverified_sync_target(&self) -> bool {
+        if self.sync_import_in_flight() {
+            return false;
+        }
+        let snapshot = self.sync_target_evidence_snapshot();
+        let deferred_during_import = self.consume_exact_deferred_unverified_sync_target(snapshot);
+        let (Some(peer_id), Some(target_hash)) = (snapshot.peer_id, snapshot.hash) else {
+            return false;
+        };
+        if !snapshot.unverified_peer_hint {
+            return false;
+        }
+        if deferred_during_import {
+            return false;
+        }
+        self.evict_unverified_sync_target_exact(
+            peer_id,
+            (snapshot.height, target_hash),
+            true,
+            "unverified target request/session expired",
+        )
     }
 
     pub(crate) fn has_verified_header_hash(&self, hash: &[u8; 32]) -> Result<bool> {
-        Ok(self.header_by_hash(hash)?.is_some())
+        Ok(self
+            .inspect_stored_pow_metadata(hash, None, "native stored header presence")?
+            .is_some())
     }
 
     pub(crate) fn begin_sync_import(&self) -> bool {
@@ -312,33 +1209,55 @@ impl NativeNode {
         range: NativeSyncRange,
     ) -> NativeSyncResponseStart {
         let mut responses = self.sync_response_in_flight_peers.lock();
-        let ranges = responses.entry(peer_id).or_default();
-        if !ranges.insert(range) {
-            NativeSyncResponseStart::DuplicateRange
-        } else {
-            NativeSyncResponseStart::Started
+        if let Some(in_flight_range) = responses.get(&peer_id) {
+            return if *in_flight_range == range {
+                NativeSyncResponseStart::DuplicateRange
+            } else {
+                NativeSyncResponseStart::AtCapacity
+            };
         }
+        if responses.len() >= MAX_NATIVE_SYNC_RESPONSE_WORKERS {
+            return NativeSyncResponseStart::AtCapacity;
+        }
+        responses.insert(peer_id, range);
+        NativeSyncResponseStart::Started
     }
 
     pub(crate) fn end_sync_response_for_peer(&self, peer_id: PeerId, range: NativeSyncRange) {
         let mut responses = self.sync_response_in_flight_peers.lock();
-        if let Some(ranges) = responses.get_mut(&peer_id) {
-            ranges.remove(&range);
-            if ranges.is_empty() {
-                responses.remove(&peer_id);
-            }
+        if responses
+            .get(&peer_id)
+            .is_some_and(|active| *active == range)
+        {
+            responses.remove(&peer_id);
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn begin_outbound_sync_request(
         &self,
         peer_id: Option<PeerId>,
         range: NativeSyncRange,
     ) -> bool {
+        self.begin_outbound_sync_request_with_context(
+            peer_id,
+            range,
+            NativeOutboundSyncRequestContext::default(),
+        )
+    }
+
+    pub(crate) fn begin_outbound_sync_request_with_context(
+        &self,
+        peer_id: Option<PeerId>,
+        range: NativeSyncRange,
+        context: NativeOutboundSyncRequestContext,
+    ) -> bool {
         let now = Instant::now();
         let mut requests = self.outbound_sync_requests.lock();
         requests.retain(|_, request| {
-            now.saturating_duration_since(request.requested_at) <= NATIVE_SYNC_REQUEST_RETRY_AFTER
+            request.state == NativeOutboundSyncRequestState::ChunkFallback
+                || now.saturating_duration_since(request.requested_at)
+                    <= NATIVE_SYNC_REQUEST_RETRY_AFTER
         });
         if requests.contains_key(&peer_id) {
             return false;
@@ -354,6 +1273,8 @@ impl NativeNode {
             NativeOutboundSyncRequest {
                 range,
                 requested_at: now,
+                state: NativeOutboundSyncRequestState::InFlight,
+                context,
             },
         );
         true
@@ -369,23 +1290,99 @@ impl NativeNode {
         &self,
         peer_id: PeerId,
         response_range: Option<NativeSyncRange>,
-    ) -> bool {
+    ) -> Option<NativeCompletedSyncRequest> {
         let mut requests = self.outbound_sync_requests.lock();
-        let mut completed = false;
-        for target in [Some(peer_id), None] {
-            let should_remove = requests.get(&target).is_some_and(|request| {
-                response_range.is_none_or(|range| native_sync_ranges_overlap(request.range, range))
-            });
-            if should_remove {
-                requests.remove(&target);
-                completed = true;
-            }
-        }
-        completed
+        let target = [Some(peer_id), None].into_iter().find(|target| {
+            requests.get(target).is_some_and(|request| {
+                request.state == NativeOutboundSyncRequestState::InFlight
+                    && response_range.is_none_or(|range| {
+                        range.from_height == request.range.from_height
+                            && range.from_height <= range.to_height
+                            && range.to_height <= request.range.to_height
+                    })
+            })
+        })?;
+        requests
+            .remove(&target)
+            .map(|request| NativeCompletedSyncRequest {
+                request_target: target,
+                range: request.range,
+                context: request.context,
+            })
     }
 
     pub(crate) fn complete_outbound_sync_request_target(&self, peer_id: Option<PeerId>) {
         self.outbound_sync_requests.lock().remove(&peer_id);
+    }
+
+    pub(crate) fn defer_outbound_sync_request_retry(
+        &self,
+        peer_id: Option<PeerId>,
+        range: NativeSyncRange,
+    ) {
+        let now = Instant::now();
+        let mut requests = self.outbound_sync_requests.lock();
+        requests.retain(|_, request| {
+            request.state == NativeOutboundSyncRequestState::ChunkFallback
+                || now.saturating_duration_since(request.requested_at)
+                    <= NATIVE_SYNC_REQUEST_RETRY_AFTER
+        });
+        requests.insert(
+            peer_id,
+            NativeOutboundSyncRequest {
+                range,
+                requested_at: now,
+                state: NativeOutboundSyncRequestState::Cooldown,
+                context: NativeOutboundSyncRequestContext::default(),
+            },
+        );
+    }
+
+    pub(crate) fn set_sync_recovery_cursor(
+        &self,
+        peer_id: Option<PeerId>,
+        target_height: u64,
+        target_hash: Option<[u8; 32]>,
+        range: NativeSyncRange,
+        expected_parent_hash: Option<[u8; 32]>,
+    ) {
+        *self.sync_recovery_cursor.lock() = Some(NativeSyncRecoveryCursor {
+            peer_id,
+            target_height,
+            target_hash,
+            range,
+            expected_parent_hash,
+        });
+    }
+
+    pub(crate) fn sync_recovery_cursor_for_target(
+        &self,
+        peer_id: Option<PeerId>,
+        target_height: u64,
+        target_hash: Option<[u8; 32]>,
+    ) -> Option<NativeSyncRecoveryCursor> {
+        let mut cursor = self.sync_recovery_cursor.lock();
+        let compatible = cursor.as_ref().is_some_and(|cursor| {
+            (peer_id.is_none() || cursor.peer_id == peer_id)
+                && target_height >= cursor.target_height
+                && (target_height > cursor.target_height || cursor.target_hash == target_hash)
+        });
+        if !compatible {
+            *cursor = None;
+            return None;
+        }
+        let cursor = cursor
+            .as_mut()
+            .expect("checked native sync recovery cursor");
+        if target_height > cursor.target_height {
+            cursor.target_height = target_height;
+            cursor.target_hash = target_hash;
+        }
+        Some(*cursor)
+    }
+
+    pub(crate) fn clear_sync_recovery_cursor(&self) {
+        *self.sync_recovery_cursor.lock() = None;
     }
 
     pub(crate) fn sync_reorg_backfill_blocks(&self) -> u64 {
@@ -400,6 +1397,7 @@ impl NativeNode {
     pub(crate) fn reset_sync_reorg_backfill(&self) {
         self.sync_reorg_backfill_blocks
             .store(NATIVE_SYNC_REORG_BACKFILL_BLOCKS, Ordering::Relaxed);
+        self.clear_sync_recovery_cursor();
     }
 
     pub(crate) fn escalate_sync_reorg_backfill(&self) -> u64 {
@@ -522,20 +1520,59 @@ impl NativeNode {
         if !self.sync_target_observed.load(Ordering::SeqCst) {
             return;
         }
-        let target = self.sync_target_height.load(Ordering::Relaxed);
-        let resolved = self.sync_target_resolved(target);
-        self.mining_sync_gate_open.store(resolved, Ordering::SeqCst);
-        if resolved {
-            *self.sync_target_peer.lock() = None;
+        let state = self.state.read();
+        let snapshot = self.sync_target_evidence_snapshot();
+        let resolved = !snapshot.unverified_peer_hint
+            && self.sync_target_resolved_against_best(&state.best, snapshot.height, snapshot.hash);
+        if !self.publish_mining_sync_gate_for_target_snapshot(snapshot, resolved) {
+            // A moving target is unresolved by definition until a later poll
+            // can evaluate one coherent tuple. Closing is conservative and
+            // avoids spinning under an adversarial announce stream.
+            self.mining_sync_gate_open.store(false, Ordering::SeqCst);
         }
     }
 
-    pub(crate) fn sync_target_resolved(&self, target: u64) -> bool {
-        let best = self.best_meta();
+    pub(crate) fn publish_mining_sync_gate_for_target_snapshot(
+        &self,
+        snapshot: NativeSyncTargetSnapshot,
+        resolved: bool,
+    ) -> bool {
+        // Reacquire the tuple locks in the writer order before publishing the
+        // decision. Resolution may read storage, so the target can change
+        // after the first snapshot; a stale resolved decision must neither
+        // open mining nor erase a newly rebound peer.
+        let target_hash = self.sync_target_hash.lock();
+        let mut target_peer = self.sync_target_peer.lock();
+        let target_height = self.sync_target_height.load(Ordering::Relaxed);
+        let current_snapshot = NativeSyncTargetSnapshot {
+            height: target_height,
+            peer_id: *target_peer,
+            hash: *target_hash,
+            unverified_peer_hint: self
+                .sync_target_unverified_peer_hint
+                .load(Ordering::Relaxed),
+        };
+        if current_snapshot != snapshot {
+            return false;
+        }
+        let resolved = resolved && !snapshot.unverified_peer_hint;
+        self.mining_sync_gate_open.store(resolved, Ordering::SeqCst);
+        if resolved {
+            *target_peer = None;
+        }
+        true
+    }
+
+    pub(crate) fn sync_target_resolved_against_best(
+        &self,
+        best: &NativeBlockMeta,
+        target: u64,
+        target_hash: Option<[u8; 32]>,
+    ) -> bool {
         if best.height < target {
             return false;
         }
-        let Some(target_hash) = *self.sync_target_hash.lock() else {
+        let Some(target_hash) = target_hash else {
             return true;
         };
         if best.hash == target_hash {
@@ -544,8 +1581,14 @@ impl NativeNode {
         if best.height > target {
             return true;
         }
-        match self.header_by_hash(&target_hash) {
-            Ok(Some(target_meta)) => !native_meta_better_than(&target_meta, &best),
+        match self.inspect_stored_pow_metadata(&target_hash, None, "native sync target metadata") {
+            Ok(Some((target_meta, _))) => !consensus::fork_choice::fork_choice_prefers_candidate(
+                compare_work(&target_meta.cumulative_work, &best.cumulative_work),
+                target_meta.height,
+                best.height,
+                &target_meta.hash,
+                &best.hash,
+            ),
             Ok(None) => false,
             Err(err) => {
                 warn!(
@@ -569,19 +1612,21 @@ impl NativeNode {
     }
 
     pub(crate) fn sync_status_fields(&self) -> (bool, u64) {
-        let target = self.sync_target_height.load(Ordering::Relaxed);
+        let snapshot = self.sync_target_evidence_snapshot();
         let observed = self.sync_target_observed.load(Ordering::SeqCst);
-        let target_resolved = self.sync_target_resolved(target);
+        let state = self.state.read();
+        let target_resolved = !snapshot.unverified_peer_hint
+            && self.sync_target_resolved_against_best(&state.best, snapshot.height, snapshot.hash);
         let syncing = !self.config.seeds.is_empty()
             && (!observed
                 || !self.mining_sync_gate_open.load(Ordering::SeqCst)
                 || !target_resolved);
-        (syncing, target)
+        (syncing, snapshot.height)
     }
 
     pub(crate) fn catching_up_to_sync_target(&self) -> Option<(u64, u64)> {
         native_sync_catch_up_target(
-            self.best_meta().height,
+            self.state.read().best.height,
             self.sync_target_observed.load(Ordering::SeqCst),
             self.sync_target_height.load(Ordering::Relaxed),
         )
@@ -746,6 +1791,15 @@ impl NativeNode {
         }
     }
 
+    pub(crate) fn clear_prepared_candidate_actions(&self) {
+        self.prepared_candidate_actions.lock().clear();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn prepared_candidate_action_count(&self) -> usize {
+        self.prepared_candidate_actions.lock().len()
+    }
+
     pub(crate) fn build_auto_recursive_candidate_action(
         &self,
         state: &NativeState,
@@ -891,35 +1945,6 @@ impl NativeNode {
         Ok(Some(action))
     }
 
-    pub(crate) fn cache_prepared_mining_actions(
-        &self,
-        pre_hash: [u8; 32],
-        actions: Vec<PendingAction>,
-    ) {
-        let mut cache = self.prepared_mining_actions.lock();
-        cache.insert(pre_hash, actions);
-        while cache.len() > MAX_PREPARED_MINING_WORKS {
-            let Some(oldest_key) = cache.keys().next().copied() else {
-                break;
-            };
-            cache.remove(&oldest_key);
-        }
-    }
-
-    pub(crate) fn prepared_mining_actions_for_work(
-        &self,
-        work: &NativeWork,
-    ) -> Option<Vec<PendingAction>> {
-        self.prepared_mining_actions
-            .lock()
-            .get(&work.pre_hash)
-            .cloned()
-    }
-
-    pub(crate) fn forget_prepared_mining_actions(&self, work: &NativeWork) {
-        self.prepared_mining_actions.lock().remove(&work.pre_hash);
-    }
-
     pub(crate) fn mineable_actions_for_work(
         &self,
         state: &NativeState,
@@ -933,17 +1958,15 @@ impl NativeNode {
                 return actions.as_ref().clone();
             }
         }
-        if let Some(actions) = self.prepared_mining_actions_for_work(work) {
-            if prepared_mining_actions_match_state(state, &actions) {
-                return actions;
-            }
-        }
         select_mineable_actions(state)
     }
 
     pub(crate) fn prepare_work(&self) -> Result<NativeWork> {
         let state = self.state.read();
-        let best = state.best.clone();
+        let best = &state.best;
+        if !self.block_tree.contains_key(best.hash.as_slice())? {
+            return Err(anyhow!("missing native block {}", hex32(&best.hash)));
+        }
         let mut pending_actions = select_mineable_actions(&state);
         if self.config.miner_address.is_some() {
             pending_actions.retain(|action| !is_coinbase_action(action));
@@ -953,7 +1976,7 @@ impl NativeNode {
                 NativeWorkTemplateAdmissionRejection::HeightNotNext,
             ));
         }
-        let pow_bits = self.expected_child_pow_bits(&best)?;
+        let pow_bits = self.expected_canonical_child_pow_bits(best)?;
         let cumulative_work = cumulative_work_after(&best.cumulative_work, pow_bits)
             .map_err(|_| NativeWorkTemplateAdmissionRejection::CumulativeWorkOverflow);
         let height = evaluate_native_work_template_admission(NativeWorkTemplateAdmissionInput {
@@ -979,18 +2002,16 @@ impl NativeNode {
                 pending_actions.clear();
             }
         }
-        let mut prepared_coinbase =
-            match self.append_auto_coinbase_action(height, &mut pending_actions, received_ms) {
-                Ok(action) => action,
-                Err(err) => {
-                    warn!(
-                        error = %err,
-                        "dropping native pending actions before auto coinbase"
-                    );
-                    pending_actions.clear();
-                    self.append_auto_coinbase_action(height, &mut pending_actions, received_ms)?
-                }
-            };
+        if let Err(err) =
+            self.append_auto_coinbase_action(height, &mut pending_actions, received_ms)
+        {
+            warn!(
+                error = %err,
+                "dropping native pending actions before auto coinbase"
+            );
+            pending_actions.clear();
+            self.append_auto_coinbase_action(height, &mut pending_actions, received_ms)?;
+        }
         let (mut actions, mut state_root, mut nullifier_root, mut extrinsics_root, mut tx_count) =
             match preview_pending_roots(&self.da_ciphertext_tree, &state, &pending_actions) {
                 Ok((state_root, nullifier_root, extrinsics_root, tx_count)) => (
@@ -1003,11 +2024,7 @@ impl NativeNode {
                 Err(err) => {
                     warn!(error = %err, "failed to preview native pending action roots");
                     let mut fallback_actions = Vec::new();
-                    prepared_coinbase = self.append_auto_coinbase_action(
-                        height,
-                        &mut fallback_actions,
-                        received_ms,
-                    )?;
+                    self.append_auto_coinbase_action(height, &mut fallback_actions, received_ms)?;
                     match preview_pending_roots(&self.da_ciphertext_tree, &state, &fallback_actions)
                     {
                         Ok((state_root, nullifier_root, extrinsics_root, tx_count)) => (
@@ -1022,7 +2039,6 @@ impl NativeNode {
                                 error = %fallback_err,
                                 "failed to preview native auto coinbase fallback"
                             );
-                            prepared_coinbase = None;
                             (
                                 Vec::new(),
                                 best.state_root,
@@ -1040,7 +2056,6 @@ impl NativeNode {
             Ok(supply_digest) => supply_digest,
             Err(err) => {
                 warn!(error = %err, "dropping native pending actions with invalid supply accounting");
-                prepared_coinbase = None;
                 actions = Vec::new();
                 state_root = best.state_root;
                 nullifier_root = best.nullifier_root;
@@ -1053,9 +2068,8 @@ impl NativeNode {
         let bridge_messages = bridge_messages_from_actions(&actions, height)?;
         let message_root = bridge_message_root(&bridge_messages);
         let message_count = u32::try_from(bridge_messages.len()).unwrap_or(u32::MAX);
-        let header_history = self.header_hashes_to_hash(best.hash)?;
-        let header_mmr_len = header_history.len() as u64;
-        let header_mmr_root = header_mmr_root_from_hashes(&header_history);
+        let (header_mmr_root, header_mmr_len) =
+            header_mmr_commitment_after_best(best, &state.header_mmr_peaks)?;
         let pre_header = native_pow_header_from_parts(
             height,
             timestamp_ms,
@@ -1075,9 +2089,6 @@ impl NativeNode {
             tx_count,
         );
         let pre_hash = pre_header.pre_hash();
-        if prepared_coinbase.is_some() {
-            self.cache_prepared_mining_actions(pre_hash, actions.clone());
-        }
         Ok(NativeWork {
             height,
             parent_hash: best.hash,
@@ -1113,7 +2124,7 @@ impl NativeNode {
         {
             return Ok(None);
         }
-        let expected_pow_bits = self.expected_child_pow_bits(&state.best)?;
+        let expected_pow_bits = self.expected_canonical_child_pow_bits(&state.best)?;
         if work.pow_bits != expected_pow_bits {
             debug!(
                 expected_pow_bits,
@@ -1138,7 +2149,8 @@ impl NativeNode {
         let preview_message_count = u32::try_from(preview_bridge_messages.len())
             .map_err(|_| anyhow!("native bridge message count overflow"))?;
         let preview_message_root = bridge_message_root(&preview_bridge_messages);
-        let expected_header_history = self.header_hashes_to_hash(state.best.hash)?;
+        let (expected_header_mmr_root, expected_header_mmr_len) =
+            header_mmr_commitment_after_best(&state.best, &state.header_mmr_peaks)?;
         let supply_digest =
             advance_native_supply_digest(state.best.supply_digest, &actions, work.height)?;
         match evaluate_native_block_commitment_admission(NativeBlockCommitmentAdmissionInput {
@@ -1149,9 +2161,8 @@ impl NativeNode {
             extrinsics_root_matches: preview_extrinsics_root == work.extrinsics_root,
             message_root_matches: preview_message_root == work.message_root,
             message_count_matches: preview_message_count == work.message_count,
-            header_mmr_root_matches: work.header_mmr_root
-                == header_mmr_root_from_hashes(&expected_header_history),
-            header_mmr_len_matches: work.header_mmr_len == expected_header_history.len() as u64,
+            header_mmr_root_matches: work.header_mmr_root == expected_header_mmr_root,
+            header_mmr_len_matches: work.header_mmr_len == expected_header_mmr_len,
             supply_digest_matches: supply_digest == work.supply_digest,
         }) {
             Ok(()) => {}
@@ -1186,8 +2197,8 @@ impl NativeNode {
                 preview_extrinsics_root == work.extrinsics_root,
                 preview_message_root == work.message_root,
                 preview_message_count == work.message_count,
-                work.header_mmr_root == header_mmr_root_from_hashes(&expected_header_history),
-                work.header_mmr_len == expected_header_history.len() as u64,
+                work.header_mmr_root == expected_header_mmr_root,
+                work.header_mmr_len == expected_header_mmr_len,
             ),
         )?;
         let mut meta = NativeBlockMeta {
@@ -1237,7 +2248,6 @@ impl NativeNode {
             NativeStorageDurabilityOperation::MinedBlockCommit,
         )?;
         self.verify_persisted_canonical_head(&meta, "native mined block commit")?;
-        self.forget_prepared_mining_actions(work);
         next_state.header_mmr_peaks = append_header_mmr_peak_state(&state, &meta)?;
         next_state.best = meta.clone();
         self.prune_invalid_pending_actions_after_state_advance(
@@ -1245,6 +2255,7 @@ impl NativeNode {
             "native mined block pending action repair",
         )?;
         publish_mined_state(&mut state, next_state);
+        self.clear_prepared_candidate_actions();
         self.blocks_found.fetch_add(1, Ordering::Relaxed);
         self.broadcast_block_announce(&meta);
         info!(
@@ -1255,35 +2266,80 @@ impl NativeNode {
         Ok(Some(meta))
     }
 
+    #[cfg(test)]
     pub(crate) fn import_announced_block(&self, meta: NativeBlockMeta) -> Result<bool> {
+        #[cfg(test)]
+        NATIVE_OWNED_ANNOUNCE_WRAPPER_ACTION_BYTES.fetch_add(
+            meta.action_bytes.iter().fold(0u64, |total, bytes| {
+                total.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX))
+            }),
+            Ordering::Relaxed,
+        );
+        Ok(matches!(
+            self.import_announced_block_with_outcome_ref(&meta)?,
+            NativeAnnouncedBlockImportOutcome::CanonicalAdvanced
+        ))
+    }
+
+    pub(crate) fn import_announced_block_with_outcome(
+        &self,
+        meta: NativeBlockMeta,
+    ) -> Result<NativeAnnouncedBlockImportOutcome> {
+        #[cfg(test)]
+        NATIVE_OWNED_ANNOUNCE_WRAPPER_ACTION_BYTES.fetch_add(
+            meta.action_bytes.iter().fold(0u64, |total, bytes| {
+                total.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX))
+            }),
+            Ordering::Relaxed,
+        );
+        self.import_announced_block_with_outcome_ref(&meta)
+    }
+
+    pub(crate) fn import_announced_block_with_outcome_ref(
+        &self,
+        meta: &NativeBlockMeta,
+    ) -> Result<NativeAnnouncedBlockImportOutcome> {
         let mut state = self.state.write();
-        if self.header_by_hash(&meta.hash)?.is_some() {
-            return Ok(false);
+        if let Some((_, exact_match)) =
+            self.inspect_stored_pow_metadata(&meta.hash, Some(meta), "known native block announce")?
+        {
+            if !exact_match {
+                return Err(anyhow!(
+                    "known native block announce does not match stored metadata {}",
+                    hex32(&meta.hash)
+                ));
+            }
+            if native_meta_better_than(meta, &state.best) {
+                self.reorganize_stored_chain_to_best_locked(&mut state, meta.hash, 0)?;
+                return Ok(NativeAnnouncedBlockImportOutcome::CanonicalAdvanced);
+            }
+            return Ok(NativeAnnouncedBlockImportOutcome::AlreadyKnown);
         }
         let Some(parent) = self.header_by_hash(&meta.parent_hash)? else {
-            return Ok(false);
+            return Ok(NativeAnnouncedBlockImportOutcome::MissingParent);
         };
         self.validate_stored_block_meta_parent_chain(&parent)?;
         let expected_pow_bits = self.expected_child_pow_bits(&parent)?;
         validate_announced_block(&parent, &meta, expected_pow_bits)?;
-        let (expected_header_mmr_root, expected_header_mmr_len) = if parent.hash == state.best.hash
-        {
-            (
-                header_mmr_root_from_peaks(
-                    header_mmr_leaf_count_after_best(&state.best)?,
-                    &state.header_mmr_peaks,
-                ),
-                header_mmr_leaf_count_after_best(&state.best)?,
-            )
+        let candidate_wins = native_meta_better_than(&meta, &state.best);
+        let parent_is_canonical_tip = parent.hash == state.best.hash;
+        let parent_hash = parent.hash;
+        drop(parent);
+        let mut streamed_non_tip_parent_state = if !parent_is_canonical_tip {
+            Some(self.replay_stored_ancestry_with_suffix_streaming(parent_hash, &[])?)
         } else {
-            let expected_header_history = self.header_hashes_to_hash(parent.hash)?;
-            (
-                header_mmr_root_from_hashes(&expected_header_history),
-                expected_header_history.len() as u64,
-            )
+            None
+        };
+        let (expected_header_mmr_root, expected_header_mmr_len) = if parent_is_canonical_tip {
+            header_mmr_commitment_after_best(&state.best, &state.header_mmr_peaks)?
+        } else {
+            let streamed = streamed_non_tip_parent_state
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing streamed non-tip parent state"))?;
+            header_mmr_commitment_after_best(&streamed.best, &streamed.header_mmr_peaks)?
         };
 
-        let parent_state = if parent.hash == state.best.hash {
+        let parent_state = if parent_is_canonical_tip {
             NativeState {
                 best: state.best.clone(),
                 header_mmr_peaks: state.header_mmr_peaks.clone(),
@@ -1295,8 +2351,10 @@ impl NativeNode {
                 staged_ciphertexts: BTreeMap::new(),
                 staged_proofs: BTreeMap::new(),
             }
+        } else if let Some(streamed) = streamed_non_tip_parent_state.take() {
+            streamed
         } else {
-            self.replay_state_to_hash(parent.hash)?
+            return Err(anyhow!("missing non-tip parent ancestry state"));
         };
         let actions = decode_block_actions(&meta)?;
         verify_decoded_action_root(&actions, &meta, "announced block action root")?;
@@ -1307,6 +2365,7 @@ impl NativeNode {
         let message_root = bridge_message_root(&bridge_messages);
         let message_count = u32::try_from(bridge_messages.len())
             .map_err(|_| anyhow!("native bridge message count overflow"))?;
+        drop(bridge_messages);
         let (fee_total, has_coinbase) = native_block_replay_supply_parts(&actions, meta.height)?;
         evaluate_native_block_replay_refinement_for_actions(
             "announced block replay refinement failed",
@@ -1333,19 +2392,29 @@ impl NativeNode {
         )?;
         validate_block_actions_locked(&parent_state, &actions)?;
         verify_native_block_artifacts_locked(self, &parent_state, &actions, &meta)?;
-        let candidate_wins = native_meta_better_than(&meta, &state.best);
         if candidate_wins {
-            if parent.hash == state.best.hash {
+            if parent_is_canonical_tip {
                 self.commit_announced_tip_extension_locked(&mut state, &actions, &meta)?;
             } else {
-                let mut new_chain = self.chain_to_hash(parent.hash)?;
-                new_chain.push(meta.clone());
-                self.reorganize_chain_to_best_locked(&mut state, new_chain)?;
+                // The reorg path reloads admitted stored rows one at a time.
+                // Prestore the newly validated tip so a crash leaves a safe,
+                // retryable noncanonical candidate rather than partial
+                // canonical state.
+                drop(parent_state);
+                drop(actions);
+                self.persist_noncanonical_block_record(meta)?;
+                self.reorganize_stored_chain_to_best_locked(&mut state, meta.hash, 1)?;
             }
-            Ok(true)
+            Ok(NativeAnnouncedBlockImportOutcome::CanonicalAdvanced)
         } else {
+            // A losing block only needs its signed metadata record. Do not
+            // retain replay state, decoded action payloads, or the ancestry
+            // snapshot across the durability flush.
+            drop(parent_state);
+            drop(actions);
+            drop(streamed_non_tip_parent_state);
             self.persist_noncanonical_block_record(&meta)?;
-            Ok(false)
+            Ok(NativeAnnouncedBlockImportOutcome::StoredNoncanonical)
         }
     }
 
@@ -1365,6 +2434,162 @@ impl NativeNode {
             NativeStorageDurabilityOperation::NoncanonicalBlockRecord,
         )?;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn validate_and_persist_noncanonical_sync_batch(
+        &self,
+        anchor_hash: [u8; 32],
+        metas: &[NativeBlockMeta],
+    ) -> Result<usize> {
+        for meta in metas {
+            if self.classify_supplied_block_record(meta)?
+                == NativeSuppliedBlockRecordStatus::KnownExact
+            {
+                return Err(anyhow!(
+                    "native sync side-branch batch includes already known block {}",
+                    hex32(&meta.hash)
+                ));
+            }
+        }
+        let persistence = self
+            .validate_and_persist_mixed_noncanonical_sync_batch(anchor_hash, metas)
+            .map_err(anyhow::Error::from)?;
+        debug_assert_eq!(persistence.already_known, 0);
+        Ok(persistence.newly_stored)
+    }
+
+    pub(crate) fn classify_supplied_block_record(
+        &self,
+        meta: &NativeBlockMeta,
+    ) -> Result<NativeSuppliedBlockRecordStatus> {
+        let inspected = self.inspect_stored_pow_metadata(
+            &meta.hash,
+            Some(meta),
+            "native supplied sync block record",
+        )?;
+        evaluate_native_supplied_block_record_classification(
+            NativeSuppliedBlockRecordClassificationInput {
+                stored_record_present: inspected.is_some(),
+                stored_record_exact: inspected.is_some_and(|(_, exact_match)| exact_match),
+            },
+        )
+        .map_err(|_| {
+            anyhow!(
+                "known native sync block does not match supplied metadata {}",
+                hex32(&meta.hash)
+            )
+        })
+    }
+
+    pub(crate) fn validate_and_persist_mixed_noncanonical_sync_batch(
+        &self,
+        anchor_hash: [u8; 32],
+        metas: &[NativeBlockMeta],
+    ) -> std::result::Result<NativeNoncanonicalSyncBatchPersistence, NativeChainLoadError> {
+        if metas.is_empty() {
+            return Ok(NativeNoncanonicalSyncBatchPersistence {
+                newly_stored: 0,
+                already_known: 0,
+            });
+        }
+        // Every production block-tree writer holds the state write lock. Keep
+        // a shared lock from exact row classification through replay and batch
+        // durability so a row classified Missing cannot become a conflicting
+        // stored record before the selective sled batch is applied.
+        let _storage_stability_guard = self.state.read();
+        if metas[0].parent_hash != anchor_hash {
+            return Err(NativeChainLoadError::Corrupt(anyhow!(
+                "native sync side-branch batch does not extend its stored anchor"
+            )));
+        }
+        for pair in metas.windows(2) {
+            if pair[0].height.checked_add(1) != Some(pair[1].height)
+                || pair[1].parent_hash != pair[0].hash
+            {
+                return Err(NativeChainLoadError::Corrupt(anyhow!(
+                    "native sync side-branch batch is not contiguous at height {}",
+                    pair[1].height
+                )));
+            }
+        }
+
+        let mut missing = Vec::new();
+        let mut already_known = 0usize;
+        for meta in metas {
+            match self
+                .classify_supplied_block_record(meta)
+                .map_err(NativeChainLoadError::Corrupt)?
+            {
+                NativeSuppliedBlockRecordStatus::KnownExact => {
+                    already_known = already_known.saturating_add(1);
+                }
+                NativeSuppliedBlockRecordStatus::Missing => missing.push(meta),
+            }
+        }
+
+        let replayed = self.replay_stored_ancestry_with_suffix_streaming(anchor_hash, metas)?;
+        let expected_tip = metas.last().expect("nonempty side-branch batch");
+        if replayed.best != *expected_tip {
+            return Err(NativeChainLoadError::Corrupt(anyhow!(
+                "native sync side-branch replay did not reach the response tip"
+            )));
+        }
+        drop(replayed);
+
+        let newly_stored = self.persist_validated_noncanonical_block_record_ref_batch(
+            &missing,
+            "native sync noncanonical block-record batch manifest",
+            "validated native sync side-branch batch",
+        )?;
+        Ok(NativeNoncanonicalSyncBatchPersistence {
+            newly_stored,
+            already_known,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn persist_validated_noncanonical_block_record_batch(
+        &self,
+        metas: &[NativeBlockMeta],
+        manifest_context: &'static str,
+        durability_context: &'static str,
+    ) -> Result<usize> {
+        let refs = metas.iter().collect::<Vec<_>>();
+        self.persist_validated_noncanonical_block_record_ref_batch(
+            &refs,
+            manifest_context,
+            durability_context,
+        )
+    }
+
+    fn persist_validated_noncanonical_block_record_ref_batch(
+        &self,
+        metas: &[&NativeBlockMeta],
+        manifest_context: &'static str,
+        durability_context: &'static str,
+    ) -> Result<usize> {
+        if metas.is_empty() {
+            return Ok(0);
+        }
+        evaluate_native_atomic_commit_manifest_admission(
+            native_noncanonical_block_record_batch_manifest(metas.len()),
+        )
+        .map_err(|rejection| {
+            native_atomic_commit_manifest_admission_error(manifest_context, rejection)
+        })?;
+        let mut batch = sled::Batch::default();
+        for &meta in metas {
+            batch.insert(meta.hash.to_vec(), bincode::serialize(meta)?);
+        }
+        self.block_tree
+            .apply_batch(batch)
+            .with_context(|| format!("persist {durability_context}"))?;
+        self.flush_native_durability_barrier(
+            durability_context,
+            NativeStorageDurabilityOperation::NoncanonicalBlockRecord,
+        )?;
+        Ok(metas.len())
     }
 
     pub(crate) fn validate_stored_block_meta_parent_chain(
@@ -1407,11 +2632,10 @@ impl NativeNode {
         let Some(sync_tx) = self.sync_tx.lock().clone() else {
             return;
         };
-        let announce = NativeSyncMessage::Announce(Box::new(meta.clone()));
-        let payload = match encode_sync_message(&announce) {
-            Ok(payload) => payload,
+        let (payload, compact) = match encode_native_sync_announce_or_tip(meta) {
+            Ok(encoded) => encoded,
             Err(err) => {
-                warn!(error = %err, "failed to encode native block announce");
+                warn!(error = %err, "failed to encode native block announcement");
                 return;
             }
         };
@@ -1428,7 +2652,8 @@ impl NativeNode {
             info!(
                 height = meta.height,
                 hash = %hex32(&meta.hash),
-                "queued native block announce"
+                compact,
+                "queued native block announcement"
             );
         }
     }
@@ -1544,61 +2769,53 @@ impl NativeNode {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn block_range(
         &self,
         from_height: u64,
         to_height: u64,
     ) -> Result<Vec<NativeBlockMeta>> {
-        let best_height = self.best_meta().height;
+        self.sync_response_block_range(from_height, to_height)
+            .map(|(_, blocks, _)| blocks)
+    }
+
+    pub(crate) fn sync_response_block_range(
+        &self,
+        from_height: u64,
+        to_height: u64,
+    ) -> Result<(u64, Vec<NativeBlockMeta>, Option<NativeSyncChunkOffer>)> {
+        let best_height = self.best_height();
         let Some(range) = native_sync_response_range(NativeSyncResponseRangeInput {
             from_height,
             to_height,
             best_height,
             max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
         }) else {
-            return Ok(Vec::new());
+            return Ok((best_height, Vec::new(), None));
         };
-        let mut blocks = Vec::new();
-        let mut previous_parent_anchor_verified = range.from_height == 0;
-        let mut parent = if range.from_height == 0 {
+        let initial_parent_hash = if range.from_height == 0 {
             None
         } else {
-            Some(self.load_canonical_block_at_height_unverified(range.from_height - 1)?)
+            Some(
+                self.load_canonical_block_at_height_unverified(range.from_height - 1)?
+                    .hash,
+            )
         };
-        let mut action_bodies_verified = 0usize;
-        for height in range.from_height..=range.to_height {
-            let meta = self.load_canonical_sync_block_at_height(height)?;
-            if let Some(parent) = parent.as_ref() {
-                if meta.parent_hash != parent.hash {
-                    return Err(anyhow!(
-                        "canonical native block parent mismatch at height {}: expected {}, got {}",
-                        height,
-                        hex32(&parent.hash),
-                        hex32(&meta.parent_hash)
-                    ));
-                }
-                if height == range.from_height {
-                    previous_parent_anchor_verified = true;
-                }
-            }
-            if meta.height != 0 {
-                action_bodies_verified = action_bodies_verified.saturating_add(1);
-            }
-            parent = Some(meta.clone());
-            blocks.push(meta);
-        }
-        truncate_native_sync_response_blocks_to_wire_budget(
-            best_height,
-            range.from_height,
-            &mut blocks,
-        );
+        let (blocks, previous_parent_anchor_verified, oversized_first_block) =
+            load_native_sync_response_prefix_with(
+                best_height,
+                range,
+                initial_parent_hash,
+                |height| self.load_canonical_sync_block_at_height(height),
+            )?;
         let Some(published_to_height) = blocks.last().map(|block| block.height) else {
-            return Ok(Vec::new());
+            return Ok((best_height, Vec::new(), oversized_first_block));
         };
         let published_range = NativeSyncRange {
             from_height: range.from_height,
             to_height: published_to_height,
         };
+        let action_bodies_verified = native_sync_verified_action_body_count(&blocks);
         evaluate_native_sync_block_range_publication_admission(
             native_sync_block_range_publication_admission_input(
                 published_range,
@@ -1614,7 +2831,11 @@ impl NativeNode {
                 rejection.label()
             )
         })?;
-        Ok(native_sync_block_range_publication_rows(blocks))
+        Ok((
+            best_height,
+            native_sync_block_range_publication_rows(blocks),
+            None,
+        ))
     }
 
     pub(crate) fn load_canonical_sync_block_at_height(
@@ -1622,14 +2843,19 @@ impl NativeNode {
         height: u64,
     ) -> Result<NativeBlockMeta> {
         let meta = self.load_canonical_block_at_height_unverified(height)?;
+        self.validate_canonical_sync_block_meta(&meta)?;
+        Ok(meta)
+    }
+
+    pub(crate) fn validate_canonical_sync_block_meta(&self, meta: &NativeBlockMeta) -> Result<()> {
         if meta.height == 0 {
-            verify_native_block_meta_projection(None, &meta, None)
+            verify_native_block_meta_projection(None, meta, None)
                 .context("validate genesis native sync block metadata")?;
         } else {
             let parent =
-                self.load_canonical_block_at_height_unverified(height.saturating_sub(1))?;
+                self.load_canonical_block_at_height_unverified(meta.height.saturating_sub(1))?;
             let expected_pow_bits = self.expected_canonical_child_pow_bits(&parent)?;
-            verify_native_block_meta_projection(Some(&parent), &meta, Some(expected_pow_bits))
+            verify_native_block_meta_projection(Some(&parent), meta, Some(expected_pow_bits))
                 .with_context(|| {
                     format!(
                         "validate canonical native sync block metadata at height {} ({})",
@@ -1637,7 +2863,7 @@ impl NativeNode {
                         hex32(&meta.hash)
                     )
                 })?;
-            verify_canonical_sync_block_body(&meta).with_context(|| {
+            verify_canonical_sync_block_body(meta).with_context(|| {
                 format!(
                     "validate canonical native sync block body at height {} ({})",
                     meta.height,
@@ -1645,7 +2871,7 @@ impl NativeNode {
                 )
             })?;
         }
-        Ok(meta)
+        Ok(())
     }
 
     pub(crate) fn load_canonical_block_at_height_unverified(
@@ -1689,49 +2915,413 @@ impl NativeNode {
         Ok(meta)
     }
 
-    pub(crate) fn chain_to_hash(&self, hash: [u8; 32]) -> Result<Vec<NativeBlockMeta>> {
-        load_chain_to_hash(&self.block_tree, hash)
+    #[cfg(test)]
+    pub(crate) fn chain_to_hash(
+        &self,
+        hash: [u8; 32],
+    ) -> std::result::Result<Vec<NativeBlockMeta>, NativeChainLoadError> {
+        let chain = load_chain_to_hash(&self.block_tree, hash)?;
+        #[cfg(test)]
+        {
+            self.chain_reconstruction_count
+                .fetch_add(1, Ordering::Relaxed);
+            self.block_meta_load_count.fetch_add(
+                u64::try_from(chain.len()).unwrap_or(u64::MAX),
+                Ordering::Relaxed,
+            );
+            self.block_meta_decode_count.fetch_add(
+                u64::try_from(chain.len()).unwrap_or(u64::MAX),
+                Ordering::Relaxed,
+            );
+        }
+        Ok(chain)
     }
 
-    pub(crate) fn header_hashes_to_hash(&self, hash: [u8; 32]) -> Result<Vec<Hash32>> {
+    #[cfg(test)]
+    pub(crate) fn reset_block_meta_load_counters(&self) {
+        self.block_meta_load_count.store(0, Ordering::Relaxed);
+        self.block_meta_decode_count.store(0, Ordering::Relaxed);
+        self.chain_reconstruction_count.store(0, Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn block_meta_load_counters(&self) -> (u64, u64) {
+        (
+            self.block_meta_load_count.load(Ordering::Relaxed),
+            self.chain_reconstruction_count.load(Ordering::Relaxed),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn block_meta_decode_count(&self) -> u64 {
+        self.block_meta_decode_count.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reset_streaming_replay_stored_meta_counters(&self) {
+        assert_eq!(
+            self.streaming_replay_live_stored_meta_count
+                .load(Ordering::Relaxed),
+            0,
+            "cannot reset streaming replay counters while a stored metadata body is live"
+        );
+        self.streaming_replay_peak_stored_meta_count
+            .store(0, Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn streaming_replay_stored_meta_counters(&self) -> (u64, u64) {
+        (
+            self.streaming_replay_live_stored_meta_count
+                .load(Ordering::Relaxed),
+            self.streaming_replay_peak_stored_meta_count
+                .load(Ordering::Relaxed),
+        )
+    }
+
+    #[cfg(test)]
+    fn begin_streaming_stored_meta_decode(&self) -> NativeStreamingStoredMetaDecodeGuard<'_> {
+        let live = self
+            .streaming_replay_live_stored_meta_count
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
+        self.streaming_replay_peak_stored_meta_count
+            .fetch_max(live, Ordering::Relaxed);
+        NativeStreamingStoredMetaDecodeGuard { node: self }
+    }
+
+    pub(crate) fn header_hashes_to_hash(
+        &self,
+        hash: [u8; 32],
+    ) -> std::result::Result<Vec<Hash32>, NativeChainLoadError> {
         Ok(self
-            .chain_to_hash(hash)?
+            .compact_stored_pow_ancestry_to_hash(hash)?
             .into_iter()
             .map(|meta| meta.hash)
             .collect())
     }
 
-    pub(crate) fn expected_child_pow_bits(&self, parent: &NativeBlockMeta) -> Result<u32> {
-        let chain = self.chain_to_hash(parent.hash)?;
-        let Some(chain_parent) = chain.last() else {
-            return Err(anyhow!(
-                "native PoW schedule cannot evaluate an empty parent chain"
-            ));
+    fn inspect_stored_pow_metadata(
+        &self,
+        hash: &[u8; 32],
+        expected: Option<&NativeBlockMeta>,
+        context: &str,
+    ) -> Result<Option<(NativePowMetaProjection, bool)>> {
+        #[cfg(test)]
+        self.block_meta_load_count.fetch_add(1, Ordering::Relaxed);
+        let Some(bytes) = self.block_tree.get(hash)? else {
+            return Ok(None);
         };
-        if chain_parent.height != parent.height
-            || chain_parent.hash != parent.hash
-            || chain_parent.pow_bits != parent.pow_bits
-            || chain_parent.timestamp_ms != parent.timestamp_ms
-        {
+        let (projection, exact_match) =
+            inspect_native_pow_metadata_bincode_exact(&bytes, expected, context)?;
+        if projection.hash != *hash {
             return Err(anyhow!(
-                "native PoW schedule parent chain ended at height {} hash {} bits {} timestamp {}, expected height {} hash {} bits {} timestamp {}",
-                chain_parent.height,
-                hex32(&chain_parent.hash),
-                chain_parent.pow_bits,
-                chain_parent.timestamp_ms,
-                parent.height,
-                hex32(&parent.hash),
-                parent.pow_bits,
-                parent.timestamp_ms
+                "stored native block hash mismatch: key={} embedded={}",
+                hex32(hash),
+                hex32(&projection.hash)
             ));
         }
-        native_expected_child_pow_bits_from_chain(&chain, self.config.pow_bits)
+        if projection.hash != projection.work_hash {
+            return Err(anyhow!(
+                "stored native block work-hash mismatch: hash={} work_hash={}",
+                hex32(&projection.hash),
+                hex32(&projection.work_hash)
+            ));
+        }
+        Ok(Some((projection, exact_match)))
+    }
+
+    fn stored_pow_parent<'a>(
+        &self,
+        parent: &'a NativeBlockMeta,
+        context: &str,
+    ) -> Result<&'a NativeBlockMeta> {
+        let (_, exact_match) = self
+            .inspect_stored_pow_metadata(&parent.hash, Some(parent), context)?
+            .ok_or_else(|| anyhow!("missing native block {}", hex32(&parent.hash)))?;
+        if !exact_match {
+            return Err(anyhow!(
+                "{context} supplied native PoW parent metadata does not match stored record {}",
+                hex32(&parent.hash)
+            ));
+        }
+        Ok(parent)
+    }
+
+    fn pow_retarget_anchor_from_parent(
+        &self,
+        parent: &NativeBlockMeta,
+        new_height: u64,
+        validated_batch_prefix: &[NativeBlockMeta],
+    ) -> Result<Option<NativePowMetaProjection>> {
+        let Some(anchor_steps) =
+            consensus::pow::pow_retarget_anchor_steps(parent.height, new_height)
+        else {
+            return Ok(None);
+        };
+
+        let mut cursor = NativePowMetaProjection::from(parent);
+        for _ in 0..anchor_steps {
+            let expected_height = cursor.height.checked_sub(1).ok_or_else(|| {
+                anyhow!(
+                    "native PoW retarget anchor underflow at parent height {}",
+                    parent.height
+                )
+            })?;
+            let ancestor = if let Some(ancestor) = validated_batch_prefix
+                .iter()
+                .rev()
+                .find(|meta| meta.hash == cursor.parent_hash)
+            {
+                NativePowMetaProjection::from(ancestor)
+            } else {
+                self.inspect_stored_pow_metadata(
+                    &cursor.parent_hash,
+                    None,
+                    "native PoW retarget ancestor",
+                )?
+                .map(|(projection, _)| projection)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "native PoW retarget missing ancestor {} below parent height {}",
+                        hex32(&cursor.parent_hash),
+                        parent.height
+                    )
+                })?
+            };
+            if ancestor.height != expected_height {
+                return Err(anyhow!(
+                    "native PoW retarget ancestor height mismatch for {}: expected {}, got {}",
+                    hex32(&ancestor.hash),
+                    expected_height,
+                    ancestor.height
+                ));
+            }
+            cursor = ancestor;
+        }
+        Ok(Some(cursor))
+    }
+
+    pub(crate) fn expected_child_pow_bits(&self, parent: &NativeBlockMeta) -> Result<u32> {
+        let parent = self.stored_pow_parent(parent, "native PoW schedule")?;
+        let new_height = parent
+            .height
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("native PoW child height overflow"))?;
+        let anchor_timestamp_ms = self
+            .pow_retarget_anchor_from_parent(parent, new_height, &[])?
+            .map(|anchor| anchor.timestamp_ms);
+        consensus::pow::expected_pow_bits_from_schedule(
+            self.config.pow_bits,
+            parent.pow_bits,
+            parent.height,
+            new_height,
+            parent.timestamp_ms,
+            anchor_timestamp_ms,
+        )
+        .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))
     }
 
     pub(crate) fn expected_canonical_child_pow_bits(
         &self,
         parent: &NativeBlockMeta,
     ) -> Result<u32> {
+        let parent = self.stored_pow_parent(parent, "canonical native PoW schedule")?;
+        let indexed_parent_hash = self.hash_by_height(parent.height)?.ok_or_else(|| {
+            anyhow!(
+                "missing canonical height index for native PoW parent at height {}",
+                parent.height
+            )
+        })?;
+        if indexed_parent_hash != parent.hash {
+            return Err(anyhow!(
+                "canonical height index at {} does not reference supplied native PoW parent: indexed={} supplied={}",
+                parent.height,
+                hex32(&indexed_parent_hash),
+                hex32(&parent.hash)
+            ));
+        }
+        let new_height = parent
+            .height
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("native PoW child height overflow"))?;
+        let anchor = self.pow_retarget_anchor_from_parent(parent, new_height, &[])?;
+        let anchor_timestamp_ms = if let Some(anchor) = anchor {
+            let indexed_anchor_hash = self.hash_by_height(anchor.height)?.ok_or_else(|| {
+                anyhow!(
+                    "missing canonical height index for native PoW retarget anchor at height {}",
+                    anchor.height
+                )
+            })?;
+            if indexed_anchor_hash != anchor.hash {
+                return Err(anyhow!(
+                    "canonical height index at {} does not reference supplied parent ancestry: indexed={} ancestry={}",
+                    anchor.height,
+                    hex32(&indexed_anchor_hash),
+                    hex32(&anchor.hash)
+                ));
+            }
+            Some(anchor.timestamp_ms)
+        } else {
+            None
+        };
+        consensus::pow::expected_pow_bits_from_schedule(
+            self.config.pow_bits,
+            parent.pow_bits,
+            parent.height,
+            new_height,
+            parent.timestamp_ms,
+            anchor_timestamp_ms,
+        )
+        .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))
+    }
+
+    pub(crate) fn expected_sync_batch_child_pow_bits(
+        &self,
+        parent: &NativeBlockMeta,
+        validated_batch_prefix: &[NativeBlockMeta],
+    ) -> Result<u32> {
+        let parent = if let Some(validated_parent) = validated_batch_prefix.last() {
+            if validated_parent != parent {
+                return Err(anyhow!(
+                    "native sync PoW parent does not match validated batch prefix tip"
+                ));
+            }
+            validated_parent
+        } else {
+            self.stored_pow_parent(parent, "native sync PoW schedule")?
+        };
+        let new_height = parent
+            .height
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("native PoW child height overflow"))?;
+        let anchor_timestamp_ms = self
+            .pow_retarget_anchor_from_parent(parent, new_height, validated_batch_prefix)?
+            .map(|anchor| anchor.timestamp_ms);
+        consensus::pow::expected_pow_bits_from_schedule(
+            self.config.pow_bits,
+            parent.pow_bits,
+            parent.height,
+            new_height,
+            parent.timestamp_ms,
+            anchor_timestamp_ms,
+        )
+        .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replay_state_to_hash(&self, hash: [u8; 32]) -> Result<NativeState> {
+        let chain = self.chain_to_hash(hash)?;
+        self.replay_chain_state(&chain)
+    }
+
+    fn replay_state_from_genesis(genesis: NativeBlockMeta) -> NativeState {
+        NativeState {
+            header_mmr_peaks: header_mmr_peaks_from_hashes(&[genesis.hash]),
+            best: genesis,
+            pending_actions: BTreeMap::new(),
+            commitment_tree: CommitmentTreeState::default(),
+            nullifiers: BTreeSet::new(),
+            consumed_bridge_messages: BTreeSet::new(),
+            stablecoin_policy_authorizations: BTreeSet::new(),
+            staged_ciphertexts: BTreeMap::new(),
+            staged_proofs: BTreeMap::new(),
+        }
+    }
+
+    fn replay_block_into_state(
+        &self,
+        state: &mut NativeState,
+        meta: NativeBlockMeta,
+        expected_pow_bits: u32,
+    ) -> Result<()> {
+        verify_native_block_meta_projection(Some(&state.best), &meta, Some(expected_pow_bits))
+            .with_context(|| {
+                format!(
+                    "replay stored native block metadata at height {} ({})",
+                    meta.height,
+                    hex32(&meta.hash)
+                )
+            })?;
+        let actions = decode_block_actions(&meta)?;
+        verify_decoded_action_root(&actions, &meta, "native replay action root")?;
+        validate_block_actions_locked(state, &actions)?;
+        let (state_root, nullifier_root, extrinsics_root, tx_count) =
+            preview_pending_roots_with_archive(
+                &self.da_ciphertext_tree,
+                Some(&self.ciphertext_archive_tree),
+                state,
+                &actions,
+            )?;
+        let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
+        let bridge_messages = bridge_messages_from_actions(&actions, meta.height)?;
+        let message_root = bridge_message_root(&bridge_messages);
+        let message_count = u32::try_from(bridge_messages.len())
+            .map_err(|_| anyhow!("native bridge message count overflow"))?;
+        let expected_header_mmr_len = header_mmr_leaf_count_after_best(&state.best)?;
+        let expected_header_mmr_root =
+            header_mmr_root_from_peaks(expected_header_mmr_len, &state.header_mmr_peaks);
+        let (fee_total, has_coinbase) = native_block_replay_supply_parts(&actions, meta.height)?;
+        evaluate_native_block_replay_refinement_for_actions(
+            "native replay refinement failed",
+            &self.da_ciphertext_tree,
+            Some(&self.ciphertext_archive_tree),
+            state,
+            &actions,
+            native_block_replay_refinement_input_from_state(
+                state,
+                meta.height,
+                fee_total,
+                has_coinbase,
+                meta.supply_digest,
+                tx_count == meta.tx_count,
+                state_root == meta.state_root,
+                kernel_root == meta.kernel_root,
+                nullifier_root == meta.nullifier_root,
+                extrinsics_root == meta.extrinsics_root,
+                message_root == meta.message_root,
+                message_count == meta.message_count,
+                meta.header_mmr_root == expected_header_mmr_root,
+                meta.header_mmr_len == expected_header_mmr_len,
+            ),
+        )?;
+        verify_native_block_artifacts_locked(self, state, &actions, &meta)?;
+        apply_actions_to_memory_with_archive(
+            &self.da_ciphertext_tree,
+            Some(&self.ciphertext_archive_tree),
+            state,
+            &actions,
+        )?;
+        state.header_mmr_peaks = append_header_mmr_peak_state(state, &meta)?;
+        state.best = meta;
+        Ok(())
+    }
+
+    pub(crate) fn replay_chain_state(&self, chain: &[NativeBlockMeta]) -> Result<NativeState> {
+        let genesis = chain
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow!("empty native chain replay"))?;
+        let mut state = Self::replay_state_from_genesis(genesis);
+        for (index, meta) in chain.iter().enumerate().skip(1) {
+            let expected_pow_bits = native_expected_child_pow_bits_for_chain_index(
+                chain,
+                index - 1,
+                self.config.pow_bits,
+            )?;
+            self.replay_block_into_state(&mut state, meta.clone(), expected_pow_bits)?;
+        }
+        Ok(state)
+    }
+
+    fn expected_projection_child_pow_bits(
+        &self,
+        ancestry: &[NativePowMetaProjection],
+        parent_index: usize,
+    ) -> Result<u32> {
+        let parent = ancestry
+            .get(parent_index)
+            .ok_or_else(|| anyhow!("native streaming replay parent index out of range"))?;
         let new_height = parent
             .height
             .checked_add(1)
@@ -1739,14 +3329,18 @@ impl NativeNode {
         let anchor_timestamp_ms = if let Some(anchor_steps) =
             consensus::pow::pow_retarget_anchor_steps(parent.height, new_height)
         {
-            let anchor_height = parent.height.checked_sub(anchor_steps).ok_or_else(|| {
+            let anchor_steps = usize::try_from(anchor_steps)
+                .map_err(|_| anyhow!("native PoW retarget anchor step overflow"))?;
+            let anchor_index = parent_index.checked_sub(anchor_steps).ok_or_else(|| {
                 anyhow!(
-                    "native PoW retarget anchor underflow at parent height {}",
+                    "native PoW retarget missing anchor history at parent height {}",
                     parent.height
                 )
             })?;
             Some(
-                self.load_canonical_block_at_height_unverified(anchor_height)?
+                ancestry
+                    .get(anchor_index)
+                    .ok_or_else(|| anyhow!("native streaming replay anchor index out of range"))?
                     .timestamp_ms,
             )
         } else {
@@ -1763,108 +3357,642 @@ impl NativeNode {
         .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))
     }
 
-    pub(crate) fn replay_state_to_hash(&self, hash: [u8; 32]) -> Result<NativeState> {
-        let chain = self.chain_to_hash(hash)?;
-        self.replay_chain_state(&chain)
+    fn compact_stored_pow_ancestry_to_hash(
+        &self,
+        hash: [u8; 32],
+    ) -> std::result::Result<Vec<NativePowMetaProjection>, NativeChainLoadError> {
+        let mut reverse_ancestry = Vec::new();
+        let mut cursor = hash;
+        let mut seen = BTreeSet::new();
+        loop {
+            if !seen.insert(cursor) {
+                return Err(NativeChainLoadError::Corrupt(anyhow!(
+                    "stored native block parent cycle at {}",
+                    hex32(&cursor)
+                )));
+            }
+            let projection = self
+                .inspect_stored_pow_metadata(
+                    &cursor,
+                    None,
+                    "native streaming noncanonical ancestry",
+                )?
+                .map(|(projection, _)| projection)
+                .ok_or_else(|| NativeChainLoadError::MissingAncestor {
+                    hash_hex: hex32(&cursor),
+                })?;
+            reverse_ancestry.push(projection);
+            if projection.height == 0 {
+                break;
+            }
+            cursor = projection.parent_hash;
+        }
+        reverse_ancestry.reverse();
+        for (index, projection) in reverse_ancestry.iter().enumerate() {
+            let expected_height = u64::try_from(index)
+                .map_err(|_| anyhow!("native streaming replay height overflow"))?;
+            if projection.height != expected_height {
+                return Err(NativeChainLoadError::Corrupt(anyhow!(
+                    "native streaming replay height mismatch at {}: expected {} observed {}",
+                    hex32(&projection.hash),
+                    expected_height,
+                    projection.height
+                )));
+            }
+            if let Some(parent) = index
+                .checked_sub(1)
+                .and_then(|parent_index| reverse_ancestry.get(parent_index))
+            {
+                if projection.parent_hash != parent.hash {
+                    return Err(NativeChainLoadError::Corrupt(anyhow!(
+                        "native streaming replay parent mismatch at height {}: expected {} observed {}",
+                        projection.height,
+                        hex32(&parent.hash),
+                        hex32(&projection.parent_hash)
+                    )));
+                }
+            }
+        }
+        Ok(reverse_ancestry)
     }
 
-    pub(crate) fn replay_chain_state(&self, chain: &[NativeBlockMeta]) -> Result<NativeState> {
-        let genesis = chain
+    fn strip_replay_only_meta_payload(meta: &mut NativeBlockMeta) {
+        meta.action_bytes = Vec::new();
+        meta.miner_public_key = Vec::new();
+        meta.miner_signature = Vec::new();
+    }
+
+    fn replay_stored_ancestry_with_suffix_streaming(
+        &self,
+        anchor_hash: [u8; 32],
+        suffix: &[NativeBlockMeta],
+    ) -> std::result::Result<NativeState, NativeChainLoadError> {
+        let mut ancestry = self.compact_stored_pow_ancestry_to_hash(anchor_hash)?;
+        let genesis_projection = *ancestry
             .first()
-            .cloned()
-            .ok_or_else(|| anyhow!("empty native chain replay"))?;
-        let mut state = NativeState {
-            header_mmr_peaks: header_mmr_peaks_from_hashes(&[genesis.hash]),
-            best: genesis,
-            pending_actions: BTreeMap::new(),
-            commitment_tree: CommitmentTreeState::default(),
-            nullifiers: BTreeSet::new(),
-            consumed_bridge_messages: BTreeSet::new(),
-            stablecoin_policy_authorizations: BTreeSet::new(),
-            staged_ciphertexts: BTreeMap::new(),
-            staged_proofs: BTreeMap::new(),
-        };
-        for (index, meta) in chain.iter().enumerate().skip(1) {
-            let meta = meta.clone();
-            let expected_pow_bits = native_expected_child_pow_bits_for_chain_index(
-                chain,
-                index - 1,
-                self.config.pow_bits,
-            )?;
-            verify_native_block_meta_projection(Some(&state.best), &meta, Some(expected_pow_bits))
-                .with_context(|| {
-                    format!(
-                        "replay stored native block metadata at height {} ({})",
-                        meta.height,
-                        hex32(&meta.hash)
-                    )
+            .ok_or_else(|| anyhow!("empty native streaming replay ancestry"))?;
+        let mut state = {
+            #[cfg(test)]
+            let _decoded_guard = self.begin_streaming_stored_meta_decode();
+            let mut genesis = self
+                .header_by_hash(&genesis_projection.hash)?
+                .ok_or_else(|| NativeChainLoadError::MissingAncestor {
+                    hash_hex: hex32(&genesis_projection.hash),
                 })?;
-            let actions = decode_block_actions(&meta)?;
-            verify_decoded_action_root(&actions, &meta, "native replay action root")?;
-            validate_block_actions_locked(&state, &actions)?;
-            let (state_root, nullifier_root, extrinsics_root, tx_count) =
-                preview_pending_roots_with_archive(
-                    &self.da_ciphertext_tree,
-                    Some(&self.ciphertext_archive_tree),
-                    &state,
-                    &actions,
-                )?;
-            let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
-            let bridge_messages = bridge_messages_from_actions(&actions, meta.height)?;
-            let message_root = bridge_message_root(&bridge_messages);
-            let message_count = u32::try_from(bridge_messages.len())
-                .map_err(|_| anyhow!("native bridge message count overflow"))?;
-            let expected_header_mmr_len = header_mmr_leaf_count_after_best(&state.best)?;
-            let expected_header_mmr_root =
-                header_mmr_root_from_peaks(expected_header_mmr_len, &state.header_mmr_peaks);
-            let (fee_total, has_coinbase) =
-                native_block_replay_supply_parts(&actions, meta.height)?;
-            evaluate_native_block_replay_refinement_for_actions(
-                "native replay refinement failed",
-                &self.da_ciphertext_tree,
-                Some(&self.ciphertext_archive_tree),
-                &state,
-                &actions,
-                native_block_replay_refinement_input_from_state(
-                    &state,
-                    meta.height,
-                    fee_total,
-                    has_coinbase,
-                    meta.supply_digest,
-                    tx_count == meta.tx_count,
-                    state_root == meta.state_root,
-                    kernel_root == meta.kernel_root,
-                    nullifier_root == meta.nullifier_root,
-                    extrinsics_root == meta.extrinsics_root,
-                    message_root == meta.message_root,
-                    message_count == meta.message_count,
-                    meta.header_mmr_root == expected_header_mmr_root,
-                    meta.header_mmr_len == expected_header_mmr_len,
-                ),
-            )?;
-            verify_native_block_artifacts_locked(self, &state, &actions, &meta)?;
-            apply_actions_to_memory_with_archive(
-                &self.da_ciphertext_tree,
-                Some(&self.ciphertext_archive_tree),
-                &mut state,
-                &actions,
-            )?;
-            state.header_mmr_peaks = append_header_mmr_peak_state(&state, &meta)?;
-            state.best = meta;
+            if NativePowMetaProjection::from(&genesis) != genesis_projection {
+                return Err(NativeChainLoadError::Corrupt(anyhow!(
+                    "native streaming replay stored genesis changed during admission"
+                )));
+            }
+            let expected_genesis = genesis_meta(self.config.pow_bits)?;
+            if genesis != expected_genesis {
+                return Err(NativeChainLoadError::Corrupt(anyhow!(
+                    "native streaming replay genesis does not match configured genesis"
+                )));
+            }
+            if ancestry.len() > 1 || !suffix.is_empty() {
+                Self::strip_replay_only_meta_payload(&mut genesis);
+            }
+            Self::replay_state_from_genesis(genesis)
+        };
+
+        for index in 1..ancestry.len() {
+            let projection = ancestry[index];
+            let expected_pow_bits =
+                self.expected_projection_child_pow_bits(&ancestry, index - 1)?;
+            #[cfg(test)]
+            let _decoded_guard = self.begin_streaming_stored_meta_decode();
+            let meta = self.header_by_hash(&projection.hash)?.ok_or_else(|| {
+                NativeChainLoadError::MissingAncestor {
+                    hash_hex: hex32(&projection.hash),
+                }
+            })?;
+            if NativePowMetaProjection::from(&meta) != projection {
+                return Err(NativeChainLoadError::Corrupt(anyhow!(
+                    "native streaming replay stored metadata changed during admission at {}",
+                    hex32(&projection.hash)
+                )));
+            }
+            self.replay_block_into_state(&mut state, meta, expected_pow_bits)?;
+            if index + 1 < ancestry.len() || !suffix.is_empty() {
+                Self::strip_replay_only_meta_payload(&mut state.best);
+            }
+        }
+
+        for (index, meta) in suffix.iter().enumerate() {
+            let parent_index = ancestry
+                .len()
+                .checked_sub(1)
+                .ok_or_else(|| anyhow!("empty native streaming replay ancestry"))?;
+            let expected_pow_bits =
+                self.expected_projection_child_pow_bits(&ancestry, parent_index)?;
+            self.replay_block_into_state(&mut state, meta.clone(), expected_pow_bits)?;
+            ancestry.push(NativePowMetaProjection::from(meta));
+            if index + 1 < suffix.len() {
+                Self::strip_replay_only_meta_payload(&mut state.best);
+            }
         }
         Ok(state)
     }
 
+    fn load_exact_stored_meta_for_projection(
+        &self,
+        projection: NativePowMetaProjection,
+        context: &'static str,
+    ) -> std::result::Result<NativeBlockMeta, NativeChainLoadError> {
+        let meta = self.header_by_hash(&projection.hash)?.ok_or_else(|| {
+            NativeChainLoadError::MissingAncestor {
+                hash_hex: hex32(&projection.hash),
+            }
+        })?;
+        if NativePowMetaProjection::from(&meta) != projection {
+            return Err(NativeChainLoadError::Corrupt(anyhow!(
+                "{context} stored metadata changed during admission at {}",
+                hex32(&projection.hash)
+            )));
+        }
+        Ok(meta)
+    }
+
+    fn local_canonical_reorg_phase_error(
+        context: &'static str,
+        error: NativeChainLoadError,
+    ) -> NativeChainLoadError {
+        match error {
+            NativeChainLoadError::MissingAncestor { hash_hex } => NativeChainLoadError::Corrupt(
+                anyhow!("{context}: locally admitted native block disappeared at {hash_hex}"),
+            ),
+            NativeChainLoadError::Corrupt(error) => {
+                NativeChainLoadError::Corrupt(error.context(context))
+            }
+        }
+    }
+
+    fn action_hashes_from_stored_ancestry_streaming(
+        &self,
+        ancestry: &[NativePowMetaProjection],
+    ) -> std::result::Result<BTreeSet<[u8; 32]>, NativeChainLoadError> {
+        let mut hashes = BTreeSet::new();
+        for projection in ancestry.iter().copied().skip(1) {
+            #[cfg(test)]
+            let _decoded_guard = self.begin_streaming_stored_meta_decode();
+            let meta = self.load_exact_stored_meta_for_projection(
+                projection,
+                "native canonical reorg action-hash scan",
+            )?;
+            for action in decode_block_actions(&meta)? {
+                hashes.insert(action.tx_hash);
+            }
+        }
+        Ok(hashes)
+    }
+
+    fn staged_ciphertext_removals_from_stored_ancestry_streaming(
+        &self,
+        ancestry: &[NativePowMetaProjection],
+        state: &mut NativeState,
+    ) -> std::result::Result<Vec<[u8; 48]>, NativeChainLoadError> {
+        let mut removals = Vec::new();
+        for projection in ancestry.iter().copied().skip(1) {
+            #[cfg(test)]
+            let _decoded_guard = self.begin_streaming_stored_meta_decode();
+            let meta = self.load_exact_stored_meta_for_projection(
+                projection,
+                "native canonical reorg staged-removal scan",
+            )?;
+            for action in decode_block_actions(&meta)? {
+                removals.extend(action.ciphertext_hashes.iter().copied());
+                clear_staged_ciphertext_markers(state, &action);
+            }
+        }
+        Ok(removals)
+    }
+
+    fn orphaned_actions_from_old_branch_suffix_compact(
+        &self,
+        old_best: &NativeBlockMeta,
+        admitted_new_ancestry: &[NativePowMetaProjection],
+        new_action_hashes: &BTreeSet<[u8; 32]>,
+    ) -> std::result::Result<Vec<PendingAction>, NativeChainLoadError> {
+        let mut cursor = old_best.hash;
+        let mut expected_height = old_best.height;
+        let mut seen = BTreeSet::new();
+        let mut orphaned_hashes = Vec::new();
+        loop {
+            if !seen.insert(cursor) {
+                return Err(NativeChainLoadError::Corrupt(anyhow!(
+                    "stored native block parent cycle at {}",
+                    hex32(&cursor)
+                )));
+            }
+            #[cfg(test)]
+            let _decoded_guard = self.begin_streaming_stored_meta_decode();
+            let meta = self.header_by_hash(&cursor)?.ok_or_else(|| {
+                NativeChainLoadError::MissingAncestor {
+                    hash_hex: hex32(&cursor),
+                }
+            })?;
+            if cursor == old_best.hash && meta != *old_best {
+                return Err(NativeChainLoadError::Corrupt(anyhow!(
+                    "stored native old-branch tip does not match in-memory canonical best"
+                )));
+            }
+            if meta.height != expected_height {
+                return Err(NativeChainLoadError::Corrupt(anyhow!(
+                    "stored native old-branch height mismatch at {}: expected {} observed {}",
+                    hex32(&cursor),
+                    expected_height,
+                    meta.height
+                )));
+            }
+            let shared = usize::try_from(meta.height)
+                .ok()
+                .and_then(|height| admitted_new_ancestry.get(height))
+                .filter(|new_meta| new_meta.hash == meta.hash);
+            if let Some(new_meta) = shared {
+                if NativePowMetaProjection::from(&meta) != *new_meta {
+                    return Err(NativeChainLoadError::Corrupt(anyhow!(
+                        "shared native reorg ancestor metadata mismatch at height {} ({})",
+                        meta.height,
+                        hex32(&meta.hash)
+                    )));
+                }
+                break;
+            }
+            if meta.height == 0 {
+                return Err(NativeChainLoadError::Corrupt(anyhow!(
+                    "native reorg old branch has no ancestor in admitted new chain"
+                )));
+            }
+            orphaned_hashes.push(meta.hash);
+            cursor = meta.parent_hash;
+            expected_height = meta
+                .height
+                .checked_sub(1)
+                .ok_or_else(|| anyhow!("native old-branch parent height underflow"))?;
+        }
+
+        let mut orphaned = Vec::new();
+        for hash in orphaned_hashes.into_iter().rev() {
+            #[cfg(test)]
+            let _decoded_guard = self.begin_streaming_stored_meta_decode();
+            let meta = self.header_by_hash(&hash)?.ok_or_else(|| {
+                NativeChainLoadError::MissingAncestor {
+                    hash_hex: hex32(&hash),
+                }
+            })?;
+            for action in decode_block_actions(&meta)? {
+                if !new_action_hashes.contains(&action.tx_hash) {
+                    orphaned.push(action);
+                }
+            }
+        }
+        Ok(orphaned)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn orphaned_actions_from_old_branch_suffix(
+        &self,
+        old_best: &NativeBlockMeta,
+        admitted_new_chain: &[NativeBlockMeta],
+        new_action_hashes: &BTreeSet<[u8; 32]>,
+    ) -> Result<Vec<PendingAction>> {
+        let mut cursor = old_best.hash;
+        let mut expected_height = old_best.height;
+        let mut seen = BTreeSet::new();
+        let mut orphaned_hashes = Vec::new();
+
+        loop {
+            if !seen.insert(cursor) {
+                return Err(anyhow!(
+                    "stored native block parent cycle at {}",
+                    hex32(&cursor)
+                ));
+            }
+            let meta = self
+                .header_by_hash(&cursor)?
+                .ok_or_else(|| anyhow!("missing native block {}", hex32(&cursor)))?;
+            if cursor == old_best.hash && meta != *old_best {
+                return Err(anyhow!(
+                    "stored native old-branch tip does not match in-memory canonical best"
+                ));
+            }
+            if meta.height != expected_height {
+                return Err(anyhow!(
+                    "stored native old-branch height mismatch at {}: expected {} observed {}",
+                    hex32(&cursor),
+                    expected_height,
+                    meta.height
+                ));
+            }
+
+            let shared = usize::try_from(meta.height)
+                .ok()
+                .and_then(|height| admitted_new_chain.get(height))
+                .filter(|new_meta| new_meta.hash == meta.hash);
+            if let Some(new_meta) = shared {
+                if new_meta != &meta {
+                    return Err(anyhow!(
+                        "shared native reorg ancestor metadata mismatch at height {} ({})",
+                        meta.height,
+                        hex32(&meta.hash)
+                    ));
+                }
+                break;
+            }
+            if meta.height == 0 {
+                return Err(anyhow!(
+                    "native reorg old branch has no ancestor in admitted new chain"
+                ));
+            }
+
+            orphaned_hashes.push(meta.hash);
+            cursor = meta.parent_hash;
+            expected_height = meta
+                .height
+                .checked_sub(1)
+                .ok_or_else(|| anyhow!("native old-branch parent height underflow"))?;
+        }
+
+        let mut orphaned = Vec::new();
+        for hash in orphaned_hashes.into_iter().rev() {
+            let meta = self
+                .header_by_hash(&hash)?
+                .ok_or_else(|| anyhow!("missing native block {}", hex32(&hash)))?;
+            for action in decode_block_actions(&meta)? {
+                if !new_action_hashes.contains(&action.tx_hash) {
+                    orphaned.push(action);
+                }
+            }
+        }
+        Ok(orphaned)
+    }
+
+    #[cfg(test)]
+    fn validate_canonical_reorg_record_partition(
+        &self,
+        new_chain: &[NativeBlockMeta],
+        first_unstored_index: usize,
+    ) -> Result<()> {
+        if first_unstored_index > new_chain.len() {
+            return Err(anyhow!(
+                "native canonical reorg unstored record index exceeds chain length: {} > {}",
+                first_unstored_index,
+                new_chain.len()
+            ));
+        }
+        for meta in &new_chain[..first_unstored_index] {
+            let (_, exact_match) = self
+                .inspect_stored_pow_metadata(
+                    &meta.hash,
+                    Some(meta),
+                    "native canonical reorg stored record",
+                )?
+                .ok_or_else(|| anyhow!("missing native block {}", hex32(&meta.hash)))?;
+            if !exact_match {
+                return Err(anyhow!(
+                    "native canonical reorg stored record does not match admitted metadata {}",
+                    hex32(&meta.hash)
+                ));
+            }
+        }
+        for meta in &new_chain[first_unstored_index..] {
+            if self.block_tree.contains_key(meta.hash.as_slice())? {
+                return Err(anyhow!(
+                    "native canonical reorg record partition marks known block as unstored {}",
+                    hex32(&meta.hash)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn validate_prestored_canonical_reorg_records(&self, metas: &[NativeBlockMeta]) -> Result<()> {
+        for meta in metas {
+            let (_, exact_match) = self
+                .inspect_stored_pow_metadata(
+                    &meta.hash,
+                    Some(meta),
+                    "native canonical reorg prestored record",
+                )?
+                .ok_or_else(|| anyhow!("missing native block {}", hex32(&meta.hash)))?;
+            if !exact_match {
+                return Err(anyhow!(
+                    "native canonical reorg prestored record does not match admitted metadata {}",
+                    hex32(&meta.hash)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn admit_compact_stored_canonical_reorg_chain(
+        &self,
+        ancestry: &[NativePowMetaProjection],
+        height_entries: &[(u64, [u8; 32])],
+    ) -> std::result::Result<(), NativeChainLoadError> {
+        let expected_genesis = genesis_meta(self.config.pow_bits)?;
+        let genesis_matches_expected = ancestry
+            .first()
+            .is_some_and(|genesis| genesis == &NativePowMetaProjection::from(&expected_genesis))
+            && self
+                .inspect_stored_pow_metadata(
+                    &expected_genesis.hash,
+                    Some(&expected_genesis),
+                    "native compact canonical reorg genesis",
+                )?
+                .is_some_and(|(_, exact_match)| exact_match);
+        let canonical_heights_contiguous = ancestry
+            .iter()
+            .enumerate()
+            .all(|(index, meta)| u64::try_from(index).ok() == Some(meta.height));
+        let canonical_parent_hashes_contiguous = ancestry
+            .windows(2)
+            .all(|pair| pair[1].parent_hash == pair[0].hash);
+        let height_entries_match_chain = ancestry.len() == height_entries.len()
+            && ancestry
+                .iter()
+                .zip(height_entries)
+                .all(|(meta, (height, hash))| meta.height == *height && meta.hash == *hash);
+        evaluate_native_canonical_reorg_chain_admission(NativeCanonicalReorgChainAdmissionInput {
+            chain_nonempty: !ancestry.is_empty(),
+            genesis_matches_expected,
+            best_metadata_matches_chain: ancestry.last().is_some(),
+            canonical_heights_contiguous,
+            canonical_chain_ids_match: ancestry
+                .iter()
+                .all(|meta| meta.chain_id == HEGEMON_CHAIN_ID_V1),
+            canonical_rules_hashes_match: ancestry
+                .iter()
+                .all(|meta| meta.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_V1),
+            canonical_hashes_match_work_hashes: ancestry
+                .iter()
+                .all(|meta| meta.hash == meta.work_hash),
+            canonical_parent_hashes_contiguous,
+            block_record_count_matches_chain: true,
+            block_records_match_chain: true,
+            height_entry_count_matches_chain: ancestry.len() == height_entries.len(),
+            height_entries_match_chain,
+        })
+        .map_err(|rejection| {
+            NativeChainLoadError::Corrupt(native_canonical_reorg_chain_admission_error(rejection))
+        })
+    }
+
+    pub(crate) fn reorganize_stored_chain_to_best_locked(
+        &self,
+        state: &mut NativeState,
+        tip_hash: [u8; 32],
+        prestored_block_records: usize,
+    ) -> std::result::Result<NativeCanonicalReorgPersistence, NativeChainLoadError> {
+        let ancestry = self.compact_stored_pow_ancestry_to_hash(tip_hash)?;
+        let height_entries = ancestry
+            .iter()
+            .map(|meta| (meta.height, meta.hash))
+            .collect::<Vec<_>>();
+        self.admit_compact_stored_canonical_reorg_chain(&ancestry, &height_entries)?;
+
+        let new_action_hashes = self
+            .action_hashes_from_stored_ancestry_streaming(&ancestry)
+            .map_err(|error| {
+                Self::local_canonical_reorg_phase_error(
+                    "native canonical reorg action-hash scan",
+                    error,
+                )
+            })?;
+        let orphaned_actions = self
+            .orphaned_actions_from_old_branch_suffix_compact(
+                &state.best,
+                &ancestry,
+                &new_action_hashes,
+            )
+            .map_err(|error| {
+                Self::local_canonical_reorg_phase_error("native old-branch scan", error)
+            })?;
+        let mut new_state = self
+            .replay_stored_ancestry_with_suffix_streaming(tip_hash, &[])
+            .map_err(|error| {
+                Self::local_canonical_reorg_phase_error("native canonical reorg replay", error)
+            })?;
+        // Replay must end at the exact winning tip, but later streaming passes
+        // need only its header/state projection. Release the potentially large
+        // action/signature payload before loading any other stored body, then
+        // restore the exact durable tip once all streaming passes finish.
+        Self::strip_replay_only_meta_payload(&mut new_state.best);
+        let canonical_index_plan = plan_canonical_index_rebuild_from_loader(
+            ancestry.len().saturating_sub(1),
+            |index| {
+                let projection =
+                    ancestry
+                        .get(index.saturating_add(1))
+                        .copied()
+                        .ok_or_else(|| {
+                            NativeChainLoadError::Corrupt(anyhow!(
+                                "native compact canonical index projection out of range"
+                            ))
+                        })?;
+                #[cfg(test)]
+                let _decoded_guard = self.begin_streaming_stored_meta_decode();
+                self.load_exact_stored_meta_for_projection(
+                    projection,
+                    "native compact canonical index rebuild",
+                )
+                .map_err(anyhow::Error::from)
+            },
+            &self.da_ciphertext_tree,
+            Some(&self.ciphertext_archive_tree),
+        )?;
+        let mut pending = state.pending_actions.clone();
+        for hash in &new_action_hashes {
+            pending.remove(hash);
+        }
+        new_state.staged_ciphertexts = state.staged_ciphertexts.clone();
+        new_state.staged_proofs = state.staged_proofs.clone();
+        let staged_ciphertext_removals = self
+            .staged_ciphertext_removals_from_stored_ancestry_streaming(&ancestry, &mut new_state)
+            .map_err(|error| {
+                Self::local_canonical_reorg_phase_error(
+                    "native canonical reorg staged-removal scan",
+                    error,
+                )
+            })?;
+        pending = revalidate_reorg_pending_actions(&new_state, pending, orphaned_actions);
+        let pending_entries = pending
+            .values()
+            .map(|action| (action.tx_hash, action.encode()))
+            .collect::<Vec<_>>();
+        let tip_projection = ancestry.last().copied().ok_or_else(|| {
+            NativeChainLoadError::Corrupt(anyhow!("empty native compact canonical ancestry"))
+        })?;
+        new_state.best = {
+            #[cfg(test)]
+            let _decoded_guard = self.begin_streaming_stored_meta_decode();
+            self.load_exact_stored_meta_for_projection(
+                tip_projection,
+                "native compact canonical reorg final tip",
+            )
+            .map_err(|error| {
+                Self::local_canonical_reorg_phase_error(
+                    "native canonical reorg final-tip reload",
+                    error,
+                )
+            })?
+        };
+
+        let known_block_count = ancestry.len().saturating_sub(prestored_block_records);
+        evaluate_native_canonical_reorg_persistence_admission(
+            NativeCanonicalReorgPersistenceAdmissionInput {
+                replacement_block_count: ancestry.len(),
+                known_block_count,
+                classified_missing_block_count: prestored_block_records,
+                supplied_missing_block_count: prestored_block_records,
+                connected_exact_known_rows: true,
+                suffix_fully_validated: true,
+                noncanonical_batch_block_record_writes: prestored_block_records,
+                noncanonical_batch_durability_flushed: true,
+                durable_records_match_replacement: true,
+                canonical_transaction_block_record_writes: 0,
+            },
+        )
+        .map_err(|rejection| {
+            NativeChainLoadError::Corrupt(anyhow!(
+                "native canonical reorg persistence admission: {rejection:?}"
+            ))
+        })?;
+        let canonical_transaction_block_record_writes = self.commit_reorg_state_atomically(
+            canonical_index_plan,
+            &height_entries,
+            &pending_entries,
+            &new_state.best,
+            &staged_ciphertext_removals,
+        )?;
+        self.flush_native_durability_barrier(
+            "native compact canonical reorg commit",
+            NativeStorageDurabilityOperation::CanonicalReorgCommit,
+        )?;
+        self.verify_persisted_canonical_head(
+            &new_state.best,
+            "native compact canonical reorg commit",
+        )?;
+
+        new_state.pending_actions = pending;
+        publish_reorganized_state(state, new_state);
+        self.clear_prepared_candidate_actions();
+        Ok(NativeCanonicalReorgPersistence {
+            prestored_block_records,
+            canonical_transaction_block_record_writes,
+        })
+    }
+
+    #[cfg(test)]
     pub(crate) fn reorganize_chain_to_best_locked(
         &self,
         state: &mut NativeState,
         new_chain: Vec<NativeBlockMeta>,
-    ) -> Result<()> {
-        let old_chain = self.chain_to_hash(state.best.hash)?;
-        let block_entries = new_chain
-            .iter()
-            .map(|meta| Ok((meta.hash, bincode::serialize(meta)?)))
-            .collect::<Result<Vec<_>>>()?;
+        first_unstored_index: usize,
+    ) -> Result<NativeCanonicalReorgPersistence> {
+        self.validate_canonical_reorg_record_partition(&new_chain, first_unstored_index)?;
         let height_entries = new_chain
             .iter()
             .map(|meta| (meta.height, meta.hash))
@@ -1872,7 +4000,8 @@ impl NativeNode {
         evaluate_native_canonical_reorg_chain_admission(
             native_canonical_reorg_chain_admission_input(
                 &new_chain,
-                &block_entries,
+                new_chain.len(),
+                true,
                 &height_entries,
                 new_chain.last(),
                 self.config.pow_bits,
@@ -1880,13 +4009,18 @@ impl NativeNode {
         )
         .map_err(native_canonical_reorg_chain_admission_error)?;
 
+        let new_action_hashes = action_hashes_from_chain(&new_chain)?;
+        let orphaned_actions = self.orphaned_actions_from_old_branch_suffix(
+            &state.best,
+            &new_chain,
+            &new_action_hashes,
+        )?;
         let mut new_state = self.replay_chain_state(&new_chain)?;
         let canonical_index_plan = plan_canonical_index_rebuild(
             &new_chain,
             &self.da_ciphertext_tree,
             Some(&self.ciphertext_archive_tree),
         )?;
-        let new_action_hashes = action_hashes_from_chain(&new_chain)?;
         let mut pending = state.pending_actions.clone();
         for hash in &new_action_hashes {
             pending.remove(hash);
@@ -1900,19 +4034,21 @@ impl NativeNode {
                 clear_staged_ciphertext_markers(&mut new_state, &action);
             }
         }
-        pending = revalidate_reorg_pending_actions(
-            &new_state,
-            pending,
-            orphaned_actions(&old_chain, &new_action_hashes)?,
-        );
+        pending = revalidate_reorg_pending_actions(&new_state, pending, orphaned_actions);
 
         let pending_entries = pending
             .values()
             .map(|action| (action.tx_hash, action.encode()))
             .collect::<Vec<_>>();
-        self.commit_reorg_state_atomically(
+        let unstored_records = &new_chain[first_unstored_index..];
+        let prestored_block_records = self.persist_validated_noncanonical_block_record_batch(
+            unstored_records,
+            "native canonical reorg candidate block-record batch manifest",
+            "native canonical reorg candidate block-record batch",
+        )?;
+        self.validate_prestored_canonical_reorg_records(unstored_records)?;
+        let canonical_transaction_block_record_writes = self.commit_reorg_state_atomically(
             canonical_index_plan,
-            &block_entries,
             &height_entries,
             &pending_entries,
             &new_state.best,
@@ -1926,7 +4062,11 @@ impl NativeNode {
 
         new_state.pending_actions = pending;
         publish_reorganized_state(state, new_state);
-        Ok(())
+        self.clear_prepared_candidate_actions();
+        Ok(NativeCanonicalReorgPersistence {
+            prestored_block_records,
+            canonical_transaction_block_record_writes,
+        })
     }
 
     pub(crate) fn commit_announced_tip_extension_locked(
@@ -1958,6 +4098,7 @@ impl NativeNode {
             "native announced block pending action repair",
         )?;
         publish_mined_state(state, next_state);
+        self.clear_prepared_candidate_actions();
         Ok(())
     }
 
@@ -1971,7 +4112,6 @@ impl NativeNode {
         }
 
         let mut next_state = state.clone();
-        let mut pow_chain = self.chain_to_hash(state.best.hash)?;
         let mut parent = next_state.best.clone();
         let mut block_entries = Vec::with_capacity(metas.len());
         let mut height_entries = Vec::with_capacity(metas.len());
@@ -1985,7 +4125,7 @@ impl NativeNode {
         let mut action_count = 0usize;
         let mut planned_action_count = 0usize;
 
-        for meta in metas {
+        for (meta_index, meta) in metas.iter().enumerate() {
             if self.header_by_hash(&meta.hash)?.is_some() {
                 return Err(anyhow!(
                     "native sync tip extension batch includes already known block {}",
@@ -2000,7 +4140,7 @@ impl NativeNode {
             }
 
             let expected_pow_bits =
-                native_expected_child_pow_bits_from_chain(&pow_chain, self.config.pow_bits)?;
+                self.expected_sync_batch_child_pow_bits(&parent, &metas[..meta_index])?;
             validate_announced_block(&parent, meta, expected_pow_bits)?;
             let expected_header_mmr_len = header_mmr_leaf_count_after_best(&next_state.best)?;
             let expected_header_mmr_root =
@@ -2103,7 +4243,6 @@ impl NativeNode {
             height_entries.push((meta.height, meta.hash));
             next_state.header_mmr_peaks = append_header_mmr_peak_state(&next_state, meta)?;
             next_state.best = meta.clone();
-            pow_chain.push(meta.clone());
             parent = meta.clone();
         }
 
@@ -2137,6 +4276,7 @@ impl NativeNode {
             "native sync tip extension pending action repair",
         )?;
         publish_mined_state(state, next_state);
+        self.clear_prepared_candidate_actions();
         Ok(metas.len())
     }
 
@@ -2197,12 +4337,11 @@ impl NativeNode {
     pub(crate) fn commit_reorg_state_atomically(
         &self,
         canonical_index_plan: NativeCanonicalIndexPlan,
-        block_entries: &[([u8; 32], Vec<u8>)],
         height_entries: &[(u64, [u8; 32])],
         pending_entries: &[([u8; 32], Vec<u8>)],
         best: &NativeBlockMeta,
         staged_ciphertext_removals: &[[u8; 48]],
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let height_keys = collect_tree_keys(&self.height_tree, "native height")?;
         let commitment_keys = collect_tree_keys(&self.commitment_tree, "native commitment")?;
         let nullifier_keys = collect_tree_keys(&self.nullifier_tree, "native nullifier")?;
@@ -2216,7 +4355,6 @@ impl NativeNode {
         let best_record = bincode::serialize(best)?;
         evaluate_native_atomic_commit_manifest_admission(native_reorg_commit_manifest(
             &canonical_index_plan,
-            block_entries,
             height_entries,
             pending_entries,
             staged_ciphertext_removals.len(),
@@ -2238,7 +4376,6 @@ impl NativeNode {
         let commit_result: sled::transaction::TransactionResult<(), std::convert::Infallible> = (
             &self.meta_tree,
             &self.height_tree,
-            &self.block_tree,
             &self.commitment_tree,
             &self.nullifier_tree,
             &self.bridge_inbound_tree,
@@ -2251,7 +4388,6 @@ impl NativeNode {
                 |(
                     meta_tree,
                     height_tree,
-                    block_tree,
                     commitment_tree,
                     nullifier_tree,
                     bridge_inbound_tree,
@@ -2282,9 +4418,6 @@ impl NativeNode {
                         action_tree.remove(key.clone())?;
                     }
 
-                    for (hash, encoded) in block_entries {
-                        block_tree.insert(hash.to_vec(), encoded.clone())?;
-                    }
                     for (height, hash) in height_entries {
                         height_tree.insert(height_key(*height).to_vec(), hash.to_vec())?;
                     }
@@ -2316,7 +4449,7 @@ impl NativeNode {
                 },
             );
         commit_result.map_err(|err| anyhow!("atomic native reorg commit failed: {err}"))?;
-        Ok(())
+        Ok(0)
     }
 
     pub(crate) fn commit_canonical_index_repair_atomically(
@@ -2648,12 +4781,16 @@ impl NativeNode {
         Ok(())
     }
 
-    pub(crate) fn ensure_ciphertext_archive_index(&self) -> Result<()> {
-        let chain = self.chain_to_hash(self.best_meta().hash)?;
-        let replayed_state = self.replay_chain_state(&chain)?;
-        self.validate_loaded_state_matches_replay(&replayed_state)?;
+    pub(crate) fn ensure_ciphertext_archive_index(
+        &self,
+        canonical_chain: &ValidatedCanonicalChainSnapshot,
+    ) -> Result<()> {
+        {
+            let replayed_state = self.replay_chain_state(canonical_chain.blocks())?;
+            self.validate_loaded_state_matches_replay(&replayed_state)?;
+        }
         let canonical_index_plan = plan_canonical_index_rebuild(
-            &chain,
+            canonical_chain.blocks(),
             &self.da_ciphertext_tree,
             Some(&self.ciphertext_archive_tree),
         )?;
@@ -2749,6 +4886,11 @@ impl NativeNode {
     }
 
     pub(crate) fn header_by_hash(&self, hash: &[u8; 32]) -> Result<Option<NativeBlockMeta>> {
+        #[cfg(test)]
+        {
+            self.block_meta_load_count.fetch_add(1, Ordering::Relaxed);
+            self.block_meta_decode_count.fetch_add(1, Ordering::Relaxed);
+        }
         load_block_meta_by_hash(&self.block_tree, hash)
     }
 
@@ -2776,11 +4918,12 @@ impl NativeNode {
             .meta_tree
             .get(META_BEST_KEY)?
             .ok_or_else(|| anyhow!("{context} missing persisted best pointer"))?;
-        let persisted_best = bincode_deserialize_native_block_meta_exact(
+        let (persisted_best, exact_best) = inspect_native_pow_metadata_bincode_exact(
             &best_bytes,
+            Some(meta),
             &format!("{context} persisted best metadata"),
         )?;
-        if &persisted_best != meta {
+        if !exact_best {
             return Err(anyhow!(
                 "{context} persisted best pointer mismatch: expected height {} hash {}, got height {} hash {}",
                 meta.height,
@@ -2802,13 +4945,19 @@ impl NativeNode {
             ));
         }
 
-        let persisted_block = self.header_by_hash(&meta.hash)?.ok_or_else(|| {
-            anyhow!(
-                "{context} missing persisted block record for {}",
-                hex32(&meta.hash)
-            )
-        })?;
-        if &persisted_block != meta {
+        let (_, exact_block) = self
+            .inspect_stored_pow_metadata(
+                &meta.hash,
+                Some(meta),
+                &format!("{context} persisted block record"),
+            )?
+            .ok_or_else(|| {
+                anyhow!(
+                    "{context} missing persisted block record for {}",
+                    hex32(&meta.hash)
+                )
+            })?;
+        if !exact_block {
             return Err(anyhow!(
                 "{context} persisted block record mismatch at height {} ({})",
                 meta.height,
@@ -2818,22 +4967,29 @@ impl NativeNode {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn best_meta(&self) -> NativeBlockMeta {
         self.state.read().best.clone()
     }
 
     pub(crate) fn mining_status(&self) -> Value {
-        let best = self.best_meta();
+        let (difficulty, block_height, next_pow_bits) = {
+            let state = self.state.read();
+            (
+                state.best.pow_bits,
+                state.best.height,
+                self.expected_canonical_child_pow_bits(&state.best).ok(),
+            )
+        };
         let (syncing, sync_target_height) = self.sync_status_fields();
-        let next_pow_bits = self.expected_child_pow_bits(&best).ok();
         json!({
             "is_mining": self.mining.load(Ordering::SeqCst),
             "threads": self.mining_threads.load(Ordering::Relaxed),
             "hash_rate": self.hash_rate(),
             "blocks_found": self.blocks_found.load(Ordering::Relaxed),
-            "difficulty": best.pow_bits,
+            "difficulty": difficulty,
             "next_difficulty": next_pow_bits,
-            "block_height": best.height,
+            "block_height": block_height,
             "syncing": syncing,
             "sync_target_height": sync_target_height,
             "mining_sync_gate_open": self.mining_sync_gate_allows_work(),
@@ -2842,14 +4998,23 @@ impl NativeNode {
     }
 
     pub(crate) fn consensus_status(&self) -> Value {
-        let best = self.best_meta();
+        let (height, best_hash, state_root, nullifier_root, supply_digest) = {
+            let state = self.state.read();
+            (
+                state.best.height,
+                state.best.hash,
+                state.best.state_root,
+                state.best.nullifier_root,
+                state.best.supply_digest,
+            )
+        };
         let (syncing, sync_target_height) = self.sync_status_fields();
         json!({
-            "height": best.height,
-            "best_hash": hex32(&best.hash),
-            "state_root": hex48(&best.state_root),
-            "nullifier_root": hex48(&best.nullifier_root),
-            "supply_digest": best.supply_digest,
+            "height": height,
+            "best_hash": hex32(&best_hash),
+            "state_root": hex48(&state_root),
+            "nullifier_root": hex48(&nullifier_root),
+            "supply_digest": supply_digest,
             "syncing": syncing,
             "sync_target_height": sync_target_height,
             "peers": self.network_peer_count(),
@@ -2857,10 +5022,14 @@ impl NativeNode {
     }
 
     pub(crate) fn telemetry_snapshot(&self) -> Value {
+        let (tx_count, blocks_imported) = {
+            let state = self.state.read();
+            (state.pending_actions.len() as u64, state.best.height)
+        };
         json!({
             "uptime_secs": self.start_instant.elapsed().as_secs(),
-            "tx_count": self.state.read().pending_actions.len() as u64,
-            "blocks_imported": self.best_meta().height,
+            "tx_count": tx_count,
+            "blocks_imported": blocks_imported,
             "blocks_mined": self.blocks_found.load(Ordering::Relaxed),
             "memory_bytes": 0u64,
             "network_rx_bytes": 0u64,
@@ -2925,14 +5094,24 @@ impl NativeNode {
     }
 
     pub(crate) fn latest_block(&self) -> Value {
-        let best = self.best_meta();
+        let (height, hash, state_root, nullifier_root, supply_digest, timestamp_ms) = {
+            let state = self.state.read();
+            (
+                state.best.height,
+                state.best.hash,
+                state.best.state_root,
+                state.best.nullifier_root,
+                state.best.supply_digest,
+                state.best.timestamp_ms,
+            )
+        };
         json!({
-            "height": best.height,
-            "hash": hex32(&best.hash),
-            "state_root": hex48(&best.state_root),
-            "nullifier_root": hex48(&best.nullifier_root),
-            "supply_digest": best.supply_digest,
-            "timestamp": best.timestamp_ms,
+            "height": height,
+            "hash": hex32(&hash),
+            "state_root": hex48(&state_root),
+            "nullifier_root": hex48(&nullifier_root),
+            "supply_digest": supply_digest,
+            "timestamp": timestamp_ms,
         })
     }
 
@@ -3119,7 +5298,7 @@ impl NativeNode {
             circuit: request.binding_circuit,
             crypto: request.binding_crypto,
         };
-        let current_height = self.best_meta().height;
+        let current_height = self.state.read().best.height;
         if !kernel_manifest().binding_allowed(binding, current_height) {
             return Err(anyhow!(
                 "native action version binding circuit={} crypto={} is not active at height {}",

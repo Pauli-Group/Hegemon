@@ -21,6 +21,27 @@ pub fn encode<T: Serialize>(value: &T, max_len: usize) -> Result<Vec<u8>, Networ
     Ok(out)
 }
 
+/// Return the exact encoded frame length without allocating the encoded body.
+///
+/// This uses the same postcard serializer as [`encode`] and includes the wire
+/// magic prefix in the returned length.  Callers that only need to enforce a
+/// frame budget can therefore avoid materializing a second copy of a large
+/// message.
+pub fn encoded_len<T: Serialize>(value: &T, max_len: usize) -> Result<usize, NetworkError> {
+    let body_len = postcard::experimental::serialized_size(value)
+        .map_err(|err| NetworkError::Serialization(format!("postcard size failed: {err}")))?;
+    let total_len = NETWORK_WIRE_MAGIC
+        .len()
+        .checked_add(body_len)
+        .ok_or_else(|| NetworkError::Serialization("encoded frame length overflow".to_string()))?;
+    if total_len > max_len {
+        return Err(NetworkError::Serialization(format!(
+            "encoded frame too large: {total_len} > {max_len}"
+        )));
+    }
+    Ok(total_len)
+}
+
 pub fn decode<T: DeserializeOwned>(bytes: &[u8], max_len: usize) -> Result<T, NetworkError> {
     decode_borrowed(bytes, max_len)
 }
@@ -73,6 +94,15 @@ mod tests {
             payload: vec![1, 2, 3],
         };
         let encoded = encode(&sample, 128).expect("encode");
+        assert_eq!(
+            encoded_len(&sample, 128).expect("measure encoded frame"),
+            encoded.len()
+        );
+        assert_eq!(
+            encoded_len(&sample, encoded.len()).expect("admit exact frame limit"),
+            encoded.len()
+        );
+        assert!(encoded_len(&sample, encoded.len() - 1).is_err());
         assert!(encoded.starts_with(NETWORK_WIRE_MAGIC));
         let decoded: Sample = decode(&encoded, 128).expect("decode");
         assert_eq!(decoded, sample);
@@ -87,6 +117,7 @@ mod tests {
             payload: vec![0; 32],
         };
         assert!(encode(&sample, 8).is_err());
+        assert!(encoded_len(&sample, 8).is_err());
     }
 
     #[test]

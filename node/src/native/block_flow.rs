@@ -43,9 +43,9 @@ pub(crate) fn expected_atomic_block_record_writes(
     match input.kind {
         NativeAtomicCommitKind::MinedBlockCommit => 1,
         NativeAtomicCommitKind::TipExtensionBatchCommit => input.chain_block_count,
-        NativeAtomicCommitKind::CanonicalReorgCommit => input.chain_block_count,
-        NativeAtomicCommitKind::CanonicalIndexRepair => 0,
-        NativeAtomicCommitKind::NoncanonicalBlockRecord => 1,
+        NativeAtomicCommitKind::CanonicalReorgCommit
+        | NativeAtomicCommitKind::CanonicalIndexRepair => 0,
+        NativeAtomicCommitKind::NoncanonicalBlockRecord => input.chain_block_count,
     }
 }
 
@@ -321,7 +321,6 @@ pub(crate) fn native_tip_extension_batch_commit_manifest(
 
 pub(crate) fn native_reorg_commit_manifest(
     canonical_index_plan: &NativeCanonicalIndexPlan,
-    block_entries: &[([u8; 32], Vec<u8>)],
     height_entries: &[(u64, [u8; 32])],
     pending_entries: &[([u8; 32], Vec<u8>)],
     staged_ciphertext_removal_count: usize,
@@ -330,7 +329,7 @@ pub(crate) fn native_reorg_commit_manifest(
         kind: NativeAtomicCommitKind::CanonicalReorgCommit,
         action_count: 0,
         planned_action_count: 0,
-        chain_block_count: block_entries.len(),
+        chain_block_count: height_entries.len(),
         height_entry_count: height_entries.len(),
         pending_entry_count: pending_entries.len(),
         source_commitment_count: canonical_index_plan.commitment_entries.len(),
@@ -339,7 +338,7 @@ pub(crate) fn native_reorg_commit_manifest(
         source_ciphertext_index_count: canonical_index_plan.ciphertext_index_entries.len(),
         source_ciphertext_archive_count: canonical_index_plan.ciphertext_archive_entries.len(),
         source_staged_ciphertext_removal_count: staged_ciphertext_removal_count,
-        block_record_writes: block_entries.len(),
+        block_record_writes: 0,
         height_index_writes: height_entries.len(),
         best_pointer_writes: 1,
         canonical_index_cleared: true,
@@ -387,13 +386,14 @@ pub(crate) fn native_canonical_index_repair_manifest(
     }
 }
 
-pub(crate) fn native_noncanonical_block_record_manifest() -> NativeAtomicCommitManifestAdmissionInput
-{
+pub(crate) fn native_noncanonical_block_record_batch_manifest(
+    block_record_count: usize,
+) -> NativeAtomicCommitManifestAdmissionInput {
     NativeAtomicCommitManifestAdmissionInput {
         kind: NativeAtomicCommitKind::NoncanonicalBlockRecord,
         action_count: 0,
         planned_action_count: 0,
-        chain_block_count: 0,
+        chain_block_count: block_record_count,
         height_entry_count: 0,
         pending_entry_count: 0,
         source_commitment_count: 0,
@@ -402,7 +402,7 @@ pub(crate) fn native_noncanonical_block_record_manifest() -> NativeAtomicCommitM
         source_ciphertext_index_count: 0,
         source_ciphertext_archive_count: 0,
         source_staged_ciphertext_removal_count: 0,
-        block_record_writes: 1,
+        block_record_writes: block_record_count,
         height_index_writes: 0,
         best_pointer_writes: 0,
         canonical_index_cleared: false,
@@ -416,6 +416,11 @@ pub(crate) fn native_noncanonical_block_record_manifest() -> NativeAtomicCommitM
         ciphertext_archive_writes: 0,
         staged_ciphertext_removals: 0,
     }
+}
+
+pub(crate) fn native_noncanonical_block_record_manifest() -> NativeAtomicCommitManifestAdmissionInput
+{
+    native_noncanonical_block_record_batch_manifest(1)
 }
 
 pub(crate) fn flush_native_db_durability_barrier(
@@ -518,9 +523,11 @@ pub(crate) fn native_canonical_reorg_chain_admission_error(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn native_canonical_reorg_chain_admission_input(
     chain: &[NativeBlockMeta],
-    block_entries: &[([u8; 32], Vec<u8>)],
+    block_record_count: usize,
+    block_records_match_chain: bool,
     height_entries: &[(u64, [u8; 32])],
     best: Option<&NativeBlockMeta>,
     pow_bits: u32,
@@ -560,17 +567,8 @@ pub(crate) fn native_canonical_reorg_chain_admission_input(
             }
         }
     }
-    let block_record_count_matches_chain = block_entries.len() == chain.len();
-    let mut block_records_match_chain = block_record_count_matches_chain;
-    if block_records_match_chain {
-        for (meta, (hash, encoded)) in chain.iter().zip(block_entries.iter()) {
-            let expected = bincode::serialize(meta)?;
-            if hash != &meta.hash || encoded != &expected {
-                block_records_match_chain = false;
-                break;
-            }
-        }
-    }
+    let block_record_count_matches_chain = block_record_count == chain.len();
+    let block_records_match_chain = block_record_count_matches_chain && block_records_match_chain;
     let height_entry_count_matches_chain = height_entries.len() == chain.len();
     let height_entries_match_chain = height_entry_count_matches_chain
         && chain
@@ -1314,58 +1312,27 @@ pub(crate) fn plan_canonical_index_rebuild(
     da_ciphertext_tree: &sled::Tree,
     ciphertext_archive_tree: Option<&sled::Tree>,
 ) -> Result<NativeCanonicalIndexPlan> {
-    let mut nullifier_state = NullifierState::default();
-    let mut bridge_replay_state = InboundReplayState::default();
-    let mut decoded_actions = Vec::new();
-    for meta in chain.iter().skip(1) {
-        let actions = decode_block_actions(meta)?;
-        decoded_actions.extend(actions);
-    }
-    let wire_steps = decoded_actions
-        .iter()
-        .map(|action| {
-            Ok(NativeActionStreamStep {
-                commitment_count: action.commitments.len(),
-                ciphertext_count: canonical_ciphertext_count_for_action(action)?,
-                nullifiers: action.nullifiers.as_slice(),
-                replay_key: bridge_inbound_replay_key_from_action(action)?,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    let stream = evaluate_native_action_stream_effect(
-        0,
-        wire_steps.iter().copied(),
-        &mut nullifier_state,
-        &mut bridge_replay_state,
-    )
-    .map_err(native_action_state_effect_error)?;
-    let rebuild_commitment_counts = decoded_actions
-        .iter()
-        .map(|action| action.commitments.len())
-        .collect::<Vec<_>>();
-    evaluate_native_action_plan_application_admission(
-        0,
-        &rebuild_commitment_counts,
-        &stream.planned_starts,
-    )
-    .map_err(|rejection| {
-        native_action_plan_application_admission_error(
-            "native canonical index rebuild action plan",
-            rejection,
-        )
-    })?;
-    let materialized = materialize_native_action_payloads_at_starts(
+    plan_canonical_index_rebuild_from_loader(
+        chain.len().saturating_sub(1),
+        |index| {
+            chain
+                .get(index.saturating_add(1))
+                .cloned()
+                .ok_or_else(|| anyhow!("native canonical index rebuild index out of range"))
+        },
         da_ciphertext_tree,
         ciphertext_archive_tree,
-        &decoded_actions,
-        &stream.planned_starts,
-    )?;
-    let planned_actions = decoded_actions
-        .into_iter()
-        .zip(materialized)
-        .collect::<Vec<_>>();
+    )
+}
 
+pub(crate) fn plan_canonical_index_rebuild_from_loader(
+    block_count: usize,
+    mut load_meta: impl FnMut(usize) -> Result<NativeBlockMeta>,
+    da_ciphertext_tree: &sled::Tree,
+    ciphertext_archive_tree: Option<&sled::Tree>,
+) -> Result<NativeCanonicalIndexPlan> {
+    let mut nullifier_state = NullifierState::default();
+    let mut bridge_replay_state = InboundReplayState::default();
     let mut plan = NativeCanonicalIndexPlan {
         commitment_entries: Vec::new(),
         nullifier_entries: Vec::new(),
@@ -1374,69 +1341,198 @@ pub(crate) fn plan_canonical_index_rebuild(
         ciphertext_archive_entries: Vec::new(),
     };
 
-    let planned_effects = planned_actions
-        .iter()
-        .zip(stream.planned_starts.iter().copied())
-        .map(
-            |((_, payload), commitment_start)| NativePlannedActionEffect {
-                commitment_start,
-                ciphertexts: payload.ciphertexts.clone(),
-                replay_key: payload.replay_key,
-            },
+    let mut leaf_cursor = 0u64;
+    for index in 0..block_count {
+        let meta = load_meta(index)?;
+        let actions = decode_block_actions(&meta)?;
+        record_canonical_index_rebuild_decoded_actions(actions.len());
+        let wire_steps = actions
+            .iter()
+            .map(|action| {
+                Ok(NativeActionStreamStep {
+                    commitment_count: action.commitments.len(),
+                    ciphertext_count: canonical_ciphertext_count_for_action(action)?,
+                    nullifiers: action.nullifiers.as_slice(),
+                    replay_key: bridge_inbound_replay_key_from_action(action)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        record_canonical_index_rebuild_wire_steps(wire_steps.len());
+        let stream = evaluate_native_action_stream_effect(
+            leaf_cursor,
+            wire_steps.iter().copied(),
+            &mut nullifier_state,
+            &mut bridge_replay_state,
         )
-        .collect::<Vec<_>>();
-    let replay_projection_actions = planned_actions
-        .iter()
-        .map(|(action, _)| action.clone())
-        .collect::<Vec<_>>();
-    admit_native_action_wire_replay_projection(
-        "native canonical index rebuild wire replay projection",
-        &replay_projection_actions,
-        &planned_effects,
-    )?;
+        .map_err(native_action_state_effect_error)?;
+        let rebuild_commitment_counts = actions
+            .iter()
+            .map(|action| action.commitments.len())
+            .collect::<Vec<_>>();
+        let application = evaluate_native_action_plan_application_admission(
+            leaf_cursor,
+            &rebuild_commitment_counts,
+            &stream.planned_starts,
+        )
+        .map_err(|rejection| {
+            native_action_plan_application_admission_error(
+                "native canonical index rebuild action plan",
+                rejection,
+            )
+        })?;
+        if application.next_leaf_count != stream.next_leaf_count {
+            return Err(anyhow!(
+                "native canonical index rebuild action plan leaf cursor drift"
+            ));
+        }
+        let materialized = materialize_native_action_payloads_at_starts(
+            da_ciphertext_tree,
+            ciphertext_archive_tree,
+            &actions,
+            &stream.planned_starts,
+        )?;
+        record_canonical_index_rebuild_materialized_payloads(materialized.len());
+        let planned_effects = stream
+            .planned_starts
+            .into_iter()
+            .zip(materialized)
+            .map(|(commitment_start, payload)| NativePlannedActionEffect {
+                commitment_start,
+                ciphertexts: payload.ciphertexts,
+                replay_key: payload.replay_key,
+            })
+            .collect::<Vec<_>>();
+        record_canonical_index_rebuild_planned_effects(planned_effects.len());
+        admit_native_action_wire_replay_projection(
+            "native canonical index rebuild wire replay projection",
+            &actions,
+            &planned_effects,
+        )?;
 
-    for ((action, payload), effect) in planned_actions.into_iter().zip(planned_effects.into_iter())
-    {
-        let commitment_start = effect.commitment_start;
-        for (offset, commitment) in action.commitments.iter().enumerate() {
-            let offset =
-                u64::try_from(offset).map_err(|_| anyhow!("commitment rebuild offset overflow"))?;
-            let index = commitment_start
-                .checked_add(offset)
-                .ok_or_else(|| anyhow!("commitment rebuild index overflow"))?;
-            plan.commitment_entries.push((index, *commitment));
+        for (action, effect) in actions.into_iter().zip(planned_effects.into_iter()) {
+            let commitment_start = effect.commitment_start;
+            for (offset, commitment) in action.commitments.iter().enumerate() {
+                let offset = u64::try_from(offset)
+                    .map_err(|_| anyhow!("commitment rebuild offset overflow"))?;
+                let index = commitment_start
+                    .checked_add(offset)
+                    .ok_or_else(|| anyhow!("commitment rebuild index overflow"))?;
+                plan.commitment_entries.push((index, *commitment));
+            }
+            for (offset, bytes) in effect.ciphertexts.into_iter().enumerate() {
+                let offset = u64::try_from(offset)
+                    .map_err(|_| anyhow!("ciphertext archive offset overflow"))?;
+                let index = commitment_start
+                    .checked_add(offset)
+                    .ok_or_else(|| anyhow!("ciphertext archive index overflow"))?;
+                plan.ciphertext_archive_entries.push((index, bytes));
+            }
+            for nullifier in &action.nullifiers {
+                plan.nullifier_entries.push(*nullifier);
+            }
+            if let Some(replay_key) = effect.replay_key {
+                plan.bridge_replay_entries.push(replay_key);
+            }
+            for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
+                let idx_u64 =
+                    u64::try_from(idx).map_err(|_| anyhow!("ciphertext index offset overflow"))?;
+                let size = action
+                    .ciphertext_sizes
+                    .get(idx)
+                    .copied()
+                    .unwrap_or_default();
+                let mut value = Vec::with_capacity(32 + 4 + 8);
+                value.extend_from_slice(&action.tx_hash);
+                value.extend_from_slice(&size.to_le_bytes());
+                value.extend_from_slice(&idx_u64.to_le_bytes());
+                plan.ciphertext_index_entries.push((*hash, value));
+            }
         }
-        for (offset, bytes) in payload.ciphertexts.into_iter().enumerate() {
-            let offset =
-                u64::try_from(offset).map_err(|_| anyhow!("ciphertext archive offset overflow"))?;
-            let index = commitment_start
-                .checked_add(offset)
-                .ok_or_else(|| anyhow!("ciphertext archive index overflow"))?;
-            plan.ciphertext_archive_entries.push((index, bytes));
-        }
-        for nullifier in &action.nullifiers {
-            plan.nullifier_entries.push(*nullifier);
-        }
-        if let Some(replay_key) = payload.replay_key {
-            plan.bridge_replay_entries.push(replay_key);
-        }
-        for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
-            let idx_u64 =
-                u64::try_from(idx).map_err(|_| anyhow!("ciphertext index offset overflow"))?;
-            let size = action
-                .ciphertext_sizes
-                .get(idx)
-                .copied()
-                .unwrap_or_default();
-            let mut value = Vec::with_capacity(32 + 4 + 8);
-            value.extend_from_slice(&action.tx_hash);
-            value.extend_from_slice(&size.to_le_bytes());
-            value.extend_from_slice(&idx_u64.to_le_bytes());
-            plan.ciphertext_index_entries.push((*hash, value));
-        }
+        leaf_cursor = stream.next_leaf_count;
     }
     Ok(plan)
 }
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct NativeCanonicalIndexRebuildPeakLive {
+    pub(crate) decoded_actions: usize,
+    pub(crate) wire_steps: usize,
+    pub(crate) materialized_payloads: usize,
+    pub(crate) planned_effects: usize,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static CANONICAL_INDEX_REBUILD_PEAK_LIVE: std::cell::Cell<NativeCanonicalIndexRebuildPeakLive> =
+        const { std::cell::Cell::new(NativeCanonicalIndexRebuildPeakLive {
+            decoded_actions: 0,
+            wire_steps: 0,
+            materialized_payloads: 0,
+            planned_effects: 0,
+        }) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_canonical_index_rebuild_peak_live() {
+    CANONICAL_INDEX_REBUILD_PEAK_LIVE.with(|peak| peak.set(Default::default()));
+}
+
+#[cfg(test)]
+pub(crate) fn canonical_index_rebuild_peak_live() -> NativeCanonicalIndexRebuildPeakLive {
+    CANONICAL_INDEX_REBUILD_PEAK_LIVE.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn update_canonical_index_rebuild_peak_live(
+    update: impl FnOnce(&mut NativeCanonicalIndexRebuildPeakLive),
+) {
+    CANONICAL_INDEX_REBUILD_PEAK_LIVE.with(|peak| {
+        let mut observed = peak.get();
+        update(&mut observed);
+        peak.set(observed);
+    });
+}
+
+#[cfg(test)]
+fn record_canonical_index_rebuild_decoded_actions(count: usize) {
+    update_canonical_index_rebuild_peak_live(|peak| {
+        peak.decoded_actions = peak.decoded_actions.max(count);
+    });
+}
+
+#[cfg(not(test))]
+fn record_canonical_index_rebuild_decoded_actions(_count: usize) {}
+
+#[cfg(test)]
+fn record_canonical_index_rebuild_wire_steps(count: usize) {
+    update_canonical_index_rebuild_peak_live(|peak| {
+        peak.wire_steps = peak.wire_steps.max(count);
+    });
+}
+
+#[cfg(not(test))]
+fn record_canonical_index_rebuild_wire_steps(_count: usize) {}
+
+#[cfg(test)]
+fn record_canonical_index_rebuild_materialized_payloads(count: usize) {
+    update_canonical_index_rebuild_peak_live(|peak| {
+        peak.materialized_payloads = peak.materialized_payloads.max(count);
+    });
+}
+
+#[cfg(not(test))]
+fn record_canonical_index_rebuild_materialized_payloads(_count: usize) {}
+
+#[cfg(test)]
+fn record_canonical_index_rebuild_planned_effects(count: usize) {
+    update_canonical_index_rebuild_peak_live(|peak| {
+        peak.planned_effects = peak.planned_effects.max(count);
+    });
+}
+
+#[cfg(not(test))]
+fn record_canonical_index_rebuild_planned_effects(_count: usize) {}
 
 pub(crate) fn canonical_ciphertexts_for_action(
     da_ciphertext_tree: &sled::Tree,
@@ -1554,6 +1650,7 @@ pub(crate) fn plan_pending_action_effects(
     plan_materialized_action_effects(da_ciphertext_tree, state, actions)
 }
 
+#[cfg(test)]
 pub(crate) fn action_hashes_from_chain(chain: &[NativeBlockMeta]) -> Result<BTreeSet<[u8; 32]>> {
     let mut hashes = BTreeSet::new();
     for meta in chain.iter().skip(1) {
@@ -1564,6 +1661,7 @@ pub(crate) fn action_hashes_from_chain(chain: &[NativeBlockMeta]) -> Result<BTre
     Ok(hashes)
 }
 
+#[cfg(test)]
 pub(crate) fn orphaned_actions(
     old_chain: &[NativeBlockMeta],
     new_action_hashes: &BTreeSet<[u8; 32]>,
