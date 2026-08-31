@@ -1803,13 +1803,23 @@ pub(crate) async fn queue_missing_blocks_from_sync_target_avoiding(
         target_tip: target_hash.map(|hash| (target, hash)),
     };
     if !node.begin_outbound_sync_request_with_context(request_peer, range, request_context) {
-        debug!(
-            best_height,
-            target,
-            from_height = range.from_height,
-            to_height = range.to_height,
-            "skipping duplicate in-flight native sync target request"
-        );
+        if node.outbound_sync_request_is_paced(request_peer, range) {
+            debug!(
+                best_height,
+                target,
+                from_height = range.from_height,
+                to_height = range.to_height,
+                "deferring rate-paced native sync target request"
+            );
+        } else {
+            debug!(
+                best_height,
+                target,
+                from_height = range.from_height,
+                to_height = range.to_height,
+                "skipping duplicate in-flight native sync target request"
+            );
+        }
         return;
     }
     let request = NativeSyncMessage::Request {
@@ -1920,14 +1930,25 @@ pub(crate) async fn request_missing_blocks(
         target_tip: anchored_target_hash.map(|hash| (announced_height, hash)),
     };
     if !node.begin_outbound_sync_request_with_context(Some(peer_id), range, request_context) {
-        debug!(
-            peer = %hex32(&peer_id),
-            best_height,
-            announced_height,
-            from_height = range.from_height,
-            to_height = range.to_height,
-            "skipping duplicate in-flight native sync request"
-        );
+        if node.outbound_sync_request_is_paced(Some(peer_id), range) {
+            debug!(
+                peer = %hex32(&peer_id),
+                best_height,
+                announced_height,
+                from_height = range.from_height,
+                to_height = range.to_height,
+                "deferring rate-paced native sync request"
+            );
+        } else {
+            debug!(
+                peer = %hex32(&peer_id),
+                best_height,
+                announced_height,
+                from_height = range.from_height,
+                to_height = range.to_height,
+                "skipping duplicate in-flight native sync request"
+            );
+        }
         return;
     }
     debug!(
