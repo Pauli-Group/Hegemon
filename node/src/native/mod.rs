@@ -625,6 +625,7 @@ pub(crate) enum NativeSyncResponseStart {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NativeOutboundSyncRequestState {
     InFlight,
+    Paced,
     Cooldown,
     ChunkFallback,
 }
@@ -3266,6 +3267,7 @@ pub struct NativeNode {
     network_local_peer_id: Arc<StdRwLock<Option<PeerId>>>,
     network_peer_snapshot: Arc<StdRwLock<Vec<ConnectedPeerSnapshot>>>,
     sync_request_rate_limits: Mutex<BTreeMap<PeerId, NativeSyncRequestRateState>>,
+    outbound_sync_request_rate_limits: Mutex<BTreeMap<PeerId, NativeSyncRequestRateState>>,
     sync_response_in_flight_peers: Mutex<BTreeMap<PeerId, NativeSyncRange>>,
     outbound_sync_requests: Mutex<BTreeMap<Option<PeerId>, NativeOutboundSyncRequest>>,
     sync_recovery_cursor: Mutex<Option<NativeSyncRecoveryCursor>>,

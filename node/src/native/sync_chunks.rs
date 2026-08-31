@@ -521,6 +521,10 @@ pub(crate) fn decode_native_sync_chunk_record_exact(
 fn outbound_chunk_state(state: NativeOutboundSyncRequestState) -> NativeSyncChunkOutboundState {
     match state {
         NativeOutboundSyncRequestState::InFlight => NativeSyncChunkOutboundState::InFlight,
+        // Pacing is outside the chunk subprotocol. Treat it as non-admitted
+        // cooldown if it ever reaches a chunk transition helper; chunk receive
+        // admission itself accepts only `InFlight` requests.
+        NativeOutboundSyncRequestState::Paced => NativeSyncChunkOutboundState::Cooldown,
         NativeOutboundSyncRequestState::Cooldown => NativeSyncChunkOutboundState::Cooldown,
         NativeOutboundSyncRequestState::ChunkFallback => {
             NativeSyncChunkOutboundState::ChunkFallback
@@ -792,6 +796,12 @@ impl NativeNode {
                 started_at: now,
                 last_activity_at: now,
             },
+        );
+        self.charge_authorized_broadcast_sync_request_rate_slot(
+            &requests,
+            request_target,
+            peer_id,
+            now,
         );
         Ok(NativeSyncBlockChunkRequest {
             height: expected_height,

@@ -10530,6 +10530,52 @@ async fn oversized_valid_native_block_advances_through_bounded_chunk_fallback() 
 }
 
 #[test]
+fn authorized_broadcast_chunk_fallback_charges_responder_rate_slot_once() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let peer = [0x90u8; 32];
+    let range = NativeSyncRange {
+        from_height: 1,
+        to_height: 1,
+    };
+
+    assert!(node.begin_outbound_sync_request(None, range));
+    node.admit_sync_request_from_peer(peer)
+        .expect("server admits broadcast request before oversized fallback response");
+    node.begin_native_sync_chunk_receive(peer, 1, true)
+        .expect("authorized broadcast winner enters chunk fallback");
+    assert_eq!(
+        node.outbound_sync_request_rate_limits
+            .lock()
+            .get(&peer)
+            .map(|state| state.requests),
+        Some(1),
+        "chunk fallback must charge the same broadcast responder slot as a normal response"
+    );
+    {
+        let requests = node.outbound_sync_requests.lock();
+        let request = requests
+            .get(&None)
+            .expect("broadcast request remains bound through chunk fallback");
+        assert_eq!(request.state, NativeOutboundSyncRequestState::ChunkFallback);
+        assert_eq!(request.range, range);
+    }
+    assert!(
+        node.begin_native_sync_chunk_receive(peer, 1, true).is_err(),
+        "the authorized broadcast fallback cannot be admitted twice"
+    );
+    assert_eq!(
+        node.outbound_sync_request_rate_limits
+            .lock()
+            .get(&peer)
+            .map(|state| state.requests),
+        Some(1),
+        "a rejected duplicate fallback must not double-charge the responder"
+    );
+    node.abort_native_sync_chunk_receive(peer);
+}
+
+#[test]
 fn chunk_preflight_rejects_unsolicited_malformed_and_expired_sessions_without_growth() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
@@ -23442,6 +23488,456 @@ fn outbound_native_sync_request_retries_after_live_timeout() {
             .expect("past instant");
     }
     assert!(node.begin_outbound_sync_request(Some(peer), range));
+}
+
+#[tokio::test]
+async fn outbound_native_sync_pacing_defers_fifth_page_until_server_window_reopens() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+    config.seeds.push("127.0.0.1:30333".to_owned());
+    let node = NativeNode::open(config).expect("node");
+    let peer = [0x70; 32];
+    let target_height = node.best_height() + 10_000;
+    let target_hash = [0x71; 32];
+    let context = NativeOutboundSyncRequestContext {
+        target_tip: Some((target_height, target_hash)),
+        ..NativeOutboundSyncRequestContext::default()
+    };
+    assert!(node.observe_pending_sync_peer_tip(Some(peer), target_height, Some(target_hash),));
+
+    let mut fourth_range = None;
+    for page in 0..MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW {
+        let from_height = u64::from(page)
+            .saturating_mul(NATIVE_SYNC_REQUEST_BLOCKS)
+            .saturating_add(1);
+        let range = NativeSyncRange {
+            from_height,
+            to_height: from_height.saturating_add(NATIVE_SYNC_REQUEST_BLOCKS - 1),
+        };
+        assert!(
+            node.begin_outbound_sync_request_with_context(Some(peer), range, context),
+            "page {} must fit the shared client/server window",
+            page + 1
+        );
+        assert!(node
+            .complete_outbound_sync_response(peer, Some(range))
+            .is_some());
+        fourth_range = Some(range);
+    }
+    let fourth_range = fourth_range.expect("fourth completed page");
+    let fifth_range = NativeSyncRange {
+        from_height: fourth_range.to_height + 1,
+        to_height: fourth_range.to_height + NATIVE_SYNC_REQUEST_BLOCKS,
+    };
+
+    let network_addr: SocketAddr = "127.0.0.1:0".parse().expect("test network address");
+    let mut network_service = P2PService::new(
+        PeerIdentity::generate(b"native-sync-outbound-pacing"),
+        network_addr,
+        Vec::new(),
+        Vec::new(),
+        GossipRouter::new(32).handle(),
+        2,
+        PeerStore::new(PeerStoreConfig::with_path(tmp.path().join("pq-peers.bin"))),
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(network_addr),
+    );
+    let handle = network_service.register_protocol(NATIVE_SYNC_PROTOCOL_ID);
+    let sync_tx = handle.sender();
+    drop(handle);
+    drop(network_service);
+
+    queue_missing_blocks_from_sync_target_avoiding(
+        &node,
+        &sync_tx,
+        Some(fourth_range),
+        Some(fourth_range),
+        false,
+        Some(peer),
+        Some(peer),
+        Some([0x76; 32]),
+    )
+    .await;
+    let (paced_range, paced_at, paced_context) = {
+        let requests = node.outbound_sync_requests.lock();
+        let request = requests
+            .get(&Some(peer))
+            .expect("fifth page retained for pacing");
+        assert_eq!(request.state, NativeOutboundSyncRequestState::Paced);
+        assert_eq!(
+            request.context.target_tip,
+            Some((target_height, target_hash))
+        );
+        assert_eq!(request.range, fifth_range);
+        (request.range, request.requested_at, request.context)
+    };
+    assert_eq!(
+        node.outbound_sync_request_rate_limits
+            .lock()
+            .get(&peer)
+            .map(|state| state.requests),
+        Some(MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW),
+        "the paced attempt must not consume another client rate slot"
+    );
+    assert_eq!(
+        node.complete_outbound_sync_response(peer, Some(paced_range)),
+        None,
+        "a late response cannot obtain authorization from a paced request"
+    );
+    {
+        let requests = node.outbound_sync_requests.lock();
+        let request = requests
+            .get(&Some(peer))
+            .expect("late response preserves paced fingerprint");
+        assert_eq!(request.state, NativeOutboundSyncRequestState::Paced);
+        assert_eq!(request.range, paced_range);
+        assert_eq!(request.requested_at, paced_at);
+        assert_eq!(request.context, paced_context);
+    }
+    assert!(
+        node.begin_native_sync_chunk_receive(peer, target_height, true)
+            .is_err(),
+        "chunk fallback cannot obtain authorization from a paced request"
+    );
+    assert!(
+        !node.expire_unverified_sync_target(),
+        "a bounded paced page must keep the target alive until the server window reopens"
+    );
+
+    queue_missing_blocks_from_sync_target(&node, &sync_tx).await;
+    assert_eq!(
+        node.outbound_sync_requests
+            .lock()
+            .get(&Some(peer))
+            .map(|request| request.requested_at),
+        Some(paced_at),
+        "scheduler ticks inside the window must not refresh the target-pinning lease"
+    );
+    assert_eq!(
+        node.outbound_sync_request_rate_limits
+            .lock()
+            .get(&peer)
+            .map(|state| state.requests),
+        Some(MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW),
+        "scheduler ticks inside the paced hold must not consume rate slots"
+    );
+
+    {
+        let mut limits = node.outbound_sync_request_rate_limits.lock();
+        let state = limits.get_mut(&peer).expect("outbound peer rate window");
+        state.window_start = Instant::now()
+            .checked_sub(NATIVE_SYNC_REQUEST_RATE_WINDOW + Duration::from_millis(1))
+            .expect("phase-offset outbound rate window");
+    }
+    queue_missing_blocks_from_sync_target(&node, &sync_tx).await;
+    assert_eq!(
+        node.outbound_sync_requests
+            .lock()
+            .get(&Some(peer))
+            .map(|request| (request.state, request.requested_at)),
+        Some((NativeOutboundSyncRequestState::Paced, paced_at)),
+        "an apparently open client window must not bypass the full hold measured from page-four completion"
+    );
+
+    {
+        let mut requests = node.outbound_sync_requests.lock();
+        let request = requests.get_mut(&Some(peer)).expect("paced fifth page");
+        request.requested_at = Instant::now()
+            .checked_sub(NATIVE_SYNC_REQUEST_RATE_WINDOW + Duration::from_millis(1))
+            .expect("elapsed full paced hold");
+    }
+    let mut retry_network_service = P2PService::new(
+        PeerIdentity::generate(b"native-sync-outbound-paced-retry"),
+        network_addr,
+        Vec::new(),
+        Vec::new(),
+        GossipRouter::new(32).handle(),
+        2,
+        PeerStore::new(PeerStoreConfig::with_path(
+            tmp.path().join("pq-peers-retry.bin"),
+        )),
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(network_addr),
+    );
+    let retry_handle = retry_network_service.register_protocol(NATIVE_SYNC_PROTOCOL_ID);
+    let retry_sync_tx = retry_handle.sender();
+    let retry_started_at = Instant::now();
+    queue_missing_blocks_from_sync_target(&node, &retry_sync_tx).await;
+    let requests = node.outbound_sync_requests.lock();
+    let request = requests
+        .get(&Some(peer))
+        .expect("paced page promoted after window expiry");
+    assert_eq!(request.state, NativeOutboundSyncRequestState::InFlight);
+    assert_eq!(request.range, paced_range);
+    assert!(request.requested_at >= retry_started_at);
+    assert_eq!(
+        request.context.target_tip,
+        Some((target_height, target_hash))
+    );
+    drop(requests);
+    assert!(
+        node.complete_outbound_sync_response(peer, Some(paced_range))
+            .is_some(),
+        "the paced page must regain ordinary response authorization only after dispatch"
+    );
+}
+
+#[tokio::test]
+async fn outbound_native_sync_pacing_rebinds_broadcast_pagination_to_first_responder() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let responder = [0x77; 32];
+    let target_height = 1_000;
+    node.observe_pending_sync_peer_height(target_height);
+    let first = NativeSyncRange {
+        from_height: 1,
+        to_height: NATIVE_SYNC_REQUEST_BLOCKS,
+    };
+    assert!(node.begin_outbound_sync_request(None, first));
+    node.admit_sync_request_from_peer(responder)
+        .expect("server admits broadcast page one");
+    let first_completed = node
+        .complete_outbound_sync_response(responder, Some(first))
+        .expect("first peer response must complete the initial broadcast request");
+    assert_eq!(first_completed.request_target, None);
+    assert_eq!(
+        node.outbound_sync_request_rate_limits
+            .lock()
+            .get(&responder)
+            .map(|state| state.requests),
+        Some(1),
+        "the authorized broadcast winner must charge the responder's first client slot"
+    );
+
+    let network_addr: SocketAddr = "127.0.0.1:0".parse().expect("test network address");
+    let mut network_service = P2PService::new(
+        PeerIdentity::generate(b"native-sync-broadcast-directed-pagination"),
+        network_addr,
+        Vec::new(),
+        Vec::new(),
+        GossipRouter::new(32).handle(),
+        2,
+        PeerStore::new(PeerStoreConfig::with_path(tmp.path().join("pq-peers.bin"))),
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(network_addr),
+    );
+    let handle = network_service.register_protocol(NATIVE_SYNC_PROTOCOL_ID);
+    let sync_tx = handle.sender();
+
+    let mut previous_range = first;
+    let mut completed_request_target = first_completed.request_target;
+    for page in 2u64..=4 {
+        queue_missing_blocks_from_sync_target_avoiding(
+            &node,
+            &sync_tx,
+            Some(previous_range),
+            Some(previous_range),
+            false,
+            Some(responder),
+            completed_request_target,
+            Some([page as u8; 32]),
+        )
+        .await;
+        let expected_range = NativeSyncRange {
+            from_height: (page - 1)
+                .saturating_mul(NATIVE_SYNC_REQUEST_BLOCKS)
+                .saturating_add(1),
+            to_height: page.saturating_mul(NATIVE_SYNC_REQUEST_BLOCKS),
+        };
+        let directed_range = {
+            let requests = node.outbound_sync_requests.lock();
+            assert!(
+                !requests.contains_key(&None),
+                "pagination after a broadcast response must never broadcast again"
+            );
+            let request = requests
+                .get(&Some(responder))
+                .expect("follow-up page bound to first responder");
+            assert_eq!(request.state, NativeOutboundSyncRequestState::InFlight);
+            assert_eq!(request.range, expected_range);
+            request.range
+        };
+        node.admit_sync_request_from_peer(responder)
+            .unwrap_or_else(|err| panic!("server must admit page {page}: {err:?}"));
+        let completed = node
+            .complete_outbound_sync_response(responder, Some(directed_range))
+            .unwrap_or_else(|| panic!("directed page {page} response"));
+        assert_eq!(completed.request_target, Some(responder));
+        previous_range = directed_range;
+        completed_request_target = completed.request_target;
+    }
+
+    let fifth = NativeSyncRange {
+        from_height: previous_range.to_height.saturating_add(1),
+        to_height: previous_range
+            .to_height
+            .saturating_add(NATIVE_SYNC_REQUEST_BLOCKS),
+    };
+    queue_missing_blocks_from_sync_target_avoiding(
+        &node,
+        &sync_tx,
+        Some(previous_range),
+        Some(previous_range),
+        false,
+        Some(responder),
+        completed_request_target,
+        Some([0x79; 32]),
+    )
+    .await;
+    let requests = node.outbound_sync_requests.lock();
+    assert!(!requests.contains_key(&None));
+    let paced = requests
+        .get(&Some(responder))
+        .expect("fifth page retained for pacing before server rejection");
+    assert_eq!(paced.state, NativeOutboundSyncRequestState::Paced);
+    assert_eq!(paced.range, fifth);
+    drop(requests);
+    assert_eq!(
+        node.outbound_sync_request_rate_limits
+            .lock()
+            .get(&responder)
+            .map(|state| state.requests),
+        Some(MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW)
+    );
+    assert_eq!(
+        node.sync_request_rate_limits
+            .lock()
+            .get(&responder)
+            .map(|state| state.requests),
+        Some(MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW),
+        "the server admitted exactly broadcast page one plus three directed pages"
+    );
+    assert_eq!(
+        node.admit_sync_request_from_peer(responder),
+        Err(NativeSyncAdmissionRejection::RequestRateLimited),
+        "sending page five immediately would have been the deterministic silent drop"
+    );
+    assert_eq!(
+        node.complete_outbound_sync_response(responder, Some(fifth)),
+        None,
+        "a paced unsent page must not authorize a response"
+    );
+}
+
+#[test]
+fn outbound_native_sync_pacing_state_is_bounded_and_per_peer() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let range = NativeSyncRange {
+        from_height: 1,
+        to_height: NATIVE_SYNC_REQUEST_BLOCKS,
+    };
+
+    for index in 0..(MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS + 32) {
+        let mut peer = [0x7a; 32];
+        peer[..8].copy_from_slice(&(index as u64).to_le_bytes());
+        assert!(node.begin_outbound_sync_request(Some(peer), range));
+        assert!(node
+            .complete_outbound_sync_response(peer, Some(range))
+            .is_some());
+    }
+    assert!(
+        node.outbound_sync_request_rate_limits.lock().len()
+            <= MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS,
+        "outbound pacing metadata must remain bounded before every peer insertion"
+    );
+
+    let paced_peer = [0x7b; 32];
+    for _ in 0..MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW {
+        assert!(node.begin_outbound_sync_request(Some(paced_peer), range));
+        assert!(node
+            .complete_outbound_sync_response(paced_peer, Some(range))
+            .is_some());
+    }
+    assert!(!node.begin_outbound_sync_request(Some(paced_peer), range));
+    assert!(node.outbound_sync_request_is_paced(Some(paced_peer), range));
+
+    let independent_peer = [0x7c; 32];
+    let independent_range = NativeSyncRange {
+        from_height: range.to_height + 1,
+        to_height: range.to_height + NATIVE_SYNC_REQUEST_BLOCKS,
+    };
+    assert!(
+        node.begin_outbound_sync_request(Some(independent_peer), independent_range),
+        "one peer's paced window must not rate-limit an independent peer"
+    );
+    assert!(
+        node.outbound_sync_request_rate_limits.lock().len()
+            <= MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS
+    );
+}
+
+#[test]
+fn outbound_native_sync_pacing_keeps_existing_expiry_and_failover_bound() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+    config.seeds.push("127.0.0.1:30333".to_owned());
+    let node = NativeNode::open(config).expect("node");
+    let peer = [0x72; 32];
+    let target_height = node.best_height() + 10_000;
+    let target_hash = [0x73; 32];
+    let context = NativeOutboundSyncRequestContext {
+        target_tip: Some((target_height, target_hash)),
+        ..NativeOutboundSyncRequestContext::default()
+    };
+    assert!(node.observe_pending_sync_peer_tip(Some(peer), target_height, Some(target_hash),));
+
+    for page in 0..MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW {
+        let from_height = u64::from(page)
+            .saturating_mul(NATIVE_SYNC_REQUEST_BLOCKS)
+            .saturating_add(1);
+        let range = NativeSyncRange {
+            from_height,
+            to_height: from_height.saturating_add(NATIVE_SYNC_REQUEST_BLOCKS - 1),
+        };
+        assert!(node.begin_outbound_sync_request_with_context(Some(peer), range, context));
+        assert!(node
+            .complete_outbound_sync_response(peer, Some(range))
+            .is_some());
+    }
+    let fifth = NativeSyncRange {
+        from_height: u64::from(MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW)
+            .saturating_mul(NATIVE_SYNC_REQUEST_BLOCKS)
+            .saturating_add(1),
+        to_height: u64::from(MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW + 1)
+            .saturating_mul(NATIVE_SYNC_REQUEST_BLOCKS),
+    };
+    assert!(!node.begin_outbound_sync_request_with_context(Some(peer), fifth, context));
+    {
+        let mut requests = node.outbound_sync_requests.lock();
+        let request = requests.get_mut(&Some(peer)).expect("paced fifth page");
+        assert_eq!(request.state, NativeOutboundSyncRequestState::Paced);
+        request.requested_at = Instant::now()
+            .checked_sub(NATIVE_SYNC_REQUEST_RETRY_AFTER + Duration::from_millis(1))
+            .expect("expired paced request instant");
+    }
+
+    assert!(
+        node.expire_unverified_sync_target(),
+        "pacing must not extend the existing unverified target lease"
+    );
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (node.best_height(), None, None)
+    );
+    assert!(!node.mining_sync_gate_allows_work());
+    assert!(node
+        .sync_unverified_target_cooldowns
+        .lock()
+        .contains_key(&peer));
+
+    let failover_peer = [0x74; 32];
+    let failover_height = node.best_height() + 100;
+    let failover_hash = [0x75; 32];
+    assert!(node.observe_pending_sync_peer_tip(
+        Some(failover_peer),
+        failover_height,
+        Some(failover_hash),
+    ));
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (failover_height, Some(failover_peer), Some(failover_hash))
+    );
 }
 
 #[test]

@@ -427,6 +427,7 @@ impl NativeNode {
             network_local_peer_id: Arc::new(StdRwLock::new(None)),
             network_peer_snapshot: Arc::new(StdRwLock::new(Vec::new())),
             sync_request_rate_limits: Mutex::new(BTreeMap::new()),
+            outbound_sync_request_rate_limits: Mutex::new(BTreeMap::new()),
             sync_response_in_flight_peers: Mutex::new(BTreeMap::new()),
             outbound_sync_requests: Mutex::new(BTreeMap::new()),
             sync_recovery_cursor: Mutex::new(None),
@@ -529,9 +530,11 @@ impl NativeNode {
         now: Instant,
     ) -> bool {
         request.state == NativeOutboundSyncRequestState::ChunkFallback
-            || (request.state == NativeOutboundSyncRequestState::InFlight
-                && now.saturating_duration_since(request.requested_at)
-                    <= NATIVE_SYNC_REQUEST_RETRY_AFTER)
+            || (matches!(
+                request.state,
+                NativeOutboundSyncRequestState::InFlight | NativeOutboundSyncRequestState::Paced
+            ) && now.saturating_duration_since(request.requested_at)
+                <= NATIVE_SYNC_REQUEST_RETRY_AFTER)
     }
 
     fn native_sync_target_peer_has_fresh_request(&self, peer_id: PeerId) -> bool {
@@ -1259,14 +1262,59 @@ impl NativeNode {
                 || now.saturating_duration_since(request.requested_at)
                     <= NATIVE_SYNC_REQUEST_RETRY_AFTER
         });
-        if requests.contains_key(&peer_id) {
+        let paced_at = match requests.get(&peer_id) {
+            Some(request) if request.state == NativeOutboundSyncRequestState::Paced => {
+                Some(request.requested_at)
+            }
+            Some(_) => return false,
+            None => None,
+        };
+        if requests.iter().any(|(target, request)| {
+            *target != peer_id && native_sync_ranges_overlap(request.range, range)
+        }) {
             return false;
         }
-        if requests
-            .values()
-            .any(|request| native_sync_ranges_overlap(request.range, range))
-        {
+        // In steady pagination the fifth request is discovered only after the
+        // fourth response completes. The server therefore received page four
+        // before this timestamp. Holding a full server window from `paced_at`
+        // is robust to client/server window phase and request-latency skew.
+        if let Some(paced_at) = paced_at.filter(|paced_at| {
+            now.saturating_duration_since(*paced_at) < NATIVE_SYNC_REQUEST_RATE_WINDOW
+        }) {
+            requests.insert(
+                peer_id,
+                NativeOutboundSyncRequest {
+                    range,
+                    requested_at: paced_at,
+                    state: NativeOutboundSyncRequestState::Paced,
+                    context,
+                },
+            );
             return false;
+        }
+        if let Some(peer_id) = peer_id {
+            let admitted = {
+                let mut limits = self.outbound_sync_request_rate_limits.lock();
+                Self::admit_sync_request_rate_state(
+                    &mut limits,
+                    peer_id,
+                    now,
+                    NATIVE_SYNC_REQUEST_RATE_WINDOW,
+                )
+                .is_ok()
+            };
+            if !admitted {
+                requests.insert(
+                    Some(peer_id),
+                    NativeOutboundSyncRequest {
+                        range,
+                        requested_at: paced_at.unwrap_or(now),
+                        state: NativeOutboundSyncRequestState::Paced,
+                        context,
+                    },
+                );
+                return false;
+            }
         }
         requests.insert(
             peer_id,
@@ -1286,6 +1334,42 @@ impl NativeNode {
         requests.remove(&None);
     }
 
+    pub(crate) fn outbound_sync_request_is_paced(
+        &self,
+        peer_id: Option<PeerId>,
+        range: NativeSyncRange,
+    ) -> bool {
+        self.outbound_sync_requests
+            .lock()
+            .get(&peer_id)
+            .is_some_and(|request| {
+                request.state == NativeOutboundSyncRequestState::Paced && request.range == range
+            })
+    }
+
+    pub(crate) fn charge_authorized_broadcast_sync_request_rate_slot(
+        &self,
+        _locked_requests: &BTreeMap<Option<PeerId>, NativeOutboundSyncRequest>,
+        request_target: Option<PeerId>,
+        peer_id: PeerId,
+        now: Instant,
+    ) {
+        if request_target.is_some() {
+            return;
+        }
+        // The broadcast destination was unknowable at send time, but the
+        // authorized winner proves this peer consumed one server admission
+        // slot. Callers retain the outbound-request lock so every path keeps
+        // the request -> outbound-rate lock order.
+        let mut limits = self.outbound_sync_request_rate_limits.lock();
+        let _ = Self::admit_sync_request_rate_state(
+            &mut limits,
+            peer_id,
+            now,
+            NATIVE_SYNC_REQUEST_RATE_WINDOW,
+        );
+    }
+
     pub(crate) fn complete_outbound_sync_response(
         &self,
         peer_id: PeerId,
@@ -1302,13 +1386,18 @@ impl NativeNode {
                     })
             })
         })?;
-        requests
-            .remove(&target)
-            .map(|request| NativeCompletedSyncRequest {
-                request_target: target,
-                range: request.range,
-                context: request.context,
-            })
+        let request = requests.remove(&target)?;
+        self.charge_authorized_broadcast_sync_request_rate_slot(
+            &requests,
+            target,
+            peer_id,
+            Instant::now(),
+        );
+        Some(NativeCompletedSyncRequest {
+            request_target: target,
+            range: request.range,
+            context: request.context,
+        })
     }
 
     pub(crate) fn complete_outbound_sync_request_target(&self, peer_id: Option<PeerId>) {
@@ -1432,9 +1521,23 @@ impl NativeNode {
         peer_id: PeerId,
     ) -> Result<(), NativeSyncAdmissionRejection> {
         let now = Instant::now();
-        let window_ms = duration_millis_u64(NATIVE_SYNC_REQUEST_RATE_WINDOW);
         let mut limits = self.sync_request_rate_limits.lock();
-        Self::prune_sync_request_rate_limits(&mut limits, now);
+        Self::admit_sync_request_rate_state(
+            &mut limits,
+            peer_id,
+            now,
+            NATIVE_SYNC_REQUEST_RATE_WINDOW,
+        )
+    }
+
+    fn admit_sync_request_rate_state(
+        limits: &mut BTreeMap<PeerId, NativeSyncRequestRateState>,
+        peer_id: PeerId,
+        now: Instant,
+        rate_window: Duration,
+    ) -> Result<(), NativeSyncAdmissionRejection> {
+        let window_ms = duration_millis_u64(rate_window);
+        Self::prune_sync_request_rate_limits(limits, now);
         debug_assert!(
             Self::sync_request_rate_limit_entries_after_insert(
                 limits.len(),
