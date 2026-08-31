@@ -20,6 +20,9 @@ tmp/
 formal/lean/.lake/
 formal/crypto/.lake/
 
+# Local Binius source checkout used by standalone experiments.
+prototypes/standalone-shake256-binius/binius64
+
 # Testnet deployment artifacts (regenerate with scripts)
 .env.testnet
 keys/
