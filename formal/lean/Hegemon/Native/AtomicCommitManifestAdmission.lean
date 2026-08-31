@@ -4,6 +4,7 @@ namespace AtomicCommitManifestAdmission
 
 inductive AtomicCommitKind where
   | minedBlockCommit
+  | tipExtensionBatchCommit
   | canonicalReorgCommit
   | canonicalIndexRepair
   | noncanonicalBlockRecord
@@ -57,13 +58,15 @@ deriving DecidableEq, Repr
 def expectedBlockRecordWrites (input : AtomicCommitManifestInput) : Nat :=
   match input.kind with
   | AtomicCommitKind.minedBlockCommit => 1
-  | AtomicCommitKind.canonicalReorgCommit => input.chainBlockCount
+  | AtomicCommitKind.tipExtensionBatchCommit => input.chainBlockCount
+  | AtomicCommitKind.canonicalReorgCommit => 0
   | AtomicCommitKind.canonicalIndexRepair => 0
-  | AtomicCommitKind.noncanonicalBlockRecord => 1
+  | AtomicCommitKind.noncanonicalBlockRecord => input.chainBlockCount
 
 def expectedHeightIndexWrites (input : AtomicCommitManifestInput) : Nat :=
   match input.kind with
   | AtomicCommitKind.minedBlockCommit => 1
+  | AtomicCommitKind.tipExtensionBatchCommit => input.heightEntryCount
   | AtomicCommitKind.canonicalReorgCommit => input.heightEntryCount
   | AtomicCommitKind.canonicalIndexRepair => 0
   | AtomicCommitKind.noncanonicalBlockRecord => 0
@@ -71,6 +74,7 @@ def expectedHeightIndexWrites (input : AtomicCommitManifestInput) : Nat :=
 def expectedBestPointerWrites (input : AtomicCommitManifestInput) : Nat :=
   match input.kind with
   | AtomicCommitKind.minedBlockCommit => 1
+  | AtomicCommitKind.tipExtensionBatchCommit => 1
   | AtomicCommitKind.canonicalReorgCommit => 1
   | AtomicCommitKind.canonicalIndexRepair => 0
   | AtomicCommitKind.noncanonicalBlockRecord => 0
@@ -78,6 +82,7 @@ def expectedBestPointerWrites (input : AtomicCommitManifestInput) : Nat :=
 def expectedCanonicalIndexCleared (input : AtomicCommitManifestInput) : Bool :=
   match input.kind with
   | AtomicCommitKind.minedBlockCommit => false
+  | AtomicCommitKind.tipExtensionBatchCommit => false
   | AtomicCommitKind.canonicalReorgCommit => true
   | AtomicCommitKind.canonicalIndexRepair => true
   | AtomicCommitKind.noncanonicalBlockRecord => false
@@ -90,6 +95,7 @@ def expectedPendingTreeCleared (input : AtomicCommitManifestInput) : Bool :=
 def expectedPendingActionRemovals (input : AtomicCommitManifestInput) : Nat :=
   match input.kind with
   | AtomicCommitKind.minedBlockCommit => input.actionCount
+  | AtomicCommitKind.tipExtensionBatchCommit => input.actionCount
   | _ => 0
 
 def expectedPendingActionWrites (input : AtomicCommitManifestInput) : Nat :=
@@ -100,6 +106,7 @@ def expectedPendingActionWrites (input : AtomicCommitManifestInput) : Nat :=
 def expectedCommitmentWrites (input : AtomicCommitManifestInput) : Nat :=
   match input.kind with
   | AtomicCommitKind.minedBlockCommit => input.sourceCommitmentCount
+  | AtomicCommitKind.tipExtensionBatchCommit => input.sourceCommitmentCount
   | AtomicCommitKind.canonicalReorgCommit => input.sourceCommitmentCount
   | AtomicCommitKind.canonicalIndexRepair => input.sourceCommitmentCount
   | AtomicCommitKind.noncanonicalBlockRecord => 0
@@ -107,6 +114,7 @@ def expectedCommitmentWrites (input : AtomicCommitManifestInput) : Nat :=
 def expectedNullifierWrites (input : AtomicCommitManifestInput) : Nat :=
   match input.kind with
   | AtomicCommitKind.minedBlockCommit => input.sourceNullifierCount
+  | AtomicCommitKind.tipExtensionBatchCommit => input.sourceNullifierCount
   | AtomicCommitKind.canonicalReorgCommit => input.sourceNullifierCount
   | AtomicCommitKind.canonicalIndexRepair => input.sourceNullifierCount
   | AtomicCommitKind.noncanonicalBlockRecord => 0
@@ -114,6 +122,7 @@ def expectedNullifierWrites (input : AtomicCommitManifestInput) : Nat :=
 def expectedBridgeReplayWrites (input : AtomicCommitManifestInput) : Nat :=
   match input.kind with
   | AtomicCommitKind.minedBlockCommit => input.sourceBridgeReplayCount
+  | AtomicCommitKind.tipExtensionBatchCommit => input.sourceBridgeReplayCount
   | AtomicCommitKind.canonicalReorgCommit => input.sourceBridgeReplayCount
   | AtomicCommitKind.canonicalIndexRepair => input.sourceBridgeReplayCount
   | AtomicCommitKind.noncanonicalBlockRecord => 0
@@ -121,6 +130,7 @@ def expectedBridgeReplayWrites (input : AtomicCommitManifestInput) : Nat :=
 def expectedCiphertextIndexWrites (input : AtomicCommitManifestInput) : Nat :=
   match input.kind with
   | AtomicCommitKind.minedBlockCommit => input.sourceCiphertextIndexCount
+  | AtomicCommitKind.tipExtensionBatchCommit => input.sourceCiphertextIndexCount
   | AtomicCommitKind.canonicalReorgCommit => input.sourceCiphertextIndexCount
   | AtomicCommitKind.canonicalIndexRepair => input.sourceCiphertextIndexCount
   | AtomicCommitKind.noncanonicalBlockRecord => 0
@@ -128,6 +138,7 @@ def expectedCiphertextIndexWrites (input : AtomicCommitManifestInput) : Nat :=
 def expectedCiphertextArchiveWrites (input : AtomicCommitManifestInput) : Nat :=
   match input.kind with
   | AtomicCommitKind.minedBlockCommit => input.sourceCiphertextArchiveCount
+  | AtomicCommitKind.tipExtensionBatchCommit => input.sourceCiphertextArchiveCount
   | AtomicCommitKind.canonicalReorgCommit => input.sourceCiphertextArchiveCount
   | AtomicCommitKind.canonicalIndexRepair => input.sourceCiphertextArchiveCount
   | AtomicCommitKind.noncanonicalBlockRecord => 0
@@ -135,15 +146,24 @@ def expectedCiphertextArchiveWrites (input : AtomicCommitManifestInput) : Nat :=
 def expectedStagedCiphertextRemovals (input : AtomicCommitManifestInput) : Nat :=
   match input.kind with
   | AtomicCommitKind.minedBlockCommit => input.sourceStagedCiphertextRemovalCount
+  | AtomicCommitKind.tipExtensionBatchCommit => input.sourceStagedCiphertextRemovalCount
   | _ => 0
 
 def minedPlanLengthMatches (input : AtomicCommitManifestInput) : Bool :=
   match input.kind with
   | AtomicCommitKind.minedBlockCommit => input.actionCount == input.plannedActionCount
+  | AtomicCommitKind.tipExtensionBatchCommit => input.actionCount == input.plannedActionCount
   | _ => true
 
 def blockRecordWritesMatch (input : AtomicCommitManifestInput) : Bool :=
   input.blockRecordWrites == expectedBlockRecordWrites input
+
+theorem noncanonical_block_record_write_count_matches_iff
+    (input : AtomicCommitManifestInput)
+    (kind : input.kind = AtomicCommitKind.noncanonicalBlockRecord) :
+    blockRecordWritesMatch input = true ↔
+      input.blockRecordWrites = input.chainBlockCount := by
+  simp [blockRecordWritesMatch, expectedBlockRecordWrites, kind]
 
 def heightIndexWritesMatch (input : AtomicCommitManifestInput) : Bool :=
   input.heightIndexWrites == expectedHeightIndexWrites input
@@ -296,7 +316,7 @@ def validCanonicalReorgCommit : AtomicCommitManifestInput :=
     sourceCiphertextIndexCount := 5,
     sourceCiphertextArchiveCount := 5,
     sourceStagedCiphertextRemovalCount := 0,
-    blockRecordWrites := 4,
+    blockRecordWrites := 0,
     heightIndexWrites := 4,
     bestPointerWrites := 1,
     canonicalIndexCleared := true,
@@ -309,6 +329,16 @@ def validCanonicalReorgCommit : AtomicCommitManifestInput :=
     ciphertextIndexWrites := 5,
     ciphertextArchiveWrites := 5,
     stagedCiphertextRemovals := 0
+  }
+
+def validTipExtensionBatchCommit : AtomicCommitManifestInput :=
+  {
+    validMinedBlockCommit with
+    kind := AtomicCommitKind.tipExtensionBatchCommit,
+    chainBlockCount := 3,
+    heightEntryCount := 3,
+    blockRecordWrites := 3,
+    heightIndexWrites := 3
   }
 
 def validCanonicalIndexRepair : AtomicCommitManifestInput :=
@@ -331,6 +361,7 @@ def validNoncanonicalBlockRecord : AtomicCommitManifestInput :=
     kind := AtomicCommitKind.noncanonicalBlockRecord,
     actionCount := 0,
     plannedActionCount := 0,
+    chainBlockCount := 1,
     sourceCommitmentCount := 0,
     sourceNullifierCount := 0,
     sourceBridgeReplayCount := 0,
@@ -348,8 +379,19 @@ def validNoncanonicalBlockRecord : AtomicCommitManifestInput :=
     stagedCiphertextRemovals := 0
   }
 
+def validNoncanonicalBlockRecordBatch : AtomicCommitManifestInput :=
+  {
+    validNoncanonicalBlockRecord with
+    chainBlockCount := 4,
+    blockRecordWrites := 4
+  }
+
 theorem valid_mined_block_commit_accepts :
     evaluateAtomicCommitManifestRejection validMinedBlockCommit = none := by
+  rfl
+
+theorem valid_tip_extension_batch_commit_accepts :
+    evaluateAtomicCommitManifestRejection validTipExtensionBatchCommit = none := by
   rfl
 
 theorem valid_canonical_reorg_commit_accepts :
@@ -364,9 +406,19 @@ theorem valid_noncanonical_block_record_accepts :
     evaluateAtomicCommitManifestRejection validNoncanonicalBlockRecord = none := by
   rfl
 
+theorem valid_noncanonical_block_record_batch_accepts :
+    evaluateAtomicCommitManifestRejection validNoncanonicalBlockRecordBatch = none := by
+  rfl
+
 theorem rejects_mined_plan_length_mismatch :
     evaluateAtomicCommitManifestRejection
       { validMinedBlockCommit with plannedActionCount := 1 } =
+      some AtomicCommitManifestReject.minedPlanLengthMismatch := by
+  rfl
+
+theorem rejects_tip_extension_batch_plan_length_mismatch :
+    evaluateAtomicCommitManifestRejection
+      { validTipExtensionBatchCommit with plannedActionCount := 1 } =
       some AtomicCommitManifestReject.minedPlanLengthMismatch := by
   rfl
 
@@ -376,9 +428,33 @@ theorem rejects_missing_block_record_write :
       some AtomicCommitManifestReject.blockRecordWritesMismatch := by
   rfl
 
+theorem rejects_tip_extension_batch_block_record_write_mismatch :
+    evaluateAtomicCommitManifestRejection
+      { validTipExtensionBatchCommit with blockRecordWrites := 2 } =
+      some AtomicCommitManifestReject.blockRecordWritesMismatch := by
+  rfl
+
+theorem rejects_noncanonical_block_record_batch_write_count_mismatch :
+    evaluateAtomicCommitManifestRejection
+      { validNoncanonicalBlockRecordBatch with blockRecordWrites := 3 } =
+      some AtomicCommitManifestReject.blockRecordWritesMismatch := by
+  rfl
+
+theorem rejects_canonical_reorg_block_record_write :
+    evaluateAtomicCommitManifestRejection
+      { validCanonicalReorgCommit with blockRecordWrites := 1 } =
+      some AtomicCommitManifestReject.blockRecordWritesMismatch := by
+  rfl
+
 theorem rejects_missing_height_index_write :
     evaluateAtomicCommitManifestRejection
       { validMinedBlockCommit with heightIndexWrites := 0 } =
+      some AtomicCommitManifestReject.heightIndexWritesMismatch := by
+  rfl
+
+theorem rejects_tip_extension_batch_height_index_write_mismatch :
+    evaluateAtomicCommitManifestRejection
+      { validTipExtensionBatchCommit with heightIndexWrites := 2 } =
       some AtomicCommitManifestReject.heightIndexWritesMismatch := by
   rfl
 

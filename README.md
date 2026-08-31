@@ -247,7 +247,7 @@ Key options:
 - `--base-path <PATH>` - Persistent database location
 - `--rpc-port <PORT>` - JSON-RPC port (default: 9944)
 - `--port <PORT>` - P2P port (default: 30333)
-- `HEGEMON_SEEDS=<host:port,...>` - Bootstrap peers for native P2P sync. Shared miners must use the same approved seed list, currently `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"`, to avoid forks.
+- `HEGEMON_SEEDS=<host:port,...>` - Bootstrap peers for native P2P sync. Shared miners must use the same approved seed list, currently `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"`, to avoid partitions and forks. Keep NTP or chrony enabled on every mining host because PoW timestamps beyond the future-skew bound are rejected.
 
 Environment variables:
 - `HEGEMON_MINE=1` - Enable mining
@@ -256,7 +256,7 @@ Environment variables:
 
 ### Two-node testnet pairing
 
-Use this when you want to run two nodes that peer with each other:
+Use this when you want to run two deliberately isolated local nodes that peer with each other. For the shared testnet, set `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"` unless the approved list has rotated, keep every miner on that same list to avoid partitions and forks, and enable NTP or chrony because future-skewed PoW timestamps are rejected. The append-only oversized-record chunk extension has no capability negotiation: a persisted block record above the legacy 16 MiB frame requires upgraded endpoints on both sides of its transfer. Before a one-node rolling canary against an old peer, verify that every record needed for catch-up fits the legacy frame or provide an upgraded relay.
 
 1. **Build the binary**:
    ```bash

@@ -1,3 +1,4 @@
+use super::node_impl::load_native_sync_response_prefix_with;
 use super::*;
 use protocol_shielded_pool::types::{
     ReceiptRootMetadata, ReceiptRootProofPayload, TxValidityReceipt,
@@ -406,6 +407,43 @@ struct LeanCanonicalReorgChainAdmissionCase {
     block_records_match_chain: bool,
     height_entry_count_matches_chain: bool,
     height_entries_match_chain: bool,
+    expected_valid: bool,
+    expected_rejection: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanCanonicalReorgPersistenceAdmissionVectorFile {
+    schema_version: u32,
+    supplied_block_record_classification_cases: Vec<LeanSuppliedBlockRecordClassificationCase>,
+    canonical_reorg_persistence_cases: Vec<LeanCanonicalReorgPersistenceAdmissionCase>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanSuppliedBlockRecordClassificationCase {
+    name: String,
+    stored_record_present: bool,
+    stored_record_exact: bool,
+    expected_valid: bool,
+    expected_status: Option<String>,
+    expected_rejection: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanCanonicalReorgPersistenceAdmissionCase {
+    name: String,
+    replacement_block_count: usize,
+    known_block_count: usize,
+    classified_missing_block_count: usize,
+    supplied_missing_block_count: usize,
+    connected_exact_known_rows: bool,
+    suffix_fully_validated: bool,
+    noncanonical_batch_block_record_writes: usize,
+    noncanonical_batch_durability_flushed: bool,
+    durable_records_match_replacement: bool,
+    canonical_transaction_block_record_writes: usize,
     expected_valid: bool,
     expected_rejection: Option<String>,
 }
@@ -2429,9 +2467,142 @@ struct LeanSyncRawIngressVectorFile {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct LeanSyncBlockChunkAdmissionVectorFile {
+    schema_version: u32,
+    sync_chunk_fallback_cases: Vec<LeanSyncChunkFallbackCase>,
+    sync_chunk_capacity_cases: Vec<LeanSyncChunkCapacityCase>,
+    sync_chunk_serve_request_cases: Vec<LeanSyncChunkServeRequestCase>,
+    sync_chunk_offer_request_cases: Vec<LeanSyncChunkOfferRequestCase>,
+    sync_chunk_outbound_transition_cases: Vec<LeanSyncChunkOutboundTransitionCase>,
+    sync_chunk_expiry_cases: Vec<LeanSyncChunkExpiryCase>,
+    sync_tip_announcement_cases: Vec<LeanSyncTipAnnouncementCase>,
+    sync_block_chunk_cases: Vec<LeanSyncBlockChunkAdmissionCase>,
+    sync_block_chunk_completion_cases: Vec<LeanSyncBlockChunkCompletionAdmissionCase>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanSyncChunkFallbackCase {
+    name: String,
+    matching_completed_request: bool,
+    response_empty: bool,
+    peer_best_height: u64,
+    requested_from_height: u64,
+    expected_valid: bool,
+    expected_rejection: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanSyncChunkCapacityCase {
+    name: String,
+    current_sessions: usize,
+    max_sessions: usize,
+    expected_valid: bool,
+    expected_rejection: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanSyncChunkServeRequestCase {
+    name: String,
+    matching_live_offer_or_session: bool,
+    tuple_matches: bool,
+    offset: u64,
+    next_offset: u64,
+    total_len: u64,
+    expected_valid: bool,
+    expected_disposition: Option<String>,
+    expected_rejection: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanSyncChunkOfferRequestCase {
+    name: String,
+    matching_live_offer: bool,
+    height_matches: bool,
+    block_hash_matches: bool,
+    record_digest_absent: bool,
+    offset: u64,
+    expected_valid: bool,
+    expected_rejection: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanSyncChunkOutboundTransitionCase {
+    name: String,
+    state: String,
+    event: String,
+    expected_valid: bool,
+    expected_state: Option<String>,
+    expected_rejection: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanSyncChunkExpiryCase {
+    name: String,
+    idle_elapsed_ms: u64,
+    max_idle_ms: u64,
+    lifetime_elapsed_ms: u64,
+    max_lifetime_ms: u64,
+    expected_valid: bool,
+    expected_rejection: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanSyncTipAnnouncementCase {
+    name: String,
+    local_height: u64,
+    announced_height: u64,
+    announced_hash_is_zero: bool,
+    announced_hash_matches_local: bool,
+    expected_valid: bool,
+    expected_rejection: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanSyncBlockChunkAdmissionCase {
+    name: String,
+    session_matches: bool,
+    chunk_bytes: usize,
+    max_chunk_bytes: usize,
+    total_bytes: u64,
+    max_total_bytes: u64,
+    offset: u64,
+    retained_bytes: usize,
+    expected_retained_after: u128,
+    expected_valid: bool,
+    expected_rejection: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanSyncBlockChunkCompletionAdmissionCase {
+    name: String,
+    assembled_bytes: usize,
+    total_bytes: u64,
+    digest_matches: bool,
+    exact_decode_accepts: bool,
+    height_matches: bool,
+    hash_matches: bool,
+    request_prefix_matches: bool,
+    recovery_context_matches: bool,
+    expected_valid: bool,
+    expected_rejection: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LeanSyncResponseImportVectorFile {
     schema_version: u32,
     sync_response_import_cases: Vec<LeanSyncResponseImportCase>,
+    sync_response_post_classification_missing_parent_cases:
+        Vec<LeanSyncResponsePostClassificationMissingParentCase>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2554,15 +2725,45 @@ struct LeanSyncResponseImportCase {
     response_heights: Vec<u64>,
     max_blocks: usize,
     outcomes: Vec<String>,
+    post_classification_outcome: String,
     local_best_height: u64,
     peer_best_height: u64,
+    current_request_from_height: u64,
+    current_request_to_height: u64,
+    candidate_request_available: bool,
+    candidate_request_from_height: u64,
+    candidate_request_to_height: u64,
+    backoff_scheduled: bool,
     expected_valid: bool,
     expected_rejection: Option<String>,
     expected_sorted_heights: Vec<u64>,
     expected_attempted_blocks: usize,
     expected_imported_blocks: u64,
+    expected_stored_noncanonical_blocks: u64,
     expected_stopped_on_error: bool,
+    expected_stopped_on_missing_parent: bool,
+    expected_completed_without_canonical_progress: bool,
     expected_request_more: bool,
+    expected_recovery_required: bool,
+    expected_backoff_required: bool,
+    expected_recovery_range_changed: bool,
+    expected_useful_recovery_or_backoff: bool,
+    expected_immediate_request_allowed: bool,
+    expected_follow_up_allowed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanSyncResponsePostClassificationMissingParentCase {
+    name: String,
+    had_blocks: bool,
+    attempted_blocks: usize,
+    response_block_count: usize,
+    imported_blocks: u64,
+    stored_noncanonical_blocks: u64,
+    stopped_on_error: bool,
+    stopped_on_missing_parent: bool,
+    expected_valid: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3193,27 +3394,509 @@ fn side_branch_with_more_work_reorganizes_canonical_chain() {
 }
 
 #[test]
-fn canonical_reorg_chain_admission_rejects_write_set_drift() {
+fn non_tip_announce_reuses_one_parent_ancestry_for_losing_and_winning_paths() {
+    let pow_bits = 0x207f_ffff;
+
+    let losing_tmp = tempfile::tempdir().expect("losing tempdir");
+    let losing = NativeNode::open(test_config(losing_tmp.path(), pow_bits, "safe", false))
+        .expect("losing node");
+    let losing_genesis = losing.best_meta();
+    let _canonical_one = mine_empty_native_block(&losing);
+    let canonical_two = mine_empty_native_block(&losing);
+    let losing_side_one = (1..128)
+        .map(|round| {
+            mined_empty_child_for_chain(std::slice::from_ref(&losing_genesis), pow_bits, round)
+        })
+        .find(|candidate| candidate.hash != canonical_two.parent_hash)
+        .expect("distinct losing side parent");
+    assert_eq!(
+        losing
+            .import_announced_block_with_outcome(losing_side_one.clone())
+            .expect("store losing side parent"),
+        NativeAnnouncedBlockImportOutcome::StoredNoncanonical
+    );
+    let losing_side_chain = vec![losing_genesis, losing_side_one.clone()];
+    let losing_side_two = (128..512)
+        .map(|round| mined_empty_child_for_chain(&losing_side_chain, pow_bits, round))
+        .find(|candidate| !native_meta_better_than(candidate, &canonical_two))
+        .expect("nonwinning side child at canonical height");
+    let cached = test_candidate_artifact_action(1, 111);
+    let same_tip_state = losing.state.read().clone();
+    let same_tip_transfer = test_inline_transfer_action(
+        same_tip_state.commitment_tree.root(),
+        [112u8; 48],
+        [113u8; 48],
+        0,
+    );
+    let same_tip_actions = vec![same_tip_transfer];
+    let cache_key = NativeNode::auto_candidate_cache_key(canonical_two.hash, &same_tip_actions);
+    losing.cache_prepared_candidate_action(cache_key, cached.clone());
+    assert_eq!(
+        losing
+            .build_auto_recursive_candidate_action(
+                &same_tip_state,
+                canonical_two.height + 1,
+                114,
+                &same_tip_actions,
+            )
+            .expect("same-tip cached candidate lookup")
+            .expect("same-tip candidate cache hit")
+            .encode(),
+        cached.encode()
+    );
+
+    losing.reset_block_meta_load_counters();
+    losing.reset_streaming_replay_stored_meta_counters();
+    assert_eq!(
+        losing
+            .import_announced_block_with_outcome(losing_side_two.clone())
+            .expect("store losing non-tip child"),
+        NativeAnnouncedBlockImportOutcome::StoredNoncanonical
+    );
+    assert_eq!(
+        losing.block_meta_load_counters().1,
+        0,
+        "losing non-tip announce must stream compact ancestry without reconstructing full metadata"
+    );
+    assert_eq!(
+        losing.streaming_replay_stored_meta_counters(),
+        (0, 1),
+        "losing non-tip announce must decode at most one stored metadata body at a time"
+    );
+    assert_eq!(losing.best_meta(), canonical_two);
+    assert_eq!(
+        losing
+            .header_by_hash(&losing_side_two.hash)
+            .expect("read stored losing child"),
+        Some(losing_side_two)
+    );
+    assert_eq!(
+        losing.prepared_candidate_action_count(),
+        1,
+        "nonwinning storage must not invalidate same-tip candidate work"
+    );
+
+    let winning_tmp = tempfile::tempdir().expect("winning tempdir");
+    let winning = NativeNode::open(test_config(winning_tmp.path(), pow_bits, "safe", false))
+        .expect("winning node");
+    let winning_genesis = winning.best_meta();
+    let winning_canonical = mine_empty_native_block(&winning);
+    let winning_side_one = (1..256)
+        .map(|round| {
+            mined_empty_child_for_chain(std::slice::from_ref(&winning_genesis), pow_bits, round)
+        })
+        .find(|candidate| !native_meta_better_than(candidate, &winning_canonical))
+        .expect("nonwinning side parent");
+    assert_eq!(
+        winning
+            .import_announced_block_with_outcome(winning_side_one.clone())
+            .expect("store winning-path side parent"),
+        NativeAnnouncedBlockImportOutcome::StoredNoncanonical
+    );
+    let winning_side_chain = vec![winning_genesis, winning_side_one.clone()];
+    let winning_side_two = mined_empty_child_for_chain(&winning_side_chain, pow_bits, 512);
+    let winning_cache_key = NativeNode::auto_candidate_cache_key(winning_canonical.hash, &[]);
+    winning.cache_prepared_candidate_action(winning_cache_key, cached.clone());
+    let invalid = mined_empty_child_with_commitment_mutation(
+        &winning_side_one,
+        pow_bits,
+        513,
+        TestCommitmentMutation::StateRoot,
+    );
+    winning
+        .import_announced_block_with_outcome(invalid)
+        .expect_err("failed winning import must reject");
+    assert_eq!(
+        winning.prepared_candidate_action_count(),
+        1,
+        "failed canonical import must retain prepared candidate work"
+    );
+
+    winning.reset_block_meta_load_counters();
+    winning.reset_streaming_replay_stored_meta_counters();
+    assert_eq!(
+        winning
+            .import_announced_block_with_outcome(winning_side_two.clone())
+            .expect("winning non-tip child"),
+        NativeAnnouncedBlockImportOutcome::CanonicalAdvanced
+    );
+    assert_eq!(
+        winning.block_meta_load_counters().1,
+        0,
+        "winning non-tip announce must not reconstruct a full metadata chain"
+    );
+    assert_eq!(
+        winning.streaming_replay_stored_meta_counters(),
+        (0, 1),
+        "winning non-tip announce must hold at most one decoded stored metadata body per streaming pass"
+    );
+    assert_eq!(winning.best_meta(), winning_side_two);
+    assert_eq!(
+        winning.hash_by_height(1).expect("winning height one"),
+        Some(winning_side_one.hash)
+    );
+    assert_eq!(
+        winning.prepared_candidate_action_count(),
+        0,
+        "successful reorg publication must invalidate stale candidate artifacts"
+    );
+}
+
+#[test]
+fn multi_mib_sync_announce_uses_borrowed_import_without_owned_body_clone() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let mut announced = node.best_meta();
+    announced.height = 1;
+    announced.hash = [0x41; 32];
+    announced.work_hash = announced.hash;
+    announced.parent_hash = [0x42; 32];
+    announced.action_bytes = vec![
+        vec![0x5a; MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES],
+        vec![0xa5; MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES],
+    ];
+    let body_bytes = announced.action_bytes.iter().map(Vec::len).sum::<usize>();
+    assert!(body_bytes >= 4 * 1024 * 1024);
+
+    NATIVE_OWNED_ANNOUNCE_WRAPPER_ACTION_BYTES.store(0, Ordering::Relaxed);
+    assert_eq!(
+        import_native_sync_announce(&node, &announced).expect("borrowed announce import"),
+        NativeAnnouncedBlockImportOutcome::MissingParent
+    );
+    assert_eq!(
+        NATIVE_OWNED_ANNOUNCE_WRAPPER_ACTION_BYTES.load(Ordering::Relaxed),
+        0,
+        "the service announce adapter must not route a multi-MiB body through an owned wrapper"
+    );
+
+    assert_eq!(
+        node.import_announced_block_with_outcome(announced)
+            .expect("owned wrapper calibration"),
+        NativeAnnouncedBlockImportOutcome::MissingParent
+    );
+    assert_eq!(
+        NATIVE_OWNED_ANNOUNCE_WRAPPER_ACTION_BYTES.load(Ordering::Relaxed),
+        u64::try_from(body_bytes).expect("body bytes fit u64"),
+        "the test counter must detect the consuming wrapper used by the pre-fix service path"
+    );
+
+    let mut mismatched_known = node.best_meta();
+    mismatched_known.action_bytes = vec![vec![0x99]];
+    let err = import_native_sync_announce(&node, &mismatched_known)
+        .expect_err("known hash with mutated body must not become verified evidence");
+    assert!(
+        err.to_string()
+            .contains("known native block announce does not match stored metadata"),
+        "unexpected known-body mismatch error: {err}"
+    );
+}
+
+#[test]
+fn canonical_publication_paths_clear_prepared_candidate_actions() {
+    let pow_bits = 0x207f_ffff;
+    let cached = test_candidate_artifact_action(1, 112);
+
+    let mined_tmp = tempfile::tempdir().expect("mined tempdir");
+    let mined = NativeNode::open(test_config(mined_tmp.path(), pow_bits, "safe", false))
+        .expect("mined node");
+    let key = NativeNode::auto_candidate_cache_key(mined.best_meta().hash, &[]);
+    mined.cache_prepared_candidate_action(key, cached.clone());
+    mine_empty_native_block(&mined);
+    assert_eq!(mined.prepared_candidate_action_count(), 0);
+
+    let announced_tmp = tempfile::tempdir().expect("announced tempdir");
+    let announced = NativeNode::open(test_config(announced_tmp.path(), pow_bits, "safe", false))
+        .expect("announced node");
+    let announced_genesis = announced.best_meta();
+    let key = NativeNode::auto_candidate_cache_key(announced_genesis.hash, &[]);
+    announced.cache_prepared_candidate_action(key, cached.clone());
+    let announced_child =
+        mined_empty_child_for_chain(std::slice::from_ref(&announced_genesis), pow_bits, 700);
+    assert_eq!(
+        announced
+            .import_announced_block_with_outcome(announced_child)
+            .expect("announced tip extension"),
+        NativeAnnouncedBlockImportOutcome::CanonicalAdvanced
+    );
+    assert_eq!(announced.prepared_candidate_action_count(), 0);
+
+    let sync_tmp = tempfile::tempdir().expect("sync tempdir");
+    let sync =
+        NativeNode::open(test_config(sync_tmp.path(), pow_bits, "safe", false)).expect("sync node");
+    let sync_genesis = sync.best_meta();
+    let key = NativeNode::auto_candidate_cache_key(sync_genesis.hash, &[]);
+    sync.cache_prepared_candidate_action(key, cached);
+    let sync_child =
+        mined_empty_child_for_chain(std::slice::from_ref(&sync_genesis), pow_bits, 701);
+    let imported = {
+        let mut state = sync.state.write();
+        sync.commit_sync_tip_extension_batch_locked(&mut state, std::slice::from_ref(&sync_child))
+            .expect("sync tip batch publication")
+    };
+    assert_eq!(imported, 1);
+    assert_eq!(sync.best_meta(), sync_child);
+    assert_eq!(sync.prepared_candidate_action_count(), 0);
+}
+
+#[test]
+fn reorg_reopen_preserves_mmr_peaks_across_four_leaf_shape_boundary() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let config = test_config(tmp.path(), pow_bits, "safe", false);
+
+    let winning_chain = {
+        let node = NativeNode::open(config.clone()).expect("node");
+        let genesis = node.best_meta();
+        let canonical_one = mine_empty_native_block(&node);
+        let canonical_two = mine_empty_native_block(&node);
+        assert_eq!(
+            node.state.read().header_mmr_peaks.len(),
+            2,
+            "three canonical leaves must have two peaks before the reorg"
+        );
+
+        let side_one = (800..1024)
+            .map(|round| {
+                mined_empty_child_for_chain(std::slice::from_ref(&genesis), pow_bits, round)
+            })
+            .find(|candidate| candidate.hash != canonical_one.hash)
+            .expect("distinct side block at height one");
+        assert_eq!(
+            node.import_announced_block_with_outcome(side_one.clone())
+                .expect("store side one"),
+            NativeAnnouncedBlockImportOutcome::StoredNoncanonical
+        );
+        let mut side_chain = vec![genesis, side_one];
+        let side_two = (1024..2048)
+            .map(|round| mined_empty_child_for_chain(&side_chain, pow_bits, round))
+            .find(|candidate| !native_meta_better_than(candidate, &canonical_two))
+            .expect("nonwinning side block at height two");
+        assert_eq!(
+            node.import_announced_block_with_outcome(side_two.clone())
+                .expect("store side two"),
+            NativeAnnouncedBlockImportOutcome::StoredNoncanonical
+        );
+        side_chain.push(side_two);
+        let side_three = mined_empty_child_for_chain(&side_chain, pow_bits, 2048);
+        assert_eq!(
+            node.import_announced_block_with_outcome(side_three.clone())
+                .expect("winning side three"),
+            NativeAnnouncedBlockImportOutcome::CanonicalAdvanced
+        );
+        side_chain.push(side_three);
+
+        let expected_hashes = side_chain.iter().map(|meta| meta.hash).collect::<Vec<_>>();
+        assert_eq!(expected_hashes.len(), 4);
+        assert_eq!(
+            node.state.read().header_mmr_peaks,
+            header_mmr_peaks_from_hashes(&expected_hashes),
+            "3-to-4 leaf reorg must publish the exact one-peak MMR state"
+        );
+        assert_eq!(node.state.read().header_mmr_peaks.len(), 1);
+        node.db.flush().expect("flush winning reorg");
+        side_chain
+    };
+
+    let reopened = NativeNode::open(config).expect("reopen winning reorg");
+    let expected_hashes = winning_chain
+        .iter()
+        .map(|meta| meta.hash)
+        .collect::<Vec<_>>();
+    let expected_root = header_mmr_root_from_hashes(&expected_hashes);
+    let expected_len = u64::try_from(expected_hashes.len()).expect("MMR leaf count");
+    assert_eq!(
+        reopened.state.read().header_mmr_peaks,
+        header_mmr_peaks_from_hashes(&expected_hashes)
+    );
+    assert_eq!(reopened.state.read().header_mmr_peaks.len(), 1);
+
+    reopened.reset_block_meta_load_counters();
+    let work = reopened.prepare_work().expect("prepare after reorg reopen");
+    assert_eq!(work.header_mmr_root, expected_root);
+    assert_eq!(work.header_mmr_len, expected_len);
+    let oracle_header = native_pow_header_from_parts(
+        work.height,
+        work.timestamp_ms,
+        work.parent_hash,
+        work.pow_bits,
+        [0u8; 32],
+        work.cumulative_work,
+        &work.state_root,
+        &work.kernel_root,
+        &work.nullifier_root,
+        &work.extrinsics_root,
+        &work.message_root,
+        work.message_count,
+        &expected_root,
+        expected_len,
+        work.supply_digest,
+        work.tx_count,
+    );
+    assert_eq!(work.pre_hash, oracle_header.pre_hash());
+    assert_eq!(
+        reopened.block_meta_load_counters(),
+        (1, 0),
+        "post-reorg work must verify only the persisted parent while using cached peaks without reconstructing history"
+    );
+}
+
+#[test]
+fn canonical_reorg_prestores_only_unknown_suffix_and_reopens() {
+    const SHARED_PREFIX_BLOCKS: u64 = 32;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let config = test_config(tmp.path(), pow_bits, "safe", false);
+    let (expected_chain, old_canonical_hash) = {
+        let node = NativeNode::open(config.clone()).expect("node");
+        let mut shared_chain = vec![node.best_meta()];
+        for round in 1..=SHARED_PREFIX_BLOCKS {
+            let child = mined_empty_child_for_chain(&shared_chain, pow_bits, round);
+            assert_eq!(
+                node.import_announced_block_with_outcome(child.clone())
+                    .expect("import shared canonical block"),
+                NativeAnnouncedBlockImportOutcome::CanonicalAdvanced
+            );
+            shared_chain.push(child);
+        }
+
+        let old_canonical = mined_empty_child_for_chain(&shared_chain, pow_bits, 10_000);
+        assert_eq!(
+            node.import_announced_block_with_outcome(old_canonical.clone())
+                .expect("import old canonical suffix"),
+            NativeAnnouncedBlockImportOutcome::CanonicalAdvanced
+        );
+        let side_one = (10_001..11_000)
+            .map(|round| mined_empty_child_for_chain(&shared_chain, pow_bits, round))
+            .find(|candidate| !native_meta_better_than(candidate, &old_canonical))
+            .expect("nonwinning first replacement block");
+        let mut expected_chain = shared_chain;
+        let first_unstored_index = expected_chain.len();
+        expected_chain.push(side_one);
+        let side_two = mined_empty_child_for_chain(&expected_chain, pow_bits, 11_001);
+        assert!(native_meta_better_than(&side_two, &old_canonical));
+        expected_chain.push(side_two.clone());
+
+        let block_rows_before = node.block_tree.len();
+        let persistence = {
+            let mut state = node.state.write();
+            node.reorganize_chain_to_best_locked(
+                &mut state,
+                expected_chain.clone(),
+                first_unstored_index,
+            )
+            .expect("reorganize through unknown two-block suffix")
+        };
+        assert_eq!(
+            persistence,
+            NativeCanonicalReorgPersistence {
+                prestored_block_records: 2,
+                canonical_transaction_block_record_writes: 0,
+            }
+        );
+        assert_eq!(node.block_tree.len(), block_rows_before + 2);
+        assert_eq!(node.best_meta(), side_two);
+        assert_eq!(
+            node.header_by_hash(&old_canonical.hash)
+                .expect("old canonical row lookup"),
+            Some(old_canonical.clone()),
+            "content-addressed old canonical row must survive replacement"
+        );
+        node.db.flush().expect("flush reorg fixture");
+        (expected_chain, old_canonical.hash)
+    };
+
+    let reopened = NativeNode::open(config).expect("reopen reorganized node");
+    assert_eq!(reopened.best_meta(), *expected_chain.last().expect("tip"));
+    assert_eq!(
+        reopened
+            .chain_to_hash(reopened.best_meta().hash)
+            .expect("reload replacement chain"),
+        expected_chain
+    );
+    assert!(reopened
+        .header_by_hash(&old_canonical_hash)
+        .expect("reopen old canonical row")
+        .is_some());
+}
+
+#[test]
+fn canonical_reorg_prestore_crash_window_is_noncanonical_and_retryable() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let config = test_config(tmp.path(), pow_bits, "safe", false);
+    let (old_canonical, side_tip) = {
+        let node = NativeNode::open(config.clone()).expect("node");
+        let genesis = node.best_meta();
+        let old_canonical =
+            mined_empty_child_for_chain(std::slice::from_ref(&genesis), pow_bits, 20_000);
+        assert_eq!(
+            node.import_announced_block_with_outcome(old_canonical.clone())
+                .expect("import old canonical block"),
+            NativeAnnouncedBlockImportOutcome::CanonicalAdvanced
+        );
+        let side_one = (20_001..21_000)
+            .map(|round| {
+                mined_empty_child_for_chain(std::slice::from_ref(&genesis), pow_bits, round)
+            })
+            .find(|candidate| !native_meta_better_than(candidate, &old_canonical))
+            .expect("nonwinning replacement parent");
+        let side_chain = vec![genesis, side_one.clone()];
+        let side_two = mined_empty_child_for_chain(&side_chain, pow_bits, 21_001);
+        assert!(native_meta_better_than(&side_two, &old_canonical));
+        assert_eq!(
+            node.persist_validated_noncanonical_block_record_batch(
+                &[side_one, side_two.clone()],
+                "test reorg candidate manifest",
+                "test reorg candidate crash window",
+            )
+            .expect("prestore replacement rows"),
+            2
+        );
+        node.db.flush().expect("flush prestored replacement rows");
+        (old_canonical, side_two)
+    };
+
+    {
+        let reopened = NativeNode::open(config.clone()).expect("reopen after prestorage");
+        assert_eq!(
+            reopened.best_meta(),
+            old_canonical,
+            "a crash after content-addressed prestorage must not publish a new canonical tip"
+        );
+        assert_eq!(
+            reopened.hash_by_height(1).expect("old canonical height"),
+            Some(old_canonical.hash)
+        );
+        let block_rows_before_retry = reopened.block_tree.len();
+        assert_eq!(
+            reopened
+                .import_announced_block_with_outcome_ref(&side_tip)
+                .expect("retry known winning announce from durable candidate rows"),
+            NativeAnnouncedBlockImportOutcome::CanonicalAdvanced
+        );
+        assert_eq!(reopened.block_tree.len(), block_rows_before_retry);
+        reopened.db.flush().expect("flush retried reorg");
+    }
+
+    let reopened = NativeNode::open(config).expect("reopen retried reorg");
+    assert_eq!(reopened.best_meta(), side_tip);
+}
+
+#[test]
+fn canonical_reorg_chain_admission_rejects_durable_record_and_height_drift() {
     let pow_bits = 0x207f_ffff;
     let genesis = genesis_meta(pow_bits).expect("genesis");
     let child = mined_empty_child(&genesis, 1, pow_bits, 11);
     let chain = vec![genesis.clone(), child.clone()];
-    let block_entries = chain
-        .iter()
-        .map(|meta| {
-            (
-                meta.hash,
-                bincode::serialize(meta).expect("serialize block"),
-            )
-        })
-        .collect::<Vec<_>>();
     let height_entries = chain
         .iter()
         .map(|meta| (meta.height, meta.hash))
         .collect::<Vec<_>>();
     let valid_input = native_canonical_reorg_chain_admission_input(
         &chain,
-        &block_entries,
+        chain.len(),
+        true,
         &height_entries,
         Some(&child),
         pow_bits,
@@ -3225,7 +3908,8 @@ fn canonical_reorg_chain_admission_rejects_write_set_drift() {
     bad_height_entries[1].1 = genesis.hash;
     let input = native_canonical_reorg_chain_admission_input(
         &chain,
-        &block_entries,
+        chain.len(),
+        true,
         &bad_height_entries,
         Some(&child),
         pow_bits,
@@ -3236,11 +3920,10 @@ fn canonical_reorg_chain_admission_rejects_write_set_drift() {
         Some(NativeCanonicalReorgChainAdmissionRejection::HeightEntryMismatch)
     );
 
-    let mut bad_block_entries = block_entries.clone();
-    bad_block_entries[1].0 = genesis.hash;
     let input = native_canonical_reorg_chain_admission_input(
         &chain,
-        &bad_block_entries,
+        chain.len(),
+        false,
         &height_entries,
         Some(&child),
         pow_bits,
@@ -3253,7 +3936,8 @@ fn canonical_reorg_chain_admission_rejects_write_set_drift() {
 
     let input = native_canonical_reorg_chain_admission_input(
         &chain,
-        &block_entries,
+        chain.len(),
+        true,
         &height_entries,
         Some(&genesis),
         pow_bits,
@@ -3390,6 +4074,7 @@ fn sync_response_skips_unknown_nonwinning_backfill_without_replay() {
         vec![stale_side.clone()],
         canonical.height,
         NativeSyncResponseImportProgress::new(1),
+        false,
     );
 
     assert!(
@@ -3410,6 +4095,1156 @@ fn sync_response_skips_unknown_nonwinning_backfill_without_replay() {
             .is_none(),
         "sync backfill must not replay or persist unknown nonwinning side branches"
     );
+}
+
+#[test]
+fn sync_response_missing_fork_parent_stops_suffix_then_recovers() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let test_pow_bits = 0x207f_ffff;
+    let node =
+        NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false)).expect("node");
+
+    let local_work = node.prepare_work().expect("prepare local fork work");
+    let local_seal = strongest_test_seal(&local_work, 0..512);
+    let local_tip = node
+        .import_mined_block(&local_work, local_seal)
+        .expect("import local fork block")
+        .expect("local fork block");
+
+    let peer_tmp = tempfile::tempdir().expect("peer tempdir");
+    let peer_node = NativeNode::open(test_config(peer_tmp.path(), test_pow_bits, "unsafe", false))
+        .expect("peer node");
+    let mut peer_blocks = Vec::new();
+    for round in 1..=65 {
+        let work = peer_node.prepare_work().expect("prepare peer fork work");
+        let seal = mine_native_round(work.clone(), round)
+            .expect("peer fork work must seal within one deterministic round");
+        peer_blocks.push(
+            peer_node
+                .import_mined_block(&work, seal)
+                .expect("import peer fork block")
+                .expect("peer fork block"),
+        );
+    }
+    assert_ne!(local_tip.hash, peer_blocks[0].hash);
+
+    // This is the shape observed live: the local and peer chains diverge at
+    // local-best height, while the 64-block response begins one height later.
+    let missing_parent_response = peer_blocks[1..65].to_vec();
+    node.reset_block_meta_load_counters();
+    let report = import_native_sync_response_blocks(
+        &node,
+        missing_parent_response,
+        peer_blocks.last().expect("peer tip").height,
+        NativeSyncResponseImportProgress::new(64),
+        false,
+    );
+
+    assert!(report.failure.is_none());
+    assert_eq!(report.progress.attempted_blocks, 1);
+    assert_eq!(report.progress.imported_blocks, 0);
+    assert!(report.progress.stopped_on_missing_parent);
+    assert_eq!(node.best_meta().hash, local_tip.hash);
+    let (block_meta_loads, chain_reconstructions) = node.block_meta_load_counters();
+    assert_eq!(chain_reconstructions, 0);
+    assert!(
+        block_meta_loads <= 4,
+        "missing-parent classification must stop before decoding the rest of the response: {block_meta_loads} loads"
+    );
+    assert!(
+        node.header_by_hash(&peer_blocks[1].hash)
+            .expect("missing child lookup")
+            .is_none(),
+        "a suffix whose fork parent is absent must not be persisted"
+    );
+
+    let recovery = import_native_sync_response_blocks(
+        &node,
+        peer_blocks.clone(),
+        peer_blocks.last().expect("peer tip").height,
+        NativeSyncResponseImportProgress::new(peer_blocks.len()),
+        true,
+    );
+    assert!(
+        recovery.failure.is_none(),
+        "recovery import failed: {:?}",
+        recovery.failure.as_ref().map(|failure| &failure.error)
+    );
+    assert_eq!(node.best_meta().hash, peer_blocks.last().unwrap().hash);
+    assert_eq!(node.best_meta().height, 65);
+}
+
+#[test]
+fn tip_extension_multi_batch_error_reports_current_batch_boundary() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let node = NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+    let mut peer_chain = vec![node.best_meta()];
+    for round in 1..=65 {
+        let child = mined_empty_child_for_chain(&peer_chain, pow_bits, 10_000 + round);
+        peer_chain.push(child);
+    }
+    let mut response = peer_chain[1..].to_vec();
+    response[40].state_root[0] ^= 1;
+
+    let report = import_native_sync_response_blocks(
+        &node,
+        response.clone(),
+        65,
+        NativeSyncResponseImportProgress::new(response.len()),
+        false,
+    );
+
+    assert!(report.failure.is_some());
+    assert!(report.progress.stopped_on_error);
+    assert_eq!(
+        report.progress.attempted_blocks,
+        2 * MAX_NATIVE_SYNC_IMPORT_BATCH_BLOCKS,
+        "an error in batch two must not claim the unvisited third-batch row"
+    );
+    assert_eq!(
+        report.progress.imported_blocks,
+        MAX_NATIVE_SYNC_IMPORT_BATCH_BLOCKS as u64
+    );
+    assert_eq!(
+        node.best_height(),
+        MAX_NATIVE_SYNC_IMPORT_BATCH_BLOCKS as u64
+    );
+    assert_eq!(
+        node.header_by_hash(&peer_chain[MAX_NATIVE_SYNC_IMPORT_BATCH_BLOCKS + 1].hash)
+            .expect("failed batch first-row lookup"),
+        None,
+        "the failing atomic batch must persist no prefix"
+    );
+    assert_eq!(
+        node.header_by_hash(&peer_chain.last().expect("peer tip").hash)
+            .expect("unvisited final-row lookup"),
+        None,
+        "the row after the failing batch must remain unvisited"
+    );
+}
+
+#[test]
+fn all_known_disconnected_winning_suffix_backfills_then_reorgs() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let test_pow_bits = 0x207f_ffff;
+    let node =
+        NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false)).expect("node");
+    let genesis = node.best_meta();
+
+    let canonical_work = node.prepare_work().expect("prepare canonical work");
+    let canonical_seal = strongest_test_seal(&canonical_work, 0..512);
+    let canonical = node
+        .import_mined_block(&canonical_work, canonical_seal)
+        .expect("import canonical block")
+        .expect("canonical block");
+
+    let side_one = (1..128)
+        .map(|round| {
+            mined_empty_child_for_chain(std::slice::from_ref(&genesis), test_pow_bits, round)
+        })
+        .find(|candidate| !native_meta_better_than(candidate, &canonical))
+        .expect("nonwinning side parent");
+    let side_two =
+        mined_empty_child_for_chain(&[genesis.clone(), side_one.clone()], test_pow_bits, 129);
+    assert!(native_meta_better_than(&side_two, &canonical));
+    node.persist_noncanonical_block_record(&side_two)
+        .expect("persist disconnected known suffix");
+    assert!(node
+        .header_by_hash(&side_one.hash)
+        .expect("side parent lookup")
+        .is_none());
+
+    let suffix_range = NativeSyncRange {
+        from_height: side_two.height,
+        to_height: side_two.height,
+    };
+    let disconnected = import_native_sync_response_blocks(
+        &node,
+        vec![side_two.clone()],
+        side_two.height,
+        NativeSyncResponseImportProgress::new(1),
+        true,
+    );
+    assert!(disconnected.failure.is_none());
+    assert_eq!(disconnected.progress.attempted_blocks, 1);
+    assert!(disconnected.progress.stopped_on_missing_parent);
+    assert!(!disconnected.progress.stopped_on_error);
+    assert!(native_sync_response_should_escalate_reorg_backfill(
+        disconnected.progress,
+        canonical.height,
+        side_two.height,
+    ));
+    assert_eq!(node.best_meta().hash, canonical.hash);
+
+    let preceding_range = native_sync_recovery_request_range(
+        suffix_range,
+        Some(suffix_range),
+        None,
+        side_two.height,
+        NATIVE_SYNC_REQUEST_BLOCKS,
+        disconnected.progress.stopped_on_missing_parent,
+    )
+    .expect("missing ancestry must move recovery to a preceding range");
+    assert_ne!(preceding_range, suffix_range);
+    assert_eq!(preceding_range.from_height, genesis.height);
+    assert_eq!(preceding_range.to_height, side_one.height);
+
+    let straddled_parent = vec![genesis.clone(), side_one.clone()];
+    let parent_report = import_native_sync_response_blocks(
+        &node,
+        straddled_parent.clone(),
+        side_two.height,
+        NativeSyncResponseImportProgress::new(straddled_parent.len()),
+        true,
+    );
+    assert!(parent_report.failure.is_none());
+    assert_eq!(parent_report.progress.stored_noncanonical_blocks, 1);
+    assert!(!parent_report.progress.stopped_on_missing_parent);
+    assert!(!parent_report.progress.stopped_on_error);
+    assert_eq!(node.best_meta().hash, canonical.hash);
+
+    let forward_range = native_sync_recovery_request_range(
+        preceding_range,
+        Some(preceding_range),
+        None,
+        side_two.height,
+        NATIVE_SYNC_REQUEST_BLOCKS,
+        parent_report.progress.stopped_on_missing_parent,
+    )
+    .expect("straddled parent page must resume toward the known suffix");
+    assert_eq!(forward_range, suffix_range);
+    let adopted = import_native_sync_response_blocks(
+        &node,
+        vec![side_two.clone()],
+        side_two.height,
+        NativeSyncResponseImportProgress::new(1),
+        true,
+    );
+    assert!(
+        adopted.failure.is_none(),
+        "recovered all-known suffix failed: {:?}",
+        adopted.failure.as_ref().map(|failure| &failure.error)
+    );
+    assert_eq!(adopted.progress.imported_blocks, 1);
+    assert_eq!(node.best_meta().hash, side_two.hash);
+    assert_eq!(
+        node.hash_by_height(side_one.height).unwrap(),
+        Some(side_one.hash)
+    );
+    assert_eq!(
+        node.hash_by_height(side_two.height).unwrap(),
+        Some(side_two.hash)
+    );
+}
+
+#[test]
+fn mixed_known_missing_known_winning_response_persists_connector_and_advances_once() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let test_pow_bits = 0x207f_ffff;
+    let config = test_config(tmp.path(), test_pow_bits, "unsafe", false);
+    let node = NativeNode::open(config.clone()).expect("node");
+    let genesis = node.best_meta();
+
+    let canonical_work = node.prepare_work().expect("prepare canonical work");
+    let canonical_seal = strongest_test_seal(&canonical_work, 0..512);
+    let canonical = node
+        .import_mined_block(&canonical_work, canonical_seal)
+        .expect("import canonical block")
+        .expect("canonical block");
+    let side_one = (1..128)
+        .map(|round| {
+            mined_empty_child_for_chain(std::slice::from_ref(&genesis), test_pow_bits, round)
+        })
+        .find(|candidate| !native_meta_better_than(candidate, &canonical))
+        .expect("nonwinning missing connector");
+    let side_two =
+        mined_empty_child_for_chain(&[genesis.clone(), side_one.clone()], test_pow_bits, 129);
+    assert!(native_meta_better_than(&side_two, &canonical));
+    node.persist_noncanonical_block_record(&side_two)
+        .expect("persist known winning descendant");
+    assert!(node
+        .header_by_hash(&side_one.hash)
+        .expect("connector lookup before import")
+        .is_none());
+
+    let block_rows_before = node.block_tree.len();
+    node.reset_block_meta_load_counters();
+    node.reset_streaming_replay_stored_meta_counters();
+    let blocks = vec![genesis.clone(), side_one.clone(), side_two.clone()];
+    let report = import_native_sync_response_blocks(
+        &node,
+        blocks.clone(),
+        side_two.height,
+        NativeSyncResponseImportProgress::new(blocks.len()),
+        true,
+    );
+
+    assert!(
+        report.failure.is_none(),
+        "mixed winning response failed: {:?}",
+        report.failure.as_ref().map(|failure| &failure.error)
+    );
+    assert_eq!(report.progress.attempted_blocks, 3);
+    assert_eq!(report.progress.imported_blocks, 1);
+    assert_eq!(report.progress.stored_noncanonical_blocks, 0);
+    assert!(!report.progress.stopped_on_missing_parent);
+    assert!(!report.progress.stopped_on_error);
+    assert!(!native_sync_response_should_escalate_reorg_backfill(
+        report.progress,
+        side_two.height,
+        side_two.height,
+    ));
+    assert!(!report
+        .progress
+        .should_request_more(side_two.height, side_two.height));
+    assert_eq!(node.block_tree.len(), block_rows_before + 1);
+    assert_eq!(node.best_meta(), side_two);
+    assert_eq!(node.hash_by_height(1).unwrap(), Some(side_one.hash));
+    assert_eq!(node.hash_by_height(2).unwrap(), Some(side_two.hash));
+    assert_eq!(
+        node.block_meta_load_counters().1,
+        0,
+        "mixed winning recovery must not reconstruct a full metadata chain"
+    );
+    assert_eq!(
+        node.streaming_replay_stored_meta_counters(),
+        (0, 1),
+        "mixed winning recovery must retain at most one decoded stored body"
+    );
+
+    node.db.flush().expect("flush mixed winning recovery");
+    drop(node);
+    let reopened = NativeNode::open(config).expect("reopen mixed winning recovery");
+    assert_eq!(reopened.best_meta(), side_two);
+    assert_eq!(reopened.hash_by_height(1).unwrap(), Some(side_one.hash));
+    assert_eq!(reopened.hash_by_height(2).unwrap(), Some(side_two.hash));
+}
+
+#[test]
+fn mixed_known_missing_mismatched_known_descendant_is_terminal_without_writes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let test_pow_bits = 0x207f_ffff;
+    let node =
+        NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false)).expect("node");
+    let genesis = node.best_meta();
+    let canonical_work = node.prepare_work().expect("prepare canonical work");
+    let canonical_seal = strongest_test_seal(&canonical_work, 0..512);
+    let canonical = node
+        .import_mined_block(&canonical_work, canonical_seal)
+        .expect("import canonical block")
+        .expect("canonical block");
+    let side_one = (1..128)
+        .map(|round| {
+            mined_empty_child_for_chain(std::slice::from_ref(&genesis), test_pow_bits, round)
+        })
+        .find(|candidate| !native_meta_better_than(candidate, &canonical))
+        .expect("nonwinning missing connector");
+    let side_two =
+        mined_empty_child_for_chain(&[genesis.clone(), side_one.clone()], test_pow_bits, 129);
+    assert!(native_meta_better_than(&side_two, &canonical));
+    node.persist_noncanonical_block_record(&side_two)
+        .expect("persist exact known descendant");
+    let block_rows_before = node.block_tree.len();
+
+    let mut mismatched_side_two = side_two.clone();
+    mismatched_side_two.timestamp_ms = mismatched_side_two.timestamp_ms.saturating_add(1);
+    let blocks = vec![genesis, side_one.clone(), mismatched_side_two];
+    let report = import_native_sync_response_blocks(
+        &node,
+        blocks.clone(),
+        side_two.height,
+        NativeSyncResponseImportProgress::new(blocks.len()),
+        true,
+    );
+
+    let failure = report
+        .failure
+        .expect("mismatched known descendant must be terminal");
+    assert!(failure.error.contains("does not match supplied metadata"));
+    assert_eq!(report.progress.attempted_blocks, 3);
+    assert_eq!(report.progress.imported_blocks, 0);
+    assert_eq!(report.progress.stored_noncanonical_blocks, 0);
+    assert!(report.progress.stopped_on_error);
+    assert!(!report.progress.stopped_on_missing_parent);
+    assert_eq!(node.block_tree.len(), block_rows_before);
+    assert!(node
+        .header_by_hash(&side_one.hash)
+        .expect("connector lookup after rejected response")
+        .is_none());
+    assert_eq!(node.best_meta(), canonical);
+}
+
+#[test]
+fn all_known_winning_sync_corrupt_parent_cycle_is_terminal() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let mut corrupt_known_tip = node.best_meta();
+    corrupt_known_tip.height = 1;
+    corrupt_known_tip.hash = [0x92; 32];
+    corrupt_known_tip.work_hash = corrupt_known_tip.hash;
+    corrupt_known_tip.parent_hash = corrupt_known_tip.hash;
+    corrupt_known_tip.cumulative_work = [0xff; 48];
+    node.persist_noncanonical_block_record(&corrupt_known_tip)
+        .expect("persist deliberately cyclic known tip");
+
+    let report = import_native_sync_response_blocks(
+        &node,
+        vec![corrupt_known_tip.clone()],
+        corrupt_known_tip.height,
+        NativeSyncResponseImportProgress::new(1),
+        true,
+    );
+
+    let failure = report
+        .failure
+        .expect("corrupt all-known winning branch must fail reconstruction");
+    assert_eq!(failure.height, corrupt_known_tip.height);
+    assert_eq!(failure.hash, corrupt_known_tip.hash);
+    assert!(failure.error.contains("parent cycle"));
+    assert_eq!(report.progress.attempted_blocks, 1);
+    assert!(report.progress.stopped_on_error);
+    assert!(!report.progress.stopped_on_missing_parent);
+    assert!(!native_sync_response_should_escalate_reorg_backfill(
+        report.progress,
+        node.best_meta().height,
+        corrupt_known_tip.height,
+    ));
+}
+
+#[test]
+fn equal_height_recovery_pages_store_connected_batch_then_adopt_target() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let test_pow_bits = 0x207f_ffff;
+    let mut config = test_config(tmp.path(), test_pow_bits, "unsafe", false);
+    config.seeds.push("127.0.0.1:30333".to_owned());
+    let node = NativeNode::open(config).expect("node");
+    let fork_height = 8u64;
+    let miner_identity = test_miner_identity();
+    let mine_from = |work: &NativeWork, start: u64| {
+        (start..start.saturating_add(1_024))
+            .find_map(|round| mine_native_round(work.clone(), round))
+            .expect("easy test work must seal within the deterministic search window")
+    };
+
+    let mut local_chain = vec![node.best_meta()];
+    let mut peer_chain = vec![node.best_meta()];
+    for height in 1..=fork_height {
+        let local_work = empty_child_work_for_chain(&local_chain, test_pow_bits);
+        let local_round_start = height.saturating_mul(32);
+        let local_seal = mine_from(&local_work, local_round_start);
+        local_chain.push(signed_empty_child_meta_from_work(
+            &local_work,
+            local_seal,
+            &miner_identity,
+        ));
+
+        let peer_work = empty_child_work_for_chain(&peer_chain, test_pow_bits);
+        let peer_round_start = height.saturating_mul(32).saturating_add(100_000);
+        let peer_seal = mine_from(&peer_work, peer_round_start);
+        peer_chain.push(signed_empty_child_meta_from_work(
+            &peer_work,
+            peer_seal,
+            &miner_identity,
+        ));
+    }
+
+    let (canonical_chain, peer_chain) = if native_meta_better_than(
+        peer_chain.last().expect("peer candidate tip"),
+        local_chain.last().expect("local candidate tip"),
+    ) {
+        (local_chain, peer_chain)
+    } else {
+        (peer_chain, local_chain)
+    };
+    for meta in canonical_chain.iter().skip(1) {
+        persist_block(&node.meta_tree, &node.height_tree, &node.block_tree, meta)
+            .expect("persist canonical test block");
+    }
+    publish_test_canonical_chain(&node, &canonical_chain);
+    let local_tip = node.best_meta();
+    let peer_tip = peer_chain.last().expect("selected peer tip").clone();
+    assert_eq!(local_tip.height, fork_height);
+    assert_eq!(peer_tip.height, fork_height);
+    assert!(native_meta_better_than(&peer_tip, &local_tip));
+    assert_eq!(peer_chain[0].hash, node.hash_by_height(0).unwrap().unwrap());
+    let peer = [0x67; 32];
+    node.observe_pending_sync_peer_tip(Some(peer), peer_tip.height, Some(peer_tip.hash));
+    assert!(!node.mining_sync_gate_allows_work());
+
+    let response_for = |range: NativeSyncRange| {
+        peer_chain[usize::try_from(range.from_height).expect("range start")
+            ..=usize::try_from(range.to_height).expect("range end")]
+            .to_vec()
+    };
+    let initial_range = native_sync_observed_tip_request_range(
+        local_tip.height,
+        local_tip.hash,
+        peer_tip.height,
+        Some(peer_tip.hash),
+        native_sync_request_max_blocks(NATIVE_SYNC_REORG_BACKFILL_BLOCKS),
+        NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+    )
+    .expect("equal-height fork request");
+    let initial = response_for(initial_range);
+    let initial_report = import_native_sync_response_blocks(
+        &node,
+        initial.clone(),
+        peer_tip.height,
+        NativeSyncResponseImportProgress::new(initial.len()),
+        false,
+    );
+    assert!(initial_report.failure.is_none());
+    assert!(initial_report.progress.stopped_on_missing_parent);
+    assert_eq!(node.best_meta(), local_tip);
+
+    let preceding_range = NativeSyncRange {
+        from_height: 0,
+        to_height: 4,
+    };
+    assert_eq!(preceding_range.from_height, 0);
+    let preceding = response_for(preceding_range);
+    let preceding_report = import_native_sync_response_blocks(
+        &node,
+        preceding.clone(),
+        peer_tip.height,
+        NativeSyncResponseImportProgress::new(preceding.len()),
+        true,
+    );
+    assert!(preceding_report.failure.is_none());
+    assert_eq!(preceding_report.progress.imported_blocks, 0);
+    assert_eq!(
+        preceding_report.progress.stored_noncanonical_blocks,
+        preceding_range.to_height
+    );
+    assert_eq!(node.best_meta(), local_tip);
+    for meta in preceding.iter().skip(1) {
+        assert_eq!(node.header_by_hash(&meta.hash).unwrap(), Some(meta.clone()));
+    }
+
+    let forward_range = native_sync_follow_response_request_range(
+        preceding_range,
+        peer_tip.height,
+        NATIVE_SYNC_REQUEST_BLOCKS,
+    )
+    .expect("forward recovery page");
+    assert_eq!(forward_range.from_height, preceding_range.to_height + 1);
+    assert_eq!(forward_range.to_height, peer_tip.height);
+    let forward = response_for(forward_range);
+    let forward_report = import_native_sync_response_blocks(
+        &node,
+        forward.clone(),
+        peer_tip.height,
+        NativeSyncResponseImportProgress::new(forward.len()),
+        true,
+    );
+    assert!(
+        forward_report.failure.is_none(),
+        "equal-height recovery reorg failed: {:?}",
+        forward_report
+            .failure
+            .as_ref()
+            .map(|failure| &failure.error)
+    );
+    assert_eq!(
+        forward_report.progress.imported_blocks,
+        forward.len() as u64
+    );
+    assert_eq!(node.best_meta(), peer_tip);
+    assert!(
+        !node.mining_sync_gate_allows_work(),
+        "direct block import must not authenticate the response envelope or clear an unverified target"
+    );
+    node.observe_verified_sync_peer_tip(Some(peer), peer_tip.height, Some(peer_tip.hash));
+    node.refresh_mining_sync_gate();
+    assert!(node.mining_sync_gate_allows_work());
+    assert_eq!(node.sync_status_fields(), (false, peer_tip.height));
+    for meta in &peer_chain {
+        assert_eq!(
+            node.hash_by_height(meta.height).expect("canonical height"),
+            Some(meta.hash)
+        );
+    }
+}
+
+#[test]
+fn sync_nonwinning_branch_batch_avoids_per_block_reconstruction_and_advances() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let test_pow_bits = 0x207f_ffff;
+    let node =
+        NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false)).expect("node");
+    for round in 1..=5 {
+        let work = node.prepare_work().expect("prepare local canonical work");
+        let seal = mine_native_round(work.clone(), round)
+            .expect("local canonical work must seal within one deterministic round");
+        node.import_mined_block(&work, seal)
+            .expect("import local canonical block")
+            .expect("local canonical block");
+    }
+    let local_tip = node.best_meta();
+
+    let peer_tmp = tempfile::tempdir().expect("peer tempdir");
+    let peer_node = NativeNode::open(test_config(peer_tmp.path(), test_pow_bits, "unsafe", false))
+        .expect("peer node");
+    let mut peer_blocks = Vec::new();
+    for round in 11..=18 {
+        let work = peer_node.prepare_work().expect("prepare peer branch work");
+        let seal = mine_native_round(work.clone(), round)
+            .expect("peer branch work must seal within one deterministic round");
+        peer_blocks.push(
+            peer_node
+                .import_mined_block(&work, seal)
+                .expect("import peer branch block")
+                .expect("peer branch block"),
+        );
+    }
+    let peer_tip = peer_blocks.last().expect("peer tip").clone();
+    assert!(!native_meta_better_than(&peer_blocks[3], &local_tip));
+    assert!(native_meta_better_than(&peer_tip, &local_tip));
+
+    node.reset_block_meta_load_counters();
+    let prefix = peer_blocks[..4].to_vec();
+    let prefix_report = import_native_sync_response_blocks(
+        &node,
+        prefix.clone(),
+        peer_tip.height,
+        NativeSyncResponseImportProgress::new(prefix.len()),
+        false,
+    );
+    assert!(prefix_report.failure.is_none());
+    assert_eq!(prefix_report.progress.imported_blocks, 0);
+    assert_eq!(prefix_report.progress.stored_noncanonical_blocks, 4);
+    assert_eq!(node.best_meta().hash, local_tip.hash);
+    assert_eq!(
+        node.block_meta_load_counters().1,
+        0,
+        "a connected losing side-branch page must stream compact ancestry without reconstructing a full metadata chain"
+    );
+    for meta in &prefix {
+        assert_eq!(
+            node.header_by_hash(&meta.hash)
+                .expect("stored side-branch lookup"),
+            Some(meta.clone())
+        );
+    }
+
+    node.reset_block_meta_load_counters();
+    let suffix = peer_blocks[4..].to_vec();
+    let suffix_report = import_native_sync_response_blocks(
+        &node,
+        suffix.clone(),
+        peer_tip.height,
+        NativeSyncResponseImportProgress::new(suffix.len()),
+        false,
+    );
+    assert!(
+        suffix_report.failure.is_none(),
+        "winning suffix failed: {:?}",
+        suffix_report.failure.as_ref().map(|failure| &failure.error)
+    );
+    assert_eq!(node.best_meta().hash, peer_tip.hash);
+    assert_eq!(node.best_meta().height, peer_tip.height);
+    assert!(
+        node.block_meta_load_counters().1 <= 1,
+        "winning suffix must not reconstruct ancestry once per response block"
+    );
+}
+
+#[test]
+fn nonwinning_sync_streams_deep_large_action_ancestry_before_suffix_persistence() {
+    const STORED_SIDE_DEPTH: u64 = 10;
+    const LOCAL_CANONICAL_HEIGHT: u64 = STORED_SIDE_DEPTH + 3;
+    const ACTIONS_PER_BLOCK: u64 = 4;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let config = test_config(tmp.path(), pow_bits, "safe", false);
+    let node = NativeNode::open(config.clone()).expect("node");
+    let genesis = node.best_meta();
+    for _ in 0..LOCAL_CANONICAL_HEIGHT {
+        mine_empty_native_block(&node);
+    }
+    let canonical_tip = node.best_meta();
+
+    let mut side_chain = vec![genesis];
+    for height in 1..=(STORED_SIDE_DEPTH + 2) {
+        let actions = (0..ACTIONS_PER_BLOCK)
+            .map(|action_index| {
+                let discriminator = (height << 32) | action_index;
+                let mut payload = vec![height as u8; MAX_NATIVE_BRIDGE_MESSAGE_PAYLOAD_BYTES];
+                payload[..8].copy_from_slice(&discriminator.to_le_bytes());
+                test_outbound_bridge_action(&payload)
+            })
+            .collect::<Vec<_>>();
+        let child =
+            mined_child_with_actions_for_chain(&side_chain, pow_bits, 50_000 + height, actions);
+        side_chain.push(child);
+    }
+    let stored_page = side_chain[1..=STORED_SIDE_DEPTH as usize].to_vec();
+    let stored_action_bytes = stored_page
+        .iter()
+        .flat_map(|meta| meta.action_bytes.iter())
+        .map(Vec::len)
+        .sum::<usize>();
+    assert!(
+        stored_action_bytes > 2 * 1024 * 1024,
+        "fixture must retain multiple MiB of valid stored ancestry"
+    );
+    assert_eq!(
+        node.validate_and_persist_noncanonical_sync_batch(
+            side_chain[0].hash,
+            stored_page.as_slice(),
+        )
+        .expect("persist initial losing side page"),
+        usize::try_from(STORED_SIDE_DEPTH).expect("stored side depth")
+    );
+    assert_eq!(node.best_meta(), canonical_tip);
+
+    let suffix = side_chain[(STORED_SIDE_DEPTH as usize + 1)..].to_vec();
+    assert_eq!(suffix.len(), 2);
+    assert!(!native_meta_better_than(
+        suffix.last().expect("suffix tip"),
+        &canonical_tip
+    ));
+    let block_rows_before = node.block_tree.len();
+    node.reset_block_meta_load_counters();
+    node.reset_streaming_replay_stored_meta_counters();
+    assert_eq!(
+        node.validate_and_persist_noncanonical_sync_batch(
+            stored_page.last().expect("stored side anchor").hash,
+            suffix.as_slice(),
+        )
+        .expect("stream and persist losing suffix"),
+        2
+    );
+    assert_eq!(node.block_tree.len(), block_rows_before + 2);
+    assert_eq!(
+        node.block_meta_load_counters().1,
+        0,
+        "losing suffix validation must not reconstruct a Vec<NativeBlockMeta> ancestry"
+    );
+    assert_eq!(
+        node.streaming_replay_stored_meta_counters(),
+        (0, 1),
+        "streaming replay must release each decoded stored body before loading the next"
+    );
+    assert_eq!(node.best_meta(), canonical_tip);
+    node.db.flush().expect("flush streamed losing suffix");
+    drop(node);
+
+    let reopened = NativeNode::open(config).expect("reopen after streamed losing suffix");
+    assert_eq!(reopened.best_meta(), canonical_tip);
+    for expected in suffix {
+        assert_eq!(
+            reopened
+                .header_by_hash(&expected.hash)
+                .expect("reopen streamed suffix row"),
+            Some(expected)
+        );
+    }
+}
+
+#[test]
+fn all_known_deep_large_action_winning_sync_streams_stored_reorg_and_reopens() {
+    const SIDE_DEPTH: u64 = 12;
+    const ACTIONS_PER_BLOCK: u64 = 4;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let config = test_config(tmp.path(), pow_bits, "safe", false);
+    let node = NativeNode::open(config.clone()).expect("node");
+    let genesis = node.best_meta();
+    for _ in 0..4 {
+        mine_empty_native_block(&node);
+    }
+    let old_canonical_tip = node.best_meta();
+
+    let mut side_chain = vec![genesis.clone()];
+    for height in 1..=SIDE_DEPTH {
+        let actions = (0..ACTIONS_PER_BLOCK)
+            .map(|action_index| {
+                let discriminator = (height << 32) | action_index;
+                let mut payload = vec![height as u8; MAX_NATIVE_BRIDGE_MESSAGE_PAYLOAD_BYTES];
+                payload[..8].copy_from_slice(&discriminator.to_le_bytes());
+                test_outbound_bridge_action(&payload)
+            })
+            .collect::<Vec<_>>();
+        let child =
+            mined_child_with_actions_for_chain(&side_chain, pow_bits, 70_000 + height, actions);
+        side_chain.push(child);
+    }
+    let side_tip = side_chain.last().expect("side tip").clone();
+    assert!(native_meta_better_than(&side_tip, &old_canonical_tip));
+    let side_action_bytes = side_chain
+        .iter()
+        .skip(1)
+        .flat_map(|meta| meta.action_bytes.iter())
+        .map(Vec::len)
+        .sum::<usize>();
+    assert!(
+        side_action_bytes > 3 * 1024 * 1024,
+        "fixture must retain multiple MiB of valid winning ancestry bodies"
+    );
+
+    let oracle_state = node
+        .replay_chain_state(&side_chain)
+        .expect("legacy explicit-chain replay oracle");
+    assert_eq!(oracle_state.best, side_tip);
+    assert_eq!(
+        node.validate_and_persist_noncanonical_sync_batch(genesis.hash, &side_chain[1..])
+            .expect("prestore deep winning side branch"),
+        usize::try_from(SIDE_DEPTH).expect("side depth")
+    );
+    assert_eq!(node.best_meta(), old_canonical_tip);
+    let block_rows_before_adoption = node.block_tree.len();
+
+    node.reset_block_meta_load_counters();
+    node.reset_streaming_replay_stored_meta_counters();
+    reset_canonical_index_rebuild_peak_live();
+    let response = vec![side_tip.clone()];
+    let report = import_native_sync_response_blocks(
+        &node,
+        response.clone(),
+        side_tip.height,
+        NativeSyncResponseImportProgress::new(response.len()),
+        true,
+    );
+    assert!(
+        report.failure.is_none(),
+        "deep all-known winning adoption failed: {:?}",
+        report.failure.as_ref().map(|failure| &failure.error)
+    );
+    assert_eq!(report.progress.attempted_blocks, 1);
+    assert_eq!(report.progress.imported_blocks, 1);
+    assert_eq!(report.progress.stored_noncanonical_blocks, 0);
+    assert!(!report.progress.stopped_on_error);
+    assert!(!report.progress.stopped_on_missing_parent);
+    assert_eq!(node.block_tree.len(), block_rows_before_adoption);
+    assert_eq!(
+        node.block_meta_load_counters().1,
+        0,
+        "all-known winning adoption must not reconstruct a full metadata chain"
+    );
+    assert_eq!(
+        node.streaming_replay_stored_meta_counters(),
+        (0, 1),
+        "each compact reorg body pass must release its stored metadata row before loading the next"
+    );
+    let planner_peak = canonical_index_rebuild_peak_live();
+    assert_eq!(planner_peak.decoded_actions, ACTIONS_PER_BLOCK as usize);
+    assert!(
+        planner_peak.decoded_actions
+            < usize::try_from(SIDE_DEPTH * ACTIONS_PER_BLOCK).expect("total action count"),
+        "canonical planning must not retain the full branch's decoded action stream"
+    );
+
+    {
+        let state = node.state.read();
+        assert_eq!(state.best, oracle_state.best);
+        assert_eq!(state.header_mmr_peaks, oracle_state.header_mmr_peaks);
+        assert_eq!(
+            state.commitment_tree.leaf_count(),
+            oracle_state.commitment_tree.leaf_count()
+        );
+        assert_eq!(
+            state.commitment_tree.root(),
+            oracle_state.commitment_tree.root()
+        );
+        assert_eq!(state.nullifiers, oracle_state.nullifiers);
+        assert_eq!(
+            state.consumed_bridge_messages,
+            oracle_state.consumed_bridge_messages
+        );
+        assert_eq!(
+            state.stablecoin_policy_authorizations,
+            oracle_state.stablecoin_policy_authorizations
+        );
+    }
+    for expected in &side_chain {
+        assert_eq!(
+            node.hash_by_height(expected.height)
+                .expect("canonical height after compact reorg"),
+            Some(expected.hash)
+        );
+    }
+    assert_eq!(node.commitment_tree.len(), 0);
+    assert_eq!(node.nullifier_tree.len(), 0);
+    assert_eq!(node.bridge_inbound_tree.len(), 0);
+    assert_eq!(node.ciphertext_index_tree.len(), 0);
+    assert_eq!(node.ciphertext_archive_tree.len(), 0);
+
+    node.db
+        .flush()
+        .expect("flush deep compact winning adoption");
+    drop(node);
+    let reopened = NativeNode::open(config).expect("reopen deep compact winning adoption");
+    assert_eq!(reopened.best_meta(), side_tip);
+    assert_eq!(reopened.block_tree.len(), block_rows_before_adoption);
+    for expected in &side_chain {
+        assert_eq!(
+            reopened
+                .hash_by_height(expected.height)
+                .expect("reopened canonical height after compact reorg"),
+            Some(expected.hash)
+        );
+        assert_eq!(
+            reopened
+                .header_by_hash(&expected.hash)
+                .expect("reopened compact reorg block row"),
+            Some(expected.clone())
+        );
+    }
+    let reopened_state = reopened.state.read();
+    assert_eq!(reopened_state.best, oracle_state.best);
+    assert_eq!(
+        reopened_state.header_mmr_peaks,
+        oracle_state.header_mmr_peaks
+    );
+    assert_eq!(
+        reopened_state.commitment_tree.root(),
+        oracle_state.commitment_tree.root()
+    );
+    assert_eq!(reopened_state.nullifiers, oracle_state.nullifiers);
+    assert_eq!(
+        reopened_state.consumed_bridge_messages,
+        oracle_state.consumed_bridge_messages
+    );
+}
+
+#[test]
+fn valid_noncanonical_sync_batch_persists_exact_rows_without_canonical_changes_after_reopen() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let test_pow_bits = 0x207f_ffff;
+    let config = test_config(tmp.path(), test_pow_bits, "unsafe", false);
+    let node = NativeNode::open(config.clone()).expect("node");
+    for round in 1..=5 {
+        let work = node.prepare_work().expect("prepare local canonical work");
+        let seal = mine_native_round(work.clone(), round)
+            .expect("local canonical work must seal within one deterministic round");
+        node.import_mined_block(&work, seal)
+            .expect("import local canonical block")
+            .expect("local canonical block");
+    }
+    let canonical_tip = node.best_meta();
+    let canonical_height_rows = (0..=canonical_tip.height)
+        .map(|height| {
+            node.hash_by_height(height)
+                .expect("canonical height lookup")
+        })
+        .collect::<Vec<_>>();
+    let canonical_index_lens = (
+        node.height_tree.len(),
+        node.commitment_tree.len(),
+        node.nullifier_tree.len(),
+        node.bridge_inbound_tree.len(),
+        node.ciphertext_index_tree.len(),
+        node.ciphertext_archive_tree.len(),
+    );
+    let block_record_count = node.block_tree.len();
+    let genesis_hash = canonical_height_rows[0].expect("canonical genesis hash");
+
+    let peer_tmp = tempfile::tempdir().expect("peer tempdir");
+    let peer_node = NativeNode::open(test_config(peer_tmp.path(), test_pow_bits, "unsafe", false))
+        .expect("peer node");
+    let mut peer_blocks = Vec::new();
+    for round in 11..=14 {
+        let work = peer_node.prepare_work().expect("prepare peer branch work");
+        let seal = mine_native_round(work.clone(), round)
+            .expect("peer branch work must seal within one deterministic round");
+        peer_blocks.push(
+            peer_node
+                .import_mined_block(&work, seal)
+                .expect("import peer branch block")
+                .expect("peer branch block"),
+        );
+    }
+
+    assert_eq!(
+        node.validate_and_persist_noncanonical_sync_batch(genesis_hash, &peer_blocks)
+            .expect("persist valid noncanonical sync batch"),
+        peer_blocks.len()
+    );
+    assert_eq!(node.best_meta(), canonical_tip);
+    assert_eq!(
+        node.block_tree.len(),
+        block_record_count + peer_blocks.len()
+    );
+    assert_eq!(
+        (
+            node.height_tree.len(),
+            node.commitment_tree.len(),
+            node.nullifier_tree.len(),
+            node.bridge_inbound_tree.len(),
+            node.ciphertext_index_tree.len(),
+            node.ciphertext_archive_tree.len(),
+        ),
+        canonical_index_lens
+    );
+    for (height, expected_hash) in canonical_height_rows.iter().copied().enumerate() {
+        assert_eq!(
+            node.hash_by_height(height as u64)
+                .expect("canonical height lookup after side-batch persist"),
+            expected_hash
+        );
+    }
+    for meta in &peer_blocks {
+        assert_eq!(
+            node.header_by_hash(&meta.hash)
+                .expect("stored side-block lookup"),
+            Some(meta.clone())
+        );
+    }
+
+    drop(node);
+    let reopened = NativeNode::open(config).expect("reopen node after side-batch persist");
+    assert_eq!(reopened.best_meta(), canonical_tip);
+    assert_eq!(
+        reopened.block_tree.len(),
+        block_record_count + peer_blocks.len()
+    );
+    assert_eq!(
+        (
+            reopened.height_tree.len(),
+            reopened.commitment_tree.len(),
+            reopened.nullifier_tree.len(),
+            reopened.bridge_inbound_tree.len(),
+            reopened.ciphertext_index_tree.len(),
+            reopened.ciphertext_archive_tree.len(),
+        ),
+        canonical_index_lens
+    );
+    for (height, expected_hash) in canonical_height_rows.iter().copied().enumerate() {
+        assert_eq!(
+            reopened
+                .hash_by_height(height as u64)
+                .expect("canonical height lookup after reopen"),
+            expected_hash
+        );
+    }
+    for meta in &peer_blocks {
+        assert_eq!(
+            reopened
+                .header_by_hash(&meta.hash)
+                .expect("reopened side-block lookup"),
+            Some(meta.clone())
+        );
+    }
+}
+
+#[test]
+fn invalid_noncanonical_sync_batch_persists_no_partial_records_or_canonical_indexes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let test_pow_bits = 0x207f_ffff;
+    let config = test_config(tmp.path(), test_pow_bits, "unsafe", false);
+    let node = NativeNode::open(config.clone()).expect("node");
+    for round in 1..=5 {
+        let work = node.prepare_work().expect("prepare local canonical work");
+        let seal = mine_native_round(work.clone(), round)
+            .expect("local canonical work must seal within one deterministic round");
+        node.import_mined_block(&work, seal)
+            .expect("import local canonical block")
+            .expect("local canonical block");
+    }
+    let canonical_tip = node.best_meta();
+    let canonical_height_rows = (0..=canonical_tip.height)
+        .map(|height| {
+            node.hash_by_height(height)
+                .expect("canonical height lookup")
+        })
+        .collect::<Vec<_>>();
+    let canonical_index_lens = (
+        node.height_tree.len(),
+        node.commitment_tree.len(),
+        node.nullifier_tree.len(),
+        node.bridge_inbound_tree.len(),
+        node.ciphertext_index_tree.len(),
+        node.ciphertext_archive_tree.len(),
+    );
+    let block_record_count = node.block_tree.len();
+    let genesis_hash = canonical_height_rows[0].expect("canonical genesis hash");
+
+    let peer_tmp = tempfile::tempdir().expect("peer tempdir");
+    let peer_node = NativeNode::open(test_config(peer_tmp.path(), test_pow_bits, "unsafe", false))
+        .expect("peer node");
+    let mut peer_blocks = Vec::new();
+    for round in 11..=14 {
+        let work = peer_node.prepare_work().expect("prepare peer branch work");
+        let seal = mine_native_round(work.clone(), round)
+            .expect("peer branch work must seal within one deterministic round");
+        peer_blocks.push(
+            peer_node
+                .import_mined_block(&work, seal)
+                .expect("import peer branch block")
+                .expect("peer branch block"),
+        );
+    }
+    for meta in &peer_blocks {
+        assert!(
+            node.header_by_hash(&meta.hash)
+                .expect("pre-import peer block lookup")
+                .is_none(),
+            "fixture requires every peer block to be unknown"
+        );
+    }
+
+    let mut invalid_batch = peer_blocks.clone();
+    invalid_batch[1].state_root[0] ^= 1;
+    node.validate_and_persist_noncanonical_sync_batch(genesis_hash, &invalid_batch)
+        .expect_err("a bad middle block must reject the complete side-branch batch");
+
+    assert_eq!(node.best_meta(), canonical_tip);
+    assert_eq!(node.block_tree.len(), block_record_count);
+    assert_eq!(
+        (
+            node.height_tree.len(),
+            node.commitment_tree.len(),
+            node.nullifier_tree.len(),
+            node.bridge_inbound_tree.len(),
+            node.ciphertext_index_tree.len(),
+            node.ciphertext_archive_tree.len(),
+        ),
+        canonical_index_lens
+    );
+    for (height, expected_hash) in canonical_height_rows.iter().copied().enumerate() {
+        assert_eq!(
+            node.hash_by_height(height as u64)
+                .expect("canonical height lookup after rejected batch"),
+            expected_hash
+        );
+    }
+    for meta in &peer_blocks {
+        assert!(
+            node.header_by_hash(&meta.hash)
+                .expect("peer block lookup after rejected batch")
+                .is_none(),
+            "rejected batch must not retain a valid prefix or unchecked suffix"
+        );
+    }
+
+    drop(node);
+    let reopened = NativeNode::open(config).expect("reopen node after rejected batch");
+    assert_eq!(reopened.best_meta(), canonical_tip);
+    assert_eq!(reopened.block_tree.len(), block_record_count);
+    assert_eq!(
+        (
+            reopened.height_tree.len(),
+            reopened.commitment_tree.len(),
+            reopened.nullifier_tree.len(),
+            reopened.bridge_inbound_tree.len(),
+            reopened.ciphertext_index_tree.len(),
+            reopened.ciphertext_archive_tree.len(),
+        ),
+        canonical_index_lens
+    );
+    for meta in &peer_blocks {
+        assert!(
+            reopened
+                .header_by_hash(&meta.hash)
+                .expect("peer block lookup after reopen")
+                .is_none(),
+            "rejected batch records must remain absent after reopen"
+        );
+    }
 }
 
 #[test]
@@ -3458,6 +5293,7 @@ fn sync_response_higher_peer_tip_imports_reorg_prefix() {
         peer_blocks.clone(),
         peer_tip.height,
         NativeSyncResponseImportProgress::new(peer_blocks.len()),
+        false,
     );
 
     assert!(
@@ -3521,6 +5357,7 @@ fn sync_response_tip_extension_imports_contiguous_chunk() {
         peer_blocks.clone(),
         peer_tip.height,
         NativeSyncResponseImportProgress::new(peer_blocks.len()),
+        false,
     );
 
     assert!(
@@ -3536,6 +5373,63 @@ fn sync_response_tip_extension_imports_contiguous_chunk() {
     assert_eq!(report.progress.imported_blocks, peer_blocks.len() as u64);
     assert_eq!(node.best_meta().hash, peer_tip.hash);
     assert_eq!(node.best_meta().height, peer_tip.height);
+}
+
+#[test]
+fn sync_tip_extension_across_retargets_avoids_chain_reconstruction() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let test_pow_bits = 0x207f_ffff;
+    let node =
+        NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false)).expect("node");
+
+    let peer_tmp = tempfile::tempdir().expect("peer tempdir");
+    let peer_node = NativeNode::open(test_config(peer_tmp.path(), test_pow_bits, "unsafe", false))
+        .expect("peer node");
+    let mut peer_blocks = Vec::new();
+    for height in 1u64..=40 {
+        let work = peer_node.prepare_work().expect("prepare peer sync work");
+        let seal = mine_native_round(work.clone(), height)
+            .expect("peer sync work must seal within one deterministic round");
+        peer_blocks.push(
+            peer_node
+                .import_mined_block(&work, seal)
+                .expect("import peer sync block")
+                .expect("peer sync block"),
+        );
+    }
+
+    let mut reference_chain = vec![node.best_meta()];
+    for meta in &peer_blocks {
+        assert_eq!(
+            meta.pow_bits,
+            native_expected_child_pow_bits_from_chain(&reference_chain, test_pow_bits)
+                .expect("reference sync difficulty"),
+            "sync fixture difficulty drift at height {}",
+            meta.height
+        );
+        reference_chain.push(meta.clone());
+    }
+
+    node.reset_block_meta_load_counters();
+    let report = import_native_sync_response_blocks(
+        &node,
+        peer_blocks.clone(),
+        peer_blocks.last().expect("peer tip").height,
+        NativeSyncResponseImportProgress::new(peer_blocks.len()),
+        false,
+    );
+    assert!(
+        report.failure.is_none(),
+        "multi-retarget sync failed: {:?}",
+        report.failure.as_ref().map(|failure| &failure.error)
+    );
+    assert_eq!(report.progress.imported_blocks, 40);
+    assert_eq!(node.best_meta().hash, peer_blocks.last().unwrap().hash);
+    let (_, chain_reconstructions) = node.block_meta_load_counters();
+    assert_eq!(
+        chain_reconstructions, 0,
+        "tip-extension batches must use bounded retarget-anchor lookups"
+    );
 }
 
 #[test]
@@ -3723,7 +5617,7 @@ fn reorg_rejects_missing_old_canonical_chain_before_publish() {
         .expect_err("missing old canonical chain must reject winning reorg");
     let err_text = err.to_string();
     assert!(
-        err_text.contains("missing native block"),
+        err_text.contains("locally admitted native block disappeared"),
         "unexpected reorg error: {err_text}"
     );
     assert_eq!(node.best_meta().hash, canonical.hash);
@@ -3741,11 +5635,11 @@ fn reorg_rejects_missing_old_canonical_chain_before_publish() {
     );
     assert_eq!(node.state.read().pending_actions.len(), old_pending_len);
     assert_eq!(node.state.read().commitment_tree.root(), old_state_root);
-    assert!(
+    assert_eq!(
         node.header_by_hash(&side_two.hash)
-            .expect("side tip lookup after rejected reorg")
-            .is_none(),
-        "failed reorg child must not be persisted"
+            .expect("side tip lookup after rejected reorg"),
+        Some(side_two),
+        "validated content-addressed prestorage may survive a failed canonical transaction, but it must remain noncanonical"
     );
 }
 
@@ -4182,6 +6076,61 @@ fn reorg_pending_revalidation_prioritizes_existing_pending_over_orphaned_duplica
 }
 
 #[test]
+fn reorg_orphan_suffix_walk_matches_legacy_order_without_full_old_chain() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let node = NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+    let genesis = node.best_meta();
+    let shared = mined_empty_child(&genesis, 1, pow_bits, 1);
+    let duplicated = test_outbound_bridge_action(b"orphan suffix duplicated on winning branch");
+    let old_first_only = test_outbound_bridge_action(b"orphan suffix old first");
+    let old_second_only = test_outbound_bridge_action(b"orphan suffix old second");
+    let old_first = mined_child_with_actions(
+        &shared,
+        2,
+        pow_bits,
+        2,
+        vec![duplicated.clone(), old_first_only.clone()],
+    );
+    let old_best =
+        mined_child_with_actions(&old_first, 3, pow_bits, 3, vec![old_second_only.clone()]);
+    let new_first = mined_child_with_actions(&shared, 2, pow_bits, 4, vec![duplicated.clone()]);
+    let new_best = mined_empty_child(&new_first, 3, pow_bits, 5);
+    for meta in [&shared, &old_first, &old_best] {
+        persist_block_record(&node.block_tree, meta).expect("persist old branch record");
+    }
+
+    let old_chain = vec![genesis.clone(), shared.clone(), old_first, old_best.clone()];
+    let new_chain = vec![genesis, shared, new_first, new_best];
+    let new_action_hashes = action_hashes_from_chain(&new_chain).expect("new action hashes");
+    let legacy = orphaned_actions(&old_chain, &new_action_hashes).expect("legacy orphan actions");
+
+    node.reset_block_meta_load_counters();
+    let suffix = node
+        .orphaned_actions_from_old_branch_suffix(&old_best, &new_chain, &new_action_hashes)
+        .expect("bounded orphan suffix walk");
+    let (meta_loads, chain_reconstructions) = node.block_meta_load_counters();
+
+    assert_eq!(
+        suffix.iter().map(Encode::encode).collect::<Vec<_>>(),
+        legacy.iter().map(Encode::encode).collect::<Vec<_>>(),
+        "suffix walk must preserve legacy block/action order and duplicate filtering"
+    );
+    assert_eq!(
+        suffix
+            .iter()
+            .map(|action| action.tx_hash)
+            .collect::<Vec<_>>(),
+        vec![old_first_only.tx_hash, old_second_only.tx_hash]
+    );
+    assert_eq!(chain_reconstructions, 0);
+    assert_eq!(
+        meta_loads, 5,
+        "two orphan blocks are walked then decoded one at a time, plus one shared ancestor lookup"
+    );
+}
+
+#[test]
 fn post_block_pending_revalidation_drops_now_spent_nullifier_sibling() {
     let test_pow_bits = 0x207f_ffff;
     let mut canonical_state = test_state(genesis_meta(test_pow_bits).expect("genesis"));
@@ -4292,15 +6241,18 @@ fn reorg_rebuild_failure_preserves_canonical_indexes() {
     let old_commitments = node.commitment_tree.len();
     let old_ciphertexts = node.ciphertext_archive_tree.len();
     let old_best = node.best_meta().hash;
+    let old_header_mmr_peaks = node.state.read().header_mmr_peaks.clone();
     let err = {
         let mut state = node.state.write();
         let new_chain = node
             .chain_to_hash(side_two.hash)
             .expect("load side chain for reorg");
+        let first_unstored_index = new_chain.len();
         let err = node
-            .reorganize_chain_to_best_locked(&mut state, new_chain)
+            .reorganize_chain_to_best_locked(&mut state, new_chain, first_unstored_index)
             .expect_err("missing sidecar ciphertext must reject before canonical clear");
         assert_eq!(state.best.hash, old_best);
+        assert_eq!(state.header_mmr_peaks, old_header_mmr_peaks);
         err
     };
     let err_text = err.to_string();
@@ -4315,6 +6267,11 @@ fn reorg_rebuild_failure_preserves_canonical_indexes() {
             .expect("height index after failed reorg"),
         old_height_one,
         "failed reorg must leave canonical height index untouched"
+    );
+    assert_eq!(
+        node.state.read().header_mmr_peaks,
+        old_header_mmr_peaks,
+        "failed reorg must not publish derived header-MMR peak state"
     );
     assert_eq!(
         node.commitment_tree.len(),
@@ -4428,7 +6385,7 @@ fn prepare_work_auto_coinbase_is_imported_and_wallet_decryptable() {
 }
 
 #[test]
-fn prepared_work_import_survives_action_cache_eviction() {
+fn prepared_work_import_uses_embedded_actions() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let pow_bits = 0x207f_ffff;
     let keys = wallet::RootSecret::from_bytes([9u8; 32]).derive();
@@ -4440,7 +6397,7 @@ fn prepared_work_import_survives_action_cache_eviction() {
 
     let work = node.prepare_work().expect("prepare native work");
     assert_eq!(work.tx_count, 1);
-    node.prepared_mining_actions.lock().clear();
+    assert!(work.prepared_actions.is_some());
 
     let seal = mine_native_round(work.clone(), 0).expect("auto coinbase seal");
     let imported = node
@@ -4551,6 +6508,86 @@ fn mined_action_block_commit_reloads_canonical_sled_state() {
     assert_eq!(reopened.commitment_tree.len(), 1);
     assert_eq!(reopened.ciphertext_archive_tree.len(), 1);
     assert_eq!(reopened.action_tree.len(), 0);
+}
+
+#[test]
+fn startup_reuses_one_validated_canonical_chain_snapshot() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let config = test_config(tmp.path(), pow_bits, "safe", false);
+    let reward = consensus::reward::block_subsidy(1);
+    let (expected_best, expected_mmr_peaks, expected_state_root, expected_archive) = {
+        let node = NativeNode::open(config.clone()).expect("node");
+        stage_test_coinbase(&node, reward, [22u8; 48]);
+        let work = node.prepare_work().expect("prepare startup snapshot work");
+        let seal = mine_native_round(work.clone(), 0).expect("startup snapshot seal");
+        let imported = node
+            .import_mined_block(&work, seal)
+            .expect("startup snapshot import")
+            .expect("startup snapshot block");
+        let expected_chain = node
+            .chain_to_hash(imported.hash)
+            .expect("load startup snapshot oracle chain");
+        let expected_hashes = expected_chain
+            .iter()
+            .map(|meta| meta.hash)
+            .collect::<Vec<_>>();
+        let expected_mmr_peaks = header_mmr_peaks_from_hashes(&expected_hashes);
+        let expected_archive = node
+            .ciphertext_archive_tree
+            .get(0u64.to_be_bytes())
+            .expect("read startup snapshot archive")
+            .expect("startup snapshot archive entry")
+            .to_vec();
+        node.db.flush().expect("flush startup snapshot db");
+        (
+            imported.clone(),
+            expected_mmr_peaks,
+            imported.state_root,
+            expected_archive,
+        )
+    };
+
+    reset_native_chain_load_metrics();
+    let reopened = NativeNode::open(config).expect("reopen from one canonical snapshot");
+    let metrics = native_chain_load_metrics();
+    assert_eq!(
+        metrics.calls, 1,
+        "startup must reconstruct the canonical metadata chain exactly once"
+    );
+    assert_eq!(
+        metrics.decoded_metas,
+        expected_best.height + 1,
+        "the single startup reconstruction must decode each canonical metadata row once"
+    );
+    assert_eq!(
+        reopened.block_meta_load_counters(),
+        (0, 0),
+        "post-construction archive verification must borrow the startup snapshot"
+    );
+
+    let state = reopened.state.read();
+    assert_eq!(state.best, expected_best);
+    assert_eq!(state.header_mmr_peaks, expected_mmr_peaks);
+    assert_eq!(state.commitment_tree.root(), expected_state_root);
+    let expected_mmr_commitment =
+        header_mmr_commitment_after_best(&state.best, &expected_mmr_peaks)
+            .expect("expected startup MMR commitment");
+    assert_eq!(
+        header_mmr_commitment_after_best(&state.best, &state.header_mmr_peaks)
+            .expect("reopened startup MMR commitment"),
+        expected_mmr_commitment
+    );
+    drop(state);
+    assert_eq!(
+        reopened
+            .ciphertext_archive_tree
+            .get(0u64.to_be_bytes())
+            .expect("read reopened startup snapshot archive")
+            .expect("reopened startup snapshot archive entry")
+            .as_ref(),
+        expected_archive.as_slice()
+    );
 }
 
 #[test]
@@ -5250,6 +7287,8 @@ fn prepare_work_drops_actions_after_supply_digest_overflow() {
     let subsidy = consensus::reward::block_subsidy(1);
     let mut parent = node.best_meta();
     parent.supply_digest = u128::MAX - u128::from(subsidy) + 1;
+    persist_block_record(&node.block_tree, &parent)
+        .expect("persist synthetic supply-overflow parent");
     {
         let mut state = node.state.write();
         state.best = parent.clone();
@@ -5288,7 +7327,7 @@ fn prepare_work_drops_actions_after_supply_digest_overflow() {
 }
 
 #[test]
-fn prepare_work_rejects_missing_header_mmr_history() {
+fn prepare_work_rejects_missing_persisted_canonical_tip() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let test_pow_bits = 0x207f_ffff;
     let node =
@@ -5301,11 +7340,27 @@ fn prepare_work_rejects_missing_header_mmr_history() {
 
     let err = node
         .prepare_work()
-        .expect_err("missing header-MMR history must reject work template");
+        .expect_err("missing persisted canonical tip must reject work template");
 
     assert!(err.to_string().contains("missing native block"));
     assert_eq!(node.best_meta().height, best.height);
     assert_eq!(node.best_meta().hash, best.hash);
+}
+
+#[test]
+fn prepare_work_rejects_malformed_cached_header_mmr_peaks() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let test_pow_bits = 0x207f_ffff;
+    let node =
+        NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false)).expect("node");
+    node.state.write().header_mmr_peaks.clear();
+
+    let err = node
+        .prepare_work()
+        .expect_err("malformed cached header-MMR peaks must reject work template");
+
+    assert!(err.to_string().contains("peak state shape mismatch"));
+    assert_eq!(node.best_meta().height, 0);
 }
 
 #[test]
@@ -5367,7 +7422,7 @@ fn native_pow_schedule_retargets_fast_window_and_rejects_stale_bits() {
             .expect("persist deterministic fast child");
         chain.push(child);
     }
-    node.state.write().best = chain.last().expect("fast parent").clone();
+    publish_test_canonical_chain(&node, &chain);
 
     let first_boundary_bits =
         native_expected_child_pow_bits_from_chain(&chain, pow_bits).expect("scheduled bits");
@@ -5384,7 +7439,7 @@ fn native_pow_schedule_retargets_fast_window_and_rejects_stale_bits() {
             .expect("persist deterministic fast child");
         chain.push(child);
     }
-    node.state.write().best = chain.last().expect("fast parent").clone();
+    publish_test_canonical_chain(&node, &chain);
 
     let expected_bits =
         native_expected_child_pow_bits_from_chain(&chain, pow_bits).expect("scheduled bits");
@@ -5412,6 +7467,559 @@ fn native_pow_schedule_retargets_fast_window_and_rejects_stale_bits() {
     let err = validate_announced_block(parent, &stale, expected_bits)
         .expect_err("stale fixed-difficulty child must reject at retarget");
     assert!(err.to_string().contains("PoW bits mismatch"), "{err:?}");
+}
+
+#[test]
+fn pow_schedule_metadata_loads_are_retarget_window_bounded_and_match_full_chain() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let node = NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+    let chain = persist_test_pow_chain(
+        &node,
+        (consensus::reward::RETARGET_WINDOW * 2) - 1,
+        pow_bits,
+    );
+
+    for parent_index in [8usize, 9, 18, 19] {
+        let parent_chain = &chain[..=parent_index];
+        let parent = parent_chain.last().expect("scheduled parent");
+        let expected = native_expected_child_pow_bits_from_chain(parent_chain, pow_bits)
+            .expect("full-chain PoW schedule oracle");
+        let new_height = parent.height.checked_add(1).expect("test child height");
+        let expected_ancestor_loads =
+            consensus::pow::pow_retarget_anchor_steps(parent.height, new_height).unwrap_or(0);
+
+        node.reset_block_meta_load_counters();
+        assert_eq!(
+            node.expected_child_pow_bits(parent)
+                .expect("bounded side-chain PoW schedule"),
+            expected
+        );
+        assert_eq!(
+            node.block_meta_load_counters(),
+            (expected_ancestor_loads.saturating_add(1), 0),
+            "generic PoW scheduling must verify the parent and read only the retarget anchor path"
+        );
+        assert_eq!(
+            node.block_meta_decode_count(),
+            0,
+            "generic PoW scheduling must not decode stored action bodies"
+        );
+
+        node.reset_block_meta_load_counters();
+        assert_eq!(
+            node.expected_canonical_child_pow_bits(parent)
+                .expect("indexed canonical PoW schedule"),
+            expected
+        );
+        assert_eq!(
+            node.block_meta_load_counters(),
+            (expected_ancestor_loads.saturating_add(1), 0),
+            "canonical PoW scheduling must verify the parent and bind the indexed anchor to bounded ancestry"
+        );
+        assert_eq!(
+            node.block_meta_decode_count(),
+            0,
+            "canonical PoW scheduling must not decode stored action bodies"
+        );
+    }
+}
+
+#[test]
+fn canonical_pow_schedule_rejects_stale_parent_and_corrupt_anchor_indexes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let node = NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+    let chain = persist_test_pow_chain(
+        &node,
+        (consensus::reward::RETARGET_WINDOW * 2) - 1,
+        pow_bits,
+    );
+    let parent = chain.last().expect("retarget parent");
+    let parent_key = height_key(parent.height);
+    let original_parent_index = node
+        .height_tree
+        .get(parent_key)
+        .expect("read parent height index")
+        .expect("parent height index");
+
+    let mut side_chain = chain[..chain.len() - 1].to_vec();
+    let side_parent = (10_000..10_256)
+        .map(|round| mined_empty_child_for_chain(&side_chain, pow_bits, round))
+        .find(|candidate| candidate.hash != parent.hash)
+        .expect("distinct side parent at canonical height");
+    persist_block_record(&node.block_tree, &side_parent).expect("persist side parent by hash");
+    side_chain.push(side_parent.clone());
+    let side_expected = native_expected_child_pow_bits_from_chain(&side_chain, pow_bits)
+        .expect("side-chain retarget oracle");
+
+    node.reset_block_meta_load_counters();
+    assert_eq!(
+        node.expected_child_pow_bits(&side_parent)
+            .expect("bounded generic side-parent schedule"),
+        side_expected
+    );
+    assert_eq!(
+        node.block_meta_load_counters(),
+        (consensus::reward::RETARGET_WINDOW, 0),
+        "generic side-branch scheduling must remain valid and bounded"
+    );
+    node.reset_block_meta_load_counters();
+    let side_err = node
+        .expected_canonical_child_pow_bits(&side_parent)
+        .expect_err("side parent at canonical height must reject canonical lookup");
+    assert!(
+        side_err
+            .to_string()
+            .contains("does not reference supplied native PoW parent"),
+        "unexpected side-parent error: {side_err}"
+    );
+    assert_eq!(node.block_meta_load_counters(), (1, 0));
+
+    node.height_tree
+        .insert(parent_key, chain[chain.len() - 2].hash.as_slice())
+        .expect("install stale parent height index");
+    node.reset_block_meta_load_counters();
+    let stale_err = node
+        .expected_canonical_child_pow_bits(parent)
+        .expect_err("stale canonical parent index must reject");
+    assert!(
+        stale_err
+            .to_string()
+            .contains("does not reference supplied native PoW parent"),
+        "unexpected stale parent error: {stale_err}"
+    );
+    assert_eq!(node.block_meta_load_counters(), (1, 0));
+    node.height_tree
+        .insert(parent_key, original_parent_index.clone())
+        .expect("restore parent height index");
+
+    node.height_tree
+        .remove(parent_key)
+        .expect("remove parent height index");
+    node.reset_block_meta_load_counters();
+    let missing_err = node
+        .expected_canonical_child_pow_bits(parent)
+        .expect_err("missing canonical parent index must reject");
+    assert!(
+        missing_err
+            .to_string()
+            .contains("missing canonical height index for native PoW parent"),
+        "unexpected missing parent error: {missing_err}"
+    );
+    assert_eq!(node.block_meta_load_counters(), (1, 0));
+    node.height_tree
+        .insert(parent_key, original_parent_index)
+        .expect("restore missing parent height index");
+
+    let anchor_steps = consensus::pow::pow_retarget_anchor_steps(
+        parent.height,
+        parent.height.checked_add(1).expect("child height"),
+    )
+    .expect("retarget anchor steps");
+    let anchor_height = parent
+        .height
+        .checked_sub(anchor_steps)
+        .expect("anchor height");
+    let anchor_key = height_key(anchor_height);
+    let original_anchor_index = node
+        .height_tree
+        .get(anchor_key)
+        .expect("read anchor height index")
+        .expect("anchor height index");
+    node.height_tree
+        .insert(anchor_key, vec![0u8; 31])
+        .expect("install malformed anchor height index");
+    node.reset_block_meta_load_counters();
+    let corrupt_err = node
+        .expected_canonical_child_pow_bits(parent)
+        .expect_err("corrupt retarget anchor index must reject");
+    assert!(
+        corrupt_err
+            .to_string()
+            .contains("stored block hash has invalid length"),
+        "unexpected corrupt anchor error: {corrupt_err}"
+    );
+    assert_eq!(
+        node.block_meta_load_counters(),
+        (consensus::reward::RETARGET_WINDOW, 0)
+    );
+    node.height_tree
+        .insert(anchor_key, original_anchor_index)
+        .expect("restore anchor height index");
+}
+
+#[test]
+fn canonical_pow_schedule_rejects_valid_side_block_anchor_index() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let node = NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+    let chain = persist_test_pow_chain(
+        &node,
+        (consensus::reward::RETARGET_WINDOW * 2) - 1,
+        pow_bits,
+    );
+    let parent = chain.last().expect("retarget parent");
+    let anchor_steps = consensus::pow::pow_retarget_anchor_steps(
+        parent.height,
+        parent.height.checked_add(1).expect("child height"),
+    )
+    .expect("retarget anchor steps");
+    let anchor_height = parent
+        .height
+        .checked_sub(anchor_steps)
+        .expect("anchor height");
+    let anchor_index = usize::try_from(anchor_height).expect("anchor index");
+    let canonical_anchor = chain.get(anchor_index).expect("canonical anchor");
+    let side_anchor = (20_000..20_256)
+        .map(|round| mined_empty_child_for_chain(&chain[..anchor_index], pow_bits, round))
+        .find(|candidate| candidate.hash != canonical_anchor.hash)
+        .expect("distinct valid side anchor");
+    assert_eq!(side_anchor.height, canonical_anchor.height);
+    persist_block_record(&node.block_tree, &side_anchor).expect("persist valid side anchor");
+
+    let anchor_key = height_key(anchor_height);
+    let original_anchor_index = node
+        .height_tree
+        .get(anchor_key)
+        .expect("read canonical anchor index")
+        .expect("canonical anchor index");
+    node.height_tree
+        .insert(anchor_key, side_anchor.hash.as_slice())
+        .expect("point canonical anchor index at valid side block");
+
+    node.reset_block_meta_load_counters();
+    let err = node
+        .expected_canonical_child_pow_bits(parent)
+        .expect_err("valid side-block anchor index must reject");
+    assert!(
+        err.to_string()
+            .contains("does not reference supplied parent ancestry"),
+        "unexpected valid-side-anchor error: {err}"
+    );
+    let (loads, reconstructions) = node.block_meta_load_counters();
+    assert_eq!(reconstructions, 0);
+    assert_eq!(
+        loads,
+        consensus::reward::RETARGET_WINDOW,
+        "parent verification plus the bounded ancestry walk must not exceed one retarget window"
+    );
+
+    node.height_tree
+        .insert(anchor_key, original_anchor_index)
+        .expect("restore canonical anchor index");
+}
+
+#[test]
+fn pow_schedule_rejects_mutated_supplied_parent_metadata() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let node = NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+    let chain = persist_test_pow_chain(&node, 3, pow_bits);
+    let mut mutated_parent = chain.last().expect("stored parent").clone();
+    mutated_parent.timestamp_ms = mutated_parent.timestamp_ms.saturating_add(1);
+
+    let generic_err = node
+        .expected_child_pow_bits(&mutated_parent)
+        .expect_err("generic schedule must reject mutated supplied parent metadata");
+    assert!(
+        generic_err
+            .to_string()
+            .contains("supplied native PoW parent metadata does not match stored record"),
+        "unexpected generic mutated-parent error: {generic_err}"
+    );
+    let canonical_err = node
+        .expected_canonical_child_pow_bits(&mutated_parent)
+        .expect_err("canonical schedule must reject mutated supplied parent metadata");
+    assert!(
+        canonical_err
+            .to_string()
+            .contains("supplied native PoW parent metadata does not match stored record"),
+        "unexpected canonical mutated-parent error: {canonical_err}"
+    );
+}
+
+#[test]
+fn pow_schedule_compares_large_stored_parent_without_decoding_action_bytes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let node = NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+    let chain = persist_test_pow_chain(&node, 3, pow_bits);
+    let mut large_parent = chain.last().expect("stored parent").clone();
+    large_parent.action_bytes = vec![vec![0x5a; 2 * 1024 * 1024]];
+    persist_block_record(&node.block_tree, &large_parent).expect("persist large parent metadata");
+
+    let expected = native_expected_child_pow_bits_from_chain(&chain, pow_bits)
+        .expect("full-chain PoW schedule oracle");
+    node.reset_block_meta_load_counters();
+    assert_eq!(
+        node.expected_canonical_child_pow_bits(&large_parent)
+            .expect("schedule from large stored parent"),
+        expected
+    );
+    assert_eq!(node.block_meta_load_counters(), (1, 0));
+    assert_eq!(
+        node.block_meta_decode_count(),
+        0,
+        "stored-parent authority must be checked without decoding the multi-megabyte action body"
+    );
+
+    let mut mismatched_parent = large_parent;
+    mismatched_parent.action_bytes[0][0] ^= 1;
+    node.reset_block_meta_load_counters();
+    let err = node
+        .expected_canonical_child_pow_bits(&mismatched_parent)
+        .expect_err("action-byte mismatch must fail stored-parent authority");
+    assert!(
+        err.to_string()
+            .contains("supplied native PoW parent metadata does not match stored record"),
+        "unexpected stored-parent mismatch error: {err}"
+    );
+    assert_eq!(node.block_meta_decode_count(), 0);
+}
+
+#[test]
+fn sync_batch_pow_schedule_follows_stored_side_parent_ancestry_at_retarget() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let node = NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+    let canonical_chain = persist_test_pow_chain(
+        &node,
+        (consensus::reward::RETARGET_WINDOW * 2) - 1,
+        pow_bits,
+    );
+    let shared_height = consensus::reward::RETARGET_WINDOW - 1;
+    let shared_index = usize::try_from(shared_height).expect("shared index");
+    let mut side_chain = canonical_chain[..=shared_index].to_vec();
+    for height in consensus::reward::RETARGET_WINDOW..(consensus::reward::RETARGET_WINDOW * 2) {
+        let parent = side_chain.last().expect("side parent");
+        let child = mined_empty_child_for_chain_at(
+            &side_chain,
+            pow_bits,
+            30_000 + height,
+            parent.timestamp_ms.saturating_add(60_000),
+        );
+        persist_block_record(&node.block_tree, &child).expect("persist side schedule block");
+        side_chain.push(child);
+    }
+
+    let side_parent = side_chain.last().expect("side retarget parent");
+    let expected_side_bits = native_expected_child_pow_bits_from_chain(&side_chain, pow_bits)
+        .expect("side-chain schedule oracle");
+    let canonical_bits = native_expected_child_pow_bits_from_chain(&canonical_chain, pow_bits)
+        .expect("canonical schedule oracle");
+    assert_ne!(
+        expected_side_bits, canonical_bits,
+        "fixture must distinguish side ancestry from canonical height indexes"
+    );
+
+    node.reset_block_meta_load_counters();
+    assert_eq!(
+        node.expected_sync_batch_child_pow_bits(side_parent, &[])
+            .expect("bounded side-parent sync schedule"),
+        expected_side_bits
+    );
+    assert_eq!(
+        node.block_meta_load_counters(),
+        (consensus::reward::RETARGET_WINDOW, 0),
+        "stored side-parent scheduling must verify the parent and walk at most one retarget window"
+    );
+    assert_eq!(
+        node.block_meta_decode_count(),
+        0,
+        "side-parent scheduling must project stored headers without decoding action bodies"
+    );
+}
+
+#[test]
+fn canonical_mining_uses_cached_mmr_without_chain_reconstruction() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let node = NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+    let mut chain = persist_test_pow_chain(
+        &node,
+        (consensus::reward::RETARGET_WINDOW * 2) - 1,
+        pow_bits,
+    );
+    let expected_hashes = chain.iter().map(|meta| meta.hash).collect::<Vec<_>>();
+    let expected_root = header_mmr_root_from_hashes(&expected_hashes);
+    let expected_len = expected_hashes.len() as u64;
+    let expected_pow_bits = native_expected_child_pow_bits_from_chain(&chain, pow_bits)
+        .expect("full-chain mining PoW oracle");
+
+    node.reset_block_meta_load_counters();
+    let mut work = None;
+    for _ in 0..4 {
+        let prepared = node.prepare_work().expect("prepare bounded native work");
+        assert_eq!(prepared.pow_bits, expected_pow_bits);
+        assert_eq!(prepared.header_mmr_root, expected_root);
+        assert_eq!(prepared.header_mmr_len, expected_len);
+
+        let status = node.mining_status();
+        assert_eq!(
+            status["next_difficulty"].as_u64(),
+            Some(u64::from(expected_pow_bits))
+        );
+        work = Some(prepared);
+    }
+    assert_eq!(
+        node.block_meta_load_counters(),
+        (8 * consensus::reward::RETARGET_WINDOW, 0),
+        "four boundary templates plus four status polls may each verify one bounded retarget window, never a chain"
+    );
+    assert_eq!(
+        node.block_meta_decode_count(),
+        0,
+        "boundary work and status polling must not decode stored action bodies"
+    );
+
+    let work = work.expect("last prepared work");
+    let seal = mine_native_round(work.clone(), 0).expect("bounded native seal");
+    node.reset_block_meta_load_counters();
+    let imported = node
+        .import_mined_block(&work, seal)
+        .expect("bounded mined import")
+        .expect("fresh bounded mined block");
+    let (import_loads, import_reconstructions) = node.block_meta_load_counters();
+    assert_eq!(import_reconstructions, 0);
+    assert!(
+        import_loads <= consensus::reward::RETARGET_WINDOW + 1,
+        "mined import may verify one retarget window and its persisted result, got {import_loads} loads"
+    );
+
+    chain.push(imported);
+    let expected_hashes = chain.iter().map(|meta| meta.hash).collect::<Vec<_>>();
+    let expected_root = header_mmr_root_from_hashes(&expected_hashes);
+    node.reset_block_meta_load_counters();
+    for _ in 0..4 {
+        let prepared = node.prepare_work().expect("prepare post-boundary work");
+        assert_eq!(prepared.header_mmr_root, expected_root);
+        assert_eq!(prepared.header_mmr_len, expected_hashes.len() as u64);
+        let _ = node.mining_status();
+    }
+    assert_eq!(
+        node.block_meta_load_counters(),
+        (8, 0),
+        "non-boundary mining and status polling must verify only the persisted parent metadata"
+    );
+    assert_eq!(
+        node.block_meta_decode_count(),
+        0,
+        "non-boundary work and status polling must not decode the stored tip body"
+    );
+}
+
+#[test]
+fn header_hash_history_uses_compact_ancestry_without_body_decode_or_chain_reconstruction() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let node = NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+    let chain = persist_test_pow_chain(
+        &node,
+        (consensus::reward::RETARGET_WINDOW * 2) - 1,
+        pow_bits,
+    );
+    let expected_hashes = chain.iter().map(|meta| meta.hash).collect::<Vec<_>>();
+    let legacy_meta = legacy_meta_from_current(
+        chain
+            .get(1)
+            .expect("test chain contains a legacy-format interior row"),
+    );
+    node.block_tree
+        .insert(
+            legacy_meta.hash,
+            bincode::serialize(&legacy_meta).expect("serialize legacy metadata row"),
+        )
+        .expect("persist legacy metadata row");
+    let mut large_tip = chain.last().expect("stored tip").clone();
+    large_tip.action_bytes = vec![vec![0x6a; 2 * 1024 * 1024]];
+    persist_block_record(&node.block_tree, &large_tip).expect("persist large tip body");
+
+    node.reset_block_meta_load_counters();
+    let observed = node
+        .header_hashes_to_hash(large_tip.hash)
+        .expect("project compact stored header ancestry");
+    assert_eq!(
+        observed, expected_hashes,
+        "compact hash path must exactly match the full-chain oracle"
+    );
+    assert_eq!(
+        node.block_meta_load_counters(),
+        (u64::try_from(chain.len()).expect("test chain length"), 0),
+        "hash history may visit each stored ancestor once but must not reconstruct full metadata bodies"
+    );
+    assert_eq!(
+        node.block_meta_decode_count(),
+        0,
+        "hash history must not decode the multi-megabyte action body"
+    );
+
+    let missing_hash = [0xf3; 32];
+    assert!(matches!(
+        node.header_hashes_to_hash(missing_hash),
+        Err(NativeChainLoadError::MissingAncestor { hash_hex })
+            if hash_hex == hex32(&missing_hash)
+    ));
+
+    let genesis_hash = chain.first().expect("genesis").hash;
+    let mut malformed_height = chain.get(1).expect("child template").clone();
+    malformed_height.hash = [0xf4; 32];
+    malformed_height.work_hash = malformed_height.hash;
+    malformed_height.parent_hash = genesis_hash;
+    malformed_height.height = 7;
+    persist_block_record(&node.block_tree, &malformed_height)
+        .expect("persist malformed-height row");
+    let height_err = node
+        .header_hashes_to_hash(malformed_height.hash)
+        .expect_err("noncontiguous stored heights must fail closed");
+    assert!(matches!(height_err, NativeChainLoadError::Corrupt(_)));
+    assert!(height_err.to_string().contains("height mismatch"));
+
+    let mut cycle = chain.get(1).expect("cycle template").clone();
+    cycle.hash = [0xf5; 32];
+    cycle.work_hash = cycle.hash;
+    cycle.parent_hash = cycle.hash;
+    persist_block_record(&node.block_tree, &cycle).expect("persist parent cycle");
+    let cycle_err = node
+        .header_hashes_to_hash(cycle.hash)
+        .expect_err("stored parent cycle must reject");
+    assert!(matches!(cycle_err, NativeChainLoadError::Corrupt(_)));
+    assert!(cycle_err.to_string().contains("parent cycle"));
+
+    let mismatched_key = [0xf6; 32];
+    let mut mismatched_hash = chain.get(1).expect("hash mismatch template").clone();
+    mismatched_hash.hash = [0xf7; 32];
+    mismatched_hash.work_hash = mismatched_hash.hash;
+    node.block_tree
+        .insert(
+            mismatched_key,
+            bincode::serialize(&mismatched_hash).expect("serialize hash-mismatch row"),
+        )
+        .expect("persist hash-mismatch row");
+    let hash_err = node
+        .header_hashes_to_hash(mismatched_key)
+        .expect_err("stored key/hash mismatch must reject");
+    assert!(matches!(hash_err, NativeChainLoadError::Corrupt(_)));
+    assert!(hash_err
+        .to_string()
+        .contains("stored native block hash mismatch"));
+
+    let mut mismatched_work = chain.get(1).expect("work mismatch template").clone();
+    mismatched_work.hash = [0xf8; 32];
+    mismatched_work.work_hash = [0xf9; 32];
+    node.block_tree
+        .insert(
+            mismatched_work.hash,
+            bincode::serialize(&mismatched_work).expect("serialize work-mismatch row"),
+        )
+        .expect("persist work-mismatch row");
+    let work_err = node
+        .header_hashes_to_hash(mismatched_work.hash)
+        .expect_err("stored hash/work mismatch must reject");
+    assert!(matches!(work_err, NativeChainLoadError::Corrupt(_)));
+    assert!(work_err
+        .to_string()
+        .contains("stored native block work-hash mismatch"));
 }
 
 #[test]
@@ -5468,7 +8076,7 @@ fn native_pow_schedule_recovers_after_slow_window_at_bounded_factor() {
             .expect("persist deterministic slow child");
         chain.push(child);
     }
-    node.state.write().best = chain.last().expect("slow parent").clone();
+    publish_test_canonical_chain(&node, &chain);
 
     let loosened_bits =
         native_expected_child_pow_bits_from_chain(&chain, pow_bits).expect("scheduled bits");
@@ -5726,9 +8334,13 @@ fn prepare_work_rejects_cumulative_work_overflow() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let pow_bits = 0x207f_ffff;
     let node = NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+    let mut parent = node.best_meta();
+    parent.cumulative_work = [0xff; 48];
+    persist_block_record(&node.block_tree, &parent)
+        .expect("persist synthetic cumulative-work-overflow parent");
     {
         let mut state = node.state.write();
-        state.best.cumulative_work = [0xff; 48];
+        state.best = parent;
     }
 
     let err = node
@@ -6250,6 +8862,49 @@ fn chain_get_block_rejects_oversized_action_body_before_hex_encoding() {
         err.to_string()
             .contains("chain_getBlock action bytes exceed"),
         "{err}"
+    );
+}
+
+#[tokio::test]
+async fn scalar_and_latest_header_rpcs_do_not_clone_or_decode_tip_action_body() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    const LARGE_TIP_BODY_BYTES: usize = 4 * 1024 * 1024;
+    node.state.write().best.action_bytes = vec![vec![0x5a; LARGE_TIP_BODY_BYTES]];
+
+    node.reset_block_meta_load_counters();
+    let _ = health_handler(State(node.clone())).await;
+    let _ = root_handler(State(node.clone())).await;
+    for method in [
+        "hegemon_poolWork",
+        "hegemon_compactJob",
+        "hegemon_poolStatus",
+        "hegemon_consensusStatus",
+    ] {
+        dispatch_rpc_method(&node, method, Value::Array(Vec::new()))
+            .unwrap_or_else(|err| panic!("{method} failed: {err}"));
+    }
+    let latest_header = chain_get_header(&node, Value::Array(Vec::new()))
+        .expect("latest header must remain available");
+    assert_ne!(latest_header, Value::Null);
+    let latest_hash = chain_get_block_hash(&node, Value::Array(Vec::new()))
+        .expect("latest hash must remain available");
+    assert_ne!(latest_hash, Value::Null);
+    assert_eq!(
+        block_timestamps(&node, Value::Array(Vec::new()), true)
+            .expect("genesis-only mined timestamps"),
+        Value::Array(Vec::new())
+    );
+
+    assert_eq!(node.block_meta_load_counters(), (0, 0));
+    assert_eq!(node.block_meta_decode_count(), 0);
+    assert_eq!(
+        node.state.read().best.action_bytes[0].len(),
+        LARGE_TIP_BODY_BYTES
+    );
+    assert!(
+        !include_str!("rpc.rs").contains("best_meta()"),
+        "RPC handlers must borrow or project the canonical tip instead of cloning its action body"
     );
 }
 
@@ -7190,6 +9845,1114 @@ fn native_sync_codec_rejects_legacy_or_trailing_bytes() {
     assert!(decode_sync_message(&trailing).is_err());
 }
 
+#[test]
+fn native_sync_message_variant_ordinals_are_append_only() {
+    let announce = NativeSyncMessage::Announce(Box::new(
+        genesis_meta(0x207f_ffff).expect("genesis metadata"),
+    ));
+    let messages = [
+        (announce, 0u8),
+        (
+            NativeSyncMessage::Request {
+                from_height: 1,
+                to_height: 2,
+            },
+            1,
+        ),
+        (
+            NativeSyncMessage::Response {
+                best_height: 3,
+                blocks: Vec::new(),
+            },
+            2,
+        ),
+        (NativeSyncMessage::PendingAction { action: Vec::new() }, 3),
+        (
+            NativeSyncMessage::RequestBlockChunk(NativeSyncBlockChunkRequest {
+                height: 5,
+                block_hash: None,
+                record_digest: None,
+                offset: 0,
+            }),
+            4,
+        ),
+        (
+            NativeSyncMessage::BlockChunk(NativeSyncBlockChunk {
+                best_height: 9,
+                height: 5,
+                block_hash: [1u8; 32],
+                record_encoding: 2,
+                record_digest: [2u8; 32],
+                total_len: 3,
+                offset: 0,
+                bytes: vec![0xaa, 0xbb, 0xcc],
+            }),
+            5,
+        ),
+        (
+            NativeSyncMessage::AnnounceTip(NativeSyncTipAnnouncement {
+                best_height: 9,
+                best_hash: [3u8; 32],
+            }),
+            6,
+        ),
+    ];
+
+    for (message, ordinal) in messages {
+        let encoded = encode_sync_message(&message).expect("encode native sync message");
+        assert_eq!(
+            &encoded[..wire::NETWORK_WIRE_MAGIC.len()],
+            wire::NETWORK_WIRE_MAGIC
+        );
+        assert_eq!(
+            encoded[wire::NETWORK_WIRE_MAGIC.len()],
+            ordinal,
+            "native sync message ordinal {ordinal} drifted"
+        );
+    }
+}
+
+#[test]
+fn native_sync_legacy_variant_bytes_remain_frozen_across_append_only_extensions() {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    enum LegacyNativeSyncMessage {
+        Announce(Box<NativeBlockMeta>),
+        Request {
+            from_height: u64,
+            to_height: u64,
+        },
+        Response {
+            best_height: u64,
+            blocks: Vec<NativeBlockMeta>,
+        },
+        PendingAction {
+            action: Vec<u8>,
+        },
+    }
+
+    let announce = genesis_meta(0x207f_ffff).expect("genesis metadata");
+    let response_block = announce.clone();
+    let legacy_and_current = [
+        (
+            LegacyNativeSyncMessage::Announce(Box::new(announce.clone())),
+            NativeSyncMessage::Announce(Box::new(announce)),
+        ),
+        (
+            LegacyNativeSyncMessage::Request {
+                from_height: 127,
+                to_height: 128,
+            },
+            NativeSyncMessage::Request {
+                from_height: 127,
+                to_height: 128,
+            },
+        ),
+        (
+            LegacyNativeSyncMessage::Response {
+                best_height: 128,
+                blocks: vec![response_block.clone()],
+            },
+            NativeSyncMessage::Response {
+                best_height: 128,
+                blocks: vec![response_block],
+            },
+        ),
+        (
+            LegacyNativeSyncMessage::PendingAction {
+                action: vec![0, 1, 127, 128, 255],
+            },
+            NativeSyncMessage::PendingAction {
+                action: vec![0, 1, 127, 128, 255],
+            },
+        ),
+    ];
+    for (legacy, current) in legacy_and_current {
+        let legacy_bytes = wire::encode(&legacy, MAX_NATIVE_SYNC_MESSAGE_BYTES)
+            .expect("encode frozen legacy sync message");
+        let current_bytes = encode_sync_message(&current).expect("encode current sync message");
+        assert_eq!(
+            current_bytes, legacy_bytes,
+            "appended variants must not change legacy sync bytes"
+        );
+        assert!(
+            decode_sync_message(&legacy_bytes).is_ok(),
+            "current decoder must continue accepting frozen legacy bytes"
+        );
+    }
+
+    let appended = [
+        NativeSyncMessage::RequestBlockChunk(NativeSyncBlockChunkRequest {
+            height: 1,
+            block_hash: None,
+            record_digest: None,
+            offset: 0,
+        }),
+        NativeSyncMessage::BlockChunk(NativeSyncBlockChunk {
+            best_height: 1,
+            height: 1,
+            block_hash: [1u8; 32],
+            record_encoding: NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2,
+            record_digest: [2u8; 32],
+            total_len: 1,
+            offset: 0,
+            bytes: vec![3],
+        }),
+        NativeSyncMessage::AnnounceTip(NativeSyncTipAnnouncement {
+            best_height: 1,
+            best_hash: [4u8; 32],
+        }),
+    ];
+    for message in appended {
+        let bytes = encode_sync_message(&message).expect("encode appended sync message");
+        assert!(
+            wire::decode::<LegacyNativeSyncMessage>(&bytes, MAX_NATIVE_SYNC_MESSAGE_BYTES).is_err(),
+            "a legacy decoder must reject appended sync variants"
+        );
+    }
+}
+
+#[test]
+fn native_sync_chunk_digest_domain_and_record_schema_are_independently_pinned() {
+    use sha2::Digest as _;
+
+    let record_encoding = NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2;
+    let height: u64 = 0x0102_0304_0506_0708;
+    let mut block_hash = [0u8; 32];
+    for (index, byte) in block_hash.iter_mut().enumerate() {
+        *byte = u8::try_from(index).expect("fixture hash index");
+    }
+    let raw = [0xaau8, 0xbb, 0xcc];
+    let total_len = 3u64;
+    let expected_hex = "7bcbe3fbdd7f5339bf0aef1f3b42c7b4e1656c8b04f794d99a4dd387f44b0e69";
+
+    // Construct the protocol preimage independently of the production helper.
+    let mut independent_preimage = b"hegemon-native-sync-block-record-v1\0".to_vec();
+    independent_preimage.push(record_encoding);
+    independent_preimage.extend_from_slice(&height.to_le_bytes());
+    independent_preimage.extend_from_slice(&block_hash);
+    independent_preimage.extend_from_slice(&total_len.to_le_bytes());
+    independent_preimage.extend_from_slice(&raw);
+    let independent_digest: [u8; 32] = sha2::Sha256::digest(&independent_preimage).into();
+    assert_eq!(hex::encode(independent_digest), expected_hex);
+
+    let production_digest =
+        native_sync_chunk_record_digest(record_encoding, height, block_hash, total_len, &raw);
+    assert_eq!(production_digest, independent_digest);
+    let mut changed_hash = block_hash;
+    changed_hash[0] ^= 1;
+    let changed_raw = [0xaau8, 0xbb, 0xcd];
+    for changed in [
+        native_sync_chunk_record_digest(
+            NATIVE_SYNC_CHUNK_RECORD_ENCODING_LEGACY_V1,
+            height,
+            block_hash,
+            total_len,
+            &raw,
+        ),
+        native_sync_chunk_record_digest(record_encoding, height + 1, block_hash, total_len, &raw),
+        native_sync_chunk_record_digest(record_encoding, height, changed_hash, total_len, &raw),
+        native_sync_chunk_record_digest(record_encoding, height, block_hash, total_len + 1, &raw),
+        native_sync_chunk_record_digest(
+            record_encoding,
+            height,
+            block_hash,
+            total_len,
+            &changed_raw,
+        ),
+    ] {
+        assert_ne!(
+            changed, production_digest,
+            "every descriptor field must bind the digest"
+        );
+    }
+    independent_preimage[0] ^= 1;
+    assert_ne!(
+        <[u8; 32]>::from(sha2::Sha256::digest(&independent_preimage)),
+        production_digest,
+        "the literal digest domain must be bound"
+    );
+
+    let current = genesis_meta(0x207f_ffff).expect("current metadata fixture");
+    let current_bytes = bincode::serialize(&current).expect("encode current metadata fixture");
+    assert_eq!(
+        decode_native_sync_chunk_record_exact(
+            NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2,
+            &current_bytes,
+        )
+        .expect("current tag exact-decodes current bytes"),
+        current
+    );
+    assert!(decode_native_sync_chunk_record_exact(
+        NATIVE_SYNC_CHUNK_RECORD_ENCODING_LEGACY_V1,
+        &current_bytes,
+    )
+    .is_err());
+
+    let legacy = legacy_meta_from_current(&current);
+    let expected_legacy: NativeBlockMeta = legacy.clone().into();
+    let legacy_bytes = bincode::serialize(&legacy).expect("encode legacy metadata fixture");
+    assert_eq!(
+        decode_native_sync_chunk_record_exact(
+            NATIVE_SYNC_CHUNK_RECORD_ENCODING_LEGACY_V1,
+            &legacy_bytes,
+        )
+        .expect("legacy tag exact-decodes legacy bytes"),
+        expected_legacy
+    );
+    assert!(decode_native_sync_chunk_record_exact(
+        NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2,
+        &legacy_bytes,
+    )
+    .is_err());
+    for unsupported in [0u8, 3u8, u8::MAX] {
+        assert!(decode_native_sync_chunk_record_exact(unsupported, &current_bytes).is_err());
+    }
+    let mut current_trailing = current_bytes;
+    current_trailing.push(0);
+    assert!(decode_native_sync_chunk_record_exact(
+        NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2,
+        &current_trailing,
+    )
+    .is_err());
+}
+
+#[test]
+fn borrowed_native_sync_response_encoding_matches_owned_wire_bytes() {
+    let mut block = genesis_meta(0x207f_ffff).expect("genesis metadata");
+    block.action_bytes = vec![vec![0x5a; 32 * 1024], vec![0xa5; 8 * 1024]];
+    let blocks = vec![block];
+    let best_height = blocks[0].height;
+
+    let owned = encode_sync_message(&NativeSyncMessage::Response {
+        best_height,
+        blocks: blocks.clone(),
+    })
+    .expect("encode owned sync response");
+    let borrowed = encode_borrowed_native_sync_response(best_height, &blocks)
+        .expect("encode borrowed sync response");
+
+    assert_eq!(borrowed, owned);
+    let frame = wire::encode(
+        &WireMessage::Proto(ProtocolMessage {
+            protocol: NATIVE_SYNC_PROTOCOL_ID,
+            payload: borrowed.clone(),
+        }),
+        wire::MAX_WIRE_FRAME_LEN,
+    )
+    .expect("encode native sync transport frame");
+    assert_eq!(
+        native_sync_response_wire_bytes(best_height, &blocks)
+            .expect("measure native sync response transport bytes"),
+        frame.len() + AES_GCM_TAG_BYTES,
+        "allocation-free response sizing must exactly match the encoded encrypted transport frame"
+    );
+    assert!(matches!(
+        decode_sync_message(&borrowed).expect("decode borrowed response bytes"),
+        NativeSyncMessage::Response { blocks: decoded, .. } if decoded == blocks
+    ));
+}
+
+fn encoded_native_sync_response_encrypted_wire_bytes(
+    best_height: u64,
+    blocks: &[NativeBlockMeta],
+) -> usize {
+    let payload = encode_borrowed_native_sync_response(best_height, blocks)
+        .expect("encode native sync response oracle payload");
+    wire::encode(
+        &WireMessage::Proto(ProtocolMessage {
+            protocol: NATIVE_SYNC_PROTOCOL_ID,
+            payload,
+        }),
+        wire::MAX_WIRE_FRAME_LEN,
+    )
+    .expect("encode native sync response oracle frame")
+    .len()
+    .checked_add(AES_GCM_TAG_BYTES)
+    .expect("encrypted response oracle length")
+}
+
+#[test]
+fn incremental_native_sync_response_sizer_matches_full_wire_oracle_at_varint_boundaries() {
+    let checkpoint_counts = [
+        0usize, 1, 2, 15, 16, 31, 32, 63, 64, 127, 128, 129, 255, 256,
+    ];
+    for best_height in [0u64, 127, 128, 16_383, 16_384, u32::MAX as u64] {
+        let mut blocks = Vec::with_capacity(MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE);
+        let mut sizer =
+            NativeSyncResponseWireSizer::new(best_height).expect("initialize response sizer");
+        assert_eq!(
+            sizer.wire_bytes().expect("measure empty response"),
+            encoded_native_sync_response_encrypted_wire_bytes(best_height, &blocks),
+            "empty response must include both codec markers, envelope, and encryption tag"
+        );
+
+        for height in 1..=MAX_NATIVE_SYNC_RESPONSE_BLOCKS {
+            let mut block = genesis_meta(0x207f_ffff).expect("block template");
+            block.height = height;
+            block.action_bytes = vec![vec![height as u8; (height as usize % 31) + 1]];
+            blocks.push(block);
+            let incremental_bytes = sizer
+                .push_block(blocks.last().expect("just-pushed block"))
+                .expect("measure incremental response");
+            if checkpoint_counts.contains(&blocks.len()) {
+                assert_eq!(
+                    incremental_bytes,
+                    encoded_native_sync_response_encrypted_wire_bytes(best_height, &blocks),
+                    "incremental sizing diverged at best_height={best_height} block_count={}",
+                    blocks.len()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn sync_block_range_stops_loading_at_wire_prefix_budget() {
+    let range = NativeSyncRange {
+        from_height: 1,
+        to_height: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+    };
+    let hash_at = |height: u64| {
+        let mut hash = [0x6du8; 32];
+        hash[..8].copy_from_slice(&height.to_le_bytes());
+        hash
+    };
+    let mut visited = Vec::new();
+    let (blocks, previous_parent_anchor_verified, oversized_first_block) =
+        load_native_sync_response_prefix_with(range.to_height, range, Some(hash_at(0)), |height| {
+            let mut block = genesis_meta(0x207f_ffff).expect("block template");
+            block.height = height;
+            block.parent_hash = hash_at(height - 1);
+            block.hash = hash_at(height);
+            block.work_hash = block.hash;
+            block.action_bytes = vec![vec![height as u8; 1024 * 1024]];
+            visited.push(block.clone());
+            Ok(block)
+        })
+        .expect("load bounded native sync response prefix");
+
+    assert!(previous_parent_anchor_verified);
+    assert_eq!(oversized_first_block, None);
+    assert!(!blocks.is_empty());
+    assert!(blocks.len() < MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE);
+    assert_eq!(
+        visited.len(),
+        blocks.len() + 1,
+        "the loader may materialize only the first over-budget candidate beyond the retained prefix"
+    );
+    assert!(
+        visited.len() <= 10,
+        "one-megabyte rows must stop near the 8 MiB target instead of loading all 256 rows: {}",
+        visited.len()
+    );
+    let retained_wire_bytes =
+        encoded_native_sync_response_encrypted_wire_bytes(range.to_height, &blocks);
+    assert!(retained_wire_bytes <= MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES);
+    let mut first_rejected_prefix = blocks.clone();
+    first_rejected_prefix.push(
+        visited
+            .get(blocks.len())
+            .expect("one visited candidate beyond retained prefix")
+            .clone(),
+    );
+    let rejected_wire_bytes =
+        encoded_native_sync_response_encrypted_wire_bytes(range.to_height, &first_rejected_prefix);
+    assert!(
+        rejected_wire_bytes > MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES,
+        "the sole extra visit must be the exact first candidate above the soft wire target: retained={retained_wire_bytes} rejected={rejected_wire_bytes} target={MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES}"
+    );
+}
+
+#[test]
+fn single_sync_block_may_cross_soft_target_but_not_hard_transport_cap() {
+    let range = NativeSyncRange {
+        from_height: 1,
+        to_height: 1,
+    };
+    let parent_hash = [0x81; 32];
+    let block_hash = [0x82; 32];
+    let mut visited = 0usize;
+    let (blocks, previous_parent_anchor_verified, oversized_first_block) =
+        load_native_sync_response_prefix_with(1, range, Some(parent_hash), |_| {
+            visited += 1;
+            let mut block = genesis_meta(0x207f_ffff).expect("block template");
+            block.height = 1;
+            block.parent_hash = parent_hash;
+            block.hash = block_hash;
+            block.work_hash = block_hash;
+            block.action_bytes = vec![vec![0x83; 9 * 1024 * 1024]];
+            Ok(block)
+        })
+        .expect("load one response block above the soft target");
+
+    assert!(previous_parent_anchor_verified);
+    assert_eq!(oversized_first_block, None);
+    assert_eq!(visited, 1, "the sole block is measured exactly once");
+    assert_eq!(blocks.len(), 1);
+    let encrypted_wire_bytes = encoded_native_sync_response_encrypted_wire_bytes(1, &blocks);
+    assert!(encrypted_wire_bytes > MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES);
+    assert!(encrypted_wire_bytes <= wire::MAX_WIRE_FRAME_LEN);
+}
+
+#[tokio::test]
+async fn oversized_valid_native_block_advances_through_bounded_chunk_fallback() {
+    let source_tmp = tempfile::tempdir().expect("source tempdir");
+    let destination_tmp = tempfile::tempdir().expect("destination tempdir");
+    let pow_bits = 0x207f_ffff;
+    let source = NativeNode::open(test_config(source_tmp.path(), pow_bits, "safe", false))
+        .expect("source node");
+    let destination = Arc::new(
+        NativeNode::open(test_config(destination_tmp.path(), pow_bits, "safe", false))
+            .expect("destination node"),
+    );
+    let genesis = source.best_meta();
+    let actions = (0u64..260)
+        .map(|index| {
+            let mut payload = vec![0x5au8; MAX_NATIVE_BRIDGE_MESSAGE_PAYLOAD_BYTES];
+            payload[..8].copy_from_slice(&index.to_le_bytes());
+            test_outbound_bridge_action(&payload)
+        })
+        .collect::<Vec<_>>();
+    let block = mined_child_with_actions(&genesis, 1, pow_bits, 9, actions);
+    let raw = bincode::serialize(&block).expect("encode oversized canonical block record");
+    assert!(
+        raw.len() > wire::MAX_WIRE_FRAME_LEN,
+        "test block must exceed the legacy encrypted frame: {}",
+        raw.len()
+    );
+    assert!(raw.len() <= MAX_NATIVE_BLOCK_META_BYTES);
+    persist_block(
+        &source.meta_tree,
+        &source.height_tree,
+        &source.block_tree,
+        &block,
+    )
+    .expect("persist oversized canonical block");
+    publish_test_canonical_chain(&source, &[genesis.clone(), block.clone()]);
+
+    let destination_genesis = destination.best_meta();
+    assert_eq!(destination_genesis.hash, genesis.hash);
+    let destination_block = (0u64..512)
+        .map(|round| {
+            mined_empty_child_at(
+                &destination_genesis,
+                1,
+                pow_bits,
+                round,
+                destination_genesis.timestamp_ms.saturating_add(1),
+            )
+        })
+        .find(|candidate| block.hash < candidate.hash)
+        .expect("find an equal-work local tip that loses the deterministic hash tie-break");
+    persist_block(
+        &destination.meta_tree,
+        &destination.height_tree,
+        &destination.block_tree,
+        &destination_block,
+    )
+    .expect("persist destination's competing equal-height canonical block");
+    publish_test_canonical_chain(
+        &destination,
+        &[destination_genesis, destination_block.clone()],
+    );
+
+    let range = NativeSyncRange {
+        from_height: 1,
+        to_height: 1,
+    };
+    let (best_height, legacy_blocks, offer) = source
+        .sync_response_block_range(1, 1)
+        .expect("prepare oversized legacy response");
+    assert_eq!(best_height, 1);
+    assert!(legacy_blocks.is_empty());
+    let offer = offer.expect("hard-oversized first block must create an offer descriptor");
+    assert_eq!(offer.height, 1);
+    assert_eq!(offer.block_hash, block.hash);
+
+    let peer = [0x91u8; 32];
+    let network_addr: SocketAddr = "127.0.0.1:0".parse().expect("test network address");
+    let mut network_service = P2PService::new(
+        PeerIdentity::generate(b"native-sync-chunk-common-handler"),
+        network_addr,
+        Vec::new(),
+        Vec::new(),
+        GossipRouter::new(32).handle(),
+        2,
+        PeerStore::new(PeerStoreConfig::with_path(
+            destination_tmp.path().join("pq-peers.bin"),
+        )),
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(network_addr),
+    );
+    let handle = network_service.register_protocol(NATIVE_SYNC_PROTOCOL_ID);
+    let sync_tx = handle.sender();
+
+    let (compact_payload, used_compact_tip) =
+        encode_native_sync_announce_or_tip(&block).expect("encode oversized announcement");
+    assert!(used_compact_tip, "oversized record must use AnnounceTip");
+    let compact_tip = match decode_sync_message(&compact_payload)
+        .expect("decode compact oversized announcement")
+    {
+        NativeSyncMessage::AnnounceTip(tip) => tip,
+        other => panic!("oversized announcement must decode as compact tip, got {other:?}"),
+    };
+    assert_eq!(compact_tip.best_height, destination_block.height);
+    assert_eq!(compact_tip.best_hash, block.hash);
+    assert_eq!(
+        process_native_sync_tip_announcement(
+            &destination,
+            &handle,
+            peer,
+            NativeSyncTipAnnouncement {
+                best_height: destination_block.height,
+                best_hash: destination_block.hash,
+            },
+        )
+        .await,
+        Err(NativeSyncTipAnnouncementAdmissionRejection::NotAhead),
+        "the local equal-height identity must remain a no-op"
+    );
+    process_native_sync_tip_announcement(&destination, &handle, peer, compact_tip)
+        .await
+        .expect("different-hash equal-height compact tip must schedule fork discovery");
+    {
+        let requests = destination.outbound_sync_requests.lock();
+        let request = requests
+            .get(&Some(peer))
+            .expect("equal-height compact tip must schedule bounded fork backfill");
+        assert_eq!(request.range.from_height, 1);
+        assert_eq!(request.range.to_height, 1);
+        assert_eq!(request.context.target_tip, Some((1, block.hash)));
+    }
+    destination.complete_outbound_sync_request(peer);
+
+    source
+        .offer_native_sync_block_chunk(peer, range, offer)
+        .expect("install authenticated peer-bound offer");
+    let offered_close = NativeSyncBlockChunkRequest {
+        height: 1,
+        block_hash: None,
+        record_digest: None,
+        offset: u64::MAX,
+    };
+    assert!(source
+        .native_sync_block_chunk_for_request(peer, offered_close.clone())
+        .is_err());
+    assert!(
+        begin_native_sync_chunk_serve_worker(&source, peer, &offered_close).is_err(),
+        "an offer cannot be closed or loaded by a placeholder max offset"
+    );
+    assert_eq!(
+        source.native_sync_chunk_record_load_count(),
+        0,
+        "invalid Offered requests must reject before canonical record load"
+    );
+    assert_eq!(source.native_sync_chunk_session_counts(), (1, 0, 1));
+    assert!(source.sync_response_in_flight_peers.lock().is_empty());
+    assert!(destination.begin_outbound_sync_request_with_context(
+        Some(peer),
+        range,
+        NativeOutboundSyncRequestContext {
+            recovery_page: false,
+            expected_parent_hash: None,
+            target_tip: Some((1, block.hash)),
+        },
+    ));
+    let mut request = destination
+        .begin_native_sync_chunk_receive(peer, best_height, true)
+        .expect("admit matching empty-response fallback");
+    let mut chunk_count = 0usize;
+    let (received, close_request, completed_request) = loop {
+        let worker_range = begin_native_sync_chunk_serve_worker(&source, peer, &request)
+            .expect("admit authenticated monotone service worker");
+        let chunk = source
+            .native_sync_block_chunk_for_request(peer, request)
+            .expect("serve next canonical chunk")
+            .expect("non-close request returns a chunk");
+        source.end_sync_response_for_peer(peer, worker_range);
+        chunk_count += 1;
+        assert!(!chunk.bytes.is_empty());
+        assert!(chunk.bytes.len() <= MAX_NATIVE_SYNC_CHUNK_BYTES);
+        destination
+            .preflight_native_sync_block_chunk(peer, &chunk)
+            .expect("preflight valid sequential chunk");
+        assert!(destination.begin_native_sync_chunk_receive_worker(peer));
+        let progress = destination
+            .ingest_native_sync_block_chunk(peer, chunk)
+            .expect("ingest valid sequential chunk");
+        destination.end_native_sync_chunk_receive_worker(peer);
+        match progress {
+            NativeSyncChunkReceiveProgress::NeedMore(next) => {
+                request = next;
+                assert!(
+                    destination.native_sync_chunk_receive_retained_bytes(peer)
+                        <= MAX_NATIVE_BLOCK_META_BYTES
+                );
+            }
+            NativeSyncChunkReceiveProgress::Complete {
+                block,
+                close_request,
+                completed_request,
+                ..
+            } => break (block, close_request, completed_request),
+        }
+    };
+    assert!(
+        chunk_count >= 5,
+        "regression must cross the old 4/10s request cap"
+    );
+    assert_eq!(*received, block);
+    assert_eq!(destination.native_sync_chunk_session_counts(), (0, 0, 0));
+    let close_worker = begin_native_sync_chunk_serve_worker(&source, peer, &close_request)
+        .expect("admit exact close acknowledgement worker");
+    assert!(source
+        .native_sync_block_chunk_for_request(peer, close_request)
+        .expect("admit exact close acknowledgement")
+        .is_none());
+    source.end_sync_response_for_peer(peer, close_worker);
+    assert_eq!(source.native_sync_chunk_session_counts(), (0, 0, 0));
+
+    process_authorized_native_sync_response(
+        &destination,
+        &handle,
+        &sync_tx,
+        peer,
+        best_height,
+        vec![*received],
+        completed_request,
+    )
+    .await;
+    assert_eq!(destination.best_height_and_hash(), (1, block.hash));
+    assert!(
+        destination.mining_sync_gate_allows_work(),
+        "durably imported target identity must reopen the mining gate"
+    );
+}
+
+#[test]
+fn chunk_preflight_rejects_unsolicited_malformed_and_expired_sessions_without_growth() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let peer = [0x92u8; 32];
+    let other_peer = [0x93u8; 32];
+    let genesis = node.best_meta();
+    let raw = bincode::serialize(&genesis).expect("encode canonical test record");
+    let total_len = raw.len() as u64;
+    let digest = native_sync_chunk_record_digest(
+        NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2,
+        0,
+        genesis.hash,
+        total_len,
+        &raw,
+    );
+    let unsolicited = NativeSyncBlockChunk {
+        best_height: 0,
+        height: 0,
+        block_hash: genesis.hash,
+        record_encoding: NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2,
+        record_digest: digest,
+        total_len,
+        offset: 0,
+        bytes: vec![0u8; MAX_NATIVE_SYNC_CHUNK_BYTES + 1],
+    };
+    assert!(node
+        .preflight_native_sync_block_chunk(peer, &unsolicited)
+        .is_err());
+    assert_eq!(node.native_sync_chunk_session_counts(), (0, 0, 0));
+    let bogus_serve_request = NativeSyncBlockChunkRequest {
+        height: 0,
+        block_hash: None,
+        record_digest: None,
+        offset: 0,
+    };
+    for _ in 0..16 {
+        assert!(
+            begin_native_sync_chunk_serve_worker(&node, peer, &bogus_serve_request).is_err(),
+            "unauthenticated requests must fail before consuming a worker slot"
+        );
+    }
+    assert!(node.sync_response_in_flight_peers.lock().is_empty());
+    assert_eq!(node.native_sync_chunk_receive_worker_count(), 0);
+
+    let range = NativeSyncRange {
+        from_height: 0,
+        to_height: 0,
+    };
+    assert!(node.begin_outbound_sync_request(Some(peer), range));
+    node.begin_native_sync_chunk_receive(peer, 0, true)
+        .expect("begin bounded receive session");
+    let undersized = NativeSyncBlockChunk {
+        best_height: 0,
+        height: 0,
+        block_hash: genesis.hash,
+        record_encoding: NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2,
+        record_digest: digest,
+        total_len,
+        offset: 0,
+        bytes: raw[..1].to_vec(),
+    };
+    let err = node
+        .preflight_native_sync_block_chunk(peer, &undersized)
+        .expect_err("non-final undersized chunk must reject before worker dispatch");
+    assert!(err.to_string().contains("chunk_length_mismatch"));
+    assert_eq!(node.native_sync_chunk_receive_retained_bytes(peer), 0);
+    assert!(
+        node.preflight_native_sync_block_chunk(peer, &unsolicited)
+            .is_err(),
+        "oversized chunk must reject before worker dispatch"
+    );
+    assert_eq!(node.native_sync_chunk_receive_retained_bytes(peer), 0);
+
+    let mut fragmented_meta = genesis.clone();
+    fragmented_meta.action_bytes =
+        vec![vec![0x43; MAX_NATIVE_SYNC_CHUNK_BYTES.saturating_add(128)]];
+    let fragmented_raw =
+        bincode::serialize(&fragmented_meta).expect("encode multi-chunk metadata fixture");
+    let fragmented_total_len = fragmented_raw.len() as u64;
+    let fragmented_digest = native_sync_chunk_record_digest(
+        NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2,
+        0,
+        genesis.hash,
+        fragmented_total_len,
+        &fragmented_raw,
+    );
+    let split = MAX_NATIVE_SYNC_CHUNK_BYTES;
+    let first = NativeSyncBlockChunk {
+        best_height: 0,
+        height: 0,
+        block_hash: genesis.hash,
+        record_encoding: NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2,
+        record_digest: fragmented_digest,
+        total_len: fragmented_total_len,
+        offset: 0,
+        bytes: fragmented_raw[..split].to_vec(),
+    };
+    node.preflight_native_sync_block_chunk(peer, &first)
+        .expect("first segment preflight");
+    assert!(matches!(
+        node.ingest_native_sync_block_chunk(peer, first)
+            .expect("first segment ingest"),
+        NativeSyncChunkReceiveProgress::NeedMore(_)
+    ));
+    assert_eq!(node.native_sync_chunk_receive_retained_bytes(peer), split);
+    let out_of_order = NativeSyncBlockChunk {
+        best_height: 0,
+        height: 0,
+        block_hash: genesis.hash,
+        record_encoding: NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2,
+        record_digest: fragmented_digest,
+        total_len: fragmented_total_len,
+        offset: split as u64 + 1,
+        bytes: fragmented_raw[split..].to_vec(),
+    };
+    assert!(
+        node.preflight_native_sync_block_chunk(peer, &out_of_order)
+            .is_err(),
+        "gap must reject without growing retained bytes"
+    );
+    assert_eq!(node.native_sync_chunk_receive_retained_bytes(peer), split);
+
+    node.expire_native_sync_chunk_receive_for_test(peer);
+    node.prune_native_sync_chunk_sessions();
+    assert_eq!(node.native_sync_chunk_session_counts(), (0, 0, 0));
+    let mut requests = node.outbound_sync_requests.lock();
+    let expired = requests
+        .get_mut(&Some(peer))
+        .expect("expired fallback becomes cooldown");
+    assert_eq!(expired.state, NativeOutboundSyncRequestState::Cooldown);
+    expired.requested_at = Instant::now()
+        .checked_sub(NATIVE_SYNC_REQUEST_RETRY_AFTER + Duration::from_millis(1))
+        .expect("old request timestamp");
+    drop(requests);
+    assert!(
+        node.begin_outbound_sync_request(Some(other_peer), range),
+        "same target can fail over after silent-session cooldown"
+    );
+
+    node.complete_outbound_sync_request_target(Some(other_peer));
+    assert!(node.begin_outbound_sync_request(Some(peer), range));
+    node.begin_native_sync_chunk_receive(peer, 0, true)
+        .expect("begin digest-mismatch session");
+    let corrupt_digest = NativeSyncBlockChunk {
+        record_digest: [0x44u8; 32],
+        bytes: raw,
+        ..NativeSyncBlockChunk {
+            best_height: 0,
+            height: 0,
+            block_hash: genesis.hash,
+            record_encoding: NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2,
+            record_digest: digest,
+            total_len,
+            offset: 0,
+            bytes: Vec::new(),
+        }
+    };
+    node.preflight_native_sync_block_chunk(peer, &corrupt_digest)
+        .expect("digest is checked only after full assembly");
+    let decodes_before = node.native_sync_chunk_record_decode_count();
+    let err = node
+        .ingest_native_sync_block_chunk(peer, corrupt_digest)
+        .expect_err("domain-bound digest mismatch must reject");
+    assert!(err.to_string().contains("record_digest_mismatch"));
+    assert_eq!(
+        node.native_sync_chunk_record_decode_count(),
+        decodes_before,
+        "digest mismatch must reject before exact decode and canonical re-encoding"
+    );
+    assert_eq!(node.native_sync_chunk_session_counts(), (0, 0, 0));
+}
+
+#[test]
+fn chunk_completion_reserve_failure_cools_down_authorized_request() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let peer = [0x94u8; 32];
+    let range = NativeSyncRange {
+        from_height: 0,
+        to_height: 0,
+    };
+    assert!(node.begin_outbound_sync_request(Some(peer), range));
+    node.begin_native_sync_chunk_receive(peer, 0, true)
+        .expect("authorized request enters chunk fallback");
+    let completed = NativeCompletedSyncRequest {
+        request_target: Some(peer),
+        range,
+        context: NativeOutboundSyncRequestContext::default(),
+    };
+    let mut bytes = Vec::new();
+    let err = node
+        .reserve_completed_native_sync_chunk_record(completed, &mut bytes, usize::MAX)
+        .expect_err("impossible reserve must fail deterministically");
+    assert!(err
+        .to_string()
+        .contains("reserve completed native sync chunk record"));
+    let requests = node.outbound_sync_requests.lock();
+    assert_eq!(
+        requests
+            .get(&Some(peer))
+            .expect("failed chunk request remains retryable")
+            .state,
+        NativeOutboundSyncRequestState::Cooldown,
+        "allocation failure after session removal must not strand ChunkFallback"
+    );
+}
+
+#[test]
+fn symmetric_native_sync_chunk_sessions_transfer_and_close_without_directional_deadlock() {
+    let left_tmp = tempfile::tempdir().expect("left tempdir");
+    let right_tmp = tempfile::tempdir().expect("right tempdir");
+    let pow_bits = 0x207f_ffff;
+    let left =
+        NativeNode::open(test_config(left_tmp.path(), pow_bits, "safe", false)).expect("left node");
+    let right = NativeNode::open(test_config(right_tmp.path(), pow_bits, "safe", false))
+        .expect("right node");
+    let left_peer = [0xa1u8; 32];
+    let right_peer = [0xa2u8; 32];
+    let range = NativeSyncRange {
+        from_height: 0,
+        to_height: 0,
+    };
+    let left_genesis = left.best_meta();
+    let right_genesis = right.best_meta();
+
+    left.offer_native_sync_block_chunk(
+        right_peer,
+        range,
+        NativeSyncChunkOffer {
+            height: 0,
+            block_hash: left_genesis.hash,
+        },
+    )
+    .expect("left installs peer-bound serve offer");
+    right
+        .offer_native_sync_block_chunk(
+            left_peer,
+            range,
+            NativeSyncChunkOffer {
+                height: 0,
+                block_hash: right_genesis.hash,
+            },
+        )
+        .expect("right installs peer-bound serve offer");
+    assert!(left.begin_outbound_sync_request(Some(right_peer), range));
+    assert!(right.begin_outbound_sync_request(Some(left_peer), range));
+
+    let left_request = left
+        .begin_native_sync_chunk_receive(right_peer, 0, true)
+        .expect("left receive may coexist with left serve session for the same peer");
+    let right_request = right
+        .begin_native_sync_chunk_receive(left_peer, 0, true)
+        .expect("right receive may coexist with right serve session for the same peer");
+    assert_eq!(left.native_sync_chunk_session_counts(), (1, 1, 2));
+    assert_eq!(right.native_sync_chunk_session_counts(), (1, 1, 2));
+
+    let left_serve_worker = begin_native_sync_chunk_serve_worker(&left, right_peer, &right_request)
+        .expect("left admits authenticated outbound chunk worker");
+    let left_chunk = left
+        .native_sync_block_chunk_for_request(right_peer, right_request)
+        .expect("left serves first chunk")
+        .expect("genesis record produces a chunk");
+    let right_serve_worker = begin_native_sync_chunk_serve_worker(&right, left_peer, &left_request)
+        .expect("right admits authenticated outbound chunk worker");
+    let right_chunk = right
+        .native_sync_block_chunk_for_request(left_peer, left_request)
+        .expect("right serves first chunk")
+        .expect("genesis record produces a chunk");
+
+    left.preflight_native_sync_block_chunk(right_peer, &right_chunk)
+        .expect("left preflights inbound chunk while serving to the same peer");
+    right
+        .preflight_native_sync_block_chunk(left_peer, &left_chunk)
+        .expect("right preflights inbound chunk while serving to the same peer");
+    assert!(left.begin_native_sync_chunk_receive_worker(right_peer));
+    assert!(right.begin_native_sync_chunk_receive_worker(left_peer));
+    let left_progress = left
+        .ingest_native_sync_block_chunk(right_peer, right_chunk)
+        .expect("left completes the symmetric transfer");
+    let right_progress = right
+        .ingest_native_sync_block_chunk(left_peer, left_chunk)
+        .expect("right completes the symmetric transfer");
+    left.end_native_sync_chunk_receive_worker(right_peer);
+    right.end_native_sync_chunk_receive_worker(left_peer);
+    left.end_sync_response_for_peer(right_peer, left_serve_worker);
+    right.end_sync_response_for_peer(left_peer, right_serve_worker);
+
+    let (left_received, left_close) = match left_progress {
+        NativeSyncChunkReceiveProgress::Complete {
+            block,
+            close_request,
+            ..
+        } => (block, close_request),
+        NativeSyncChunkReceiveProgress::NeedMore(_) => {
+            panic!("genesis record must complete in one bounded chunk")
+        }
+    };
+    let (right_received, right_close) = match right_progress {
+        NativeSyncChunkReceiveProgress::Complete {
+            block,
+            close_request,
+            ..
+        } => (block, close_request),
+        NativeSyncChunkReceiveProgress::NeedMore(_) => {
+            panic!("genesis record must complete in one bounded chunk")
+        }
+    };
+    assert_eq!(*left_received, right_genesis);
+    assert_eq!(*right_received, left_genesis);
+    assert_eq!(left.native_sync_chunk_session_counts(), (1, 0, 1));
+    assert_eq!(right.native_sync_chunk_session_counts(), (1, 0, 1));
+
+    let left_close_worker = begin_native_sync_chunk_serve_worker(&left, right_peer, &right_close)
+        .expect("left admits right close acknowledgement");
+    assert!(left
+        .native_sync_block_chunk_for_request(right_peer, right_close)
+        .expect("left accepts right close acknowledgement")
+        .is_none());
+    left.end_sync_response_for_peer(right_peer, left_close_worker);
+    let right_close_worker = begin_native_sync_chunk_serve_worker(&right, left_peer, &left_close)
+        .expect("right admits left close acknowledgement");
+    assert!(right
+        .native_sync_block_chunk_for_request(left_peer, left_close)
+        .expect("right accepts left close acknowledgement")
+        .is_none());
+    right.end_sync_response_for_peer(left_peer, right_close_worker);
+    assert_eq!(left.native_sync_chunk_session_counts(), (0, 0, 0));
+    assert_eq!(right.native_sync_chunk_session_counts(), (0, 0, 0));
+    assert!(left.outbound_sync_requests.lock().is_empty());
+    assert!(right.outbound_sync_requests.lock().is_empty());
+}
+
+#[test]
+fn truncated_native_sync_response_prefix_remains_publishable() {
+    let mut blocks = Vec::new();
+    let mut parent_hash = [0u8; 32];
+    for height in 1..=16u64 {
+        let mut block = genesis_meta(0x207f_ffff).expect("genesis metadata");
+        block.height = height;
+        block.parent_hash = parent_hash;
+        block.hash = [height as u8; 32];
+        block.hash[..8].copy_from_slice(&height.to_le_bytes());
+        block.work_hash = block.hash;
+        block.miner_signature = vec![height as u8; 1024 * 1024];
+        parent_hash = block.hash;
+        blocks.push(block);
+    }
+    let original_len = blocks.len();
+
+    truncate_native_sync_response_blocks_to_wire_budget(16, 1, &mut blocks);
+
+    assert!(
+        blocks.len() < original_len,
+        "fixture must exercise the soft wire-budget truncation"
+    );
+    let published_range = NativeSyncRange {
+        from_height: 1,
+        to_height: blocks.last().expect("truncated prefix").height,
+    };
+    let input = native_sync_block_range_publication_admission_input(
+        published_range,
+        &blocks,
+        blocks.len(),
+        native_sync_verified_action_body_count(&blocks),
+        true,
+    );
+    assert_eq!(
+        evaluate_native_sync_block_range_publication_admission(input),
+        Ok(()),
+        "publication evidence must be recomputed for the retained prefix"
+    );
+    assert!(native_sync_response_is_contiguous_request_prefix(
+        NativeSyncRange {
+            from_height: 1,
+            to_height: 16,
+        },
+        &blocks,
+    ));
+}
+
+#[test]
+fn native_sync_response_prefix_rejects_suffix_gap_duplicate_and_wrong_parent() {
+    let requested = NativeSyncRange {
+        from_height: 100,
+        to_height: 355,
+    };
+    let mut first = lean_sync_response_import_meta(100, 0x11);
+    let mut second = lean_sync_response_import_meta(101, 0x22);
+    second.parent_hash = first.hash;
+    assert!(native_sync_response_is_contiguous_request_prefix(
+        requested,
+        &[first.clone(), second.clone()],
+    ));
+
+    first.height = 101;
+    assert!(!native_sync_response_is_contiguous_request_prefix(
+        requested,
+        &[first.clone(), second.clone()],
+    ));
+    first.height = 100;
+
+    second.height = 102;
+    assert!(!native_sync_response_is_contiguous_request_prefix(
+        requested,
+        &[first.clone(), second.clone()],
+    ));
+    second.height = 100;
+    assert!(!native_sync_response_is_contiguous_request_prefix(
+        requested,
+        &[first.clone(), second.clone()],
+    ));
+    second.height = 101;
+    second.parent_hash = [0x99; 32];
+    assert!(!native_sync_response_is_contiguous_request_prefix(
+        requested,
+        &[first, second],
+    ));
+    assert!(!native_sync_response_is_contiguous_request_prefix(
+        requested,
+        &[],
+    ));
+}
+
 #[tokio::test]
 async fn rpc_handler_rejects_oversized_batches() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -8106,6 +11869,147 @@ fn verify_lean_canonical_reorg_chain_admission_case(case: &LeanCanonicalReorgCha
 }
 
 #[test]
+fn lean_generated_canonical_reorg_persistence_admission_vectors_match_production() {
+    let Ok(path) = std::env::var("HEGEMON_LEAN_CANONICAL_REORG_PERSISTENCE_ADMISSION_VECTORS")
+    else {
+        eprintln!(
+            "HEGEMON_LEAN_CANONICAL_REORG_PERSISTENCE_ADMISSION_VECTORS not set; skipping generated Lean canonical reorg persistence admission vector check"
+        );
+        return;
+    };
+    let raw = std::fs::read_to_string(&path)
+        .expect("read generated Lean canonical reorg persistence admission vectors");
+    let vectors: LeanCanonicalReorgPersistenceAdmissionVectorFile = serde_json::from_str(&raw)
+        .expect("parse generated Lean canonical reorg persistence admission vectors");
+    assert_eq!(vectors.schema_version, 1);
+    assert!(
+        !vectors
+            .supplied_block_record_classification_cases
+            .is_empty(),
+        "Lean supplied block-record classification cases must not be empty"
+    );
+    assert!(
+        !vectors.canonical_reorg_persistence_cases.is_empty(),
+        "Lean canonical reorg persistence cases must not be empty"
+    );
+
+    let mut names = BTreeSet::new();
+    for case in &vectors.supplied_block_record_classification_cases {
+        assert!(names.insert(case.name.clone()));
+        verify_lean_supplied_block_record_classification_case(case);
+    }
+    for case in &vectors.canonical_reorg_persistence_cases {
+        assert!(names.insert(case.name.clone()));
+        verify_lean_canonical_reorg_persistence_admission_case(case);
+    }
+}
+
+fn verify_lean_supplied_block_record_classification_case(
+    case: &LeanSuppliedBlockRecordClassificationCase,
+) {
+    let actual = evaluate_native_supplied_block_record_classification(
+        NativeSuppliedBlockRecordClassificationInput {
+            stored_record_present: case.stored_record_present,
+            stored_record_exact: case.stored_record_exact,
+        },
+    );
+    let actual_status = actual.as_ref().ok().map(|status| match status {
+        NativeSuppliedBlockRecordStatus::KnownExact => "known_exact".to_owned(),
+        NativeSuppliedBlockRecordStatus::Missing => "missing".to_owned(),
+    });
+    let actual_rejection = actual.err().map(|rejection| match rejection {
+        NativeSuppliedBlockRecordClassificationRejection::KnownRecordMismatch => {
+            "known_record_mismatch".to_owned()
+        }
+    });
+    assert_eq!(
+        actual_rejection.is_none(),
+        case.expected_valid,
+        "{} native supplied block-record classification validity drifted from Lean spec",
+        case.name
+    );
+    assert_eq!(
+        actual_status, case.expected_status,
+        "{} native supplied block-record classification status drifted from Lean spec",
+        case.name
+    );
+    assert_eq!(
+        actual_rejection, case.expected_rejection,
+        "{} native supplied block-record classification rejection drifted from Lean spec",
+        case.name
+    );
+}
+
+fn verify_lean_canonical_reorg_persistence_admission_case(
+    case: &LeanCanonicalReorgPersistenceAdmissionCase,
+) {
+    let actual = evaluate_native_canonical_reorg_persistence_admission(
+        NativeCanonicalReorgPersistenceAdmissionInput {
+            replacement_block_count: case.replacement_block_count,
+            known_block_count: case.known_block_count,
+            classified_missing_block_count: case.classified_missing_block_count,
+            supplied_missing_block_count: case.supplied_missing_block_count,
+            connected_exact_known_rows: case.connected_exact_known_rows,
+            suffix_fully_validated: case.suffix_fully_validated,
+            noncanonical_batch_block_record_writes: case.noncanonical_batch_block_record_writes,
+            noncanonical_batch_durability_flushed: case.noncanonical_batch_durability_flushed,
+            durable_records_match_replacement: case.durable_records_match_replacement,
+            canonical_transaction_block_record_writes: case
+                .canonical_transaction_block_record_writes,
+        },
+    );
+    let actual_rejection = actual
+        .err()
+        .map(canonical_reorg_persistence_rejection_label)
+        .map(str::to_owned);
+    assert_eq!(
+        actual_rejection.is_none(),
+        case.expected_valid,
+        "{} native canonical reorg persistence validity drifted from Lean spec",
+        case.name
+    );
+    assert_eq!(
+        actual_rejection, case.expected_rejection,
+        "{} native canonical reorg persistence rejection drifted from Lean spec",
+        case.name
+    );
+}
+
+fn canonical_reorg_persistence_rejection_label(
+    rejection: NativeCanonicalReorgPersistenceAdmissionRejection,
+) -> &'static str {
+    match rejection {
+        NativeCanonicalReorgPersistenceAdmissionRejection::KnownCountExceedsReplacement => {
+            "known_count_exceeds_replacement"
+        }
+        NativeCanonicalReorgPersistenceAdmissionRejection::ClassifiedMissingCountMismatch => {
+            "classified_missing_count_mismatch"
+        }
+        NativeCanonicalReorgPersistenceAdmissionRejection::SuppliedMissingCountMismatch => {
+            "supplied_missing_count_mismatch"
+        }
+        NativeCanonicalReorgPersistenceAdmissionRejection::ConnectedExactKnownRowsMissing => {
+            "connected_exact_known_rows_missing"
+        }
+        NativeCanonicalReorgPersistenceAdmissionRejection::SuffixNotFullyValidated => {
+            "suffix_not_fully_validated"
+        }
+        NativeCanonicalReorgPersistenceAdmissionRejection::NoncanonicalBatchWriteCountMismatch => {
+            "noncanonical_batch_write_count_mismatch"
+        }
+        NativeCanonicalReorgPersistenceAdmissionRejection::NoncanonicalBatchNotDurable => {
+            "noncanonical_batch_not_durable"
+        }
+        NativeCanonicalReorgPersistenceAdmissionRejection::DurableRecordsMismatchReplacement => {
+            "durable_records_mismatch_replacement"
+        }
+        NativeCanonicalReorgPersistenceAdmissionRejection::CanonicalTransactionWritesBlockRecords => {
+            "canonical_transaction_writes_block_records"
+        }
+    }
+}
+
+#[test]
 fn lean_generated_canonical_state_reload_vectors_match_production() {
     let Ok(path) = std::env::var("HEGEMON_LEAN_CANONICAL_STATE_RELOAD_VECTORS") else {
         eprintln!(
@@ -8658,6 +12562,10 @@ fn lean_generated_mined_block_commit_publication_vectors_match_production() {
         assert!(names.insert(case.name.clone()));
         verify_lean_mined_block_commit_publication_case(case);
     }
+    assert!(
+        names.contains("tip-extension-batch-kind-mismatch-rejected"),
+        "Lean mined-block publication vectors must cover the tip-extension commit-kind mismatch"
+    );
 }
 
 fn verify_lean_mined_block_commit_publication_case(case: &LeanMinedBlockCommitPublicationCase) {
@@ -10613,6 +14521,67 @@ fn native_block_meta_bincode_budget_allows_current_and_legacy_metadata() {
 }
 
 #[test]
+fn native_block_meta_schema_specific_decoders_are_exact_and_unambiguous() {
+    assert_eq!(NATIVE_BLOCK_META_SCHEMA_LEGACY_V1, 1);
+    assert_eq!(NATIVE_BLOCK_META_SCHEMA_CURRENT_V2, 2);
+
+    let current = genesis_meta(0x207f_ffff).expect("current native metadata");
+    let current_bytes = bincode::serialize(&current).expect("serialize current native metadata");
+    let legacy = legacy_meta_from_current(&current);
+    let legacy_bytes = bincode::serialize(&legacy).expect("serialize legacy native metadata");
+
+    let current_decoded = bincode_deserialize_current_native_block_meta_exact(
+        &current_bytes,
+        "current native metadata",
+    )
+    .expect("current schema decoder must accept current metadata");
+    assert_eq!(current_decoded, current);
+    assert!(bincode_deserialize_legacy_v1_native_block_meta_exact(
+        &current_bytes,
+        "current bytes under legacy schema",
+    )
+    .is_err());
+
+    let legacy_decoded = bincode_deserialize_legacy_v1_native_block_meta_exact(
+        &legacy_bytes,
+        "legacy native metadata",
+    )
+    .expect("legacy schema decoder must accept legacy metadata");
+    assert_eq!(legacy_decoded.height, current.height);
+    assert_eq!(legacy_decoded.hash, current.hash);
+    assert!(bincode_deserialize_current_native_block_meta_exact(
+        &legacy_bytes,
+        "legacy bytes under current schema",
+    )
+    .is_err());
+
+    let (detected_current, current_schema) = detect_bincode_native_block_meta_schema_exact(
+        &current_bytes,
+        "detect current native metadata",
+    )
+    .expect("detect current native metadata schema");
+    assert_eq!(detected_current, current);
+    assert_eq!(current_schema, NATIVE_BLOCK_META_SCHEMA_CURRENT_V2);
+
+    let (detected_legacy, legacy_schema) = detect_bincode_native_block_meta_schema_exact(
+        &legacy_bytes,
+        "detect legacy native metadata",
+    )
+    .expect("detect legacy native metadata schema");
+    assert_eq!(detected_legacy.height, current.height);
+    assert_eq!(detected_legacy.hash, current.hash);
+    assert_eq!(legacy_schema, NATIVE_BLOCK_META_SCHEMA_LEGACY_V1);
+
+    let mut trailing_current = current_bytes;
+    trailing_current.push(0);
+    assert!(detect_bincode_native_block_meta_schema_exact(
+        &trailing_current,
+        "current native metadata with trailing byte",
+    )
+    .is_err());
+}
+
+#[test]
 fn native_block_meta_exact_decode_matches_bincode_oracle_on_mutation_corpus() {
     let corpus = native_block_meta_exact_decode_equivalence_corpus();
     assert!(
@@ -11193,6 +15162,20 @@ fn lean_generated_atomic_commit_manifest_admission_vectors_match_production() {
     for case in &vectors.atomic_commit_manifest_admission_cases {
         assert!(names.insert(case.name.clone()));
         verify_lean_atomic_commit_manifest_admission_case(case);
+    }
+    for required in [
+        "valid-tip-extension-batch-commit",
+        "valid-noncanonical-block-record-batch",
+        "tip-extension-batch-plan-length-mismatch-rejected",
+        "tip-extension-batch-block-record-write-mismatch-rejected",
+        "noncanonical-block-record-batch-write-count-mismatch-rejected",
+        "canonical-reorg-block-record-write-rejected",
+        "tip-extension-batch-height-index-write-mismatch-rejected",
+    ] {
+        assert!(
+            names.contains(required),
+            "Lean atomic-commit manifest vectors must contain {required}"
+        );
     }
 }
 
@@ -17012,7 +20995,7 @@ fn lean_generated_sync_raw_ingress_vectors_match_production() {
     let raw = std::fs::read_to_string(&path).expect("read generated Lean sync raw-ingress vectors");
     let vectors: LeanSyncRawIngressVectorFile =
         serde_json::from_str(&raw).expect("parse generated Lean sync raw-ingress vectors");
-    assert_eq!(vectors.schema_version, 1);
+    assert_eq!(vectors.schema_version, 2);
     assert!(
         !vectors.sync_raw_ingress_cases.is_empty(),
         "Lean sync raw-ingress cases must not be empty"
@@ -17187,6 +21170,51 @@ fn verify_lean_sync_raw_ingress_case(case: &LeanSyncRawIngressCase) {
                 Err(_) => Some("pending_action_decode_rejected".to_owned()),
             }
         }
+        Ok(NativeSyncMessage::RequestBlockChunk(request)) => {
+            assert_eq!(
+                case.expected_kind, "request_block_chunk",
+                "{} decoded to block-chunk request but Lean expected {}",
+                case.name, case.expected_kind
+            );
+            let canonical = encode_sync_message(&NativeSyncMessage::RequestBlockChunk(request))
+                .expect("re-encode decoded sync block-chunk request");
+            assert_eq!(
+                canonical, case.raw_bytes,
+                "{} raw sync block-chunk request bytes are not canonical production bytes",
+                case.name
+            );
+            None
+        }
+        Ok(NativeSyncMessage::BlockChunk(chunk)) => {
+            assert_eq!(
+                case.expected_kind, "block_chunk",
+                "{} decoded to block chunk but Lean expected {}",
+                case.name, case.expected_kind
+            );
+            let canonical = encode_sync_message(&NativeSyncMessage::BlockChunk(chunk))
+                .expect("re-encode decoded sync block chunk");
+            assert_eq!(
+                canonical, case.raw_bytes,
+                "{} raw sync block chunk bytes are not canonical production bytes",
+                case.name
+            );
+            None
+        }
+        Ok(NativeSyncMessage::AnnounceTip(tip)) => {
+            assert_eq!(
+                case.expected_kind, "announce_tip",
+                "{} decoded to compact tip announcement but Lean expected {}",
+                case.name, case.expected_kind
+            );
+            let canonical = encode_sync_message(&NativeSyncMessage::AnnounceTip(tip))
+                .expect("re-encode decoded compact sync tip announcement");
+            assert_eq!(
+                canonical, case.raw_bytes,
+                "{} raw compact sync tip bytes are not canonical production bytes",
+                case.name
+            );
+            None
+        }
     };
     assert_eq!(
         actual.is_none(),
@@ -17208,12 +21236,291 @@ fn lean_sync_response_import_outcome_from_label(
     match label {
         "imported" => NativeSyncResponseImportOutcome::Imported,
         "already_known" => NativeSyncResponseImportOutcome::AlreadyKnown,
+        "stored_noncanonical" => NativeSyncResponseImportOutcome::StoredNoncanonical,
+        "missing_parent" => NativeSyncResponseImportOutcome::MissingParent,
         "error" => NativeSyncResponseImportOutcome::Error,
         other => panic!(
             "{} unknown raw-ingress sync-response import outcome {other}",
             case.name
         ),
     }
+}
+
+#[test]
+fn lean_generated_sync_block_chunk_admission_vectors_match_production() {
+    let Ok(path) = std::env::var("HEGEMON_LEAN_SYNC_BLOCK_CHUNK_ADMISSION_VECTORS") else {
+        eprintln!(
+            "HEGEMON_LEAN_SYNC_BLOCK_CHUNK_ADMISSION_VECTORS not set; skipping generated Lean sync block-chunk admission vector check"
+        );
+        return;
+    };
+    let raw = std::fs::read_to_string(&path)
+        .expect("read generated Lean sync block-chunk admission vectors");
+    let vectors: LeanSyncBlockChunkAdmissionVectorFile = serde_json::from_str(&raw)
+        .expect("parse generated Lean sync block-chunk admission vectors");
+    assert_eq!(vectors.schema_version, 4);
+    assert!(!vectors.sync_chunk_fallback_cases.is_empty());
+    assert!(!vectors.sync_chunk_capacity_cases.is_empty());
+    assert!(!vectors.sync_chunk_serve_request_cases.is_empty());
+    assert!(!vectors.sync_chunk_offer_request_cases.is_empty());
+    assert!(!vectors.sync_chunk_outbound_transition_cases.is_empty());
+    assert!(!vectors.sync_chunk_expiry_cases.is_empty());
+    assert!(!vectors.sync_tip_announcement_cases.is_empty());
+    assert!(!vectors.sync_block_chunk_cases.is_empty());
+    assert!(!vectors.sync_block_chunk_completion_cases.is_empty());
+
+    let mut names = BTreeSet::new();
+    for case in &vectors.sync_chunk_fallback_cases {
+        assert!(names.insert(case.name.clone()));
+        let actual =
+            evaluate_native_sync_chunk_fallback_admission(NativeSyncChunkFallbackAdmissionInput {
+                matching_completed_request: case.matching_completed_request,
+                response_empty: case.response_empty,
+                peer_best_height: case.peer_best_height,
+                requested_from_height: case.requested_from_height,
+            });
+        assert_sync_chunk_vector_result(
+            &case.name,
+            actual,
+            case.expected_valid,
+            case.expected_rejection.as_deref(),
+        );
+    }
+    for case in &vectors.sync_chunk_capacity_cases {
+        assert!(names.insert(case.name.clone()));
+        let actual =
+            evaluate_native_sync_chunk_session_capacity(NativeSyncChunkSessionCapacityInput {
+                current_sessions: case.current_sessions,
+                max_sessions: case.max_sessions,
+            });
+        assert_sync_chunk_vector_result(
+            &case.name,
+            actual,
+            case.expected_valid,
+            case.expected_rejection.as_deref(),
+        );
+    }
+    for case in &vectors.sync_chunk_serve_request_cases {
+        assert!(names.insert(case.name.clone()));
+        let actual = evaluate_native_sync_chunk_serve_request_admission(
+            NativeSyncChunkServeRequestAdmissionInput {
+                matching_live_offer_or_session: case.matching_live_offer_or_session,
+                tuple_matches: case.tuple_matches,
+                offset: case.offset,
+                next_offset: case.next_offset,
+                total_len: case.total_len,
+            },
+        );
+        let (actual_disposition, actual_rejection) = match actual {
+            Ok(NativeSyncChunkServeRequestDisposition::ServeNext) => (Some("serve_next"), None),
+            Ok(NativeSyncChunkServeRequestDisposition::Close) => (Some("close"), None),
+            Err(rejection) => (None, Some(rejection.label())),
+        };
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native sync chunk serve-request validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_disposition,
+            case.expected_disposition.as_deref(),
+            "{} native sync chunk serve-request disposition drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection,
+            case.expected_rejection.as_deref(),
+            "{} native sync chunk serve-request rejection drifted from Lean spec",
+            case.name
+        );
+    }
+    for case in &vectors.sync_chunk_offer_request_cases {
+        assert!(names.insert(case.name.clone()));
+        let actual = evaluate_native_sync_chunk_offer_request_admission(
+            NativeSyncChunkOfferRequestAdmissionInput {
+                matching_live_offer: case.matching_live_offer,
+                height_matches: case.height_matches,
+                block_hash_matches: case.block_hash_matches,
+                record_digest_absent: case.record_digest_absent,
+                offset: case.offset,
+            },
+        );
+        assert_sync_chunk_vector_result(
+            &case.name,
+            actual,
+            case.expected_valid,
+            case.expected_rejection.as_deref(),
+        );
+    }
+    for case in &vectors.sync_chunk_outbound_transition_cases {
+        assert!(names.insert(case.name.clone()));
+        let actual = evaluate_native_sync_chunk_outbound_transition(
+            NativeSyncChunkOutboundTransitionInput {
+                state: native_sync_chunk_outbound_state_from_label(&case.name, &case.state),
+                event: native_sync_chunk_outbound_event_from_label(&case.name, &case.event),
+            },
+        );
+        let (actual_state, actual_rejection) = match actual {
+            Ok(state) => (Some(native_sync_chunk_outbound_state_label(state)), None),
+            Err(rejection) => (None, Some(rejection.label())),
+        };
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native sync chunk outbound-transition validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_state,
+            case.expected_state.as_deref(),
+            "{} native sync chunk outbound-transition state drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection,
+            case.expected_rejection.as_deref(),
+            "{} native sync chunk outbound-transition rejection drifted from Lean spec",
+            case.name
+        );
+    }
+    for case in &vectors.sync_chunk_expiry_cases {
+        assert!(names.insert(case.name.clone()));
+        let actual = evaluate_native_sync_chunk_session_expiry(NativeSyncChunkSessionExpiryInput {
+            idle_elapsed_ms: case.idle_elapsed_ms,
+            max_idle_ms: case.max_idle_ms,
+            lifetime_elapsed_ms: case.lifetime_elapsed_ms,
+            max_lifetime_ms: case.max_lifetime_ms,
+        });
+        assert_sync_chunk_vector_result(
+            &case.name,
+            actual,
+            case.expected_valid,
+            case.expected_rejection.as_deref(),
+        );
+    }
+    for case in &vectors.sync_tip_announcement_cases {
+        assert!(names.insert(case.name.clone()));
+        let actual = evaluate_native_sync_tip_announcement_admission(
+            NativeSyncTipAnnouncementAdmissionInput {
+                local_height: case.local_height,
+                announced_height: case.announced_height,
+                announced_hash_is_zero: case.announced_hash_is_zero,
+                announced_hash_matches_local: case.announced_hash_matches_local,
+            },
+        );
+        let actual_rejection = actual.err().map(|rejection| rejection.label());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native sync tip-announcement validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection,
+            case.expected_rejection.as_deref(),
+            "{} native sync tip-announcement rejection drifted from Lean spec",
+            case.name
+        );
+    }
+    for case in &vectors.sync_block_chunk_cases {
+        assert!(names.insert(case.name.clone()));
+        assert_eq!(
+            (case.retained_bytes as u128) + (case.chunk_bytes as u128),
+            case.expected_retained_after,
+            "{} Lean chunk retained-byte arithmetic drifted",
+            case.name
+        );
+        let actual =
+            evaluate_native_sync_block_chunk_admission(NativeSyncBlockChunkAdmissionInput {
+                session_matches: case.session_matches,
+                chunk_len: case.chunk_bytes,
+                max_chunk_bytes: case.max_chunk_bytes,
+                total_len: case.total_bytes,
+                max_total_len: case.max_total_bytes,
+                offset: case.offset,
+                retained_len: case.retained_bytes,
+            });
+        assert_sync_chunk_vector_result(
+            &case.name,
+            actual,
+            case.expected_valid,
+            case.expected_rejection.as_deref(),
+        );
+    }
+    for case in &vectors.sync_block_chunk_completion_cases {
+        assert!(names.insert(case.name.clone()));
+        let actual = evaluate_native_sync_block_chunk_completion_admission(
+            NativeSyncBlockChunkCompletionAdmissionInput {
+                assembled_len: case.assembled_bytes,
+                total_len: case.total_bytes,
+                digest_matches: case.digest_matches,
+                exact_decode_accepts: case.exact_decode_accepts,
+                height_matches: case.height_matches,
+                hash_matches: case.hash_matches,
+                request_prefix_matches: case.request_prefix_matches,
+                recovery_context_matches: case.recovery_context_matches,
+            },
+        );
+        assert_sync_chunk_vector_result(
+            &case.name,
+            actual,
+            case.expected_valid,
+            case.expected_rejection.as_deref(),
+        );
+    }
+}
+
+fn native_sync_chunk_outbound_state_from_label(
+    name: &str,
+    label: &str,
+) -> NativeSyncChunkOutboundState {
+    match label {
+        "in_flight" => NativeSyncChunkOutboundState::InFlight,
+        "chunk_fallback" => NativeSyncChunkOutboundState::ChunkFallback,
+        "cooldown" => NativeSyncChunkOutboundState::Cooldown,
+        "absent" => NativeSyncChunkOutboundState::Absent,
+        other => panic!("{name} unknown native sync chunk outbound state {other}"),
+    }
+}
+
+fn native_sync_chunk_outbound_event_from_label(
+    name: &str,
+    label: &str,
+) -> NativeSyncChunkOutboundEvent {
+    match label {
+        "admitted_empty_response" => NativeSyncChunkOutboundEvent::AdmittedEmptyResponse,
+        "complete" => NativeSyncChunkOutboundEvent::Complete,
+        "abort" => NativeSyncChunkOutboundEvent::Abort,
+        other => panic!("{name} unknown native sync chunk outbound event {other}"),
+    }
+}
+
+fn native_sync_chunk_outbound_state_label(state: NativeSyncChunkOutboundState) -> &'static str {
+    match state {
+        NativeSyncChunkOutboundState::InFlight => "in_flight",
+        NativeSyncChunkOutboundState::ChunkFallback => "chunk_fallback",
+        NativeSyncChunkOutboundState::Cooldown => "cooldown",
+        NativeSyncChunkOutboundState::Absent => "absent",
+    }
+}
+
+fn assert_sync_chunk_vector_result(
+    name: &str,
+    actual: std::result::Result<(), NativeSyncChunkAdmissionRejection>,
+    expected_valid: bool,
+    expected_rejection: Option<&str>,
+) {
+    let actual_rejection = actual.err().map(|rejection| rejection.label());
+    assert_eq!(
+        actual_rejection.is_none(),
+        expected_valid,
+        "{name} native sync chunk validity drifted from Lean spec"
+    );
+    assert_eq!(
+        actual_rejection, expected_rejection,
+        "{name} native sync chunk rejection drifted from Lean spec"
+    );
 }
 
 #[test]
@@ -17228,16 +21535,46 @@ fn lean_generated_sync_response_import_vectors_match_production() {
         std::fs::read_to_string(&path).expect("read generated Lean sync-response import vectors");
     let vectors: LeanSyncResponseImportVectorFile =
         serde_json::from_str(&raw).expect("parse generated Lean sync-response import vectors");
-    assert_eq!(vectors.schema_version, 1);
+    assert_eq!(vectors.schema_version, 3);
     assert!(
         !vectors.sync_response_import_cases.is_empty(),
         "Lean sync-response import cases must not be empty"
+    );
+    assert!(
+        !vectors
+            .sync_response_post_classification_missing_parent_cases
+            .is_empty(),
+        "Lean post-classification missing-parent cases must not be empty"
     );
 
     let mut names = BTreeSet::new();
     for case in &vectors.sync_response_import_cases {
         assert!(names.insert(case.name.clone()));
         verify_lean_sync_response_import_case(case);
+    }
+    for case in &vectors.sync_response_post_classification_missing_parent_cases {
+        assert!(names.insert(case.name.clone()));
+        let mut progress = NativeSyncResponseImportProgress {
+            had_blocks: case.had_blocks,
+            response_block_count: case.response_block_count,
+            attempted_blocks: case.attempted_blocks,
+            imported_blocks: case.imported_blocks,
+            stored_noncanonical_blocks: case.stored_noncanonical_blocks,
+            stopped_on_missing_parent: case.stopped_on_missing_parent,
+            stopped_on_error: case.stopped_on_error,
+        };
+        let actual = progress.record_missing_parent_after_classification();
+        assert_eq!(
+            actual, case.expected_valid,
+            "{} post-classification missing-parent admission drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            progress.stopped_on_missing_parent,
+            case.stopped_on_missing_parent || case.expected_valid,
+            "{} post-classification missing-parent mutation drifted from Lean spec",
+            case.name
+        );
     }
 }
 
@@ -17251,6 +21588,26 @@ fn verify_lean_sync_response_import_case(case: &LeanSyncResponseImportCase) {
         Err(rejection) => Some(rejection.label().to_owned()),
         Ok(()) if case.outcomes.len() > case.response_heights.len() => {
             Some("outcome_count_over_response".to_owned())
+        }
+        Ok(())
+            if case.outcomes.len() < case.response_heights.len()
+                && !case
+                    .outcomes
+                    .iter()
+                    .any(|outcome| matches!(outcome.as_str(), "error" | "missing_parent")) =>
+        {
+            Some("outcome_trace_incomplete".to_owned())
+        }
+        Ok(())
+            if case.post_classification_outcome != "none"
+                && (case.response_heights.is_empty()
+                    || case.outcomes.len() != case.response_heights.len()
+                    || case
+                        .outcomes
+                        .iter()
+                        .any(|outcome| matches!(outcome.as_str(), "error" | "missing_parent"))) =>
+        {
+            Some("post_classification_outcome_invalid".to_owned())
         }
         Ok(()) => None,
     };
@@ -17290,7 +21647,20 @@ fn verify_lean_sync_response_import_case(case: &LeanSyncResponseImportCase) {
         .outcomes
         .iter()
         .map(|outcome| lean_sync_response_import_outcome(case, outcome));
-    let progress = native_sync_response_import_progress(case.response_heights.len(), outcomes);
+    let mut progress = native_sync_response_import_progress(case.response_heights.len(), outcomes);
+    match case.post_classification_outcome.as_str() {
+        "none" => {}
+        "missing_ancestor" => assert!(
+            progress.record_missing_parent_after_classification(),
+            "{} valid post-classification missing ancestor must be admitted",
+            case.name
+        ),
+        "corrupt" => progress.record_terminal_error(),
+        other => panic!(
+            "{} unknown post-classification sync outcome {other}",
+            case.name
+        ),
+    }
     assert_eq!(
         progress.attempted_blocks, case.expected_attempted_blocks,
         "{} native sync-response import attempted-block count drifted from Lean spec",
@@ -17302,14 +21672,86 @@ fn verify_lean_sync_response_import_case(case: &LeanSyncResponseImportCase) {
         case.name
     );
     assert_eq!(
+        progress.stored_noncanonical_blocks, case.expected_stored_noncanonical_blocks,
+        "{} native sync-response import stored-noncanonical count drifted from Lean spec",
+        case.name
+    );
+    assert_eq!(
         progress.stopped_on_error, case.expected_stopped_on_error,
         "{} native sync-response import stopped-on-error flag drifted from Lean spec",
+        case.name
+    );
+    assert_eq!(
+        progress.stopped_on_missing_parent, case.expected_stopped_on_missing_parent,
+        "{} native sync-response import missing-parent stop drifted from Lean spec",
+        case.name
+    );
+    assert_eq!(
+        progress.completed_without_canonical_progress(),
+        case.expected_completed_without_canonical_progress,
+        "{} native sync-response no-canonical-progress decision drifted from Lean spec",
         case.name
     );
     assert_eq!(
         progress.should_request_more(case.local_best_height, case.peer_best_height),
         case.expected_request_more,
         "{} native sync-response import continuation decision drifted from Lean spec",
+        case.name
+    );
+
+    let recovery_required = native_sync_response_should_escalate_reorg_backfill(
+        progress,
+        case.local_best_height,
+        case.peer_best_height,
+    );
+    assert_eq!(
+        recovery_required, case.expected_recovery_required,
+        "{} native sync-response recovery decision drifted from Lean spec",
+        case.name
+    );
+    let backoff_required = progress.had_blocks
+        && case.local_best_height < case.peer_best_height
+        && progress.stopped_on_error;
+    assert_eq!(
+        backoff_required, case.expected_backoff_required,
+        "{} native sync-response backoff decision drifted from Lean spec",
+        case.name
+    );
+    let current_range = NativeSyncRange {
+        from_height: case.current_request_from_height,
+        to_height: case.current_request_to_height,
+    };
+    let candidate_range = case.candidate_request_available.then_some(NativeSyncRange {
+        from_height: case.candidate_request_from_height,
+        to_height: case.candidate_request_to_height,
+    });
+    let recovery_range_changed =
+        native_sync_useful_recovery_request_range(current_range, candidate_range).is_some();
+    assert_eq!(
+        recovery_range_changed, case.expected_recovery_range_changed,
+        "{} native sync-response recovery-range decision drifted from Lean spec",
+        case.name
+    );
+    let useful_recovery_or_backoff = recovery_range_changed || case.backoff_scheduled;
+    assert_eq!(
+        useful_recovery_or_backoff, case.expected_useful_recovery_or_backoff,
+        "{} native sync-response useful-recovery decision drifted from Lean spec",
+        case.name
+    );
+    let immediate_request_allowed = progress
+        .should_request_more(case.local_best_height, case.peer_best_height)
+        || (recovery_required && recovery_range_changed);
+    assert_eq!(
+        immediate_request_allowed, case.expected_immediate_request_allowed,
+        "{} native sync-response immediate-request decision drifted from Lean spec",
+        case.name
+    );
+    let follow_up_allowed = immediate_request_allowed
+        || (backoff_required && case.backoff_scheduled)
+        || (recovery_required && case.backoff_scheduled);
+    assert_eq!(
+        follow_up_allowed, case.expected_follow_up_allowed,
+        "{} native sync-response follow-up decision drifted from Lean spec",
         case.name
     );
 }
@@ -17321,6 +21763,8 @@ fn lean_sync_response_import_outcome(
     match label {
         "imported" => NativeSyncResponseImportOutcome::Imported,
         "already_known" => NativeSyncResponseImportOutcome::AlreadyKnown,
+        "stored_noncanonical" => NativeSyncResponseImportOutcome::StoredNoncanonical,
+        "missing_parent" => NativeSyncResponseImportOutcome::MissingParent,
         "error" => NativeSyncResponseImportOutcome::Error,
         other => panic!("{} unknown sync-response import outcome {other}", case.name),
     }
@@ -17336,30 +21780,47 @@ fn lean_sync_response_import_meta(height: u64, discriminator: u8) -> NativeBlock
 }
 
 #[test]
-fn stale_known_sync_response_requests_more_without_reorg_escalation() {
+fn all_known_sync_response_requires_changed_recovery_range() {
     let mut progress = NativeSyncResponseImportProgress::new(128);
     for _ in 0..128 {
         assert!(progress.record(NativeSyncResponseImportOutcome::AlreadyKnown));
     }
 
     assert!(progress.completed_with_only_known_blocks());
-    assert!(progress.should_request_more(128, 6_132));
-    assert!(!native_sync_response_should_escalate_reorg_backfill(
+    assert!(progress.completed_without_canonical_progress());
+    assert!(!progress.should_request_more(128, 6_132));
+    assert!(native_sync_response_should_escalate_reorg_backfill(
         progress, 128, 6_132
     ));
 }
 
 #[test]
-fn unproductive_unknown_sync_response_escalates_reorg_backfill() {
+fn stored_noncanonical_sync_response_requires_changed_recovery_range() {
     let mut progress = NativeSyncResponseImportProgress::new(128);
-    for _ in 0..127 {
-        assert!(progress.record(NativeSyncResponseImportOutcome::AlreadyKnown));
+    for _ in 0..128 {
+        assert!(progress.record(NativeSyncResponseImportOutcome::StoredNoncanonical));
     }
 
     assert!(!progress.completed_with_only_known_blocks());
-    assert!(progress.should_request_more(128, 6_132));
+    assert!(progress.completed_without_canonical_progress());
+    assert_eq!(progress.stored_noncanonical_blocks, 128);
+    assert!(!progress.should_request_more(128, 6_132));
     assert!(native_sync_response_should_escalate_reorg_backfill(
         progress, 128, 6_132
+    ));
+}
+
+#[test]
+fn missing_parent_sync_response_stops_and_requires_recovery() {
+    let mut progress = NativeSyncResponseImportProgress::new(64);
+    assert!(!progress.record(NativeSyncResponseImportOutcome::MissingParent));
+
+    assert_eq!(progress.attempted_blocks, 1);
+    assert!(progress.stopped_on_missing_parent);
+    assert!(!progress.stopped_on_error);
+    assert!(!progress.should_request_more(43_529, 69_941));
+    assert!(native_sync_response_should_escalate_reorg_backfill(
+        progress, 43_529, 69_941
     ));
 }
 
@@ -17613,6 +22074,456 @@ fn native_sync_large_gap_request_still_backfills_reorg_window() {
         range.to_height,
         expected_from + MAX_NATIVE_SYNC_RESPONSE_BLOCKS - 1
     );
+}
+
+#[test]
+fn observed_live_topology_missing_parent_range_changes_and_straddles_fork() {
+    let best_height = 43_529;
+    let peer_height = 69_941;
+    let initial_backfill = NATIVE_SYNC_REORG_BACKFILL_BLOCKS;
+    let initial_max = native_sync_request_max_blocks(initial_backfill);
+    assert_eq!(initial_max, NATIVE_SYNC_REQUEST_BLOCKS);
+    let current = native_sync_observed_tip_request_range(
+        best_height,
+        [0x11; 32],
+        peer_height,
+        Some([0x22; 32]),
+        initial_max,
+        initial_backfill,
+    )
+    .expect("initial live catch-up range");
+    assert_eq!(current.from_height, 43_530);
+    assert_eq!(current.to_height, 43_593);
+
+    let escalated_backfill = initial_backfill * 2;
+    let recovery = native_sync_observed_tip_request_range(
+        best_height,
+        [0x11; 32],
+        peer_height,
+        Some([0x22; 32]),
+        native_sync_request_max_blocks(escalated_backfill),
+        escalated_backfill,
+    );
+    let useful = native_sync_useful_recovery_request_range(current, recovery)
+        .expect("missing-parent recovery must change the range");
+    assert!(useful.from_height <= best_height);
+    assert_eq!(useful.to_height, best_height + 1);
+    assert_ne!(useful, current);
+}
+
+#[test]
+fn live_shape_sync_orchestration_recovers_range_bounds_retry_and_holds_gate() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+    config.seeds.push("127.0.0.1:30333".to_owned());
+    let node = NativeNode::open(config).expect("node");
+    let peer = [0xa6; 32];
+    let local_height = 43_529;
+    let target_height = 69_941;
+    let local_hash = [0x11; 32];
+    let target_hash = [0x22; 32];
+    let missing_fork_parent_hash = [0x33; 32];
+
+    let mut local_tip = node.best_meta();
+    local_tip.height = local_height;
+    local_tip.hash = local_hash;
+    local_tip.work_hash = local_hash;
+    node.state.write().best = local_tip.clone();
+    node.observe_pending_sync_peer_tip(Some(peer), target_height, Some(target_hash));
+    assert!(
+        !node.mining_sync_gate_allows_work(),
+        "a seeded node must keep mining closed while the exact target is unresolved"
+    );
+
+    let initial_backfill = node.sync_reorg_backfill_blocks();
+    let initial_range = native_sync_observed_tip_request_range(
+        local_height,
+        local_hash,
+        target_height,
+        Some(target_hash),
+        native_sync_request_max_blocks(initial_backfill),
+        initial_backfill,
+    )
+    .expect("initial live-shape request");
+    assert_eq!(
+        initial_range,
+        NativeSyncRange {
+            from_height: 43_530,
+            to_height: 43_593,
+        }
+    );
+    let initial_context = NativeOutboundSyncRequestContext {
+        recovery_page: false,
+        expected_parent_hash: None,
+        target_tip: Some((target_height, target_hash)),
+    };
+    assert!(node.begin_outbound_sync_request_with_context(
+        Some(peer),
+        initial_range,
+        initial_context,
+    ));
+
+    let mut blocks = Vec::with_capacity(NATIVE_SYNC_REQUEST_BLOCKS as usize);
+    let mut parent_hash = missing_fork_parent_hash;
+    for height in initial_range.from_height..=initial_range.to_height {
+        let mut meta = genesis_meta(0x207f_ffff).expect("block template");
+        let mut hash = [0x44; 32];
+        hash[..8].copy_from_slice(&height.to_le_bytes());
+        meta.height = height;
+        meta.parent_hash = parent_hash;
+        meta.hash = hash;
+        meta.work_hash = hash;
+        parent_hash = hash;
+        blocks.push(meta);
+    }
+    assert_eq!(blocks.len(), NATIVE_SYNC_REQUEST_BLOCKS as usize);
+    assert!(native_sync_response_is_contiguous_request_prefix(
+        initial_range,
+        &blocks,
+    ));
+    assert!(native_sync_response_matches_recovery_context(
+        initial_context.expected_parent_hash,
+        initial_context.target_tip,
+        &blocks,
+    ));
+
+    let completed = node
+        .complete_outbound_sync_response(peer, Some(initial_range))
+        .expect("exact 64-block response must match the tracked request");
+    assert_eq!(completed.request_target, Some(peer));
+    assert_eq!(completed.range, initial_range);
+    assert!(node.outbound_sync_requests.lock().is_empty());
+
+    let report = import_native_sync_response_blocks(
+        &node,
+        blocks,
+        target_height,
+        NativeSyncResponseImportProgress::new(NATIVE_SYNC_REQUEST_BLOCKS as usize),
+        completed.context.recovery_page,
+    );
+    assert!(report.failure.is_none());
+    assert_eq!(report.progress.attempted_blocks, 1);
+    assert!(report.progress.stopped_on_missing_parent);
+    assert_eq!(node.best_meta(), local_tip);
+
+    let expanded_backfill = node.escalate_sync_reorg_backfill();
+    let canonical_candidate = native_sync_observed_tip_request_range(
+        local_height,
+        local_hash,
+        target_height,
+        Some(target_hash),
+        native_sync_request_max_blocks(expanded_backfill),
+        expanded_backfill,
+    );
+    let recovery_range = native_sync_recovery_request_range(
+        initial_range,
+        Some(initial_range),
+        native_sync_request_range_avoiding(Some(initial_range), canonical_candidate),
+        target_height,
+        native_sync_request_max_blocks(expanded_backfill),
+        report.progress.stopped_on_missing_parent,
+    )
+    .expect("missing-parent response must schedule a changed ancestor page");
+    assert_ne!(recovery_range, initial_range);
+    assert!(recovery_range.from_height <= local_height);
+    assert!(recovery_range.to_height >= local_height);
+
+    let recovery_context = NativeOutboundSyncRequestContext {
+        recovery_page: true,
+        expected_parent_hash: None,
+        target_tip: Some((target_height, target_hash)),
+    };
+    node.set_sync_recovery_cursor(
+        Some(peer),
+        target_height,
+        Some(target_hash),
+        recovery_range,
+        None,
+    );
+    assert!(node.begin_outbound_sync_request_with_context(
+        Some(peer),
+        recovery_range,
+        recovery_context,
+    ));
+    assert_eq!(node.outbound_sync_requests.lock().len(), 1);
+    let recovery_completed = node
+        .complete_outbound_sync_response(peer, Some(recovery_range))
+        .expect("recovery response fingerprint");
+    for _ in 0..8 {
+        node.defer_outbound_sync_request_retry(
+            recovery_completed.request_target,
+            recovery_completed.range,
+        );
+    }
+    let requests = node.outbound_sync_requests.lock();
+    assert_eq!(requests.len(), 1, "retry state remains bounded per target");
+    assert_eq!(
+        requests.get(&Some(peer)).map(|request| request.state),
+        Some(NativeOutboundSyncRequestState::Cooldown)
+    );
+    drop(requests);
+    assert!(!node.mining_sync_gate_allows_work());
+
+    let mut wrong_equal_height_tip = local_tip.clone();
+    wrong_equal_height_tip.height = target_height;
+    wrong_equal_height_tip.hash = [0x23; 32];
+    wrong_equal_height_tip.work_hash = wrong_equal_height_tip.hash;
+    node.state.write().best = wrong_equal_height_tip.clone();
+    node.refresh_mining_sync_gate();
+    assert!(
+        !node.mining_sync_gate_allows_work(),
+        "height equality alone must not resolve a hash-anchored target"
+    );
+    wrong_equal_height_tip.hash = target_hash;
+    wrong_equal_height_tip.work_hash = target_hash;
+    node.state.write().best = wrong_equal_height_tip;
+    node.refresh_mining_sync_gate();
+    assert!(
+        !node.mining_sync_gate_allows_work(),
+        "an unverified target hint must not open the gate even after direct test-state mutation"
+    );
+    node.observe_verified_sync_peer_tip(Some(peer), target_height, Some(target_hash));
+    node.refresh_mining_sync_gate();
+    assert!(
+        node.mining_sync_gate_allows_work(),
+        "the gate opens only when the exact hash-anchored target resolves through verified evidence"
+    );
+}
+
+#[test]
+fn sync_request_range_avoiding_filters_only_completed_recovery_range() {
+    let current = NativeSyncRange {
+        from_height: 43_530,
+        to_height: 43_593,
+    };
+    let changed = NativeSyncRange {
+        from_height: 43_466,
+        to_height: 43_530,
+    };
+
+    assert_eq!(
+        native_sync_request_range_avoiding(None, Some(current)),
+        Some(current),
+        "ordinary planned requests remain unchanged"
+    );
+    assert_eq!(
+        native_sync_request_range_avoiding(Some(current), Some(current)),
+        None,
+        "a recovery cannot immediately repeat its completed range"
+    );
+    assert_eq!(
+        native_sync_request_range_avoiding(Some(current), Some(changed)),
+        Some(changed),
+        "a changed recovery range remains eligible"
+    );
+}
+
+#[test]
+fn native_sync_recovery_ranges_fail_closed_at_numeric_boundaries() {
+    assert_eq!(
+        native_sync_preceding_recovery_request_range(
+            NativeSyncRange {
+                from_height: 0,
+                to_height: MAX_NATIVE_SYNC_RESPONSE_BLOCKS - 1,
+            },
+            MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        ),
+        None,
+        "ancestor paging must stop at genesis without underflow"
+    );
+    assert_eq!(
+        native_sync_preceding_recovery_request_range(
+            NativeSyncRange {
+                from_height: 1,
+                to_height: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+            },
+            0,
+        ),
+        None
+    );
+    assert_eq!(
+        native_sync_follow_response_request_range(
+            NativeSyncRange {
+                from_height: u64::MAX,
+                to_height: u64::MAX,
+            },
+            u64::MAX,
+            MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        ),
+        None,
+        "forward paging must stop at u64::MAX without wrapping"
+    );
+
+    let near_max = native_sync_follow_response_request_range(
+        NativeSyncRange {
+            from_height: u64::MAX - 300,
+            to_height: u64::MAX - 255,
+        },
+        u64::MAX,
+        MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+    )
+    .expect("near-maximum follow-up range");
+    assert_eq!(near_max.from_height, u64::MAX - 254);
+    assert_eq!(near_max.to_height, u64::MAX);
+    assert!(near_max.from_height <= near_max.to_height);
+    assert!(near_max.to_height - near_max.from_height < MAX_NATIVE_SYNC_RESPONSE_BLOCKS);
+}
+
+#[test]
+fn deep_fork_recovery_expands_request_cap_until_protocol_limit() {
+    let best_height = 10_000;
+    let peer_height = 20_000;
+    let mut previous = native_sync_observed_tip_request_range(
+        best_height,
+        [0x31; 32],
+        peer_height,
+        Some([0x41; 32]),
+        native_sync_request_max_blocks(NATIVE_SYNC_REORG_BACKFILL_BLOCKS),
+        NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+    )
+    .expect("initial catch-up range");
+
+    for backfill in [64, 128, NATIVE_SYNC_MAX_REORG_BACKFILL_BLOCKS] {
+        let max_blocks = native_sync_request_max_blocks(backfill);
+        let candidate = native_sync_observed_tip_request_range(
+            best_height,
+            [0x31; 32],
+            peer_height,
+            Some([0x41; 32]),
+            max_blocks,
+            backfill,
+        );
+        let recovery = native_sync_useful_recovery_request_range(previous, candidate)
+            .expect("each escalation before saturation must change the range");
+        assert_eq!(recovery.to_height, best_height + 1);
+        assert!(recovery.from_height < previous.from_height);
+        assert!(recovery.to_height - recovery.from_height < max_blocks);
+        previous = recovery;
+    }
+
+    let saturated = native_sync_observed_tip_request_range(
+        best_height,
+        [0x31; 32],
+        peer_height,
+        Some([0x41; 32]),
+        native_sync_request_max_blocks(NATIVE_SYNC_MAX_REORG_BACKFILL_BLOCKS),
+        NATIVE_SYNC_MAX_REORG_BACKFILL_BLOCKS,
+    );
+    let changed_candidate = native_sync_request_range_avoiding(previous.into(), saturated);
+    assert_eq!(changed_candidate, None);
+    let older = native_sync_recovery_request_range(
+        previous,
+        Some(previous),
+        changed_candidate,
+        peer_height,
+        MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        true,
+    )
+    .expect("a saturated missing-parent search must page farther backward");
+    assert_eq!(older.to_height + 1, previous.from_height);
+    assert_eq!(
+        older.to_height - older.from_height + 1,
+        MAX_NATIVE_SYNC_RESPONSE_BLOCKS
+    );
+
+    let still_older = native_sync_recovery_request_range(
+        older,
+        Some(older),
+        native_sync_request_range_avoiding(Some(older), saturated),
+        peer_height,
+        MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        true,
+    )
+    .expect("missing-parent search must cross more than one protocol window");
+    assert_eq!(still_older.to_height + 1, older.from_height);
+
+    let forward = native_sync_recovery_request_range(
+        still_older,
+        Some(still_older),
+        native_sync_request_range_avoiding(Some(still_older), saturated),
+        peer_height,
+        MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        false,
+    )
+    .expect("a connected noncanonical prefix must advance its side-branch frontier");
+    assert_eq!(forward.from_height, still_older.to_height + 1);
+    assert_eq!(
+        forward.to_height - forward.from_height + 1,
+        MAX_NATIVE_SYNC_RESPONSE_BLOCKS
+    );
+}
+
+#[test]
+fn equal_height_recovery_pagination_crosses_protocol_window_then_resumes_forward() {
+    let height = MAX_NATIVE_SYNC_RESPONSE_BLOCKS + 4;
+    let local_hash = [0x68; 32];
+    let target_hash = [0x69; 32];
+    let mut current = native_sync_observed_tip_request_range(
+        height,
+        local_hash,
+        height,
+        Some(target_hash),
+        native_sync_request_max_blocks(NATIVE_SYNC_REORG_BACKFILL_BLOCKS),
+        NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+    )
+    .expect("initial equal-height fork request");
+    assert_eq!(current.to_height, height);
+
+    for backfill in [64, 128, NATIVE_SYNC_MAX_REORG_BACKFILL_BLOCKS] {
+        let candidate = native_sync_observed_tip_request_range(
+            height,
+            local_hash,
+            height,
+            Some(target_hash),
+            native_sync_request_max_blocks(backfill),
+            backfill,
+        );
+        let expanded = native_sync_useful_recovery_request_range(current, candidate)
+            .expect("equal-height recovery escalation must change the requested range");
+        assert_eq!(expanded.to_height, height);
+        assert!(expanded.from_height < current.from_height);
+        current = expanded;
+    }
+    assert_eq!(
+        current.to_height - current.from_height + 1,
+        NATIVE_SYNC_MAX_REORG_BACKFILL_BLOCKS
+    );
+    assert!(current.from_height > 0);
+
+    let mut missing_parent = NativeSyncResponseImportProgress::new(1);
+    assert!(!missing_parent.record(NativeSyncResponseImportOutcome::MissingParent));
+    assert!(native_sync_response_should_escalate_reorg_backfill(
+        missing_parent,
+        height,
+        height,
+    ));
+
+    let preceding = native_sync_recovery_request_range(
+        current,
+        Some(current),
+        None,
+        height,
+        MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        true,
+    )
+    .expect("saturated equal-height recovery must page before the protocol window");
+    assert_eq!(preceding.from_height, 0);
+    assert_eq!(preceding.to_height + 1, current.from_height);
+    assert!(
+        current.to_height - preceding.from_height + 1 > MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        "the combined recovery search must cross the 256-block protocol horizon"
+    );
+
+    let forward = native_sync_recovery_request_range(
+        preceding,
+        Some(preceding),
+        Some(current),
+        height,
+        MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        false,
+    )
+    .expect("a connected ancestor page must resume from its response tip");
+    assert_eq!(forward, current);
 }
 
 #[test]
@@ -17966,7 +22877,7 @@ fn empty_response_clear_keeps_hash_anchored_sync_target_closed() {
 }
 
 #[test]
-fn nonwinning_hash_anchored_sync_response_clears_target() {
+fn unvalidated_nonwinning_hash_anchored_sync_response_does_not_clear_target() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
     config.seeds.push("127.0.0.1:30333".to_string());
@@ -17977,25 +22888,259 @@ fn nonwinning_hash_anchored_sync_response_clears_target() {
 
     let best = node.best_meta();
     let mut target = best.clone();
-    target.height = best.height + 1;
+    target.height = best.height;
     target.hash = [0x51; 32];
-    target.parent_hash = best.hash;
     target.cumulative_work = [0; 48];
     assert!(!native_meta_better_than(&target, &best));
     node.observe_pending_sync_peer_tip(Some([0x24; 32]), target.height, Some(target.hash));
     assert!(!node.mining_sync_gate_allows_work());
 
-    assert!(node.clear_nonwinning_sync_target_response_to_local_tip(
+    assert!(native_sync_response_stale_for_local_tip(
+        &node,
         target.height,
-        std::slice::from_ref(&target)
+        std::slice::from_ref(&target),
     ));
+    assert_eq!(
+        native_sync_response_pre_import_disposition(
+            &node,
+            target.height,
+            std::slice::from_ref(&target),
+            false,
+        ),
+        NativeSyncResponsePreImportDisposition::Continue,
+        "an exact target row must reach validation instead of clearing from supplied work"
+    );
+    let report = import_native_sync_response_blocks(
+        &node,
+        vec![target.clone()],
+        target.height,
+        NativeSyncResponseImportProgress::new(1),
+        false,
+    );
+    assert!(report.failure.is_some());
+    assert!(report.progress.stopped_on_error);
+    assert_eq!(report.progress.imported_blocks, 0);
+    assert_eq!(report.progress.stored_noncanonical_blocks, 0);
+    assert!(!node
+        .clear_stored_nonwinning_sync_target_to_local_tip(
+            target.height,
+            (target.height, target.hash)
+        )
+        .expect("missing durable target lookup"));
+
+    let (syncing, observed_target) = node.sync_status_fields();
+    assert!(syncing);
+    assert_eq!(observed_target, target.height);
+    assert!(!node.mining_sync_gate_allows_work());
+    assert_eq!(*node.sync_target_peer.lock(), Some([0x24; 32]));
+    assert_eq!(*node.sync_target_hash.lock(), Some(target.hash));
+}
+
+#[test]
+fn validated_durable_nonwinning_target_clears_gate_after_full_import() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let mut config = test_config(tmp.path(), pow_bits, "unsafe", false);
+    config.seeds.push("127.0.0.1:30333".to_string());
+    let node = NativeNode::open(config).expect("node");
+    let genesis = node.best_meta();
+    let canonical_work = node.prepare_work().expect("prepare canonical work");
+    let canonical_seal = strongest_test_seal(&canonical_work, 0..512);
+    let canonical = node
+        .import_mined_block(&canonical_work, canonical_seal)
+        .expect("import canonical block")
+        .expect("canonical block");
+    let target = (1..128)
+        .map(|round| mined_empty_child_for_chain(std::slice::from_ref(&genesis), pow_bits, round))
+        .find(|candidate| !native_meta_better_than(candidate, &canonical))
+        .expect("valid nonwinning target");
+    let peer = [0x24; 32];
+    node.observe_pending_sync_peer_tip(Some(peer), target.height, Some(target.hash));
+    assert!(!node.mining_sync_gate_allows_work());
+    assert_eq!(
+        native_sync_response_pre_import_disposition(
+            &node,
+            target.height,
+            std::slice::from_ref(&target),
+            false,
+        ),
+        NativeSyncResponsePreImportDisposition::Continue,
+    );
+
+    let report = import_native_sync_response_blocks(
+        &node,
+        vec![target.clone()],
+        target.height,
+        NativeSyncResponseImportProgress::new(1),
+        false,
+    );
+    assert!(
+        report.failure.is_none(),
+        "valid nonwinner failed import: {:?}",
+        report.failure.as_ref().map(|failure| &failure.error)
+    );
+    assert_eq!(report.progress.attempted_blocks, 1);
+    assert_eq!(report.progress.imported_blocks, 0);
+    assert_eq!(report.progress.stored_noncanonical_blocks, 1);
+    assert!(!report.progress.stopped_on_error);
+    assert!(!report.progress.stopped_on_missing_parent);
+    assert_eq!(
+        node.header_by_hash(&target.hash)
+            .expect("durable target lookup"),
+        Some(target.clone())
+    );
+    assert!(node
+        .clear_stored_nonwinning_sync_target_to_local_tip(
+            target.height,
+            (target.height, target.hash)
+        )
+        .expect("resolve durable nonwinning target"));
 
     let (syncing, observed_target) = node.sync_status_fields();
     assert!(!syncing);
-    assert_eq!(observed_target, best.height);
+    assert_eq!(observed_target, canonical.height);
     assert!(node.mining_sync_gate_allows_work());
     assert_eq!(*node.sync_target_peer.lock(), None);
     assert_eq!(*node.sync_target_hash.lock(), None);
+    assert_eq!(node.best_meta(), canonical);
+}
+
+#[tokio::test]
+async fn authorized_sync_target_resolution_requires_successful_durable_import() {
+    let network_tmp = tempfile::tempdir().expect("network tempdir");
+    let network_addr: SocketAddr = "127.0.0.1:0".parse().expect("test network address");
+    let mut network_service = P2PService::new(
+        PeerIdentity::generate(b"native-sync-target-durable-authority"),
+        network_addr,
+        Vec::new(),
+        Vec::new(),
+        GossipRouter::new(32).handle(),
+        2,
+        PeerStore::new(PeerStoreConfig::with_path(
+            network_tmp.path().join("pq-peers.bin"),
+        )),
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(network_addr),
+    );
+    let handle = network_service.register_protocol(NATIVE_SYNC_PROTOCOL_ID);
+    let sync_tx = handle.sender();
+    let pow_bits = 0x207f_ffff;
+
+    let forged_tmp = tempfile::tempdir().expect("forged node tempdir");
+    let mut forged_config = test_config(forged_tmp.path(), pow_bits, "unsafe", false);
+    forged_config.seeds.push("127.0.0.1:30333".to_string());
+    let forged_node = NativeNode::open(forged_config).expect("forged target node");
+    mine_empty_native_block(&forged_node);
+    let local_best = forged_node.best_meta();
+    let forged_peer = [0x31; 32];
+    let mut forged_target = local_best.clone();
+    forged_target.hash = [0x32; 32];
+    forged_target.cumulative_work = [0; 48];
+    forged_node.observe_pending_sync_peer_tip(
+        Some(forged_peer),
+        forged_target.height,
+        Some(forged_target.hash),
+    );
+    let forged_range = NativeSyncRange {
+        from_height: forged_target.height,
+        to_height: forged_target.height,
+    };
+    assert!(forged_node.begin_outbound_sync_request_with_context(
+        Some(forged_peer),
+        forged_range,
+        NativeOutboundSyncRequestContext {
+            recovery_page: false,
+            expected_parent_hash: None,
+            target_tip: Some((forged_target.height, forged_target.hash)),
+        },
+    ));
+    let forged_request = forged_node
+        .complete_outbound_sync_response(forged_peer, Some(forged_range))
+        .expect("complete forged target request");
+
+    process_authorized_native_sync_response(
+        &forged_node,
+        &handle,
+        &sync_tx,
+        forged_peer,
+        forged_target.height,
+        vec![forged_target.clone()],
+        forged_request,
+    )
+    .await;
+
+    assert!(forged_node
+        .header_by_hash(&forged_target.hash)
+        .expect("forged durable target lookup")
+        .is_none());
+    assert!(
+        !forged_node.mining_sync_gate_allows_work(),
+        "failed target import must not reopen mining"
+    );
+    assert!(
+        !forged_node.sync_target_observed.load(Ordering::SeqCst),
+        "terminal unverified target may be evicted for failover but must not be resolved"
+    );
+
+    let valid_tmp = tempfile::tempdir().expect("valid node tempdir");
+    let mut valid_config = test_config(valid_tmp.path(), pow_bits, "unsafe", false);
+    valid_config.seeds.push("127.0.0.1:30333".to_string());
+    let valid_node = NativeNode::open(valid_config).expect("valid target node");
+    let genesis = valid_node.best_meta();
+    let canonical_work = valid_node.prepare_work().expect("prepare canonical work");
+    let canonical_seal = strongest_test_seal(&canonical_work, 0..512);
+    let canonical = valid_node
+        .import_mined_block(&canonical_work, canonical_seal)
+        .expect("import canonical block")
+        .expect("canonical block");
+    let valid_target = (1..128)
+        .map(|round| mined_empty_child_for_chain(std::slice::from_ref(&genesis), pow_bits, round))
+        .find(|candidate| !native_meta_better_than(candidate, &canonical))
+        .expect("valid nonwinning target");
+    let valid_peer = [0x41; 32];
+    valid_node.observe_pending_sync_peer_tip(
+        Some(valid_peer),
+        valid_target.height,
+        Some(valid_target.hash),
+    );
+    let valid_range = NativeSyncRange {
+        from_height: valid_target.height,
+        to_height: valid_target.height,
+    };
+    assert!(valid_node.begin_outbound_sync_request_with_context(
+        Some(valid_peer),
+        valid_range,
+        NativeOutboundSyncRequestContext {
+            recovery_page: false,
+            expected_parent_hash: None,
+            target_tip: Some((valid_target.height, valid_target.hash)),
+        },
+    ));
+    let valid_request = valid_node
+        .complete_outbound_sync_response(valid_peer, Some(valid_range))
+        .expect("complete valid target request");
+
+    process_authorized_native_sync_response(
+        &valid_node,
+        &handle,
+        &sync_tx,
+        valid_peer,
+        valid_target.height,
+        vec![valid_target.clone()],
+        valid_request,
+    )
+    .await;
+
+    assert_eq!(
+        valid_node
+            .header_by_hash(&valid_target.hash)
+            .expect("validated durable target lookup"),
+        Some(valid_target)
+    );
+    assert_eq!(valid_node.best_meta(), canonical);
+    assert!(valid_node.mining_sync_gate_allows_work());
+    assert_eq!(*valid_node.sync_target_peer.lock(), None);
+    assert_eq!(*valid_node.sync_target_hash.lock(), None);
 }
 
 #[test]
@@ -18017,10 +23162,12 @@ fn better_hash_anchored_sync_response_keeps_target() {
     assert!(native_meta_better_than(&target, &best));
     node.observe_pending_sync_peer_tip(Some([0x24; 32]), target.height, Some(target.hash));
 
-    assert!(!node.clear_nonwinning_sync_target_response_to_local_tip(
-        target.height,
-        std::slice::from_ref(&target)
-    ));
+    assert!(!node
+        .clear_stored_nonwinning_sync_target_to_local_tip(
+            target.height,
+            (target.height, target.hash)
+        )
+        .expect("missing durable target lookup"));
 
     let (syncing, observed_target) = node.sync_status_fields();
     assert!(syncing);
@@ -18147,7 +23294,8 @@ fn native_sync_response_in_flight_deduplicates_peer() {
                 to_height: 256,
             },
         ),
-        NativeSyncResponseStart::Started
+        NativeSyncResponseStart::AtCapacity,
+        "one peer may hold at most one response worker even for a different range"
     );
     node.end_sync_response_for_peer(
         peer,
@@ -18158,7 +23306,8 @@ fn native_sync_response_in_flight_deduplicates_peer() {
     );
     assert_eq!(
         node.begin_sync_response_for_peer(peer, range),
-        NativeSyncResponseStart::DuplicateRange
+        NativeSyncResponseStart::DuplicateRange,
+        "ending a non-running range must not release the peer's active worker"
     );
     node.end_sync_response_for_peer(peer, range);
     assert_eq!(
@@ -18166,6 +23315,73 @@ fn native_sync_response_in_flight_deduplicates_peer() {
         NativeSyncResponseStart::Started
     );
     node.end_sync_response_for_peer(peer, range);
+}
+
+#[test]
+fn native_sync_response_workers_are_globally_bounded() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let first_peer = [0x91; 32];
+    let second_peer = [0x92; 32];
+    let third_peer = [0x93; 32];
+    let first_range = NativeSyncRange {
+        from_height: 1,
+        to_height: 64,
+    };
+    let second_range = NativeSyncRange {
+        from_height: 65,
+        to_height: 128,
+    };
+    let waiting_range = NativeSyncRange {
+        from_height: 129,
+        to_height: 192,
+    };
+
+    assert_eq!(MAX_NATIVE_SYNC_RESPONSE_WORKERS, 2);
+    assert_eq!(
+        node.begin_sync_response_for_peer(first_peer, first_range),
+        NativeSyncResponseStart::Started
+    );
+    assert_eq!(
+        node.begin_sync_response_for_peer(first_peer, second_range),
+        NativeSyncResponseStart::AtCapacity,
+        "one peer cannot consume both global response workers"
+    );
+    assert_eq!(
+        node.begin_sync_response_for_peer(second_peer, waiting_range),
+        NativeSyncResponseStart::Started
+    );
+    assert_eq!(
+        node.begin_sync_response_for_peer(third_peer, second_range),
+        NativeSyncResponseStart::AtCapacity,
+        "a third peer must wait while two distinct peers own the global workers"
+    );
+    assert_eq!(
+        node.begin_sync_response_for_peer(first_peer, first_range),
+        NativeSyncResponseStart::DuplicateRange,
+        "an already-running range remains a duplicate even when the global worker cap is full"
+    );
+
+    node.end_sync_response_for_peer(first_peer, second_range);
+    assert_eq!(
+        node.begin_sync_response_for_peer(third_peer, second_range),
+        NativeSyncResponseStart::AtCapacity,
+        "ending a non-running peer range must not release a global worker slot"
+    );
+    node.end_sync_response_for_peer(first_peer, first_range);
+    assert_eq!(
+        node.begin_sync_response_for_peer(third_peer, second_range),
+        NativeSyncResponseStart::Started,
+        "finishing the exact response must release exactly one global worker slot"
+    );
+
+    node.end_sync_response_for_peer(second_peer, waiting_range);
+    node.end_sync_response_for_peer(third_peer, second_range);
+    assert_eq!(
+        node.begin_sync_response_for_peer(first_peer, first_range),
+        NativeSyncResponseStart::Started
+    );
+    node.end_sync_response_for_peer(first_peer, first_range);
 }
 
 #[test]
@@ -18229,6 +23445,963 @@ fn outbound_native_sync_request_retries_after_live_timeout() {
 }
 
 #[test]
+fn unproductive_native_sync_response_cooldown_suppresses_tick_retries() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let peer = [0x48; 32];
+    let range = NativeSyncRange {
+        from_height: 43_530,
+        to_height: 43_593,
+    };
+
+    for _ in 0..8 {
+        node.defer_outbound_sync_request_retry(Some(peer), range);
+    }
+    assert_eq!(node.outbound_sync_requests.lock().len(), 1);
+    assert!(
+        !node.begin_outbound_sync_request(Some(peer), range),
+        "the 2-second scheduler tick must not bypass the 20-second cooldown"
+    );
+
+    {
+        let mut requests = node.outbound_sync_requests.lock();
+        let request = requests.get_mut(&Some(peer)).expect("cooldown fingerprint");
+        request.requested_at = Instant::now()
+            .checked_sub(NATIVE_SYNC_REQUEST_RETRY_AFTER + Duration::from_millis(1))
+            .expect("past instant");
+    }
+    assert!(node.begin_outbound_sync_request(Some(peer), range));
+}
+
+#[test]
+fn cooldown_native_sync_request_rejects_late_response_without_clearing_fingerprint() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let peer = [0x4d; 32];
+    let range = NativeSyncRange {
+        from_height: 43_530,
+        to_height: 43_593,
+    };
+
+    node.defer_outbound_sync_request_retry(Some(peer), range);
+    assert_eq!(
+        node.complete_outbound_sync_response(peer, Some(range)),
+        None
+    );
+    assert_eq!(node.complete_outbound_sync_response(peer, None), None);
+    {
+        let requests = node.outbound_sync_requests.lock();
+        let request = requests.get(&Some(peer)).expect("cooldown fingerprint");
+        assert_eq!(request.range, range);
+        assert_eq!(request.state, NativeOutboundSyncRequestState::Cooldown);
+    }
+    assert!(
+        !node.begin_outbound_sync_request(Some(peer), range),
+        "a duplicate response must not clear the cooldown fingerprint"
+    );
+
+    {
+        let mut requests = node.outbound_sync_requests.lock();
+        let request = requests.get_mut(&Some(peer)).expect("cooldown fingerprint");
+        request.requested_at = Instant::now()
+            .checked_sub(NATIVE_SYNC_REQUEST_RETRY_AFTER + Duration::from_millis(1))
+            .expect("past instant");
+    }
+    assert!(node.begin_outbound_sync_request(Some(peer), range));
+    assert_eq!(
+        node.outbound_sync_requests
+            .lock()
+            .get(&Some(peer))
+            .map(|request| request.state),
+        Some(NativeOutboundSyncRequestState::InFlight)
+    );
+}
+
+#[test]
+fn deep_sync_recovery_cursor_survives_request_expiry_and_beats_near_tip_restart() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let peer = [0x4a; 32];
+    let target_height = 20_000;
+    let target_hash = Some([0x4b; 32]);
+    let recovery = NativeSyncRange {
+        from_height: 8_977,
+        to_height: 9_232,
+    };
+    let near_tip = NativeSyncRange {
+        from_height: 9_746,
+        to_height: 10_001,
+    };
+    let expected_parent_hash = Some([0x4d; 32]);
+
+    node.set_sync_recovery_cursor(
+        Some(peer),
+        target_height,
+        target_hash,
+        recovery,
+        expected_parent_hash,
+    );
+    assert!(node.begin_outbound_sync_request(Some(peer), recovery));
+    {
+        let mut requests = node.outbound_sync_requests.lock();
+        let request = requests
+            .get_mut(&Some(peer))
+            .expect("tracked recovery request");
+        request.requested_at = Instant::now()
+            .checked_sub(NATIVE_SYNC_REQUEST_RETRY_AFTER + Duration::from_millis(1))
+            .expect("expired request instant");
+    }
+    assert!(node.begin_outbound_sync_request(
+        None,
+        NativeSyncRange {
+            from_height: 1,
+            to_height: 64,
+        }
+    ));
+    assert!(!node.outbound_sync_requests.lock().contains_key(&Some(peer)));
+
+    let persisted = node.sync_recovery_cursor_for_target(Some(peer), target_height, target_hash);
+    let persisted_range = persisted.map(|cursor| cursor.range);
+    assert_eq!(persisted_range, Some(recovery));
+    assert_eq!(
+        persisted.and_then(|cursor| cursor.expected_parent_hash),
+        expected_parent_hash
+    );
+    assert_eq!(
+        native_sync_preferred_target_request_range(persisted_range, Some(near_tip)),
+        Some(recovery),
+        "a dropped deep page must retry from its persisted cursor instead of restarting near the canonical tip"
+    );
+    let advanced_hash = Some([0x4c; 32]);
+    let advanced = node
+        .sync_recovery_cursor_for_target(Some(peer), target_height + 1, advanced_hash)
+        .expect("same-peer target growth must preserve the recovery cursor");
+    assert_eq!(advanced.range, recovery);
+    assert_eq!(advanced.target_height, target_height + 1);
+    assert_eq!(advanced.target_hash, advanced_hash);
+    assert_eq!(advanced.expected_parent_hash, expected_parent_hash);
+}
+
+#[test]
+fn same_peer_target_advance_retargets_cursor_without_tuple_corruption() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let peer_a = [0x51; 32];
+    let peer_b = [0x52; 32];
+    let hash_a = [0x61; 32];
+    let hash_a_next = [0x62; 32];
+    let range = NativeSyncRange {
+        from_height: 257,
+        to_height: 512,
+    };
+    let expected_parent_hash = Some([0x63; 32]);
+
+    node.observe_pending_sync_peer_tip(Some(peer_a), 1_000, Some(hash_a));
+    node.set_sync_recovery_cursor(
+        Some(peer_a),
+        1_000,
+        Some(hash_a),
+        range,
+        expected_parent_hash,
+    );
+    node.observe_pending_sync_peer_tip(Some(peer_a), 1_001, Some(hash_a_next));
+
+    let advanced = node
+        .sync_recovery_cursor_for_target(Some(peer_a), 1_001, Some(hash_a_next))
+        .expect("same-peer target growth must preserve the recovery cursor");
+    assert_eq!(advanced.range, range);
+    assert_eq!(advanced.expected_parent_hash, expected_parent_hash);
+    assert_eq!(advanced.target_height, 1_001);
+    assert_eq!(advanced.target_hash, Some(hash_a_next));
+
+    node.observe_pending_sync_peer_tip(Some(peer_a), 1_000, Some([0x64; 32]));
+    node.observe_pending_sync_peer_tip(Some(peer_b), 1_001, Some([0x65; 32]));
+    node.observe_pending_sync_peer_height(1_002);
+
+    assert_eq!(node.sync_target_height.load(Ordering::Relaxed), 1_001);
+    assert_eq!(*node.sync_target_peer.lock(), Some(peer_a));
+    assert_eq!(*node.sync_target_hash.lock(), Some(hash_a_next));
+    let preserved = node
+        .sync_recovery_cursor_for_target(Some(peer_a), 1_001, Some(hash_a_next))
+        .expect("stale or height-only evidence must not invalidate the cursor");
+    assert_eq!(preserved.range, range);
+    assert_eq!(preserved.expected_parent_hash, expected_parent_hash);
+
+    let hash_b_next = [0x66; 32];
+    node.observe_pending_sync_peer_tip(Some(peer_b), 1_002, Some(hash_b_next));
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (1_002, Some(peer_b), Some(hash_b_next)),
+        "higher evidence from another peer must replace the full target tuple"
+    );
+    assert_eq!(
+        *node.sync_recovery_cursor.lock(),
+        None,
+        "a cursor bound to the replaced peer must not survive failover"
+    );
+}
+
+#[test]
+fn same_target_hash_peer_failover_after_timeout_rebinds_cursor_and_retry() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+    config.seeds.push("127.0.0.1:30333".to_owned());
+    let node = NativeNode::open(config).expect("node");
+    let peer_a = [0x56; 32];
+    let peer_b = [0x57; 32];
+    let peer_c = [0x58; 32];
+    let target_height = 1_000;
+    let target_hash = [0x68; 32];
+    let conflicting_hash = [0x69; 32];
+    let range = NativeSyncRange {
+        from_height: 1,
+        to_height: NATIVE_SYNC_REQUEST_BLOCKS,
+    };
+    let expected_parent_hash = Some([0x6a; 32]);
+
+    node.observe_pending_sync_peer_tip(Some(peer_a), target_height, Some(target_hash));
+    node.set_sync_recovery_cursor(
+        Some(peer_a),
+        target_height,
+        Some(target_hash),
+        range,
+        expected_parent_hash,
+    );
+    assert!(node.begin_outbound_sync_request(Some(peer_a), range));
+
+    node.observe_pending_sync_peer_tip(Some(peer_b), target_height, Some(target_hash));
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (target_height, Some(peer_a), Some(target_hash)),
+        "a fresh in-flight request must not thrash between peers advertising the same tip"
+    );
+    node.observe_pending_sync_peer_tip(Some(peer_b), target_height, Some(conflicting_hash));
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (target_height, Some(peer_a), Some(target_hash)),
+        "a conflicting hash at the same height must not replace the exact target tuple"
+    );
+
+    {
+        let mut requests = node.outbound_sync_requests.lock();
+        let request = requests
+            .get_mut(&Some(peer_a))
+            .expect("peer A in-flight request");
+        request.requested_at = Instant::now()
+            .checked_sub(NATIVE_SYNC_REQUEST_RETRY_AFTER + Duration::from_millis(1))
+            .expect("expired peer A request instant");
+    }
+    node.observe_pending_sync_peer_tip(Some(peer_b), target_height, Some(target_hash));
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (target_height, Some(peer_b), Some(target_hash)),
+        "an exact same-tip observation must fail over after the first peer times out"
+    );
+    assert!(!node
+        .outbound_sync_requests
+        .lock()
+        .contains_key(&Some(peer_a)));
+    let rebound_cursor = node
+        .sync_recovery_cursor_for_target(Some(peer_b), target_height, Some(target_hash))
+        .expect("exact-target recovery cursor must follow peer failover");
+    assert_eq!(rebound_cursor.range, range);
+    assert_eq!(rebound_cursor.expected_parent_hash, expected_parent_hash);
+    assert_eq!(
+        node.complete_outbound_sync_response(peer_a, Some(range)),
+        None,
+        "a late response from the timed-out peer must lose request authorization"
+    );
+    assert!(node.begin_outbound_sync_request(Some(peer_b), range));
+
+    node.observe_verified_sync_peer_tip(Some(peer_c), target_height, Some(target_hash));
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (target_height, Some(peer_c), Some(target_hash)),
+        "verified exact evidence must replace unverified peer ownership even during a fresh request"
+    );
+    assert_eq!(
+        node.complete_outbound_sync_response(peer_b, Some(range)),
+        None,
+        "verified failover must revoke the previous peer's request authorization"
+    );
+    let verified_rebound_cursor = node
+        .sync_recovery_cursor_for_target(Some(peer_c), target_height, Some(target_hash))
+        .expect("verified exact-target recovery cursor must follow peer failover");
+    assert_eq!(verified_rebound_cursor.range, range);
+    assert_eq!(
+        verified_rebound_cursor.expected_parent_hash,
+        expected_parent_hash
+    );
+    assert!(node.begin_outbound_sync_request(Some(peer_c), range));
+    assert!(node.sync_status_fields().0);
+    assert!(!node.mining_sync_gate_allows_work());
+
+    let mut wrong_target = node.best_meta();
+    wrong_target.height = target_height;
+    wrong_target.hash = conflicting_hash;
+    wrong_target.work_hash = conflicting_hash;
+    node.state.write().best = wrong_target;
+    node.refresh_mining_sync_gate();
+    assert!(!node.mining_sync_gate_allows_work());
+
+    let mut exact_target = node.best_meta();
+    exact_target.hash = target_hash;
+    exact_target.work_hash = target_hash;
+    node.state.write().best = exact_target;
+    node.refresh_mining_sync_gate();
+    assert!(node.mining_sync_gate_allows_work());
+}
+
+#[test]
+fn stale_sync_target_gate_snapshot_cannot_open_gate_or_clear_rebound_peer() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+    config.seeds.push("127.0.0.1:30333".to_owned());
+    let node = NativeNode::open(config).expect("node");
+    let best = node.best_meta();
+    let previous_peer = [0x59; 32];
+    let rebound_peer = [0x5a; 32];
+    let unresolved_hash = [0x6b; 32];
+
+    node.sync_target_observed.store(true, Ordering::SeqCst);
+    {
+        let mut target_hash = node.sync_target_hash.lock();
+        let mut target_peer = node.sync_target_peer.lock();
+        node.sync_target_height
+            .store(best.height, Ordering::Relaxed);
+        *target_hash = Some(best.hash);
+        *target_peer = Some(previous_peer);
+    }
+    let stale_snapshot = node.sync_target_evidence_snapshot();
+    let stale_resolved =
+        node.sync_target_resolved_against_best(&best, stale_snapshot.height, stale_snapshot.hash);
+    assert!(stale_resolved, "fixture snapshot must be resolved");
+
+    // Model the exact interleaving in which resolution finishes after a peer
+    // observation has replaced the complete target tuple.
+    {
+        let mut target_hash = node.sync_target_hash.lock();
+        let mut target_peer = node.sync_target_peer.lock();
+        node.sync_target_height
+            .store(best.height + 1, Ordering::Relaxed);
+        *target_hash = Some(unresolved_hash);
+        *target_peer = Some(rebound_peer);
+        node.sync_target_unverified_peer_hint
+            .store(true, Ordering::Relaxed);
+    }
+    node.mining_sync_gate_open.store(false, Ordering::SeqCst);
+
+    assert!(
+        !node.publish_mining_sync_gate_for_target_snapshot(stale_snapshot, stale_resolved),
+        "a stale resolved decision must not publish against a replacement target"
+    );
+    assert!(!node.mining_sync_gate_allows_work());
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (best.height + 1, Some(rebound_peer), Some(unresolved_hash)),
+        "stale publication must not erase the rebound target peer"
+    );
+
+    node.refresh_mining_sync_gate();
+    assert!(!node.mining_sync_gate_allows_work());
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (best.height + 1, Some(rebound_peer), Some(unresolved_hash)),
+        "refresh must publish the coherent unresolved tuple"
+    );
+}
+
+#[test]
+fn unverified_extreme_target_timeout_quarantines_peer_and_allows_lower_recovery() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+    config.seeds.push("127.0.0.1:30333".to_owned());
+    let node = NativeNode::open(config).expect("node");
+    let local_best = node.best_meta();
+    let attacker = [0xa1; 32];
+    let attacker_hash = [0xb1; 32];
+    let honest = [0xa2; 32];
+    let honest_hash = [0xb2; 32];
+    let sybil = [0xa3; 32];
+    let request_range = NativeSyncRange {
+        from_height: local_best.height + 1,
+        to_height: local_best.height + NATIVE_SYNC_REQUEST_BLOCKS,
+    };
+
+    assert!(node.observe_pending_sync_peer_tip(Some(attacker), u64::MAX, Some(attacker_hash),));
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (u64::MAX, Some(attacker), Some(attacker_hash))
+    );
+    assert!(node.sync_target_evidence_snapshot().unverified_peer_hint);
+    node.refresh_mining_sync_gate();
+    assert!(!node.mining_sync_gate_allows_work());
+
+    let context = NativeOutboundSyncRequestContext {
+        recovery_page: false,
+        expected_parent_hash: None,
+        target_tip: Some((u64::MAX, attacker_hash)),
+    };
+    assert!(node.begin_outbound_sync_request_with_context(Some(attacker), request_range, context,));
+    node.set_sync_recovery_cursor(
+        Some(attacker),
+        u64::MAX,
+        Some(attacker_hash),
+        request_range,
+        None,
+    );
+    {
+        let mut requests = node.outbound_sync_requests.lock();
+        let request = requests.get_mut(&Some(attacker)).expect("attacker request");
+        request.requested_at = Instant::now()
+            .checked_sub(NATIVE_SYNC_REQUEST_RETRY_AFTER + Duration::from_millis(1))
+            .expect("expired request instant");
+    }
+
+    assert!(node.expire_unverified_sync_target());
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (local_best.height, None, None),
+        "expired unverified evidence must reset to the local tip"
+    );
+    assert!(!node.sync_target_observed.load(Ordering::SeqCst));
+    assert!(!node.mining_sync_gate_allows_work());
+    assert!(!node
+        .outbound_sync_requests
+        .lock()
+        .contains_key(&Some(attacker)));
+    assert_eq!(*node.sync_recovery_cursor.lock(), None);
+    assert!(node
+        .sync_unverified_target_cooldowns
+        .lock()
+        .contains_key(&attacker));
+
+    assert!(
+        !node.observe_pending_sync_peer_tip(Some(attacker), u64::MAX, Some(attacker_hash)),
+        "the offending peer must not immediately reacquire the target"
+    );
+
+    let honest_height = local_best.height + 100;
+    assert!(node.observe_pending_sync_peer_tip(Some(honest), honest_height, Some(honest_hash),));
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (honest_height, Some(honest), Some(honest_hash)),
+        "a lower honest target must become eligible after exact eviction"
+    );
+    let honest_context = NativeOutboundSyncRequestContext {
+        target_tip: Some((honest_height, honest_hash)),
+        ..NativeOutboundSyncRequestContext::default()
+    };
+    assert!(node.begin_outbound_sync_request_with_context(
+        Some(honest),
+        request_range,
+        honest_context,
+    ));
+    assert!(
+        !node.observe_pending_sync_peer_tip(Some(sybil), u64::MAX - 1, Some([0xb3; 32])),
+        "a fresh exact request must not be superseded by another unverified peer"
+    );
+
+    let mut exact_honest_tip = local_best;
+    exact_honest_tip.height = honest_height;
+    exact_honest_tip.hash = honest_hash;
+    exact_honest_tip.work_hash = honest_hash;
+    node.state.write().best = exact_honest_tip;
+    node.refresh_mining_sync_gate();
+    assert!(
+        !node.mining_sync_gate_allows_work(),
+        "a locally matching hash does not upgrade peer-hint provenance by itself"
+    );
+    node.observe_verified_sync_peer_tip(Some(honest), honest_height, Some(honest_hash));
+    assert!(node.mining_sync_gate_allows_work());
+}
+
+#[test]
+fn stale_unverified_terminal_hook_cannot_evict_verified_rebound_target() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+    config.seeds.push("127.0.0.1:30333".to_owned());
+    let node = NativeNode::open(config).expect("node");
+    let attacker = [0xa4; 32];
+    let verified_peer = [0xa5; 32];
+    let target_height = node.best_height() + 64;
+    let target_hash = [0xb4; 32];
+    let range = NativeSyncRange {
+        from_height: node.best_height() + 1,
+        to_height: target_height,
+    };
+    let context = NativeOutboundSyncRequestContext {
+        target_tip: Some((target_height, target_hash)),
+        ..NativeOutboundSyncRequestContext::default()
+    };
+
+    assert!(node.observe_pending_sync_peer_tip(Some(attacker), target_height, Some(target_hash),));
+    node.set_sync_recovery_cursor(
+        Some(attacker),
+        target_height,
+        Some(target_hash),
+        range,
+        None,
+    );
+    assert!(node.begin_outbound_sync_request_with_context(Some(attacker), range, context));
+    node.observe_verified_sync_peer_tip(Some(verified_peer), target_height, Some(target_hash));
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (target_height, Some(verified_peer), Some(target_hash))
+    );
+    assert!(!node.sync_target_evidence_snapshot().unverified_peer_hint);
+    assert!(
+        !node
+            .outbound_sync_requests
+            .lock()
+            .contains_key(&Some(attacker)),
+        "verified exact evidence must revoke the unverified owner's fresh request"
+    );
+    assert!(node
+        .sync_recovery_cursor_for_target(Some(verified_peer), target_height, Some(target_hash))
+        .is_some());
+    assert!(node.begin_outbound_sync_request(Some(verified_peer), range));
+
+    assert!(
+        !handle_native_sync_terminal_target_failure(
+            &node,
+            attacker,
+            Some((target_height, target_hash)),
+            "late attacker terminal response",
+        ),
+        "a stale terminal event must not erase a verified rebound tuple"
+    );
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (target_height, Some(verified_peer), Some(target_hash))
+    );
+}
+
+#[tokio::test]
+async fn unverified_target_deferred_during_import_is_scheduled_before_expiry() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+    config.seeds.push("127.0.0.1:30333".to_owned());
+    let node = NativeNode::open(config).expect("node");
+    let local_height = node.best_height();
+    let network_addr: SocketAddr = "127.0.0.1:0".parse().expect("test network address");
+    let mut network_service = P2PService::new(
+        PeerIdentity::generate(b"native-sync-deferred-unverified-target"),
+        network_addr,
+        Vec::new(),
+        Vec::new(),
+        GossipRouter::new(32).handle(),
+        2,
+        PeerStore::new(PeerStoreConfig::with_path(tmp.path().join("pq-peers.bin"))),
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(network_addr),
+    );
+    let handle = network_service.register_protocol(NATIVE_SYNC_PROTOCOL_ID);
+    let sync_tx = handle.sender();
+    let peer = [0xa9; 32];
+    let target_height = local_height + NATIVE_SYNC_REQUEST_BLOCKS;
+    let target_hash = [0xb9; 32];
+
+    assert!(node.begin_sync_import());
+    process_native_sync_tip_announcement(
+        &node,
+        &handle,
+        peer,
+        NativeSyncTipAnnouncement {
+            best_height: target_height,
+            best_hash: target_hash,
+        },
+    )
+    .await
+    .expect("compact tip observed while import is active");
+    assert!(!node.outbound_sync_requests.lock().contains_key(&Some(peer)));
+    node.end_sync_import();
+
+    assert!(
+        !node.expire_unverified_sync_target(),
+        "the first post-import expiry pass must preserve an exact deferred hint"
+    );
+    queue_missing_blocks_from_sync_target(&node, &sync_tx).await;
+    let requests = node.outbound_sync_requests.lock();
+    let request = requests
+        .get(&Some(peer))
+        .expect("the same periodic pass must schedule the deferred honest hint");
+    assert_eq!(
+        request.context.target_tip,
+        Some((target_height, target_hash))
+    );
+    drop(requests);
+    assert!(
+        !node.expire_unverified_sync_target(),
+        "a newly scheduled fresh request must retain the target"
+    );
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (target_height, Some(peer), Some(target_hash))
+    );
+}
+
+#[test]
+fn terminal_failure_hook_evicts_exact_unverified_target_and_quarantines_peer() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+    config.seeds.push("127.0.0.1:30333".to_owned());
+    let node = NativeNode::open(config).expect("node");
+    let local_height = node.best_height();
+    let peer = [0xa6; 32];
+    let target_height = local_height + 64;
+    let target_hash = [0xb6; 32];
+
+    assert!(node.observe_pending_sync_peer_tip(Some(peer), target_height, Some(target_hash),));
+    assert!(handle_native_sync_terminal_target_failure(
+        &node,
+        peer,
+        Some((target_height, target_hash)),
+        "terminal invalid response fixture",
+    ));
+    assert_eq!(node.sync_target_tip_snapshot(), (local_height, None, None));
+    assert!(!node.sync_target_observed.load(Ordering::SeqCst));
+    assert!(!node.mining_sync_gate_allows_work());
+    assert!(!node.observe_pending_sync_peer_tip(Some(peer), target_height, Some(target_hash),));
+}
+
+#[test]
+fn unverified_target_chunk_session_expiry_recovers_without_reannouncement() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+    config.seeds.push("127.0.0.1:30333".to_owned());
+    let node = NativeNode::open(config).expect("node");
+    let local_height = node.best_height();
+    let peer = [0xa7; 32];
+    let target_height = local_height + 64;
+    let target_hash = [0xb7; 32];
+    let range = NativeSyncRange {
+        from_height: local_height + 1,
+        to_height: target_height,
+    };
+    let context = NativeOutboundSyncRequestContext {
+        target_tip: Some((target_height, target_hash)),
+        ..NativeOutboundSyncRequestContext::default()
+    };
+
+    assert!(node.observe_pending_sync_peer_tip(Some(peer), target_height, Some(target_hash),));
+    assert!(node.begin_outbound_sync_request_with_context(Some(peer), range, context));
+    node.begin_native_sync_chunk_receive(peer, target_height, true)
+        .expect("chunk fallback session");
+    node.expire_native_sync_chunk_receive_for_test(peer);
+    node.prune_native_sync_chunk_sessions();
+
+    assert!(node.expire_unverified_sync_target());
+    assert_eq!(node.sync_target_tip_snapshot(), (local_height, None, None));
+    assert_eq!(node.native_sync_chunk_session_counts().1, 0);
+    assert!(!node.mining_sync_gate_allows_work());
+}
+
+#[test]
+fn unverified_target_peer_cooldowns_are_bounded_and_pruned() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let target_height = node.best_height() + 1;
+
+    for index in 0..=MAX_NATIVE_SYNC_UNVERIFIED_TARGET_COOLDOWNS {
+        let mut peer = [0xc1; 32];
+        peer[..8].copy_from_slice(&(index as u64).to_le_bytes());
+        let mut target_hash = [0xd1; 32];
+        target_hash[..8].copy_from_slice(&(index as u64).to_le_bytes());
+        assert!(node.observe_pending_sync_peer_tip(Some(peer), target_height, Some(target_hash),));
+        assert!(node.evict_unverified_sync_target_after_terminal_failure(
+            peer,
+            (target_height, target_hash),
+            "bounded cooldown fixture",
+        ));
+    }
+    assert_eq!(
+        node.sync_unverified_target_cooldowns.lock().len(),
+        MAX_NATIVE_SYNC_UNVERIFIED_TARGET_COOLDOWNS
+    );
+
+    {
+        let expired_at = Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .expect("expired instant");
+        for expires_at in node.sync_unverified_target_cooldowns.lock().values_mut() {
+            *expires_at = expired_at;
+        }
+    }
+    let next_peer = [0xe1; 32];
+    let next_hash = [0xe2; 32];
+    assert!(node.observe_pending_sync_peer_tip(Some(next_peer), target_height, Some(next_hash),));
+    assert!(node.sync_unverified_target_cooldowns.lock().is_empty());
+}
+
+#[tokio::test]
+async fn announce_tip_is_unverified_request_planning_evidence_and_never_opens_gate() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+    config.seeds.push("127.0.0.1:30333".to_owned());
+    let node = NativeNode::open(config).expect("node");
+    let local_best = node.best_meta();
+    node.observe_verified_sync_peer_height(local_best.height);
+    assert!(node.mining_sync_gate_allows_work());
+
+    let network_addr: SocketAddr = "127.0.0.1:0".parse().expect("test network address");
+    let mut network_service = P2PService::new(
+        PeerIdentity::generate(b"native-sync-compact-tip-evidence"),
+        network_addr,
+        Vec::new(),
+        Vec::new(),
+        GossipRouter::new(32).handle(),
+        2,
+        PeerStore::new(PeerStoreConfig::with_path(tmp.path().join("pq-peers.bin"))),
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(network_addr),
+    );
+    let handle = network_service.register_protocol(NATIVE_SYNC_PROTOCOL_ID);
+    let peer = [0xe3; 32];
+    let target_height = local_best.height + NATIVE_SYNC_REQUEST_BLOCKS;
+    let target_hash = [0xe4; 32];
+    let tip = NativeSyncTipAnnouncement {
+        best_height: target_height,
+        best_hash: target_hash,
+    };
+
+    process_native_sync_tip_announcement(&node, &handle, peer, tip)
+        .await
+        .expect("ahead nonzero compact tip is admitted for request planning");
+
+    let snapshot = node.sync_target_evidence_snapshot();
+    assert_eq!(snapshot.height, target_height);
+    assert_eq!(snapshot.peer_id, Some(peer));
+    assert_eq!(snapshot.hash, Some(target_hash));
+    assert!(snapshot.unverified_peer_hint);
+    assert!(node.sync_status_fields().0);
+    assert!(
+        !node.mining_sync_gate_allows_work(),
+        "a compact tip must conservatively close, never open, the mining gate"
+    );
+    {
+        let requests = node.outbound_sync_requests.lock();
+        let request = requests
+            .get(&Some(peer))
+            .expect("compact tip must schedule the ordinary bounded range request");
+        assert_eq!(request.state, NativeOutboundSyncRequestState::InFlight);
+        assert_eq!(
+            request.context.target_tip,
+            Some((target_height, target_hash))
+        );
+        assert_eq!(request.range.from_height, local_best.height + 1);
+        assert_eq!(request.range.to_height, target_height);
+    }
+
+    let mut locally_matching_unverified_tip = local_best;
+    locally_matching_unverified_tip.height = target_height;
+    locally_matching_unverified_tip.hash = target_hash;
+    locally_matching_unverified_tip.work_hash = target_hash;
+    node.state.write().best = locally_matching_unverified_tip;
+    node.refresh_mining_sync_gate();
+    assert!(node.sync_target_evidence_snapshot().unverified_peer_hint);
+    assert!(
+        !node.mining_sync_gate_allows_work(),
+        "matching local fields alone must not upgrade compact-tip provenance"
+    );
+
+    node.observe_verified_sync_peer_tip(Some(peer), target_height, Some(target_hash));
+    assert!(!node.sync_target_evidence_snapshot().unverified_peer_hint);
+    assert!(
+        node.mining_sync_gate_allows_work(),
+        "only the separate verified-evidence path may resolve the exact target"
+    );
+}
+
+#[test]
+fn truncated_verified_sync_response_preserves_announced_target_and_schedules_forward() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let peer = [0x54; 32];
+    let returned_tip_hash = [0x76; 32];
+    let announced_target_hash = [0x77; 32];
+    let conflicting_target_hash = [0x78; 32];
+    let completed_range = NativeSyncRange {
+        from_height: 1,
+        to_height: 64,
+    };
+
+    let mut returned_tip = node.best_meta();
+    returned_tip.height = completed_range.to_height;
+    returned_tip.hash = returned_tip_hash;
+    node.state.write().best = returned_tip.clone();
+    let announced_target_height = 128;
+    node.observe_pending_sync_peer_tip(
+        Some(peer),
+        announced_target_height,
+        Some(announced_target_hash),
+    );
+    node.set_sync_recovery_cursor(
+        Some(peer),
+        announced_target_height,
+        Some(announced_target_hash),
+        completed_range,
+        Some(returned_tip.parent_hash),
+    );
+
+    let advertised_height = 10_000;
+    let mut progress = NativeSyncResponseImportProgress::new(64);
+    for _ in 0..64 {
+        assert!(progress.record(NativeSyncResponseImportOutcome::Imported));
+    }
+    let observed_height = native_sync_verified_response_observed_height(
+        progress,
+        Some(completed_range),
+        returned_tip.height,
+        false,
+    )
+    .expect("validated truncated response tip");
+    assert_eq!(observed_height, completed_range.to_height);
+    assert_eq!(
+        native_sync_verified_response_tip_hash(
+            advertised_height,
+            Some(completed_range),
+            Some(returned_tip_hash),
+        ),
+        None,
+        "a truncated prefix hash must not be attached to the advertised height"
+    );
+    node.observe_verified_sync_peer_tip(Some(peer), observed_height, None);
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (
+            announced_target_height,
+            Some(peer),
+            Some(announced_target_hash)
+        ),
+        "a truncated response must preserve the separately announced exact target tuple"
+    );
+    assert!(node
+        .sync_recovery_cursor_for_target(
+            Some(peer),
+            announced_target_height,
+            Some(announced_target_hash),
+        )
+        .is_some());
+
+    let backfill_blocks = node.sync_reorg_backfill_blocks();
+    let next_range = native_sync_observed_tip_request_range(
+        returned_tip.height,
+        returned_tip.hash,
+        announced_target_height,
+        node.sync_target_tip_snapshot().2,
+        native_sync_request_max_blocks(backfill_blocks),
+        backfill_blocks,
+    )
+    .expect("truncated verified progress must retain a forward request");
+    assert_ne!(next_range, completed_range);
+    assert!(next_range.to_height > completed_range.to_height);
+    assert!(next_range.to_height <= announced_target_height);
+
+    let full_range = NativeSyncRange {
+        from_height: next_range.from_height,
+        to_height: announced_target_height,
+    };
+    let exact_hash = native_sync_verified_response_tip_hash(
+        announced_target_height,
+        Some(full_range),
+        Some(announced_target_hash),
+    );
+    assert_eq!(exact_hash, Some(announced_target_hash));
+    node.observe_verified_sync_peer_tip(Some(peer), announced_target_height, exact_hash);
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (
+            announced_target_height,
+            Some(peer),
+            Some(announced_target_hash)
+        ),
+        "a response reaching the advertised height may bind its exact tip hash"
+    );
+    node.observe_verified_sync_peer_tip(
+        Some(peer),
+        announced_target_height,
+        Some(conflicting_target_hash),
+    );
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (
+            announced_target_height,
+            Some(peer),
+            Some(announced_target_hash)
+        ),
+        "verified evidence must not replace an existing exact target with a conflicting hash"
+    );
+}
+
+#[test]
+fn deep_equal_height_recovery_page_bypasses_stale_and_preserves_target() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    for _ in 0..2 {
+        mine_empty_native_block(&node);
+    }
+    let best = node.best_meta();
+    let page_hash = node
+        .hash_by_height(best.height - 1)
+        .expect("height lookup")
+        .expect("recovery page hash");
+    let page = node
+        .header_by_hash(&page_hash)
+        .expect("header lookup")
+        .expect("recovery page");
+    let peer = [0x53; 32];
+    let target_hash = [0x66; 32];
+    let recovery = NativeSyncRange {
+        from_height: page.height,
+        to_height: page.height,
+    };
+
+    node.observe_pending_sync_peer_tip(Some(peer), best.height, Some(target_hash));
+    node.set_sync_recovery_cursor(Some(peer), best.height, Some(target_hash), recovery, None);
+
+    assert!(native_sync_response_stale_for_local_tip(
+        &node,
+        best.height,
+        std::slice::from_ref(&page),
+    ));
+    assert_eq!(
+        native_sync_response_pre_import_disposition(
+            &node,
+            best.height,
+            std::slice::from_ref(&page),
+            false,
+        ),
+        NativeSyncResponsePreImportDisposition::Stale
+    );
+    assert_eq!(
+        native_sync_response_pre_import_disposition(
+            &node,
+            best.height,
+            std::slice::from_ref(&page),
+            true,
+        ),
+        NativeSyncResponsePreImportDisposition::Continue
+    );
+
+    let mut progress = NativeSyncResponseImportProgress::new(1);
+    assert!(!progress.record(NativeSyncResponseImportOutcome::MissingParent));
+    assert!(native_sync_response_should_escalate_reorg_backfill(
+        progress,
+        best.height,
+        best.height,
+    ));
+    assert_eq!(node.sync_target_height.load(Ordering::Relaxed), best.height);
+    assert_eq!(*node.sync_target_peer.lock(), Some(peer));
+    assert_eq!(*node.sync_target_hash.lock(), Some(target_hash));
+    assert_eq!(
+        node.sync_recovery_cursor_for_target(Some(peer), best.height, Some(target_hash))
+            .map(|cursor| cursor.range),
+        Some(recovery)
+    );
+}
+
+#[test]
 fn outbound_native_sync_response_completion_is_range_aware() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
@@ -18239,34 +24412,184 @@ fn outbound_native_sync_response_completion_is_range_aware() {
     };
 
     assert!(node.begin_outbound_sync_request(Some(peer), range));
-    assert!(!node.complete_outbound_sync_response(
-        peer,
-        Some(NativeSyncRange {
-            from_height: 1,
-            to_height: 128,
-        }),
-    ));
+    assert_eq!(
+        node.complete_outbound_sync_response(
+            peer,
+            Some(NativeSyncRange {
+                from_height: 1,
+                to_height: 128,
+            }),
+        )
+        .map(|completed| completed.range),
+        None
+    );
     assert!(!node.begin_outbound_sync_request(Some(peer), range));
     node.complete_outbound_sync_request(peer);
     assert!(node.begin_outbound_sync_request(Some(peer), range));
 
-    assert!(!node.complete_outbound_sync_response(
-        peer,
-        Some(NativeSyncRange {
-            from_height: 257,
-            to_height: 384,
-        }),
-    ));
+    assert_eq!(
+        node.complete_outbound_sync_response(
+            peer,
+            Some(NativeSyncRange {
+                from_height: 257,
+                to_height: 384,
+            }),
+        )
+        .map(|completed| completed.range),
+        None
+    );
     assert!(!node.begin_outbound_sync_request(Some(peer), range));
 
-    assert!(node.complete_outbound_sync_response(
-        peer,
-        Some(NativeSyncRange {
-            from_height: 128,
-            to_height: 384,
-        }),
-    ));
+    assert_eq!(
+        node.complete_outbound_sync_response(
+            peer,
+            Some(NativeSyncRange {
+                from_height: 129,
+                to_height: 200,
+            }),
+        )
+        .map(|completed| completed.range),
+        Some(range)
+    );
     assert!(node.begin_outbound_sync_request(Some(peer), range));
+}
+
+#[test]
+fn truncated_sync_response_retains_full_completed_request_fingerprint() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let peer = [0x47; 32];
+    let requested = NativeSyncRange {
+        from_height: 129,
+        to_height: 256,
+    };
+    let received = NativeSyncRange {
+        from_height: 129,
+        to_height: 160,
+    };
+    let context = NativeOutboundSyncRequestContext {
+        recovery_page: true,
+        expected_parent_hash: Some([0x6a; 32]),
+        target_tip: Some((256, [0x6b; 32])),
+    };
+
+    assert!(node.begin_outbound_sync_request_with_context(Some(peer), requested, context));
+    assert_eq!(
+        node.complete_outbound_sync_response(peer, Some(received)),
+        Some(NativeCompletedSyncRequest {
+            request_target: Some(peer),
+            range: requested,
+            context,
+        }),
+        "a wire-truncated response must complete and return the full request fingerprint"
+    );
+
+    let follow_up = native_sync_recovery_request_range(
+        requested,
+        Some(received),
+        native_sync_request_range_avoiding(Some(requested), Some(requested)),
+        1_000,
+        MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        false,
+    )
+    .expect("connected truncated prefix must advance from the received frontier");
+    assert_eq!(follow_up.from_height, received.to_height + 1);
+    assert_ne!(follow_up, requested);
+}
+
+#[test]
+fn broadcast_native_sync_response_cools_down_matched_broadcast_key() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let responding_peer = [0x55; 32];
+    let requested = NativeSyncRange {
+        from_height: 43_530,
+        to_height: 43_593,
+    };
+
+    assert!(node.begin_outbound_sync_request(None, requested));
+    let completed = node
+        .complete_outbound_sync_response(responding_peer, Some(requested))
+        .expect("broadcast request must authorize the first matching peer response");
+    assert_eq!(completed.request_target, None);
+    assert_eq!(completed.range, requested);
+
+    for _ in 0..8 {
+        node.defer_outbound_sync_request_retry(completed.request_target, completed.range);
+    }
+    let requests = node.outbound_sync_requests.lock();
+    assert_eq!(requests.len(), 1, "broadcast cooldown state stays bounded");
+    assert!(!requests.contains_key(&Some(responding_peer)));
+    let cooldown = requests.get(&None).expect("broadcast cooldown fingerprint");
+    assert_eq!(cooldown.range, requested);
+    assert_eq!(cooldown.state, NativeOutboundSyncRequestState::Cooldown);
+    drop(requests);
+
+    assert_eq!(
+        node.complete_outbound_sync_response(responding_peer, Some(requested)),
+        None,
+        "a late response must not consume the broadcast cooldown fingerprint"
+    );
+    assert!(!node.begin_outbound_sync_request(None, requested));
+}
+
+#[test]
+fn native_sync_recovery_context_binds_forward_parent_and_final_tip() {
+    let pow_bits = 0x207f_ffff;
+    let mut first = genesis_meta(pow_bits).expect("genesis template");
+    let expected_parent_hash = [0x71; 32];
+    first.height = 161;
+    first.parent_hash = expected_parent_hash;
+    first.hash = [0x72; 32];
+    let mut second = first.clone();
+    second.height = 162;
+    second.parent_hash = first.hash;
+    second.hash = [0x73; 32];
+    let blocks = [first.clone(), second.clone()];
+
+    assert!(native_sync_response_matches_recovery_context(
+        Some(expected_parent_hash),
+        Some((second.height, second.hash)),
+        &blocks,
+    ));
+    assert!(!native_sync_response_matches_recovery_context(
+        Some([0x74; 32]),
+        Some((second.height, second.hash)),
+        &blocks,
+    ));
+    assert!(!native_sync_response_matches_recovery_context(
+        Some(expected_parent_hash),
+        Some((second.height, [0x75; 32])),
+        &blocks,
+    ));
+    assert!(native_sync_response_matches_recovery_context(
+        Some(expected_parent_hash),
+        Some((second.height, second.hash)),
+        std::slice::from_ref(&first),
+    ));
+}
+
+#[test]
+fn empty_sync_response_cools_down_exact_completed_request() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let peer = [0x49; 32];
+    let requested = NativeSyncRange {
+        from_height: 43_530,
+        to_height: 43_593,
+    };
+
+    assert!(node.begin_outbound_sync_request(Some(peer), requested));
+    assert_eq!(
+        node.complete_outbound_sync_response(peer, None)
+            .map(|completed| completed.range),
+        Some(requested)
+    );
+    node.defer_outbound_sync_request_retry(Some(peer), requested);
+    assert!(
+        !node.begin_outbound_sync_request(Some(peer), requested),
+        "scheduler ticks must not immediately repeat an empty-response request"
+    );
 }
 
 #[test]
@@ -18298,11 +24621,11 @@ fn stale_native_sync_response_is_dropped_before_import() {
         &[better_same_height]
     ));
 
-    assert!(!native_sync_response_stale_for_local_tip(
+    assert!(native_sync_response_stale_for_local_tip(
         &node,
         best.height + 1,
         &[]
-    ));
+    ), "an empty response carries no verified progress even when its unauthenticated envelope claims an ahead height");
 }
 
 #[test]
@@ -21494,6 +27817,164 @@ fn assert_canonical_index_plans_eq(
     );
 }
 
+fn legacy_full_chain_canonical_index_plan(
+    chain: &[NativeBlockMeta],
+    da_ciphertext_tree: &sled::Tree,
+    ciphertext_archive_tree: Option<&sled::Tree>,
+) -> Result<NativeCanonicalIndexPlan> {
+    let mut nullifier_state = NullifierState::default();
+    let mut bridge_replay_state = InboundReplayState::default();
+    let decoded_actions = chain
+        .iter()
+        .skip(1)
+        .map(decode_block_actions)
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    let wire_steps = decoded_actions
+        .iter()
+        .map(|action| {
+            Ok(NativeActionStreamStep {
+                commitment_count: action.commitments.len(),
+                ciphertext_count: canonical_ciphertext_count_for_action(action)?,
+                nullifiers: action.nullifiers.as_slice(),
+                replay_key: bridge_inbound_replay_key_from_action(action)?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let stream = evaluate_native_action_stream_effect(
+        0,
+        wire_steps.iter().copied(),
+        &mut nullifier_state,
+        &mut bridge_replay_state,
+    )
+    .map_err(native_action_state_effect_error)?;
+    evaluate_native_action_plan_application_admission(
+        0,
+        &action_commitment_counts(&decoded_actions),
+        &stream.planned_starts,
+    )
+    .map_err(|rejection| {
+        native_action_plan_application_admission_error(
+            "legacy canonical index rebuild action plan",
+            rejection,
+        )
+    })?;
+    let materialized = materialize_native_action_payloads_at_starts(
+        da_ciphertext_tree,
+        ciphertext_archive_tree,
+        &decoded_actions,
+        &stream.planned_starts,
+    )?;
+    let planned = stream
+        .planned_starts
+        .into_iter()
+        .zip(materialized)
+        .map(|(commitment_start, payload)| NativePlannedActionEffect {
+            commitment_start,
+            ciphertexts: payload.ciphertexts,
+            replay_key: payload.replay_key,
+        })
+        .collect::<Vec<_>>();
+    admit_native_action_wire_replay_projection(
+        "legacy canonical index rebuild wire replay projection",
+        &decoded_actions,
+        &planned,
+    )?;
+
+    let mut plan = NativeCanonicalIndexPlan {
+        commitment_entries: Vec::new(),
+        nullifier_entries: Vec::new(),
+        bridge_replay_entries: Vec::new(),
+        ciphertext_index_entries: Vec::new(),
+        ciphertext_archive_entries: Vec::new(),
+    };
+    for (action, effect) in decoded_actions.into_iter().zip(planned.into_iter()) {
+        for (offset, commitment) in action.commitments.iter().enumerate() {
+            let index = effect
+                .commitment_start
+                .checked_add(u64::try_from(offset)?)
+                .ok_or_else(|| anyhow!("legacy commitment rebuild index overflow"))?;
+            plan.commitment_entries.push((index, *commitment));
+        }
+        for (offset, bytes) in effect.ciphertexts.into_iter().enumerate() {
+            let index = effect
+                .commitment_start
+                .checked_add(u64::try_from(offset)?)
+                .ok_or_else(|| anyhow!("legacy ciphertext rebuild index overflow"))?;
+            plan.ciphertext_archive_entries.push((index, bytes));
+        }
+        plan.nullifier_entries
+            .extend(action.nullifiers.iter().copied());
+        if let Some(replay_key) = effect.replay_key {
+            plan.bridge_replay_entries.push(replay_key);
+        }
+        for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
+            let idx = u64::try_from(idx)?;
+            let size = action
+                .ciphertext_sizes
+                .get(usize::try_from(idx)?)
+                .copied()
+                .unwrap_or_default();
+            let mut value = Vec::with_capacity(32 + 4 + 8);
+            value.extend_from_slice(&action.tx_hash);
+            value.extend_from_slice(&size.to_le_bytes());
+            value.extend_from_slice(&idx.to_le_bytes());
+            plan.ciphertext_index_entries.push((*hash, value));
+        }
+    }
+    Ok(plan)
+}
+
+#[test]
+fn canonical_index_rebuild_streams_one_block_and_matches_legacy_plan() {
+    let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
+    let pow_bits = 0x207f_ffff;
+    let genesis = genesis_meta(pow_bits).expect("genesis");
+    let anchor = test_state(genesis.clone()).commitment_tree.root();
+    let first_actions = [
+        test_sidecar_transfer_action(anchor, [101u8; 48], [102u8; 48], 0),
+        test_outbound_bridge_action(b"streamed rebuild first block"),
+    ];
+    let second_actions = [
+        test_inbound_bridge_action(b"streamed rebuild second block"),
+        test_candidate_artifact_action(2, 103),
+    ];
+    for action in first_actions.iter().chain(second_actions.iter()) {
+        insert_test_sidecar_ciphertext(&da_ciphertext_tree, action);
+    }
+
+    let mut first = genesis.clone();
+    first.height = 1;
+    first.parent_hash = genesis.hash;
+    first.tx_count = u32::try_from(first_actions.len()).expect("first action count");
+    first.action_bytes = first_actions.iter().map(Encode::encode).collect();
+    let mut second = first.clone();
+    second.height = 2;
+    second.parent_hash = first.hash;
+    second.tx_count = u32::try_from(second_actions.len()).expect("second action count");
+    second.action_bytes = second_actions.iter().map(Encode::encode).collect();
+    let chain = vec![genesis, first, second];
+
+    let legacy = legacy_full_chain_canonical_index_plan(&chain, &da_ciphertext_tree, None)
+        .expect("legacy full-chain plan");
+    reset_canonical_index_rebuild_peak_live();
+    let streamed = plan_canonical_index_rebuild(&chain, &da_ciphertext_tree, None)
+        .expect("streamed canonical index plan");
+    let peak = canonical_index_rebuild_peak_live();
+
+    assert_canonical_index_plans_eq("streamed rebuild legacy equivalence", &streamed, &legacy);
+    assert_eq!(peak.decoded_actions, 2);
+    assert_eq!(peak.wire_steps, 2);
+    assert_eq!(peak.materialized_payloads, 2);
+    assert_eq!(peak.planned_effects, 2);
+    assert!(
+        peak.decoded_actions < first_actions.len() + second_actions.len(),
+        "planner must not retain the full chain's decoded action stream"
+    );
+}
+
 #[test]
 fn action_state_effect_preview_drops_consumed_bridge_replay_from_work() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -24255,6 +30736,138 @@ fn mined_empty_child(
     )
 }
 
+fn mined_empty_child_for_chain(
+    chain: &[NativeBlockMeta],
+    genesis_pow_bits: u32,
+    round: u64,
+) -> NativeBlockMeta {
+    let parent = chain.last().expect("test chain parent");
+    mined_empty_child_for_chain_at(
+        chain,
+        genesis_pow_bits,
+        round,
+        parent.timestamp_ms.saturating_add(1),
+    )
+}
+
+fn mined_empty_child_for_chain_at(
+    chain: &[NativeBlockMeta],
+    genesis_pow_bits: u32,
+    round: u64,
+    timestamp_ms: u64,
+) -> NativeBlockMeta {
+    let mut work = empty_child_work_for_chain(chain, genesis_pow_bits);
+    work.timestamp_ms = timestamp_ms;
+    work.pre_hash = native_pow_header_from_parts(
+        work.height,
+        work.timestamp_ms,
+        work.parent_hash,
+        work.pow_bits,
+        [0u8; 32],
+        work.cumulative_work,
+        &work.state_root,
+        &work.kernel_root,
+        &work.nullifier_root,
+        &work.extrinsics_root,
+        &work.message_root,
+        work.message_count,
+        &work.header_mmr_root,
+        work.header_mmr_len,
+        work.supply_digest,
+        work.tx_count,
+    )
+    .pre_hash();
+    let seal = mine_native_round(work.clone(), round).expect("test chain child seal");
+    signed_empty_child_meta_from_work(&work, seal, &test_miner_identity())
+}
+
+fn empty_child_work_for_chain(chain: &[NativeBlockMeta], genesis_pow_bits: u32) -> NativeWork {
+    let parent = chain.last().expect("test chain parent");
+    let height = parent.height.checked_add(1).expect("test child height");
+    let pow_bits = native_expected_child_pow_bits_from_chain(chain, genesis_pow_bits)
+        .expect("test child PoW schedule");
+    let timestamp_ms = parent.timestamp_ms.saturating_add(1);
+    let header_hashes = chain.iter().map(|meta| meta.hash).collect::<Vec<_>>();
+    let header_mmr_root = header_mmr_root_from_hashes(&header_hashes);
+    let header_mmr_len = u64::try_from(header_hashes.len()).expect("test header history length");
+    let cumulative_work =
+        cumulative_work_after(&parent.cumulative_work, pow_bits).expect("test cumulative work");
+    let extrinsics_root = actions_extrinsics_root(&[]);
+    let message_root = empty_bridge_message_root();
+    let pre_header = native_pow_header_from_parts(
+        height,
+        timestamp_ms,
+        parent.hash,
+        pow_bits,
+        [0u8; 32],
+        cumulative_work,
+        &parent.state_root,
+        &parent.kernel_root,
+        &parent.nullifier_root,
+        &extrinsics_root,
+        &message_root,
+        0,
+        &header_mmr_root,
+        header_mmr_len,
+        parent.supply_digest,
+        0,
+    );
+    NativeWork {
+        height,
+        parent_hash: parent.hash,
+        pre_hash: pre_header.pre_hash(),
+        state_root: parent.state_root,
+        kernel_root: parent.kernel_root,
+        nullifier_root: parent.nullifier_root,
+        extrinsics_root,
+        message_root,
+        message_count: 0,
+        header_mmr_root,
+        header_mmr_len,
+        cumulative_work,
+        supply_digest: parent.supply_digest,
+        tx_count: 0,
+        timestamp_ms,
+        pow_bits,
+        prepared_actions: None,
+    }
+}
+
+fn signed_empty_child_meta_from_work(
+    work: &NativeWork,
+    seal: NativeSeal,
+    identity: &NativeMinerIdentity,
+) -> NativeBlockMeta {
+    let mut meta = NativeBlockMeta {
+        chain_id: HEGEMON_CHAIN_ID_V1,
+        rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+        height: work.height,
+        hash: seal.work_hash,
+        parent_hash: work.parent_hash,
+        state_root: work.state_root,
+        kernel_root: work.kernel_root,
+        nullifier_root: work.nullifier_root,
+        extrinsics_root: work.extrinsics_root,
+        message_root: work.message_root,
+        message_count: work.message_count,
+        header_mmr_root: work.header_mmr_root,
+        header_mmr_len: work.header_mmr_len,
+        timestamp_ms: work.timestamp_ms,
+        pow_bits: work.pow_bits,
+        nonce: seal.nonce,
+        work_hash: seal.work_hash,
+        cumulative_work: work.cumulative_work,
+        supply_digest: work.supply_digest,
+        tx_count: work.tx_count,
+        action_bytes: Vec::new(),
+        miner_commitment: [0u8; 48],
+        miner_public_key: Vec::new(),
+        miner_signature: Vec::new(),
+    };
+    sign_native_block_meta(&mut meta, identity);
+    meta
+}
+
 fn strongest_test_seal(work: &NativeWork, rounds: std::ops::Range<u64>) -> NativeSeal {
     rounds
         .filter_map(|round| mine_native_round(work.clone(), round))
@@ -24567,6 +31180,102 @@ fn mined_child_with_actions(
     })
 }
 
+fn mined_child_with_actions_for_chain(
+    chain: &[NativeBlockMeta],
+    genesis_pow_bits: u32,
+    round: u64,
+    actions: Vec<PendingAction>,
+) -> NativeBlockMeta {
+    let parent = chain.last().expect("action-chain parent");
+    let height = parent.height.checked_add(1).expect("action-chain height");
+    let parent_state = test_state(parent.clone());
+    let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
+    for action in &actions {
+        insert_test_sidecar_ciphertext(&da_ciphertext_tree, action);
+    }
+    let (state_root, nullifier_root, extrinsics_root, tx_count) =
+        preview_pending_roots(&da_ciphertext_tree, &parent_state, &actions)
+            .expect("preview action-chain roots");
+    let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
+    let bridge_messages = bridge_messages_from_actions(&actions, height).expect("bridge messages");
+    let message_root = bridge_message_root(&bridge_messages);
+    let message_count = u32::try_from(bridge_messages.len()).expect("message count");
+    let header_hashes = chain.iter().map(|meta| meta.hash).collect::<Vec<_>>();
+    let header_mmr_root = header_mmr_root_from_hashes(&header_hashes);
+    let header_mmr_len = u64::try_from(header_hashes.len()).expect("header MMR length");
+    let pow_bits = native_expected_child_pow_bits_from_chain(chain, genesis_pow_bits)
+        .expect("action-chain PoW schedule");
+    let cumulative_work =
+        cumulative_work_after(&parent.cumulative_work, pow_bits).expect("cumulative work");
+    let supply_digest = advance_native_supply_digest(parent.supply_digest, &actions, height)
+        .expect("action-chain supply digest");
+    let timestamp_ms = parent.timestamp_ms.saturating_add(1);
+    let pre_header = native_pow_header_from_parts(
+        height,
+        timestamp_ms,
+        parent.hash,
+        pow_bits,
+        [0u8; 32],
+        cumulative_work,
+        &state_root,
+        &kernel_root,
+        &nullifier_root,
+        &extrinsics_root,
+        &message_root,
+        message_count,
+        &header_mmr_root,
+        header_mmr_len,
+        supply_digest,
+        tx_count,
+    );
+    let work = NativeWork {
+        height,
+        parent_hash: parent.hash,
+        pre_hash: pre_header.pre_hash(),
+        state_root,
+        kernel_root,
+        nullifier_root,
+        extrinsics_root,
+        message_root,
+        message_count,
+        header_mmr_root,
+        header_mmr_len,
+        cumulative_work,
+        supply_digest,
+        tx_count,
+        timestamp_ms,
+        pow_bits,
+        prepared_actions: None,
+    };
+    let seal = mine_native_round(work, round).expect("action-chain seal");
+    signed_test_block_meta(NativeBlockMeta {
+        chain_id: HEGEMON_CHAIN_ID_V1,
+        rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+        height,
+        hash: seal.work_hash,
+        parent_hash: parent.hash,
+        state_root,
+        kernel_root,
+        nullifier_root,
+        extrinsics_root,
+        message_root,
+        message_count,
+        header_mmr_root,
+        header_mmr_len,
+        timestamp_ms,
+        pow_bits,
+        nonce: seal.nonce,
+        work_hash: seal.work_hash,
+        cumulative_work,
+        supply_digest,
+        tx_count,
+        action_bytes: actions.iter().map(Encode::encode).collect(),
+        miner_commitment: [0u8; 48],
+        miner_public_key: Vec::new(),
+        miner_signature: Vec::new(),
+    })
+}
+
 fn test_config(path: &Path, pow_bits: u32, rpc_methods: &str, rpc_external: bool) -> NativeConfig {
     NativeConfig {
         dev: true,
@@ -24595,6 +31304,39 @@ fn mine_empty_native_block(node: &NativeNode) -> NativeBlockMeta {
     node.import_mined_block(&work, seal)
         .expect("empty native import")
         .expect("empty native block")
+}
+
+fn publish_test_canonical_chain(node: &NativeNode, chain: &[NativeBlockMeta]) {
+    let best = chain.last().expect("test canonical chain tip").clone();
+    let hashes = chain.iter().map(|meta| meta.hash).collect::<Vec<_>>();
+    let mut state = node.state.write();
+    state.best = best;
+    state.header_mmr_peaks = header_mmr_peaks_from_hashes(&hashes);
+}
+
+fn persist_test_pow_chain(
+    node: &NativeNode,
+    end_height: u64,
+    genesis_pow_bits: u32,
+) -> Vec<NativeBlockMeta> {
+    let mut chain = vec![node.best_meta()];
+    for height in 1..=end_height {
+        let child_pow_bits = native_expected_child_pow_bits_from_chain(&chain, genesis_pow_bits)
+            .expect("test child PoW schedule");
+        let parent = chain.last().expect("test PoW parent");
+        let child = mined_empty_child_at(
+            parent,
+            height,
+            child_pow_bits,
+            height,
+            parent.timestamp_ms.saturating_add(1_000),
+        );
+        persist_block(&node.meta_tree, &node.height_tree, &node.block_tree, &child)
+            .expect("persist test PoW child");
+        chain.push(child);
+    }
+    publish_test_canonical_chain(node, &chain);
+    chain
 }
 
 fn test_state(best: NativeBlockMeta) -> NativeState {
