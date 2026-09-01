@@ -623,6 +623,7 @@ theorem correctionPolynomial_eval_zero_ne :
   norm_num [correctionNumerator, OpeningIndex, Historical.piopOpenings,
     Historical.packingFactor, V8Smz9QromAccounting.piopOpenings,
     V8Smz9QromAccounting.packingFactor]
+  decide
 
 theorem correctionPolynomial_ne_zero : correctionPolynomial ≠ 0 := by
   intro isZero
@@ -907,6 +908,9 @@ abbrev FullAdmissibleOpeningTuple :=
 abbrev RejectedDistinctOutsideOpeningTuple :=
   { base : DistinctOutsideOpeningTuple // ¬ extraOpeningAdmissible base }
 
+noncomputable instance : Fintype FullAdmissibleOpeningTuple := Fintype.ofFinite _
+noncomputable instance : Fintype RejectedDistinctOutsideOpeningTuple := Fintype.ofFinite _
+
 abbrev CorrectionZeroTuple :=
   { points : OpeningTuple // correctionNumerator points = 0 }
 
@@ -925,20 +929,28 @@ def rejectedViolationUnderlying :
   | Sum.inl points => points.1
   | Sum.inr points => points.1
 
+theorem rejected_distinct_outside_has_violation
+    (rejected : RejectedDistinctOutsideOpeningTuple) :
+    ∃ violation : CorrectionZeroTuple ⊕ ExtraPcsHitTuple,
+      rejectedViolationUnderlying violation = baseOpeningPoints rejected.1 := by
+  by_cases correctionZero : correctionNumerator (baseOpeningPoints rejected.1) = 0
+  · exact ⟨Sum.inl ⟨baseOpeningPoints rejected.1, correctionZero⟩, rfl⟩
+  · have hit : ∃ coordinate, baseOpeningPoints rejected.1 coordinate ∈ pcsAdditionalRootSet := by
+      by_contra noHit
+      apply rejected.2
+      exact ⟨correctionZero, fun coordinate membership =>
+        noHit ⟨coordinate, membership⟩⟩
+    exact ⟨Sum.inr ⟨baseOpeningPoints rejected.1, hit⟩, rfl⟩
+
 noncomputable def rejectedDistinctOutsideEmbedding :
     RejectedDistinctOutsideOpeningTuple ↪ CorrectionZeroTuple ⊕ ExtraPcsHitTuple where
-  toFun rejected := by
-    by_cases correctionZero : correctionNumerator (baseOpeningPoints rejected.1) = 0
-    · exact Sum.inl ⟨baseOpeningPoints rejected.1, correctionZero⟩
-    · apply Sum.inr
-      refine ⟨baseOpeningPoints rejected.1, ?_⟩
-      unfold extraOpeningAdmissible at rejected
-      push_neg at rejected
-      exact rejected.2 correctionZero
+  toFun rejected := Classical.choose (rejected_distinct_outside_has_violation rejected)
   inj' := by
     intro left right same
-    have underlyingSame : baseOpeningPoints left.1 = baseOpeningPoints right.1 :=
-      congrArg rejectedViolationUnderlying same
+    have underlyingSame : baseOpeningPoints left.1 = baseOpeningPoints right.1 := by
+      rw [← Classical.choose_spec (rejected_distinct_outside_has_violation left),
+        ← Classical.choose_spec (rejected_distinct_outside_has_violation right)]
+      exact congrArg rejectedViolationUnderlying same
     apply Subtype.ext
     apply DFunLike.ext _ _
     intro coordinate
@@ -976,8 +988,7 @@ theorem rejected_distinct_outside_card_le :
       Nat.add_le_add correctionBound scaledHitBound
     _ = openingAdmissibilityBadTupleCoefficient *
           goldilocksOrder ^ (piopOpenings - 1) := by
-      unfold openingAdmissibilityBadTupleCoefficient
-      omega
+      simp [openingAdmissibilityBadTupleCoefficient, Nat.add_mul]
 
 theorem full_admissible_opening_tuple_card_lower_bound :
     correctionAwareOpeningTupleLowerBound ≤
@@ -985,8 +996,21 @@ theorem full_admissible_opening_tuple_card_lower_bound :
   have partition := Fintype.card_subtype_compl extraOpeningAdmissible
   have rejectedBound := rejected_distinct_outside_card_le
   rw [distinctOutsideOpeningTuple_card] at partition
+  have acceptedLe := Fintype.card_subtype_le extraOpeningAdmissible
+  rw [distinctOutsideOpeningTuple_card] at acceptedLe
   unfold correctionAwareOpeningTupleLowerBound admissibilityRejectedTupleUpperBound
-  omega
+  apply Nat.sub_le_iff_le_add.mpr
+  calc
+    distinctOutsideOpeningTupleCount =
+        (distinctOutsideOpeningTupleCount - Fintype.card FullAdmissibleOpeningTuple) +
+          Fintype.card FullAdmissibleOpeningTuple :=
+      (Nat.sub_add_cancel acceptedLe).symm
+    _ = Fintype.card RejectedDistinctOutsideOpeningTuple +
+          Fintype.card FullAdmissibleOpeningTuple := by rw [← partition]
+    _ ≤ admissibilityRejectedTupleUpperBound +
+          Fintype.card FullAdmissibleOpeningTuple := Nat.add_le_add_right rejectedBound _
+    _ = Fintype.card FullAdmissibleOpeningTuple +
+          admissibilityRejectedTupleUpperBound := Nat.add_comm _ _
 
 abbrev OrderedCollisionPair :=
   { pair : OpeningIndex × OpeningIndex // pair.1.val < pair.2.val }
@@ -1004,8 +1028,7 @@ def collisionFiberEmbedding (pair : OrderedCollisionPair) :
     intro left right removedSame
     have distinct : pair.1.1 ≠ pair.1.2 := by
       intro same
-      rw [same] at pair
-      exact Nat.lt_irrefl _ pair.2
+      exact (Nat.ne_of_lt pair.2) (congrArg Fin.val same)
     obtain ⟨coordinate, coordinateSpec⟩ := Fin.exists_succAbove_eq distinct
     have firstSame : left.1 pair.1.1 = right.1 pair.1.1 := by
       have coordinateSame := congrFun removedSame coordinate
@@ -1013,12 +1036,14 @@ def collisionFiberEmbedding (pair : OrderedCollisionPair) :
     have secondSame : left.1 pair.1.2 = right.1 pair.1.2 := by
       rw [← left.2, ← right.2]
       exact firstSame
-    calc
-      left.1 = pair.1.2.insertNth (left.1 pair.1.2) (pair.1.2.removeNth left.1) :=
-        (pair.1.2.insertNth_self_removeNth left.1).symm
-      _ = pair.1.2.insertNth (right.1 pair.1.2) (pair.1.2.removeNth right.1) := by
-        rw [secondSame, removedSame]
-      _ = right.1 := pair.1.2.insertNth_self_removeNth right.1
+    apply Subtype.ext
+    apply funext
+    intro index
+    by_cases removed : index = pair.1.2
+    · simpa [removed] using secondSame
+    · obtain ⟨coordinate, coordinateSpec⟩ := Fin.exists_succAbove_eq removed
+      have coordinateSame := congrFun removedSame coordinate
+      simpa [Fin.removeNth_apply, coordinateSpec] using coordinateSame
 
 theorem collision_fiber_card_le (pair : OrderedCollisionPair) :
     Fintype.card (CollisionFiber pair) ≤
@@ -1037,9 +1062,8 @@ abbrev CollisionTuple := { points : OpeningTuple // ¬ Function.Injective points
 
 theorem collision_tuple_has_ordered_pair (points : CollisionTuple) :
     ∃ pair : OrderedCollisionPair, points.1 pair.1.1 = points.1 pair.1.2 := by
-  unfold Function.Injective at points
-  push_neg at points
-  rcases points.2 with ⟨left, right, sameValue, different⟩
+  rcases Function.not_injective_iff.mp points.2 with
+    ⟨left, right, sameValue, different⟩
   by_cases ordered : left.val < right.val
   · exact ⟨⟨(left, right), ordered⟩, sameValue⟩
   · have reverseOrdered : right.val < left.val := by
@@ -1093,7 +1117,7 @@ theorem not_mem_pcsRootUnion_iff (point : Goldilocks) :
 
 theorem zero_mem_packingDomain : (0 : Goldilocks) ∈ packingDomain := by
   rw [packingDomain, Finset.mem_map]
-  exact ⟨(0 : Fin packingFactor), Finset.mem_univ _, rfl⟩
+  exact ⟨(⟨0, by decide⟩ : Fin packingFactor), Finset.mem_univ _, rfl⟩
 
 def CorrectionAwareOpeningPredicate (points : OpeningTuple) : Prop :=
   Function.Injective points ∧
@@ -1164,6 +1188,8 @@ abbrev PackingHitTuple := TupleHitsSet packingDomain
 abbrev InvalidOpeningTuple :=
   { points : OpeningTuple // ¬ CorrectionAwareOpeningPredicate points }
 
+noncomputable instance : Fintype InvalidOpeningTuple := Fintype.ofFinite _
+
 abbrev OpeningViolation :=
   PackingHitTuple ⊕ (CollisionTuple ⊕ (CorrectionZeroTuple ⊕ ExtraPcsHitTuple))
 
@@ -1173,42 +1199,45 @@ def openingViolationUnderlying : OpeningViolation → OpeningTuple
   | Sum.inr (Sum.inr (Sum.inl points)) => points.1
   | Sum.inr (Sum.inr (Sum.inr points)) => points.1
 
-noncomputable def invalidOpeningTupleEmbedding :
-    InvalidOpeningTuple ↪ OpeningViolation where
-  toFun invalid := by
-    by_cases outside : ∀ coordinate, invalid.1 coordinate ∉ packingDomain
-    · by_cases injective : Function.Injective invalid.1
-      · by_cases correctionNonzero :
-          V8Smz9ZeroKnowledge.linearPiopCorrectionNumerator invalid.1 ≠ 0
-        · apply Sum.inr
-          apply Sum.inr
-          apply Sum.inr
-          refine ⟨invalid.1, ?_⟩
-          have notAllFactors : ¬ ∀ coordinate,
-              invalid.1 coordinate ^ 64 ≠ 1 ∧
-              invalid.1 coordinate ^ 35 ≠ 1 ∧
-              invalid.1 coordinate ^ 63 ≠ 1 := by
-            intro allFactors
-            exact invalid.2 ⟨injective, outside, correctionNonzero, allFactors⟩
-          push_neg at notAllFactors
-          rcases notAllFactors with ⟨coordinate, badFactor⟩
-          refine ⟨coordinate, Finset.mem_sdiff.mpr ⟨?_, outside coordinate⟩⟩
+theorem invalid_opening_tuple_has_violation (invalid : InvalidOpeningTuple) :
+    ∃ violation : OpeningViolation,
+      openingViolationUnderlying violation = invalid.1 := by
+  by_cases outside : ∀ coordinate, invalid.1 coordinate ∉ packingDomain
+  · by_cases injective : Function.Injective invalid.1
+    · by_cases correctionNonzero :
+        V8Smz9ZeroKnowledge.linearPiopCorrectionNumerator invalid.1 ≠ 0
+      · have notAllFactors : ¬ ∀ coordinate,
+            invalid.1 coordinate ^ 64 ≠ 1 ∧
+            invalid.1 coordinate ^ 35 ≠ 1 ∧
+            invalid.1 coordinate ^ 63 ≠ 1 := by
+          intro allFactors
+          exact invalid.2 ⟨injective, outside, correctionNonzero, allFactors⟩
+        obtain ⟨coordinate, badFactor⟩ := Classical.not_forall.mp notAllFactors
+        have rootMembership : invalid.1 coordinate ∈ pcsRootUnion := by
           by_contra notRoot
           exact badFactor ((not_mem_pcsRootUnion_iff _).mp notRoot)
-        · apply Sum.inr
-          apply Sum.inr
-          apply Sum.inl
-          refine ⟨invalid.1, ?_⟩
+        exact ⟨Sum.inr (Sum.inr (Sum.inr
+          ⟨invalid.1, coordinate, Finset.mem_sdiff.mpr
+            ⟨rootMembership, outside coordinate⟩⟩)), rfl⟩
+      · have correctionZero : correctionNumerator invalid.1 = 0 := by
           rw [correctionNumerator_eq_exact_rust_numerator]
           exact Classical.not_not.mp correctionNonzero
-      · exact Sum.inr (Sum.inl ⟨invalid.1, injective⟩)
-    · apply Sum.inl
-      push_neg at outside
-      exact ⟨invalid.1, outside⟩
+        exact ⟨Sum.inr (Sum.inr (Sum.inl ⟨invalid.1, correctionZero⟩)), rfl⟩
+    · exact ⟨Sum.inr (Sum.inl ⟨invalid.1, injective⟩), rfl⟩
+  · obtain ⟨coordinate, insideNotNot⟩ := Classical.not_forall.mp outside
+    exact ⟨Sum.inl ⟨invalid.1, coordinate, Classical.not_not.mp insideNotNot⟩, rfl⟩
+
+noncomputable irreducible_def invalidOpeningTupleEmbedding :
+    InvalidOpeningTuple ↪ OpeningViolation where
+  toFun invalid := Classical.choose (invalid_opening_tuple_has_violation invalid)
   inj' := by
     intro left right same
+    have underlyingSame : left.1 = right.1 := by
+      rw [← Classical.choose_spec (invalid_opening_tuple_has_violation left),
+        ← Classical.choose_spec (invalid_opening_tuple_has_violation right)]
+      exact congrArg openingViolationUnderlying same
     apply Subtype.ext
-    exact congrArg openingViolationUnderlying same
+    exact underlyingSame
 
 def rawOpeningBadTupleCoefficient : Nat :=
   piopOpenings * packingFactor + Nat.choose piopOpenings 2 +
@@ -1223,12 +1252,25 @@ theorem invalid_opening_tuple_card_le :
     Fintype.card InvalidOpeningTuple ≤
       rawOpeningBadTupleCoefficient *
         goldilocksOrder ^ (piopOpenings - 1) := by
-  have packingHitBound := tuple_hits_set_card_le packingDomain
-  have packingCard := packingDomain_card
-  have collisionBound := collision_tuple_card_le
-  have correctionBound := correction_zero_tuple_fintype_card_le
-  have pcsHitBound := tuple_hits_set_card_le pcsAdditionalRootSet
-  have pcsRootBound := pcs_additional_root_set_card_le
+  have packingHitBound :
+      Fintype.card PackingHitTuple ≤
+        piopOpenings * packingDomain.card * goldilocksOrder ^ (piopOpenings - 1) :=
+    tuple_hits_set_card_le packingDomain
+  have packingCard : packingDomain.card = packingFactor := packingDomain_card
+  have collisionBound :
+      Fintype.card CollisionTuple ≤
+        15 * goldilocksOrder ^ (piopOpenings - 1) := collision_tuple_card_le
+  have correctionBound :
+      Fintype.card CorrectionZeroTuple ≤
+        correctionPolynomialDegree * goldilocksOrder ^ (piopOpenings - 1) :=
+    correction_zero_tuple_fintype_card_le
+  have pcsHitBound :
+      Fintype.card ExtraPcsHitTuple ≤
+        piopOpenings * pcsAdditionalRootSet.card *
+          goldilocksOrder ^ (piopOpenings - 1) :=
+    tuple_hits_set_card_le pcsAdditionalRootSet
+  have pcsRootBound : pcsAdditionalRootSet.card ≤ 68 :=
+    pcs_additional_root_set_card_le
   have scaledPackingHitBound :
       Fintype.card PackingHitTuple ≤
         piopOpenings * packingFactor *
@@ -1251,18 +1293,23 @@ theorem invalid_opening_tuple_card_le :
       Fintype.card_le_of_embedding invalidOpeningTupleEmbedding
     _ = Fintype.card PackingHitTuple + Fintype.card CollisionTuple +
           Fintype.card CorrectionZeroTuple + Fintype.card ExtraPcsHitTuple := by
-      simp [OpeningViolation, add_assoc]
+      rw [Fintype.card_sum, Fintype.card_sum, Fintype.card_sum]
+      omega
     _ ≤ piopOpenings * packingFactor * goldilocksOrder ^ (piopOpenings - 1) +
           15 * goldilocksOrder ^ (piopOpenings - 1) +
           correctionPolynomialDegree * goldilocksOrder ^ (piopOpenings - 1) +
           piopOpenings * pcsUnstackAdditionalForbiddenValues *
             goldilocksOrder ^ (piopOpenings - 1) := by
-      omega
+      exact Nat.add_le_add
+        (Nat.add_le_add
+          (Nat.add_le_add scaledPackingHitBound collisionBound)
+          correctionBound)
+        scaledPcsHitBound
     _ = rawOpeningBadTupleCoefficient *
           goldilocksOrder ^ (piopOpenings - 1) := by
       unfold rawOpeningBadTupleCoefficient
-      norm_num [Historical.piopOpenings, V8Smz9QromAccounting.piopOpenings]
-      ring
+      have chooseSixTwo : Nat.choose piopOpenings 2 = 15 := by decide
+      simp only [chooseSixTwo, Nat.add_mul]
 
 abbrev OpeningTrialStream := Fin 16 → OpeningTuple
 abbrev ExhaustedOpeningTrialStream := Fin 16 → InvalidOpeningTuple
@@ -1270,14 +1317,18 @@ abbrev ExhaustedOpeningTrialStream := Fin 16 → InvalidOpeningTuple
 theorem openingTuple_card :
     Fintype.card OpeningTuple = goldilocksOrder ^ piopOpenings := by
   simp only [OpeningTuple, OpeningIndex, Fintype.card_fun, Fintype.card_fin]
-  rw [show Fintype.card Goldilocks = goldilocksOrder by
-    rw [ZMod.card]
-    rfl]
+  exact congrArg (fun cardinality => cardinality ^ piopOpenings)
+    (goldilocks_card.trans (by decide))
 
 theorem openingTrialStream_card :
     Fintype.card OpeningTrialStream =
       (goldilocksOrder ^ piopOpenings) ^ 16 := by
-  simp [OpeningTrialStream, openingTuple_card]
+  calc
+    Fintype.card OpeningTrialStream =
+        Fintype.card OpeningTuple ^ Fintype.card (Fin 16) := Fintype.card_fun
+    _ = Fintype.card OpeningTuple ^ 16 := by rw [Fintype.card_fin]
+    _ = (goldilocksOrder ^ piopOpenings) ^ 16 :=
+      congrArg (fun cardinality => cardinality ^ 16) openingTuple_card
 
 theorem exhaustedOpeningTrialStream_card :
     Fintype.card ExhaustedOpeningTrialStream =
@@ -1476,10 +1527,8 @@ structure CorrectionAwareOpeningSamplingRefinement : Prop where
 theorem correction_aware_opening_sampling_refinement :
     CorrectionAwareOpeningSamplingRefinement where
   sixOpenings := by decide
-  packingPoints := by simpa [Historical.packingFactor] using packingDomain_card
-  correctionDegree := by
-    simpa [correctionPolynomialDegree, Historical.piopOpenings] using
-      correctionPolynomial_totalDegree_le
+  packingPoints := packingDomain_card.trans (by decide)
+  correctionDegree := correctionPolynomial_totalDegree_le.trans (by decide)
   correctionNonzero := correctionPolynomial_ne_zero
   pcsFactorRootBounds :=
     ⟨pcsRootSet64_card_le, pcsRootSet35_card_le, pcsRootSet63_card_le⟩

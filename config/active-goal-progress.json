@@ -4,7 +4,7 @@
   "goal_thread_id": "019f29c7-3468-78f2-ba8a-6e6ed94c7b02",
   "goal_status_when_measured": "blocked",
   "measurement_timestamp": "2026-08-23T21:50:40Z",
-  "formal_source_tree_blake3": "d09ce325d341c77315ceaf4e9209fc022191c538f0754addd756717bfd491715",
+  "formal_source_tree_blake3": "f6dc09c1fe58fcd81fad2628b2c8538a7dd930d591d7813af56c2909074462ac",
   "objective": "On branch codex/smallwood-pq128-experiment, preserve the kernel-checked conditional SmallWood V4/Gamma exact-map and block-composition reductions while the production consensus manifest authorizes active V4/Gamma only and formal security/release authority remains false, and record that the canonical-semantic refinement bridge, shipped-Rust verifier evidence construction, finite-QROM-to-block composition, deployed SHA-512 instantiation loss, and a deployed 128-bit post-quantum soundness guarantee remain open; rebuild the formal targets, retain benchmark evidence, classify historical V2/Beta and V3/Beta formats as decoder compatibility without production authority, and make claim governance fail closed.",
   "objective_must_contain": [
     "codex/smallwood-pq128-experiment",
@@ -54,8 +54,8 @@
       "command": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
       "status": "passed",
       "exit_code": 0,
-      "executed_at": "2026-08-24T02:38:24Z",
-      "policy_inputs_blake3": "9f8f0517df9a5315d4b2c79d210f86b1f5e72fc05d064fb963f26577f119bd91",
+      "executed_at": "2026-08-31T23:56:13Z",
+      "policy_inputs_blake3": "0d4f855e40b8631c576532167996aa893f09cf70cb642507c66ab5312832371b",
       "report": {
         "passed": true,
         "test_filter": "governance_",

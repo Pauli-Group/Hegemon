@@ -62,13 +62,15 @@ fn exact_v8_coinbase_wire_is_small_spendable_and_fail_closed_at_ingress() {
         args.miner_note.opening.authorization_key
     );
 
-    assert!(ensure_native_v3_active_action_route_ids(
+    let ingress_error = ensure_native_v3_active_action_route_ids(
         FAMILY_SHIELDED_POOL,
         ACTION_MINT_POSEIDON2_V8_COINBASE,
         false,
     )
-    .is_err());
-    assert!(validate_coinbase_route_at_height(std::slice::from_ref(&action), 1).is_err());
+    .expect_err("V8 coinbase must remain closed at external ingress");
+    assert!(ingress_error.to_string().contains("miner-local outputs"));
+    validate_coinbase_route_at_height(std::slice::from_ref(&action), 1)
+        .expect("V8 coinbase route validation is structural, not production authority");
 }
 
 #[test]

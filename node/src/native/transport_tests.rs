@@ -304,7 +304,7 @@ fn native_v3_body_locator_uses_exact_fixed_width_types_and_one_framed_hash() {
 }
 
 #[test]
-fn native_v3_wire_tags_reject_interim_and_mutated_forms_before_allocation_or_credit() {
+fn native_sync_wire_tags_admit_exact_carrier_and_reject_record_fallback_before_allocation() {
     let _counter_guard = TRANSPORT_COUNTER_TEST_LOCK
         .lock()
         .expect("counter test lock");
@@ -360,49 +360,44 @@ fn native_v3_wire_tags_reject_interim_and_mutated_forms_before_allocation_or_cre
     };
     for tag in 0u8..=3 {
         assert_eq!(
-            prefilter_native_sync_wire_tag(&tagged(tag), true).expect("common V3 wire tag"),
+            prefilter_native_sync_wire_tag(&tagged(tag)).expect("common native sync wire tag"),
             tag
         );
     }
-    for tag in NATIVE_SYNC_INTERIM_BODY_TAGS {
-        let err = prefilter_native_sync_wire_tag(&tagged(tag), true)
-            .expect_err("interim locator era must reject at the tag boundary");
-        assert!(err.to_string().contains("before postcard allocation"));
+    for tag in NATIVE_SYNC_EXACT_LOCATOR_BODY_TAGS {
         assert_eq!(
-            prefilter_native_sync_wire_tag(&tagged(tag), false)
-                .expect("interim tag remains admitted only before atomic cutover"),
+            prefilter_native_sync_wire_tag(&tagged(tag))
+                .expect("exact locator/action-body carrier tag"),
             tag
         );
     }
-    for tag in [
-        NATIVE_SYNC_V3_ANNOUNCE_LOCATOR_TAG,
-        NATIVE_SYNC_V3_RESPONSE_LOCATORS_TAG,
-        NATIVE_SYNC_V3_BLOCK_BODY_REQUEST_TAG,
-        NATIVE_SYNC_V3_BLOCK_BODY_CHUNK_TAG,
-    ] {
-        assert_eq!(
-            prefilter_native_sync_wire_tag(&tagged(tag), true).expect("fresh V3 body tag"),
-            tag
-        );
-        assert!(prefilter_native_sync_wire_tag(&tagged(tag), false)
-            .expect_err("fresh V3 tag must not enter the interim decoder")
-            .to_string()
-            .contains("not active before the atomic cutover"));
+    for tag in NATIVE_SYNC_RECORD_FALLBACK_TAGS {
+        let err = prefilter_native_sync_wire_tag(&tagged(tag))
+            .expect_err("incompatible stored-record fallback must reject at the tag boundary");
+        let rendered = err.to_string();
+        assert!(rendered.contains("incompatible"));
+        assert!(rendered.contains("before postcard allocation"));
     }
-    assert!(
-        prefilter_native_sync_wire_tag(wire::NETWORK_WIRE_MAGIC, true)
-            .expect_err("truncated tag")
-            .to_string()
-            .contains("missing its postcard variant tag")
+    assert_eq!(
+        prefilter_native_sync_wire_tag(&tagged(NATIVE_SYNC_ANNOUNCE_TIP_TAG))
+            .expect("bounded compact-tip tag"),
+        NATIVE_SYNC_ANNOUNCE_TIP_TAG
     );
-    assert!(prefilter_native_sync_wire_tag(b"bad!\x08", true).is_err());
-    assert!(prefilter_native_sync_wire_tag(&tagged(12), true)
+    assert!(prefilter_native_sync_wire_tag(wire::NETWORK_WIRE_MAGIC)
+        .expect_err("truncated tag")
+        .to_string()
+        .contains("missing its postcard variant tag"));
+    assert!(prefilter_native_sync_wire_tag(b"bad!\x08").is_err());
+    assert!(prefilter_native_sync_wire_tag(&tagged(11))
         .expect_err("unknown future tag")
         .to_string()
         .contains("unsupported native sync wire tag"));
-    let mut mutated = tagged(NATIVE_SYNC_V3_ANNOUNCE_LOCATOR_TAG);
-    mutated[wire::NETWORK_WIRE_MAGIC.len()] = 4;
-    assert!(prefilter_native_sync_wire_tag(&mutated, true).is_err());
+    let mut mutated = tagged(*NATIVE_SYNC_EXACT_LOCATOR_BODY_TAGS.start());
+    mutated[wire::NETWORK_WIRE_MAGIC.len()] = *NATIVE_SYNC_RECORD_FALLBACK_TAGS.start();
+    assert!(prefilter_native_sync_wire_tag(&mutated)
+        .expect_err("carrier tag mutated into record fallback")
+        .to_string()
+        .contains("before postcard allocation"));
 
     assert_eq!(reassembler.entry_count(), 0);
     assert_eq!(reassembler.reserved_bytes(), 0);
@@ -616,8 +611,17 @@ fn native_block_body_transport_rotates_withholders_and_aborts_range_suffix() {
         locators.push(locator);
     }
     let range_peer = [44u8; 32];
+    let response_range = NativeSyncRange {
+        from_height: locators.first().expect("first range locator").height,
+        to_height: locators.last().expect("last range locator").height,
+    };
+    let completed_request = NativeCompletedSyncRequest {
+        request_target: Some(range_peer),
+        range: response_range,
+        context: NativeOutboundSyncRequestContext::default(),
+    };
     range_transport
-        .enqueue_range(range_peer, 100, locators)
+        .enqueue_range(range_peer, 100, locators, completed_request)
         .expect("enqueue range")
         .expect("range");
     range_transport
@@ -851,24 +855,11 @@ fn known_taller_nonwinning_locator_never_closes_native_mining_sync_gate() {
 
     node.reset_full_block_body_load_invocations();
     assert!(node
-        .is_verified_canonical_header_at(local_best.height, &local_best.hash)
-        .expect("check compact canonical membership"));
-    let (known_tip, parent_hash, rules_hash, body_len) = node
-        .noncanonical_header_summary(&known.hash)
-        .expect("read compact noncanonical summary")
-        .expect("known compact noncanonical summary");
-    assert_eq!(known_tip.height, known.height);
-    assert_eq!(known_tip.hash, known.hash);
-    assert_eq!(known_tip.cumulative_work, known.cumulative_work);
-    assert_eq!(parent_hash, known.parent_hash);
-    assert_eq!(rules_hash, known.rules_hash);
-    assert_eq!(
-        body_len,
-        bincode::serialized_size(&known).expect("known body size")
-    );
+        .has_verified_header_hash(&local_best.hash)
+        .expect("check compact canonical header"));
     assert!(node
         .has_verified_header_hash(&known.hash)
-        .expect("check compact verified marker"));
+        .expect("check compact noncanonical header"));
     assert!(!admit_known_native_block_locator(&node, [0x91; 32], &known,));
     assert_eq!(
         node.full_block_body_load_invocations(),
@@ -992,7 +983,7 @@ fn transport_test_node(name: &str) -> (tempfile::TempDir, Arc<NativeNode>) {
 }
 
 #[test]
-fn block_body_abort_clears_only_the_exact_owned_range() {
+fn block_body_abort_defers_only_the_exact_owned_range() {
     let (_temp, node) = transport_test_node("body-range-owner-test");
     let peer = [0x93; 32];
     let peer_range = NativeSyncRange {
@@ -1005,6 +996,9 @@ fn block_body_abort_clears_only_the_exact_owned_range() {
     };
     assert!(node.begin_outbound_sync_request(Some(peer), peer_range));
     assert!(node.begin_outbound_sync_request(None, generic_range));
+    let peer_completed_request = node
+        .complete_outbound_sync_response(peer, Some(peer_range))
+        .expect("complete exact peer-owned body range request");
 
     complete_native_block_body_range_origins(
         &node,
@@ -1013,22 +1007,30 @@ fn block_body_abort_clears_only_the_exact_owned_range() {
             best_height: 128,
             response_range: peer_range,
             final_pending_body: false,
+            response_tip_hash: None,
+            completed_request: peer_completed_request,
         }],
     );
-    assert!(node.begin_outbound_sync_request(Some(peer), peer_range));
+    assert!(
+        !node.begin_outbound_sync_request(Some(peer), peer_range),
+        "aborted peer range must enter bounded retry cooldown"
+    );
     assert!(
         !node.begin_outbound_sync_request(None, generic_range),
         "peer-range abort must preserve the unrelated generic request"
     );
-    node.complete_outbound_sync_request(peer);
+    node.complete_outbound_sync_request_target(Some(peer));
     assert!(
         !node.begin_outbound_sync_request(None, generic_range),
-        "peer send-failure cleanup must not cancel the generic request"
+        "exact peer cleanup must not cancel the generic request"
     );
     node.complete_outbound_sync_request_target(None);
 
     assert!(node.begin_outbound_sync_request(None, peer_range));
     assert!(node.begin_outbound_sync_request(Some(peer), generic_range));
+    let generic_completed_request = node
+        .complete_outbound_sync_response(peer, Some(peer_range))
+        .expect("complete exact broadcast body range request");
     complete_native_block_body_range_origins(
         &node,
         peer,
@@ -1036,9 +1038,14 @@ fn block_body_abort_clears_only_the_exact_owned_range() {
             best_height: 128,
             response_range: peer_range,
             final_pending_body: true,
+            response_tip_hash: None,
+            completed_request: generic_completed_request,
         }],
     );
-    assert!(node.begin_outbound_sync_request(None, peer_range));
+    assert!(
+        !node.begin_outbound_sync_request(None, peer_range),
+        "aborted generic range must enter bounded retry cooldown"
+    );
     assert!(
         !node.begin_outbound_sync_request(Some(peer), generic_range),
         "generic-range abort must preserve the unrelated peer request"
@@ -1518,13 +1525,21 @@ fn scalar_best_tip_access_never_clones_or_encodes_a_maximum_body() {
         assert_eq!(node.best_fork_choice_tip(), expected_fork_choice);
     }
     node.observe_verified_sync_peer_height(expected.0);
-    assert!(node.sync_target_resolved(expected.0));
+    let snapshot = node.sync_target_evidence_snapshot();
+    let state = node.state.read();
+    assert!(node.sync_target_resolved_against_best(&state.best, snapshot.height, snapshot.hash));
+    drop(state);
     assert!(node.catching_up_to_sync_target().is_none());
+    assert!(!node.sync_status_fields().0);
     assert!(!node.clear_unanchored_sync_target_to_local_tip(
         expected.0,
         "scalar accessor transport regression",
     ));
-    assert!(!node.clear_nonwinning_sync_target_response_to_local_tip(expected.0, &[],));
+    assert!(!node.clear_hash_anchored_sync_target_to_local_tip(
+        expected.0,
+        expected.1,
+        "scalar accessor transport regression",
+    ));
     assert_eq!(
         node.best_meta_clone_invocations(),
         0,

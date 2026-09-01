@@ -247,11 +247,15 @@ theorem smz9_repeated_decs_evaluation_high_views_are_exactly_coupled
 window.  It is not, by itself, evidence that this many honest proof views were generated or
 observed by the SHA-512 oracle; that exposure premise remains explicit below. -/
 def finiteHistoryProofInteractions : Nat :=
-  V8Smz9AdaptiveFiniteAccounting.analysisHistoryProofInteractions
+  V8Smz9AdaptiveFiniteAccounting.Historical.analysisHistoryProofInteractions
 
 theorem exact_finite_history_proof_interactions :
-    finiteHistoryProofInteractions = 2097152 :=
-  V8Smz9AdaptiveFiniteAccounting.exact_analysis_history_interaction_count
+    finiteHistoryProofInteractions = 2097152 := by
+  norm_num [finiteHistoryProofInteractions,
+    V8Smz9AdaptiveFiniteAccounting.Historical.analysisHistoryProofInteractions,
+    V8Smz9QromAccounting.analysisHistoryProofInteractions,
+    V8Smz9QromAccounting.consensusProofActionsPerBlock,
+    V8Smz9QromAccounting.analysisHistoryBlocks]
 
 abbrev FiniteHistoryFreshCoins (Coins : Type*) :=
   RepeatedFreshCoins finiteHistoryProofInteractions Coins
@@ -698,9 +702,7 @@ theorem active_sha512_merkle_node_input_is_injective_in_two_fresh_children :
 
 theorem exact_merkle_internal_fresh_children_space_card :
     Fintype.card MerkleInternalFreshChildren = 2 ^ 1024 := by
-  rw [Fintype.card_prod, exact_sha512_digest_space_card,
-    exact_sha512_digest_space_card, ← pow_add]
-  norm_num
+  rw [Fintype.card_prod, exact_sha512_digest_space_card, ← pow_add]
 
 structure IdealMerkleInternalTwoChildInputModel (Prior Input : Type*) where
   encode : Prior -> ActiveSha512MerkleNodeInput -> Input
@@ -824,7 +826,8 @@ theorem final_piop_even_half_gap_minimum_iff (halfGap : Nat) :
     finalPiopHistoryProgrammingScreen
         (analysisTotalOracleStepExponentCeiling + 1 + 2 * halfGap) =
       ⟨3 * finiteHistoryProofInteractions, 1 + halfGap⟩ by
-    simp [finalPiopHistoryProgrammingScreen, analysisTotalOracleStepExponentCeiling]]
+    simp [finalPiopHistoryProgrammingScreen, analysisTotalOracleStepExponentCeiling]
+    omega]
   constructor
   · intro strict
     by_contra below
@@ -975,7 +978,11 @@ theorem smz9_lazy_joint_weighted_corner_bound
     _ = (counts.strictLeafPrograms + 1) * leafFinalWeight +
         ((20 - counts.strictLeafPrograms) * internalWeight +
           352 * internalWeight) := by
-      rw [split, Nat.add_mul]
+      simpa [Nat.add_mul] using
+        congrArg
+          (fun value =>
+            (counts.strictLeafPrograms + 1) * leafFinalWeight + value * internalWeight)
+          split
     _ ≤ (counts.strictLeafPrograms + 1) * leafFinalWeight +
         ((20 - counts.strictLeafPrograms) * leafFinalWeight +
           352 * internalWeight) :=
@@ -1007,6 +1014,36 @@ theorem smz9_lazy_joint_programming_ratio_uses_generic_exposure
     smz9LazyFinalPiopPrograms, smz9LazyInternalProgramsAtWeightedCorner,
     smz9LazyTotalMerkleProgramCap]
 
+theorem exact_finite_history_total_oracle_exposure_exponent :
+    V8Smz9AdaptiveFiniteAccounting.totalOracleExposureExponent
+      finiteHistoryProofInteractions = 65 := by
+  rw [exact_finite_history_proof_interactions]
+  have exposureLog :
+      Nat.log 2 (V8Smz9AdaptiveFiniteAccounting.totalOracleExposures 2097152) = 64 := by
+    apply Nat.log_eq_of_pow_le_of_lt_pow
+    · norm_num [V8Smz9AdaptiveFiniteAccounting.totalOracleExposures,
+        V8Smz9AdaptiveFiniteAccounting.honestProgramExposures,
+        V8Smz9AdaptiveFiniteAccounting.eagerAllProgramsPerProof,
+        V8Smz9AdaptiveFiniteAccounting.eagerTreeProgramsPerProof,
+        V8Smz9AdaptiveFiniteAccounting.finalPiopProgramsPerProof,
+        V8Smz9AdaptiveFiniteAccounting.Historical.decsDomainSize,
+        V8Smz9QromAccounting.decsDomainSize,
+        V8Smz9AdaptiveFiniteAccounting.Historical.analysisGlobalQueryBudget,
+        V8Smz9QromAccounting.analysisGlobalQueryBudget,
+        V8Smz9QromAccounting.analysisGlobalQueryExponent]
+    · norm_num [V8Smz9AdaptiveFiniteAccounting.totalOracleExposures,
+        V8Smz9AdaptiveFiniteAccounting.honestProgramExposures,
+        V8Smz9AdaptiveFiniteAccounting.eagerAllProgramsPerProof,
+        V8Smz9AdaptiveFiniteAccounting.eagerTreeProgramsPerProof,
+        V8Smz9AdaptiveFiniteAccounting.finalPiopProgramsPerProof,
+        V8Smz9AdaptiveFiniteAccounting.Historical.decsDomainSize,
+        V8Smz9QromAccounting.decsDomainSize,
+        V8Smz9AdaptiveFiniteAccounting.Historical.analysisGlobalQueryBudget,
+        V8Smz9QromAccounting.analysisGlobalQueryBudget,
+        V8Smz9QromAccounting.analysisGlobalQueryExponent]
+  unfold V8Smz9AdaptiveFiniteAccounting.totalOracleExposureExponent
+  rw [Nat.log2_eq_log_two, exposureLog]
+
 theorem fixed_history_lazy_joint_entropies_are_applicable :
     V8Smz9AdaptiveFiniteAccounting.genericAdaptiveProgrammingApplicable
         512 finiteHistoryProofInteractions ∧
@@ -1020,8 +1057,7 @@ theorem fixed_history_lazy_joint_entropies_are_applicable :
   rw [show
     V8Smz9AdaptiveFiniteAccounting.totalOracleExposureExponent
         finiteHistoryProofInteractions = 65 by
-      simpa [finiteHistoryProofInteractions] using
-        V8Smz9AdaptiveFiniteAccounting.exact_fixed_history_generic_oracle_exposure.2.2]
+      exact exact_finite_history_total_oracle_exposure_exponent]
   norm_num
 
 /-- Under the exact fixed history, the source-derived joint lazy inventory has floors 197 bits
@@ -1045,8 +1081,7 @@ theorem fixed_history_lazy_joint_programming_bit_floors :
   rw [show
     V8Smz9AdaptiveFiniteAccounting.totalOracleExposureExponent
         finiteHistoryProofInteractions = 65 by
-      simpa [finiteHistoryProofInteractions] using
-        V8Smz9AdaptiveFiniteAccounting.exact_fixed_history_generic_oracle_exposure.2.2]
+      exact exact_finite_history_total_oracle_exposure_exponent]
   norm_num [smz9LazyStrictLeafProgramCap, smz9LazyFinalPiopPrograms,
     smz9LazyInternalProgramsAtWeightedCorner, smz9LazyTotalMerkleProgramCap,
     exact_finite_history_proof_interactions]

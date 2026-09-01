@@ -14,6 +14,9 @@ inductive SyncRawIngressKind where
   | request
   | response
   | pendingAction
+  | requestBlockChunk
+  | blockChunk
+  | announceTip
   | decodeError
 deriving DecidableEq, Repr
 
@@ -56,6 +59,20 @@ def syncEmptyResponseWire (bestHeight : Nat) : List Byte :=
 def syncPendingActionWire (actionBytes : List Byte) : List Byte :=
   networkWireMagic ++ [3, byte actionBytes.length] ++ actionBytes
 
+def syncBlockChunkRequestWire (height : Nat) : List Byte :=
+  networkWireMagic ++ [8, byte height, 0, 0, 0]
+
+def syncBlockChunkWire : List Byte :=
+  networkWireMagic
+    ++ [9, 9, 5]
+    ++ List.replicate 32 (byte 1)
+    ++ [2]
+    ++ List.replicate 32 (byte 2)
+    ++ [3, 0, 3, 170, 187, 204]
+
+def syncTipAnnouncementWire : List Byte :=
+  networkWireMagic ++ [10, 9] ++ List.replicate 32 (byte 3)
+
 def requestRangeInput (case : SyncRawIngressCase) :
     SyncResponseRangeInput :=
   {
@@ -71,6 +88,7 @@ def responseImportInput (case : SyncRawIngressCase) :
     responseHeights := case.responseHeights,
     maxBlocks := case.maxBlocks,
     outcomes := case.outcomes,
+    postClassificationOutcome := .noIssue,
     localBestHeight := case.localBestHeight,
     peerBestHeight := case.peerBestHeight
   }
@@ -85,6 +103,7 @@ def syncRawIngressCaseMatches (case : SyncRawIngressCase) : Bool :=
   | some SyncRawIngressReject.pendingActionDecodeRejected,
       SyncRawIngressKind.pendingAction =>
       true
+  | none, SyncRawIngressKind.announceTip => true
   | none, SyncRawIngressKind.request =>
       responseRange (requestRangeInput case) = case.expectedRange
   | none, SyncRawIngressKind.response =>
@@ -133,7 +152,7 @@ def missingMarkerRawRequest : SyncRawIngressCase :=
 
 def unknownVariantRawMessage : SyncRawIngressCase :=
   { validRawRequest with
-    rawBytes := networkWireMagic ++ [4],
+    rawBytes := networkWireMagic ++ [11],
     kind := SyncRawIngressKind.decodeError,
     expectedRange := none,
     expectedReject := some SyncRawIngressReject.wireDecodeRejected }
@@ -144,6 +163,47 @@ def emptyPendingActionRelay : SyncRawIngressCase :=
     kind := SyncRawIngressKind.pendingAction,
     expectedRange := none,
     expectedReject := some SyncRawIngressReject.pendingActionDecodeRejected }
+
+def validRawBlockChunkRequest : SyncRawIngressCase :=
+  { validRawRequest with
+    rawBytes := syncBlockChunkRequestWire 5,
+    kind := SyncRawIngressKind.decodeError,
+    expectedRange := none,
+    expectedReject := some SyncRawIngressReject.wireDecodeRejected }
+
+def validRawBlockChunk : SyncRawIngressCase :=
+  { validRawRequest with
+    rawBytes := syncBlockChunkWire,
+    kind := SyncRawIngressKind.decodeError,
+    expectedRange := none,
+    expectedReject := some SyncRawIngressReject.wireDecodeRejected }
+
+def validRawTipAnnouncement : SyncRawIngressCase :=
+  { validRawRequest with
+    rawBytes := syncTipAnnouncementWire,
+    kind := SyncRawIngressKind.announceTip,
+    expectedRange := none }
+
+def truncatedRawBlockChunkRequest : SyncRawIngressCase :=
+  { validRawRequest with
+    rawBytes := networkWireMagic ++ [8],
+    kind := SyncRawIngressKind.decodeError,
+    expectedRange := none,
+    expectedReject := some SyncRawIngressReject.wireDecodeRejected }
+
+def trailingRawBlockChunk : SyncRawIngressCase :=
+  { validRawRequest with
+    rawBytes := syncBlockChunkWire ++ [0],
+    kind := SyncRawIngressKind.decodeError,
+    expectedRange := none,
+    expectedReject := some SyncRawIngressReject.wireDecodeRejected }
+
+def trailingRawTipAnnouncement : SyncRawIngressCase :=
+  { validRawRequest with
+    rawBytes := syncTipAnnouncementWire ++ [0],
+    kind := SyncRawIngressKind.decodeError,
+    expectedRange := none,
+    expectedReject := some SyncRawIngressReject.wireDecodeRejected }
 
 def validEmptyRawResponse : SyncRawIngressCase := {
   rawBytes := syncEmptyResponseWire 11,
@@ -178,6 +238,7 @@ theorem sync_raw_ingress_case_matches_expected
             some SyncResponseImportReject.responseBlockCountTooLarge
       | some SyncRawIngressReject.pendingActionDecodeRejected,
           SyncRawIngressKind.pendingAction => True
+      | none, SyncRawIngressKind.announceTip => True
       | none, SyncRawIngressKind.request =>
           responseRange (requestRangeInput case) = case.expectedRange
       | none, SyncRawIngressKind.response =>
@@ -220,6 +281,30 @@ theorem raw_sync_unknown_variant_rejects :
 
 theorem raw_sync_empty_pending_action_relay_rejects :
     syncRawIngressCaseMatches emptyPendingActionRelay = true := by
+  decide
+
+theorem raw_sync_block_chunk_request_fail_closed :
+    syncRawIngressCaseMatches validRawBlockChunkRequest = true := by
+  decide
+
+theorem raw_sync_block_chunk_fail_closed :
+    syncRawIngressCaseMatches validRawBlockChunk = true := by
+  decide
+
+theorem valid_raw_sync_tip_announcement_accepts :
+    syncRawIngressCaseMatches validRawTipAnnouncement = true := by
+  decide
+
+theorem raw_sync_truncated_block_chunk_request_rejects :
+    syncRawIngressCaseMatches truncatedRawBlockChunkRequest = true := by
+  decide
+
+theorem raw_sync_trailing_block_chunk_rejects :
+    syncRawIngressCaseMatches trailingRawBlockChunk = true := by
+  decide
+
+theorem raw_sync_trailing_tip_announcement_rejects :
+    syncRawIngressCaseMatches trailingRawTipAnnouncement = true := by
   decide
 
 theorem valid_raw_empty_sync_response_accepts :

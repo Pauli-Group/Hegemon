@@ -620,7 +620,7 @@ private structure FieldXofAbortRatioCertificate where
   denominatorExact : denominator = 2 ^ (64 * 36)
   conservativeBound : numerator * 2 ^ 500 ≤ 1 * denominator
 
-private opaque fieldXofAbortRatioCertificate : FieldXofAbortRatioCertificate := {
+private irreducible_def fieldXofAbortRatioCertificate : FieldXofAbortRatioCertificate := {
   numerator := 2 ^ 25 * Nat.choose 102400 36 * (2 ^ 32 - 1) ^ 36
   denominator := 2 ^ (64 * 36)
   numeratorExact := rfl
@@ -632,9 +632,10 @@ def fieldXofAbortRatio : CompositionRatio where
   numerator := fieldXofAbortRatioCertificate.numerator
   denominator := fieldXofAbortRatioCertificate.denominator
 
-/-- The opaque certificate stores the executable binomial expression itself, not a numerical
-replacement.  This equality keeps the source formula in the public API while preventing repeated
-kernel evaluation of `Nat.choose 102400 36`. -/
+/-- The irreducible definition stores the executable binomial expression itself, not a numerical
+replacement.  Its generated equation theorem remains available for explicit unfolding, while the
+certificate fields expose the exact values and the kernel-checked conservative bound without
+repeatedly normalizing `Nat.choose 102400 36`. -/
 theorem exact_field_xof_abort_ratio_numerator :
     fieldXofAbortRatio.numerator =
       fieldXofRequestUnion * Nat.choose fieldXofCandidateWords fieldXofMinimumRejections *

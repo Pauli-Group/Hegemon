@@ -217,6 +217,9 @@ lean_exe gen_candidate_artifact_coupling_admission_vectors where
 lean_exe gen_canonical_reorg_chain_admission_vectors where
   root := `Hegemon.Native.GenerateCanonicalReorgChainAdmissionVectors
 
+lean_exe gen_canonical_reorg_persistence_admission_vectors where
+  root := `Hegemon.Native.GenerateCanonicalReorgPersistenceAdmissionVectors
+
 lean_exe gen_codec_admission_vectors where
   root := `Hegemon.Native.GenerateCodecAdmissionVectors
 
@@ -312,6 +315,9 @@ lean_exe gen_storage_durability_admission_vectors where
 
 lean_exe gen_sync_admission_vectors where
   root := `Hegemon.Native.GenerateSyncAdmissionVectors
+
+lean_exe gen_sync_block_chunk_admission_vectors where
+  root := `Hegemon.Native.GenerateSyncBlockChunkAdmissionVectors
 
 lean_exe gen_sync_block_range_publication_admission_vectors where
   root := `Hegemon.Native.GenerateSyncBlockRangePublicationAdmissionVectors

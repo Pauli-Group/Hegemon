@@ -1,17 +1,17 @@
 {
   "schema": 1,
-  "generated_at_utc": "2026-06-18",
+  "generated_at_utc": "2026-08-31",
   "waivers": [
     {
       "id": "RUSTSEC-2025-0141",
       "package": "bincode",
       "version": "1.3.3",
       "kind": "unmaintained",
-      "expires": "2026-08-31",
+      "expires": "2026-09-30",
       "tracking": "DEP-2026-0002",
       "reason": "Network trust-boundary encoding has been moved to the bounded HNW1/postcard codec. Remaining uses are consensus/proof artifact compatibility surfaces and must move behind versioned canonical codecs before this waiver expires.",
       "owner": "release-engineering",
-      "reviewed_at": "2026-06-18",
+      "reviewed_at": "2026-08-31",
       "remediation": "Replace remaining consensus/proof bincode compatibility surfaces with versioned canonical codecs and remove bincode 1.3.3 before the waiver expires."
     },
     {
@@ -19,11 +19,11 @@
       "package": "fxhash",
       "version": "0.2.1",
       "kind": "unmaintained",
-      "expires": "2026-08-31",
+      "expires": "2026-09-30",
       "tracking": "DEP-2026-0004",
       "reason": "Transitive through sled. Hegemon does not use fxhash as a cryptographic hash; remove by replacing or upgrading the node storage dependency.",
       "owner": "release-engineering",
-      "reviewed_at": "2026-06-18",
+      "reviewed_at": "2026-08-31",
       "remediation": "Remove the fxhash 0.2.1 path by upgrading or replacing the sled-backed storage dependency before the waiver expires."
     },
     {
@@ -31,11 +31,11 @@
       "package": "instant",
       "version": "0.1.13",
       "kind": "unmaintained",
-      "expires": "2026-08-31",
+      "expires": "2026-09-30",
       "tracking": "DEP-2026-0005",
       "reason": "Transitive through parking_lot 0.11 via sled/reed-solomon-erasure. Remove by lifting those dependencies to parking_lot 0.12+ paths.",
       "owner": "release-engineering",
-      "reviewed_at": "2026-06-18",
+      "reviewed_at": "2026-08-31",
       "remediation": "Lift the sled/reed-solomon-erasure dependency path to parking_lot 0.12+ or replace the transitive path before the waiver expires."
     },
     {
@@ -43,12 +43,24 @@
       "package": "paste",
       "version": "1.0.15",
       "kind": "unmaintained",
-      "expires": "2026-08-31",
+      "expires": "2026-09-30",
       "tracking": "DEP-2026-0006",
       "reason": "Transitive macro dependency through arkworks and RISC0. It is not a runtime trust-boundary parser; remove with upstream dependency lifts.",
       "owner": "release-engineering",
-      "reviewed_at": "2026-06-18",
+      "reviewed_at": "2026-08-31",
       "remediation": "Remove paste 1.0.15 by lifting arkworks or RISC0 dependency paths once upstream releases clear the macro dependency."
+    },
+    {
+      "id": "RUSTSEC-2026-0253",
+      "package": "lru",
+      "version": "0.7.8",
+      "kind": "unsound",
+      "expires": "2026-09-30",
+      "tracking": "DEP-2026-0007",
+      "reason": "Transitive through reed-solomon-erasure 6.0.0 in state-da. The active Hegemon path constructs ReedSolomon and calls encode; it does not call LruCache::pop, whose panic-safety flaw requires a panicking key destructor during pop.",
+      "owner": "release-engineering",
+      "reviewed_at": "2026-08-31",
+      "remediation": "Upgrade or replace reed-solomon-erasure so the production graph uses lru 0.18.2 or later, then remove this waiver."
     }
   ]
 }

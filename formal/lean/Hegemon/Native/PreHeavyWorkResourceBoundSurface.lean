@@ -9,6 +9,7 @@ import Hegemon.Native.ResourceBudgetAdmission
 import Hegemon.Native.RpcAdmission
 import Hegemon.Native.SidecarUploadAdmission
 import Hegemon.Native.SyncAdmission
+import Hegemon.Native.SyncBlockChunkAdmission
 import Hegemon.Native.TransferActionPayloadAdmission
 import Hegemon.Native.TxLeafArtifactProjectionRefinement
 
@@ -26,6 +27,7 @@ open Hegemon.Native.ResourceBudgetAdmission
 open Hegemon.Native.RpcAdmission
 open Hegemon.Native.SidecarUploadAdmission
 open Hegemon.Native.SyncAdmission
+open Hegemon.Native.SyncBlockChunkAdmission
 open Hegemon.Native.TransferActionPayloadAdmission
 open Hegemon.Native.TxLeafArtifact
 open Hegemon.Native.TxLeafArtifactProjectionRefinement
@@ -890,6 +892,7 @@ structure PreHeavyWorkSyncPathSurface where
   responseCount : SyncResponseCountInput
   resourcePolicy : ResourcePolicy
   resourceRequest : ResourceRequest
+  blockChunk : SyncBlockChunkAdmissionInput
 deriving DecidableEq, Repr
 
 structure AcceptedPreHeavyWorkSyncPathInputs
@@ -905,6 +908,8 @@ structure AcceptedPreHeavyWorkSyncPathInputs
     evaluateBoundedRequest
       surface.resourcePolicy
       surface.resourceRequest = none
+  blockChunkAccepted :
+    evaluateSyncBlockChunkAdmission surface.blockChunk = none
   responseRangeCountMatchesResponseCount :
     responseRangeBlockCount surface.responseRange =
       surface.responseCount.blockCount
@@ -946,6 +951,17 @@ structure AcceptedPreHeavyWorkSyncPathBounds
     AcceptedBoundedRequestFacts
       surface.resourcePolicy
       surface.resourceRequest
+  blockChunkAccepted :
+    evaluateSyncBlockChunkAdmission surface.blockChunk = none
+  blockChunkResourceFacts :
+    AcceptedBoundedRequestFacts
+      (syncBlockChunkResourcePolicy surface.blockChunk)
+      (syncBlockChunkResourceRequest surface.blockChunk)
+  blockChunkRetainedBytesWithinTotal :
+    surface.blockChunk.retainedBytes + surface.blockChunk.chunkBytes ≤
+      surface.blockChunk.totalBytes
+  blockChunkTotalWithinCap :
+    surface.blockChunk.totalBytes ≤ surface.blockChunk.maxTotalBytes
   resourceItemCountMatchesResponseCount :
     surface.resourceRequest.itemCount =
       surface.responseCount.blockCount
@@ -994,6 +1010,12 @@ theorem sync_path_accepts_implies_preheavy_bounds
         surface.responseCount.blockCount := by
     simpa [accepted.resourceItemCountMatchesResponseCount] using
       resourceFacts.itemCountWithinCap
+  have blockChunkResourceFacts :
+      AcceptedBoundedRequestFacts
+        (syncBlockChunkResourcePolicy surface.blockChunk)
+        (syncBlockChunkResourceRequest surface.blockChunk) :=
+    accepted_chunk_exposes_bounded_request_facts
+      accepted.blockChunkAccepted
   exact {
     syncDecodeAccepted := accepted.syncDecodeAccepted,
     syncDecodePreconditions := syncPreconditions,
@@ -1008,6 +1030,13 @@ theorem sync_path_accepts_implies_preheavy_bounds
       accepted.responseRangeCountMatchesResponseCount,
     syncResourceAccepted := accepted.syncResourceAccepted,
     syncResourceFacts := resourceFacts,
+    blockChunkAccepted := accepted.blockChunkAccepted,
+    blockChunkResourceFacts := blockChunkResourceFacts,
+    blockChunkRetainedBytesWithinTotal :=
+      accepted_chunk_retained_bytes_within_total
+        accepted.blockChunkAccepted,
+    blockChunkTotalWithinCap :=
+      accepted_chunk_total_within_cap accepted.blockChunkAccepted,
     resourceItemCountMatchesResponseCount :=
       accepted.resourceItemCountMatchesResponseCount,
     responseCountWithinResourceCap := responseCountWithinResourceCap
@@ -1290,6 +1319,7 @@ inductive PublicInputCostFamily where
   | syncResponseRange
   | syncResponseCount
   | syncResponseImport
+  | syncBlockChunk
   | submitActionRequest
   | transferPayload
   | bridgeActionPayload
@@ -1315,6 +1345,7 @@ def productionPublicInputCostFamilies : List PublicInputCostFamily := [
   PublicInputCostFamily.syncResponseRange,
   PublicInputCostFamily.syncResponseCount,
   PublicInputCostFamily.syncResponseImport,
+  PublicInputCostFamily.syncBlockChunk,
   PublicInputCostFamily.submitActionRequest,
   PublicInputCostFamily.transferPayload,
   PublicInputCostFamily.bridgeActionPayload,
@@ -1412,6 +1443,15 @@ def publicInputCostFamilyCovered
           surface.syncPath.responseCount.blockCount
         ∧ ¬ surface.syncPath.resourcePolicy.itemCountCap <
           surface.syncPath.responseCount.blockCount
+  | PublicInputCostFamily.syncBlockChunk =>
+      evaluateSyncBlockChunkAdmission surface.syncPath.blockChunk = none
+        ∧ ¬ surface.syncPath.blockChunk.maxChunkBytes <
+          surface.syncPath.blockChunk.chunkBytes
+        ∧ surface.syncPath.blockChunk.retainedBytes +
+            surface.syncPath.blockChunk.chunkBytes ≤
+          surface.syncPath.blockChunk.totalBytes
+        ∧ surface.syncPath.blockChunk.totalBytes ≤
+          surface.syncPath.blockChunk.maxTotalBytes
   | PublicInputCostFamily.submitActionRequest =>
       actionRequestProjectionAccepts surface.actionRequest = true
         ∧ actionRequestProjectionPreconditions surface.actionRequest =
@@ -1577,6 +1617,11 @@ theorem preheavy_certificate_covers_public_input_cost_family
       certificate.syncBounds.resourceItemCountMatchesResponseCount,
       certificate.syncBounds.responseCountWithinResourceCap⟩
   · exact ⟨
+      certificate.syncBounds.blockChunkAccepted,
+      certificate.syncBounds.blockChunkResourceFacts.rawBytesWithinCap,
+      certificate.syncBounds.blockChunkRetainedBytesWithinTotal,
+      certificate.syncBounds.blockChunkTotalWithinCap⟩
+  · exact ⟨
       certificate.actionRequestBounds.actionRequestAccepted,
       certificate.actionRequestBounds.actionRequestPreconditions⟩
   · exact ⟨
@@ -1645,7 +1690,7 @@ structure PublicInputCostClassCoverageCertificate
           surface
           family
   familyCount :
-    productionPublicInputCostFamilies.length = 22
+    productionPublicInputCostFamilies.length = 23
 
 theorem accepted_preheavy_dos_certificate_covers_all_public_input_cost_classes
     {surface : PreHeavyWorkVerificationPathSurface}

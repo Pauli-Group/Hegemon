@@ -514,7 +514,14 @@ pub(crate) fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<
         }
         _ => None,
     };
-    let best = node.best_meta();
+    let (best_header, best_checkpoint) = {
+        let state = node.state.read();
+        (
+            pow_header_from_meta(&state.best),
+            checkpoint_from_meta(&state.best),
+        )
+    };
+    let best_height = best_header.height;
     let confirmations_checked =
         evaluate_native_bridge_witness_export_admission(NativeBridgeWitnessExportAdmissionInput {
             block_hash_parameter_valid: true,
@@ -529,8 +536,8 @@ pub(crate) fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<
                     && canonical_height_present
                     && block_is_canonical
                     && message_index_in_bounds),
-            best_height: best.height,
-            message_height: meta.as_ref().map(|meta| meta.height).unwrap_or(best.height),
+            best_height,
+            message_height: meta.as_ref().map(|meta| meta.height).unwrap_or(best_height),
             max_explicit_history: MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS,
             max_materialized_history: MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS,
         })
@@ -553,7 +560,7 @@ pub(crate) fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<
         })?;
     let header = pow_header_from_meta(&meta);
     let parent_checkpoint = checkpoint_from_meta(&parent);
-    let long_range_trusted_checkpoint = if best.height > meta.height {
+    let long_range_trusted_checkpoint = if best_height > meta.height {
         let genesis_hash = node
             .hash_by_height(0)?
             .ok_or_else(|| anyhow!("missing genesis hash for bridge witness"))?;
@@ -568,7 +575,6 @@ pub(crate) fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<
         .as_ref()
         .unwrap_or(&parent_checkpoint);
     let message_checkpoint = checkpoint_from_meta(&meta);
-    let best_checkpoint = checkpoint_from_meta(&best);
     let output = bridge_checkpoint_output_with_tip_from_anchor_v2(
         output_anchor,
         &message_checkpoint,
@@ -599,7 +605,7 @@ pub(crate) fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<
     let long_range_proof = build_long_range_bridge_proof(
         node,
         &meta,
-        &best,
+        &best_header,
         &messages,
         message_index,
         output.clone(),
@@ -713,12 +719,12 @@ pub(crate) fn latest_bridge_message_block_hash(
 pub(crate) fn build_long_range_bridge_proof(
     node: &NativeNode,
     message_meta: &NativeBlockMeta,
-    tip_meta: &NativeBlockMeta,
+    tip_header: &PowHeaderV2,
     messages: &[BridgeMessageV1],
     message_index: usize,
     output: BridgeCheckpointOutputV2,
 ) -> Result<Option<HegemonLongRangeProofV2>> {
-    if tip_meta.height <= message_meta.height {
+    if tip_header.height <= message_meta.height {
         return Ok(None);
     }
     let genesis_hash = node
@@ -727,12 +733,11 @@ pub(crate) fn build_long_range_bridge_proof(
     let genesis = node
         .header_by_hash(&genesis_hash)?
         .ok_or_else(|| anyhow!("missing genesis header for bridge witness"))?;
-    let tip_history = node.header_hashes_to_hash(tip_meta.parent_hash)?;
+    let tip_history = node.header_hashes_to_hash(tip_header.parent_hash)?;
     let message_header = pow_header_from_meta(message_meta);
-    let tip_header = pow_header_from_meta(tip_meta);
     let tip_parent_opening = header_mmr_opening_from_hashes(
         &tip_history,
-        tip_meta
+        tip_header
             .height
             .checked_sub(1)
             .ok_or_else(|| anyhow!("bridge witness tip has no parent"))?,
@@ -749,11 +754,11 @@ pub(crate) fn build_long_range_bridge_proof(
     )
     .map_err(|err| anyhow!("build message parent MMR opening failed: {err:?}"))?;
     let sample_indices = flyclient_sample_indices(
-        tip_meta.header_mmr_root,
-        tip_meta.hash,
+        tip_header.header_mmr_root,
+        tip_header.pow_hash(),
         message_meta.hash,
         genesis.height.saturating_add(1),
-        tip_meta.height,
+        tip_header.height,
         DEFAULT_BRIDGE_FLYCLIENT_SAMPLE_COUNT,
     );
     let mut sample_headers = Vec::with_capacity(sample_indices.len());
@@ -782,7 +787,7 @@ pub(crate) fn build_long_range_bridge_proof(
     Ok(Some(HegemonLongRangeProofV2 {
         verifier_hash: HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V2,
         trusted_checkpoint: checkpoint_from_meta(&genesis),
-        tip_header,
+        tip_header: tip_header.clone(),
         tip_parent_opening,
         message_header,
         message_header_opening,

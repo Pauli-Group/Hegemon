@@ -17,6 +17,8 @@ use consensus::{
     CommitmentTreeState, DaParams, ProofEnvelope, Transaction, TxValidityArtifact,
     COMMITMENT_TREE_DEPTH,
 };
+#[cfg(test)]
+use consensus_light_client::header_mmr_root_from_hashes;
 use consensus_light_client::{
     bridge_checkpoint_output_from_anchor_v2, bridge_checkpoint_output_with_tip_from_anchor_v2,
     canonical_bridge_checkpoint_output_bytes_v2, canonical_trusted_checkpoint_bytes_v2,
@@ -102,9 +104,6 @@ use transaction_circuit::smallwood_v5_envelope::decode_envelope_exact;
 use transaction_core::hashing_pq::ciphertext_hash_bytes;
 use wallet::{NoteCiphertext, NotePlaintext, ShieldedAddress};
 
-#[cfg(test)]
-use consensus_light_client::header_mmr_root_from_hashes;
-
 pub(crate) const META_BEST_KEY: &[u8] = b"best";
 pub(crate) const META_GENESIS_KEY: &[u8] = b"genesis";
 pub(crate) const META_NULLIFIER_ACCUMULATOR_KEY: &[u8] = b"nullifier_accumulator_v2";
@@ -150,6 +149,16 @@ pub(crate) const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e54;
 pub(crate) const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 256;
 pub(crate) const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize =
     MAX_NATIVE_SYNC_RESPONSE_BLOCKS as usize;
+pub(crate) const MAX_NATIVE_SYNC_RESPONSE_WORKERS: usize = 2;
+/// Retired chunk record tags retained only for explicit negative decoding
+/// tests. Production chunk admission accepts only the V3 tag exported by
+/// `sync_chunks` and never upgrades either historical grammar.
+pub(crate) const NATIVE_SYNC_CHUNK_RECORD_ENCODING_LEGACY_V1: u8 = 1;
+pub(crate) const NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2: u8 = 2;
+pub(crate) const MAX_NATIVE_SYNC_CHUNK_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_NATIVE_SYNC_CHUNK_SESSIONS: usize = 2;
+pub(crate) const NATIVE_SYNC_CHUNK_SESSION_TTL: Duration = Duration::from_secs(30);
+pub(crate) const NATIVE_SYNC_CHUNK_SESSION_MAX_LIFETIME: Duration = Duration::from_secs(2 * 60);
 pub(crate) const NATIVE_SYNC_REQUEST_BLOCKS: u64 = 64;
 pub(crate) const MAX_NATIVE_SYNC_IMPORT_BATCH_BLOCKS: usize = 32;
 pub(crate) const NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(2);
@@ -161,6 +170,8 @@ pub(crate) const NATIVE_SYNC_REQUEST_RATE_WINDOW: Duration = Duration::from_secs
 // flight, but retry quickly enough that a dropped response does not freeze
 // fresh-node catch-up for minutes.
 pub(crate) const NATIVE_SYNC_REQUEST_RETRY_AFTER: Duration = Duration::from_secs(20);
+pub(crate) const NATIVE_SYNC_UNVERIFIED_TARGET_COOLDOWN: Duration = Duration::from_secs(20);
+pub(crate) const MAX_NATIVE_SYNC_UNVERIFIED_TARGET_COOLDOWNS: usize = 1024;
 pub(crate) const MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW: u32 = 4;
 pub(crate) const NATIVE_SYNC_REQUEST_RATE_LIMIT_STATE_TTL: Duration = Duration::from_secs(10 * 60);
 pub(crate) const MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS: usize = 4096;
@@ -243,14 +254,14 @@ pub(crate) const NATIVE_BLOCK_BODY_REASSEMBLY_MAX_LIFETIME: Duration = Duration:
 /// Canonical identity-free native block-body grammar. Schema 2 was an
 /// unreleased identity-bearing interim format and is rejected, never upgraded.
 pub(crate) const NATIVE_BLOCK_BODY_SCHEMA_VERSION: u16 = 3;
-/// Postcard enum tags are part of the native sync wire grammar. Tags 4..=7
-/// identify the unreleased 32-byte locator era and become reject-only at the
-/// atomic V3 cutover; fresh fixed-width V3 locator traffic uses 8..=11.
-pub(crate) const NATIVE_SYNC_INTERIM_BODY_TAGS: std::ops::RangeInclusive<u8> = 4..=7;
-pub(crate) const NATIVE_SYNC_V3_ANNOUNCE_LOCATOR_TAG: u8 = 8;
-pub(crate) const NATIVE_SYNC_V3_RESPONSE_LOCATORS_TAG: u8 = 9;
-pub(crate) const NATIVE_SYNC_V3_BLOCK_BODY_REQUEST_TAG: u8 = 10;
-pub(crate) const NATIVE_SYNC_V3_BLOCK_BODY_CHUNK_TAG: u8 = 11;
+/// Postcard enum tags are part of the native sync wire grammar. The exact V3
+/// locator/body carrier occupies tags 4..=7. PR 203's stored-record chunk
+/// fallback occupies tags 8..=9 and must remain fail-closed until it can
+/// decode and verify the same V3 carrier without any metadata-era conversion.
+/// Tag 10 is the compact tip announcement and has its own bounded admission.
+pub(crate) const NATIVE_SYNC_EXACT_LOCATOR_BODY_TAGS: std::ops::RangeInclusive<u8> = 4..=7;
+pub(crate) const NATIVE_SYNC_RECORD_FALLBACK_TAGS: std::ops::RangeInclusive<u8> = 8..=9;
+pub(crate) const NATIVE_SYNC_ANNOUNCE_TIP_TAG: u8 = 10;
 pub(crate) const MAX_NATIVE_BLOCK_BODY_QUEUE_PER_PEER: usize =
     MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE;
 pub(crate) const MAX_NATIVE_BLOCK_BODY_QUEUE_GLOBAL: usize =
@@ -309,6 +320,9 @@ pub(crate) const MAX_NATIVE_MINING_THREADS: u32 = 64;
 pub(crate) const NATIVE_MINING_BACKGROUND_THREAD_CAP: u32 = 2;
 pub(crate) const NATIVE_MINING_RESERVED_SERVICE_THREADS: u32 = 3;
 pub(crate) const NATIVE_EMPTY_DIGEST48: [u8; 48] = [0u8; 48];
+
+#[cfg(test)]
+pub(crate) static NATIVE_OWNED_ANNOUNCE_WRAPPER_ACTION_BYTES: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Parser)]
 #[command(name = "hegemon-node")]
@@ -833,6 +847,12 @@ pub(crate) enum NativeSyncMessage {
     BlockBodyChunk {
         chunk: NativeBlockBodyChunk,
     },
+    /// PR 203 bounded-record chunk fallback. These variants are additive to
+    /// the V3 locator/body grammar above; they must not rewrite or upgrade a
+    /// stored V3 record or its separately bound canonical action body.
+    RequestBlockChunk(NativeSyncBlockChunkRequest),
+    BlockChunk(NativeSyncBlockChunk),
+    AnnounceTip(NativeSyncTipAnnouncement),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1119,12 +1139,54 @@ pub(crate) struct NativeSyncRequestRateState {
 pub(crate) enum NativeSyncResponseStart {
     Started,
     DuplicateRange,
+    AtCapacity,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativeOutboundSyncRequestState {
+    InFlight,
+    Paced,
+    Cooldown,
+    ChunkFallback,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct NativeOutboundSyncRequestContext {
+    recovery_page: bool,
+    expected_parent_hash: Option<[u8; 32]>,
+    target_tip: Option<(u64, [u8; 32])>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeOutboundSyncRequest {
     range: NativeSyncRange,
     requested_at: Instant,
+    state: NativeOutboundSyncRequestState,
+    context: NativeOutboundSyncRequestContext,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeSyncTargetSnapshot {
+    height: u64,
+    peer_id: Option<PeerId>,
+    hash: Option<[u8; 32]>,
+    unverified_peer_hint: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeCompletedSyncRequest {
+    request_target: Option<PeerId>,
+    range: NativeSyncRange,
+    context: NativeOutboundSyncRequestContext,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeSyncRecoveryCursor {
+    peer_id: Option<PeerId>,
+    target_height: u64,
+    target_hash: Option<[u8; 32]>,
+    range: NativeSyncRange,
+    expected_parent_hash: Option<[u8; 32]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1145,9 +1207,36 @@ pub(crate) struct NativeMiningGateInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativeAnnouncedBlockImportOutcome {
+    CanonicalAdvanced,
+    StoredNoncanonical,
+    AlreadyKnown,
+    MissingParent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativeSuppliedBlockRecordStatus {
+    KnownExact,
+    Missing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeSuppliedBlockRecordClassificationInput {
+    stored_record_present: bool,
+    stored_record_exact: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativeSuppliedBlockRecordClassificationRejection {
+    KnownRecordMismatch,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NativeSyncResponseImportOutcome {
     Imported,
+    StoredNoncanonical,
     AlreadyKnown,
+    MissingParent,
     Error,
 }
 
@@ -1157,6 +1246,8 @@ pub(crate) struct NativeSyncResponseImportProgress {
     response_block_count: usize,
     attempted_blocks: usize,
     imported_blocks: u64,
+    stored_noncanonical_blocks: u64,
+    stopped_on_missing_parent: bool,
     stopped_on_error: bool,
 }
 
@@ -1167,12 +1258,17 @@ impl NativeSyncResponseImportProgress {
             response_block_count,
             attempted_blocks: 0,
             imported_blocks: 0,
+            stored_noncanonical_blocks: 0,
+            stopped_on_missing_parent: false,
             stopped_on_error: false,
         }
     }
 
     fn record(&mut self, outcome: NativeSyncResponseImportOutcome) -> bool {
-        if self.stopped_on_error || self.attempted_blocks >= self.response_block_count {
+        if self.stopped_on_error
+            || self.stopped_on_missing_parent
+            || self.attempted_blocks >= self.response_block_count
+        {
             return false;
         }
         self.attempted_blocks += 1;
@@ -1181,7 +1277,15 @@ impl NativeSyncResponseImportProgress {
                 self.imported_blocks = self.imported_blocks.saturating_add(1);
                 true
             }
+            NativeSyncResponseImportOutcome::StoredNoncanonical => {
+                self.stored_noncanonical_blocks = self.stored_noncanonical_blocks.saturating_add(1);
+                true
+            }
             NativeSyncResponseImportOutcome::AlreadyKnown => true,
+            NativeSyncResponseImportOutcome::MissingParent => {
+                self.stopped_on_missing_parent = true;
+                false
+            }
             NativeSyncResponseImportOutcome::Error => {
                 self.stopped_on_error = true;
                 false
@@ -1189,15 +1293,46 @@ impl NativeSyncResponseImportProgress {
         }
     }
 
-    fn should_request_more(self, local_best_height: u64, peer_best_height: u64) -> bool {
-        self.had_blocks && local_best_height < peer_best_height
+    fn record_terminal_error(&mut self) {
+        let _ = self.record(NativeSyncResponseImportOutcome::Error);
+        // Errors discovered after every response row was classified (for
+        // example while reconstructing an all-known winning branch) must
+        // still be terminal even though `record` cannot consume another row.
+        self.stopped_on_error = true;
     }
 
-    fn completed_with_only_known_blocks(self) -> bool {
+    fn record_missing_parent_after_classification(&mut self) -> bool {
+        if !self.had_blocks
+            || self.attempted_blocks != self.response_block_count
+            || self.imported_blocks != 0
+            || self.stored_noncanonical_blocks != 0
+            || self.stopped_on_error
+            || self.stopped_on_missing_parent
+        {
+            return false;
+        }
+        self.stopped_on_missing_parent = true;
+        true
+    }
+
+    fn should_request_more(self, local_best_height: u64, peer_best_height: u64) -> bool {
+        self.had_blocks
+            && !self.stopped_on_missing_parent
+            && !self.stopped_on_error
+            && !self.completed_without_canonical_progress()
+            && local_best_height < peer_best_height
+    }
+
+    fn completed_without_canonical_progress(self) -> bool {
         self.had_blocks
             && self.attempted_blocks == self.response_block_count
             && self.imported_blocks == 0
+            && !self.stopped_on_missing_parent
             && !self.stopped_on_error
+    }
+
+    fn completed_with_only_known_blocks(self) -> bool {
+        self.completed_without_canonical_progress() && self.stored_noncanonical_blocks == 0
     }
 }
 
@@ -1206,10 +1341,9 @@ pub(crate) fn native_sync_response_should_escalate_reorg_backfill(
     local_best_height: u64,
     peer_best_height: u64,
 ) -> bool {
-    progress.had_blocks
-        && !progress.stopped_on_error
-        && !progress.completed_with_only_known_blocks()
-        && local_best_height < peer_best_height
+    !progress.stopped_on_error
+        && (progress.stopped_on_missing_parent || progress.completed_without_canonical_progress())
+        && local_best_height <= peer_best_height
 }
 
 pub(crate) fn native_mining_sync_observed_peer_height(
@@ -2306,6 +2440,45 @@ pub(crate) struct NativeCanonicalIndexPlan {
     ciphertext_archive_entries: Vec<(u64, Vec<u8>)>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeCanonicalReorgPersistence {
+    pub(crate) prestored_block_records: usize,
+    pub(crate) canonical_transaction_block_record_writes: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeNoncanonicalSyncBatchPersistence {
+    pub(crate) newly_stored: usize,
+    pub(crate) already_known: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeCanonicalReorgPersistenceAdmissionInput {
+    replacement_block_count: usize,
+    known_block_count: usize,
+    classified_missing_block_count: usize,
+    supplied_missing_block_count: usize,
+    connected_exact_known_rows: bool,
+    suffix_fully_validated: bool,
+    noncanonical_batch_block_record_writes: usize,
+    noncanonical_batch_durability_flushed: bool,
+    durable_records_match_replacement: bool,
+    canonical_transaction_block_record_writes: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativeCanonicalReorgPersistenceAdmissionRejection {
+    KnownCountExceedsReplacement,
+    ClassifiedMissingCountMismatch,
+    SuppliedMissingCountMismatch,
+    ConnectedExactKnownRowsMissing,
+    SuffixNotFullyValidated,
+    NoncanonicalBatchWriteCountMismatch,
+    NoncanonicalBatchNotDurable,
+    DurableRecordsMismatchReplacement,
+    CanonicalTransactionWritesBlockRecords,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct NativeActionStreamStep<'a> {
     commitment_count: usize,
@@ -2861,6 +3034,7 @@ pub(crate) enum NativeBlockCommitmentAdmissionRejection {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NativeAtomicCommitKind {
     MinedBlockCommit,
+    TipExtensionBatchCommit,
     CanonicalReorgCommit,
     CanonicalSuffixReorgCommit,
     CanonicalIndexRepair,
@@ -3854,6 +4028,9 @@ pub struct NativeNode {
     sync_target_observed: AtomicBool,
     sync_target_peer: Mutex<Option<PeerId>>,
     sync_target_hash: Mutex<Option<[u8; 32]>>,
+    sync_target_unverified_peer_hint: AtomicBool,
+    sync_unverified_target_deferred_during_import: Mutex<Option<NativeSyncTargetSnapshot>>,
+    sync_unverified_target_cooldowns: Mutex<BTreeMap<PeerId, Instant>>,
     sync_reorg_backfill_blocks: AtomicU64,
     mining_sync_gate_open: AtomicBool,
     sync_import_in_flight: AtomicBool,
@@ -3861,8 +4038,12 @@ pub struct NativeNode {
     network_local_peer_id: Arc<StdRwLock<Option<PeerId>>>,
     network_peer_snapshot: Arc<StdRwLock<Vec<ConnectedPeerSnapshot>>>,
     sync_request_rate_limits: Mutex<BTreeMap<PeerId, NativeSyncRequestRateState>>,
-    sync_response_in_flight_peers: Mutex<BTreeMap<PeerId, BTreeSet<NativeSyncRange>>>,
+    outbound_sync_request_rate_limits: Mutex<BTreeMap<PeerId, NativeSyncRequestRateState>>,
+    sync_response_in_flight_peers: Mutex<BTreeMap<PeerId, NativeSyncRange>>,
     outbound_sync_requests: Mutex<BTreeMap<Option<PeerId>, NativeOutboundSyncRequest>>,
+    sync_recovery_cursor: Mutex<Option<NativeSyncRecoveryCursor>>,
+    sync_chunk_sessions: Mutex<NativeSyncChunkSessions>,
+    sync_chunk_receive_in_flight_peers: Mutex<BTreeSet<PeerId>>,
     mining_tasks: Mutex<Vec<JoinHandle<()>>>,
     sync_tx: Mutex<Option<ProtocolSender>>,
     pending_proof_admission_semaphore: Arc<Semaphore>,
@@ -3927,6 +4108,22 @@ pub struct NativeNode {
     reorg_suffix_body_bytes_examined: AtomicU64,
     #[cfg(test)]
     reorg_index_mutations: AtomicU64,
+    // PR 203 bounded-sync instrumentation. These counters describe storage
+    // work only and never act as proof-validity authority.
+    #[cfg(test)]
+    block_meta_load_count: AtomicU64,
+    #[cfg(test)]
+    block_meta_decode_count: AtomicU64,
+    #[cfg(test)]
+    chain_reconstruction_count: AtomicU64,
+    #[cfg(test)]
+    streaming_replay_live_stored_meta_count: AtomicU64,
+    #[cfg(test)]
+    streaming_replay_peak_stored_meta_count: AtomicU64,
+    #[cfg(test)]
+    sync_chunk_record_load_count: AtomicU64,
+    #[cfg(test)]
+    sync_chunk_record_decode_count: AtomicU64,
 }
 
 mod admission;
@@ -3948,6 +4145,7 @@ mod rpc;
 mod service;
 pub(crate) mod smallwood_v8_lifetime;
 mod storage;
+mod sync_chunks;
 mod util;
 
 pub(crate) use admission::*;
@@ -3971,6 +4169,7 @@ pub(crate) use rpc::*;
 pub use service::run;
 pub(crate) use service::*;
 pub(crate) use storage::*;
+pub(crate) use sync_chunks::*;
 pub(crate) use util::*;
 
 #[cfg(test)]

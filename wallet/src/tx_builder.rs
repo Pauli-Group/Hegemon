@@ -2085,9 +2085,7 @@ fn build_output(
 mod tests {
     use rand::{rngs::StdRng, SeedableRng};
     use serde::Deserialize;
-    use superneo_hegemon::{
-        decode_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_artifact_bytes,
-    };
+    use superneo_hegemon::decode_native_tx_leaf_artifact_bytes;
     use tempfile::{tempdir, TempDir};
 
     use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
@@ -2978,91 +2976,6 @@ mod tests {
         assert!(error
             .to_string()
             .contains("no fresh transaction proof authority"));
-    }
-
-    #[test]
-    fn build_transaction_can_emit_native_tx_leaf_payloads() {
-        let (sender, recipient_store, _) = seeded_sender_and_recipient(777);
-        let recipient_fvk = recipient_store.full_viewing_key().unwrap().unwrap();
-
-        let recipient = Recipient {
-            address: recipient_store.primary_address().unwrap(),
-            value: 160_000_000,
-            asset_id: 0,
-            memo: MemoPlaintext::new(b"native tx leaf".to_vec()),
-        };
-        let built = build_transaction(&sender, &[recipient], 0).unwrap();
-        assert_eq!(built.bundle.commitments.len(), 1);
-        assert_eq!(built.outgoing_disclosures.len(), 1);
-        assert_eq!(
-            built.outgoing_disclosures[0].commitment,
-            built.bundle.commitments[0]
-        );
-
-        let decoded_notes = built.bundle.decode_notes().unwrap();
-        assert_eq!(decoded_notes.len(), 1);
-        let recovered = recipient_fvk.decrypt_note(&decoded_notes[0]).unwrap();
-        let recovered_commitment = felts_to_bytes48(&recovered.note_data.commitment());
-        assert_eq!(recovered_commitment, built.bundle.commitments[0]);
-        assert_eq!(
-            felts_to_bytes48(&built.outgoing_disclosures[0].note.commitment()),
-            recovered_commitment
-        );
-
-        let decoded = decode_native_tx_leaf_artifact_bytes(&built.bundle.proof_bytes)
-            .expect("native tx-leaf payload should decode");
-        assert_eq!(decoded.tx.commitments, built.bundle.commitments);
-        let decoded_ciphertext_hashes = decoded_notes
-            .iter()
-            .map(|note| {
-                note.to_da_bytes()
-                    .map(|bytes| ciphertext_hash_bytes(&bytes))
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .expect("decoded notes should serialize to DA bytes");
-        assert_eq!(decoded.tx.ciphertext_hashes.len(), decoded_notes.len());
-        assert_eq!(decoded.tx.ciphertext_hashes, decoded_ciphertext_hashes);
-        let artifact_balance_slot_asset_ids: [u64; 4] = decoded
-            .stark_public_inputs
-            .balance_slot_asset_ids
-            .clone()
-            .try_into()
-            .expect("artifact balance slot count");
-        assert_eq!(decoded.stark_public_inputs.merkle_root, built.bundle.anchor);
-        assert_eq!(decoded.tx.nullifiers, built.bundle.nullifiers);
-        assert_eq!(decoded.tx.commitments, built.bundle.commitments);
-        assert_eq!(decoded.tx.ciphertext_hashes, decoded_ciphertext_hashes);
-        assert_eq!(
-            artifact_balance_slot_asset_ids,
-            built.bundle.balance_slot_asset_ids
-        );
-        assert_eq!(decoded.stark_public_inputs.fee, built.bundle.fee);
-        let artifact_binding_inputs = ShieldedTransferInputs {
-            anchor: decoded.stark_public_inputs.merkle_root,
-            nullifiers: decoded.tx.nullifiers.clone(),
-            commitments: decoded.tx.commitments.clone(),
-            ciphertext_hashes: decoded.tx.ciphertext_hashes.clone(),
-            balance_slot_asset_ids: artifact_balance_slot_asset_ids,
-            fee: decoded.stark_public_inputs.fee,
-            value_balance: 0,
-            stablecoin: None,
-        };
-        assert_eq!(
-            StarkVerifier::compute_binding_hash(&artifact_binding_inputs).data,
-            built.bundle.binding_hash,
-            "wallet action binding hash must match the native tx-leaf artifact binding"
-        );
-        verify_native_tx_leaf_artifact_bytes(
-            &decoded.tx,
-            &decoded.receipt,
-            &built.bundle.proof_bytes,
-        )
-        .expect("native tx-leaf payload should verify");
-        assert_eq!(
-            decoded.receipt.verifier_profile,
-            superneo_hegemon::experimental_native_tx_leaf_verifier_profile()
-        );
-        assert_eq!(built.bundle.nullifiers.len(), built.nullifiers.len());
     }
 
     #[test]

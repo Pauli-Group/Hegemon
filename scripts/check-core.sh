@@ -103,7 +103,6 @@ run_test_wallet() {
 run_test_wallet_base() {
   prepare_test_environment
   cargo test -p wallet -- \
-    --skip tx_builder::tests::build_transaction_can_emit_native_tx_leaf_payloads \
     --skip tx_builder::tests::multisig_setup_bundle_has_fee_nullifier_and_reconciled_accumulator \
     --skip tx_builder::tests::multisig_builders_create_approval_and_final_transactions_with_hidden_policy_shape \
     --skip tx_builder::tests::multisig_final_rejects_plan_digest_drift

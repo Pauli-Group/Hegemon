@@ -35,7 +35,7 @@ const BLUEPRINT_REVIEW_SOURCE_BYTE_EXCLUSIONS: &[&str] = &[
 const MAX_BLUEPRINT_REVIEW_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_BLUEPRINT_REVIEW_EXPANDED_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 const EXPECTED_V8_ATOMIC_RUNTIME_GATE_AST_BLAKE3: &str =
-    "f2738a82e854ef35fbbe1bd791dd5a2cf2bc70e5c530e187cc400286e8652755";
+    "5420f41a3ec88b209e294193065ec23840e09bcfc57ec313996f1d12d066aaf2";
 const V8_ATOMIC_MANIFEST_RUNTIME_FUNCTIONS: &[&str] = &[
     "evaluate_native_atomic_commit_manifest_admission",
     "expected_atomic_block_record_writes",
@@ -174,7 +174,7 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
 const EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3: &str =
     "51512c473f20c40c3a88b9f2a1ba0d2e81b9a25a6591c025967b306121801657";
 const EXPECTED_FORMAL_SOURCE_TREE_BLAKE3: &str =
-    "d09ce325d341c77315ceaf4e9209fc022191c538f0754addd756717bfd491715";
+    "f6dc09c1fe58fcd81fad2628b2c8538a7dd930d591d7813af56c2909074462ac";
 const PROGRESS_PERCENT_EPSILON: f64 = 0.0001;
 const CLAIMS_SCHEMA_VERSION: u32 = 2;
 const BLUEPRINT_SCHEMA_VERSION: u32 = 2;
@@ -2179,6 +2179,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/GenerateActionRequestProjectionAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateAtomicCommitManifestAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/CanonicalReorgPersistenceAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateCanonicalReorgPersistenceAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/ActionHashAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateActionHashAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/ActionRootTranscript.lean",
@@ -2301,9 +2303,15 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/SidecarUploadAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateSidecarUploadAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/SyncAdmission.lean",
+        "formal/lean/Hegemon/Native/SyncBlockChunkAdmission.lean",
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean",
+        "formal/lean/Hegemon/Native/SyncBlockRangePublicationAdmission.lean",
+        "formal/lean/Hegemon/Native/SyncRawIngress.lean",
         "formal/lean/Hegemon/Native/SyncResponseImport.lean",
         "formal/lean/Hegemon/Native/GenerateSyncAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/GenerateSyncBlockChunkAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/GenerateSyncBlockRangePublicationAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/GenerateSyncRawIngressVectors.lean",
         "formal/lean/Hegemon/Native/GenerateSyncResponseImportVectors.lean",
         "formal/lean/Hegemon/Network/SecureChannel.lean",
         "formal/lean/Hegemon/Network/GenerateSecureChannelVectors.lean",
@@ -4201,12 +4209,12 @@ fn syn_direct_pinned_transaction_statement_indices(method: &syn::ImplItemFn) -> 
 }
 
 #[derive(Default)]
-struct RustOuterEscapeVisitor {
+struct RustOuterSuccessfulEscapeVisitor {
     closure_depth: usize,
     found: bool,
 }
 
-impl<'ast> syn::visit::Visit<'ast> for RustOuterEscapeVisitor {
+impl<'ast> syn::visit::Visit<'ast> for RustOuterSuccessfulEscapeVisitor {
     fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
         self.closure_depth += 1;
         syn::visit::visit_expr_closure(self, closure);
@@ -4214,7 +4222,13 @@ impl<'ast> syn::visit::Visit<'ast> for RustOuterEscapeVisitor {
     }
 
     fn visit_expr_return(&mut self, expression: &'ast syn::ExprReturn) {
-        if self.closure_depth == 0 {
+        if self.closure_depth == 0
+            && !expression
+                .expr
+                .as_deref()
+                .and_then(|returned| syn_call_path_is(returned, &["Err"]))
+                .is_some_and(|err| err.args.len() == 1)
+        {
             self.found = true;
             return;
         }
@@ -4222,26 +4236,27 @@ impl<'ast> syn::visit::Visit<'ast> for RustOuterEscapeVisitor {
     }
 
     fn visit_expr_macro(&mut self, expression: &'ast syn::ExprMacro) {
-        if self.closure_depth == 0 {
+        if self.closure_depth == 0
+            && !expression.mac.path.is_ident("anyhow")
+            && !expression.mac.path.is_ident("format")
+        {
             self.found = true;
             return;
         }
         syn::visit::visit_expr_macro(self, expression);
     }
 
-    fn visit_stmt_macro(&mut self, statement: &'ast syn::StmtMacro) {
+    fn visit_stmt_macro(&mut self, _statement: &'ast syn::StmtMacro) {
         if self.closure_depth == 0 {
             self.found = true;
-            return;
         }
-        syn::visit::visit_stmt_macro(self, statement);
     }
 }
 
-fn syn_statements_have_outer_return_or_macro(statements: &[syn::Stmt]) -> bool {
+fn syn_statements_have_outer_successful_escape_or_unknown_macro(statements: &[syn::Stmt]) -> bool {
     use syn::visit::Visit;
 
-    let mut visitor = RustOuterEscapeVisitor::default();
+    let mut visitor = RustOuterSuccessfulEscapeVisitor::default();
     for statement in statements {
         visitor.visit_stmt(statement);
         if visitor.found {
@@ -4253,6 +4268,8 @@ fn syn_statements_have_outer_return_or_macro(statements: &[syn::Stmt]) -> bool {
 
 #[derive(Default)]
 struct RustRuntimeGateVarianceVisitor {
+    allow_atomic_kind_matches: bool,
+    atomic_kind_matches_seen: usize,
     found: bool,
 }
 
@@ -4265,17 +4282,33 @@ impl<'ast> syn::visit::Visit<'ast> for RustRuntimeGateVarianceVisitor {
         syn::visit::visit_attribute(self, attribute);
     }
 
-    fn visit_macro(&mut self, _mac: &'ast syn::Macro) {
-        self.found = true;
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        let pinned_atomic_kind_matches = self.allow_atomic_kind_matches
+            && mac.path.is_ident("matches")
+            && compact_ascii_whitespace(&mac.tokens.to_string())
+                == "input.kind,NativeAtomicCommitKind::MinedBlockCommit|NativeAtomicCommitKind::TipExtensionBatchCommit";
+        if pinned_atomic_kind_matches {
+            self.atomic_kind_matches_seen += 1;
+            if self.atomic_kind_matches_seen > 1 {
+                self.found = true;
+            }
+        } else {
+            self.found = true;
+        }
     }
 }
 
 fn syn_item_fn_has_runtime_gate_variance(function: &syn::ItemFn) -> bool {
     use syn::visit::Visit;
 
-    let mut visitor = RustRuntimeGateVarianceVisitor::default();
+    let allow_atomic_kind_matches =
+        function.sig.ident == "evaluate_native_atomic_commit_manifest_admission";
+    let mut visitor = RustRuntimeGateVarianceVisitor {
+        allow_atomic_kind_matches,
+        ..RustRuntimeGateVarianceVisitor::default()
+    };
     visitor.visit_item_fn(function);
-    visitor.found
+    visitor.found || (allow_atomic_kind_matches && visitor.atomic_kind_matches_seen != 1)
 }
 
 fn syn_item_fn_has_compiler_selection(function: &syn::ItemFn) -> bool {
@@ -4325,15 +4358,6 @@ fn syn_item_impl_has_compiler_selection_attribute(item_impl: &syn::ItemImpl) -> 
         .attrs
         .iter()
         .any(|attribute| attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr"))
-}
-
-fn syn_plain_reference_path_is(expression: &syn::Expr, expected: &str) -> bool {
-    let syn::Expr::Reference(reference) = expression else {
-        return false;
-    };
-    reference.attrs.is_empty()
-        && reference.mutability.is_none()
-        && syn_plain_path_is(&reference.expr, expected)
 }
 
 fn syn_parent_call_is<'a>(expression: &'a syn::Expr, expected: &str) -> Option<&'a syn::ExprCall> {
@@ -4405,6 +4429,49 @@ fn syn_fn_arg_is_reference_slice_path(
         && reference.lifetime.is_none()
         && reference.mutability.is_none()
         && syn_type_path_is_segments(&slice.elem, expected_element)
+}
+
+fn syn_fn_arg_is_path(argument: &syn::FnArg, binding: &str, expected_type: &[&str]) -> bool {
+    let syn::FnArg::Typed(argument) = argument else {
+        return false;
+    };
+    argument.attrs.is_empty()
+        && syn_plain_pat_ident_is(&argument.pat, binding)
+        && syn_type_path_is_segments(&argument.ty, expected_type)
+}
+
+fn syn_fn_arg_is_owned_v8_reorg(argument: &syn::FnArg) -> bool {
+    let syn::FnArg::Typed(argument) = argument else {
+        return false;
+    };
+    let syn::Type::Path(option) = argument.ty.as_ref() else {
+        return false;
+    };
+    if !argument.attrs.is_empty()
+        || !syn_plain_pat_ident_is(&argument.pat, "poseidon2_v8_reorg")
+        || option.qself.is_some()
+        || option.path.leading_colon.is_some()
+        || option.path.segments.len() != 1
+        || option.path.segments[0].ident != "Option"
+    {
+        return false;
+    }
+    let syn::PathArguments::AngleBracketed(arguments) = &option.path.segments[0].arguments else {
+        return false;
+    };
+    let Some(syn::GenericArgument::Type(syn::Type::Tuple(tuple))) = arguments.args.first() else {
+        return false;
+    };
+    arguments.args.len() == 1
+        && tuple.elems.len() == 2
+        && syn_type_path_is_segments(
+            &tuple.elems[0],
+            &["poseidon2_v8_state", "Poseidon2V8StateStore"],
+        )
+        && syn_type_path_is_segments(
+            &tuple.elems[1],
+            &["poseidon2_v8_state", "Poseidon2V8CanonicalPlan"],
+        )
 }
 
 fn syn_return_type_is_result_unit(output: &syn::ReturnType) -> bool {
@@ -4485,7 +4552,7 @@ fn validate_v8_atomic_method_signature(
     let inputs = signature.inputs.iter().collect::<Vec<_>>();
     let exact = match method_name {
         "commit_reorg_suffix_atomically" => {
-            inputs.len() == 4
+            inputs.len() == 6
                 && syn_fn_arg_is_reference_path(inputs[1], "plan", &["NativeReorgSuffixCommitPlan"])
                 && syn_fn_arg_is_reference_path(inputs[2], "best", &["NativeBlockMeta"])
                 && syn_fn_arg_is_reference_path(
@@ -4493,6 +4560,8 @@ fn validate_v8_atomic_method_signature(
                     "next_nullifier_accumulator",
                     &["NullifierAccumulator"],
                 )
+                && syn_fn_arg_is_owned_v8_reorg(inputs[4])
+                && syn_fn_arg_is_path(inputs[5], "commit_kind", &["NativeAtomicCommitKind"])
         }
         "commit_mined_block_atomically" => {
             inputs.len() == 8
@@ -4549,6 +4618,15 @@ fn syn_plain_reference_field_is(expression: &syn::Expr, base: &str, field: &str)
         && matches!(&field_expression.member, syn::Member::Named(ident) if ident == field)
 }
 
+fn syn_plain_field_is(expression: &syn::Expr, base: &str, field: &str) -> bool {
+    let syn::Expr::Field(field_expression) = expression else {
+        return false;
+    };
+    field_expression.attrs.is_empty()
+        && syn_plain_path_is(&field_expression.base, base)
+        && matches!(&field_expression.member, syn::Member::Named(ident) if ident == field)
+}
+
 fn syn_plain_pat_ident_is(pattern: &syn::Pat, expected: &str) -> bool {
     let syn::Pat::Ident(ident) = pattern else {
         return false;
@@ -4575,6 +4653,24 @@ fn syn_plain_pat_path_is(pattern: &syn::Pat, expected: &str) -> bool {
         && matches!(path.path.segments[0].arguments, syn::PathArguments::None)
 }
 
+fn syn_plain_pat_path_is_segments(pattern: &syn::Pat, expected: &[&str]) -> bool {
+    let syn::Pat::Path(path) = pattern else {
+        return false;
+    };
+    path.attrs.is_empty()
+        && path.qself.is_none()
+        && path.path.leading_colon.is_none()
+        && path.path.segments.len() == expected.len()
+        && path
+            .path
+            .segments
+            .iter()
+            .zip(expected)
+            .all(|(segment, expected)| {
+                segment.ident == *expected && matches!(segment.arguments, syn::PathArguments::None)
+            })
+}
+
 fn syn_tuple_struct_pat_is_one_ident(pattern: &syn::Pat, constructor: &str, binding: &str) -> bool {
     let syn::Pat::TupleStruct(tuple) = pattern else {
         return false;
@@ -4593,6 +4689,12 @@ fn syn_integer_literal_is(expression: &syn::Expr, expected: &str) -> bool {
     matches!(expression, syn::Expr::Lit(literal)
         if literal.attrs.is_empty()
             && matches!(&literal.lit, syn::Lit::Int(integer) if integer.base10_digits() == expected))
+}
+
+fn syn_string_literal_is(expression: &syn::Expr, expected: &str) -> bool {
+    matches!(expression, syn::Expr::Lit(literal)
+        if literal.attrs.is_empty()
+            && matches!(&literal.lit, syn::Lit::Str(string) if string.value() == expected))
 }
 
 fn syn_call_path_is<'a>(expression: &'a syn::Expr, expected: &[&str]) -> Option<&'a syn::ExprCall> {
@@ -4953,6 +5055,191 @@ fn syn_v8_plan_projection_is(
         && syn_plain_pat_ident_is(&tuple.elems[1], projected_binding)
 }
 
+fn syn_expression_is_fail_closed_return(expression: &syn::Expr) -> bool {
+    let syn::Expr::Return(returned) = expression else {
+        return false;
+    };
+    returned.attrs.is_empty()
+        && returned
+            .expr
+            .as_deref()
+            .and_then(|expression| syn_call_path_is(expression, &["Err"]))
+            .is_some_and(|err| err.args.len() == 1)
+}
+
+fn syn_block_tail_is_propagated_self_call(
+    block: &syn::ExprBlock,
+    expected_statement_count: usize,
+    expected_builder: &str,
+) -> bool {
+    if !block.attrs.is_empty()
+        || block.label.is_some()
+        || block.block.stmts.len() != expected_statement_count
+    {
+        return false;
+    }
+    let Some(syn::Stmt::Expr(syn::Expr::Try(propagated), None)) = block.block.stmts.last() else {
+        return false;
+    };
+    propagated.attrs.is_empty()
+        && syn_self_call_is(&propagated.expr, expected_builder).is_some_and(|call| {
+            call.args.len() == 2
+                && syn_plain_path_is(&call.args[0], "plan")
+                && syn_plain_path_is(&call.args[1], "v8_plan")
+        })
+}
+
+fn syn_canonical_suffix_tip_removal_guard_is(statement: &syn::Stmt) -> bool {
+    let syn::Stmt::Expr(syn::Expr::If(guard), None) = statement else {
+        return false;
+    };
+    let syn::Expr::Unary(negation) = guard.cond.as_ref() else {
+        return false;
+    };
+    let syn::Expr::MethodCall(is_empty) = negation.expr.as_ref() else {
+        return false;
+    };
+    guard.attrs.is_empty()
+        && guard.else_branch.is_none()
+        && matches!(negation.op, syn::UnOp::Not(_))
+        && negation.attrs.is_empty()
+        && is_empty.attrs.is_empty()
+        && is_empty.method == "is_empty"
+        && is_empty.turbofish.is_none()
+        && is_empty.args.is_empty()
+        && syn_plain_field_is(&is_empty.receiver, "plan", "tip_action_removals")
+        && matches!(guard.then_branch.stmts.as_slice(), [syn::Stmt::Expr(expression, Some(_))]
+            if syn_expression_is_fail_closed_return(expression))
+}
+
+fn syn_suffix_manifest_commit_kind_split_is(expression: &syn::Expr) -> bool {
+    let syn::Expr::Match(split) = expression else {
+        return false;
+    };
+    if !split.attrs.is_empty()
+        || !syn_plain_path_is(&split.expr, "commit_kind")
+        || split.arms.len() != 3
+        || split
+            .arms
+            .iter()
+            .any(|arm| !arm.attrs.is_empty() || arm.guard.is_some())
+    {
+        return false;
+    }
+    let tip = &split.arms[0];
+    let canonical = &split.arms[1];
+    let invalid = &split.arms[2];
+    syn_plain_pat_path_is_segments(
+        &tip.pat,
+        &["NativeAtomicCommitKind", "TipExtensionBatchCommit"],
+    ) && matches!(tip.body.as_ref(), syn::Expr::Block(block)
+    if syn_block_tail_is_propagated_self_call(
+        block,
+        1,
+        "native_tip_extension_batch_commit_manifest",
+    )) && syn_plain_pat_path_is_segments(
+        &canonical.pat,
+        &["NativeAtomicCommitKind", "CanonicalSuffixReorgCommit"],
+    ) && matches!(canonical.body.as_ref(), syn::Expr::Block(block)
+            if syn_block_tail_is_propagated_self_call(
+                block,
+                2,
+                "native_canonical_suffix_reorg_commit_manifest",
+            ) && syn_canonical_suffix_tip_removal_guard_is(&block.block.stmts[0]))
+        && matches!(&invalid.pat, syn::Pat::Wild(wild) if wild.attrs.is_empty())
+        && syn_expression_is_fail_closed_return(&invalid.body)
+}
+
+fn syn_mined_parent_projection_binding_is(local: &syn::Local) -> bool {
+    let syn::Pat::Tuple(tuple) = &local.pat else {
+        return false;
+    };
+    if !local.attrs.is_empty()
+        || !tuple.attrs.is_empty()
+        || tuple.elems.len() != 2
+        || !syn_plain_pat_ident_is(&tuple.elems[0], "parent_projection")
+        || !matches!(&tuple.elems[1], syn::Pat::Wild(wild) if wild.attrs.is_empty())
+    {
+        return false;
+    }
+    let Some(init) = &local.init else {
+        return false;
+    };
+    let syn::Expr::Try(required_parent) = init.expr.as_ref() else {
+        return false;
+    };
+    let syn::Expr::MethodCall(ok_or_else) = required_parent.expr.as_ref() else {
+        return false;
+    };
+    let syn::Expr::Try(inspected) = ok_or_else.receiver.as_ref() else {
+        return false;
+    };
+    let syn::Expr::MethodCall(inspect) = inspected.expr.as_ref() else {
+        return false;
+    };
+    let Some(syn::Expr::Closure(missing_parent)) = ok_or_else.args.first() else {
+        return false;
+    };
+    required_parent.attrs.is_empty()
+        && ok_or_else.attrs.is_empty()
+        && ok_or_else.method == "ok_or_else"
+        && ok_or_else.turbofish.is_none()
+        && ok_or_else.args.len() == 1
+        && inspected.attrs.is_empty()
+        && inspect.attrs.is_empty()
+        && inspect.method == "inspect_stored_pow_metadata"
+        && inspect.turbofish.is_none()
+        && syn_plain_path_is(&inspect.receiver, "self")
+        && inspect.args.len() == 3
+        && syn_plain_reference_field_is(&inspect.args[0], "meta", "parent_hash")
+        && syn_plain_path_is(&inspect.args[1], "None")
+        && syn_string_literal_is(&inspect.args[2], "native mined-block V8 canonical parent")
+        && missing_parent.attrs.is_empty()
+        && missing_parent.inputs.is_empty()
+        && matches!(missing_parent.body.as_ref(), syn::Expr::Macro(expression)
+            if expression.attrs.is_empty() && expression.mac.path.is_ident("anyhow"))
+}
+
+fn syn_mined_parent_projection_check_is(statement: &syn::Stmt) -> bool {
+    let syn::Stmt::Expr(syn::Expr::If(check), None) = statement else {
+        return false;
+    };
+    let syn::Expr::Binary(or) = check.cond.as_ref() else {
+        return false;
+    };
+    let (syn::Expr::Binary(height_mismatch), syn::Expr::Binary(hash_mismatch)) =
+        (or.left.as_ref(), or.right.as_ref())
+    else {
+        return false;
+    };
+    let syn::Expr::MethodCall(checked_add) = height_mismatch.left.as_ref() else {
+        return false;
+    };
+    let Some(expected_height) = syn_call_path_is(&height_mismatch.right, &["Some"]) else {
+        return false;
+    };
+    check.attrs.is_empty()
+        && check.else_branch.is_none()
+        && matches!(or.op, syn::BinOp::Or(_))
+        && or.attrs.is_empty()
+        && matches!(height_mismatch.op, syn::BinOp::Ne(_))
+        && height_mismatch.attrs.is_empty()
+        && checked_add.attrs.is_empty()
+        && checked_add.method == "checked_add"
+        && checked_add.turbofish.is_none()
+        && checked_add.args.len() == 1
+        && syn_plain_field_is(&checked_add.receiver, "parent_projection", "height")
+        && syn_integer_literal_is(&checked_add.args[0], "1")
+        && expected_height.args.len() == 1
+        && syn_plain_field_is(&expected_height.args[0], "meta", "height")
+        && matches!(hash_mismatch.op, syn::BinOp::Ne(_))
+        && hash_mismatch.attrs.is_empty()
+        && syn_plain_field_is(&hash_mismatch.left, "parent_projection", "hash")
+        && syn_plain_field_is(&hash_mismatch.right, "meta", "parent_hash")
+        && matches!(check.then_branch.stmts.as_slice(), [syn::Stmt::Expr(expression, Some(_))]
+            if syn_expression_is_fail_closed_return(expression))
+}
+
 fn validate_v8_atomic_caller_provenance(
     method_name: &str,
     item_impl: &syn::ItemImpl,
@@ -4999,13 +5286,15 @@ fn validate_v8_atomic_caller_provenance(
     );
     let transaction_index = transaction_indices[0];
     ensure!(
-        !syn_statements_have_outer_return_or_macro(&method.block.stmts[..transaction_index]),
-        "{} V8 atomic caller prefix must be return-free and macro-free outside closures",
+        !syn_statements_have_outer_successful_escape_or_unknown_macro(
+            &method.block.stmts[..transaction_index],
+        ),
+        "{} V8 atomic caller prefix must not bypass the transaction or use an unpinned macro outside closures",
         claim_id
     );
     let planner_name = match method_name {
         "commit_reorg_suffix_atomically" => "plan_poseidon2_v8_reorganization",
-        "commit_mined_block_atomically" => "plan_poseidon2_v8_block_against_parent",
+        "commit_mined_block_atomically" => "plan_poseidon2_v8_block_against_parent_tip",
         _ => {
             return Err(anyhow!(
                 "{} shared sled binding names unsupported production caller {}",
@@ -5034,37 +5323,25 @@ fn validate_v8_atomic_caller_provenance(
         "commit_reorg_suffix_atomically" => {
             let reorgs = syn_direct_local_bindings(method, "poseidon2_v8_reorg");
             ensure!(
-                reorgs.len() == 1
-                    && reorgs[0].1.attrs.is_empty()
-                    && syn_plain_pat_ident_is(&reorgs[0].1.pat, "poseidon2_v8_reorg"),
-                "{} V8 suffix caller requires one immutable poseidon2_v8_reorg binding",
+                reorgs.is_empty(),
+                "{} V8 suffix caller must consume its exact externally prepared poseidon2_v8_reorg parameter without shadowing",
                 claim_id
             );
-            let Some(reorg_init) = &reorgs[0].1.init else {
-                return Err(anyhow!(
-                    "{} V8 suffix planner binding has no initializer",
-                    claim_id
-                ));
-            };
-            let syn::Expr::Try(reorg_try) = reorg_init.expr.as_ref() else {
-                return Err(anyhow!(
-                    "{} V8 suffix planner must propagate failure",
-                    claim_id
-                ));
-            };
-            let syn::Expr::MethodCall(reorg_planner) = reorg_try.expr.as_ref() else {
-                return Err(anyhow!("{} V8 suffix plan uses the wrong source", claim_id));
-            };
+            let v8_plans = syn_direct_local_bindings(method, "v8_plan");
             ensure!(
-                reorg_try.attrs.is_empty()
-                    && reorg_planner.attrs.is_empty()
-                    && reorg_planner.method == "plan_poseidon2_v8_reorganization"
-                    && reorg_planner.turbofish.is_none()
-                    && syn_plain_path_is(&reorg_planner.receiver, "self")
-                    && reorg_planner.args.len() == 2
-                    && syn_plain_reference_field_is(&reorg_planner.args[0], "plan", "old_blocks")
-                    && syn_plain_reference_field_is(&reorg_planner.args[1], "plan", "new_blocks"),
-                "{} V8 suffix plan must come from the exact contextual source planner",
+                v8_plans.len() == 1
+                    && v8_plans[0].1.attrs.is_empty()
+                    && syn_plain_pat_ident_is(&v8_plans[0].1.pat, "v8_plan")
+                    && v8_plans[0].1.init.as_ref().is_some_and(|init| {
+                        init.diverge.is_none()
+                            && syn_v8_plan_projection_is(
+                                &init.expr,
+                                "poseidon2_v8_reorg",
+                                true,
+                                "v8_plan",
+                            )
+                    }),
+                "{} V8 suffix caller must derive one immutable v8_plan reference from the external prepared plan",
                 claim_id
             );
             let manifests = syn_direct_local_bindings(method, "suffix_manifest");
@@ -5072,7 +5349,7 @@ fn validate_v8_atomic_caller_provenance(
                 manifests.len() == 1
                     && manifests[0].1.attrs.is_empty()
                     && syn_plain_pat_ident_is(&manifests[0].1.pat, "suffix_manifest")
-                    && reorgs[0].0 < manifests[0].0
+                    && v8_plans[0].0 < manifests[0].0
                     && manifests[0].0 < transaction_index,
                 "{} V8 suffix caller requires one immutable suffix_manifest binding",
                 claim_id
@@ -5083,52 +5360,40 @@ fn validate_v8_atomic_caller_provenance(
                     claim_id
                 ));
             };
-            let syn::Expr::Try(try_expression) = init.expr.as_ref() else {
-                return Err(anyhow!(
-                    "{} V8 suffix manifest builder must propagate failure",
-                    claim_id
-                ));
-            };
             ensure!(
-                try_expression.attrs.is_empty(),
-                "{} V8 suffix manifest builder must be unconditional",
-                claim_id
-            );
-            let Some(call) = syn_self_call_is(
-                &try_expression.expr,
-                "native_canonical_suffix_reorg_commit_manifest",
-            ) else {
-                return Err(anyhow!(
-                    "{} V8 suffix manifest uses the wrong builder",
-                    claim_id
-                ));
-            };
-            ensure!(
-                call.args.len() == 2
-                    && syn_plain_path_is(&call.args[0], "plan")
-                    && syn_v8_plan_projection_is(
-                        &call.args[1],
-                        "poseidon2_v8_reorg",
-                        true,
-                        "v8_plan",
-                    ),
-                "{} V8 suffix manifest must consume the exact suffix plan projection",
+                init.diverge.is_none() && syn_suffix_manifest_commit_kind_split_is(&init.expr),
+                "{} V8 suffix manifest must split commit_kind across the exact tip-extension and canonical-reorg builders",
                 claim_id
             );
         }
         "commit_mined_block_atomically" => {
+            let parents = syn_direct_local_bindings(method, "parent_projection");
+            let parent_checks = method
+                .block
+                .stmts
+                .iter()
+                .enumerate()
+                .filter(|(_, statement)| syn_mined_parent_projection_check_is(statement))
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
             let commits = syn_direct_local_bindings(method, "v8_commit");
             let manifests = syn_direct_local_bindings(method, "mined_manifest");
             ensure!(
-                commits.len() == 1
+                parents.len() == 1
+                    && syn_mined_parent_projection_binding_is(parents[0].1)
+                    && parent_checks.len() == 1
+                    && syn_direct_local_bindings(method, "parent_meta").is_empty()
+                    && commits.len() == 1
                     && commits[0].1.attrs.is_empty()
                     && syn_plain_pat_ident_is(&commits[0].1.pat, "v8_commit")
                     && manifests.len() == 1
                     && manifests[0].1.attrs.is_empty()
                     && syn_plain_pat_ident_is(&manifests[0].1.pat, "mined_manifest")
+                    && parents[0].0 < parent_checks[0]
+                    && parent_checks[0] < commits[0].0
                     && commits[0].0 < manifests[0].0
                     && manifests[0].0 < transaction_index,
-                "{} V8 mined caller requires ordered immutable v8_commit and mined_manifest bindings",
+                "{} V8 mined caller requires checked stored-parent inspection before ordered immutable v8_commit and mined_manifest bindings",
                 claim_id
             );
             let Some(commit_init) = &commits[0].1.init else {
@@ -5149,14 +5414,15 @@ fn validate_v8_atomic_caller_provenance(
             ensure!(
                 commit_try.attrs.is_empty()
                     && planner.attrs.is_empty()
-                    && planner.method == "plan_poseidon2_v8_block_against_parent"
+                    && planner.method == "plan_poseidon2_v8_block_against_parent_tip"
                     && planner.turbofish.is_none()
                     && syn_plain_path_is(&planner.receiver, "self")
-                    && planner.args.len() == 3
-                    && syn_plain_reference_path_is(&planner.args[0], "parent_meta")
-                    && syn_plain_path_is(&planner.args[1], "meta")
-                    && syn_plain_path_is(&planner.args[2], "actions"),
-                "{} V8 mined plan must come from the exact contextual source planner",
+                    && planner.args.len() == 4
+                    && syn_plain_field_is(&planner.args[0], "parent_projection", "height")
+                    && syn_plain_field_is(&planner.args[1], "parent_projection", "hash")
+                    && syn_plain_path_is(&planner.args[2], "meta")
+                    && syn_plain_path_is(&planner.args[3], "actions"),
+                "{} V8 mined plan must come from the exact checked stored-parent tip",
                 claim_id
             );
             let Some(manifest_init) = &manifests[0].1.init else {
@@ -5245,8 +5511,14 @@ fn validate_unconditional_shared_sled_symbols(
                 continue;
             };
             if item_impl.trait_.is_some()
-                || expected_type
-                    .is_some_and(|expected| !syn_impl_self_type_is_exact(item_impl, expected))
+                || expected_type.is_some_and(|expected| {
+                    let exact_type = if binding.path == "node/src/native/node_impl.rs" {
+                        syn_impl_self_type_is_one_segment(item_impl, expected)
+                    } else {
+                        syn_impl_self_type_is_exact(item_impl, expected)
+                    };
+                    !exact_type
+                })
             {
                 continue;
             }
@@ -5479,6 +5751,14 @@ fn validate_rust_implementation_binding(
                 &test_module_spans,
                 &functions,
             );
+            let allow_pinned_native_error_prefix = binding.path == "node/src/native/node_impl.rs"
+                && binding.callee
+                    == "apply_poseidon2_v8_plan_and_admit_atomic_manifest_in_transaction"
+                && matches!(
+                    caller.as_str(),
+                    "NativeNode::commit_reorg_suffix_atomically"
+                        | "NativeNode::commit_mined_block_atomically"
+                );
             ensure!(
                 !call_sites.is_empty()
                     && (result_obligation
@@ -5493,6 +5773,7 @@ fn validate_rust_implementation_binding(
                             &closure_bodies,
                             &async_block_bodies,
                             &macro_body_spans,
+                            allow_pinned_native_error_prefix,
                         ) && call_satisfies_result_obligation(
                             body,
                             raw_body,
@@ -5592,6 +5873,14 @@ fn validate_rust_implementation_order(
                     &closure_bodies,
                     &async_block_bodies,
                     &macro_body_spans,
+                    binding.path == "node/src/native/node_impl.rs"
+                        && binding.callee
+                            == "apply_poseidon2_v8_plan_and_admit_atomic_manifest_in_transaction"
+                        && matches!(
+                            constraint.caller.as_str(),
+                            "NativeNode::commit_reorg_suffix_atomically"
+                                | "NativeNode::commit_mined_block_atomically"
+                        ),
                 )
             } else {
                 rust_call_is_direct_order_evidence(
@@ -7401,11 +7690,31 @@ fn rust_call_is_member_invocation(source: &str, call: &RustCallSite) -> bool {
 /// implementation-binding evidence. The ordinary result-obligation check
 /// separately requires `?` (or another accepted propagation form) on the inner
 /// helper.
+fn rust_prefix_has_noncanonical_return(source: &str) -> bool {
+    let mut cursor = 0usize;
+    while let Some(return_start) = find_rust_token(source, "return", cursor) {
+        let after_return = skip_ascii_whitespace(source, return_start + "return".len());
+        let Some(after_err) = source[after_return..]
+            .strip_prefix("Err")
+            .map(|suffix| source.len() - suffix.len())
+        else {
+            return true;
+        };
+        let err_open = skip_ascii_whitespace(source, after_err);
+        if source.as_bytes().get(err_open) != Some(&b'(') {
+            return true;
+        }
+        cursor = err_open + 1;
+    }
+    false
+}
+
 fn call_is_in_propagated_shared_sled_transaction_closure(
     source: &str,
     raw_source: &str,
     call: &RustCallSite,
     enclosing_closure: &RustClosureBody,
+    allow_pinned_native_error_prefix: bool,
 ) -> bool {
     debug_assert_eq!(source.len(), raw_source.len());
     let Some(transaction_call) = rust_call_sites(source, "transaction")
@@ -7422,7 +7731,12 @@ fn call_is_in_propagated_shared_sled_transaction_closure(
     };
     let context = rust_statement_context(source, transaction_call.start);
     let transaction_statement_start = context.current_statement_start();
-    if find_rust_token(&source[..transaction_statement_start], "return", 0).is_some() {
+    let prefix = &source[..transaction_statement_start];
+    if if allow_pinned_native_error_prefix {
+        rust_prefix_has_noncanonical_return(prefix)
+    } else {
+        find_rust_token(prefix, "return", 0).is_some()
+    } {
         return false;
     }
     let rooted_ufcs_path =
@@ -7571,6 +7885,7 @@ fn rust_call_is_direct_binding_evidence(
     closures: &[RustClosureBody],
     async_blocks: &[RustSourceSpan],
     macro_bodies: &[RustSourceSpan],
+    allow_pinned_native_error_prefix: bool,
 ) -> bool {
     if rust_position_is_inside_spans(call.start, async_blocks)
         || rust_position_is_inside_spans(call.start, macro_bodies)
@@ -7591,6 +7906,7 @@ fn rust_call_is_direct_binding_evidence(
                 raw_source,
                 call,
                 enclosing_closures[0],
+                allow_pinned_native_error_prefix,
             );
     }
     if enclosing_closures.is_empty() {
@@ -12100,15 +12416,16 @@ mod tests {
              plan: &Plan,\n\
              v8_plan: Option<&V8Plan>,\n\
          ) -> Result<Manifest, ()> { todo!() }\n\
-         impl super::NativeNode {\n\
+         impl NativeNode {\n\
              fn plan_poseidon2_v8_reorganization(\n\
                  &self,\n\
                  old_blocks: &[Block],\n\
                  new_blocks: &[Block],\n\
              ) -> Result<Option<(Store, V8Plan)>, ()> { todo!() }\n\
-             fn plan_poseidon2_v8_block_against_parent(\n\
+             fn plan_poseidon2_v8_block_against_parent_tip(\n\
                  &self,\n\
-                 parent: &Meta,\n\
+                 parent_height: u64,\n\
+                 parent_hash: [u8; 32],\n\
                  meta: &Meta,\n\
                  actions: &[PendingAction],\n\
              ) -> Result<Option<(Store, V8Plan)>, ()> { todo!() }\n\
@@ -12117,16 +12434,25 @@ mod tests {
                  plan: &NativeReorgSuffixCommitPlan,\n\
                  best: &NativeBlockMeta,\n\
                  next_nullifier_accumulator: &NullifierAccumulator,\n\
+                 poseidon2_v8_reorg: Option<(\n\
+                     poseidon2_v8_state::Poseidon2V8StateStore,\n\
+                     poseidon2_v8_state::Poseidon2V8CanonicalPlan,\n\
+                 )>,\n\
+                 commit_kind: NativeAtomicCommitKind,\n\
              ) -> Result<()> {\n\
-                 let poseidon2_v8_reorg = self\
-                     .plan_poseidon2_v8_reorganization(\n\
-                         &plan.old_blocks,\n\
-                         &plan.new_blocks,\n\
-                     )?;\n\
-                 let suffix_manifest = self::native_canonical_suffix_reorg_commit_manifest(\n\
-                     plan,\n\
-                     poseidon2_v8_reorg.as_ref().map(|(_, v8_plan)| v8_plan),\n\
-                 )?;\n\
+                 let v8_plan = poseidon2_v8_reorg.as_ref().map(|(_, v8_plan)| v8_plan);\n\
+                 let suffix_manifest = match commit_kind {\n\
+                     NativeAtomicCommitKind::TipExtensionBatchCommit => {\n\
+                         self::native_tip_extension_batch_commit_manifest(plan, v8_plan)?\n\
+                     }\n\
+                     NativeAtomicCommitKind::CanonicalSuffixReorgCommit => {\n\
+                         if !plan.tip_action_removals.is_empty() {\n\
+                             return Err(anyhow!(\"unexpected tip removals\"));\n\
+                         }\n\
+                         self::native_canonical_suffix_reorg_commit_manifest(plan, v8_plan)?\n\
+                     }\n\
+                     _ => return Err(anyhow!(\"invalid commit kind\")),\n\
+                 };\n\
                  self::__hegemon_pinned_sled::transaction::Transactional::transaction(\n\
                      &(),\n\
                      |_| Ok(()),\n\
@@ -12143,9 +12469,25 @@ mod tests {
                  checkpoint_rows: &NativeCanonicalCheckpointRows,\n\
                  additional_pending_action_removals: &[ActionId48],\n\
              ) -> Result<()> {\n\
-                 let parent_meta = parent_meta;\n\
+                 let (parent_projection, _) = self\
+                     .inspect_stored_pow_metadata(\n\
+                         &meta.parent_hash,\n\
+                         None,\n\
+                         \"native mined-block V8 canonical parent\",\n\
+                     )?\
+                     .ok_or_else(|| anyhow!(\"missing parent\"))?;\n\
+                 if parent_projection.height.checked_add(1) != Some(meta.height)\
+                     || parent_projection.hash != meta.parent_hash\
+                 {\n\
+                     return Err(anyhow!(\"parent mismatch\"));\n\
+                 }\n\
                  let v8_commit = self\
-                     .plan_poseidon2_v8_block_against_parent(&parent_meta, meta, actions)?;\n\
+                     .plan_poseidon2_v8_block_against_parent_tip(\n\
+                         parent_projection.height,\n\
+                         parent_projection.hash,\n\
+                         meta,\n\
+                         actions,\n\
+                     )?;\n\
                  let mined_manifest = super::native_mined_block_commit_manifest(\n\
                      actions,\n\
                      planned,\n\
@@ -12361,6 +12703,27 @@ mod tests {
     }
 
     #[test]
+    fn production_shared_sled_provenance_accepts_current_node_source() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("canonical repository root");
+        let source = std::fs::read_to_string(root.join("node/src/native/node_impl.rs"))
+            .expect("read current native node source");
+        let parsed = syn::parse_file(&source).expect("parse current native node source");
+        validate_unconditional_shared_sled_symbols(
+            &parsed,
+            "native.atomic-commit-manifest-admission",
+            &ImplementationBinding {
+                callee: "apply_poseidon2_v8_plan_and_admit_atomic_manifest_in_transaction"
+                    .to_owned(),
+                ..production_shared_sled_ast_binding()
+            },
+        )
+        .expect("current production V8 atomic caller provenance");
+    }
+
+    #[test]
     fn production_shared_sled_ast_rejects_async_atomic_caller() {
         let source = production_shared_sled_ast_fixture().replacen(
             "fn commit_reorg_suffix_atomically(",
@@ -12383,7 +12746,75 @@ mod tests {
         );
         assert_production_shared_sled_ast_rejected(
             &source,
-            "prefix must be return-free and macro-free outside closures",
+            "prefix must not bypass the transaction or use an unpinned macro outside closures",
+        );
+    }
+
+    #[test]
+    fn production_shared_sled_ast_rejects_success_before_transaction() {
+        let source = production_shared_sled_ast_fixture().replacen(
+            "self::__hegemon_pinned_sled::transaction::Transactional::transaction(",
+            "return Ok(());\n\
+             self::__hegemon_pinned_sled::transaction::Transactional::transaction(",
+            1,
+        );
+        assert_production_shared_sled_ast_rejected(
+            &source,
+            "prefix must not bypass the transaction",
+        );
+    }
+
+    #[test]
+    fn production_shared_sled_ast_rejects_reorg_parameter_or_commit_kind_drift() {
+        let borrowed_plan = production_shared_sled_ast_fixture().replacen(
+            "poseidon2_v8_reorg: Option<(",
+            "poseidon2_v8_reorg: &Option<(",
+            1,
+        );
+        assert_production_shared_sled_ast_rejected(&borrowed_plan, "parameter grammar changed");
+
+        let forged_kind = production_shared_sled_ast_fixture().replacen(
+            "match commit_kind {",
+            "match NativeAtomicCommitKind::CanonicalSuffixReorgCommit {",
+            1,
+        );
+        assert_production_shared_sled_ast_rejected(&forged_kind, "must split commit_kind");
+
+        let swapped_builder = production_shared_sled_ast_fixture().replacen(
+            "native_tip_extension_batch_commit_manifest",
+            "native_canonical_suffix_reorg_commit_manifest",
+            1,
+        );
+        assert_production_shared_sled_ast_rejected(&swapped_builder, "must split commit_kind");
+    }
+
+    #[test]
+    fn production_shared_sled_ast_rejects_forged_mined_parent_provenance() {
+        let unchecked_height = production_shared_sled_ast_fixture().replacen(
+            "parent_projection.height.checked_add(1) != Some(meta.height)",
+            "parent_projection.height + 1 != meta.height",
+            1,
+        );
+        assert_production_shared_sled_ast_rejected(
+            &unchecked_height,
+            "requires checked stored-parent inspection",
+        );
+
+        let forged_hash =
+            production_shared_sled_ast_fixture().replacen("&meta.parent_hash,", "&meta.hash,", 1);
+        assert_production_shared_sled_ast_rejected(
+            &forged_hash,
+            "requires checked stored-parent inspection",
+        );
+
+        let obsolete_planner = production_shared_sled_ast_fixture().replacen(
+            "plan_poseidon2_v8_block_against_parent_tip(",
+            "plan_poseidon2_v8_block_against_parent(",
+            2,
+        );
+        assert_production_shared_sled_ast_rejected(
+            &obsolete_planner,
+            "requires one attribute-free inherent source planner",
         );
     }
 
@@ -12570,10 +13001,10 @@ mod tests {
             .expect("current V8 atomic runtime source");
 
         let evaluator_marker =
-            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    if input.kind";
+            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    if matches!(";
         let evaluator_cfg = block_flow.replacen(
             evaluator_marker,
-            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    if cfg!(not(test)) { return ::core::result::Result::Ok(()); }\n    if input.kind",
+            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    if cfg!(not(test)) { return ::core::result::Result::Ok(()); }\n    if matches!(",
             1,
         );
         assert_ne!(evaluator_cfg, block_flow);
@@ -12623,10 +13054,10 @@ mod tests {
     fn v8_atomic_runtime_gate_rejects_semantic_admission_or_apply_noops() {
         let (block_flow, node_impl, state) = current_v8_atomic_runtime_gate_sources();
         let evaluator_marker =
-            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    if input.kind";
+            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    if matches!(";
         let evaluator_noop = block_flow.replacen(
             evaluator_marker,
-            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    return ::core::result::Result::Ok(());\n    if input.kind",
+            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    return ::core::result::Result::Ok(());\n    if matches!(",
             1,
         );
         assert_ne!(evaluator_noop, block_flow);
@@ -12635,6 +13066,19 @@ mod tests {
             &node_impl,
             &state,
             "runtime AST changed",
+        );
+
+        let widened_atomic_kind_match = block_flow.replacen(
+            "NativeAtomicCommitKind::MinedBlockCommit | NativeAtomicCommitKind::TipExtensionBatchCommit",
+            "_",
+            1,
+        );
+        assert_ne!(widened_atomic_kind_match, block_flow);
+        assert_v8_atomic_runtime_gate_mutation_rejected(
+            &widened_atomic_kind_match,
+            &node_impl,
+            &state,
+            "macro-free cfg-invariant",
         );
 
         let evaluator_err_shadow = block_flow
@@ -12666,7 +13110,7 @@ mod tests {
         );
 
         let mined_manifest_tautology = block_flow.replacen(
-            "poseidon2_v8_plan_application_count:\n            UNOBSERVED_POSEIDON2_V8_PLAN_APPLICATION_COUNT,",
+            "poseidon2_v8_plan_application_count: UNOBSERVED_POSEIDON2_V8_PLAN_APPLICATION_COUNT,",
             "poseidon2_v8_plan_application_count: poseidon2_v8_plan_count,",
             1,
         );
@@ -12679,7 +13123,7 @@ mod tests {
         );
 
         let suffix_manifest_tautology = node_impl.replacen(
-            "poseidon2_v8_plan_application_count:\n            UNOBSERVED_POSEIDON2_V8_PLAN_APPLICATION_COUNT,",
+            "poseidon2_v8_plan_application_count: UNOBSERVED_POSEIDON2_V8_PLAN_APPLICATION_COUNT,",
             "poseidon2_v8_plan_application_count: poseidon2_v8_plan_count,",
             1,
         );
@@ -12739,10 +13183,10 @@ mod tests {
     fn v8_atomic_runtime_gate_ast_ignores_comments_but_rejects_enclosing_cfg() {
         let (block_flow, node_impl, state) = current_v8_atomic_runtime_gate_sources();
         let evaluator_marker =
-            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    if input.kind";
+            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    if matches!(";
         let commented = block_flow.replacen(
             evaluator_marker,
-            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    // Non-semantic review note.\n    if input.kind",
+            ") -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {\n    // Non-semantic review note.\n    if matches!(",
             1,
         );
         assert_ne!(commented, block_flow);
@@ -12765,12 +13209,9 @@ mod tests {
 
     #[test]
     fn production_shared_sled_ast_rejects_bare_or_qualified_decoy_type() {
-        for replacement in ["impl NativeNode {", "impl adversary::NativeNode {"] {
-            let source = production_shared_sled_ast_fixture().replacen(
-                "impl super::NativeNode {",
-                replacement,
-                1,
-            );
+        for replacement in ["impl super::NativeNode {", "impl adversary::NativeNode {"] {
+            let source =
+                production_shared_sled_ast_fixture().replacen("impl NativeNode {", replacement, 1);
             assert_production_shared_sled_ast_rejected(
                 &source,
                 "requires one top-level inherent method",
@@ -12787,7 +13228,7 @@ mod tests {
         );
         assert_production_shared_sled_ast_rejected(
             &suffix_shadow,
-            "one immutable poseidon2_v8_reorg binding",
+            "externally prepared poseidon2_v8_reorg parameter without shadowing",
         );
 
         let mined_shadow = production_shared_sled_ast_fixture().replacen(
@@ -12797,7 +13238,7 @@ mod tests {
         );
         assert_production_shared_sled_ast_rejected(
             &mined_shadow,
-            "ordered immutable v8_commit and mined_manifest bindings",
+            "checked stored-parent inspection before ordered immutable v8_commit",
         );
 
         let manifest_redirect = production_shared_sled_ast_fixture().replacen(
@@ -12807,7 +13248,7 @@ mod tests {
         );
         assert_production_shared_sled_ast_rejected(
             &manifest_redirect,
-            "exact suffix plan projection",
+            "derive one immutable v8_plan reference",
         );
     }
 

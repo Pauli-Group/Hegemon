@@ -2404,6 +2404,12 @@ pub(crate) fn native_sync_observed_tip_request_range(
     )
 }
 
+pub(crate) fn native_sync_request_max_blocks(backfill_blocks: u64) -> u64 {
+    NATIVE_SYNC_REQUEST_BLOCKS
+        .max(backfill_blocks.saturating_add(1))
+        .min(MAX_NATIVE_SYNC_RESPONSE_BLOCKS)
+}
+
 pub(crate) fn native_sync_observed_tip_request_range_from_admitted_missing(
     input: NativeSyncMissingRequestInput,
     best_hash: [u8; 32],
@@ -2449,13 +2455,19 @@ pub(crate) fn native_sync_missing_request_range_apply_reorg_backfill(
     backfill_blocks: u64,
 ) -> NativeSyncRange {
     let gap = input.announced_height.saturating_sub(input.best_height);
-    if gap == 0 || backfill_blocks == 0 || input.max_blocks <= backfill_blocks {
+    if gap == 0 || backfill_blocks == 0 || input.max_blocks <= 1 {
         return range;
     }
 
+    // A response must retain at least one slot beyond the local tip so the
+    // recovered fork prefix can make forward progress.  Clamp oversized
+    // backfill requests instead of turning them into a no-op; the live sync
+    // request cap is 64 while the first escalation reaches exactly 64.
+    let effective_backfill = backfill_blocks.min(input.max_blocks.saturating_sub(1));
+
     let from_height = input
         .best_height
-        .saturating_sub(backfill_blocks)
+        .saturating_sub(effective_backfill)
         .saturating_add(1)
         .min(range.from_height);
     let to_height = input
@@ -2467,10 +2479,148 @@ pub(crate) fn native_sync_missing_request_range_apply_reorg_backfill(
     }
 }
 
+pub(crate) fn native_sync_useful_recovery_request_range(
+    current_range: NativeSyncRange,
+    candidate_range: Option<NativeSyncRange>,
+) -> Option<NativeSyncRange> {
+    candidate_range.filter(|candidate| {
+        candidate.from_height <= candidate.to_height && *candidate != current_range
+    })
+}
+
+pub(crate) fn native_sync_request_range_avoiding(
+    avoid_range: Option<NativeSyncRange>,
+    candidate_range: Option<NativeSyncRange>,
+) -> Option<NativeSyncRange> {
+    match avoid_range {
+        Some(current_range) => {
+            native_sync_useful_recovery_request_range(current_range, candidate_range)
+        }
+        None => candidate_range,
+    }
+}
+
+pub(crate) fn native_sync_preferred_target_request_range(
+    recovery_range: Option<NativeSyncRange>,
+    canonical_candidate: Option<NativeSyncRange>,
+) -> Option<NativeSyncRange> {
+    recovery_range.or(canonical_candidate)
+}
+
+pub(crate) fn native_sync_preceding_recovery_request_range(
+    current_range: NativeSyncRange,
+    max_blocks: u64,
+) -> Option<NativeSyncRange> {
+    if max_blocks == 0
+        || current_range.from_height > current_range.to_height
+        || current_range.from_height == 0
+    {
+        return None;
+    }
+    let to_height = current_range.from_height - 1;
+    let from_height = to_height.saturating_sub(max_blocks - 1);
+    Some(NativeSyncRange {
+        from_height,
+        to_height,
+    })
+}
+
+pub(crate) fn native_sync_follow_response_request_range(
+    response_range: NativeSyncRange,
+    announced_height: u64,
+    max_blocks: u64,
+) -> Option<NativeSyncRange> {
+    if max_blocks == 0 || response_range.from_height > response_range.to_height {
+        return None;
+    }
+    let from_height = response_range.to_height.checked_add(1)?;
+    if from_height > announced_height {
+        return None;
+    }
+    Some(NativeSyncRange {
+        from_height,
+        to_height: announced_height.min(from_height.saturating_add(max_blocks - 1)),
+    })
+}
+
+pub(crate) fn native_sync_recovery_request_range(
+    current_request: NativeSyncRange,
+    response_range: Option<NativeSyncRange>,
+    changed_canonical_candidate: Option<NativeSyncRange>,
+    announced_height: u64,
+    max_blocks: u64,
+    stopped_on_missing_parent: bool,
+) -> Option<NativeSyncRange> {
+    if stopped_on_missing_parent {
+        if let Some(candidate) = changed_canonical_candidate
+            .filter(|candidate| candidate.from_height < current_request.from_height)
+        {
+            return Some(candidate);
+        }
+        return native_sync_preceding_recovery_request_range(current_request, max_blocks);
+    }
+
+    if let Some(response_range) = response_range {
+        if let Some(follow_up) =
+            native_sync_follow_response_request_range(response_range, announced_height, max_blocks)
+                .filter(|follow_up| *follow_up != current_request)
+        {
+            return Some(follow_up);
+        }
+    }
+
+    changed_canonical_candidate
+}
+
 pub(crate) fn native_sync_block_range_publication_rows(
     blocks: Vec<NativeBlockMeta>,
 ) -> Vec<NativeBlockMeta> {
     blocks
+}
+
+pub(crate) fn native_sync_verified_action_body_count(blocks: &[NativeBlockMeta]) -> usize {
+    blocks.iter().filter(|meta| meta.height != 0).count()
+}
+
+pub(crate) fn native_sync_response_is_contiguous_request_prefix(
+    requested_range: NativeSyncRange,
+    blocks: &[NativeBlockMeta],
+) -> bool {
+    let Some(first) = blocks.first() else {
+        return false;
+    };
+    let Some(last) = blocks.last() else {
+        return false;
+    };
+    if requested_range.from_height > requested_range.to_height
+        || first.height != requested_range.from_height
+        || last.height > requested_range.to_height
+    {
+        return false;
+    }
+    blocks.windows(2).all(|pair| {
+        pair[0].height.checked_add(1) == Some(pair[1].height) && pair[1].parent_hash == pair[0].hash
+    })
+}
+
+pub(crate) fn native_sync_response_matches_recovery_context(
+    expected_parent_hash: Option<[u8; 32]>,
+    target_tip: Option<(u64, [u8; 32])>,
+    blocks: &[NativeBlockMeta],
+) -> bool {
+    let Some(first) = blocks.first() else {
+        return false;
+    };
+    if expected_parent_hash.is_some_and(|expected| first.parent_hash != expected) {
+        return false;
+    }
+    let Some((target_height, target_hash)) = target_tip else {
+        return true;
+    };
+    blocks
+        .iter()
+        .find(|meta| meta.height == target_height)
+        .is_none_or(|meta| meta.hash == target_hash)
 }
 
 pub(crate) fn evaluate_native_sync_block_range_publication_admission(
@@ -2579,6 +2729,66 @@ pub(crate) fn admit_and_sort_native_sync_response_blocks(
         max_blocks,
     })?;
     blocks.sort_by_key(|meta| meta.height);
+    Ok(())
+}
+
+pub(crate) fn evaluate_native_supplied_block_record_classification(
+    input: NativeSuppliedBlockRecordClassificationInput,
+) -> Result<NativeSuppliedBlockRecordStatus, NativeSuppliedBlockRecordClassificationRejection> {
+    if !input.stored_record_present {
+        return Ok(NativeSuppliedBlockRecordStatus::Missing);
+    }
+    if !input.stored_record_exact {
+        return Err(NativeSuppliedBlockRecordClassificationRejection::KnownRecordMismatch);
+    }
+    Ok(NativeSuppliedBlockRecordStatus::KnownExact)
+}
+
+pub(crate) fn evaluate_native_canonical_reorg_persistence_admission(
+    input: NativeCanonicalReorgPersistenceAdmissionInput,
+) -> Result<(), NativeCanonicalReorgPersistenceAdmissionRejection> {
+    if input.known_block_count > input.replacement_block_count {
+        return Err(
+            NativeCanonicalReorgPersistenceAdmissionRejection::KnownCountExceedsReplacement,
+        );
+    }
+    let expected_missing = input.replacement_block_count - input.known_block_count;
+    if input.classified_missing_block_count != expected_missing {
+        return Err(
+            NativeCanonicalReorgPersistenceAdmissionRejection::ClassifiedMissingCountMismatch,
+        );
+    }
+    if input.supplied_missing_block_count != input.classified_missing_block_count {
+        return Err(
+            NativeCanonicalReorgPersistenceAdmissionRejection::SuppliedMissingCountMismatch,
+        );
+    }
+    if !input.connected_exact_known_rows {
+        return Err(
+            NativeCanonicalReorgPersistenceAdmissionRejection::ConnectedExactKnownRowsMissing,
+        );
+    }
+    if !input.suffix_fully_validated {
+        return Err(NativeCanonicalReorgPersistenceAdmissionRejection::SuffixNotFullyValidated);
+    }
+    if input.noncanonical_batch_block_record_writes != input.supplied_missing_block_count {
+        return Err(
+            NativeCanonicalReorgPersistenceAdmissionRejection::NoncanonicalBatchWriteCountMismatch,
+        );
+    }
+    if !input.noncanonical_batch_durability_flushed {
+        return Err(NativeCanonicalReorgPersistenceAdmissionRejection::NoncanonicalBatchNotDurable);
+    }
+    if !input.durable_records_match_replacement {
+        return Err(
+            NativeCanonicalReorgPersistenceAdmissionRejection::DurableRecordsMismatchReplacement,
+        );
+    }
+    if input.canonical_transaction_block_record_writes != 0 {
+        return Err(
+            NativeCanonicalReorgPersistenceAdmissionRejection::CanonicalTransactionWritesBlockRecords,
+        );
+    }
     Ok(())
 }
 
@@ -2868,6 +3078,53 @@ pub(crate) fn is_inactive_native_sidecar_transfer(action: &PendingAction) -> boo
     action.family_id == FAMILY_SHIELDED_POOL && action.action_id == ACTION_SHIELDED_TRANSFER_SIDECAR
 }
 
+// The PR203 bounded-memory sync regressions need valid, multi-megabyte action
+// bodies. Production bridge routes remain closed until a PQ128 source-chain
+// authority exists, so tests opt in on their own thread instead of weakening
+// the shared route gate.
+#[cfg(test)]
+std::thread_local! {
+    static OUTBOUND_BRIDGE_TEST_AUTHORITY_DEPTH: std::cell::Cell<u32> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) struct OutboundBridgeTestAuthorityGuard;
+
+#[cfg(test)]
+impl Drop for OutboundBridgeTestAuthorityGuard {
+    fn drop(&mut self) {
+        OUTBOUND_BRIDGE_TEST_AUTHORITY_DEPTH.with(|depth| {
+            depth.set(
+                depth
+                    .get()
+                    .checked_sub(1)
+                    .expect("outbound bridge test authority guard underflow"),
+            );
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn install_outbound_bridge_test_authority() -> OutboundBridgeTestAuthorityGuard {
+    OUTBOUND_BRIDGE_TEST_AUTHORITY_DEPTH.with(|depth| {
+        depth.set(
+            depth
+                .get()
+                .checked_add(1)
+                .expect("outbound bridge test authority nesting overflow"),
+        );
+    });
+    OutboundBridgeTestAuthorityGuard
+}
+
+#[cfg(test)]
+pub(crate) fn outbound_bridge_test_authority_allows(family_id: u16, action_id: u16) -> bool {
+    family_id == FAMILY_BRIDGE
+        && action_id == ACTION_BRIDGE_OUTBOUND
+        && OUTBOUND_BRIDGE_TEST_AUTHORITY_DEPTH.with(|depth| depth.get() != 0)
+}
+
 /// Preserve deep validation coverage for the checked-in historical SmallWood
 /// fixtures without making a retired proof grammar reachable in production.
 /// The active V4/Gamma route is deliberately excluded, and both the action
@@ -2924,6 +3181,10 @@ pub(crate) fn ensure_native_v3_active_action_route_ids(
     action_id: u16,
     allow_internal_coinbase: bool,
 ) -> Result<()> {
+    #[cfg(test)]
+    if outbound_bridge_test_authority_allows(family_id, action_id) {
+        return Ok(());
+    }
     if family_id == FAMILY_SHIELDED_POOL && action_id == ACTION_SHIELDED_TRANSFER_SIDECAR {
         return Err(anyhow!(
             "shielded sidecar transfer route is decode-compatible but inactive under native V3; submit the canonical inline transfer so peers can reconstruct the block"

@@ -437,9 +437,7 @@ pub(crate) fn poseidon2_v8_test_coinbase() -> Option<PendingAction> {
 }
 
 #[cfg(test)]
-pub(crate) fn poseidon2_v8_test_binding_at(
-    height: u64,
-) -> Option<Poseidon2V8ProductionBinding> {
+pub(crate) fn poseidon2_v8_test_binding_at(height: u64) -> Option<Poseidon2V8ProductionBinding> {
     POSEIDON2_V8_TEST_BINDING
         .with(|slot| slot.get())
         .filter(|binding| binding.active_at(height))
@@ -457,8 +455,7 @@ pub(crate) fn poseidon2_v8_test_binding_authorizes_route(
             && family_id == FAMILY_SHIELDED_POOL
             && matches!(
                 action_id,
-                ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
-                    | ACTION_MINT_POSEIDON2_V8_COINBASE
+                ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE | ACTION_MINT_POSEIDON2_V8_COINBASE
             )
             && action_id
                 == if action_id == ACTION_MINT_POSEIDON2_V8_COINBASE {
@@ -1725,9 +1722,9 @@ mod tests {
         expected: Poseidon2ProductionExpectedContext,
         envelope: &[u8],
     ) -> Vec<u8> {
-        let request = crate::native::decode_submit_action_rpc_request(
-            retained_wallet_rpc_request(expected, envelope),
-        )
+        let request = crate::native::decode_submit_action_rpc_request(retained_wallet_rpc_request(
+            expected, envelope,
+        ))
         .expect("retained wallet RPC request JSON decodes");
         crate::native::admit_native_action_request_projection(&request)
             .expect("retained wallet RPC byte projection is canonical")
@@ -1824,8 +1821,8 @@ mod tests {
             prepared.iter().map(Encode::encode).collect::<Vec<_>>(),
             expected_action_bytes
         );
-        let seal = crate::native::mine_native_round(work.clone(), 0)
-            .expect("mine retained native work");
+        let seal =
+            crate::native::mine_native_round(work.clone(), 0).expect("mine retained native work");
         let block = node
             .import_mined_block(&work, seal)
             .expect("import retained mined block")
@@ -2029,11 +2026,10 @@ mod tests {
                 .checked_sub(1)
                 .expect("retained pending action is nonempty");
             mutated_peer_bytes[mutation_index] ^= 1;
-            assert!(crate::native::decode_native_peer_pending_action_v3(
-                &mutated_peer_bytes,
-                3,
-            )
-            .is_err());
+            assert!(
+                crate::native::decode_native_peer_pending_action_v3(&mutated_peer_bytes, 3,)
+                    .is_err()
+            );
         }
 
         let primary_view =
@@ -2113,18 +2109,22 @@ mod tests {
         // test-specific; user action 10 enters through the actual wallet JSON
         // request or peer PendingAction decoder.
         let live_primary_directory = tempfile::tempdir().unwrap();
-        let live_primary_config = retained_native_config(
-            live_primary_directory.path(),
-            "retained-v8-primary",
-        );
+        let live_primary_config =
+            retained_native_config(live_primary_directory.path(), "retained-v8-primary");
         let live_primary = crate::native::NativeNode::open(live_primary_config.clone())
             .expect("open retained primary native node");
         let coinbase_block_1 = mine_exact_pending_fixture(&live_primary, &coinbase_0_action);
         let coinbase_block_2 = mine_exact_pending_fixture(&live_primary, &coinbase_1_action);
         assert_eq!(coinbase_block_1.height, 1);
         assert_eq!(coinbase_block_2.height, 2);
-        assert_eq!(coinbase_block_1.action_bytes, vec![coinbase_0_action.encode()]);
-        assert_eq!(coinbase_block_2.action_bytes, vec![coinbase_1_action.encode()]);
+        assert_eq!(
+            coinbase_block_1.action_bytes,
+            vec![coinbase_0_action.encode()]
+        );
+        assert_eq!(
+            coinbase_block_2.action_bytes,
+            vec![coinbase_1_action.encode()]
+        );
 
         // A proof-body mutation is intentionally carried unchanged by the
         // wallet packager and rejected only at the source verifier boundary.
@@ -2134,15 +2134,12 @@ mod tests {
             .checked_sub(1)
             .expect("retained envelope is nonempty");
         mutated_envelope[mutated_proof_index] ^= 1;
-        let mutated_request = retained_wallet_rpc_request(
-            production.expected_context(),
-            &mutated_envelope,
-        );
-        let mutated_request_projection = crate::native::decode_submit_action_rpc_request(
-            mutated_request.clone(),
-        )
-        .and_then(|request| crate::native::admit_native_action_request_projection(&request))
-        .expect("wallet and RPC projections preserve an opaque proof-body mutation");
+        let mutated_request =
+            retained_wallet_rpc_request(production.expected_context(), &mutated_envelope);
+        let mutated_request_projection =
+            crate::native::decode_submit_action_rpc_request(mutated_request.clone())
+                .and_then(|request| crate::native::admit_native_action_request_projection(&request))
+                .expect("wallet and RPC projections preserve an opaque proof-body mutation");
         let decoded_mutated_projection = decode_poseidon2_production_smz9_inline_args_exact(
             production.expected_context(),
             &mutated_request_projection,
@@ -2157,7 +2154,9 @@ mod tests {
             .validate_and_stage_action(mutated_request)
             .expect_err("source verifier rejects the wallet-carried proof mutation");
         assert!(
-            mutated_rpc_error.to_string().contains("SMZ9 proof rejected"),
+            mutated_rpc_error
+                .to_string()
+                .contains("SMZ9 proof rejected"),
             "unexpected mutated retained proof error: {mutated_rpc_error}"
         );
         assert!(live_primary.state.read().pending_actions.is_empty());
@@ -2269,7 +2268,10 @@ mod tests {
         let restarted_live_primary =
             crate::native::NativeNode::reopen_after_sled_release_for_test(live_primary_config)
                 .expect("restart source-reverifies the retained primary branch");
-        assert_eq!(restarted_live_primary.best_meta().hash, primary_block_5.hash);
+        assert_eq!(
+            restarted_live_primary.best_meta().hash,
+            primary_block_5.hash
+        );
         let restarted_primary_block = restarted_live_primary
             .load_canonical_block_at_height_unverified(3)
             .expect("restart reloads exact retained action body");
@@ -2277,15 +2279,11 @@ mod tests {
             restarted_primary_block.action_bytes,
             vec![primary.pending_action_bytes.clone()]
         );
-        let restarted_actions =
-            crate::native::decode_block_actions(&restarted_primary_block)
-                .expect("restart exact-decodes retained action body");
-        let restarted_view = Poseidon2V8ActionView::from_pending(
-            production,
-            3,
-            &restarted_actions[0],
-        )
-        .expect("restart reconstructs retained V8 action view");
+        let restarted_actions = crate::native::decode_block_actions(&restarted_primary_block)
+            .expect("restart exact-decodes retained action body");
+        let restarted_view =
+            Poseidon2V8ActionView::from_pending(production, 3, &restarted_actions[0])
+                .expect("restart reconstructs retained V8 action view");
         assert_eq!(restarted_view.exact_native_leaf(), primary.native_leaf);
 
         // Fresh import uses the exact persisted block bodies. A body mutation

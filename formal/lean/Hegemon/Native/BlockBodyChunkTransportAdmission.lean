@@ -213,11 +213,11 @@ theorem exact_chunk_count_boundaries :
     derivedChunkCount chunkBytes = 1 ∧
     derivedChunkCount (chunkBytes + 1) = 2 ∧
     derivedChunkCount maxBodyBytes = maxChunkCount := by
-  native_decide
+  decide
 
 theorem final_chunk_uses_exact_remainder :
     expectedChunkLength (chunkBytes + 17) 1 = 17 := by
-  native_decide
+  decide
 
 theorem locator_precedence_is_schema_chain_rules_length_count :
     evaluateLocator
@@ -257,7 +257,7 @@ theorem completion_hash_precedes_decode :
 theorem sample_hash_preimage_binds_domain_length_and_body :
     bodyHashPreimage [1, 2, 3] =
       bodyHashDomain ++ [3, 0, 0, 0, 0, 0, 0, 0] ++ [1, 2, 3] := by
-  native_decide
+  decide
 
 end BlockBodyChunkTransportAdmission
 end Native

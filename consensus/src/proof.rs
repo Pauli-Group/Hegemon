@@ -61,7 +61,7 @@ const RECURSIVE_BLOCK_V1_ARTIFACT_MAX_BYTES: usize =
     block_recursion::RECURSIVE_BLOCK_HEADER_BYTES_V1
         + block_recursion::RECURSIVE_BLOCK_PROOF_BYTES_V1
         + block_recursion::RECURSIVE_BLOCK_PUBLIC_BYTES_V1;
-const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_BYTES: usize = 523_736;
+const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_BYTES: usize = 531_368;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct BlockProofPolicyInput {

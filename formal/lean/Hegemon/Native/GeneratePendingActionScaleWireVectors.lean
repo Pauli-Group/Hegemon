@@ -34,8 +34,8 @@ def noCandidatePendingActionBytes
     (txValue circuit crypto family action anchorValue : Nat)
     (nullifierValues commitmentValues ciphertextHashValues : List Nat)
     (ciphertextSizes publicArgs : List Nat)
-    (fee receivedMs : Nat) : List Byte :=
-  repeated 32 txValue
+    (fee : Nat) : List Byte :=
+  repeated 48 txValue
     ++ u16le circuit
     ++ u16le crypto
     ++ u16le family
@@ -53,7 +53,6 @@ def noCandidatePendingActionBytes
     ++ publicArgs.map byte
     ++ u64le fee
     ++ [0]
-    ++ u64le receivedMs
 
 def candidateArtifactRecursiveBlockPayloadBytes
     (version txCount txStatementsCommitmentValue daRootValue daChunkCount
@@ -123,9 +122,9 @@ def someCandidatePendingActionBytes
     (txValue circuit crypto family action anchorValue : Nat)
     (nullifierValues commitmentValues ciphertextHashValues : List Nat)
     (ciphertextSizes publicArgs : List Nat)
-    (fee receivedMs : Nat)
+    (fee : Nat)
     (candidatePayload : List Byte) : List Byte :=
-  repeated 32 txValue
+  repeated 48 txValue
     ++ u16le circuit
     ++ u16le crypto
     ++ u16le family
@@ -144,17 +143,16 @@ def someCandidatePendingActionBytes
     ++ u64le fee
     ++ [1]
     ++ candidatePayload
-    ++ u64le receivedMs
 
 def validEmptyBytes : List Byte :=
   noCandidatePendingActionBytes
     0 0 0 0 0 0
-    [] [] [] [] [] 0 0
+    [] [] [] [] [] 0
 
 def validOneEachBytes : List Byte :=
   noCandidatePendingActionBytes
     9 7 8 10 11 12
-    [1] [2] [3] [4] [0xaa, 0xbb, 0xcc] 5 6
+    [1] [2] [3] [4] [0xaa, 0xbb, 0xcc] 5
 
 def validCandidatePayloadBytes : List Byte :=
   candidateArtifactRecursiveBlockPayloadBytes
@@ -163,7 +161,7 @@ def validCandidatePayloadBytes : List Byte :=
 def validCandidateSomeBytes : List Byte :=
   someCandidatePendingActionBytes
     13 0 0 1 5 0
-    [] [] [] [] validCandidatePayloadBytes 0 9
+    [] [] [] [] validCandidatePayloadBytes 0
     validCandidatePayloadBytes
 
 def validReceiptRootReceiptBytes : List Byte :=
@@ -179,7 +177,7 @@ def validCandidateReceiptRootPayloadBytes : List Byte :=
 def validCandidateReceiptRootSomeBytes : List Byte :=
   someCandidatePendingActionBytes
     14 0 0 1 5 0
-    [] [] [] [] validCandidateReceiptRootPayloadBytes 0 10
+    [] [] [] [] validCandidateReceiptRootPayloadBytes 0
     validCandidateReceiptRootPayloadBytes
 
 def replaceAt : Nat -> Byte -> List Byte -> List Byte
@@ -195,37 +193,37 @@ def insertAt : Nat -> Byte -> List Byte -> List Byte
       head :: insertAt idx value tail
 
 def shortEmptyBytes : List Byte :=
-  (List.range 109).map (fun _ => 0)
+  (List.range 117).map (fun _ => 0)
 
 def trailingEmptyBytes : List Byte :=
   validEmptyBytes ++ [0xaa]
 
 def invalidOptionTagBytes : List Byte :=
-  replaceAt 101 2 validEmptyBytes
+  replaceAt 117 2 validEmptyBytes
 
 def noncanonicalNullifierZeroPrefixBytes : List Byte :=
-  insertAt 89 0 (replaceAt 88 1 validEmptyBytes)
+  insertAt 105 0 (replaceAt 104 1 validEmptyBytes)
 
 def nullifierCountOverrunBytes : List Byte :=
-  replaceAt 88 8 validOneEachBytes
+  replaceAt 104 8 validOneEachBytes
 
 def publicArgsMissingBytes : List Byte :=
-  replaceAt 92 4 validEmptyBytes
+  replaceAt 108 4 validEmptyBytes
 
 def candidateSomeTruncatedBytes : List Byte :=
-  replaceAt 101 1 validEmptyBytes
+  replaceAt 117 1 validEmptyBytes
 
 def trailingCandidateSomeBytes : List Byte :=
   validCandidateSomeBytes ++ [0xaa]
 
 def candidateSomeInvalidProofModeBytes : List Byte :=
-  replaceAt 400 7 validCandidateSomeBytes
+  replaceAt 416 7 validCandidateSomeBytes
 
 def candidateSomeInvalidProofKindBytes : List Byte :=
-  replaceAt 401 9 validCandidateSomeBytes
+  replaceAt 417 9 validCandidateSomeBytes
 
 def candidateSomeRecursiveProofOverrunBytes : List Byte :=
-  replaceAt 452 (byte (33 * 4)) validCandidateSomeBytes
+  replaceAt 468 (byte (33 * 4)) validCandidateSomeBytes
 
 def candidateArtifactReceiptRootReceiptCountOffset
     (rootProofLength : Nat) : Nat :=
@@ -237,7 +235,7 @@ def candidateArtifactReceiptRootReceiptCountOffset
 def candidateSomeReceiptRootReceiptCountOverrunBytes : List Byte :=
   someCandidatePendingActionBytes
     14 0 0 1 5 0
-    [] [] [] [] validCandidateReceiptRootPayloadBytes 0 10
+    [] [] [] [] validCandidateReceiptRootPayloadBytes 0
     (replaceAt
       (candidateArtifactReceiptRootReceiptCountOffset 3)
       (byte (2 * 4))
@@ -343,7 +341,7 @@ def caseJson
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 3,\n"
     ++ "  \"pending_action_scale_wire_cases\": [\n"
     ++ caseJson "valid-empty-no-candidate" "valid_empty_no_candidate"
       validEmptyNoCandidate validEmptyBytes ++ ",\n"
@@ -362,7 +360,7 @@ def vectorJson : String :=
       [] ++ ",\n"
     ++ caseJson "short-empty-no-candidate-rejected" "short_empty_no_candidate"
       { validEmptyNoCandidate with
-        totalBytes := 109,
+        totalBytes := 117,
         canonicalReencodeMatches := false }
       shortEmptyBytes ++ ",\n"
     ++ caseJson "trailing-empty-no-candidate-rejected"

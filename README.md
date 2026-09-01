@@ -105,11 +105,11 @@ Spend authorization follows the hash-based nullifier scheme from `METHODS.md §1
 
 Multi-asset conservation follows `METHODS.md §2`: V8 constrains the signed input/output balance, fees, issuance, asset identifiers, and stablecoin transition inside the same 120-word public statement. Seven field limbs bind each externally visible digest or intent value without truncation. Native admission must obtain the expected pre-state from authenticated consensus state, verify the proof against that exact statement, and commit the resulting nullifier and output changes atomically. Native and formal refinement must pass before this balance claim can authorize production.
 
-Post-quantum security hinges on the primitives cataloged in `DESIGN.md §1`: ML-DSA handles miner and protocol-authenticated envelope signatures, SLH-DSA anchors long-lived trust roots, and ML-KEM drives note/viewing key encryption, all exposed via the unified `crypto/` crate. The STARK and note-authorization paths avoid elliptic-curve, pairing, and factoring assumptions exposed to Shor’s algorithm. Their deployed soundness still depends on the explicitly recorded hash/QROM, semantic-refinement, and compiled-verifier assumptions; the repository does not relabel an interactive error estimate as an end-to-end post-quantum guarantee.
+Post-quantum security hinges on the primitives cataloged in `DESIGN.md §1`: ML-DSA handles protocol- and network-authenticated envelope signatures, SLH-DSA anchors long-lived trust roots, and ML-KEM drives note/viewing key encryption, all exposed via the unified `crypto/` crate. Active native V2 block metadata is identity-free and carries no miner signature; proof of work plus the canonical block and action rules supplies native block authority. The STARK and note-authorization paths avoid elliptic-curve, pairing, and factoring assumptions exposed to Shor’s algorithm. Their deployed soundness still depends on the explicitly recorded hash/QROM, semantic-refinement, and compiled-verifier assumptions; the repository does not relabel an interactive error estimate as an end-to-end post-quantum guarantee.
 
 Wallet note ciphertexts now have a theorem- and vector-checked chain-to-DA boundary: chain bytes remove only the canonical compact ML-KEM length field to form the DA hash preimage, and production parsers must reparse that projected DA form with the same public summary before `ciphertext_hash_bytes` is used.
 
-PoW seals and node-authenticated envelopes use the same PQ signing surface: ML-DSA-backed miner identities with hash-derived 32-byte ids. This keeps address encoding stable while aligning wallet and miner verification around lattice and hash-based primitives.
+Node-authenticated protocol envelopes use ML-DSA-backed identities with hash-derived 32-byte ids. Active native V2 PoW seals do not: they contain no miner public key, identity commitment, or signature, and reward ownership is expressed by the canonical shielded coinbase action. Exact signed identity-bearing V1, unsigned V1, and unreleased identity-bearing V2 encodings are recognized only to reject them and are never upgraded. The generic `PowConsensus` miner-identity gate is a separate compatibility and formal surface.
 
 These intended guarantees are tracked in code and formal artifacts rather than inferred from prose: `circuits/formal` captures nullifier-uniqueness and MASP-balance models, while retained SmallWood research benchmarks and `wallet-bench` expose performance evidence. None of those legacy benchmarks is a measured proof for a fresh successor relation or a production-security certificate.
 
@@ -127,7 +127,7 @@ The privacy layer is engineered as a single, MASP-style shielded pool from genes
 | **V8 Poseidon2 commitment binding** | Parameter-dependent primitive estimate | About 149-bit generic quantum collision work | Primitive estimate only; the composed proof bound is tracked separately |
 | **V8 Poseidon2 nullifier preimage resistance** | Parameter-dependent primitive estimate | At least the selected 128-bit target under the recorded parameter assumptions | Requires the same independent parameter review and composed proof analysis |
 | **Transaction proof soundness** | Conditional model result | Conditional model result | The frozen composition accounts for `Q + 2^24*T` SHA-512 exposure and `Q + 128*T` Poseidon2 exposure, with `e_q(T) = bit_length(2^q + 2^24*T)`. `T` must be an explicit reviewed bound on every observed or generated honest proof view; the accepted canonical count is not a substitute. Concrete reductions and the remaining refinement, privacy, history, and review premises still block production. |
-| **Signatures (ML-DSA-65)** | ~192 bits | ~128 bits | NIST Level 3; used for block/tx authentication |
+| **Signatures (ML-DSA-65)** | ~192 bits | ~128 bits | NIST Level 3; used for protocol/network authentication, not active native V2 block metadata |
 | **V8 Merkle path binding** | Parameter-dependent primitive estimate | At least the selected 128-bit target under the recorded parameter assumptions | Depth 32; exact relation and reduction terms must pass release review |
 
 **Anonymity set**: All notes share a single shielded pool—the anonymity set equals the total note count (currently 2³²–2⁴⁰ capacity). Version upgrades do not partition users into separate privacy pools.
@@ -296,7 +296,7 @@ Key options:
 - `--base-path <PATH>` - Persistent database location
 - `--rpc-port <PORT>` - JSON-RPC port (default: 9944)
 - `--port <PORT>` - P2P port (default: 30333)
-- `HEGEMON_SEEDS=<host:port,...>` - Bootstrap peers for native P2P sync. Shared miners must use the same approved seed list, currently `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"`, to avoid forks.
+- `HEGEMON_SEEDS=<host:port,...>` - Bootstrap peers for native P2P sync. Shared miners must use the same approved seed list, currently `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"`, to avoid partitions and forks. Keep NTP or chrony enabled on every mining host because PoW timestamps beyond the future-skew bound are rejected.
 
 Environment variables:
 - `HEGEMON_MINE=1` - Enable mining
@@ -305,7 +305,7 @@ Environment variables:
 
 ### Two-node testnet pairing
 
-Use this when you want to run two nodes that peer with each other:
+Use this when you want to run two deliberately isolated local nodes that peer with each other. For the shared testnet, set `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"` unless the approved list has rotated, keep every miner on that same list to avoid partitions and forks, and enable NTP or chrony because future-skewed PoW timestamps are rejected. The append-only oversized-record chunk extension has no capability negotiation: a persisted block record above the legacy 16 MiB frame requires upgraded endpoints on both sides of its transfer. Before a one-node rolling canary against an old peer, verify that every record needed for catch-up fits the legacy frame or provide an upgraded relay.
 
 1. **Build the binary**:
    ```bash

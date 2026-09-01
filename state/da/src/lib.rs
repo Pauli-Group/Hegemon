@@ -328,6 +328,12 @@ pub fn verify_da_chunk(root: DaRoot, proof: &DaChunkProof) -> Result<(), DaError
 }
 
 pub fn verify_da_multi_chunk(root: DaRoot, proof: &DaMultiChunkProof) -> Result<(), DaError> {
+    if !da_page_merkle_path_len_is_admissible(proof.page_merkle_path.len()) {
+        return Err(DaError::ProofPathTooLong {
+            path_len: proof.page_merkle_path.len(),
+            max: MAX_DA_PAGE_MERKLE_PATH_LEN,
+        });
+    }
     verify_da_chunk(proof.page_root, &proof.page_proof)?;
     verify_page_root(
         root,

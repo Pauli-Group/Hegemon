@@ -893,19 +893,39 @@ pub(crate) fn load_best_or_genesis(
     Ok(genesis)
 }
 
+pub(crate) struct ValidatedCanonicalChainSnapshot {
+    blocks: Vec<NativeBlockMeta>,
+    block_index_reload_admission: NativeBlockIndexReloadAdmission,
+}
+
+impl ValidatedCanonicalChainSnapshot {
+    pub(crate) fn blocks(&self) -> &[NativeBlockMeta] {
+        &self.blocks
+    }
+
+    pub(crate) const fn block_index_reload_admission(&self) -> NativeBlockIndexReloadAdmission {
+        self.block_index_reload_admission
+    }
+}
+
 pub(crate) fn load_header_mmr_peaks_for_best(
-    block_tree: &sled::Tree,
+    canonical_chain: &ValidatedCanonicalChainSnapshot,
     best: &NativeBlockMeta,
 ) -> Result<Vec<Hash32>> {
-    let hashes = load_chain_to_hash(block_tree, best.hash)?
-        .into_iter()
-        .map(|meta| meta.hash)
-        .collect::<Vec<_>>();
-    if hashes.len() as u64 != header_mmr_leaf_count_after_best(best)? {
+    let chain = canonical_chain.blocks();
+    if chain.last() != Some(best) {
+        return Err(anyhow!(
+            "native header MMR peak state best metadata mismatch"
+        ));
+    }
+    let chain_len = u64::try_from(chain.len())
+        .map_err(|_| anyhow!("native header MMR peak state chain length overflow"))?;
+    if chain_len != header_mmr_leaf_count_after_best(best)? {
         return Err(anyhow!(
             "native header MMR peak state chain length mismatch"
         ));
     }
+    let hashes = chain.iter().map(|meta| meta.hash).collect::<Vec<_>>();
     Ok(header_mmr_peaks_from_hashes(&hashes))
 }
 
@@ -913,6 +933,24 @@ pub(crate) fn header_mmr_leaf_count_after_best(best: &NativeBlockMeta) -> Result
     best.height
         .checked_add(1)
         .ok_or_else(|| anyhow!("native header MMR leaf count overflow"))
+}
+
+pub(crate) fn header_mmr_commitment_after_best(
+    best: &NativeBlockMeta,
+    peaks: &[Hash32],
+) -> Result<(Hash32, u64)> {
+    let leaf_count = header_mmr_leaf_count_after_best(best)?;
+    let expected_peak_count = leaf_count.count_ones() as usize;
+    if peaks.len() != expected_peak_count {
+        return Err(anyhow!(
+            "native header MMR peak state shape mismatch after height {}: expected {} peaks for {} leaves, got {}",
+            best.height,
+            expected_peak_count,
+            leaf_count,
+            peaks.len()
+        ));
+    }
+    Ok((header_mmr_root_from_peaks(leaf_count, peaks), leaf_count))
 }
 
 pub(crate) fn append_header_mmr_peak_state(
@@ -1030,28 +1068,43 @@ pub(crate) fn load_block_meta_by_hash(
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum NativeChainLoadError {
+    #[error("missing native block {hash_hex}")]
+    MissingAncestor { hash_hex: String },
+    #[error(transparent)]
+    Corrupt(#[from] anyhow::Error),
+}
+
 pub(crate) fn load_chain_to_hash(
     block_tree: &sled::Tree,
     hash: [u8; 32],
-) -> Result<Vec<NativeBlockMeta>> {
+) -> std::result::Result<Vec<NativeBlockMeta>, NativeChainLoadError> {
+    #[cfg(test)]
+    record_native_chain_load_call();
     let mut chain = Vec::new();
     let mut cursor = hash;
     let mut seen = BTreeSet::new();
     loop {
         if !seen.insert(cursor) {
-            return Err(anyhow!(
+            return Err(NativeChainLoadError::Corrupt(anyhow!(
                 "stored native block parent cycle at {}",
                 hex32(&cursor)
-            ));
+            )));
         }
-        let meta = load_block_meta_by_hash(block_tree, &cursor)?
-            .ok_or_else(|| anyhow!("missing native block {}", hex32(&cursor)))?;
+        let meta = load_block_meta_by_hash(block_tree, &cursor)
+            .map_err(NativeChainLoadError::Corrupt)?
+            .ok_or_else(|| NativeChainLoadError::MissingAncestor {
+                hash_hex: hex32(&cursor),
+            })?;
+        #[cfg(test)]
+        record_native_chain_load_decoded_meta();
         if meta.hash != cursor {
-            return Err(anyhow!(
+            return Err(NativeChainLoadError::Corrupt(anyhow!(
                 "stored native block hash mismatch: key={} embedded={}",
                 hex32(&cursor),
                 hex32(&meta.hash)
-            ));
+            )));
         }
         let parent = meta.parent_hash;
         let is_genesis = meta.height == 0;
@@ -1063,6 +1116,55 @@ pub(crate) fn load_chain_to_hash(
     }
     chain.reverse();
     Ok(chain)
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct NativeChainLoadMetrics {
+    pub(crate) calls: u64,
+    pub(crate) decoded_metas: u64,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static NATIVE_CHAIN_LOAD_METRICS: std::cell::Cell<NativeChainLoadMetrics> =
+        const { std::cell::Cell::new(NativeChainLoadMetrics {
+            calls: 0,
+            decoded_metas: 0,
+        }) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_native_chain_load_metrics() {
+    NATIVE_CHAIN_LOAD_METRICS.with(|metrics| metrics.set(Default::default()));
+}
+
+#[cfg(test)]
+pub(crate) fn native_chain_load_metrics() -> NativeChainLoadMetrics {
+    NATIVE_CHAIN_LOAD_METRICS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn update_native_chain_load_metrics(update: impl FnOnce(&mut NativeChainLoadMetrics)) {
+    NATIVE_CHAIN_LOAD_METRICS.with(|metrics| {
+        let mut observed = metrics.get();
+        update(&mut observed);
+        metrics.set(observed);
+    });
+}
+
+#[cfg(test)]
+fn record_native_chain_load_call() {
+    update_native_chain_load_metrics(|metrics| {
+        metrics.calls = metrics.calls.saturating_add(1);
+    });
+}
+
+#[cfg(test)]
+fn record_native_chain_load_decoded_meta() {
+    update_native_chain_load_metrics(|metrics| {
+        metrics.decoded_metas = metrics.decoded_metas.saturating_add(1);
+    });
 }
 
 pub(crate) fn evaluate_native_block_index_reload(
@@ -1389,7 +1491,7 @@ pub(crate) fn validate_loaded_block_indexes(
     height_tree: &sled::Tree,
     block_tree: &sled::Tree,
     pow_bits: u32,
-) -> Result<NativeBlockIndexReloadAdmission> {
+) -> Result<ValidatedCanonicalChainSnapshot> {
     let expected_genesis = genesis_meta(pow_bits)?;
     let chain = load_chain_to_hash(block_tree, best.hash)?;
 
@@ -1538,7 +1640,10 @@ pub(crate) fn validate_loaded_block_indexes(
         )?;
     }
 
-    Ok(admission)
+    Ok(ValidatedCanonicalChainSnapshot {
+        blocks: chain,
+        block_index_reload_admission: admission,
+    })
 }
 
 pub(crate) fn apply_native_block_index_reload_repairs(
@@ -2026,12 +2131,15 @@ fn validate_pending_action_against_mempool_state_inner(
     if enforce_active_route {
         ensure_native_v3_active_action_route(action, false)?;
     }
+    // The only caller that disables active-route enforcement is the cfg(test)
+    // group-engine seam. It must also bypass the outer proof-authority gate so
+    // batching, durability, and publication can be tested while every
+    // production proof route remains fail closed.
     #[cfg(test)]
-    let skip_v8_group_engine_authoring_policy =
-        !enforce_active_route && is_poseidon2_v8_action(action);
+    let skip_group_engine_authoring_policy = !enforce_active_route;
     #[cfg(not(test))]
-    let skip_v8_group_engine_authoring_policy = false;
-    if !skip_v8_group_engine_authoring_policy {
+    let skip_group_engine_authoring_policy = false;
+    if !skip_group_engine_authoring_policy {
         validate_native_action_authoring_version_policy(
             state.best.height,
             action.binding,
@@ -2372,12 +2480,10 @@ pub(crate) fn expected_consumed_bridge_messages_from_chain(
 }
 
 pub(crate) fn validate_loaded_bridge_replay_state(
-    best: &NativeBlockMeta,
-    block_tree: &sled::Tree,
+    canonical_chain: &ValidatedCanonicalChainSnapshot,
     consumed_bridge_messages: &PersistentKeySet48,
 ) -> Result<()> {
-    let chain = load_chain_to_hash(block_tree, best.hash)?;
-    let expected_state = expected_consumed_bridge_messages_from_chain(&chain)?;
+    let expected_state = expected_consumed_bridge_messages_from_chain(canonical_chain.blocks())?;
     let expected = &expected_state.consumed;
     let missing = expected
         .iter()

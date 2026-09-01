@@ -1117,10 +1117,7 @@
       "remaining_work": []
     },
     {
-      "id": "codec.canonical-encoding-non-malleability",
-      "weight": 5,
       "completion_percent": 100.0,
-      "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
       "current_evidence": [
         "native codec admission Lean gate",
         "proof-wrapper admission gate",
@@ -1190,17 +1187,27 @@
         "formal/lean/Hegemon/Transaction/ProofWrapperWire.lean models canonical, trailing, invalid-backend, truncated, malformed, and raw-to-admission top-level-nullifier-drift outer TransactionProof bincode fixtures checked against production exact decoder, canonical reserialization, and decoded admission.",
         "circuits/transaction/src/proof.rs `transaction_proof_wrapper_exact_decode_matches_bincode_oracle_on_mutation_corpus` compares production exact wrapper decode to bincode deserialize, full-consumption, and canonical-reencode oracle semantics across malformed, truncated, trailing-byte, inserted-byte, pseudo-random, and mutated-valid wrappers.",
         "pre-heavy staged-proof upload vectors are generated from the proved PreHeavyWorkResourceBoundSurface predicate and included in formal-core, not a duplicate model.",
-        "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean binds this internal theorem surface into the final completion certificate with explicit external-assumption fields and the production release gate."
+        "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean binds this internal theorem surface into the final completion certificate with explicit external-assumption fields and the production release gate.",
+        "formal/lean/Hegemon/Native/CodecAdmission.lean now proves current-first/legacy-fallback native metadata decode facts, and schema-v2 generated vectors check current metadata selection, legacy fallback only after current rejection, and trailing-byte rejection for both formats against production bincode_deserialize_native_block_meta_exact.",
+        "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean `accepted_pending_action_codec_canonical_publication_with_metadata_non_malleability_facts` carries native metadata current-first/legacy-fallback exact-decode facts with the pending/block-action canonical publication certificate",
+        "formal/lean/Hegemon/Native/CodecAdmission.lean proves `native_metadata_bincode_budget_acceptance_excludes_overruns` and generated schema-v3 codec vectors bind native metadata bincode budget cases to node/src/native/mod.rs, which pre-scans current/legacy metadata bytes and rejects oversized action counts, action payload lengths, aggregate action bytes, miner public keys, and miner signatures before allocation-heavy bincode work while preserving signed current and legacy exact decode",
+        "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean `bounded_canonical_codec_gate_certificate_exposes_production_binding` and `accepted_bounded_canonical_codec_gate_binds_production_wires` project the bounded gate into exact route-wire decode, full consumption, canonical re-encode, block-action declared/decoded/published row equality, and metadata current-before-legacy facts on one production review surface",
+        "Production codec tests pin the complete serializer map: legacy ordinals 0 through 3, exact-carrier ordinals 4 AnnounceLocator, 5 ResponseLocators, 6 BlockBodyRequest, and 7 BlockBodyChunk, fail-closed stored-record ordinals 8 RequestBlockChunk and 9 BlockChunk, and bounded non-authoritative ordinal 10 AnnounceTip. The independent raw tag prefilter test rejects ordinals 8 and 9 before postcard allocation.",
+        "formal/lean/Hegemon/Native/BlockBodyChunkTransportAdmission.lean and generated vectors bind the active exact locator and action-body carrier to schema, chain, rules, total length, derived chunk count, exact chunk length, body hash, exact decode, and locator equality before authorized import. SyncRawIngress and SyncBlockChunkAdmission retain the incompatible metadata-record layout only as conditional evidence and do not authorize production decode."
       ],
-      "missing_work": [],
-      "performance_constraint": "Canonical decode checks should remain linear and bounded before allocation-heavy work.",
       "explicit_external_assumptions": [
         "Complete arbitrary-byte parser-internal equivalence for every consensus object beyond accepted exact-decode/full-byte publication predicates, native tx-leaf/receipt-root parser-oracle coverage, and the concrete PendingAction, MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs, OutboundBridgeArgsV1, InboundBridgeArgsV1, BridgeVerifierRegistrationV1, and BridgeMintPayloadV1 SCALE vector grammars.",
         "Extend the CandidateArtifact PendingAction SCALE wire model beyond the shipped recursive-block and bounded receipt-root product lanes to arbitrary custom payloads if those paths are re-enabled.",
         "Extend the accepted-predicate parser/wire/production projection composition beyond the bounded route-wire gate into parser-internal implementation equivalence for every remaining consensus byte object.",
-        "Move remaining bincode/trust-boundary encodings to bounded canonical codecs or prove exact wrappers."
+        "Move remaining bincode/trust-boundary encodings to bounded canonical codecs or prove exact wrappers.",
+        "The active exact-carrier vectors are representative boundary evidence, not a proof of arbitrary postcard/SCALE parser internals or body-hash collision resistance. The retained SyncRawIngress and SyncBlockChunkAdmission vectors describe an inactive metadata-record layout and confer no production authority."
       ],
-      "remaining_work": []
+      "id": "codec.canonical-encoding-non-malleability",
+      "missing_work": [],
+      "performance_constraint": "Canonical decode checks should remain linear and bounded before allocation-heavy work.",
+      "remaining_work": [],
+      "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
+      "weight": 5
     },
     {
       "id": "node.replay-reorg-startup-refinement",
@@ -1211,6 +1218,8 @@
         "native block replay refinement gate",
         "canonical-state/block-index/bridge-replay reload gates",
         "atomic commit manifest and storage durability gates",
+        "node/src/native connected nonwinning sync suffix import fully replays the candidate suffix before one count-parameterized noncanonical manifest, one sled Batch, and a durability barrier before successful return",
+        "node/src/native canonical sync tip-extension import replays each block on carried candidate state before one `TipExtensionBatchCommit` manifest with `block_record_writes = chain_block_count`, then crosses the durability barrier before canonical state publication",
         "implementation bindings in config/formal-security-blueprint.json",
         "formal/lean/Hegemon/Native/AcceptedChain.lean ledger-state chain lift for supply, leaf cursor, nullifiers, and bridge replay",
         "formal/lean/Hegemon/Native/AcceptedChain.lean ledger-state startup/replay equivalence theorem",
@@ -1261,15 +1270,23 @@
         "node/src/native/mod.rs mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication checks a restarted noncanonical side-branch reorg candidate with sidecar transfer nullifier rows plus a disabled inbound bridge replay key fails closed before canonical publication rows change",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean ciphertext path-family content theorem now includes startup repair, reorg replay, block_range, canonical-index rebuild, announced import, sync import, mined commit, and raw-ingress ciphertext rows",
         "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean binds this internal theorem surface into the final completion certificate with explicit external-assumption fields and the production release gate.",
-        "formal/lean/Hegemon/Native/SyncResponseImport.lean now proves inbound sync response import control flow facts: count-before-sort/import, sorted-height projection, bounded attempted/imported counts, stop-on-first-error, impossible outcome-trace rejection, and nonempty/still-ahead continuation requests.",
-        "node/src/native/mod.rs native_sync_loop response handling now routes through admit_and_sort_native_sync_response_blocks before NativeSyncResponseImportProgress and import_announced_block; Lean-generated vectors check sorted heights, import progress, over-limit rejection, and continuation decisions against production helpers.",
-        "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean and GenerateMinedBlockCommitPublicationVectors.lean now bind the composed mined publication rejection order to production helper calls: mined-work, block commitment, mined manifest kind, then manifest shape"
+        "formal/lean/Hegemon/Native/SyncResponseImport.lean proves inbound sync response import control flow facts: count-before-sort/import, sorted-height projection, bounded attempted/imported/stored-noncanonical counts, distinct row and post-classification error/missing-parent stops, fully consumed zero-canonical-progress detection including equal-height fork-recovery escalation, impossible or inconsistent post-classification outcome rejection, and changed-range-or-backoff recovery requirements.",
+        "node/src/native/mod.rs native_sync_loop response handling routes through admit_and_sort_native_sync_response_blocks before NativeSyncResponseImportProgress and import_announced_block; schema-v3 Lean-generated vectors check sorted heights, outcome accounting, stop semantics, over-limit rejection, all-known post-classification missing-ancestor/corruption classification, direct continuation, and useful recovery filtering against production helpers.",
+        "node/src/native/service.rs routes the active exact locator and action-body carrier through bounded body reassembly, body-hash binding, exact decode, and the existing authorized response import/reorg/no-progress path. Stored-metadata-record tags 8 and 9 reject before postcard allocation and never reach this handoff. AnnounceTip tag 10 is only an unverified request-planning hint: it may conservatively close the mining sync gate, but cannot open or resolve the gate or count as verified import or canonical progress.",
+        "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean and GenerateMinedBlockCommitPublicationVectors.lean now bind the composed mined publication rejection order to production helper calls: mined-work, block commitment, mined manifest kind, then manifest shape",
+        "formal/lean/Hegemon/Native/CanonicalReorgPersistenceAdmission.lean proves supplied-record classification and exact canonical-reorg persistence plan/count/order predicates: absent is missing, exact stored is known-exact, mismatch rejects, missing rows are independently and durably prestored before canonical adoption, and `CanonicalSuffixReorgCommit.block_record_writes = 0`.",
+        "node/src/native/admission.rs, service.rs, and node_impl.rs implement the cross-file classifier, compact/hash-projection ancestry and suffix streaming, separate selective missing-record prestorage and durability, then a `CanonicalSuffixReorgCommit` that consumes/compares exact prestored rows and never writes block records; exact mixed-known/missing/mismatch, reopen, and crash-window regressions supply finite execution evidence rather than a Rust refinement proof.",
+        "Deep large-action regressions cover nonwinning suffix persistence and all-known winning stored reorg without reconstructing a full NativeBlockMeta Vec."
       ],
       "missing_work": [],
       "performance_constraint": "Refinement proof should reuse existing replay planning; avoid extra full replay on normal block import.",
       "explicit_external_assumptions": [
         "Positive inbound bridge replay publication remains disabled until a PQ-clean verifier replaces the experimental offline envelope; the combined disabled-inbound restart/reorg fail-closed case is now gated.",
-        "Prove parser-internal implementation equivalence for arbitrary raw PendingAction bytes instead of relying on accepted exact-decode predicates plus Rust conformance gates."
+        "Prove parser-internal implementation equivalence for arbitrary raw PendingAction bytes instead of relying on accepted exact-decode predicates plus Rust conformance gates.",
+        "Native sync replay/manifest/durability wiring does not prove sled batch or transaction atomicity, operating-system fsync semantics, hash-key uniqueness, arbitrary raw block-replay soundness, or convergence for every deep fork.",
+        "CanonicalReorgPersistenceAdmission proves the storage-plan/count/order predicate only. Cross-file Rust refinement, sled Batch/transaction atomicity, operating-system fsync semantics, allocator/RSS bounds, and arbitrary completion peak memory remain external or runtime-tested.",
+        "Grouped pending-action flush-before-memory ordering is lexically bound, but the static checker does not prove outer loop-to-completion propagation to every waiter; focused atomicity/restart tests are conditional integration evidence. Graceful shutdown currently logs rather than propagates a flush failure.",
+        "The historical whole-index canonical reorg calls the typed-plan application and manifest helper lexically before shared-tree removal inside its transaction, but the dedicated static source gate proves transaction-result propagation and dominance only for the active canonical-suffix and mined signatures; rollback and restart tests provide conditional evidence for the older path."
       ],
       "remaining_work": []
     },
@@ -1277,9 +1294,9 @@
       "id": "consensus.admission-safety",
       "weight": 4,
       "completion_percent": 100.0,
-      "top_level_theorem_target": "No block enters the accepted chain unless version, PoW, timestamp, retarget, miner identity, proof policy, supply, action root, DA root, and artifact checks pass in required order.",
+      "top_level_theorem_target": "No block enters the accepted chain unless version, PoW, timestamp, retarget, proof policy, supply, action root, DA root, artifact checks, and any miner-identity check required by the selected consensus profile pass in required order; active native V2 is identity-free.",
       "current_evidence": [
-        "PoW, header, version-policy, miner-identity, proof-policy, mined-work, announced-block, block-commitment, and work-template gates",
+        "PoW, header, version-policy, generic consensus miner-identity, proof-policy, mined-work, announced-block, block-commitment, active-native retired-identity rejection, and work-template gates",
         "consensus statement-anchor admission gate rejects binding-count mismatch, unknown parent-history anchors, and same-block-created anchors before expensive proof paths",
         "implementation order and dominance constraints in blueprint",
         "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean composes accepted decoded block-action validation, accepted wire replay projection, and accepted block replay/accounting into a publication surface exposing action-hash preconditions, validated row consumption, replay-row agreement, bridge replay-count agreement, canonical replay trace, commitment preconditions, expected/claimed supply equality, and state-root agreement",
@@ -1512,10 +1529,7 @@
       "remaining_work": []
     },
     {
-      "id": "resource.dos-bounds",
-      "weight": 2,
       "completion_percent": 100.0,
-      "top_level_theorem_target": "Every consensus-facing parser, RPC admission path, proof artifact, and sidecar enforces bounded size and bounded pre-verification work before allocation-heavy or proof-heavy work.",
       "current_evidence": [
         "resource-budget admission gate",
         "RPC admission gate",
@@ -1559,19 +1573,32 @@
         "formal-security blueprint sidecar-upload order now permits staged proof byte-budget admission before tx-leaf proof decoding/binding-hash recomputation, preserving cheap DoS bounds before heavy work while decoded/capacity admission still dominate staging.",
         "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean models staged-proof upload pre-heavy ordering and generated vectors check da_submitProofs rejects staged proof byte-budget overflow before tx-leaf artifact binding decode or proof hashing.",
         "PreHeavyWorkResourceBoundSurface now proves generic staged-proof upload ordering: metadata rejection precedes budget work, staged proof byte-budget rejection precedes decoded proof binding/hash work, and decoded rejection happens only after metadata and budget acceptance",
+        "da_submitCiphertexts parses and prepares individually bounded values before prepared_ciphertexts.push, then checks staged-ciphertext capacity under the persistence epoch before projected insertion, persistence, durability, and publication. da_submitProofs checks metadata, projected staged-proof bytes, capacity, and decoded binding before prepared_proofs.push, then rechecks bytes and capacity under the persistence epoch before projected insertion, persistence, durability, and publication.",
         "formal/lean/Hegemon/Network/QueueResourceAdmission.lean `accepted_network_pre_heavy_resource_admission_exposes_facts` and companion rejection theorems prove bad frames fail before queue reservation, queue rejection rolls back byte accounting after frame acceptance, accepted queue charges stay within frame bounds, and pre-heavy admission ties frame, queue, and peer-store bounds together.",
         "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean binds this internal theorem surface into the final completion certificate with explicit external-assumption fields and the production release gate.",
-        "formal/lean/Hegemon/Native/SyncResponseImport.lean and generated vectors bind inbound sync response-count admission to the production admission/sort helper before any import-progress or block-import work is attempted."
+        "formal/lean/Hegemon/Native/SyncResponseImport.lean and generated vectors bind inbound sync response-count admission to the production admission/sort helper before any import-progress or block-import work is attempted.",
+        "formal/lean/Hegemon/Native/BlockBodyChunkTransportAdmission.lean proves active exact-carrier schema, chain, rules, total-length and derived-chunk-count checks precede reservation, accepted chunks have the exact derived length, and completion checks the bound body hash before exact decode; generated vectors bind those rules to production transport helpers.",
+        "formal/lean/Hegemon/Native/SyncBlockChunkAdmission.lean remains conditional analysis of an incompatible stored-metadata-record fallback. Production rejects its tags 8 and 9 before postcard allocation, so its retained-byte and bounded-request theorems supply no active ingress coverage or authorization.",
+        "consensus/src/aggregation/v5.rs `aggregation_v5_envelope_decode_matches_zstd_postcard_oracle_on_mutation_corpus` covers the recursive aggregation HGA0/zstd envelope and exact-postcard V5 payload parser boundary before representative child proof decoding or STARK batch verification.",
+        "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean carries 22 active production public-input cost families plus a 23rd conditional syncBlockChunk family; the conditional family describes disabled tags 8 and 9 and is not active coverage.",
+        "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean `accepted_preheavy_dos_certificate_covers_all_public_input_cost_classes` proves the 23-family internal model count by kernel reduction instead of `native_decide`; direct `#print axioms` reports no axiom dependencies, but production authority for oversized blocks comes separately from BlockBodyChunkTransportAdmission.",
+        "formal/lean/Hegemon/Native/SyncResponseImport.lean and schema-v3 generated vectors bind inbound sync response-count admission to the production admission/sort helper before any import-progress or block-import work is attempted; bind missing-parent/all-known/stored-side-branch no-progress outcomes to changed-range or deferred-backoff recovery rather than immediate same-range retry; and distinguish post-classification missing stored ancestors from terminal corruption after an all-known trace.",
+        "node/src/native compact/hash-projection streaming regressions cover deep large-action nonwinning suffix persistence and all-known winning stored reorg without full NativeBlockMeta-chain reconstruction; this is finite runtime evidence, not a theorem bounding allocator RSS or every decode peak."
       ],
+      "explicit_external_assumptions": [
+        "Add benchmark-backed per-family cost budgets beyond the current 22 active production families and separately integrate BlockBodyChunkTransportAdmission into the aggregate resource certificate; do not count the conditional 23rd syncBlockChunk family as active coverage.",
+        "BlockBodyChunkTransportAdmission bounds the active exact action-body carrier decision table but does not prove allocator release or total process peak memory. The conditional SyncBlockChunkAdmission theorem must not be counted as active production coverage.",
+        "Benchmark any new runtime check on native-devnet-host or local release builds.",
+        "Bind the remaining consensus-facing parser families beyond native block actions, inbound sync response counts, outbound sync response ranges, candidate-artifact resource projection, inline transfer ciphertext resource projection, bridge action receipt/payload resource projection, recursive_block_v1/v2 parser-oracle coverage, native tx-leaf/receipt-root parser-oracle coverage, and network queue byte caps to deeper parser-internal proofs or benchmark-backed cost budgets.",
+        "Full parser implementation proofs, RPC authentication/deployment exposure, OS/network scheduling DoS, and complete native-node refinement remain explicit residuals.",
+        "Closure-contained local/relay budget propagation, grouped per-candidate loop-to-transaction ordering, cross-loop sidecar persistence, and grouped durability loop-to-completion are supported by lexical bindings plus focused atomicity/restart tests; the static checker does not prove their control-flow dominance or every waiting-completion error path. Graceful shutdown logs rather than propagates a flush failure."
+      ],
+      "id": "resource.dos-bounds",
       "missing_work": [],
       "performance_constraint": "The property itself enforces little-to-no performance cost by putting cheap caps before expensive work.",
       "remaining_work": [],
-      "explicit_external_assumptions": [
-        "Add benchmark-backed per-family cost budgets beyond the current explicit 22-family public-input coverage certificate.",
-        "Benchmark any new runtime check on native-devnet-host or local release builds.",
-        "Bind the remaining consensus-facing parser families beyond native block actions, inbound sync response counts, outbound sync response ranges, candidate-artifact resource projection, inline transfer ciphertext resource projection, bridge action receipt/payload resource projection, recursive_block_v1/v2 parser-oracle coverage, native tx-leaf/receipt-root parser-oracle coverage, and network queue byte caps to deeper parser-internal proofs or benchmark-backed cost budgets.",
-        "Full parser implementation proofs, RPC authentication/deployment exposure, OS/network scheduling DoS, and complete native-node refinement remain explicit residuals."
-      ]
+      "top_level_theorem_target": "Every consensus-facing parser, RPC admission path, proof artifact, and sidecar enforces bounded size and bounded pre-verification work before allocation-heavy or proof-heavy work.",
+      "weight": 2
     },
     {
       "id": "release.dependency-posture",
@@ -1801,59 +1828,80 @@
     ]
   },
   "last_sync_response_import_slice": {
-    "date": "2026-06-18",
-    "summary": "Added a native SyncResponseImport refinement gate. Lean now models inbound sync response import control flow after wire decode: count admission before sort/import, deterministic sorted heights, bounded attempted/imported counters, stop-on-first-error behavior, impossible outcome-trace rejection, and continuation requests only for nonempty responses when the peer remains ahead. Production now routes native_sync_loop response handling through admit_and_sort_native_sync_response_blocks plus NativeSyncResponseImportProgress, and formal-core generates vectors checked by hegemon-node.",
+    "date": "2026-08-30",
+    "summary": "Extended schema-v3 SyncResponseImport for post-classification and mixed-tail fork recovery. Fully attempted all-known missingAncestor becomes recovery only with zero imported/stored rows and no earlier stop; corrupt is terminal; inconsistent combinations reject. Known/imported/known may continue only after canonical adoption, while known/stored-noncanonical/known remains no-progress and requires recovery. Production classification, compact/hash-projection ancestry streaming, selective missing-record prestorage, stored reorg, and publication span admission.rs, service.rs, and node_impl.rs, so generated helper conformance plus exact runtime regressions are the evidence boundary rather than a cross-file checker proof.",
     "lean_modules": [
       "formal/lean/Hegemon/Native/SyncResponseImport.lean",
       "formal/lean/Hegemon/Native/GenerateSyncResponseImportVectors.lean"
     ],
     "top_level_theorems": [
       "Hegemon.Native.SyncResponseImport.sync_response_import_acceptance_exposes_facts",
+      "Hegemon.Native.SyncResponseImport.recovery_required_blocks_direct_continuation",
+      "Hegemon.Native.SyncResponseImport.immediate_recovery_requires_changed_range",
+      "Hegemon.Native.SyncResponseImport.follow_up_after_stop_requires_useful_recovery_or_backoff",
       "Hegemon.Native.SyncResponseImport.sync_response_import_sorts_unsorted_heights",
       "Hegemon.Native.SyncResponseImport.sync_response_import_stops_on_first_error",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_error_blocks_immediate_retry",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_stops_on_missing_parent",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_missing_parent_requires_recovery",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_same_range_is_not_useful_recovery",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_changed_ancestor_range_allows_recovery",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_all_known_ahead_requires_recovery",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_all_known_equal_height_requires_recovery",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_stored_noncanonical_ahead_requires_recovery",
       "Hegemon.Native.SyncResponseImport.sync_response_import_empty_never_requests_more",
       "Hegemon.Native.SyncResponseImport.sync_response_import_over_limit_rejects",
-      "Hegemon.Native.SyncResponseImport.sync_response_import_outcome_over_response_rejects"
+      "Hegemon.Native.SyncResponseImport.sync_response_import_outcome_over_response_rejects",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_incomplete_nonterminal_trace_rejects",
+      "Hegemon.Native.SyncResponseImport.post_classification_missing_parent_accepts_after_full_trace",
+      "Hegemon.Native.SyncResponseImport.post_classification_missing_parent_rejects_incomplete_trace",
+      "Hegemon.Native.SyncResponseImport.post_classification_missing_parent_rejects_without_blocks",
+      "Hegemon.Native.SyncResponseImport.post_classification_missing_parent_rejects_after_error",
+      "Hegemon.Native.SyncResponseImport.post_classification_missing_parent_rejects_after_import",
+      "Hegemon.Native.SyncResponseImport.post_classification_missing_parent_rejects_after_noncanonical_store",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_post_classification_missing_ancestor_requires_recovery",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_post_classification_corruption_is_terminal",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_post_classification_after_row_stop_rejects",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_known_imported_known_continues_after_adoption",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_known_stored_known_requires_recovery"
     ],
     "formal_core_gate": {
-      "command": "HEGEMON_LEAN_SYNC_RESPONSE_IMPORT_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_response_import_vectors_match_production --lib --no-default-features -- --nocapture",
-      "wrapper": "bash scripts/check_formal_core.sh now generates gen_sync_response_import_vectors and runs the production conformance test after the sync admission vectors."
+      "command": "HEGEMON_LEAN_SYNC_RESPONSE_IMPORT_VECTORS=<generated-json> scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::lean_generated_sync_response_import_vectors_match_production --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::all_known_disconnected_winning_suffix_backfills_then_reorgs --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::all_known_winning_sync_corrupt_parent_cycle_is_terminal --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::mixed_known_missing_known_winning_response_persists_connector_and_advances_once --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::mixed_known_missing_mismatched_known_descendant_is_terminal_without_writes --no-default-features",
+      "wrapper": "bash scripts/check_formal_core.sh generates schema-v3 vectors and uses the exact cargo-lib runner for helper conformance; scripts/check_native_node_memory_sync_recovery.sh runs missing-ancestor, corrupt-cycle, mixed known/missing/mismatch, deep streaming, reopen, and crash-window regressions."
     },
     "validation": {
-      "status": "Targeted local gates passed: cd formal/lean && lake build Hegemon.Native.SyncResponseImport Hegemon.Native.GenerateSyncResponseImportVectors Hegemon; generated-vector JSON validation; HEGEMON_LEAN_SYNC_RESPONSE_IMPORT_VECTORS=/tmp/hegemon-sync-response-import.json cargo test -p hegemon-node lean_generated_sync_response_import_vectors_match_production --lib --no-default-features -- --nocapture."
+      "status": "Focused Lean, schema-v3 generated-vector conformance including the two mixed-tail cases, and exact missing-ancestor, corrupt-cycle, mixed known/missing/mismatch runtime regressions passed. Full formal-core remains a separate final gate."
     },
     "known_limitations": [
-      "This proves and production-binds non-cryptographic inbound sync response import control flow, not peer honesty, network liveness, storage durability, or complete native-node equivalence.",
-      "Block body/action-root validity remains covered by existing sync row materialization and block-action gates; arbitrary parser internals remain a separate refinement track."
+      "The Lean model proves non-cryptographic response-import and recovery-decision control flow. It does not prove complete fork discovery, peer honesty, network liveness, cross-file Rust refinement, allocator/RSS behavior, sled atomicity, operating-system fsync semantics, hash-key uniqueness, arbitrary raw block-replay soundness, or complete native-node equivalence.",
+      "Canonical reorg storage planning is covered separately by CanonicalReorgPersistenceAdmission; runtime tests, not SyncResponseImport, cover compact/hash streaming, selective prestorage, reopen, and crash-window behavior."
     ]
   },
   "last_sync_raw_ingress_slice": {
-    "date": "2026-06-19",
-    "summary": "Added a native SyncRawIngress byte-vector gate. Lean now owns representative raw `HNW1`/postcard sync bytes for a canonical request, canonical empty response, trailing request, missing-marker request, and unknown variant. The production gate feeds those exact bytes through `decode_sync_message`, checks canonical valid request/response bytes against `encode_sync_message`, then routes decoded requests to `native_sync_response_range` and decoded responses to `admit_and_sort_native_sync_response_blocks` plus `NativeSyncResponseImportProgress`.",
+    "date": "2026-08-30",
+    "summary": "Reconciled native sync wire authority to the shipped exact carrier. Legacy ordinals 0 through 3 remain frozen; AnnounceLocator, ResponseLocators, BlockBodyRequest, and BlockBodyChunk are active at ordinals 4 through 7; incompatible stored-metadata-record RequestBlockChunk and BlockChunk are assigned ordinals 8 and 9 but reject in the raw tag prefilter before postcard allocation; and ordinal 10 AnnounceTip is a bounded non-authoritative request-planning hint. BlockBodyChunkTransportAdmission is the active large-block model. SyncRawIngress retains the superseded metadata-record byte layout only as conditional evidence and supplies no production authority.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/SyncRawIngress.lean",
-      "formal/lean/Hegemon/Native/GenerateSyncRawIngressVectors.lean"
+      "formal/lean/Hegemon/Native/BlockBodyChunkTransportAdmission.lean",
+      "formal/lean/Hegemon/Native/GenerateBlockBodyChunkTransportAdmissionVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.SyncRawIngress.sync_raw_ingress_case_matches_expected",
-      "Hegemon.Native.SyncRawIngress.valid_raw_sync_request_accepts",
-      "Hegemon.Native.SyncRawIngress.raw_sync_request_range_caps_to_limit",
-      "Hegemon.Native.SyncRawIngress.raw_sync_request_trailing_rejects",
-      "Hegemon.Native.SyncRawIngress.raw_sync_missing_marker_rejects",
-      "Hegemon.Native.SyncRawIngress.raw_sync_unknown_variant_rejects",
-      "Hegemon.Native.SyncRawIngress.valid_raw_empty_sync_response_accepts",
-      "Hegemon.Native.SyncRawIngress.raw_empty_sync_response_never_requests_more"
+      "Hegemon.Native.BlockBodyChunkTransportAdmission.exact_chunk_count_boundaries",
+      "Hegemon.Native.BlockBodyChunkTransportAdmission.final_chunk_uses_exact_remainder",
+      "Hegemon.Native.BlockBodyChunkTransportAdmission.locator_precedence_is_schema_chain_rules_length_count",
+      "Hegemon.Native.BlockBodyChunkTransportAdmission.chunk_precedence_checks_count_before_index_and_length",
+      "Hegemon.Native.BlockBodyChunkTransportAdmission.completion_hash_precedes_decode",
+      "Hegemon.Native.BlockBodyChunkTransportAdmission.sample_hash_preimage_binds_domain_length_and_body"
     ],
     "formal_core_gate": {
-      "command": "HEGEMON_LEAN_SYNC_RAW_INGRESS_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_raw_ingress_vectors_match_production --lib --no-default-features -- --nocapture",
-      "wrapper": "bash scripts/check_formal_core.sh now generates gen_sync_raw_ingress_vectors and runs the production conformance test between sync admission and sync-response import gates."
+      "command": "scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::native_sync_message_variant_ordinals_are_append_only --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::transport_tests::native_sync_wire_tags_admit_exact_carrier_and_reject_record_fallback_before_allocation --no-default-features && HEGEMON_LEAN_BLOCK_BODY_CHUNK_TRANSPORT_ADMISSION_VECTORS=<generated-json> scripts/run_exact_cargo_lib_test.sh hegemon-node native::transport_tests::lean_generated_block_body_chunk_transport_admission_vectors_match_production --no-default-features",
+      "wrapper": "bash scripts/check_formal_core.sh checks the complete 0 through 10 serializer map, encoded active-carrier tags 4 through 7, raw prefilter decisions including rejection of 8 and 9, and Lean-generated exact locator/action-body transport conformance."
     },
     "validation": {
-      "status": "Targeted local gates passed: cd formal/lean && lake build Hegemon.Native.SyncRawIngress Hegemon.Native.GenerateSyncRawIngressVectors gen_sync_raw_ingress_vectors Hegemon; generated-vector JSON validation; HEGEMON_LEAN_SYNC_RAW_INGRESS_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_raw_ingress_vectors_match_production --lib --no-default-features -- --nocapture."
+      "status": "The repaired exact 0 through 10 serializer-map regression, active-carrier/pre-allocation-rejection transport test, and Lean-generated BlockBodyChunkTransportAdmission conformance test pass in the merged worktree. The full post-merge formal-core run remains separate; no stale SyncRawIngress result is credited."
     },
     "known_limitations": [
-      "This is representative mechanized raw-byte refinement for the native sync message boundary, not a full Lean proof of postcard parser correctness over arbitrary bytes.",
-      "Peer honesty, network liveness, block validity beyond the existing sync publication gates, storage durability, and complete native-node equivalence remain explicit separate assumptions or refinement tracks."
+      "The active model proves the exact transport decision table and hash-before-decode order, not arbitrary postcard/SCALE parser correctness, allocator behavior, or hash collision resistance.",
+      "The retained SyncRawIngress module describes a superseded metadata-record layout and cannot authorize production decode. Peer honesty, network liveness, complete block validity, storage durability, and complete native-node equivalence remain separate assumptions or refinement tracks."
     ]
   },
   "last_smallwood_verifier_statement_projection_slice": {
@@ -1968,6 +2016,109 @@
     },
     "known_limitations": [
       "This is a verifier-registration effect policy and vector gate. It does not prove external-chain receipt soundness, PQ verifier soundness, bridge payload hash security/equivalence, SCALE parser implementation correctness for all arbitrary bytes, positive inbound bridge mint publication, or complete native-node refinement."
+    ]
+  },
+  "last_canonical_reorg_persistence_admission_slice": {
+    "date": "2026-08-30",
+    "summary": "Canonical reorg persistence has two explicit phases. The classifier maps absent records to missing, exact stored records to known-exact, and stored metadata mismatch to terminal rejection; every missing winning-suffix row is selectively prestored and durability-flushed before adoption. `CanonicalSuffixReorgCommit` then consumes exact durable pre-stored rows and requires `block_record_writes = 0`. This is distinct from the ordinary `TipExtensionBatchCommit` fast path, which requires `block_record_writes = chain_block_count`. Structural-count checks precede validation/storage checks, and validation precedes durability checks. Cross-file production execution remains source-review plus exact runtime-regression evidence.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Native/CanonicalReorgPersistenceAdmission.lean",
+    "formal/lean/Hegemon/Native/GenerateCanonicalReorgPersistenceAdmissionVectors.lean",
+    "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
+    "formal/lean/Hegemon/Native/GenerateAtomicCommitManifestAdmissionVectors.lean"
+    ],
+    "top_level_theorems": [
+      "Hegemon.Native.CanonicalReorgPersistenceAdmission.accepts_iff_canonical_reorg_persistence_preconditions",
+      "Hegemon.Native.CanonicalReorgPersistenceAdmission.absent_record_classifies_missing",
+      "Hegemon.Native.CanonicalReorgPersistenceAdmission.exact_stored_record_classifies_known_exact",
+      "Hegemon.Native.CanonicalReorgPersistenceAdmission.mismatched_stored_record_rejects",
+      "Hegemon.Native.CanonicalReorgPersistenceAdmission.accepted_known_status_requires_exact_stored_record",
+      "Hegemon.Native.CanonicalReorgPersistenceAdmission.structural_counts_precede_validation_and_storage",
+      "Hegemon.Native.CanonicalReorgPersistenceAdmission.validation_precedes_storage_durability",
+    "Hegemon.Native.CanonicalReorgPersistenceAdmission.accepted_persistence_has_exact_prestorage_and_zero_canonical_record_writes",
+    "Hegemon.Native.AtomicCommitManifestAdmission.valid_tip_extension_batch_commit_accepts",
+    "Hegemon.Native.AtomicCommitManifestAdmission.rejects_tip_extension_batch_block_record_write_mismatch",
+    "Hegemon.Native.AtomicCommitManifestAdmission.valid_canonical_suffix_reorg_commit_accepts",
+    "Hegemon.Native.AtomicCommitManifestAdmission.rejects_canonical_suffix_reorg_block_record_write"
+    ],
+    "formal_core_gate": {
+    "command": "HEGEMON_LEAN_CANONICAL_REORG_PERSISTENCE_ADMISSION_VECTORS=<generated-json> scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::lean_generated_canonical_reorg_persistence_admission_vectors_match_production --no-default-features && HEGEMON_LEAN_ATOMIC_COMMIT_MANIFEST_ADMISSION_VECTORS=<generated-json> scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::lean_generated_atomic_commit_manifest_admission_vectors_match_production --no-default-features",
+    "wrapper": "bash scripts/check_formal_core.sh generates both vector families and invokes their exact cargo-lib conformance tests."
+    },
+    "runtime_gates": {
+      "command": "scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::mixed_known_missing_known_winning_response_persists_connector_and_advances_once --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::mixed_known_missing_mismatched_known_descendant_is_terminal_without_writes --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::nonwinning_sync_streams_deep_large_action_ancestry_before_suffix_persistence --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::all_known_deep_large_action_winning_sync_streams_stored_reorg_and_reopens --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::canonical_reorg_prestores_only_unknown_suffix_and_reopens --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::canonical_reorg_prestore_crash_window_is_noncanonical_and_retryable --no-default-features",
+      "wrapper": "scripts/check_native_node_memory_sync_recovery.sh runs these exact regressions."
+    },
+    "validation": {
+    "status": "The repaired atomic-manifest adapter now covers generated `tip_extension_batch_commit`; both the current atomic-manifest and canonical-reorg-persistence Lean-generated vector conformance tests pass in the merged worktree. The exact runtime regression suite and full formal-core run remain separate final gates."
+    },
+    "known_limitations": [
+      "The formal relation proves production-derived storage-plan/count/order predicates, not sled Batch or transaction atomicity, stable-media durability, cross-file Rust refinement, hash collision resistance, allocator/RSS bounds, or arbitrary completion peak memory.",
+    "KnownMismatch-before-write, compact/hash streaming, separate selective prestorage and flush, `CanonicalSuffixReorgCommit.block_record_writes = 0`, `TipExtensionBatchCommit.block_record_writes = chain_block_count`, durable-head verification, publication, reopen, and crash-window retry are finite source/runtime evidence."
+    ]
+  },
+  "last_sync_block_chunk_admission_slice": {
+    "date": "2026-08-30",
+    "summary": "Conditional and inactive only. SyncBlockChunkAdmission models an incompatible stored-metadata-record fallback, including retained-byte, canonical chunk-shape, session, completion, and compact-tip predicates. Production assigns its RequestBlockChunk and BlockChunk forms to tags 8 and 9 and rejects them in prefilter_native_sync_wire_tag before postcard allocation, so none of these theorems authorize production ingress, decode, completion, or import. Active large-block transport uses the exact locator and action-body carrier at tags 4 through 7 under BlockBodyChunkTransportAdmission; AnnounceTip tag 10 remains non-authoritative.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Native/SyncBlockChunkAdmission.lean",
+      "formal/lean/Hegemon/Native/GenerateSyncBlockChunkAdmissionVectors.lean"
+    ],
+    "top_level_theorems": [
+      "Hegemon.Native.SyncBlockChunkAdmission.accepted_chunk_retained_bytes_within_total",
+      "Hegemon.Native.SyncBlockChunkAdmission.accepted_chunk_total_within_cap",
+      "Hegemon.Native.SyncBlockChunkAdmission.accepted_chunk_has_canonical_length",
+      "Hegemon.Native.SyncBlockChunkAdmission.accepted_nonfinal_chunk_fills_cap",
+      "Hegemon.Native.SyncBlockChunkAdmission.accepted_final_chunk_matches_remainder",
+      "Hegemon.Native.SyncBlockChunkAdmission.accepted_chunk_exposes_bounded_request_facts",
+      "Hegemon.Native.SyncBlockChunkAdmission.valid_fallback_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.fallback_without_matching_request_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.session_capacity_exact_limit_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.matching_offer_exact_next_offset_serves",
+      "Hegemon.Native.SyncBlockChunkAdmission.serve_request_without_matching_offer_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.serve_request_tuple_mismatch_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.serve_request_wrong_next_offset_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.serve_request_total_offset_closes",
+      "Hegemon.Native.SyncBlockChunkAdmission.matching_offer_initial_request_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.offer_request_without_matching_offer_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.offer_request_tuple_mismatch_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.offer_request_nonzero_offset_rejects_before_record_load",
+      "Hegemon.Native.SyncBlockChunkAdmission.offer_request_u64_max_offset_rejects_before_record_load",
+      "Hegemon.Native.SyncBlockChunkAdmission.admitted_empty_response_enters_chunk_fallback",
+      "Hegemon.Native.SyncBlockChunkAdmission.completed_chunk_fallback_removes_request",
+      "Hegemon.Native.SyncBlockChunkAdmission.aborted_chunk_fallback_enters_cooldown",
+      "Hegemon.Native.SyncBlockChunkAdmission.duplicate_empty_response_transition_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.chunk_session_idle_exact_limit_expires",
+      "Hegemon.Native.SyncBlockChunkAdmission.chunk_session_lifetime_exact_limit_expires",
+      "Hegemon.Native.SyncBlockChunkAdmission.valid_tip_announcement_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.tip_announcement_not_ahead_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.tip_announcement_equal_local_hash_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.tip_announcement_equal_local_hash_precedes_zero_hash",
+      "Hegemon.Native.SyncBlockChunkAdmission.tip_announcement_equal_competing_hash_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.tip_announcement_zero_hash_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.valid_chunk_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.valid_nonfinal_full_chunk_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.valid_final_remainder_chunk_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.oversized_chunk_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.undersized_nonfinal_chunk_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.offset_mismatch_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.chunk_end_overflow_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.valid_completion_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.completion_digest_mismatch_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.completion_decode_rejects_after_digest_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.completion_context_mismatch_rejects"
+    ],
+    "formal_core_gate": {
+      "command": "(cd formal/lean && lake build Hegemon.Native.SyncBlockChunkAdmission Hegemon.Native.GenerateSyncBlockChunkAdmissionVectors) && scripts/run_exact_cargo_lib_test.sh hegemon-node native::transport_tests::native_sync_wire_tags_admit_exact_carrier_and_reject_record_fallback_before_allocation --no-default-features",
+      "wrapper": "bash scripts/check_formal_core.sh may retain the conditional Lean module, but production authority requires the raw pre-allocation rejection gate for tags 8 and 9 and the separate active BlockBodyChunkTransportAdmission conformance gate."
+    },
+    "validation": {
+      "status": "The module remains conditional evidence only. Final post-merge execution must confirm tags 8 and 9 are unreachable before allocation and must not credit old metadata-record conformance or import regressions as production coverage."
+    },
+    "known_limitations": [
+      "The retained-byte and bounded-request theorems apply only to an inactive message family and do not bound active ingress or completion peak memory.",
+      "Append-only tags do not provide capability negotiation. Mixed-version large-block interoperability is claimed only for peers supporting the exact locator and action-body carrier at tags 4 through 7.",
+      "Digest collision resistance, arbitrary parser correctness, allocator behavior, peer honesty, network liveness, and complete native-node equivalence remain external."
     ]
   }
 }

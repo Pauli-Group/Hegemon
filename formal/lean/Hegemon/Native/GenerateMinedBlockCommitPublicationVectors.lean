@@ -10,6 +10,7 @@ def boolJson (value : Bool) : String :=
 
 def kindJson : AtomicCommitKind -> String
   | AtomicCommitKind.minedBlockCommit => "\"mined_block_commit\""
+  | AtomicCommitKind.tipExtensionBatchCommit => "\"tip_extension_batch_commit\""
   | AtomicCommitKind.canonicalReorgCommit => "\"canonical_reorg_commit\""
   | AtomicCommitKind.canonicalSuffixReorgCommit =>
       "\"canonical_suffix_reorg_commit\""
@@ -165,6 +166,10 @@ def vectorJson : String :=
       "commit-kind-mismatch-rejected"
       { validMinedBlockCommitPublication with
         commitManifest := validCanonicalReorgCommit } ++ ",\n"
+    ++ publicationCaseJson
+      "tip-extension-batch-kind-mismatch-rejected"
+      { validMinedBlockCommitPublication with
+        commitManifest := validTipExtensionBatchCommit } ++ ",\n"
     ++ publicationCaseJson
       "commit-kind-rejects-before-manifest-shape"
       { validMinedBlockCommitPublication with
