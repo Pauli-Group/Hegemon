@@ -46,6 +46,7 @@ pub mod smallwood_poseidon2_v8_hash_schedule;
 pub(crate) mod smallwood_poseidon2_v8_ir;
 pub mod smallwood_poseidon2_v8_program;
 pub mod smallwood_poseidon2_v8_relation;
+pub mod smallwood_poseidon2_v8_rng_refinement;
 pub mod smallwood_poseidon2_v8_security;
 pub mod smallwood_poseidon2_v8_semantic_refinement;
 pub mod smallwood_poseidon2_v8_semantics;

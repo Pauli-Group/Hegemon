@@ -155,9 +155,18 @@ arithmetic or throughput controls only and can never replace a reviewed `T`.
 
 The frozen executable privacy report is 4,230 bytes with SHA-512
 `0efabeb6d53f2557b12f21747fecbcc4694a3ed44a78075804908a6c6b0a028d4b84c7b85a2c33bf62f6248dd0b3ef123953c7f89d31ab386d30b0bfe34a73c8`.
-It uses a typed coin tape drawn through `CryptoRng` with exact rejection and
-consumption accounting, exact
-programmable SHA-512 replay, and no salt-only oracle program. Its exact lazy
+The honest SMZ9 prover obtains field candidates, its 32-byte salt, and all
+`2^23` 64-byte DECS tapes through `getrandom::fill`; any provider error aborts
+proof construction. The typed `CryptoRng + RngCore` sampler belongs to the
+whole-view refinement harness and its marker traits do not prove uniformity.
+The shared Rust sampler and Lean model now fix canonical Goldilocks rejection,
+the byte layout, and the exact inventory of 12,201 accepted field coins, at
+least 2,950 successful fills, and at least 536,968,552 source bytes. They do not
+prove the runtime distribution, OS entropy quality, independence across
+concurrent calls, or a concrete `epsilon_rng` bound. This work changes no SMZ9
+wire byte: the 122,863-byte maximum and the 122,735/122,607-byte retained proofs
+remain unchanged. The executable harness also has exact programmable SHA-512
+replay and no salt-only oracle program. Its exact lazy
 strict-128 ceiling is `18,889,465,930,379,069,227,007` observed views. The
 remaining constructor-free premises are refinement from the RNG to independent
 uniform coins, applicability of the adaptive hidden-subtree argument in the

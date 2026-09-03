@@ -87,13 +87,21 @@ review, and hermetic release authority remain required.
   arithmetic-only. It cannot supply the security parameter `T`, which must
   cover all observed or generated honest views, including rejected, orphaned,
   offline, side-fork, and repeated views.
-- [ ] (2026-08-30 22:44Z) Complete the exact six-opening correction-aware
-  sampling refinement and bind its theorem to the Rust predicate and generated
-  vectors. The source theorem now proves six distinct nonpacking openings, the
-  nonzero degree-six correction, all three PCS root families, denominator
-  `(p-64)_6 - 414*p^5`, and abort `813^16/p^16`; Rust vectors pass. The only
-  remaining local gate is a practical-time kernel build after the first
-  monolithic exact-arithmetic run exceeded the 15-minute campaign limit.
+- [x] (2026-09-03 15:57Z) Kernel-checked the exact ideal six-opening
+  correction-aware sampling theorem in practical time. It proves six distinct
+  nonpacking openings, the nonzero degree-six correction, all three PCS root
+  families, denominator `(p-64)_6 - 414*p^5`, and abort
+  `813^16/p^16`. `lake build
+  HegemonCrypto.SmallWoodV8Smz9AdaptiveFiniteAccounting` passed all 2,594 jobs,
+  and the focused Rust rejection/accounting vectors pass. This closes the
+  previously reported Lean build problem without changing proof bytes.
+- [ ] Bind that ideal theorem to the exact Rust/SHA-512 retry execution. The
+  current theorem deliberately does not identify SHA-512-derived candidates
+  with independent uniform tuples or prove canonical Rust execution
+  refinement, and the repository has no generated correction-sampling vector
+  artifact. Keep the deployed sampling receipt absent until this bridge is
+  explicit; the runtime-randomness refinement work below may discharge the
+  deterministic map while retaining entropy and quantum-oracle assumptions.
 - [ ] (2026-08-30 22:44Z) Complete repeated-proof algebraic privacy and the
   active final-PIOP programming-input entropy theorem. The result must be
   binary: a proved loss below the 128-bit target under named assumptions, or a
@@ -109,6 +117,30 @@ review, and hermetic release authority remain required.
   constructor-free premises are RNG-to-uniform refinement, adaptive hidden
   subtree applicability, concrete SHA-512/global QROM composition, and a
   reviewed upper bound on all observed views `T`.
+- [x] (2026-09-03 16:03Z) Factored the production randomness maps into one
+  source-injectable Rust implementation and proved their deterministic ideal
+  geometry. Production still calls `getrandom::fill`; accepted little-endian
+  words are the unique canonical Goldilocks representatives, rejected words
+  are never reduced modulo the field, fixed byte strings and DECS tapes are
+  copied exactly, and any provider error aborts proof construction. The honest
+  SMZ9 inventory is 12,201 accepted field words, one 32-byte salt, and
+  8,388,608 64-byte leaf tapes. Six focused Rust tests, the prior engine RNG
+  session tests, formatting, the standalone RuntimeRandomness build, and the
+  2,634-job `HegemonCrypto` umbrella build pass. Proof bytes are unchanged.
+  This establishes the deterministic map, not the external
+  source premise: the composed privacy bound must retain an explicit
+  `epsilon_rng` for the OS/CSPRNG stream, including concurrent calls.
+- [ ] Build the actual joint whole-view refinement rather than composing
+  marginal hiding lemmas. A strict constructor audit found no Lean honest
+  SMZ9 proof-byte constructor and no common real/simulator view: the current
+  formal view omits the concrete verifier trace, programmed inputs and keys,
+  prior queries, ordered oracle trace, replay record, histogram, and coin
+  ledger. The honest tape contains every `2^23` leaf tape while the simulator
+  consumes opened tapes plus lazy-program inputs and outputs. The next theorem
+  must consume the real typed coins into the actual proof bytes and oracle
+  trace and construct one history-dependent joint transport or QROM hybrid.
+  Do not award adaptive-zero-knowledge credit to a generic kernel with the
+  desired coupling supplied as a premise.
 - [ ] (2026-08-30 22:44Z) Compose the exact PCS, PIOP, DECS, abort, Fiat-Shamir
   QROM, SHA-512, Poseidon2, and lifetime terms from the implemented SMZ9
   parameters. Separate kernel-checked arithmetic, explicit primitive
@@ -126,8 +158,30 @@ review, and hermetic release authority remain required.
   global-once SHA/product loss, and per-view external terms. Ten Rust accounting
   and mutation tests and an independent formula audit pass. It deliberately
   has no deployed floor while named primitive, logical-oracle, history,
-  privacy, and review premises remain absent. The remaining local gate is the
-  same practical-time Lean build repair.
+  privacy, and review premises remain absent. The ideal finite-accounting Lean
+  build now passes; the exact SMZ9 round-by-round knowledge instance below is
+  the first semantic soundness gate.
+- [x] (2026-09-03 16:08Z) Completed the strict SMZ9/CMS compatibility audit
+  without adding a conditional wrapper or changing the proof wire. The four
+  challenge stages and their domains are structurally usable, but the existing
+  production theorem is a different protocol, not an SMZ9 instantiation. It
+  hard-codes a `2^20` consecutive-subgroup domain, `699 x 64` extracted
+  witness, `69 x 749 -> 138 x 375` unstacking, degree 397, five PIOP openings,
+  twenty-three DECS openings, depth 20, and ten combination rows. SMZ9 uses the
+  `2^23` disjoint coset, `686 x 64`, `70 x 736 -> 140 x 368`, degree 387, six
+  PIOP openings, twenty DECS openings, depth 23, and twelve combination rows.
+  A 296-line shape-only wrapper was discarded after review because it proved
+  no security fact. The only retained correction fixes the old theorem's
+  misleading twenty-opening comment to its actual value, twenty-three.
+- [ ] Prove the first real SMZ9 round-by-round dependency: an exact analogue of
+  `extracted_production_oracles_satisfied_iff_relation` for the HGV8RP03
+  `2^23 x 145` oracle and `686 x 64` witness. Then prove the disjoint-coset DECS
+  degree bound, affine batching after extraction, the root-event bound over
+  `FullAdmissibleOpeningTuple` rather than plain `ValidTuple`, and the exact
+  degree-387 twenty-of-`2^23` LVCS bound. Only after those facts exist should
+  the prefix syntax be generalized and the Rust byte transition, failure
+  selector, and CMS instability be bound. This is proof work on the current
+  compact wire; no size expansion is indicated by the audit.
 - [x] (2026-08-30 22:30Z) Closed the universal HGV8RP03 compiler/verifier
   refinement: every admitted canonical statement must specialize to the exact
   pinned typed linear program and every nonlinear identity must be the exact
@@ -741,8 +795,59 @@ review, and hermetic release authority remain required.
   repeated-proof zero-knowledge, and protocol-lifetime composition authority
   in the hermetic Linux release environment; then add the source-registry entry
   and activate the capability in one reviewed consensus release.
+- [x] (2026-09-03 15:51Z) Resumed the exact HGV8RP03/SMZ9 production campaign
+  from clean commit `d13597da5f60fb9e71f1c496192b406e243a8e08` with 58 GiB free
+  and the 40 GiB reserve intact. Freeze the proof wire and 122,863-byte source
+  ceiling while four disjoint local obligations run: correction-aware opening
+  sampling, runtime-randomness-to-uniform-coins refinement, adaptive whole-view
+  quantum zero knowledge, and round-by-round quantum soundness/knowledge. The
+  first binary decision is whether the exact four-challenge SMZ9 transcript
+  satisfies the tighter SmallWood/CMS quantum Fiat--Shamir hypotheses with at
+  least 128 composed bits. Do not spend time on release activation or another
+  backend until that theorem either closes or produces a precise no-go.
+- [x] (2026-09-03 15:57Z) Re-established the narrow executable baseline from
+  the resumed source: transaction library check; security accounting 10/10;
+  whole-view ZK refinement 4/4; exhaustive relation and mutation coverage 9/9;
+  shielded-pool maximum carrier mutation test 1/1; native exact artifact codec
+  test 1/1; and the frozen source-security report exact check all pass.
+  The report still says `production_eligible=false`, the capability remains
+  absent, and the 122,863-byte source ceiling is unchanged. Disk remained at
+  55 GiB free after the builds, above the 40 GiB hard reserve.
+- [x] (2026-09-03 16:03Z) Re-audited security-neutral byte headroom before
+  changing the wire. The maximum proof is 97,608 bytes of field words, 23,872
+  bytes of SHA-512 roots/authentication nodes, 1,280 bytes of opened leaf
+  tapes, 32 bytes of salt, 4 bytes each of nonce and magic, and only 63 bytes
+  of shape metadata. A new fixed-profile codec could save at most 67
+  worst-case bytes (0.055%) without changing cryptographic parameters, but it
+  would require a new canonical wire, carriers, manifests, mutations, and
+  lifecycle reseal. Proof-specific Merkle deduplication does not reduce the
+  worst case. Keep SMZ9 unchanged; the larger 2,313--5,161-byte candidates all
+  change a soundness/hash term and remain ineligible until composition closes.
+- [x] (2026-09-03 16:34Z) Repaired five latent, independently reproducible
+  test contradictions without weakening production code: a compact Merkle
+  zero-length path was both accepted and rejected by different tests; frozen
+  Level-5 vectors were mislabeled as the current SMZ1 profile in three stale
+  assertions; and one HX512 fixture omitted the public bindings required by
+  its verifier. All five focused reruns pass. The complete transaction library
+  regression then passed 418/418 tests with 21 explicit release/benchmark
+  tests ignored. Disk remains at 54 GiB free, fourteen GiB above reserve.
 
 ## Surprises & Discoveries
+
+- Observation: two candidate formal additions were rejected during strict
+  review and removed. The proposed whole-view wrapper assumed the desired
+  coupling in a premise while leaving its proof-byte and oracle-transport
+  parameters unused. The proposed BCS compatibility wrapper only repackaged
+  existing counts and mismatches. Neither proved an SMZ9 privacy, knowledge,
+  or soundness fact, so both receive zero progress credit.
+
+- Observation: the exact SMZ9 wire is already nearly free of removable
+  metadata. Its 122,863-byte maximum consists of 97,608 field-word bytes,
+  23,872 SHA-512 root and authentication-node bytes, 1,280 tape bytes, 32 salt
+  bytes, 4 nonce bytes, 4 magic bytes, and 63 metadata bytes. A new fixed codec
+  can save at most 67 worst-case bytes; every multi-kilobyte reduction changes
+  a commitment width or opening count and therefore requires a fresh security
+  composition.
 
 - Observation: the compact retained SMZ1 proof is 119,606 bytes, while an
   older retained proof is 371,142 bytes because it carries stale 84-column
@@ -1012,6 +1117,28 @@ review, and hermetic release authority remain required.
   sub-128-bit artifact is not a Hegemon transaction proof.
   Date: 2026-08-30.
 
+- Decision: treat the exact SMZ9 quantum Fiat--Shamir compatibility theorem as
+  the next cutover checkpoint and keep the existing wire unchanged while it is
+  evaluated. Generic multi-round bounds that lose a factor quadratic in the
+  global query count at every challenge are not acceptable substitutes for the
+  tighter round-by-round SmallWood/CMS path.
+  Reason: the current conditional arithmetic has useful margin, but the
+  published SmallWood argument is classical-ROM and no black-box theorem yet
+  binds Hegemon's exact compact transcript, lazy Merkle simulator, and Rust
+  proof bytes to the required adaptive QROM games. This checkpoint determines
+  whether remaining work is proof-only or a new wire version is necessary.
+  Date: 2026-09-03.
+
+- Decision: retain the existing SMZ9 wire and 122,863-byte ceiling while the
+  privacy and soundness proofs close. Do not introduce a new codec for the
+  67-byte worst-case metadata saving. Keep the q20/56-byte, q19, and combined
+  candidates inactive because they change commitment or query security and
+  require complete recomposition before they can receive size credit.
+  Reason: 121,516 of the 122,863 maximum bytes are field words and SHA-512
+  commitment/authentication material. Encoding churn cannot produce a
+  meaningful block-capacity gain, while parameter changes can.
+  Date: 2026-09-03.
+
 - Decision: retain SmallWood and the compact Poseidon2 transaction relation.
   Reason: it is the only current architecture with a measured proof near
   120 KiB for the full relation. Binary-relation and replacement-backend work
@@ -1185,7 +1312,15 @@ review, and hermetic release authority remain required.
 
 ## Outcomes & Retrospective
 
-Not complete. The frozen current HGV8RP03 baseline is the 686-row
+Not complete. This checkpoint makes the production randomness mapping shared
+and executable, pins its exact SMZ9 coin inventory, and kernel-checks both the
+runtime-randomness module and the complete `HegemonCrypto` umbrella. It does
+not supply the missing distributional RNG pushforward or `epsilon_rng`, the
+joint honest/simulated proof-byte and oracle-trace construction, or the exact
+SMZ9 round-by-round knowledge theorem. Current-source retained artifacts and
+release authority also remain absent, so the capability stays `None`.
+
+The frozen current HGV8RP03 baseline is the 686-row
 SMZ9/profile-6 relation with
 twenty tapes and a 122,863-byte proof projection. Its RPC envelope, SCALE inline
 arguments, and canonical full `PendingAction` project to 128,293, 128,297, and
@@ -1585,3 +1720,13 @@ reference vectors for 522 proofs per block, 4,096 blocks,
 ceiling. Release evidence distinguishes this mechanism from deployed security;
 the executable receipt command, capability, registry, review root, and global
 QROM theorem remain absent.
+
+Revision note (2026-09-03): recorded the resumed clean-source and disk-reserve
+checkpoint and narrowed immediate execution to the four proof obligations that
+decide whether HGV8RP03/SMZ9 can reach production without changing proof bytes.
+The quantum Fiat--Shamir compatibility theorem is now the explicit first
+go/no-go checkpoint; production capability remains absent. Re-established all
+narrow Rust relation, privacy, security, carrier, and native-codec baselines,
+and closed the practical-time Lean build issue for the ideal correction-aware
+six-opening theorem. Its Rust/SHA-512 sampling bridge remains a separate open
+obligation rather than being hidden by the successful ideal build.

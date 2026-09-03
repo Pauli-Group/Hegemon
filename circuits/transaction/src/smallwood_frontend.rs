@@ -10111,7 +10111,7 @@ mod tests {
     }
 
     #[test]
-    fn lean_generated_smallwood_transcript_binding_vectors_match_production() {
+    fn lean_generated_legacy_level5_transcript_binding_vectors_match_runtime_codec() {
         let vectors = load_smallwood_transcript_binding_vectors();
         assert_eq!(vectors.schema_version, 2);
         let exact = &vectors.active_no_grinding_soundness;
@@ -10260,7 +10260,7 @@ mod tests {
         ]);
         assert_eq!(
             covered_arithmetization_tags, expected_arithmetization_tags,
-            "Lean SmallWood transcript vectors must cover every production-recognized arithmetization tag"
+            "Lean legacy SmallWood transcript vectors must cover their complete frozen tag set"
         );
 
         let active_binding = active_binding.expect("active transcript vector missing");
@@ -10269,9 +10269,13 @@ mod tests {
             statement_mutation_binding.expect("statement mutation transcript vector missing"),
             "statement byte mutation must alter the transcript binding"
         );
+        // These Lean vectors model the original compressed Level-5 profile,
+        // not the later SMZ1 testnet successor selected by the frontend default.
+        let vector_active_arithmetization =
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5;
         let active_profile = smallwood_candidate_verifier_profile_material(
             SMALLWOOD_CANDIDATE_VERSION_BINDING,
-            default_smallwood_candidate_arithmetization(),
+            vector_active_arithmetization,
         );
         let expected_mutation_names = std::collections::BTreeSet::from([
             "circuit-version",
@@ -10292,13 +10296,12 @@ mod tests {
             "poseidon-rows-per-permutation",
         ]);
         let mut observed_mutation_names = std::collections::BTreeSet::new();
-        let active_parameters = smallwood_verifier_profile_binding_parameters(
-            default_smallwood_candidate_arithmetization(),
-        );
+        let active_parameters =
+            smallwood_verifier_profile_binding_parameters(vector_active_arithmetization);
         let active_field_values = [
             SMALLWOOD_CANDIDATE_VERSION_BINDING.circuit as u64,
             SMALLWOOD_CANDIDATE_VERSION_BINDING.crypto as u64,
-            default_smallwood_candidate_arithmetization() as u64,
+            vector_active_arithmetization as u64,
             active_parameters.effective_constraint_degree,
             active_parameters.profile.rho as u64,
             active_parameters.profile.nb_opened_evals as u64,
@@ -10414,12 +10417,12 @@ mod tests {
                     crypto: SMALLWOOD_CANDIDATE_VERSION_BINDING.crypto + 1,
                     ..SMALLWOOD_CANDIDATE_VERSION_BINDING
                 },
-                default_smallwood_candidate_arithmetization(),
+                vector_active_arithmetization,
             ),
             "crypto-suite mutation must alter verifier profile material"
         );
         for tag in expected_arithmetization_tags {
-            if tag == default_smallwood_candidate_arithmetization() as u64 {
+            if tag == vector_active_arithmetization as u64 {
                 continue;
             }
             let arithmetization = smallwood_arithmetization_from_vector(tag);
@@ -10445,7 +10448,7 @@ mod tests {
 
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
-        let arithmetization = default_smallwood_candidate_arithmetization();
+        let arithmetization = vector_active_arithmetization;
         let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
             &witness,
             SmallwoodFrontendShape::direct_packed64_compressed_level5(),
@@ -12780,9 +12783,14 @@ mod tests {
         );
         assert!(ensure_verifiable_smallwood_arithmetization(
             SMALLWOOD_CANDIDATE_VERSION_BINDING,
-            SmallwoodArithmetization::DirectPacked64CompressedLevel5,
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1,
         )
         .is_ok());
+        assert!(ensure_verifiable_smallwood_arithmetization(
+            SMALLWOOD_CANDIDATE_VERSION_BINDING,
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5,
+        )
+        .is_err());
         assert!(ensure_verifiable_smallwood_arithmetization(
             SMALLWOOD_V3_VERSION_BINDING,
             SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
@@ -13063,7 +13071,7 @@ mod tests {
         .expect_err("non-production SmallWood arithmetization must reject before proving");
         assert!(err
             .to_string()
-            .contains("not accepted by the production verifier"));
+            .contains("not the repaired compact SMZ1 testnet profile"));
     }
 
     #[test]

@@ -7251,6 +7251,29 @@ mod tests {
         let statement = [0u8; HX512_STATEMENT_BYTES];
         let context = [0u8; HX512_VERIFIER_CONTEXT_BYTES];
         let mut builder = Hx512ExecutableBuilder::new();
+        let statement_wires = builder
+            .allocate_bits(
+                &statement,
+                Hx512PredicateFamily::CanonicalStatementAndContext,
+            )
+            .unwrap();
+        let context_wires = builder
+            .allocate_bits(&context, Hx512PredicateFamily::CanonicalStatementAndContext)
+            .unwrap();
+        builder
+            .bind_public_bits(
+                Hx512PredicateFamily::CanonicalStatementAndContext,
+                Hx512PublicSurface::Statement,
+                &statement_wires,
+            )
+            .unwrap();
+        builder
+            .bind_public_bits(
+                Hx512PredicateFamily::CanonicalStatementAndContext,
+                Hx512PublicSurface::VerifierContext,
+                &context_wires,
+            )
+            .unwrap();
         let source = builder
             .allocate_bits(message, Hx512PredicateFamily::CanonicalWitness)
             .unwrap();

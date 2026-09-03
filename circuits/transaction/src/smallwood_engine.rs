@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use blake3::Hasher;
 use getrandom::fill as getrandom_fill;
-use hegemon_field::Goldilocks;
+use hegemon_field::{Goldilocks, GOLDILOCKS_MODULUS};
 use num_bigint::BigUint;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
@@ -21,6 +21,10 @@ use crate::{
         Hx512DeferredVerifierTranscript, Hx512Error, Hx512Transcript,
         HX512_PROFILE_LEAF_TAPE_BYTES, HX512_SALT_BYTES,
     },
+    smallwood_poseidon2_v8_rng_refinement::{
+        canonical_goldilocks_word_v1, fixed_bytes_with_source_v1,
+        sample_fixed_width_tapes_with_source_v1, sample_goldilocks_words_with_source_v1,
+    },
     smallwood_semantics::{
         SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView,
     },
@@ -31,7 +35,7 @@ use crate::{
     },
 };
 
-const FIELD_ORDER: u64 = 0xffff_ffff_0000_0001;
+const FIELD_ORDER: u64 = GOLDILOCKS_MODULUS;
 const NEG_ORDER: u64 = FIELD_ORDER.wrapping_neg();
 const GOLDILOCKS_TWO_ADIC_ROOT: u64 = 0x1856_29dc_da58_878c;
 const GOLDILOCKS_TWO_ADICITY: u32 = 32;
@@ -7184,7 +7188,7 @@ impl<'a, R: CryptoRng + RngCore + ?Sized> SmallwoodStrictWholeViewCryptoSamplerV
             let candidate = self.rng.next_u64();
             Self::bump(&mut self.ledger.rng_bytes_consumed, 8)?;
             Self::bump(&mut self.ledger.field_candidate_words, 1)?;
-            if candidate < FIELD_ORDER {
+            if let Some(candidate) = canonical_goldilocks_word_v1(candidate) {
                 Self::bump(&mut self.ledger.accepted_field_words, 1)?;
                 return Ok(candidate);
             }
@@ -13585,7 +13589,12 @@ mod tests {
         )
         .is_err());
         assert!(encode_matrix_u64_v1(&mut out, &[vec![FIELD_ORDER]]).is_err());
-        assert!(encode_auth_paths_v1(&mut out, &[Vec::new()], LEGACY_DIGEST_BYTES).is_err());
+        assert!(encode_auth_paths_v1(
+            &mut out,
+            &[vec![[0u8; DIGEST_BYTES]; u8::MAX as usize + 1]],
+            LEGACY_DIGEST_BYTES,
+        )
+        .is_err());
         assert!(encode_opened_witness_v1(
             &mut out,
             &SmallwoodOpenedWitnessBundle::row_scalars(Vec::new(), Vec::new(), 1),
@@ -16629,47 +16638,37 @@ fn random_poly(degree: usize) -> Result<Vec<u64>, TransactionCircuitError> {
 
 #[inline]
 fn canonical_random_field_word(candidate: u64) -> Option<u64> {
-    (candidate < FIELD_ORDER).then_some(candidate)
+    canonical_goldilocks_word_v1(candidate)
 }
 
 fn random_vec(size: usize) -> Result<Vec<u64>, TransactionCircuitError> {
     let bounded_hx512 = smallwood_hx512_register_field_rng_request_v1(size)?;
-    let mut values = Vec::with_capacity(size);
-    while values.len() < size {
-        let remaining = size - values.len();
-        if bounded_hx512 {
-            smallwood_hx512_register_field_candidates_v1(remaining)?;
-        }
-        let byte_len = remaining.checked_mul(8).ok_or({
-            TransactionCircuitError::ConstraintViolation(
-                "smallwood random field request exceeds addressable memory",
-            )
-        })?;
-        let mut bytes = vec![0u8; byte_len];
-        getrandom_fill(&mut bytes).map_err(|err| {
-            TransactionCircuitError::ConstraintViolationOwned(format!(
-                "smallwood random generation failed: {err}"
-            ))
-        })?;
-        for chunk in bytes.chunks_exact(8) {
-            let mut buf = [0u8; 8];
-            buf.copy_from_slice(chunk);
-            if let Some(value) = canonical_random_field_word(u64::from_le_bytes(buf)) {
-                values.push(value);
+    sample_goldilocks_words_with_source_v1(
+        size,
+        |remaining| {
+            if bounded_hx512 {
+                smallwood_hx512_register_field_candidates_v1(remaining)?;
             }
-        }
-    }
-    Ok(values)
+            Ok(())
+        },
+        |bytes| {
+            getrandom_fill(bytes).map_err(|err| {
+                TransactionCircuitError::ConstraintViolationOwned(format!(
+                    "smallwood random generation failed: {err}"
+                ))
+            })
+        },
+    )
 }
 
 fn random_bytes<const N: usize>() -> Result<[u8; N], TransactionCircuitError> {
-    let mut out = [0u8; N];
-    getrandom_fill(&mut out).map_err(|err| {
-        TransactionCircuitError::ConstraintViolationOwned(format!(
-            "smallwood random byte generation failed: {err}"
-        ))
-    })?;
-    Ok(out)
+    fixed_bytes_with_source_v1(|output| {
+        getrandom_fill(output).map_err(|err| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+                "smallwood random byte generation failed: {err}"
+            ))
+        })
+    })
 }
 
 fn random_decs_leaf_tapes(
@@ -16681,26 +16680,22 @@ fn random_decs_leaf_tapes(
             "smallwood strict-ZK DECS tape width must be non-zero and word aligned",
         ));
     }
-    let mut tapes = Vec::with_capacity(count);
-    while tapes.len() < count {
-        let batch_count = (count - tapes.len()).min(HX512_SMALLWOOD_DECS_TAPES_PER_RNG_CALL_V1);
-        let byte_count = batch_count.checked_mul(tape_bytes).ok_or(
-            TransactionCircuitError::ConstraintViolation(
-                "smallwood strict-ZK DECS leaf-tape request overflows addressable memory",
-            ),
-        )?;
-        let _bounded_hx512 = smallwood_hx512_register_tape_rng_batch_v1(byte_count)?;
-        let mut bytes = vec![0u8; byte_count];
-        getrandom_fill(&mut bytes).map_err(|err| {
-            TransactionCircuitError::ConstraintViolationOwned(format!(
-                "smallwood strict-ZK DECS leaf-tape generation failed: {err}"
-            ))
-        })?;
-        for chunk in bytes.chunks_exact(tape_bytes) {
-            tapes.push(chunk.to_vec());
-        }
-    }
-    Ok(tapes)
+    sample_fixed_width_tapes_with_source_v1(
+        count,
+        tape_bytes,
+        HX512_SMALLWOOD_DECS_TAPES_PER_RNG_CALL_V1,
+        |byte_count| {
+            let _bounded_hx512 = smallwood_hx512_register_tape_rng_batch_v1(byte_count)?;
+            Ok(())
+        },
+        |bytes| {
+            getrandom_fill(bytes).map_err(|err| {
+                TransactionCircuitError::ConstraintViolationOwned(format!(
+                    "smallwood strict-ZK DECS leaf-tape generation failed: {err}"
+                ))
+            })
+        },
+    )
 }
 
 #[inline]

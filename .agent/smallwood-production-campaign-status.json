@@ -1,6 +1,6 @@
 {
   "schema": "hegemon.smallwood-production-campaign-status.v1",
-  "updated_at": "2026-08-31T00:05:25Z",
+  "updated_at": "2026-09-03T16:34:57Z",
   "branch": "codex/smallwood-pq128-experiment",
   "relation": "HGV8RP03",
   "proof_profile": "SMZ9",
@@ -8,10 +8,35 @@
   "successor_selection": "unselected",
   "disk": {
     "free_gib_at_start": 92,
-    "free_gib_last_check": 61,
+    "resume_free_gib_at_start": 58,
+    "free_gib_last_check": 54,
     "hard_reserve_gib": 40,
     "shared_target_cache_gib": 38.1,
-    "current_free_gib_approx": 61
+    "current_free_gib_approx": 54
+  },
+  "current_execution_checkpoint": {
+    "start_commit": "d13597da5f60fb9e71f1c496192b406e243a8e08",
+    "transaction_library_check": "pass",
+    "source_security_accounting_tests": "10_of_10_pass",
+    "whole_view_zk_refinement_tests": "4_of_4_pass",
+    "exhaustive_relation_mask_mode_tests": "9_of_9_pass",
+    "shielded_pool_maximum_carrier_mutation_test": "1_of_1_pass",
+    "native_exact_artifact_codec_test": "1_of_1_pass",
+    "source_security_report_exact_check": "pass_production_eligible_false",
+    "adaptive_finite_accounting_lean_build": "pass_2594_jobs",
+    "runtime_randomness_lean_build": "pass",
+    "formal_crypto_umbrella_lean_build": "pass_2634_jobs",
+    "runtime_rng_mapping_tests": "6_of_6_pass",
+    "engine_field_rejection_test": "1_of_1_pass",
+    "hx512_rng_session_tests": "3_of_3_pass",
+    "full_transaction_library_regression": "pass_418_of_418_with_21_release_benchmarks_ignored",
+    "latent_regression_repairs": [
+      "compact_merkle_zero_length_path_test_contradiction",
+      "legacy_level5_vectors_mislabeled_as_current_profile",
+      "v4_version_pair_test_still_expected_retired_level5",
+      "nonactive_profile_rejection_expected_obsolete_error_text",
+      "hx512_test_fixture_omitted_required_public_bindings"
+    ]
   },
   "retained_proofs": [
     {"role": "primary", "bytes": 122735},
@@ -44,8 +69,8 @@
     "generated_report_bytes": 4230,
     "generated_report_sha512": "0efabeb6d53f2557b12f21747fecbcc4694a3ed44a78075804908a6c6b0a028d4b84c7b85a2c33bf62f6248dd0b3ef123953c7f89d31ab386d30b0bfe34a73c8",
     "generated_report_refresh": "write_and_exact_check_passed",
-    "direct_crypto_rng_typed_coin_sampler": "implemented_with_exact_rejection_and_consumption_ledger",
-    "formal_rng_independent_uniform_refinement": "constructor_free_pending",
+    "direct_crypto_rng_typed_coin_sampler": "strict_simulator_and_refinement_harness_only_not_honest_prover_path",
+    "formal_rng_independent_uniform_refinement": "deterministic_map_and_finite_trace_algebra_proved_distributional_pushforward_and_epsilon_rng_pending",
     "maximum_lazy_leaf_programs": 20,
     "maximum_lazy_merkle_programs_total": 372,
     "lazy_internal_program_cap_when_leaf_programs_equal_20": 352,
@@ -57,6 +82,27 @@
     "canonical_accepted_count_is_not_observed_view_bound": true,
     "adaptive_qrom_theorem": "constructor_free_external_premises_remain_and_are_not_claimed_by_overlay_execution",
     "release_checker_raw_report_binding": "dedicated_exact_validator_and_eight_mutation_controls_pass"
+  },
+  "runtime_rng_refinement": {
+    "schema": "hegemon.smallwood.poseidon2-v8.smz9.runtime-rng-refinement.v1",
+    "honest_prover_source": "getrandom::fill",
+    "accepted_field_words": 12201,
+    "salt_bytes": 32,
+    "leaf_tape_count": 8388608,
+    "leaf_tape_bytes_each": 64,
+    "leaf_tape_bytes_total": 536870912,
+    "minimum_successful_fill_calls": 2950,
+    "minimum_successful_fill_bytes": 536968552,
+    "maximum_fill_calls_is_unbounded": true,
+    "provider_error_aborts_proving": true,
+    "deterministic_mapping_and_layout_proved": true,
+    "distributional_pushforward_proved": false,
+    "full_runtime_coin_pushforward_proved": false,
+    "conditional_security_bound_proved": false,
+    "epsilon_rng_bound_present": false,
+    "os_entropy_premise_discharged": false,
+    "proof_wire_changed": false,
+    "production_authorized": false
   },
   "source_security_report": {
     "schema": "hegemon.smallwood.poseidon2-v8.smz9.source-security-report.v3",
@@ -138,13 +184,13 @@
     "source_freeze_and_disk_gate": "complete",
     "proof_authority_convergence": "complete_fail_closed_focused_protocol_kernel_consensus_node_wallet_tests_pass",
     "formal_forbidden_token_scan": "complete_no_native_decide",
-    "correction_aware_sampling": "qrom_accounting_and_logical_oracle_build_green_adaptive_finite_blocked_on_exact_fin64_sixth_power_sum_certificate_repeated_and_coordinated_build_pending",
-    "repeated_proof_privacy": "executable_overlay_rng_ledger_exact_program_inventory_and_negative_tests_pass_constructor_free_external_premises_remain",
-    "composed_quantum_soundness": "rust_report_checker_formula_redteam_qrom_accounting_and_logical_oracle_green_adaptive_finite_exact_sum_certificate_and_repeated_build_pending",
+    "correction_aware_sampling": "ideal_six_opening_theorem_build_and_deterministic_rust_lean_map_green_sha512_candidate_independence_retry_loop_distributional_pushforward_canonical_rust_execution_refinement_and_generated_vector_open",
+    "repeated_proof_privacy": "executable_simulator_rng_ledger_and_deterministic_production_map_green_common_honest_simulated_whole_view_constructor_distributional_pushforward_epsilon_rng_history_dependent_joint_transport_qrom_hybrid_hidden_subtree_sha512_and_reviewed_T_open",
+    "composed_quantum_soundness": "report_checker_and_ideal_finite_accounting_green_exact_smz9_round_by_round_instance_absent_first_gate_hgv8rp03_extracted_oracles_iff_relation_then_disjoint_coset_decs_affine_batching_full_admissible_root_event_degree387_q20_lvcs_and_rust_bytes_cms_binding_no_deployed_floor",
     "universal_compiler_verifier_refinement": "complete_to_source_semantics_boundary_verified_rust_extraction_and_in_lean_rfc7693_remain",
     "ci_and_release_trigger_coverage": "complete_main_and_focused_formal_crypto_jobs_run_exact_report_and_successor_regressions_both_reports_trigger_and_policy_mutations_pass",
-    "security_preserving_size_optimization": "q20_56_smc8_implemented_measured_inactive_and_unselected",
+    "security_preserving_size_optimization": "retain_smz9_122863_byte_ceiling_no_selected_shrink_fixed_codec_saves_only_67_worst_case_bytes_q20_56_q19_and_combined_cuts_change_security_terms",
     "retained_artifact_and_lifecycle_regression": "in_process_wallet_rpc_peer_mempool_mining_persistence_reorg_restart_and_fresh_announce_test_passed_before_two_assertion_only_hardenings_historical_proofs_preserved_current_source_inventory_stale_final_rerun_direct_sync_and_fresh_artifacts_pending"
   },
-  "claim_boundary": "Historical retained proof and wire bytes are preserved, but their source inventory predates schema v3 and is not current release evidence. Production authority remains false until privacy, composed security, refinement, review, fresh source-bound retained evidence, and hermetic release gates pass."
+  "claim_boundary": "Historical retained proof and wire bytes are preserved, but their source inventory predates current source and is not release evidence. Production authority remains false: runtime distributional randomness and epsilon_rng, one joint honest/simulated whole-view construction, exact SMZ9 round-by-round knowledge and QROM composition, current-source retained artifacts, independent review, and hermetic release authority remain absent."
 }

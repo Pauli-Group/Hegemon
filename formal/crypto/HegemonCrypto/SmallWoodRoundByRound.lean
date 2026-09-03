@@ -153,7 +153,7 @@ Full LVCS combination values sent before DECS indexes are sampled. Each row is s
 abbrev PcsCombinationMessage :=
   Matrix openedCombinationCount (lvcsColumnCount + decsOpenedEvaluations)
 
-/-- Ideal fourth verifier challenge: a uniform 20-element subset of the DECS domain. -/
+/-- Ideal fourth verifier challenge: a uniform 23-element subset of the historical DECS domain. -/
 abbrev DecsOpeningChallenge :=
   { sample : Finset (Fin decsEvaluationCount) //
       sample.card = decsOpenedEvaluations }
