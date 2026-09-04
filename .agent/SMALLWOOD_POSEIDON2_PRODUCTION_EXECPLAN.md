@@ -55,6 +55,23 @@ review, and hermetic release authority remain required.
 
 ## Progress
 
+- [x] (2026-09-04 22:21Z) Resumed and completed the saved governance validation.
+  The blueprint check passes 121 nodes and 677 falsification cases with all
+  121 nodes still awaiting independent review. The existing progress checker
+  passes its historical 10-of-20 assumption accounting. The final blueprint
+  receipt now matches the second review-digest refresh. No review decision
+  or production authorization changed. The September 3 source checkpoint
+  passed 419 transaction tests with 21 explicit benchmarks ignored, the full
+  cryptography Lean build, and the axiom audit of 77 credited declarations.
+  A complete final preflight invocation remains pending; the current disk
+  has 39 GiB free and cold builds remain stopped below the 40 GiB reserve.
+- [ ] (2026-09-04 22:21Z) Extend the checked ideal 12,201-field distribution
+  through an explicit bijection into the existing honest algebraic coin
+  structure, including mask interleaving and PCS coordinate transposition.
+  In parallel, prove structural canonicality of the exact generated HGV8RP03
+  program with a sequential checker that avoids repeated prefix scans.
+  These additions must be kernel checked before receiving completion credit.
+
 - [x] (2026-08-30 20:10Z, historical snapshot) Resumed the production campaign from the frozen
   HGV8RP03/SMZ9 artifacts. Re-read the repository instructions and current
   proof sections of `DESIGN.md`, `METHODS.md`, `README.md`, and this plan;
@@ -129,18 +146,42 @@ review, and hermetic release authority remain required.
   2,634-job `HegemonCrypto` umbrella build pass. Proof bytes are unchanged.
   This establishes the deterministic map, not the external
   source premise: the composed privacy bound must retain an explicit
-  `epsilon_rng` for the OS/CSPRNG stream, including concurrent calls.
+  quantum-computational distinguishing term for the complete OS/CSPRNG field,
+  salt, and tape stream, including concurrent calls.
+- [x] (2026-09-03 17:28Z) Proved the ideal probability law for the actual
+  Goldilocks rejection map. An iid uniform sequence of raw 64-bit proposals,
+  stopped at the first accepted proposal for each output, yields independent
+  uniform field elements; the exact 12,201-output SMZ9 specialization is
+  kernel checked. This does not identify `getrandom`, a caller-supplied RNG,
+  concurrent production calls, or their full salt-and-tape schedule with that
+  ideal law. Those runtime steps and a numerical quantum-computational
+  advantage bound for the complete runtime coin source remain open.
 - [ ] Build the actual joint whole-view refinement rather than composing
-  marginal hiding lemmas. A strict constructor audit found no Lean honest
-  SMZ9 proof-byte constructor and no common real/simulator view: the current
-  formal view omits the concrete verifier trace, programmed inputs and keys,
-  prior queries, ordered oracle trace, replay record, histogram, and coin
-  ledger. The honest tape contains every `2^23` leaf tape while the simulator
-  consumes opened tapes plus lazy-program inputs and outputs. The next theorem
-  must consume the real typed coins into the actual proof bytes and oracle
-  trace and construct one history-dependent joint transport or QROM hybrid.
-  Do not award adaptive-zero-knowledge credit to a generic kernel with the
-  desired coupling supplied as a premise.
+  marginal hiding lemmas. Lean now separates a minimal static verifier result
+  `(statement bytes, bound-data bytes, proof bytes, verifier result)` from a
+  full internal audit record containing the concrete verifier trace,
+  programmed inputs and keys, prior queries, ordered oracle trace, replay
+  record, histogram, and coin ledger. The constructors still receive those
+  values from the caller; no theorem derives them from the Rust prover and
+  verifier or places the honest and simulator observations in one probability
+  experiment or exposes the interactive oracle queries available to a
+  ROM/QROM adversary. The honest tape contains every `2^23` leaf tape while the
+  simulator consumes opened tapes plus lazy-program inputs and outputs. The
+  next theorem must consume the real typed coins into the actual proof bytes
+  and oracle trace and construct one history-dependent joint transport or QROM
+  hybrid. Do not award adaptive-zero-knowledge credit to a generic kernel with
+  the desired coupling supplied as a premise.
+- [x] (2026-09-03 17:28Z) Added typed syntactic audit-record constructors for
+  honest and simulated SMZ9 fixtures. They parse the supplied proof bytes,
+  authentication paths, and opened tapes and rebuild the checked program
+  table, query receipt, histogram, and coin ledger. They do not enforce the
+  production matrix dimensions or execute the Rust verifier. The full Rust verifier
+  payload, statement and bound data, ordered SHA-512 events, programmed node
+  values, and runtime counts are still checked inputs rather than values
+  derived from a Rust execution. The audit record also carries its origin and
+  mode-specific internals, so it is not itself an adversary-visible view. This
+  is necessary plumbing, not a privacy or QROM theorem, and earns no
+  production authority.
 - [ ] (2026-08-30 22:44Z) Compose the exact PCS, PIOP, DECS, abort, Fiat-Shamir
   QROM, SHA-512, Poseidon2, and lifetime terms from the implemented SMZ9
   parameters. Separate kernel-checked arithmetic, explicit primitive
@@ -182,6 +223,20 @@ review, and hermetic release authority remain required.
   the prefix syntax be generalized and the Rust byte transition, failure
   selector, and CMS instability be bound. This is proof work on the current
   compact wire; no size expansion is indicated by the audit.
+- [x] (2026-09-03 17:28Z) Materialized the exact 852,305-byte HGV8RP03 program
+  as typed Lean components and independently bound the Rust source encoder to
+  the checked artifact byte for byte. The generator checks the pinned SHA-512,
+  parses every section to exhaustion, re-encodes canonically, and rejects hash
+  mutation, truncation, trailing data, bad lengths, and bad references. Lean
+  now proves the exact inventory and fixed identity fields; a kernel proof of
+  every `RelationProgramComponents.Canonical` conjunct remains open.
+- [x] (2026-09-03 17:28Z) Proved the exact `2^23` Goldilocks evaluation coset
+  has order `2^23`, is injective, and is disjoint from all 388 interpolation
+  coordinates. Added the deterministic `2^23 x 145` oracle-to-`686 x 64`
+  candidate inverse and proved it recovers a degree-at-most-387 polynomial
+  when full-domain pointwise agreement is supplied. Verifier acceptance still has to imply
+  the required codeword proximity and relation satisfaction; the new theorem
+  does not assume or claim that step.
 - [x] (2026-08-30 22:30Z) Closed the universal HGV8RP03 compiler/verifier
   refinement: every admitted canonical statement must specialize to the exact
   pinned typed linear program and every nonlinear identity must be the exact
@@ -194,6 +249,11 @@ review, and hermetic release authority remain required.
   typed program is exact at the source-semantics boundary. Verified Rust
   extraction, an in-Lean RFC 7693 BLAKE2b-384 implementation, and compiled
   machine-code equivalence remain outside this theorem and must not be implied.
+- [x] (2026-09-03 17:28Z) Added the exact inverse for the 120-word public
+  statement layout. Every canonical typed statement round-trips through the
+  decoder, and two canonical statements with identical encoded words are
+  equal. This closes public-layout ambiguity only; accepted-program-to-typed-
+  transaction semantics remains governed by the separate semantic refinement.
 - [x] (2026-08-30 22:35Z) Screened proof-size changes after exposing the
   composed-bound margins. A change is eligible only
   if it preserves HGV8RP03 semantics, complete privacy, at least 128 composed
@@ -829,10 +889,29 @@ review, and hermetic release authority remain required.
   Level-5 vectors were mislabeled as the current SMZ1 profile in three stale
   assertions; and one HX512 fixture omitted the public bindings required by
   its verifier. All five focused reruns pass. The complete transaction library
-  regression then passed 418/418 tests with 21 explicit release/benchmark
-  tests ignored. Disk remains at 54 GiB free, fourteen GiB above reserve.
+  regression then passed 419/419 tests with 21 explicit release/benchmark
+  tests ignored. Disk now remains at 53 GiB free, thirteen GiB above reserve.
+- [x] (2026-09-03 16:52Z) Revalidated the fail-closed retained-artifact refresh
+  seam before freezing any new proof bytes. The wallet's isolated no-overwrite
+  publisher passed 8/8 tests, the candidate-manifest constructor passed 15/15,
+  and the node's test-only candidate selector passed 9/9. Both the fixed
+  retained pointer and the existing candidate correctly reject against the
+  changed live source inventory, so neither was silently reused or promoted.
+  The cold node build reduced free space to 43 GiB; all heavy work stopped and
+  the exact disposable workspace `target/` directory was removed, restoring
+  53 GiB free without touching source or retained artifacts. Fresh proof
+  generation remains deferred until the active formal source freezes.
 
 ## Surprises & Discoveries
+
+- Observation (2026-09-04): the saved September 3 checkpoint remains at commit
+  `de5611c2528b8ff44d3068fb9cdefc5b3f044362` with 18 modified and 11 new files.
+  Free disk space fell from 53 to 39 GiB while the task was paused. Heavy
+  builds stay stopped below the 40 GiB reserve; existing validator binaries
+  and source inspection can continue. The second review-digest refresh was
+  saved, so only the blueprint governance receipt needed its matching policy
+  digest before final validation. That receipt remains an executed test
+  record, and every independent review status and production gate is unchanged.
 
 - Observation: two candidate formal additions were rejected during strict
   review and removed. The proposed whole-view wrapper assumed the desired
@@ -1312,29 +1391,31 @@ review, and hermetic release authority remain required.
 
 ## Outcomes & Retrospective
 
-Not complete. This checkpoint makes the production randomness mapping shared
-and executable, pins its exact SMZ9 coin inventory, and kernel-checks both the
-runtime-randomness module and the complete `HegemonCrypto` umbrella. It does
-not supply the missing distributional RNG pushforward or `epsilon_rng`, the
-joint honest/simulated proof-byte and oracle-trace construction, or the exact
-SMZ9 round-by-round knowledge theorem. Current-source retained artifacts and
-release authority also remain absent, so the capability stays `None`.
+Not complete. The checked checkpoint contains the exact 120-word public
+decoder, the generated HGV8RP03 program components, the disjoint evaluation
+coset and conditional degree-387 recovery, and the ideal independent law for
+12,201 sampled field values. The Rust transaction suite passes 419 tests;
+the complete cryptography Lean build and axiom audit of 77 credited
+declarations pass. The generated program still needs its complete structural
+canonicality theorem, and the ideal field law still needs an exact map into
+the honest prover's role coordinates and a connection to actual runtime
+randomness. The complete-source quantum distinguishing bound, joint real and
+simulated proof and oracle experiment, and exact SMZ9 knowledge theorem remain
+open. Current-source retained artifacts and release authority also remain
+absent, so the capability stays `None`.
 
 The frozen current HGV8RP03 baseline is the 686-row
 SMZ9/profile-6 relation with
 twenty tapes and a 122,863-byte proof projection. Its RPC envelope, SCALE inline
 arguments, and canonical full `PendingAction` project to 128,293, 128,297, and
-128,522 bytes. The two independently randomized v4 rehearsals measured
-122,351/128,010 and 122,735/128,394 proof/full-record bytes and freshly verify,
-but they are height-zero-only rehearsal artifacts, not release artifacts. Their
-HGV8RP02 relation zeroes `parent_height` and the stablecoin roots when
-stablecoin is disabled; they predate the native capability's canonical empty
-note-tree genesis-root binding and use a synthetic nonempty anchor. A
-byte-preserving v5 provenance reseal can
-bind the v4 parent reports and complete source inventory, but it cannot promote
-those proofs. The HGV8RP03 relation is source-frozen; the full native proof
-source inventory must be sealed only after the action-11 lifecycle integration
-settles. Production still needs new HGV8RP03 proofs and v5 artifacts. The atomic mined/reorg typed-plan
+128,522 bytes. The two independently randomized HGV8RP03 v5 rehearsals measure
+122,735 and 122,607 proof bytes and verify against their frozen 2026-08-23
+source inventory. They are not current-source release artifacts: the later
+security, randomness, formal, and checker changes deliberately make the live
+inventory check reject both the fixed pointer and the existing candidate. The
+HGV8RP03 program bytes and proof wire remain frozen, but production still
+needs two fresh proofs and a newly constructed current-source v5 candidate
+manifest after this formal source checkpoint settles. The atomic mined/reorg typed-plan
 count seam is source-bound and covered by formal-core plus
 rollback/cardinality/reopen regressions, but capability is `None`, MAX V8
 actions is 512, the required cryptographic/refinement/release receipts
@@ -1730,3 +1811,9 @@ narrow Rust relation, privacy, security, carrier, and native-codec baselines,
 and closed the practical-time Lean build issue for the ideal correction-aware
 six-opening theorem. Its Rust/SHA-512 sampling bridge remains a separate open
 obligation rather than being hidden by the successful ideal build.
+
+Revision note (2026-09-04): resumed the saved checkpoint, repaired the final
+governance receipt after its dependent review digest changed, and verified
+the blueprint and historical progress ledger. Recorded the 39 GiB disk
+limit and the next two concrete proof additions. The prior tested source
+checkpoint is preserved separately from those new additions.

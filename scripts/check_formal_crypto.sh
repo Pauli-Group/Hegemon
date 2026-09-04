@@ -131,6 +131,8 @@ if free < minimum:
 PY
 fi
 
+bash "$ROOT/scripts/check_poseidon2_v8_relation_program_components_lean.sh"
+
 forbidden_report="$WORK_DIR/forbidden.txt"
 if find "$CRYPTO_ROOT" -path "$CRYPTO_ROOT/.lake" -prune -o -type f -name '*.lean' -print0 \
     | xargs -0 grep -nE \

@@ -365,7 +365,8 @@ theorem runtime_field_coin_space_cardinality (count : Nat) :
 /--
 Accepted-coordinate bijection for one already-accepted vector.  The file does not prove the
 distributional pushforward of the unbounded runtime loop or a full raw-source equivalence to
-`Smz9HonestRuntimeCoins`; those remain separate obligations together with `epsilon_rng`.
+`Smz9HonestRuntimeCoins`; those remain separate obligations together with a quantum-computational
+distinguishing bound for the complete joint runtime coin law.
 -/
 theorem accepted_runtime_words_biject_to_ideal_field_coins (count : Nat) :
     Nonempty ((Fin count → AcceptedRawWord) ≃ RuntimeFieldCoins count) := by

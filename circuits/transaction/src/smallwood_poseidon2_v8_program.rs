@@ -2458,6 +2458,26 @@ mod tests {
     }
 
     #[test]
+    fn source_program_bytes_match_checked_in_canonical_artifact() {
+        let source_program = encode_smallwood_poseidon2_v8_program();
+        let checked_in_program = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/formal_core_vectors/poseidon2_v8_relation_program.bin"
+        ));
+
+        assert_eq!(source_program.as_slice(), checked_in_program.as_slice());
+
+        let mut mutated = checked_in_program.to_vec();
+        let last = mutated.len() - 1;
+        mutated[last] ^= 1;
+        assert_ne!(source_program, mutated);
+        assert_ne!(
+            smallwood_poseidon2_v8_program_sha512_from_bytes(&mutated),
+            SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512
+        );
+    }
+
+    #[test]
     fn program_descriptor_inventory_is_exact_and_gap_free() {
         let nonlinear = smallwood_poseidon2_v8_nonlinear_descriptors();
         assert_eq!(nonlinear.len(), 830);

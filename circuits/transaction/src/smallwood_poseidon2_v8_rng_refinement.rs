@@ -5,15 +5,17 @@
 //! Goldilocks modulus, so every field element has exactly one raw-word
 //! preimage.  Fixed-width salts and DECS tapes are copied without reduction.
 //!
-//! It deliberately does **not** prove a distributional pushforward or certify
-//! an entropy provider.  The production
-//! path calls `getrandom::fill`; the strict whole-view harness accepts a
-//! caller-supplied `CryptoRng + RngCore`.  A future distributional refinement
-//! requires the corresponding provider to return fresh independent uniform
-//! bytes across every successful call (including concurrent calls), plus a
-//! proof for the unbounded rejection loop and the complete coin layout.
-//! Provider failure aborts proving.  A deterministic test RNG can check
-//! consumption and mapping, but cannot establish any distributional premise.
+//! The companion Lean module proves that the actual rejection map sends ideal
+//! iid-uniform raw-word terminating traces to independent uniform field coins.
+//! It deliberately does **not** identify either runtime entropy path with that
+//! ideal law or certify an entropy provider.  The production path calls
+//! `getrandom::fill`; the strict whole-view harness accepts a caller-supplied
+//! `CryptoRng + RngCore`.  Runtime refinement still requires the corresponding
+//! provider to return fresh independent uniform bytes across every successful
+//! call (including concurrent calls), together with the complete salt/tape
+//! layout refinement.  Provider failure aborts proving.  A deterministic test
+//! RNG can check consumption and mapping, but cannot establish any
+//! distributional premise.
 
 use serde::{Deserialize, Serialize};
 
@@ -30,12 +32,34 @@ use crate::smallwood_poseidon2_v8_zk_refinement::{
 };
 use hegemon_field::GOLDILOCKS_MODULUS;
 
-pub const SMALLWOOD_SMZ9_RUNTIME_RNG_REFINEMENT_SCHEMA_V1: &str =
-    "hegemon.smallwood.poseidon2-v8.smz9.runtime-rng-refinement.v1";
-pub const SMALLWOOD_SMZ9_RUNTIME_RNG_FORMAL_MODEL_V1: &str =
+pub const SMALLWOOD_SMZ9_RUNTIME_RNG_REFINEMENT_SCHEMA_V2: &str =
+    "hegemon.smallwood.poseidon2-v8.smz9.runtime-rng-refinement.v2";
+pub const SMALLWOOD_SMZ9_RUNTIME_RNG_FORMAL_DETERMINISTIC_MODULE_V1: &str =
+    "HegemonCrypto.SmallWoodV8Smz9RuntimeRandomness";
+pub const SMALLWOOD_SMZ9_RUNTIME_RNG_FORMAL_DISTRIBUTION_MODULE_V1: &str =
+    "HegemonCrypto.SmallWoodV8Smz9RuntimeDistribution";
+pub const SMALLWOOD_SMZ9_RUNTIME_RNG_FORMAL_DETERMINISTIC_NAMESPACE_V1: &str =
     "HegemonCrypto.SmallWood.V8Smz9RuntimeRandomness";
-pub const SMALLWOOD_SMZ9_FORMAL_TARGET_COIN_MODEL_V1: &str =
+pub const SMALLWOOD_SMZ9_RUNTIME_RNG_FORMAL_DISTRIBUTION_NAMESPACE_V1: &str =
+    "HegemonCrypto.SmallWood.V8Smz9RuntimeDistribution";
+pub const SMALLWOOD_SMZ9_FORMAL_IDEAL_FIELD_OUTPUT_MODEL_V1: &str =
+    "HegemonCrypto.SmallWood.V8Smz9RuntimeRandomness.RuntimeFieldCoins";
+pub const SMALLWOOD_SMZ9_FORMAL_FULL_RUNTIME_COIN_TARGET_V1: &str =
     "HegemonCrypto.SmallWood.V8Smz9RuntimeRandomness.Smz9HonestRuntimeCoins";
+pub const SMALLWOOD_SMZ9_FORMAL_ACCEPTED_WORD_BIJECTION_THEOREM_V1: &str =
+    "HegemonCrypto.SmallWood.V8Smz9RuntimeRandomness.accepted_runtime_words_biject_to_ideal_field_coins";
+pub const SMALLWOOD_SMZ9_FORMAL_IDEAL_TRACE_MASS_THEOREM_V1: &str =
+    "HegemonCrypto.SmallWood.V8Smz9RuntimeDistribution.iid_uniform_rejection_trace_mass_eq_iid_raw_prefix";
+pub const SMALLWOOD_SMZ9_FORMAL_IDEAL_TRACE_UNIQUENESS_THEOREM_V1: &str =
+    "HegemonCrypto.SmallWood.V8Smz9RuntimeDistribution.iid_uniform_rejection_trace_law_unique";
+pub const SMALLWOOD_SMZ9_FORMAL_IDEAL_FIELD_PUSHFORWARD_THEOREM_V1: &str =
+    "HegemonCrypto.SmallWood.V8Smz9RuntimeDistribution.iid_uniform_rejection_output_law";
+pub const SMALLWOOD_SMZ9_FORMAL_IDEAL_FINITE_OUTPUT_THEOREM_V1: &str =
+    "HegemonCrypto.SmallWood.V8Smz9RuntimeDistribution.iid_uniform_rejection_outputs";
+pub const SMALLWOOD_SMZ9_FORMAL_IDEAL_EXACT_SMZ9_OUTPUT_THEOREM_V1: &str =
+    "HegemonCrypto.SmallWood.V8Smz9RuntimeDistribution.exact_smz9_iid_uniform_rejection_output_law";
+pub const SMALLWOOD_SMZ9_FORMAL_FIELD_OUTPUT_STATISTICAL_DISTANCE_DEFINITION_V1: &str =
+    "HegemonCrypto.SmallWood.V8Smz9RuntimeDistribution.epsilonFieldOutputStatistical";
 
 /// Order of the Goldilocks field used by HGV8RP03/SMZ9.
 pub const SMALLWOOD_SMZ9_GOLDILOCKS_MODULUS_V1: u64 = GOLDILOCKS_MODULUS;
@@ -50,19 +74,31 @@ pub const SMALLWOOD_SMZ9_OS_ENTROPY_EXTERNAL_PREMISE_V1: &str =
 pub const SMALLWOOD_SMZ9_CRYPTO_RNG_EXTERNAL_PREMISE_V1: &str =
     "The caller-supplied CryptoRng + RngCore stream returns mutually fresh independent uniform bytes and u64 words with one coherent consumption order; the marker traits alone do not establish this premise.";
 
-/// Machine-checkable statement of the deterministic mapping boundary. `true` fields
-/// describe source-visible maps or fail-closed behavior.  They never assert
-/// a distributional runtime-to-ideal theorem.
+/// Machine-checkable statement of the deterministic mapping and conditional
+/// ideal-law boundaries.  Ideal-law flags refer only to the named Lean
+/// theorems under their explicit iid-uniform raw-word model.  Runtime, OS,
+/// full-coin, security-bound, and production flags remain separate and false.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SmallwoodSmz9RuntimeRngRefinementV1 {
+pub struct SmallwoodSmz9RuntimeRngRefinementV2 {
     pub schema: String,
-    pub formal_model_id: String,
-    pub formal_target_coin_model_id: String,
+    pub formal_deterministic_module_id: String,
+    pub formal_distribution_module_id: String,
+    pub formal_deterministic_namespace_id: String,
+    pub formal_distribution_namespace_id: String,
+    pub formal_ideal_field_output_model_id: String,
+    pub formal_full_runtime_coin_target_id: String,
+    pub formal_accepted_word_bijection_theorem_id: String,
+    pub formal_ideal_trace_mass_theorem_id: String,
+    pub formal_ideal_trace_uniqueness_theorem_id: String,
+    pub formal_ideal_field_pushforward_theorem_id: String,
+    pub formal_ideal_finite_output_theorem_id: String,
+    pub formal_ideal_exact_smz9_output_theorem_id: String,
+    pub formal_field_output_statistical_distance_definition_id: String,
     pub field_modulus: u64,
     pub raw_word_cardinality: u128,
     pub accepted_raw_word_count: u64,
     pub rejected_raw_word_count: u64,
-    pub accepted_fiber_size_per_field_element: u64,
+    pub accepted_canonical_word_preimage_count_per_field_element: u64,
     pub witness_interpolation_field_coins: usize,
     pub nonlinear_piop_field_coins: usize,
     pub linear_piop_field_coins: usize,
@@ -85,12 +121,18 @@ pub struct SmallwoodSmz9RuntimeRngRefinementV1 {
     pub fixed_width_byte_coins_are_identity_partitioned: bool,
     pub provider_error_aborts_proving: bool,
     pub deterministic_sampler_mapping_checked: bool,
-    pub distributional_pushforward_proved: bool,
+    pub live_smz9_profile_rho_openings_and_eta_cross_checked: bool,
+    pub ideal_iid_field_rejection_pushforward_proved: bool,
+    pub ideal_iid_finite_output_independence_proved: bool,
+    pub ideal_iid_exact_smz9_field_output_law_proved: bool,
+    pub runtime_distributional_pushforward_proved: bool,
     pub full_runtime_coin_pushforward_proved: bool,
     pub conditional_security_bound_proved: bool,
     pub numeric_ideal_rejection_tail_converges_to_zero: bool,
-    pub rng_distinguishing_term_symbol: String,
-    pub rng_distinguishing_term_bound_present: bool,
+    pub field_output_statistical_distance_term_symbol: String,
+    pub field_output_statistical_distance_bound_present: bool,
+    pub full_runtime_quantum_computational_advantage_model_present: bool,
+    pub full_runtime_quantum_computational_advantage_bound_present: bool,
     pub os_entropy_external_premise: String,
     pub os_entropy_premise_discharged_by_repository: bool,
     pub crypto_rng_external_premise: String,
@@ -201,8 +243,8 @@ pub(crate) fn sample_fixed_width_tapes_with_source_v1(
     Ok(tapes)
 }
 
-pub fn smallwood_smz9_runtime_rng_refinement_v1(
-) -> Result<SmallwoodSmz9RuntimeRngRefinementV1, TransactionCircuitError> {
+pub fn smallwood_smz9_runtime_rng_refinement_v2(
+) -> Result<SmallwoodSmz9RuntimeRngRefinementV2, TransactionCircuitError> {
     let accepted_raw_word_count = SMALLWOOD_SMZ9_GOLDILOCKS_MODULUS_V1;
     let rejected_raw_word_count = SMALLWOOD_SMZ9_RAW_WORD_CARDINALITY_V1
         .checked_sub(u128::from(accepted_raw_word_count))
@@ -236,8 +278,8 @@ pub fn smallwood_smz9_runtime_rng_refinement_v1(
         + lvcs_tail_field_coins
         + decs_mask_field_coins;
     let honest_prover_salt_bytes = 32usize;
-    let honest_prover_leaf_tape_count =
-        POSEIDON2_V8_SMZ9_SMALLWOOD_NO_GRINDING_PROFILE.decs_nb_evals;
+    let live_profile = POSEIDON2_V8_SMZ9_SMALLWOOD_NO_GRINDING_PROFILE;
+    let honest_prover_leaf_tape_count = live_profile.decs_nb_evals;
     let honest_prover_leaf_tape_bytes_each = SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES;
     let honest_prover_leaf_tape_bytes = honest_prover_leaf_tape_count
         .checked_mul(honest_prover_leaf_tape_bytes_each)
@@ -265,7 +307,11 @@ pub fn smallwood_smz9_runtime_rng_refinement_v1(
         .ok_or(TransactionCircuitError::ConstraintViolation(
             "SMZ9 runtime RNG byte inventory overflow",
         ))?;
-    if honest_prover_field_coins != 12_201
+    if live_profile.rho != SMZ9_NONLINEAR_MASK_POLYNOMIALS
+        || live_profile.nb_opened_evals != SMZ9_PIOP_OPENINGS
+        || live_profile.decs_nb_opened_evals != SMZ9_DECS_OPENINGS
+        || live_profile.decs_eta != SMZ9_DECS_ETA
+        || honest_prover_field_coins != 12_201
         || honest_prover_leaf_tape_count != 8_388_608
         || honest_prover_leaf_tape_bytes_each != 64
         || minimum_field_fill_calls != 901
@@ -278,15 +324,39 @@ pub fn smallwood_smz9_runtime_rng_refinement_v1(
         ));
     }
 
-    Ok(SmallwoodSmz9RuntimeRngRefinementV1 {
-        schema: SMALLWOOD_SMZ9_RUNTIME_RNG_REFINEMENT_SCHEMA_V1.to_owned(),
-        formal_model_id: SMALLWOOD_SMZ9_RUNTIME_RNG_FORMAL_MODEL_V1.to_owned(),
-        formal_target_coin_model_id: SMALLWOOD_SMZ9_FORMAL_TARGET_COIN_MODEL_V1.to_owned(),
+    Ok(SmallwoodSmz9RuntimeRngRefinementV2 {
+        schema: SMALLWOOD_SMZ9_RUNTIME_RNG_REFINEMENT_SCHEMA_V2.to_owned(),
+        formal_deterministic_module_id: SMALLWOOD_SMZ9_RUNTIME_RNG_FORMAL_DETERMINISTIC_MODULE_V1
+            .to_owned(),
+        formal_distribution_module_id: SMALLWOOD_SMZ9_RUNTIME_RNG_FORMAL_DISTRIBUTION_MODULE_V1
+            .to_owned(),
+        formal_deterministic_namespace_id:
+            SMALLWOOD_SMZ9_RUNTIME_RNG_FORMAL_DETERMINISTIC_NAMESPACE_V1.to_owned(),
+        formal_distribution_namespace_id:
+            SMALLWOOD_SMZ9_RUNTIME_RNG_FORMAL_DISTRIBUTION_NAMESPACE_V1.to_owned(),
+        formal_ideal_field_output_model_id: SMALLWOOD_SMZ9_FORMAL_IDEAL_FIELD_OUTPUT_MODEL_V1
+            .to_owned(),
+        formal_full_runtime_coin_target_id: SMALLWOOD_SMZ9_FORMAL_FULL_RUNTIME_COIN_TARGET_V1
+            .to_owned(),
+        formal_accepted_word_bijection_theorem_id:
+            SMALLWOOD_SMZ9_FORMAL_ACCEPTED_WORD_BIJECTION_THEOREM_V1.to_owned(),
+        formal_ideal_trace_mass_theorem_id: SMALLWOOD_SMZ9_FORMAL_IDEAL_TRACE_MASS_THEOREM_V1
+            .to_owned(),
+        formal_ideal_trace_uniqueness_theorem_id:
+            SMALLWOOD_SMZ9_FORMAL_IDEAL_TRACE_UNIQUENESS_THEOREM_V1.to_owned(),
+        formal_ideal_field_pushforward_theorem_id:
+            SMALLWOOD_SMZ9_FORMAL_IDEAL_FIELD_PUSHFORWARD_THEOREM_V1.to_owned(),
+        formal_ideal_finite_output_theorem_id: SMALLWOOD_SMZ9_FORMAL_IDEAL_FINITE_OUTPUT_THEOREM_V1
+            .to_owned(),
+        formal_ideal_exact_smz9_output_theorem_id:
+            SMALLWOOD_SMZ9_FORMAL_IDEAL_EXACT_SMZ9_OUTPUT_THEOREM_V1.to_owned(),
+        formal_field_output_statistical_distance_definition_id:
+            SMALLWOOD_SMZ9_FORMAL_FIELD_OUTPUT_STATISTICAL_DISTANCE_DEFINITION_V1.to_owned(),
         field_modulus: SMALLWOOD_SMZ9_GOLDILOCKS_MODULUS_V1,
         raw_word_cardinality: SMALLWOOD_SMZ9_RAW_WORD_CARDINALITY_V1,
         accepted_raw_word_count,
         rejected_raw_word_count: SMALLWOOD_SMZ9_REJECTED_WORD_COUNT_V1,
-        accepted_fiber_size_per_field_element: 1,
+        accepted_canonical_word_preimage_count_per_field_element: 1,
         witness_interpolation_field_coins,
         nonlinear_piop_field_coins,
         linear_piop_field_coins,
@@ -309,12 +379,19 @@ pub fn smallwood_smz9_runtime_rng_refinement_v1(
         fixed_width_byte_coins_are_identity_partitioned: true,
         provider_error_aborts_proving: true,
         deterministic_sampler_mapping_checked: true,
-        distributional_pushforward_proved: false,
+        live_smz9_profile_rho_openings_and_eta_cross_checked: true,
+        ideal_iid_field_rejection_pushforward_proved: true,
+        ideal_iid_finite_output_independence_proved: true,
+        ideal_iid_exact_smz9_field_output_law_proved: true,
+        runtime_distributional_pushforward_proved: false,
         full_runtime_coin_pushforward_proved: false,
         conditional_security_bound_proved: false,
         numeric_ideal_rejection_tail_converges_to_zero: true,
-        rng_distinguishing_term_symbol: "epsilon_rng".to_owned(),
-        rng_distinguishing_term_bound_present: false,
+        field_output_statistical_distance_term_symbol: "epsilon_field_output_statistical"
+            .to_owned(),
+        field_output_statistical_distance_bound_present: false,
+        full_runtime_quantum_computational_advantage_model_present: false,
+        full_runtime_quantum_computational_advantage_bound_present: false,
         os_entropy_external_premise: SMALLWOOD_SMZ9_OS_ENTROPY_EXTERNAL_PREMISE_V1.to_owned(),
         os_entropy_premise_discharged_by_repository: false,
         crypto_rng_external_premise: SMALLWOOD_SMZ9_CRYPTO_RNG_EXTERNAL_PREMISE_V1.to_owned(),
@@ -338,12 +415,72 @@ mod tests {
 
     #[test]
     fn exact_rejection_geometry_and_claim_boundary_are_pinned() {
-        let report = smallwood_smz9_runtime_rng_refinement_v1()
+        let report = smallwood_smz9_runtime_rng_refinement_v2()
             .expect("construct SMZ9 runtime RNG refinement report");
+        assert_eq!(
+            report.schema,
+            "hegemon.smallwood.poseidon2-v8.smz9.runtime-rng-refinement.v2"
+        );
+        assert_eq!(
+            report.formal_deterministic_module_id,
+            "HegemonCrypto.SmallWoodV8Smz9RuntimeRandomness"
+        );
+        assert_eq!(
+            report.formal_distribution_module_id,
+            "HegemonCrypto.SmallWoodV8Smz9RuntimeDistribution"
+        );
+        assert_eq!(
+            report.formal_deterministic_namespace_id,
+            "HegemonCrypto.SmallWood.V8Smz9RuntimeRandomness"
+        );
+        assert_eq!(
+            report.formal_distribution_namespace_id,
+            "HegemonCrypto.SmallWood.V8Smz9RuntimeDistribution"
+        );
+        assert_eq!(
+            report.formal_ideal_field_output_model_id,
+            "HegemonCrypto.SmallWood.V8Smz9RuntimeRandomness.RuntimeFieldCoins"
+        );
+        assert_eq!(
+            report.formal_full_runtime_coin_target_id,
+            "HegemonCrypto.SmallWood.V8Smz9RuntimeRandomness.Smz9HonestRuntimeCoins"
+        );
+        assert_eq!(
+            report.formal_accepted_word_bijection_theorem_id,
+            "HegemonCrypto.SmallWood.V8Smz9RuntimeRandomness.accepted_runtime_words_biject_to_ideal_field_coins"
+        );
+        assert_eq!(
+            report.formal_ideal_trace_mass_theorem_id,
+            "HegemonCrypto.SmallWood.V8Smz9RuntimeDistribution.iid_uniform_rejection_trace_mass_eq_iid_raw_prefix"
+        );
+        assert_eq!(
+            report.formal_ideal_trace_uniqueness_theorem_id,
+            "HegemonCrypto.SmallWood.V8Smz9RuntimeDistribution.iid_uniform_rejection_trace_law_unique"
+        );
+        assert_eq!(
+            report.formal_ideal_field_pushforward_theorem_id,
+            "HegemonCrypto.SmallWood.V8Smz9RuntimeDistribution.iid_uniform_rejection_output_law"
+        );
+        assert_eq!(
+            report.formal_ideal_finite_output_theorem_id,
+            "HegemonCrypto.SmallWood.V8Smz9RuntimeDistribution.iid_uniform_rejection_outputs"
+        );
+        assert_eq!(
+            report.formal_ideal_exact_smz9_output_theorem_id,
+            "HegemonCrypto.SmallWood.V8Smz9RuntimeDistribution.exact_smz9_iid_uniform_rejection_output_law"
+        );
+        assert_eq!(
+            report.formal_field_output_statistical_distance_definition_id,
+            "HegemonCrypto.SmallWood.V8Smz9RuntimeDistribution.epsilonFieldOutputStatistical"
+        );
         assert_eq!(report.raw_word_cardinality, 18_446_744_073_709_551_616);
         assert_eq!(report.field_modulus, 18_446_744_069_414_584_321);
+        assert_eq!(report.accepted_raw_word_count, report.field_modulus);
         assert_eq!(report.rejected_raw_word_count, 4_294_967_295);
-        assert_eq!(report.accepted_fiber_size_per_field_element, 1);
+        assert_eq!(
+            report.accepted_canonical_word_preimage_count_per_field_element,
+            1
+        );
         assert_eq!(report.honest_prover_field_coins, 12_201);
         assert_eq!(report.witness_interpolation_field_coins, 4_116);
         assert_eq!(report.nonlinear_piop_field_coins, 2_445);
@@ -360,14 +497,36 @@ mod tests {
         assert_eq!(report.minimum_successful_getrandom_fill_calls, 2_950);
         assert_eq!(report.minimum_successful_getrandom_fill_bytes, 536_968_552);
         assert!(report.maximum_getrandom_fill_calls_is_unbounded);
+        assert_eq!(report.candidate_byte_order, "little-endian-u64");
+        assert!(report.accepted_word_is_canonical_identity);
+        assert!(report.rejection_sampling_has_no_modulo_reduction);
+        assert!(report.fixed_width_byte_coins_are_identity_partitioned);
+        assert!(report.provider_error_aborts_proving);
         assert!(report.deterministic_sampler_mapping_checked);
-        assert!(!report.distributional_pushforward_proved);
+        assert!(report.live_smz9_profile_rho_openings_and_eta_cross_checked);
+        assert!(report.ideal_iid_field_rejection_pushforward_proved);
+        assert!(report.ideal_iid_finite_output_independence_proved);
+        assert!(report.ideal_iid_exact_smz9_field_output_law_proved);
+        assert!(!report.runtime_distributional_pushforward_proved);
         assert!(!report.full_runtime_coin_pushforward_proved);
         assert!(!report.conditional_security_bound_proved);
         assert!(report.numeric_ideal_rejection_tail_converges_to_zero);
-        assert_eq!(report.rng_distinguishing_term_symbol, "epsilon_rng");
-        assert!(!report.rng_distinguishing_term_bound_present);
+        assert_eq!(
+            report.field_output_statistical_distance_term_symbol,
+            "epsilon_field_output_statistical"
+        );
+        assert!(!report.field_output_statistical_distance_bound_present);
+        assert!(!report.full_runtime_quantum_computational_advantage_model_present);
+        assert!(!report.full_runtime_quantum_computational_advantage_bound_present);
+        assert_eq!(
+            report.os_entropy_external_premise,
+            "Every successful getrandom::fill call used by one or more SMZ9 provers returns bytes that are jointly fresh, independent, and uniform, including across concurrent Rayon calls; an error aborts proving without emitting a proof."
+        );
         assert!(!report.os_entropy_premise_discharged_by_repository);
+        assert_eq!(
+            report.crypto_rng_external_premise,
+            "The caller-supplied CryptoRng + RngCore stream returns mutually fresh independent uniform bytes and u64 words with one coherent consumption order; the marker traits alone do not establish this premise."
+        );
         assert!(!report.crypto_rng_marker_discharges_premise);
         assert!(!report.typed_crypto_rng_sampler_is_honest_prover_path);
         assert!(!report.qrom_programming_coins_are_os_draws);
@@ -494,6 +653,12 @@ mod tests {
         assert!(tapes
             .iter()
             .all(|tape| tape.len() == SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES));
+        assert_eq!(
+            tapes.concat(),
+            (0..count * SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES)
+                .map(|index| index as u8)
+                .collect::<Vec<_>>()
+        );
 
         let error = sample_fixed_width_tapes_with_source_v1(
             1,

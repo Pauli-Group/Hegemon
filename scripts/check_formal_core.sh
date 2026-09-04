@@ -131,6 +131,9 @@ bash "$ROOT/scripts/check_native_runtime_dependencies.sh"
 printf '\n[0d/14] Checking generated SmallWood production constraint table\n'
 bash "$ROOT/scripts/check_smallwood_production_constraint_table.sh"
 
+printf '\n[0e/14] Checking exact HGV8RP03 Lean relation-program components\n'
+bash "$ROOT/scripts/check_poseidon2_v8_relation_program_components_lean.sh"
+
 printf '\n[1/14] Checking formal-core checker formatting\n'
 cargo fmt --manifest-path "$FORMAL_MANIFEST" -- --check
 
@@ -171,6 +174,9 @@ run_exact_lib_test \
 run_exact_lib_test \
   transaction-circuit \
   smallwood_poseidon2_v8_program::tests::lean_generated_v8_relation_program_vectors_match_source
+run_exact_lib_test \
+  transaction-circuit \
+  smallwood_poseidon2_v8_program::tests::source_program_bytes_match_checked_in_canonical_artifact
 LEAN_BRIDGE_VECTORS="$(mktemp)"
 LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS="$(mktemp)"
 LEAN_BRIDGE_LONG_RANGE_VECTORS="$(mktemp)"

@@ -161,9 +161,13 @@ proof construction. The typed `CryptoRng + RngCore` sampler belongs to the
 whole-view refinement harness and its marker traits do not prove uniformity.
 The shared Rust sampler and Lean model now fix canonical Goldilocks rejection,
 the byte layout, and the exact inventory of 12,201 accepted field coins, at
-least 2,950 successful fills, and at least 536,968,552 source bytes. They do not
-prove the runtime distribution, OS entropy quality, independence across
-concurrent calls, or a concrete `epsilon_rng` bound. This work changes no SMZ9
+least 2,950 successful fills, and at least 536,968,552 source bytes. Under an
+ideal independent uniform raw-word premise, Lean proves the 12,201 field
+outputs are jointly uniform. Its statistical-distance definition covers only
+those field outputs. It does not prove the runtime distribution, OS entropy
+quality, independence across concurrent calls, the full salt/tape law, or the
+quantum-computational distinguishing bound required for the complete runtime
+coin source. This work changes no SMZ9
 wire byte: the 122,863-byte maximum and the 122,735/122,607-byte retained proofs
 remain unchanged. The executable harness also has exact programmable SHA-512
 replay and no salt-only oracle program. Its exact lazy
