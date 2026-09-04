@@ -19,3 +19,6 @@ if ! cmp -s "$EXPECTED" "$GENERATED"; then
 fi
 
 printf 'HGV8RP03 Lean component value matches the exact source artifact\n'
+
+python3 "$ROOT/scripts/generate_poseidon2_v8_program_canonicality_lean.py" \
+  --input "$SOURCE" --check

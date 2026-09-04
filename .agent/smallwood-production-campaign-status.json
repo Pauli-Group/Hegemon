@@ -1,7 +1,7 @@
 {
   "schema": "hegemon.smallwood-production-campaign-status.v1",
-  "updated_at": "2026-09-04T22:21:06Z",
-  "execution_status": "resumed_saved_checkpoint_validated_two_new_formal_proof_additions_in_progress",
+  "updated_at": "2026-09-04T23:23:39Z",
+  "execution_status": "verified_checkpoint_complete_three_formal_milestones_proved_production_work_remaining",
   "branch": "codex/smallwood-pq128-experiment",
   "relation": "HGV8RP03",
   "proof_profile": "SMZ9",
@@ -10,18 +10,22 @@
   "disk": {
     "free_gib_at_start": 92,
     "resume_free_gib_at_start": 58,
-    "free_gib_last_check": 39,
+    "free_gib_last_check": 38.28,
     "hard_reserve_gib": 40,
     "shared_target_cache_gib": 1.1,
     "workspace_target_cache_removed_after_cold_node_check_gib": 5.0,
-    "current_free_gib_approx": 39
+    "current_free_gib_approx": 38.28
   },
   "current_execution_checkpoint": {
     "start_commit": "d13597da5f60fb9e71f1c496192b406e243a8e08",
     "governance_blueprint_resume_check": "pass_121_nodes_677_falsification_cases_121_pending_external_reviews",
+    "governance_blueprint_final_check": "pass_2026_09_04_2323_121_nodes_677_falsification_cases_26_source_digests_refreshed_121_reviews_unchanged",
+    "governance_focused_final_tests": "pass_14_of_14_fresh_execution_receipt_matches_current_policy_inputs",
     "historical_goal_progress_resume_check": "pass_10_of_20_assumption_tracks_no_new_production_credit",
-    "runtime_field_layout_bridge": "in_progress_no_completion_credit",
-    "generated_program_canonicality": "in_progress_no_completion_credit",
+    "validated_checkpoint_commit": "51f90425",
+    "runtime_field_layout_bridge": "pass_explicit_12201_coordinate_bijection_and_ideal_joint_uniform_law_independently_reviewed_runtime_execution_and_os_source_not_proved",
+    "generated_program_canonicality": "pass_original_full_Canonical_predicate_without_premises_20569_attempts_8836_expressions_830_roots_1105_descriptors_643_csr_chunks_48_generated_serial_modules",
+    "fixed_challenge_joint_algebraic_law": "pass_complete_six_role_joint_distribution_from_rejection_law_and_fixed_secret_independence_independent_review_clean_actual_adaptive_transcript_and_random_offsets_not_proved",
     "transaction_library_check": "pass",
     "source_security_accounting_tests": "10_of_10_pass",
     "whole_view_zk_refinement_tests": "4_of_4_pass",
@@ -31,7 +35,7 @@
     "source_security_report_exact_check": "pass_production_eligible_false",
     "adaptive_finite_accounting_lean_build": "pass_2594_jobs",
     "runtime_randomness_lean_build": "pass",
-    "formal_crypto_umbrella_lean_build": "pass_2687_jobs",
+    "formal_crypto_umbrella_lean_build": "pass_2738_jobs",
     "runtime_rng_mapping_tests": "6_of_6_pass",
     "engine_field_rejection_test": "1_of_1_pass",
     "hx512_rng_session_tests": "3_of_3_pass",
@@ -45,11 +49,11 @@
     "smz9_disjoint_coset_lean": "pass_exact_2pow23_shift388_injectivity_and_disjointness",
     "smz9_oracle_candidate_extraction_lean": "pass_candidate_inverse_and_degree_at_most_387_interpolation_under_full_domain_agreement_only",
     "smz9_whole_view_audit_observation_lean": "pass_syntactic_internal_record_fixtures_plus_static_verifier_projection_no_rust_execution_or_rom_qrom_adversary_view_or_privacy_credit",
-    "integrated_formal_crypto_umbrella": "pass_2687_jobs",
-    "formal_crypto_full_gate": "pass_77_credited_declarations_axiom_audited",
+    "integrated_formal_crypto_umbrella": "pass_2738_jobs",
+    "formal_crypto_full_gate": "pass_87_credited_declarations_axiom_audited",
     "formal_lean_umbrella": "pass_222_jobs",
     "rust_source_program_artifact_equality_test": "pass_exact_bytes_and_mutation_control",
-    "formal_core_preflight": "pending_final_rerun_receipt_digest_repaired_2026_09_04_heavy_builds_held_below_disk_reserve",
+    "formal_core_preflight": "pass_2026_09_04_2237_246_checker_tests_2745_theorem_audit_historical_goal_ledger_no_new_production_credit",
     "fixed_retained_pointer_live_source_check": "expected_reject_stale_source_inventory",
     "existing_candidate_manifest_live_source_check": "expected_reject_stale_source_inventory",
     "latent_regression_repairs": [
@@ -123,6 +127,10 @@
     "ideal_iid_field_rejection_pushforward_proved": true,
     "ideal_iid_finite_output_independence_proved": true,
     "ideal_iid_exact_smz9_field_output_law_proved": true,
+    "exact_field_role_coordinate_bijection_proved": true,
+    "ideal_honest_algebraic_coin_joint_law_proved": true,
+    "ideal_fixed_challenge_joint_algebraic_output_law_proved": true,
+    "actual_adaptive_transcript_joint_law_proved": false,
     "runtime_distributional_pushforward_proved": false,
     "full_runtime_coin_pushforward_proved": false,
     "conditional_security_bound_proved": false,
@@ -211,16 +219,16 @@
     "selection_rule": "no_size_credit_until_privacy_and_composed_quantum_bounds_are_executable_and_all_fail_closed_gates_pass"
   },
   "tracks": {
-    "source_freeze_and_disk_gate": "39_gib_free_40_gib_hard_reserve_cold_builds_held_cache_cleanup_approval_pending",
+    "source_freeze_and_disk_gate": "38_28_gib_free_40_gib_hard_reserve_cold_builds_and_fresh_proofs_held_cache_cleanup_approval_pending",
     "proof_authority_convergence": "complete_fail_closed_focused_protocol_kernel_consensus_node_wallet_tests_pass",
     "formal_forbidden_token_scan": "complete_no_native_decide",
     "correction_aware_sampling": "ideal_six_opening_theorem_lean_deterministic_map_rust_sampler_tests_and_ideal_iid_field_output_law_green_rust_to_lean_execution_runtime_provider_sha512_candidate_independence_complete_salt_and_tape_law_and_full_quantum_computational_rng_advantage_bound_open",
     "repeated_proof_privacy": "executable_simulator_rng_ledger_internal_syntactic_audit_records_and_static_verifier_projection_green_rust_derived_statement_binded_data_proof_and_ordered_sha512_trace_interactive_rom_qrom_adversary_experiment_joint_distributional_transport_qrom_hybrid_hidden_subtree_sha512_and_reviewed_T_open",
-    "composed_quantum_soundness": "report_checker_ideal_finite_accounting_exact_disjoint_coset_candidate_oracle_inverse_and_hgv8rp03_program_materialization_green_verifier_acceptance_to_decs_codeword_affine_batching_full_admissible_root_event_degree387_q20_lvcs_fiat_shamir_commitment_and_rust_bytes_cms_binding_open_no_deployed_floor",
+    "composed_quantum_soundness": "report_checker_ideal_finite_accounting_exact_disjoint_coset_candidate_oracle_inverse_hgv8rp03_materialization_and_full_structural_canonicality_green_verifier_acceptance_to_decs_codeword_affine_batching_full_admissible_root_event_degree387_q20_lvcs_fiat_shamir_commitment_and_rust_bytes_cms_binding_open_no_deployed_floor",
     "universal_compiler_verifier_refinement": "complete_to_source_semantics_boundary_verified_rust_extraction_and_in_lean_rfc7693_remain",
     "ci_and_release_trigger_coverage": "complete_main_and_focused_formal_crypto_jobs_run_exact_report_and_successor_regressions_both_reports_trigger_and_policy_mutations_pass",
     "security_preserving_size_optimization": "retain_smz9_122863_byte_ceiling_no_selected_shrink_fixed_codec_saves_only_67_worst_case_bytes_q20_56_q19_and_combined_cuts_change_security_terms",
     "retained_artifact_and_lifecycle_regression": "candidate_publication_8_of_8_manifest_constructor_15_of_15_and_node_selector_9_of_9_green_fixed_and_existing_candidate_manifests_correctly_reject_stale_source_in_process_lifecycle_historical_final_fresh_proofs_and_rerun_pending_formal_source_freeze"
   },
-  "claim_boundary": "Historical retained proof and wire bytes are preserved, but their source inventory predates current source and is not release evidence. The exact 120-word public decoder, 852305-byte HGV8RP03 program materialization, ideal iid rejection field-output law, disjoint coset, candidate oracle inverse, internal syntactic audit records, and static verifier projection are now explicit. They do not prove privacy or soundness. Production authority remains false: Rust-to-Lean runtime refinement, the full salt/tape distribution and quantum-computational RNG advantage bound, Rust-derived statement, bound data, traces and oracle events, an interactive ROM/QROM adversary experiment, a joint real-versus-simulator theorem, verifier acceptance to an authenticated nearby codeword, exact SMZ9 round-by-round extraction and QROM composition, full generated-program canonicality, current-source retained artifacts, independent review, and hermetic release authority remain absent."
+  "claim_boundary": "Historical retained proof and wire bytes are preserved, but their source inventory predates current source and is not release evidence. The exact public decoder, full structural canonicality of the materialized HGV8RP03 program, ideal rejection-output law, explicit 12201-field allocation, and joint algebraic distribution at fixed admissible challenges and fixed offsets are proved. The disjoint coset, conditional oracle inverse, syntactic audit records, and static verifier projection remain explicit. These results do not prove complete privacy or soundness. Production authority remains false: actual Rust execution, complete field/salt/tape source distribution and quantum RNG advantage bound, adaptive challenge and offset dependencies, an actual interactive real/simulator oracle experiment, verifier acceptance to an authenticated nearby codeword, exact SMZ9 extraction and QROM composition, Lean encoded-byte/hash binding, typed transaction semantic adequacy, current-source retained artifacts, independent review, and hermetic release authority remain open."
 }

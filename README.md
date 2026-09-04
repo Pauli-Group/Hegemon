@@ -163,8 +163,13 @@ The shared Rust sampler and Lean model now fix canonical Goldilocks rejection,
 the byte layout, and the exact inventory of 12,201 accepted field coins, at
 least 2,950 successful fills, and at least 536,968,552 source bytes. Under an
 ideal independent uniform raw-word premise, Lean proves the 12,201 field
-outputs are jointly uniform. Its statistical-distance definition covers only
-those field outputs. It does not prove the runtime distribution, OS entropy
+outputs are jointly uniform. An explicit, invertible allocation map now proves
+the same joint law for the honest prover's witness, nonlinear and linear masks,
+PCS, LVCS, and DECS field coordinates. Its statistical-distance definition covers
+only those field outputs. For fixed admissible challenges and fixed secret offsets,
+Lean also proves equality of the complete algebraic output distributions, including
+their joint correlations. This does not condition or analyze the actual adaptive
+transcript. It does not prove the runtime distribution, OS entropy
 quality, independence across concurrent calls, the full salt/tape law, or the
 quantum-computational distinguishing bound required for the complete runtime
 coin source. This work changes no SMZ9
@@ -187,6 +192,10 @@ caps simultaneously.
 The compiler and conformance work is complete only to the source-semantics
 boundary: all sixteen masks and authorization modes are covered, but verified
 Rust extraction and an in-Lean RFC 7693 BLAKE2b-384 implementation remain.
+Lean now proves the complete structural validity of the exact HGV8RP03 program,
+including every expression reference and all 20,569 indexed linear attempts.
+Exact Lean encoding and hash binding to the binary, and the complete typed
+transaction semantics, remain separate requirements.
 An inactive, unselected q20/56 `SMC8` size candidate measured 119,767 inner
 proof bytes and 125,201 bytes for a two-output action, with source ceilings of
 119,879 and 125,313 bytes. It saves 2,984 bytes at the source worst case while

@@ -55,6 +55,17 @@ review, and hermetic release authority remain required.
 
 ## Progress
 
+- [x] (2026-09-04 23:23Z) Final integrated checkpoint passes: the complete
+  cryptography build and 87-declaration axiom audit, generator self-tests and
+  exact drift checks for all 48 generated modules, CI policy negative tests,
+  14 fresh governance tests, and the full 121-node/677-case blueprint validation.
+  Mechanically refreshed 26 source digests; verified that every other policy
+  and review field is unchanged apart from the executed test receipt. All
+  121 independent reviews remain pending. Runtime code, the program binary,
+  transaction proof format and 122,863-byte maximum are unchanged. No new
+  transaction proof was generated. About 38.3 GiB remains free and no cache
+  cleanup was performed without approval.
+
 - [x] (2026-09-04 22:21Z) Resumed and completed the saved governance validation.
   The blueprint check passes 121 nodes and 677 falsification cases with all
   121 nodes still awaiting independent review. The existing progress checker
@@ -63,14 +74,33 @@ review, and hermetic release authority remain required.
   or production authorization changed. The September 3 source checkpoint
   passed 419 transaction tests with 21 explicit benchmarks ignored, the full
   cryptography Lean build, and the axiom audit of 77 credited declarations.
-  A complete final preflight invocation remains pending; the current disk
-  has 39 GiB free and cold builds remain stopped below the 40 GiB reserve.
-- [ ] (2026-09-04 22:21Z) Extend the checked ideal 12,201-field distribution
-  through an explicit bijection into the existing honest algebraic coin
-  structure, including mask interleaving and PCS coordinate transposition.
-  In parallel, prove structural canonicality of the exact generated HGV8RP03
-  program with a sequential checker that avoids repeated prefix scans.
-  These additions must be kernel checked before receiving completion credit.
+  The complete cached offline preflight passed at 22:37Z, including 246 checker
+  tests and the 2,745-theorem Lean audit. Commit `51f90425` preserves this
+  checkpoint. The current disk has 39 GiB free and cold builds remain stopped
+  below the 40 GiB reserve.
+- [x] (2026-09-04 22:37Z) Extended the ideal 12,201-field distribution through
+  an explicit bijection into `Smz9HonestAlgebraicCoins`, including nonlinear
+  and linear mask interleaving and PCS coordinate transposition. The targeted
+  Lean build passed in 8.3 seconds; an independent source review agrees with
+  all six Rust allocation families. The joint uniform law follows from the
+  checked rejection distribution, not an assumed target distribution. Six
+  declarations use only the permitted kernel axioms. Actual Rust execution,
+  OS randomness, salt/tapes, and quantum distinguishing bounds remain open.
+- [x] (2026-09-04 22:49Z) Proved the complete six-role algebraic output law
+  induced by the rejection distribution, its specialization to the existing
+  exact maps at fixed admissible challenges, and equality after changing fixed
+  secret offsets. The direct Lean check and three axiom audits pass. This is
+  joint distribution equality, not six marginal equalities. It neither
+  conditions the actual adaptive transcript nor closes its privacy premise.
+- [x] (2026-09-04 23:11Z) Proved the original complete structural canonicality
+  predicate for the exact generated HGV8RP03 program, without premises.
+  All 20,569 CSR attempts in 643 chunks, 8,836 expression nodes, 830 roots,
+  and 1,105 descriptors pass. The source generator emits 48 modules with a
+  serial import chain; the helper and final composition also pass. Three
+  negative examples reject forward references, wrong local indices, and
+  wrong family emission. The final theorem uses only permitted kernel axioms.
+  Encoded-byte/hash equality, transaction semantics, Rust refinement, and
+  cryptographic soundness do not follow from this structural theorem.
 
 - [x] (2026-08-30 20:10Z, historical snapshot) Resumed the production campaign from the frozen
   HGV8RP03/SMZ9 artifacts. Re-read the repository instructions and current
@@ -228,8 +258,9 @@ review, and hermetic release authority remain required.
   the checked artifact byte for byte. The generator checks the pinned SHA-512,
   parses every section to exhaustion, re-encodes canonically, and rejects hash
   mutation, truncation, trailing data, bad lengths, and bad references. Lean
-  now proves the exact inventory and fixed identity fields; a kernel proof of
-  every `RelationProgramComponents.Canonical` conjunct remains open.
+  proved the exact inventory and fixed identity fields at that checkpoint.
+  Every `RelationProgramComponents.Canonical` conjunct was subsequently
+  proved on September 4, as recorded above.
 - [x] (2026-09-03 17:28Z) Proved the exact `2^23` Goldilocks evaluation coset
   has order `2^23`, is injective, and is disjoint from all 388 interpolation
   coordinates. Added the deterministic `2^23 x 145` oracle-to-`686 x 64`
@@ -904,7 +935,7 @@ review, and hermetic release authority remain required.
 
 ## Surprises & Discoveries
 
-- Observation (2026-09-04): the saved September 3 checkpoint remains at commit
+- Observation (2026-09-04): at resumption the saved September 3 checkpoint was at commit
   `de5611c2528b8ff44d3068fb9cdefc5b3f044362` with 18 modified and 11 new files.
   Free disk space fell from 53 to 39 GiB while the task was paused. Heavy
   builds stay stopped below the 40 GiB reserve; existing validator binaries
@@ -912,6 +943,20 @@ review, and hermetic release authority remain required.
   saved, so only the blueprint governance receipt needed its matching policy
   digest before final validation. That receipt remains an executed test
   record, and every independent review status and production gate is unchanged.
+
+- Observation (2026-09-04): one monolithic HGV8RP03 canonicality check reached
+  about 10 GiB RSS after 129 seconds and was stopped without receiving proof
+  credit. The generic cursor and three rejection examples pass in 5.67 seconds.
+  Subsequent certificates must use bounded serial checks and preserve the
+  materialized list-of-chunks representation to avoid a large final reduction.
+  This is a Lean checking resource issue, not a transaction proof size change.
+
+- Observation (2026-09-04): after the CSR checks passed, descriptor shard 04
+  reached 5.82 GiB RSS while reducing long UTF-8 label round trips and was
+  stopped. Rewriting by `String.toList_ofList` preserves the exact predicate
+  and made the repaired descriptor builds pass in 2.6–6.5 seconds. The final
+  composition passed in 4.8 seconds. CSR modules remain cached; sampled late
+  CSR memory was 1.29 GiB. No proof wire or production capability changed.
 
 - Observation: two candidate formal additions were rejected during strict
   review and removed. The proposed whole-view wrapper assumed the desired
@@ -1394,12 +1439,18 @@ review, and hermetic release authority remain required.
 Not complete. The checked checkpoint contains the exact 120-word public
 decoder, the generated HGV8RP03 program components, the disjoint evaluation
 coset and conditional degree-387 recovery, and the ideal independent law for
-12,201 sampled field values. The Rust transaction suite passes 419 tests;
-the complete cryptography Lean build and axiom audit of 77 credited
-declarations pass. The generated program still needs its complete structural
-canonicality theorem, and the ideal field law still needs an exact map into
-the honest prover's role coordinates and a connection to actual runtime
-randomness. The complete-source quantum distinguishing bound, joint real and
+12,201 sampled field values. An explicit invertible allocation now transports
+that law to all six honest algebraic coin roles. For fixed admissible challenges
+and fixed offsets, the joint algebraic output law is also proved independent
+of those offsets. Independent source reviews found no errors in either result.
+The saved Rust transaction suite passes 419 tests. The complete cryptography
+Lean gate passes with 87 audited declarations, including all three new
+mathematical results. The integrated build passes 2,738 jobs.
+The complete structural canonicality theorem now also passes for the exact
+generated program. Its encoded-byte/hash binding and typed transaction
+semantic adequacy remain separate obligations.
+The connection to actual runtime randomness and to the sequential transcript
+remains open. The complete-source quantum distinguishing bound, joint real and
 simulated proof and oracle experiment, and exact SMZ9 knowledge theorem remain
 open. Current-source retained artifacts and release authority also remain
 absent, so the capability stays `None`.
@@ -1814,6 +1865,14 @@ obligation rather than being hidden by the successful ideal build.
 
 Revision note (2026-09-04): resumed the saved checkpoint, repaired the final
 governance receipt after its dependent review digest changed, and verified
-the blueprint and historical progress ledger. Recorded the 39 GiB disk
-limit and the next two concrete proof additions. The prior tested source
-checkpoint is preserved separately from those new additions.
+the blueprint and historical progress ledger. Commit `51f90425` preserves
+that tested checkpoint. Subsequently proved the exact field allocation,
+the joint algebraic law at fixed challenges and offsets, and full structural
+canonicality of the materialized HGV8RP03 program. The integrated cryptography
+gate passes with 87 audited declarations and 2,738 build jobs. Serial bounded
+checks and exact string-roundtrip rewrites resolve the two observed checking
+memory spikes. The transaction implementation, program binary, and proof wire
+are unchanged. About 38.3 GiB remains free; cold builds and fresh retained
+proof generation remain held below the 40 GiB reserve. Complete privacy,
+quantum composition, implementation refinement, and release authority remain
+open and receive no completion credit from these structural results.

@@ -1065,12 +1065,7 @@ theorem exact_program_fixed_identity_fields :
 /-- Materializing a program value is not production authorization. -/
 def productionAuthorized : Bool := false
 
-/-- The generated value still needs a kernel proof of `RelationProgramComponents.Canonical`. -/
-def leanCanonicalProofComplete : Bool := false
-
-theorem exact_program_lean_canonical_proof_remains_open :
-    leanCanonicalProofComplete = false := by
-  rfl
+/- Canonicality must be proved for this value; a materialization status flag is not evidence. -/
 
 theorem exact_program_has_no_production_authority :
     productionAuthorized = false := by
