@@ -12476,15 +12476,14 @@ fn smallwood_piop_opening_points_are_valid_for_profile(
         }))
 }
 
-/// Return the exact forty 6-by-6 blocks which carry the 240 SMZ9 PCS
-/// unstacking coins into the serialized partial-evaluation view.
+/// Return the forty legacy blocks defining the current conservative SMZ9
+/// opening-admissibility policy. These are NOT the PCS randomness map.
 ///
 /// For coin index `t`, `pcs_commit` places the coin at row `64+t`.
 /// The first six coins of each width-eight nonlinear polynomial are subtracted
 /// at row `t`, while its final coin is subtracted at row `29+t`.  Each
 /// width-two linear polynomial's coin is subtracted at row `1+t`.  At opening
-/// `j` with point `r_j`, evaluation by `pcs_build_coefficients` therefore gives
-/// the exact block entries
+/// `j` with point `r_j`, the legacy policy checks the following block entries:
 ///
 /// * `M[j,t] = r_j^t (r_j^64 - 1)` for each intermediate nonlinear role;
 /// * `M[j,t] = r_j^(29+t) (r_j^35 - 1)` for a nonlinear-final role; and
@@ -12493,8 +12492,16 @@ fn smallwood_piop_opening_points_are_valid_for_profile(
 /// Each block is a nonzero row-diagonal scaling of the same Vandermonde
 /// matrix.  There are five nonlinear polynomials with seven roles apiece and
 /// five linear polynomials with one role apiece, for forty blocks and total
-/// dimension 240.  Returning every block makes the accepted-proof audit check
-/// the exact cross-opening map instead of copying an unrelated rank.
+/// dimension 240. Their nonzero-entry check remains part of the unchanged
+/// opening policy, but their rank is not evidence about the source PCS map.
+///
+/// In `pcs_commit`, subtraction is in the NEXT column, not the column where
+/// the coin is added. Writing Z_i(r) for a coin column's degree-five polynomial,
+/// the actual nonlinear partial columns are r^64*Z_i(r)-Z_(i-1)(r) for i=1..6,
+/// followed by -r^29*Z_6(r); the linear partial is -r*Z_0(r). This coupled map
+/// is inverted by back-substitution and Vandermonde inversion at distinct
+/// nonzero points. Do not change this helper to that different map without an
+/// explicit protocol change: doing so would change accepted opening points.
 pub(crate) fn smallwood_smz9_pcs_unstack_blocks_v1(
     eval_points: &[u64],
 ) -> Option<Vec<Vec<Vec<u64>>>> {

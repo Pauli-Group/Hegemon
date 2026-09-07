@@ -16,17 +16,20 @@ coefficients.  An additive equivalence on each complete coordinate space gives a
 bijection of random coins between any two secrets.  The linear mask also reuses the exact
 zero-sum coupling, and the auxiliary-witness space is empty.
 
-The equivalences below prove the algebraic coupling for all six concrete source maps.  They model
-the exact witness `poly_restore` basis, forty PCS 6-by-6 blocks, nonlinear and DECS evaluation/high
-maps, the degree-132 zero-sum linear map, and the joint 2,800-coordinate LVCS tail map.  Their
-injectivity proofs use the same exact opening, correction-factor, and interpolation predicates
-enforced or audited by the prover and verifier, then construct the corresponding `AddEquiv` values.
-The source verifier and the model in this file now share an exact outer acceptance gate: one
+The equivalences below prove algebraic coupling for the specified mathematical maps. A September 7
+source check found that the forty independent PCS blocks in this module do NOT model `pcs_commit`:
+Rust adds each random coin in one column and subtracts it in the NEXT column. The actual PCS map is
+coupled across adjacent columns. Its corrected source-shaped construction is separate; the historic
+names `exactPcsUnstackMap`, `rustPcsUnstackBlockEntry` and their refinement factory are retained for
+compatibility, not as evidence of Rust execution. Matching the legacy admissibility helper does not
+repair that source mismatch. The other maps and predicates retain their individually stated scope.
+
+The source verifier and this file model an outer acceptance gate with one
 canonical SMZ9 decoding, byte-for-byte re-encoding, the compact-authentication bound, the
 per-proof honest-map audit, and the deterministic verifier predicate.  The theorems quantify over
 every serialized byte string.  Canonical nonce/opening selection, lazy Merkle programming, final
-PIOP programming, concrete SHA-512 QROM instantiation, adaptive repeated-proof composition, and
-independent review remain separate release premises.
+PIOP programming, corrected PCS source refinement, concrete SHA-512 QROM instantiation, adaptive
+repeated-proof composition, and independent review remain separate release premises.
 No production authority is constructed here.
 -/
 
@@ -525,7 +528,7 @@ def pcsUnstackColumnRole (column : Fin partialEvaluationColumnCount) : PcsUnstac
   else
     .linear
 
-/-- Row factor in each of the three exact Rust PCS-unstack block families. -/
+/-- Row factor in the legacy conservative admissibility blocks, not the actual PCS coin map. -/
 def pcsUnstackRowFactor
     {F : Type*} [Field F]
     (points : Fin piopOpeningCount → F)
@@ -536,7 +539,7 @@ def pcsUnstackRowFactor
   | .nonlinearFinal => points row ^ 29 * (points row ^ 35 - 1)
   | .linear => points row * (points row ^ 63 - 1)
 
-/-- Direct coefficient obtained from Rust's add-at-row-`64+t`, subtract-at-source-row update. -/
+/-- Historical same-column coefficient; actual `pcs_commit` subtracts in the next column. -/
 def rustPcsUnstackBlockEntry
     {F : Type*} [Field F]
     (points : Fin piopOpeningCount → F)
@@ -580,7 +583,7 @@ def pcsUnstackBlockMap
     factor row *
       ∑ coin : Fin piopOpeningCount, points row ^ coin.val * coins coin
 
-/-- Forty separate 6-by-6 blocks, in Rust's exact opened-component column order. -/
+/-- Historical forty-block model. It is invertible but is not the source's coupled PCS map. -/
 def exactPcsUnstackMap
     {F : Type*} [Field F]
     (points : Fin piopOpeningCount → F)
@@ -604,7 +607,7 @@ theorem exact_pcs_unstack_map_apply_rust_formula
   intro coin _
   rw [← mul_assoc, pcs_unstack_block_entry_matches_rust_rows]
 
-/-- Exact additional SMZ9 opening predicate required by all forty PCS-unstack blocks. -/
+/-- Current conservative opening predicate, also sufficient for the legacy forty-block model. -/
 structure Smz9PcsUnstackAdmissible
     {F : Type*} [Field F]
     (points : Fin piopOpeningCount → F) : Prop where
@@ -1616,6 +1619,7 @@ structure ExecutableWitnessInterpolationTransformExact
   admissible : Smz9WitnessInterpolationAdmissible openingPoints
   mapMatchesExactRustFormula :
     map = exactWitnessInterpolationAddEquiv openingPoints admissible
+/-- Historical model-equality receipt. Despite its retained name, it does not refine `pcs_commit`. -/
 structure ExecutablePcsUnstackTransformExact
     (F : Type*) [Field F] [Fintype F]
     (map : PcsUnstackCoins F ≃+ PcsPartialEvaluationView F) where
@@ -1680,9 +1684,10 @@ structure Smz9HonestAlgebraicMapRefinement (F : Type*) [Field F] [Fintype F] whe
   openedWitnessAuxiliaryCountIsZero : ExecutableOpenedWitnessAuxiliaryZeroExact F
 
 /--
-Build the complete six-map refinement from the exact predicates enforced for one accepted proof.
-All six maps below are the concrete Rust formulas; the only remaining release assumptions are the
-separately named transcript/hash/QROM and independent-review premises later in this file.
+Build the six specified model maps from their predicates. The PCS component is the historical
+same-column model, not the actual next-column Rust map. This factory therefore does not establish
+complete honest-prover refinement; the corrected PCS source map and the separately named
+transcript/hash/QROM premises still require their own proofs.
 -/
 noncomputable def smz9HonestAlgebraicMapRefinementOfExactMaps
     {F : Type*} [Field F] [Fintype F]

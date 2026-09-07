@@ -427,6 +427,31 @@ The honest SMZ9 runtime samples field candidates, its 32-byte salt, and all `2^2
 
 The executable privacy method uses a typed full coin tape rather than deriving all simulator coins from one seed. Its `CryptoRng + RngCore` sampler belongs to the whole-view refinement harness, not the honest production path; deterministic RNG exists only for tests, and the marker traits do not establish independent uniform coins. The programmable SHA-512 overlay keys exact raw oracle queries, rejects duplicate or previously queried programming conflicts, and replays the verifier exactly. The executable lazy route programs only the lazy Merkle records and final PIOP point; it has no salt-only program and excludes the direct 256-bit first-program route structurally. The frozen report is 4,230 bytes with SHA-512 `0efabeb6d53f2557b12f21747fecbcc4694a3ed44a78075804908a6c6b0a028d4b84c7b85a2c33bf62f6248dd0b3ef123953c7f89d31ab386d30b0bfe34a73c8`. Its exact lazy strict-128 ceiling is `18,889,465,930,379,069,227,007` observed views. The algebraic simulator distance is zero under the recorded coin and oracle premises, while adaptive programming loss is separate. The remaining constructor-free premises are RNG-to-independent-uniform refinement, adaptive hidden-subtree/QROM applicability, concrete SHA-512 random-oracle and global composition, and an enforceable bound on the complete observed-view total `T`. Keep the source capability `None` until all four and the other release gates are discharged.
 
+The September 7 complete-security continuation supersedes source credit for
+the historical same-column PCS map: Rust subtracts each mask in the next
+column. Use `SmallWoodV8Smz9EagerPrivacy` for the corrected 240-coordinate map,
+the joint PIOP/DECS inverse, the full 12,201-coin allocation and the generated
+opening law with late-selector failure retained. Its whole-view encoder and
+adaptive quantum composition must still be established; the frozen compact
+simulator report is not revalidated by these equalities. The separate physical
+hidden-patch theorem bounds a counted full-raw-oracle continuation by
+`4q/2^256` under independent unopened 512-bit tapes. Prove that independence
+inside the actual game before applying it, count honest and adversarial future
+queries, and retain all earlier oracle entries.
+
+For semantic adequacy, admit the exact encoded canonical public statement
+before applying private packed-equation soundness. The reserved balance asset
+is `4294967294`, the canonical field image of `u64::MAX`; `p-1` is not its
+encoding. The full-witness decode/relower helper is an honest compilation check,
+not an extraction step performed by the proof verifier. Checked consequences
+of arbitrary packed acceptance now include the two zero transparent-balance
+words, 849 singleton-zero equations, 4,416 Boolean coordinates and 256 radix-4
+digits. Construct all remaining typed witness, hash-link, integer-balance and
+stable-transition obligations, and refine frontend admission separately. These
+local results and corrected domains do not enable production authority. The
+living [complete-security plan](.agent/SMZ9_COMPLETE_SECURITY_EXECPLAN.md) and
+[research dossier](docs/crypto/smz9-campaign/README.md) retain the endpoint gates.
+
 For lazy programming, the method derives the exact executable constraints
 `leaf <= 20` and `leaf + internal <= 372`. The weighted upper bound charges
 caps of 21 leaf-plus-final 512-bit events and 352 internal 1024-bit events per

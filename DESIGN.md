@@ -97,6 +97,29 @@ does not pay that cost. Final hidden-leaf removal, concrete SHA-512/RNG and
 runtime refinement, complete witness privacy and global accounting remain open.
 See the dossier's latest piecewise-recovery and hidden-leaf reports.
 
+The complete-security continuation corrects two proof-model mismatches without
+changing the protocol. The actual PCS mask subtraction goes into the next
+column; the historical same-column PCS map and its composed laws cannot be
+credited as the runtime map. The new eager-privacy module proves the correct
+240-coordinate map, the joint 3,105/1,940 PIOP/DECS mask inverse, and the
+chronological remaining-view law including its late-selector failure branch.
+The physical hidden-patch module proves a full-raw-oracle operational bound
+`4q/2^256` for fresh independent unopened tapes, with all continuation queries
+counted and no leaf-count multiplier. Its use inside the full adaptive privacy
+experiment remains an integration obligation. These results do not certify the
+compact simulator or the frozen report's claimed zero algebraic distance.
+
+The fixed semantic specification now uses the source's reserved balance asset
+`u64::MAX mod p = 4294967294`, not `p-1`. Semantic adequacy is required on the
+frontend-admitted, exactly encoded public-statement domain: raw packed
+equations do not enforce every inactive public padding rule. The full-witness
+canonical relowering helper is called by the honest compiler, not by the
+sampled-opening proof verifier. New universal interpreter, zero-coordinate,
+Boolean and radix-4 lemmas derive private constraints from arbitrary accepted
+assignments; they do not yet construct the complete typed witness. See
+[the complete-security plan](.agent/SMZ9_COMPLETE_SECURITY_EXECPLAN.md) and the
+dossier for the remaining numerical recovery, extraction and semantic proofs.
+
 The lazy programming screen derives `leaf <= 20` and
 `leaf + internal <= 372` from the executable compact path. Its weighted upper
 bound charges caps of 21 leaf-plus-final 512-bit events and 352 internal

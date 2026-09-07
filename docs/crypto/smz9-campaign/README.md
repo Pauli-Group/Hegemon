@@ -9,6 +9,75 @@ campaign lands checked local mathematics and a concrete rejection of the current
 soundness proof shortcut. It does not enable a proof profile, grant a security
 receipt, or claim that an SMZ9 transaction has been forged.
 
+## Current continuation
+
+The [complete-security ExecPlan](../../../.agent/SMZ9_COMPLETE_SECURITY_EXECPLAN.md)
+retains both complete game endpoints as the acceptance condition. The following
+new source modules passed strict direct Lean checks; most also passed central
+cached builds. They are not a completed full security argument.
+
+| Current result | What is established | Remaining boundary |
+| --- | --- | --- |
+| [Eager privacy](eager-privacy-proof.md), [public simulator](eager-simulator-proof.md), [current-program adapter](current-program-piop-proof.md) | Explicit joint PIOP/DECS inverse, correct cross-column PCS map, dependent witness/PCS/LVCS law, public reconstruction and actual field-expression adapter | Honest whole-byte correspondence and complete quantum-game composition |
+| [Hidden patch](hidden-patch-proof.md) and [game composition](privacy-game-composition-proof.md) | Physical raw-domain full-versus-opened oracle bound `4Q / 2^256`, including retained context and arbitrary future queries, with no tree-size union factor | Source-generated outer experiment, initial reprogramming and final composed privacy bound |
+| [Arbitrary-source recovery](mca-recovery-proof.md) | Exact joint coefficient/twenty-subset failure bound in terms of a defined weighted MCA budget; specified pre-query interpolation decoder and complete response projection | Concrete unrestricted budget bound and quantum extraction of its input table |
+| [PIOP soundness](piop-soundness-proof.md) | Fixed-pre-batching-candidate bound `p^-5 + epsilon3` for arbitrary later transcripts and fresh admissible six-point queries | Candidate extraction, current constraint-family instantiation and raw Fiat–Shamir transfer |
+| [Current program polynomials](program-polynomials-proof.md) | All 8,271 actual field-expression instructions, degree-zero inverse/selector checks, degree at most 552 for all 830 roots, and source-interpreter evaluation correspondence | Full polynomial/PCS/Rust execution pipeline |
+| [Current opening binding](current-program-opening-binding.md) and [indexed privacy game](current-privacy-game-proof.md) | Actual 736-column/140-row source reconstruction, equality of genuine opened suffixes, and randomized-label source versus witness-free reference loss `4Q / 2^256` | Earlier honest-hash QROM hybrids, exact public CSR binding and Rust execution |
+| [Merkle extraction geometry](coherent-merkle-geometry-proof.md) | Deterministic finite recorded-map extractor, exact raw-key framing and classical instability `3t / 2^512` through both wrappers | Physical coherent extraction commutator, accepted-opening consistency and full quantum transfer |
+| [Semantic binding](semantic-adequacy-proof.md), [dense values](semantic-dense-range-proof.md), [typed projection](semantic-decoder-proof.md) | Accepted-source Boolean/zero/radix constraints, seven integer 61-bit bounds, typed note values and positions, exact one-hot authorization mode | Complete canonical witness, hash/authorization/integer-conservation/stablecoin semantics and Rust refinement |
+| [Asset membership](semantic-asset-membership-proof.md) | Actual nonlinear roots force each active note into one of the four public assets and derive the typed one-hot selectors | Integer conservation and the other full semantic families |
+
+The [weighted-MCA research](weighted-mca-research.md) proves the requested
+weighted bound through global quotient dimension four, using finite incidence
+and a published list-correlated-agreement theorem. Unrestricted dimensions
+five and six remain unproved. Its additional rational-pole family exclusion
+does not close that universal gap.
+
+Two earlier source-binding claims required correction. The legacy PCS map used
+a same-column subtraction; Rust subtracts from the next column. New privacy
+modules use the corrected map, while the verifier's conservative old opening
+admissibility policy remains unchanged. The semantic padding asset is
+`u64::MAX mod p = 4294967294`, not `p-1`. Public canonicality is a frontend
+admission condition, not a consequence of raw packed equations. These changes
+correct the model and claim boundaries, not the runtime protocol.
+
+The coordinator's temporary 40 GiB cutoff was not a user requirement and has
+been removed. Bounded warm compilation continues with disk monitoring. Only
+two validated disposable Cargo incremental-cache directories were reclaimed;
+proof artifacts, dependencies, node/wallet state and Lean caches were preserved.
+`McaSourceBinding`, the completed `EagerOracleGame` comparison, and
+`CurrentProgramPiop` now pass strict checks and central builds. The integrated
+207-root crypto gate passed (2,770 jobs), as did all 2,745 base claimed-theorem
+axiom checks and the relevant generated semantic vectors. The expanded
+integration now also passes: **2,776 jobs and 238 audited declarations**,
+unchanged wire vectors and all 48 generated program files. This includes the
+source-opening/privacy/asset/Merkle modules, the
+[raw-counter compiler](raw-counter-compiler-proof.md), and the
+[factor-free recovery bound](random-direction-recovery-proof.md).
+The corrected source gamma cap is included: it depends on retained linear
+rows, with an upper bound of 12,860 raw blocks, not the earlier 523-block
+nonlinear-only undercount. The generic two-query simulation is unchanged.
+
+The refreshed policy checks passed the 121-node claims/blueprint policies,
+six system-model gates and bridge vectors. The broader formal-core policy
+script subsequently failed at its unchanged native-backend review-bundle
+guard: the unsupported BLAKE2b-384 production relation cannot be authorized
+by legacy Poseidon review vectors. That unrelated refusal is retained;
+the entire policy script is not reported as passing.
+
+The current quantum-framework review derives a leading `320 t^2 kappa` loss;
+it does not treat the published framework as an automatic source instantiation.
+A proof-only random-direction argument has passed the full exact probability
+and source-decoder proof, replacing the 140-column union factor by `p/(p-1)`.
+The unrestricted weighted budget remains open; neither improvement is an
+endpoint receipt.
+
+The sections below retain the prior landed checkpoint and historical rationale;
+their older gate counts do not certify the current continuation.
+
+## Earlier checkpoint
+
 The initial positive privacy result is the exact LVCS later-challenge law: the 240
 combination-tail words and the 2,560 subsequent subset evaluations retain their
 joint law when the later challenge depends on those earlier words. The proof
@@ -79,7 +148,7 @@ matrix coefficients alone therefore does not justify deleting the support
 factor. A new event-specific extractor or sufficiently strong masked/interleaved
 proximity theorem is required.
 
-## Verification and landing
+## Earlier verification and landing
 
 The six-module continuation passes the full coordinator gate: **2,754 jobs,
 145 allowed-axiom roots**, unchanged wire vectors and all 48 exact generated
@@ -136,17 +205,19 @@ No Rust runtime, wire format, dependency, node/wallet state, retained proof,
 successor selection, or production capability is changed by this campaign.
 The pre-existing AGENTS and testnet-skill edits remain outside its commits.
 
-## Remaining research decision
+## Remaining complete-proof obligations
 
-Keep the carrier and production gate unchanged. Privacy continues from the
-honest-order randomized-leaf hybrid, with generated-prefix freshness now derived
-and the correlated final overlay retained. Its first ideal-QROM transition is
-externally justified by the reviewed adaptive-reprogramming reduction; final
-hidden-leaf treatment, whole-witness independence, runtime refinement and full
-history composition remain separate obligations.
-Soundness must replace the invalid selected-completion event bound before any
-CMS arithmetic is credited. The report's stronger support-count obstruction
-also rules out simply assigning the old 288-bit screen to that broad event.
-Neither a new record of assumed probabilities nor the old published theorem
-can fill that gap. No protocol redesign or parameter change is silently
-authorized by these findings.
+Keep the carrier and production gate unchanged. Privacy must connect the new
+public simulator and physical hidden-patch theorem to the actual admitted
+statement, current field-expression program, complete bytes, persistent oracle,
+all aborts and the complete history experiment. An old arithmetic-expression
+interface is not an identification with the live `FieldExpression` program.
+
+Soundness requires the still-open unrestricted weighted-MCA bound, a coherent
+commitment substitution and extraction procedure with exact raw-oracle resource
+losses, and complete semantic adequacy of the extracted witness. The older
+classical measured-database extractor and postulated CMS accounting do not
+establish that chronology. Neither the old support-union theorem nor a record
+containing the desired success probability supplies these missing results.
+No redesign, parameter change, release, deletion or reserve relaxation is
+silently authorized.

@@ -42,7 +42,15 @@ def valueBound : Nat := 2 ^ 61
 def stablecoinValueBound : Nat := 2 ^ 56
 def stablecoinScalarBound : Nat := 2 ^ 63
 def nativeAssetId : Nat := 0
-def balancePaddingAssetId : Nat := fieldModulus - 1
+/-- The external `u64::MAX` sentinel reduced into Goldilocks, matching transaction-core. -/
+def balancePaddingAssetId : Nat := (2 ^ 64 - 1) % fieldModulus
+
+theorem balance_padding_asset_id_eq : balancePaddingAssetId = 4294967294 := by decide
+
+theorem balance_padding_asset_id_is_canonical : balancePaddingAssetId < fieldModulus := by decide
+
+theorem balance_padding_asset_id_is_not_field_minus_one :
+    balancePaddingAssetId ≠ fieldModulus - 1 := by decide
 def circuitVersion : Nat := 8
 def cryptoSuiteEta : Nat := 7
 
@@ -267,6 +275,43 @@ def CanonicalBalanceAssets (assets : List Nat) : Prop :=
       wordAt assets left < wordAt assets right) ∧
     ∀ left right, left < right → right < balanceSlotCount →
       wordAt assets left = balancePaddingAssetId → wordAt assets right = balancePaddingAssetId
+
+/-- The native-only asset layout produced by Rust is admitted by the independent specification. -/
+theorem canonical_native_only_balance_assets :
+    CanonicalBalanceAssets
+      [nativeAssetId, balancePaddingAssetId, balancePaddingAssetId, balancePaddingAssetId] := by
+  refine ⟨rfl, rfl, ?_, ?_, ?_⟩
+  · intro slot bounded
+    have finite : ∀ index : Fin 4,
+        wordAt [nativeAssetId, balancePaddingAssetId, balancePaddingAssetId,
+          balancePaddingAssetId] index.val < fieldModulus := by decide
+    exact finite ⟨slot, bounded⟩
+  · intro left right ordered bounded leftReal rightReal
+    have finite : ∀ first second : Fin 4, first.val < second.val →
+        wordAt [nativeAssetId, balancePaddingAssetId, balancePaddingAssetId,
+          balancePaddingAssetId] first.val ≠ balancePaddingAssetId →
+        wordAt [nativeAssetId, balancePaddingAssetId, balancePaddingAssetId,
+          balancePaddingAssetId] second.val ≠ balancePaddingAssetId →
+        wordAt [nativeAssetId, balancePaddingAssetId, balancePaddingAssetId,
+          balancePaddingAssetId] first.val <
+        wordAt [nativeAssetId, balancePaddingAssetId, balancePaddingAssetId,
+          balancePaddingAssetId] second.val := by decide
+    exact finite ⟨left, Nat.lt_trans ordered bounded⟩ ⟨right, bounded⟩ ordered leftReal rightReal
+  · intro left right ordered bounded leftPadding
+    have finite : ∀ first second : Fin 4, first.val < second.val →
+        wordAt [nativeAssetId, balancePaddingAssetId, balancePaddingAssetId,
+          balancePaddingAssetId] first.val = balancePaddingAssetId →
+        wordAt [nativeAssetId, balancePaddingAssetId, balancePaddingAssetId,
+          balancePaddingAssetId] second.val = balancePaddingAssetId := by decide
+    exact finite ⟨left, Nat.lt_trans ordered bounded⟩ ⟨right, bounded⟩ ordered leftPadding
+
+/-- Repeating the old, incorrect field-minus-one sentinel is not canonical asset padding. -/
+theorem field_minus_one_is_not_native_only_padding :
+    ¬ CanonicalBalanceAssets
+      [nativeAssetId, fieldModulus - 1, fieldModulus - 1, fieldModulus - 1] := by
+  intro canonical
+  have impossible := canonical.2.2.2.1 1 2 (by decide) (by decide) (by decide) (by decide)
+  exact (Nat.lt_irrefl (fieldModulus - 1)) impossible
 
 def CanonicalCompatibility
     (compatibility : V8StablecoinCompatibility) (stable : V8StablecoinPublic) : Prop :=
