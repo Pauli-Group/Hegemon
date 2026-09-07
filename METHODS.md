@@ -341,6 +341,24 @@ The intended new-block path requires every shielded transfer to carry one canoni
 * Sidecar ciphertext and proof staging remain proposer-local coordination; they are not substitutes for the transaction proof or part of consensus validity.
 * Proof verification is not operator-selectable. `HEGEMON_PARALLEL_PROOF_VERIFICATION=0` remains a logged no-op.
 
+For current SMZ9 research, use the event boundaries and reproducible checks in
+the [privacy and soundness dossier](docs/crypto/smz9-campaign/README.md).
+Do not substitute a matrix-selected accumulated completion into the fixed
+full-domain `p^-5` theorem. A valid finite-family argument fixes the complete
+candidate family before the matrix and pays `L*p^-5`; merely bounding how many
+matrix-dependent candidates an extractor inspects does not establish that
+premise. The published all-support bound is vacuous at the current parameters.
+An accepted-proof extraction theorem must jointly control the support,
+response chronology, twenty-opening sampler and witness relation.
+
+For privacy, compose the new source-shaped triangular LVCS law only after
+establishing its fixed-context and fresh-coin premises in the honest quantum
+experiment. Its proof-carrying optional selector is not a refinement of the
+Rust sampler's error path. Conditional input entropy alone also does not
+justify programming an oracle to an output chosen before that input. The
+full Lean gate, axiom audit and unchanged vectors check these local artifacts;
+they do not close either end-to-end security obligation or authorize release.
+
 ---
 
 ### Experimental post-proof receipt folding spike

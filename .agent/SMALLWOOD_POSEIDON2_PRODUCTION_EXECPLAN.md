@@ -55,6 +55,52 @@ review, and hermetic release authority remain required.
 
 ## Progress
 
+- [x] (2026-09-07) User authorized coordinated research, independent
+  verification and local landing of privacy and soundness. Preserved the
+  previously verified ideal-event milestone in local commit `de2f827d`;
+  the three pre-existing AGENTS/testnet-skill edits are excluded.
+- [x] Produce and independently falsify the exact single-proof privacy,
+  accepted-opening extraction and quantum-reduction arguments. Reused tasks
+  `01a01112-0722-74f0-8df3-43a10aa72b90` (Review Smallwood PQ128 proofs)
+  and `019f29c7-3468-78f2-ba8a-6e6ed94c7b02` (Harden lean specs) for
+  independent cryptographic and specification checks. Three bounded author
+  lanes own separate privacy, soundness and quantum-reduction artifacts in
+  `docs/crypto/smz9-campaign/`. The coordinator alone owns integration,
+  shared build outputs, theorem inventory and git commits.
+- [x] (2026-09-07) Complete the source-shaped LVCS triangular feedback
+  theorem: retain the 240 earlier combination-tail words while deriving
+  the 2,560 later subset evaluations, including the 388-node rotated
+  interpolation, committed-head offsets, and an abstract failure branch.
+  With fixed public context and an admissibility-certified selector, the law
+  starts from the ideal 2,800-word rejection sampler. Runtime selector/error
+  refinement remains open. Direct checks and targeted
+  axiom audits pass. The earlier commitment/PIOP feedback and the complete
+  quantum experiment remain open.
+- [x] (2026-09-07) Check the published DECS support-union certificate
+  against primary-source Theorem 1 and Equation 14. The coordinator proves
+  `choose(2^23,389) >= 2^5446` and that its current-parameter probability
+  upper-bound expression exceeds one in Lean. The authors also provide a
+  fixed-source adaptive-support counterexample and the sound fixed-family
+  replacement bound; their integration gate is recorded separately below.
+- [x] (2026-09-07 04:18Z) Integrate the four reviewed modules and complete
+  the full formal-crypto gate: 2,745 build jobs, 114 credited declarations
+  using only `propext`, `Classical.choice`, and `Quot.sound`, three unchanged
+  generated wire vectors, and all 48 exact generated-program modules pass.
+  The first integrated attempt rejected an unnecessary `simpa`; its local
+  proof-script correction passes without changing the theorem or lint policy.
+  The successful guarded run retained at least 40.0605 GiB free. Reviewed
+  mathematics, the research dossier and matching DESIGN/METHODS claim-boundary
+  notes form the local landing scope.
+  No review-token constructor, arbitrary supplied
+  probability, post-challenge oracle, or assumed final bound may close a
+  cryptographic obligation. Production activation and external publication
+  remain separately unauthorized.
+- [ ] Establish a genuinely stronger current-parameter extraction/proximity
+  theorem and the complete honest/simulated quantum hybrid. The research
+  campaign does not yet achieve these requested endpoints. In particular,
+  the existing `p^-5` full-domain event cannot serve as the adaptive
+  completion event, and the published support-family theorem is vacuous.
+
 - [x] (2026-09-07) Resume privacy and quantum-soundness work with bounded
   event-level proofs: retain the earlier prefix in the exact fresh-mask law,
   prove the polynomial-root event on fully admissible six-tuples, and bind
@@ -968,6 +1014,30 @@ review, and hermetic release authority remain required.
 
 ## Surprises & Discoveries
 
+- Observation (2026-09-07, managed research): the primary SmallWood paper,
+  ePrint 2025/1085 revision `20260213:134127`, retains
+  `choose(N,d_decs+2)/p^eta` in Theorem 1 and Equation 14 even for a full
+  uniform challenge matrix. At `N=2^23`, `d_decs=387`, `eta=5`, its first
+  term is greater than one (approximately `2^5835.76`). The fixed-full-domain
+  `p^-5` lemma remains valid but is a different event. Two candidate
+  post-matrix supports already exceed its bound. Consequently the published
+  extraction theorem cannot supply the currently missing exact SMZ9
+  instability proof; genuinely stronger extraction/proximity mathematics is
+  needed. This is a failure of the proposed certificate, not a forgery.
+
+- Observation (2026-09-07, managed research): GHHM adaptive reprogramming
+  samples its input before an independent uniform target output. The current
+  simulator selects `h_piop` first and uses it while constructing that input.
+  Arbitrary input entropy conditional on a target is insufficient: the
+  explicit finite experiment `X=(nonce,target)` permits a one-query
+  distinguisher. A proposed honest-side chronological programming hybrid
+  must establish the joint law before replacing it by the reverse simulator.
+  A constructive retained-output triangular bijection can handle the exact
+  source-shaped local LVCS challenge feedback; both the general lemma and
+  its source-specific instantiation pass direct Lean checking. Fixed public
+  context, selector admissibility, and the earlier quantum commitment hybrid
+  remain explicit premises or open obligations.
+
 - Observation (2026-09-07): the real prover samples witness and nonlinear/
   linear masks, commits them through PCS/DECS, and only then derives its PIOP
   challenges (`smallwood_engine.rs`, `prove_statement_core_with_transcript_backend_profile_and_domain`).
@@ -1265,6 +1335,17 @@ review, and hermetic release authority remain required.
 
 ## Decision Log
 
+- Decision: retain the selected checkout and reuse two relevant existing
+  tasks for independent reviews, with three non-overlapping author lanes
+  under the coordinator. The review tasks write only their assigned
+  `independent-review.md` and `security-contract.md`; author lanes write only
+  their assigned argument documents and approved new Lean modules. Initial
+  research checkpoints are bounded to 20-25 minutes and 30-50 MiB per lane.
+  Reason: the user requested managed research through verification and
+  landing; separate authorship and falsification make progress reviewable,
+  while the 40 GiB disk reserve rules out duplicated cold build trees.
+  Date: 2026-09-07.
+
 - Decision: reuse proved residual and finite-count mathematics at the exact
   current SMZ9 dimensions before adding an external coding-theory dependency.
   Preserve a strict separation between prior-prefix fresh randomness and
@@ -1497,7 +1578,39 @@ review, and hermetic release authority remain required.
 
 ## Outcomes & Retrospective
 
-September 7 adds three event-level modules: joint earlier-prefix/fresh-mask
+The managed September 7 campaign adds four further modules and six research/
+review documents, following the earlier checkpoint `de2f827d`. The constructive
+privacy result is a joint law for the source-shaped 240/2,560-coordinate LVCS
+feedback block, with fixed public context, an admissibility-certified selector,
+and an abstract failure branch. It is not runtime error refinement or complete
+committed-view privacy. A fixed-source adaptive-support counterexample proves
+that the existing full-domain `p^-5` lemma does not bound the broader selected
+completion event. The published SmallWood support-family bound is provably
+greater than one at the current parameters. A fixed prechallenge family has
+the valid replacement bound `L*p^-5`; a useful source-derived family is still
+missing. Stronger subgroup-sum estimates are independently reviewed primary-
+source mathematics, explicitly outside the new Lean results.
+
+The full integrated cryptography gate passes 2,745 jobs and 114 credited
+declarations, with unchanged wire vectors, exact 48-module generated-program
+conformance and no new trusted axiom. Independent source review approved only
+the local theorem scopes and identified summary overclaims, which were
+corrected before landing. The minimum sampled free disk on the successful
+guarded run was 40.0605 GiB. There was no runtime/wire/dependency change, new
+proof generation, artifact deletion, external submission, or production
+activation. The source capability remains `None`, successor selection remains
+`unselected`, and the source-security report remains `production_eligible=false`.
+
+The requested end-to-end privacy and quantum knowledge-soundness endpoints
+remain unproved. This campaign has identified a substantive missing extraction
+theorem, not a glue-code task: the broad selected-completion event cannot use
+the current first error term, and the published theorem is vacuous. The next
+unchanged-carrier attempt must construct and bound a masked/interleaved
+correlated-agreement extractor jointly with the twenty-opening experiment.
+Privacy separately needs the explicit honest-side commitment-hiding quantum
+hybrid. No probability receipt or parameter change is silently substituted.
+
+Earlier on September 7, three event-level modules added joint earlier-prefix/fresh-mask
 laws with sequential composition and a checked same-coin counterexample;
 the corrected six-opening false-batch and twenty-opening DECS root-event
 bounds; and current-oracle degree enforcement under an independent uniform
@@ -1524,7 +1637,7 @@ and fixed offsets, the joint algebraic output law is also proved independent
 of those offsets. Independent source reviews found no errors in either result.
 The saved September 4 Rust transaction suite passes 419 tests. That historical
 cryptography Lean gate passed with 87 audited declarations and 2,738 build
-jobs; the September 7 integration and its new audit are recorded above.
+jobs; the September 7 integrations and their expanded audits are recorded above.
 The complete structural canonicality theorem now also passes for the exact
 generated program. Its encoded-byte/hash binding and typed transaction
 semantic adequacy remain separate obligations.
@@ -1984,3 +2097,20 @@ the selective better.codes/ArkLib reuse verdict without adding a dependency
 or transferring its score into the Hegemon ledger. These event-level results
 advance, but do not complete, the real transcript privacy or quantum-security
 theorems. Production capability remains absent.
+
+Revision note (2026-09-07, managed campaign): recorded the user's explicit
+implementation/coordination authorization, landed the verified prerequisite
+checkpoint as `de2f827d`, and dispatched independent review and author lanes
+with exclusive paths. Exact single-proof privacy, valid extraction and their
+quantum composition remain open outcomes, not completion claims. Work stays
+in the selected checkout; no push, dependency installation or production
+activation is implied by local landing.
+
+Revision note (2026-09-07 04:18Z, integrated research): landed four new
+constructive/obstruction modules with the argument, independent review, and
+security acceptance contract. The full cryptography gate passes 2,745 jobs,
+114 allowed-axiom declarations, unchanged wire vectors, and exact generated
+programs under the 40 GiB reserve guard. Corrected the published-bound scope,
+local-versus-runtime sampler wording, ideal randomness qualification and
+identity/carrier summaries. Full privacy, extraction and quantum composition
+remain open; no production authority is granted by this local commit.

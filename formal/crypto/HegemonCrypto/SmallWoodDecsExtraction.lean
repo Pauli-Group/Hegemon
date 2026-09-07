@@ -527,12 +527,16 @@ theorem degree_enforcement_failure_probability_le
           (supportSize := degreeBound + 2) point mask)
 
 /--
-For the full uniform coefficient matrix used by Hegemon V4, the bad support can be selected once
-from the committed rows before the verifier samples the matrix.  The verifier-failure event is
-therefore contained in one affine fiber, not a union over every possible support.
+For fixed committed rows and masks, the bad support can be selected once before the verifier
+samples the full uniform coefficient matrix. The event bounded here requires every combined
+word to be a degree-bounded codeword on the ENTIRE domain, so it lies in one affine fiber.
 
-This strengthening does not apply to SmallWood's structured scalar-power challenge.  It relies on
-all `width * repetitions` coefficients being independent uniform field elements.
+This is not a bound for a support or accumulated completion selected after the matrix. The
+published SmallWood analysis retains its support-family factor even for full uniform matrices
+(ePrint 2025/1085, revision 20260213:134127, Theorem 1 and Equation 14). Transferring this stronger
+fixed-full-domain event bound to adaptive accepted openings requires a separate extraction
+argument. Independence of all `width * repetitions` coefficients alone does not remove that
+obligation. See `SmallWoodV8Smz9AccumulatedExtraction.lean` for a selection counterexample.
 -/
 theorem uniform_matrix_degree_enforcement_failure_probability_le
     [Fintype F] [DecidableEq F]

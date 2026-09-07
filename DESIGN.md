@@ -63,6 +63,22 @@ The exact program now has a deterministic independent parser and canonical re-en
 
 The honest SMZ9 prover obtains field candidates, its 32-byte salt, and all `2^23` 64-byte DECS tapes through `getrandom::fill`; a provider error aborts proof construction. The typed `CryptoRng + RngCore` tape belongs to the executable whole-view refinement harness, not the honest production path, and its marker traits do not prove uniformity. One shared Rust sampler and the Lean runtime-randomness model now fix canonical Goldilocks rejection, byte layout, and the exact inventory of 12,201 accepted field coins, at least 2,950 successful fills, and at least 536,968,552 source bytes. The companion Lean distribution module constructs a normalized PMF on actual finite terminating rejection traces, proves that each trace has the exact iid-uniform raw-word cylinder mass and that those masses uniquely characterize the law, and derives independent uniform Goldilocks outputs for every finite count, specializing to 12,201. An explicit bijection now allocates these 12,201 outputs to the existing honest algebraic coin structure, proving the mask interleaving, PCS coordinate transposition, inverse laws, and joint uniform distribution. For fixed admissible challenges and fixed secret offsets, the six exact algebraic maps further yield a joint output law independent of those offsets. This does not condition the actual adaptive transcript or prove its challenge/coin dependencies. These are ideal conditional theorems, not a construction of an OS-backed infinite stream or a runtime refinement. Its defined statistical distance covers only the 12,201 field outputs. It does not prove the runtime distributional pushforward, OS entropy quality, independence across concurrent calls, the full salt/tape coin distribution, or the quantum-computational distinguishing bound required for the complete joint runtime coin law. This changes neither the SMZ9 wire nor its 122,863-byte maximum; the retained proofs remain 122,735 and 122,607 bytes. The executable privacy harness also has exact programmable SHA-512 verifier replay and no salt-only oracle program. Its frozen 4,230-byte report has SHA-512 `0efabeb6d53f2557b12f21747fecbcc4694a3ed44a78075804908a6c6b0a028d4b84c7b85a2c33bf62f6248dd0b3ef123953c7f89d31ab386d30b0bfe34a73c8`. The exact lazy strict-128 ceiling is `18,889,465,930,379,069,227,007` observed views. The algebraic simulator distance is zero under the recorded coin and oracle premises; adaptive programming loss is separate. Four constructor-free external premises remain: refinement from the complete runtime RNG law to ideal coins with a quantum-computational advantage bound, applicability of the adaptive hidden-subtree argument in the QROM, concrete SHA-512 random-oracle and global composition, and an enforceable upper bound on all observed views `T`. The source registry remains empty, the capability is `None`, and the deployed gate rejects the route while any premise is absent.
 
+The September 7 [SMZ9 research dossier](docs/crypto/smz9-campaign/README.md)
+further limits the favorable accounting above. The checked `p^-5` DECS lemma
+bounds a fixed full-domain oracle event, not an accumulated completion selected
+after the challenge matrix. A fixed-source counterexample proves that the
+broader selected-support event exceeds that bound. The published SmallWood
+support-family expression `choose(2^23,389)/p^5` is provably greater than one,
+so it supplies no useful replacement certificate at this profile. A new
+source-specific extraction/proximity theorem is required; the existing
+288/157/136-bit arithmetic screens are not accepted-proof security bounds.
+The new source-shaped LVCS triangular law proves the local 240/2,560-word
+feedback pattern only with fixed public context, an admissibility-certified
+selector and ideal fresh coins. It neither refines runtime error behavior nor
+discharges earlier commitment feedback or the whole quantum privacy hybrid.
+No wire, relation, capability or production policy changes follow from these
+research results, and they are not a demonstrated transaction forgery.
+
 The lazy programming screen derives `leaf <= 20` and
 `leaf + internal <= 372` from the executable compact path. Its weighted upper
 bound charges caps of 21 leaf-plus-final 512-bit events and 352 internal

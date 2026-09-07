@@ -57,11 +57,15 @@ ideal-CMS envelope at `Q=2^64`, but also proves that its deployment premise reco
 while the full relation, transcript, concrete SHA-512/Poseidon2, complete-ZK, history, approved
 global-query-budget, and review receipts remain absent. This remains the historical SMZ8/open-5
 ledger. `SmallWoodV8Smz9QromAccounting.lean` adds the fresh profile-6/open-6/q-20 identity without
-relabeling SMZ8: it proves 288 interactive bits, 157 ideal-CMS bits at `Q=2^64`, and 136 bits after
+relabeling SMZ8: it proves conditional arithmetic floors of 288 interactive bits,
+157 ideal-CMS bits at `Q=2^64`, and 136 bits after
 the exact `522 * 4096` canonical-`PendingAction` history union, all before external deployment
 losses. It retains `523 * 4096` only as a stricter conservative overcount. Its deployed
 premise record is independently unavailable for the same explicit receipt reasons. That first
-ledger preserves the historical distinct/outside-only opening model.
+ledger preserves the historical distinct/outside-only opening model. These are
+not accepted-proof security bounds: the current `p^-5` term bounds a fixed
+full-domain event and has no valid transfer to adaptive support-selected
+extraction. The managed research below proves this distinction.
 `SmallWoodV8Smz9AdaptiveFiniteAccounting.lean` separately matches the executable sampler's
 additional nonzero degree-six linear-correction predicate with the conservative denominator
 `(p-64)_6 - 414*p^5` and nonce-abort term `813^16/p^16`. It retains the 288/157/136 integer floors,
@@ -93,6 +97,35 @@ current committed oracle and bounds the non-codeword degree-enforcement event by
 independent uniform matrix challenges. These are event-level ideal sampling results, not just
 numeric ledger inequalities; they do not derive full-domain codeword agreement from twenty
 accepted openings or transfer the events to the Rust/SHA-512/QROM experiment.
+
+The subsequent managed research establishes a concrete later-challenge privacy step:
+`SmallWoodV8Smz9TriangularAlgebraicLaw.lean` constructs an inverse when each fixed-challenge
+bijection retains the same earlier output. `SmallWoodV8Smz9SingleProofPrivacy.lean` instantiates
+it with the actual LVCS 240-word combination-tail output and the 2,560 subsequent subset
+evaluations, including the rotated 388-node interpolation, committed-head offsets, ideal
+rejection law, and an abstract failure branch. With fixed public context and an
+admissibility-certified selector, this permits the later challenge to depend on those same
+coins' retained earlier output. It does not refine the runtime selector/error pipeline or
+resolve the earlier PCS/DECS commitment feedback.
+The module also proves the simulator's exact 3,045-high-coefficient injection and an explicit
+target-first programming counterexample: arbitrary conditional input entropy alone cannot
+justify a quantum oracle-programming step.
+
+There is a decisive soundness boundary. `SmallWoodV8Smz9AccumulatedExtraction.lean` constructs
+one fixed two-indicator source and a fixed zero response whose matrix-dependent support
+selection exceeds `p^-5`; it also proves the corrected `L*p^-5` bound for a fixed finite
+candidate family. The [original SmallWood theorem](https://eprint.iacr.org/archive/2025/1085/20260213:134127)
+retains `choose(N,d_decs+2)/p^eta` even for fully uniform matrices. The new
+`SmallWoodV8Smz9PublishedBound.lean` proves that this expression exceeds one at the current
+SMZ9 parameters, without floating-point calculations. Neither result is a full-verifier
+forgery or a general impossibility theorem. They show why the existing 288/157/136-bit
+arithmetic screens cannot be promoted through the published extraction argument; a genuinely
+stronger source-specific extraction/proximity theorem is still needed.
+
+The [managed campaign dossier](../../docs/crypto/smz9-campaign/README.md) separates these
+checked results, the independent source review, externally justified but unmechanized
+mathematics, and remaining quantum/privacy/implementation obligations. No result in this
+milestone constructs a whole-view security receipt or enables production.
 
 The public [better.codes challenge contract](https://github.com/proximity-prize/proximity-prize/blob/1b2ca03/README.md)
 is useful as a source of coding-theory proof techniques, not an SMZ9 certificate. Its score is
