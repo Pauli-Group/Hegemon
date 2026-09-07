@@ -2124,3 +2124,17 @@ privacy coupling inside the randomized-leaf experiment. The full gate passes
 retaining at least 40.133030 GiB free. Eight exhaustive-probe tests and separate
 literal response enumeration pass. Low-local-rank recovery, full quantum leaf
 hybrids, semantic extraction and production authority remain open.
+
+Revision note (2026-09-07 05:32Z, constructive recovery and first-leaf reduction):
+after checkpoint `814b68fb`, six more modules bind the actual Vandermonde and
+quotient rank to the adaptive high-rank count; prove exact joint subset sampling
+and fixed-family `L/p^5` mismatch; and compose a specified finite-list recovery
+scan under a verified polynomial patch cover. The first honest-leaf ideal-QROM
+transition now has a reviewed reduction to external GHHM21 adaptive reprogramming,
+with the fresh-input law and physical two-query domain simulation proved in Lean.
+The full gate passes 2,754 jobs and 145 allowed-axiom roots, unchanged vectors
+and exact generated programs, with 40.176918 GiB minimum free disk. Eleven
+exhaustive-probe tests and three exact hybrid-arithmetic tests pass. Arbitrary
+low-rank source recovery, final hidden-leaf removal, witness-semantic extraction,
+implementation/primitive refinements and whole-security composition remain open.
+No proof bytes, runtime profile, dependency or production authority changed.

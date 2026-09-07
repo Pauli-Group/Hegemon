@@ -248,6 +248,34 @@ def current_profile_screen() -> dict:
                               'and quantum security remain unproved.'}
 
 
+def patch_cover_screen() -> dict:
+    """Conditional arithmetic for a verified fixed patch cover; no source coverage claim."""
+    modulus, length, degree, queries, eta = 2**64 - 2**32 + 1, 2**23, 387, 20, 5
+    rows = []
+    for patches, exceptions in ((1, 0), (2, 0), (2, 274), (2, 275), (3, 0)):
+        cutoff = patches * degree + exceptions
+        small = Fraction(comb(cutoff, queries), comb(length, queries))
+        mismatch = Fraction(patches, modulus**eta)
+        total = small + mismatch
+        illustrative_scaled = total * (12 * 2**128)
+        rows.append({'fixed_patches': patches, 'uncovered_positions': exceptions,
+                     'small_agreement_cutoff': cutoff,
+                     'small_agreement_bits': log2(small.denominator) - log2(small.numerator),
+                     'fixed_family_mismatch_bits': log2(mismatch.denominator) - log2(mismatch.numerator),
+                     'conditional_classical_sum_bits': log2(total.denominator) - log2(total.numerator),
+                     'isolated_12Q2_bits_at_Q_2pow64':
+                         log2(illustrative_scaled.denominator) - log2(illustrative_scaled.numerator),
+                     'isolated_strict_128_exact_check':
+                         illustrative_scaled.numerator * 2**128 < illustrative_scaled.denominator})
+    return {'reference_parameters': {'p': modulus, 'N': length, 'degree': degree,
+                                    'queries': queries, 'matrix_rows': eta},
+            'cases': rows,
+            'claim_boundary': 'Requires an independently verified fixed polynomial patch cover. '
+                              'The isolated 12Q^2 multiplication is arithmetic, not a proved CMS '
+                              'reduction. Arbitrary-source coverage, semantic extraction, all other '
+                              'losses and quantum security remain unproved.'}
+
+
 class ProbeTests(unittest.TestCase):
     def test_rank(self):
         self.assertEqual(rank_mod([[1, 2], [2, 4]], 5), 1)
@@ -304,11 +332,53 @@ class ProbeTests(unittest.TestCase):
         self.assertTrue(all('sampled_incidence_upper_bound' in row
                             for row in report['high_rank_tail_checks']))
 
+    def test_patch_cover_exact_screen(self):
+        cases = patch_cover_screen()['cases']
+        self.assertEqual([case['isolated_strict_128_exact_check'] for case in cases],
+                         [True, True, True, False, False])
+
+    def test_piecewise_response_coverage(self):
+        # Two degree-one patches, two data rows, one matrix row, all matrices
+        # and all possible degree-one responses. The list precedes the matrix.
+        modulus, domain = 7, tuple(range(6))
+        words = (tuple(int(x < 3) for x in domain),
+                 tuple(x if x < 3 else 0 for x in domain))
+        for a, b in product(range(modulus), repeat=2):
+            combined = tuple((a * words[0][i] + b * words[1][i]) % modulus
+                             for i in range(len(domain)))
+            for constant, linear in product(range(modulus), repeat=2):
+                agreement = sum((constant + linear * x) % modulus == combined[i]
+                                for i, x in enumerate(domain))
+                if agreement > 2:
+                    self.assertIn((constant, linear), ((0, 0), (a, b)))
+
+    def test_fixed_candidate_joint_mismatch(self):
+        # Two matrix rows: choose one mismatching position from each fixed
+        # query subset before counting matrices. No factor of query count.
+        modulus, domain = 7, tuple(range(6))
+        words = (tuple(int(x < 3) for x in domain),
+                 tuple(x if x < 3 else 0 for x in domain))
+        query_sets = tuple(combinations(range(len(domain)), 2))
+        for candidate in (tuple((0, 0) for _ in domain), tuple((1, x) for x in domain)):
+            mismatches = {i for i in range(len(domain))
+                          if (words[0][i], words[1][i]) != candidate[i]}
+            count = 0
+            for coefficients in product(range(modulus), repeat=4):
+                accepted = {i for i in range(len(domain)) if all(
+                    (coefficients[2 * row] * (words[0][i] - candidate[i][0]) +
+                     coefficients[2 * row + 1] * (words[1][i] - candidate[i][1])) % modulus == 0
+                    for row in range(2))}
+                count += sum(set(query).issubset(accepted) and bool(set(query) & mismatches)
+                             for query in query_sets)
+            hit_count = sum(bool(set(query) & mismatches) for query in query_sets)
+            self.assertLessEqual(count * modulus**2, modulus**4 * hit_count)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--self-test', action='store_true')
     parser.add_argument('--current-profile-screen', action='store_true')
+    parser.add_argument('--patch-cover-screen', action='store_true')
     args = parser.parse_args()
     if args.self_test:
         suite = unittest.defaultTestLoader.loadTestsFromTestCase(ProbeTests)
@@ -316,6 +386,9 @@ def main():
         raise SystemExit(not result.wasSuccessful())
     if args.current_profile_screen:
         print(json.dumps(current_profile_screen(), indent=2))
+        return
+    if args.patch_cover_screen:
+        print(json.dumps(patch_cover_screen(), indent=2))
         return
     domain = (1, 2, 4, 3)
     monomials = tuple(tuple(pow(x, degree, 5) for x in domain) for degree in (2, 3))

@@ -36,6 +36,19 @@ authorized by this research milestone.
   assuming the desired full-view equality or quantum security bound.
 - [x] Independently review surviving claims, run strict cached Lean and axiom/
   vector gates under a disk guard, and commit only verified scoped artifacts.
+- [x] Landed that checkpoint as local commit `814b68fb`; all unrelated edits
+  remained outside the commit.
+- [x] Prove concrete Vandermonde/quotient bindings and the general adaptive
+  high-rank count on the actual SMZ9 coset.
+- [x] Prove fixed-candidate and fixed-family queried-mismatch bounds `p^-5`
+  and `L*p^-5`, including arbitrary matrix-dependent responses.
+- [x] Prove deterministic polynomial-patch response coverage, and generic
+  exact twenty-subset sampling for arbitrary prefix-dependent agreement.
+- [x] Construct the first honest-leaf ideal-QROM reduction against an explicit
+  published theorem; verify tape-input mass and two-query oracle-domain
+  decomposition, with all newly required query costs.
+- [x] Finish and gate the composed specified finite-list recovery probability,
+  integrate the follow-on source review and exact arithmetic, then land locally.
 
 ## Surprises & Discoveries
 
@@ -57,6 +70,11 @@ It does not multiply independent-looking marginal bounds. With agreement split
 Generic independent-support, affine-row and first-moment identities are proved
 in Lean. Their full Vandermonde/quotient-dimension/SMZ9 game instantiation is not.
 
+Follow-on correction: `SmallWoodV8Smz9RankIncidenceBinding.lean` now supplies
+the concrete Vandermonde/quotient bridge and matrix-dependent high-rank integer
+count. Its exact twenty-opening weighting and the omitted low-rank structures
+remain separate; the unweighted current-coset tail is no longer only paper math.
+
 Low local rank does not imply low global rank: a zero core with 140 distinct
 exceptional basis-vector positions has global quotient rank 140 but a large
 rank-one agreement set when one matrix column vanishes. Conversely, the small
@@ -71,6 +89,23 @@ and composes the local LVCS law with both abort levels. Literal frame bytes
 separate leaf and later non-leaf inputs; the delayed-overlay theorem is limited
 to non-leaf queries and an atomic honest invocation. The initial and final
 hidden-leaf QROM transitions remain open.
+
+The initial transition now has a reviewed, explicit ideal-QROM reduction to
+GHHM21 adaptive reprogramming. It samples the fresh tape/input before the new
+digest, then reads that digest through the selected oracle; all `T*2^23` such
+reads are charged and the programmed table persists. The final hidden-leaf
+removal remains open. The published distance theorem is external, while the
+input mass, physical query maps, independent-domain factorization and exact
+two-query coherent simulation are newly checked Lean results.
+
+A fixed query subset permits choosing one mismatching source/candidate position
+before counting matrices. This tightens the fixed-list loss from `20L*p^-5`
+to `L*p^-5`. A source covered by L fixed polynomial patches except at h points
+has response coverage above `387L+h` agreement, giving a concrete recovery case
+even at global source quotient rank 140. This does not construct a small cover
+for arbitrary malicious sources. Conversely, twenty accepted openings alone
+always admit an interpolated data/mask lift and therefore are an inadequate
+knowledge-extraction endpoint.
 
 ## Decision Log
 
@@ -97,6 +132,25 @@ roots against the existing kernel axiom allowlist. All three wire vectors and
 availability was 40.133030 GiB. The earlier gate passed 2,745 jobs and 114 roots;
 that historical result was not substituted for the current gate.
 Full privacy, accepted-proof extraction and quantum composition remain open.
+
+The follow-on probe has eleven passing tests, including literal two-patch
+coverage and fixed-candidate sampled mismatch. The new hidden-leaf arithmetic
+script has three passing tests and exact integer boundary/successor checks for
+all four query-budget cases. None of these arithmetic screens is a production
+history authorization or a whole-security bound. The second integrated gate
+passes 2,754 jobs and 145 scoped roots with unchanged wire vectors and all 48
+generated-program modules. Minimum sampled free disk was 40.176918 GiB. The
+first attempt found one omitted explicit type binder under `autoImplicit=false`;
+the signature was corrected and the complete gate rerun successfully, without
+changing a mathematical statement or the checking policy.
+
+The completed `SmallWoodV8Smz9PiecewiseRecovery.lean` theorem bounds the actual
+joint accepted-pair fraction for the specified first-projecting-candidate scan
+by `choose(h+L*d,20)/choose(N,20) + L/p^5`. Independent review confirmed the
+event inclusion, exact product-coordinate swap and additive union without an
+event-independence assumption. It is not a probability conditioned on acceptance
+or a transaction-witness theorem. The finite scan is mathematical, not a Rust
+extractor implementation; arbitrary-source cover construction remains open.
 
 The exhaustive probe passes eight tests. Its three default experiments enumerate
 99,771 matrices and check 229 fixed-support affine-rank counts and 20 high-rank

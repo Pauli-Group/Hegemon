@@ -81,14 +81,21 @@ research results, and they are not a demonstrated transaction forgery.
 
 The joint-event follow-up proves sampled acceptance for the fixed two-monomial
 source, with arbitrary matrix-dependent responses followed by twenty fresh
-uniform openings. General high-rank incidence and affine-fiber primitives are
-also checked; their complete SMZ9 proximity/extractor binding remains open,
-particularly large agreement with low local residual rank. On privacy, an exact
+uniform openings. Concrete Vandermonde/quotient bindings and the adaptive
+current-coset high-rank count are also checked. A specified finite-list scan has
+a joint exact-20 recovery bound when a fixed polynomial patch cover is supplied;
+general low-local-rank recovery and witness-semantic extraction remain open.
+On privacy, an exact
 honest-order change of variables now derives the required LVCS-tail freshness
 inside the independently randomized-leaf hybrid and retains the correlated final
-oracle overlay. The real-hash/QROM transition into that hybrid and removal of
-hidden leaf programs are not proved. See the dossier's joint-extraction and
-honest-hybrid reports for the exact constructive results and omitted events.
+oracle overlay. The first ideal-QROM transition into that hybrid now has an
+explicit reduction to published adaptive reprogramming. Its source-shaped
+input mass and physical query/domain decomposition are proved in Lean, not the
+external distance theorem. The initial transition charges all `T*2^23` leaf
+events and their answer reads; the separate twenty-leaf lazy screen below
+does not pay that cost. Final hidden-leaf removal, concrete SHA-512/RNG and
+runtime refinement, complete witness privacy and global accounting remain open.
+See the dossier's latest piecewise-recovery and hidden-leaf reports.
 
 The lazy programming screen derives `leaf <= 20` and
 `leaf + internal <= 372` from the executable compact path. Its weighted upper

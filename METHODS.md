@@ -372,8 +372,19 @@ then its default exhaustive small-field experiment and
 and responses before the fresh subset. Its current-profile arithmetic explicitly
 omits large-agreement low-rank cases and is not a total security bound. The
 separate Lean sampled-acceptance theorem covers only its fixed two-monomial
-source; the rank-incidence module supplies generic exact counting primitives,
-not the completed general extractor.
+source. The concrete rank-incidence binding now proves the current-coset
+adaptive high-rank count. For a genuinely fixed polynomial patch cover, the
+specified list scan composes exact subset sampling with the stronger `L/p^5`
+candidate-mismatch bound. Use `--patch-cover-screen` only for that conditional
+formula; no arbitrary-source cover or transaction-witness extractor is supplied.
+
+For the first leaf hybrid, use the exact games and external-theorem mapping in
+`docs/crypto/smz9-campaign/hidden-leaf-qrom-step.md`. Run
+`python3 -B scripts/smz9_hidden_leaf_qrom_screen.py --self-test` and its default
+screen. Charge every attempt reaching the leaf batch, retain the programmed
+oracle, and distinguish inclusive raw-oracle Q from the explicitly constructed
+two-query leaf/complement reduction. Neither budget permits omitting honest
+leaf reads or assigning the old lazy twenty-leaf history screen to this step.
 
 ---
 

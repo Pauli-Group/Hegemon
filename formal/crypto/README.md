@@ -158,8 +158,9 @@ sampled-acceptance theorem, not a general accepted-proof extraction theorem.
 
 `SmallWoodV8Smz9RankIncidence.lean` proves independent-support extension and density,
 affine fiber and independent-row counts, quotient-map surjectivity, and the exact
-incidence first moment. The actual Vandermonde/quotient-dimension binding and the
-complete SMZ9 probability theorem are not yet mechanized. The reviewed
+incidence first moment. `SmallWoodV8Smz9RankIncidenceBinding.lean` now supplies
+the concrete Vandermonde/quotient bridge, exact five-row support counts and the
+adaptive current-coset high-rank integer bound. The reviewed
 [joint-extraction argument](../../docs/crypto/smz9-campaign/joint-extraction-research.md)
 derives the stronger same-agreement-set weighted bound and a constructive decoder
 for small global residual dimension. It explicitly leaves the large-agreement,
@@ -171,8 +172,31 @@ variables retains original masks and arbitrary final observations, including the
 correlations. It composes the source-shaped LVCS law with both failure levels,
 proves literal hash-role input separation, and proves leaf-overlay delay for
 adaptive non-leaf traces and finite complex-linear non-leaf queries. This does not
-prove the real-oracle-to-randomized-leaf QROM transition or remove the final hidden
-leaf overlay. Full proof privacy and knowledge soundness remain unestablished.
+by itself prove the real-oracle-to-randomized-leaf QROM transition or remove the
+final hidden leaf overlay. Full proof privacy and knowledge soundness remain
+unestablished.
+
+`SmallWoodV8Smz9RobustQueryMismatch.lean` proves a fixed-candidate joint queried
+mismatch bound `p^-5`, tightened by choosing one mismatch from each fixed query
+subset before counting matrices. Its fixed-family version is `L*p^-5`.
+`SmallWoodV8Smz9JointQuerySampling.lean` supplies the exact matrix-dependent
+agreement/twenty-subset product law and accepted-pair swap. The `PiecewiseCoverage`
+and `PiecewiseRecovery` modules derive and compose a specified first-projecting-
+candidate scan: with a fixed L-patch degree-d cover except at h positions, joint
+acceptance and failure to recover a query-consistent candidate is at most
+`choose(L*d+h,20)/choose(2^23,20) + L/p^5`. This is not conditional failure given
+acceptance, a constructed cover for arbitrary sources, a Rust extractor, or a
+valid-witness theorem.
+
+`SmallWoodV8Smz9HiddenLeafQrom.lean` proves the fresh 64-byte tape embedding's exact
+input mass, full complex-linear oracle-query semantics, independent domain-table
+factorization, and a clean-auxiliary two-query coherent simulation. The accompanying
+[first-leaf reduction](../../docs/crypto/smz9-campaign/hidden-leaf-qrom-step.md)
+applies the explicitly external GHHM21 adaptive-reprogramming theorem to the defined
+ideal-QROM games. It retains the updated oracle and charges all leaf events and
+answer reads, including failed attempts. The analytic distance theorem is not
+declared as a Lean theorem. Final hidden-leaf removal, concrete primitives and
+runtime/quantum-game refinement remain separate obligations.
 
 The active research formalization proves substantial internal mathematics, with its authority scope
 encoded in the exported record and theorem names:
