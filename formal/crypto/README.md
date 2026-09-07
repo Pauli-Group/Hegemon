@@ -79,6 +79,33 @@ receipt must still show that the executable Rust prover uses those exact inverti
 SMZ9 whole-view theorem remains conditional on that refinement, exact relation and parser replay,
 adaptive SHA-512 programming/composition, a target loss bound, and independent review.
 
+The September 7 additions strengthen specific probability statements without closing that
+whole-view boundary. `SmallWoodV8Smz9SequentialAlgebraicLaw.lean` derives the exact 3,105-word
+pre-PCS mask law jointly with an arbitrary earlier prefix, and composes fresh phases with
+history-dependent choices. A finite counterexample proves why fixed-challenge uniformity cannot
+be substituted after choosing a challenge from those same coins. In the actual prover the masks
+are committed before the PIOP challenges are derived, so that feedback remains unresolved.
+`SmallWoodV8Smz9AdmissibleRootProbability.lean` bounds the degree-552 false-batch root event on
+the fully admissible six-tuples by `(552)_6 / ((p-64)_6 - 414*p^5)`, and the degree-387 DECS root
+event on twenty-element subsets of the exact disjoint coset by `(387)_20 / (2^23)_20`.
+`SmallWoodV8Smz9DecsDegreeEnforcement.lean` projects the 140 data rows and five masks from the
+current committed oracle and bounds the non-codeword degree-enforcement event by `p^-5` under
+independent uniform matrix challenges. These are event-level ideal sampling results, not just
+numeric ledger inequalities; they do not derive full-domain codeword agreement from twenty
+accepted openings or transfer the events to the Rust/SHA-512/QROM experiment.
+
+The public [better.codes challenge contract](https://github.com/proximity-prize/proximity-prize/blob/1b2ca03/README.md)
+is useful as a source of coding-theory proof techniques, not an SMZ9 certificate. Its score is
+the spot-check quantity `(1-delta)^128`, explicitly not full-protocol security. Its
+[concrete profile](https://github.com/proximity-prize/proximity-prize/blob/1b2ca03/ProximityPrize/Benchmark/IRSProfile.lean)
+uses KoalaBear's sextic extension, domain `2^18`, scalar dimension `2^17`, eight interleavings,
+and 128 checks. The pinned [ArkLib IRS development](https://github.com/Verified-zkEVM/ArkLib/blob/e65197892890b8fd9b0dc05b8980273cf1d595cc/ArkLib/ProofSystem/ToyProblem/Impl/IRS.lean)
+contains potentially reusable `erasureDecodeOrZero_eq`, `transitionExtractor_pointList_and_affine`,
+and `exactGammaFailure_sample_le`. Their agreement-set, not-MCA, and symbolic error hypotheses
+must be discharged for SMZ9; the two-word scalar-challenge protocol does not establish its
+five-combination batching, privacy, or quantum reduction. No ArkLib dependency, prize submission or
+external numerical security credit is added by this inspection.
+
 `SmallWoodCompressedRelation.lean` preserves only the reusable mathematics from the compression
 work. It proves equivalence of the old and dense range encodings and proves that constrained
 external and internal S-box input wires preserve the corresponding Poseidon2 rounds. The active

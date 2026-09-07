@@ -55,6 +55,39 @@ review, and hermetic release authority remain required.
 
 ## Progress
 
+- [x] (2026-09-07) Resume privacy and quantum-soundness work with bounded
+  event-level proofs: retain the earlier prefix in the exact fresh-mask law,
+  prove the polynomial-root event on fully admissible six-tuples, and bind
+  the current committed-oracle non-codeword event to the five-combination affine
+  bound. All three new modules pass direct kernel checking and the integrated
+  2,741-job build. Independent source reviews find no issue with the
+  corrected-opening or current-matrix proofs. No full transcript or QROM
+  theorem is assumed by these results.
+- [x] (2026-09-07) Complete the expanded 97-declaration axiom audit and unchanged
+  proof-wire vector checks for the September 7 integration. All closures use
+  only `propext`, `Classical.choice`, and `Quot.sound`; the full cryptography
+  gate passes. The first audit attempt
+  rejected an explanatory comment as a theorem name; removed that comment
+  from the names-only inventory without changing any proof or audit policy.
+- [x] (2026-09-07) Prove joint laws for the actual 3,105-word fresh mask
+  allocation and finite sequential phases with history-dependent affine
+  choices. A kernel-checked two-element counterexample demonstrates that
+  bijections at each fixed challenge do not preserve uniformity when the
+  challenge depends on those same coins. This is a limitation result, not an
+  attack on SMZ9 and not a complete adaptive privacy theorem.
+- [x] (2026-09-07) Derive the current false-batch root-event bound
+  `(552)_6 / ((p-64)_6 - 414*p^5)` on fully admissible tuples, proving its
+  discrepancy nonzero from a failed packing-lane evaluation. Derive the
+  degree-387 root-event bound `(387)_20 / (2^23)_20` on the existing unordered
+  twenty-point DECS challenge and certified coset. These close two ideal
+  event-to-ledger steps without asserting runtime challenge uniformity.
+- [x] (2026-09-07) Direct Lean checking passes for the exact SMZ9 DECS
+  non-codeword event over the current `2^23 x 145` oracle. The 140 data rows
+  and five masks are projected from that oracle, and the existing residual
+  proof gives `p^-5` under a full independent uniform challenge matrix.
+  Twenty successful openings do not themselves supply full-domain codeword
+  agreement, and SHA-512 matrix sampling remains a separate reduction.
+
 - [x] (2026-09-04 23:23Z) Final integrated checkpoint passes: the complete
   cryptography build and 87-declaration axiom audit, generator self-tests and
   exact drift checks for all 48 generated modules, CI policy negative tests,
@@ -935,6 +968,23 @@ review, and hermetic release authority remain required.
 
 ## Surprises & Discoveries
 
+- Observation (2026-09-07): the real prover samples witness and nonlinear/
+  linear masks, commits them through PCS/DECS, and only then derives its PIOP
+  challenges (`smallwood_engine.rs`, `prove_statement_core_with_transcript_backend_profile_and_domain`).
+  The challenge-dependent hiding maps therefore cannot be treated as fixed
+  before those coins were sampled. A valid earlier-prefix law alone does
+  not discharge this same-proof feedback through the commitment.
+
+- Observation (2026-09-07): better.codes advertises a 68.04-to-116.13-bit
+  interval, but the pinned challenge README explicitly defines its score as
+  a spot-check quantity `(1-delta)^128`, not full-protocol security. Its
+  concrete profile uses KoalaBear's sextic extension, a `2^18` domain,
+  base dimension `2^17`, eight interleaved words and 128 checks. That is not
+  the Goldilocks SMZ9 domain, degree, multirow challenge or opening law.
+  ArkLib's extractor and agreement lemmas may be selectively reusable;
+  neither its score nor its two-word scalar-challenge reduction transfers
+  directly. Public source inspection did not upload code or install tools.
+
 - Observation (2026-09-04): at resumption the saved September 3 checkpoint was at commit
   `de5611c2528b8ff44d3068fb9cdefc5b3f044362` with 18 modified and 11 new files.
   Free disk space fell from 53 to 39 GiB while the task was paused. Heavy
@@ -1215,6 +1265,17 @@ review, and hermetic release authority remain required.
 
 ## Decision Log
 
+- Decision: reuse proved residual and finite-count mathematics at the exact
+  current SMZ9 dimensions before adding an external coding-theory dependency.
+  Preserve a strict separation between prior-prefix fresh randomness and
+  same-proof commitment-derived challenges. Do not award progress for a
+  record that merely assumes the desired privacy or quantum bound.
+  Reason: the source exposes a concrete conditioning obstruction, while the
+  needed admissible-root and independent-matrix event proofs can be closed
+  with the existing kernel-checked library. The better.codes protocol is a
+  different reduction, not an SMZ9 certificate.
+  Date: 2026-09-07.
+
 - Decision: use one height-aware, source-owned proof-authority decision for
   protocol manifests, wallet construction, RPC, mempool, mining, block import,
   synchronization, and historical replay. Fresh V4/Gamma must not inherit
@@ -1436,6 +1497,24 @@ review, and hermetic release authority remain required.
 
 ## Outcomes & Retrospective
 
+September 7 adds three event-level modules: joint earlier-prefix/fresh-mask
+laws with sequential composition and a checked same-coin counterexample;
+the corrected six-opening false-batch and twenty-opening DECS root-event
+bounds; and current-oracle degree enforcement under an independent uniform
+matrix. These use the existing rejection law, exact coset, residual theorem
+and finite counting, not assumed simulator equality or failure probabilities.
+The missing central conclusions remain the real-versus-simulated committed
+transcript law, accepted-SMZ9-to-extraction failure reduction, and quantum
+Fiat--Shamir transfer with the runtime and lifetime terms. Better.codes offers
+selective erasure-decoding and agreement lemmas for that research; its
+two-word scalar-challenge certificate cannot supply these conclusions.
+The complete cryptography gate passes 2,741 jobs and 97 audited declarations,
+with unchanged generated proof-wire vectors and no new trusted axiom. The
+three mathematical modules, their integration and documentation are the only task edits;
+runtime code, proof bytes, dependency pins and production authority are
+unchanged. Approximately 42 GiB remains free, and no cold build, proof
+generation, cleanup, external submission or dependency installation occurred.
+
 Not complete. The checked checkpoint contains the exact 120-word public
 decoder, the generated HGV8RP03 program components, the disjoint evaluation
 coset and conditional degree-387 recovery, and the ideal independent law for
@@ -1443,9 +1522,9 @@ coset and conditional degree-387 recovery, and the ideal independent law for
 that law to all six honest algebraic coin roles. For fixed admissible challenges
 and fixed offsets, the joint algebraic output law is also proved independent
 of those offsets. Independent source reviews found no errors in either result.
-The saved Rust transaction suite passes 419 tests. The complete cryptography
-Lean gate passes with 87 audited declarations, including all three new
-mathematical results. The integrated build passes 2,738 jobs.
+The saved September 4 Rust transaction suite passes 419 tests. That historical
+cryptography Lean gate passed with 87 audited declarations and 2,738 build
+jobs; the September 7 integration and its new audit are recorded above.
 The complete structural canonicality theorem now also passes for the exact
 generated program. Its encoded-byte/hash binding and typed transaction
 semantic adequacy remain separate obligations.
@@ -1515,6 +1594,24 @@ new Poseidon2/SMZ9 production artifact directory; old candidate artifacts must
 not be overwritten or silently reclassified.
 
 ## Plan of Work
+
+### Bounded September 7 milestone: connect exact sampling events to their bounds
+
+The research-only files
+`formal/crypto/HegemonCrypto/SmallWoodV8Smz9SequentialAlgebraicLaw.lean`,
+`formal/crypto/HegemonCrypto/SmallWoodV8Smz9AdmissibleRootProbability.lean`, and
+`formal/crypto/HegemonCrypto/SmallWoodV8Smz9DecsDegreeEnforcement.lean` now
+derive the fresh-mask joint law and the three ideal events described above.
+They are imported by `formal/crypto/HegemonCrypto.lean`; representative
+theorem roots, including the negative same-coin counterexample, are listed in
+`formal/crypto/credited-declarations.txt`. The counterexample is audited for
+correctness but supplies no positive security credit. From the repository
+root, run `HEGEMON_FORMAL_CRYPTO_MIN_FREE_GIB=40 bash scripts/check_formal_crypto.sh`.
+Acceptance requires the complete cached build, unchanged SMZ9 wire vectors,
+and only `propext`, `Classical.choice`, and `Quot.sound` in all credited
+closures. No Rust build or fresh transaction proof is needed for these
+mathematical-only changes. Do not promote this milestone into the unfinished
+privacy, adaptive quantum, or production-authorization milestones below.
 
 ### Milestone 1: freeze and verify the relation and parameters
 
@@ -1876,3 +1973,14 @@ are unchanged. About 38.3 GiB remains free; cold builds and fresh retained
 proof generation remain held below the 40 GiB reserve. Complete privacy,
 quantum composition, implementation refinement, and release authority remain
 open and receive no completion credit from these structural results.
+
+Revision note (2026-09-07): added exact earlier-prefix fresh-mask laws,
+sequential composition and a same-coin conditioning counterexample; derived
+the corrected admissible PIOP and exact DECS subset root-event bounds; and
+bound the current committed-oracle non-codeword event by `p^-5` under a full
+independent uniform matrix. The integrated cryptography gate passes with
+2,741 build jobs, unchanged wire vectors and 97 audited declarations. Recorded
+the selective better.codes/ArkLib reuse verdict without adding a dependency
+or transferring its score into the Hegemon ledger. These event-level results
+advance, but do not complete, the real transcript privacy or quantum-security
+theorems. Production capability remains absent.
