@@ -79,6 +79,17 @@ discharges earlier commitment feedback or the whole quantum privacy hybrid.
 No wire, relation, capability or production policy changes follow from these
 research results, and they are not a demonstrated transaction forgery.
 
+The joint-event follow-up proves sampled acceptance for the fixed two-monomial
+source, with arbitrary matrix-dependent responses followed by twenty fresh
+uniform openings. General high-rank incidence and affine-fiber primitives are
+also checked; their complete SMZ9 proximity/extractor binding remains open,
+particularly large agreement with low local residual rank. On privacy, an exact
+honest-order change of variables now derives the required LVCS-tail freshness
+inside the independently randomized-leaf hybrid and retains the correlated final
+oracle overlay. The real-hash/QROM transition into that hybrid and removal of
+hidden leaf programs are not proved. See the dossier's joint-extraction and
+honest-hybrid reports for the exact constructive results and omitted events.
+
 The lazy programming screen derives `leaf <= 20` and
 `leaf + internal <= 372` from the executable compact path. Its weighted upper
 bound charges caps of 21 leaf-plus-final 512-bit events and 352 internal

@@ -359,6 +359,22 @@ justify programming an oracle to an output chosen before that input. The
 full Lean gate, axiom audit and unchanged vectors check these local artifacts;
 they do not close either end-to-end security obligation or authorize release.
 
+The honest-hybrid follow-up supplies the fresh-tail premise for a generated
+public context in the independent-randomized-leaf experiment. Preserve its
+reconstructed original mask and final-overlay correlation; projected prefix
+independence does not imply independence of the full retained oracle. Literal
+role separation permits delaying leaf updates across non-leaf honest execution,
+not across unrestricted external quantum queries.
+
+For joint DECS checks, run `python3 -B scripts/smz9_joint_acceptance_probe.py --self-test`,
+then its default exhaustive small-field experiment and
+`--current-profile-screen`. The diagnostic fixes source/masks before the matrix
+and responses before the fresh subset. Its current-profile arithmetic explicitly
+omits large-agreement low-rank cases and is not a total security bound. The
+separate Lean sampled-acceptance theorem covers only its fixed two-monomial
+source; the rank-incidence module supplies generic exact counting primitives,
+not the completed general extractor.
+
 ---
 
 ### Experimental post-proof receipt folding spike

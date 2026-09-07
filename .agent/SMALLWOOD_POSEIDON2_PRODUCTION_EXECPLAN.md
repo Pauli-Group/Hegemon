@@ -2114,3 +2114,13 @@ programs under the 40 GiB reserve guard. Corrected the published-bound scope,
 local-versus-runtime sampler wording, ideal randomness qualification and
 identity/carrier summaries. Full privacy, extraction and quantum composition
 remain open; no production authority is granted by this local commit.
+
+Revision note (2026-09-07 05:10Z, joint-event checkpoint): the continuing
+[joint-event ExecPlan](SMZ9_JOINT_ACCEPTANCE_EXECPLAN.md) records three additional
+verified modules: fixed-source sampled acceptance with matrix-dependent
+responses, generic rank-incidence/affine counts, and honest-order generated-prefix
+privacy coupling inside the randomized-leaf experiment. The full gate passes
+2,748 jobs and 129 allowed-axiom roots with unchanged wire/program artifacts,
+retaining at least 40.133030 GiB free. Eight exhaustive-probe tests and separate
+literal response enumeration pass. Low-local-rank recovery, full quantum leaf
+hybrids, semantic extraction and production authority remain open.

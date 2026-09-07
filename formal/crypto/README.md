@@ -147,6 +147,33 @@ constraint map are checked separately.
 
 ## Security boundary
 
+### Joint-acceptance and honest-order checkpoint
+
+`SmallWoodV8Smz9SampledAcceptance.lean` now counts an actual finite matrix/response/
+twenty-subset experiment for the fixed `X^388`, `X^389`, zero-mask source. Responses
+may depend on the entire matrix. It proves the exact two-zero-column probability
+`p^-10` and bounds acceptance by
+`p^-10 + (1-p^-10) * choose(389,20)/choose(2^23,20)`. This is a source-specific
+sampled-acceptance theorem, not a general accepted-proof extraction theorem.
+
+`SmallWoodV8Smz9RankIncidence.lean` proves independent-support extension and density,
+affine fiber and independent-row counts, quotient-map surjectivity, and the exact
+incidence first moment. The actual Vandermonde/quotient-dimension binding and the
+complete SMZ9 probability theorem are not yet mechanized. The reviewed
+[joint-extraction argument](../../docs/crypto/smz9-campaign/joint-extraction-research.md)
+derives the stronger same-agreement-set weighted bound and a constructive decoder
+for small global residual dimension. It explicitly leaves the large-agreement,
+low-local-rank/high-global-rank case open.
+
+`SmallWoodV8Smz9HonestHybrid.lean` derives fresh LVCS tails from the generated public
+prefix inside the independent-randomized-leaf experiment. The exact change of
+variables retains original masks and arbitrary final observations, including their
+correlations. It composes the source-shaped LVCS law with both failure levels,
+proves literal hash-role input separation, and proves leaf-overlay delay for
+adaptive non-leaf traces and finite complex-linear non-leaf queries. This does not
+prove the real-oracle-to-randomized-leaf QROM transition or remove the final hidden
+leaf overlay. Full proof privacy and knowledge soundness remain unestablished.
+
 The active research formalization proves substantial internal mathematics, with its authority scope
 encoded in the exported record and theorem names:
 
