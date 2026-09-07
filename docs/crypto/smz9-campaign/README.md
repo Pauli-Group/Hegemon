@@ -1,6 +1,8 @@
 # SMZ9 privacy and soundness research dossier
 
-Date: 2026-09-07 UTC. Target: unchanged HGV8RP03 / SMZ9 profile 6.
+Date: 2026-09-07 UTC. Target: repaired 853,429-byte program in the HGV8RP03
+format lineage / SMZ9 profile 6, SHA-512
+`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`.
 
 ## Decision
 
@@ -56,8 +58,9 @@ source-opening/privacy/asset/Merkle modules, the
 [raw-counter compiler](raw-counter-compiler-proof.md), and the
 [factor-free recovery bound](random-direction-recovery-proof.md).
 The corrected source gamma cap is included: it depends on retained linear
-rows, with an upper bound of 12,860 raw blocks, not the earlier 523-block
-nonlinear-only undercount. The generic two-query simulation is unchanged.
+rows. The pre-repair checkpoint bounded it by 12,860 raw blocks; the repaired
+20,605-attempt relation raises the current bound to 12,883, not the earlier
+523-block nonlinear-only undercount. The generic two-query simulation is unchanged.
 
 The refreshed policy checks passed the 121-node claims/blueprint policies,
 six system-model gates and bridge vectors. The broader formal-core policy

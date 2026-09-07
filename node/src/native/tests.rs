@@ -39270,7 +39270,7 @@ fn protocol_v8_artifact_codec_matches_private_pending_action_v3_exactly() {
     assert_eq!(
         SMALLWOOD_POSEIDON2_V8_ARTIFACT_RELATION_DIGEST,
         transaction_circuit::smallwood_poseidon2_v8_program::SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST,
-        "protocol artifact identity must remain source-pinned to HGV8RP03"
+        "protocol artifact relation digest must remain source-pinned"
     );
     let expected = Poseidon2ProductionExpectedContext::new(
         SMALLWOOD_POSEIDON2_V8_ARTIFACT_NETWORK_ID,

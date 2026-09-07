@@ -12,8 +12,8 @@ set_option maxHeartbeats 0
 def csrTail041 : List CsrExecutableAttempt := []
 def csrChunks041 : List (List CsrExecutableAttempt) := []
 theorem csrTail041_checked :
-    checkCsrFrom 565 exactLinearCsrCompilerFamilies 20569
-      V8Smz9ProgramCanonicalityCsr40.counters003 csrTail041 = true := by rfl
+    checkCsrFrom 565 exactLinearCsrCompilerFamilies 20605
+      V8Smz9ProgramCanonicalityCsr40.counters004 csrTail041 = true := by rfl
 theorem csrTail041_eq_chunks : csrTail041 = csrChunks041.flatten := by rfl
 def csrTail040 : List CsrExecutableAttempt := V8Smz9ProgramCanonicalityCsr40.suffix000 ++ csrTail041
 def csrChunks040 : List (List CsrExecutableAttempt) := V8Smz9ProgramCanonicalityCsr40.chunkList ++ csrChunks041
@@ -21,8 +21,8 @@ theorem csrTail040_checked :
     checkCsrFrom 565 exactLinearCsrCompilerFamilies 20480
       V8Smz9ProgramCanonicalityCsr40.counters000 csrTail040 = true := by
   exact checkCsrChunk_append 565 exactLinearCsrCompilerFamilies
-    V8Smz9ProgramCanonicalityCsr40.suffix000 csrTail041 20480 20569
-    V8Smz9ProgramCanonicalityCsr40.counters000 V8Smz9ProgramCanonicalityCsr40.counters003
+    V8Smz9ProgramCanonicalityCsr40.suffix000 csrTail041 20480 20605
+    V8Smz9ProgramCanonicalityCsr40.counters000 V8Smz9ProgramCanonicalityCsr40.counters004
     V8Smz9ProgramCanonicalityCsr40.suffix000_checked (congrArg (Nat.add 20480) V8Smz9ProgramCanonicalityCsr40.suffix000_length)
     V8Smz9ProgramCanonicalityCsr40.suffix000_state csrTail041_checked
 theorem csrTail040_eq_chunks : csrTail040 = csrChunks040.flatten := by

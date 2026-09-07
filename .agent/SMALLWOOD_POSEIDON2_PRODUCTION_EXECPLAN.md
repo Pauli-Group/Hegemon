@@ -23,10 +23,15 @@ bytes, and 128,522 complete `PendingAction` bytes. The parser caps remain
 131,068, 131,072, and 131,297 bytes respectively. Neither relation completeness
 nor security may be traded for size.
 
-The frozen current candidate keeps the compact SmallWood engine but uses the
+The current fail-closed candidate keeps the compact SmallWood engine but uses the
 686-row, 368-column, degree-eight V8 relation with 120 public field elements,
-830 nonlinear identities, 19,899 through 20,473 statement-specialized linear
-identities, and at most 21,303 identities in their soundness union. It uses
+830 nonlinear identities, 19,935 through 20,509 statement-specialized linear
+identities, and at most 21,339 identities in their soundness union. Its current
+canonical 853,429-byte program has 20,605 ordered CSR attempts, SHA-512
+`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`,
+and 48-byte relation id
+`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984`.
+It uses
 Goldilocks Poseidon2 with width 16, rate 8, capacity 8, seven-limb digests,
 exponent 7, 8 full rounds, and 22 partial rounds. Its SMZ9/profile-6 proof uses
 rho=5, six PIOP openings, beta=2, a `2^23` DECS domain, twenty DECS openings,
@@ -35,23 +40,39 @@ The earlier 699-row width-12 relation and its SMZ1 and SMZ8 proof profiles are
 historical engineering evidence only; no current plan statement may treat
 their rows, tapes, sizes, identities, or security estimates as the active
 candidate. A lifecycle audit found that the v4 686-row HGV8RP02 rehearsal
-relation forced disabled-stablecoin `parent_height` and roots to zero. HGV8RP03
-repairs that relation without changing its geometry: disabled mode binds the
-actual parent height and requires both roots to equal the native current root,
-while all remaining inactive stablecoin fields stay zero. The native source
-capability now carries a distinct seven-limb `note_genesis_root` and requires
-the canonical empty depth-32 Poseidon2 root for fresh activation. HGV8RP03 and
-native projection also require canonical zero `value_balance`. Fresh proofs
-and the positive-value retained lifecycle now pass. The selected native
-value source is miner-local V8 coinbase action 11. The historical retained schema spends
-two exact action-11 notes at canonical positions zero and one with two
-separately randomized maximum-shape HGV8RP03 proofs. Those retained artifacts
-predate the current source-security v3 implementation and no longer satisfy
-the live-source inventory check; they remain byte-preservation regression
-evidence only. The obsolete
-three-proof zero-value seed plan is historical only. The retained proofs and
-lifecycle are nonauthorizing while the capability is `None`; external security,
-review, and hermetic release authority remain required.
+relation forced disabled-stablecoin `parent_height` and roots to zero. The
+current digest-bound successor retains the eight-byte `HGV8RP03` format magic
+but repairs that relation without changing its geometry: disabled mode binds
+the actual parent height and requires both roots to equal the native current
+root, while all remaining inactive stablecoin fields stay zero. The magic is
+a format-lineage marker, not the relation identity; the current relation is
+fixed by the SHA-512 and 48-byte relation id above. The native source capability
+now carries a distinct seven-limb `note_genesis_root` and requires the canonical
+empty depth-32 Poseidon2 root for fresh activation. The current relation and
+native projection also require canonical zero `value_balance`. No proof or
+positive-value lifecycle receipt is retained for the current relation id. The
+selected native value source is miner-local V8 coinbase action 11. Only the
+historical retained schema spends two exact action-11 notes at canonical
+positions zero and one with two separately randomized maximum-shape proofs.
+Those proofs bind the pre-repair 852,305-byte HGV8RP03-format program at SHA-512
+`8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e46a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3`;
+they do not verify or bind the current repaired program. They also predate the
+current source-security v3 implementation and no longer satisfy the live-source
+inventory check, so their passing in-process lifecycle remains historical
+byte-preservation regression evidence only. The obsolete three-proof zero-value
+seed plan is historical only. The retained proofs and lifecycle are
+nonauthorizing while the capability is `None`; external security, fresh
+repaired-digest evidence, review, and hermetic release authority remain required.
+
+All evidence and gate receipts before the 2026-09-07 21:00Z relation repair bind
+only their exact pre-repair snapshots. This includes the checkpoint at commit
+`2fdab7e0` and the 2,745/114, 2,748/129, and 2,754/145 build-job/
+audited-declaration outcomes. They do not transfer to the current 853,429-byte
+program or supply a current proof, lifecycle, production, or release receipt.
+Current operator policy records
+`operator_hard_reserve_gib: null`: no fixed GiB free-space floor is active.
+Timestamped disk measurements below remain historical observations only; new
+work uses measured capacity and disk-pressure checks.
 
 ## Progress
 
@@ -82,19 +103,21 @@ review, and hermetic release authority remain required.
   upper-bound expression exceeds one in Lean. The authors also provide a
   fixed-source adaptive-support counterexample and the sound fixed-family
   replacement bound; their integration gate is recorded separately below.
-- [x] (2026-09-07 04:18Z) Integrate the four reviewed modules and complete
-  the full formal-crypto gate: 2,745 build jobs, 114 credited declarations
+- [x] (2026-09-07 04:18Z, historical pre-repair snapshot) Integrated the four
+  reviewed modules and completed that snapshot's full formal-crypto gate: 2,745
+  build jobs, 114 credited declarations
   using only `propext`, `Classical.choice`, and `Quot.sound`, three unchanged
   generated wire vectors, and all 48 exact generated-program modules pass.
   The first integrated attempt rejected an unnecessary `simpa`; its local
   proof-script correction passes without changing the theorem or lint policy.
-  The successful guarded run retained at least 40.0605 GiB free. Reviewed
+  The successful guarded run measured at least 40.0605 GiB free. Reviewed
   mathematics, the research dossier and matching DESIGN/METHODS claim-boundary
   notes form the local landing scope.
   No review-token constructor, arbitrary supplied
   probability, post-challenge oracle, or assumed final bound may close a
   cryptographic obligation. Production activation and external publication
-  remain separately unauthorized.
+  remain separately unauthorized. This gate does not transfer to the repaired
+  relation.
 - [ ] Establish a genuinely stronger current-parameter extraction/proximity
   theorem and the complete honest/simulated quantum hybrid. The research
   campaign does not yet achieve these requested endpoints. In particular,
@@ -134,6 +157,30 @@ review, and hermetic release authority remain required.
   Twenty successful openings do not themselves supply full-domain codeword
   agreement, and SHA-512 matrix sampling remains a separate reduction.
 
+- [x] (2026-09-07 21:00Z) Regenerated the current relation after adding the
+  canonical sponge-padding constraints. The exact program is 853,429 bytes with
+  SHA-512
+  `180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`
+  and relation id
+  `180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984`.
+  Its 20,605 ordered CSR attempts span 644 bounded chunks; specialized linear
+  counts range from 19,935 to 20,509 and the maximum summed identity union is
+  21,339. The refreshed 136,119-byte source-security report has SHA-512
+  `087fd1f3dc04f653b6d380f104467842c1b4b42b7ba0fabfbe75220f3664f0e870b80f92bda748b571cce3768b0386cf870a5586f92d0547e780518b2e04a881`,
+  and the unchanged-size 4,230-byte executable-ZK report has SHA-512
+  `02d3e86eb1f9d5e33091611cbe8786e4ef7c38411cbc48a92b4b926e94f769752b3d1e61173b92d959c697b2c45867a993335c69a3cdb22c506a0ec695a353dd`.
+  Both remain nonauthorizing; the historical 852,305-byte retained relation
+  program and its proofs are not reinterpreted under this successor identity.
+  Production authority remains false and successor selection remains
+  `unselected`.
+
+- [x] (2026-09-07, final post-repair gate) The local formal-crypto gate passes
+  2,806 build jobs and kernel-audits 376 declarations against the existing
+  allowlist. Its generated-program check covers all 48 modules and 2,266,857
+  source bytes for the current 853,429-byte relation and full SHA-512 above.
+  This is local gate evidence only: it supplies no retained proof or lifecycle
+  receipt and grants no production or release authority.
+
 - [x] (2026-09-04 23:23Z) Final integrated checkpoint passes: the complete
   cryptography build and 87-declaration axiom audit, generator self-tests and
   exact drift checks for all 48 generated modules, CI policy negative tests,
@@ -154,9 +201,9 @@ review, and hermetic release authority remain required.
   passed 419 transaction tests with 21 explicit benchmarks ignored, the full
   cryptography Lean build, and the axiom audit of 77 credited declarations.
   The complete cached offline preflight passed at 22:37Z, including 246 checker
-  tests and the 2,745-theorem Lean audit. Commit `51f90425` preserves this
-  checkpoint. The current disk has 39 GiB free and cold builds remain stopped
-  below the 40 GiB reserve.
+  tests and the historical 2,745-theorem Lean audit. Commit `51f90425` preserves
+  this checkpoint. The then-current disk measurement was 39 GiB free; that
+  observation is not a current operator floor.
 - [x] (2026-09-04 22:37Z) Extended the ideal 12,201-field distribution through
   an explicit bijection into `Smz9HonestAlgebraicCoins`, including nonlinear
   and linear mask interleaving and PCS coordinate transposition. The targeted
@@ -171,7 +218,8 @@ review, and hermetic release authority remain required.
   secret offsets. The direct Lean check and three axiom audits pass. This is
   joint distribution equality, not six marginal equalities. It neither
   conditions the actual adaptive transcript nor closes its privacy premise.
-- [x] (2026-09-04 23:11Z) Proved the original complete structural canonicality
+- [x] (2026-09-04 23:11Z, historical checkpoint) Proved the original complete
+  structural canonicality
   predicate for the exact generated HGV8RP03 program, without premises.
   All 20,569 CSR attempts in 643 chunks, 8,836 expression nodes, 830 roots,
   and 1,105 descriptors pass. The source generator emits 48 modules with a
@@ -187,12 +235,13 @@ review, and hermetic release authority remain required.
   reran the retained-artifact checker; confirmed both 122,735-byte and
   122,607-byte proofs then verified against that snapshot; confirmed the successor selection remains
   `unselected`; and measured 92 GiB free on the workspace volume.
-- [x] (2026-08-30 20:10Z) Fixed a campaign disk reserve of 40 GiB. Every cold
-  build, proof generation, or isolated target directory must check free space
-  first and stop before starting when the reserve would be crossed. Temporary
-  build directories must be named explicitly and removed only after their
-  retained evidence is copied and verified; no broad cleanup or deletion of
-  user-owned dirty-tree work is permitted.
+- [x] (2026-08-30 20:10Z, historical policy; withdrawn) The campaign formerly
+  fixed a 40 GiB disk reserve. Current status instead records
+  `operator_hard_reserve_gib: null`; capacity is measured for each substantial
+  build or proof-generation phase and work stops on unsafe disk pressure.
+  Temporary build directories must be named explicitly and removed only after
+  their retained evidence is copied and verified; no broad cleanup or deletion
+  of user-owned dirty-tree work is permitted.
 - [x] (2026-08-30 20:12Z) Found a live proof-authority contradiction:
   `protocol/versioning` still selects V4/Gamma `SmallwoodCandidate` as the
   default, `protocol/kernel` advertises that binding with a 128-bit claim, and
@@ -238,7 +287,7 @@ review, and hermetic release authority remain required.
   rejection and consumption accounting,
   rejects programming conflicts, and proves the active inventory has no
   salt-only point or direct 256-bit route. Its 4,230-byte report is frozen at
-  SHA-512 `0efabeb6d53f2557b12f21747fecbcc4694a3ed44a78075804908a6c6b0a028d4b84c7b85a2c33bf62f6248dd0b3ef123953c7f89d31ab386d30b0bfe34a73c8`.
+  SHA-512 `02d3e86eb1f9d5e33091611cbe8786e4ef7c38411cbc48a92b4b926e94f769752b3d1e61173b92d959c697b2c45867a993335c69a3cdb22c506a0ec695a353dd`.
   Algebraic simulator distance is zero under the recorded premises. Remaining
   constructor-free premises are RNG-to-uniform refinement, adaptive hidden
   subtree applicability, concrete SHA-512/global QROM composition, and a
@@ -302,8 +351,8 @@ review, and hermetic release authority remain required.
   quantified generic primitive attack currently recorded is the approximately
   `2^149.33` quantum collision work on the seven-limb Poseidon2 digest. A
   4,096-block calculation is a finite screen, not a cryptographic reset. The
-  frozen 134,914-byte source report at SHA-512
-  `a87a7c6b3ae4f15352c21b51487b82912578aad07dbbc02bf419556462dcb83b1f441132fb2048a928b6ffe173963b905181d80486010748fad7b767419932b8`
+  frozen 136,119-byte source report at SHA-512
+  `087fd1f3dc04f653b6d380f104467842c1b4b42b7ba0fabfbe75220f3664f0e870b80f92bda748b571cce3768b0386cf870a5586f92d0547e780518b2e04a881`
   now charges SHA exposure `Q + 2^24*T`, Poseidon2 exposure `Q + 128*T`,
   global-once SHA/product loss, and per-view external terms. Ten Rust accounting
   and mutation tests and an independent formula audit pass. It deliberately
@@ -479,9 +528,9 @@ review, and hermetic release authority remain required.
   formal and wallet source inventory freezes. The final checker correctly
   rejected the older artifact pointer because today's source inventory differs
   from its frozen root; the old proof bytes remain regression evidence, not
-  current-source release evidence. Check at least 41 GiB free before each
-  phase and stop before crossing the 40 GiB reserve. Generate wallet vectors
-  only into a new explicit candidate directory. Then perform two isolated
+  current-source release evidence. Measure capacity before and during each
+  phase, and stop on unsafe disk pressure. Generate wallet vectors only into a
+  new explicit candidate directory. Then perform two isolated
   byte-identical retained builds, two fresh proofs, four cross-verifications,
   exact chain verification, construct and verify a new candidate manifest,
   and run the ignored full lifecycle test through its explicit candidate-only
@@ -808,8 +857,9 @@ review, and hermetic release authority remain required.
   gate pins the Cargo-selected library/operator sources, ordinary module chain,
   exact `NativeNode`/eleven-tree shape, rooted raw apply and evaluator, and the
   direct helper grammar and an ordered macro-free runtime AST digest.
-  Formal-core passes 243 tests; focused rollback,
-  cardinality, `v8_plan`, and reopen/readback regressions pass.
+  That historical pre-repair formal-core snapshot passed 243 tests; focused
+  rollback, cardinality, `v8_plan`, and reopen/readback regressions passed. The
+  receipt is non-transferable to the current relation.
 - [x] (2026-08-23) Hardened lifecycle evidence so artifact parser-stage labels
   and scripted state tests cannot be promoted into production authority. A
   qualifying report must bind the retained primary proof digest at every
@@ -967,7 +1017,7 @@ review, and hermetic release authority remain required.
   and activate the capability in one reviewed consensus release.
 - [x] (2026-09-03 15:51Z) Resumed the exact HGV8RP03/SMZ9 production campaign
   from clean commit `d13597da5f60fb9e71f1c496192b406e243a8e08` with 58 GiB free
-  and the 40 GiB reserve intact. Freeze the proof wire and 122,863-byte source
+  at that historical checkpoint. Freeze the proof wire and 122,863-byte source
   ceiling while four disjoint local obligations run: correction-aware opening
   sampling, runtime-randomness-to-uniform-coins refinement, adaptive whole-view
   quantum zero knowledge, and round-by-round quantum soundness/knowledge. The
@@ -981,8 +1031,8 @@ review, and hermetic release authority remain required.
   shielded-pool maximum carrier mutation test 1/1; native exact artifact codec
   test 1/1; and the frozen source-security report exact check all pass.
   The report still says `production_eligible=false`, the capability remains
-  absent, and the 122,863-byte source ceiling is unchanged. Disk remained at
-  55 GiB free after the builds, above the 40 GiB hard reserve.
+  absent, and the 122,863-byte source ceiling is unchanged. The historical disk
+  measurement after the builds was 55 GiB free.
 - [x] (2026-09-03 16:03Z) Re-audited security-neutral byte headroom before
   changing the wire. The maximum proof is 97,608 bytes of field words, 23,872
   bytes of SHA-512 roots/authentication nodes, 1,280 bytes of opened leaf
@@ -1000,7 +1050,7 @@ review, and hermetic release authority remain required.
   assertions; and one HX512 fixture omitted the public bindings required by
   its verifier. All five focused reruns pass. The complete transaction library
   regression then passed 419/419 tests with 21 explicit release/benchmark
-  tests ignored. Disk now remains at 53 GiB free, thirteen GiB above reserve.
+  tests ignored. The historical post-check measurement was 53 GiB free.
 - [x] (2026-09-03 16:52Z) Revalidated the fail-closed retained-artifact refresh
   seam before freezing any new proof bytes. The wallet's isolated no-overwrite
   publisher passed 8/8 tests, the candidate-manifest constructor passed 15/15,
@@ -1057,9 +1107,10 @@ review, and hermetic release authority remain required.
 
 - Observation (2026-09-04): at resumption the saved September 3 checkpoint was at commit
   `de5611c2528b8ff44d3068fb9cdefc5b3f044362` with 18 modified and 11 new files.
-  Free disk space fell from 53 to 39 GiB while the task was paused. Heavy
-  builds stay stopped below the 40 GiB reserve; existing validator binaries
-  and source inspection can continue. The second review-digest refresh was
+  Free disk space fell from 53 to 39 GiB while the task was paused. Heavy builds
+  were stopped under the then-active reserve policy; the measurements and policy
+  are historical, not a current fixed floor. Existing validator binaries and
+  source inspection could continue. The second review-digest refresh was
   saved, so only the blueprint governance receipt needed its matching policy
   digest before final validation. That receipt remains an executed test
   record, and every independent review status and production gate is unchanged.
@@ -1262,9 +1313,12 @@ review, and hermetic release authority remain required.
   fail closed before proof verification.
 
 - Observation: HGV8RP03 supersedes HGV8RP02 as the current source relation.
-  Its disabled-mode pass-through and two zero-value-balance equations raise the
-  specialized linear inventory to 19,899--20,473 and the summed soundness union
-  to 21,303 without changing the 686-row, 368-column proof geometry or the
+  Its disabled-mode pass-through and two zero-value-balance equations first
+  raised the specialized linear inventory at the historical retained-program
+  checkpoint. The current successor additionally binds canonical out-of-range
+  sponge padding, bringing the active inventory to 19,935--20,509 specialized
+  linear identities, 20,605 ordered CSR attempts, and a 21,339 maximum summed
+  soundness union without changing the 686-row, 368-column proof geometry or the
   122,863-byte projection.
 
 - Observation: native mempool and block validation now enforce a source-owned
@@ -1343,7 +1397,7 @@ review, and hermetic release authority remain required.
   research checkpoints are bounded to 20-25 minutes and 30-50 MiB per lane.
   Reason: the user requested managed research through verification and
   landing; separate authorship and falsification make progress reviewable,
-  while the 40 GiB disk reserve rules out duplicated cold build trees.
+  while measured disk pressure rules out duplicated cold build trees.
   Date: 2026-09-07.
 
 - Decision: reuse proved residual and finite-count mathematics at the exact
@@ -1367,10 +1421,12 @@ review, and hermetic release authority remain required.
   documentation issue.
   Date: 2026-08-30.
 
-- Decision: maintain at least 40 GiB free throughout this campaign and treat
-  the existing dirty tree as user-owned evidence. Do not run a cold build or
-  proof generation below the reserve, do not use broad destructive cleanup,
-  and do not regenerate retained proofs for a merely theoretical size idea.
+- Decision (historical; withdrawn): the campaign formerly maintained at least
+  40 GiB free. Current status records `operator_hard_reserve_gib: null`; no fixed
+  GiB operator floor is active. Continue to treat the existing dirty tree as
+  user-owned evidence, measure capacity before and during substantial work, stop
+  on unsafe disk pressure, avoid broad destructive cleanup, and do not regenerate
+  retained proofs for a merely theoretical size idea.
   Reason: proof and formal builds are large, and reproducibility work is lost
   if disk pressure corrupts or forces ad hoc cleanup of the shared checkout.
   Date: 2026-08-30.
@@ -1591,15 +1647,16 @@ the valid replacement bound `L*p^-5`; a useful source-derived family is still
 missing. Stronger subgroup-sum estimates are independently reviewed primary-
 source mathematics, explicitly outside the new Lean results.
 
-The full integrated cryptography gate passes 2,745 jobs and 114 credited
-declarations, with unchanged wire vectors, exact 48-module generated-program
-conformance and no new trusted axiom. Independent source review approved only
-the local theorem scopes and identified summary overclaims, which were
-corrected before landing. The minimum sampled free disk on the successful
-guarded run was 40.0605 GiB. There was no runtime/wire/dependency change, new
-proof generation, artifact deletion, external submission, or production
-activation. The source capability remains `None`, successor selection remains
-`unselected`, and the source-security report remains `production_eligible=false`.
+The historical pre-repair integrated cryptography gate passed 2,745 jobs and 114
+credited declarations, with unchanged wire vectors, exact 48-module
+generated-program conformance and no new trusted axiom. Independent source
+review approved only the local theorem scopes and identified summary overclaims,
+which were corrected before landing. The historical minimum sampled free disk
+on that successful run was 40.0605 GiB. This receipt does not transfer to the
+repaired relation. There was no runtime/wire/dependency change, new proof
+generation, artifact deletion, external submission, or production activation.
+The source capability remains `None`, successor selection remains `unselected`,
+and the source-security report remains `production_eligible=false`.
 
 The requested end-to-end privacy and quantum knowledge-soundness endpoints
 remain unproved. This campaign has identified a substantive missing extraction
@@ -1647,7 +1704,7 @@ simulated proof and oracle experiment, and exact SMZ9 knowledge theorem remain
 open. Current-source retained artifacts and release authority also remain
 absent, so the capability stays `None`.
 
-The frozen current HGV8RP03 baseline is the 686-row
+The current proof-geometry baseline is the 686-row
 SMZ9/profile-6 relation with
 twenty tapes and a 122,863-byte proof projection. Its RPC envelope, SCALE inline
 arguments, and canonical full `PendingAction` project to 128,293, 128,297, and
@@ -1655,9 +1712,13 @@ arguments, and canonical full `PendingAction` project to 128,293, 128,297, and
 122,735 and 122,607 proof bytes and verify against their frozen 2026-08-23
 source inventory. They are not current-source release artifacts: the later
 security, randomness, formal, and checker changes deliberately make the live
-inventory check reject both the fixed pointer and the existing candidate. The
-HGV8RP03 program bytes and proof wire remain frozen, but production still
-needs two fresh proofs and a newly constructed current-source v5 candidate
+inventory check reject both the fixed pointer and the existing candidate.
+Those rehearsals retain the historical 852,305-byte relation program and proof
+wire. Current source instead pins the 853,429-byte successor program under
+relation id
+`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984`;
+no retained proof may be relabeled under that identity. Production still needs
+two fresh proofs and a newly constructed current-source v5 candidate
 manifest after this formal source checkpoint settles. The atomic mined/reorg typed-plan
 count seam is source-bound and covered by formal-core plus
 rollback/cardinality/reopen regressions, but capability is `None`, MAX V8
@@ -1719,7 +1780,7 @@ They are imported by `formal/crypto/HegemonCrypto.lean`; representative
 theorem roots, including the negative same-coin counterexample, are listed in
 `formal/crypto/credited-declarations.txt`. The counterexample is audited for
 correctness but supplies no positive security credit. From the repository
-root, run `HEGEMON_FORMAL_CRYPTO_MIN_FREE_GIB=40 bash scripts/check_formal_crypto.sh`.
+root, run `bash scripts/check_formal_crypto.sh` after checking measured capacity.
 Acceptance requires the complete cached build, unchanged SMZ9 wire vectors,
 and only `propext`, `Classical.choice`, and `Quot.sound` in all credited
 closures. No Rust build or fresh transaction proof is needed for these
@@ -2063,9 +2124,10 @@ ceiling. Release evidence distinguishes this mechanism from deployed security;
 the executable receipt command, capability, registry, review root, and global
 QROM theorem remain absent.
 
-Revision note (2026-09-03): recorded the resumed clean-source and disk-reserve
-checkpoint and narrowed immediate execution to the four proof obligations that
-decide whether HGV8RP03/SMZ9 can reach production without changing proof bytes.
+Revision note (2026-09-03, historical): recorded the resumed clean-source and
+disk-capacity checkpoint and narrowed immediate execution to the four proof
+obligations that decide whether HGV8RP03/SMZ9 can reach production without
+changing proof bytes.
 The quantum Fiat--Shamir compatibility theorem is now the explicit first
 go/no-go checkpoint; production capability remains absent. Re-established all
 narrow Rust relation, privacy, security, carrier, and native-codec baselines,
@@ -2082,8 +2144,9 @@ canonicality of the materialized HGV8RP03 program. The integrated cryptography
 gate passes with 87 audited declarations and 2,738 build jobs. Serial bounded
 checks and exact string-roundtrip rewrites resolve the two observed checking
 memory spikes. The transaction implementation, program binary, and proof wire
-are unchanged. About 38.3 GiB remains free; cold builds and fresh retained
-proof generation remain held below the 40 GiB reserve. Complete privacy,
+are unchanged. The then-current measurement was about 38.3 GiB free; cold builds
+and fresh retained proof generation were held under the historical reserve
+policy. Complete privacy,
 quantum composition, implementation refinement, and release authority remain
 open and receive no completion credit from these structural results.
 
@@ -2106,35 +2169,48 @@ quantum composition remain open outcomes, not completion claims. Work stays
 in the selected checkout; no push, dependency installation or production
 activation is implied by local landing.
 
-Revision note (2026-09-07 04:18Z, integrated research): landed four new
-constructive/obstruction modules with the argument, independent review, and
-security acceptance contract. The full cryptography gate passes 2,745 jobs,
-114 allowed-axiom declarations, unchanged wire vectors, and exact generated
-programs under the 40 GiB reserve guard. Corrected the published-bound scope,
+Revision note (2026-09-07 04:18Z, historical pre-repair integrated research):
+landed four new constructive/obstruction modules with the argument, independent
+review, and security acceptance contract. That snapshot's full cryptography
+gate passed 2,745 jobs, 114 allowed-axiom declarations, unchanged wire vectors,
+and exact generated programs; its disk measurement was governed by the
+now-withdrawn reserve policy. Corrected the published-bound scope,
 local-versus-runtime sampler wording, ideal randomness qualification and
 identity/carrier summaries. Full privacy, extraction and quantum composition
 remain open; no production authority is granted by this local commit.
 
-Revision note (2026-09-07 05:10Z, joint-event checkpoint): the continuing
-[joint-event ExecPlan](SMZ9_JOINT_ACCEPTANCE_EXECPLAN.md) records three additional
-verified modules: fixed-source sampled acceptance with matrix-dependent
-responses, generic rank-incidence/affine counts, and honest-order generated-prefix
-privacy coupling inside the randomized-leaf experiment. The full gate passes
-2,748 jobs and 129 allowed-axiom roots with unchanged wire/program artifacts,
-retaining at least 40.133030 GiB free. Eight exhaustive-probe tests and separate
+Revision note (2026-09-07 05:10Z, historical pre-repair joint-event checkpoint):
+the continuing [joint-event ExecPlan](SMZ9_JOINT_ACCEPTANCE_EXECPLAN.md) records
+three additional verified modules: fixed-source sampled acceptance with
+matrix-dependent responses, generic rank-incidence/affine counts, and
+honest-order generated-prefix privacy coupling inside the randomized-leaf
+experiment. That snapshot's full gate passed 2,748 jobs and 129 allowed-axiom
+roots with unchanged wire/program artifacts, with a historical minimum
+free-disk sample of 40.133030 GiB. Eight exhaustive-probe tests and separate
 literal response enumeration pass. Low-local-rank recovery, full quantum leaf
 hybrids, semantic extraction and production authority remain open.
 
-Revision note (2026-09-07 05:32Z, constructive recovery and first-leaf reduction):
-after checkpoint `814b68fb`, six more modules bind the actual Vandermonde and
-quotient rank to the adaptive high-rank count; prove exact joint subset sampling
-and fixed-family `L/p^5` mismatch; and compose a specified finite-list recovery
-scan under a verified polynomial patch cover. The first honest-leaf ideal-QROM
-transition now has a reviewed reduction to external GHHM21 adaptive reprogramming,
-with the fresh-input law and physical two-query domain simulation proved in Lean.
-The full gate passes 2,754 jobs and 145 allowed-axiom roots, unchanged vectors
-and exact generated programs, with 40.176918 GiB minimum free disk. Eleven
-exhaustive-probe tests and three exact hybrid-arithmetic tests pass. Arbitrary
+Revision note (2026-09-07 05:32Z, historical pre-repair constructive recovery
+and first-leaf reduction): after checkpoint `814b68fb`, six more modules bind the
+actual Vandermonde and quotient rank to the adaptive high-rank count; prove exact
+joint subset sampling and fixed-family `L/p^5` mismatch; and compose a specified
+finite-list recovery scan under a verified polynomial patch cover. The first
+honest-leaf ideal-QROM transition now has a reviewed reduction to external GHHM21
+adaptive reprogramming, with the fresh-input law and physical two-query domain
+simulation proved in Lean.
+That snapshot's full gate passed 2,754 jobs and 145 allowed-axiom roots,
+unchanged vectors and exact generated programs, with a historical 40.176918 GiB
+minimum free-disk sample. Eleven exhaustive-probe tests and three exact
+hybrid-arithmetic tests pass. Arbitrary
 low-rank source recovery, final hidden-leaf removal, witness-semantic extraction,
 implementation/primitive refinements and whole-security composition remain open.
 No proof bytes, runtime profile, dependency or production authority changed.
+
+Revision note (2026-09-07, final post-repair gate): the local formal-crypto gate
+passes 2,806 build jobs, audits 376 declarations against the allowed kernel
+axioms, and checks all 48 generated modules totaling 2,266,857 source bytes for
+the 853,429-byte relation at SHA-512
+`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`.
+The 2,745/114, 2,748/129, and 2,754/145 receipts remain historical and
+non-transferable. This receipt is local checking evidence, not proof-byte,
+lifecycle, production, or release authority.

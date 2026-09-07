@@ -703,7 +703,7 @@ fn prove_smallwood_poseidon2_v8_compact448_candidate_with_relation_v1(
     ensure_relation_contract(relation)?;
     if relation.relation_digest() != &SMALLWOOD_POSEIDON2_V8_RELATION_DIGEST {
         return Err(TransactionCircuitError::ConstraintViolation(
-            "SmallWood Poseidon2 V8 compact prover requires exact HGV8RP03 relation identity",
+            "SmallWood Poseidon2 V8 compact prover requires the exact source-owned relation digest",
         ));
     }
     let expected_witness_words = relation
@@ -778,7 +778,7 @@ fn verify_smallwood_poseidon2_v8_compact448_candidate_with_relation_v1(
     ensure_relation_matches_input(relation, input)?;
     if relation.relation_digest() != &SMALLWOOD_POSEIDON2_V8_RELATION_DIGEST {
         return Err(TransactionCircuitError::ConstraintViolation(
-            "SmallWood Poseidon2 V8 compact verifier requires exact HGV8RP03 relation identity",
+            "SmallWood Poseidon2 V8 compact verifier requires the exact source-owned relation digest",
         ));
     }
     ensure_smc7_bytes(proof_bytes)?;
@@ -866,7 +866,7 @@ fn prove_smallwood_poseidon2_v8_compact448_q20_candidate_with_relation_v1(
     ensure_relation_contract(relation)?;
     if relation.relation_digest() != &SMALLWOOD_POSEIDON2_V8_RELATION_DIGEST {
         return Err(TransactionCircuitError::ConstraintViolation(
-            "SmallWood Poseidon2 V8 SMC8 prover requires exact HGV8RP03 relation identity",
+            "SmallWood Poseidon2 V8 SMC8 prover requires the exact source-owned relation digest",
         ));
     }
     let expected_witness_words = relation
@@ -941,7 +941,7 @@ fn verify_smallwood_poseidon2_v8_compact448_q20_candidate_with_relation_v1(
     ensure_relation_matches_input(relation, input)?;
     if relation.relation_digest() != &SMALLWOOD_POSEIDON2_V8_RELATION_DIGEST {
         return Err(TransactionCircuitError::ConstraintViolation(
-            "SmallWood Poseidon2 V8 SMC8 verifier requires exact HGV8RP03 relation identity",
+            "SmallWood Poseidon2 V8 SMC8 verifier requires the exact source-owned relation digest",
         ));
     }
     ensure_smc8_bytes(proof_bytes)?;

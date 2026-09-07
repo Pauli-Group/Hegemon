@@ -545,10 +545,23 @@ def primitiveRemainderRatio (queries proofViews : Nat) : CompositionRatio :=
       (poseidon2CollisionRatio (totalPoseidon2ExposuresFor queries proofViews))).add
     (poseidon2PreimageRatio (totalPoseidon2ExposuresFor queries proofViews))
 
-def fieldXofRequestedWords : Nat := 102365
-def fieldXofCandidateWords : Nat := 102400
-def fieldXofMinimumRejections : Nat := 36
+/-- Fixed realized source-report request, not the public constructor's universal
+103025-word ceiling. The exact tail below is for this cap/slack tuple; extending
+it to all statement-dependent lengths requires a separate sampler-family bound. -/
+def fieldXofRequestedWords : Nat := 102545
+def fieldXofCandidateWords : Nat := 102584
+def fieldXofMinimumRejections : Nat := 40
 def fieldXofRequestUnion : Nat := 2 ^ 25
+
+theorem field_xof_minimum_rejections_matches_cap :
+    fieldXofMinimumRejections = fieldXofCandidateWords - fieldXofRequestedWords + 1 := by
+  decide
+
+private theorem exact_field_xof_binomial :
+    Nat.choose 102584 40 =
+      337471816674651122714581203548411225347441768094873134687130983462087259570299871092628166702156389391664787843162028615200599323044310286277613231712245 := by
+  rw [Nat.choose_eq_descFactorial_div_factorial]
+  norm_num [Nat.descFactorial, Nat.factorial]
 
 /-- Kernel-friendly conservative envelope for the exact binomial rejection tail. -/
 def conservativeFieldXofAbortRatio : CompositionRatio where
@@ -560,69 +573,69 @@ private theorem mul4_le_mul4 {a b c d a' b' c' d' : Nat}
     a * b * c * d ≤ a' * b' * c' * d' :=
   Nat.mul_le_mul (Nat.mul_le_mul (Nat.mul_le_mul ha hb) hc) hd
 
-private theorem field_xof_choose_bound : Nat.choose 102400 36 ≤ 102400 ^ 36 :=
-  Nat.choose_le_pow 102400 36
+private theorem field_xof_choose_bound : Nat.choose 102584 40 ≤ 102584 ^ 40 :=
+  Nat.choose_le_pow 102584 40
 
 private theorem field_xof_candidate_power_bound :
-    102400 ^ 36 ≤ (2 ^ 17) ^ 36 :=
-  Nat.pow_le_pow_left (by norm_num) 36
+    102584 ^ 40 ≤ (2 ^ 17) ^ 40 :=
+  Nat.pow_le_pow_left (by norm_num) 40
 
 private theorem field_xof_rejection_power_bound :
-    (2 ^ 32 - 1) ^ 36 ≤ (2 ^ 32) ^ 36 :=
-  Nat.pow_le_pow_left (by omega) 36
+    (2 ^ 32 - 1) ^ 40 ≤ (2 ^ 32) ^ 40 :=
+  Nat.pow_le_pow_left (by omega) 40
 
 private theorem field_xof_product_choose_bound :
-    2 ^ 25 * Nat.choose 102400 36 * (2 ^ 32 - 1) ^ 36 * 2 ^ 500 ≤
-      2 ^ 25 * 102400 ^ 36 * (2 ^ 32 - 1) ^ 36 * 2 ^ 500 := by
+    2 ^ 25 * Nat.choose 102584 40 * (2 ^ 32 - 1) ^ 40 * 2 ^ 500 ≤
+      2 ^ 25 * 102584 ^ 40 * (2 ^ 32 - 1) ^ 40 * 2 ^ 500 := by
   exact mul4_le_mul4 (Nat.le_refl (2 ^ 25)) field_xof_choose_bound
-    (Nat.le_refl ((2 ^ 32 - 1) ^ 36)) (Nat.le_refl (2 ^ 500))
+    (Nat.le_refl ((2 ^ 32 - 1) ^ 40)) (Nat.le_refl (2 ^ 500))
 
 private theorem field_xof_product_candidate_bound :
-    2 ^ 25 * 102400 ^ 36 * (2 ^ 32 - 1) ^ 36 * 2 ^ 500 ≤
-      2 ^ 25 * (2 ^ 17) ^ 36 * (2 ^ 32 - 1) ^ 36 * 2 ^ 500 := by
+    2 ^ 25 * 102584 ^ 40 * (2 ^ 32 - 1) ^ 40 * 2 ^ 500 ≤
+      2 ^ 25 * (2 ^ 17) ^ 40 * (2 ^ 32 - 1) ^ 40 * 2 ^ 500 := by
   exact mul4_le_mul4 (Nat.le_refl (2 ^ 25)) field_xof_candidate_power_bound
-    (Nat.le_refl ((2 ^ 32 - 1) ^ 36)) (Nat.le_refl (2 ^ 500))
+    (Nat.le_refl ((2 ^ 32 - 1) ^ 40)) (Nat.le_refl (2 ^ 500))
 
 private theorem field_xof_product_rejection_bound :
-    2 ^ 25 * (2 ^ 17) ^ 36 * (2 ^ 32 - 1) ^ 36 * 2 ^ 500 ≤
-      2 ^ 25 * (2 ^ 17) ^ 36 * (2 ^ 32) ^ 36 * 2 ^ 500 := by
-  exact mul4_le_mul4 (Nat.le_refl (2 ^ 25)) (Nat.le_refl ((2 ^ 17) ^ 36))
+    2 ^ 25 * (2 ^ 17) ^ 40 * (2 ^ 32 - 1) ^ 40 * 2 ^ 500 ≤
+      2 ^ 25 * (2 ^ 17) ^ 40 * (2 ^ 32) ^ 40 * 2 ^ 500 := by
+  exact mul4_le_mul4 (Nat.le_refl (2 ^ 25)) (Nat.le_refl ((2 ^ 17) ^ 40))
     field_xof_rejection_power_bound (Nat.le_refl (2 ^ 500))
 
 private theorem field_xof_power_ceiling :
-    2 ^ 25 * (2 ^ 17) ^ 36 * (2 ^ 32) ^ 36 * 2 ^ 500 ≤
-      2 ^ (64 * 36) := by
+    2 ^ 25 * (2 ^ 17) ^ 40 * (2 ^ 32) ^ 40 * 2 ^ 500 ≤
+      2 ^ (64 * 40) := by
   norm_num [← pow_mul, ← pow_add]
 
 private theorem field_xof_direct_bound :
-    2 ^ 25 * Nat.choose 102400 36 * (2 ^ 32 - 1) ^ 36 * 2 ^ 500 ≤
-      2 ^ (64 * 36) := by
+    2 ^ 25 * Nat.choose 102584 40 * (2 ^ 32 - 1) ^ 40 * 2 ^ 500 ≤
+      2 ^ (64 * 40) := by
   calc
-    2 ^ 25 * Nat.choose 102400 36 * (2 ^ 32 - 1) ^ 36 * 2 ^ 500 ≤
-        2 ^ 25 * 102400 ^ 36 * (2 ^ 32 - 1) ^ 36 * 2 ^ 500 :=
+    2 ^ 25 * Nat.choose 102584 40 * (2 ^ 32 - 1) ^ 40 * 2 ^ 500 ≤
+        2 ^ 25 * 102584 ^ 40 * (2 ^ 32 - 1) ^ 40 * 2 ^ 500 :=
       field_xof_product_choose_bound
-    _ ≤ 2 ^ 25 * (2 ^ 17) ^ 36 * (2 ^ 32 - 1) ^ 36 * 2 ^ 500 :=
+    _ ≤ 2 ^ 25 * (2 ^ 17) ^ 40 * (2 ^ 32 - 1) ^ 40 * 2 ^ 500 :=
       field_xof_product_candidate_bound
-    _ ≤ 2 ^ 25 * (2 ^ 17) ^ 36 * (2 ^ 32) ^ 36 * 2 ^ 500 :=
+    _ ≤ 2 ^ 25 * (2 ^ 17) ^ 40 * (2 ^ 32) ^ 40 * 2 ^ 500 :=
       field_xof_product_rejection_bound
-    _ ≤ 2 ^ (64 * 36) := field_xof_power_ceiling
+    _ ≤ 2 ^ (64 * 40) := field_xof_power_ceiling
 
 private theorem exact_field_xof_parameters :
-    fieldXofRequestUnion = 2 ^ 25 ∧ fieldXofCandidateWords = 102400 ∧
-      fieldXofMinimumRejections = 36 := by
+    fieldXofRequestUnion = 2 ^ 25 ∧ fieldXofCandidateWords = 102584 ∧
+      fieldXofMinimumRejections = 40 := by
   decide
 
 private structure FieldXofAbortRatioCertificate where
   numerator : Nat
   denominator : Nat
   numeratorExact :
-    numerator = 2 ^ 25 * Nat.choose 102400 36 * (2 ^ 32 - 1) ^ 36
-  denominatorExact : denominator = 2 ^ (64 * 36)
+    numerator = 2 ^ 25 * Nat.choose 102584 40 * (2 ^ 32 - 1) ^ 40
+  denominatorExact : denominator = 2 ^ (64 * 40)
   conservativeBound : numerator * 2 ^ 500 ≤ 1 * denominator
 
 private irreducible_def fieldXofAbortRatioCertificate : FieldXofAbortRatioCertificate := {
-  numerator := 2 ^ 25 * Nat.choose 102400 36 * (2 ^ 32 - 1) ^ 36
-  denominator := 2 ^ (64 * 36)
+  numerator := 2 ^ 25 * Nat.choose 102584 40 * (2 ^ 32 - 1) ^ 40
+  denominator := 2 ^ (64 * 40)
   numeratorExact := rfl
   denominatorExact := rfl
   conservativeBound := by simpa only [one_mul] using field_xof_direct_bound
@@ -635,14 +648,14 @@ def fieldXofAbortRatio : CompositionRatio where
 /-- The irreducible definition stores the executable binomial expression itself, not a numerical
 replacement.  Its generated equation theorem remains available for explicit unfolding, while the
 certificate fields expose the exact values and the kernel-checked conservative bound without
-repeatedly normalizing `Nat.choose 102400 36`. -/
+repeatedly normalizing `Nat.choose 102584 40`. -/
 theorem exact_field_xof_abort_ratio_numerator :
     fieldXofAbortRatio.numerator =
       fieldXofRequestUnion * Nat.choose fieldXofCandidateWords fieldXofMinimumRejections *
         (2 ^ 32 - 1) ^ fieldXofMinimumRejections := by
   calc
     fieldXofAbortRatio.numerator =
-        2 ^ 25 * Nat.choose 102400 36 * (2 ^ 32 - 1) ^ 36 :=
+        2 ^ 25 * Nat.choose 102584 40 * (2 ^ 32 - 1) ^ 40 :=
       fieldXofAbortRatioCertificate.numeratorExact
     _ = fieldXofRequestUnion *
           Nat.choose fieldXofCandidateWords fieldXofMinimumRejections *
@@ -653,10 +666,26 @@ theorem exact_field_xof_abort_ratio_numerator :
 theorem exact_field_xof_abort_ratio_denominator :
     fieldXofAbortRatio.denominator = 2 ^ (64 * fieldXofMinimumRejections) := by
   calc
-    fieldXofAbortRatio.denominator = 2 ^ (64 * 36) :=
+    fieldXofAbortRatio.denominator = 2 ^ (64 * 40) :=
       fieldXofAbortRatioCertificate.denominatorExact
     _ = 2 ^ (64 * fieldXofMinimumRejections) := by
       rw [exact_field_xof_parameters.2.2]
+
+/-- Exact fixed-tuple binomial diagnostic, including the 2^25 request union.
+This is not a uniform assertion for all lengths below a maximum request count. -/
+theorem exact_field_xof_abort_supports_748_bits :
+    fieldXofAbortRatio.supportsBits 748 := by
+  unfold CompositionRatio.supportsBits
+  rw [exact_field_xof_abort_ratio_numerator, exact_field_xof_abort_ratio_denominator]
+  norm_num [fieldXofRequestUnion, fieldXofCandidateWords, fieldXofMinimumRejections,
+    exact_field_xof_binomial]
+
+theorem exact_field_xof_abort_does_not_support_749_bits :
+    ¬ fieldXofAbortRatio.supportsBits 749 := by
+  unfold CompositionRatio.supportsBits
+  rw [exact_field_xof_abort_ratio_numerator, exact_field_xof_abort_ratio_denominator]
+  norm_num [fieldXofRequestUnion, fieldXofCandidateWords, fieldXofMinimumRejections,
+    exact_field_xof_binomial]
 
 theorem exact_field_xof_abort_is_bounded_by_conservative_envelope :
     fieldXofAbortRatio.numerator * conservativeFieldXofAbortRatio.denominator ≤
@@ -709,8 +738,8 @@ def conditionalTotalFailureFiniteHistoryRatio
     (conditionalCompletenessAbortFiniteHistoryRatio proofInteractions)
 
 theorem exact_abort_and_no_grinding_parameters :
-    fieldXofRequestedWords = 102365 ∧ fieldXofCandidateWords = 102400 ∧
-      fieldXofMinimumRejections = 36 ∧ canonicalPiopNonceBadPerTrial = 813 ∧
+    fieldXofRequestedWords = 102545 ∧ fieldXofCandidateWords = 102584 ∧
+      fieldXofMinimumRejections = 40 ∧ canonicalPiopNonceBadPerTrial = 813 ∧
       canonicalPiopNonceTrialCount = 16 ∧ fixedDecsCandidateCount = 50 ∧
       fixedDecsMinimumBadDraws = 31 ∧ grindingRatio.numerator = 0 ∧
       grindingRatio.denominator = 1 := by

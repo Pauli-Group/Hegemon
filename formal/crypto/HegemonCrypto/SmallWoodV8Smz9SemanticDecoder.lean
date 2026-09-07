@@ -1,4 +1,5 @@
 import HegemonCrypto.SmallWoodV8Smz9SemanticDenseRange
+import HegemonCrypto.SmallWoodV8Smz9ProgramCanonicalityGenerated
 import Hegemon.Transaction.Poseidon2V8DecoderRefinement
 
 /-!
@@ -254,20 +255,154 @@ theorem accepted_project_position_bound {publicWords packed : List Nat}
   rcases accepted_direction_boolean accepted inputBound bitBound with zero | one <;> omega
 
 def noteBridgeCall (note : Nat) : Nat := [1, 37, 73, 76].getD note 0
-def noteBridgeAttemptIndex (note : Nat) : Nat := [15806, 15836, 18326, 18356].getD note 0
+def noteBridgeAttemptIndex (note : Nat) : Nat := [15810, 15846, 18346, 18382].getD note 0
 
 def noteBridgeExpectedAttempt (note word : Nat) : CsrExecutableAttempt :=
   attempt (noteBridgeAttemptIndex note + word) (if note < 2 then 12 else 21)
-    (30 * (note % 2) + word) 0
+    (36 * (note % 2) + word) 0
     [(hashInitialIndex (noteBridgeCall note) word, 1), (densePrivateAddress note + 64 * word, 158)] 0
+
+private theorem csr30_entry_mem_exact {chunk : List CsrExecutableAttempt}
+    {entry : CsrExecutableAttempt}
+    (chunkMem : chunk ∈ V8Smz9ProgramCanonicalityCsr30.chunkList)
+    (entryMem : entry ∈ chunk) : entry ∈ exactCsrAttempts := by
+  rw [← V8Smz9ProgramCanonicalityGenerated.csr_chunks_equal_materialized_attempts]
+  apply List.mem_flatten_of_mem _ entryMem
+  unfold V8Smz9ProgramCanonicalityGenerated.csrChunks000
+    V8Smz9ProgramCanonicalityGenerated.csrChunks001
+    V8Smz9ProgramCanonicalityGenerated.csrChunks002
+    V8Smz9ProgramCanonicalityGenerated.csrChunks003
+    V8Smz9ProgramCanonicalityGenerated.csrChunks004
+    V8Smz9ProgramCanonicalityGenerated.csrChunks005
+    V8Smz9ProgramCanonicalityGenerated.csrChunks006
+    V8Smz9ProgramCanonicalityGenerated.csrChunks007
+    V8Smz9ProgramCanonicalityGenerated.csrChunks008
+    V8Smz9ProgramCanonicalityGenerated.csrChunks009
+    V8Smz9ProgramCanonicalityGenerated.csrChunks010
+    V8Smz9ProgramCanonicalityGenerated.csrChunks011
+    V8Smz9ProgramCanonicalityGenerated.csrChunks012
+    V8Smz9ProgramCanonicalityGenerated.csrChunks013
+    V8Smz9ProgramCanonicalityGenerated.csrChunks014
+    V8Smz9ProgramCanonicalityGenerated.csrChunks015
+    V8Smz9ProgramCanonicalityGenerated.csrChunks016
+    V8Smz9ProgramCanonicalityGenerated.csrChunks017
+    V8Smz9ProgramCanonicalityGenerated.csrChunks018
+    V8Smz9ProgramCanonicalityGenerated.csrChunks019
+    V8Smz9ProgramCanonicalityGenerated.csrChunks020
+    V8Smz9ProgramCanonicalityGenerated.csrChunks021
+    V8Smz9ProgramCanonicalityGenerated.csrChunks022
+    V8Smz9ProgramCanonicalityGenerated.csrChunks023
+    V8Smz9ProgramCanonicalityGenerated.csrChunks024
+    V8Smz9ProgramCanonicalityGenerated.csrChunks025
+    V8Smz9ProgramCanonicalityGenerated.csrChunks026
+    V8Smz9ProgramCanonicalityGenerated.csrChunks027
+    V8Smz9ProgramCanonicalityGenerated.csrChunks028
+    V8Smz9ProgramCanonicalityGenerated.csrChunks029
+    V8Smz9ProgramCanonicalityGenerated.csrChunks030
+  simp only [List.mem_append]
+  aesop
+
+private theorem csr35_entry_mem_exact {chunk : List CsrExecutableAttempt}
+    {entry : CsrExecutableAttempt}
+    (chunkMem : chunk ∈ V8Smz9ProgramCanonicalityCsr35.chunkList)
+    (entryMem : entry ∈ chunk) : entry ∈ exactCsrAttempts := by
+  rw [← V8Smz9ProgramCanonicalityGenerated.csr_chunks_equal_materialized_attempts]
+  apply List.mem_flatten_of_mem _ entryMem
+  unfold V8Smz9ProgramCanonicalityGenerated.csrChunks000
+    V8Smz9ProgramCanonicalityGenerated.csrChunks001
+    V8Smz9ProgramCanonicalityGenerated.csrChunks002
+    V8Smz9ProgramCanonicalityGenerated.csrChunks003
+    V8Smz9ProgramCanonicalityGenerated.csrChunks004
+    V8Smz9ProgramCanonicalityGenerated.csrChunks005
+    V8Smz9ProgramCanonicalityGenerated.csrChunks006
+    V8Smz9ProgramCanonicalityGenerated.csrChunks007
+    V8Smz9ProgramCanonicalityGenerated.csrChunks008
+    V8Smz9ProgramCanonicalityGenerated.csrChunks009
+    V8Smz9ProgramCanonicalityGenerated.csrChunks010
+    V8Smz9ProgramCanonicalityGenerated.csrChunks011
+    V8Smz9ProgramCanonicalityGenerated.csrChunks012
+    V8Smz9ProgramCanonicalityGenerated.csrChunks013
+    V8Smz9ProgramCanonicalityGenerated.csrChunks014
+    V8Smz9ProgramCanonicalityGenerated.csrChunks015
+    V8Smz9ProgramCanonicalityGenerated.csrChunks016
+    V8Smz9ProgramCanonicalityGenerated.csrChunks017
+    V8Smz9ProgramCanonicalityGenerated.csrChunks018
+    V8Smz9ProgramCanonicalityGenerated.csrChunks019
+    V8Smz9ProgramCanonicalityGenerated.csrChunks020
+    V8Smz9ProgramCanonicalityGenerated.csrChunks021
+    V8Smz9ProgramCanonicalityGenerated.csrChunks022
+    V8Smz9ProgramCanonicalityGenerated.csrChunks023
+    V8Smz9ProgramCanonicalityGenerated.csrChunks024
+    V8Smz9ProgramCanonicalityGenerated.csrChunks025
+    V8Smz9ProgramCanonicalityGenerated.csrChunks026
+    V8Smz9ProgramCanonicalityGenerated.csrChunks027
+    V8Smz9ProgramCanonicalityGenerated.csrChunks028
+    V8Smz9ProgramCanonicalityGenerated.csrChunks029
+    V8Smz9ProgramCanonicalityGenerated.csrChunks030
+    V8Smz9ProgramCanonicalityGenerated.csrChunks031
+    V8Smz9ProgramCanonicalityGenerated.csrChunks032
+    V8Smz9ProgramCanonicalityGenerated.csrChunks033
+    V8Smz9ProgramCanonicalityGenerated.csrChunks034
+    V8Smz9ProgramCanonicalityGenerated.csrChunks035
+  simp only [List.mem_append]
+  aesop
+
+private theorem exact_attempt_at_global_index {global : Nat} {entry : CsrExecutableAttempt}
+    (member : entry ∈ exactCsrAttempts) (globalIndex : entry.globalIndex = global) :
+    exactCsrAttempts[global]? = some entry := by
+  obtain ⟨index, found⟩ := List.mem_iff_getElem?.mp member
+  have canonical := V8Smz9ProgramCanonicality.checkCsr_sound 565
+    exactLinearCsrCompilerFamilies exactCsrAttempts
+    V8Smz9ProgramCanonicalityGenerated.hgv8rp03_csr_check_passes index entry found
+  have same : index = global := canonical.1.1.symm.trans globalIndex
+  rw [← same]
+  exact found
 
 theorem exact_note_bridge_attempts : ∀ note, note < 4 → ∀ word, word < 2 →
     exactCsrAttempts[noteBridgeAttemptIndex note + word]? =
       some (noteBridgeExpectedAttempt note word) := by
-  have checked : (List.range 4).all (fun note => (List.range 2).all (fun word =>
-      decide (exactCsrAttempts[noteBridgeAttemptIndex note + word]? =
-        some (noteBridgeExpectedAttempt note word)))) = true := by decide
-  simpa only [List.all_eq_true, List.mem_range, decide_eq_true_eq] using checked
+  intro note noteBound word wordBound
+  interval_cases note <;> interval_cases word
+  · apply exact_attempt_at_global_index
+    · apply csr30_entry_mem_exact (chunk := V8Smz9ProgramCanonicalityCsr30.chunk014)
+      · simp [V8Smz9ProgramCanonicalityCsr30.chunkList]
+      · decide
+    · rfl
+  · apply exact_attempt_at_global_index
+    · apply csr30_entry_mem_exact (chunk := V8Smz9ProgramCanonicalityCsr30.chunk014)
+      · simp [V8Smz9ProgramCanonicalityCsr30.chunkList]
+      · decide
+    · rfl
+  · apply exact_attempt_at_global_index
+    · apply csr30_entry_mem_exact (chunk := V8Smz9ProgramCanonicalityCsr30.chunk015)
+      · simp [V8Smz9ProgramCanonicalityCsr30.chunkList]
+      · decide
+    · rfl
+  · apply exact_attempt_at_global_index
+    · apply csr30_entry_mem_exact (chunk := V8Smz9ProgramCanonicalityCsr30.chunk015)
+      · simp [V8Smz9ProgramCanonicalityCsr30.chunkList]
+      · decide
+    · rfl
+  · apply exact_attempt_at_global_index
+    · apply csr35_entry_mem_exact (chunk := V8Smz9ProgramCanonicalityCsr35.chunk013)
+      · simp [V8Smz9ProgramCanonicalityCsr35.chunkList]
+      · decide
+    · rfl
+  · apply exact_attempt_at_global_index
+    · apply csr35_entry_mem_exact (chunk := V8Smz9ProgramCanonicalityCsr35.chunk013)
+      · simp [V8Smz9ProgramCanonicalityCsr35.chunkList]
+      · decide
+    · rfl
+  · apply exact_attempt_at_global_index
+    · apply csr35_entry_mem_exact (chunk := V8Smz9ProgramCanonicalityCsr35.chunk014)
+      · simp [V8Smz9ProgramCanonicalityCsr35.chunkList]
+      · decide
+    · rfl
+  · apply exact_attempt_at_global_index
+    · apply csr35_entry_mem_exact (chunk := V8Smz9ProgramCanonicalityCsr35.chunk014)
+      · simp [V8Smz9ProgramCanonicalityCsr35.chunkList]
+      · decide
+    · rfl
 
 /-- The actual note value and asset sponge words equal the corresponding raw words. -/
 theorem accepted_note_source_bridge {publicWords packed : List Nat}

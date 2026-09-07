@@ -70,7 +70,7 @@ The two new files are additive. Re-running source checks is read-only and requir
 
 ## Artifacts and Notes
 
-The source parser is `scripts/generate_poseidon2_v8_relation_program_components_lean.py`; its `parse_components` function validates the 852,305-byte artifact and its pinned SHA-512 before returning all exact expressions and attempts. The independent read-only audit agrees with the formulas above.
+The source parser is `scripts/generate_poseidon2_v8_relation_program_components_lean.py`; its `parse_components` function validates the current 853,429-byte successor artifact and its pinned SHA-512 before returning all exact expressions and 20,605 attempts. The independent read-only audit agrees with the formulas above.
 
 ## Interfaces and Dependencies
 

@@ -611,6 +611,12 @@ fn validate_compatibility_stablecoin(
         || compatibility.reserved_legacy_stablecoin_commitments != [[0; 6]; 3]
         || (stable.direction == StablecoinPoseidon2V8Direction::Burn
             && !is_zero(&felt_digest_to_words(stable.issuer_authorization)))
+        || statement
+            .balance_assets
+            .iter()
+            .filter(|asset| **asset == compatibility.asset_id)
+            .count()
+            != 1
     {
         return Err(SmallwoodPoseidon2V8SurfaceError::StablecoinSurfaceMismatch);
     }
@@ -2196,6 +2202,64 @@ mod tests {
         assert_eq!(
             mutated.validate(),
             Err(SmallwoodPoseidon2V8SurfaceError::ActionIntentMismatch)
+        );
+    }
+
+    #[test]
+    fn enabled_stablecoin_requires_exactly_one_balance_asset_membership() {
+        let surface = stablecoin_surface();
+        surface.statement.validate_public_structure().unwrap();
+
+        let mut missing = surface.statement;
+        missing.balance_assets = [
+            NATIVE_ASSET_ID,
+            BALANCE_SLOT_PADDING_FIELD_ID,
+            BALANCE_SLOT_PADDING_FIELD_ID,
+            BALANCE_SLOT_PADDING_FIELD_ID,
+        ];
+        missing.stablecoin.action_intent = missing
+            .expected_action_intent()
+            .unwrap()
+            .map(Felt::from_u64);
+        assert_eq!(
+            missing.validate_public_structure(),
+            Err(SmallwoodPoseidon2V8SurfaceError::StablecoinSurfaceMismatch)
+        );
+
+        let disabled = SmallwoodPoseidon2V8PublicStatement::default();
+        assert_eq!(
+            disabled.balance_assets,
+            [
+                NATIVE_ASSET_ID,
+                BALANCE_SLOT_PADDING_FIELD_ID,
+                BALANCE_SLOT_PADDING_FIELD_ID,
+                BALANCE_SLOT_PADDING_FIELD_ID,
+            ]
+        );
+        disabled.validate_public_structure().unwrap();
+    }
+
+    #[test]
+    fn prior_stable_burn_shape_without_balance_asset_is_rejected() {
+        let mut burn = stablecoin_surface().statement;
+        burn.compatibility_stablecoin.issuance_sign = false;
+        burn.stablecoin.direction = StablecoinPoseidon2V8Direction::Burn;
+        burn.stablecoin.issuer_authorization = [Felt::ZERO; 7];
+        burn.balance_assets = [
+            NATIVE_ASSET_ID,
+            BALANCE_SLOT_PADDING_FIELD_ID,
+            BALANCE_SLOT_PADDING_FIELD_ID,
+            BALANCE_SLOT_PADDING_FIELD_ID,
+        ];
+        burn.stablecoin.action_intent = burn.expected_action_intent().unwrap().map(Felt::from_u64);
+
+        assert_eq!(
+            burn.validate_public_structure(),
+            Err(SmallwoodPoseidon2V8SurfaceError::StablecoinSurfaceMismatch)
+        );
+        assert_eq!(
+            SmallwoodPoseidon2V8PublicStatement::try_from_public_words(&burn.to_public_words()),
+            Err(SmallwoodPoseidon2V8SurfaceError::StablecoinSurfaceMismatch)
         );
     }
 

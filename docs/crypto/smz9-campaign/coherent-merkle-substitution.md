@@ -235,9 +235,9 @@ For current coefficient sampling, the source cap is
 `ceil((requested_words + 32)/8)`. The DECS matrix uses 700 field words, so
 `L=92`. PIOP batching uses `5 * max(830, retainedLinearRows)`, not merely the
 830 nonlinear roots. The active program's 15,561 nonempty raw-replication
-rows already give a lower bound; all CSR attempts number 20,569. Under those
-retained-count bounds, gamma uses 77,805–102,845 words and a cap of
-9,730–12,860 blocks. Its exact count depends on the public statement.
+rows already give a lower bound; all CSR attempts number 20,605. Under those
+retained-count bounds, gamma uses 77,805–103,025 words and a cap of
+9,730–12,883 blocks. Its exact count depends on the public statement.
 DECS has 47,104 raw bits; a common maximum-width compiler has 6,584,320 raw
 bits per vector answer. The generic two-query simulation is unchanged, but
 its workspace/gate accounting must include this corrected width.

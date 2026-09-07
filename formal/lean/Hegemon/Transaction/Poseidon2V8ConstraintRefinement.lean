@@ -20,13 +20,13 @@ pre-S-box wires and 166 equations per group, a 364-row hash kernel at relation r
 
 The source adapter now constructs its linear table directly from the statement-independent
 `HGV8RP03` CSR program and executes the relation-id-bound nonlinear expression DAG in every one
-of the 64 packed lanes.  Its 852,305-byte transcript, SHA-512 known answer, exact linear-count
-range, and maximum constraint union are frozen.  This closes the universal source-program
-specialization boundary for every canonical statement and packed witness, rather than only for
-known-answer vectors.  What remains absent is a verified-compiler or machine-code theorem tying
-an arbitrary production binary to this source predicate, plus a theorem equating the executable
-program with the higher-level transaction semantic target.  Neither source refinement nor the
-hash-kernel theorem is production authority.
+of the 64 packed lanes.  Its 853,429-byte successor transcript, SHA-512 known answer, exact
+linear-count range, and maximum constraint union are frozen.  This closes the universal
+source-program specialization boundary for every canonical statement and packed witness, rather
+than only for known-answer vectors.  What remains absent is a verified-compiler or machine-code
+theorem tying an arbitrary production binary to this source predicate, plus a theorem equating
+the executable program with the higher-level transaction semantic target.  Neither source
+refinement nor the hash-kernel theorem is production authority.
 -/
 
 def semanticTargetId : String :=
@@ -68,8 +68,8 @@ def relationRowCount : Nat := 686
 def proofGeometryColumnCount : Nat := 368
 def packedWitnessWordCount : Nat := relationRowCount * packingFactor
 def nonlinearIdentityCount : Nat := 830
-def minimumStatementLinearConstraintCount : Nat := 19899
-def maximumStatementLinearConstraintCount : Nat := 20473
+def minimumStatementLinearConstraintCount : Nat := 19935
+def maximumStatementLinearConstraintCount : Nat := 20509
 def enginePiopGammaWidth : Nat :=
   max nonlinearIdentityCount maximumStatementLinearConstraintCount
 def maximumSummedIdentityUnionCount : Nat :=
@@ -98,10 +98,10 @@ theorem source_derived_v8_geometry_is_exact :
       ∧ relationRowCount = 686
       ∧ proofGeometryColumnCount = 368
       ∧ nonlinearIdentityCount = 830
-      ∧ minimumStatementLinearConstraintCount = 19899
-      ∧ maximumStatementLinearConstraintCount = 20473
-      ∧ enginePiopGammaWidth = 20473
-      ∧ maximumSummedIdentityUnionCount = 21303
+      ∧ minimumStatementLinearConstraintCount = 19935
+      ∧ maximumStatementLinearConstraintCount = 20509
+      ∧ enginePiopGammaWidth = 20509
+      ∧ maximumSummedIdentityUnionCount = 21339
       ∧ packingFactor = 64
       ∧ packedWitnessWordCount = 43904
       ∧ relationConstraintDegree = 8 := by
@@ -331,7 +331,8 @@ theorem source_executable_adapter_checks_all_64_lanes
 
 /--
 Required universal bridge from the executable, statement-specialized Rust CSR builder to the
-statement-independent executable CSR program committed by `HGV8RP03`.
+statement-independent executable CSR program whose exact bytes, SHA-512, and native relation ID
+are fixed by `Poseidon2V8RelationProgram`. `HGV8RP03` is only the shared format magic.
 -/
 structure RustExecutableCsrProgramRefinementReceipt
     (Statement : Type u)

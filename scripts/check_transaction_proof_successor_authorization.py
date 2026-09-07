@@ -51,20 +51,20 @@ RELEASE_WORKFLOW_SHA512 = (
     "b2537b5eeb458762aef9f5da385a459e32567099c196f58eac909ae57f0ed6b"
 )
 NON_AUTHORIZING_DIAGNOSTIC_SECURITY_REPORT_SHA512 = (
-    "a87a7c6b3ae4f15352c21b51487b82912578aad07dbbc02bf419556462dcb83b"
-    "1f441132fb2048a928b6ffe173963b905181d80486010748fad7b767419932b8"
+    "087fd1f3dc04f653b6d380f104467842c1b4b42b7ba0fabfbe75220f3664f0e"
+    "870b80f92bda748b571cce3768b0386cf870a5586f92d0547e780518b2e04a881"
 )
 NON_AUTHORIZING_DIAGNOSTIC_SECURITY_REPORT_PATH = (
     "docs/crypto/smallwood_poseidon2_v8_smz9_source_security_report.json"
 )
-NON_AUTHORIZING_DIAGNOSTIC_SECURITY_REPORT_BYTES = 134_914
+NON_AUTHORIZING_DIAGNOSTIC_SECURITY_REPORT_BYTES = 136_119
 EXECUTABLE_ZK_REFINEMENT_REPORT_PATH = (
     "docs/crypto/smallwood_poseidon2_v8_smz9_executable_zk_refinement.json"
 )
 EXECUTABLE_ZK_REFINEMENT_REPORT_BYTES = 4_230
 EXECUTABLE_ZK_REFINEMENT_REPORT_SHA512 = (
-    "0efabeb6d53f2557b12f21747fecbcc4694a3ed44a78075804908a6c6b0a028d"
-    "4b84c7b85a2c33bf62f6248dd0b3ef123953c7f89d31ab386d30b0bfe34a73c8"
+    "02d3e86eb1f9d5e33091611cbe8786e4ef7c38411cbc48a92b4b926e94f76975"
+    "2b3d1e61173b92d959c697b2c45867a993335c69a3cdb22c506a0ec695a353dd"
 )
 MAX_SELECTION_JSON_BYTES = 64 * 1024
 MAX_RELEASE_WORKFLOW_BYTES = 512 * 1024
@@ -1067,10 +1067,10 @@ RETAINED_GENERATION_PROVENANCE_KEYS = {
     "proof_sha512",
 }
 RETAINED_RELATION_PROGRAM_MAGIC = "HGV8RP03"
-RETAINED_RELATION_PROGRAM_BYTES = 852_305
+RETAINED_RELATION_PROGRAM_BYTES = 853_429
 RETAINED_RELATION_PROGRAM_SHA512 = (
-    "8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e4"
-    "6a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3"
+    "180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d22"
+    "39e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84"
 )
 RETAINED_PROJECTED_PENDING_ACTION_BYTES = 128_522
 RETAINED_MAXIMUM_RECORD_BYTE_QUOTIENT_DIAGNOSTIC = (
@@ -1152,7 +1152,7 @@ RETAINED_ARTIFACT_GEOMETRY = {
     "packed_witness_words": 43_904,
     "constraint_degree": 8,
     "nonlinear_constraints": 830,
-    "linear_constraints": 19_899,
+    "linear_constraints": 19_935,
     "auxiliary_words": 0,
     "hash_calls": 125,
 }
@@ -3451,8 +3451,8 @@ def validate_source_security_report_document(
         "packing_factor": 64,
         "constraint_degree": 8,
         "nonlinear_identity_count": 830,
-        "maximum_linear_identity_count": 20_473,
-        "maximum_summed_identity_union": 21_303,
+        "maximum_linear_identity_count": 20_509,
+        "maximum_summed_identity_union": 21_339,
     }:
         reject("source-derived composed security report relation geometry mismatch")
     if {
@@ -3676,9 +3676,9 @@ def validate_source_security_report_document(
         "field_xof_minimum_rejections": report.get("field_xof_minimum_rejections"),
         "field_xof_request_union": report.get("field_xof_request_union"),
     } != {
-        "field_xof_requested_words": 102_365,
-        "field_xof_candidate_words": 102_400,
-        "field_xof_minimum_rejections": 36,
+        "field_xof_requested_words": 102_545,
+        "field_xof_candidate_words": 102_584,
+        "field_xof_minimum_rejections": 40,
         "field_xof_request_union": 1 << 25,
     }:
         reject("source-derived composed security report field-XOF parameter mismatch")
@@ -3725,7 +3725,7 @@ def validate_source_security_report_document(
             "conditional_completeness_abort_finite_history"
         ].get("security_bits_floor"),
     } != {
-        "field_xof_abort_union": 665,
+        "field_xof_abort_union": 748,
         "canonical_piop_opening_abort": 869,
         "fixed_decs_sampler_abort": 488,
         "conditional_completeness_abort_finite_history": 467,

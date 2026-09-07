@@ -2686,8 +2686,8 @@ mod tests {
         assert_eq!(report.row_count, 686);
         assert_eq!(report.proof_columns, 368);
         assert_eq!(report.nonlinear_identity_count, 830);
-        assert_eq!(report.maximum_linear_identity_count, 20_473);
-        assert_eq!(report.maximum_summed_identity_union, 21_303);
+        assert_eq!(report.maximum_linear_identity_count, 20_509);
+        assert_eq!(report.maximum_summed_identity_union, 21_339);
         assert_eq!(report.proof_wire_magic_ascii, "SMZ9");
         assert_eq!(report.profile_wire_id, 6);
         assert_eq!(report.piop_openings, 6);
@@ -2730,9 +2730,9 @@ mod tests {
         assert!((288.79..288.80).contains(&report.interactive_aggregate.approximate_security_bits));
         assert_eq!(report.ideal_cms_qrom.security_bits_floor, 157);
         assert!((157.21..157.22).contains(&report.ideal_cms_qrom.approximate_security_bits));
-        assert_eq!(report.field_xof_requested_words, 102_365);
-        assert_eq!(report.field_xof_candidate_words, 102_400);
-        assert_eq!(report.field_xof_minimum_rejections, 36);
+        assert_eq!(report.field_xof_requested_words, 102_545);
+        assert_eq!(report.field_xof_candidate_words, 102_584);
+        assert_eq!(report.field_xof_minimum_rejections, 40);
         assert_eq!(report.field_xof_request_union, 1 << 25);
         assert_eq!(
             report.canonical_piop_opening_abort.numerator_decimal,
@@ -2740,7 +2740,7 @@ mod tests {
                 .pow(SMALLWOOD_LEVEL5_MAX_PIOP_NONCE_TRIALS)
                 .to_str_radix(10)
         );
-        assert_eq!(report.field_xof_abort_union.security_bits_floor, 665);
+        assert_eq!(report.field_xof_abort_union.security_bits_floor, 748);
         assert_eq!(report.canonical_piop_opening_abort.security_bits_floor, 869);
         assert_eq!(report.fixed_decs_sampler_abort.security_bits_floor, 488);
         assert_eq!(

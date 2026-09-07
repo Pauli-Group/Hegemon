@@ -1211,17 +1211,31 @@ fn bind_sponge(
         let call = call_start + block;
         for lane in 0..POSEIDON2_WIDTH16_RATE {
             let input_index = block * POSEIDON2_WIDTH16_RATE + lane;
-            if let Some(source) = inputs.get(input_index).and_then(Clone::clone) {
-                let expected = if block == 0 {
-                    source
-                } else {
-                    LinearExpression::witness(hash_final_index(call - 1, lane)).add(source)
-                };
-                csr.bind(hash_initial_index(call, lane), expected);
-            } else if block > 0 {
-                // An omitted source is a private absorbed word, not permission to break chaining.
-                // Its value is represented by the initial-minus-previous-final difference, so no
-                // rate-lane equation is needed here.
+            match inputs.get(input_index).cloned() {
+                Some(Some(source)) => {
+                    let expected = if block == 0 {
+                        source
+                    } else {
+                        LinearExpression::witness(hash_final_index(call - 1, lane)).add(source)
+                    };
+                    csr.bind(hash_initial_index(call, lane), expected);
+                }
+                Some(None) => {
+                    // An explicit private source is represented by the
+                    // initial-minus-previous-final difference, so no rate-lane equation is
+                    // emitted. First-block private sources are the initial lane itself.
+                }
+                None => {
+                    // A lane beyond the declared input is canonical sponge padding, not a
+                    // private absorbed word. It is zero in the first block and preserves the
+                    // previous final state in every later block.
+                    let expected = if block == 0 {
+                        LinearExpression::default()
+                    } else {
+                        LinearExpression::witness(hash_final_index(call - 1, lane))
+                    };
+                    csr.bind(hash_initial_index(call, lane), expected);
+                }
             }
         }
         for lane in POSEIDON2_WIDTH16_RATE..POSEIDON2_WIDTH16_WIDTH {
@@ -4297,6 +4311,116 @@ pub fn compile_smallwood_poseidon2_v8_relation(
 mod tests {
     use super::*;
 
+    fn numeric_row_binding_witness<'a>(
+        builder: &'a CsrBuilder,
+        family: &'static str,
+        witness_index: usize,
+    ) -> Option<&'a CsrNormalizedRow> {
+        let family_index = SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES
+            .iter()
+            .position(|candidate| candidate.name == family)
+            .expect("test family exists");
+        builder.rows_by_family[family_index]
+            .iter()
+            .filter_map(Option::as_ref)
+            .find(|row| row.terms.iter().any(|(index, _)| *index == witness_index))
+    }
+
+    #[test]
+    fn output_note_final_block_tail_lanes_preserve_previous_final_state() {
+        let call = output_note_call(0);
+        let mut inputs = vec![None; 18];
+        inputs[0] = Some(LinearExpression::witness(raw_index(output_value_row(0))));
+        inputs[1] = Some(LinearExpression::witness(raw_index(output_asset_row(0))));
+        for limb in 0..4 {
+            inputs[14 + limb] = Some(LinearExpression::witness(raw_index(output_auth_key_row(
+                0, limb,
+            ))));
+        }
+
+        let mut builder = CsrBuilder::new();
+        builder.set_family("hash.output_note_initial");
+        assert_eq!(
+            bind_sponge(&mut builder, call, NOTE_DOMAIN_TAG, &inputs),
+            call + 2
+        );
+
+        for lane in 2..POSEIDON2_WIDTH16_RATE {
+            let initial = hash_initial_index(call + 2, lane);
+            let previous_final = hash_final_index(call + 1, lane);
+            let row = numeric_row_binding_witness(&builder, "hash.output_note_initial", initial)
+                .expect("each out-of-range final-block lane is constrained");
+            assert_eq!(row.target, 0, "lane {lane}");
+            assert_eq!(row.terms.len(), 2, "lane {lane}");
+            assert_eq!(
+                row.terms.iter().find(|(index, _)| *index == initial),
+                Some(&(initial, 1)),
+                "lane {lane}"
+            );
+            assert_eq!(
+                row.terms.iter().find(|(index, _)| *index == previous_final),
+                Some(&(previous_final, NEG_ONE)),
+                "lane {lane}"
+            );
+        }
+    }
+
+    #[test]
+    fn in_range_private_sponge_hole_remains_unbound() {
+        let call = output_note_call(0);
+        let inputs = vec![None; 18];
+        let mut builder = CsrBuilder::new();
+        builder.set_family("hash.output_note_initial");
+        bind_sponge(&mut builder, call, NOTE_DOMAIN_TAG, &inputs);
+
+        let first_block_private_hole = hash_initial_index(call, 2);
+        assert!(
+            numeric_row_binding_witness(
+                &builder,
+                "hash.output_note_initial",
+                first_block_private_hole,
+            )
+            .is_none(),
+            "an explicit first-block None remains an intentional private absorbed word"
+        );
+
+        let private_hole = hash_initial_index(call + 1, 2);
+        assert!(
+            numeric_row_binding_witness(&builder, "hash.output_note_initial", private_hole,)
+                .is_none(),
+            "an explicit in-range None remains an intentional private absorbed word"
+        );
+        assert!(
+            numeric_row_binding_witness(
+                &builder,
+                "hash.output_note_initial",
+                hash_initial_index(call + 2, 2),
+            )
+            .is_some(),
+            "the same lane becomes constrained once its input index is out of range"
+        );
+
+        let mut first_block_builder = CsrBuilder::new();
+        first_block_builder.set_family("hash.output_note_initial");
+        bind_sponge(
+            &mut first_block_builder,
+            call,
+            NOTE_DOMAIN_TAG,
+            &inputs[..2],
+        );
+        for lane in 2..POSEIDON2_WIDTH16_RATE {
+            let initial = hash_initial_index(call, lane);
+            let row = numeric_row_binding_witness(
+                &first_block_builder,
+                "hash.output_note_initial",
+                initial,
+            )
+            .expect("out-of-range first-block lane is constrained");
+            assert_eq!(row.terms, vec![(initial, 1)], "lane {lane}");
+            assert_eq!(row.target, 0, "lane {lane}");
+        }
+    }
+
     fn default_numeric_csr() -> ([u64; SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS], FinalizedCsr) {
         let public = SmallwoodPoseidon2V8PublicStatement::default().to_public_words();
         let mut builder = CsrBuilder::new();
@@ -4338,7 +4462,7 @@ mod tests {
         assert_eq!(adapter.geometry().hash_calls, 125);
         assert_eq!(adapter.geometry().auxiliary_words, 0);
         assert_eq!(adapter.geometry().nonlinear_constraints, 830);
-        assert_eq!(adapter.geometry().linear_constraints, 20_473);
+        assert_eq!(adapter.geometry().linear_constraints, 20_509);
         assert!(adapter.compiler_complete());
         assert_ne!(adapter.relation_digest(), &[0; 48]);
         let refinement = adapter.source_program_refinement();
@@ -4347,7 +4471,7 @@ mod tests {
         assert_eq!(refinement.nonlinear_expression_nodes, 8_271);
         assert_eq!(refinement.nonlinear_roots, 830);
         assert_eq!(refinement.csr_expression_nodes, 565);
-        assert_eq!(refinement.csr_attempts, 20_569);
+        assert_eq!(refinement.csr_attempts, 20_605);
         assert_eq!(
             refinement.emitted_linear_constraints,
             adapter.geometry().linear_constraints

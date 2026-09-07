@@ -1,4 +1,4 @@
-# Complete the unchanged SMZ9 security argument
+# Complete the corrected SMZ9 security argument
 
 This living ExecPlan follows `.agent/PLANS.md` and continues
 `.agent/SMZ9_JOINT_ACCEPTANCE_EXECPLAN.md`. A checked intermediate theorem is not
@@ -6,18 +6,23 @@ completion of this plan.
 
 ## Purpose / Big Picture
 
-The endpoint is a complete security argument for the actual HGV8RP03 transaction
-relation and unchanged SMZ9/profile-6 proof. Privacy must use a witness-free
+The endpoint is a complete security argument for the exact transaction relation
+and SMZ9/profile-6 proof selected after the two verified HGV8RP03/typed-semantics
+mismatches are repaired. Privacy must use a witness-free
 simulator with the adversary's persistent quantum oracle. Knowledge soundness
 must construct an efficient extractor from the candidate verifier's accepted
 bytes and return a witness satisfying `ExactV8RelationSemanticValid`. The
 always-denying outer production gate cannot make either theorem vacuous.
 
-Preserve the self-contained bytes through wallet, RPC, relay, mempool, mining,
+The repair is not a relabeling of HGV8RP03. Constraining out-of-range sponge
+padding changes the executable relation bytes and therefore requires a new
+relation digest, regenerated source and Lean artifacts, new retained proofs, and
+fresh review. Old proof bytes stay nonauthorizing historical evidence. Preserve
+the new self-contained bytes through wallet, RPC, relay, mempool, mining,
 blocks, sync, restart, reorg and fresh-node verification. Do not change the
-relation, wire, profile, primitive, authority, network or dependency to make an
+wire, profile, primitive, authority, network or dependency merely to make an
 intermediate theorem easier. No push, deployment or public submission is part
-of this work. The exact endpoints and resource accounting remain those in
+of this work. The security endpoints and resource accounting remain those in
 `docs/crypto/smz9-campaign/security-contract.md`.
 
 ## Progress
@@ -51,6 +56,80 @@ of this work. The exact endpoints and resource accounting remain those in
 - [x] Constructed the actual total typed source projection and proved note
   value, direction/position and one-hot authorization-mode properties from
   arbitrary packed acceptance; the full semantic conjunction remains open.
+- [x] Derived the full unchanged canonical-witness predicate and per-asset
+  integer balance from the actual accepted packed program. The balance proof
+  includes native, ordinary nonnative, mint and burn branches with no-wrap
+  bounds; hash/authorization/stable-transition families remain separate.
+- [x] Constructed the current unbatched PIOP candidate from arbitrary decoded
+  source polynomials and proved full candidate satisfaction implies actual
+  unchanged packed-interpreter acceptance, including total Option evaluation
+  and the impossible-empty normalized-CSR fallback case.
+- [x] (2026-09-07 19:19 UTC) Ran the integrated formal-crypto build and axiom
+  audit over 308 designated declarations: 2,797 build jobs passed, every audited
+  declaration used only `propext`, `Classical.choice`, and `Quot.sound`, and all
+  generated proof-wire files remained byte-identical.
+- [x] Proved exact finite capped-sampler tails: DECS abort at most `2^-976`,
+  successor maximum-size gamma abort at most `2^-773`, and every permitted retained-row
+  gamma abort at most `2^-629`. The `Q^2` result is arithmetic over fixed-vector
+  laws, not an adaptive-QROM theorem; a later `(2*Q_raw)^2` use pays its factor
+  four explicitly.
+- [x] Strictly checked the non-single authorization source prefix and the
+  current repeated-request compiler. The former binds Boolean/one-hot bitmap
+  transitions and the raw signer tag but not yet the complete canonical
+  authorization relation. The latter compiles retained updates and charges two
+  raw calls per logical read, but does not yet supply the external adaptive
+  reprogramming theorem.
+- [x] (2026-09-07 19:35 UTC) Kernel-proved that the old universal
+  typed-to-HGV8RP03 completeness claim is false: a typed-valid stable burn whose
+  stable asset is omitted from `balanceAssets` is rejected for every packed
+  witness by public source root 1042.
+- [x] (2026-09-07 20:17 UTC) Daybreak independently constructed a raw HGV8RP03
+  counterexample for the final partial output-note sponge block. It preserves
+  the decoded typed witness and passes all 20,569 CSR attempts and 53,120
+  nonlinear evaluations, while violating canonical chaining at call 75 lane 2.
+  The honest materializer rejects it only at `NonCanonicalTypedLowering`.
+- [x] Traced the independent profile-6 verifier and confirmed it checks the
+  HGV8RP03 CSR/nonlinear relation but never invokes the prover-side canonical
+  typed-lowering guard. Production remains fail-closed because the source
+  capability is absent.
+- [x] Repair the two relation mismatches: bind every out-of-range sponge rate
+  lane to canonical no-absorption chaining, and require an enabled stable asset
+  exactly once in the typed/public balance list. Explicit in-range private
+  sponge holes remain unbound. The focused Rust regressions pass.
+- [x] Regenerate the exact source-owned relation program and digest-dependent
+  source/Lean, conformance, policy and transport fixtures under the 853,429-byte
+  program SHA-512 `180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`.
+  `HGV8RP03` remains only the format-lineage magic; the 48-byte digest prefix is
+  the relation discriminator. Never reinterpret old HGV8RP03-format proofs
+  under the repaired digest.
+- [x] (2026-09-07 21:38 UTC) Integrate the repaired relation, non-single
+  authorization, disabled stable transition, bounded enabled-stable arithmetic,
+  whole-view observation, coherent extraction, and source-codec endpoints. The
+  complete formal-crypto gate passed 2,806 jobs and audited all 376 designated
+  declarations under the existing axiom allowlist; three wire vectors and 48
+  generated relation modules (2,266,857 source bytes) matched exactly.
+- [x] (2026-09-07 21:44 UTC) Run the post-review Rust coverage: the focused
+  first-block private-hole and wrong-new-signer-tag regressions each passed,
+  the exhaustive relation target passed 10/10, and `cargo fmt --all -- --check`
+  passed.
+- [x] Record the endpoint decision dossier: P7, K8, and R0 are unavailable in
+  the current proof graph, their constructor-free premise records cannot be
+  bypassed by local gate results, and production stays fail-closed.
+- [x] (2026-09-07 22:50 UTC) Preserve the final formal-core boundary exactly.
+  Preflight passed. The vector script passed its repaired-relation/source and
+  early consumer checks, then was interrupted at phase 4/14 when it reached a
+  native-node SIGTERM smoke step forbidden by this continuation's no-node
+  scope (exit 130); no listener or `hegemon-node` process remained, and the
+  whole vector script is not recorded as passing. The policy script passed the
+  dependency, inventory, system-model, 121-claim, 121-node blueprint and 2/2
+  bridge-vector stages, then failed closed at phase 12/14 because the native
+  BLAKE2b-384 Boolean transaction relation is unsupported and legacy Poseidon
+  review bundles cannot authorize production (exit 1); phases 13/14 were not
+  reached. Neither script was bypassed, weakened or rerun past its boundary.
+- [ ] Generate and retain fresh primary and independent proofs for the repaired
+  digest, then rerun the exact carrier/lifecycle evidence. The old retained
+  bundles remain immutable historical evidence; proof generation and node
+  execution were not authorized by this continuation.
 - [ ] Mechanize the joint PIOP/DECS mask change of variables and compose the
   generated whole view with actual opening maps and abort branches.
 - [ ] Prove the physical hidden-program removal inequality, its indexed-tape
@@ -79,6 +158,17 @@ entire canonical public-word shape: the frontend performs that admission.
 The semantic receipt now uses the actual admitted-public domain instead of
 asking for a false raw-acceptance implication. This is not a proof that all
 remaining private semantic families follow from acceptance.
+
+Two authorization-specification mismatches were independently source-checked.
+The transaction PRF selects the first active input, including the admitted
+second-input-only case, rather than always reading input zero. The approval
+predicate also omitted the source's binding from the newly approved bitmap
+slot to all five words of the transaction signer's policy tag. The source
+membership/bitmap constraints enforce that identity at
+`smallwood_poseidon2_v8_semantics.rs:800-825`. The semantic model now includes
+`ApprovalSignerBound`; it is strengthened to reflect existing execution, not
+used to change the accepted protocol. Both corrections require fresh base
+formal checks and source-content digests.
 
 The old `ProductionConstraintExpression` and the actual 8,271-node
 `FieldExpression` DAG are different interfaces. Generic public PIOP recovery
@@ -113,12 +203,37 @@ reduces arbitrary-source recovery to a sample-weighted, exact-support line
 agreement bound. The desired finite bound at agreement threshold 416 is not
 proved. No asymptotic capacity statement supplies its missing constant.
 
+The executable sponge builder conflated an in-range `None` (a deliberately
+private absorbed word) with `inputs.get(input_index) = None` beyond the final
+input. For an 18-word output note, final call 75 rate lanes 2 through 7 were
+therefore unconstrained instead of copied from call 74. A synthetic one-output
+assignment changes lane 2, recomputes its hash trace and dependent action intent,
+and still satisfies the entire pinned HGV8RP03 CSR/nonlinear program. The
+canonical typed-lowering comparison is not part of independent proof
+verification, so HGV8RP03 knowledge cannot be promoted to knowledge of the
+typed relation.
+
+The opposite-direction mismatch is public and independent of private witness
+choices. The typed public predicate allowed an enabled stable asset to be absent
+from all four canonical balance slots, while HGV8RP03 root 1042 requires
+membership. A concrete asset-1001 burn is fully typed-valid but has root value
+1001 for every packed assignment. This is a completeness rejection, not
+inflation. Strengthening typed/public admission to the already-enforced packed
+membership rule preserves the intended balance semantics.
+
 ## Decision Log
 
 Use the complete eager simulator as the first privacy target. Its public proof
 format is unchanged; proving the compact simulator's different sampling law is
 not necessary to exhibit a witness-free simulator. Retain all correlated oracle
 entries until an explicit quantum transition removes them.
+
+After the user instructed the team to complete the work on 2026-09-07, repair
+the verified relation/specification mismatches rather than attempt to prove a
+false unchanged-refinement statement. The padding repair strengthens the
+executable relation and creates a successor identity. The stable-membership
+repair strengthens typed/public admission to match the existing packed rule.
+Neither repair authorizes production or permits old artifacts to be relabeled.
 
 The coordinator owns this plan, shared imports, inventory, builds and git.
 Authors own only the new files assigned below. Initial review checkpoints are
@@ -246,6 +361,22 @@ only two independently verified unused incremental Cargo caches were removed
 There is no 40 GiB stop condition. Per-process memory limits and small
 certificate chunks are used where an actual oversized elaboration is found.
 
+At about 18:11 UTC, the root-owned CurrentSourceAcceptance module passed
+strict Lean. Its complete decoded-candidate-to-packed-acceptance theorem does
+not take evaluator success or decoded witness validity as an assumption. It
+uses the source's unconditional zero-coordinate attempt 19262 to eliminate
+the impossible-empty normalized CSR case. The full balance endpoint passed
+strict Lean independently; both await current-base cache/axiom integration.
+
+A third independent semantic-target mismatch was verified against actual
+hash-schedule lines 965–981, CSR lines 1405–1422, and the single-key public
+shape validator: V8AuthorizationValid always selected input zero's key even
+when only input one was active. The coordinator corrected the target to the
+source's first-active key selection (four zeros if neither is active) and
+added three strict-passing regression lemmas. No Rust/wire behavior changed.
+Refresh the base caches, affected theorem inventory, semantic-source digest,
+blueprint content hashes and relevant gates before the next local commit.
+
 At approximately 16:46 UTC, the complete crypto gate passed: 2,770 jobs,
 207 credited declarations under the standard axiom allowlist, unchanged wire
 vectors, and all 48 generated HGV8RP03 files (2,263,766 bytes). This includes
@@ -276,14 +407,19 @@ Unfrozen CoherentMerkleInstrument, CurrentPublicContext, CappedRawSampler,
 SemanticCanonicalWitness, SemanticCryptographicLinks and current unrestricted
 MCA research remain outside this integration and outside the local checkpoint.
 
-The public CSR binding then exposed a source gamma-count error before landing:
+The public CSR binding then exposed a source gamma-count error before landing
+at the pre-repair checkpoint:
 `derive_gamma_prime` uses five times the maximum of nonlinear and retained
 linear counts, not five times 830. The 15,561 raw-replication rows already
-exceed 830; the upper bound is 20,569 attempts. RawCounterCompiler's old
-4150-word numerical facts remain true only as examples and are renamed as
-such. The corrected conditional cap is 9,730–12,860 blocks. The generic
-two-query law remains valid, with larger workspace. Recheck the modified
-compiler and integrated inventory before committing this checkpoint.
+exceed 830; that program's upper bound was 20,569 attempts.
+The old 4,150-word RawCounterCompiler numerical facts remain true only as
+examples and are renamed as such. The historical corrected conditional cap was
+9,730–12,860 blocks. After
+the successor relation added 36 canonical padding attempts, the current upper
+bound is 20,605 attempts and the current conditional cap is 9,730–12,883
+blocks. The generic two-query law remains valid, with larger workspace. Recheck
+the modified compiler and integrated inventory before committing this
+checkpoint.
 
 The corrected compiler and its added cap endpoint now pass the full gate:
 2,776 jobs and 238 allowed-axiom declarations, unchanged wire/generated
@@ -308,7 +444,99 @@ measured database for a commitment that may first appear inside a coherent
 Fiat--Shamir query. No complete security theorem or production authority has
 been constructed by this continuation.
 
+At approximately 17:39 UTC the reviewed 238-root checkpoint landed locally as
+`9f3e8aea` (58 files). It was not pushed or deployed. The three pre-existing
+instruction/skill edits were excluded. The full unchanged canonical-witness
+predicate has subsequently passed strict checks and its seven principal
+standard-axiom audits; it is no longer an open semantic-shape obligation.
+CurrentPublicContext and CoherentMerkleInstrument also passed source review
+and central cache builds and are being added to the next integrated inventory.
+
+The coordinator owns the new DecodedPolynomialSource module and its dossier:
+arbitrary calculated DECS rows now produce exact source heads, degree-69
+witness columns, degree-488/132 masks, canonical packed evaluations, and a
+current unbatched PIOP candidate built from all actual nonlinear roots and
+retained public CSR rows. The full module passed strict Lean at about 17:49
+UTC. Its finite soundness endpoint is `p^-5 + epsilon3` for failure of the
+explicit generated normalized source relation. Accepted-byte opening binding
+and the normalized-relation/interpreter converse are still separate work.
+
+The full coherent multi-answer Partition commutator also passed strict Lean:
+the proved conservative constant is `192 I`, giving `576t/2^512` for the
+actual raw source partition, with arbitrary superposed target/answer/workspace
+and no target-count factor. This does not silently adopt the sharper external
+`80 I` or claim an efficient answer encoding. Its source review is complete;
+central caching and axiom integration are next.
+
+Actual aggregate memory pressure was observed at about 17:48 UTC with seven
+simultaneous bounded Lean checks and over 11 GiB of compressed memory. The
+coordinator reduced verification to at most two global processes. Other lanes
+continue source work, with serialized check grants. This is a measured RAM
+constraint, not the withdrawn free-disk cutoff. No source or retained artifact
+was lost. Interpolation's central cache passed 1,861 jobs and is available to
+the actual integer-balance lane.
+
+At approximately 18:31 UTC the hash dependency and root certificates and their
+arbitrary-acceptance source replay passed central caches (1,863 jobs). The local
+Poseidon2 templates and complete 31-step composition also passed (1,649 jobs),
+with all sixteen output lanes related to the pinned kernel. Actual generated
+DAG instantiation is the next checked boundary. The 466-line authorization
+prefix separately passed strict Lean for single-key zeros, approval/final
+activity, shared opening fields, and final-next accumulator zeros; the full
+authorization predicate is not yet proved.
+
+The coordinator owns new `SmallWoodV8Smz9CurrentSourceAcceptance.lean` and
+`current-source-acceptance-proof.md`, including all interpreter Option paths,
+the independently forced normalized-CSR fallback zero, and canonical field
+lifting. It passed strict Lean before the later authorization-specification
+correction; cache refresh and integrated audits remain necessary.
+
+The coordinator also owns new `SmallWoodV8Smz9PiopReconstruction.lean` and
+`piop-reconstruction-proof.md`: construct the actual six-point restore and
+linear correction from the transmitted 483/126 high coefficients, then relate
+the reconstructed 489/132 hash transcript to the current candidate equations.
+This does not assume that a post-opening reconstructed transcript was already
+fixed before the opening challenge. That hash/chronology binding and the
+decoded PCS evaluation-trace binding remain explicit separate obligations.
+
+The capped sampler's maximum-size gamma case is not its uniform worst case:
+capacity minus requested count plus one varies between 33 and 40. For example,
+102,840 requested words have 102,872 candidates and rejection threshold 33,
+whereas 102,845 words have threshold 36. The numerical tail follow-up therefore
+uses threshold 33 and capacity at most 102,880 for the all-public-context bound.
+
 ## Interfaces and Dependencies
+
+At approximately 19:18 UTC the integrated crypto gate passed 2,797 jobs and
+audited 308 designated declarations against the existing kernel-axiom allowlist.
+That historical checkpoint was superseded at approximately 21:38 UTC: the
+complete repaired-relation gate passed 2,806 jobs and all 376 credited
+declarations, with the same allowed axiom sets, three unchanged wire-vector
+files, and exact agreement across 48 generated modules totaling 2,266,857
+source bytes. Newly integrated endpoints include the actual packed-to-integer
+balance proof, accepted hash-call equality to the pinned Poseidon2 permutation,
+current decoded-candidate-to-interpreter acceptance, exact six-opening PIOP
+reconstruction, executed chronological privacy comparison, literal capped byte
+sampler, coherent vector extraction, bounded trace codec, disabled stable
+transition, and bounded enabled-stable arithmetic. These are intermediate
+mathematical results; the complete security contract remains unproved and
+production unauthorized.
+
+The source-to-sponge obstruction was confirmed by an active-output
+countermodel against the historical 852,305-byte relation. The repaired source
+now distinguishes explicit in-range private holes from out-of-range padding and
+binds all 36 missing padding attempts. A focused regression preserves the
+private-hole behavior. This changes the executable relation to 853,429 bytes and
+SHA-512 `180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`;
+historical proofs cannot be reused.
+
+The enabled-stable completeness mismatch was also confirmed and repaired at the
+typed/public admission boundary: mint and burn now require the stable asset
+exactly once in the canonical balance list, matching packed root 1042. The old
+asset-1001 burn remains historical counterexample evidence, not a counterexample
+to the repaired relation. Integrated stablecoin lemmas prove the disabled full
+transition and bounded enabled arithmetic/coordinate consequences; full enabled
+policy, collateral, epoch/mint-base, and hash composition remain open.
 
 User correction (2026-09-07, approximately 16:27 UTC): the 40 GiB cutoff was
 invented by the coordinator, not imposed by the user. Its earlier description

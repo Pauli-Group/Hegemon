@@ -26,6 +26,8 @@ that the end-to-end SMZ9 argument has reached 128-bit security.
 - [x] (2026-09-07 17:06Z) Added same-vector capped parsing, success/abort equivalences and exact rejection thresholds.
 - [x] (2026-09-07 17:13Z) Strict compiler check passed for padded full-domain simulation, uniform-law transport, typed framing injectivity and concrete parser regressions.
 - [x] (2026-09-07 17:16Z) Final executable suffix-routing check and evidence handoff completed.
+- [x] (2026-09-07 20:56Z) Updated the successor retained-row bound and its exact request/cap interval source-only.
+- [x] (2026-09-07 20:59Z) Successor bounds passed the strict compiler check in the granted single-worker slot.
 - [ ] Separate follow-up: prove finite-cap conditional field-output uniformity on this same vector; it is not assumed here.
 
 ## Context and Orientation
@@ -44,8 +46,8 @@ basis states, extended linearly to their complex amplitudes.
 DECS requests 700 field words and permits 92 full digest blocks. PIOP gamma
 requests `5 * max(830, retainedLinearRows)` words, not `5 * 830` in general.
 The 15,561 nonempty raw-replication rows already exceed 830; the complete
-program has at most 20,569 CSR attempts. The resulting gamma request lies
-between 77,805 and 102,845 words and its cap between 9,730 and 12,860 blocks,
+program has at most 20,605 CSR attempts. The resulting gamma request lies
+between 77,805 and 103,025 words and its cap between 9,730 and 12,883 blocks,
 subject to the retained-row bounds. Each block supplies eight u64 proposals.
 Only words strictly below the Goldilocks modulus are accepted. Exhaustion is
 an explicit error, so a finite vector must not be replaced by an unconditional
@@ -145,8 +147,8 @@ without a hash preimage search.
 
 `uniform_vector_block_point_mass` proves that any selected raw block has
 point mass `2^-512`; using the cardinality of the entire vector as that
-denominator would be incorrect. A common width of 12,860 can cover the two
-field stages under the program's 20,569-row upper bound: DECS reads its first
+denominator would be incorrect. A common width of 12,883 can cover the two
+field stages under the program's 20,605-row upper bound: DECS reads its first
 92 blocks, gamma uses its statement-derived cap, and core hashes select
 counter zero. Other counters and raw inputs remain in the complement. The
 generic two-query compiler is independent of the selected vector width.
@@ -192,7 +194,8 @@ authority.
 ## Artifacts and Notes
 
 
-The strict Lean command above completed with exit code zero and no warnings.
+The pre-successor and successor-bound strict Lean checks completed with exit
+code zero and no warnings.
 No `sorry`, admitted axiom, native-decider shortcut or assumed extraction
 success was introduced. The literal all-`ff` abort and other parser regressions
 are kernel-checked theorem bodies. Shared imports, declaration credit and
@@ -206,6 +209,12 @@ Revision 2026-09-07 17:16Z: completed the literal compiler; added padded
 complement routing after finding the fixed-table efficiency ambiguity;
 recorded exact finite-cap and composition residuals.
 
-Coordinator correction 2026-09-07: source CSR binding exposed the earlier
-gamma undercount. Renamed the 4150-word facts as examples, recorded the actual
-maximum-count rule and proved its conditional 9,730–12,860 cap interval.
+Pre-successor coordinator correction 2026-09-07: source CSR binding exposed the
+earlier gamma undercount. The 4150-word facts were renamed as examples and the
+then-current conditional 9,730–12,860 cap interval was proved.
+
+Successor correction 2026-09-07 20:56Z: raised the CSR-attempt upper bound to
+20,605 and the resulting gamma request/cap maxima to 103,025/12,883.
+
+Revision 2026-09-07 20:59Z: the successor-bound delta passed the coordinated
+strict single-worker check.

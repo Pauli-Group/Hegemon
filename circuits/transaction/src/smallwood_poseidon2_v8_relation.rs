@@ -514,11 +514,20 @@ fn build_aux(
         time_carries: if mint {
             [
                 (((config.enabled_at & LIMB_MASK) + (enabled_age & LIMB_MASK)) >> 32) & 1,
-                (((config.enabled_at & LIMB_MASK) + 1 + (retirement_order_gap & LIMB_MASK)) >> 32)
-                    & 1,
-                (((public.parent_height & LIMB_MASK) + 1 + (retirement_height_gap & LIMB_MASK))
-                    >> 32)
-                    & 1,
+                if config.retired_at.is_some() {
+                    (((config.enabled_at & LIMB_MASK) + 1 + (retirement_order_gap & LIMB_MASK))
+                        >> 32)
+                        & 1
+                } else {
+                    0
+                },
+                if config.retired_at.is_some() {
+                    (((public.parent_height & LIMB_MASK) + 1 + (retirement_height_gap & LIMB_MASK))
+                        >> 32)
+                        & 1
+                } else {
+                    0
+                },
                 (((config.oracle_submitted_at & LIMB_MASK) + (oracle_age & LIMB_MASK)) >> 32) & 1,
                 (((oracle_age & LIMB_MASK) + (oracle_slack & LIMB_MASK)) >> 32) & 1,
                 (((config.attestation_created_at & LIMB_MASK) + (attestation_age & LIMB_MASK))
@@ -1133,6 +1142,42 @@ mod tests {
             verify_smallwood_poseidon2_v8_relation_material(context, public, witness, &mutated,),
             Err(SmallwoodPoseidon2V8RelationError::MaterialMismatch)
         );
+    }
+
+    #[test]
+    fn absent_retirement_uses_canonical_zero_helpers_at_low_limb_wrap() {
+        let (mut context, mut public, mut witness) = fixture();
+        let height = u32::MAX as u64;
+        assert_eq!(((height & LIMB_MASK) + 1) >> 32, 1);
+        witness.config.enabled_at = height;
+        witness.config.retired_at = None;
+        witness.config.oracle_submitted_at = height;
+        witness.config.attestation_created_at = height;
+        witness.before.epoch_id = height >> 12;
+        public.parent_height = height;
+        public.after.epoch_id = height >> 12;
+        let config_digest = stablecoin_poseidon2_v8_config_digest(witness.config);
+        public.before_root = stablecoin_poseidon2_v8_root(
+            public.asset_id,
+            config_digest,
+            witness.before,
+            &witness.siblings,
+        )
+        .unwrap();
+        public.after_root = stablecoin_poseidon2_v8_root(
+            public.asset_id,
+            config_digest,
+            public.after,
+            &witness.siblings,
+        )
+        .unwrap();
+        context.current_root = public.before_root;
+        context.parent_height = height;
+
+        let material =
+            build_smallwood_poseidon2_v8_relation_material(context, public, witness).unwrap();
+        assert_eq!(material.rows[NUMERIC_AUX_ROW][2..4], [0, 0]);
+        assert_eq!(material.rows[BOOLEAN_ROW][27..29], [0, 0]);
     }
 
     #[test]

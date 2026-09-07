@@ -150,7 +150,7 @@ def vectorJson : String :=
     ++ "  \"nonlinear_expression_nodes\": 8271,\n"
     ++ "  \"nonlinear_roots\": 830,\n"
     ++ "  \"csr_expression_nodes\": 565,\n"
-    ++ "  \"csr_attempts\": 20569,\n"
+    ++ "  \"csr_attempts\": 20605,\n"
     ++ "  \"packed_nonlinear_lanes\": 64,\n"
     ++ "  \"geometry\": " ++ geometryJson activeHashKernelGeometry ++ ",\n"
     ++ "  \"call_roles\": " ++ callRolesJson ++ ",\n"

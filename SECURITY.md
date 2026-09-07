@@ -14,9 +14,15 @@ Any production-authorized shielded route must enforce **independent transaction
 proofs plus deterministic consensus replay**:
 
 1. **Transaction proofs**: The current candidate is one canonical SMZ9 proof of
-   the HGV8RP03 Poseidon2 V8 relation per shielded transfer. Import must verify
-   every proof independently in block order. The production capability registry
-   currently returns `None`, so the route is not active.
+   the 853,429-byte Poseidon2 V8 relation per shielded transfer. Its program has
+   SHA-512
+   `180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`
+   and relation id
+   `180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984`.
+   `HGV8RP03` is its eight-byte format magic and lineage marker, not its relation
+   identity. Import must verify every proof independently in block order. The
+   production capability registry currently returns `None`, so the route is not
+   active.
 2. **Block commitments**: The header binds the ordered action body, state roots,
    supply transition, and DA fields. Consensus recomputes those values while
    replaying the block.
@@ -29,12 +35,16 @@ proofs plus deterministic consensus replay**:
    block-body locator and action root, not covered by this ciphertext-only
    erasure code.
 
-The retained HGV8RP03 primary and independent proofs measure 122,735 and
-122,607 bytes. Both cryptographically verify from the frozen 830-file source
-inventory and survive the exact RPC, relay, mempool, mining, import, restart,
-reorganization, and fresh-node replay fixture without changing proof bytes.
-This is retained implementation evidence, not release authority; the source
-capability and successor registry remain empty.
+The retained primary and independent proofs measure 122,735 and 122,607 bytes.
+They are historical evidence for the pre-repair 852,305-byte HGV8RP03-format
+program at SHA-512
+`8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e46a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3`.
+Both cryptographically verify from their frozen 830-file source inventory and
+survive the exact RPC, relay, mempool, mining, import, restart, reorganization,
+and fresh-node replay fixture without changing proof bytes. They neither verify
+nor bind the current repaired program. No proof or lifecycle receipt is retained
+for the current relation id. This is historical implementation evidence, not
+release authority; the source capability and successor registry remain empty.
 
 The old commitment-proof and recursive/aggregate authoring backends are not
 executable. Retained recursive decoders have no production block-validity
@@ -89,21 +99,26 @@ For this repository we track soundness as the minimum of (a) hash-based binding
 security for the exact commitment and Fiat-Shamir domains and (b) the SmallWood
 PCS/PIOP/DECS soundness terms for the exact candidate statement geometry.
 
-The deterministic 31,956-byte HGV8RP03 source-security diagnostic has SHA-512
-`4308fb56c68be761de1f2db8411e26fb5f0addeaa279f52a10e245b5a23b727112fecc9401969305a00c2858ca4c2e8a179a033affaf7b46ea606c0857350fee`.
-It records a 288-bit interactive floor, a 157-bit ideal composition floor for
-one global `2^64` quantum-query budget, and a 136-bit union over the exact
-2,138,112-proof finite screen before external losses. Four external per-proof
-terms each need at least 152 bits to retain a conditional 128-bit result over
-that screen. Those bounds are conditional: the report explicitly records
-`production_eligible=false` and no deployed floor.
+The deterministic 136,119-byte current-source security diagnostic has SHA-512
+`087fd1f3dc04f653b6d380f104467842c1b4b42b7ba0fabfbe75220f3664f0e870b80f92bda748b571cce3768b0386cf870a5586f92d0547e780518b2e04a881`.
+It is bound to the current program digest above. Under its uninstantiated
+assumptions it records a 288-bit interactive floor and a conditional 157-bit
+soundness/composition screen for one global `2^64` quantum-query budget. Its
+4,096-block and 2,097,152-accepted-proof arithmetic is a finite diagnostic, not a
+cryptographic reset or a protocol-lifetime bound. Required refinement,
+primitive, whole-view, history, budget-binding, and independent-review receipts
+remain absent. The report explicitly records `production_eligible=false`, no
+deployed composed floor, and no production authority.
 
-The deterministic 2,963-byte executable zero-knowledge refinement report has
-SHA-512
-`df0b7a7e09b46b79bac097c08bcf947fe012a8514d3b6b8c638a0387323919120710f6f834e6b5563ee2f5da533104f985a6059929a716645c0a19051d1e8907`.
-It verifies exact executable ROM replay and honest-map dimensions without using
-witness words. It is refinement evidence, not the missing adaptive
-repeated-proof zero-knowledge theorem or global SHA-512 QROM lifetime theorem.
+The deterministic 4,230-byte executable zero-knowledge refinement diagnostic
+has SHA-512
+`02d3e86eb1f9d5e33091611cbe8786e4ef7c38411cbc48a92b4b926e94f769752b3d1e61173b92d959c697b2c45867a993335c69a3cdb22c506a0ec695a353dd`.
+It is bound to the same current relation id and verifies exact executable ROM
+replay and honest-map dimensions without using witness words. It records
+`production_eligible=false` and no executable whole-view refinement. It is
+diagnostic refinement evidence, not the missing adaptive repeated-proof
+zero-knowledge theorem, global SHA-512 QROM lifetime theorem, or production
+authorization.
 
 The Lean cryptography package proves an exact finite-QROM extraction statement
 for an ideal logical-oracle game. Its block-supply theorem is separate and

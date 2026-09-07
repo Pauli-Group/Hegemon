@@ -29,7 +29,8 @@ acceptance-iff theorem, or cryptographic, zero-knowledge, or PQ128 evidence.
 `Hegemon.Transaction.GeneratePoseidon2V8ConstraintRefinementVectors`. It binds
 the source-owned width-16 permutation answers, corrected 125-call/two-group
 hash layout, exact call roles and row indices, negative geometry mutations, the
-exact `HGV8RP03` identity, and the source adapter's program-derived CSR and
+exact repaired program digest in the `HGV8RP03` format lineage, and the source
+adapter's program-derived CSR and
 all-64-lane nonlinear acceptance contract. Its coverage is
 `source_executable_program_bound`: this is a universal source-level contract,
 not a claim that a verified compiler ties arbitrary machine code to Lean, not a
@@ -40,19 +41,23 @@ not release authority.
 `Hegemon.Transaction.GeneratePoseidon2V8RelationProgramVectors`. It fixes the
 statement-independent `HGV8RP03` nine-section framing and the exact derivation
 of the 48-byte native relation id as the prefix of the 64-byte SHA-512 digest.
-It pins the source-recomputed 852,305-byte executable transcript, SHA-512
-`8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e46a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3`,
+It pins the source-recomputed 853,429-byte executable transcript, SHA-512
+`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`,
+48-byte relation id
+`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984`,
 and every declared identity-changing mutation. Sections eight and nine bind
-the shared nonlinear expression DAG and every ordered CSR attempt; numeric
-statement values remain outside the relation id. Rust consumes this generated
-JSON and recomputes the full digest and prefix. Historical `HGV8RP01` was the
+the shared nonlinear expression DAG and all 20,605 ordered CSR attempts. The
+specialized linear inventory ranges from 19,935 to 20,509 identities and the
+maximum summed soundness union is 21,339 identities; numeric statement values
+remain outside the relation id. Rust consumes this generated JSON and
+recomputes the full digest and prefix. Historical `HGV8RP01` was the
 89,310-byte seven-section descriptor-only KAT and is not production evidence.
 `HGV8RP02` is now historical. The `HGV8RP03` KAT is exact executable-program
 identity evidence, but it is not
 by itself a universal Rust/Lean acceptance equivalence, semantic-target
 refinement, or production-authority receipt.
 
-`poseidon2_v8_relation_program.bin` is the canonical 852,305-byte transcript
+`poseidon2_v8_relation_program.bin` is the canonical 853,429-byte transcript
 named by that JSON vector. After building the artifact runner, regenerate it
 without proving via
 `target/debug/examples/smallwood_poseidon2_v8_artifact program testdata/formal_core_vectors/poseidon2_v8_relation_program.bin`.

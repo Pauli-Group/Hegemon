@@ -961,6 +961,43 @@ fn every_typed_nonzero_authorization_field_is_linked_to_the_packed_verifier() {
 }
 
 #[test]
+fn approval_step_rejects_wrong_new_signer_tag_after_rebinding_policy_root() {
+    let (mut statement, mut witness) = approval_fixture(0b0111);
+    witness.auth.policy_signer_tags[0][1] ^= 1;
+
+    let policy = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness)
+        .unwrap()
+        .calls[POLICY_FINAL]
+        .final_digest();
+    witness.auth.current.policy_root = policy;
+    witness.auth.next.policy_root = policy;
+
+    let material = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
+    let legacy = material.calls[0].final_digest();
+    let current = material.calls[CURRENT_FINAL].final_digest();
+    let next = material.calls[NEXT_FINAL].final_digest();
+    witness.inputs[0]
+        .note
+        .authorization_key
+        .copy_from_slice(&current[..4]);
+    witness.inputs[1]
+        .note
+        .authorization_key
+        .copy_from_slice(&legacy[1..5]);
+    witness.outputs[0]
+        .note
+        .authorization_key
+        .copy_from_slice(&next[..4]);
+
+    install_merkle_paths(&mut statement, &mut witness);
+    install_transaction_public_hashes(&mut statement, &witness);
+    witness
+        .validate_against_statement(&statement)
+        .expect("typed validation intentionally omits the executable signer-identity equation");
+    assert!(compile_smallwood_poseidon2_v8_relation(&statement, &witness).is_err());
+}
+
+#[test]
 fn stable_role_source_hash_root_and_issuer_mutations_fail_closed() {
     let (mint_statement, mint_witness) = stable_fixture(StablecoinPoseidon2V8Direction::Mint);
 
@@ -1143,39 +1180,39 @@ fn report_statement_specialized_linear_constraint_inventory() {
     assert_eq!(
         &entries[..16],
         &[
-            ("single", 0, 20_473),
-            ("single", 1, 20_207),
-            ("single", 2, 20_207),
-            ("single", 3, 19_945),
-            ("single", 4, 20_450),
-            ("single", 5, 20_184),
-            ("single", 6, 20_184),
-            ("single", 7, 19_922),
-            ("single", 8, 20_450),
-            ("single", 9, 20_184),
-            ("single", 10, 20_184),
-            ("single", 11, 19_922),
-            ("single", 12, 20_427),
-            ("single", 13, 20_161),
-            ("single", 14, 20_161),
-            ("single", 15, 19_899),
+            ("single", 0, 20_509),
+            ("single", 1, 20_243),
+            ("single", 2, 20_243),
+            ("single", 3, 19_981),
+            ("single", 4, 20_486),
+            ("single", 5, 20_220),
+            ("single", 6, 20_220),
+            ("single", 7, 19_958),
+            ("single", 8, 20_486),
+            ("single", 9, 20_220),
+            ("single", 10, 20_220),
+            ("single", 11, 19_958),
+            ("single", 12, 20_463),
+            ("single", 13, 20_197),
+            ("single", 14, 20_197),
+            ("single", 15, 19_935),
         ]
     );
     assert_eq!(
         &entries[16..],
         &[
-            ("approval", 7, 19_922),
-            ("approval", 15, 19_899),
-            ("final", 3, 19_945),
-            ("final", 7, 19_922),
-            ("final", 11, 19_922),
-            ("final", 15, 19_899),
-            ("mint", 4, 20_348),
-            ("burn", 1, 20_129),
+            ("approval", 7, 19_958),
+            ("approval", 15, 19_935),
+            ("final", 3, 19_981),
+            ("final", 7, 19_958),
+            ("final", 11, 19_958),
+            ("final", 15, 19_935),
+            ("mint", 4, 20_384),
+            ("burn", 1, 20_165),
         ]
     );
     assert_eq!(
         entries.iter().map(|(_, _, count)| *count).max(),
-        Some(20_473)
+        Some(20_509)
     );
 }

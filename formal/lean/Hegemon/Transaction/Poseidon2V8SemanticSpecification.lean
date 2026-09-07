@@ -314,7 +314,8 @@ theorem field_minus_one_is_not_native_only_padding :
   exact (Nat.lt_irrefl (fieldModulus - 1)) impossible
 
 def CanonicalCompatibility
-    (compatibility : V8StablecoinCompatibility) (stable : V8StablecoinPublic) : Prop :=
+    (balanceAssets : List Nat) (compatibility : V8StablecoinCompatibility)
+    (stable : V8StablecoinPublic) : Prop :=
   BooleanWord compatibility.enabled ∧ BooleanWord compatibility.issuanceSign ∧
     compatibility.issuanceMagnitude < stablecoinValueBound ∧
     compatibility.reservedLegacyCommitments.length = 3 ∧
@@ -337,7 +338,8 @@ def CanonicalCompatibility
           compatibility.issuanceMagnitude = stable.magnitude ∧
           compatibility.assetId ≠ nativeAssetId ∧
           compatibility.assetId ≠ balancePaddingAssetId ∧
-          stable.assetId < 2 ^ 32 ∧ stable.policyVersion < 2 ^ 32
+          stable.assetId < 2 ^ 32 ∧ stable.policyVersion < 2 ^ 32 ∧
+          balanceAssets.count compatibility.assetId = 1
     | .burn =>
         compatibility.enabled = 1 ∧ compatibility.assetId = stable.assetId ∧
           compatibility.policyVersion = stable.policyVersion ∧
@@ -346,7 +348,8 @@ def CanonicalCompatibility
           compatibility.assetId ≠ nativeAssetId ∧
           compatibility.assetId ≠ balancePaddingAssetId ∧
           stable.assetId < 2 ^ 32 ∧ stable.policyVersion < 2 ^ 32 ∧
-          ZeroWords stable.issuerAuthorization
+          ZeroWords stable.issuerAuthorization ∧
+          balanceAssets.count compatibility.assetId = 1
 
 def PublicSlotShapeValid (statement : V8PublicStatement) : Prop :=
   ∀ slot, slot < 2 →
@@ -1036,7 +1039,7 @@ def CanonicalPublicStatement
     statement.fee < valueBound ∧ statement.valueBalanceSign = 0 ∧
     statement.valueBalanceMagnitude = 0 ∧ ExactWords digestWords statement.merkleRoot ∧
     CanonicalBalanceAssets statement.balanceAssets ∧
-    CanonicalCompatibility statement.compatibility statement.stablecoin ∧
+    CanonicalCompatibility statement.balanceAssets statement.compatibility statement.stablecoin ∧
     statement.version = circuitVersion ∧ statement.cryptoSuite = cryptoSuiteEta ∧
     statement.stablecoin.parentHeight < stablecoinScalarBound ∧
     ExactWords digestWords statement.stablecoin.actionIntent ∧
@@ -1106,11 +1109,58 @@ def noApprovalCleared (current next : V8AccumulatorOpening) : Prop :=
   ∀ slot, slot < signerCountMaximum →
     wordAt current.approvedSlots slot = 1 → wordAt next.approvedSlots slot = 1
 
+/-- Exact transaction-PRF source selection: first active input, or four zeros.
+The second-input-only shape is admitted by the source frontend and must not
+derive its authorization key from the inactive first input. -/
+def selectedTransactionSpendKey (statement : V8PublicStatement) (witness : V8Witness) : List Nat :=
+  if flagAt statement.inputFlags 0 = 1 then (witness.inputs.getD 0 default).spendKey
+  else if flagAt statement.inputFlags 1 = 1 then (witness.inputs.getD 1 default).spendKey
+  else List.replicate 4 0
+
+theorem selected_transaction_spend_key_first_active
+    (statement : V8PublicStatement) (witness : V8Witness)
+    (active : flagAt statement.inputFlags 0 = 1) :
+    selectedTransactionSpendKey statement witness = (witness.inputs.getD 0 default).spendKey := by
+  simp only [selectedTransactionSpendKey, if_pos active]
+
+theorem selected_transaction_spend_key_second_only
+    (statement : V8PublicStatement) (witness : V8Witness)
+    (firstInactive : flagAt statement.inputFlags 0 = 0)
+    (secondActive : flagAt statement.inputFlags 1 = 1) :
+    selectedTransactionSpendKey statement witness = (witness.inputs.getD 1 default).spendKey := by
+  simp only [selectedTransactionSpendKey, firstInactive, Nat.zero_ne_one,
+    if_false, if_pos secondActive]
+
+theorem selected_transaction_spend_key_no_active
+    (statement : V8PublicStatement) (witness : V8Witness)
+    (firstInactive : flagAt statement.inputFlags 0 = 0)
+    (secondInactive : flagAt statement.inputFlags 1 = 0) :
+    selectedTransactionSpendKey statement witness = List.replicate 4 0 := by
+  simp only [selectedTransactionSpendKey, firstInactive, secondInactive, Nat.zero_ne_one, if_false]
+
+/-- The newly approved policy slot belongs to the actual transaction signer.
+Source membership flags bind the bitmap increment and all five legacy PRF
+words to the same policy tag; monotone bitmap shape alone omits this identity. -/
+def ApprovalSignerBound (legacy : List Nat) (authorization : V8AuthorizationWitness) : Prop :=
+  ∀ slot, slot < signerCountMaximum →
+    wordAt authorization.current.approvedSlots slot ≠ wordAt authorization.next.approvedSlots slot →
+      authorization.policySignerTags.getD slot [] = legacy.take signerTagWords
+
+theorem approval_signer_bound_rejects_wrong_tag
+    (legacy : List Nat) (authorization : V8AuthorizationWitness) (slot : Nat)
+    (inRange : slot < signerCountMaximum)
+    (changed : wordAt authorization.current.approvedSlots slot ≠
+      wordAt authorization.next.approvedSlots slot)
+    (wrong : authorization.policySignerTags.getD slot [] ≠ legacy.take signerTagWords) :
+    ¬ ApprovalSignerBound legacy authorization := by
+  intro bound
+  exact wrong (bound slot inRange changed)
+
 def V8AuthorizationValid
     (primitives : V8SemanticPrimitives) (statement : V8PublicStatement)
     (witness : V8Witness) : Prop :=
   let auth := witness.authorization
-  let sharedSpendKey := (witness.inputs.getD 0 default).spendKey
+  let sharedSpendKey := selectedTransactionSpendKey statement witness
   let legacy := primitives.transactionPrf sharedSpendKey
   match auth.mode with
   | .singleKey =>
@@ -1130,6 +1180,7 @@ def V8AuthorizationValid
         auth.next.signerCount = auth.current.signerCount ∧
         auth.next.approvalCount = auth.current.approvalCount + 1 ∧
         changedApprovalSlots auth.current auth.next = 1 ∧ noApprovalCleared auth.current auth.next ∧
+        ApprovalSignerBound legacy auth ∧
         (witness.inputs.getD 0 default).note.authorizationKey =
           (primitives.accumulatorDigest auth.current).take 4 ∧
         (witness.inputs.getD 1 default).note.authorizationKey = (legacy.drop 1).take 4 ∧

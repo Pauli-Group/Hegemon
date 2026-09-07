@@ -1461,13 +1461,13 @@ def exactLazyMerkleRefinementVectorSource : String :=
   "docs/crypto/smallwood_poseidon2_v8_smz9_executable_zk_refinement.json"
 def exactLazyMerkleRefinementReportBytes : Nat := 4230
 def exactLazyMerkleRefinementReportSha512 : String :=
-  "0efabeb6d53f2557b12f21747fecbcc4694a3ed44a78075804908a6c6b0a028d4b84c7b85a2c33bf62f6248dd0b3ef123953c7f89d31ab386d30b0bfe34a73c8"
+  "02d3e86eb1f9d5e33091611cbe8786e4ef7c38411cbc48a92b4b926e94f769752b3d1e61173b92d959c697b2c45867a993335c69a3cdb22c506a0ec695a353dd"
 def exactLazyMerkleRelationProgramSha512 : String :=
-  "8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e46a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3"
+  "180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84"
 def exactLazyMerkleProgramTableSha512 : String :=
-  "308dba7c23e13b627650fa5995d7ff6eea217b1b63683c87acbae3fff3fd6dde5654a44b81f46512348e094c434b57ed2f4a0d4e6ce3fd61c572918c6d3d5660"
+  "618bd3c61d59348cdfb680ebab86ebf93d7aa3cd6e3ff398b0a35b9a2e2bf9ea6a648c7a7ab523bb2cf21ed9291308420e5c25dcf480dd3a4680c2bac135b2d3"
 def exactLazyMerkleQueryTraceSha512 : String :=
-  "e693b90515d4760a4210dd8d8388e0043cfe4ec207245098b35657c86b699ca926cf10edee986a83a34438d9944d3eb589654ec765ee101e868cce3078fb3032"
+  "187c8ec0b3b43229f6b6537abe7dab7c01cb86a016d921d5b64da386bb33956626dcdbc8c3edcf2088eb722e488482ecff9f7babe78bff1e094e0acdfaa46dae"
 def exactLazyMerkleProofSha512 : String :=
   "66c1552ebc33133bffb14c271680986fb98185632982350e5e0bec092e82e4ede5ae4934649b418d46a3a36802c3f2618de6ac264dde59055c5515cff72be73b"
 def exactLazyMerkleVectorLevelHistogram : List Nat :=
@@ -1515,14 +1515,14 @@ structure ExactLazyMerkleProgramInputOutputRecordingRefinement : Prop where
   reportPinExact :
     exactLazyMerkleRefinementReportBytes = 4230 ∧
       exactLazyMerkleRefinementReportSha512 =
-        "0efabeb6d53f2557b12f21747fecbcc4694a3ed44a78075804908a6c6b0a028d4b84c7b85a2c33bf62f6248dd0b3ef123953c7f89d31ab386d30b0bfe34a73c8"
+        "02d3e86eb1f9d5e33091611cbe8786e4ef7c38411cbc48a92b4b926e94f769752b3d1e61173b92d959c697b2c45867a993335c69a3cdb22c506a0ec695a353dd"
   sourceAndOraclePinsExact :
     exactLazyMerkleRelationProgramSha512 =
-        "8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e46a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3" ∧
+        "180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84" ∧
       exactLazyMerkleProgramTableSha512 =
-        "308dba7c23e13b627650fa5995d7ff6eea217b1b63683c87acbae3fff3fd6dde5654a44b81f46512348e094c434b57ed2f4a0d4e6ce3fd61c572918c6d3d5660" ∧
+        "618bd3c61d59348cdfb680ebab86ebf93d7aa3cd6e3ff398b0a35b9a2e2bf9ea6a648c7a7ab523bb2cf21ed9291308420e5c25dcf480dd3a4680c2bac135b2d3" ∧
       exactLazyMerkleQueryTraceSha512 =
-        "e693b90515d4760a4210dd8d8388e0043cfe4ec207245098b35657c86b699ca926cf10edee986a83a34438d9944d3eb589654ec765ee101e868cce3078fb3032" ∧
+        "187c8ec0b3b43229f6b6537abe7dab7c01cb86a016d921d5b64da386bb33956626dcdbc8c3edcf2088eb722e488482ecff9f7babe78bff1e094e0acdfaa46dae" ∧
       exactLazyMerkleProofSha512 =
         "66c1552ebc33133bffb14c271680986fb98185632982350e5e0bec092e82e4ede5ae4934649b418d46a3a36802c3f2618de6ac264dde59055c5515cff72be73b"
   vectorJointCountsExact :

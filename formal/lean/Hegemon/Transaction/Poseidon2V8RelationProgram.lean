@@ -32,24 +32,24 @@ def packingFactor : Nat := 64
 def packedWitnessWordCount : Nat := 43904
 
 /-!
-Source-recomputed `HGV8RP03` known-answer identity. These constants were frozen only after the
+Source-recomputed known-answer identity for the current `HGV8RP03`-format program. These constants were frozen only after the
 shared executable expression IR, the 86-family compiler cursor, all nine transcript sections, and
 formula-level mutation tests agreed. They identify a program artifact; they do not by themselves
 assert universal Rust/Lean semantic refinement or production authority.
 -/
 def canonicalProgramArtifactAvailable : Bool := true
-def canonicalProgramTranscriptBytes : Nat := 852305
+def canonicalProgramTranscriptBytes : Nat := 853429
 def canonicalProgramSha512Hex : String :=
-  "8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e4" ++
-  "6a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3"
+  "180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d22" ++
+  "39e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84"
 def canonicalProgramSha512 : List Nat :=
-  [ 132, 119, 137, 109, 199, 101, 195, 119, 111, 239, 201, 59, 183, 79, 176, 199,
-    102, 138, 103, 122, 189, 198, 6, 151, 176, 194, 22, 188, 155, 67, 99, 228,
-    106, 139, 124, 173, 197, 87, 219, 164, 161, 228, 204, 223, 229, 114, 229, 178,
-    131, 56, 121, 221, 70, 80, 121, 177, 43, 96, 68, 165, 26, 86, 18, 195 ]
+  [ 24, 15, 202, 80, 55, 111, 117, 115, 202, 206, 223, 181, 70, 90, 11, 77,
+    107, 245, 198, 22, 55, 21, 32, 53, 166, 130, 210, 16, 56, 1, 109, 34,
+    57, 226, 248, 181, 6, 5, 243, 107, 170, 99, 80, 56, 52, 141, 201, 132,
+    25, 125, 109, 242, 147, 71, 225, 126, 17, 80, 194, 79, 247, 55, 222, 132 ]
 def canonicalNativeRelationIdHex : String :=
-  "8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e4" ++
-  "6a8b7cadc557dba4a1e4ccdfe572e5b2"
+  "180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d22" ++
+  "39e2f8b50605f36baa635038348dc984"
 
 def publicIdentityOpcode : Nat := 0x0201
 def publicRangeOpcode : Nat := 0x0202
@@ -219,7 +219,7 @@ structure RelationProgramComponents where
   bindingDescriptors : List ProgramDescriptor
   /-- Exact shared executable nonlinear expression DAG and its 830 ordered roots. -/
   nonlinearExecutable : ExpressionProgram
-  /-- Exact public-only expression DAG used by all 20,569 attempted CSR identities. -/
+  /-- Exact public-only expression DAG used by all 20,605 attempted CSR identities. -/
   csrExpressions : List FieldExpression
   /-- Every attempted CSR identity before statement specialization and normalized zero deletion. -/
   csrAttempts : List CsrExecutableAttempt
@@ -241,7 +241,7 @@ def exactBindingDescriptors : List ProgramDescriptor :=
       label := "calls[125,128).initial[0,16)=0" },
     { opcode := 0x0706, words := [0], label := "auxiliary-witness-words=0" },
     { opcode := 0x0707,
-      words := [64, 8, 830, 19899, 20473, 21303, 5, 6, 2, 23, 20, 5],
+      words := [64, 8, 830, 19935, 20509, 21339, 5, 6, 2, 23, 20, 5],
       label := "DirectPacked64Poseidon2V8Sha512Smz9" ++ nulSeparator ++
         "Sha512Poseidon2V8Smz9" ++ nulSeparator ++ "rho5-open6-beta2-N23-q20-eta5" },
     { opcode := 0x0708, words := [64, 48],
@@ -256,7 +256,7 @@ def requiredGeometryWords : List Nat :=
     64, 8, -- packing and maximum relation degree
     125, 128, 3, 2, -- live/padded/dummy calls and groups
     150, 182, 166, 332, -- S-box wires, rows and identities per group, hash identities
-    830, 19899, 20473, 21303, -- nonlinear, min/max linear, summed union maximum
+    830, 19935, 20509, 21339, -- nonlinear, min/max linear, summed union maximum
     368, 43904 ] -- proof columns and packed witness words
 
 def poseidonParameterSetSha256 : List Nat :=
@@ -469,7 +469,7 @@ def RelationProgramComponents.Canonical
     components.nonlinearExecutable.Canonical true ∧
     components.csrExpressions.length = 565 ∧
     ({ expressions := components.csrExpressions, roots := [] } : ExpressionProgram).Canonical false ∧
-    components.csrAttempts.length = 20569 ∧
+    components.csrAttempts.length = 20605 ∧
     (∀ global attempt, components.csrAttempts[global]? = some attempt →
       attempt.Canonical components.csrExpressions.length global ∧
         attempt.localIndex =
@@ -510,7 +510,7 @@ theorem transcript_framing_is_exact :
 
 theorem canonical_program_identity_widths_are_exact :
     canonicalProgramArtifactAvailable = true ∧
-      canonicalProgramTranscriptBytes = 852305 ∧
+      canonicalProgramTranscriptBytes = 853429 ∧
       canonicalProgramSha512.length = transcriptDigestBytes ∧
       (nativeRelationId canonicalProgramSha512).length = nativeRelationIdBytes ∧
       nativeRelationId canonicalProgramSha512 = canonicalProgramSha512.take 48 := by
@@ -520,9 +520,9 @@ theorem required_v8_geometry_is_exact :
     requiredGeometryWords.length = 37 ∧
       requiredGeometryWords[20]? = some 686 ∧
       requiredGeometryWords[31]? = some 830 ∧
-      requiredGeometryWords[32]? = some 19899 ∧
-      requiredGeometryWords[33]? = some 20473 ∧
-      requiredGeometryWords[34]? = some 21303 ∧
+      requiredGeometryWords[32]? = some 19935 ∧
+      requiredGeometryWords[33]? = some 20509 ∧
+      requiredGeometryWords[34]? = some 21339 ∧
       requiredGeometryWords[35]? = some 368 := by
   simp [requiredGeometryWords]
 

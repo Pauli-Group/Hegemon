@@ -685,11 +685,11 @@ def sourceGammaWordRequest (retainedLinearRows : ℕ) : ℕ :=
   5 * max 830 retainedLinearRows
 
 theorem gamma_caps_of_retained_row_bounds (retainedLinearRows : ℕ)
-    (lower : 15561 ≤ retainedLinearRows) (upper : retainedLinearRows ≤ 20569) :
+    (lower : 15561 ≤ retainedLinearRows) (upper : retainedLinearRows ≤ 20605) :
     77805 ≤ sourceGammaWordRequest retainedLinearRows ∧
-      sourceGammaWordRequest retainedLinearRows ≤ 102845 ∧
+      sourceGammaWordRequest retainedLinearRows ≤ 103025 ∧
       9730 ≤ digestCallCap (sourceGammaWordRequest retainedLinearRows) ∧
-      digestCallCap (sourceGammaWordRequest retainedLinearRows) ≤ 12860 := by
+      digestCallCap (sourceGammaWordRequest retainedLinearRows) ≤ 12883 := by
   unfold sourceGammaWordRequest digestCallCap
   rw [max_eq_right (by omega : 830 ≤ retainedLinearRows)]
   simp only [if_neg (by omega : 5 * retainedLinearRows ≠ 0)]

@@ -1,10 +1,16 @@
 # SMZ9 quantum security acceptance contract
 
-Date: 2026-09-06
+Date: 2026-09-06. Rebound to the repaired relation identity on 2026-09-07.
 
-Scope: the HGV8RP03 relation carried by SMZ9/profile 6. This document is a
-review contract. It does not grant a security claim, production eligibility,
-or release authority.
+Scope: the repaired 853,429-byte program in the HGV8RP03 format lineage,
+carried by SMZ9/profile 6 and identified by SHA-512
+`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`
+and native 48-byte relation ID
+`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984`.
+`HGV8RP03` is the shared program-format magic, not the unique identity. This
+document is a review contract. It does not grant a security claim, production
+eligibility, or release authority. Pre-repair proofs and receipts remain bound
+to the superseded relation ID and do not satisfy this contract.
 
 ## Verdict
 
@@ -13,7 +19,7 @@ The current tree does not establish either endpoint required by this contract:
 1. adaptive, repeated, witness-free zero knowledge against a quantum adversary
    with coherent access to the actual shared SHA-512 oracle; or
 2. extractive knowledge soundness for accepted production proof bytes with
-   respect to the fixed HGV8RP03 transaction semantics.
+   respect to the fixed repaired transaction semantics and exact relation ID.
 
 The checked arithmetic, algebraic hiding maps, compressed-oracle machinery,
 wire parsers, replay fixtures, and deterministic candidate inverse are useful
@@ -37,9 +43,9 @@ a generic SmallWood instance, or a differently framed oracle does not transfer.
 
 | Component | Required value |
 | --- | --- |
-| Relation | HGV8RP03, fixed 120-word public statement and fixed 7-limb relation binding |
+| Relation | Repaired 853,429-byte HGV8RP03-format program, fixed 120-word public statement and fixed 7-limb relation binding |
 | SMZ wire | `SMZ9`, profile id 6 |
-| Program identity | Exact source-owned HGV8RP03 serialized program and its 48-byte digest, not the magic string alone |
+| Program identity | SHA-512 `180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`; native 48-byte relation ID `180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984` |
 | Relation geometry | 686 rows, 368 columns, constraint degree 8, packing factor 64 |
 | PIOP | rho 5, six openings, beta 2 |
 | DECS | `N = 2^23`, eta 5, twenty distinct openings, degree bound 387 |

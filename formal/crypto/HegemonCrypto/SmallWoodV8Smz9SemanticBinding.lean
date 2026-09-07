@@ -121,7 +121,7 @@ theorem exact_csr_is_canonical_with_rows :
 theorem exact_transparent_balance_attempts :
     exactCsrAttempts[15672]? = some (attempt 15672 5 0 0 [(41528, 1)] 49) ∧
     exactCsrAttempts[15673]? = some (attempt 15673 5 1 0 [(41528, 1)] 50) ∧
-    exactCsrAttempts[19262]? = some (attempt 19262 39 0 0 [(41528, 1)] 0) := by
+    exactCsrAttempts[19298]? = some (attempt 19298 39 0 0 [(41528, 1)] 0) := by
   decide
 
 theorem exact_transparent_balance_expression_nodes :
@@ -196,14 +196,14 @@ def unconditionalZeroAttempt (entry : CsrExecutableAttempt) : Bool :=
     | [(_, 1)] => true
     | _ => false
 
-/-- There are 849 such equations in the exact source, including canonical padding. -/
+/-- There are 857 such equations in the exact source, including canonical padding. -/
 theorem exact_unconditional_zero_attempt_count :
-    (exactCsrAttempts.filter unconditionalZeroAttempt).length = 849 := by
+    (exactCsrAttempts.filter unconditionalZeroAttempt).length = 857 := by
   decide
 
 /--
 Every exact singleton-one/zero-target CSR equation forces the corresponding
-canonical private word to zero.  This covers all 849 matching equations, without
+canonical private word to zero.  This covers all 857 matching equations, without
 assuming that the accepted witness came from the honest typed lowerer.
 -/
 theorem accepted_packed_unconditional_zero_coordinate
@@ -318,11 +318,182 @@ instance (entry : BooleanWitnessRoot) : Decidable entry.Valid := by
   unfold BooleanWitnessRoot.Valid
   infer_instance
 
-theorem exact_boolean_witness_roots_valid :
-    ∀ entry, entry ∈ exactBooleanWitnessRoots → entry.Valid := by
-  have checked : exactBooleanWitnessRoots.all (fun entry => decide entry.Valid) = true := by
+/-- Small kernel-checked certificates avoid reducing all 69 large-list lookups at once. -/
+private def exactBooleanWitnessRootChunk00 : List BooleanWitnessRoot :=
+  [⟨2, 840, 841⟩,
+    ⟨3, 842, 843⟩,
+    ⟨4, 844, 845⟩,
+    ⟨5, 846, 847⟩,
+    ⟨6, 848, 849⟩,
+    ⟨7, 850, 851⟩,
+    ⟨8, 852, 853⟩,
+    ⟨9, 854, 855⟩]
+
+private theorem exact_boolean_witness_root_chunk_00_valid :
+    ∀ entry, entry ∈ exactBooleanWitnessRootChunk00 → entry.Valid := by
+  have checked : exactBooleanWitnessRootChunk00.all (fun entry => decide entry.Valid) = true := by
     decide
   simpa only [List.all_eq_true, decide_eq_true_eq] using checked
+
+private def exactBooleanWitnessRootChunk01 : List BooleanWitnessRoot :=
+  [⟨10, 856, 857⟩,
+    ⟨11, 858, 859⟩,
+    ⟨12, 860, 861⟩,
+    ⟨13, 862, 863⟩,
+    ⟨14, 864, 865⟩,
+    ⟨15, 866, 867⟩,
+    ⟨16, 868, 869⟩,
+    ⟨17, 870, 871⟩]
+
+private theorem exact_boolean_witness_root_chunk_01_valid :
+    ∀ entry, entry ∈ exactBooleanWitnessRootChunk01 → entry.Valid := by
+  have checked : exactBooleanWitnessRootChunk01.all (fun entry => decide entry.Valid) = true := by
+    decide
+  simpa only [List.all_eq_true, decide_eq_true_eq] using checked
+
+private def exactBooleanWitnessRootChunk02 : List BooleanWitnessRoot :=
+  [⟨18, 872, 873⟩,
+    ⟨19, 874, 875⟩,
+    ⟨20, 876, 877⟩,
+    ⟨21, 878, 879⟩,
+    ⟨22, 880, 881⟩,
+    ⟨23, 882, 883⟩,
+    ⟨24, 884, 885⟩,
+    ⟨25, 886, 887⟩]
+
+private theorem exact_boolean_witness_root_chunk_02_valid :
+    ∀ entry, entry ∈ exactBooleanWitnessRootChunk02 → entry.Valid := by
+  have checked : exactBooleanWitnessRootChunk02.all (fun entry => decide entry.Valid) = true := by
+    decide
+  simpa only [List.all_eq_true, decide_eq_true_eq] using checked
+
+private def exactBooleanWitnessRootChunk03 : List BooleanWitnessRoot :=
+  [⟨26, 888, 889⟩,
+    ⟨27, 890, 891⟩,
+    ⟨28, 892, 893⟩,
+    ⟨29, 894, 895⟩,
+    ⟨30, 896, 897⟩,
+    ⟨31, 898, 899⟩,
+    ⟨32, 900, 901⟩,
+    ⟨33, 902, 903⟩]
+
+private theorem exact_boolean_witness_root_chunk_03_valid :
+    ∀ entry, entry ∈ exactBooleanWitnessRootChunk03 → entry.Valid := by
+  have checked : exactBooleanWitnessRootChunk03.all (fun entry => decide entry.Valid) = true := by
+    decide
+  simpa only [List.all_eq_true, decide_eq_true_eq] using checked
+
+private def exactBooleanWitnessRootChunk04 : List BooleanWitnessRoot :=
+  [⟨36, 917, 918⟩,
+    ⟨37, 919, 920⟩,
+    ⟨38, 921, 922⟩,
+    ⟨39, 923, 924⟩,
+    ⟨40, 925, 926⟩,
+    ⟨41, 927, 928⟩,
+    ⟨42, 929, 930⟩,
+    ⟨43, 931, 932⟩]
+
+private theorem exact_boolean_witness_root_chunk_04_valid :
+    ∀ entry, entry ∈ exactBooleanWitnessRootChunk04 → entry.Valid := by
+  have checked : exactBooleanWitnessRootChunk04.all (fun entry => decide entry.Valid) = true := by
+    decide
+  simpa only [List.all_eq_true, decide_eq_true_eq] using checked
+
+private def exactBooleanWitnessRootChunk05 : List BooleanWitnessRoot :=
+  [⟨44, 933, 934⟩,
+    ⟨45, 935, 936⟩,
+    ⟨46, 937, 938⟩,
+    ⟨47, 939, 940⟩,
+    ⟨48, 941, 942⟩,
+    ⟨49, 943, 944⟩,
+    ⟨50, 945, 946⟩,
+    ⟨51, 947, 948⟩]
+
+private theorem exact_boolean_witness_root_chunk_05_valid :
+    ∀ entry, entry ∈ exactBooleanWitnessRootChunk05 → entry.Valid := by
+  have checked : exactBooleanWitnessRootChunk05.all (fun entry => decide entry.Valid) = true := by
+    decide
+  simpa only [List.all_eq_true, decide_eq_true_eq] using checked
+
+private def exactBooleanWitnessRootChunk06 : List BooleanWitnessRoot :=
+  [⟨52, 949, 950⟩,
+    ⟨53, 951, 952⟩,
+    ⟨54, 953, 954⟩,
+    ⟨55, 955, 956⟩,
+    ⟨56, 957, 958⟩,
+    ⟨57, 959, 960⟩,
+    ⟨58, 961, 962⟩,
+    ⟨59, 963, 964⟩]
+
+private theorem exact_boolean_witness_root_chunk_06_valid :
+    ∀ entry, entry ∈ exactBooleanWitnessRootChunk06 → entry.Valid := by
+  have checked : exactBooleanWitnessRootChunk06.all (fun entry => decide entry.Valid) = true := by
+    decide
+  simpa only [List.all_eq_true, decide_eq_true_eq] using checked
+
+private def exactBooleanWitnessRootChunk07 : List BooleanWitnessRoot :=
+  [⟨60, 965, 966⟩,
+    ⟨61, 967, 968⟩,
+    ⟨62, 969, 970⟩,
+    ⟨63, 971, 972⟩,
+    ⟨64, 973, 974⟩,
+    ⟨65, 975, 976⟩,
+    ⟨66, 977, 978⟩,
+    ⟨67, 979, 980⟩]
+
+private theorem exact_boolean_witness_root_chunk_07_valid :
+    ∀ entry, entry ∈ exactBooleanWitnessRootChunk07 → entry.Valid := by
+  have checked : exactBooleanWitnessRootChunk07.all (fun entry => decide entry.Valid) = true := by
+    decide
+  simpa only [List.all_eq_true, decide_eq_true_eq] using checked
+
+private def exactBooleanWitnessRootChunk08 : List BooleanWitnessRoot :=
+  [⟨251, 1202, 1203⟩,
+    ⟨92, 1235, 1236⟩,
+    ⟨93, 1237, 1238⟩,
+    ⟨94, 1239, 1240⟩,
+    ⟨658, 8129, 8130⟩]
+
+private theorem exact_boolean_witness_root_chunk_08_valid :
+    ∀ entry, entry ∈ exactBooleanWitnessRootChunk08 → entry.Valid := by
+  have checked : exactBooleanWitnessRootChunk08.all (fun entry => decide entry.Valid) = true := by
+    decide
+  simpa only [List.all_eq_true, decide_eq_true_eq] using checked
+
+private theorem exact_boolean_witness_roots_eq_chunks :
+    exactBooleanWitnessRoots =
+      exactBooleanWitnessRootChunk00 ++
+      exactBooleanWitnessRootChunk01 ++
+      exactBooleanWitnessRootChunk02 ++
+      exactBooleanWitnessRootChunk03 ++
+      exactBooleanWitnessRootChunk04 ++
+      exactBooleanWitnessRootChunk05 ++
+      exactBooleanWitnessRootChunk06 ++
+      exactBooleanWitnessRootChunk07 ++
+      exactBooleanWitnessRootChunk08 := by
+  decide
+
+theorem exact_boolean_witness_roots_valid :
+    ∀ entry, entry ∈ exactBooleanWitnessRoots → entry.Valid := by
+  intro entry member
+  rw [exact_boolean_witness_roots_eq_chunks] at member
+  rcases List.mem_append.mp member with rest7 | member8
+  · rcases List.mem_append.mp rest7 with rest6 | member7
+    · rcases List.mem_append.mp rest6 with rest5 | member6
+      · rcases List.mem_append.mp rest5 with rest4 | member5
+        · rcases List.mem_append.mp rest4 with rest3 | member4
+          · rcases List.mem_append.mp rest3 with rest2 | member3
+            · rcases List.mem_append.mp rest2 with rest1 | member2
+              · rcases List.mem_append.mp rest1 with rest0 | member1
+                · exact exact_boolean_witness_root_chunk_00_valid entry rest0
+                · exact exact_boolean_witness_root_chunk_01_valid entry member1
+              · exact exact_boolean_witness_root_chunk_02_valid entry member2
+            · exact exact_boolean_witness_root_chunk_03_valid entry member3
+          · exact exact_boolean_witness_root_chunk_04_valid entry member4
+        · exact exact_boolean_witness_root_chunk_05_valid entry member5
+      · exact exact_boolean_witness_root_chunk_06_valid entry member6
+    · exact exact_boolean_witness_root_chunk_07_valid entry member7
+  · exact exact_boolean_witness_root_chunk_08_valid entry member8
 
 theorem exact_boolean_witness_root_count : exactBooleanWitnessRoots.length = 69 := by decide
 

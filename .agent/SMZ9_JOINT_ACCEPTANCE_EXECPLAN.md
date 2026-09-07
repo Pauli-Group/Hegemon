@@ -1,29 +1,46 @@
 # Prove the joint SMZ9 acceptance and extraction bounds
 
 This is a living ExecPlan under `.agent/PLANS.md`, continuing
-`.agent/SMALLWOOD_POSEIDON2_PRODUCTION_EXECPLAN.md` from commit `2fdab7e0`.
+`.agent/SMALLWOOD_POSEIDON2_PRODUCTION_EXECPLAN.md` from the historical
+pre-repair commit `2fdab7e0`.
 
 ## Purpose / Big Picture
 
 The user authorized immediate work on the actual probability that accepted
-SMZ9 proof bytes fail to yield a valid HGV8RP03 witness. A malformed committed
-table alone is not that event. This milestone must produce checkable mathematical
-progress on the actual sampling experiment and test the proposed extraction
-claims adversarially. It must not promote the current compact profile using the
-already-refuted fixed-residual shortcut.
+SMZ9 proof bytes fail to yield a valid witness for the exact current V8 relation.
+A malformed committed table alone is not that event. This milestone must produce
+checkable mathematical progress on the actual sampling experiment and test the
+proposed extraction claims adversarially. It must not promote the current compact
+profile using the already-refuted fixed-residual shortcut.
 
-The unchanged target is the 686-row, 368-column HGV8RP03 relation with its
-120 public words, SMZ9 profile 6, five DECS matrix rows, 140 data rows and five
-mask rows, degree 387, the `2^23`-point Goldilocks coset, and twenty openings.
-The source maximum remains 122,863 proof bytes. Production capability remains
-absent. No wire, parameter, dependency, deployment or publication change is
-authorized by this research milestone.
+The fixed subject is the current 853,429-byte, 686-row, 368-column relation with
+SHA-512
+`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`
+and 48-byte relation id
+`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984`.
+Its eight-byte `HGV8RP03` magic identifies the program-format lineage only and
+does not substitute for that digest. The relation has 120 public words, SMZ9
+profile 6, five DECS matrix rows, 140 data rows and five mask rows, degree 387,
+the `2^23`-point Goldilocks coset, and twenty openings. The source maximum remains
+122,863 proof bytes. No proof or lifecycle receipt is retained for this repaired
+digest, and production capability remains absent. No wire, parameter, dependency,
+deployment or publication change is authorized by this research milestone.
+
+All evidence and gate receipts before the 2026-09-07 21:00Z relation repair bind
+only their exact pre-repair snapshots. This includes the checkpoint at commit
+`2fdab7e0` and the 2,745/114, 2,748/129, and 2,754/145 build-job/audited-root
+outcomes. They do not transfer to the current 853,429-byte program or supply a
+current proof, lifecycle, or release receipt. Current operator policy records
+`operator_hard_reserve_gib: null`: no fixed GiB free-space floor is active.
+Timestamped disk measurements below remain historical observations only; new
+work uses measured capacity and disk-pressure checks.
 
 ## Progress
 
-- [x] (2026-09-07) Rechecked the selected checkout at `2fdab7e0`, preserved the
-  three unrelated AGENTS/testnet-skill edits, and confirmed approximately
-  40.16 GiB free against the hard 40 GiB reserve.
+- [x] (2026-09-07, historical pre-repair snapshot) Rechecked the selected
+  checkout at `2fdab7e0`, preserved the three unrelated AGENTS/testnet-skill
+  edits, and measured approximately 40.16 GiB free. That measurement is not a
+  current operator threshold or evidence for the repaired relation.
 - [x] Assigned disjoint author lanes for the sampled-acceptance theorem,
   large-agreement extraction research, and the honest-side privacy hybrid.
 - [x] Prove sampled acceptance for the fixed two-monomial source with arbitrary
@@ -113,8 +130,9 @@ The coordinator owns this plan, shared imports, the declaration inventory,
 builds and commits. The three author lanes own only their named new files.
 They may use cached direct Lean checks with temporary outputs, but not shared
 package builds. Initial checkpoints are twenty minutes with 20-30 MiB of new
-disk per lane. The final gate is coordinator-only and stops above the hard
-reserve rather than deleting unrelated files or retained evidence.
+disk per lane. The final gate is coordinator-only and uses measured capacity
+and disk-pressure checks rather than deleting unrelated files or retained
+evidence.
 
 The central event is accepted proof plus failure of a specified efficient
 extractor, not merely absence of a globally degree-bounded source table.
@@ -125,24 +143,34 @@ remain separate until their actual joint experiment is constructed.
 
 ## Outcomes & Retrospective
 
-The three new Lean modules pass direct strict checks and independent source
-review. The integrated coordinator gate passes 2,748 jobs and all 129 scoped
-roots against the existing kernel axiom allowlist. All three wire vectors and
-48 generated-program modules are unchanged. The disk guard's minimum sampled
-availability was 40.133030 GiB. The earlier gate passed 2,745 jobs and 114 roots;
-that historical result was not substituted for the current gate.
-Full privacy, accepted-proof extraction and quantum composition remain open.
+The three new Lean modules passed direct strict checks and independent source
+review in a historical pre-repair snapshot. That snapshot's integrated
+coordinator gate passed 2,748 jobs and all 129 scoped roots against the existing
+kernel axiom allowlist. All three wire vectors and 48 generated-program modules
+were unchanged, and the minimum sampled availability was 40.133030 GiB. The
+earlier historical gate passed 2,745 jobs and 114 roots. Neither result transfers
+to the current repaired program. Full privacy, accepted-proof extraction and
+quantum composition remain open.
 
 The follow-on probe has eleven passing tests, including literal two-patch
 coverage and fixed-candidate sampled mismatch. The new hidden-leaf arithmetic
 script has three passing tests and exact integer boundary/successor checks for
 all four query-budget cases. None of these arithmetic screens is a production
-history authorization or a whole-security bound. The second integrated gate
-passes 2,754 jobs and 145 scoped roots with unchanged wire vectors and all 48
-generated-program modules. Minimum sampled free disk was 40.176918 GiB. The
-first attempt found one omitted explicit type binder under `autoImplicit=false`;
-the signature was corrected and the complete gate rerun successfully, without
+history authorization or a whole-security bound. The second historical
+pre-repair integrated gate passed 2,754 jobs and 145 scoped roots with unchanged
+wire vectors and all 48 generated-program modules. Its minimum sampled free disk
+was 40.176918 GiB. This gate does not transfer to the repaired relation. The first
+attempt found one omitted explicit type binder under `autoImplicit=false`; the
+signature was corrected and the complete gate rerun successfully, without
 changing a mathematical statement or the checking policy.
+
+The final post-repair local formal-crypto gate passes 2,806 build jobs and
+kernel-audits 376 declarations against the existing allowlist. Its generated
+program check covers all 48 modules and 2,266,857 source bytes for the current
+853,429-byte relation at SHA-512
+`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`.
+This is local gate evidence only: it supplies no retained proof or lifecycle
+receipt and grants no production or release authority.
 
 The completed `SmallWoodV8Smz9PiecewiseRecovery.lean` theorem bounds the actual
 joint accepted-pair fraction for the specified first-projecting-candidate scan
@@ -206,13 +234,12 @@ From the repository root, run:
 
     python3 -B scripts/smz9_joint_acceptance_probe.py --self-test
     python3 -B scripts/smz9_joint_acceptance_probe.py
-    HEGEMON_FORMAL_CRYPTO_MIN_FREE_GIB=40 bash scripts/check_formal_crypto.sh
+    bash scripts/check_formal_crypto.sh
     git diff --check
 
-The final command must additionally be wrapped by the coordinator's free-disk
-monitor because the existing script's built-in reserve check is cold-build-only.
-Use the already pinned Lean 4.32.2 and mathlib cache. No installation, Rust
-build, node launch or retained-proof generation is required.
+Measure available capacity before and during the final command and stop on
+unsafe disk pressure. Use the already pinned Lean 4.32.2 and mathlib cache. No
+installation, Rust build, node launch or retained-proof generation is required.
 
 ## Validation and Acceptance
 
@@ -228,14 +255,15 @@ credit. Neither this milestone nor a passing gate grants a security receipt.
 ## Idempotence and Recovery
 
 The probe writes JSON to standard output and creates no cache with `-B`.
-Temporary Lean outputs use distinct paths. Stop a guarded check if free disk
-approaches 40 GiB, preserving completed source and all prior artifacts.
-Stage explicit task-owned files only. Never reset the user's dirty files.
+Temporary Lean outputs use distinct paths. Stop a guarded check before measured
+disk pressure threatens completed source or prior artifacts. Stage explicit
+task-owned files only. Never reset the user's dirty files.
 
 ## Artifacts and Notes
 
-Prior local commits: `de2f827d` and `2fdab7e0`. Current dispatch creates no
-new app tasks, worktrees, external submissions or production authority.
+Prior local commits: `de2f827d` and historical pre-repair `2fdab7e0`. Current
+dispatch creates no new app tasks, worktrees, external submissions or
+production authority.
 
 ## Interfaces and Dependencies
 
@@ -252,3 +280,12 @@ modules, reviewed research arguments and exhaustive diagnostic. Continued
 independent bounded work on the concrete rank-map binding, robust sampled
 candidate mismatch, piecewise polynomial coverage and the hidden-leaf QROM
 transition. Those follow-on obligations receive no credit from this gate.
+
+Revision note (2026-09-07, final post-repair gate): the local formal-crypto gate
+passes 2,806 build jobs, audits 376 declarations against the allowed kernel
+axioms, and checks 48 generated modules totaling 2,266,857 source bytes for the
+853,429-byte relation at SHA-512
+`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`.
+Earlier 2,745/114, 2,748/129, and 2,754/145 receipts remain historical and
+non-transferable. This receipt is local checking evidence, not proof-byte,
+lifecycle, production, or release authority.

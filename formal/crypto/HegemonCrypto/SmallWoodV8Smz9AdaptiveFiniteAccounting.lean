@@ -489,14 +489,16 @@ def poseidon2PreimageTerm : ExactNatRatio where
   numerator := analysisGlobalQueryBudget ^ 2
   denominator := goldilocksOrder ^ 7
 
-def fieldXofRequestedWords : Nat := 102365
-def fieldXofCandidateWords : Nat := 102400
-def fieldXofMinimumRejections : Nat := 36
+/-- Fixed realized source-report request, not the 103025-word universal public
+ceiling. Variable-length sampler-family accounting remains separate. -/
+def fieldXofRequestedWords : Nat := 102545
+def fieldXofCandidateWords : Nat := 102584
+def fieldXofMinimumRejections : Nat := 40
 def fieldXofRequestUnion : Nat := 2 ^ 25
 
 theorem exact_field_xof_sampler_parameters :
-    fieldXofRequestedWords = 102365 ∧ fieldXofCandidateWords = 102400 ∧
-      fieldXofMinimumRejections = 36 := by
+    fieldXofRequestedWords = 102545 ∧ fieldXofCandidateWords = 102584 ∧
+      fieldXofMinimumRejections = 40 := by
   decide
 
 def fieldXofAbortTerm : ExactNatRatio where
@@ -1545,7 +1547,13 @@ inductive AdaptiveWholeViewCompleteZeroKnowledge : Prop
 inductive ProtocolLifetimeGlobalQueryBudgetBinding : Nat → Nat → Prop
 /-- Lifetime binding for `T` as every observed/generated honest proof view, not accepted actions. -/
 inductive ProtocolLifetimeGlobalQueryAndObservedViewBudgetBinding : Nat → Nat → Prop
-inductive ExactV8RelationAndSmz9TranscriptRefinement : Prop
+/--
+Constructor-free refinement premise indexed by the exact executable relation
+bytes, SHA-512, and native 48-byte relation ID.  The `HGV8RP03` format magic is
+deliberately not an index because multiple program revisions may share it.
+-/
+inductive ExactV8RelationAndSmz9TranscriptRefinement :
+    Nat → String → String → Prop
 inductive AuthenticatedIndependentGlobalSha512QromReview : Prop
 /-- Identifies the real quantity bounded below with the exact indexed logical-QROM failure event. -/
 inductive ExactSmz9IndexedLogicalFailureProbabilityIdentification : ℝ → Prop
@@ -1622,7 +1630,11 @@ structure DeployedSmz9GlobalSha512QromLifetimePremises where
   composedTerms :
     GlobalSha512QromLifetimeComposedTerms globalQuantumQueries observedHonestProofViews
   correctionAwareOpeningSamplingRefinement : CorrectionAwareOpeningSamplingRefinement
-  exactRelationAndTranscriptRefinement : ExactV8RelationAndSmz9TranscriptRefinement
+  exactRelationAndTranscriptRefinement :
+    ExactV8RelationAndSmz9TranscriptRefinement
+      Hegemon.Transaction.Poseidon2V8RelationProgram.canonicalProgramTranscriptBytes
+      Hegemon.Transaction.Poseidon2V8RelationProgram.canonicalProgramSha512Hex
+      Hegemon.Transaction.Poseidon2V8RelationProgram.canonicalNativeRelationIdHex
   exactSmz9RoundTransitionRefinement :
     V8Smz9LogicalOracle.ExactSmz9RoundTransitionRefinement
   exactSmz9FailureSelectorRefinement :
@@ -1683,7 +1695,11 @@ structure DeployedAdaptiveFiniteProofPremises where
   globalQuantumQueries : Nat
   totalProofInteractions : Nat
   correctionAwareOpeningSamplingRefinement : CorrectionAwareOpeningSamplingRefinement
-  exactRelationAndTranscriptRefinement : ExactV8RelationAndSmz9TranscriptRefinement
+  exactRelationAndTranscriptRefinement :
+    ExactV8RelationAndSmz9TranscriptRefinement
+      Hegemon.Transaction.Poseidon2V8RelationProgram.canonicalProgramTranscriptBytes
+      Hegemon.Transaction.Poseidon2V8RelationProgram.canonicalProgramSha512Hex
+      Hegemon.Transaction.Poseidon2V8RelationProgram.canonicalNativeRelationIdHex
   concreteSha512FiatShamirQromReduction : ConcreteSha512FiatShamirQromReduction
   poseidon2PrimitiveSecurityReduction : Poseidon2PrimitiveSecurityReduction
   adaptiveWholeViewCompleteZeroKnowledge : AdaptiveWholeViewCompleteZeroKnowledge
