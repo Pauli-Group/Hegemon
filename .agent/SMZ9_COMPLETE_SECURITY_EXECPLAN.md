@@ -27,6 +27,18 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Progress
 
+- [x] (2026-09-08 09:09 UTC) Integrate twelve reviewed modules and 72
+  designated roots for 496 stable-tail CSR attempts, all 448 inactive
+  Merkle-right attempts and 145 authorization roots. The full gate passes
+  3,040 jobs and all 1,356 declarations with unchanged wire/generated files.
+  Forward coverage is now 18,496/20,605 CSR attempts and 633/830 nonlinear
+  roots; the remaining 197 nonlinear positions are exactly 252..448.
+- [x] (2026-09-08 09:04 UTC) The exact frozen Stage5 candidate passes
+  its corrected R3 fixture replay: 21 normal and 21 checks-enabled controls,
+  strict original node translation, byte-identical checked node output and
+  all six scalar output comparisons. All 24 owned groups are extinct and
+  full postflight passes. No Lean evaluator proof is claimed; the next
+  isolated native-refinement packet targets those exact generated definitions.
 - [x] (2026-09-08 08:29 UTC) Integrate 19 modules and 92 exact roots
   for 64 policy-initial CSR attempts and 121 early/inline/multiplication
   nonlinear roots. The complete gate passes 3,024 jobs and all 1,255
@@ -712,7 +724,7 @@ Actual source extraction also now establishes all four scalar helper
 refinements, including inverse-loop termination, in an isolated,
 exact-root-checked Lean 4.31.0 lane. The expression loop, caller/array binding
 and production binary remain separate
-R0 obligations; these results are not added to the 1,284-root integrated gate.
+R0 obligations; these results are not added to the 1,356-root integrated gate.
 
 The forward construction now includes one full 43,904-word candidate,
 canonical from fixed typed validity alone, exact dense and same-schedule
@@ -724,8 +736,10 @@ roots and all 332 generated hash roots.
 The partial hash-root program has derived successful interpreter execution
 on the unchanged full expression DAG. The ideal batch-trace probability law
 is constructed separately. These are named constructions with derived
-properties, not populated adequacy receipts. The remaining 3,053 raw CSR
-attempts and 342 nonlinear authorization roots, actual Rust execution and complete
+properties, not populated adequacy receipts. The additional 496 stable-tail
+and 448 inactive-Merkle-right CSR attempts and 145 authorization roots now
+leave 2,109 raw CSR attempts and 197 nonlinear positions 252..448. Actual
+Rust execution and complete
 generated-equation coverage remain active.
 
 The prior commits establish local mathematical ingredients, not either
@@ -1106,3 +1120,11 @@ zero-stress/capped-cover mathematics. Record the metadata ordering defect
 without changing the pinned executable relation. Complete the bounded
 translator instrumentation run, preserving the failed sandbox attempt and
 isolating any later semantic correction from this diagnostic evidence.
+
+Revision note (2026-09-08 09:09 UTC): retain the reviewed twelve-module
+increment and complete 1,356-root gate, with 18,496 actual CSR attempts and
+633 nonlinear roots derived from the fixed full source candidate. Preserve
+the remaining 2,109 CSR and 197 authorization positions as open. Record
+the corrected native translator fixture's successful normal/checks replay
+without treating generated Lean output as an already checked evaluator
+theorem or relabeling earlier failed runs.

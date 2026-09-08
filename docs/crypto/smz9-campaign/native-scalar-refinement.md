@@ -141,7 +141,7 @@ and binary correspondence to be proved. Full R0 and concrete P7/K8 remain
 open; release authority is unchanged.
 
 The unchanged node evaluator successfully extracts to transparent Charon
-LLBC, but pinned Aeneas fails at `InterpProjectors.ml:109` before emitting
+LLBC, but unmodified pinned Aeneas fails at `InterpProjectors.ml:109` before emitting
 Lean. Source inspection points to inconsistent region erasure of the static
 error-reference return; the later isolated instrumentation confirms retained
 nested RStatic versus recursively erased RErased at the assertion. The failed extraction and source-derived
@@ -211,6 +211,43 @@ The R2 execution receipt at
 has SHA-256
 `ab1fff5d7140fe54100fca4fb3486b13121caeedf3a7e0515da7e0442a1fc1a2`;
 its incomplete status is intentional evidence of the stopped run.
-An explicit fixture result-type annotation and a separately reviewed run
-using the frozen binary are pending. A built translator is not a proof of
-correct translation, and no expression-evaluator or R0 theorem follows.
+The original failed receipt is not superseded or relabeled by the following
+successful fixture correction.
+
+## Corrected fixture replay succeeds
+
+At 2026-09-08 09:04:23 UTC the separately reviewed R3 final replay passes
+in 104.444 seconds, reusing that exact frozen candidate without rebuilding
+or copying its sources. The only fixture change types `concrete` explicitly
+as `symbolic_value -> tvalue`. All 21 exact projector/caller cases pass
+normally and again with the checks flag enabled. The unchanged nodes LLBC
+translates successfully in 1.552 seconds; its separate `-checks` replay
+passes in 3.351 seconds and emits byte-identical output. All six scalar
+Types/Funs outputs remain byte-identical to their prior reference files.
+
+The strict node output contains exactly `Smz9IrNodes/Code/Types.lean`
+(41 lines, SHA-256
+`967c5caff2863178b7e7c186eab7d15fdde9305b65183bdd5966002fb3ed735c`)
+and `Smz9IrNodes/Code/Funs.lean` (269 lines, SHA-256
+`4ee3ecb61af8975930f6c1b685623684ef1f8b479bf652f78277dc7519987391`).
+There are no generated placeholders or external/template replacements.
+The execution receipt is
+`/private/tmp/smz9-aeneas-stage1.IgNKumAA/stage5-r3-fixture/R3_FINAL_EXECUTION_RECEIPT.json`,
+SHA-256 `160a4268af0dc92c29b65fe04a34aa6542d4af4b202b8addd2d5e736532f213c`.
+
+All 24 owned process groups are extinct without signals. Full postflight
+revalidates original/copied sources, installed/native libraries, retained
+inputs, Stage4/R1 evidence, all 3,719 frozen R2 tree records and prior R3
+preparations. The earlier R3 launch-profile error and revised-preparation
+log-name collision remain preserved as separate pre-execution evidence.
+Maximum observed root allocation is 2,721,320,960 bytes and minimum free
+space is 17,647,124,480 bytes. The checks phase takes 10.174 seconds within
+its separate 600-second bound; no resource stop occurs.
+
+This is successful translation and finite regression evidence, not yet a
+Lean compilation or expression-evaluator refinement. The finite controls'
+checks flag does not explicitly invoke whole-context invariant validation;
+the separate node `-checks` replay remains a distinct, still finite check.
+Translator correctness, actual-array induction, acceptance and full R0 are
+still open. The next step is a fresh isolated Lean check of these exact
+generated definitions and a proof against the unchanged relation evaluator.

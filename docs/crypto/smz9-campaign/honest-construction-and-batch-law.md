@@ -311,11 +311,31 @@ Malformed Boolean/path/reserved/ciphertext/asset examples have nonzero
 actual roots; nonzero fee/issuance with zero notes and duplicate assets are
 separate balance controls, not admitted typed witnesses.
 
-Together these results discharge 17,552 of 20,605 actual raw CSR attempts
-and 488 of 830 nonlinear roots in all 64 lanes. Covered root-list positions
-are exactly `0..128` and `471..829`; the remaining 342 authorization roots
-and 3,053 raw CSR attempts, complete coefficient/interpreter execution and
-full packed acceptance remain open.
+The next twelve modules add three exact forward subsets on this same
+constructed candidate:
+
+- Four `SourceTailCsr*` modules derive 496 actual raw attempts in families
+  37, 39, 44, 46, 48, 49, 50, 51, 61, 84 and 85. Public compatibility copies,
+  Boolean source copies and every selected padding value follow directly
+  from construction, without a typed-validity premise.
+- Three `SourceInactiveMerkleRight*` modules derive every actual family-17
+  attempt at indices `17838..18285`. Fixed validity makes inactive inputs'
+  position and siblings zero, hence every oriented right word zero; active
+  inputs have zero gate coefficient. All 448 actual all-one controls yield
+  residuals 1, 0 and -1 for public flags 0, 1 and 2.
+- Five `SourceAuth*` modules derive nonlinear positions `129..251` and
+  `449..470`, exactly 145 roots in all 64 lanes, including single-mode
+  zeroing, actual interleaved PRF/key input bindings, mode selection and final
+  zeroing. Final position 458 uses the actual next-count flag value 1.
+  Six altered theorem controls fail for wrong root/order/mode/count
+  bindings or missing typed validity.
+
+Together these results discharge 18,496 of 20,605 actual raw CSR attempts
+and 633 of 830 nonlinear roots in all 64 lanes. Covered root-list positions
+are exactly `0..251` and `449..829`; the remaining 197 authorization roots
+at `252..448` and 2,109 raw CSR attempts, complete coefficient/interpreter
+execution and full packed acceptance remain open. These are raw attempt
+counts, not a fixed count of public-dependent normalized emitted rows.
 
 ## Remaining-count sampler batches
 
@@ -423,8 +443,20 @@ designated declarations on the unchanged allowlist; all wire vectors and
 source/checker/negative-control evidence and both intermediate gate logs
 are retained under
 `.agent/artifacts/smallwood-poseidon2-v8/formal-source-1284-43a14c88c4badaf9`.
-Forward coverage is 17,552 actual CSR attempts and 488 nonlinear roots;
-the remaining equations and full security endpoints are still open.
+Forward coverage at that earlier snapshot is 17,552 actual CSR attempts
+and 488 nonlinear roots.
+
+At 2026-09-08 09:09 UTC the twelve-module increment passes the complete
+3,040-job gate with all 1,356 designated roots on the same axiom allowlist.
+All three wire vectors and 48 generated relation files remain unchanged.
+The full log SHA-256 is
+`260c85fa1d83555ccf8ff8e18ffc44e19ee83e1e4718446ccfaa4b659a852fba`.
+Original sources, checkers, negative controls and receipts are retained under
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-1356-260c85fa1d83555c`.
+Independent reviews compare the actual generated records and coefficient
+DAG, not only descriptive labels. The new coverage is 18,496 CSR attempts
+and 633 nonlinear roots; the remaining equations and full security endpoints
+are still open.
 
 Continue by closing the remaining checked-success obligations and deriving
 all 830 nonlinear roots in every lane and all 20,605 raw linear

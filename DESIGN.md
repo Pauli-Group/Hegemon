@@ -84,9 +84,12 @@ selector/inverse/Boolean/radix roots hold on that same candidate. The
 next increment adds 64 policy-initial CSR attempts, eight inline roots,
 the actual stable multiplication root and all 112 early public/path/asset/
 ciphertext roots: 17,552/20,605 CSR attempts and 484/830 nonlinear roots.
-The four actual per-asset balance roots then bring nonlinear coverage to
-488/830, completing root-list positions 0..128 and 471..829 in every lane.
-tail uses the same computed hash schedule, with no supplied
+The four actual per-asset balance roots bring nonlinear coverage to 488.
+Another 496 actual stable-tail and 448 inactive-Merkle-right CSR attempts,
+plus 145 actual authorization roots, bring the current forward coverage to
+18,496/20,605 CSR attempts and 633/830 nonlinear roots. The covered nonlinear
+positions are exactly 0..251 and 449..829 in every lane; positions 252..448
+and 2,109 CSR attempts remain open. The tail uses the same computed hash schedule, with no supplied
 auxiliary or hash-final values. Remaining generated equations are still
 being proved. These component
 results do not establish full packed acceptance or Rust execution. The exact finite

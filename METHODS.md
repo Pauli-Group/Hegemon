@@ -377,8 +377,13 @@ are joined by 1,920 actual Merkle CSR residuals and 26 stable
 selector/inverse/Boolean/radix roots on the same full candidate. The next
 source increment proves 64 policy-initial CSR attempts, eight inline roots,
 the actual multiplication root, all 112 early roots and four balance roots.
-This gives 17,552/20,605 CSR attempts and 488/830 nonlinear roots; all
-342 remaining nonlinear positions are in authorization. Coverage
+The next increment derives 496 stable-tail and 448 inactive-Merkle-right
+CSR attempts and 145 authorization roots, bringing coverage to
+18,496/20,605 CSR attempts and 633/830 nonlinear roots. The remaining
+197 nonlinear positions are exactly 252..448; 2,109 CSR attempts remain.
+The stable-tail identities are constructor properties; the inactive
+Merkle and authorization endpoints use fixed typed validity and derive
+their actual public/packed values internally. Coverage
 uses actual indexed generated entries and DAG evaluation, not descriptor
 labels alone. These results are not complete packed acceptance or Rust
 refinement. The exact
