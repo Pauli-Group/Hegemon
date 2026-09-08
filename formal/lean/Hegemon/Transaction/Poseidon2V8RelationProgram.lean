@@ -40,16 +40,16 @@ assert universal Rust/Lean semantic refinement or production authority.
 def canonicalProgramArtifactAvailable : Bool := true
 def canonicalProgramTranscriptBytes : Nat := 853429
 def canonicalProgramSha512Hex : String :=
-  "180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d22" ++
-  "39e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84"
+  "7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8" ++
+  "fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17"
 def canonicalProgramSha512 : List Nat :=
-  [ 24, 15, 202, 80, 55, 111, 117, 115, 202, 206, 223, 181, 70, 90, 11, 77,
-    107, 245, 198, 22, 55, 21, 32, 53, 166, 130, 210, 16, 56, 1, 109, 34,
-    57, 226, 248, 181, 6, 5, 243, 107, 170, 99, 80, 56, 52, 141, 201, 132,
-    25, 125, 109, 242, 147, 71, 225, 126, 17, 80, 194, 79, 247, 55, 222, 132 ]
+  [ 126, 80, 235, 160, 125, 132, 67, 58, 83, 166, 200, 94, 210, 179, 239, 236,
+    190, 255, 16, 60, 164, 2, 187, 147, 24, 49, 225, 89, 142, 108, 154, 184,
+    250, 19, 140, 155, 47, 12, 185, 210, 27, 242, 191, 4, 75, 80, 212, 208,
+    87, 174, 11, 177, 46, 77, 239, 0, 236, 82, 118, 82, 69, 207, 158, 23 ]
 def canonicalNativeRelationIdHex : String :=
-  "180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d22" ++
-  "39e2f8b50605f36baa635038348dc984"
+  "7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8" ++
+  "fa138c9b2f0cb9d21bf2bf044b50d4d0"
 
 def publicIdentityOpcode : Nat := 0x0201
 def publicRangeOpcode : Nat := 0x0202

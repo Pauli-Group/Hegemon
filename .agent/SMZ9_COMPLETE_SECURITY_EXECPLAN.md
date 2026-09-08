@@ -36,10 +36,27 @@ of this work. The security endpoints and resource accounting remain those in
 - [x] (2026-09-08) Compile the exact generated native node Types/Funs in
   isolated Lean 4.31.0. The proposed body proof remains unrun after its V2
   runner review found dependency-directory and resource-policy guard gaps.
-- [ ] Correct the exporter descriptor order using per-family local counters,
-  with a focused failing-before/passing-after source-order regression, then
-  regenerate the affected relation identity and dependent artifacts. Keep
-  prior proofs and source-forward evidence bound to their original subjects.
+- [x] (2026-09-08) Correct exporter ordering with persistent per-family local
+  counters and a failing-before/passing-after 90-root source-order regression.
+  Independent parsing confirms exactly 45 section-4 records change, with the
+  other eight sections byte-identical. Regenerate the program, Lean components,
+  transcript/kernel vectors, reports and pins under `7e50eba07d84433a`.
+  Ten targeted Rust tests, both report rebuilds, 21 constructor tests and the
+  authorization fixtures pass. Historical fixtures recover inventory-checked
+  old source bytes and retain their original relation identity.
+- [x] (2026-09-08 17:03 UTC) Complete the post-metadata full formal gate:
+  all 3,066 build jobs, all 1,472 declaration audits and canonical wire checks
+  pass. Final log SHA-256 is
+  `37e71135134ec82186b948b02aa11052cdcf324a88109cb99cfde3c503281e3e`.
+  Its first rebuild rejected the old descriptor-mismatch equality, as expected
+  after correcting those labels. Replace it with exact current alignment plus
+  four explicit stale-record rejections, keeping the credited count at 1,472,
+  and rerun the gate using completed build outputs. Both runs are preserved
+  in the metadata-order evidence directory. This is not a fresh proof or
+  lifecycle receipt; no additional source-semantic obligations are credited.
+- [ ] Generate new retained proofs and lifecycle receipts for the corrected
+  metadata identity after the source is frozen. Prior proofs and source-forward
+  receipts remain evidence for their original subjects only.
 - [x] (2026-09-08 09:09 UTC) Integrate twelve reviewed modules and 72
   designated roots for 496 stable-tail CSR attempts, all 448 inactive
   Merkle-right attempts and 145 authorization roots. The full gate passes
@@ -97,7 +114,7 @@ of this work. The security endpoints and resource accounting remain those in
   support-capped affine/rational-graph charges and the zero-stress branch
   proof. The middle-support cover allowances `2^168`/`2^184` are only
   conditional sufficient bounds; no universal cover or K8 receipt follows.
-- [ ] (2026-09-08 07:46 UTC) Resolve the exporter nonlinear-descriptor
+- [x] (2026-09-08; discovered 07:46 UTC) Resolve the exporter nonlinear-descriptor
   ordering defect found while tracing roots 0..115. The executable builder
   interleaves each input's bits/asset and each output's asset/ciphertext;
   metadata groups those families. Actual roots 63/98/104 are nodes
@@ -107,11 +124,14 @@ of this work. The security endpoints and resource accounting remain those in
   expression change, automatic artifact relabeling or fresh security
   authority is justified by this finding.
   Exact read-only preparation identifies 45 changed descriptor records:
-  `63..95`, `98..104`, `243..247`; six family labels and 39 local indices.
+  `63..95`, `98..104`, `243..247`; six family labels and 45 local indices
+  (39 local-index-only changes; six records change both fields).
   The PRF/key metadata also needs actual per-input interleaving. A correct
   exporter must keep per-family local counters across split spans. Only
   section 4 changes; executable sections 8/9 stay byte-identical, but the
   whole digest/id, vectors and generated descriptors need a fresh identity.
+  The completed repair and regenerated identity are recorded above and in
+  `docs/crypto/smz9-campaign/metadata-order-repair.md`.
 - [x] (2026-09-08 07:33 UTC) Complete and integrate the one-input-pair
   43,904-word typed constructor with all 39 stable rows canonical, actual
   authorization digest identities, checked-subtraction/range helpers and
@@ -1147,5 +1167,6 @@ before any descriptor-identity correction. Record the actual remaining
 1,670 CSR/97 nonlinear obligations and the separately successful generated
 native Lean compilation; keep the unrun body proof and security endpoints
 open. The user requires lightweight or medium-effort agents and bounded
-work: this follow-up uses one Luna/medium read-only worker, no child agents,
+work: this follow-up uses one Luna/medium worker for bounded review and one
+exclusively assigned test-file edit, no child agents,
 serial focused checks, and a stop at 5 percent reported weekly usage.

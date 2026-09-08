@@ -12,17 +12,21 @@ set_option maxRecDepth 100000
 set_option maxHeartbeats 1000000
 set_option Elab.async false
 
-/-- These are exact descriptor/root-list observations. Their labels disagree
-with the actual executable families; no metadata or executable is modified. -/
-theorem exact_early_descriptor_root_mismatch_examples :
-    exactNonlinearIdentities[63]? = some ⟨1025,[63,32,0,0],"base.input_direction_boolean"⟩ ∧
+/-- The corrected descriptors align with the unchanged executable root list.
+The four stale descriptor records remain explicit rejected controls. -/
+theorem exact_early_descriptor_root_alignment_examples :
+    exactNonlinearIdentities[63]? = some ⟨1025,[63,0,0,0],"base.input_asset_membership_excluding_padding"⟩ ∧
     exactNonlinearRoots[63]? = some 916 ∧
-    exactNonlinearIdentities[95]? = some ⟨1025,[95,0,0,0],"base.input_asset_membership_excluding_padding"⟩ ∧
+    exactNonlinearIdentities[95]? = some ⟨1025,[95,63,0,0],"base.input_direction_boolean"⟩ ∧
     exactNonlinearRoots[95]? = some 980 ∧
-    exactNonlinearIdentities[98]? = some ⟨1025,[98,1,0,0],"base.output_asset_membership_excluding_padding"⟩ ∧
+    exactNonlinearIdentities[98]? = some ⟨1025,[98,0,0,0],"base.output_inactive_ciphertext"⟩ ∧
     exactNonlinearRoots[98]? = some 1006 ∧
-    exactNonlinearIdentities[104]? = some ⟨1025,[104,5,0,0],"base.output_inactive_ciphertext"⟩ ∧
-    exactNonlinearRoots[104]? = some 1023 := by decide
+    exactNonlinearIdentities[104]? = some ⟨1025,[104,1,0,0],"base.output_asset_membership_excluding_padding"⟩ ∧
+    exactNonlinearRoots[104]? = some 1023 ∧
+    exactNonlinearIdentities[63]? ≠ some ⟨1025,[63,32,0,0],"base.input_direction_boolean"⟩ ∧
+    exactNonlinearIdentities[95]? ≠ some ⟨1025,[95,0,0,0],"base.input_asset_membership_excluding_padding"⟩ ∧
+    exactNonlinearIdentities[98]? ≠ some ⟨1025,[98,1,0,0],"base.output_asset_membership_excluding_padding"⟩ ∧
+    exactNonlinearIdentities[104]? ≠ some ⟨1025,[104,5,0,0],"base.output_inactive_ciphertext"⟩ := by decide
 
 noncomputable section
 

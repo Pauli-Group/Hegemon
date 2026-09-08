@@ -1461,9 +1461,9 @@ def exactLazyMerkleRefinementVectorSource : String :=
   "docs/crypto/smallwood_poseidon2_v8_smz9_executable_zk_refinement.json"
 def exactLazyMerkleRefinementReportBytes : Nat := 4230
 def exactLazyMerkleRefinementReportSha512 : String :=
-  "02d3e86eb1f9d5e33091611cbe8786e4ef7c38411cbc48a92b4b926e94f769752b3d1e61173b92d959c697b2c45867a993335c69a3cdb22c506a0ec695a353dd"
+  "e89ff29b047d85c6121689c4d298f031141d2dac6452f182d5d8d53cdd4ef7694c8616909ade6be95bcf1b1e06e98dd25b13df79bd7372be9a5af0500fe9015b"
 def exactLazyMerkleRelationProgramSha512 : String :=
-  "180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84"
+  "7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17"
 def exactLazyMerkleProgramTableSha512 : String :=
   "618bd3c61d59348cdfb680ebab86ebf93d7aa3cd6e3ff398b0a35b9a2e2bf9ea6a648c7a7ab523bb2cf21ed9291308420e5c25dcf480dd3a4680c2bac135b2d3"
 def exactLazyMerkleQueryTraceSha512 : String :=
@@ -1515,10 +1515,10 @@ structure ExactLazyMerkleProgramInputOutputRecordingRefinement : Prop where
   reportPinExact :
     exactLazyMerkleRefinementReportBytes = 4230 ∧
       exactLazyMerkleRefinementReportSha512 =
-        "02d3e86eb1f9d5e33091611cbe8786e4ef7c38411cbc48a92b4b926e94f769752b3d1e61173b92d959c697b2c45867a993335c69a3cdb22c506a0ec695a353dd"
+        "e89ff29b047d85c6121689c4d298f031141d2dac6452f182d5d8d53cdd4ef7694c8616909ade6be95bcf1b1e06e98dd25b13df79bd7372be9a5af0500fe9015b"
   sourceAndOraclePinsExact :
     exactLazyMerkleRelationProgramSha512 =
-        "180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84" ∧
+        "7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17" ∧
       exactLazyMerkleProgramTableSha512 =
         "618bd3c61d59348cdfb680ebab86ebf93d7aa3cd6e3ff398b0a35b9a2e2bf9ea6a648c7a7ab523bb2cf21ed9291308420e5c25dcf480dd3a4680c2bac135b2d3" ∧
       exactLazyMerkleQueryTraceSha512 =

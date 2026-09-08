@@ -1,5 +1,5 @@
 {
-  "claim_boundary": "The source encoder, Lean specification, generated vector, checked-in canonical program artifact, and Rust conformance test agree on the current 853429-byte executable program with HGV8RP03 format magic, SHA-512 180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84, and 48-byte relation id 180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984. HGV8RP03 is only the shared format magic; the exact program encodes the typed executable nonlinear formula IR and every CSR attempt consumed by the verifier/compiler, including canonical zero padding for absent output-note sponge lanes, exact zero transparent value balance, and Disabled stablecoin contextual height and root pass-through; numeric statement values are excluded. The historical HGV8RP01 and HGV8RP02 programs remain non-authoritative history. No independent digest receipt, universal Rust-to-Lean acceptance equivalence, semantic-target refinement, source supply-chain manifest, complete adaptive zero knowledge, concrete QROM composition, retained proof measurement, lifecycle receipt, or independent release review is present. This file cannot authorize proving, verification, wallet admission, kernel routing, consensus use, or release.",
+  "claim_boundary": "The source encoder, Lean specification, generated vector, checked-in canonical program artifact, and Rust conformance test agree on the current 853429-byte executable program with HGV8RP03 format magic, SHA-512 7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17, and 48-byte relation id 7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d0. HGV8RP03 is only the shared format magic; the exact program encodes the typed executable nonlinear formula IR and every CSR attempt consumed by the verifier/compiler, including canonical zero padding for absent output-note sponge lanes, exact zero transparent value balance, and Disabled stablecoin contextual height and root pass-through; numeric statement values are excluded. The historical HGV8RP01 and HGV8RP02 programs remain non-authoritative history. No independent digest receipt, universal Rust-to-Lean acceptance equivalence, semantic-target refinement, source supply-chain manifest, complete adaptive zero knowledge, concrete QROM composition, retained proof measurement, lifecycle receipt, or independent release review is present. This file cannot authorize proving, verification, wallet admission, kernel routing, consensus use, or release.",
   "compiled_relation": {
     "canonical_artifact_frozen": true,
     "canonical_program_transcript_format_magic": "HGV8RP03",
@@ -14,9 +14,9 @@
     "nonlinear_identity_count": 830,
     "program_bytes": 853429,
     "program_path": "testdata/formal_core_vectors/poseidon2_v8_relation_program.bin",
-    "program_sha512": "180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84",
+    "program_sha512": "7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17",
     "proof_geometry_columns": 368,
-    "relation_id": "180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984",
+    "relation_id": "7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d0",
     "relation_id_derivation": "program_sha512_prefix_48",
     "row_count": 686,
     "statement_independent_linear_compiler_family_count": 86

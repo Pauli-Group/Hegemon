@@ -71,7 +71,19 @@ REPAIRED_RELATION_PROFILE = RelationProfile(
     "b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84",
     19_935,
 )
-SUPPORTED_RELATION_PROFILES = (HISTORICAL_RELATION_PROFILE, REPAIRED_RELATION_PROFILE)
+# The metadata-only correction has its own identity. Old repaired artifacts
+# retain their exact profile and are never relabeled as this subject.
+METADATA_CORRECTED_RELATION_PROFILE = RelationProfile(
+    853_429,
+    "7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8"
+    "fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17",
+    19_935,
+)
+SUPPORTED_RELATION_PROFILES = (
+    HISTORICAL_RELATION_PROFILE,
+    REPAIRED_RELATION_PROFILE,
+    METADATA_CORRECTED_RELATION_PROFILE,
+)
 GENERATOR_SOURCE = "circuits/transaction/examples/smallwood_poseidon2_v8_artifact.rs"
 GENERATOR_SOURCE_SHA512 = (
     "2500a4df3c05b6fc70fecc4e288a326627f61029d51c6bf7192b05d614300b2db"

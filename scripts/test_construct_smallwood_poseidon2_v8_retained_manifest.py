@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import inspect
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -37,10 +39,16 @@ class CandidateRetainedManifestTests(unittest.TestCase):
         # Keep the historical pointer immutable; exercise the constructor with
         # the repaired proof fixture and its actual inventory-bound source.
         cls.historical_manifest = json.loads(cls.fixed_pointer.read_text(encoding="utf-8"))
-        cls.fixed_manifest = CONSTRUCTOR.build_candidate_snapshot(
-            cls.source_repository,
-            ".agent/artifacts/smallwood-poseidon2-v8/hgv8rp03-b1e5c143f7abf052",
-        ).manifest
+        # Load the frozen fixture manifest, not a new snapshot of today's tree.
+        # Each construction test below rechecks its copied payload and the
+        # inventory-authenticated historical identity source.
+        cls.fixed_manifest = json.loads((
+            cls.fixed_pointer.parent
+            / "retained-artifact-manifest.candidate-b1e5c143f7abf052.json"
+        ).read_text(encoding="utf-8"))
+        if cls.fixed_manifest["artifact_root"] != (
+                ".agent/artifacts/smallwood-poseidon2-v8/hgv8rp03-b1e5c143f7abf052"):
+            raise AssertionError("historical fixture root changed")
         cls.artifact_relative = Path(cls.fixed_manifest["artifact_root"])
         cls.source_root = cls.source_repository / cls.artifact_relative
         cls.generator_source_relative = Path(CONSTRUCTOR.CHECKER.GENERATOR_SOURCE)
@@ -53,6 +61,33 @@ class CandidateRetainedManifestTests(unittest.TestCase):
         report = json.loads(primary_report.read_text(encoding="utf-8"))
         cls.source_inventory = report["proof_source_inventory"]
         cls.source_revision = report["generation_provenance"]["source_revision"]
+        cls.historical_relation_program = (
+            cls.source_root
+            / Path(cls.fixed_manifest["proofs"][0]["directory"])
+            / "relation-program.bin"
+        ).read_bytes()
+        cls.historical_identity_source = subprocess.run(
+            ["git", "-C", str(cls.source_repository), "show",
+             f"{cls.source_revision}:{CONSTRUCTOR.RELATION_IDENTITY_SOURCE}"],
+            check=True,
+            capture_output=True,
+        ).stdout
+        inventory_identity = next(
+            entry for entry in cls.source_inventory["entries"]
+            if entry["path"] == CONSTRUCTOR.RELATION_IDENTITY_SOURCE
+        )
+        if (len(cls.historical_identity_source) != inventory_identity["bytes"]
+                or hashlib.sha512(cls.historical_identity_source).hexdigest()
+                != inventory_identity["sha512"]):
+            raise AssertionError("historical identity source is not inventory-authenticated")
+        if (len(cls.historical_relation_program)
+                != CONSTRUCTOR.CHECKER.REPAIRED_RELATION_PROFILE.program_bytes
+                or hashlib.sha512(cls.historical_relation_program).hexdigest()
+                != CONSTRUCTOR.CHECKER.REPAIRED_RELATION_PROFILE.program_sha512):
+            raise AssertionError("historical fixture relation program is not the repaired pin")
+        if cls.historical_identity_source == (
+                cls.source_repository / CONSTRUCTOR.RELATION_IDENTITY_SOURCE).read_bytes():
+            raise AssertionError("current relation source substituted for historical source")
 
     def copied_candidate(
         self,
@@ -71,7 +106,13 @@ class CandidateRetainedManifestTests(unittest.TestCase):
         for relative in (CONSTRUCTOR.RELATION_PROGRAM_SOURCE, CONSTRUCTOR.RELATION_IDENTITY_SOURCE):
             destination = repository / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(self.source_repository / relative, destination)
+            if relative == CONSTRUCTOR.RELATION_PROGRAM_SOURCE:
+                destination.write_bytes(self.historical_relation_program)
+            else:
+                destination.write_bytes(self.historical_identity_source)
+        if (repository / CONSTRUCTOR.RELATION_IDENTITY_SOURCE).read_bytes() == (
+                self.source_repository / CONSTRUCTOR.RELATION_IDENTITY_SOURCE).read_bytes():
+            raise AssertionError("copied candidate substituted current relation source")
         output = root.parent / "retained-artifact-manifest.candidate.json"
         return temporary, repository, root, output
 
@@ -178,6 +219,27 @@ class CandidateRetainedManifestTests(unittest.TestCase):
         current_bundle = self.source_root / self.fixed_manifest["proofs"][0]["directory"]
         with self.assertRaisesRegex(CONSTRUCTOR.CandidateManifestError, "pinned exact identity"):
             checker.parse_native_leaf(current_bundle)
+
+    def test_metadata_corrected_source_selects_its_own_exact_profile(self) -> None:
+        checker = CONSTRUCTOR.CHECKER
+        source = (self.source_repository / CONSTRUCTOR.RELATION_IDENTITY_SOURCE).read_bytes()
+        # Exercise only source_relation_profile's identity-entry boundary here;
+        # this single-entry inventory is not a complete artifact inventory.
+        inventory = {"entries": [{
+            "path": CONSTRUCTOR.RELATION_IDENTITY_SOURCE,
+            "bytes": len(source),
+            "sha512": hashlib.sha512(source).hexdigest(),
+        }]}
+        profile, program, identities = CONSTRUCTOR.source_relation_profile(
+            self.source_repository, inventory
+        )
+        self.assertEqual(profile, checker.METADATA_CORRECTED_RELATION_PROFILE)
+        self.assertNotEqual(profile, checker.REPAIRED_RELATION_PROFILE)
+        self.assertEqual(len(identities), 2)
+        with self.assertRaisesRegex(CONSTRUCTOR.CandidateManifestError, "pinned exact identity"):
+            checker.check_relation_program(program, checker.REPAIRED_RELATION_PROFILE)
+        with self.assertRaisesRegex(CONSTRUCTOR.CandidateManifestError, "source inventory"):
+            CONSTRUCTOR.source_relation_profile(self.source_repository, self.source_inventory)
 
     def test_source_relation_requires_exact_inventory_and_source_bytes(self) -> None:
         temporary, repository, _, _ = self.copied_candidate()

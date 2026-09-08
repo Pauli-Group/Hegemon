@@ -4483,6 +4483,131 @@ mod tests {
     }
 
     #[test]
+    fn nonlinear_descriptor_order_matches_actual_root_rows() {
+        use crate::smallwood_poseidon2_v8_ir::SmallwoodPoseidon2V8Expr;
+
+        fn witness_rows(root: u32, expressions: &[SmallwoodPoseidon2V8Expr]) -> Vec<u16> {
+            fn visit(index: u32, expressions: &[SmallwoodPoseidon2V8Expr], rows: &mut Vec<u16>) {
+                match expressions[index as usize] {
+                    SmallwoodPoseidon2V8Expr::WitnessRow(row) => rows.push(row),
+                    SmallwoodPoseidon2V8Expr::Add { left, right }
+                    | SmallwoodPoseidon2V8Expr::Sub { left, right }
+                    | SmallwoodPoseidon2V8Expr::Mul { left, right } => {
+                        visit(left, expressions, rows);
+                        visit(right, expressions, rows);
+                    }
+                    SmallwoodPoseidon2V8Expr::Neg { value }
+                    | SmallwoodPoseidon2V8Expr::Inverse { value }
+                    | SmallwoodPoseidon2V8Expr::Bit { value, .. } => {
+                        visit(value, expressions, rows)
+                    }
+                    SmallwoodPoseidon2V8Expr::SelectEqual {
+                        left,
+                        right,
+                        equal,
+                        not_equal,
+                    } => {
+                        visit(left, expressions, rows);
+                        visit(right, expressions, rows);
+                        visit(equal, expressions, rows);
+                        visit(not_equal, expressions, rows);
+                    }
+                    SmallwoodPoseidon2V8Expr::Constant(_) | SmallwoodPoseidon2V8Expr::Public(_) => {
+                    }
+                }
+            }
+            let mut rows = Vec::new();
+            visit(root, expressions, &mut rows);
+            rows.sort_unstable();
+            rows.dedup();
+            rows
+        }
+
+        let program = smallwood_poseidon2_v8_nonlinear_expression_program();
+        let descriptors =
+            crate::smallwood_poseidon2_v8_program::smallwood_poseidon2_v8_nonlinear_descriptors();
+        let check_base = |root: usize, family: &str, local: u16, row: usize| {
+            let descriptor = &descriptors[root];
+            assert_eq!(
+                witness_rows(program.roots[root], &program.expressions),
+                vec![row as u16]
+            );
+            assert_eq!(usize::from(descriptor.global_index), root);
+            assert_eq!(
+                (descriptor.family, descriptor.local_index),
+                (family, local),
+                "root {root}"
+            );
+        };
+        for input in 0..INPUTS {
+            for bit in 0..MERKLE_DEPTH {
+                check_base(
+                    31 + input * 33 + bit,
+                    "base.input_direction_boolean",
+                    (input * 32 + bit) as u16,
+                    input_direction_row(input, bit),
+                );
+            }
+            check_base(
+                31 + input * 33 + 32,
+                "base.input_asset_membership_excluding_padding",
+                input as u16,
+                input_asset_row(input),
+            );
+        }
+        for output in 0..OUTPUTS {
+            check_base(
+                97 + output * 7,
+                "base.output_asset_membership_excluding_padding",
+                output as u16,
+                output_asset_row(output),
+            );
+            for limb in 0..6 {
+                check_base(
+                    98 + output * 7 + limb,
+                    "base.output_inactive_ciphertext",
+                    (output * 6 + limb) as u16,
+                    output_ciphertext_row(output, limb),
+                );
+            }
+        }
+        for input in 0..INPUTS {
+            for offset in 0..5 {
+                let root = 242 + input * 5 + offset;
+                let expected_row = if offset == 0 {
+                    auth_input_prf_row(input)
+                } else {
+                    auth_input_key_row(input, offset - 1)
+                };
+                let expected_family = if offset == 0 {
+                    "auth.effective_input_prf"
+                } else {
+                    "auth.effective_input_key"
+                };
+                let expected_local = if offset == 0 {
+                    input as u16
+                } else {
+                    (input * 4 + offset - 1) as u16
+                };
+                let descriptor = &descriptors[root];
+                match program.expressions[program.roots[root] as usize] {
+                    SmallwoodPoseidon2V8Expr::Sub { left, .. } => assert_eq!(
+                        program.expressions[left as usize],
+                        SmallwoodPoseidon2V8Expr::WitnessRow(expected_row as u16)
+                    ),
+                    expression => panic!("auth root {root} is not subtraction: {expression:?}"),
+                }
+                assert_eq!(usize::from(descriptor.global_index), root);
+                assert_eq!(
+                    (descriptor.family, descriptor.local_index),
+                    (expected_family, expected_local),
+                    "root {root}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn executable_csr_program_is_numeric_authority_and_rejects_emission_drift() {
         let (public, csr) = default_numeric_csr();
         ensure_csr_matches_executable_program(&public, &csr)

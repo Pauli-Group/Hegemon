@@ -1,16 +1,20 @@
 # SMZ9 quantum security acceptance contract
 
-Date: 2026-09-06. Rebound to the repaired relation identity on 2026-09-07.
+Date: 2026-09-06. Rebound to the repaired relation on 2026-09-07 and to its
+metadata-corrected identity on 2026-09-08.
 
 Scope: the repaired 853,429-byte program in the HGV8RP03 format lineage,
 carried by SMZ9/profile 6 and identified by SHA-512
-`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`
+`7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17`
 and native 48-byte relation ID
-`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984`.
+`7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d0`.
 `HGV8RP03` is the shared program-format magic, not the unique identity. This
 document is a review contract. It does not grant a security claim, production
 eligibility, or release authority. Pre-repair proofs and receipts remain bound
 to the superseded relation ID and do not satisfy this contract.
+The [metadata-order repair](metadata-order-repair.md) changes 45 descriptor
+records, not the executable expression or CSR sections. Its distinct digest
+still requires fresh proof and lifecycle receipts; prior artifacts are unchanged.
 
 ## Verdict
 
@@ -45,7 +49,7 @@ a generic SmallWood instance, or a differently framed oracle does not transfer.
 | --- | --- |
 | Relation | Repaired 853,429-byte HGV8RP03-format program, fixed 120-word public statement and fixed 7-limb relation binding |
 | SMZ wire | `SMZ9`, profile id 6 |
-| Program identity | SHA-512 `180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`; native 48-byte relation ID `180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984` |
+| Program identity | SHA-512 `7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17`; native 48-byte relation ID `7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d0` |
 | Relation geometry | 686 rows, 368 columns, constraint degree 8, packing factor 64 |
 | PIOP | rho 5, six openings, beta 2 |
 | DECS | `N = 2^23`, eta 5, twenty distinct openings, degree bound 387 |

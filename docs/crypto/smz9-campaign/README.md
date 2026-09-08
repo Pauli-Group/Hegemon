@@ -1,8 +1,8 @@
 # SMZ9 privacy and soundness research dossier
 
-Date: 2026-09-07 UTC. Target: repaired 853,429-byte program in the HGV8RP03
+Date: 2026-09-08 UTC. Target: metadata-corrected 853,429-byte program in the HGV8RP03
 format lineage / SMZ9 profile 6, SHA-512
-`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`.
+`7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17`.
 
 ## Decision
 
@@ -12,6 +12,15 @@ soundness proof shortcut. It does not enable a proof profile, grant a security
 receipt, or claim that an SMZ9 transaction has been forged.
 
 ## Current continuation
+
+The [metadata-order repair](metadata-order-repair.md) corrects 45 descriptor
+records without changing executable constraints. Earlier dossier snapshots and
+proof receipts retain their original `180fca50376f7573` subject. The corrected
+identity has regenerated source records; fresh proofs and lifecycle receipts
+remain pending.
+The post-repair full formal gate passes 3,066 jobs and all 1,472 declaration
+audits, with unchanged wire vectors. This rechecks the corrected subject;
+it does not increase source-semantic coverage or establish a security endpoint.
 
 The repaired-source snapshot `cee3cb81` now has two independently generated,
 cross-verified 122,543-byte proofs and a completed real HTTP/PQ socket

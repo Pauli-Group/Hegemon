@@ -16,9 +16,9 @@ proofs plus deterministic consensus replay**:
 1. **Transaction proofs**: The current candidate is one canonical SMZ9 proof of
    the 853,429-byte Poseidon2 V8 relation per shielded transfer. Its program has
    SHA-512
-   `180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`
+   `7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17`
    and relation id
-   `180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984`.
+   `7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d0`.
    `HGV8RP03` is its eight-byte format magic and lineage marker, not its relation
    identity. Import must verify every proof independently in block order. The
    production capability registry currently returns `None`, so the route is not
@@ -100,7 +100,7 @@ security for the exact commitment and Fiat-Shamir domains and (b) the SmallWood
 PCS/PIOP/DECS soundness terms for the exact candidate statement geometry.
 
 The deterministic 136,119-byte current-source security diagnostic has SHA-512
-`087fd1f3dc04f653b6d380f104467842c1b4b42b7ba0fabfbe75220f3664f0e870b80f92bda748b571cce3768b0386cf870a5586f92d0547e780518b2e04a881`.
+`5346d68e30c7ec99d197669679159af777ae7663029e22fc84da8fbf5e353b1829b4f4368b6449510b25bbf1e1022281891a114f51783148e2423c538e0b5110`.
 It is bound to the current program digest above. Under its uninstantiated
 assumptions it records a 288-bit interactive floor and a conditional 157-bit
 soundness/composition screen for one global `2^64` quantum-query budget. Its
@@ -112,7 +112,7 @@ deployed composed floor, and no production authority.
 
 The deterministic 4,230-byte executable zero-knowledge refinement diagnostic
 has SHA-512
-`02d3e86eb1f9d5e33091611cbe8786e4ef7c38411cbc48a92b4b926e94f769752b3d1e61173b92d959c697b2c45867a993335c69a3cdb22c506a0ec695a353dd`.
+`e89ff29b047d85c6121689c4d298f031141d2dac6452f182d5d8d53cdd4ef7694c8616909ade6be95bcf1b1e06e98dd25b13df79bd7372be9a5af0500fe9015b`.
 It is bound to the same current relation id and verifies exact executable ROM
 replay and honest-map dimensions without using witness words. It records
 `production_eligible=false` and no executable whole-view refinement. It is

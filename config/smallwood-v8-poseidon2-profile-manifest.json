@@ -4,7 +4,7 @@
     "source_registry_entry_present": false,
     "successor_selection_selected": false
   },
-  "claim_boundary": "This manifest records the fresh SMZ9/profile-6 tuple for V8/Eta/action-10 while preserving SMZ8 as historical profile-5. The source encoder, Lean transcript specification/vector, and Rust conformance test pin the 853429-byte HGV8RP03 executable program under SHA-512 180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84 and relation id 180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984. The 122863-byte proof, 128293-byte RPC envelope, 128297-byte SCALE inline route arguments, and 128522-byte full PendingAction figures are distinct exact source-geometry projections, not retained measurements or accepted maxima. The pinned current-source security report remains diagnostic. The exact raw executable-ZK report is separately pinned and mechanically records that no salt-only oracle point or direct 256-bit first-program route is used, while retaining production_eligible=false. Exact source supply-chain, universal relation/verifier refinement, full-admissibility PIOP sampling refinement, concrete SHA-512/Poseidon2/QROM composition, adaptive whole-view zero knowledge, an enforceable query/history budget, lifecycle, independent review, and retained proof receipts remain absent. No production authority follows from this inventory.",
+  "claim_boundary": "This manifest records the fresh SMZ9/profile-6 tuple for V8/Eta/action-10 while preserving SMZ8 as historical profile-5. The source encoder, Lean transcript specification/vector, and Rust conformance test pin the 853429-byte HGV8RP03 executable program under SHA-512 7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17 and relation id 7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d0. The 122863-byte proof, 128293-byte RPC envelope, 128297-byte SCALE inline route arguments, and 128522-byte full PendingAction figures are distinct exact source-geometry projections, not retained measurements or accepted maxima. The pinned current-source security report remains diagnostic. The exact raw executable-ZK report is separately pinned and mechanically records that no salt-only oracle point or direct 256-bit first-program route is used, while retaining production_eligible=false. Exact source supply-chain, universal relation/verifier refinement, full-admissibility PIOP sampling refinement, concrete SHA-512/Poseidon2/QROM composition, adaptive whole-view zero knowledge, an enforceable query/history budget, lifecycle, independent review, and retained proof receipts remain absent. No production authority follows from this inventory.",
   "consensus_identity": {
     "action_id": 10,
     "backend_wire_id": 2,
@@ -20,7 +20,7 @@
     "path": "docs/crypto/smallwood_poseidon2_v8_smz9_source_security_report.json",
     "production_authorizing": false,
     "schema": "hegemon.smallwood.poseidon2-v8.smz9.source-security-report.v3",
-    "sha512": "087fd1f3dc04f653b6d380f104467842c1b4b42b7ba0fabfbe75220f3664f0e870b80f92bda748b571cce3768b0386cf870a5586f92d0547e780518b2e04a881"
+    "sha512": "5346d68e30c7ec99d197669679159af777ae7663029e22fc84da8fbf5e353b1829b4f4368b6449510b25bbf1e1022281891a114f51783148e2423c538e0b5110"
   },
   "executable_zk_refinement_report": {
     "bytes": 4230,
@@ -30,7 +30,7 @@
     "production_eligible": false,
     "salt_only_oracle_program_count": 0,
     "schema": "hegemon.smallwood.poseidon2-v8.smz9.executable-zk-refinement.v1",
-    "sha512": "02d3e86eb1f9d5e33091611cbe8786e4ef7c38411cbc48a92b4b926e94f769752b3d1e61173b92d959c697b2c45867a993335c69a3cdb22c506a0ec695a353dd"
+    "sha512": "e89ff29b047d85c6121689c4d298f031141d2dac6452f182d5d8d53cdd4ef7694c8616909ade6be95bcf1b1e06e98dd25b13df79bd7372be9a5af0500fe9015b"
   },
   "poseidon2": {
     "capacity": 8,
@@ -42,20 +42,20 @@
   "profile_id": "hegemon.smallwood.poseidon2.v8-eta.smz9.v1",
   "relation_manifest": {
     "path": "config/smallwood-v8-poseidon2-relation-manifest.json",
-    "relation_id": "180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984",
-    "sha512": "ee037655734f8e52ce392e35c657b3c7a0447b2437f8aa90e41def8913420e008cbbfde24834060b0a3509c2ee1dffea1f5e3e71e6377c882bb9eb9d6af3322f"
+    "relation_id": "7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d0",
+    "sha512": "343c31cd4852df45f9f33f537abc8d01c8403b0dbac962836e95029c94e47a7eef28b9f507ec8d8215aa67d6058c7fd30a9e708a057f9080a228de3f482ce06f"
   },
   "required_release_receipts": {
     "adaptive_qrom_whole_view_zk": null,
     "cryptographic_role_manifest_sha512": null,
-    "executable_zk_refinement_report_sha512": "02d3e86eb1f9d5e33091611cbe8786e4ef7c38411cbc48a92b4b926e94f769752b3d1e61173b92d959c697b2c45867a993335c69a3cdb22c506a0ec695a353dd",
+    "executable_zk_refinement_report_sha512": "e89ff29b047d85c6121689c4d298f031141d2dac6452f182d5d8d53cdd4ef7694c8616909ade6be95bcf1b1e06e98dd25b13df79bd7372be9a5af0500fe9015b",
     "lean_compiled_relation_semantic_refinement": null,
     "lean_poseidon2_relation_refinement": null,
     "lifecycle_same_bytes": null,
     "piop_correction_aware_sampling_refinement": null,
     "profile_manifest_sha512": null,
     "proof_measurement": null,
-    "relation_manifest_sha512": "ee037655734f8e52ce392e35c657b3c7a0447b2437f8aa90e41def8913420e008cbbfde24834060b0a3509c2ee1dffea1f5e3e71e6377c882bb9eb9d6af3322f",
+    "relation_manifest_sha512": "343c31cd4852df45f9f33f537abc8d01c8403b0dbac962836e95029c94e47a7eef28b9f507ec8d8215aa67d6058c7fd30a9e708a057f9080a228de3f482ce06f",
     "restart_reorg_fresh_node": null,
     "rust_lean_verifier_conformance": null,
     "rust_verifier_acceptance_refinement": null,

@@ -122,18 +122,18 @@ pub const SMALLWOOD_POSEIDON2_V8_REQUIRED_GEOMETRY_WORDS: [u64; 37] = [
 
 /// Pinned SHA-512 KAT for the canonical HGV8RP03 executable program transcript.
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512: [u8; SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512_BYTES] = [
-    0x18, 0x0f, 0xca, 0x50, 0x37, 0x6f, 0x75, 0x73, 0xca, 0xce, 0xdf, 0xb5, 0x46, 0x5a, 0x0b, 0x4d,
-    0x6b, 0xf5, 0xc6, 0x16, 0x37, 0x15, 0x20, 0x35, 0xa6, 0x82, 0xd2, 0x10, 0x38, 0x01, 0x6d, 0x22,
-    0x39, 0xe2, 0xf8, 0xb5, 0x06, 0x05, 0xf3, 0x6b, 0xaa, 0x63, 0x50, 0x38, 0x34, 0x8d, 0xc9, 0x84,
-    0x19, 0x7d, 0x6d, 0xf2, 0x93, 0x47, 0xe1, 0x7e, 0x11, 0x50, 0xc2, 0x4f, 0xf7, 0x37, 0xde, 0x84,
+    0x7e, 0x50, 0xeb, 0xa0, 0x7d, 0x84, 0x43, 0x3a, 0x53, 0xa6, 0xc8, 0x5e, 0xd2, 0xb3, 0xef, 0xec,
+    0xbe, 0xff, 0x10, 0x3c, 0xa4, 0x02, 0xbb, 0x93, 0x18, 0x31, 0xe1, 0x59, 0x8e, 0x6c, 0x9a, 0xb8,
+    0xfa, 0x13, 0x8c, 0x9b, 0x2f, 0x0c, 0xb9, 0xd2, 0x1b, 0xf2, 0xbf, 0x04, 0x4b, 0x50, 0xd4, 0xd0,
+    0x57, 0xae, 0x0b, 0xb1, 0x2e, 0x4d, 0xef, 0x00, 0xec, 0x52, 0x76, 0x52, 0x45, 0xcf, 0x9e, 0x17,
 ];
 
 /// First 48 bytes of [`SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512`].  This value names a compiler
 /// program; it does not authorize that program for production.
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST: [u8; SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST_BYTES] = [
-    0x18, 0x0f, 0xca, 0x50, 0x37, 0x6f, 0x75, 0x73, 0xca, 0xce, 0xdf, 0xb5, 0x46, 0x5a, 0x0b, 0x4d,
-    0x6b, 0xf5, 0xc6, 0x16, 0x37, 0x15, 0x20, 0x35, 0xa6, 0x82, 0xd2, 0x10, 0x38, 0x01, 0x6d, 0x22,
-    0x39, 0xe2, 0xf8, 0xb5, 0x06, 0x05, 0xf3, 0x6b, 0xaa, 0x63, 0x50, 0x38, 0x34, 0x8d, 0xc9, 0x84,
+    0x7e, 0x50, 0xeb, 0xa0, 0x7d, 0x84, 0x43, 0x3a, 0x53, 0xa6, 0xc8, 0x5e, 0xd2, 0xb3, 0xef, 0xec,
+    0xbe, 0xff, 0x10, 0x3c, 0xa4, 0x02, 0xbb, 0x93, 0x18, 0x31, 0xe1, 0x59, 0x8e, 0x6c, 0x9a, 0xb8,
+    0xfa, 0x13, 0x8c, 0x9b, 0x2f, 0x0c, 0xb9, 0xd2, 0x1b, 0xf2, 0xbf, 0x04, 0x4b, 0x50, 0xd4, 0xd0,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -235,10 +235,14 @@ const NONLINEAR_PREFIX_SPANS: &[SmallwoodPoseidon2V8NonlinearFamilySpan] = &[
     nonlinear_span("base.stable_direction_domain", 1),
     nonlinear_span("base.stable_compatibility", 5),
     nonlinear_span("base.reserved_compatibility_zero", 18),
-    nonlinear_span("base.input_direction_boolean", 64),
-    nonlinear_span("base.input_asset_membership_excluding_padding", 2),
-    nonlinear_span("base.output_asset_membership_excluding_padding", 2),
-    nonlinear_span("base.output_inactive_ciphertext", 12),
+    nonlinear_span("base.input_direction_boolean", 32),
+    nonlinear_span("base.input_asset_membership_excluding_padding", 1),
+    nonlinear_span("base.input_direction_boolean", 32),
+    nonlinear_span("base.input_asset_membership_excluding_padding", 1),
+    nonlinear_span("base.output_asset_membership_excluding_padding", 1),
+    nonlinear_span("base.output_inactive_ciphertext", 6),
+    nonlinear_span("base.output_asset_membership_excluding_padding", 1),
+    nonlinear_span("base.output_inactive_ciphertext", 6),
     nonlinear_span("base.stable_asset_membership_excluding_padding", 1),
     nonlinear_span("base.per_asset_balance", 4),
     nonlinear_span("base.dense_radix4_digit", 4),
@@ -248,8 +252,10 @@ const NONLINEAR_PREFIX_SPANS: &[SmallwoodPoseidon2V8NonlinearFamilySpan] = &[
     nonlinear_span("auth.mode_boolean", 3),
     nonlinear_span("auth.mode_one_hot", 1),
     nonlinear_span("auth.single_mode_canonical_zero", 109),
-    nonlinear_span("auth.effective_input_prf", 2),
-    nonlinear_span("auth.effective_input_key", 8),
+    nonlinear_span("auth.effective_input_prf", 1),
+    nonlinear_span("auth.effective_input_key", 4),
+    nonlinear_span("auth.effective_input_prf", 1),
+    nonlinear_span("auth.effective_input_key", 4),
     nonlinear_span("auth.approval_final_activity", 5),
     nonlinear_span("auth.approval_output_key", 4),
     nonlinear_span("auth.threshold_signer_encoding", 17),
@@ -280,9 +286,16 @@ pub struct SmallwoodPoseidon2V8NonlinearDescriptor {
 pub fn smallwood_poseidon2_v8_nonlinear_descriptors() -> Vec<SmallwoodPoseidon2V8NonlinearDescriptor>
 {
     let mut out = Vec::with_capacity(SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINTS);
+    // The evaluator interleaves input/output families. A split span resumes its family's
+    // local index rather than restarting at zero; hash groups below retain their coordinates.
+    let mut next_local = std::collections::BTreeMap::<&'static str, u16>::new();
     for span in NONLINEAR_PREFIX_SPANS {
-        for local_index in 0..span.count {
-            push_nonlinear(&mut out, span.name, local_index, 0, 0);
+        let local_index = next_local.entry(span.name).or_default();
+        for _ in 0..span.count {
+            push_nonlinear(&mut out, span.name, *local_index, 0, 0);
+            *local_index = local_index
+                .checked_add(1)
+                .expect("prefix family count fits u16");
         }
     }
     debug_assert_eq!(out.len(), 471);
