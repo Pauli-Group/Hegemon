@@ -27,6 +27,33 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Progress
 
+- [x] (2026-09-08) Strictly qualify and exactly migrate 90 range equations:
+  66 range reconstructions and 24 high-limb padding cells in ten modules,
+  adding 46 declarations (2,129 total). All 983 input pins, 11 fresh outputs
+  and 35 logs pass independent postflight. All 24 mathematical and nine
+  parser negatives are rejected; peak child RSS is 2,413,821,952 bytes.
+  Receipt SHA-256 is
+  `1a60e85b14c56e309f0a5a9a6a40dfe7250be66caaaaf6f451de04afe8d1e51e`;
+  migration SHA-256 is
+  `279e97232e635ddce6df6122cefdf65dc09e63f5df301f32ec10b79bcb677c04`.
+  Independent review confirms validity-only source bounds, odd top-bit
+  readback, actual coefficient DAGs and exact indexed endpoints. The first
+  unintegrated padding draft's incorrect merged address block is rejected;
+  the exact six four-cell blocks are retained in the corrected source proof.
+- [x] (2026-09-08 23:43 UTC) Complete the 2,129-declaration integration
+  gate: all 3,141 jobs, exact axiom audits and unchanged-vector checks pass.
+  Gate-log SHA-256 is
+  `672254cd2af528ad5621b22cf1ff4cfa8e11666e2c23052164023fcc9576a372`.
+  Retain 222 files / 38,418,652 bytes in
+  `.agent/artifacts/smallwood-poseidon2-v8/formal-source-2129-672254cd2af528ad`;
+  manifest SHA-256 is
+  `688c4be9357a1b9301a182fb7d8f1393488c36bc20683cf2d9bff649e27116f1`.
+  Independent exact-set, size and hash readback passes for every payload.
+- [ ] Close the remaining numeric CSR equations and compose full execution.
+  Source coverage is 20,431/20,605, leaving exactly 174 numeric equations.
+  Complete CSR execution, packed acceptance, native refinement and the
+  independent security/release endpoints remain open.
+
 - [x] (2026-09-08 19:11 UTC) Strictly qualify the final 97 authorization
   nonlinear roots in ten source modules. All 230 exact declaration audits,
   10 mathematical negatives and parser controls pass with 907 frozen input
@@ -682,6 +709,14 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Surprises & Discoveries
 
+The initial high-limb padding draft merged two four-cell groups and omitted
+the final right-output group. The qualified theorem follows the six actual
+source starts and generated entries; the wrong draft remains uncredited.
+A full-table finite lookup hit the unchanged 2,800-MiB Lean allocation cap.
+Bounded generated-chunk membership plus the complete-list lookup theorem
+closes the same indexed statement below the cap. This was a proof-development
+resource failure, not a discovered runtime defect.
+
 - Observation (2026-09-08): the existing note/nullifier/Merkle acceptance
   theorems have the wrong direction for honest construction. New source
   proofs must first derive exact scheduled digests, including the 32-step
@@ -832,6 +867,13 @@ membership rule preserves the intended balance semantics.
 
 ## Decision Log
 
+- Decision: integrate all ten range modules as one 90-equation packet and
+  one complete 2,129-declaration gate. Use bounded generated-chunk membership
+  for exact padding lookup after whole-table reduction exceeds the existing
+  cap. Preserve all unsuccessful drafts and compile logs; do not weaken
+  compiler settings, source bounds or the final typed-validity statement.
+  Date/Author: 2026-09-08, coordinator.
+
 - Decision: integrate the four stablecoin packets together after their
   strict source checks and independent reviews, then run one complete
   2,083-declaration gate. Reuse only unchanged development dependencies
@@ -972,7 +1014,8 @@ CSR attempts first leave 1,432; the 192 inline-policy copy and padding
 attempts first reduce that to 1,240. The next 354 dense/base/key and
 authorization-initial equations first reduce the gap to 886. The next
 290 note/nullifier/public-digest equations reduce it to 596. Another 332
-stablecoin frame, path and public-output equations reduce it to 264. Actual Rust execution, complete CSR execution
+stablecoin frame, path and public-output equations reduce it to 264. The next
+90 range and padding equations reduce it to 174. Actual Rust execution, complete CSR execution
 and full packed acceptance remain active.
 
 The prior commits establish local mathematical ingredients, not either
@@ -1006,7 +1049,13 @@ leaf, state-path and issuer frames and their public/private digest bindings.
 The 2,083-declaration integration gate passes all 3,131 jobs, exact axiom
 audits and unchanged vectors. Its 533 retained payloads pass independent
 byte-size and hash readback. The remaining 264 equations
-are numeric/range families, not a complete-interpreter or release claim.
+are numeric/range families at that checkpoint, not a complete-interpreter
+or release claim. The following 90-equation range packet now passes strict
+qualification, exact ten-module migration and the 2,129-declaration complete
+gate. Its 222 evidence payloads pass independent exact-set, size and hash
+readback. Coverage is 20,431/20,605, with only globals `20320..20493` still
+open. This does not close actual CSR execution, packed acceptance, Rust
+refinement or either complete security endpoint.
 
 The final report for `4a0acb9b` incorrectly led with "Completed". It completed
 a local repair checkpoint only. Empty Lean receipt types deliberately prevent
@@ -1032,14 +1081,14 @@ is currently uninhabited.
 
 ## Plan of Work
 
-The current raw CSR gap is an exact disjoint union of two inclusive index
-ranges: `20192..20257` (66) and `20296..20493` (198). These total 264
-and do not overlap the 20,341 derived attempts. They contain stablecoin
-range-reconstruction and numeric-helper equations. The exact parsed
+The current raw CSR gap is the inclusive index range `20320..20493` (174),
+disjoint from the 20,431 derived attempts. The 66 range-reconstruction and
+24 high-limb padding equations are now strictly qualified and migrated.
+The remaining equations contain stablecoin numeric helpers. The exact parsed
 program and source-module anchors are recorded in
-`/private/tmp/smz9-stable332-integration.le6qig/CSR-REMAINDER-264.json`,
-with SHA-256 `adf59dfcf559790ccfdc0ea0d54e9227bf2bb0e2fa7364872622286ef3beb81e`.
-The prior 1,240-, 886- and 596-gap inventories remain retained for their checkpoints.
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-2129-672254cd2af528ad/integration/CSR-REMAINDER-174.json`,
+with SHA-256 `1c0692a7d66d4eb2ffde1af628dbceac53fad8ab5cb78b5bea27dd9f17e6ec1a`.
+The prior 1,240-, 886-, 596- and 264-gap inventories remain retained for their checkpoints.
 Descriptor names are navigation aids, not satisfaction evidence. Derive
 actual residuals from the unchanged constructor, qualify each packet, then
 compose complete CSR execution and packed acceptance; do not confuse this
@@ -1462,3 +1511,11 @@ exactly migrate the combined 332-equation increment. Record the four
 strict receipts and independent postflight/review, update the disjoint
 gap to 264, and record the completed 2,083-declaration full gate and exact
 533-payload archive separately from production authority.
+
+Revision note (2026-09-08): strictly qualify and migrate the next 90 range
+and high-limb padding equations. Derive all widths from typed/source bounds,
+preserve odd top bits, reject incorrect padding coordinates, and use bounded
+generated-chunk membership after a whole-table development check reaches the
+unchanged compiler memory cap. Record the new 174-equation disjoint gap and
+record the completed 2,129-declaration integration gate and exact 222-file
+evidence archive after the actual audit and vector results pass.

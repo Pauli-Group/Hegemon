@@ -110,8 +110,10 @@ frames and 28 public-root/issuer-output bindings. Forward digest proofs
 execute all four configuration chunks, the configuration tree and all four
 state-path levels. Disabled transitions enforce root equality; enabled
 roots and mint-only issuer digests bind the exact typed/public/private words.
-Current source coverage is 20,341/20,605, with 264 numeric/range equations
-still open. The 2,083-declaration integration gate passes with unchanged
+Ten range modules add 66 actual range reconstructions and 24 high-limb
+padding cells, deriving numeric bounds and odd top bits from typed validity.
+Current source coverage is 20,431/20,605, with 174 numeric equations
+still open. The 2,129-declaration integration gate passes with unchanged
 wire vectors; it is not production authority.
 The tail uses the same computed hash schedule, with no supplied auxiliary
 or hash-final values. Complete CSR coefficient/interpreter execution,

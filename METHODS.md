@@ -411,8 +411,12 @@ Another 332 equations cover stablecoin configuration, leaf, path and issuer
 frames and the 28 public-root/issuer-output bindings. Their forward hash
 proofs retain the four-chunk configuration tree, both four-level paths,
 the disabled root-equality term and mint-only issuer gates. Source coverage
-is now 20,341/20,605, leaving 264 numeric/range raw CSR attempts; the
-2,083-declaration combined integration gate passes with unchanged wire vectors.
+first reaches 20,341/20,605. Another 90 equations derive all 66 actual
+range reconstructions and the 24 high-limb padding cells. Bounds, odd
+top-bit readbacks and signed coefficients come from the actual source and
+expression DAG. Source coverage is now 20,431/20,605, leaving 174 numeric
+raw CSR attempts; the 2,129-declaration integration gate passes with
+unchanged wire vectors.
 The stable-tail identities are constructor properties; the inactive
 Merkle and authorization endpoints use fixed typed validity and derive
 their actual public/packed values internally. Coverage

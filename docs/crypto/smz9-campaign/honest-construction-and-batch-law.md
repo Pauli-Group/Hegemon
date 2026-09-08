@@ -411,8 +411,21 @@ Disabled transitions enforce before/after root equality without binding an
 inactive hash; enabled root outputs and mint-only issuer outputs use their
 exact gates. None of these endpoints assumes accepted packed data.
 
-Together these results discharge 20,341 of 20,605 actual raw CSR attempts
-and all 830 nonlinear roots in all 64 lanes. The remaining 264 numeric/range raw CSR
+Ten range modules add all 66 actual family-60 reconstructions and 24
+family-62 high-limb padding cells. `SourceStableRangeDigits` derives radix-four
+reconstruction; direct and auxiliary bound modules supply the actual typed
+source bounds. `SourceStableRangeTopBits` and `SourceStableRangeReadbacks`
+bind the exact source digits and odd top bits to physical candidate words.
+`SourceStableRangeCoefficients` executes the signed coefficient DAG;
+`SourceStableRangeNatural` and `SourceStableRange66` close globals
+`20192..20257`. `SourceStablePadding24` closes globals `20296..20319`,
+using the six separate four-cell address blocks at `43446`, `43494`,
+`43574`, `43638`, `43686` and `43766`. No source auxiliary, numeric bound,
+acceptance predicate or desired evaluator output is supplied as an extra
+premise to the final typed-validity endpoints.
+
+Together these results discharge 20,431 of 20,605 actual raw CSR attempts
+and all 830 nonlinear roots in all 64 lanes. The remaining 174 numeric raw CSR
 attempts, complete CSR coefficient/interpreter execution and full packed
 acceptance remain open. These are raw attempt counts, not a fixed count of
 public-dependent normalized emitted rows. Rust refinement, cryptographic
@@ -646,7 +659,30 @@ copy-manifest SHA-256 is
 All copied sizes and hashes pass independent readback. This increment
 does not relabel the existing runtime freeze or grant production authority.
 
-Continue by closing the remaining 264 raw CSR attempts and deriving
+The next 90 range equations are strict-qualified in one ten-module packet.
+The receipt SHA-256 is
+`1a60e85b14c56e309f0a5a9a6a40dfe7250be66caaaaf6f451de04afe8d1e51e`.
+All 24 mathematical negatives and nine parser negatives are rejected.
+Independent pre-migration postflight verifies 983 frozen input pins, 11
+fresh outputs and 35 logs; peak child RSS is 2,413,821,952 bytes. Source
+review checks the forward bounds, top-bit and digit bindings, coefficient
+signs and exact indexed coverage. Import-only migration adds 46 declarations
+for a total of 2,129; migration SHA-256 is
+`279e97232e635ddce6df6122cefdf65dc09e63f5df301f32ec10b79bcb677c04`.
+The combined gate passes all 3,141 jobs, every declaration audit and the
+unchanged-vector checks. Full-gate log SHA-256 is
+`672254cd2af528ad5621b22cf1ff4cfa8e11666e2c23052164023fcc9576a372`.
+The exact 222-file, 38,418,652-byte evidence archive is
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-2129-672254cd2af528ad`;
+copy-manifest SHA-256 is
+`688c4be9357a1b9301a182fb7d8f1393488c36bc20683cf2d9bff649e27116f1`.
+All copied sizes, hashes and the complete payload set pass independent
+readback. The rejected initial padding mapping and failed development runs
+remain uncredited evidence. A whole-table finite lookup exceeded the existing
+compiler cap; the qualified proof uses bounded chunk membership without
+changing the limits or the statement proved.
+
+Continue by closing the remaining 174 raw CSR attempts and deriving
 complete CSR coefficient/interpreter execution. This must supply
 `CanonicalPublicPackedDomain` for a named
 concrete constructor. Actual Rust success, output equality, decoding
