@@ -391,10 +391,17 @@ list membership, including the 332-root hash slice, and supplies the complete
 nonlinear interpreter's execution and all-zero root readback from fixed typed
 validity alone. Four digest-copy families add 28 actual CSR attempts, bringing
 coverage to 19,173/20,605. Families 27/28 then add 21 inline-policy bindings
-and 171 padding cells: 19,365/20,605 with 1,240 still open. The padding
+and 171 padding cells, first reaching 19,365/20,605. The padding
 address is `17927 + 64*(index/57) + index%57`, preserving each row's seven
 live cells. These copy and padding equations follow structurally from the
 same constructor without an additional validity premise.
+Eight further modules derive 354 attempts: 103 dense padding cells, 111
+balance/legacy/ciphertext/inactive-raw equations, 128 authorization initial
+frame equations, and 12 inactive/shared-key equations. The authorization
+frames preserve the exact 23-word and 14-word preimages and short final-block
+padding. The key equations use typed inactivity or equality of active input
+spend keys. All source bindings use actual generated entries and the unchanged
+constructor. Coverage is now 19,719/20,605, leaving 886 raw CSR attempts.
 The stable-tail identities are constructor properties; the inactive
 Merkle and authorization endpoints use fixed typed validity and derive
 their actual public/packed values internally. Coverage

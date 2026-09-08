@@ -98,7 +98,10 @@ all 830 roots in all 64 lanes. The actual complete nonlinear interpreter
 now executes the unchanged expression DAG and returns zero at every root
 from fixed typed validity alone. Four digest-copy families add 28 actual
 CSR attempts. The 21 inline-policy bindings and 171 padding cells add another
-192: current coverage is 19,365/20,605, with 1,240 still open.
+192. A further 354 attempts cover dense padding (103), balance/legacy/ciphertext
+copies and inactive raw fields (111), authorization initial frames (128),
+and inactive/shared input keys (12). Current coverage is 19,719/20,605,
+with 886 still open.
 The tail uses the same computed hash schedule, with no supplied auxiliary
 or hash-final values. Complete CSR coefficient/interpreter execution,
 full packed acceptance and Rust execution remain separate obligations. The exact finite

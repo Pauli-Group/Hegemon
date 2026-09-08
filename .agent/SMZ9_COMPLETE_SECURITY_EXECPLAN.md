@@ -66,6 +66,26 @@ of this work. The security endpoints and resource accounting remain those in
   `cb6b91b97da5517d9c7d6358e27120d5251dca9af7ff7560de92f86c6a9f1009`.
   Retain all 268 payload files byte-identically under
   `.agent/artifacts/smallwood-poseidon2-v8/formal-source-1767-cb6b91b97da5517d`.
+- [x] (2026-09-08 20:54 UTC) Strictly qualify 354 further actual CSR
+  attempts in eight modules: dense padding 103, base/ciphertext/inactive raw
+  111, authorization initial frames 128 and inactive/shared input keys 12.
+  All 95 exact declaration audits, 40 mathematical negatives and 36 parser
+  negatives pass. Independent postflight checks all four frozen input sets,
+  12 fresh outputs and 52 logs. Separate read-only review finds no source-
+  binding defect. The failed dense draft, mechanical development failures
+  and first key negative-control namespace error remain uncredited.
+- [x] (2026-09-08 21:02 UTC) Complete the 1,862-declaration integration
+  gate after exact import-only migration of eight modules. All 3,095 jobs,
+  exact declaration audits and three unchanged wire vectors pass. Retain
+  all 291 payload files (29,509,819 bytes) byte-identically under
+  `.agent/artifacts/smallwood-poseidon2-v8/formal-source-1862-1191e073689038d1`.
+  Full-gate log SHA-256 is
+  `1191e073689038d1343296066b47439849a8e79ca6edc04a1d6ed01ce3495a9f`.
+  Migration SHA-256 is
+  `de6b43867f1f7c7e5c7f4ea3d63dde199852962ceaf8f65430c63024531a3fd9`.
+  Current source coverage is 19,719/20,605; the remaining 886 equations,
+  complete CSR execution, packed acceptance and downstream security/runtime
+  obligations stay open.
 - [x] (2026-09-08) Integrate seven current-qualified role-CSR modules and
   30 exact roots. All 210 actual family-47 entries `19344..19553` evaluate
   to zero on the original full typed candidate from fixed typed validity,
@@ -866,7 +886,8 @@ first reduce those counts to 1,460 and 97. The final 97-root authorization
 packet and indexed composition now establish all 830 nonlinear roots and
 successful actual nonlinear interpreter execution. Another 28 digest-copy
 CSR attempts first leave 1,432; the 192 inline-policy copy and padding
-attempts reduce that to 1,240. Actual Rust execution, complete CSR execution
+attempts first reduce that to 1,240. The next 354 dense/base/key and
+authorization-initial equations reduce the gap to 886. Actual Rust execution, complete CSR execution
 and full packed acceptance remain active.
 
 The prior commits establish local mathematical ingredients, not either
@@ -878,10 +899,14 @@ The 1,767-declaration combined gate now passes with unchanged wire vectors.
 Its retained increment contains 14 integrated source modules and 265 added
 audited declarations, with exact source migration and 268 byte-verified
 evidence payloads. It completes nonlinear source execution, not the full
-security or production objective. The next draft for 103 dense-padding CSR
-attempts is uncompiled and uncredited; parent review rejected its confusion
-between packed addresses and coefficient-node indices. Replace that argument
-with the actual dense-constructor padding readback before testing it.
+security or production objective. Parent review rejected the first dense-
+padding draft's confusion between packed addresses and coefficient-node
+indices; the replacement uses the actual dense-constructor padding readback.
+It and seven further modules are now strict-qualified with 95 declarations
+and 354 actual CSR attempts. The 1,862-declaration integration gate passes
+all 3,095 jobs, exact audits and unchanged vectors; 291 evidence payloads
+are retained byte-identically with an exact copy manifest.
+No production capability, runtime program or wire bytes change in this increment.
 
 The final report for `4a0acb9b` incorrectly led with "Completed". It completed
 a local repair checkpoint only. Empty Lean receipt types deliberately prevent
@@ -907,18 +932,17 @@ is currently uninhabited.
 
 ## Plan of Work
 
-The current raw CSR gap is an exact disjoint union of nine inclusive index
-ranges: `15561..15664` (104), `15672..15788` (117), `15805..15917` (113),
-`18286..18467` (182), `18971..19018` (48), `19026..19073` (48),
-`19081..19112` (32), `19860..20257` (398) and `20296..20493` (198).
-These total 1,240 and do not overlap the 19,365 derived attempts. The first
-four blocks are base/input/output bindings and initial frames; the next
-three are current/next/value-lock authorization initial frames; the last
-two are stablecoin initial frames, public bindings, range reconstruction
-and numeric helper equations. The exact parsed program and source-module
-anchors are recorded in `CSR-REMAINDER-1240.json` in the retained formal
-increment. Its SHA-256 is
-`5d242824636e4a722653bbf398a9fcefb9afc67eb9d5607a79093a87cd8a1bb0`.
+The current raw CSR gap is an exact disjoint union of four inclusive index
+ranges: `15810..15917` (108), `18286..18467` (182), `19860..20257` (398)
+and `20296..20493` (198). These total 886 and do not overlap the 19,719
+derived attempts. The first two blocks contain 216 input/output note initial
+and inactive-preimage equations, 32 nullifier initial equations and 42 public
+Merkle/nullifier/commitment bindings. The last two contain 596 stablecoin
+initial-frame, public-binding, range-reconstruction and numeric-helper
+equations. The exact parsed program and source-module anchors are recorded
+in `CSR-REMAINDER-886.json` in the current formal increment, with SHA-256
+`315e540840203d594556f0f9e0f87ceae3c9baeee9ee44c4cb3738ea437f4927`.
+The prior 1,240-gap inventory remains retained for its earlier checkpoint.
 Descriptor names are navigation aids, not satisfaction evidence. Derive
 actual residuals from the unchanged constructor, qualify each packet, then
 compose complete CSR execution and packed acceptance; do not confuse this
@@ -1308,3 +1332,14 @@ Revision note (2026-09-08 19:57 UTC): record the successful 3,087-job,
 1,767-declaration combined gate, unchanged vectors and byte-verified evidence
 archive. Preserve the failed first gate and wrong-domain dense draft as
 uncredited work. Production authority remains absent.
+
+Revision note (2026-09-08 20:54 UTC): integrate eight strict-qualified
+modules adding 354 actual CSR attempts and 95 audited declarations. Record
+all four exact receipts, postflight, failed draft/control evidence and the
+running combined gate. Replace the obsolete dense-draft next step with the
+exact remaining 886-equation inventory and note-initial construction work.
+
+Revision note (2026-09-08 21:02 UTC): record the complete 1,862-declaration
+gate and exact 291-file retained increment. Keep all prior failed evidence,
+source-freeze identities and production barriers unchanged. Begin isolated
+note-frame drafts without counting them toward integrated coverage.

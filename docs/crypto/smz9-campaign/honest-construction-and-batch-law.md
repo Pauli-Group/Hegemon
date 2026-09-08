@@ -370,8 +370,23 @@ all equations follow from the unchanged constructor without a validity
 premise. Eight mathematical negatives test the three padding runs,
 policy/final/mode operands, coefficient sign and exact count.
 
-Together these results discharge 19,365 of 20,605 actual raw CSR attempts
-and all 830 nonlinear roots in all 64 lanes. The remaining 1,240 raw CSR
+The next eight modules add 354 actual attempts. `SourceDense103` derives
+the 46 dense-padding and 57 top-padding cells at `15674..15776` from the
+actual dense constructor, not by treating packed addresses as coefficient
+indices. `SourceBase7`, `SourceCipher12` and `SourceInactiveRaw92` add two
+balance equations, five legacy-digest copies, twelve ciphertext copies and
+92 inactive raw fields. `SourceAuthInitialFrames`, `SourceAuthInitialWords`
+and `SourceAuthInitial128` establish the 48 current-accumulator, 48 next-
+accumulator and 32 value-lock initial equations, preserving the exact
+23-word and 14-word preimages and short final-block padding. Finally,
+`SourceInputKeyCsr12` derives eight inactive-input-key equations and four
+shared-key equations at `15777..15788`. Typed inactive keys are zero;
+two active inputs have equal spend keys, while an inactive flag cancels
+the actual shared-key coefficient product. Every final indexed endpoint
+uses the unchanged full typed constructor and actual generated CSR entries.
+
+Together these results discharge 19,719 of 20,605 actual raw CSR attempts
+and all 830 nonlinear roots in all 64 lanes. The remaining 886 raw CSR
 attempts, complete CSR coefficient/interpreter execution and full packed
 acceptance remain open. These are raw attempt counts, not a fixed count of
 public-dependent normalized emitted rows. Rust refinement, cryptographic
@@ -531,11 +546,35 @@ All 268 evidence payloads (15,391,024 bytes), including the failed earlier
 attempts, are retained byte-identically under
 `.agent/artifacts/smallwood-poseidon2-v8/formal-source-1767-cb6b91b97da5517d`.
 Four strict receipts qualify all 14 migrated source modules and 265 added
-declarations. Current source coverage is 19,365/20,605 CSR attempts and all
+declarations. Coverage at that checkpoint is 19,365/20,605 CSR attempts and all
 830 nonlinear roots; the complete actual nonlinear interpreter endpoint is
 included, not only separate field-root equations.
 
-Continue by closing the remaining 1,240 raw CSR attempts and deriving
+The four subsequent strict receipts qualify eight modules and 95 added
+declarations. The dense-103 receipt is
+`57511cee7598b918da929f4bb354789812cf01f215fa5a9170efaa525916b9ab`;
+base-111 is `2f8a0beaee3fa6af9b52d4f002ec7467ccbe970026ec4fe6109089a64e696f78`;
+authorization-128 is
+`8a923150d3f37a4ea8002bcd25864b158676b3c06f51d800b3fa36a57a911241`;
+key-12 is `74f77513e226f9cb5ba5ea2f33d53568238168887fd6e540cab2ac4a486a22e1`.
+They reject 40 mathematical negatives and 36 parser negatives and check
+all source/tool/import pins before and after every compiler invocation.
+Independent postflight verifies all frozen inputs, fresh outputs and logs.
+Peak child memory is 2,555,904,000 bytes. Parent and separate read-only
+reviews check source binding and premise scope. Failed drafts and the
+first key-control namespace error remain uncredited evidence. Exact
+import-only migration adds the 95 roots to the declaration list, for
+1,862 total. The combined gate passes all 3,095 jobs, exact declaration
+audits and three byte-identical wire vectors. Log SHA-256 is
+`1191e073689038d1343296066b47439849a8e79ca6edc04a1d6ed01ce3495a9f`.
+All 291 payload files (29,509,819 bytes) are retained under
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-1862-1191e073689038d1`;
+copy-manifest SHA-256 is
+`8deeea715965e135ecc54f3e68e5e5a03d9711e08c4e82948bc111f48b0e2552`.
+This is an exact evidence archive, not a portable hermetic replay or a
+new production-binary source freeze.
+
+Continue by closing the remaining 886 raw CSR attempts and deriving
 complete CSR coefficient/interpreter execution. This must supply
 `CanonicalPublicPackedDomain` for a named
 concrete constructor. Actual Rust success, output equality, decoding
