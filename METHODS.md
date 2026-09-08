@@ -407,7 +407,12 @@ note preimages retain all 18 words and three blocks; nullifiers bind their
 mode-dependent scalar, exact 32-bit position and four rho words. Forward
 digest proofs follow all 32 actual Merkle steps and bind their orientation
 and public root, alongside the public nullifiers and output commitments.
-Coverage is now 20,009/20,605, leaving 596 stablecoin raw CSR attempts.
+Another 332 equations cover stablecoin configuration, leaf, path and issuer
+frames and the 28 public-root/issuer-output bindings. Their forward hash
+proofs retain the four-chunk configuration tree, both four-level paths,
+the disabled root-equality term and mint-only issuer gates. Source coverage
+is now 20,341/20,605, leaving 264 numeric/range raw CSR attempts; the
+2,083-declaration combined integration gate passes with unchanged wire vectors.
 The stable-tail identities are constructor properties; the inactive
 Merkle and authorization endpoints use fixed typed validity and derive
 their actual public/packed values internally. Coverage

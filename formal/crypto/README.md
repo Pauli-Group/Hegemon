@@ -271,10 +271,14 @@ independent cryptographic review or authorization to overstate those assumptions
 
 The source-forward SMZ9 construction now includes all 830 actual nonlinear
 roots and complete nonlinear interpreter execution on the same full typed
-candidate in every lane. It derives 20,009 of 20,605 raw CSR attempts;
-the remaining 596 stablecoin attempts, full CSR execution and packed acceptance are
+candidate in every lane. It derives 20,341 of 20,605 raw CSR attempts;
+the remaining 264 numeric/range attempts, full CSR execution and packed acceptance are
 still open. See the [construction dossier](../../docs/crypto/smz9-campaign/honest-construction-and-batch-law.md)
 for exact modules, receipts and the separate runtime/security boundaries.
+The 2,083-declaration integration gate for the latest 332-equation batch passes
+with unchanged wire vectors. Its exact evidence archive is
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-2083-a08ea36246cb35e5`
+at the repository root.
 
 Run the complete package gate from the repository root:
 

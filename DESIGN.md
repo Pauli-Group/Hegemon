@@ -104,8 +104,15 @@ and inactive/shared input keys (12). Another 290 cover exact note initial
 and inactive-preimage equations (216), nullifier initial equations (32),
 and public Merkle/nullifier/commitment bindings (42). These derive the actual
 three-block note digests, mode-dependent nullifier digests and all 32 Merkle
-steps from typed validity. Current coverage is 20,009/20,605, with 596
-stablecoin equations still open.
+steps from typed validity. Fifteen stablecoin modules add 332 equations:
+112 configuration frames, 128 state-path frames, 32 leaf frames, 32 issuer
+frames and 28 public-root/issuer-output bindings. Forward digest proofs
+execute all four configuration chunks, the configuration tree and all four
+state-path levels. Disabled transitions enforce root equality; enabled
+roots and mint-only issuer digests bind the exact typed/public/private words.
+Current source coverage is 20,341/20,605, with 264 numeric/range equations
+still open. The 2,083-declaration integration gate passes with unchanged
+wire vectors; it is not production authority.
 The tail uses the same computed hash schedule, with no supplied auxiliary
 or hash-final values. Complete CSR coefficient/interpreter execution,
 full packed acceptance and Rust execution remain separate obligations. The exact finite

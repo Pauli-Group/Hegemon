@@ -397,8 +397,22 @@ and nullifier digests and the complete 32-step Merkle fold, then bind the
 spend-key selection is proved from typed validity; no accepted-packed
 premise is used to obtain a forward source digest.
 
-Together these results discharge 20,009 of 20,605 actual raw CSR attempts
-and all 830 nonlinear roots in all 64 lanes. The remaining 596 stablecoin raw CSR
+Fifteen further modules derive 332 stablecoin attempts. `SourceStableConfig112`
+covers four configuration chunks and their three-node tree, including the
+final chunk's padding. `SourceStablePath128`, `SourceStableLeaf32` and
+`SourceStableIssuer32` cover both four-level paths, the two leaves and the
+two issuer frames. `SourceStableDigestForward` and `SourceStableStateForward`
+derive the computed configuration, state-root and issuer digests from the
+actual scheduled kernel calls. `SourceStableOutputBindings` connects them
+to typed transition equalities and exact public/private word encodings.
+`SourceStableOutputCoefficients` executes the actual target DAG nodes;
+`SourceStableOutput28` closes globals `20132..20145` and `20178..20191`.
+Disabled transitions enforce before/after root equality without binding an
+inactive hash; enabled root outputs and mint-only issuer outputs use their
+exact gates. None of these endpoints assumes accepted packed data.
+
+Together these results discharge 20,341 of 20,605 actual raw CSR attempts
+and all 830 nonlinear roots in all 64 lanes. The remaining 264 numeric/range raw CSR
 attempts, complete CSR coefficient/interpreter execution and full packed
 acceptance remain open. These are raw attempt counts, not a fixed count of
 public-dependent normalized emitted rows. Rust refinement, cryptographic
@@ -609,7 +623,30 @@ copy-manifest SHA-256 is
 This does not change the earlier runtime binary freeze or constitute
 a portable hermetic replay or production authorization.
 
-Continue by closing the remaining 596 raw CSR attempts and deriving
+The next 332-equation batch has four independent strict receipts. In order
+configuration-112, path-128, leaf/issuer-64 and public-output-28, their SHA-256
+values are `68105e401dda3756e9fd9885c0b95e319c4df2531a515c1e83c6568b987568fa`,
+`cb0f97422c44ed4d74a1e85182af4fd5d0daf3ba5880364b3352820922c42c88`,
+`e237bf09dfcdbc0ffb767e5a141d06e3c4f50926b461a15de40344e8e99fbd25`,
+and `8733a3d74d800043571cc4f46661f42655f6bd6cad6829fb7a2fb0ed7a9daed2`.
+They reject 42 mathematical and 36 parser negatives. Independent
+pre-migration postflight verifies all 3,768 input-pin occurrences, 27 fresh
+outputs and 69 logs, with peak child RSS 2,488,270,848 bytes. Source review
+checks the forward bindings, gating and exact indexed coverage. Import-only
+migration adds 15 modules and 87 unique declarations, bringing the inventory
+to 2,083; migration SHA-256 is
+`24ec2dadf121415fa6df8d2a718e1ba79243cb3e56a26ee1688727586add1300`.
+The combined repository gate passes all 3,131 jobs, all 2,083 kernel axiom
+audits and unchanged-vector checks. Full-gate log SHA-256 is
+`a08ea36246cb35e5b1227905d880c61d3c467d79cf58a82ea7e8e99ac2022316`.
+The exact 533-file, 88,070,836-byte evidence archive is
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-2083-a08ea36246cb35e5`;
+copy-manifest SHA-256 is
+`613689183d124209fe52abf25145c62016919fac0ce56e54c9850554d1a9062d`.
+All copied sizes and hashes pass independent readback. This increment
+does not relabel the existing runtime freeze or grant production authority.
+
+Continue by closing the remaining 264 raw CSR attempts and deriving
 complete CSR coefficient/interpreter execution. This must supply
 `CanonicalPublicPackedDomain` for a named
 concrete constructor. Actual Rust success, output equality, decoding

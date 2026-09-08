@@ -105,6 +105,42 @@ of this work. The security endpoints and resource accounting remain those in
   `.agent/artifacts/smallwood-poseidon2-v8/formal-source-1996-ed9d9e03b53fb45f`.
   Copy-manifest SHA-256 is
   `e20ed7a6fb6e987dc112839df9b64d96c43d934ad6000c4e90164efea4272644`.
+- [x] (2026-09-08 22:25 UTC) Strictly qualify 304 further stablecoin CSR
+  equations in ten isolated modules: configuration chunks/tree (112),
+  before/after state paths (128), leaf frames (32), and issuer frames (32).
+  Three receipts contain 54 unique audited declarations, reject 28
+  mathematical and 27 parser negatives, and pass independent source review.
+  All 2,813 input-pin occurrences, 15 fresh outputs and 43 logs pass
+  independent postflight. This is qualified scratch work, not integrated
+  coverage; the committed checkpoint remains 20,009/20,605 with 1,996
+  declarations. The 292 not-yet-qualified CSR equations comprise 28 public
+  stable digest bindings, 66 range reconstructions, and 198 numeric cells.
+  Sources and evidence are in `/private/tmp/smz9-stable112-coordinator.UrdYTo`.
+  Receipt SHA-256 values are
+  `68105e401dda3756e9fd9885c0b95e319c4df2531a515c1e83c6568b987568fa`,
+  `cb0f97422c44ed4d74a1e85182af4fd5d0daf3ba5880364b3352820922c42c88`,
+  and `e237bf09dfcdbc0ffb767e5a141d06e3c4f50926b461a15de40344e8e99fbd25`.
+- [x] (2026-09-08) Strictly qualify the remaining 28 stable public-root
+  and issuer-output equations, then exactly migrate the combined 332-equation
+  increment in 15 modules with 87 unique declarations. Four strict packets
+  reject 42 mathematical and 36 parser negatives; all 3,768 input-pin
+  occurrences, 27 fresh outputs and 69 logs pass independent pre-migration
+  postflight. Public-output receipt SHA-256 is
+  `8733a3d74d800043571cc4f46661f42655f6bd6cad6829fb7a2fb0ed7a9daed2`.
+  Migration SHA-256 is
+  `24ec2dadf121415fa6df8d2a718e1ba79243cb3e56a26ee1688727586add1300`.
+  Source coverage is 20,341/20,605; the 264 remaining equations comprise
+  66 range reconstructions and 198 numeric cells. All final source endpoints
+  use the unchanged constructor and typed validity, including disabled
+  root equality and mint-only issuer gates.
+- [x] (2026-09-08) Complete and retain the 2,083-declaration integration
+  gate: all 3,131 jobs, exact declaration audits and unchanged-vector
+  checks pass. Gate-log SHA-256 is
+  `a08ea36246cb35e5b1227905d880c61d3c467d79cf58a82ea7e8e99ac2022316`.
+  Retain 533 payloads (88,070,836 bytes) under
+  `.agent/artifacts/smallwood-poseidon2-v8/formal-source-2083-a08ea36246cb35e5`.
+  All copies pass independent size/hash readback; copy-manifest SHA-256 is
+  `613689183d124209fe52abf25145c62016919fac0ce56e54c9850554d1a9062d`.
 - [x] (2026-09-08) Integrate seven current-qualified role-CSR modules and
   30 exact roots. All 210 actual family-47 entries `19344..19553` evaluate
   to zero on the original full typed candidate from fixed typed validity,
@@ -796,6 +832,14 @@ membership rule preserves the intended balance semantics.
 
 ## Decision Log
 
+- Decision: integrate the four stablecoin packets together after their
+  strict source checks and independent reviews, then run one complete
+  2,083-declaration gate. Reuse only unchanged development dependencies
+  during drafting; strict qualification freshly rebuilds every selected
+  scratch dependency. This reduces repeated development work without
+  weakening source/output pinning or final acceptance gates.
+  Date/Author: 2026-09-08, coordinator.
+
 - Decision: batch all 290 remaining input/output CSR equations into one
   exact 21-module migration and one 1,996-declaration integration gate.
   Rationale: three independently qualified packets now cover every note,
@@ -927,7 +971,8 @@ successful actual nonlinear interpreter execution. Another 28 digest-copy
 CSR attempts first leave 1,432; the 192 inline-policy copy and padding
 attempts first reduce that to 1,240. The next 354 dense/base/key and
 authorization-initial equations first reduce the gap to 886. The next
-290 note/nullifier/public-digest equations reduce it to 596. Actual Rust execution, complete CSR execution
+290 note/nullifier/public-digest equations reduce it to 596. Another 332
+stablecoin frame, path and public-output equations reduce it to 264. Actual Rust execution, complete CSR execution
 and full packed acceptance remain active.
 
 The prior commits establish local mathematical ingredients, not either
@@ -955,6 +1000,14 @@ audits and unchanged vectors; 558 evidence payloads are retained with
 hash-verified copies. No production
 capability, runtime program or wire bytes change in this increment.
 
+The following 332-equation stablecoin increment is strict-qualified and
+exactly migrated with 87 new declarations. It derives all configuration,
+leaf, state-path and issuer frames and their public/private digest bindings.
+The 2,083-declaration integration gate passes all 3,131 jobs, exact axiom
+audits and unchanged vectors. Its 533 retained payloads pass independent
+byte-size and hash readback. The remaining 264 equations
+are numeric/range families, not a complete-interpreter or release claim.
+
 The final report for `4a0acb9b` incorrectly led with "Completed". It completed
 a local repair checkpoint only. Empty Lean receipt types deliberately prevent
 unsupported claims; proving those types uninhabited does not establish that
@@ -980,13 +1033,13 @@ is currently uninhabited.
 ## Plan of Work
 
 The current raw CSR gap is an exact disjoint union of two inclusive index
-ranges: `19860..20257` (398) and `20296..20493` (198). These total 596
-and do not overlap the 20,009 derived attempts. They contain stablecoin
-initial-frame, public-binding, range-reconstruction and numeric-helper
-equations. The exact parsed program and source-module anchors are recorded
-in `CSR-REMAINDER-596.json` in the current formal increment, with SHA-256
-`9c31820e07af74f18df80f6ef248347dd8176ba07e4619df6e9b4ef546849ebc`.
-The prior 1,240- and 886-gap inventories remain retained for their checkpoints.
+ranges: `20192..20257` (66) and `20296..20493` (198). These total 264
+and do not overlap the 20,341 derived attempts. They contain stablecoin
+range-reconstruction and numeric-helper equations. The exact parsed
+program and source-module anchors are recorded in
+`/private/tmp/smz9-stable332-integration.le6qig/CSR-REMAINDER-264.json`,
+with SHA-256 `adf59dfcf559790ccfdc0ea0d54e9227bf2bb0e2fa7364872622286ef3beb81e`.
+The prior 1,240-, 886- and 596-gap inventories remain retained for their checkpoints.
 Descriptor names are navigation aids, not satisfaction evidence. Derive
 actual residuals from the unchanged constructor, qualify each packet, then
 compose complete CSR execution and packed acceptance; do not confuse this
@@ -1394,3 +1447,18 @@ bindings, the 596-equation disjoint inventory and the completed combined
 1,996-declaration gate with 558 exact retained payloads. Preserve all prior
 snapshots and failed evidence. Continue with stablecoin source equations;
 the formal increment does not authorize production.
+
+Revision note (2026-09-08 22:25 UTC): record three isolated, independently
+reviewed strict packets for 304 stablecoin equations. Keep the committed
+1,996-declaration checkpoint separate from scratch qualification. Reject
+the first issuer draft's incorrect commitment capacity words; the reviewed
+replacement derives both actual domains and markers from source frames.
+For range reconstruction, preserve the top Boolean for odd widths rather
+than assuming a stronger bound that drops that bit. Next complete the 28
+public stable digest bindings and then the 264 numeric/range equations.
+
+Revision note (2026-09-08): complete the 28 public digest bindings and
+exactly migrate the combined 332-equation increment. Record the four
+strict receipts and independent postflight/review, update the disjoint
+gap to 264, and record the completed 2,083-declaration full gate and exact
+533-payload archive separately from production authority.
