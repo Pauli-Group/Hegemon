@@ -22,10 +22,11 @@ carrier receipt](repaired-proof-execution.md#completed-source-frozen-local-carri
 This is local integration evidence with production authority still disabled.
 
 The [actual Rust scalar refinement](native-scalar-refinement.md) now covers
-subtraction for canonical U64 operands and addition/multiplication for all
-U64 operands, including successful checked arithmetic and exact original
-Lean field results. Its isolated nine-root evidence gate passes; this is
-not yet the complete expression evaluator or R0.
+subtraction/inverse for canonical U64 operands and addition/multiplication
+for all U64 operands, including successful checked arithmetic, actual
+inverse-loop termination and exact original Lean field results. Its isolated
+nine-root v2 and five-root inverse-v3 evidence gates pass; this is not yet
+the complete expression evaluator or R0.
 
 The [complete-security ExecPlan](../../../.agent/SMZ9_COMPLETE_SECURITY_EXECPLAN.md)
 retains both complete game endpoints as the acceptance condition. The following

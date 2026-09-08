@@ -1,7 +1,7 @@
-# Actual Rust scalar refinement: subtraction, addition and multiplication
+# Actual Rust scalar refinements
 
 Status: checked isolated source-extraction results, 2026-09-08 UTC. These
-three helper theorems advance R0; they do not close whole-evaluator,
+four helper refinements advance R0; they do not close whole-evaluator,
 acceptance, binary or cryptographic refinement.
 
 ## Exact statements
@@ -78,6 +78,42 @@ Independent review found no remaining arithmetic or exact-root/import-pin
 issue. The external transitive library closure is not fully sealed: this is
 not a hermetic build claim.
 
+## Actual inverse: separately checked v3 extension
+
+The unchanged source `inverse` (IR lines 448–463) now has a checked
+refinement for every canonical U64 input, including zero. The original
+generated loop remains the theorem's subject. Its stronger root
+`Smz9IrInverseRefinement.inverse_loop_refines_pow` proves successful
+termination for arbitrary U64 exponent and base with a canonical accumulator,
+returning exactly `(accumulator * base ^ exponent) % p` as a canonical word.
+The actual low-bit/parity relation and checked signed right shift by one
+give strict decrease of `exponent.val / 2`; a modular square-and-multiply
+invariant gives the exact value. The generated multiplication is
+definitionally equal to the frozen v2 generated body.
+
+`inverse_canonical_refines_actual_fieldInverse` then establishes successful
+`p-2` initialization and equality to the original imported total `fieldInverse`.
+There is no nonzero-input premise. This proves the existing power-based
+definition, not a new primality/Fermat theorem or multiplicative-inverse law.
+
+Three strict v3 builds freshly compile inverse Types/Funs and the unchanged
+proof, with the same single-worker flags and exact binary as v2. Five exact
+unique roots have only the three standard axioms; all five evidence-string
+controls pass. The consumed frozen v2 sources, generated imports, compiled
+proofs, receipt and checking script are pinned before and after. The inverse
+proof check takes 2.809 seconds; peak serial child RSS is 2,232,811,520 bytes
+(approximately 2.08 GiB). Coordinator and independent read-only review found
+no mathematical, exact-root or retained import-provenance issue.
+
+The separate local archive is
+`.agent/artifacts/smallwood-poseidon2-v8/native-refinement-inverse-v3-29670ce01aeadeb0`.
+Its strict receipt SHA-256 is
+`29670ce01aeadeb026f308dd5211512ebbd3798c9e8115cb01e695e06920395c`;
+its proof SHA-256 is
+`2bef8e3d2532f69193426e63a87fa0b3b6fde8f5e5fe0ed37bd15a3a829c2c16`.
+This extension depends on the frozen scalar-v2 evidence and the same explicit
+translation/standard-library trust boundary; it is not a hermetic runner.
+
 ## Explicit trust and unfinished work
 
 The pinned pairing is Aeneas
@@ -98,8 +134,14 @@ No source-proved Rust standard-library conversion is claimed.
 The isolated Lean 4.31.0 results are not silently added to the repository's
 Lean 4.32.2 integrated 745-root gate. Existing unrelated native-decision
 declarations in the imported Hegemon module do not occur in the credited
-roots' axiom dependencies. These helper results leave the actual inverse
-loop, expression-array induction, indexing, shifts, canonical admission,
+roots' axiom dependencies. These helper results leave expression-array
+induction, generic indexing/bit shifts, canonical admission,
 runtime builder/array binding, ordered root collection, acceptance pipeline,
 and binary correspondence to be proved. Full R0 and concrete P7/K8 remain
 open; release authority is unchanged.
+
+The unchanged node evaluator successfully extracts to transparent Charon
+LLBC, but pinned Aeneas fails at `InterpProjectors.ml:109` before emitting
+Lean. The static error-reference return encounters inconsistent region
+erasure. The failed extraction and source-derived diagnosis do not constitute
+an evaluator proof; no generated function or Rust signature was substituted.

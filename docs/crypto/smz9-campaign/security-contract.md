@@ -56,7 +56,8 @@ a generic SmallWood instance, or a differently framed oracle does not transfer.
 | Inner parser/envelope ceiling | 131,072 proof bytes for SMZ8/SMZ9; this is not the routed maximum |
 | Maximum-shape routed inner limit | 125,638 proof bytes after the two-output action's fixed and ciphertext bytes |
 | Current SMZ9 projection | 122,863 inner-proof bytes; 128,297 bytes for the complete maximum-shape two-output action |
-| Outer inline action cap | 131,072 bytes for the complete action, including fixed fields, ciphertexts, and proof |
+| Inline argument cap | 131,072 bytes for SCALE inline arguments, including fixed fields, ciphertexts, and proof |
+| Native PendingAction cap | 131,297 bytes, including the separate 225-byte native wrapper |
 
 The two 131,072-byte values are distinct limits. The engine first applies the
 SMZ8/SMZ9 borrowed-input parser/envelope ceiling
@@ -70,6 +71,13 @@ ciphertexts leaves a routed inner-proof maximum of 125,638 bytes
 The current 122,863-byte inner projection produces a 128,297-byte complete
 maximum-shape action
 ([source](../../../circuits/transaction/src/smallwood_poseidon2_v8_frontend.rs#L1598-L1616)).
+Here the frontend's historical "action" terminology denotes SCALE inline
+arguments, not the larger native `PendingAction`. Its 225-byte wrapper makes
+the projected native size 128,522 bytes. The source separates the wallet
+argument and native-action caps explicitly
+([source](../../../wallet/src/poseidon2_v8.rs#L33-L49)); the fresh retained
+pair measures 127,977 argument bytes and 128,202 native-action bytes
+([measurements](repaired-proof-execution.md#completed-source-frozen-local-carrier-milestone)).
 
 The Lean arithmetic pins the profile and projection
 ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9QromAccounting.lean#L27-L137));

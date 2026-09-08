@@ -27,6 +27,16 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Progress
 
+- [x] (2026-09-08 05:08 UTC) Complete the unchanged actual Rust inverse
+  refinement. The extracted loop terminates for arbitrary U64 exponent/base
+  with canonical accumulator and returns the exact modular power; the full
+  helper matches original `fieldInverse` on every canonical input, including
+  zero. Inverse-v3 freshly checks generated Types/Funs and proof, pins all
+  consumed frozen v2 dependencies, and passes five unique standard-axiom roots
+  and five evidence controls. Independent review agrees. Retain evidence as
+  `native-refinement-inverse-v3-29670ce01aeadeb0`. The actual nodes LLBC
+  extracts, but Aeneas fails on the static error-reference return before
+  producing Lean; no evaluator theorem or semantic substitution is credited.
 - [x] (2026-09-08 04:41 UTC) Complete isolated actual-source scalar
   refinements: canonical-input subtraction and all-U64 addition/multiplication
   succeed and equal the unchanged original Lean field definitions. V2
@@ -529,9 +539,10 @@ frozen snapshots. The `cee3cb81` snapshot now has both a complete real-socket
 receipt and the separate in-process reorg receipt, with exact post-run source
 and artifact verification. The narrow production sync bug has a failing-before
 regression and passing caller tests, not only a source hypothesis.
-Actual source extraction also now establishes the three scalar helper
-refinements in an isolated, exact-root-checked Lean 4.31.0 lane. The inverse,
-expression loop, caller/array binding and production binary remain separate
+Actual source extraction also now establishes all four scalar helper
+refinements, including inverse-loop termination, in an isolated,
+exact-root-checked Lean 4.31.0 lane. The expression loop, caller/array binding
+and production binary remain separate
 R0 obligations; these results are not added to the 745-root integrated gate.
 
 The prior commits establish local mathematical ingredients, not either

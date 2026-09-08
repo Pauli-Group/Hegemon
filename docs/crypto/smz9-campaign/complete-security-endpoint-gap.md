@@ -189,10 +189,12 @@ Therefore R0 is not a theorem in the current graph, and R1-R5 cannot inherit
 authority from source/vector agreement.
 
 The isolated [actual Rust scalar refinements](native-scalar-refinement.md)
-now prove successful canonical subtraction for canonical U64 inputs, and
-addition/multiplication for every U64 pair, against the original imported
-Lean field definitions. V2 freshly builds all eight selected imports and
-checks nine exact roots with standard axiom sets. These are actual
+now prove successful canonical subtraction and inverse for canonical U64
+inputs, and addition/multiplication for every U64 pair, against the original
+imported Lean field definitions. V2 freshly builds all eight selected imports
+and checks nine exact roots; inverse-v3 adds five exact roots with a proved
+loop-termination invariant and fresh generated imports, retaining the frozen
+v2 dependency pins. All roots have standard axiom sets. These are actual
 source-extraction helper results under explicit Charon/Aeneas and standard
 library mapping assumptions, not full evaluator or binary refinement. They
 remain separate from the integrated Lean 4.32.2 gate; no R0 receipt is filled.

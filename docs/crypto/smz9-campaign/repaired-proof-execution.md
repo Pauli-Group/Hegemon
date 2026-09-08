@@ -26,7 +26,9 @@ The historical fixed pointer was not replaced.
 | Complete PendingAction bytes | 128,202 | 128,202 |
 | Proving plus internal verification | 79.135 s | 98.092 s |
 
-Both maximum-shape actions have 3,095 bytes of headroom under the unchanged
+Both maximum-shape SCALE argument payloads have 3,095 bytes of headroom
+under the unchanged 131,072-byte inline-argument limit. The complete native
+`PendingAction` adds 225 bytes and has the same headroom under its distinct
 131,297-byte limit. These are measured randomized artifacts, not a new
 worst-case projection or a production performance benchmark. Their proof
 bytes, wire salts, transcript roots and process randomness are independent.
