@@ -27,6 +27,45 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Progress
 
+- [x] (2026-09-08 19:11 UTC) Strictly qualify the final 97 authorization
+  nonlinear roots in ten source modules. All 230 exact declaration audits,
+  10 mathematical negatives and parser controls pass with 907 frozen input
+  pins and freshly rebuilt local dependencies. Independent postflight checks
+  all 11 outputs and 21 logs; peak child RSS is 2,571,337,728 bytes and total
+  compiler time is 530.36 seconds. Receipt SHA-256 is
+  `bb567c974a7f9d6a241f7d8745767f9014abc986b28d01436d2a29a615cdbcc1`.
+- [x] (2026-09-08 19:23 UTC) Strictly qualify complete coverage of all 830
+  nonlinear roots and actual full nonlinear interpreter execution. Ten
+  declaration audits, seven semantic negatives and nine parser negatives
+  pass with 941 frozen inputs and three fresh outputs; independent postflight
+  verifies every input, output and log. Receipt SHA-256 is
+  `139a1b97d6db3df484b9a7286ac279d74585ab957ccdf5e387e1e382beffcbb2`.
+  A separate read-only review confirms complete coverage and premise scope.
+- [x] (2026-09-08) Strictly qualify 28 digest-copy CSR attempts in families
+  25, 30, 32 and 34, with ten audited declarations and six semantic negatives.
+  Receipt SHA-256 is
+  `be666366e5998a5ba8e8f1ba4071c1a44756c48fad247fa09d7662b40ce43fe7`.
+- [x] (2026-09-08 19:48 UTC) Strictly qualify 192 actual inline-policy CSR
+  attempts in families 27/28. All 15 declaration audits, eight mathematical
+  negatives and nine parser negatives pass with 906 frozen inputs and two
+  fresh outputs. Independent postflight verifies every pin and log; receipt
+  SHA-256 is `ba397f0a934ee53e75376df2de1534a6b4048394a9d154ab0291be88b26a31d0`.
+  The original wrong-padding draft and all later mechanical/linter failures
+  remain uncredited. The final result has no typed-validity premise.
+- [x] (2026-09-08 19:57 UTC) Complete the combined full gate after exact
+  import-only migration of 14 modules and addition of 265 credited entries
+  (1,767 total). Source coverage is 19,365/20,605 raw CSR attempts and all
+  830 nonlinear roots. The remaining 1,240 CSR attempts, complete CSR
+  coefficient/interpreter execution, packed acceptance, runtime refinement
+  and production security/authority remain open. The first integrated run
+  builds all 3,086 jobs and regenerates byte-identical wire vectors, then
+  the audit rejects a comment heading in the declaration list as an unknown
+  theorem. That first run remains failed evidence. The corrected combined
+  gate passes 3,087 jobs, audits all 1,767 declarations and preserves all
+  three wire vectors. Log SHA-256 is
+  `cb6b91b97da5517d9c7d6358e27120d5251dca9af7ff7560de92f86c6a9f1009`.
+  Retain all 268 payload files byte-identically under
+  `.agent/artifacts/smallwood-poseidon2-v8/formal-source-1767-cb6b91b97da5517d`.
 - [x] (2026-09-08) Integrate seven current-qualified role-CSR modules and
   30 exact roots. All 210 actual family-47 entries `19344..19553` evaluate
   to zero on the original full typed candidate from fixed typed validity,
@@ -568,6 +607,23 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Surprises & Discoveries
 
+The complete nonlinear endpoint needs both exact indexed root coverage and
+the actual interpreter bridge; zero field expressions alone are not an
+execution receipt. The all-830 proof obtains real list membership for the
+hash slice and instantiates the bridge's public/row lengths and canonical
+DAG premise internally. A negative-control attempt initially hit Lean's
+default recursion-depth limit and was not credited as a semantic rejection.
+The fresh v3 run raises that limit explicitly and rejects all seven false
+statements mathematically. Earlier failed sources and logs are retained.
+
+The shell gate's initial declaration-count check ignores comment headings,
+but the Lean audit reads every nonempty line as a theorem name. A heading
+added during the final authorization migration therefore stopped the
+1,752-declaration audit after a successful build and wire generation.
+The correction removes the heading, preserves all 1,752 declaration names
+and retains the failed full-gate log under SHA-256
+`f988bcab301557abf747f671a2eb199227e36708e3c185ea91f313825564c2c4`.
+
 The source's remaining-count refill has an exact finite-trace interpretation:
 its final batch must accept every candidate, so the last word is the last
 required acceptance. A proof by remaining raw length handles arbitrarily many
@@ -691,6 +747,13 @@ membership rule preserves the intended balance semantics.
 
 ## Decision Log
 
+Compose and credit the actual complete nonlinear interpreter endpoint after
+qualifying all 97 remaining authorization roots; do not infer full CSR or
+packed acceptance from it. Keep raw CSR attempt counts distinct from
+public-dependent normalized rows. Preserve the original scratch receipts
+and compare import-only migrated sources byte for byte before the combined
+gate. Date: 2026-09-08 19:27 UTC.
+
 Continue reverse semantic adequacy through named concrete row constructors,
 not through an existential accepted witness or a successful-evaluator input.
 The current independent components and exact batch law are documented in
@@ -782,7 +845,7 @@ Actual source extraction also now establishes all four scalar helper
 refinements, including inverse-loop termination, in an isolated,
 exact-root-checked Lean 4.31.0 lane. The expression loop, caller/array binding
 and production binary remain separate
-R0 obligations; these results are not added to the 1,502-declaration integrated gate.
+R0 obligations; these results are not added to the formal-crypto integrated gate.
 
 The forward construction now includes one full 43,904-word candidate,
 canonical from fixed typed validity alone, exact dense and same-schedule
@@ -799,13 +862,26 @@ and 448 inactive-Merkle-right CSR attempts and 145 authorization roots now
 first leave 2,109 raw CSR attempts and 197 nonlinear positions 252..448.
 The next 439 CSR attempts and 100 authorization roots reduce the remaining
 counts to 1,670 and 97 respectively. The next 210 actual role-CSR residuals
-reduce those counts to 1,460 and 97. Actual Rust execution and complete
-generated-equation coverage remain active.
+first reduce those counts to 1,460 and 97. The final 97-root authorization
+packet and indexed composition now establish all 830 nonlinear roots and
+successful actual nonlinear interpreter execution. Another 28 digest-copy
+CSR attempts first leave 1,432; the 192 inline-policy copy and padding
+attempts reduce that to 1,240. Actual Rust execution, complete CSR execution
+and full packed acceptance remain active.
 
 The prior commits establish local mathematical ingredients, not either
 endpoint. This continuation explicitly retains the unfinished complete proof as
 the acceptance condition. Record subsequent validation and substantive
 obstructions here; never populate a receipt with the desired conclusion.
+
+The 1,767-declaration combined gate now passes with unchanged wire vectors.
+Its retained increment contains 14 integrated source modules and 265 added
+audited declarations, with exact source migration and 268 byte-verified
+evidence payloads. It completes nonlinear source execution, not the full
+security or production objective. The next draft for 103 dense-padding CSR
+attempts is uncompiled and uncredited; parent review rejected its confusion
+between packed addresses and coefficient-node indices. Replace that argument
+with the actual dense-constructor padding readback before testing it.
 
 The final report for `4a0acb9b` incorrectly led with "Completed". It completed
 a local repair checkpoint only. Empty Lean receipt types deliberately prevent
@@ -830,6 +906,23 @@ in `formal/lean/Hegemon/Transaction/Poseidon2V8SemanticAdequacy.lean`; that rece
 is currently uninhabited.
 
 ## Plan of Work
+
+The current raw CSR gap is an exact disjoint union of nine inclusive index
+ranges: `15561..15664` (104), `15672..15788` (117), `15805..15917` (113),
+`18286..18467` (182), `18971..19018` (48), `19026..19073` (48),
+`19081..19112` (32), `19860..20257` (398) and `20296..20493` (198).
+These total 1,240 and do not overlap the 19,365 derived attempts. The first
+four blocks are base/input/output bindings and initial frames; the next
+three are current/next/value-lock authorization initial frames; the last
+two are stablecoin initial frames, public bindings, range reconstruction
+and numeric helper equations. The exact parsed program and source-module
+anchors are recorded in `CSR-REMAINDER-1240.json` in the retained formal
+increment. Its SHA-256 is
+`5d242824636e4a722653bbf398a9fcefb9afc67eb9d5607a79093a87cd8a1bb0`.
+Descriptor names are navigation aids, not satisfaction evidence. Derive
+actual residuals from the unchanged constructor, qualify each packet, then
+compose complete CSR execution and packed acceptance; do not confuse this
+arithmetic inventory with either endpoint.
 
 The privacy author owns new `formal/crypto/HegemonCrypto/SmallWoodV8Smz9EagerPrivacy.lean`
 and `docs/crypto/smz9-campaign/eager-privacy-proof.md`. Derive the joint mask
@@ -1197,3 +1290,21 @@ open. The user requires lightweight or medium-effort agents and bounded
 work: this follow-up uses one Luna/medium worker for bounded review and one
 exclusively assigned test-file edit, no child agents,
 serial focused checks, and a stop at 5 percent reported weekly usage.
+
+Revision note (2026-09-08 19:27 UTC): retain strict qualification of the
+final 97 nonlinear roots, all-830 composition, actual complete nonlinear
+interpreter execution and 28 digest-copy CSR attempts. Record exact source
+migration and the running 1,752-declaration gate. Keep the remaining 1,432
+CSR attempts and all downstream runtime/security/authorization gaps open.
+
+Revision note (2026-09-08 19:49 UTC): record the declaration-list heading
+failure without crediting the first full gate. Remove the heading, integrate
+the newly strict-qualified 192 inline-policy attempts, and rerun the complete
+1,767-declaration gate. Current source coverage leaves 1,240 raw CSR attempts;
+neither the closed nonlinear interpreter nor constructor copy equations
+authorize a security or production claim.
+
+Revision note (2026-09-08 19:57 UTC): record the successful 3,087-job,
+1,767-declaration combined gate, unchanged vectors and byte-verified evidence
+archive. Preserve the failed first gate and wrong-domain dense draft as
+uncredited work. Production authority remains absent.

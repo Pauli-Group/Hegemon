@@ -92,11 +92,16 @@ plus 145 actual authorization roots, bring the current forward coverage to
 authorization roots, bring current coverage to 18,935/20,605 CSR attempts
 and 733/830 nonlinear roots in every lane. Seven additional role-CSR modules
 derive all 210 actual family-47 residuals on that same candidate, bringing
-current coverage to 19,145/20,605 CSR attempts. The remaining 97 nonlinear roots
-lie within positions 252..448; 1,460 CSR attempts remain open. The tail uses the same computed hash schedule, with no supplied
-auxiliary or hash-final values. Remaining generated equations are still
-being proved. These component
-results do not establish full packed acceptance or Rust execution. The exact finite
+coverage to 19,145/20,605 CSR attempts. Ten further authorization modules
+close the last 97 nonlinear roots, and the complete indexed theorem covers
+all 830 roots in all 64 lanes. The actual complete nonlinear interpreter
+now executes the unchanged expression DAG and returns zero at every root
+from fixed typed validity alone. Four digest-copy families add 28 actual
+CSR attempts. The 21 inline-policy bindings and 171 padding cells add another
+192: current coverage is 19,365/20,605, with 1,240 still open.
+The tail uses the same computed hash schedule, with no supplied auxiliary
+or hash-final values. Complete CSR coefficient/interpreter execution,
+full packed acceptance and Rust execution remain separate obligations. The exact finite
 ideal batch law also remains separate from the real randomness provider and
 Rust execution. See [construction and sampler boundaries](docs/crypto/smz9-campaign/honest-construction-and-batch-law.md).
 

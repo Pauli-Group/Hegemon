@@ -345,11 +345,37 @@ The 640 raw terms include all 168 explicit zero-coefficient terms. The final
 endpoint needs only fixed typed validity and returns 210 distinct `some 0`
 results through the actual generated attempt list.
 
-Together these results discharge 19,145 of 20,605 actual raw CSR attempts
-and 733 of 830 nonlinear roots in all 64 lanes. The remaining 97 authorization
-roots lie within `252..448`. Those roots and 1,460 raw CSR attempts, complete coefficient/interpreter
-execution and full packed acceptance remain open. These are raw attempt
-counts, not a fixed count of public-dependent normalized emitted rows.
+Ten further authorization modules close the remaining 97 nonlinear positions
+within `252..448`. `SmallWoodV8Smz9SourceAllNonlinear` composes the exact
+indexed coverage of every one of the 830 roots in all 64 lanes. Its hash
+slice proof obtains an actual bounded list element and proves membership;
+an out-of-range default does not supply any root. The companion
+`SmallWoodV8Smz9SourceNonlinearExecution` derives successful execution of
+the complete unchanged expression DAG and reads `some 0` from every actual
+root in its computed value array. Both endpoints require only the fixed
+typed validity premise, not an assumed accepted packed witness or a supplied
+interpreter result.
+
+`SmallWoodV8Smz9SourceAuthDigestCsr` adds the 28 actual digest-copy attempts
+from families 25, 30, 32 and 34, at globals `18708..18714`, `19019..19025`,
+`19074..19080` and `19113..19119`. Each copy reads the same computed hash
+final on both sides and retains the actual generated coefficients.
+`SmallWoodV8Smz9SourceInlinePolicy192` adds all 21 family-27 bindings at
+`18779..18799` and all 171 family-28 padding attempts at `18800..18970`.
+The three live inline rows bind the policy word, computed call-97 final
+and sum of the two non-single mode flags. The padding address
+`17927 + 64*(index/57) + index%57` skips the seven live cells in each row.
+Actual generated chunk membership supplies exact global lookup metadata;
+all equations follow from the unchanged constructor without a validity
+premise. Eight mathematical negatives test the three padding runs,
+policy/final/mode operands, coefficient sign and exact count.
+
+Together these results discharge 19,365 of 20,605 actual raw CSR attempts
+and all 830 nonlinear roots in all 64 lanes. The remaining 1,240 raw CSR
+attempts, complete CSR coefficient/interpreter execution and full packed
+acceptance remain open. These are raw attempt counts, not a fixed count of
+public-dependent normalized emitted rows. Rust refinement, cryptographic
+security and production authorization remain separate.
 
 ## Remaining-count sampler batches
 
@@ -489,18 +515,36 @@ coefficients, on the same full typed source candidate. The full gate passes
 The raw qualification checks seven modules, 30 exact roots, six mathematical
 negative controls and strict parser controls. Evidence is retained under
 `.agent/artifacts/smallwood-poseidon2-v8/formal-source-1502-cfa3d0d25b27111a`.
-Current coverage is 19,145/20,605 CSR attempts and 733/830 nonlinear roots;
-1,460 CSR attempts, 97 nonlinear roots and the full security endpoints remain.
+Coverage at that checkpoint is 19,145/20,605 CSR attempts and 733/830
+nonlinear roots; 1,460 CSR attempts and 97 nonlinear roots remain there.
 
-Continue by closing the remaining checked-success obligations and deriving
-all 830 nonlinear roots in every lane and all 20,605 raw linear
-constraints. This must supply `CanonicalPublicPackedDomain` for a named
+The subsequent strict qualifications close the final 97 nonlinear roots,
+complete the actual nonlinear interpreter endpoint and add 220 CSR attempts
+(28 digest copies and 192 inline-policy/padding entries). The first combined
+1,752-declaration gate builds all 3,086 jobs and regenerates identical wire
+vectors, but its audit rejects a declaration-list comment heading. That run
+is failed evidence, not a completed gate. Removing the heading preserves all
+theorem names. The corrected 1,767-declaration gate passes 3,087 jobs and all
+declaration audits with unchanged wire vectors. Its log SHA-256 is
+`cb6b91b97da5517d9c7d6358e27120d5251dca9af7ff7560de92f86c6a9f1009`.
+All 268 evidence payloads (15,391,024 bytes), including the failed earlier
+attempts, are retained byte-identically under
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-1767-cb6b91b97da5517d`.
+Four strict receipts qualify all 14 migrated source modules and 265 added
+declarations. Current source coverage is 19,365/20,605 CSR attempts and all
+830 nonlinear roots; the complete actual nonlinear interpreter endpoint is
+included, not only separate field-root equations.
+
+Continue by closing the remaining 1,240 raw CSR attempts and deriving
+complete CSR coefficient/interpreter execution. This must supply
+`CanonicalPublicPackedDomain` for a named
 concrete constructor. Actual Rust success, output equality, decoding
 roundtrip and production binary refinement remain additional obligations.
 The universal weighted soundness bound is also still open. No runtime,
 wire format, primitive, dependency pin or production capability changes here.
 
-The corrected source freeze `2c14119da9a0705c` includes these formal sources
+The corrected source freeze `2c14119da9a0705c` includes the earlier
+1,502-declaration formal snapshot, not these later source additions,
 and has its own fresh proof pair, four cross-verifications, matching chain
 reports and completed in-process and actual-socket local lifecycle receipts.
 The earlier `cee3cb81` artifacts remain evidence for their original source

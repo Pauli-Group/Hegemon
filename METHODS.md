@@ -385,14 +385,22 @@ attempts plus 100 authorization roots: 18,935/20,605 CSR attempts and
 733/830 nonlinear roots. The next 210 role-CSR residuals use symbolic field
 term sums, actual source/auth-family readbacks and the same typed candidate;
 the 640 raw terms include all 168 explicit zero coefficients. Coverage is
-19,145/20,605 CSR attempts. There remain 1,460 CSR attempts and 97 nonlinear
-roots within positions 252..448.
+19,145/20,605 CSR attempts. The final 97 authorization roots complete all
+830 actual nonlinear positions. The indexed coverage theorem uses actual
+list membership, including the 332-root hash slice, and supplies the complete
+nonlinear interpreter's execution and all-zero root readback from fixed typed
+validity alone. Four digest-copy families add 28 actual CSR attempts, bringing
+coverage to 19,173/20,605. Families 27/28 then add 21 inline-policy bindings
+and 171 padding cells: 19,365/20,605 with 1,240 still open. The padding
+address is `17927 + 64*(index/57) + index%57`, preserving each row's seven
+live cells. These copy and padding equations follow structurally from the
+same constructor without an additional validity premise.
 The stable-tail identities are constructor properties; the inactive
 Merkle and authorization endpoints use fixed typed validity and derive
 their actual public/packed values internally. Coverage
 uses actual indexed generated entries and DAG evaluation, not descriptor
-labels alone. These results are not complete packed acceptance or Rust
-refinement. The exact
+labels alone. These results are not complete CSR coefficient/interpreter
+execution, packed acceptance or Rust refinement. The exact
 remaining-count batch law counts every rejected raw candidate and transports
 the ideal first-accept law; it does not prove OS/provider behavior or permit
 conditioning on later proof success. Run the complete formal-crypto gate
