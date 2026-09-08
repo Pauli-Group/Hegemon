@@ -27,6 +27,28 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Progress
 
+- [x] (2026-09-08 04:41 UTC) Complete isolated actual-source scalar
+  refinements: canonical-input subtraction and all-U64 addition/multiplication
+  succeed and equal the unchanged original Lean field definitions. V2
+  rebuilds eight exact generated/Hegemon imports, checks both proof modules,
+  enforces nine unique exact roots/axiom sets and passes five evidence-string
+  controls. Peak serial child RSS is 2.077 GiB. Retain the receipt and proof
+  closure under `native-refinement-scalars-v2-4050e54ee1c381c4`; document the
+  trusted translation/standard-library mapping and isolated Lean 4.31.0
+  boundary in `native-scalar-refinement.md`. No whole-evaluator/R0 credit.
+- [x] (2026-09-08 04:39 UTC) Complete fresh two-build generation at
+  `cee3cb8123d87d85d97e6db12f0262baacf0e1a7`, source root
+  `aaea3c80e8f5d9ff`: both proofs 122,543 bytes and both complete actions
+  128,202 bytes. Four cross-verifications, equal two-build binaries/chain
+  reports and all full manifest pre/post gates pass. The in-process lifecycle
+  passes in 34.63 seconds; the real HTTP/PQ socket lifecycle passes both
+  episodes in 53.70 seconds, including exact locator/body imports, clean
+  same-identity restart and fresh-node sync. Eight children exit unforced
+  with closed listeners. Independent receipt processing confirms exact
+  action/leaf/proof bytes and all canonical blocks/typed rows across four
+  processes per episode. Retain the complete receipt and exact executable
+  under `.agent/artifacts/smallwood-poseidon2-v8/carrier-aaea3c80e8f5d9ff`.
+  This closes this local artifact/carrier milestone, not P7/K8/R0 or release.
 - [x] (2026-09-08 04:29 UTC) Pass the four new caller-boundary tests, the
   extended paced-announcement regression (including a hashless same-peer
   repeat and announcement-driven dispatch after the hold), and the focused
@@ -503,9 +525,14 @@ formal changes in separate scratch directories until the snapshot is sealed.
 The source-lifetime privacy endpoint now exists for the explicitly modeled
 ideal oracle under its external theorem and analysis budgets. Concrete P7,
 universal K8 and full R0 remain open. Fresh repaired proofs exist for several
-frozen snapshots; the latest source change requires another pair, and no
-completed actual-socket lifecycle is yet credited. The narrow production
-sync bug now has a failing-before regression, not only a source hypothesis.
+frozen snapshots. The `cee3cb81` snapshot now has both a complete real-socket
+receipt and the separate in-process reorg receipt, with exact post-run source
+and artifact verification. The narrow production sync bug has a failing-before
+regression and passing caller tests, not only a source hypothesis.
+Actual source extraction also now establishes the three scalar helper
+refinements in an isolated, exact-root-checked Lean 4.31.0 lane. The inverse,
+expression loop, caller/array binding and production binary remain separate
+R0 obligations; these results are not added to the 745-root integrated gate.
 
 The prior commits establish local mathematical ingredients, not either
 endpoint. This continuation explicitly retains the unfinished complete proof as

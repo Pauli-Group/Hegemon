@@ -148,9 +148,13 @@ Their manifest and positive in-process wallet-to-fresh-import lifecycle establis
 canonical-byte preservation and source-verifier replay for that snapshot only;
 they do not verify or bind the current relation. A separate pair of 122,735-byte
 repaired-digest proofs and an in-process lifecycle exist for the historical
-`b1e5c143f7abf052` source snapshot. Final-snapshot regeneration and actual
-socket/process carrier verification are pending; none of this evidence
-supplies production authority or live-network transport coverage.
+`b1e5c143f7abf052` source snapshot. The later `cee3cb81` source snapshot has
+two independently generated 122,543-byte proofs and completed in-process
+reorg and real HTTP/PQ socket lifecycles, including exact locator/body import,
+clean restart and fresh-node sync. See the [exact source and carrier
+receipt](docs/crypto/smz9-campaign/repaired-proof-execution.md#completed-source-frozen-local-carrier-milestone).
+These isolated tests do not supply production authority or public-network
+release coverage.
 
 The frozen source-security report is 136,119 bytes with SHA-512
 `087fd1f3dc04f653b6d380f104467842c1b4b42b7ba0fabfbe75220f3664f0e870b80f92bda748b571cce3768b0386cf870a5586f92d0547e780518b2e04a881`.

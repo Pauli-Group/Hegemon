@@ -13,12 +13,30 @@ receipt, or claim that an SMZ9 transaction has been forged.
 
 ## Current continuation
 
+The repaired-source snapshot `cee3cb81` now has two independently generated,
+cross-verified 122,543-byte proofs and a completed real HTTP/PQ socket
+lifecycle for both. Exact bytes and canonical state survive relay, mining,
+locator/body import, clean restart and fresh-node sync; the separate
+in-process reorg test also passes. See the [source-frozen artifact and
+carrier receipt](repaired-proof-execution.md#completed-source-frozen-local-carrier-milestone).
+This is local integration evidence with production authority still disabled.
+
+The [actual Rust scalar refinement](native-scalar-refinement.md) now covers
+subtraction for canonical U64 operands and addition/multiplication for all
+U64 operands, including successful checked arithmetic and exact original
+Lean field results. Its isolated nine-root evidence gate passes; this is
+not yet the complete expression evaluator or R0.
+
 The [complete-security ExecPlan](../../../.agent/SMZ9_COMPLETE_SECURITY_EXECPLAN.md)
 retains both complete game endpoints as the acceptance condition. The following
-new source modules passed strict direct Lean checks; most also passed central
-cached builds. They are not a completed full security argument.
+table is an earlier ingredient ledger: its per-module original boundaries
+are not a current inventory of aggregate endpoint gaps. The completed modeled
+source-lifetime privacy and packed semantic endpoints described below
+supersede their corresponding local gaps. The full integrated formal gate
+passes all 745 credited roots; these results are not a completed concrete
+security argument.
 
-| Current result | What is established | Remaining boundary |
+| Earlier ingredient | What is established | Original local boundary |
 | --- | --- | --- |
 | [Eager privacy](eager-privacy-proof.md), [public simulator](eager-simulator-proof.md), [current-program adapter](current-program-piop-proof.md) | Explicit joint PIOP/DECS inverse, correct cross-column PCS map, dependent witness/PCS/LVCS law, public reconstruction and actual field-expression adapter | Honest whole-byte correspondence and complete quantum-game composition |
 | [Hidden patch](hidden-patch-proof.md) and [game composition](privacy-game-composition-proof.md) | Physical raw-domain full-versus-opened oracle bound `4Q / 2^256`, including retained context and arbitrary future queries, with no tree-size union factor | Source-generated outer experiment, initial reprogramming and final composed privacy bound |

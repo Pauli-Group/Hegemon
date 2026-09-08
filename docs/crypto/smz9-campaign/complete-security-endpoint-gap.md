@@ -188,6 +188,15 @@ The production-owned full semantic receipt remains unavailable
 Therefore R0 is not a theorem in the current graph, and R1-R5 cannot inherit
 authority from source/vector agreement.
 
+The isolated [actual Rust scalar refinements](native-scalar-refinement.md)
+now prove successful canonical subtraction for canonical U64 inputs, and
+addition/multiplication for every U64 pair, against the original imported
+Lean field definitions. V2 freshly builds all eight selected imports and
+checks nine exact roots with standard axiom sets. These are actual
+source-extraction helper results under explicit Charon/Aeneas and standard
+library mapping assumptions, not full evaluator or binary refinement. They
+remain separate from the integrated Lean 4.32.2 gate; no R0 receipt is filled.
+
 ## Retained artifacts and authority
 
 The retained-artifact and release state is explicit and fail-closed:
@@ -208,11 +217,13 @@ The retained-artifact and release state is explicit and fail-closed:
   ([source](../../../docs/crypto/smallwood_poseidon2_v8_smz9_executable_zk_refinement.json#L66-L67),
   [source](../../../docs/crypto/smallwood_poseidon2_v8_smz9_executable_zk_refinement.json#L91-L100)).
 
-Two independently generated repaired-relation proofs are physically retained,
-each 122,735 bytes, with cross-verification and an isolated native lifecycle
-receipt. They bind the recorded b1e5c143f7abf052 source snapshot. Subsequent
-formal/test integration requires another frozen final snapshot and fresh
-receipts; it must not silently rebind these old generation inventories
+Two independently generated 122,543-byte repaired-relation proofs now bind
+the `cee3cb81` source revision and `aaea3c80e8f5d9ff` inventory. Four-way
+cross-verification, the in-process reorg lifecycle and both actual HTTP/PQ
+socket episodes pass, including exact locator/body import, clean restart and
+fresh-node synchronization. The earlier `b1e5c143f7abf052` and intervening
+snapshots remain preserved, without rebinding their generation inventories.
+Any later covered source change still requires new source-bound evidence
 ([exact evidence and transport limits](repaired-proof-execution.md)).
 
 Local formal gates, source/vector agreement and simulated proof diagnostics
@@ -274,9 +285,9 @@ proceed in parallel. Both must finish before step 6.
    capability.
 
 Until all six stages complete for the same digest and carrier, the correct
-verdict is: **P7 unavailable, K8 unavailable, R0 unavailable; repaired-relation
-proofs exist for a preserved historical source snapshot, while final-snapshot
-regeneration and actual socket carrier evidence are pending. The active V8
+verdict is: **Complete concrete P7, K8 and R0 remain unavailable; fresh
+repaired-relation proofs and completed isolated socket/in-process carrier
+receipts exist for the source-bound `cee3cb81` snapshot. The active V8
 production capability remains `None`, and the repaired relation is unselected
 and production-unauthorized**
 ([source](daybreak-regeneration-map.md#L146-L152)).

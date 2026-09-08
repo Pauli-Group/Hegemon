@@ -1,8 +1,85 @@
 # Fresh proofs for the repaired SMZ9 relation
 
+## Completed source-frozen local carrier milestone
+
+On 2026-09-08, revision `cee3cb8123d87d85d97e6db12f0262baacf0e1a7`
+completed fresh independent generation and both retained lifecycle tests.
+The frozen source inventory contains 1,112 files and 31,635,077 bytes, with
+SHA-512
+`aaea3c80e8f5d9ff50269fed164d386b209066ae77d91cd0f7711a25b5c7298c98d8442ae05ed846da866615d6213bb1a8ff81e6feec102c7d96f981af4fc453`.
+The two generator builds are byte-identical; four cross-verifications, two
+identical chain reports, and full constructor checks before and after each
+lifecycle pass. The exact 29 retained payloads total 8,495,239 bytes.
+
+The root is `.agent/artifacts/smallwood-poseidon2-v8/hgv8rp03-aaea3c80e8f5d9ff`.
+The separate candidate manifest is
+`retained-artifact-manifest.candidate-aaea3c80e8f5d9ff.json`, SHA-512
+`d4bf0d395334026406a09d02cf98ee03d4c9b496f1bd00adfb9a29ba3613c1de3c4e3bd225730dfa34ce04e32845c066a6207b987be4ad79ec78207bc816fdd0`.
+The historical fixed pointer was not replaced.
+
+| Measurement | Primary | Independent |
+| --- | ---: | ---: |
+| Inner proof bytes | 122,543 | 122,543 |
+| Native leaf bytes | 127,941 | 127,941 |
+| RPC envelope bytes | 127,973 | 127,973 |
+| SCALE inline arguments bytes | 127,977 | 127,977 |
+| Complete PendingAction bytes | 128,202 | 128,202 |
+| Proving plus internal verification | 79.135 s | 98.092 s |
+
+Both maximum-shape actions have 3,095 bytes of headroom under the unchanged
+131,297-byte limit. These are measured randomized artifacts, not a new
+worst-case projection or a production performance benchmark. Their proof
+bytes, wire salts, transcript roots and process randomness are independent.
+
+The primary bundle is `retained_proof_primary/smz9-4efa6dcb016c41b1fdd49eff`;
+its proof SHA-512 is
+`4efa6dcb016c41b1fdd49efffee234d79c7da05e464ba5a54d096614339ce511503f432349c1bfd96f8ab8f6ffdbfca43f40ff9a23d226d1dcc47563e9f34848`.
+The independent bundle is
+`retained_proof_independent/smz9-b9496e8dea00b4afbf6a4833`; its proof SHA-512 is
+`b9496e8dea00b4afbf6a4833c69c4e1ebc3813585460524296beead6c7385d08c40fe87ee43b37b24a5ca35fcbc12206ea8d2c4f6b99377ee235cee099410517`.
+
+The in-process wallet/RPC/relay/mining/restart/reorg/fresh-import test passed
+in 34.63 seconds. The separate actual HTTP/PQ process test passed both proof
+episodes in 53.70 seconds. It observes cryptographic rejection of the mutated
+proof through HTTP, successful valid submission, authenticated pending relay,
+exact pending bytes, source mining, locator/body reassembly and fresh block
+verification, canonical state equality, same-identity/new-PID clean restart,
+and fresh-node synchronization from the original source as the only live peer.
+All eight child processes exit successfully without forced termination and
+close both listeners. The source, relay, restarted relay and fresh node agree
+on every canonical block and raw typed-state row within each episode.
+
+The corresponding height-three hashes are
+`3fb7b182c8625648fb43402bf3b132347b6530b8e2ee64b65b139b2afffa2a57`
+(primary) and
+`26a3cfe8b8e704e27fa06356095f1e87bf8148ace457ccbe8ad88e3d34ad288f`
+(independent). Fresh-node events explicitly record the original source peer,
+the height-three locator/body/import, and a new proof verification event with
+the exact retained proof and leaf hashes. Restart keeps the relay peer id but
+has a different PID and a startup verification event for that same block.
+
+The complete 26,871,160-byte receipt, exact test executable, compact independent
+byte/state cross-check, and both logs are retained outside the 29-payload
+proof root under
+`.agent/artifacts/smallwood-poseidon2-v8/carrier-aaea3c80e8f5d9ff`.
+The receipt SHA-512 is
+`46065e0d7894a8bbfee662abe0542afb544ffaf3882d8eb151fc767c0d9c26e9eedd85a6cff87b8dd49078afa54da4216801ee152686f213f4e7832af3384f3e`.
+The 74,450,400-byte test executable has SHA-512
+`c7375a994ba2b37357a5878a6c88f41d8ca5a13f93ddc7790cec2a68e10e3f15affc71fdef745be996ebe0594ef9bfd66c831a0cc9bcf53daec620d61df58f2c`.
+
+This is an isolated, feature-gated local receipt, not production authority.
+The small proof block is deliberately selected for the existing single-body
+locator path; natural oversized-body selection and multi-chunk boundaries
+are not tested. The socket receipt also excludes reorg (covered separately
+in-process), crash recovery, enabled stablecoin, other authorization modes,
+complete active-transport quiescence, and public-network release. Tracked
+proof/import/fallback idleness and real clean exits must not be described as
+a measurement of every transport internal. P7, K8, R0 and independent review
+and release authorization retain their separate requirements.
+
 ## Later source snapshots
 
-The next source freeze incorporates the exact-action prefix selector and a
+The completed source freeze incorporates the exact-action prefix selector and a
 production `request_missing_blocks` recovery-cursor correction. The latter
 has a deterministic failing-before test (`[257,320]` overwritten by `[1,64]`)
 and passing-after pacing/expiry/target/peer regressions. It preserves the
@@ -10,8 +87,8 @@ compatible cursor's range, parent and recovery classification; receiver
 checks, production thresholds and proof bytes are unchanged. These facts
 establish the caller bug and repair, not the unrecorded cause of the earlier
 socket stall. Thirteen carrier controls, the ordinary no-feature library
-check and formatting also pass. A new two-build pair and complete socket
-receipt are still required for this changed source.
+check and formatting also pass. The new pair and socket receipt above bind
+these changes; previous snapshots below remain historical evidence.
 
 On 2026-09-08 at revision `ed893a1f54503e903dd6a2ff47579998b8d27bff`, the
 regenerated root `hgv8rp03-38714873e4d04181` passed both independent-build
