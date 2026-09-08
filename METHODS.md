@@ -368,10 +368,12 @@ prefix plus dense block now derives the seven actual reconstruction residuals;
 the computed hash block derives the exact 332-root slice using the complete
 unchanged expression DAG. The typed 125-call schedule now supplies the live
 initial states, including actual earlier-call dependence and unaltered raw
-frame readback. The combined canonical prefix has 647 rows; the concrete
-39-row stable tail has exact shape/readback but still lacks 12 full row
-canonicality proofs. Neither construction is complete packed acceptance or
-Rust refinement. The exact
+frame readback. The full typed constructor now proves canonicality of all
+43,904 words, combining the 647-row prefix with the same-schedule 39-row
+stable tail without free auxiliary/hash/tail inputs. All 15,561 raw
+replication residuals are derived from the actual constructor and exact
+generated entries, using 31 ordinary-kernel slice certificates. These
+results are not complete packed acceptance or Rust refinement. The exact
 remaining-count batch law counts every rejected raw candidate and transports
 the ideal first-accept law; it does not prove OS/provider behavior or permit
 conditioning on later proof success. Run the complete formal-crypto gate

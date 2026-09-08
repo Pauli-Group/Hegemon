@@ -27,6 +27,24 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Progress
 
+- [x] (2026-09-08 07:33 UTC) Complete and integrate the one-input-pair
+  43,904-word typed constructor with all 39 stable rows canonical, actual
+  authorization digest identities, checked-subtraction/range helpers and
+  all 15,561 raw replication CSR residuals. The next 18 modules and 95
+  exact roots pass the full central gate: 2,995 jobs and all 1,100 credited
+  roots, with unchanged wire/generated artifacts. Together with the seven
+  dense attempts, 15,568 of 20,605 raw CSR attempts are discharged; 337 of
+  830 nonlinear roots hold in every lane. Remaining equations, actual Rust
+  execution and complete security endpoints are not inferred from shape.
+- [x] (2026-09-08 07:07 UTC) Source-review and retain the conditional
+  polynomial-shift stress lemma and the exact rank-six large-gcd escape
+  family. The latter has `M(813)=N`, refuting an overstrong intermediate
+  tail target, but its complete weighted contribution is below `2^52`.
+  A separate unconditional sharp affine-response-family charge is below
+  150,552; no global cover is asserted. Independent mathematical review
+  and exact rational arithmetic pass. These are mathematical research
+  documents, not additional Lean roots or completion of universal K8.
+
 - [x] (2026-09-08 06:58 UTC) Pass the full central gate after integrating
   the typed 125-call schedule, authorization/inline rows, canonical 647-row
   source prefix and complete 39-row stable-tail constructor: 16 new modules,
@@ -633,16 +651,19 @@ Actual source extraction also now establishes all four scalar helper
 refinements, including inverse-loop termination, in an isolated,
 exact-root-checked Lean 4.31.0 lane. The expression loop, caller/array binding
 and production binary remain separate
-R0 obligations; these results are not added to the 1,005-root integrated gate.
+R0 obligations; these results are not added to the 1,100-root integrated gate.
 
-The forward construction now includes the typed 92-row prefix, exact dense
-block, all five dense nonlinear roots, seven actual sparse reconstruction
-residuals and the computed hash block with all 332 generated hash roots.
+The forward construction now includes one full 43,904-word candidate,
+canonical from fixed typed validity alone, exact dense and same-schedule
+stable/hash blocks, all five dense nonlinear roots, seven actual sparse
+reconstruction residuals, 15,561 actual raw replication residuals and all
+332 generated hash roots.
 The partial hash-root program has derived successful interpreter execution
 on the unchanged full expression DAG. The ideal batch-trace probability law
 is constructed separately. These are named constructions with derived
-properties, not populated adequacy receipts. Full assignment, typed live
-schedule and remaining generated-equation coverage remain active.
+properties, not populated adequacy receipts. The remaining 5,037 raw CSR
+attempts and 493 nonlinear roots, actual Rust execution and complete
+generated-equation coverage remain active.
 
 The prior commits establish local mathematical ingredients, not either
 endpoint. This continuation explicitly retains the unfinished complete proof as
@@ -1009,3 +1030,9 @@ remaining obligations. Record the completed 852-root central gate at 06:15 UTC.
 Revision note (2026-09-08 06:58 UTC): record the canonical typed source
 prefix, full stable-tail construction and 1,005-root central gate, preserving
 the explicit remaining canonicality/equation and actual-Rust boundaries.
+
+Revision note (2026-09-08 07:33 UTC): retain the full typed candidate,
+15,561-entry raw replication proof and 1,100-root central checkpoint.
+Preserve the remaining 5,037 CSR/493 nonlinear and native-refinement gaps.
+Record the legal large-gcd counterfamily and sharp affine-family charge
+without claiming a universal cover or completed weighted soundness bound.

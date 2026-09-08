@@ -4,6 +4,13 @@ Date: 2026-09-07. This is local mathematical research, not a completed arbitrary
 
 ## Exact target
 
+The current continuation adds a [conditional global stress lemma](weighted-mca-global-shift-stress.md),
+a [legal rank-six large-gcd counterfamily](weighted-mca-global-escape-family.md),
+and a [sharp per-affine-response-family charge](weighted-mca-affine-response-charge.md).
+The counterfamily refutes the proposed universal `M(813)<=212` shortcut,
+not the weighted security target. The family charge needs an independently
+proved global cover before it can bound unrestricted responses.
+
 Write `p = 2^64 - 2^32 + 1`, `N = 2^23`, `k = 388`, and `K = F_(p^5)`. The domain `D` is the existing shifted Goldilocks coset, with its `N` distinct base-field points. The five coordinates of `K` only group the existing five base-field matrix rows.
 
 Fix arbitrary `U : D -> K` and `V : D -> F_p`. For `alpha in K` and `P in K[X]` of degree less than `k`, put

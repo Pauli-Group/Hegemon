@@ -190,6 +190,18 @@ it is not a quantitative theorem for families as large as p^5.
 
 ## 7. A precise missing quantitative lemma
 
+The subsequent [global polynomial-shift lemma](weighted-mca-global-shift-stress.md)
+gives a conditional low-dimensional shared-source conclusion from actual
+compressed-stress gcd/span bounds. The [exact escape family](weighted-mca-global-escape-family.md)
+shows those small-gcd conditions cannot be forced merely by choosing bad
+subsets: it has quotient rank six and exactly `M(813)=N`, with a gcd of
+degree at least 7,728,452 for every full-family subset selection. It remains
+within the weighted allowance, so it is not a soundness counterexample.
+The [sharp affine-response charge](weighted-mca-affine-response-charge.md)
+unconditionally bounds each fixed polynomial affine family's contribution
+by less than 150,552. A universal cover or another bound charging all escape
+families is still missing.
+
 The separate [finite local-rank obstruction](weighted-mca-local-rank-barrier.md)
 excludes the displayed Proposition 3.7 additive-incidence-rank certificate
 through agreement 2,892, even with exact individual ranks. It does not exclude

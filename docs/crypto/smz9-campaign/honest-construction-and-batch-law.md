@@ -149,6 +149,15 @@ trace equality or successful evaluator result is an input premise. This is
 a Lean source transcription reviewed against Rust; `initial_bindings` and
 `final_binding` metadata and Rust execution identity are not proved here.
 
+The three `SmallWoodV8Smz9SourceSpongeSegment`/`SourceAuthorization*`
+modules additionally derive the actual contiguous sponge recurrence from
+those source-call plans and the unchanged permutation. Fixed typed validity
+supplies the precise input geometry, giving exact policy/current/effective-
+next/value-lock digests at calls 97/100/103/105. The policy final equals the
+stored current policy and is nonzero only in non-single-key modes; call
+103 uses the source effective-next record, not unconditionally the raw next
+record. These are derived digest identities, not assumed final-state values.
+
 `SmallWoodV8Smz9SourceConstructedPrefix` concatenates the first 92 rows,
 155 authorization rows, five dense rows, 31 inline rows and 364 hash rows.
 Its hash-final accessor is read back from those same packed final cells.
@@ -176,10 +185,12 @@ slots, 33 multiplication lanes and all 1,434 radix-four digits. Eight ordered
 families cover the full rectangle and have exact local/global readback.
 The last 38 cells are zero padding; the leading 41,408 words remain unchanged.
 
-Canonicality in this increment covers 27 of the 39 rows: the two source
-rows, selector, inverse and 23 digit rows. The seven role rows, boolean row,
-numeric row and three multiplication rows still need their complete
-typed-valid canonicality proofs. Disabled auxiliaries retain same-epoch and
+The initial increment covered 27 of the 39 rows: the two source rows,
+selector, inverse and 23 digit rows. The subsequent role/Boolean and
+numeric/multiplication proofs now cover every remaining row. All 53 Boolean
+values are actually 0/1. Numeric limbs and C operands use tight carry bounds
+of at most `2^32-2`, with high limbs below `2^24`; decimal products are at
+most `10^18`. Disabled auxiliaries retain same-epoch and
 decimal-product units, the actual parent-height range and nonzero helper
 operands; the disabled tail is not an all-zero assignment.
 
@@ -191,6 +202,48 @@ totalize cases rejected by Rust. Forward checked-success, range and active
 nonzero proofs must eliminate those cases for valid inputs. No accepted
 packed witness, arbitrary auxiliary values, or successful Rust run is
 assumed to fill those obligations.
+
+The separate checked-subtraction helper now derives the actual typed
+decimal/cap/epoch and mint lifecycle inequalities and proves recomposition
+of those computed auxiliary subtractions, including both retirement gaps.
+It also proves epoch-gap/remainder/path-quotient bounds and that the bounded
+three-factor products fit U128. This does not yet prove every range check,
+final collateral borrow zero, multiplication equation or Rust execution.
+
+## One full typed candidate and actual raw replication
+
+`SmallWoodV8Smz9SourceFullTypedCandidate.fullTypedSourceCandidate` has only
+the typed statement and witness as inputs. Fixed
+`ExactV8RelationSemanticValid` proves `ExactWords 43904` for the full
+candidate. There is no caller-supplied stable tail, live initial state,
+hash-final accessor, auxiliary value, range admission or accepted-packed
+premise. Public encoding canonicality is derived separately from the same
+typed validity, not inferred from the candidate's size.
+
+The complete candidate preserves every prefix word and exact stable-family
+readback. The 94-word private reorder reads actual admitted entries; the
+18 public source words start at 41502 and the eight spend-key words at
+41520. All 125-by-16 initial/final cells use the same actual typed schedule
+as the stable policy accessor. The 337 selected nonlinear roots and seven
+dense reconstruction attempts hold on this very candidate.
+
+Eight `SmallWoodV8Smz9SourceReplicate*` modules prove every one of the
+15,561 actual raw replication attempts has zero interpreted field residual.
+For index `i=row*63+lane-1`, the exact generated entry (including metadata)
+is `attempt i 0 i 0 [(row*64+lane,1),(row*64,3)] 0`. Actual coefficient
+node 3 is the literal canonical `p-1`, whose field interpretation is `-1`;
+it is not a presumed subtraction expression. The constructor supplies equal
+values in all 64 lanes of each of the first 247 rows, with no validity or
+`EqualLanes` premise. The public field input and tail remain arbitrary.
+
+Thirty-one ordinary-kernel slice certificates cover the complete actual
+table prefix: thirty 512-entry slices and a final 201-entry slice. A
+quotient/remainder proof gives a present exact entry for every `i<15561`,
+then its mapped residual is `some 0`. No sampled table entry or native
+decision axiom substitutes for this coverage. This proves 15,568 of the
+20,605 raw CSR attempts together with the seven dense attempts; the other
+5,037 attempts and 493 of 830 nonlinear roots remain due. It does not yet
+establish full coefficient/interpreter execution or packed acceptance.
 
 ## Remaining-count sampler batches
 
@@ -267,8 +320,19 @@ Original source/checker/receipt evidence and that log are retained under
 `.agent/artifacts/smallwood-poseidon2-v8/formal-source-1005-6429f42ae2790f52`.
 The evidence retains the same non-hermetic direct-import boundary.
 
-Continue by closing the remaining stable-row canonicality and checked-success
-obligations and assembling the complete typed constructor, then deriving
+At the 2026-09-08 07:33 UTC checkpoint, the next 18 integrated modules
+and 95 exact roots pass the full central gate: 2,995 build jobs and 1,100
+credited declarations on the unchanged three-axiom allowlist. All three
+wire vectors and 48 generated relation files (2,266,857 source bytes) match.
+This includes the remaining stable canonicality, checked-subtraction helper,
+four actual authorization digests, full typed candidate and complete raw
+replication family. The log SHA-256 is
+`abd82c808ea7383809e4f22c6251495144ded6f1ae3532bff239e7673a305260`.
+The original reviewed sources/checkers/receipts and log are retained under
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-1100-abd82c808ea73838`.
+These direct-import receipts are not a hermetic rebuild claim.
+
+Continue by closing the remaining checked-success obligations and deriving
 all 830 nonlinear roots in every lane and all 20,605 raw linear
 constraints. This must supply `CanonicalPublicPackedDomain` for a named
 concrete constructor. Actual Rust success, output equality, decoding
