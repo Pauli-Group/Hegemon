@@ -385,8 +385,20 @@ two active inputs have equal spend keys, while an inactive flag cancels
 the actual shared-key coefficient product. Every final indexed endpoint
 uses the unchanged full typed constructor and actual generated CSR entries.
 
-Together these results discharge 19,719 of 20,605 actual raw CSR attempts
-and all 830 nonlinear roots in all 64 lanes. The remaining 886 raw CSR
+Twenty-one further modules derive 290 actual attempts. Seven note modules
+cover all 216 note-initial and inactive-preimage equations at
+`15810..15917` and `18346..18453`, preserving the 18-word preimages,
+three-block absorption and short final-block padding. Six nullifier modules
+cover all 32 initial equations at `18300..18331`: the mode-dependent scalar,
+the position reconstructed from all 32 bits, four rho words and ten frame
+constants per input. Eight public-digest modules derive the actual note
+and nullifier digests and the complete 32-step Merkle fold, then bind the
+14 public roots, 14 nullifiers and 14 output commitments. Active input
+spend-key selection is proved from typed validity; no accepted-packed
+premise is used to obtain a forward source digest.
+
+Together these results discharge 20,009 of 20,605 actual raw CSR attempts
+and all 830 nonlinear roots in all 64 lanes. The remaining 596 stablecoin raw CSR
 attempts, complete CSR coefficient/interpreter execution and full packed
 acceptance remain open. These are raw attempt counts, not a fixed count of
 public-dependent normalized emitted rows. Rust refinement, cryptographic
@@ -574,7 +586,30 @@ copy-manifest SHA-256 is
 This is an exact evidence archive, not a portable hermetic replay or a
 new production-binary source freeze.
 
-Continue by closing the remaining 886 raw CSR attempts and deriving
+The next three strict receipts qualify 21 modules and 134 declarations.
+The note-216 receipt is
+`8d8a061eac32de107ee5c89393b7293f61cec2567f6d8d511abda34893ea0718`;
+nullifier-32 is
+`125bbc500feac3578b6e4deb540c129dc932dcbaed5e4a92ddab92c3201caece`;
+public-digest-42 is
+`b999fa08c74de01e055a19fb2b5205981f561a1c65e3d119c92e4991f8f72ec9`.
+All 44 mathematical negatives and 27 parser negatives are rejected.
+Independent pre-integration postflight verifies every frozen input, all
+24 fresh outputs and 68 logs. Peak child RSS is 2,889,580,544 bytes.
+Separate source review verifies the source/typed/public direction and
+exact index coverage. Import-only migration adds the 134 declarations,
+bringing the complete inventory to 1,996. The full integration gate passes
+all 3,116 jobs, exact kernel axiom audits and unchanged-vector checks.
+Gate-log SHA-256 is
+`ed9d9e03b53fb45fbb54d306b0cb64fa53fa684713f6fb6f0e9a42df55ef7c31`.
+The exact 558-file, 103,676,117-byte evidence archive is
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-1996-ed9d9e03b53fb45f`;
+copy-manifest SHA-256 is
+`e20ed7a6fb6e987dc112839df9b64d96c43d934ad6000c4e90164efea4272644`.
+This does not change the earlier runtime binary freeze or constitute
+a portable hermetic replay or production authorization.
+
+Continue by closing the remaining 596 raw CSR attempts and deriving
 complete CSR coefficient/interpreter execution. This must supply
 `CanonicalPublicPackedDomain` for a named
 concrete constructor. Actual Rust success, output equality, decoding

@@ -401,7 +401,13 @@ frame equations, and 12 inactive/shared-key equations. The authorization
 frames preserve the exact 23-word and 14-word preimages and short final-block
 padding. The key equations use typed inactivity or equality of active input
 spend keys. All source bindings use actual generated entries and the unchanged
-constructor. Coverage is now 19,719/20,605, leaving 886 raw CSR attempts.
+constructor. The next 290 derive 216 note-initial/inactive-preimage equations,
+32 nullifier-initial equations and 42 public digest bindings. The source
+note preimages retain all 18 words and three blocks; nullifiers bind their
+mode-dependent scalar, exact 32-bit position and four rho words. Forward
+digest proofs follow all 32 actual Merkle steps and bind their orientation
+and public root, alongside the public nullifiers and output commitments.
+Coverage is now 20,009/20,605, leaving 596 stablecoin raw CSR attempts.
 The stable-tail identities are constructor properties; the inactive
 Merkle and authorization endpoints use fixed typed validity and derive
 their actual public/packed values internally. Coverage

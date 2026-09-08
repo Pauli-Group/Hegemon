@@ -271,8 +271,8 @@ independent cryptographic review or authorization to overstate those assumptions
 
 The source-forward SMZ9 construction now includes all 830 actual nonlinear
 roots and complete nonlinear interpreter execution on the same full typed
-candidate in every lane. It derives 19,719 of 20,605 raw CSR attempts;
-the remaining 886 attempts, full CSR execution and packed acceptance are
+candidate in every lane. It derives 20,009 of 20,605 raw CSR attempts;
+the remaining 596 stablecoin attempts, full CSR execution and packed acceptance are
 still open. See the [construction dossier](../../docs/crypto/smz9-campaign/honest-construction-and-batch-law.md)
 for exact modules, receipts and the separate runtime/security boundaries.
 

@@ -100,8 +100,12 @@ from fixed typed validity alone. Four digest-copy families add 28 actual
 CSR attempts. The 21 inline-policy bindings and 171 padding cells add another
 192. A further 354 attempts cover dense padding (103), balance/legacy/ciphertext
 copies and inactive raw fields (111), authorization initial frames (128),
-and inactive/shared input keys (12). Current coverage is 19,719/20,605,
-with 886 still open.
+and inactive/shared input keys (12). Another 290 cover exact note initial
+and inactive-preimage equations (216), nullifier initial equations (32),
+and public Merkle/nullifier/commitment bindings (42). These derive the actual
+three-block note digests, mode-dependent nullifier digests and all 32 Merkle
+steps from typed validity. Current coverage is 20,009/20,605, with 596
+stablecoin equations still open.
 The tail uses the same computed hash schedule, with no supplied auxiliary
 or hash-final values. Complete CSR coefficient/interpreter execution,
 full packed acceptance and Rust execution remain separate obligations. The exact finite
