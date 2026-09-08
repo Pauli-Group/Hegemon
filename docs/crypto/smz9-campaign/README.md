@@ -29,14 +29,14 @@ nine-root v2 and five-root inverse-v3 evidence gates pass; this is not yet
 the complete expression evaluator or R0.
 
 The [honest-construction and batch-law increment](honest-construction-and-batch-law.md)
-now constructs the first 92 typed rows and five-row dense range block,
-deriving all five nonlinear range roots and seven actual sparse
-reconstruction residuals. It constructs the full hash block from 125
-canonical live initial states and derives all 332 generated hash roots,
-including successful evaluation on the unchanged complete expression DAG.
-It also proves the remaining-count sampler's exact finite ideal trace law.
-The full typed assignment, live hash schedule and remaining equations are
-active work; no accepted-packed premise is used to claim their completion.
+now constructs the canonical first 647 rows from the typed witness and
+actual ordered 125-call hash schedule. It derives all five nonlinear range
+roots, seven actual sparse reconstruction residuals and all 332 generated
+hash roots, with exact raw source-frame and packed hash readbacks. The
+complete 39-row stable tail is constructed; 12 of its rows still need full
+canonicality proofs. It also proves the remaining-count sampler's exact
+finite ideal trace law. Full packed acceptance and remaining generated
+equations are active work; no accepted-packed premise claims their completion.
 
 The [complete-security ExecPlan](../../../.agent/SMZ9_COMPLETE_SECURITY_EXECPLAN.md)
 retains both complete game endpoints as the acceptance condition. The following
@@ -44,7 +44,7 @@ table is an earlier ingredient ledger: its per-module original boundaries
 are not a current inventory of aggregate endpoint gaps. The completed modeled
 source-lifetime privacy and packed semantic endpoints described below
 supersede their corresponding local gaps. The full integrated formal gate
-passes all 852 credited roots; these results are not a completed concrete
+passes all 1,005 credited roots; these results are not a completed concrete
 security argument.
 
 | Earlier ingredient | What is established | Original local boundary |

@@ -132,7 +132,7 @@ That unedited failed variant is retained separately and is not credited.
 No source-proved Rust standard-library conversion is claimed.
 
 The isolated Lean 4.31.0 results are not silently added to the repository's
-Lean 4.32.2 integrated 745-root gate. Existing unrelated native-decision
+Lean 4.32.2 integrated gate. Existing unrelated native-decision
 declarations in the imported Hegemon module do not occur in the credited
 roots' axiom dependencies. These helper results leave expression-array
 induction, generic indexing/bit shifts, canonical admission,
@@ -142,6 +142,50 @@ open; release authority is unchanged.
 
 The unchanged node evaluator successfully extracts to transparent Charon
 LLBC, but pinned Aeneas fails at `InterpProjectors.ml:109` before emitting
-Lean. The static error-reference return encounters inconsistent region
-erasure. The failed extraction and source-derived diagnosis do not constitute
-an evaluator proof; no generated function or Rust signature was substituted.
+Lean. Source inspection points to inconsistent region erasure of the static
+error-reference return; runtime type instrumentation is still needed to
+confirm that specific cause. The failed extraction and source-derived
+diagnosis do not constitute an evaluator proof; no generated function or
+Rust signature was substituted.
+
+## Independently built, unmodified translator baseline
+
+At 2026-09-08 06:35 UTC, the exact pinned Aeneas/Charon source pair built
+successfully with one native Dune job in an isolated local OCaml switch.
+The build took 215.77 seconds and the complete replay/postflight stage took
+264.37 seconds. The original nodes LLBC again exited 2 at projector line
+109, through `apply_proj_borrows` during backward-return synthesis, with
+no generated Lean files. All three scalar LLBC replays succeeded and their
+six Types/Funs files were byte-identical to the earlier credited outputs.
+The node failure is an expected negative baseline result, not successful
+evaluator extraction.
+
+The native ARM64 executable has SHA-256
+`63cb15a3d10b031ca824b26669762eecc15d348429d0741c94bab9dd0fc7de70`
+and reports `aeneas 8d58d14-local-baseline`. It dynamically links the pinned
+local GMP and zstd libraries and is not a self-contained or release-byte-
+identical binary. The single-use runner, exact specification, sandbox
+profile, full logs and receipt remain under
+`/private/tmp/smz9-aeneas-stage1.IgNKumAA/stage3-baseline`, with supporting
+control files in its parent. Receipt SHA-256 is
+`a9c8fff7cdc74fe48692f06d4e14d90024085e8afad4aa42535fd294c7617cde`;
+the build log is
+`d03b2ddd81210944f54e57d9eda2b9c1a8fff4089a3e5480ad442024c62213b9`.
+
+Preflight and postflight check the exact source commits and trees, complete
+Aeneas/Charon source inventories, 10,787 installed-artifact records, two
+actual native-library identities, four original LLBC inputs, six retained
+scalar outputs and the older release translator. Child writes are limited
+to the new stage's five output/build/cache/temp/log directories. External
+networking is denied; only the reviewed local Unix IPC for Dune is allowed.
+Maximum sampled total acquisition-root size was 1.902 GiB and minimum
+sampled APFS available space was 17.161 GiB. No resource stop or sandbox
+denial occurred. The dependency installation had previously been interrupted
+during cleanup by its fail-closed directory-size check; its separate
+postflight verified all 118 exact installed packages and executable tools.
+This baseline did not retry or relabel that installation as exit-zero.
+
+Any instrumented or corrected translator must use distinct source/build
+outputs, preserve this baseline, retain its assertion and strict translation
+flags, and replay the unchanged inputs. No such correction is credited by
+this baseline milestone, and no whole-evaluator or R0 receipt is filled.

@@ -102,11 +102,95 @@ recurrence, trace equality, root value or evaluator success. An arbitrary
 suffix remains permissible because lane extraction pads missing words;
 this does not establish full packed length or canonicality.
 
-The 125 live initial states are still explicit canonical component inputs.
-Their derivation from the typed transaction's ordered hash schedule, the
-other 498 nonlinear roots and complete packed acceptance remain due. Neither
-the fixed hash-kernel predicate nor this exact partial-root theorem is
-substituted for full acceptance.
+The generic hash-block theorem keeps 125 canonical live initial states as
+component inputs. The typed constructor below now supplies them. Neither the
+fixed hash-kernel predicate nor this exact partial-root theorem is substituted
+for full acceptance. Across hash and dense components, 337 of the 830 root
+types are covered; the other 493 remain independent obligations.
+
+## Typed authorization, inline rows and ordered hash schedule
+
+`SmallWoodV8Smz9SourceAuthInputs`, `SourceAuthRows` and `SourceAuthReadbacks`
+use the same module prefix and construct all 155 authorization rows 92..246.
+Their 18 ordered families include mode flags, effective input PRFs and keys,
+computed digests, counts and bitmaps, signer tags, membership flags and the
+15 ordered pairwise tag-difference inverses. Every family coordinate and all
+64 lanes have exact global readback. The generic component keeps a canonical
+hash-final accessor explicit; composition below computes that accessor from
+the same hash columns actually present in the assignment.
+
+`SmallWoodV8Smz9SourceInlineRows` constructs the 31 rows 252..282. All 448
+input/level/digest-limb slots have the actual previous-result, left, right and
+direction fields, using the existing source index formula. Previous results
+come from computed compressed traces; valid typed sibling and final-state
+reads are proved present, not supplied by a default value. Policy rows use
+the computed call-97 result in non-single modes, with exactly 57 zero padding
+lanes per row. Row materialization alone does not establish their generated
+binding constraints.
+
+Five `SmallWoodV8Smz9TypedSchedule*` modules construct every one of the 125
+live initial states directly from the typed transaction. They preserve the
+fixed call roles and order, all inactive calls, source domain/length/mode/
+suite preparation, final-block marker, full 16-word sponge carry, and actual
+width-16 permutation. Nullifier helper digests needed before their scheduled
+authorization calls are computed by the existing semantic sponge, not read
+from a future uninitialized slot. The effective next accumulator retains
+the current policy, intent, threshold and signer count while using the next
+approval count and bitmap. Stable calls preserve the four padded configuration
+chunks, configuration tree, before/after leaves, interleaved paths and issuer
+calls, including disabled mode.
+
+Fixed `ExactV8RelationSemanticValid` supplies source compression canonicality.
+The resulting theorem equates each complete prepared frame with its raw
+source projection using actual prior permutation results. Both dependencies
+inside a call plan and the separate sponge-predecessor lookup are proved to
+read only earlier calls. No entire-frame correctness, accepted assignment,
+trace equality or successful evaluator result is an input premise. This is
+a Lean source transcription reviewed against Rust; `initial_bindings` and
+`final_binding` metadata and Rust execution identity are not proved here.
+
+`SmallWoodV8Smz9SourceConstructedPrefix` concatenates the first 92 rows,
+155 authorization rows, five dense rows, 31 inline rows and 364 hash rows.
+Its hash-final accessor is read back from those same packed final cells.
+`SmallWoodV8Smz9SourceTypedPrefix` instantiates that composition with the
+typed schedule, removing the free live-state input. Fixed typed validity
+gives `ExactWords 41408` for this 647-row prefix. All live packed initial
+cells equal their raw source-frame words, with explicit `some`-entry proofs;
+all live packed final cells equal the actual kernel on that source frame
+and the scheduled final state. All 337 selected nonlinear roots and seven
+actual dense CSR residuals transfer unchanged to this assignment.
+
+The typed-prefix interface still accepts a caller-supplied stable tail;
+`ExactWords 2496` for that tail gives canonical full length 43,904. This
+conditional full-shape result is not full acceptance. The next constructor
+supplies those 39 rows, with the remaining canonicality boundary explicit.
+
+## Concrete stable tail
+
+The five `SmallWoodV8Smz9SourceTail*` modules construct all 39 rows 647..685,
+not an arbitrary auxiliary block. They compute the invertible 94-word private
+reorder, parent public fields and spend keys; stable and authorization role
+differences, first-nonzero selectors and inverses; all lifecycle, decimal,
+capacity, epoch and collateral auxiliaries; 53 boolean slots, 46 numeric
+slots, 33 multiplication lanes and all 1,434 radix-four digits. Eight ordered
+families cover the full rectangle and have exact local/global readback.
+The last 38 cells are zero padding; the leading 41,408 words remain unchanged.
+
+Canonicality in this increment covers 27 of the 39 rows: the two source
+rows, selector, inverse and 23 digit rows. The seven role rows, boolean row,
+numeric row and three multiplication rows still need their complete
+typed-valid canonicality proofs. Disabled auxiliaries retain same-epoch and
+decimal-product units, the actual parent-height range and nonzero helper
+operands; the disabled tail is not an all-zero assignment.
+
+The tail constructor's only hash dependency is call 97. Its accessor must
+be bound to the typed computed result when composing the full assignment;
+canonicality alone does not prove the policy-digest identity or nonzero
+role property. Natural subtraction and all-zero-role fallback deliberately
+totalize cases rejected by Rust. Forward checked-success, range and active
+nonzero proofs must eliminate those cases for valid inputs. No accepted
+packed witness, arbitrary auxiliary values, or successful Rust run is
+assumed to fill those obligations.
 
 ## Remaining-count sampler batches
 
@@ -172,8 +256,20 @@ The new gate log SHA-256 is
 Original source/receipts and this log are retained locally under
 `.agent/artifacts/smallwood-poseidon2-v8/formal-forward-852-8a8baa5b4ad93556`.
 
-Continue by constructing the other typed rows and the live hash schedule,
-then deriving all 830 nonlinear roots in every lane and all 20,605 raw linear
+The typed-schedule, authorization, inline, full-prefix and stable-tail
+increment adds 16 modules and 153 designated roots. At the 2026-09-08
+06:58 UTC checkpoint, the complete central gate passes 2,977 build jobs and
+all 1,005 exact credited roots against the same three-axiom allowlist.
+All three proof-wire vectors and all 48 generated relation modules
+(2,266,857 source bytes) remain unchanged. The full gate log SHA-256 is
+`6429f42ae2790f52e06135ba58967e4a5f6cf602edd312bab75396b28a82e995`.
+Original source/checker/receipt evidence and that log are retained under
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-1005-6429f42ae2790f52`.
+The evidence retains the same non-hermetic direct-import boundary.
+
+Continue by closing the remaining stable-row canonicality and checked-success
+obligations and assembling the complete typed constructor, then deriving
+all 830 nonlinear roots in every lane and all 20,605 raw linear
 constraints. This must supply `CanonicalPublicPackedDomain` for a named
 concrete constructor. Actual Rust success, output equality, decoding
 roundtrip and production binary refinement remain additional obligations.

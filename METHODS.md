@@ -366,8 +366,12 @@ dummy traces are not valid substitutions. Derive generated equations from
 the constructor, never from an assumed accepted packed witness. The typed
 prefix plus dense block now derives the seven actual reconstruction residuals;
 the computed hash block derives the exact 332-root slice using the complete
-unchanged expression DAG. Neither is complete packed acceptance, and the
-125 live initial states still require typed schedule construction. The exact
+unchanged expression DAG. The typed 125-call schedule now supplies the live
+initial states, including actual earlier-call dependence and unaltered raw
+frame readback. The combined canonical prefix has 647 rows; the concrete
+39-row stable tail has exact shape/readback but still lacks 12 full row
+canonicality proofs. Neither construction is complete packed acceptance or
+Rust refinement. The exact
 remaining-count batch law counts every rejected raw candidate and transports
 the ideal first-accept law; it does not prove OS/provider behavior or permit
 conditioning on later proof success. Run the complete formal-crypto gate

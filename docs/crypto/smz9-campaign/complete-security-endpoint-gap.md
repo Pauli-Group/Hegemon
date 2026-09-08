@@ -206,8 +206,12 @@ residuals, and the dense block satisfies all five nonlinear range roots.
 The 364-row hash block comes from the actual compressed trace, has exact
 source-coordinate placement and satisfies all 332 generated hash roots,
 with successful evaluation on the unchanged complete expression DAG.
-The 125 live hash starts remain component inputs, and remaining equations
-and the complete typed constructor remain due. The ideal batch law is proved,
+The canonical 647-row prefix now supplies those 125 starts from the typed
+source schedule with actual prior permutation results, and includes the
+authorization and inline rows. The full stable tail is concretely constructed,
+with canonicality established for 27 of its 39 rows; the other 12 row proofs,
+remaining equations and the complete typed constructor remain due.
+The ideal batch law is proved,
 without identifying it with the real provider conditioned on success.
 
 ## Retained artifacts and authority
@@ -242,8 +246,8 @@ Any later covered source change still requires new source-bound evidence
 Local formal gates, source/vector agreement and simulated proof diagnostics
 do not replace those artifacts, independent review, or production authority.
 
-At the 2026-09-08 06:15 UTC audit snapshot, the complete formal-crypto gate
-passed 2,961 build jobs and all 852 designated declarations used only
+At the 2026-09-08 06:58 UTC audit snapshot, the complete formal-crypto gate
+passed 2,977 build jobs and all 1,005 designated declarations used only
 `propext`, `Classical.choice`, and `Quot.sound`. This includes the complete
 arbitrary-packed semantic endpoint, full authorization and enabled stable
 transition, measured oracle games, literal post-final proof/error bytes,

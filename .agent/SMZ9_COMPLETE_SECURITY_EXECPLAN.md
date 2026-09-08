@@ -27,6 +27,28 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Progress
 
+- [x] (2026-09-08 06:58 UTC) Pass the full central gate after integrating
+  the typed 125-call schedule, authorization/inline rows, canonical 647-row
+  source prefix and complete 39-row stable-tail constructor: 16 new modules,
+  153 new roots, 2,977 successful build jobs and all 1,005 credited roots on
+  the unchanged three-axiom allowlist. Wire vectors and all 48 generated
+  relation files remain unchanged. Stable canonicality covers 27 of 39
+  rows at this checkpoint; the other 12 and full equation satisfaction
+  remain open. Retain the full log and original reviewed source evidence.
+- [x] (2026-09-08 06:35 UTC) Build the exact unmodified pinned Aeneas/Charon
+  pair in the isolated switch. The 215.77-second native build exits zero;
+  original nodes LLBC reproduces the exact projector-109 failure with no
+  Lean output, and all six scalar Types/Funs outputs remain byte-identical.
+  The complete 264.37-second baseline stage passes source/dependency/input
+  postflight. Preserve the baseline before diagnostic instrumentation;
+  do not replace its assertion or count the negative node result as R0.
+- [x] (2026-09-08 06:43 UTC) Integrate the five typed hash-schedule modules
+  and the constructed 647-row prefix, with 27 designated roots. All six
+  targeted repository builds pass. Fixed typed validity derives each of
+  the 125 source initial frames using actual prior permutation results;
+  source-frame canonicality is no longer an assumed complete-frame fact.
+  The preceding authorization/inline increment adds four modules and 54
+  roots. The full central axiom/vector gate subsequently passes at 06:58 UTC.
 - [x] (2026-09-08 06:11 UTC) Construct the first 92 typed replicated rows
   with explicit real-entry admission and source-coordinate readback. Compose
   them with the dense block to derive all seven actual CSR reconstruction
@@ -611,7 +633,7 @@ Actual source extraction also now establishes all four scalar helper
 refinements, including inverse-loop termination, in an isolated,
 exact-root-checked Lean 4.31.0 lane. The expression loop, caller/array binding
 and production binary remain separate
-R0 obligations; these results are not added to the 852-root integrated gate.
+R0 obligations; these results are not added to the 1,005-root integrated gate.
 
 The forward construction now includes the typed 92-row prefix, exact dense
 block, all five dense nonlinear roots, seven actual sparse reconstruction
@@ -983,3 +1005,7 @@ Revision note (2026-09-08 06:11 UTC): integrate the typed prefix, concrete
 seven-residual dense composition and exact forward hash-root/evaluator
 component; preserve full packed acceptance and actual source refinement as
 remaining obligations. Record the completed 852-root central gate at 06:15 UTC.
+
+Revision note (2026-09-08 06:58 UTC): record the canonical typed source
+prefix, full stable-tail construction and 1,005-root central gate, preserving
+the explicit remaining canonicality/equation and actual-Rust boundaries.
