@@ -359,11 +359,15 @@ justify programming an oracle to an output chosen before that input. The
 full Lean gate, axiom audit and unchanged vectors check these local artifacts;
 they do not close either end-to-end security obligation or authorize release.
 
-For forward typed-witness lowering, use the named dense/hash constructors in
+For forward typed-witness lowering, use the named prefix/dense/hash constructors in
 the [honest-construction dossier](docs/crypto/smz9-campaign/honest-construction-and-batch-law.md).
 Keep their explicit global embeddings; local-list default reads and zeroed
 dummy traces are not valid substitutions. Derive generated equations from
-the constructor, never from an assumed accepted packed witness. The exact
+the constructor, never from an assumed accepted packed witness. The typed
+prefix plus dense block now derives the seven actual reconstruction residuals;
+the computed hash block derives the exact 332-root slice using the complete
+unchanged expression DAG. Neither is complete packed acceptance, and the
+125 live initial states still require typed schedule construction. The exact
 remaining-count batch law counts every rejected raw candidate and transports
 the ideal first-accept law; it does not prove OS/provider behavior or permit
 conditioning on later proof success. Run the complete formal-crypto gate

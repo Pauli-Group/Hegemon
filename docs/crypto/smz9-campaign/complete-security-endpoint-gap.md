@@ -200,12 +200,14 @@ library mapping assumptions, not full evaluator or binary refinement. They
 remain separate from the integrated Lean 4.32.2 gate; no R0 receipt is filled.
 
 The reverse lowering now has [concrete checked components](honest-construction-and-batch-law.md):
-the five-row dense block comes from the exact seven typed/public source
-values and satisfies all five actual generated nonlinear roots in all
-lanes; the 364-row hash block comes from the actual compressed trace and
-has exact decoder/source-index placement. The 125 live hash starts remain
-component inputs, and full generated constraints and the complete typed
-constructor remain due. The exact ideal batch-trace law is also proved,
+the first 92 typed rows bind the four private note values; their composition
+with the five-row dense block satisfies all seven actual reconstruction
+residuals, and the dense block satisfies all five nonlinear range roots.
+The 364-row hash block comes from the actual compressed trace, has exact
+source-coordinate placement and satisfies all 332 generated hash roots,
+with successful evaluation on the unchanged complete expression DAG.
+The 125 live hash starts remain component inputs, and remaining equations
+and the complete typed constructor remain due. The ideal batch law is proved,
 without identifying it with the real provider conditioned on success.
 
 ## Retained artifacts and authority
@@ -240,8 +242,8 @@ Any later covered source change still requires new source-bound evidence
 Local formal gates, source/vector agreement and simulated proof diagnostics
 do not replace those artifacts, independent review, or production authority.
 
-At the 2026-09-08 05:50 UTC audit snapshot, the complete formal-crypto gate
-passed 2,953 build jobs and all 803 designated declarations used only
+At the 2026-09-08 06:15 UTC audit snapshot, the complete formal-crypto gate
+passed 2,961 build jobs and all 852 designated declarations used only
 `propext`, `Classical.choice`, and `Quot.sound`. This includes the complete
 arbitrary-packed semantic endpoint, full authorization and enabled stable
 transition, measured oracle games, literal post-final proof/error bytes,
@@ -252,8 +254,9 @@ query bounds
 proof-wire vectors were unchanged, and all 48 generated relation modules
 (2,266,857 source bytes) matched exactly. Final-write and whole-history
 composition modules and the public source-lifetime privacy endpoint are included.
-The eight new honest-construction/batch-law modules add 58 roots, including
-the typed dense values and actual dense nonlinear-root derivations.
+The earlier eight honest-construction/batch-law modules add 58 roots. The
+next eight modules add 49 roots for the typed prefix, all seven actual dense
+reconstruction residuals and exact forward hash-root/interpreter derivations.
 These are local
 intermediate checks, not P7, K8, universal Rust execution refinement, retained
 proof evidence, independent release review, or production authority.

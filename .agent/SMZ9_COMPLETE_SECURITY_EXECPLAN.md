@@ -27,6 +27,18 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Progress
 
+- [x] (2026-09-08 06:11 UTC) Construct the first 92 typed replicated rows
+  with explicit real-entry admission and source-coordinate readback. Compose
+  them with the dense block to derive all seven actual CSR reconstruction
+  residuals, preserving the arbitrary intervening authorization region and
+  suffix. Separately derive all 332 generated hash roots in every lane from
+  the computed hash block and successful evaluation of the unchanged full
+  expression DAG. Independent source reviews find no material issue in the
+  final typed prefix or forward-hash chain. Integrate eight modules and 49
+  exact roots; the full central gate passes at 06:15 UTC with 2,961 jobs and
+  852 approved-axiom roots. All generated relation modules and proof-wire
+  vectors are unchanged. Full typed schedule, remaining rows/equations and
+  actual Rust execution remain separate obligations.
 - [x] (2026-09-08 05:43 UTC) Construct the actual five-row dense range block
   from the seven typed/public source values, prove its explicit global
   placement, and derive all five generated nonlinear range roots in every
@@ -398,6 +410,12 @@ that local list would silently read defaults. The explicit embedding proves
 the actual 15,808-word offset. Likewise the three hash dummy calls start at
 zero but their first final word is `0x60cffc11a095a4f6`; their trace blocks
 cannot be replaced by zeros. The new constructors preserve both distinctions.
+The typed 92-row prefix also proves actual entry presence before crediting
+canonical source values: list defaults are not typed inputs. Its composition
+with the dense block discharges all four private reconstruction cells, not
+only the three public identities. The hash forward proof uses the full
+generated expression DAG and only a selected exact root slice; interpreter
+success for that slice is not full packed acceptance.
 
 The first real-socket proof-block import attempt made genuine earlier
 progress but repeatedly fetched coinbase heights one and two. A first-only
@@ -511,6 +529,12 @@ claiming full admission. Keep the isolated translator dependency build out
 of Hegemon's runtime/dependency graph and preserve its original failing
 extraction inputs for before/after regression. Date: 2026-09-08.
 
+Derive the complete hash-root component by exact earlier-row replay and
+source trace scheduling, then transfer those identities to the constructed
+block. Keep the selected-root interpreter endpoint explicitly partial.
+Bind dense reconstruction to concrete first-prefix readbacks instead of
+adding raw-cell equality premises. Date: 2026-09-08 06:11 UTC.
+
 The announcement caller must use the same compatible recovery cursor as the
 periodic scheduler. Guard its mutating lookup by the current admitted full
 peer/height/hash tuple; retain the existing sender pacing and receiver checks.
@@ -587,13 +611,16 @@ Actual source extraction also now establishes all four scalar helper
 refinements, including inverse-loop termination, in an isolated,
 exact-root-checked Lean 4.31.0 lane. The expression loop, caller/array binding
 and production binary remain separate
-R0 obligations; these results are not added to the 803-root integrated gate.
+R0 obligations; these results are not added to the 852-root integrated gate.
 
-The next forward-construction increment now adds the exact dense block and
-its actual nonlinear roots, a computed hash block with exact source-index
-placement, and a constructed ideal batch-trace probability law. These are
-defined constructions with derived properties, not populated adequacy
-receipts. Full assignment and generated-equation coverage remain active.
+The forward construction now includes the typed 92-row prefix, exact dense
+block, all five dense nonlinear roots, seven actual sparse reconstruction
+residuals and the computed hash block with all 332 generated hash roots.
+The partial hash-root program has derived successful interpreter execution
+on the unchanged full expression DAG. The ideal batch-trace probability law
+is constructed separately. These are named constructions with derived
+properties, not populated adequacy receipts. Full assignment, typed live
+schedule and remaining generated-equation coverage remain active.
 
 The prior commits establish local mathematical ingredients, not either
 endpoint. This continuation explicitly retains the unfinished complete proof as
@@ -951,3 +978,8 @@ Revision note (2026-09-08 05:47 UTC): integrate constructive dense/hash
 components and the exact finite ideal batch law, record the missing typed
 schedule and full generated-equation links, and keep the isolated translator
 dependency installation bounded and distinct from a reviewed translator fix.
+
+Revision note (2026-09-08 06:11 UTC): integrate the typed prefix, concrete
+seven-residual dense composition and exact forward hash-root/evaluator
+component; preserve full packed acceptance and actual source refinement as
+remaining obligations. Record the completed 852-root central gate at 06:15 UTC.

@@ -72,11 +72,14 @@ test natural oversized-body selection, multi-chunk boundaries, crash recovery
 or public-network deployment. The [exact artifacts and claim boundaries](docs/crypto/smz9-campaign/repaired-proof-execution.md#completed-source-frozen-local-carrier-milestone)
 remain distinct from production authorization and full security/refinement.
 
-The research-only reverse semantic construction now builds the exact dense
-range block from typed values and derives its actual nonlinear roots, and
-builds the complete hash block from 125 canonical live initial states plus
-three zero-start full traces. Its source-coordinate proofs do not substitute
-hash-kernel acceptance for complete generated constraints. The exact finite
+The research-only reverse semantic construction now builds the first 92
+typed witness rows and the exact dense range block, deriving all five range
+roots and seven actual sparse reconstruction equations. It also builds the
+complete hash block from 125 canonical live initial states plus three
+zero-start full traces and derives all 332 generated hash roots, including
+successful evaluation of their unchanged full expression DAG. These are
+component results: the typed live-call schedule, remaining rows/equations
+and full packed acceptance remain separate. The exact finite
 ideal batch law also remains separate from the real randomness provider and
 Rust execution. See [construction and sampler boundaries](docs/crypto/smz9-campaign/honest-construction-and-batch-law.md).
 
