@@ -143,8 +143,8 @@ open; release authority is unchanged.
 The unchanged node evaluator successfully extracts to transparent Charon
 LLBC, but pinned Aeneas fails at `InterpProjectors.ml:109` before emitting
 Lean. Source inspection points to inconsistent region erasure of the static
-error-reference return; runtime type instrumentation is still needed to
-confirm that specific cause. The failed extraction and source-derived
+error-reference return; the later isolated instrumentation confirms retained
+nested RStatic versus recursively erased RErased at the assertion. The failed extraction and source-derived
 diagnosis do not constitute an evaluator proof; no generated function or
 Rust signature was substituted.
 
@@ -189,3 +189,28 @@ Any instrumented or corrected translator must use distinct source/build
 outputs, preserve this baseline, retain its assertion and strict translation
 flags, and replay the unchanged inputs. No such correction is credited by
 this baseline milestone, and no whole-evaluator or R0 receipt is filled.
+
+## Isolated two-site translator candidate
+
+The subsequent instrumentation-only run preserves the assertion, reproduces
+the original failure and keeps all six scalar outputs byte-identical.
+The separately reviewed candidate changes only the two projector-side
+expected-type erasures to the existing recursive type eraser. Original
+source trees and all baseline/instrumentation evidence remain unchanged.
+
+At 2026-09-08 08:40 UTC its one-job native build passes in 228.981 seconds.
+The built executable SHA-256 is
+`b2ea49f1ac27930e20dc19f430b7ca4f5284119fe322f4addeaac0e1c1e0de37`.
+The test harness then fails compilation at line 14: OCaml infers its
+unannotated concrete record as evalue, whose constructors exclude VSymbolic.
+No control execution, node/scalar translation replay or checks phase runs.
+All ten owned process groups exit and the failure is retained separately.
+
+The R2 execution receipt at
+`/private/tmp/smz9-aeneas-stage1.IgNKumAA/stage5-erasure-candidate/R2_EXECUTION_RECEIPT.json`
+has SHA-256
+`ab1fff5d7140fe54100fca4fb3486b13121caeedf3a7e0515da7e0442a1fc1a2`;
+its incomplete status is intentional evidence of the stopped run.
+An explicit fixture result-type annotation and a separately reviewed run
+using the frozen binary are pending. A built translator is not a proof of
+correct translation, and no expression-evaluator or R0 theorem follows.

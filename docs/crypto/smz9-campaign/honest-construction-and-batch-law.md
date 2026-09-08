@@ -279,10 +279,43 @@ slice and the exact interpolation formula are kernel-checked; a zero-role
 control is proved to fail the inverse equation. No nonzero-role premise is
 added to the final endpoint.
 
-Together these results discharge 17,488 of 20,605 actual raw CSR attempts
-and 363 of 830 nonlinear roots in all 64 lanes. The remaining 3,117 raw CSR
-attempts and 467 nonlinear roots, complete coefficient/interpreter execution
-and full packed acceptance remain open.
+## Early, balance, inline, multiplication and policy-frame equations
+
+Five `SmallWoodV8Smz9SourcePolicy*`/`SourceFullRatePreparation` modules
+derive all 64 actual family-26 attempts `18715..18778`. They bind the
+threshold, signer count and 30 tag words to the raw prepared call frames,
+including capacity domain 7, length 32, suite, prior state and final padding.
+No permutation-output cancellation or supplied frame equality is used.
+
+`SmallWoodV8Smz9SourceInlineRoots` proves actual positions `121..128`:
+seven orientation equations and the policy bridge. The bit comes from the
+same constructed rows; non-single policy lanes use computed call 97 and
+single mode derives the required zero gate. All 64 lanes are covered.
+
+Four source multiplication modules derive root 806, actual node 8132 and
+row equation `row660 * row661 - row662`. Every decimal, product, epoch,
+carry-inverse and retirement lane comes from the full typed constructor;
+inactive and padding lanes are handled explicitly. Actual parent height
+comes from encoded public word 94. No multiplication-equation premise is
+added to the endpoint.
+
+Nine `SmallWoodV8Smz9SourceEarly*` modules derive actual roots `0..111`:
+public Boolean/stable/reserved fields, all 64 direction bits, inactive
+ciphertext limbs and note/stable asset membership. Four balance modules
+extend this through `0..115`. Canonical distinct assets make the actual
+interpolation weights exact indicators. Typed natural conservation supplies
+the native fee, mint and burn branches; padding slots are proved zero
+separately, without assuming padding conservation. The actual root list,
+not its currently misordered descriptive metadata, selects each expression.
+Malformed Boolean/path/reserved/ciphertext/asset examples have nonzero
+actual roots; nonzero fee/issuance with zero notes and duplicate assets are
+separate balance controls, not admitted typed witnesses.
+
+Together these results discharge 17,552 of 20,605 actual raw CSR attempts
+and 488 of 830 nonlinear roots in all 64 lanes. Covered root-list positions
+are exactly `0..128` and `471..829`; the remaining 342 authorization roots
+and 3,053 raw CSR attempts, complete coefficient/interpreter execution and
+full packed acceptance remain open.
 
 ## Remaining-count sampler batches
 
@@ -380,6 +413,18 @@ gate log SHA-256 is
 `77e97c320cbf1f2fb0335a9622b61eb7c451f22b00ae97576b124648465a3a30`.
 Original source/checker/receipt evidence and the log are retained under
 `.agent/artifacts/smallwood-poseidon2-v8/formal-source-1163-77e97c320cbf1f2f`.
+
+The next 23 reviewed modules add 121 designated roots for policy frames,
+inline orientation/policy binding, multiplication, early roots and balance.
+At 2026-09-08 08:44 UTC the full gate passes 3,028 jobs and all 1,284
+designated declarations on the unchanged allowlist; all wire vectors and
+48 generated relation files remain unchanged. The full log SHA-256 is
+`43a14c88c4badaf9f3c5a2b5488bec9fc8df9f88d25178c92a225a9ba445d218`. Original
+source/checker/negative-control evidence and both intermediate gate logs
+are retained under
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-1284-43a14c88c4badaf9`.
+Forward coverage is 17,552 actual CSR attempts and 488 nonlinear roots;
+the remaining equations and full security endpoints are still open.
 
 Continue by closing the remaining checked-success obligations and deriving
 all 830 nonlinear roots in every lane and all 20,605 raw linear

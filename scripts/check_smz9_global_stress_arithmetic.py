@@ -77,6 +77,44 @@ def main():
     assert size - 812 == 8_387_796
     assert (size - dimension) // 425 == 19_736
     assert p**5 * weight(812) + (size - 812) < 2**53
+    cofactor_rank_bound = size - 812
+    assert 0 < cofactor_rank_bound < p
+    stress_twenty_count = comb(832, 19)
+    assert stress_twenty_count == 202917499647411935202774832309045124800
+    middle_twenty = cofactor_rank_bound**5 + (p**2 * stress_twenty_count) // (p - cofactor_rank_bound)
+    assert middle_twenty == 3743167183203034151303853822236727914500710913488939544761
+    fractional_middle = cofactor_rank_bound**5 + Fraction(p**2 * stress_twenty_count, p - cofactor_rank_bound)
+    assert middle_twenty <= fractional_middle < middle_twenty + 1
+    budget_twenty = p**5 * weight(812) + middle_twenty * weight(support_cap) + tails
+    assert budget_twenty < 2**53
+    for source_rank in (1, 20, 813, 100000, cofactor_rank_bound - 1):
+        assert source_rank**5 + Fraction(p**2 * stress_twenty_count, p - source_rank) <= fractional_middle
+    middle_twenty_one = cofactor_rank_bound**5 + (p**2 * comb(833, 20)) // (p - cofactor_rank_bound)
+    assert p**5 * weight(812) + middle_twenty_one * weight(support_cap) + tails > 2**53
+    assert 813**2 > 387 * 1707
+    assert 4096**2 * 813**2 >= 4097**2 * 387 * 1707
+    assert Fraction(387, 1707) > Fraction(1, 5)
+    assert Fraction(387, 1707) > Fraction(4, 25)
+    small_union = Fraction(25 * 1707 * (2 * 4097**5 + 3 * 4097), 6) + Fraction(5 * 4097, 2)
+    assert small_union == 16420338088483447085805 < 2**76
+    union_fiber = Fraction(1708, 1708 - 2 * 813) * comb(831, 18)
+    assert union_fiber == 96521439648185566973505641095408249150 > 2**76
+    union_middle_fraction = cofactor_rank_bound**5 + Fraction(p**2, p - cofactor_rank_bound) * union_fiber
+    union_middle = union_middle_fraction.numerator // union_middle_fraction.denominator
+    assert union_middle == 1780506294402334431843840135889800907721994892128331979526
+    assert union_middle <= union_middle_fraction < union_middle + 1
+    union_budget = p**5 * weight(812) + union_middle * weight(support_cap) + tails
+    assert union_budget < 2**53
+    next_fiber = Fraction(1708, 82) * comb(832, 19)
+    next_middle = cofactor_rank_bound**5 + Fraction(p**2, p - cofactor_rank_bound) * next_fiber
+    assert p**5 * weight(812) + (next_middle.numerator // next_middle.denominator) * weight(support_cap) + tails > 2**53
+    first_tail_count = 19415238057946677331930434730749083756
+    direct_tail_count = 424128388239503090
+    assert first_tail_count < 2**124 and direct_tail_count < 2**59
+    assert weight(65535) < Fraction(1, 2**140)
+    assert weight(size // 16 - 1) < Fraction(1, 2**80)
+    refined_tail = 2**36 + Fraction(1, 2**16) + Fraction(1, 2**21)
+    assert first_tail_count * weight(65535) + direct_tail_count * weight(size // 16 - 1) + 2**36 < refined_tail < tails
     print("PASS: all integer/rational inequalities")
     print("Conditional 833 bound / allowance:", float(conditional / allowance))
     print("Conditional 813 bound / 2^53:", float(strong_conditional / 2**53))
@@ -89,6 +127,10 @@ def main():
     print("Conditional capped affine budget / 2^53:", float((p**5 * weight(812) + 2**168 * capped_charge + tails) / 2**53))
     print("Conditional graph budget / 2^53:", float((p**5 * weight(812) + 2**184 * graph_charge + tails) / 2**53))
     print("Zero-stress branch budget / 2^53:", float((p**5 * weight(812) + size - 812) / 2**53))
+    print("Conditional stress<=20 middle count:", middle_twenty)
+    print("Conditional stress<=20 budget / 2^53:", float(budget_twenty / 2**53))
+    print("Conditional union-sensitive stress<=21 budget / 2^53:", float(union_budget / 2**53))
+    print("Refined universal tail upper bound:", refined_tail)
 
 
 if __name__ == "__main__":

@@ -213,7 +213,10 @@ the same-schedule stable tail and proves all 43,904 words canonical, with
 no extra auxiliary/hash/tail inputs. All 15,561 actual raw replication CSR
 residuals also vanish on this constructor. Another 1,920 actual Merkle CSR
 residuals and 26 stable selector/inverse/Boolean/radix roots are now derived
-from that same candidate. The remaining 3,117 CSR attempts and 467 nonlinear
+from that same candidate. Another 64 policy-initial attempts and the early,
+balance, inline and multiplication roots bring coverage to 17,552/20,605
+CSR attempts and 488/830 nonlinear roots. The remaining 3,053 CSR attempts
+and 342 nonlinear authorization
 roots still need their forward satisfaction proofs;
 canonicality does not supply those equations or actual Rust success.
 The ideal batch law is proved,
@@ -251,8 +254,8 @@ Any later covered source change still requires new source-bound evidence
 Local formal gates, source/vector agreement and simulated proof diagnostics
 do not replace those artifacts, independent review, or production authority.
 
-At the 2026-09-08 07:50 UTC audit snapshot, the complete formal-crypto gate
-passed 3,005 build jobs and all 1,163 designated declarations used only
+At the 2026-09-08 08:44 UTC audit snapshot, the complete formal-crypto gate
+passed 3,028 build jobs and all 1,284 designated declarations used only
 `propext`, `Classical.choice`, and `Quot.sound`. This includes the complete
 arbitrary-packed semantic endpoint, full authorization and enabled stable
 transition, measured oracle games, literal post-final proof/error bytes,

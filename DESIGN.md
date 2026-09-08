@@ -81,6 +81,11 @@ actual sparse reconstruction residuals, all 15,561 raw replication residuals
 and 332 generated hash roots are derived, with exact source-coordinate
 readbacks. Another 1,920 actual Merkle CSR residuals and 26 stable
 selector/inverse/Boolean/radix roots hold on that same candidate. The
+next increment adds 64 policy-initial CSR attempts, eight inline roots,
+the actual stable multiplication root and all 112 early public/path/asset/
+ciphertext roots: 17,552/20,605 CSR attempts and 484/830 nonlinear roots.
+The four actual per-asset balance roots then bring nonlinear coverage to
+488/830, completing root-list positions 0..128 and 471..829 in every lane.
 tail uses the same computed hash schedule, with no supplied
 auxiliary or hash-final values. Remaining generated equations are still
 being proved. These component

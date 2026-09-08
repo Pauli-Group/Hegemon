@@ -27,6 +27,34 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Progress
 
+- [x] (2026-09-08 08:29 UTC) Integrate 19 modules and 92 exact roots
+  for 64 policy-initial CSR attempts and 121 early/inline/multiplication
+  nonlinear roots. The complete gate passes 3,024 jobs and all 1,255
+  declarations with unchanged wire/generated artifacts. Coverage at this
+  checkpoint is 17,552/20,605 CSR attempts and 484/830 nonlinear roots.
+- [x] (2026-09-08 08:34 UTC) Independently review four balance modules
+  and 29 roots. Actual positions 112..115 follow from the full typed
+  candidate and fixed validity for every lane; native fee, mint, burn and
+  padding branches are explicit. At 08:44 UTC the complete integrated gate
+  passes 3,028 jobs and all 1,284 declarations; wire/generated files remain
+  unchanged. Forward coverage is now 17,552 CSR attempts and 488 roots.
+- [x] (2026-09-08 08:33 UTC) Independently review the conditional
+  compressed-stress dimension-at-most-21 branch, giving `B/2^53<0.987571`,
+  and the universal tail `<2^36+2^-16+2^-21`. Exact arithmetic passes;
+  neither result supplies the unrestricted middle-support K8 bound.
+- [x] (2026-09-08 08:40 UTC) Run the isolated, separately reviewed
+  Stage5 two-site erasure candidate with 21 exact projector/caller controls,
+  unchanged-node/scalar replays and a checks-enabled subphase. Original
+  sources, assertions and R1/Stage4 evidence remain preserved. The single
+  candidate build passes in 228.981 seconds, but the harness fails at the
+  first compilation step: its unannotated concrete record is inferred as
+  evalue instead of tvalue. No controls or translator replay ran. Preserve
+  the failed R2 receipt and built binary; all ten owned groups are extinct.
+  This negative run is not Rust-to-Lean refinement or permission for a retry.
+- [ ] Prepare a distinct R3 fixture-only type annotation and no-rebuild
+  harness run against the frozen candidate, with fresh complete pre/postflight.
+  Execution needs separate exact-artifact review; no further semantic patch
+  or relabeling of the failed R2 run is authorized.
 - [x] (2026-09-08 07:50 UTC) Integrate ten modules and 63 exact roots
   proving 1,920 actual Merkle CSR residuals and 26 stable selector/inverse/
   Boolean/radix roots on the same typed candidate. The full gate passed
@@ -54,6 +82,12 @@ of this work. The security endpoints and resource accounting remain those in
   preparing exact metadata correction/regeneration requirements; no
   expression change, automatic artifact relabeling or fresh security
   authority is justified by this finding.
+  Exact read-only preparation identifies 45 changed descriptor records:
+  `63..95`, `98..104`, `243..247`; six family labels and 39 local indices.
+  The PRF/key metadata also needs actual per-input interleaving. A correct
+  exporter must keep per-family local counters across split spans. Only
+  section 4 changes; executable sections 8/9 stay byte-identical, but the
+  whole digest/id, vectors and generated descriptors need a fresh identity.
 - [x] (2026-09-08 07:33 UTC) Complete and integrate the one-input-pair
   43,904-word typed constructor with all 39 stable rows canonical, actual
   authorization digest identities, checked-subtraction/range helpers and
@@ -678,19 +712,20 @@ Actual source extraction also now establishes all four scalar helper
 refinements, including inverse-loop termination, in an isolated,
 exact-root-checked Lean 4.31.0 lane. The expression loop, caller/array binding
 and production binary remain separate
-R0 obligations; these results are not added to the 1,163-root integrated gate.
+R0 obligations; these results are not added to the 1,284-root integrated gate.
 
 The forward construction now includes one full 43,904-word candidate,
 canonical from fixed typed validity alone, exact dense and same-schedule
 stable/hash blocks, all five dense nonlinear roots, seven actual sparse
 reconstruction residuals, 15,561 actual raw replication residuals, 1,920
-actual Merkle CSR residuals, 26 stable selector/inverse/Boolean/radix roots
-and all 332 generated hash roots.
+actual Merkle CSR residuals, 64 policy-initial CSR attempts, 26 stable
+selector/inverse/Boolean/radix roots, all early/balance/inline/multiplication
+roots and all 332 generated hash roots.
 The partial hash-root program has derived successful interpreter execution
 on the unchanged full expression DAG. The ideal batch-trace probability law
 is constructed separately. These are named constructions with derived
-properties, not populated adequacy receipts. The remaining 3,117 raw CSR
-attempts and 467 nonlinear roots, actual Rust execution and complete
+properties, not populated adequacy receipts. The remaining 3,053 raw CSR
+attempts and 342 nonlinear authorization roots, actual Rust execution and complete
 generated-equation coverage remain active.
 
 The prior commits establish local mathematical ingredients, not either

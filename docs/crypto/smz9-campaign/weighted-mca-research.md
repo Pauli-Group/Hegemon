@@ -17,7 +17,17 @@ missing cover to maximizing responses with full support in `813..56977`.
 Respectively, at most `2^168` affine families or total non-affine graph
 degree at most `2^184` would suffice for the weighted inequality; neither
 cover is established. The [zero-stress branch](weighted-mca-zero-stress-branch.md)
-is closed by a separate diagonal-kernel argument. Nonzero stress remains
+is closed by a separate diagonal-kernel argument. The
+[small-stress count](weighted-mca-small-stress-count.md) and
+[union-sensitive refinement](weighted-mca-union-sensitive-stress.md) now
+close the conditional branch where some choice of one bad 813-subset per
+maximizing middle-support label has compressed stress dimension at most 21.
+The bound is `B/2^53<0.987571`, not the stronger historical `2^52` target
+below. A hypothetical counterexample must have dimension at least 22 for
+every such choice; no universal low-stress selection is established.
+The [refined universal tail](weighted-mca-refined-universal-tail.md) is
+`<2^36+2^-16+2^-21`, without changing sources or sampling weights.
+Unrestricted high stress remains
 an independent obstruction, and no numerical K8 receipt is populated.
 
 Write `p = 2^64 - 2^32 + 1`, `N = 2^23`, `k = 388`, and `K = F_(p^5)`. The domain `D` is the existing shifted Goldilocks coset, with its `N` distinct base-field points. The five coordinates of `K` only group the existing five base-field matrix rows.
