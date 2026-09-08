@@ -359,6 +359,17 @@ justify programming an oracle to an output chosen before that input. The
 full Lean gate, axiom audit and unchanged vectors check these local artifacts;
 they do not close either end-to-end security obligation or authorize release.
 
+For forward typed-witness lowering, use the named dense/hash constructors in
+the [honest-construction dossier](docs/crypto/smz9-campaign/honest-construction-and-batch-law.md).
+Keep their explicit global embeddings; local-list default reads and zeroed
+dummy traces are not valid substitutions. Derive generated equations from
+the constructor, never from an assumed accepted packed witness. The exact
+remaining-count batch law counts every rejected raw candidate and transports
+the ideal first-accept law; it does not prove OS/provider behavior or permit
+conditioning on later proof success. Run the complete formal-crypto gate
+after integration and bind any later retained artifacts to the new source
+inventory without relabeling old receipts.
+
 The honest-hybrid follow-up supplies the fresh-tail premise for a generated
 public context in the independent-randomized-leaf experiment. Preserve its
 reconstructed original mask and final-overlay correlation; projected prefix

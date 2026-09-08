@@ -27,6 +27,27 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Progress
 
+- [x] (2026-09-08 05:43 UTC) Construct the actual five-row dense range block
+  from the seven typed/public source values, prove its explicit global
+  placement, and derive all five generated nonlinear range roots in every
+  lane without an accepted-packed premise. Construct the complete hash
+  block from 125 canonical live initial states plus three actual zero-start
+  traces, including source-owned coordinate readback and the nonzero dummy
+  permutation output. Independently review both components and the exact
+  remaining-count batch/first-accept trace bijection and ideal law transport.
+  Integrate eight research modules and 58 exact roots; the complete gate
+  passes at 05:50 UTC with 2,953 jobs and 803 approved-axiom roots. All 48
+  generated relation modules and three proof-wire vectors are unchanged.
+  Full typed assignment, live hash schedule, remaining roots/linear
+  equations and real provider/Rust execution remain due.
+- [x] (2026-09-08 05:47 UTC) Complete isolated pinned translator-source and
+  signed OPAM bootstrap acquisition. Freeze 118 exact dependency identities
+  and 113 strong-checksum source records, with no packages installed at the
+  end of acquisition. Authorize only their one-job isolated installation,
+  with 8 GiB maximum new-root storage, 8 GiB minimum free storage and a
+  120-minute ceiling. The translator patch/build remains a separate step;
+  no Hegemon dependency, original extraction, old tool or retained artifact
+  is changed.
 - [x] (2026-09-08 05:08 UTC) Complete the unchanged actual Rust inverse
   refinement. The extracted loop terminates for arbitrary U64 exponent/base
   with canonical accumulator and returns the exact modular power; the full
@@ -364,6 +385,20 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Surprises & Discoveries
 
+The source's remaining-count refill has an exact finite-trace interpretation:
+its final batch must accept every candidate, so the last word is the last
+required acceptance. A proof by remaining raw length handles arbitrarily many
+all-reject rounds without pretending the remaining output count decreases.
+The resulting ideal probability law still does not establish actual provider
+freshness, error conditioning, allocation or concurrent scheduling.
+
+Forward materialization must preserve global offsets and nonzero helpers.
+Dense data is only a 320-word local block, so using a global-row decoder on
+that local list would silently read defaults. The explicit embedding proves
+the actual 15,808-word offset. Likewise the three hash dummy calls start at
+zero but their first final word is `0x60cffc11a095a4f6`; their trace blocks
+cannot be replaced by zeros. The new constructors preserve both distinctions.
+
 The first real-socket proof-block import attempt made genuine earlier
 progress but repeatedly fetched coinbase heights one and two. A first-only
 locator is a legal requested prefix; selecting the last locator would violate
@@ -467,6 +502,15 @@ membership rule preserves the intended balance semantics.
 
 ## Decision Log
 
+Continue reverse semantic adequacy through named concrete row constructors,
+not through an existential accepted witness or a successful-evaluator input.
+The current independent components and exact batch law are documented in
+`docs/crypto/smz9-campaign/honest-construction-and-batch-law.md`. Assemble
+remaining rows, the typed live hash schedule and generated equations before
+claiming full admission. Keep the isolated translator dependency build out
+of Hegemon's runtime/dependency graph and preserve its original failing
+extraction inputs for before/after regression. Date: 2026-09-08.
+
 The announcement caller must use the same compatible recovery cursor as the
 periodic scheduler. Guard its mutating lookup by the current admitted full
 peer/height/hash tuple; retain the existing sender pacing and receiver checks.
@@ -543,7 +587,13 @@ Actual source extraction also now establishes all four scalar helper
 refinements, including inverse-loop termination, in an isolated,
 exact-root-checked Lean 4.31.0 lane. The expression loop, caller/array binding
 and production binary remain separate
-R0 obligations; these results are not added to the 745-root integrated gate.
+R0 obligations; these results are not added to the 803-root integrated gate.
+
+The next forward-construction increment now adds the exact dense block and
+its actual nonlinear roots, a computed hash block with exact source-index
+placement, and a constructed ideal batch-trace probability law. These are
+defined constructions with derived properties, not populated adequacy
+receipts. Full assignment and generated-equation coverage remain active.
 
 The prior commits establish local mathematical ingredients, not either
 endpoint. This continuation explicitly retains the unfinished complete proof as
@@ -896,3 +946,8 @@ Revision note (2026-09-08 04:21 UTC): record the completed modeled lifetime
 endpoint, the independently reproduced recovery-cursor caller bug and scoped
 fix, and the finite additive-local-rank obstruction. Retain the separate
 concrete security and actual-socket acceptance requirements.
+
+Revision note (2026-09-08 05:47 UTC): integrate constructive dense/hash
+components and the exact finite ideal batch law, record the missing typed
+schedule and full generated-equation links, and keep the isolated translator
+dependency installation bounded and distinct from a reviewed translator fix.

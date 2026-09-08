@@ -199,6 +199,15 @@ source-extraction helper results under explicit Charon/Aeneas and standard
 library mapping assumptions, not full evaluator or binary refinement. They
 remain separate from the integrated Lean 4.32.2 gate; no R0 receipt is filled.
 
+The reverse lowering now has [concrete checked components](honest-construction-and-batch-law.md):
+the five-row dense block comes from the exact seven typed/public source
+values and satisfies all five actual generated nonlinear roots in all
+lanes; the 364-row hash block comes from the actual compressed trace and
+has exact decoder/source-index placement. The 125 live hash starts remain
+component inputs, and full generated constraints and the complete typed
+constructor remain due. The exact ideal batch-trace law is also proved,
+without identifying it with the real provider conditioned on success.
+
 ## Retained artifacts and authority
 
 The retained-artifact and release state is explicit and fail-closed:
@@ -231,8 +240,8 @@ Any later covered source change still requires new source-bound evidence
 Local formal gates, source/vector agreement and simulated proof diagnostics
 do not replace those artifacts, independent review, or production authority.
 
-At the 2026-09-08 03:31 UTC audit snapshot, the complete formal-crypto gate
-passed 2,945 build jobs and all 745 designated declarations used only
+At the 2026-09-08 05:50 UTC audit snapshot, the complete formal-crypto gate
+passed 2,953 build jobs and all 803 designated declarations used only
 `propext`, `Classical.choice`, and `Quot.sound`. This includes the complete
 arbitrary-packed semantic endpoint, full authorization and enabled stable
 transition, measured oracle games, literal post-final proof/error bytes,
@@ -243,6 +252,8 @@ query bounds
 proof-wire vectors were unchanged, and all 48 generated relation modules
 (2,266,857 source bytes) matched exactly. Final-write and whole-history
 composition modules and the public source-lifetime privacy endpoint are included.
+The eight new honest-construction/batch-law modules add 58 roots, including
+the typed dense values and actual dense nonlinear-root derivations.
 These are local
 intermediate checks, not P7, K8, universal Rust execution refinement, retained
 proof evidence, independent release review, or production authority.

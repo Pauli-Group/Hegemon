@@ -28,13 +28,22 @@ inverse-loop termination and exact original Lean field results. Its isolated
 nine-root v2 and five-root inverse-v3 evidence gates pass; this is not yet
 the complete expression evaluator or R0.
 
+The [honest-construction and batch-law increment](honest-construction-and-batch-law.md)
+now constructs the typed five-row dense range block and derives all five
+actual nonlinear range roots in every lane. It also constructs the full
+hash block and exact source-index placement from 125 live initial states,
+and proves the remaining-count sampler's exact finite ideal trace law.
+The full typed assignment, live hash schedule and generated hash/linear
+constraints remain active work; no accepted-packed premise is used to
+claim their completion.
+
 The [complete-security ExecPlan](../../../.agent/SMZ9_COMPLETE_SECURITY_EXECPLAN.md)
 retains both complete game endpoints as the acceptance condition. The following
 table is an earlier ingredient ledger: its per-module original boundaries
 are not a current inventory of aggregate endpoint gaps. The completed modeled
 source-lifetime privacy and packed semantic endpoints described below
 supersede their corresponding local gaps. The full integrated formal gate
-passes all 745 credited roots; these results are not a completed concrete
+passes all 803 credited roots; these results are not a completed concrete
 security argument.
 
 | Earlier ingredient | What is established | Original local boundary |
