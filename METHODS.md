@@ -379,8 +379,11 @@ source increment proves 64 policy-initial CSR attempts, eight inline roots,
 the actual multiplication root, all 112 early roots and four balance roots.
 The next increment derives 496 stable-tail and 448 inactive-Merkle-right
 CSR attempts and 145 authorization roots, bringing coverage to
-18,496/20,605 CSR attempts and 633/830 nonlinear roots. The remaining
-197 nonlinear positions are exactly 252..448; 2,109 CSR attempts remain.
+18,496/20,605 CSR attempts and 633/830 nonlinear roots. The next checked
+increment adds 135 stable, 288 action-intent/dummy-initial and 16 PRF-initial
+attempts plus 100 authorization roots: 18,935/20,605 CSR attempts and
+733/830 nonlinear roots. There remain 1,670 CSR attempts and 97 nonlinear
+roots within positions 252..448.
 The stable-tail identities are constructor properties; the inactive
 Merkle and authorization endpoints use fixed typed validity and derive
 their actual public/packed values internally. Coverage

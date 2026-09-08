@@ -27,6 +27,19 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Progress
 
+- [x] (2026-09-08) Complete the 26-module increment: 439 additional actual
+  CSR attempts and 100 nonlinear authorization roots. The full gate passes
+  3,066 jobs and all 1,472 declarations, with unchanged wire/generated files.
+  Coverage is 18,935/20,605 CSR attempts and 733/830 nonlinear roots;
+  1,670 CSR attempts and 97 nonlinear roots within 252..448 remain. Preserve
+  all 118 evidence payloads byte-for-byte in the 1,472-declaration archive.
+- [x] (2026-09-08) Compile the exact generated native node Types/Funs in
+  isolated Lean 4.31.0. The proposed body proof remains unrun after its V2
+  runner review found dependency-directory and resource-policy guard gaps.
+- [ ] Correct the exporter descriptor order using per-family local counters,
+  with a focused failing-before/passing-after source-order regression, then
+  regenerate the affected relation identity and dependent artifacts. Keep
+  prior proofs and source-forward evidence bound to their original subjects.
 - [x] (2026-09-08 09:09 UTC) Integrate twelve reviewed modules and 72
   designated roots for 496 stable-tail CSR attempts, all 448 inactive
   Merkle-right attempts and 145 authorization roots. The full gate passes
@@ -63,10 +76,9 @@ of this work. The security endpoints and resource accounting remain those in
   evalue instead of tvalue. No controls or translator replay ran. Preserve
   the failed R2 receipt and built binary; all ten owned groups are extinct.
   This negative run is not Rust-to-Lean refinement or permission for a retry.
-- [ ] Prepare a distinct R3 fixture-only type annotation and no-rebuild
-  harness run against the frozen candidate, with fresh complete pre/postflight.
-  Execution needs separate exact-artifact review; no further semantic patch
-  or relabeling of the failed R2 run is authorized.
+- [x] Prepare and separately review the distinct R3 fixture-only annotation
+  and no-rebuild harness; its successful 09:04 UTC replay is recorded above.
+  Preserve the failed R2 run without relabeling it.
 - [x] (2026-09-08 07:50 UTC) Integrate ten modules and 63 exact roots
   proving 1,920 actual Merkle CSR residuals and 26 stable selector/inverse/
   Boolean/radix roots on the same typed candidate. The full gate passed
@@ -724,7 +736,7 @@ Actual source extraction also now establishes all four scalar helper
 refinements, including inverse-loop termination, in an isolated,
 exact-root-checked Lean 4.31.0 lane. The expression loop, caller/array binding
 and production binary remain separate
-R0 obligations; these results are not added to the 1,356-root integrated gate.
+R0 obligations; these results are not added to the 1,472-declaration integrated gate.
 
 The forward construction now includes one full 43,904-word candidate,
 canonical from fixed typed validity alone, exact dense and same-schedule
@@ -738,8 +750,9 @@ on the unchanged full expression DAG. The ideal batch-trace probability law
 is constructed separately. These are named constructions with derived
 properties, not populated adequacy receipts. The additional 496 stable-tail
 and 448 inactive-Merkle-right CSR attempts and 145 authorization roots now
-leave 2,109 raw CSR attempts and 197 nonlinear positions 252..448. Actual
-Rust execution and complete
+first leave 2,109 raw CSR attempts and 197 nonlinear positions 252..448.
+The next 439 CSR attempts and 100 authorization roots reduce the remaining
+counts to 1,670 and 97 respectively. Actual Rust execution and complete
 generated-equation coverage remain active.
 
 The prior commits establish local mathematical ingredients, not either
@@ -1128,3 +1141,11 @@ the remaining 2,109 CSR and 197 authorization positions as open. Record
 the corrected native translator fixture's successful normal/checks replay
 without treating generated Lean output as an already checked evaluator
 theorem or relabeling earlier failed runs.
+
+Revision note (2026-09-08): preserve the completed 1,472-declaration gate
+before any descriptor-identity correction. Record the actual remaining
+1,670 CSR/97 nonlinear obligations and the separately successful generated
+native Lean compilation; keep the unrun body proof and security endpoints
+open. The user requires lightweight or medium-effort agents and bounded
+work: this follow-up uses one Luna/medium read-only worker, no child agents,
+serial focused checks, and a stop at 5 percent reported weekly usage.

@@ -53,7 +53,7 @@ table is an earlier ingredient ledger: its per-module original boundaries
 are not a current inventory of aggregate endpoint gaps. The completed modeled
 source-lifetime privacy and packed semantic endpoints described below
 supersede their corresponding local gaps. The full integrated formal gate
-passes all 1,356 credited roots; these results are not a completed concrete
+passes all 1,472 credited declarations; these results are not a completed concrete
 security argument.
 
 | Earlier ingredient | What is established | Original local boundary |

@@ -244,10 +244,24 @@ Maximum observed root allocation is 2,721,320,960 bytes and minimum free
 space is 17,647,124,480 bytes. The checks phase takes 10.174 seconds within
 its separate 600-second bound; no resource stop occurs.
 
-This is successful translation and finite regression evidence, not yet a
-Lean compilation or expression-evaluator refinement. The finite controls'
+This stage provides successful translation and finite regression evidence,
+not expression-evaluator refinement. The finite controls'
 checks flag does not explicitly invoke whole-context invariant validation;
 the separate node `-checks` replay remains a distinct, still finite check.
 Translator correctness, actual-array induction, acceptance and full R0 are
-still open. The next step is a fresh isolated Lean check of these exact
-generated definitions and a proof against the unchanged relation evaluator.
+still open.
+
+## Generated node definitions compile; body proof remains unrun
+
+On September 8 the isolated `initial-r2` check successfully compiles the
+exact generated Types and Funs with Lean 4.31.0. All three version/compile
+commands exit zero in 33.6677 seconds, with before/after source and dependency
+checks and no live child groups. Its receipt SHA-256 is
+`d59414732d885a8812ee52971751cf1eca2bdbf72401c24fae08a30ca747c0ed`
+at `/private/tmp/smz9-aeneas-stage1.IgNKumAA/stage6-nodes-lean.fbqPGn/initial-r2/INITIAL_COMPILE_RECEIPT.json`.
+The earlier missing-search-root preflight failure is preserved separately.
+
+The proposed 440-line body proof has not been run. Independent review of
+its V2 runner found incomplete directory-symlink guards, an unpinned loaded
+resource-policy file and a missing final historical peak-RSS assertion.
+Execution was withheld; no body, full-array or R0 theorem is credited.

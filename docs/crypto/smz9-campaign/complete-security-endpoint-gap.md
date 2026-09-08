@@ -217,9 +217,11 @@ from that same candidate. Another 64 policy-initial attempts and the early,
 balance, inline and multiplication roots first give 17,552 CSR attempts
 and 488 nonlinear roots. Another 496 stable-tail and 448 inactive-Merkle-right
 CSR attempts and 145 authorization roots bring the total to 18,496/20,605
-CSR attempts and 633/830 nonlinear roots. The remaining 2,109 CSR attempts
-and 197 nonlinear authorization positions `252..448`
-roots still need their forward satisfaction proofs;
+CSR attempts and 633/830 nonlinear roots. The next integrated increment
+adds 439 CSR attempts and 100 authorization roots, yielding 18,935/20,605
+CSR attempts and 733/830 nonlinear roots. The remaining 1,670 CSR attempts
+and 97 nonlinear authorization roots within positions `252..448`
+still need their forward satisfaction proofs;
 canonicality does not supply those equations or actual Rust success.
 The ideal batch law is proved,
 without identifying it with the real provider conditioned on success.

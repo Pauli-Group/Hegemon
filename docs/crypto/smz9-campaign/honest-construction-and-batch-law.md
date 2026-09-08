@@ -330,10 +330,15 @@ constructed candidate:
   Six altered theorem controls fail for wrong root/order/mode/count
   bindings or missing typed validity.
 
-Together these results discharge 18,496 of 20,605 actual raw CSR attempts
-and 633 of 830 nonlinear roots in all 64 lanes. Covered root-list positions
-are exactly `0..251` and `449..829`; the remaining 197 authorization roots
-at `252..448` and 2,109 raw CSR attempts, complete coefficient/interpreter
+The next 26-module increment derives 135 stable CSR residuals, 240
+action-intent initial residuals, 48 dummy-initial residuals, 16 PRF-initial
+residuals and 100 additional authorization roots from the same full typed
+candidate. Initial-state results retain the computed prior hash states and
+actual selected PRF key; dummy initial zero does not replace its final trace.
+
+Together these results discharge 18,935 of 20,605 actual raw CSR attempts
+and 733 of 830 nonlinear roots in all 64 lanes. The remaining 97 authorization
+roots lie within `252..448`. Those roots and 1,670 raw CSR attempts, complete coefficient/interpreter
 execution and full packed acceptance remain open. These are raw attempt
 counts, not a fixed count of public-dependent normalized emitted rows.
 
@@ -455,8 +460,17 @@ Original sources, checkers, negative controls and receipts are retained under
 `.agent/artifacts/smallwood-poseidon2-v8/formal-source-1356-260c85fa1d83555c`.
 Independent reviews compare the actual generated records and coefficient
 DAG, not only descriptive labels. The new coverage is 18,496 CSR attempts
-and 633 nonlinear roots; the remaining equations and full security endpoints
-are still open.
+and 633 nonlinear roots at that checkpoint.
+
+The next integrated check passes 3,066 jobs and all 1,472 designated
+declarations, again with unchanged three wire vectors and 48 generated
+relation files. It adds 116 audited declarations across 26 modules. The log
+SHA-256 is `c2781561bd8f3b2bdc0a51f94ff025cb123c46f92fac7d292a4e6b585b38484b`.
+The 118 original source/checker/control/receipt/log files are retained under
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-1472-c2781561bd8f3b2b`,
+with a complete byte-identical copy manifest. Current coverage is 18,935 CSR
+attempts and 733 nonlinear roots. The separate 210 role-binding draft is not
+counted; the remaining equations and full security endpoints are still open.
 
 Continue by closing the remaining checked-success obligations and deriving
 all 830 nonlinear roots in every lane and all 20,605 raw linear
