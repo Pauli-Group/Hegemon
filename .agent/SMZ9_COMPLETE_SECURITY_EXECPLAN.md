@@ -27,6 +27,33 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Progress
 
+- [x] (2026-09-08 07:50 UTC) Integrate ten modules and 63 exact roots
+  proving 1,920 actual Merkle CSR residuals and 26 stable selector/inverse/
+  Boolean/radix roots on the same typed candidate. The full gate passed
+  3,005 jobs and all 1,163 declarations with unchanged wire/generated
+  artifacts. Coverage is 17,488/20,605 raw CSR attempts and 363/830
+  nonlinear roots; the remaining 3,117/467 are still active obligations.
+- [x] (2026-09-08 07:48 UTC) Complete the isolated instrumentation-only
+  translator run after fresh R3 safety revalidation. Preserve the earlier
+  sandbox-denied incomplete run, confirmed extinct, separately. The new
+  335-second run retained the original assertion, reproduced the nodes
+  failure and kept all six scalar outputs byte-identical; all 20 process
+  groups exited without cleanup signals and all postflight pins passed.
+  Raw expected type retains nested `RStatic` while the value and recursive
+  erasure contain `RErased`. No semantic translator patch is applied.
+- [x] (2026-09-08 07:46 UTC) Independently review and retain exact
+  support-capped affine/rational-graph charges and the zero-stress branch
+  proof. The middle-support cover allowances `2^168`/`2^184` are only
+  conditional sufficient bounds; no universal cover or K8 receipt follows.
+- [ ] (2026-09-08 07:46 UTC) Resolve the exporter nonlinear-descriptor
+  ordering defect found while tracing roots 0..115. The executable builder
+  interleaves each input's bits/asset and each output's asset/ciphertext;
+  metadata groups those families. Actual roots 63/98/104 are nodes
+  916/1006/1023, not the operations their labels imply. Actual indexed
+  expressions remain proof authority. Preserve this pinned program while
+  preparing exact metadata correction/regeneration requirements; no
+  expression change, automatic artifact relabeling or fresh security
+  authority is justified by this finding.
 - [x] (2026-09-08 07:33 UTC) Complete and integrate the one-input-pair
   43,904-word typed constructor with all 39 stable rows canonical, actual
   authorization digest identities, checked-subtraction/range helpers and
@@ -651,18 +678,19 @@ Actual source extraction also now establishes all four scalar helper
 refinements, including inverse-loop termination, in an isolated,
 exact-root-checked Lean 4.31.0 lane. The expression loop, caller/array binding
 and production binary remain separate
-R0 obligations; these results are not added to the 1,100-root integrated gate.
+R0 obligations; these results are not added to the 1,163-root integrated gate.
 
 The forward construction now includes one full 43,904-word candidate,
 canonical from fixed typed validity alone, exact dense and same-schedule
 stable/hash blocks, all five dense nonlinear roots, seven actual sparse
-reconstruction residuals, 15,561 actual raw replication residuals and all
-332 generated hash roots.
+reconstruction residuals, 15,561 actual raw replication residuals, 1,920
+actual Merkle CSR residuals, 26 stable selector/inverse/Boolean/radix roots
+and all 332 generated hash roots.
 The partial hash-root program has derived successful interpreter execution
 on the unchanged full expression DAG. The ideal batch-trace probability law
 is constructed separately. These are named constructions with derived
-properties, not populated adequacy receipts. The remaining 5,037 raw CSR
-attempts and 493 nonlinear roots, actual Rust execution and complete
+properties, not populated adequacy receipts. The remaining 3,117 raw CSR
+attempts and 467 nonlinear roots, actual Rust execution and complete
 generated-equation coverage remain active.
 
 The prior commits establish local mathematical ingredients, not either
@@ -1036,3 +1064,10 @@ Revision note (2026-09-08 07:33 UTC): retain the full typed candidate,
 Preserve the remaining 5,037 CSR/493 nonlinear and native-refinement gaps.
 Record the legal large-gcd counterfamily and sharp affine-family charge
 without claiming a universal cover or completed weighted soundness bound.
+
+Revision note (2026-09-08 07:50 UTC): retain the 1,163-root checkpoint,
+1,920 actual Merkle CSR and 26 stable-root increment, and reviewed
+zero-stress/capped-cover mathematics. Record the metadata ordering defect
+without changing the pinned executable relation. Complete the bounded
+translator instrumentation run, preserving the failed sandbox attempt and
+isolating any later semantic correction from this diagnostic evidence.

@@ -11,6 +11,15 @@ The counterfamily refutes the proposed universal `M(813)<=212` shortcut,
 not the weighted security target. The family charge needs an independently
 proved global cover before it can bound unrestricted responses.
 
+The [support-capped affine charge](weighted-mca-support-capped-charge.md)
+and [rational-graph charge](weighted-mca-rational-graph-charge.md) reduce the
+missing cover to maximizing responses with full support in `813..56977`.
+Respectively, at most `2^168` affine families or total non-affine graph
+degree at most `2^184` would suffice for the weighted inequality; neither
+cover is established. The [zero-stress branch](weighted-mca-zero-stress-branch.md)
+is closed by a separate diagonal-kernel argument. Nonzero stress remains
+an independent obstruction, and no numerical K8 receipt is populated.
+
 Write `p = 2^64 - 2^32 + 1`, `N = 2^23`, `k = 388`, and `K = F_(p^5)`. The domain `D` is the existing shifted Goldilocks coset, with its `N` distinct base-field points. The five coordinates of `K` only group the existing five base-field matrix rows.
 
 Fix arbitrary `U : D -> K` and `V : D -> F_p`. For `alpha in K` and `P in K[X]` of degree less than `k`, put

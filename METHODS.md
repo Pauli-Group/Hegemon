@@ -373,7 +373,11 @@ frame readback. The full typed constructor now proves canonicality of all
 stable tail without free auxiliary/hash/tail inputs. All 15,561 raw
 replication residuals are derived from the actual constructor and exact
 generated entries, using 31 ordinary-kernel slice certificates. These
-results are not complete packed acceptance or Rust refinement. The exact
+are joined by 1,920 actual Merkle CSR residuals and 26 stable
+selector/inverse/Boolean/radix roots on the same full candidate. Coverage
+uses actual indexed generated entries and DAG evaluation, not descriptor
+labels alone. These results are not complete packed acceptance or Rust
+refinement. The exact
 remaining-count batch law counts every rejected raw candidate and transports
 the ideal first-accept law; it does not prove OS/provider behavior or permit
 conditioning on later proof success. Run the complete formal-crypto gate

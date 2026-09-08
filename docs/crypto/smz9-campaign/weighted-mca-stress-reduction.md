@@ -231,6 +231,13 @@ different source words. No globally shared-source counterexample is claimed.
 
 ## Outcome
 
+The subsequent [zero-stress branch proof](weighted-mca-zero-stress-branch.md)
+derives independence of the compressed cofactor columns when `W=0`, giving
+the sufficient weighted inequality on that branch only. The
+[capped affine](weighted-mca-support-capped-charge.md) and
+[rational-graph](weighted-mca-rational-graph-charge.md) charges provide
+conditional middle-support cover targets, not a universal stress theorem.
+
 The new result is a rigorous global compatibility reduction and a bounded
 local-realizability barrier, not a numerical closure. It identifies the missing
 object as a five-coordinate stress expansion/annihilator-covering inequality

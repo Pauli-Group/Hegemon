@@ -34,6 +34,8 @@ actual ordered 125-call hash schedule, without supplied auxiliary/hash/tail
 inputs. It derives all five nonlinear range roots, seven actual sparse
 reconstruction residuals, all 15,561 raw replication residuals and all 332
 generated hash roots, with exact raw source-frame and packed hash readbacks.
+The next source proofs add 1,920 actual Merkle CSR residuals and 26 stable
+selector/inverse/Boolean/radix roots on that same constructed candidate.
 It also proves the remaining-count sampler's exact
 finite ideal trace law. Full packed acceptance and remaining generated
 equations are active work; no accepted-packed premise claims their completion.
@@ -44,7 +46,7 @@ table is an earlier ingredient ledger: its per-module original boundaries
 are not a current inventory of aggregate endpoint gaps. The completed modeled
 source-lifetime privacy and packed semantic endpoints described below
 supersede their corresponding local gaps. The full integrated formal gate
-passes all 1,100 credited roots; these results are not a completed concrete
+passes all 1,163 credited roots; these results are not a completed concrete
 security argument.
 
 | Earlier ingredient | What is established | Original local boundary |

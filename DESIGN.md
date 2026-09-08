@@ -79,7 +79,9 @@ ordered source schedule and prior permutation results; three zero-start
 dummy calls still execute full nonzero traces. All five dense roots, seven
 actual sparse reconstruction residuals, all 15,561 raw replication residuals
 and 332 generated hash roots are derived, with exact source-coordinate
-readbacks. The tail uses the same computed hash schedule, with no supplied
+readbacks. Another 1,920 actual Merkle CSR residuals and 26 stable
+selector/inverse/Boolean/radix roots hold on that same candidate. The
+tail uses the same computed hash schedule, with no supplied
 auxiliary or hash-final values. Remaining generated equations are still
 being proved. These component
 results do not establish full packed acceptance or Rust execution. The exact finite

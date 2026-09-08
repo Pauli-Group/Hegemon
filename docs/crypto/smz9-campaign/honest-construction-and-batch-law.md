@@ -105,8 +105,8 @@ this does not establish full packed length or canonicality.
 The generic hash-block theorem keeps 125 canonical live initial states as
 component inputs. The typed constructor below now supplies them. Neither the
 fixed hash-kernel predicate nor this exact partial-root theorem is substituted
-for full acceptance. Across hash and dense components, 337 of the 830 root
-types are covered; the other 493 remain independent obligations.
+for full acceptance. These hash and dense components alone cover 337 of the
+830 root types; additional stable roots are established below.
 
 ## Typed authorization, inline rows and ordered hash schedule
 
@@ -240,10 +240,49 @@ Thirty-one ordinary-kernel slice certificates cover the complete actual
 table prefix: thirty 512-entry slices and a final 201-entry slice. A
 quotient/remainder proof gives a present exact entry for every `i<15561`,
 then its mapped residual is `some 0`. No sampled table entry or native
-decision axiom substitutes for this coverage. This proves 15,568 of the
-20,605 raw CSR attempts together with the seven dense attempts; the other
-5,037 attempts and 493 of 830 nonlinear roots remain due. It does not yet
-establish full coefficient/interpreter execution or packed acceptance.
+decision axiom substitutes for this coverage. This component and the seven
+dense attempts cover 15,568 of the 20,605 raw CSR attempts.
+
+## Actual Merkle and stable-role equations
+
+`SmallWoodV8Smz9SourceMerkleCopies` derives all 896 actual CSR entries
+`16942..17837`: 448 copies of the computed previous digest and 448 copies of
+the raw direction bit. Both operands come from the same constructor; no
+copy-equality, lane-equality or validity premise supplies their equality.
+The checked global-index metadata identifies actual table entries, and
+coefficient nodes 1 and 158 are interpreted as 1 and -1.
+
+Three `SmallWoodV8Smz9SourceMerkleInitial*` modules prove the 1,024 entries
+`15918..16941`. The actual 64 calls include both inputs and every level,
+including inactive inputs. Their 896 rate words use the same computed
+previous finals and typed sibling orientation; 128 capacity words carry
+domain 4 and the actual suite marker. Fixed typed validity supplies real
+sibling/frame geometry. The final endpoint has arbitrary public coefficient
+input and tail, so it instantiates directly on the complete typed candidate.
+Wrong capacity, table index, coefficient and orientation controls each fail
+for their expected semantic mismatch.
+
+Three `SmallWoodV8Smz9Source*StableBooleanRoot*` modules derive actual root
+805 and roots `807..829` on all 64 lanes of the complete candidate. The
+Boolean row contains 53 actual bits and 11 zero-padding cells. The 23 digit
+rows contain all 1,434 computed modulo-four digits and 38 padding cells.
+Digit-root satisfaction needs no value-width admission; it does not prove
+that those digits reconstruct every original value.
+
+`SmallWoodV8Smz9SourceRoleAlgebra`, `SourceRoleNonzero` and `SourceRoleRoots`
+derive roots 803/804, actual nodes 8009/8128, on the same candidate. The
+selector has no validity premise. The inverse follows from fixed validity:
+every actual role has a nonzero canonical limb, including distinct stable
+commitment differences, the first active spend key, actual call-97 policy,
+active signer tags and original unit padding. The complete 131-node source
+slice and the exact interpolation formula are kernel-checked; a zero-role
+control is proved to fail the inverse equation. No nonzero-role premise is
+added to the final endpoint.
+
+Together these results discharge 17,488 of 20,605 actual raw CSR attempts
+and 363 of 830 nonlinear roots in all 64 lanes. The remaining 3,117 raw CSR
+attempts and 467 nonlinear roots, complete coefficient/interpreter execution
+and full packed acceptance remain open.
 
 ## Remaining-count sampler batches
 
@@ -331,6 +370,16 @@ replication family. The log SHA-256 is
 The original reviewed sources/checkers/receipts and log are retained under
 `.agent/artifacts/smallwood-poseidon2-v8/formal-source-1100-abd82c808ea73838`.
 These direct-import receipts are not a hermetic rebuild claim.
+
+At 2026-09-08 07:50 UTC, the next ten source modules and 63 designated
+roots passed the complete central gate: 3,005 build jobs and all 1,163
+declarations on the same kernel-axiom allowlist. The three wire vectors
+and 48 generated relation files remained unchanged. This increment covers
+the 1,920 Merkle CSR attempts and 26 stable roots described above. The
+gate log SHA-256 is
+`77e97c320cbf1f2fb0335a9622b61eb7c451f22b00ae97576b124648465a3a30`.
+Original source/checker/receipt evidence and the log are retained under
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-1163-77e97c320cbf1f2f`.
 
 Continue by closing the remaining checked-success obligations and deriving
 all 830 nonlinear roots in every lane and all 20,605 raw linear

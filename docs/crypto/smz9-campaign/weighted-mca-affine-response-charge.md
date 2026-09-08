@@ -69,7 +69,7 @@ is exactly C_20. This uses at most N actual field labels.
 The same fiber decomposition gives the sharp unweighted threshold bound
 
     number of this family's bad labels with |G|>=a <= N-a+1,
-                                                        k<a<=N.
+                                                        416<=a<=N.
 
 Indeed, each retained fiber has size at least max(1,a-z), while their sum
 is at most N-z. Maximizing (N-z)/max(1,a-z) gives N-a+1. The construction
