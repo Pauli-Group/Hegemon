@@ -1470,6 +1470,15 @@ After a nonempty response, compare the canonical best hash/height before and aft
 
 Steady outbound catch-up pagination uses the same per-peer four-request/ten-second budget as response serving. The first over-budget page is retained locally for a full ten seconds from the pacing decision, then the two-second scheduler retries it before the existing twenty-second request lease expires. Repeated scheduler ticks or announcements do not refresh the paced timestamp; a stopped scheduler still reaches ordinary unverified-target eviction, peer cooldown, and failover. A broadcast bootstrap request is rebound to its first authorized responder before pagination, and that authorized normal or chunk-fallback response conservatively charges the responder's first client slot at completion, so later pages neither bypass nor trail the server's per-peer budget. A requester restart can still encounter one bounded silent server rejection before its local window history converges.
 
+Announcement-triggered requests, like periodic retries, prefer the persisted
+recovery page for the exact admitted peer/height/hash tuple and retain its
+expected parent and recovery classification. Repeated announcements cannot
+replace a paced forward page with an ordinary near-tip/backfill request.
+Stale or foreign observations do not invoke the mutating cursor lookup;
+existing target admission, expiry, same-peer growth and exact-hash failover
+rules remain authoritative. Preserving a cursor does not authorize a response
+before its request becomes `InFlight`.
+
 Outbound response construction applies the wire budget while reading canonical rows, rather than materializing the entire requested range and truncating it afterward. It normally retains the largest height-ordered prefix below the soft encrypted-frame target; if the first block alone exceeds that soft target but still fits the 16 MiB encrypted transport cap, it retains that single block to preserve progress. It computes the exact encoded length without allocating a second serialized frame and stops after inspecting at most one candidate beyond the retained prefix. A global service cap currently permits at most two response-building workers across all peers; duplicate ranges from one peer remain deduplicated and additional distinct work is refused until capacity returns.
 
 If an inline announcement or range response cannot fit the transport budget, the service emits `AnnounceLocator` or `ResponseLocators` rather than a partial or empty metadata-record response. The receiver requests one exact body at a time with `BlockBodyRequest`; the sender answers with bounded `BlockBodyChunk` messages. Locator admission checks active schema, chain, rules, identities, exact body length, body hash, and derived chunk count before reservation. Completion checks exact total length and hash before bounded full-consumption decode, canonical re-encoding, locator equality, and the existing authorized import path.

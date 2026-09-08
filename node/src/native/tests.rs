@@ -27987,6 +27987,19 @@ async fn outbound_native_sync_pacing_defers_fifth_page_until_server_window_reope
         assert_eq!(request.range, fifth_range);
         (request.range, request.requested_at, request.context)
     };
+    assert!(paced_context.recovery_page);
+    assert_eq!(paced_context.expected_parent_hash, Some([0x76; 32]));
+    for repeated_hash in [Some(target_hash), None, Some(target_hash)] {
+        request_missing_blocks(&node, &sync_tx, peer, target_height, repeated_hash, true).await;
+        let requests = node.outbound_sync_requests.lock();
+        let request = requests
+            .get(&Some(peer))
+            .expect("exact tip must retain the paced recovery request");
+        assert_eq!(request.state, NativeOutboundSyncRequestState::Paced);
+        assert_eq!(request.range, paced_range);
+        assert_eq!(request.context, paced_context);
+        assert_eq!(request.requested_at, paced_at);
+    }
     assert_eq!(
         node.outbound_sync_request_rate_limits
             .lock()
@@ -28078,7 +28091,15 @@ async fn outbound_native_sync_pacing_defers_fifth_page_until_server_window_reope
     let retry_handle = retry_network_service.register_protocol(NATIVE_SYNC_PROTOCOL_ID);
     let retry_sync_tx = retry_handle.sender();
     let retry_started_at = Instant::now();
-    queue_missing_blocks_from_sync_target(&node, &retry_sync_tx).await;
+    request_missing_blocks(
+        &node,
+        &retry_sync_tx,
+        peer,
+        target_height,
+        Some(target_hash),
+        true,
+    )
+    .await;
     let requests = node.outbound_sync_requests.lock();
     let request = requests
         .get(&Some(peer))
@@ -28086,6 +28107,7 @@ async fn outbound_native_sync_pacing_defers_fifth_page_until_server_window_reope
     assert_eq!(request.state, NativeOutboundSyncRequestState::InFlight);
     assert_eq!(request.range, paced_range);
     assert!(request.requested_at >= retry_started_at);
+    assert_eq!(request.context, paced_context);
     assert_eq!(
         request.context.target_tip,
         Some((target_height, target_hash))
@@ -28427,6 +28449,355 @@ fn cooldown_native_sync_request_rejects_late_response_without_clearing_fingerpri
             .map(|request| request.state),
         Some(NativeOutboundSyncRequestState::InFlight)
     );
+}
+
+// Keep only the protocol queues alive: this fixture never runs the service,
+// opens a listener, connects to peers, or launches a native node task.
+fn recovery_cursor_request_test_protocol(path: &std::path::Path) -> (P2PService, ProtocolHandle) {
+    let network_addr: SocketAddr = "127.0.0.1:0".parse().expect("test network address");
+    let mut service = P2PService::new(
+        PeerIdentity::generate(b"native-sync-recovery-cursor-caller"),
+        network_addr,
+        Vec::new(),
+        Vec::new(),
+        GossipRouter::new(32).handle(),
+        2,
+        PeerStore::new(PeerStoreConfig::with_path(path.join("pq-peers.bin"))),
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(network_addr),
+    );
+    let handle = service.register_protocol(NATIVE_SYNC_PROTOCOL_ID);
+    (service, handle)
+}
+
+#[tokio::test]
+async fn request_missing_blocks_recovery_cursor_survives_expired_request() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+    config.seeds.push("127.0.0.1:30333".to_owned());
+    let node = NativeNode::open(config).expect("node");
+    let (_service, handle) = recovery_cursor_request_test_protocol(tmp.path());
+    let sync_tx = handle.sender();
+    let peer = [0x81; 32];
+    let target_height = 10_000;
+    let target_hash = [0x82; 32];
+    let range = NativeSyncRange {
+        from_height: 257,
+        to_height: 320,
+    };
+    let context = NativeOutboundSyncRequestContext {
+        recovery_page: true,
+        expected_parent_hash: Some([0x83; 32]),
+        target_tip: Some((target_height, target_hash)),
+    };
+    assert!(node.observe_pending_sync_peer_tip(Some(peer), target_height, Some(target_hash)));
+    node.set_sync_recovery_cursor(
+        Some(peer),
+        target_height,
+        Some(target_hash),
+        range,
+        context.expected_parent_hash,
+    );
+    let cursor = *node.sync_recovery_cursor.lock();
+    assert!(node.begin_outbound_sync_request_with_context(Some(peer), range, context));
+    node.outbound_sync_requests
+        .lock()
+        .get_mut(&Some(peer))
+        .expect("old request")
+        .requested_at = Instant::now()
+        .checked_sub(NATIVE_SYNC_REQUEST_RETRY_AFTER + Duration::from_millis(1))
+        .expect("expired request timestamp");
+
+    let retry_started_at = Instant::now();
+    request_missing_blocks(
+        &node,
+        &sync_tx,
+        peer,
+        target_height,
+        Some(target_hash),
+        true,
+    )
+    .await;
+
+    assert_eq!(
+        node.sync_target_evidence_snapshot(),
+        NativeSyncTargetSnapshot {
+            height: target_height,
+            peer_id: Some(peer),
+            hash: Some(target_hash),
+            unverified_peer_hint: true,
+        }
+    );
+    assert_eq!(*node.sync_recovery_cursor.lock(), cursor);
+    let request = *node
+        .outbound_sync_requests
+        .lock()
+        .get(&Some(peer))
+        .expect("announcement must retry the persisted recovery page");
+    assert_eq!(request.state, NativeOutboundSyncRequestState::InFlight);
+    assert_eq!(request.range, range);
+    assert_eq!(request.context, context);
+    assert!(request.requested_at >= retry_started_at);
+    assert!(!node.mining_sync_gate_allows_work());
+}
+
+#[tokio::test]
+async fn request_missing_blocks_recovery_cursor_tracks_same_peer_target_advance() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+    config.seeds.push("127.0.0.1:30333".to_owned());
+    let node = NativeNode::open(config).expect("node");
+    let (_service, handle) = recovery_cursor_request_test_protocol(tmp.path());
+    let sync_tx = handle.sender();
+    let peer = [0x84; 32];
+    let old_height = 1_000;
+    let old_hash = [0x85; 32];
+    let next_height = old_height + 1;
+    let next_hash = [0x86; 32];
+    let range = NativeSyncRange {
+        from_height: 257,
+        to_height: 512,
+    };
+    let expected_parent_hash = Some([0x87; 32]);
+    assert!(node.observe_pending_sync_peer_tip(Some(peer), old_height, Some(old_hash)));
+    node.set_sync_recovery_cursor(
+        Some(peer),
+        old_height,
+        Some(old_hash),
+        range,
+        expected_parent_hash,
+    );
+
+    request_missing_blocks(&node, &sync_tx, peer, next_height, Some(next_hash), true).await;
+
+    assert_eq!(
+        node.sync_target_evidence_snapshot(),
+        NativeSyncTargetSnapshot {
+            height: next_height,
+            peer_id: Some(peer),
+            hash: Some(next_hash),
+            unverified_peer_hint: true,
+        }
+    );
+    assert_eq!(
+        *node.sync_recovery_cursor.lock(),
+        Some(NativeSyncRecoveryCursor {
+            peer_id: Some(peer),
+            target_height: next_height,
+            target_hash: Some(next_hash),
+            range,
+            expected_parent_hash,
+        })
+    );
+    let request = *node
+        .outbound_sync_requests
+        .lock()
+        .get(&Some(peer))
+        .expect("advanced target must retain the recovery page");
+    assert_eq!(request.state, NativeOutboundSyncRequestState::InFlight);
+    assert_eq!(request.range, range);
+    assert_eq!(
+        request.context,
+        NativeOutboundSyncRequestContext {
+            recovery_page: true,
+            expected_parent_hash,
+            target_tip: Some((next_height, next_hash)),
+        }
+    );
+    assert!(!node.mining_sync_gate_allows_work());
+}
+
+#[tokio::test]
+async fn request_missing_blocks_recovery_cursor_rejects_stale_conflicting_and_foreign_hints() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+    config.seeds.push("127.0.0.1:30333".to_owned());
+    let node = NativeNode::open(config).expect("node");
+    let (_service, handle) = recovery_cursor_request_test_protocol(tmp.path());
+    let sync_tx = handle.sender();
+    let peer = [0x88; 32];
+    let foreign_peer = [0x89; 32];
+    let target_height = 1_000;
+    let target_hash = [0x8a; 32];
+    let conflicting_hash = [0x8b; 32];
+    let range = NativeSyncRange {
+        from_height: 257,
+        to_height: 512,
+    };
+    let context = NativeOutboundSyncRequestContext {
+        recovery_page: true,
+        expected_parent_hash: Some([0x8c; 32]),
+        target_tip: Some((target_height, target_hash)),
+    };
+    assert!(node.observe_pending_sync_peer_tip(Some(peer), target_height, Some(target_hash)));
+    node.set_sync_recovery_cursor(
+        Some(peer),
+        target_height,
+        Some(target_hash),
+        range,
+        context.expected_parent_hash,
+    );
+    assert!(node.begin_outbound_sync_request_with_context(Some(peer), range, context));
+    let target_before = node.sync_target_evidence_snapshot();
+    let cursor_before = *node.sync_recovery_cursor.lock();
+    let requests_before = node.outbound_sync_requests.lock().clone();
+    let rate_slots_before = node
+        .outbound_sync_request_rate_limits
+        .lock()
+        .get(&peer)
+        .expect("initial rate slot")
+        .requests;
+
+    for (announcing_peer, height, hash) in [
+        (peer, target_height, Some(conflicting_hash)),
+        (peer, target_height - 1, Some(target_hash)),
+        (peer, target_height + 1, None),
+        (foreign_peer, target_height, Some(target_hash)),
+        (foreign_peer, target_height, Some(conflicting_hash)),
+        (foreign_peer, target_height + 1, Some(conflicting_hash)),
+    ] {
+        request_missing_blocks(&node, &sync_tx, announcing_peer, height, hash, true).await;
+        assert_eq!(node.sync_target_evidence_snapshot(), target_before);
+        assert_eq!(*node.sync_recovery_cursor.lock(), cursor_before);
+        assert_eq!(*node.outbound_sync_requests.lock(), requests_before);
+        assert_eq!(
+            node.outbound_sync_request_rate_limits
+                .lock()
+                .get(&peer)
+                .expect("retained initial rate slot")
+                .requests,
+            rate_slots_before
+        );
+        assert!(!node.mining_sync_gate_allows_work());
+    }
+    assert!(!node
+        .outbound_sync_request_rate_limits
+        .lock()
+        .contains_key(&foreign_peer));
+}
+
+#[tokio::test]
+async fn request_missing_blocks_recovery_cursor_rebinds_exact_hash_after_peer_timeout() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+    config.seeds.push("127.0.0.1:30333".to_owned());
+    let node = NativeNode::open(config).expect("node");
+    let (_service, handle) = recovery_cursor_request_test_protocol(tmp.path());
+    let sync_tx = handle.sender();
+    let previous_peer = [0x8d; 32];
+    let next_peer = [0x8e; 32];
+    let target_height = 1_000;
+    let target_hash = [0x8f; 32];
+    let range = NativeSyncRange {
+        from_height: 257,
+        to_height: 512,
+    };
+    let context = NativeOutboundSyncRequestContext {
+        recovery_page: true,
+        expected_parent_hash: Some([0x90; 32]),
+        target_tip: Some((target_height, target_hash)),
+    };
+    assert!(node.observe_pending_sync_peer_tip(
+        Some(previous_peer),
+        target_height,
+        Some(target_hash),
+    ));
+    node.set_sync_recovery_cursor(
+        Some(previous_peer),
+        target_height,
+        Some(target_hash),
+        range,
+        context.expected_parent_hash,
+    );
+    assert!(node.begin_outbound_sync_request_with_context(Some(previous_peer), range, context));
+    let previous_request = *node
+        .outbound_sync_requests
+        .lock()
+        .get(&Some(previous_peer))
+        .expect("previous peer request");
+
+    request_missing_blocks(
+        &node,
+        &sync_tx,
+        next_peer,
+        target_height,
+        Some(target_hash),
+        true,
+    )
+    .await;
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (target_height, Some(previous_peer), Some(target_hash))
+    );
+    assert_eq!(
+        node.outbound_sync_requests.lock().get(&Some(previous_peer)),
+        Some(&previous_request)
+    );
+    assert!(!node
+        .outbound_sync_requests
+        .lock()
+        .contains_key(&Some(next_peer)));
+
+    node.outbound_sync_requests
+        .lock()
+        .get_mut(&Some(previous_peer))
+        .expect("request to expire")
+        .requested_at = Instant::now()
+        .checked_sub(NATIVE_SYNC_REQUEST_RETRY_AFTER + Duration::from_millis(1))
+        .expect("expired previous peer timestamp");
+    request_missing_blocks(
+        &node,
+        &sync_tx,
+        next_peer,
+        target_height,
+        Some(target_hash),
+        true,
+    )
+    .await;
+
+    assert_eq!(
+        node.sync_target_evidence_snapshot(),
+        NativeSyncTargetSnapshot {
+            height: target_height,
+            peer_id: Some(next_peer),
+            hash: Some(target_hash),
+            unverified_peer_hint: true,
+        }
+    );
+    assert_eq!(
+        *node.sync_recovery_cursor.lock(),
+        Some(NativeSyncRecoveryCursor {
+            peer_id: Some(next_peer),
+            target_height,
+            target_hash: Some(target_hash),
+            range,
+            expected_parent_hash: context.expected_parent_hash,
+        })
+    );
+    assert!(!node
+        .outbound_sync_requests
+        .lock()
+        .contains_key(&Some(previous_peer)));
+    let rebound_request = *node
+        .outbound_sync_requests
+        .lock()
+        .get(&Some(next_peer))
+        .expect("rebound recovery request");
+    assert_eq!(
+        rebound_request.state,
+        NativeOutboundSyncRequestState::InFlight
+    );
+    assert_eq!(rebound_request.range, range);
+    assert_eq!(rebound_request.context, context);
+    assert_eq!(
+        node.complete_outbound_sync_response(previous_peer, Some(range)),
+        None
+    );
+    assert_eq!(
+        node.outbound_sync_requests.lock().get(&Some(next_peer)),
+        Some(&rebound_request)
+    );
+    assert!(!node.mining_sync_gate_allows_work());
 }
 
 #[test]

@@ -190,6 +190,13 @@ it is not a quantitative theorem for families as large as p^5.
 
 ## 7. A precise missing quantitative lemma
 
+The separate [finite local-rank obstruction](weighted-mca-local-rank-barrier.md)
+excludes the displayed Proposition 3.7 additive-incidence-rank certificate
+through agreement 2,892, even with exact individual ranks. It does not exclude
+dependencies between different incidence blocks, the stress formulation here,
+or a nonzero global kernel. Do not treat that route's failure as a universal
+impossibility theorem or as a source counterexample.
+
 The following stronger-than-necessary finite statement would establish the
 desired universal bound without changing the profile:
 

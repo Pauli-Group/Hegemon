@@ -417,6 +417,34 @@ coordinator. These local results do not authorize a release, establish the
 universal soundness frontier, or turn the remaining concrete construction
 assumption into an unconditional theorem.
 
+## External adaptive-reprogramming binding audit
+
+The 2026-09-08 independent interface audit found no hypothesis, query-count
+or constant mismatch with GHHM's finite adaptive game. Figure 2 samples the
+input and its classical side information before the fresh output; Theorem 1,
+equation (2), bounds distinguishing advantage by
+`sum_r(sqrt(qhat_r*pmax_r)+qhat_r*pmax_r/2)`. The model's branchwise input
+cap and whole-program query bound imply the uniform-cap specialization used
+here. Later oracle queries and repeated-address updates remain part of the
+game. [GHHM, *Tight adaptive reprogramming in the QROM*, Figure 2 and
+Theorem 1](https://arxiv.org/pdf/2010.15103).
+
+In `SmallWoodV8Smz9HonestWholeViewGames.lean`, `freshInput` uses input-first
+coins, a fresh uniform output, and a charged read to expose the current
+value. Every measured branch retains its subnormalized state. The mixed
+compiler derives its read/event counts and preserves newest-first updates,
+including address collisions. The initial state and program are fixed before
+the uniform oracle average; oracle-correlated advice is not a free input.
+
+`ExternalAdaptiveReprogramming` remains an explicit proposition supplied as
+`ghhm`, not a project axiom declaration or a proved Lean theorem. This review
+does not mechanize the finite-instrument/ancilla embedding, side-information
+encoding or at-most-event padding into the published machine model. It also
+does not make concrete SHA-512 a random oracle, prove Rust/RNG/byte/timing
+refinement, or approve the analysis lifetime budgets as a deployment policy.
+The conditional ideal-QROM endpoint and those concrete obligations must stay
+separate.
+
 ## Verification
 
 The second implementation batch adds three source-connected modules:

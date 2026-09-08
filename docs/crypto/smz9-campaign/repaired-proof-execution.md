@@ -2,6 +2,29 @@
 
 ## Later source snapshots
 
+The next source freeze incorporates the exact-action prefix selector and a
+production `request_missing_blocks` recovery-cursor correction. The latter
+has a deterministic failing-before test (`[257,320]` overwritten by `[1,64]`)
+and passing-after pacing/expiry/target/peer regressions. It preserves the
+compatible cursor's range, parent and recovery classification; receiver
+checks, production thresholds and proof bytes are unchanged. These facts
+establish the caller bug and repair, not the unrecorded cause of the earlier
+socket stall. Thirteen carrier controls, the ordinary no-feature library
+check and formatting also pass. A new two-build pair and complete socket
+receipt are still required for this changed source.
+
+On 2026-09-08 at revision `ed893a1f54503e903dd6a2ff47579998b8d27bff`, the
+regenerated root `hgv8rp03-38714873e4d04181` passed both independent-build
+comparison and all four proof cross-verifications. The primary and independent
+proofs are 122,543 and 122,735 bytes, with complete actions of 128,202 and
+128,394 bytes. Its manifest SHA-512 is
+`13f912e3e967123545bb9ea66aad36822212539e87850c5373b3850d2a279b08d9ca188f52df59920e7acd0822af853703d697259dbdc44c26924326d9455c1f`.
+The in-process lifecycle passed in 26.90 seconds. The actual-socket test
+passed HTTP rejection/admission, authenticated pending-action relay and
+source mining, then timed out with the relay at height two; it has no completed
+socket receipt. The subsequent source-only selector correction again requires
+a new source-frozen pair. Preserve this snapshot and its failure evidence.
+
 On 2026-09-08 at revision `c890e84350d14117beb5d83118dff8b8c4a9deb4`, a
 second independently generated pair passed four-way cross-verification,
 byte-identical two-build comparison, identical chain-report recomputation and

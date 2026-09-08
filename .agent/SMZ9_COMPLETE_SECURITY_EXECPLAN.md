@@ -27,6 +27,44 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Progress
 
+- [x] (2026-09-08 04:29 UTC) Pass the four new caller-boundary tests, the
+  extended paced-announcement regression (including a hashless same-peer
+  repeat and announcement-driven dispatch after the hold), and the focused
+  pacing, cursor, target-growth, peer-failover and unverified-target groups.
+  All 13 carrier controls, the ordinary no-feature native library check and
+  whole-workspace formatting pass. Independent review finds no new
+  peer/hash/parent-binding defect; existing snapshot/lookup non-atomicity is
+  not claimed solved. Freeze this source for a new independent proof pair.
+- [x] (2026-09-08 04:21 UTC) Reproduce the production caller's recovery-page
+  overwrite in the exact pacing regression: a repeated tip replaces
+  `[257,320]` by `[1,64]`. Prefer the compatible admitted recovery cursor in
+  `request_missing_blocks` and preserve its parent/recovery context. The next
+  source-frozen carrier run remains due; positive tests are recorded above.
+- [x] (2026-09-08 04:21 UTC) Independently review and retain the finite
+  additive-local-rank obstruction in
+  `docs/crypto/smz9-campaign/weighted-mca-local-rank-barrier.md`. For the
+  displayed Proposition 3.7 interpolation space, even exact individual ranks
+  cannot meet its rank-sum certificate through agreement 2,892. Exact
+  arithmetic checks pass. This excludes that proof route, not global kernels
+  or the universal weighted MCA theorem; K8 remains open.
+- [x] (2026-09-08 04:13 UTC) Generate another independent two-build pair at
+  `ed893a1f54503e903dd6a2ff47579998b8d27bff`, source root
+  `38714873e4d04181`. The proofs measure 122,543 and 122,735 bytes; complete
+  actions measure 128,202 and 128,394 bytes. Four cross-verifications, full
+  constructor checks, and the 26.90-second in-process lifecycle pass. The
+  real-socket run reaches HTTP mutation rejection and valid admission, PQ
+  peer relay, exact durable/in-memory pending bytes, and proof-block mining,
+  but times out before the relay imports height three. Preserve its failure
+  receipt; it is not a completed actual-socket lifecycle.
+- [x] (2026-09-08 04:13 UTC) Narrow the source-only carrier selection to
+  inline the exact non-proof coinbase prefix and select a single locator
+  only when the byte-identified retained action is first in the requested
+  range. No receiver check, proof byte, production threshold or production
+  behavior changes. Fail closed on a poisoned observation lock; add plain
+  stage diagnostics. All 13 carrier controls and full formatting pass.
+  Independent review found no normal-path selector/init bypass. The
+  separately source-confirmed paced-announcement recovery-range overwrite
+  is being checked before the next freeze and fresh generation.
 - [x] (2026-09-08 03:46 UTC) Generate and cross-verify two fresh proofs at
   `c890e84350d14117beb5d83118dff8b8c4a9deb4`, with byte-identical independent
   generator builds and frozen 1,112-file source root `3e26e0e66e57d8c8`.
@@ -294,6 +332,16 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Surprises & Discoveries
 
+The first real-socket proof-block import attempt made genuine earlier
+progress but repeatedly fetched coinbase heights one and two. A first-only
+locator is a legal requested prefix; selecting the last locator would violate
+the receiver's exact requested-start check. The narrowed fixture preserves
+coinbase prefixes inline and reserves the locator/body path for the actual
+retained proof block. Source review separately found that repeated same-target
+announcements can replace a paced recovery request with an ordinary backfill
+range. The receipt lacks the request/context timestamps needed to prove that
+specific interleaving caused this failure; do not state it as observed fact.
+
 The pure manually constructed guard fixture did not exercise CLI difficulty
 selection. `NativeConfig::from_cli` uses the normal development genesis bits
 `0x1e10c6f7`, while the retained coinbase fixture deliberately uses
@@ -387,6 +435,12 @@ membership rule preserves the intended balance semantics.
 
 ## Decision Log
 
+The announcement caller must use the same compatible recovery cursor as the
+periodic scheduler. Guard its mutating lookup by the current admitted full
+peer/height/hash tuple; retain the existing sender pacing and receiver checks.
+The deterministic failing request-state test establishes this caller bug,
+but does not retroactively establish the unrecorded cause of the socket stall.
+
 The isolated retained fixture may select its existing easy test difficulty;
 the ordinary CLI and production difficulty must not change. Factor the service
 body into `run_with_config` so the guarded configuration is the executed one,
@@ -445,6 +499,13 @@ work, keeping source files frozen during generation and storing prospective
 formal changes in separate scratch directories until the snapshot is sealed.
 
 ## Outcomes & Retrospective
+
+The source-lifetime privacy endpoint now exists for the explicitly modeled
+ideal oracle under its external theorem and analysis budgets. Concrete P7,
+universal K8 and full R0 remain open. Fresh repaired proofs exist for several
+frozen snapshots; the latest source change requires another pair, and no
+completed actual-socket lifecycle is yet credited. The narrow production
+sync bug now has a failing-before regression, not only a source hypothesis.
 
 The prior commits establish local mathematical ingredients, not either
 endpoint. This continuation explicitly retains the unfinished complete proof as
@@ -792,3 +853,8 @@ Revision note (2026-09-08 02:30 UTC): record the measured prior-history
 lifting and operational witness-free byte program, exact source/public
 query accounting, eleven native controls and reviewed fresh-generation
 wrapper corrections. Final source-stage and lifetime composition remain active.
+
+Revision note (2026-09-08 04:21 UTC): record the completed modeled lifetime
+endpoint, the independently reproduced recovery-cursor caller bug and scoped
+fix, and the finite additive-local-rank obstruction. Retain the separate
+concrete security and actual-socket acceptance requirements.

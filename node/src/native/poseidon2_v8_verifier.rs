@@ -1064,6 +1064,13 @@ pub(crate) fn retained_carrier_force_locators() -> bool {
 }
 
 #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+pub(crate) fn retained_carrier_inline_response_prefix(
+    blocks: &[super::NativeBlockMeta],
+) -> Option<usize> {
+    tests::retained_carrier_inline_response_prefix(blocks)
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
 pub(crate) fn retained_carrier_event(
     stage: &'static str,
     peer: Option<[u8; 32]>,

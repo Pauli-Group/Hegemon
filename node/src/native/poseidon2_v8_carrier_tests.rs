@@ -48,6 +48,7 @@ struct RetainedCarrierStartup {
 
 struct RetainedCarrierObservations {
     session: String,
+    proof_action: Vec<u8>,
     node: Option<std::sync::Weak<crate::native::NativeNode>>,
     rpc: Option<std::net::SocketAddr>,
     locators: bool,
@@ -87,9 +88,76 @@ pub(super) fn retained_carrier_rpc_bound(addr: std::net::SocketAddr) {
 pub(super) fn retained_carrier_force_locators() -> bool {
     retained_carrier_observations()
         .lock()
-        .ok()
-        .and_then(|state| state.as_ref().map(|state| state.locators))
+        .expect("retained transport observation lock must not be poisoned")
+        .as_ref()
+        .map(|state| state.locators)
         .unwrap_or(false)
+}
+
+fn retained_carrier_inline_prefix_for_action(
+    blocks: &[crate::native::NativeBlockMeta],
+    proof_action: &[u8],
+) -> usize {
+    assert!(!proof_action.is_empty(), "retained proof action must be installed");
+    blocks
+        .iter()
+        .position(|block| {
+            block
+                .action_bytes
+                .iter()
+                .any(|action| action.as_slice() == proof_action)
+        })
+        .unwrap_or(blocks.len())
+}
+
+pub(super) fn retained_carrier_inline_response_prefix(
+    blocks: &[crate::native::NativeBlockMeta],
+) -> Option<usize> {
+    let slot = retained_carrier_observations()
+        .lock()
+        .expect("retained response selection must not bypass a poisoned lock");
+    let state = slot.as_ref()?;
+    state.locators.then(|| {
+        retained_carrier_inline_prefix_for_action(blocks, &state.proof_action)
+    })
+}
+
+#[test]
+fn retained_carrier_locator_selection_preserves_the_exact_nonproof_prefix() {
+    let mut first = crate::native::genesis_meta(RETAINED_CARRIER_POW_BITS).unwrap();
+    first.height = 1;
+    first.action_bytes = vec![vec![11, 1]];
+    let mut second = first.clone();
+    second.height = 2;
+    second.action_bytes = vec![vec![11, 2]];
+    let mut proof = first.clone();
+    // Deliberately not height three: selection binds action bytes, not height.
+    proof.height = 91;
+    proof.action_bytes = vec![vec![10, 7, 6, 9]];
+    let exact_proof = proof.action_bytes[0].clone();
+    for (blocks, expected_prefix) in [
+        (vec![first.clone(), second.clone()], 2),
+        (vec![first.clone(), second.clone(), proof.clone()], 2),
+        (vec![second, proof.clone()], 1),
+        (vec![proof.clone()], 0),
+    ] {
+        let prefix = retained_carrier_inline_prefix_for_action(&blocks, &exact_proof);
+        assert_eq!(prefix, expected_prefix);
+        assert!(blocks[..prefix]
+            .iter()
+            .flat_map(|block| &block.action_bytes)
+            .all(|action| *action != exact_proof));
+        if prefix < blocks.len() {
+            assert_eq!(blocks[prefix].action_bytes, proof.action_bytes);
+        }
+    }
+    let mut different = proof;
+    different.action_bytes[0][3] ^= 1;
+    assert_eq!(
+        retained_carrier_inline_prefix_for_action(&[different], &exact_proof),
+        1,
+        "same-height but different bytes must not select the retained proof"
+    );
 }
 
 fn retained_carrier_record(mut event: serde_json::Value) {
@@ -585,6 +653,7 @@ fn retained_rp03_socket_child() {
         assert!(slot.is_none(), "nested carrier observation scope");
         *slot = Some(RetainedCarrierObservations {
             session: session.clone(),
+            proof_action: Vec::new(),
             node: None,
             rpc: None,
             locators: role == "source",
@@ -604,6 +673,12 @@ fn retained_rp03_socket_child() {
         &retained_manifest.source_inventory,
         production.expected_context(),
     );
+    retained_carrier_observations()
+        .lock()
+        .expect("bind exact retained action to transport selection")
+        .as_mut()
+        .expect("observations installed before service startup")
+        .proof_action = artifact.pending_action_bytes.clone();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .max_blocking_threads(4)
@@ -1438,6 +1513,7 @@ fn retained_carrier_episode(
     let source_connected = source.wait_for("source authenticates relay peer", |snapshot| {
         retained_carrier_has_peer(snapshot, &relay_peer) && retained_carrier_tracked_idle(snapshot)
     })?;
+    eprintln!("Retained carrier {artifact_role}: authenticated coinbase synchronization passed");
 
     // The public wallet helper is deliberately allowed to package the opaque
     // mutation. Only the actual HTTP source-verifier rejection gets credit.
@@ -1551,6 +1627,7 @@ fn retained_carrier_episode(
                     Some(&artifact.pending_action_bytes),
                 )
         })?;
+    eprintln!("Retained carrier {artifact_role}: HTTP admission and exact PQ pending relay passed");
     let source_before_mine = source.command(RetainedCarrierCommand::Quiesce {})?;
     let source_mine_event_floor = source_before_mine["events"]
         .as_array()
@@ -1592,6 +1669,7 @@ fn retained_carrier_episode(
         .as_str()
         .ok_or("proof block hash missing")?
         .to_string();
+    eprintln!("Retained carrier {artifact_role}: exact proof block mined; waiting for relay import");
     relay.wait_for(
         "relay canonical proof block and raw typed-state rows",
         |snapshot| {
@@ -1613,6 +1691,7 @@ fn retained_carrier_episode(
     if !retained_carrier_same_chain(&source_three, &relay_three) {
         return Err("tracked-idle source/relay raw chain or typed-state bytes differ".into());
     }
+    eprintln!("Retained carrier {artifact_role}: relay block verification and canonical state passed");
     let source_http =
         retained_carrier_http_block(&runtime, &client, &source, &source_three, artifact)?;
     let relay_http =
@@ -1653,6 +1732,7 @@ fn retained_carrier_episode(
     let restart_http =
         retained_carrier_http_block(&runtime, &client, &restarted, &restart_snapshot, artifact)?;
     let restart_stop = restarted.clean_stop()?;
+    eprintln!("Retained carrier {artifact_role}: clean same-identity process restart passed");
 
     // Fresh C is made only after B' has exited, leaving the original source as
     // its only possible live authenticated block-body provider.

@@ -1605,11 +1605,16 @@ fn native_sync_response_message_from_encoded(
         locators.push(locator);
     }
     #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
-    if poseidon2_v8_verifier::retained_carrier_force_locators() {
-        if let Some(locator) = locators.first() {
-            // Select the existing one-body carrier without changing its bytes
-            // or the ordinary size thresholds. The receiver still admits the
-            // real requested prefix and requests subsequent heights normally.
+    if let Some(prefix) = poseidon2_v8_verifier::retained_carrier_inline_response_prefix(&blocks) {
+        if prefix > 0 {
+            // Preserve the requested canonical coinbase prefix inline. The
+            // exact retained proof is never in this prefix: its bytes select
+            // the next request's existing single-body locator carrier.
+            return Ok(NativeSyncMessage::Response {
+                best_height,
+                blocks: blocks.into_iter().take(prefix).collect(),
+            });
+        } else if let Some(locator) = locators.first() {
             return Ok(NativeSyncMessage::ResponseLocators {
                 best_height,
                 blocks: vec![locator.clone()],
@@ -5857,6 +5862,20 @@ pub(crate) async fn request_missing_blocks(
         );
         return;
     }
+    let (target_height, target_peer, target_hash) = node.sync_target_tip_snapshot();
+    let anchored_target_hash = announced_hash.or_else(|| {
+        (target_height == announced_height)
+            .then_some(target_hash)
+            .flatten()
+    });
+    // A repeated tip must preserve the admitted recovery page, including its
+    // parent binding. Do not run the mutating cursor lookup for a stale or
+    // foreign target observation: an incompatible lookup clears the cursor.
+    let persisted_recovery_cursor = (target_height == announced_height
+        && target_peer == Some(peer_id)
+        && target_hash == anchored_target_hash)
+        .then(|| node.sync_recovery_cursor_for_target(Some(peer_id), target_height, target_hash))
+        .flatten();
     let (best_height, best_hash) = node.best_tip();
     let backfill_blocks = node.sync_reorg_backfill_blocks();
     let missing_request_input = NativeSyncMissingRequestInput {
@@ -5865,24 +5884,23 @@ pub(crate) async fn request_missing_blocks(
         max_blocks: native_sync_request_max_blocks(backfill_blocks),
     };
     let admitted_missing_range = native_sync_missing_request_range(missing_request_input);
-    let Some(range) = native_sync_observed_tip_request_range_from_admitted_missing(
+    let canonical_candidate = native_sync_observed_tip_request_range_from_admitted_missing(
         missing_request_input,
         best_hash,
         announced_hash,
         backfill_blocks,
         admitted_missing_range,
+    );
+    let Some(range) = native_sync_preferred_target_request_range(
+        persisted_recovery_cursor.map(|cursor| cursor.range),
+        canonical_candidate,
     ) else {
         return;
     };
-    let (target_height, _, target_hash) = node.sync_target_tip_snapshot();
-    let anchored_target_hash = announced_hash.or_else(|| {
-        (target_height == announced_height)
-            .then_some(target_hash)
-            .flatten()
-    });
     let request_context = NativeOutboundSyncRequestContext {
-        recovery_page: false,
-        expected_parent_hash: None,
+        recovery_page: persisted_recovery_cursor.is_some(),
+        expected_parent_hash: persisted_recovery_cursor
+            .and_then(|cursor| cursor.expected_parent_hash),
         target_tip: anchored_target_hash.map(|hash| (announced_height, hash)),
     };
     if !node.begin_outbound_sync_request_with_context(Some(peer_id), range, request_context) {
