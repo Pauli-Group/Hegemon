@@ -52,7 +52,6 @@ class CandidateRetainedManifestTests(unittest.TestCase):
         cls.artifact_relative = Path(cls.fixed_manifest["artifact_root"])
         cls.source_root = cls.source_repository / cls.artifact_relative
         cls.generator_source_relative = Path(CONSTRUCTOR.CHECKER.GENERATOR_SOURCE)
-        cls.generator_source = cls.source_repository / cls.generator_source_relative
         primary_report = (
             cls.source_root
             / Path(cls.fixed_manifest["proofs"][0]["directory"])
@@ -66,20 +65,24 @@ class CandidateRetainedManifestTests(unittest.TestCase):
             / Path(cls.fixed_manifest["proofs"][0]["directory"])
             / "relation-program.bin"
         ).read_bytes()
-        cls.historical_identity_source = subprocess.run(
-            ["git", "-C", str(cls.source_repository), "show",
-             f"{cls.source_revision}:{CONSTRUCTOR.RELATION_IDENTITY_SOURCE}"],
-            check=True,
-            capture_output=True,
-        ).stdout
-        inventory_identity = next(
-            entry for entry in cls.source_inventory["entries"]
-            if entry["path"] == CONSTRUCTOR.RELATION_IDENTITY_SOURCE
-        )
-        if (len(cls.historical_identity_source) != inventory_identity["bytes"]
-                or hashlib.sha512(cls.historical_identity_source).hexdigest()
-                != inventory_identity["sha512"]):
-            raise AssertionError("historical identity source is not inventory-authenticated")
+        def historical_source(relative: str) -> bytes:
+            payload = subprocess.run(
+                ["git", "-C", str(cls.source_repository), "show",
+                 f"{cls.source_revision}:{relative}"],
+                check=True,
+                capture_output=True,
+            ).stdout
+            inventory_entry = next(
+                entry for entry in cls.source_inventory["entries"]
+                if entry["path"] == relative
+            )
+            if (len(payload) != inventory_entry["bytes"]
+                    or hashlib.sha512(payload).hexdigest() != inventory_entry["sha512"]):
+                raise AssertionError(f"historical source is not inventory-authenticated: {relative}")
+            return payload
+
+        cls.historical_identity_source = historical_source(CONSTRUCTOR.RELATION_IDENTITY_SOURCE)
+        cls.historical_generator_source = historical_source(CONSTRUCTOR.CHECKER.GENERATOR_SOURCE)
         if (len(cls.historical_relation_program)
                 != CONSTRUCTOR.CHECKER.REPAIRED_RELATION_PROFILE.program_bytes
                 or hashlib.sha512(cls.historical_relation_program).hexdigest()
@@ -102,7 +105,7 @@ class CandidateRetainedManifestTests(unittest.TestCase):
             path.chmod(path.stat().st_mode | (0o700 if path.is_dir() else 0o200))
         generator_source = repository / self.generator_source_relative
         generator_source.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(self.generator_source, generator_source)
+        generator_source.write_bytes(self.historical_generator_source)
         for relative in (CONSTRUCTOR.RELATION_PROGRAM_SOURCE, CONSTRUCTOR.RELATION_IDENTITY_SOURCE):
             destination = repository / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -197,6 +200,17 @@ class CandidateRetainedManifestTests(unittest.TestCase):
         )
         self.assertEqual(frozen_verifiers.call_args.kwargs["relation_profile"],
                          CONSTRUCTOR.CHECKER.REPAIRED_RELATION_PROFILE)
+
+    def test_historical_fixture_rejects_current_generator_source(self) -> None:
+        temporary, repository, _, output = self.copied_candidate()
+        self.addCleanup(temporary.cleanup)
+        current = (self.source_repository / self.generator_source_relative).read_bytes()
+        self.assertNotEqual(current, self.historical_generator_source)
+        (repository / self.generator_source_relative).write_bytes(current)
+        with self.assertRaisesRegex(CONSTRUCTOR.CandidateManifestError,
+                                    "generator source is not exactly bound"):
+            self.construct(repository, output)
+        self.assertFalse(output.exists())
 
     def test_frozen_checker_keeps_hardcoded_source_revision_default(self) -> None:
         parameter = inspect.signature(CONSTRUCTOR.CHECKER.check_report).parameters[

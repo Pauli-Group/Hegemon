@@ -2752,6 +2752,16 @@ mod tests {
     }
 
     #[test]
+    fn artifact_codec_relation_digest_matches_program_bytes() {
+        let program = encode_smallwood_poseidon2_v8_program();
+        assert_eq!(
+            protocol_shielded_pool::poseidon2_pending_action_artifact::SMALLWOOD_POSEIDON2_V8_ARTIFACT_RELATION_DIGEST,
+            smallwood_poseidon2_v8_program_digest_from_bytes(&program),
+            "offline pending-action codec must bind the current executable relation"
+        );
+    }
+
+    #[test]
     fn program_digest_known_answer_and_descriptor_mutation() {
         let bytes = encode_smallwood_poseidon2_v8_program();
         let sha512 = smallwood_poseidon2_v8_program_sha512_from_bytes(&bytes);

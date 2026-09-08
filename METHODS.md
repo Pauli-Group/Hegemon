@@ -382,7 +382,10 @@ CSR attempts and 145 authorization roots, bringing coverage to
 18,496/20,605 CSR attempts and 633/830 nonlinear roots. The next checked
 increment adds 135 stable, 288 action-intent/dummy-initial and 16 PRF-initial
 attempts plus 100 authorization roots: 18,935/20,605 CSR attempts and
-733/830 nonlinear roots. There remain 1,670 CSR attempts and 97 nonlinear
+733/830 nonlinear roots. The next 210 role-CSR residuals use symbolic field
+term sums, actual source/auth-family readbacks and the same typed candidate;
+the 640 raw terms include all 168 explicit zero coefficients. Coverage is
+19,145/20,605 CSR attempts. There remain 1,460 CSR attempts and 97 nonlinear
 roots within positions 252..448.
 The stable-tail identities are constructor properties; the inactive
 Merkle and authorization endpoints use fixed typed validity and derive

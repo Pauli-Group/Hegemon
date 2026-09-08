@@ -95,8 +95,37 @@ rerun followed the one explicit descriptor-control correction above.
 
 ## Remaining work
 
-No retained honest proof or lifecycle receipt is generated for the corrected
-identity by this repair. Prior `b1e5c143f7abf052` and `cee3cb81` receipts stay
+### Offline carrier follow-up
+
+The first fresh generation attempt at `dfd72052` reached the offline
+PendingAction encoder and failed with `Transport(RelationDigestMismatch)`.
+No artifact bundle was published. That codec still pinned the pre-metadata
+`180fca50376f7573` digest while the compiler and verifier used `7e50eba07d84433a`.
+The generator's two independently built binaries were byte-identical; this
+was a copied-identity mismatch, not a proof-verification failure.
+
+The codec now binds the corrected digest. A lightweight transaction-program
+regression compares it with the hash of actual encoded program bytes; it
+failed before the correction and passes afterward. All eight program tests,
+both codec tests (including explicit rejection of the old relation), and the
+native private-PendingAction conformance test pass. The generator checks this
+cross-component identity before projection/proving. Its emitted program still
+matches the corrected vector byte-for-byte. This repair changes neither the
+relation program nor the wire, and does not authorize production. The subsequent
+source-frozen generation and lifecycle verification are now complete as below.
+The historical constructor fixture also now recovers its exact original
+generator source, authenticated against its recorded inventory; all 22 tests
+pass, including rejection of current-source substitution. Failed and passing
+logs and both failed-source generators are preserved under
+`.agent/artifacts/smallwood-poseidon2-v8/codec-identity-7e50eba07d84433a`.
+
+The corrected `2c14119da9a0705c` source inventory now binds an independently
+generated pair, four cross-verifications, identical chain reports and complete
+in-process and actual HTTP/PQ process lifecycle receipts. The respective proofs
+are 122,735/122,479 bytes and complete actions are 128,394/128,138 bytes.
+Full 29-payload manifest checks pass before and after the carriers; see
+[fresh proof execution](repaired-proof-execution.md) for exact hashes and scope.
+Prior `b1e5c143f7abf052` and `cee3cb81` receipts stay
 bound to their original source and program. The complete security endpoints,
 remaining source-semantic and Rust-refinement obligations, independent review
 and release authorization are unchanged. The earlier 1,472-declaration archive

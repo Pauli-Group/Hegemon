@@ -175,6 +175,13 @@ fn runner_error(message: impl Into<String>) -> Box<dyn Error> {
 }
 
 fn ensure_frozen_identity_constants() -> RunnerResult<()> {
+    if protocol_shielded_pool::poseidon2_pending_action_artifact::SMALLWOOD_POSEIDON2_V8_ARTIFACT_RELATION_DIGEST
+        != SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST
+    {
+        return Err(runner_error(
+            "offline pending-action codec relation digest differs from the source program",
+        ));
+    }
     if SMALLWOOD_POSEIDON2_V8_PROGRAM_MAGIC.as_slice() != PROGRAM_MAGIC_ASCII.as_bytes()
         || POSEIDON2_PRODUCTION_SMZ9_NATIVE_LEAF_MAGIC.as_slice()
             != NATIVE_LEAF_MAGIC_ASCII.as_bytes()

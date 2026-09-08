@@ -90,8 +90,10 @@ plus 145 actual authorization roots, bring the current forward coverage to
 18,496/20,605 CSR attempts and 633/830 nonlinear roots. A further 135 stable,
 288 action-intent/dummy-initial and 16 PRF-initial CSR attempts, plus 100
 authorization roots, bring current coverage to 18,935/20,605 CSR attempts
-and 733/830 nonlinear roots in every lane. The remaining 97 nonlinear roots
-lie within positions 252..448; 1,670 CSR attempts remain open. The tail uses the same computed hash schedule, with no supplied
+and 733/830 nonlinear roots in every lane. Seven additional role-CSR modules
+derive all 210 actual family-47 residuals on that same candidate, bringing
+current coverage to 19,145/20,605 CSR attempts. The remaining 97 nonlinear roots
+lie within positions 252..448; 1,460 CSR attempts remain open. The tail uses the same computed hash schedule, with no supplied
 auxiliary or hash-final values. Remaining generated equations are still
 being proved. These component
 results do not establish full packed acceptance or Rust execution. The exact finite

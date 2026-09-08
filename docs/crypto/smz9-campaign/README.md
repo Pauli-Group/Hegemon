@@ -16,18 +16,21 @@ receipt, or claim that an SMZ9 transaction has been forged.
 The [metadata-order repair](metadata-order-repair.md) corrects 45 descriptor
 records without changing executable constraints. Earlier dossier snapshots and
 proof receipts retain their original `180fca50376f7573` subject. The corrected
-identity has regenerated source records; fresh proofs and lifecycle receipts
-remain pending.
+identity now has regenerated source records, a fresh independent proof pair
+and completed local lifecycle receipts under inventory `2c14119da9a0705c`.
 The post-repair full formal gate passes 3,066 jobs and all 1,472 declaration
 audits, with unchanged wire vectors. This rechecks the corrected subject;
 it does not increase source-semantic coverage or establish a security endpoint.
+The subsequent 210-row role-CSR increment passes 3,073 jobs and all 1,502
+declaration audits. This increases forward CSR coverage, not the completed
+security endpoints.
 
-The repaired-source snapshot `cee3cb81` now has two independently generated,
-cross-verified 122,543-byte proofs and a completed real HTTP/PQ socket
+The corrected source freeze now has independently generated, cross-verified
+122,735-byte and 122,479-byte proofs and a completed real HTTP/PQ socket
 lifecycle for both. Exact bytes and canonical state survive relay, mining,
 locator/body import, clean restart and fresh-node sync; the separate
 in-process reorg test also passes. See the [source-frozen artifact and
-carrier receipt](repaired-proof-execution.md#completed-source-frozen-local-carrier-milestone).
+carrier receipt](repaired-proof-execution.md#current-corrected-source-frozen-local-carrier-milestone).
 This is local integration evidence with production authority still disabled.
 
 The [actual Rust scalar refinement](native-scalar-refinement.md) now covers
@@ -48,10 +51,12 @@ selector/inverse/Boolean/radix roots on that same constructed candidate.
 Another 64 policy-initial attempts and all early, balance, inline and
 multiplication roots first gave 17,552 CSR attempts and 488 nonlinear roots.
 The next reviewed increment derives 496 stable-tail CSR attempts, all
-448 inactive-Merkle-right attempts and 145 authorization roots. Coverage is
-now 18,496/20,605 CSR attempts and 633/830 nonlinear roots. The remaining
-197 nonlinear positions are exactly `252..448`; the 2,109 remaining CSR
-attempts are tracked separately.
+448 inactive-Merkle-right attempts and 145 authorization roots. Coverage was
+then 18,496/20,605 CSR attempts and 633/830 nonlinear roots. The next 439
+CSR attempts and 100 authorization roots, followed by all 210 role-CSR
+attempts, bring current coverage to 19,145/20,605 CSR attempts and 733/830
+nonlinear roots. The remaining 97 nonlinear roots lie within `252..448`;
+1,460 CSR attempts remain separately tracked.
 It also proves the remaining-count sampler's exact
 finite ideal trace law. Full packed acceptance and remaining generated
 equations are active work; no accepted-packed premise claims their completion.
@@ -62,7 +67,7 @@ table is an earlier ingredient ledger: its per-module original boundaries
 are not a current inventory of aggregate endpoint gaps. The completed modeled
 source-lifetime privacy and packed semantic endpoints described below
 supersede their corresponding local gaps. The full integrated formal gate
-passes all 1,472 credited declarations; these results are not a completed concrete
+passes all 1,502 credited declarations; these results are not a completed concrete
 security argument.
 
 | Earlier ingredient | What is established | Original local boundary |

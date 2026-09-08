@@ -1,6 +1,52 @@
 # Fresh proofs for the repaired SMZ9 relation
 
-## Completed source-frozen local carrier milestone
+## Current corrected source-frozen local carrier milestone
+
+On 2026-09-08, the frozen working-tree source inventory for root
+`hgv8rp03-2c14119da9a0705c` contains 1,240 files and 32,983,403 bytes, with
+SHA-512
+`2c14119da9a0705c0f81fd15254b755e7a489fc913c159c7973af4e8b20bf1ef1571832b6d7781eff5c32dd04c8119d8bcf0c2c4e78d5d3aa8cfa83ee5410e09`.
+The generation checkout reports informational Git HEAD `dfd72052`; the
+frozen bytes are dirty-tree bytes and must not be described as that commit's
+source. The source inventory includes the declarations checked by the current
+1,502-root formal gate. The exact candidate has 29 payloads totaling 8,568,959 bytes; its
+manifest SHA-512 is
+`0cb57289e7f9b4cded8067e372461846fe8311581e79590885d240d18ae42fde24aefde6ec86a361277a983956cc8756ea819533f98fedfeaa50853641566c87`.
+
+The retained actual-socket carrier receipt is under
+`.agent/artifacts/smallwood-poseidon2-v8/carrier-2c14119da9a0705c` and binds
+two independent episodes. Primary/independent proof bytes are 122,735/122,479;
+native leaves are 128,133/127,877; complete pending actions are 128,394/128,138.
+The in-process lifecycle passed in 32.15 seconds and the actual-socket carrier
+passed in 60.35 seconds. Both episodes reach source mining and relay import
+event floor 3, carry 13 equal typed rows across source/relay/restarted/fresh,
+and retain exact canonical block, body, leaf and proof identities. Across both
+episodes there are eight clean child exits with no forced termination and
+closed RPC/P2P listeners. Restart preserves relay peer identity with a new PID.
+
+The two generator binaries compare byte for byte, with SHA-512
+`97d5dda2b96bf42d3b468a18112ff3ba391adcde0610a4e996e56dfa225c94ba2567b44ba823d638aba46f907cec26633f67a6fc87ac3b695066d2621b504897`.
+All four independent build/proof cross-verifications, both byte-identical
+chain reports, and full candidate checks before and after the carriers pass.
+The complete actions have 2,903/3,159 bytes of headroom under the unchanged
+131,297-byte cap; this measures these randomized maximum-shape artifacts,
+not a worst-case bound or a production performance benchmark.
+
+The 26,884,007-byte actual-socket receipt has SHA-512
+`5071b64b88959a300736cd61c6842332dfcb67556f0947bd3d56d92d1bd96917f49b4cee8143ac597996963b765d0eac59a2825094a5df8ece82a8a84c621ce8`.
+The retained 74,505,136-byte test executable has SHA-512
+`8834ce9c96a52cd91356a2e6d7b026befe046cd9f11aa3c6ddb5815ee5bac1ec01eaec47f980d543f13f88cf120fe1cc176746721fff71b69a136a5044a76625`.
+
+The compact scalar-only audit is
+`.agent/artifacts/smallwood-poseidon2-v8/carrier-2c14119da9a0705c/compact-independent-audit.json`.
+This is a feature-gated isolated local receipt with production authority
+denied. It does not close P7, K8, R0 or independent review. It excludes enabled
+stablecoin and other authorization modes, natural oversized selection, multi-chunk
+boundaries, crash recovery, reorg in the socket carrier, public network, and
+production release authority. Snapshot proof hex and shutdown snapshots are
+intentionally not repeated in the compact audit.
+
+## Historical source-frozen local carrier milestone (cee3)
 
 On 2026-09-08, revision `cee3cb8123d87d85d97e6db12f0262baacf0e1a7`
 completed fresh independent generation and both retained lifecycle tests.

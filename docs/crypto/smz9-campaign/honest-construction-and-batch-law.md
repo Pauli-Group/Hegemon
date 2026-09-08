@@ -305,8 +305,9 @@ ciphertext limbs and note/stable asset membership. Four balance modules
 extend this through `0..115`. Canonical distinct assets make the actual
 interpolation weights exact indicators. Typed natural conservation supplies
 the native fee, mint and burn branches; padding slots are proved zero
-separately, without assuming padding conservation. The actual root list,
-not its currently misordered descriptive metadata, selects each expression.
+separately, without assuming padding conservation. The actual root list selects
+each expression. The later metadata repair aligns the descriptive labels
+without changing that executable root list.
 Malformed Boolean/path/reserved/ciphertext/asset examples have nonzero
 actual roots; nonzero fee/issuance with zero notes and duplicate assets are
 separate balance controls, not admitted typed witnesses.
@@ -336,9 +337,17 @@ residuals and 100 additional authorization roots from the same full typed
 candidate. Initial-state results retain the computed prior hash states and
 actual selected PRF key; dummy initial zero does not replace its final trace.
 
-Together these results discharge 18,935 of 20,605 actual raw CSR attempts
+Seven subsequent role-CSR modules derive all 210 actual family-47 residuals
+at globals `19344..19553`. Symbolic field term sums separate the algebra from
+the full candidate; exact source/auth-family readbacks then instantiate all
+accessors with the original typed candidate and its computed hash finals.
+The 640 raw terms include all 168 explicit zero-coefficient terms. The final
+endpoint needs only fixed typed validity and returns 210 distinct `some 0`
+results through the actual generated attempt list.
+
+Together these results discharge 19,145 of 20,605 actual raw CSR attempts
 and 733 of 830 nonlinear roots in all 64 lanes. The remaining 97 authorization
-roots lie within `252..448`. Those roots and 1,670 raw CSR attempts, complete coefficient/interpreter
+roots lie within `252..448`. Those roots and 1,460 raw CSR attempts, complete coefficient/interpreter
 execution and full packed acceptance remain open. These are raw attempt
 counts, not a fixed count of public-dependent normalized emitted rows.
 
@@ -468,9 +477,20 @@ relation files. It adds 116 audited declarations across 26 modules. The log
 SHA-256 is `c2781561bd8f3b2bdc0a51f94ff025cb123c46f92fac7d292a4e6b585b38484b`.
 The 118 original source/checker/control/receipt/log files are retained under
 `.agent/artifacts/smallwood-poseidon2-v8/formal-source-1472-c2781561bd8f3b2b`,
-with a complete byte-identical copy manifest. Current coverage is 18,935 CSR
-attempts and 733 nonlinear roots. The separate 210 role-binding draft is not
-counted; the remaining equations and full security endpoints are still open.
+with a complete byte-identical copy manifest. Coverage at that checkpoint is 18,935 CSR
+attempts and 733 nonlinear roots. The separate 210 role-binding draft was not
+counted at that checkpoint.
+
+The next seven current-qualified modules derive all 210 actual role-CSR
+attempts `19344..19553`, including all 640 terms and 168 explicit zero
+coefficients, on the same full typed source candidate. The full gate passes
+3,073 jobs and all 1,502 declarations; log SHA-256
+`2d0ea4a4b323af3f2062f8725302611f7c0451e087d6962bfdff889f9416110b`.
+The raw qualification checks seven modules, 30 exact roots, six mathematical
+negative controls and strict parser controls. Evidence is retained under
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-1502-cfa3d0d25b27111a`.
+Current coverage is 19,145/20,605 CSR attempts and 733/830 nonlinear roots;
+1,460 CSR attempts, 97 nonlinear roots and the full security endpoints remain.
 
 Continue by closing the remaining checked-success obligations and deriving
 all 830 nonlinear roots in every lane and all 20,605 raw linear
@@ -480,7 +500,9 @@ roundtrip and production binary refinement remain additional obligations.
 The universal weighted soundness bound is also still open. No runtime,
 wire format, primitive, dependency pin or production capability changes here.
 
-The earlier `cee3cb81` proof pair and complete local carrier receipt remain
-valid evidence for their frozen source inventory. These new formal sources
-advance that inventory; a later freeze needs new source-bound evidence,
-without relabeling the earlier proofs or replacing their receipt.
+The corrected source freeze `2c14119da9a0705c` includes these formal sources
+and has its own fresh proof pair, four cross-verifications, matching chain
+reports and completed in-process and actual-socket local lifecycle receipts.
+The earlier `cee3cb81` artifacts remain evidence for their original source
+inventory, without relabeling or replacing either receipt. Neither generation
+nor local carrier success closes the remaining security endpoints.

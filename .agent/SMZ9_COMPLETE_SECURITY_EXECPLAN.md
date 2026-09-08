@@ -27,6 +27,16 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Progress
 
+- [x] (2026-09-08) Integrate seven current-qualified role-CSR modules and
+  30 exact roots. All 210 actual family-47 entries `19344..19553` evaluate
+  to zero on the original full typed candidate from fixed typed validity,
+  preserving all 640 terms and 168 explicit zero-coefficient terms. Fresh
+  strict qualification passes all seven modules, 30 exact axiom checks,
+  six mathematical negatives and parser controls. Full integration passes
+  3,073 build jobs, all 1,502 declaration audits and unchanged wire vectors;
+  log SHA-256 `2d0ea4a4b323af3f2062f8725302611f7c0451e087d6962bfdff889f9416110b`.
+  Coverage is 19,145/20,605 CSR attempts and 733/830 nonlinear roots;
+  1,460 CSR attempts and 97 nonlinear roots remain.
 - [x] (2026-09-08) Complete the 26-module increment: 439 additional actual
   CSR attempts and 100 nonlinear authorization roots. The full gate passes
   3,066 jobs and all 1,472 declarations, with unchanged wire/generated files.
@@ -54,9 +64,25 @@ of this work. The security endpoints and resource accounting remain those in
   and rerun the gate using completed build outputs. Both runs are preserved
   in the metadata-order evidence directory. This is not a fresh proof or
   lifecycle receipt; no additional source-semantic obligations are credited.
-- [ ] Generate new retained proofs and lifecycle receipts for the corrected
-  metadata identity after the source is frozen. Prior proofs and source-forward
-  receipts remain evidence for their original subjects only.
+- [x] (2026-09-08) Generate and cross-verify the corrected proof pair under
+  source inventory `2c14119da9a0705c` (1,240 files, 32,983,403 bytes).
+  Two separately built generators are byte-identical; all four proof checks,
+  both identical chain reports and the full 29-payload constructor checks pass.
+  The primary/independent proofs are 122,735/122,479 bytes; complete actions
+  are 128,394/128,138 bytes. In-process lifecycle passes in 32.15 seconds;
+  actual HTTP/PQ process carriers pass both episodes in 60.35 seconds.
+  Full manifest verification passes before and after the carriers. Generation
+  records the informational HEAD `dfd72052` with a dirty frozen source tree;
+  that commit alone is not the complete generation source. Prior proofs and
+  source-forward receipts retain their original subjects. Production authority
+  remains disabled; see `repaired-proof-execution.md` for receipt boundaries.
+- [x] (2026-09-08) Fresh generation at `dfd72052` exposes the offline
+  PendingAction codec's stale `180fca50376f7573` identity after successful
+  proving/source verification; no bundle is published. Correct its digest,
+  add an early generator identity preflight and a failing-before/passing-after
+  actual-program regression. Eight program tests, two codec tests and native
+  private-carrier conformance pass. Restart generation under a new inventory;
+  do not relabel the failed source snapshot.
 - [x] (2026-09-08 09:09 UTC) Integrate twelve reviewed modules and 72
   designated roots for 496 stable-tail CSR attempts, all 448 inactive
   Merkle-right attempts and 145 authorization roots. The full gate passes
@@ -756,7 +782,7 @@ Actual source extraction also now establishes all four scalar helper
 refinements, including inverse-loop termination, in an isolated,
 exact-root-checked Lean 4.31.0 lane. The expression loop, caller/array binding
 and production binary remain separate
-R0 obligations; these results are not added to the 1,472-declaration integrated gate.
+R0 obligations; these results are not added to the 1,502-declaration integrated gate.
 
 The forward construction now includes one full 43,904-word candidate,
 canonical from fixed typed validity alone, exact dense and same-schedule
@@ -772,7 +798,8 @@ properties, not populated adequacy receipts. The additional 496 stable-tail
 and 448 inactive-Merkle-right CSR attempts and 145 authorization roots now
 first leave 2,109 raw CSR attempts and 197 nonlinear positions 252..448.
 The next 439 CSR attempts and 100 authorization roots reduce the remaining
-counts to 1,670 and 97 respectively. Actual Rust execution and complete
+counts to 1,670 and 97 respectively. The next 210 actual role-CSR residuals
+reduce those counts to 1,460 and 97. Actual Rust execution and complete
 generated-equation coverage remain active.
 
 The prior commits establish local mathematical ingredients, not either
