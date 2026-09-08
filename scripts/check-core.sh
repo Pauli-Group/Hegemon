@@ -83,7 +83,7 @@ run_test_transaction_lib() {
     --skip proof::tests::lean_generated_transaction_proof_wrapper_wire_vectors_match_production \
     --skip smallwood_frontend::tests::lean_generated_smallwood_candidate_wrapper_admission_vectors_match_production \
     --skip smallwood_frontend::tests::lean_generated_smallwood_production_constraint_maps_match_every_production_row \
-    --skip smallwood_frontend::tests::lean_generated_smallwood_transcript_binding_vectors_match_production \
+    --skip smallwood_frontend::tests::lean_generated_legacy_level5_transcript_binding_vectors_match_runtime_codec \
     --skip smallwood_frontend::tests::lean_generated_smallwood_verifier_statement_projection_vectors_match_production \
     --skip smallwood_recursive::tests::lean_generated_smallwood_recursive_envelope_wire_vectors_match_production
 }

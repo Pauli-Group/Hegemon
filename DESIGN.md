@@ -1004,9 +1004,33 @@ soundness, invalid-opening rejection, typed-lowering completeness, and compositi
 context and ciphertext admission. The Rust receipt replays honest typed lowering through the
 program-derived adapter and the existing exhaustive fixtures. The semantic target uses fixed
 primitive symbols rather than receipt-selected functions, while separately recording that exact
-source refinement for those symbols remains absent. This is executable regression evidence, not
-the missing arbitrary-assignment or primitive-refinement proof. The checked-in Lean/Rust vector
-therefore sets `exact_primitive_interpretation_refinement_proved=false`,
-`universal_accepted_witness_soundness_proved=false`, and `production_authority=false`; V8 stays
-fail closed until the primitive bridge, decoder, and all five universal obligations are discharged
-and reviewed.
+source refinement for those symbols remains absent. The executable receipt is regression
+evidence, not Rust execution refinement or a completed bidirectional compiler receipt.
+
+The isolated research theorem
+`V8Smz9ExactSemanticEndpoint.admitted_packed_project_typed_exact_semantics` now proves
+the complete unchanged `ExactV8RelationSemanticValid` for its actual total typed projection.
+Its sole domain premise is exact public encoding, canonical public admission, and arbitrary
+acceptance of the repaired generated packed program. It derives canonical witness structure,
+all cryptographic links and authorization modes, integer balance, and disabled/mint/burn stable
+transitions; it does not assume honest lowering. The full-action wrapper adds the actual
+consensus-context and inline-ciphertext matches as explicit premises. See the
+[semantic endpoint](docs/crypto/smz9-campaign/packed-semantic-endpoint.md) and
+[Rust refinement obligations](docs/crypto/smz9-campaign/rust-source-refinement-obligations.md).
+
+This forward research theorem does not construct the complete production refinement receipt:
+reverse valid-typed-witness lowering, actual Rust public/evaluator/decoder execution, primitive
+source execution, and accepted-proof-byte extraction remain separate. The generated release
+vector therefore still records `exact_primitive_interpretation_refinement_proved=false`,
+`universal_accepted_witness_soundness_proved=false`, and `production_authority=false`.
+Those unpromoted status fields are not evidence that the new forward theorem is absent.
+V8 remains fail closed pending all independent security, implementation, review, and release gates.
+
+The isolated `V8Smz9SourceLifetimePrivacy` development now composes the modeled actual
+source lifetime with a directly compiled witness-free public-policy simulator. It derives
+all leaf/final/hidden transitions and the exact public erasure; no desired endpoint equality
+or distance is assumed. Under the explicit universal adaptive-reprogramming assumption,
+the analysis indices `q <= 2^65` and `r <= 2^21` give simulator distance at most `2^-167`
+and a two-witness gap below `2^-128`. This is not a deployed resource policy, concrete
+SHA-512 construction theorem, runtime refinement, or production P7 receipt. See the
+[privacy endpoint](docs/crypto/smz9-campaign/privacy-endpoint-completion.md).

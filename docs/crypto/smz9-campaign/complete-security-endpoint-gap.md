@@ -15,12 +15,13 @@ The current tree cannot support any of these claims:
   `2^-128`; or
 - **R0:** universal Rust-source/Lean acceptance and semantic refinement.
 
-This is a constructive no-go for the current proof graph, not a claim that the
-endpoints are impossible in principle. The graph contains premise records that
-Lean explicitly proves uninhabited. Intermediate algebra, accounting,
-serialization, and implementation checks do not compose around those proofs of
-nonexistence. The governing dependency graph requires independent P7 and K8
-before R0-R5
+This is an inventory of unfinished evidence, not a mathematical impossibility
+result. The graph contains deliberately constructor-free premise types; Lean's
+proofs that those types are uninhabited follow from how the sentinels were
+defined. They block unsupported release claims but do not refute the protocol's
+security statements or justify stopping work. Actual endpoint derivations must
+replace missing evidence with proved constructions. The governing dependency
+graph requires independent P7 and K8 before production credit through R0-R5
 ([security contract](security-contract.md#dependency-graph)).
 
 ## Repaired subject and identity boundary
@@ -84,7 +85,7 @@ documentation/freeze requirement, not evidence of ambiguous bytes.
 | Arbitrary-source MCA accounting | The exact coefficient/subset-space recovery bound is proved ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9McaRecovery.lean#L682-L733)). | The concrete current-profile `smz9LineBudget` inequality remains outstanding, so its specialization is not a numerical certificate ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9McaRecovery.lean#L740-L755)). |
 | Decoded source to packed interpreter | A fully satisfied decoded candidate yields unchanged packed-program acceptance ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9CurrentSourceAcceptance.lean#L368-L389)). | No preceding theorem extracts that candidate from an actually accepted proof. The deterministic oracle inverse explicitly leaves acceptance-to-proximity/extraction separate ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9OracleExtraction.lean#L21-L28), [source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9OracleExtraction.lean#L356-L390)). |
 | PIOP opening reconstruction | The actual six-opening restore/correction equations are constructed ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9PiopReconstruction.lean#L210-L252)). | A false candidate can also reconstruct at selected points; pre-opening hash chronology and decoded PCS trace binding remain necessary ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9PiopReconstruction.lean#L192-L204)). |
-| Packed witness to typed semantics | Canonical witness shape and natural-number balance are proved for the typed projection ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9SemanticCanonicalWitness.lean#L356-L366), [source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9SemanticBalance.lean#L868-L871)). The full disabled stable transition and bounded enabled arithmetic, sequence, and typed-source-coordinate consequences are integrated ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9SemanticStablecoin.lean#L287-L309), [source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9SemanticStablecoinEnabled.lean#L38-L121)). | Complete authorization, cryptographic-link, and enabled stable-transition refinement are not composed into `ExactV8RelationSemanticValid`; the enabled module explicitly disclaims an unrestricted transition ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9SemanticStablecoinEnabled.lean#L3-L7)), and the five-part target is fixed here ([source](../../../formal/lean/Hegemon/Transaction/Poseidon2V8SemanticSpecification.lean#L1266-L1275)). |
+| Packed witness to typed semantics | The complete `ExactV8RelationSemanticValid` implication now follows from canonical public admission and arbitrary acceptance of the actual repaired packed program. It includes all authorization modes, note/Merkle/nullifier/output links, integer balance and disabled/mint/burn stable transitions ([endpoint](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9ExactSemanticEndpoint.lean), [proof dossier](packed-semantic-endpoint.md)). | Actual Rust public/evaluator/decoder execution, accepted-proof-byte extraction and the reverse valid-typed-witness lowerer-completeness implication remain separate. Full-action semantics additionally require the actual context and inline-ciphertext predicates; the wrapper does not prove their admission. |
 
 ## Exact current blockers
 
@@ -96,9 +97,20 @@ inputs and disclaim distribution, coupling, QROM, and production claims
 ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9WholeViewObservation.lean#L14-L27),
 [source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9WholeViewObservation.lean#L248-L308),
 [source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9WholeViewObservation.lean#L819-L820)).
-The privacy telescope retains one persistent table, but assumes every adjacent
+The older privacy telescope retains one persistent table, but assumes every adjacent
 complete-program bound rather than deriving it
 ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9CurrentPrivacyComposition.lean#L803-L819)).
+The new `SmallWoodV8Smz9SourceLifetimePrivacy.lean` endpoint supersedes that
+limitation for the modeled actual source lifetime: it derives all three
+leaf/final/hidden comparisons, the source-stage execution equalities, a
+witness-free public-source simulator and its exact erasure, and the final
+two-witness triangle. Under the explicit universal external reprogramming
+assumption, `q <= 2^65` and `r <= 2^21` give a source/simulator gap at most
+`2^-167` and a two-witness gap below `2^-128`. The full public request/control
+flow must agree; its simulator is not defined on a statement alone. See the
+[completed ideal source-lifetime endpoint](privacy-endpoint-completion.md#completed-ideal-source-lifetime-endpoint).
+This does not provide concrete SHA-512 construction security, actual
+Rust/runtime/byte refinement, or an approved deployed resource model.
 The concrete premise types for RNG freshness, raw serialization, adaptive final-
 PIOP programming, SHA-512 QRO instantiation, all-history leaf freshness,
 internal-node entropy, lifetime budgets, and collision applicability are
@@ -117,6 +129,14 @@ P7 release receipt has no inhabitant
 Therefore no P7 or complete-ZK claim follows.
 
 ### K8: accepted-byte knowledge soundness
+
+The current universal weighted MCA inequality is still unproved. The
+[finite literature check](mca-universal-literature-boundary.md) substitutes
+the actual `N=2^23`, degree 387 and five-coordinate field into the primary
+whole-support and capacity results. None of the checked finite certificates
+closes the required low-agreement range. This is neither a protocol
+counterexample nor an impossibility claim. Even the exact one-point-direction
+subclass leaves an unrestricted weighted punctured Reed-Solomon list problem.
 
 The exact ideal logical-QROM theorem still consumes a caller-supplied failure
 selector and `RealInstabilityBound`
@@ -158,7 +178,12 @@ The semantic-adequacy receipt names the required arbitrary-input decoder,
 canonicality, authorization/cryptographic-link, balance, stable-transition,
 and Rust-refinement obligations
 ([source](../../../formal/lean/Hegemon/Transaction/Poseidon2V8SemanticAdequacy.lean#L56-L116)).
-The checked-in universal semantic refinement is explicitly unavailable
+The one-way arbitrary-packed-to-typed relation implication is now proved in
+the research tree, including all five fixed semantic conjuncts
+([endpoint](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9ExactSemanticEndpoint.lean),
+[scope and checking](packed-semantic-endpoint.md)). This is not the reverse
+valid-typed-witness lowering theorem or universal Rust execution refinement.
+The production-owned full semantic receipt remains unavailable
 ([source](../../../formal/lean/Hegemon/Transaction/Poseidon2V8SemanticAdequacy.lean#L378-L394)).
 Therefore R0 is not a theorem in the current graph, and R1-R5 cannot inherit
 authority from source/vector agreement.
@@ -174,8 +199,8 @@ The retained-artifact and release state is explicit and fail-closed:
   ([source](../../../config/smallwood-v8-poseidon2-profile-manifest.json#L2-L7));
 - required theorem, refinement, lifecycle, and review receipts remain null
   ([source](../../../config/smallwood-v8-poseidon2-profile-manifest.json#L48-L63));
-- both fresh repaired-relation retained primary and independent proof hashes are
-  null
+- the release manifest's fresh retained-proof hash fields remain null; this is
+  an unpromoted release record, not an assertion that no fresh proofs exist
   ([source](../../../config/smallwood-v8-poseidon2-profile-manifest.json#L92-L93)); and
 - the executable-ZK diagnostic records whole-view refinement false, concrete
   SHA-512 acceptance false, both endpoint receipts absent, and production
@@ -183,20 +208,29 @@ The retained-artifact and release state is explicit and fail-closed:
   ([source](../../../docs/crypto/smallwood_poseidon2_v8_smz9_executable_zk_refinement.json#L66-L67),
   [source](../../../docs/crypto/smallwood_poseidon2_v8_smz9_executable_zk_refinement.json#L91-L100)).
 
-Passing local formal gates, source/vector agreement, simulated proof bytes, or
-diagnostic hashes are not retained independent proof evidence and cannot change
-these authority fields.
+Two independently generated repaired-relation proofs are physically retained,
+each 122,735 bytes, with cross-verification and an isolated native lifecycle
+receipt. They bind the recorded b1e5c143f7abf052 source snapshot. Subsequent
+formal/test integration requires another frozen final snapshot and fresh
+receipts; it must not silently rebind these old generation inventories
+([exact evidence and transport limits](repaired-proof-execution.md)).
 
-At the final local audit snapshot, the umbrella imports the non-single
-authorization, both stablecoin, whole-view, and extraction modules
-([source](../../../formal/crypto/HegemonCrypto.lean#L145-L172)). The 376-entry
-credited inventory includes the reviewed stablecoin endpoints but no whole-view
-release root
-([source](../../../formal/crypto/credited-declarations.txt#L352-L376)). The
-complete formal-crypto gate passed 2,806 build jobs, all 376 designated
-declarations used only the permitted kernel axioms, the three proof-wire vectors
-were unchanged, and all 48 generated relation modules (2,266,857 source bytes)
-matched exactly. These are local intermediate checks, not P7, K8, R0, retained
+Local formal gates, source/vector agreement and simulated proof diagnostics
+do not replace those artifacts, independent review, or production authority.
+
+At the 2026-09-08 02:06 UTC audit snapshot, the complete formal-crypto gate
+passed 2,912 build jobs and all 603 designated declarations used only
+`propext`, `Classical.choice`, and `Quot.sound`. This includes the complete
+arbitrary-packed semantic endpoint, full authorization and enabled stable
+transition, measured oracle games, literal post-final proof/error bytes,
+collision-exact mixed writes, source-tree/path geometry and complete request
+query bounds
+([umbrella](../../../formal/crypto/HegemonCrypto.lean),
+[credited roots](../../../formal/crypto/credited-declarations.txt)). The three
+proof-wire vectors were unchanged, and all 48 generated relation modules
+(2,266,857 source bytes) matched exactly. Final-write and whole-history
+composition modules remain in progress and are not part of that pass. These are local
+intermediate checks, not P7, K8, universal Rust execution refinement, retained
 proof evidence, independent release review, or production authority.
 
 ## Minimum dependency-ordered closure
@@ -214,8 +248,9 @@ proceed in parallel. Both must finish before step 6.
    the same persistent oracle. Instantiate and prove the adaptive single-proof
    programming theorem with exact chronology, dependence, collision, and
    sampler losses.
-3. **Close P5-P7.** Build the complete repeated-request cq-state hybrid without
-   oracle reset; derive every adjacent bound; compose concrete SHA-512 and all
+3. **Close P5-P7.** The modeled repeated-request hybrid, derived adjacent
+   bounds and public simulator triangle now pass Lean without oracle reset.
+   Connect the actual Rust experiment to that model; compose concrete SHA-512 and all
    refinement losses from the common resource ledger; then construct an
    inhabited P7 receipt proving at most `2^-128`.
 4. **Close K0-K4.** Define actual Rust acceptance-and-extraction-failure from
@@ -224,9 +259,10 @@ proceed in parallel. Both must finish before step 6.
    prove the concrete universal MCA line budget; and transfer the actual SHA-
    derived PIOP/DECS challenge laws.
 5. **Close K5-K8.** Prove the two-sided CMS instability for that event, the
-   raw-SHA-512-to-exact-logical-oracle reduction, and full packed-witness
-   semantic adequacy including authorization, cryptographic links, and enabled
-   stable transition. Compose all soundness losses and construct an inhabited
+   raw-SHA-512-to-exact-logical-oracle reduction. The one-way packed-witness
+   semantic implication is now proved, including authorization, cryptographic
+   links and enabled stable transitions; extraction must supply its actual
+   admitted domain. Compose all soundness losses and construct an inhabited
    K8 receipt at `2^-128`.
 6. **Close R0-R4, then authorize R5 separately.** Prove universal
    Rust/Lean/compiler equivalence on arbitrary bytes, binary/native and full-
@@ -237,8 +273,9 @@ proceed in parallel. Both must finish before step 6.
    capability.
 
 Until all six stages complete for the same digest and carrier, the correct
-verdict is: **P7 unavailable, K8 unavailable, R0 unavailable, fresh retained
-proofs for the repaired relation absent; the active V8 production capability
-remains `None`, and the repaired relation is unselected and production-
-unauthorized**
+verdict is: **P7 unavailable, K8 unavailable, R0 unavailable; repaired-relation
+proofs exist for a preserved historical source snapshot, while final-snapshot
+regeneration and actual socket carrier evidence are pending. The active V8
+production capability remains `None`, and the repaired relation is unselected
+and production-unauthorized**
 ([source](daybreak-regeneration-map.md#L146-L152)).

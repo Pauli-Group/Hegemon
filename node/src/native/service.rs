@@ -10,6 +10,8 @@ pub async fn run(cli: NativeCli) -> Result<()> {
     }
     let config = NativeConfig::from_cli(cli)?;
     let node = NativeNode::open(config.clone())?;
+    #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+    poseidon2_v8_verifier::retained_carrier_node_opened(&node);
     start_native_p2p(Arc::clone(&node), &config)?;
 
     info!(
@@ -29,6 +31,8 @@ pub async fn run(cli: NativeCli) -> Result<()> {
     let listener = TcpListener::bind(config.rpc_addr)
         .await
         .with_context(|| format!("bind native JSON-RPC {}", config.rpc_addr))?;
+    #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+    poseidon2_v8_verifier::retained_carrier_rpc_bound(listener.local_addr()?);
     let app = Router::new()
         .route(
             "/",
@@ -1540,6 +1544,16 @@ pub(crate) fn native_block_announce_message_from_encoded(
     body_len: usize,
     locator: NativeBlockBodyLocator,
 ) -> Result<NativeSyncMessage> {
+    #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+    if poseidon2_v8_verifier::retained_carrier_force_locators() {
+        // Mined-block broadcasts bypass the periodic announcement cache. Keep
+        // this sender-only test selection compact as well, so no inline body
+        // can be queued before the peer requests its actual locator carrier.
+        return Ok(NativeSyncMessage::AnnounceTip(NativeSyncTipAnnouncement {
+            best_height: meta.height,
+            best_hash: meta.hash,
+        }));
+    }
     if body_len <= MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES {
         let inline = NativeSyncMessage::Announce(Box::new(meta.clone()));
         let payload = encode_sync_message(&inline)?;
@@ -1583,6 +1597,18 @@ fn native_sync_response_message_from_encoded(
             .ok_or_else(|| anyhow!("native sync inline body-byte total overflow"))?;
         all_inline &= body_len <= MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES;
         locators.push(locator);
+    }
+    #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+    if poseidon2_v8_verifier::retained_carrier_force_locators() {
+        if let Some(locator) = locators.first() {
+            // Select the existing one-body carrier without changing its bytes
+            // or the ordinary size thresholds. The receiver still admits the
+            // real requested prefix and requests subsequent heights normally.
+            return Ok(NativeSyncMessage::ResponseLocators {
+                best_height,
+                blocks: vec![locator.clone()],
+            });
+        }
     }
     if all_inline && inline_body_bytes <= MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES {
         let inline = NativeSyncMessage::Response {
@@ -2448,6 +2474,14 @@ fn spawn_next_peer_pending_proof(
                 .await
                 {
                     Ok(Ok(Some(staged))) => {
+                        #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+                        poseidon2_v8_verifier::retained_carrier_event(
+                            "peer_pending_action_staged",
+                            Some(peer_id),
+                            None,
+                            None,
+                            Some(&staged.encode()),
+                        );
                         info!(
                             peer = %hex32(&peer_id),
                             tx_hash = %hex48(tx_hash.as_bytes()),
@@ -3426,6 +3460,8 @@ fn spawn_native_chunk_range_import(
     completed: NativeCompletedBlockBody,
 ) {
     tokio::spawn(async move {
+        #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+        let retained_chunk_block = (completed.locator.height, completed.locator.block_hash);
         let result = match Arc::clone(&node.block_import_semaphore)
             .acquire_owned()
             .await
@@ -3439,6 +3475,14 @@ fn spawn_native_chunk_range_import(
                             decode_completed_native_block_body(completed).map_err(|err| {
                                 format!("invalid reassembled native block body: {err}")
                             })?;
+                        #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+                        poseidon2_v8_verifier::retained_carrier_event(
+                            "block_body_reassembled",
+                            Some(peer_id),
+                            Some(meta.height),
+                            Some(meta.hash),
+                            None,
+                        );
                         if native_sync_response_pre_import_disposition(
                             &import_node,
                             best_height,
@@ -3463,6 +3507,22 @@ fn spawn_native_chunk_range_import(
             }
             Err(_) => Err("native block import semaphore closed".to_string()),
         };
+        #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+        if matches!(
+            &result,
+            Ok(Some(report))
+                if report.failure.is_none()
+                    && !report.progress.stopped_on_error
+                    && report.progress.imported_blocks == 1
+        ) {
+            poseidon2_v8_verifier::retained_carrier_event(
+                "chunk_range_block_imported",
+                Some(peer_id),
+                Some(retained_chunk_block.0),
+                Some(retained_chunk_block.1),
+                None,
+            );
+        }
         node.end_sync_import();
         node.refresh_mining_sync_gate();
         let _ = completion_tx
@@ -4598,6 +4658,8 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                     );
                     continue;
                 }
+                #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+                let retained_locator = (locator.height, locator.block_hash);
                 match block_body_transport.enqueue_range(
                     peer_id,
                     best_height,
@@ -4633,6 +4695,14 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                         continue;
                     }
                 }
+                #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+                poseidon2_v8_verifier::retained_carrier_event(
+                    "response_locator_admitted",
+                    Some(peer_id),
+                    Some(retained_locator.0),
+                    Some(retained_locator.1),
+                    None,
+                );
                 match block_body_transport.start_next(peer_id, Instant::now()) {
                     Ok(Some(locator)) => {
                         send_native_block_body_request(&handle, peer_id, &locator).await;
@@ -4674,6 +4744,14 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                     );
                     continue;
                 }
+                #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+                poseidon2_v8_verifier::retained_carrier_event(
+                    "block_body_request_admitted",
+                    Some(peer_id),
+                    None,
+                    Some(block_hash),
+                    None,
+                );
                 pump_native_block_body_send_queue(
                     &mut block_body_send_queue,
                     &node,
@@ -5482,6 +5560,19 @@ pub(crate) async fn native_best_announce_payload(
     node: &Arc<NativeNode>,
     cache: &mut NativeBestAnnounceCache,
 ) -> Result<(u64, [u8; 32], Vec<u8>)> {
+    #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+    if poseidon2_v8_verifier::retained_carrier_force_locators() {
+        // Bypass the cached inline announcement as well as its encoder so
+        // future periodic announcements cannot reuse a full-body payload
+        // cached before the retained child's transport selection changed.
+        let (height, block_hash) = node.best_tip();
+        let payload =
+            encode_sync_message(&NativeSyncMessage::AnnounceTip(NativeSyncTipAnnouncement {
+                best_height: height,
+                best_hash: block_hash,
+            }))?;
+        return Ok((height, block_hash, payload));
+    }
     let block_hash = {
         let state = node.state.read();
         state.best.hash

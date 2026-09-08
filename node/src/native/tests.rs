@@ -38925,9 +38925,10 @@ fn lean_generated_accepted_smallwood_block_supply_vectors_match_production() {
             crypto: case.crypto_suite,
         };
         assert_eq!(
-            protocol_versioning::tx_proof_backend_for_version(binding.into()).is_some(),
+            protocol_versioning::VersionBinding::from(binding)
+                == protocol_versioning::DEFAULT_VERSION_BINDING,
             case.expected_valid,
-            "{} historical SmallWood decoder scope drifted from retained proof evidence",
+            "{} active SmallWood claim scope drifted from the production default binding",
             case.name
         );
     }

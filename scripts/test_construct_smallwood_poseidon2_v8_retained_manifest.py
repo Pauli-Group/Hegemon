@@ -34,7 +34,13 @@ class CandidateRetainedManifestTests(unittest.TestCase):
         cls.fixed_pointer = (
             cls.source_repository / Path(CONSTRUCTOR.CHECKER.MANIFEST_PATH.as_posix())
         )
-        cls.fixed_manifest = json.loads(cls.fixed_pointer.read_text(encoding="utf-8"))
+        # Keep the historical pointer immutable; exercise the constructor with
+        # the repaired proof fixture and its actual inventory-bound source.
+        cls.historical_manifest = json.loads(cls.fixed_pointer.read_text(encoding="utf-8"))
+        cls.fixed_manifest = CONSTRUCTOR.build_candidate_snapshot(
+            cls.source_repository,
+            ".agent/artifacts/smallwood-poseidon2-v8/hgv8rp03-b1e5c143f7abf052",
+        ).manifest
         cls.artifact_relative = Path(cls.fixed_manifest["artifact_root"])
         cls.source_root = cls.source_repository / cls.artifact_relative
         cls.generator_source_relative = Path(CONSTRUCTOR.CHECKER.GENERATOR_SOURCE)
@@ -56,9 +62,16 @@ class CandidateRetainedManifestTests(unittest.TestCase):
         root = repository / self.artifact_relative
         root.parent.mkdir(parents=True)
         shutil.copytree(self.source_root, root)
+        root.chmod(root.stat().st_mode | 0o700)
+        for path in root.rglob("*"):
+            path.chmod(path.stat().st_mode | (0o700 if path.is_dir() else 0o200))
         generator_source = repository / self.generator_source_relative
         generator_source.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(self.generator_source, generator_source)
+        for relative in (CONSTRUCTOR.RELATION_PROGRAM_SOURCE, CONSTRUCTOR.RELATION_IDENTITY_SOURCE):
+            destination = repository / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(self.source_repository / relative, destination)
         output = root.parent / "retained-artifact-manifest.candidate.json"
         return temporary, repository, root, output
 
@@ -112,6 +125,8 @@ class CandidateRetainedManifestTests(unittest.TestCase):
             [path.as_posix() for path in CONSTRUCTOR.CHECKER.GENERATOR_PATHS],
         )
         self.assertTrue(manifest["generator_binaries"]["byte_identical"])
+        self.assertEqual(manifest["identity"]["relation_program_sha512"],
+                         CONSTRUCTOR.CHECKER.REPAIRED_RELATION_PROFILE.program_sha512)
         verified = self.verify(repository, output)
         self.assertTrue(verified["verified"])
         self.assertEqual(verified["payload_file_count"], 29)
@@ -139,12 +154,109 @@ class CandidateRetainedManifestTests(unittest.TestCase):
             frozen_verifiers.call_args.args[4]["schema"],
             CONSTRUCTOR.CHECKER.CHAIN_SCHEMA,
         )
+        self.assertEqual(frozen_verifiers.call_args.kwargs["relation_profile"],
+                         CONSTRUCTOR.CHECKER.REPAIRED_RELATION_PROFILE)
 
     def test_frozen_checker_keeps_hardcoded_source_revision_default(self) -> None:
         parameter = inspect.signature(CONSTRUCTOR.CHECKER.check_report).parameters[
             "expected_source_revision"
         ]
         self.assertEqual(parameter.default, CONSTRUCTOR.CHECKER.SOURCE_REVISION)
+
+    def test_frozen_helpers_keep_historical_relation_defaults(self) -> None:
+        checker = CONSTRUCTOR.CHECKER
+        for name in ("parse_native_leaf", "check_report", "check_chain_report",
+                     "run_frozen_verifiers", "check_relation_program"):
+            self.assertEqual(inspect.signature(getattr(checker, name)).parameters[
+                "relation_profile"].default, checker.HISTORICAL_RELATION_PROFILE)
+        historical_bundle = (self.source_repository / self.historical_manifest["artifact_root"]
+                             / self.historical_manifest["proofs"][0]["directory"])
+        checker.parse_native_leaf(historical_bundle)
+        with self.assertRaisesRegex(CONSTRUCTOR.CandidateManifestError, "pinned exact identity"):
+            checker.parse_native_leaf(historical_bundle,
+                                      relation_profile=checker.REPAIRED_RELATION_PROFILE)
+        current_bundle = self.source_root / self.fixed_manifest["proofs"][0]["directory"]
+        with self.assertRaisesRegex(CONSTRUCTOR.CandidateManifestError, "pinned exact identity"):
+            checker.parse_native_leaf(current_bundle)
+
+    def test_source_relation_requires_exact_inventory_and_source_bytes(self) -> None:
+        temporary, repository, _, _ = self.copied_candidate()
+        self.addCleanup(temporary.cleanup)
+        source = repository / CONSTRUCTOR.RELATION_IDENTITY_SOURCE
+        original = source.read_bytes()
+        inventory = copy.deepcopy(self.source_inventory)
+        profile, _, _ = CONSTRUCTOR.source_relation_profile(repository, inventory)
+        self.assertEqual(profile, CONSTRUCTOR.CHECKER.REPAIRED_RELATION_PROFILE)
+        for label, replacement, message in (
+            ("magic", b'*b"HGV8RPXX"', "source magic"),
+            ("length", None, "unsupported exact relation identity"),
+            ("unknown_hash", None, "unsupported exact relation identity"),
+            ("digest", None, "source digest prefix"),
+        ):
+            with self.subTest(label=label):
+                if label == "magic":
+                    mutated = original.replace(b'*b"HGV8RP03"', replacement)
+                elif label == "length":
+                    mutated = original.replace(b"853_429", b"853_430")
+                elif label == "unknown_hash":
+                    mutated = original.replace(b"0x18, 0x0f, 0xca, 0x50", b"0x19, 0x0f, 0xca, 0x50")
+                else:
+                    before, after = original.split(b"pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST:", 1)
+                    mutated = before + b"pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST:" + after.replace(b"0x18", b"0x19", 1)
+                source.write_bytes(mutated)
+                with self.assertRaisesRegex(CONSTRUCTOR.CandidateManifestError, "source inventory"):
+                    CONSTRUCTOR.source_relation_profile(repository, inventory)
+                resealed = copy.deepcopy(inventory)
+                for entry in resealed["entries"]:
+                    if entry["path"] == CONSTRUCTOR.RELATION_IDENTITY_SOURCE:
+                        entry.update(bytes=len(mutated), sha512=CONSTRUCTOR.CHECKER.sha512_bytes(mutated))
+                with self.assertRaisesRegex(CONSTRUCTOR.CandidateManifestError, message):
+                    CONSTRUCTOR.source_relation_profile(repository, resealed)
+        source.write_bytes(original)
+        vector = repository / CONSTRUCTOR.RELATION_PROGRAM_SOURCE
+        program = vector.read_bytes()
+        for mutated in (b"UNKNOWN!" + program[8:], program[:-1] + bytes([program[-1] ^ 1])):
+            vector.write_bytes(mutated)
+            with self.assertRaisesRegex(CONSTRUCTOR.CandidateManifestError, "pinned exact identity"):
+                CONSTRUCTOR.source_relation_profile(repository, inventory)
+
+    def test_repaired_candidate_rejects_historical_program_and_geometry(self) -> None:
+        temporary, repository, root, output = self.copied_candidate()
+        self.addCleanup(temporary.cleanup)
+        bundle = root / self.fixed_manifest["proofs"][0]["directory"]
+        historical = (self.source_repository / self.historical_manifest["artifact_root"]
+                      / self.historical_manifest["proofs"][0]["directory"] / "relation-program.bin")
+        program = bundle / "relation-program.bin"
+        original = program.read_bytes()
+        program.write_bytes(historical.read_bytes())
+        with self.assertRaisesRegex(CONSTRUCTOR.CandidateManifestError, "canonical source program"):
+            self.construct(repository, output)
+        program.write_bytes(original)
+        report_path = bundle / "artifact-report.json"
+        report = json.loads(report_path.read_bytes())
+        report["geometry"]["linear_constraints"] = 19899
+        report_path.write_bytes(CONSTRUCTOR.CHECKER.canonical_json(report))
+        with self.assertRaisesRegex(CONSTRUCTOR.CandidateManifestError, "pinned relation geometry"):
+            self.construct(repository, output)
+        self.assertFalse(output.exists())
+
+    def test_recorded_generation_revision_need_not_equal_current_head(self) -> None:
+        git_result = mock.Mock(returncode=0, stdout=(self.source_revision + "\n").encode())
+        with mock.patch.object(CONSTRUCTOR.subprocess, "run", return_value=git_result) as run:
+            self.assertEqual(CONSTRUCTOR.current_source_revision(
+                self.source_repository, self.source_revision), self.source_revision)
+        self.assertEqual(run.call_args.args[0][-1], self.source_revision + "^{commit}")
+        self.assertNotIn("HEAD", run.call_args.args[0])
+
+    def test_candidate_rejects_disagreeing_generation_revisions(self) -> None:
+        temporary, repository, root, output = self.copied_candidate()
+        self.addCleanup(temporary.cleanup)
+        report_path = root / self.fixed_manifest["proofs"][1]["directory"] / "artifact-report.json"
+        report = json.loads(report_path.read_bytes())
+        report["generation_provenance"]["source_revision"] = "ab" * 20
+        report_path.write_bytes(CONSTRUCTOR.CHECKER.canonical_json(report))
+        with self.assertRaisesRegex(CONSTRUCTOR.CandidateManifestError, "generation revisions differ"):
+            self.construct(repository, output)
 
     def test_refuses_overwrite_without_changing_existing_output(self) -> None:
         temporary, repository, _, output = self.copied_candidate()

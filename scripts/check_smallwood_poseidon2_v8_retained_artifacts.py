@@ -13,7 +13,7 @@ import stat
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, NamedTuple
 
 
 ARTIFACT_PARENT = PurePosixPath(".agent/artifacts/smallwood-poseidon2-v8")
@@ -35,6 +35,43 @@ RELATION_SHA512 = (
     "6a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3"
 )
 RELATION_DIGEST_HEX = RELATION_SHA512[:96]
+
+
+class RelationProfile(NamedTuple):
+    program_bytes: int
+    program_sha512: str
+    linear_constraints: int
+
+    @property
+    def digest_hex(self) -> str:
+        return self.program_sha512[:96]
+
+    @property
+    def geometry(self) -> dict[str, int]:
+        return {
+            "auxiliary_words": 0,
+            "constraint_degree": 8,
+            "hash_calls": 125,
+            "linear_constraints": self.linear_constraints,
+            "nonlinear_constraints": 830,
+            "packed_witness_words": 43_904,
+            "packing_factor": 64,
+            "public_words": 120,
+            "relation_balance_limbs": 7,
+            "witness_rows": 686,
+        }
+
+
+# The fixed retained pointer and all default helper calls retain the historical
+# identity. Candidate construction must select one of these exact source pins.
+HISTORICAL_RELATION_PROFILE = RelationProfile(RELATION_BYTES, RELATION_SHA512, 19_899)
+REPAIRED_RELATION_PROFILE = RelationProfile(
+    853_429,
+    "180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8"
+    "b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84",
+    19_935,
+)
+SUPPORTED_RELATION_PROFILES = (HISTORICAL_RELATION_PROFILE, REPAIRED_RELATION_PROFILE)
 GENERATOR_SOURCE = "circuits/transaction/examples/smallwood_poseidon2_v8_artifact.rs"
 GENERATOR_SOURCE_SHA512 = (
     "2500a4df3c05b6fc70fecc4e288a326627f61029d51c6bf7192b05d614300b2db"
@@ -489,7 +526,24 @@ def check_route(payload: bytes, base: int, label: str) -> None:
     require(read_u16(payload, base + 20) == ROUTE["domain_set"], f"{label}: domain")
 
 
-def parse_native_leaf(bundle: Path) -> dict[str, bytes | int]:
+def check_relation_program(
+    program: bytes,
+    relation_profile: RelationProfile = HISTORICAL_RELATION_PROFILE,
+) -> None:
+    require(relation_profile in SUPPORTED_RELATION_PROFILES,
+            "unsupported pinned relation profile")
+    require(len(program) == relation_profile.program_bytes
+            and program.startswith(RELATION_MAGIC)
+            and sha512_bytes(program) == relation_profile.program_sha512,
+            "relation program differs from the pinned exact identity")
+
+
+def parse_native_leaf(
+    bundle: Path,
+    *,
+    relation_profile: RelationProfile = HISTORICAL_RELATION_PROFILE,
+) -> dict[str, bytes | int]:
+    check_relation_program((bundle / "relation-program.bin").read_bytes(), relation_profile)
     leaf = (bundle / "native-leaf.bin").read_bytes()
     proof = (bundle / "proof.bin").read_bytes()
     statement = (bundle / "public-statement.bin").read_bytes()
@@ -509,10 +563,10 @@ def parse_native_leaf(bundle: Path) -> dict[str, bytes | int]:
     require(read_u32(leaf, 28) == NETWORK_ID, "native leaf network")
     proof_len = read_u32(leaf, 32)
     require(proof_len == len(proof), "native leaf proof length")
-    require(leaf[36:84] == bytes.fromhex(RELATION_DIGEST_HEX), "native leaf relation digest")
+    require(leaf[36:84] == bytes.fromhex(relation_profile.digest_hex), "native leaf relation digest")
     require(read_u32(leaf, 84) == len(leaf), "native leaf total length")
     require(network == NETWORK_ID.to_bytes(4, "little"), "network-id.bin")
-    require(relation_digest == bytes.fromhex(RELATION_DIGEST_HEX), "relation-digest.bin")
+    require(relation_digest == bytes.fromhex(relation_profile.digest_hex), "relation-digest.bin")
     require(len(statement) == STATEMENT_BYTES, "public statement length")
     require(len(binding) == BINDING_BYTES, "relation binding length")
     for offset in range(0, len(statement), FIELD_BYTES):
@@ -610,7 +664,9 @@ def check_report(
     generator: dict[str, Any],
     *,
     expected_source_revision: str = SOURCE_REVISION,
+    relation_profile: RelationProfile = HISTORICAL_RELATION_PROFILE,
 ) -> dict[str, Any]:
+    check_relation_program((bundle / "relation-program.bin").read_bytes(), relation_profile)
     report, _ = load_json_exact(bundle / "artifact-report.json")
     proof = native["proof"]
     leaf = native["leaf"]
@@ -627,11 +683,11 @@ def check_report(
         "inner_magic": INNER_MAGIC.decode(),
         "network_id": NETWORK_ID,
         "profile": EXPECTED_PROFILE,
-        "relation_digest_hex": RELATION_DIGEST_HEX,
+        "relation_digest_hex": relation_profile.digest_hex,
         "relation_program": {
-            "bytes": RELATION_BYTES,
+            "bytes": relation_profile.program_bytes,
             "magic": RELATION_MAGIC.decode(),
-            "sha512": RELATION_SHA512,
+            "sha512": relation_profile.program_sha512,
         },
         "semantic_relation": RELATION_NAME,
         "transport": {
@@ -639,6 +695,8 @@ def check_report(
             "rpc_envelope_magic": RPC_MAGIC.decode(),
         },
     }, f"{role}: exact identity, profile, and transport")
+    require(report.get("geometry") == relation_profile.geometry,
+            f"{role}: exact pinned relation geometry")
     sizes = report.get("bytes", {})
     expected_sizes = {
         "measured_inner_proof": len(proof),
@@ -650,7 +708,7 @@ def check_report(
         "projected_max_rpc_envelope": PROJECTED_RPC_BYTES,
         "projected_max_scale_inline_args": PROJECTED_SCALE_BYTES,
         "projected_max_pending_action": PROJECTED_PENDING_BYTES,
-        "relation_program": RELATION_BYTES,
+        "relation_program": relation_profile.program_bytes,
     }
     for key, value in expected_sizes.items():
         require(sizes.get(key) == value, f"{role}: report byte field {key}")
@@ -747,8 +805,8 @@ def check_report(
             "sha512": sha512_bytes(proof),
         },
         "relation_program": {
-            "bytes": RELATION_BYTES, "id": "relation_program", "kind": "program",
-            "path": "relation-program.bin", "sha512": RELATION_SHA512,
+            "bytes": relation_profile.program_bytes, "id": "relation_program", "kind": "program",
+            "path": "relation-program.bin", "sha512": relation_profile.program_sha512,
         },
     }, f"{role}: exact successor evidence")
     return report
@@ -760,7 +818,11 @@ def check_chain_report(
     roles: dict[str, PurePosixPath],
     manifest: dict[str, Any],
     reports: dict[str, dict[str, Any]],
+    *,
+    relation_profile: RelationProfile = HISTORICAL_RELATION_PROFILE,
 ) -> dict[str, Any]:
+    require(relation_profile in SUPPORTED_RELATION_PROFILES,
+            "unsupported pinned relation profile")
     chain_record = manifest.get("chain_verification", {})
     require(chain_record.get("path") == "retained-chain-verification.json",
             "chain report path")
@@ -773,7 +835,8 @@ def check_chain_report(
     require(chain.get("schema") == CHAIN_SCHEMA, "chain report schema")
     require(chain.get("semantic_relation") == RELATION_NAME, "chain semantic relation")
     require(chain.get("relation_program_magic") == RELATION_MAGIC.decode(), "chain relation magic")
-    require(chain.get("relation_program_sha512") == RELATION_SHA512, "chain relation hash")
+    require(chain.get("relation_program_sha512") == relation_profile.program_sha512,
+            "chain relation hash")
     require(chain.get("production_capability_enabled") is False,
             "chain report incorrectly enables production")
     require(chain.get("fixture_group") == EXPECTED_FIXTURE["fixture_group"],
@@ -833,7 +896,12 @@ def run_frozen_verifiers(
     proof_records: list[dict[str, Any]],
     chain_report: dict[str, Any],
     repository_root: Path,
+    *,
+    relation_profile: RelationProfile = HISTORICAL_RELATION_PROFILE,
+    expected_generation_provenance: dict[str, dict[str, Any]] | None = None,
 ) -> None:
+    require(relation_profile in SUPPORTED_RELATION_PROFILES,
+            "unsupported pinned relation profile")
     by_role = {record["artifact_role"]: record for record in proof_records}
     primary_argument = str(artifact_root / roles[ROLE_ORDER[0]])
     independent_argument = str(artifact_root / roles[ROLE_ORDER[1]])
@@ -861,10 +929,14 @@ def run_frozen_verifiers(
                     f"{generator_path}: verifier canonical fixture")
             require(verification.get("semantic_relation") == RELATION_NAME,
                     f"{generator_path}: verifier semantic relation")
-            require(verification.get("relation_program_sha512") == RELATION_SHA512,
+            require(verification.get("relation_program_sha512") == relation_profile.program_sha512,
                     f"{generator_path}: verifier relation program")
             require(verification.get("consensus_tuple") == ROUTE,
                     f"{generator_path}: verifier route")
+            if expected_generation_provenance is not None:
+                require(verification.get("generation_provenance")
+                        == expected_generation_provenance[role],
+                        f"{generator_path}: verifier generation provenance")
             for field in ("source_factory_verified", "canonical_transport_verified",
                           "canonical_pending_action_verified", "hash_manifest_verified"):
                 require(verification.get(field) is True,

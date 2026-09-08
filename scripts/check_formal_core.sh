@@ -976,7 +976,7 @@ HEGEMON_LEAN_PRIVATE_MULTISIG_ACCUMULATOR_VECTORS="$LEAN_PRIVATE_MULTISIG_ACCUMU
 HEGEMON_LEAN_SMALLWOOD_TRANSCRIPT_BINDING_VECTORS="$LEAN_SMALLWOOD_TRANSCRIPT_BINDING_VECTORS" \
   run_exact_lib_test \
     transaction-circuit \
-    smallwood_frontend::tests::lean_generated_smallwood_transcript_binding_vectors_match_production
+    smallwood_frontend::tests::lean_generated_legacy_level5_transcript_binding_vectors_match_runtime_codec
 HEGEMON_LEAN_SMALLWOOD_PUBLIC_STATEMENT_BINDING_VECTORS="$LEAN_SMALLWOOD_PUBLIC_STATEMENT_BINDING_VECTORS" \
   cargo test -p transaction-circuit --test smallwood_public_statement_binding lean_generated_smallwood_public_statement_binding_vectors_match_production -- --nocapture
 HEGEMON_LEAN_SMALLWOOD_VERIFIER_STATEMENT_PROJECTION_VECTORS="$LEAN_SMALLWOOD_VERIFIER_STATEMENT_PROJECTION_VECTORS" \

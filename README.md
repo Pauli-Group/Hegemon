@@ -20,7 +20,7 @@ HGN is a shielded-only monetary protocol built for a quantum-adversarial future.
 The HGN protocol consists of four tightly-coupled subsystems:
 
 1. **Shielded pool and cryptography (`crypto/`, `circuits/`, `wallet/`)** – The pool is modeled as a sparse Merkle accumulator proven via STARKs. ML-DSA/SLH-DSA signature primitives, ML-KEM key encapsulation, and hash-based commitments (Blake3/SHA3, no Pedersen or ECC) underpin the spend authorization flow. Notes transition between states through the circuits defined in `circuits/`, and users interface with them via the wallet note-management APIs.
-2. **Consensus and networking (`consensus/`, `network/`)** - A PoW protocol seals ordered shielded transactions. Every admitted shielded transaction must be a self-contained proof-carrying object: the wallet creates it, peers validate it before relay, miners include the same canonical proof bytes, and a fresh node revalidates them from the block without a block producer, sidecar, aggregate, receipt, or cache standing in for transaction validity. The production direction is the compact SmallWood engine with the repaired Poseidon2 V8 transaction relation in the HGV8RP03 format lineage and the SMZ9 proof profile. Only the historical pre-repair proofs and positive action-11 coinbase lifecycle pass their retained in-process fixture; no proof or lifecycle receipt is retained for the current repaired relation digest. The route remains disabled until fresh repaired-digest evidence, complete adaptive zero knowledge, composed post-quantum security, remaining implementation refinement, independent review, and hermetic release authorization all pass.
+2. **Consensus and networking (`consensus/`, `network/`)** - A PoW protocol seals ordered shielded transactions. Every admitted shielded transaction must be a self-contained proof-carrying object: the wallet creates it, peers validate it before relay, miners include the same canonical proof bytes, and a fresh node revalidates them from the block without a block producer, sidecar, aggregate, receipt, or cache standing in for transaction validity. The production direction is the compact SmallWood engine with the repaired Poseidon2 V8 transaction relation in the HGV8RP03 format lineage and the SMZ9 proof profile. Two repaired-relation proofs and a positive in-process lifecycle are retained for a historical source snapshot; final-snapshot regeneration and actual socket/process carrier verification remain pending. The route remains disabled until fresh repaired-digest evidence, complete adaptive zero knowledge, composed post-quantum security, remaining implementation refinement, independent review, and hermetic release authorization all pass.
 3. **State and execution (`node/src/native`, `state/`, `protocol/`)** – Mining nodes maintain native on-disk state, aggregate optional miner tips into the shielded coinbase path, replay higher-work side branches into canonical sled indexes, and expose programmable hooks for sidecar applications. The `protocol/` crate codifies transaction formats, serialization, tx-artifact envelopes, and block-artifact verification limits.
 4. **Protocol release artifacts and runbooks (`governance/`, `runbooks/`)** – Version schedules define supported proof bindings, issuance parameters, and emergency upgrade paths. Operational runbooks document incident response, upgrade ceremonies, and miner-facing procedures; see [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) for the end-to-end node + wallet pairing walkthrough referenced throughout this whitepaper.
 
@@ -78,7 +78,7 @@ current-source release evidence. No retained manifest was silently repinned.
 
 Protocol releases roll new bindings through the off-chain release-coordination flow documented in `governance/VERSIONING.md`: authors publish a `VersionProposal`, operators stage verifying keys and commitment-proof parameters, and each adopted release line ships the resulting `VersionSchedule` inside the canonical protocol manifest. Proposals can include `UpgradeDirective`s that mandate a dedicated migration circuit, and both the base binding and upgrade circuit appear in the block’s `version_commitment` so operators can measure uptake via the per-block version counts. The consensus crate enforces these policies by matching each observed binding against the live schedule, surfacing errors for unsanctioned bindings, and honoring retirement heights so deprecated circuits fall out automatically.
 
-Operational touchpoints anchor the theory to daily practice. The measured v4 SMZ9 artifacts are height-zero-only, synthetic-anchor rehearsal evidence. The current repaired relation preserves the disabled-mode parent height and stablecoin root, and the native source capability binds the canonical empty note-tree genesis root. The two retained source-inventory-binding v5 proofs belong to the historical 852,305-byte HGV8RP03-format program at SHA-512 `8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e46a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3`; they pass exact carrier readback, cryptographic verification, and the in-process positive-value restart, reorganization, and fresh announced-block-import lifecycle for that pre-repair snapshot only. They neither verify nor bind the current 853,429-byte program, and no repaired-digest retained proof or lifecycle receipt exists. HTTP, peer-socket, and locator/body-chunk synchronization remain external transport tests. During an emergency swap, `runbooks/emergency_version_swap.md` walks operators through the version proposal and retirement process. Earlier SmallWood encodings and all standalone Binius, M4, and Flock profiles are historical or research-only. Moving proof bytes to a miner cache, aggregate, receipt, or sidecar does not satisfy the self-contained validity rule.
+Operational touchpoints anchor the theory to daily practice. The measured v4 SMZ9 artifacts are height-zero-only, synthetic-anchor rehearsal evidence. The current repaired relation preserves the disabled-mode parent height and stablecoin root, and the native source capability binds the canonical empty note-tree genesis root. The two retained source-inventory-binding v5 proofs belong to the historical 852,305-byte HGV8RP03-format program at SHA-512 `8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e46a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3`; they pass exact carrier readback, cryptographic verification, and the in-process positive-value restart, reorganization, and fresh announced-block-import lifecycle for that pre-repair snapshot only. They neither verify nor bind the current 853,429-byte program. A separate repaired-digest pair and in-process lifecycle are retained for the historical `b1e5c143f7abf052` source snapshot, not the current source inventory. HTTP, peer-socket, and locator/body-chunk synchronization remain external transport tests. During an emergency swap, `runbooks/emergency_version_swap.md` walks operators through the version proposal and retirement process. Earlier SmallWood encodings and all standalone Binius, M4, and Flock profiles are historical or research-only. Moving proof bytes to a miner cache, aggregate, receipt, or sidecar does not satisfy the self-contained validity rule.
 
 #### Shielded transactions and PQ cryptography
 
@@ -146,9 +146,11 @@ SHA-512
 `8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e46a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3`.
 Their manifest and positive in-process wallet-to-fresh-import lifecycle establish
 canonical-byte preservation and source-verifier replay for that snapshot only;
-they do not verify or bind the current relation. No current repaired-digest proof
-or lifecycle receipt exists, and neither historical evidence nor the active
-calculation supplies production authority or live-network transport coverage.
+they do not verify or bind the current relation. A separate pair of 122,735-byte
+repaired-digest proofs and an in-process lifecycle exist for the historical
+`b1e5c143f7abf052` source snapshot. Final-snapshot regeneration and actual
+socket/process carrier verification are pending; none of this evidence
+supplies production authority or live-network transport coverage.
 
 The frozen source-security report is 136,119 bytes with SHA-512
 `087fd1f3dc04f653b6d380f104467842c1b4b42b7ba0fabfbe75220f3664f0e870b80f92bda748b571cce3768b0386cf870a5586f92d0547e780518b2e04a881`.
@@ -201,8 +203,14 @@ Rust extraction and an in-Lean RFC 7693 BLAKE2b-384 implementation remain.
 Lean now proves the complete structural validity of the exact current
 853,429-byte program using the HGV8RP03 format magic, including every expression
 reference and all 20,605 indexed linear attempts.
-Exact Lean encoding and hash binding to the binary, and the complete typed
-transaction semantics, remain separate requirements.
+The research theorem now derives the complete unchanged typed transaction
+semantics from canonical public admission and arbitrary acceptance of this
+packed program, including every authorization mode and enabled stable operation
+([exact endpoint](docs/crypto/smz9-campaign/packed-semantic-endpoint.md)).
+Exact encoding/hash binding, Rust execution refinement, reverse typed-lowering
+completeness, and extraction from accepted proof bytes remain separate
+requirements. This one-way semantic result does not establish privacy or
+knowledge soundness.
 An inactive, unselected q20/56 `SMC8` size candidate measured 119,767 inner
 proof bytes and 125,201 bytes for a two-output action, with source ceilings of
 119,879 and 125,313 bytes. It saves 2,984 bytes at the source worst case while

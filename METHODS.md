@@ -422,8 +422,11 @@ and carrier bytes remain regression fixtures, but the inventory is not a
 current-source release receipt and has not been repinned. The retained checker
 is bound to the 852,305-byte program at SHA-512
 `8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e46a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3`;
-it neither verifies nor binds the current repaired program, and no retained
-proof or lifecycle receipt exists for the current relation id.
+it neither verifies nor binds the current repaired program. A separate pair of
+122,735-byte repaired-digest proofs and an in-process lifecycle are retained
+for the historical `b1e5c143f7abf052` source snapshot. Their source inventory is
+not current; final-snapshot regeneration and actual socket/process verification
+remain pending.
 
 The wallet method `prove_verify_and_submit_poseidon2_v8` moves the typed witness into a blocking proof task, uses the source compiler, independently runs the source verifier, checks the exact program id and network, reads the unchanged proof back from the constructed leaf, and enforces the 128,297-byte maximum-shape inline-argument projection before RPC. The canonical node codec separately checks the exact 225-byte outer carrier and 128,522-byte full `PendingAction` projection against the 131,297-byte V8 route cap. The outer legacy 48-byte nullifier list is empty; the node derives the two seven-limb nullifiers from the exact public statement. Native admission decodes the same HGV8TX02 bytes at the actual height, verifies the SMZ9 proof through the source-owned factory, and projects no V8 state into historical 48-byte trees. The typed seven-limb state store applies and replays verified leaves in block-carried order, chaining the evolving root and rejecting duplicate nullifiers. The pending-chain planner consumes source-verifier-returned transitions, counts each full canonical outer carrier, and exact-checks block order. The source-owned runtime ceiling is 512 V8 actions, with independent per-record and 64 MiB aggregate byte limits. At one stablecoin root, verified `DisabledNoWrite` transitions are ordered by canonical action id before at most one `Mint` or `Burn` transition advances the root; cycle detection follows only advancing transitions. The typed block verifier snapshots the canonical parent note-root history before applying any action, so no action may anchor to an output created earlier in the same block. Mempool state advance and reorg discard tip-bound V8 entries, requiring source verification and deterministic replanning on rebroadcast. The byte-only pre-block-overhead screen fits 522 complete canonical `PendingAction` records, but the shared runtime limit is 512; neither value is a proof-history or soundness-union bound. Peer fork verification constructs a read-only detach/attach plan from the durable common ancestor, canonical reorg commits the verified typed plan in the same sled transaction as the block pointer, and restart verifies the canonical chain from genesis in scratch state before exact durable-row reconciliation. Existing and orphaned V8 pending entries are discarded on a tip change and must be source-verified again on rebroadcast. One historical-DA ownership predicate limits ciphertext-index, archive, staged-sidecar removal, and DA-count effects to legacy transfers and coinbase, so a colliding V8 inline ciphertext hash cannot consume a staged legacy blob. The source capability registry remains empty, so wallet, RPC, mempool, relay, mining, block, restart, sync, and reorg authority all fail closed. No host check, cache, sidecar, receipt, historical wrapper, or caller-provided context can substitute for the source capability. The narrow transport tests still establish only canonical construction, and the scripted state tests still establish only state-machine behavior. The retained source-verifier lifecycle test named above additionally starts from the two exact action-11 coinbase notes, verifies both separately randomized spend proofs, uses the actual wallet JSON request builder and native RPC admission, traverses peer route authority and the relayed-mempool API, mines and persists both spend branches, imports and detaches them, restarts, and checks unchanged proof bytes and digests on fresh announced-block import. This inhabits the positive in-process retained-fixture integration receipt for its historical snapshot. HTTP and peer sockets plus locator/action-body-chunk synchronization are not part of that test. It does not enable the capability or create a production authorization receipt; actions 10 and 11 remain fail closed until the reviewed security, refinement, and release gates pass.
 
@@ -1544,3 +1547,29 @@ change the generated status to true only after source refinement for the fixed p
 an exact decoder for arbitrary accepted packed assignments, and all five Lean refinement
 obligations are inhabited; consensus context and exact inline ciphertext checks remain separate
 required conjuncts.
+
+The arbitrary-packed forward theorem is now checked separately in the isolated research
+package: run `bash scripts/check_formal_crypto.sh` from the repository root. Its credited
+`V8Smz9ExactSemanticEndpoint.admitted_packed_project_typed_exact_semantics` root derives
+all five unchanged relation conjuncts for the total typed source projection from canonical
+public admission and actual generated-program acceptance. This covers arbitrary satisfying
+assignments, not only the finite lowering fixtures. The full-action wrapper additionally
+requires the actual context and inline-ciphertext matches. The
+[endpoint dossier](docs/crypto/smz9-campaign/packed-semantic-endpoint.md) records the
+dependency closure and exact premise boundary. Keep the generated production status fields
+unchanged until the complete receipt is constructed: the forward result does not prove
+reverse lowerer completeness, Rust execution, or proof-byte extraction. The separate
+[source-refinement obligations](docs/crypto/smz9-campaign/rust-source-refinement-obligations.md)
+pin the reviewed implementation seams without claiming an operational proof.
+
+The same isolated gate now checks the full modeled source-lifetime privacy composition.
+`V8Smz9SourceLifetimePrivacy.actual_source_to_public_simulator_bound` derives the three
+losses from the actual request factory, its complete byte/error future, and a direct
+public-policy simulator. `actual_two_witness_lifetime_bound` requires the same complete
+public control-flow erasure and common initial state; witnesses may differ per request.
+Each request charges `16,790,291` queries plus its future, including fixed writes.
+At analysis indices `q <= 2^65`, `r <= 2^21`, the single-witness bound is `2^-167` and
+the two-witness bound is strictly below `2^-128`, conditional on the explicit universal
+external reprogramming theorem. Preserve the separate concrete hash/RNG, source/binary,
+approved-lifetime and production-authorization boundaries in the
+[privacy dossier](docs/crypto/smz9-campaign/privacy-endpoint-completion.md).

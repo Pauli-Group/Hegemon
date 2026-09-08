@@ -253,7 +253,7 @@ EOF
       ;;
     smallwood-lean-spec-hardening)
       cat <<'EOF'
-cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::lean_generated_smallwood_transcript_binding_vectors_match_production --nocapture
+cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::lean_generated_legacy_level5_transcript_binding_vectors_match_runtime_codec --nocapture
 cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::smallwood_active_profile_is_no_grinding_and_pow_bits_are_transcript_bound --nocapture
 cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth --nocapture
 cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::packed_smallwood_inline_merkle_rejects_active_input_note_value_and_commitment_mutation --nocapture

@@ -361,8 +361,9 @@ pub(crate) struct Poseidon2V8ProductionBinding {
 // Retained lifecycle tests must exercise the production routing and verifier
 // code while the release capability remains deliberately absent. Keep that
 // authority local to the current test thread: parallel tests cannot observe
-// it, a thread hop loses it and therefore fails closed, and none of this code
-// is present in a production binary.
+// it and a thread hop normally fails closed. The separately admitted exact
+// retained socket child has a feature-and-test-gated process scope below;
+// neither exceptional path is present in a production binary.
 #[cfg(test)]
 std::thread_local! {
     static POSEIDON2_V8_TEST_BINDING: std::cell::Cell<Option<Poseidon2V8ProductionBinding>> =
@@ -437,10 +438,640 @@ pub(crate) fn poseidon2_v8_test_coinbase() -> Option<PendingAction> {
 }
 
 #[cfg(test)]
+fn poseidon2_v8_test_binding() -> Option<Poseidon2V8ProductionBinding> {
+    let local = POSEIDON2_V8_TEST_BINDING.with(|slot| slot.get());
+    #[cfg(feature = "poseidon2-v8-retained-test-support")]
+    {
+        local.or_else(|| {
+            POSEIDON2_V8_PROCESS_TEST_BINDING
+                .lock()
+                .ok()
+                .and_then(|slot| *slot)
+        })
+    }
+    #[cfg(not(feature = "poseidon2-v8-retained-test-support"))]
+    {
+        local
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn poseidon2_v8_test_binding_at(height: u64) -> Option<Poseidon2V8ProductionBinding> {
-    POSEIDON2_V8_TEST_BINDING
-        .with(|slot| slot.get())
-        .filter(|binding| binding.active_at(height))
+    poseidon2_v8_test_binding().filter(|binding| binding.active_at(height))
+}
+
+/// This slot is available only in a library-test executable that also opted
+/// into retained-fixture support. Its sole installer validates the actual child
+/// selector, isolated configuration and live manifest before publishing it.
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+static POSEIDON2_V8_PROCESS_TEST_BINDING: std::sync::Mutex<Option<Poseidon2V8ProductionBinding>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+const RETAINED_CARRIER_CHILD_TEST_NAME: &str =
+    "native::poseidon2_v8_verifier::tests::retained_rp03_socket_child";
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+pub(crate) struct Poseidon2V8ProcessTestBindingGuard {
+    _not_send: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+impl Drop for Poseidon2V8ProcessTestBindingGuard {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = POSEIDON2_V8_PROCESS_TEST_BINDING.lock() {
+            *slot = None;
+        }
+    }
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+fn retained_carrier_lower_hex(value: &str, length: usize) -> bool {
+    value.len() == length
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Pure admission checks are split out so negative controls do not need a
+/// retained proof or ever install process authority.
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+fn validate_retained_carrier_process_request(
+    config: &super::NativeConfig,
+    arguments: &[String],
+    marker: Option<&str>,
+    session: &str,
+    manifest_sha512: &str,
+) -> Result<(), String> {
+    let expected = [
+        "--ignored",
+        "--exact",
+        RETAINED_CARRIER_CHILD_TEST_NAME,
+        "--nocapture",
+        "--test-threads=1",
+    ];
+    if arguments.iter().map(String::as_str).collect::<Vec<_>>() != expected {
+        return Err("retained carrier authority requires the one exact ignored child test".into());
+    }
+    if !retained_carrier_lower_hex(session, 32) || marker != Some(session) {
+        return Err("retained carrier child session marker is absent or mismatched".into());
+    }
+    if !retained_carrier_lower_hex(manifest_sha512, 128)
+        || manifest_sha512.bytes().all(|byte| byte == b'0')
+    {
+        return Err("retained carrier manifest SHA-512 must be exact nonzero lowercase hex".into());
+    }
+    if !config.dev
+        || config.tmp
+        || config.mine
+        || config.mine_threads != 1
+        || config.bootstrap_mining_authoring
+        || config.miner_address.is_some()
+        || config.pow_bits != 0x207f_ffff
+        || !(1..=4).contains(&config.max_peers)
+    {
+        return Err(
+            "retained carrier requires isolated non-mining development configuration".into(),
+        );
+    }
+    if !config.rpc_addr.ip().is_loopback()
+        || config.rpc_external
+        || config.rpc_cors.is_some()
+        || config.rpc_methods != "unsafe"
+    {
+        return Err("retained carrier RPC must be explicit trusted numeric loopback".into());
+    }
+    let listen = config
+        .p2p_listen_addr
+        .parse::<std::net::SocketAddr>()
+        .map_err(|_| "retained carrier P2P listener must be a numeric socket address")?;
+    if !listen.ip().is_loopback() || listen.port() == 0 {
+        return Err("retained carrier P2P listener must have a fixed loopback port".into());
+    }
+    for seed in &config.seeds {
+        let seed = seed
+            .parse::<std::net::SocketAddr>()
+            .map_err(|_| "retained carrier seed must be a numeric socket address")?;
+        if !seed.ip().is_loopback() || seed.port() == 0 {
+            return Err("retained carrier seed must have a fixed loopback port".into());
+        }
+    }
+    let base = config
+        .base_path
+        .canonicalize()
+        .map_err(|error| format!("canonicalize retained child base: {error}"))?;
+    let temporary = std::env::temp_dir()
+        .canonicalize()
+        .map_err(|error| format!("canonicalize system temporary directory: {error}"))?;
+    let private_tmp = std::path::Path::new("/private/tmp");
+    let temporary_child = base != temporary && base.starts_with(&temporary);
+    let private_tmp_child =
+        private_tmp.exists() && base != private_tmp && base.starts_with(private_tmp);
+    if !config.base_path.is_absolute()
+        || base != config.base_path
+        || (!temporary_child && !private_tmp_child)
+        || config.db_path != base.join("native-chain.sled")
+    {
+        return Err(
+            "retained carrier storage must be one canonical temporary child directory".into(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+fn retained_carrier_manifest_path(
+    workspace: &std::path::Path,
+    relative: &str,
+) -> Result<std::path::PathBuf, String> {
+    let path = std::path::Path::new(relative);
+    let parent = std::path::Path::new(".agent/artifacts/smallwood-poseidon2-v8");
+    if path.is_absolute()
+        || path.parent() != Some(parent)
+        || !path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+        || path.components().collect::<std::path::PathBuf>().to_str() != Some(relative)
+    {
+        return Err("retained carrier manifest must be a canonical candidate child path".into());
+    }
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    if !filename.starts_with("retained-artifact-manifest.candidate") || !filename.ends_with(".json")
+    {
+        return Err("retained carrier requires an explicitly named candidate JSON manifest".into());
+    }
+    let mut current = workspace.to_path_buf();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        let metadata = std::fs::symlink_metadata(&current)
+            .map_err(|error| format!("inspect retained manifest path: {error}"))?;
+        if metadata.file_type().is_symlink() {
+            return Err("retained carrier manifest path must not contain a symlink".into());
+        }
+    }
+    if !current
+        .metadata()
+        .map_err(|error| format!("inspect retained manifest: {error}"))?
+        .is_file()
+        || current
+            .canonicalize()
+            .map_err(|error| format!("canonicalize retained manifest: {error}"))?
+            != current
+    {
+        return Err("retained carrier manifest must be an exact canonical regular file".into());
+    }
+    Ok(current)
+}
+
+/// There is deliberately no Boolean or environment-receipt shortcut for live
+/// source verification. The existing checker policy recomputes the complete
+/// source inventory, including these test sources, before the slot is installed.
+/// Full frozen-native verifier execution is a separate coordinator pre/post gate.
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+pub(crate) fn install_poseidon2_v8_process_test_binding(
+    binding: Poseidon2V8ProductionBinding,
+    config: &super::NativeConfig,
+    candidate_manifest_relative: &str,
+    expected_manifest_sha512: &str,
+    session: &str,
+) -> Result<Poseidon2V8ProcessTestBindingGuard, String> {
+    let arguments = std::env::args_os()
+        .skip(1)
+        .map(|argument| {
+            argument
+                .into_string()
+                .map_err(|_| "retained child arguments must be UTF-8".to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let marker = std::env::var("HEGEMON_TEST_RETAINED_SMZ9_CHILD_SESSION").ok();
+    validate_retained_carrier_process_request(
+        config,
+        &arguments,
+        marker.as_deref(),
+        session,
+        expected_manifest_sha512,
+    )?;
+    for name in ["HEGEMON_PQ_IDENTITY_SEED", "HEGEMON_PQ_IDENTITY_SEED_PATH"] {
+        if std::env::var_os(name).is_some() {
+            return Err(format!(
+                "retained carrier identity must use its isolated persisted path, not {name}"
+            ));
+        }
+    }
+    if protocol_versioning::smallwood_poseidon2_production_capability().is_some() {
+        return Err("retained child must not run with an activated production capability".into());
+    }
+    if POSEIDON2_V8_PROCESS_TEST_BINDING
+        .lock()
+        .map_err(|_| "retained process authority lock is poisoned")?
+        .is_some()
+    {
+        return Err("retained process authority does not allow nested installation".into());
+    }
+    if binding.activation_genesis_hash()
+        != super::genesis_meta(config.pow_bits)
+            .map_err(|error| format!("retained child genesis: {error}"))?
+            .hash
+    {
+        return Err("retained process authority must bind this exact development genesis".into());
+    }
+    retained_carrier_verify_live_manifest(
+        candidate_manifest_relative,
+        expected_manifest_sha512,
+        &config.base_path,
+    )?;
+    let mut slot = POSEIDON2_V8_PROCESS_TEST_BINDING
+        .lock()
+        .map_err(|_| "retained process authority lock is poisoned")?;
+    if slot.is_some() {
+        return Err("retained process authority was concurrently installed".into());
+    }
+    *slot = Some(binding);
+    Ok(Poseidon2V8ProcessTestBindingGuard {
+        _not_send: std::marker::PhantomData,
+    })
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+const RETAINED_CARRIER_CHECKER_SOURCE: &[u8] =
+    include_bytes!("../../../scripts/check_smallwood_poseidon2_v8_retained_artifacts.py");
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+const RETAINED_CARRIER_POLICY_SOURCE: &[u8] =
+    include_bytes!("../../../scripts/check_transaction_proof_successor_authorization.py");
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+fn retained_carrier_inventory_sources_match(checker: &[u8], policy: &[u8]) -> bool {
+    checker == RETAINED_CARRIER_CHECKER_SOURCE && policy == RETAINED_CARRIER_POLICY_SOURCE
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+pub(crate) fn retained_carrier_inventory_tool_pins() -> serde_json::Value {
+    use sha2::Digest;
+    serde_json::json!({
+        "checker": {
+            "path": "scripts/check_smallwood_poseidon2_v8_retained_artifacts.py",
+            "bytes": RETAINED_CARRIER_CHECKER_SOURCE.len(),
+            "sha512": hex::encode(sha2::Sha512::digest(RETAINED_CARRIER_CHECKER_SOURCE)),
+        },
+        "policy": {
+            "path": "scripts/check_transaction_proof_successor_authorization.py",
+            "bytes": RETAINED_CARRIER_POLICY_SOURCE.len(),
+            "sha512": hex::encode(sha2::Sha512::digest(RETAINED_CARRIER_POLICY_SOURCE)),
+        },
+    })
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+pub(crate) fn retained_carrier_new_process_group(
+    command: &mut std::process::Command,
+) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = command;
+        Err("retained process carriers require Unix process-group containment".into())
+    }
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+pub(crate) fn retained_carrier_confirm_process_group(pid: u32) -> Result<u32, String> {
+    use std::io::Read;
+    if pid <= 1 || pid == std::process::id() {
+        return Err("retained process group must name a newly owned child PID".into());
+    }
+    let mut inspector = std::process::Command::new("/bin/ps")
+        .args(["-o", "pgid=", "-p", &pid.to_string()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|error| format!("inspect owned process group: {error}"))?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let status = loop {
+        match inspector.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            outcome => {
+                let _ = inspector.kill();
+                let _ = inspector.wait();
+                return Err(format!(
+                    "owned process-group inspection failed: {outcome:?}"
+                ));
+            }
+        }
+    };
+    let mut output = String::new();
+    inspector
+        .stdout
+        .take()
+        .ok_or("process-group inspection omitted stdout")?
+        .take(128)
+        .read_to_string(&mut output)
+        .map_err(|error| format!("read owned process group: {error}"))?;
+    let group = output
+        .trim()
+        .parse::<u32>()
+        .map_err(|error| format!("parse owned process group: {error}"))?;
+    if !status.success() || group != pid {
+        return Err("owned child did not enter a new process group matching its PID".into());
+    }
+    Ok(group)
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+pub(crate) fn retained_carrier_kill_process_group(
+    pid: u32,
+    confirmed_group: u32,
+) -> Result<(), String> {
+    if pid <= 1 || pid == std::process::id() || confirmed_group != pid {
+        return Err("refusing to signal an unconfirmed or inherited process group".into());
+    }
+    let mut signal = std::process::Command::new("/bin/kill")
+        .args(["-KILL", "--", &format!("-{confirmed_group}")])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|error| format!("signal owned process group: {error}"))?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match signal.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => return Err(format!("owned process-group signal failed: {status}")),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            outcome => {
+                let _ = signal.kill();
+                let _ = signal.wait();
+                return Err(format!(
+                    "owned process-group signal did not finish: {outcome:?}"
+                ));
+            }
+        }
+    }
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+struct RetainedCarrierPreflightProcess {
+    child: std::process::Child,
+    confirmed_group: Option<u32>,
+    finished: bool,
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+impl Drop for RetainedCarrierPreflightProcess {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        if let Some(group) = self.confirmed_group {
+            let _ = retained_carrier_kill_process_group(self.child.id(), group);
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+pub(crate) fn retained_carrier_verify_live_manifest(
+    candidate_manifest_relative: &str,
+    expected_manifest_sha512: &str,
+    log_directory: &std::path::Path,
+) -> Result<(), String> {
+    use sha2::Digest;
+    use std::io::{Read, Write};
+
+    if !retained_carrier_lower_hex(expected_manifest_sha512, 128)
+        || expected_manifest_sha512.bytes().all(|byte| byte == b'0')
+    {
+        return Err("retained carrier manifest SHA-512 must be exact nonzero lowercase hex".into());
+    }
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("node crate must have a workspace parent")?
+        .canonicalize()
+        .map_err(|error| format!("canonicalize retained workspace: {error}"))?;
+    let manifest_path = retained_carrier_manifest_path(&workspace, candidate_manifest_relative)?;
+    let checker_source =
+        std::fs::read(workspace.join("scripts/check_smallwood_poseidon2_v8_retained_artifacts.py"))
+            .map_err(|error| format!("read pinned inventory checker: {error}"))?;
+    let policy_source =
+        std::fs::read(workspace.join("scripts/check_transaction_proof_successor_authorization.py"))
+            .map_err(|error| format!("read pinned inventory policy: {error}"))?;
+    if !retained_carrier_inventory_sources_match(&checker_source, &policy_source) {
+        return Err("live inventory checker/policy differs from compile-pinned source".into());
+    }
+    let inventory_tool_pins = retained_carrier_inventory_tool_pins();
+    let manifest_bytes = std::fs::read(&manifest_path)
+        .map_err(|error| format!("read retained candidate manifest: {error}"))?;
+    if hex::encode(sha2::Sha512::digest(&manifest_bytes)) != expected_manifest_sha512 {
+        return Err("retained candidate manifest SHA-512 does not match the explicit pin".into());
+    }
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)
+        .map_err(|error| format!("decode retained candidate manifest: {error}"))?;
+    let artifact_root = manifest["artifact_root"]
+        .as_str()
+        .ok_or("retained candidate manifest omits artifact_root")?;
+    let artifact_path = std::path::Path::new(artifact_root);
+    if artifact_path.parent()
+        != Some(std::path::Path::new(
+            ".agent/artifacts/smallwood-poseidon2-v8",
+        ))
+        || !artifact_path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err("retained artifact root is outside its exact local parent".into());
+    }
+    static PREFLIGHT_LOG_SEQUENCE: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
+    let sequence = PREFLIGHT_LOG_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let log_path = log_directory.join(format!(
+        "retained-source-preflight-{}-{sequence}.log",
+        std::process::id()
+    ));
+    let output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&log_path)
+        .map_err(|error| format!("create retained source preflight log: {error}"))?;
+    let error_output = output
+        .try_clone()
+        .map_err(|error| format!("clone retained preflight log: {error}"))?;
+    // This imports the existing inventory policy, but never invokes a native
+    // retained verifier. The coordinator runs the full constructor separately.
+    // Cargo metadata subprocesses remain inside a validated owned group.
+    const INVENTORY_PREFLIGHT: &str = r#"
+import hashlib, json, os, pathlib, sys, types
+if sys.stdin.readline(128) != "RETAINED_INVENTORY_START\n":
+    raise RuntimeError("missing private inventory startup gate")
+root, relative, expected_sha, owner = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3], int(sys.argv[4])
+checker_sha, policy_sha = sys.argv[5], sys.argv[6]
+if os.getpgrp() != (owner or os.getpid()):
+    raise RuntimeError("inventory process is outside its owned process group")
+checker_path = root / "scripts/check_smallwood_poseidon2_v8_retained_artifacts.py"
+policy_path = root / "scripts/check_transaction_proof_successor_authorization.py"
+checker_raw, policy_raw = checker_path.read_bytes(), policy_path.read_bytes()
+if hashlib.sha512(checker_raw).hexdigest() != checker_sha or hashlib.sha512(policy_raw).hexdigest() != policy_sha:
+    raise RuntimeError("inventory Python source differs from compile-pinned bytes")
+def pinned_module(name, path, raw):
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    sys.modules[name] = module
+    exec(compile(raw, str(path), "exec"), module.__dict__)
+    return module
+checker = pinned_module("retained_inventory_checker", checker_path, checker_raw)
+policy = pinned_module("retained_inventory_policy", policy_path, policy_raw)
+manifest_path = root / relative
+manifest, raw = checker.load_json_exact(manifest_path, canonical=True)
+checker.require(hashlib.sha512(raw).hexdigest() == expected_sha, "inventory manifest SHA512 mismatch")
+before = policy.recompute_retained_proof_source_inventory(root)
+summary = {key: before[key] for key in ("schema", "file_count", "root_sha512", "total_bytes")}
+checker.require(manifest["source_inventory"] == summary, "manifest differs from live source inventory")
+after = policy.recompute_retained_proof_source_inventory(root)
+checker.require(after == before, "source inventory changed during preflight")
+checker.require(manifest_path.read_bytes() == raw, "manifest changed during inventory preflight")
+checker.require(checker_path.read_bytes() == checker_raw and policy_path.read_bytes() == policy_raw, "inventory tooling changed during preflight")
+print(json.dumps({"schema": "hegemon.retained-smz9.inventory-preflight-v1", "source_inventory": summary, "native_verifiers_executed": False, "inventory_tool_pins": {"checker": {"path": str(checker_path.relative_to(root)), "bytes": len(checker_raw), "sha512": checker_sha}, "policy": {"path": str(policy_path.relative_to(root)), "bytes": len(policy_raw), "sha512": policy_sha}}}, sort_keys=True))
+"#;
+    let child_selector = std::env::args().skip(1).collect::<Vec<_>>()
+        == [
+            "--ignored",
+            "--exact",
+            RETAINED_CARRIER_CHILD_TEST_NAME,
+            "--nocapture",
+            "--test-threads=1",
+        ];
+    let group_owner = if child_selector {
+        std::process::id()
+    } else {
+        0
+    };
+    let mut command = std::process::Command::new("python3");
+    command
+        .current_dir(&workspace)
+        .arg("-I")
+        .arg("-B")
+        .arg("-c")
+        .arg(INVENTORY_PREFLIGHT)
+        .arg(&workspace)
+        .arg(candidate_manifest_relative)
+        .arg(expected_manifest_sha512)
+        .arg(group_owner.to_string())
+        .arg(
+            inventory_tool_pins["checker"]["sha512"]
+                .as_str()
+                .ok_or("compiled checker pin is absent")?,
+        )
+        .arg(
+            inventory_tool_pins["policy"]["sha512"]
+                .as_str()
+                .ok_or("compiled policy pin is absent")?,
+        )
+        .stdin(std::process::Stdio::piped())
+        .stdout(output)
+        .stderr(error_output);
+    if !child_selector {
+        retained_carrier_new_process_group(&mut command)?;
+    }
+    let mut checker = RetainedCarrierPreflightProcess {
+        child: command
+            .spawn()
+            .map_err(|error| format!("start retained live source preflight: {error}"))?,
+        confirmed_group: None,
+        finished: false,
+    };
+    if !child_selector {
+        checker.confirmed_group = Some(retained_carrier_confirm_process_group(checker.child.id())?);
+    }
+    checker
+        .child
+        .stdin
+        .take()
+        .ok_or("inventory startup pipe is absent")?
+        .write_all(b"RETAINED_INVENTORY_START\n")
+        .map_err(|error| format!("release inventory startup gate: {error}"))?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let status = loop {
+        match checker.child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Ok(None) => {
+                return Err(
+                    "retained live source preflight exceeded its 60-second deadline".into(),
+                );
+            }
+            Err(error) => {
+                return Err(format!("wait for retained source preflight: {error}"));
+            }
+        }
+    };
+    if !status.success() {
+        let mut detail = String::new();
+        if let Ok(log) = std::fs::File::open(&log_path) {
+            let _ = log.take(4096).read_to_string(&mut detail);
+        }
+        return Err(format!(
+            "retained live source preflight rejected: {status}: {detail}"
+        ));
+    }
+    checker.finished = true;
+    let checker_after =
+        std::fs::read(workspace.join("scripts/check_smallwood_poseidon2_v8_retained_artifacts.py"))
+            .map_err(|error| format!("reread pinned inventory checker: {error}"))?;
+    let policy_after =
+        std::fs::read(workspace.join("scripts/check_transaction_proof_successor_authorization.py"))
+            .map_err(|error| format!("reread pinned inventory policy: {error}"))?;
+    if !retained_carrier_inventory_sources_match(&checker_after, &policy_after) {
+        return Err("inventory checker/policy changed during preflight".into());
+    }
+    let manifest_after = retained_carrier_manifest_path(&workspace, candidate_manifest_relative)?;
+    if std::fs::read(manifest_after)
+        .map_err(|error| format!("reread retained candidate manifest: {error}"))?
+        != manifest_bytes
+    {
+        return Err("retained candidate manifest changed during live source preflight".into());
+    }
+    Ok(())
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+pub(crate) fn retained_carrier_node_opened(node: &std::sync::Arc<super::NativeNode>) {
+    tests::retained_carrier_node_opened(node);
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+pub(crate) fn retained_carrier_rpc_bound(address: std::net::SocketAddr) {
+    tests::retained_carrier_rpc_bound(address);
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+pub(crate) fn retained_carrier_force_locators() -> bool {
+    tests::retained_carrier_force_locators()
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+pub(crate) fn retained_carrier_event(
+    stage: &'static str,
+    peer: Option<[u8; 32]>,
+    height: Option<u64>,
+    block_hash: Option<[u8; 32]>,
+    action_bytes: Option<&[u8]>,
+) {
+    tests::retained_carrier_event(stage, peer, height, block_hash, action_bytes);
 }
 
 #[cfg(test)]
@@ -473,7 +1104,7 @@ impl Poseidon2V8ProductionBinding {
     /// height; this constructor is never an authoring or fresh-import gate.
     pub(crate) fn from_source_for_replay() -> Result<Option<Self>, String> {
         #[cfg(test)]
-        if let Some(binding) = POSEIDON2_V8_TEST_BINDING.with(|slot| slot.get()) {
+        if let Some(binding) = poseidon2_v8_test_binding() {
             return Ok(Some(binding));
         }
         let Some(capability) = protocol_versioning::smallwood_poseidon2_production_capability()
@@ -722,8 +1353,25 @@ impl Poseidon2V8ExactLeafVerifier for Poseidon2V8NativeVerifierConnector {
             &verifier_input.public_values,
         )
         .map_err(|error| format!("V8 leaf {leaf_index} {error}"))?;
-        verify_smallwood_poseidon2_v8_candidate(&verifier_input, decoded.proof())
-            .map_err(|error| format!("V8 leaf {leaf_index} SMZ9 proof rejected: {error}"))?;
+        verify_smallwood_poseidon2_v8_candidate(&verifier_input, decoded.proof()).map_err(
+            |error| {
+                #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+                tests::retained_carrier_rejected_leaf(
+                    block.height(),
+                    block.block_hash(),
+                    exact_native_leaf,
+                    decoded.proof(),
+                );
+                format!("V8 leaf {leaf_index} SMZ9 proof rejected: {error}")
+            },
+        )?;
+        #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+        tests::retained_carrier_verified_leaf(
+            block.height(),
+            block.block_hash(),
+            exact_native_leaf,
+            decoded.proof(),
+        );
 
         let before_root = Poseidon2V8Root::new(core::array::from_fn(|index| {
             verifier_input.public_values[V8_PUBLIC_BEFORE_ROOT.start + index]
@@ -827,6 +1475,221 @@ mod tests {
     use transaction_circuit::smallwood_poseidon2_v8_types::{
         smallwood_poseidon2_v8_ciphertext_commitment, SmallwoodPoseidon2V8PublicStatement,
     };
+
+    #[cfg(feature = "poseidon2-v8-retained-test-support")]
+    include!("poseidon2_v8_carrier_tests.rs");
+
+    #[cfg(feature = "poseidon2-v8-retained-test-support")]
+    fn retained_carrier_guard_fixture(
+    ) -> (tempfile::TempDir, crate::native::NativeConfig, Vec<String>) {
+        let directory = tempfile::tempdir().expect("isolated guard fixture directory");
+        let canonical = directory.path().canonicalize().unwrap();
+        let mut config = retained_native_config(&canonical, "retained-guard-negative");
+        config.max_peers = 4;
+        config.p2p_listen_addr = "127.0.0.1:19381".to_owned();
+        let arguments = [
+            "--ignored",
+            "--exact",
+            RETAINED_CARRIER_CHILD_TEST_NAME,
+            "--nocapture",
+            "--test-threads=1",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        (directory, config, arguments)
+    }
+
+    #[test]
+    #[cfg(feature = "poseidon2-v8-retained-test-support")]
+    fn retained_carrier_guard_accepts_only_the_pure_isolated_request_shape() {
+        let (_directory, config, arguments) = retained_carrier_guard_fixture();
+        let session = "0123456789abcdef0123456789abcdef";
+        assert!(validate_retained_carrier_process_request(
+            &config,
+            &arguments,
+            Some(session),
+            session,
+            &"1".repeat(128),
+        )
+        .is_ok());
+        assert!(POSEIDON2_V8_PROCESS_TEST_BINDING.lock().unwrap().is_none());
+        assert!(protocol_versioning::smallwood_poseidon2_production_capability().is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "poseidon2-v8-retained-test-support")]
+    fn retained_carrier_guard_rejects_wrong_child_selector_and_parallel_test_arguments() {
+        let (_directory, config, arguments) = retained_carrier_guard_fixture();
+        let session = "0123456789abcdef0123456789abcdef";
+        let mut wrong_child = arguments.clone();
+        wrong_child[2] = "native::poseidon2_v8_verifier::tests::not_the_child".into();
+        let mut parallel = arguments.clone();
+        parallel[4] = "--test-threads=2".into();
+        let mut extra = arguments.clone();
+        extra.push("--include-ignored".into());
+        let mut no_ignored = arguments.clone();
+        no_ignored.remove(0);
+        for rejected in [Vec::new(), wrong_child, parallel, extra, no_ignored] {
+            assert!(validate_retained_carrier_process_request(
+                &config,
+                &rejected,
+                Some(session),
+                session,
+                &"1".repeat(128),
+            )
+            .is_err());
+        }
+        assert!(POSEIDON2_V8_PROCESS_TEST_BINDING.lock().unwrap().is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "poseidon2-v8-retained-test-support")]
+    fn retained_carrier_guard_rejects_missing_session_and_malformed_manifest_pin() {
+        let (_directory, config, arguments) = retained_carrier_guard_fixture();
+        let session = "0123456789abcdef0123456789abcdef";
+        for (marker, selected) in [
+            (None, session),
+            (Some("bad"), session),
+            (Some("bad"), "bad"),
+        ] {
+            assert!(validate_retained_carrier_process_request(
+                &config,
+                &arguments,
+                marker,
+                selected,
+                &"1".repeat(128),
+            )
+            .is_err());
+        }
+        for digest in [
+            String::new(),
+            "1".repeat(127),
+            "0".repeat(128),
+            "A".repeat(128),
+        ] {
+            assert!(validate_retained_carrier_process_request(
+                &config,
+                &arguments,
+                Some(session),
+                session,
+                &digest,
+            )
+            .is_err());
+        }
+        assert!(POSEIDON2_V8_PROCESS_TEST_BINDING.lock().unwrap().is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "poseidon2-v8-retained-test-support")]
+    fn retained_carrier_guard_rejects_operator_network_and_storage_configuration() {
+        let (_directory, config, arguments) = retained_carrier_guard_fixture();
+        let session = "0123456789abcdef0123456789abcdef";
+        let mut rejected = Vec::new();
+        macro_rules! reject_change {
+            ($field:ident, $value:expr) => {{
+                let mut changed = config.clone();
+                changed.$field = $value;
+                rejected.push(changed);
+            }};
+        }
+        reject_change!(dev, false);
+        reject_change!(tmp, true);
+        reject_change!(mine, true);
+        reject_change!(mine_threads, 2);
+        reject_change!(max_peers, 5);
+        reject_change!(bootstrap_mining_authoring, true);
+        reject_change!(miner_address, Some("unexpected-payout".into()));
+        reject_change!(rpc_external, true);
+        reject_change!(rpc_cors, Some("*".into()));
+        reject_change!(rpc_methods, "auto".into());
+        reject_change!(rpc_addr, "0.0.0.0:9944".parse().unwrap());
+        reject_change!(p2p_listen_addr, "0.0.0.0:30333".into());
+        reject_change!(p2p_listen_addr, "127.0.0.1:0".into());
+        reject_change!(seeds, vec!["devnet.hegemonprotocol.com:30333".into()]);
+        reject_change!(seeds, vec!["192.0.2.1:30333".into()]);
+        reject_change!(seeds, vec!["127.0.0.1:0".into()]);
+        reject_change!(
+            base_path,
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        );
+        reject_change!(db_path, config.base_path.join("not-the-child-database"));
+        for candidate in rejected {
+            assert!(validate_retained_carrier_process_request(
+                &candidate,
+                &arguments,
+                Some(session),
+                session,
+                &"1".repeat(128),
+            )
+            .is_err());
+        }
+        assert!(POSEIDON2_V8_PROCESS_TEST_BINDING.lock().unwrap().is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "poseidon2-v8-retained-test-support")]
+    fn retained_carrier_guard_rejects_manifest_aliases_before_reading_a_payload() {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        for candidate in [
+            "/private/tmp/retained-artifact-manifest.candidate.json",
+            ".agent/artifacts/smallwood-poseidon2-v8/../retained-artifact-manifest.candidate.json",
+            ".agent//artifacts/smallwood-poseidon2-v8/retained-artifact-manifest.candidate.json",
+            ".agent/artifacts/smallwood-poseidon2-v8/retained-artifact-manifest.json",
+            ".agent/retained-artifact-manifest.candidate.json",
+        ] {
+            assert!(retained_carrier_manifest_path(workspace, candidate).is_err());
+        }
+        assert!(POSEIDON2_V8_PROCESS_TEST_BINDING.lock().unwrap().is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "poseidon2-v8-retained-test-support")]
+    fn retained_carrier_inventory_tool_pins_reject_source_mutation() {
+        use sha2::Digest;
+
+        assert!(retained_carrier_inventory_sources_match(
+            RETAINED_CARRIER_CHECKER_SOURCE,
+            RETAINED_CARRIER_POLICY_SOURCE,
+        ));
+        for mutate_checker in [true, false] {
+            for append_byte in [false, true] {
+                let mut checker = RETAINED_CARRIER_CHECKER_SOURCE.to_vec();
+                let mut policy = RETAINED_CARRIER_POLICY_SOURCE.to_vec();
+                let mutated = if mutate_checker {
+                    &mut checker
+                } else {
+                    &mut policy
+                };
+                if append_byte {
+                    mutated.push(b'\n');
+                } else {
+                    mutated[0] ^= 1;
+                }
+                assert!(!retained_carrier_inventory_sources_match(&checker, &policy));
+            }
+        }
+        let pins = retained_carrier_inventory_tool_pins();
+        for (role, path, source) in [
+            (
+                "checker",
+                "scripts/check_smallwood_poseidon2_v8_retained_artifacts.py",
+                RETAINED_CARRIER_CHECKER_SOURCE,
+            ),
+            (
+                "policy",
+                "scripts/check_transaction_proof_successor_authorization.py",
+                RETAINED_CARRIER_POLICY_SOURCE,
+            ),
+        ] {
+            assert_eq!(pins[role]["path"], path);
+            assert_eq!(pins[role]["bytes"], source.len());
+            assert_eq!(
+                pins[role]["sha512"],
+                hex::encode(sha2::Sha512::digest(source))
+            );
+        }
+        assert!(POSEIDON2_V8_PROCESS_TEST_BINDING.lock().unwrap().is_none());
+    }
 
     const TEST_HEIGHT: u64 = 1;
     const TRANSPORT_PROFILE_OFFSET: usize = 19;

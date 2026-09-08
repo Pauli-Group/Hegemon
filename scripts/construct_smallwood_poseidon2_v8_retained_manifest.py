@@ -14,6 +14,7 @@ import errno
 import importlib.util
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -36,6 +37,8 @@ SPEC.loader.exec_module(CHECKER)
 
 CandidateManifestError = CHECKER.RetainedArtifactError
 CANDIDATE_MANIFEST_PREFIX = "retained-artifact-manifest.candidate"
+RELATION_PROGRAM_SOURCE = "testdata/formal_core_vectors/poseidon2_v8_relation_program.bin"
+RELATION_IDENTITY_SOURCE = "circuits/transaction/src/smallwood_poseidon2_v8_program.rs"
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,7 @@ class CandidateSnapshot:
     proof_records: list[dict[str, Any]]
     chain_report: dict[str, Any]
     source_inventory: dict[str, Any]
+    relation_profile: CHECKER.RelationProfile
     filesystem_identities: frozenset[tuple[int, int]]
 
 
@@ -92,7 +96,11 @@ def require_existing_regular_file(
     return path, metadata
 
 
-def current_source_revision(repository_root: Path) -> str:
+def current_source_revision(repository_root: Path, recorded_revision: str | None = None) -> str:
+    # A generation commit is informational provenance. Covered source equality
+    # is enforced independently by the complete live source inventory.
+    if recorded_revision is not None:
+        CHECKER.require_lower_hex(recorded_revision, 20, "recorded generation revision")
     git = shutil.which("git")
     require(git is not None, "git is required to bind the source revision")
     environment = {
@@ -105,7 +113,8 @@ def current_source_revision(repository_root: Path) -> str:
     }
     try:
         result = subprocess.run(
-            [git, "-C", str(repository_root), "rev-parse", "--verify", "HEAD"],
+            [git, "-C", str(repository_root), "rev-parse", "--verify",
+             f"{recorded_revision or 'HEAD'}^{{commit}}"],
             check=False,
             close_fds=True,
             env=environment,
@@ -121,6 +130,8 @@ def current_source_revision(repository_root: Path) -> str:
         CHECKER.reject(f"cannot determine source revision: {detail}")
     revision = result.stdout.decode("ascii", "strict").strip()
     CHECKER.require_lower_hex(revision, 20, "current source revision")
+    require(recorded_revision is None or revision == recorded_revision,
+            "recorded generation revision does not identify an exact existing commit")
     return revision
 
 
@@ -326,14 +337,76 @@ def proof_record_from_report(
     return record
 
 
-def manifest_identity() -> dict[str, Any]:
+def source_relation_profile(
+    repository_root: Path,
+    source_inventory: dict[str, Any],
+) -> tuple[CHECKER.RelationProfile, bytes, frozenset[tuple[int, int]]]:
+    """Select only an exact supported program bound by the live source inventory."""
+
+    source, metadata = require_existing_regular_file(
+        repository_root, PurePosixPath(RELATION_PROGRAM_SOURCE), "candidate relation source"
+    )
+    program = source.read_bytes()
+    identity_source, identity_metadata = require_existing_regular_file(
+        repository_root, PurePosixPath(RELATION_IDENTITY_SOURCE), "candidate relation identity source"
+    )
+    identity_payload = identity_source.read_bytes()
+    entries = source_inventory.get("entries")
+    require(isinstance(entries, list), "candidate source inventory entries")
+    matches = [
+        entry for entry in entries
+        if isinstance(entry, dict) and entry.get("path") == RELATION_IDENTITY_SOURCE
+    ]
+    require(matches == [{
+        "bytes": len(identity_payload), "path": RELATION_IDENTITY_SOURCE,
+        "sha512": CHECKER.sha512_bytes(identity_payload),
+    }], "candidate relation identity source is not exactly bound by the source inventory")
+    source_text = identity_payload.decode("utf-8", "strict")
+
+    def exact_constant(name: str, suffix: str) -> str:
+        matches = re.findall(r"^pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_" + name
+                             + suffix, source_text, re.MULTILINE)
+        require(len(matches) == 1, f"candidate relation source constant {name}")
+        return matches[0]
+
+    magic = exact_constant("MAGIC", r': \[u8; 8\] = \*b"([^"\n]+)";')
+    program_bytes = int(exact_constant("TRANSCRIPT_BYTES", r": usize = ([0-9_]+);")
+                        .replace("_", ""))
+
+    def byte_constant(name: str, length: int) -> bytes:
+        body = exact_constant(name, r": \[u8; SMALLWOOD_POSEIDON2_V8_PROGRAM_"
+                              + name + r"_BYTES\] = \[([^\]]+)\];")
+        require(re.fullmatch(r"\s*(?:0x[0-9a-f]{2},\s*)+", body) is not None,
+                f"candidate relation source {name} byte grammar")
+        value = bytes(int(word, 16) for word in re.findall(r"0x[0-9a-f]{2}", body))
+        require(len(value) == length, f"candidate relation source {name} length")
+        return value
+
+    program_hash = byte_constant("SHA512", 64).hex()
+    digest = byte_constant("DIGEST", 48).hex()
+    require(magic == CHECKER.RELATION_MAGIC.decode(), "candidate relation source magic")
+    require(digest == program_hash[:96], "candidate relation source digest prefix")
+    profiles = [
+        profile for profile in CHECKER.SUPPORTED_RELATION_PROFILES
+        if profile.program_bytes == program_bytes and profile.program_sha512 == program_hash
+    ]
+    require(len(profiles) == 1, "candidate source has unsupported exact relation identity")
+    profile = profiles[0]
+    CHECKER.check_relation_program(program, profile)
+    return profile, program, frozenset((
+        (metadata.st_dev, metadata.st_ino),
+        (identity_metadata.st_dev, identity_metadata.st_ino),
+    ))
+
+
+def manifest_identity(relation_profile: CHECKER.RelationProfile) -> dict[str, Any]:
     return {
         "inner_magic": CHECKER.INNER_MAGIC.decode(),
         "network_id": CHECKER.NETWORK_ID,
-        "relation_digest_hex": CHECKER.RELATION_DIGEST_HEX,
+        "relation_digest_hex": relation_profile.digest_hex,
         "relation_magic": CHECKER.RELATION_MAGIC.decode(),
-        "relation_program_bytes": CHECKER.RELATION_BYTES,
-        "relation_program_sha512": CHECKER.RELATION_SHA512,
+        "relation_program_bytes": relation_profile.program_bytes,
+        "relation_program_sha512": relation_profile.program_sha512,
         "route": CHECKER.ROUTE,
         "semantic_relation": CHECKER.RELATION_NAME,
     }
@@ -350,21 +423,38 @@ def build_candidate_snapshot(
     records = file_records(root, paths)
 
     source_inventory = CHECKER.recompute_source_inventory(repository_root)
+    relation_profile, source_program, relation_source_identities = source_relation_profile(
+        repository_root, source_inventory
+    )
     source_summary = source_inventory_summary(source_inventory)
     require(artifact_root.name == f"hgv8rp03-{source_summary['root_sha512'][:16]}",
             "candidate artifact root does not bind the live source inventory root")
-    source_revision = current_source_revision(repository_root)
+    generation_revisions = [
+        CHECKER.load_json_exact(root / Path(roles[role].as_posix()) / "artifact-report.json")
+        [0].get("generation_provenance", {}).get("source_revision")
+        for role in CHECKER.ROLE_ORDER
+    ]
+    for revision in generation_revisions:
+        CHECKER.require_lower_hex(revision, 20, "candidate generation revision")
+    require(generation_revisions[0] == generation_revisions[1],
+            "candidate generation revisions differ")
+    source_revision = current_source_revision(repository_root, generation_revisions[0])
     generator, source_identity = generator_record(
         repository_root, root, source_inventory, payload_identities
     )
-    all_identities = frozenset((*payload_identities, source_identity))
+    require(relation_source_identities.isdisjoint(payload_identities)
+            and source_identity not in relation_source_identities,
+            "candidate relation source aliases retained payload or generator source")
+    all_identities = frozenset((*payload_identities, source_identity, *relation_source_identities))
 
     reports: dict[str, dict[str, Any]] = {}
     proof_records: list[dict[str, Any]] = []
     for role in CHECKER.ROLE_ORDER:
         bundle = root / Path(roles[role].as_posix())
         report, _ = CHECKER.load_json_exact(bundle / "artifact-report.json")
-        native = CHECKER.parse_native_leaf(bundle)
+        require((bundle / "relation-program.bin").read_bytes() == source_program,
+                f"{role}: artifact relation differs from canonical source program")
+        native = CHECKER.parse_native_leaf(bundle, relation_profile=relation_profile)
         transport = CHECKER.parse_rpc_and_scale(bundle, native)
         proof = native["proof"]
         require(isinstance(proof, bytes), f"{role}: decoded proof is not bytes")
@@ -379,6 +469,7 @@ def build_candidate_snapshot(
             source_inventory,
             generator,
             expected_source_revision=source_revision,
+            relation_profile=relation_profile,
         )
         reports[role] = checked_report
         proof_records.append(record)
@@ -427,7 +518,7 @@ def build_candidate_snapshot(
         "common_payload": common_payload,
         "files": records,
         "generator_binaries": generator,
-        "identity": manifest_identity(),
+        "identity": manifest_identity(relation_profile),
         "payload_file_count": len(records),
         "payload_inventory_sha512": CHECKER.inventory_sha512(records),
         "payload_total_bytes": sum(record["bytes"] for record in records),
@@ -436,7 +527,7 @@ def build_candidate_snapshot(
         "source_inventory": source_summary,
     }
     chain_report = CHECKER.check_chain_report(
-        root, artifact_root, roles, manifest, reports
+        root, artifact_root, roles, manifest, reports, relation_profile=relation_profile
     )
     return CandidateSnapshot(
         manifest=manifest,
@@ -447,6 +538,7 @@ def build_candidate_snapshot(
         proof_records=proof_records,
         chain_report=chain_report,
         source_inventory=source_inventory,
+        relation_profile=relation_profile,
         filesystem_identities=all_identities,
     )
 
@@ -495,6 +587,10 @@ def run_candidate_verifiers(
         snapshot.proof_records,
         snapshot.chain_report,
         repository_root,
+        relation_profile=snapshot.relation_profile,
+        expected_generation_provenance={
+            role: snapshot.reports[role]["generation_provenance"] for role in CHECKER.ROLE_ORDER
+        },
     )
 
 
