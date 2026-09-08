@@ -1,5 +1,27 @@
 # Fresh proofs for the repaired SMZ9 relation
 
+## Later source snapshots
+
+On 2026-09-08 at revision `c890e84350d14117beb5d83118dff8b8c4a9deb4`, a
+second independently generated pair passed four-way cross-verification,
+byte-identical two-build comparison, identical chain-report recomputation and
+full candidate construction. Its root is
+`.agent/artifacts/smallwood-poseidon2-v8/hgv8rp03-3e26e0e66e57d8c8`; the
+1,112-file inventory totals 31,613,521 source bytes. Its exact 29 payloads total
+8,495,237 bytes. The candidate manifest SHA-512 is
+`ab159153b09bb9fe16e3248c4a5f1e2a167aca950e59e63f0267bb4a5e5d38f9eda76266b55e14f4658b0a709552374bd600d144d846169b7bcab16b59ab7662`.
+The in-process lifecycle passed in 26.62 seconds.
+
+The actual-socket test correctly rejected the child's configuration before
+service startup: ordinary CLI development difficulty differed from the
+retained fixture's deliberate easy test genesis. This is not a passed socket
+receipt. The subsequent test/service correction requires a new source-frozen
+pair and another complete carrier run. Preserve the `3e26e0e66e57d8c8` pair
+and its failure evidence; do not relabel its inventory as the corrected source.
+Production capability remains disabled.
+
+## Original repaired-source snapshot
+
 On 2026-09-07, two fresh maximum-shape proofs were generated, retained and
 cross-verified at source revision
 `4a0acb9be94ff15441855cbb9ea7051ca104998a`. The primary and independent runs

@@ -27,6 +27,24 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Progress
 
+- [x] (2026-09-08 03:46 UTC) Generate and cross-verify two fresh proofs at
+  `c890e84350d14117beb5d83118dff8b8c4a9deb4`, with byte-identical independent
+  generator builds and frozen 1,112-file source root `3e26e0e66e57d8c8`.
+  The exact 29-payload candidate passes full constructor verification and
+  the retained in-process lifecycle passes. The actual-socket attempt stops
+  before service startup: its CLI selects normal development difficulty,
+  whereas the retained fixture and guard require easy test difficulty.
+  Preserve this pair and failure receipt as historical snapshot evidence;
+  neither credits a successful socket lifecycle for the corrected source.
+- [x] (2026-09-08 03:46 UTC) Correct that fixture-only configuration path.
+  Ordinary `run(cli)` retains its configuration and delegates to the same
+  native service body. The child now passes the exact adjusted configuration
+  checked by its guard into that shared body. Production difficulty and all
+  guard predicates are unchanged. All 12 carrier controls pass, including
+  actual CLI-derived configurations under both sanitized seed modes and a
+  check that exactly one named child ran. Independent source review found no
+  second deterministic startup mismatch. Regeneration and socket execution
+  against the new source freeze remain due.
 - [x] (2026-09-08 03:22 UTC) Complete and integrate the actual modeled
   source-lifetime privacy endpoint: all-request leaf/final/hidden comparisons,
   literal persistent byte/error histories, derived query/event/mass bounds,
@@ -276,6 +294,14 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Surprises & Discoveries
 
+The pure manually constructed guard fixture did not exercise CLI difficulty
+selection. `NativeConfig::from_cli` uses the normal development genesis bits
+`0x1e10c6f7`, while the retained coinbase fixture deliberately uses
+`0x207fffff`. The first actual child therefore correctly rejected before
+opening a service. The new regression uses the actual sanitized child
+environment and CLI constructor, checks ordinary rejection and retained
+admission, and passes the same admitted configuration to the real service.
+
 The collision-exact compiler does not treat a fixed programmed entry as an
 authoritative overlay that can shadow a later refresh. It maintains the
 effective table as the raw table XOR a newest-first finite correction log.
@@ -360,6 +386,13 @@ inflation. Strengthening typed/public admission to the already-enforced packed
 membership rule preserves the intended balance semantics.
 
 ## Decision Log
+
+The isolated retained fixture may select its existing easy test difficulty;
+the ordinary CLI and production difficulty must not change. Factor the service
+body into `run_with_config` so the guarded configuration is the executed one,
+without a second CLI parse. Any covered-source change, including this test
+repair, requires a new source-frozen retained pair; prior proof bytes and
+failure diagnostics remain preserved and are never resealed as fresh.
 
 The 2026-09-08 local carrier test uses one exact ignored library-test child
 process, numeric loopback listeners/seeds, an isolated temporary database and

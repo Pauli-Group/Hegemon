@@ -16,6 +16,7 @@ const RETAINED_CARRIER_P2P_ENV: &str = "HEGEMON_TEST_RETAINED_SMZ9_CHILD_P2P_ADD
 const RETAINED_CARRIER_ARTIFACT_ENV: &str = "HEGEMON_TEST_RETAINED_SMZ9_CHILD_ARTIFACT_ROLE";
 const RETAINED_CARRIER_MAX_LINE: usize = 8 * 1024 * 1024;
 const RETAINED_CARRIER_MAX_EVENTS: usize = 512;
+const RETAINED_CARRIER_POW_BITS: u32 = 0x207f_ffff;
 const RETAINED_CARRIER_STAGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 type RetainedCarrierResult<T> = std::result::Result<T, String>;
 
@@ -378,10 +379,132 @@ fn retained_carrier_assert_denied() {
 fn retained_carrier_production() -> Poseidon2V8ProductionBinding {
     test_production(protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NETWORK_ID)
         .with_test_activation_genesis_hash(
-            crate::native::genesis_meta(0x207f_ffff)
+            crate::native::genesis_meta(RETAINED_CARRIER_POW_BITS)
                 .expect("retained process genesis")
                 .hash,
         )
+}
+
+fn retained_carrier_service_config(
+    cli: crate::native::NativeCli,
+) -> anyhow::Result<crate::native::NativeConfig> {
+    let mut config = crate::native::NativeConfig::from_cli(cli)?;
+    // The retained coinbase fixture deliberately uses easy isolated PoW. The
+    // production CLI keeps its normal development difficulty. This exact
+    // adjusted configuration must pass the guard and reach the real service.
+    config.pow_bits = RETAINED_CARRIER_POW_BITS;
+    Ok(config)
+}
+
+fn retained_carrier_isolated_command(
+    seed: Option<std::net::SocketAddr>,
+) -> RetainedCarrierResult<std::process::Command> {
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let inherited = std::env::vars_os().filter(|(key, _)| {
+        let key = key.to_string_lossy();
+        !key.starts_with("HEGEMON_")
+            && key != "PQ_IDENTITY_SEED"
+            && key != "PQ_IDENTITY_SEED_PATH"
+    });
+    let mut command = std::process::Command::new(executable);
+    command
+        .env_clear()
+        .envs(inherited)
+        .env(
+            "HEGEMON_SEEDS",
+            seed.map(|addr| addr.to_string()).unwrap_or_default(),
+        )
+        .env("HEGEMON_MAX_PEERS", "4")
+        .env("HEGEMON_MINE", "0")
+        .env("HEGEMON_MINE_THREADS", "1")
+        .env("HEGEMON_BOOTSTRAP_AUTHORING", "0");
+    Ok(command)
+}
+
+#[test]
+fn retained_carrier_cli_config_keeps_fixture_and_production_genesis_distinct() {
+    for seed in [None, Some("127.0.0.1:19383".parse().unwrap())] {
+        let output = retained_carrier_isolated_command(seed)
+            .unwrap()
+            .args([
+                "--ignored",
+                "--exact",
+                "native::poseidon2_v8_verifier::tests::retained_carrier_cli_guard_child",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .output()
+            .expect("pure CLI guard child using the real sanitized service environment");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success()
+                && stdout.contains("retained_carrier_cli_guard_child ... ok")
+                && stdout.contains("test result: ok. 1 passed; 0 failed;"),
+            "CLI guard child did not execute and pass: stdout={} stderr={}",
+            stdout,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+#[ignore = "pure configuration child; parent provides the real sanitized environment"]
+fn retained_carrier_cli_guard_child() {
+    let directory = tempfile::tempdir().expect("isolated CLI configuration fixture");
+    let cli = crate::native::NativeCli {
+        print_crypto_profile: false,
+        dev: true,
+        tmp: false,
+        base_path: Some(directory.path().canonicalize().unwrap()),
+        rpc_port: 0,
+        rpc_external: false,
+        rpc_methods: "unsafe".into(),
+        rpc_cors: None,
+        port: 19382,
+        listen_addr: Some("127.0.0.1:19382".into()),
+        name: Some("retained-cli-config".into()),
+    };
+    let ordinary = crate::native::NativeConfig::from_cli(cli.clone()).unwrap();
+    assert_eq!(ordinary.pow_bits, crate::native::NATIVE_DEV_POW_BITS);
+    let retained = retained_carrier_service_config(cli).unwrap();
+    assert_eq!(retained.pow_bits, RETAINED_CARRIER_POW_BITS);
+    assert_ne!(retained.pow_bits, ordinary.pow_bits);
+    assert_eq!(retained.base_path, ordinary.base_path);
+    assert_eq!(retained.rpc_addr, ordinary.rpc_addr);
+    assert_eq!(retained.p2p_listen_addr, ordinary.p2p_listen_addr);
+    assert_eq!(retained.seeds, ordinary.seeds);
+    assert_eq!(
+        crate::native::genesis_meta(retained.pow_bits).unwrap().hash,
+        retained_carrier_production().activation_genesis_hash()
+    );
+    let arguments = [
+        "--ignored",
+        "--exact",
+        RETAINED_CARRIER_CHILD_TEST_NAME,
+        "--nocapture",
+        "--test-threads=1",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    let session = "0123456789abcdef0123456789abcdef";
+    let digest = "1".repeat(128);
+    assert!(validate_retained_carrier_process_request(
+        &ordinary,
+        &arguments,
+        Some(session),
+        session,
+        &digest,
+    )
+    .is_err());
+    validate_retained_carrier_process_request(
+        &retained,
+        &arguments,
+        Some(session),
+        session,
+        &digest,
+    )
+    .expect("actual CLI-derived retained config passes every pure guard predicate");
+    assert!(POSEIDON2_V8_PROCESS_TEST_BINDING.lock().unwrap().is_none());
 }
 
 #[test]
@@ -434,8 +557,7 @@ fn retained_rp03_socket_child() {
         listen_addr: Some(p2p.to_string()),
         name: Some(format!("retained-{role}")),
     };
-    let config =
-        crate::native::NativeConfig::from_cli(cli.clone()).expect("derive isolated child config");
+    let config = retained_carrier_service_config(cli).expect("derive isolated child config");
     let production = retained_carrier_production();
     let process_guard = install_poseidon2_v8_process_test_binding(
         production,
@@ -489,7 +611,7 @@ fn retained_rp03_socket_child() {
         .enable_all()
         .build()
         .expect("small actual-service runtime");
-    let service = runtime.spawn(crate::native::run(cli));
+    let service = runtime.spawn(crate::native::service::run_with_config(config));
     let ready_deadline = std::time::Instant::now() + RETAINED_CARRIER_STAGE_TIMEOUT;
     let ready = loop {
         if let Ok(snapshot) = retained_carrier_snapshot(&artifact, production.expected_context()) {
@@ -708,16 +830,9 @@ impl RetainedCarrierProcess {
             base.display()
         );
         let session = sha512_hex(nonce.as_bytes())[..32].to_string();
-        let executable = std::env::current_exe().map_err(|e| e.to_string())?;
-        let inherited = std::env::vars_os().filter(|(key, _)| {
-            let key = key.to_string_lossy();
-            !key.starts_with("HEGEMON_")
-                && key != "PQ_IDENTITY_SEED"
-                && key != "PQ_IDENTITY_SEED_PATH"
-        });
         let logs = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
         let (sender, replies) = std::sync::mpsc::sync_channel(8);
-        let mut command = std::process::Command::new(executable);
+        let mut command = retained_carrier_isolated_command(seed)?;
         command
             .args([
                 "--ignored",
@@ -726,8 +841,6 @@ impl RetainedCarrierProcess {
                 "--nocapture",
                 "--test-threads=1",
             ])
-            .env_clear()
-            .envs(inherited)
             .env(RETAINED_CARRIER_SESSION_ENV, &session)
             .env(RETAINED_SMZ9_TEST_MANIFEST_ENV, manifest)
             .env(RETAINED_CARRIER_SHA_ENV, manifest_sha512)
@@ -735,14 +848,6 @@ impl RetainedCarrierProcess {
             .env(RETAINED_CARRIER_BASE_ENV, &base)
             .env(RETAINED_CARRIER_P2P_ENV, p2p.to_string())
             .env(RETAINED_CARRIER_ARTIFACT_ENV, artifact_role)
-            .env(
-                "HEGEMON_SEEDS",
-                seed.map(|addr| addr.to_string()).unwrap_or_default(),
-            )
-            .env("HEGEMON_MAX_PEERS", "4")
-            .env("HEGEMON_MINE", "0")
-            .env("HEGEMON_MINE_THREADS", "1")
-            .env("HEGEMON_BOOTSTRAP_AUTHORING", "0")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());

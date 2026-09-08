@@ -218,8 +218,8 @@ receipts; it must not silently rebind these old generation inventories
 Local formal gates, source/vector agreement and simulated proof diagnostics
 do not replace those artifacts, independent review, or production authority.
 
-At the 2026-09-08 02:06 UTC audit snapshot, the complete formal-crypto gate
-passed 2,912 build jobs and all 603 designated declarations used only
+At the 2026-09-08 03:31 UTC audit snapshot, the complete formal-crypto gate
+passed 2,945 build jobs and all 745 designated declarations used only
 `propext`, `Classical.choice`, and `Quot.sound`. This includes the complete
 arbitrary-packed semantic endpoint, full authorization and enabled stable
 transition, measured oracle games, literal post-final proof/error bytes,
@@ -229,7 +229,8 @@ query bounds
 [credited roots](../../../formal/crypto/credited-declarations.txt)). The three
 proof-wire vectors were unchanged, and all 48 generated relation modules
 (2,266,857 source bytes) matched exactly. Final-write and whole-history
-composition modules remain in progress and are not part of that pass. These are local
+composition modules and the public source-lifetime privacy endpoint are included.
+These are local
 intermediate checks, not P7, K8, universal Rust execution refinement, retained
 proof evidence, independent release review, or production authority.
 

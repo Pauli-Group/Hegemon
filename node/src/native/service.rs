@@ -9,6 +9,12 @@ pub async fn run(cli: NativeCli) -> Result<()> {
         return Ok(());
     }
     let config = NativeConfig::from_cli(cli)?;
+    run_with_config(config).await
+}
+
+/// Run the same native services from the already resolved configuration. The
+/// retained process harness passes the exact configuration checked by its guard.
+pub(super) async fn run_with_config(config: NativeConfig) -> Result<()> {
     let node = NativeNode::open(config.clone())?;
     #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
     poseidon2_v8_verifier::retained_carrier_node_opened(&node);

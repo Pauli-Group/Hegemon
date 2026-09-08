@@ -1596,7 +1596,9 @@ mod tests {
         reject_change!(tmp, true);
         reject_change!(mine, true);
         reject_change!(mine_threads, 2);
+        reject_change!(pow_bits, crate::native::NATIVE_DEV_POW_BITS);
         reject_change!(max_peers, 5);
+        reject_change!(max_peers, 0);
         reject_change!(bootstrap_mining_authoring, true);
         reject_change!(miner_address, Some("unexpected-payout".into()));
         reject_change!(rpc_external, true);
