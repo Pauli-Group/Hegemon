@@ -114,11 +114,19 @@ Ten range modules add 66 actual range reconstructions and 24 high-limb
 padding cells, deriving numeric bounds and odd top bits from typed validity.
 Twenty-six further modules derive all 174 remaining numeric equations,
 including exact decimal/epoch, time/retirement, product, difference and carry
-bindings. Indexed source coverage is now 20,605/20,605. The 2,483-declaration
-integration gate passes with unchanged wire vectors; it is not production authority.
+bindings. Indexed source coverage is now 20,605/20,605. Seven further modules
+compose every actual row into complete CSR Option-interpreter execution and
+combine it with all 64 nonlinear lanes to derive packed acceptance from
+fixed typed validity. Two more modules construct the typed source request
+with derived packed admission and actual public-specialized row count, then
+instantiate conditional single-request ideal privacy for two valid witnesses
+with identical public parameters and continuation. All 28 new theorem roots
+pass fresh qualification; the combined 2,511-declaration gate passes with
+unchanged wire vectors. This is source-level evidence, not production authority.
 The tail uses the same computed hash schedule, with no supplied auxiliary
-or hash-final values. Complete CSR coefficient/interpreter execution,
-full packed acceptance and Rust execution remain separate obligations. The exact finite
+or hash-final values. Rust execution, canonical binding-byte construction,
+real randomness/hash instantiation and independent security/release authority
+remain separate obligations. The exact finite
 ideal batch law also remains separate from the real randomness provider and
 Rust execution. See [construction and sampler boundaries](docs/crypto/smz9-campaign/honest-construction-and-batch-law.md).
 

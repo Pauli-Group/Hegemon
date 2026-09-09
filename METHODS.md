@@ -417,15 +417,23 @@ top-bit readbacks and signed coefficients come from the actual source and
 expression DAG. The final 174 numeric equations use the actual auxiliary
 constructor, natural limb/carry identities and signed coefficient DAGs,
 covering every remaining index `20320..20493`. Indexed source coverage is
-now 20,605/20,605; the 2,483-declaration integration gate passes with
-unchanged wire vectors. These indexed endpoints still require whole-table
-composition before complete interpreter or packed-acceptance credit.
+now 20,605/20,605. Complete index dispatch now supplies the actual CSR
+coefficient evaluation and every Option-interpreter equation. Combining
+that execution with all 64 nonlinear lanes derives packed acceptance and
+`CanonicalPublicPackedDomain` for `fullTypedSourceCandidate` directly from
+fixed typed validity. Fresh qualification of these seven composition modules
+and two typed privacy modules passes; the combined 2,511-declaration gate
+passes with unchanged wire vectors.
 The stable-tail identities are constructor properties; the inactive
 Merkle and authorization endpoints use fixed typed validity and derive
 their actual public/packed values internally. Coverage
 uses actual indexed generated entries and DAG evaluation, not descriptor
-labels alone. These results are not complete CSR coefficient/interpreter
-execution, packed acceptance or Rust refinement. The exact
+labels alone. The typed privacy request derives admission and the actual
+retained-row count; its single-request bound keeps common public parameters,
+common continuation, normalized initial state and external adaptive
+reprogramming explicit. Neither this source-level construction nor its ideal
+privacy instantiation proves actual Rust execution, canonical binding bytes,
+concrete RNG/hash security or production authorization. The exact
 remaining-count batch law counts every rejected raw candidate and transports
 the ideal first-accept law; it does not prove OS/provider behavior or permit
 conditioning on later proof success. Run the complete formal-crypto gate

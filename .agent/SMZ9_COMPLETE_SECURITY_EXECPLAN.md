@@ -64,9 +64,35 @@ of this work. The security endpoints and resource accounting remain those in
   manifest SHA-256 is `b52d2d7e1390aebe83d5db79de56105bfdd8ab0483514598ffd743a3cc4617c6`.
   Independent exact-set, size and hash readback passes. Indexed coverage
   is exactly 20,605/20,605 with no overlap or remaining index.
-- [ ] Compose the now-complete indexed equations into full execution.
-  Complete CSR execution, packed acceptance, native refinement and the
-  independent security/release endpoints remain open.
+- [x] (2026-09-09 02:04 UTC) Compose all 20,605 actual CSR indices into
+  coefficient/Option-interpreter execution and combine all 64 nonlinear
+  lanes into full packed acceptance on the fixed typed candidate. Typed
+  validity supplies canonical public-packed admission without an accepted
+  or extracted witness premise. Two further modules construct a typed
+  request with derived row count and instantiate conditional single-request
+  ideal privacy for two valid witnesses with common public parameters,
+  continuation and normalized initial state; external reprogramming remains
+  an assumption. Freshly rebuild all nine modules, audit 28 exact theorem
+  roots and reject 18 mathematical/projection and nine parser negatives.
+  Independent postflight verifies 1,044 frozen inputs, ten outputs and 28
+  logs; peak child RSS is 2,785,918,976 bytes. Receipt SHA-256 is
+  `dc61f9b41429cefed82f0144c1b4ed61ae17485f0b0f5556457cae6afacf277a`;
+  exact migration SHA-256 is
+  `be3be42b399fa4cfc27ab36912529685ab4375125b156117a7d80f06871f4d1a`.
+- [x] (2026-09-09 02:18 UTC) Complete the combined 2,511-declaration
+  integration gate: all 3,176 jobs, exact axiom audits and unchanged wire
+  vectors pass in 738.07 seconds. Gate-log SHA-256 is
+  `ac5e02735422fa2a0936179072a21c8b042f2d0f1ff950f81576c96047596076`.
+  The whole-package peak is 3,259,678,720 bytes (3.04 GiB), distinct from the
+  bounded M2800/<3 GiB single-module qualification above. Retain 272 files /
+  20,468,422 bytes under
+  `.agent/artifacts/smallwood-poseidon2-v8/formal-source-2511-ac5e02735422fa2a`;
+  manifest SHA-256 is
+  `a212de049d4d1f1f6f47547b006fe8e5666e89550c847a5f9c4aecde46a97714`.
+  Independent exact-set, size and hash readback passes for every payload.
+- [ ] Complete native lowering/evaluator/byte refinement, concrete privacy
+  and soundness, approved resource accounting and independent release gates.
+  Source construction and conditional ideal privacy do not close these.
 
 - [x] (2026-09-08 19:11 UTC) Strictly qualify the final 97 authorization
   nonlinear roots in ten source modules. All 230 exact declaration audits,
@@ -723,6 +749,14 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Surprises & Discoveries
 
+The typed privacy draft's bare public-request reflexivity caused Lean to
+compare large private constructors and exceeded the unchanged M2800 cap.
+Prefix probes isolated the public-equality declaration. Naming the common
+public record explicitly with `Eq.refl` preserves every field and the original
+proposition while keeping peak qualified child RSS below 2.786 GB. Public-only
+row-count and lifetime-reflexivity helpers were split into a separate module.
+Failed variants and probes remain uncredited and are retained with the packet.
+
 The initial high-limb padding draft merged two four-cell groups and omitted
 the final right-output group. The qualified theorem follows the six actual
 source starts and generated entries; the wrong draft remains uncredited.
@@ -881,6 +915,14 @@ membership rule preserves the intended balance semantics.
 
 ## Decision Log
 
+Keep full source-forward construction distinct from native implementation
+refinement. Complete all actual CSR/nonlinear interpreter branches on the same
+typed constructor, then instantiate source privacy with derived admission/count
+rather than introducing a new caller-supplied packed-domain premise. Preserve
+the external reprogramming, common-public-policy and normalized-state
+assumptions. Do not change runtime, compiler caps or production authority.
+Date/author: 2026-09-09, coordinator.
+
 - Decision: integrate all ten range modules as one 90-equation packet and
   one complete 2,129-declaration gate. Use bounded generated-chunk membership
   for exact padding lookup after whole-table reduction exceeds the existing
@@ -993,6 +1035,15 @@ formal changes in separate scratch directories until the snapshot is sealed.
 
 ## Outcomes & Retrospective
 
+At the 2026-09-09 composition milestone, no raw CSR index or nonlinear root
+remains outside the source-forward construction. The stronger endpoint is
+actual full packed Option-interpreter acceptance, not just a coverage count.
+Typed request admission and a conditional single-request ideal privacy bound
+are derived. Native Rust/RNG/hash correspondence, full concrete P7/K8,
+resource-policy approval and production release remain open. The full
+2,511-declaration integration gate passes all 3,176 jobs and unchanged vectors;
+its exact evidence is retained separately from production authority.
+
 The source-lifetime privacy endpoint now exists for the explicitly modeled
 ideal oracle under its external theorem and analysis budgets. Concrete P7,
 universal K8 and full R0 remain open. Fresh repaired proofs exist for several
@@ -1029,8 +1080,15 @@ attempts first reduce that to 1,240. The next 354 dense/base/key and
 authorization-initial equations first reduce the gap to 886. The next
 290 note/nullifier/public-digest equations reduce it to 596. Another 332
 stablecoin frame, path and public-output equations reduce it to 264. The next
-90 range and padding equations reduce it to 174. Actual Rust execution, complete CSR execution
-and full packed acceptance remain active.
+90 range and padding equations reduce it to 174; the final numeric packet
+closes those indices. The new complete composition derives actual CSR
+execution and packed acceptance. Actual Rust execution and the independent
+concrete security/release endpoints remain active.
+
+Exact qualified-source migration retains the final blank line in the AllCsr
+and MiddleComposition modules. The staged whitespace check reports those two
+EOF blank lines; no clean-whitespace result is claimed. Their bytes remain
+exactly those bound by the migration and completed integration evidence.
 
 The prior commits establish local mathematical ingredients, not either
 endpoint. This continuation explicitly retains the unfinished complete proof as
@@ -1100,9 +1158,13 @@ source-construction endpoints. The final globals `20320..20493` (174) are
 disjoint from the prior 20,431 indices. The complete accounting is retained in
 `.agent/artifacts/smallwood-poseidon2-v8/formal-source-2483-f7e3b6b83e6f890e/integration/CSR-COMPLETE-20605.json`,
 with SHA-256 `48ea5e730685d984218d9b25e59e096295cb7d44e183105454350950b3d3397a`.
-Prior gap inventories remain retained for their checkpoints. Compose these
-indexed results into complete CSR interpreter execution and packed acceptance
-on the same unchanged constructor; do not confuse accounting with either endpoint.
+Prior gap inventories remain retained for their checkpoints. The nine new
+composition/privacy modules now construct complete CSR interpreter execution,
+packed acceptance and typed request admission on the same unchanged constructor.
+The combined gate and byte-verified archive are complete. Next advance
+the actual extracted Rust evaluator proof, preserving its translator/source
+pins, failed-run history and strict bounded runner. Do not confuse source
+completeness or conditional ideal privacy with native or production endpoints.
 
 The privacy author owns new `formal/crypto/HegemonCrypto/SmallWoodV8Smz9EagerPrivacy.lean`
 and `docs/crypto/smz9-campaign/eager-privacy-proof.md`. Derive the joint mask
@@ -1529,3 +1591,11 @@ generated-chunk membership after a whole-table development check reaches the
 unchanged compiler memory cap. Record the new 174-equation disjoint gap and
 record the completed 2,129-declaration integration gate and exact 222-file
 evidence archive after the actual audit and vector results pass.
+
+Revision note (2026-09-09): integrate the complete source packed construction
+and derived typed single-request privacy bridge after fresh qualification and
+independent read-only review. Record all failure/probe evidence, exact receipts,
+unchanged qualification memory limit and the completed combined gate. Record
+the whole-package run's separate 3.04 GiB peak. Correct two stale dossier
+digests against the actual current program bytes. Continue native refinement
+without changing the wire, primitives, dependency pins or release authority.

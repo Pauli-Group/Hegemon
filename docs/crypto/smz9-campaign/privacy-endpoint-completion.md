@@ -1,8 +1,8 @@
 # Completing the SMZ9 honest whole-view privacy argument
 
-Date: 2026-09-08. Subject: the repaired HGV8RP03 relation carried by SMZ9,
+Date: 2026-09-09. Subject: the repaired HGV8RP03 relation carried by SMZ9,
 profile 6, SHA-512
-`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`.
+`7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17`.
 
 The three-stage ideal-QROM lifetime composition is now proved for the actual
 modeled source-request program: randomize the honest leaf outputs, randomize
@@ -59,7 +59,7 @@ at most `2^-178`, final loss at most `2^-201`, and hidden loss at most
 most `2^-166`, strictly below `2^-128`. These are explicit analysis resources,
 not an approved deployed lifetime policy or a proved Rust-to-index accounting
 map. Concrete SHA-512 construction security, runtime randomness/source and
-binary refinement, reverse honest-lowering completeness, universal soundness,
+binary refinement, native honest-lowering equivalence, universal soundness,
 and independent production authorization remain separate requirements.
 
 All new endpoint modules passed strict individual and central builds. On
@@ -67,6 +67,34 @@ All new endpoint modules passed strict individual and central builds. On
 audited all 745 credited declarations against the existing three-axiom
 allowlist. Generated relation and proof-wire artifacts remain exact. The
 campaign status records that full pass separately from individual checks.
+
+## Typed-witness request construction
+
+`SmallWoodV8Smz9SourcePackedConstruction.lean` now constructs canonical
+packed admission for the fixed full typed candidate from exact typed validity,
+using every actual CSR equation and all 64 nonlinear lanes. The companion
+`SmallWoodV8Smz9TypedSourcePrivacy.lean` consumes that theorem to construct
+`SourceRequestData`, deriving its actual public-specialized retained-row count
+and row bound. No admitted packed witness or caller-selected count is an
+extra premise. The public-only helper module derives lifetime reflexivity
+for every query, measurement, random and byte/error continuation branch.
+
+For two valid typed witnesses of the same statement, common binding bytes
+and salt, and one common zero-request continuation, the resulting source
+lifetimes are publicly equivalent. Their erasures are proved equal, and the
+existing source theorem gives the bound `2 * privacyLoss (16790291 + q) 1`
+for their acceptance difference. The same normalized initial state and the
+universal external reprogramming theorem remain explicit hypotheses.
+
+This is a constructive single-request instantiation of the modeled lifetime
+theorem, not a derivation of a complete adaptive typed-witness policy. Binding
+bytes are common, length-bounded public parameters; their equality to native
+canonical serialization is not proved. Concrete Rust execution, RNG/hash
+instantiation, deployed lifetime budgets and production P7 remain open.
+The nine-module combined packet passes fresh strict qualification, 28 exact
+theorem audits, 18 mathematical/projection negatives and nine parser controls.
+The [construction dossier](honest-construction-and-batch-law.md) records its
+exact receipt and the completed 3,176-job, 2,511-declaration integration gate.
 
 ## A concrete error in an otherwise plausible splice
 

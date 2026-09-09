@@ -271,14 +271,23 @@ independent cryptographic review or authorization to overstate those assumptions
 
 The source-forward SMZ9 construction now includes all 830 actual nonlinear
 roots and complete nonlinear interpreter execution on the same full typed
-candidate in every lane. Its indexed endpoints now derive all 20,605 raw CSR
-attempts; composed full CSR execution and packed acceptance remain open.
+candidate in every lane. Its indexed endpoints derive all 20,605 raw CSR
+attempts, and the complete composition now constructs actual CSR execution,
+packed acceptance and canonical public-packed admission from typed validity.
+The typed single-request privacy bridge derives its admission and actual
+retained count, while keeping common public parameters/continuation, the
+normalized initial state and external reprogramming assumption explicit.
 See the [construction dossier](../../docs/crypto/smz9-campaign/honest-construction-and-batch-law.md)
 for exact modules, receipts and the separate runtime/security boundaries.
 The 2,483-declaration integration gate for the final 174-equation numeric batch passes
 with unchanged wire vectors. Its exact evidence archive is
 `.agent/artifacts/smallwood-poseidon2-v8/formal-source-2483-f7e3b6b83e6f890e`
 at the repository root.
+The next nine-module, 28-theorem packet passes fresh qualification and
+independent postflight; the complete 2,511-declaration gate passes all 3,176
+jobs and unchanged wire-vector checks. Its 272-file evidence archive is
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-2511-ac5e02735422fa2a`.
+Source-level completeness is not native Rust/RNG/hash refinement or production authority.
 
 Run the complete package gate from the repository root:
 

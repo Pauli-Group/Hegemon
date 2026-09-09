@@ -1,6 +1,6 @@
 # Complete-security endpoint gaps for the repaired relation under SMZ9/profile 6
 
-Date: 2026-09-07. This dossier records the current fail-closed boundary after
+Date: 2026-09-09. This dossier records the current fail-closed boundary after
 the relation repair. It is not a complete privacy or knowledge-
 soundness proof, a retained proof receipt, an independent review, or production
 authority.
@@ -51,9 +51,9 @@ The repaired 853,429-byte program is disambiguated by its current SHA-512 and
 48-byte prefix relation ID
 ([source](../../../circuits/transaction/src/smallwood_poseidon2_v8_program.rs#L123-L137)).
 Its SHA-512 is
-`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984197d6df29347e17e1150c24ff737de84`,
+`7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17`,
 and its native relation ID is the 48-byte prefix
-`180fca50376f7573cacedfb5465a0b4d6bf5c61637152035a682d21038016d2239e2f8b50605f36baa635038348dc984`.
+`7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d0`.
 The regeneration map expressly permits the magic to remain because the digest
 is the per-program discriminator
 ([source](daybreak-regeneration-map.md#L38-L46),
@@ -85,7 +85,8 @@ documentation/freeze requirement, not evidence of ambiguous bytes.
 | Arbitrary-source MCA accounting | The exact coefficient/subset-space recovery bound is proved ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9McaRecovery.lean#L682-L733)). | The concrete current-profile `smz9LineBudget` inequality remains outstanding, so its specialization is not a numerical certificate ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9McaRecovery.lean#L740-L755)). |
 | Decoded source to packed interpreter | A fully satisfied decoded candidate yields unchanged packed-program acceptance ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9CurrentSourceAcceptance.lean#L368-L389)). | No preceding theorem extracts that candidate from an actually accepted proof. The deterministic oracle inverse explicitly leaves acceptance-to-proximity/extraction separate ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9OracleExtraction.lean#L21-L28), [source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9OracleExtraction.lean#L356-L390)). |
 | PIOP opening reconstruction | The actual six-opening restore/correction equations are constructed ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9PiopReconstruction.lean#L210-L252)). | A false candidate can also reconstruct at selected points; pre-opening hash chronology and decoded PCS trace binding remain necessary ([source](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9PiopReconstruction.lean#L192-L204)). |
-| Packed witness to typed semantics | The complete `ExactV8RelationSemanticValid` implication now follows from canonical public admission and arbitrary acceptance of the actual repaired packed program. It includes all authorization modes, note/Merkle/nullifier/output links, integer balance and disabled/mint/burn stable transitions ([endpoint](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9ExactSemanticEndpoint.lean), [proof dossier](packed-semantic-endpoint.md)). | Actual Rust public/evaluator/decoder execution, accepted-proof-byte extraction and the reverse valid-typed-witness lowerer-completeness implication remain separate. Full-action semantics additionally require the actual context and inline-ciphertext predicates; the wrapper does not prove their admission. |
+| Packed witness to typed semantics | The complete `ExactV8RelationSemanticValid` implication follows from canonical public admission and arbitrary acceptance of the actual repaired packed program. It includes all authorization modes, note/Merkle/nullifier/output links, integer balance and disabled/mint/burn stable transitions ([endpoint](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9ExactSemanticEndpoint.lean), [proof dossier](packed-semantic-endpoint.md)). | Actual Rust public/evaluator/decoder execution and accepted-proof-byte extraction remain separate. Full-action semantics additionally require the actual context and inline-ciphertext predicates; the wrapper does not prove their admission. |
+| Typed validity to actual packed source execution | The fixed full typed constructor now satisfies all 20,605 actual CSR equations and all 830 nonlinear roots in every lane; complete Option-interpreter acceptance and canonical public-packed admission follow ([endpoint](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9SourcePackedConstruction.lean), [qualification](honest-construction-and-batch-law.md)). | Source-level forward completeness, not actual Rust lowering/decoding roundtrip, binary correspondence or accepted-proof extraction. |
 
 ## Exact current blockers
 
@@ -111,6 +112,11 @@ flow must agree; its simulator is not defined on a statement alone. See the
 [completed ideal source-lifetime endpoint](privacy-endpoint-completion.md#completed-ideal-source-lifetime-endpoint).
 This does not provide concrete SHA-512 construction security, actual
 Rust/runtime/byte refinement, or an approved deployed resource model.
+The new [typed request construction](privacy-endpoint-completion.md#typed-witness-request-construction)
+derives admission and actual retained-row counts from typed validity, and
+instantiates a single-request two-witness bound with common public parameters
+and continuation. It does not prove native canonical binding bytes or remove
+the external reprogramming assumption.
 The concrete premise types for RNG freshness, raw serialization, adaptive final-
 PIOP programming, SHA-512 QRO instantiation, all-history leaf freshness,
 internal-node entropy, lifetime budgets, and collision applicability are
@@ -181,8 +187,10 @@ and Rust-refinement obligations
 The one-way arbitrary-packed-to-typed relation implication is now proved in
 the research tree, including all five fixed semantic conjuncts
 ([endpoint](../../../formal/crypto/HegemonCrypto/SmallWoodV8Smz9ExactSemanticEndpoint.lean),
-[scope and checking](packed-semantic-endpoint.md)). This is not the reverse
-valid-typed-witness lowering theorem or universal Rust execution refinement.
+[scope and checking](packed-semantic-endpoint.md)). The converse source-level
+construction is now also proved for `fullTypedSourceCandidate`, including
+complete CSR and nonlinear interpreter execution. Neither direction proves
+universal Rust execution refinement or source/decoder roundtrip identity.
 The production-owned full semantic receipt remains unavailable
 ([source](../../../formal/lean/Hegemon/Transaction/Poseidon2V8SemanticAdequacy.lean#L378-L394)).
 Therefore R0 is not a theorem in the current graph, and R1-R5 cannot inherit
@@ -219,10 +227,15 @@ and 488 nonlinear roots. Another 496 stable-tail and 448 inactive-Merkle-right
 CSR attempts and 145 authorization roots bring the total to 18,496/20,605
 CSR attempts and 633/830 nonlinear roots. The next integrated increment
 adds 439 CSR attempts and 100 authorization roots, yielding 18,935/20,605
-CSR attempts and 733/830 nonlinear roots. The remaining 1,670 CSR attempts
-and 97 nonlinear authorization roots within positions `252..448`
-still need their forward satisfaction proofs;
-canonicality does not supply those equations or actual Rust success.
+CSR attempts and 733/830 nonlinear roots at that historical checkpoint.
+Subsequent source packets close every remaining equation. The complete
+indexed composition now derives all 20,605 actual CSR residuals, evaluates
+the actual coefficient DAG, constructs CSR Option-interpreter success and
+combines all 64 nonlinear lanes into packed acceptance. No accepted witness,
+extracted witness or desired residual equation is an endpoint premise.
+The combined source/typed-privacy packet passes fresh strict qualification;
+the whole-package gate passes 3,176 jobs, all 2,511 declaration audits and
+unchanged wire vectors. Actual Rust success and concrete security remain separate.
 The ideal batch law is proved,
 without identifying it with the real provider conditioned on success.
 

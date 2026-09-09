@@ -433,8 +433,10 @@ accepted-program or desired field equation is an extra endpoint premise.
 The 198 coefficient lemmas follow the actual expression DAG.
 
 Together these indexed results discharge all 20,605 actual raw CSR attempts
-and all 830 nonlinear roots in all 64 lanes. Complete CSR
-coefficient/interpreter composition and full packed acceptance remain open.
+and all 830 nonlinear roots in all 64 lanes. The complete composition in
+`SmallWoodV8Smz9SourcePackedConstruction.lean` now derives actual CSR
+coefficient/Option-interpreter execution, all-lane nonlinear acceptance and
+full packed acceptance on the same fixed constructor from typed validity.
 These are raw attempt counts, not a fixed count of
 public-dependent normalized emitted rows. Rust refinement, cryptographic
 security and production authorization remain separate.
@@ -709,10 +711,43 @@ development checks remain uncredited. The complete disjoint source index
 accounting has SHA-256
 `48ea5e730685d984218d9b25e59e096295cb7d44e183105454350950b3d3397a`.
 
-Continue by composing complete CSR coefficient/interpreter execution.
-This must supply
-`CanonicalPublicPackedDomain` for a named
-concrete constructor. Actual Rust success, output equality, decoding
+The next seven modules compose the complete actual CSR table. The early,
+middle and numeric dispatchers cover every index once; note-preimage ordering
+is transported into actual global coordinates. Membership-to-index conversion
+feeds the exact residual equations into a canonical coefficient/interpreter
+construction, without assuming interpreter success. The endpoint combines
+that result with all 64 nonlinear lanes and supplies
+`CanonicalPublicPackedDomain` for `fullTypedSourceCandidate statement witness`
+from `ExactV8RelationSemanticValid statement witness` alone.
+
+Two typed privacy modules derive the request's actual retained count and
+public equality, then instantiate the existing conditional ideal single-request
+bound. The common public record is constructed explicitly; a bare reflexivity
+elaboration attempted to compare large private constructors and exhausted the
+unchanged memory cap. The explicit record proof and split public-only helpers
+preserve the proposition. Binding contents remain caller-supplied public
+parameters, not a proved serialization of the actual binding bytes.
+
+Fresh qualification rebuilds all nine modules and audits exactly 28 theorem
+roots. All 18 mathematical/projection negatives and nine parser negatives
+reject. Independent postflight checks all 1,044 frozen pins, ten fresh
+outputs and 28 logs; peak child RSS is 2,785,918,976 bytes. Receipt SHA-256 is
+`dc61f9b41429cefed82f0144c1b4ed61ae17485f0b0f5556457cae6afacf277a`;
+exact import-only migration SHA-256 is
+`be3be42b399fa4cfc27ab36912529685ab4375125b156117a7d80f06871f4d1a`.
+Independent read-only review finds no hidden admission or extracted-witness
+premise. The combined gate passes all 3,176 jobs, all 2,511 declaration audits
+and unchanged wire-vector checks in 738.07 seconds. Its log SHA-256 is
+`ac5e02735422fa2a0936179072a21c8b042f2d0f1ff950f81576c96047596076`.
+The whole-package run peaks at 3,259,678,720 bytes (3.04 GiB); it is not the
+separate M2800/<3 GiB single-module qualification receipt above.
+Retain 272 exact payloads, totaling 20,468,422 bytes, under
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-2511-ac5e02735422fa2a`.
+Copy-manifest SHA-256 is
+`a212de049d4d1f1f6f47547b006fe8e5666e89550c847a5f9c4aecde46a97714`;
+independent exact-set, size and hash verification passes for every payload.
+
+Actual Rust success, output equality, decoding
 roundtrip and production binary refinement remain additional obligations.
 The universal weighted soundness bound is also still open. No runtime,
 wire format, primitive, dependency pin or production capability changes here.
