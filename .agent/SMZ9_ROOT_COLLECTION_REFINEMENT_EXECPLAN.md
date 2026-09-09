@@ -41,8 +41,13 @@ proof runtime's vector model and are not silently promoted to proved facts.
   and run offline tests/extraction with clean child exits. Preserve the failed
   broad Map-type inspection; separate independent read-only review verifies
   exact source bytes and absence of unsupported reachable operation calls.
-- [ ] Perform separately guarded strict Aeneas translation using the existing
-  candidate binary, preserving the failed Stage 8 receipt without relabeling.
+- [x] (2026-09-09) Perform separately guarded strict Aeneas translation using
+  the existing candidate. Preserve the Stage 9 invariant-check failure and
+  both failed receipts without relabeling; no translation proof is credited.
+- [ ] Correct and qualify the independently identified return-value
+  region-erasure constructor mismatch in a new isolated translator candidate,
+  preserving all invariants and existing frozen tools; then qualify strict
+  translation of the actual wrapper.
 - [ ] Audit generated declarations and prove ordered-root induction against
   the original source-shaped program semantics; include invalid-root,
   duplicate/order and empty-root boundaries. Do not assume native success.
@@ -64,7 +69,18 @@ unused Map, FilterMap, MapWhile, FlatMap and MapWindows type metadata even
 though no reachable wrapper/node signature or body references them and no
 map, collect, copied or from_iter function declaration remains. The original
 receipt stays failed. Independent exact-source and reachable-callee review
-is recorded separately; strict translation remains the next acceptance step.
+is recorded separately; strict translation is a separate acceptance step.
+
+Stage 9 reaches the actual wrapper but fails the unchanged typing invariant
+at `interp/Invariants.ml:422` immediately after the node-function call and
+before `Try::branch`. The called function returns a symbolic
+`Result<Vec<u64>, &'static str>`. Static source tracing finds that
+`ValuesUtils.mk_tvalue_from_symbolic_value` uses Charon's region-variable-only
+erasure, which preserves the static lifetime that `ty_is_ety` rejects.
+Changing only that constructor would then conflict with the expected-type
+calculation at `Invariants.ml:536`; both must use a consistent erasure
+definition without dropping their checks. This is a concrete source-level
+mismatch, not a printed identification of the exact failing context binding.
 
 ## Decision Log
 
@@ -90,7 +106,8 @@ identity are newly frozen; old receipts remain historical. Both offline
 compiler commands exit zero, but the Stage 8 receipt correctly remains failed
 at its overly broad type-inventory assertion. Separate static review verifies
 the LLBC source and reachable calls without rerunning or relabeling it.
-No strict translation, root-loop proof or full production build is claimed.
+The separately reviewed strict translation fails inside the translator's
+typing invariant; no root-loop proof or full production build is claimed.
 The 2,511-declaration source gate and 17-root native node loop qualification
 remain preserved evidence for their exact sources.
 
@@ -204,6 +221,21 @@ copy-manifest SHA-256
 Independent readback verifies the exact 526-file set, every size/hash,
 the current source copy, unchanged failed receipt and absence of symlinks.
 
+Stage 9 failed receipt SHA-256 is
+`743f8fa933c95187a9d4f7a1e246dc252b29439546418e627c399eb1a8600951`;
+the translator log has SHA-256
+`fabf03b2fe1dc826da29d756cfc045ef449bc7368954519642f38449456d0ac6`.
+The bounded run lasts 2.94 seconds with 12 resource samples, maximum sampled
+group RSS 71,598,080 bytes and maximum scratch allocation 6,139,904 bytes.
+All three ordinary and 3,719-record frozen-candidate inventories are exact;
+the owned group exits 2 and is extinct without signals. Preserve the exact
+28-file / 7,986,269-byte archive at
+`.agent/artifacts/smallwood-poseidon2-v8/native-root-translation-failed-743f8fa933c95187`,
+copy-manifest SHA-256
+`331c12578469a1999057c4872fe6b0e565e68440c8f2d59ab641f49f3f634e80`.
+Independent readback verifies every source and retained size/hash, exact
+payload set, both failed receipts, raw LLBC and absence of symlinks.
+
 ## Interfaces and Dependencies
 
 The public Rust function signature remains
@@ -219,3 +251,8 @@ stdlib-model gaps without inventing replacement library assumptions.
 Stage 8 revision: record successful finite tests and clean extraction-command
 exit separately from the failed type-inventory screen. Preserve the original
 failure and require a new strict-translation decision on exact reviewed bytes.
+
+Stage 9 revision: retain the strict translator invariant failure and complete
+postflight without retry. Diagnose the concrete lifetime-erasure constructor
+and checker mismatch before preparing any new isolated candidate; no invariant
+may be disabled and no existing frozen binary may be changed.

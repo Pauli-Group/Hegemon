@@ -470,3 +470,36 @@ combined integration qualification; unchanged serialization is not inferred
 solely from the source diff.
 Independent archive readback verifies the exact payload set, every size/hash,
 the current source copy, unchanged failed receipt and absence of symlinks.
+
+## Strict root-wrapper translation failure
+
+A separately reviewed one-shot Stage 9 run independently validates the raw
+LLBC and exact embedded current source before invoking the frozen translator
+with `-checks`, warnings as errors and abort on error. Eighteen mock/read-only
+controls pass beforehand. All ordinary inputs, loader paths and all 3,719
+frozen candidate records match before launch and after failure.
+
+The translator exits 2 at `interp/Invariants.ml:422`, immediately after the
+node-function call and before residual branching or root collection. The
+unchanged invariant rejects a non-erased lifetime in a concrete value type.
+Static tracing identifies `ValuesUtils.mk_tvalue_from_symbolic_value` using
+region-variable-only erasure on a return type containing `&'static str`;
+that operation preserves the static lifetime. The symbolic-value checker
+also uses that narrower operation to compute its expected type, so changing
+only the constructor would create a second mismatch. This source trace does
+not claim that the precise failing runtime binding was printed. A consistent
+repair requires separate review and qualification with every check intact.
+
+Failed receipt SHA-256 is
+`743f8fa933c95187a9d4f7a1e246dc252b29439546418e627c399eb1a8600951`;
+log SHA-256 is
+`fabf03b2fe1dc826da29d756cfc045ef449bc7368954519642f38449456d0ac6`.
+The run lasts 2.94 seconds; the group is extinct without signals. Maximum
+sampled group RSS is 71,598,080 bytes and maximum scratch allocation is
+6,139,904 bytes. No generated proof files, retry or weakened check are credited.
+The independently verified 28-file / 7,986,269-byte archive is
+`.agent/artifacts/smallwood-poseidon2-v8/native-root-translation-failed-743f8fa933c95187`,
+copy-manifest SHA-256
+`331c12578469a1999057c4872fe6b0e565e68440c8f2d59ab641f49f3f634e80`.
+Both failed receipts remain unchanged. Native wrapper refinement, complete
+runtime/byte refinement and production authorization remain open.

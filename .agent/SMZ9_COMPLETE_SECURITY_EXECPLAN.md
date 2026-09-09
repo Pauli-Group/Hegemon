@@ -167,7 +167,21 @@ of this work. The security endpoints and resource accounting remain those in
   `.agent/artifacts/smallwood-poseidon2-v8/native-root-loop-tests-fdb73b5e1b5023a5`,
   copy-manifest SHA-256
   `511078f2e98b381388d0f6ce7aae845dfc018ca84c2a4c3f900b8318e6e6e4ac`.
-- [ ] Strictly translate and refine the actual checked-loop wrapper under
+- [x] (2026-09-09) Perform the separately reviewed Stage 9 strict checked
+  translation attempt after 18 mock/read-only controls. Exact embedded-source,
+  loader and full input inventories pass, including all 3,719 frozen candidate
+  records. The translator exits 2 at `interp/Invariants.ml:422` immediately
+  after the node-function call; no generated proof is credited. The owned
+  group is extinct without signals. Preserve failed receipt
+  `743f8fa933c95187a9d4f7a1e246dc252b29439546418e627c399eb1a8600951`
+  and the independently verified 28-file / 7,986,269-byte archive
+  `.agent/artifacts/smallwood-poseidon2-v8/native-root-translation-failed-743f8fa933c95187`,
+  copy-manifest SHA-256
+  `331c12578469a1999057c4872fe6b0e565e68440c8f2d59ab641f49f3f634e80`.
+  No retry, check disabling or frozen-tool modification occurs.
+- [ ] Resolve the concrete translator return-value region-erasure mismatch
+  in a separately reviewed new candidate, then strictly translate and refine
+  the actual checked-loop wrapper under
   `.agent/SMZ9_ROOT_COLLECTION_REFINEMENT_EXECPLAN.md`, verify the exact
   current runtime program identity, compose full CSR/packed execution and
   close the remaining byte/runtime/security obligations. Empty-row node
