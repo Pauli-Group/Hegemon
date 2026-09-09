@@ -514,14 +514,168 @@ pub fn evaluate_smallwood_poseidon2_v8_expression_program(
 ) -> Result<Vec<u64>, &'static str> {
     let values =
         evaluate_smallwood_poseidon2_v8_expression_nodes(&program.expressions, public, rows)?;
-    program
-        .roots
-        .iter()
-        .map(|root| {
-            values
-                .get(*root as usize)
-                .copied()
-                .ok_or("V8 executable program root is out of range")
-        })
-        .collect()
+    let mut roots = Vec::new();
+    for root in program.roots.iter() {
+        let value = *values
+            .get(*root as usize)
+            .ok_or("V8 executable program root is out of range")?;
+        roots.push(value);
+    }
+    Ok(roots)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Retain the original collector as an element/error oracle, not an allocator model.
+    fn old_map_program(
+        program: &SmallwoodPoseidon2V8ExpressionProgram,
+        public: &[u64],
+        rows: &[u64],
+    ) -> Result<Vec<u64>, &'static str> {
+        let values =
+            evaluate_smallwood_poseidon2_v8_expression_nodes(&program.expressions, public, rows)?;
+        program
+            .roots
+            .iter()
+            .map(|root| {
+                values
+                    .get(*root as usize)
+                    .copied()
+                    .ok_or("V8 executable program root is out of range")
+            })
+            .collect()
+    }
+
+    fn assert_same(program: &SmallwoodPoseidon2V8ExpressionProgram, public: &[u64], rows: &[u64]) {
+        assert_eq!(
+            old_map_program(program, public, rows),
+            evaluate_smallwood_poseidon2_v8_expression_program(program, public, rows),
+            "old/new mismatch for {program:?}"
+        );
+    }
+
+    fn constant_program(values: &[u64], roots: Vec<u32>) -> SmallwoodPoseidon2V8ExpressionProgram {
+        SmallwoodPoseidon2V8ExpressionProgram {
+            expressions: values
+                .iter()
+                .map(|value| SmallwoodPoseidon2V8Expr::Constant(*value))
+                .collect(),
+            roots,
+        }
+    }
+
+    #[test]
+    fn explicit_loop_preserves_root_order_and_duplicates() {
+        let program = constant_program(&[11, 22], vec![1, 0, 1, 0]);
+        assert_same(&program, &[], &[]);
+        assert_eq!(
+            evaluate_smallwood_poseidon2_v8_expression_program(&program, &[], &[]),
+            Ok(vec![22, 11, 22, 11])
+        );
+    }
+
+    #[test]
+    fn explicit_loop_handles_empty_expressions_and_roots() {
+        for values in [vec![], vec![1, 2]] {
+            let program = constant_program(&values, vec![]);
+            assert_same(&program, &[], &[]);
+            assert_eq!(
+                evaluate_smallwood_poseidon2_v8_expression_program(&program, &[], &[]),
+                Ok(Vec::new())
+            );
+        }
+        let invalid = constant_program(&[], vec![0]);
+        assert_same(&invalid, &[], &[]);
+        assert_eq!(
+            evaluate_smallwood_poseidon2_v8_expression_program(&invalid, &[], &[]),
+            Err("V8 executable program root is out of range")
+        );
+    }
+
+    #[test]
+    fn explicit_loop_rejects_first_later_and_u32_max_invalid_roots() {
+        for roots in [vec![1], vec![0, 1], vec![u32::MAX], vec![0, u32::MAX]] {
+            let program = constant_program(&[7], roots);
+            assert_same(&program, &[], &[]);
+            assert_eq!(
+                evaluate_smallwood_poseidon2_v8_expression_program(&program, &[], &[]),
+                Err("V8 executable program root is out of range")
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_loop_preserves_raw_noncanonical_constants() {
+        let values = [u64::MAX, GOLDILOCKS_MODULUS, GOLDILOCKS_MODULUS + 1];
+        let program = constant_program(&values, vec![0, 1, 2]);
+        assert_same(&program, &[], &[]);
+        assert_eq!(
+            evaluate_smallwood_poseidon2_v8_expression_program(&program, &[], &[]),
+            Ok(values.to_vec())
+        );
+    }
+
+    #[test]
+    fn explicit_loop_node_errors_precede_root_collection() {
+        for (expression, expected) in [
+            (
+                SmallwoodPoseidon2V8Expr::Public(99),
+                "V8 executable program public index is out of range",
+            ),
+            (
+                SmallwoodPoseidon2V8Expr::WitnessRow(99),
+                "V8 executable program witness row is out of range",
+            ),
+        ] {
+            for roots in [vec![], vec![0], vec![u32::MAX], vec![0, u32::MAX]] {
+                // Even an unreferenced failing node is evaluated before any roots.
+                let program = SmallwoodPoseidon2V8ExpressionProgram {
+                    expressions: vec![SmallwoodPoseidon2V8Expr::Constant(3), expression],
+                    roots,
+                };
+                assert_same(&program, &[], &[]);
+                assert_eq!(
+                    evaluate_smallwood_poseidon2_v8_expression_program(&program, &[], &[]),
+                    Err(expected)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_loop_matches_old_map_on_exactly_510_bounded_cases() {
+        let tables = [
+            vec![],
+            vec![0],
+            vec![u64::MAX],
+            vec![1, 2],
+            vec![u64::MAX, 0],
+            vec![
+                GOLDILOCKS_MODULUS - 1,
+                GOLDILOCKS_MODULUS,
+                GOLDILOCKS_MODULUS + 1,
+            ],
+        ];
+        let alphabet = [0, 1, 2, u32::MAX];
+        let mut case_count = 0;
+        // Six constant tables times all 1 + 4 + 16 + 64 root lists of length 0..=3.
+        for values in tables {
+            for len in 0..=3 {
+                for code in 0..4usize.pow(len) {
+                    let mut code = code;
+                    let mut roots = Vec::new();
+                    for _ in 0..len {
+                        roots.push(alphabet[code % 4]);
+                        code /= 4;
+                    }
+                    let program = constant_program(&values, roots);
+                    assert_same(&program, &[], &[]);
+                    case_count += 1;
+                }
+            }
+        }
+        assert_eq!(case_count, 510);
+    }
 }

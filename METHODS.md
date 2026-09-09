@@ -440,6 +440,19 @@ conditioning on later proof success. Run the complete formal-crypto gate
 after integration and bind any later retained artifacts to the new source
 inventory without relabeling old receipts.
 
+For native ordered-root refinement, the actual Rust wrapper uses checked
+lookup and push in an explicit slice-iterator loop, after evaluating all nodes.
+Six focused tests include an exact 510-case comparison with the original
+test-only iterator chain, plus explicit order, duplicate, invalid-root and
+node-error precedence controls. This is returned-element/error regression
+evidence, not allocator/OOM equivalence or a universal native theorem.
+Bind new extraction and proof artifacts to the changed source. The Stage 8
+type screen rejects unused Map-like declarations despite successful tests
+and extraction; preserve that failed receipt and the separate exact-source/
+reachable-call review. Require strict translation and proof rather than
+silently changing the old receipt or adding missing-library assumptions.
+See the [root-collection plan](.agent/SMZ9_ROOT_COLLECTION_REFINEMENT_EXECPLAN.md).
+
 The honest-hybrid follow-up supplies the fresh-tail premise for a generated
 public context in the independent-randomized-leaf experiment. Preserve its
 reconstructed original mask and final-overlay correlation; projected prefix

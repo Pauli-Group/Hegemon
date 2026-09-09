@@ -421,3 +421,52 @@ Lean runtime defines the Map structure but lacks those operation bindings. No Ae
 or Lean proof is claimed for this wrapper. Empty-row node evaluation alone
 does not qualify complete CSR residual execution, packed acceptance or full
 R0. P7, K8 and independent production/release gates remain unchanged.
+
+## Actual explicit-loop refactor and finite tests
+
+The actual Rust wrapper now uses `Vec::new`, explicit slice iteration,
+checked `get`, the unchanged error literal and propagation, and `push`.
+The complete node-evaluation call remains first. All pre-wrapper source
+bytes are unchanged. Its new 21,277-byte source file includes six private
+tests and has SHA-256
+`a580c88243eb6551e60b28c07f57c7ab6b3d3c44f8c007361568d1726fa1bd47`.
+The equivalence scope is returned elements/errors, not vector capacity,
+allocator scheduling or OOM behavior. The only inspected production caller
+does not observe capacity. No wire, primitive, dependency or authority changes.
+
+All six standalone actual-source tests pass. A test-only exact copy of the
+old wrapper checks six constant tables against every root list of length
+zero through three over `[0, 1, 2, u32::MAX]`: exactly 510 cases. Additional
+checks cover order/duplicates, empty tables/roots, invalid first/later roots,
+raw noncanonical constants, and eager Public/WitnessRow errors for empty,
+valid and invalid roots, including unreferenced failing nodes. Test-log
+SHA-256 is `5bdd5481711dc2667b505e7b3695cadcc523cb3c5c750515a5b7fe136b66db89`.
+These tests are finite function-level evidence, not a full production build.
+
+The subsequent Charon command also exits zero. Both owned groups are cleanly
+retired and all four immutable input inventories pass. However, the Stage 8
+receipt remains **failed** at the broad Map-type assertion, SHA-256
+`fdb73b5e1b5023a53f0982651e57396c1bf95ab69a5c0297e7696e597237510d`.
+It is not relabeled or rerun. The 818,538-byte LLBC has SHA-256
+`77fcbfc2331b327e87c287e15ad1b368c66147c040a512c5fa9f216a2a1876c6`.
+
+Separate independent static inspection confirms exact embedded source and
+six required transparent structured bodies. Map, FilterMap, MapWhile,
+FlatMap and MapWindows are unreferenced type metadata: no reachable wrapper/
+node body or signature uses their type ids, and no function declaration is
+named map, collect, copied or from_iter. The new blanket `IntoIterator`
+operation has an existing frozen method and instance model. This explains
+the screen's false positive; it does not supply a native proof. Strict
+translation is a separately reviewed next step on these exact bytes.
+
+The exact 526-file / 81,085,198-byte evidence archive is
+`.agent/artifacts/smallwood-poseidon2-v8/native-root-loop-tests-fdb73b5e1b5023a5`,
+copy-manifest SHA-256
+`511078f2e98b381388d0f6ce7aae845dfc018ca84c2a4c3f900b8318e6e6e4ac`.
+It preserves the failed receipt, successful test log, extracted bytes and
+separate static review without granting translation, refinement or production
+credit. The full runtime program identity check remains required before a
+combined integration qualification; unchanged serialization is not inferred
+solely from the source diff.
+Independent archive readback verifies the exact payload set, every size/hash,
+the current source copy, unchanged failed receipt and absence of symlinks.

@@ -152,13 +152,26 @@ of this work. The security endpoints and resource accounting remain those in
   Charon omits embedded external field-source contents; pinned fresh Cargo
   compilation remains an explicit boundary. This is extraction evidence,
   not a Lean proof, hermetic replay or production receipt.
-- [ ] Refine the actual ordered-root collection wrapper, bind the exact
-  runtime program, compose full CSR/packed execution and close the remaining
-  byte/runtime/security obligations. The new extraction exposes iterator-map,
-  Map iterator-next, Result-from-iterator and Option-copied operations absent
-  from the frozen Lean runtime. Resolve that boundary explicitly; do not
-  assume wrapper success or silently replace the extracted code. Empty-row
-  node evaluation alone does not establish full CSR execution or full R0.
+- [x] (2026-09-09) Refactor the actual root wrapper to a checked explicit
+  loop with unchanged element/error behavior, not claimed allocator/OOM
+  equivalence. Six focused tests pass, including the 510-case exact old/new
+  grid. All pre-wrapper source bytes remain unchanged. New source SHA-256
+  is `a580c88243eb6551e60b28c07f57c7ab6b3d3c44f8c007361568d1726fa1bd47`.
+  Preserve Stage 8 failed receipt
+  `fdb73b5e1b5023a53f0982651e57396c1bf95ab69a5c0297e7696e597237510d`:
+  both compiler commands exit zero, but its broad Map-type assertion rejects
+  unused iterator type metadata. Separate independent static review verifies
+  exact embedded source, six transparent local functions and absence of
+  unsupported reachable iterator-chain calls. No rerun or relabeling occurs.
+  Independently verify the 526-file / 81,085,198-byte archive at
+  `.agent/artifacts/smallwood-poseidon2-v8/native-root-loop-tests-fdb73b5e1b5023a5`,
+  copy-manifest SHA-256
+  `511078f2e98b381388d0f6ce7aae845dfc018ca84c2a4c3f900b8318e6e6e4ac`.
+- [ ] Strictly translate and refine the actual checked-loop wrapper under
+  `.agent/SMZ9_ROOT_COLLECTION_REFINEMENT_EXECPLAN.md`, verify the exact
+  current runtime program identity, compose full CSR/packed execution and
+  close the remaining byte/runtime/security obligations. Empty-row node
+  evaluation and finite Rust tests do not establish full CSR execution or R0.
 
 - [x] (2026-09-08 19:11 UTC) Strictly qualify the final 97 authorization
   nonlinear roots in ten source modules. All 230 exact declaration audits,

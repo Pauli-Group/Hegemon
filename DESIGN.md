@@ -1094,13 +1094,25 @@ consensus-context and inline-ciphertext matches as explicit premises. See the
 [semantic endpoint](docs/crypto/smz9-campaign/packed-semantic-endpoint.md) and
 [Rust refinement obligations](docs/crypto/smz9-campaign/rust-source-refinement-obligations.md).
 
-This forward research theorem does not construct the complete production refinement receipt:
-reverse valid-typed-witness lowering, actual Rust public/evaluator/decoder execution, primitive
-source execution, and accepted-proof-byte extraction remain separate. The generated release
+The source development also derives full packed acceptance and canonical
+public-packed admission for `fullTypedSourceCandidate` from fixed typed validity,
+covering all 20,605 CSR attempts and 64 nonlinear lanes. Neither direction
+constructs the complete production refinement receipt: actual Rust
+public/evaluator/decoder execution, primitive source execution, and
+accepted-proof-byte extraction remain separate. The generated release
 vector therefore still records `exact_primitive_interpretation_refinement_proved=false`,
 `universal_accepted_witness_soundness_proved=false`, and `production_authority=false`.
 Those unpromoted status fields are not evidence that the new forward theorem is absent.
 V8 remains fail closed pending all independent security, implementation, review, and release gates.
+
+The actual Rust program wrapper now collects ordered roots with an explicit
+checked loop after complete node evaluation. This preserves returned values,
+duplicates, order and existing errors; vector capacity, allocator scheduling
+and OOM behavior are not part of the equivalence claim. Six focused tests,
+including 510 exact differential cases against the test-only original iterator
+chain, pass. The source change requires new extraction/refinement bindings;
+old source-bound artifacts are not relabeled. Native root-loop refinement
+remains open; see the [native refinement dossier](docs/crypto/smz9-campaign/native-scalar-refinement.md).
 
 The isolated `V8Smz9SourceLifetimePrivacy` development now composes the modeled actual
 source lifetime with a directly compiled witness-free public-policy simulator. It derives
