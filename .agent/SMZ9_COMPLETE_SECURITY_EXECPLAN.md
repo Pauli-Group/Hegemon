@@ -49,8 +49,22 @@ of this work. The security endpoints and resource accounting remain those in
   manifest SHA-256 is
   `688c4be9357a1b9301a182fb7d8f1393488c36bc20683cf2d9bff649e27116f1`.
   Independent exact-set, size and hash readback passes for every payload.
-- [ ] Close the remaining numeric CSR equations and compose full execution.
-  Source coverage is 20,431/20,605, leaving exactly 174 numeric equations.
+- [x] (2026-09-09 01:37 UTC) Strictly qualify, exactly migrate and integrate
+  all 174 remaining numeric CSR equations in 26 modules, adding 354
+  declarations (2,483 total). Independent postflight checks 1,015 frozen
+  input pins, 27 fresh outputs and 51 logs. All 24 mathematical and nine
+  parser negatives reject; peak child RSS is 2,390,081,536 bytes. Receipt
+  SHA-256 is `92f273e2a7c5e6216bc6f7ff4bcf9d4f908ba51406b2b6ff2e41236c4f5e9de5`;
+  migration SHA-256 is `4074b53b0aafd5cc61c04a1ed33b004a96b33ca4013d39dd312f215e38d1c370`.
+  The complete gate passes all 3,167 jobs, 2,483 axiom audits and unchanged
+  wire-vector checks. Gate-log SHA-256 is
+  `f7e3b6b83e6f890e36c6df33e0fff6407c751545709be0f862e682e950a0510a`.
+  Retain 504 files / 50,934,511 bytes under
+  `.agent/artifacts/smallwood-poseidon2-v8/formal-source-2483-f7e3b6b83e6f890e`;
+  manifest SHA-256 is `b52d2d7e1390aebe83d5db79de56105bfdd8ab0483514598ffd743a3cc4617c6`.
+  Independent exact-set, size and hash readback passes. Indexed coverage
+  is exactly 20,605/20,605 with no overlap or remaining index.
+- [ ] Compose the now-complete indexed equations into full execution.
   Complete CSR execution, packed acceptance, native refinement and the
   independent security/release endpoints remain open.
 
@@ -1081,18 +1095,14 @@ is currently uninhabited.
 
 ## Plan of Work
 
-The current raw CSR gap is the inclusive index range `20320..20493` (174),
-disjoint from the 20,431 derived attempts. The 66 range-reconstruction and
-24 high-limb padding equations are now strictly qualified and migrated.
-The remaining equations contain stablecoin numeric helpers. The exact parsed
-program and source-module anchors are recorded in
-`.agent/artifacts/smallwood-poseidon2-v8/formal-source-2129-672254cd2af528ad/integration/CSR-REMAINDER-174.json`,
-with SHA-256 `1c0692a7d66d4eb2ffde1af628dbceac53fad8ab5cb78b5bea27dd9f17e6ec1a`.
-The prior 1,240-, 886-, 596- and 264-gap inventories remain retained for their checkpoints.
-Descriptor names are navigation aids, not satisfaction evidence. Derive
-actual residuals from the unchanged constructor, qualify each packet, then
-compose complete CSR execution and packed acceptance; do not confuse this
-arithmetic inventory with either endpoint.
+All 20,605 actual CSR indices now have strictly qualified, integrated
+source-construction endpoints. The final globals `20320..20493` (174) are
+disjoint from the prior 20,431 indices. The complete accounting is retained in
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-2483-f7e3b6b83e6f890e/integration/CSR-COMPLETE-20605.json`,
+with SHA-256 `48ea5e730685d984218d9b25e59e096295cb7d44e183105454350950b3d3397a`.
+Prior gap inventories remain retained for their checkpoints. Compose these
+indexed results into complete CSR interpreter execution and packed acceptance
+on the same unchanged constructor; do not confuse accounting with either endpoint.
 
 The privacy author owns new `formal/crypto/HegemonCrypto/SmallWoodV8Smz9EagerPrivacy.lean`
 and `docs/crypto/smz9-campaign/eager-privacy-proof.md`. Derive the joint mask

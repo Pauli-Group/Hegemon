@@ -414,9 +414,12 @@ the disabled root-equality term and mint-only issuer gates. Source coverage
 first reaches 20,341/20,605. Another 90 equations derive all 66 actual
 range reconstructions and the 24 high-limb padding cells. Bounds, odd
 top-bit readbacks and signed coefficients come from the actual source and
-expression DAG. Source coverage is now 20,431/20,605, leaving 174 numeric
-raw CSR attempts; the 2,129-declaration integration gate passes with
-unchanged wire vectors.
+expression DAG. The final 174 numeric equations use the actual auxiliary
+constructor, natural limb/carry identities and signed coefficient DAGs,
+covering every remaining index `20320..20493`. Indexed source coverage is
+now 20,605/20,605; the 2,483-declaration integration gate passes with
+unchanged wire vectors. These indexed endpoints still require whole-table
+composition before complete interpreter or packed-acceptance credit.
 The stable-tail identities are constructor properties; the inactive
 Merkle and authorization endpoints use fixed typed validity and derive
 their actual public/packed values internally. Coverage

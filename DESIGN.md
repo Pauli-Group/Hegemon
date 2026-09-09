@@ -112,9 +112,10 @@ state-path levels. Disabled transitions enforce root equality; enabled
 roots and mint-only issuer digests bind the exact typed/public/private words.
 Ten range modules add 66 actual range reconstructions and 24 high-limb
 padding cells, deriving numeric bounds and odd top bits from typed validity.
-Current source coverage is 20,431/20,605, with 174 numeric equations
-still open. The 2,129-declaration integration gate passes with unchanged
-wire vectors; it is not production authority.
+Twenty-six further modules derive all 174 remaining numeric equations,
+including exact decimal/epoch, time/retirement, product, difference and carry
+bindings. Indexed source coverage is now 20,605/20,605. The 2,483-declaration
+integration gate passes with unchanged wire vectors; it is not production authority.
 The tail uses the same computed hash schedule, with no supplied auxiliary
 or hash-final values. Complete CSR coefficient/interpreter execution,
 full packed acceptance and Rust execution remain separate obligations. The exact finite

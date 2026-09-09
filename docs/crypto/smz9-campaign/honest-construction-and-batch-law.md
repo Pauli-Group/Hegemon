@@ -424,10 +424,18 @@ using the six separate four-cell address blocks at `43446`, `43494`,
 acceptance predicate or desired evaluator output is supplied as an extra
 premise to the final typed-validity endpoints.
 
-Together these results discharge 20,431 of 20,605 actual raw CSR attempts
-and all 830 nonlinear roots in all 64 lanes. The remaining 174 numeric raw CSR
-attempts, complete CSR coefficient/interpreter execution and full packed
-acceptance remain open. These are raw attempt counts, not a fixed count of
+The final 174 numeric equations occupy globals `20320..20493`. Twenty-six
+modules derive all initial/asset/scale/counter bindings, nonmint zeros,
+decimal and epoch equations, time and retirement low/high parts, thirty
+three-limb product equations, collateral differences, the final borrow and
+all carry cells. The source supplies the exact natural auxiliaries; no
+accepted-program or desired field equation is an extra endpoint premise.
+The 198 coefficient lemmas follow the actual expression DAG.
+
+Together these indexed results discharge all 20,605 actual raw CSR attempts
+and all 830 nonlinear roots in all 64 lanes. Complete CSR
+coefficient/interpreter composition and full packed acceptance remain open.
+These are raw attempt counts, not a fixed count of
 public-dependent normalized emitted rows. Rust refinement, cryptographic
 security and production authorization remain separate.
 
@@ -682,8 +690,27 @@ remain uncredited evidence. A whole-table finite lookup exceeded the existing
 compiler cap; the qualified proof uses bounded chunk membership without
 changing the limits or the statement proved.
 
-Continue by closing the remaining 174 raw CSR attempts and deriving
-complete CSR coefficient/interpreter execution. This must supply
+The final numeric packet strictly qualifies all 174 remaining equations,
+with 354 audited declarations in 26 modules. Its receipt SHA-256 is
+`92f273e2a7c5e6216bc6f7ff4bcf9d4f908ba51406b2b6ff2e41236c4f5e9de5`.
+All 24 mathematical and nine parser negatives reject. Independent postflight
+checks 1,015 input pins, 27 fresh outputs and 51 logs; peak child RSS is
+2,390,081,536 bytes. Import-only migration SHA-256 is
+`4074b53b0aafd5cc61c04a1ed33b004a96b33ca4013d39dd312f215e38d1c370`.
+The combined gate passes all 3,167 jobs, every one of the 2,483 declaration
+audits and unchanged-vector checks. Full-gate log SHA-256 is
+`f7e3b6b83e6f890e36c6df33e0fff6407c751545709be0f862e682e950a0510a`.
+The exact 504-file, 50,934,511-byte evidence archive is
+`.agent/artifacts/smallwood-poseidon2-v8/formal-source-2483-f7e3b6b83e6f890e`;
+copy-manifest SHA-256 is
+`b52d2d7e1390aebe83d5db79de56105bfdd8ab0483514598ffd743a3cc4617c6`.
+Independent exact-set, size and hash readback passes. Failed drafts and
+development checks remain uncredited. The complete disjoint source index
+accounting has SHA-256
+`48ea5e730685d984218d9b25e59e096295cb7d44e183105454350950b3d3397a`.
+
+Continue by composing complete CSR coefficient/interpreter execution.
+This must supply
 `CanonicalPublicPackedDomain` for a named
 concrete constructor. Actual Rust success, output equality, decoding
 roundtrip and production binary refinement remain additional obligations.
