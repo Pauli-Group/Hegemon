@@ -27,6 +27,10 @@ of this work. The security endpoints and resource accounting remain those in
 
 ## Progress
 
+- [x] (2026-09-09 05:35 UTC / September 8 local) Pause for the night at
+  the user's request. Qualified source/native evidence and failed translator
+  attempts are retained; the next build and constructor controls remain
+  unexecuted. Current handoff is `.agent/SMZ9_NIGHT_CHECKPOINT_2026-09-08.md`.
 - [x] (2026-09-08) Strictly qualify and exactly migrate 90 range equations:
   66 range reconstructions and 24 high-limb padding cells in ten modules,
   adding 46 declarations (2,129 total). All 983 input pins, 11 fresh outputs
@@ -195,9 +199,37 @@ of this work. The security endpoints and resource accounting remain those in
   Copy-manifest SHA-256 is
   `5c9ba0cf726f1db596c754fad38a6c6f261c515d3157339057e49d7bce7f142f`.
   This archive contains zero actual symlinks and represents the failed
-  filesystem; it is not a literal clone or hermetic replay. A fresh reviewed
-  copy-sandbox build, actual-constructor controls and strict translation
-  remain open under `.agent/SMZ9_TRANSLATOR_STATIC_RETURN_EXECPLAN.md`.
+  filesystem; it is not a literal clone or hermetic replay. Actual-constructor
+  controls and strict translation remain open under
+  `.agent/SMZ9_TRANSLATOR_STATIC_RETURN_EXECPLAN.md`.
+- [x] (2026-09-09) Preserve the distinct approved copy-mode build failure
+  at its 736 MiB sampled scratch stop. Receipt SHA-256 is
+  `265a7a36d6027d1fb114dfcc0d2e7e1fc824421fd73db9878a16a07fb6bd70db`.
+  Clean SIGTERM cleanup leaves group 69500 extinct. A separate complete
+  read-only reconstruction verifies every immutable input; the failed
+  execution receipt itself lacks immutable-postflight credit and stays failed.
+  Independently verify 3,017 source/context records and 2,090 deduplicated
+  regular payloads / 55,571,639 bytes in
+  `.agent/artifacts/smallwood-poseidon2-v8/native-static-return-copy-build-failed-265a7a36d6027d1f`.
+  Copy-manifest SHA-256 is
+  `428a6e66a63f716b38daf64cb6f29708d36025bcc1345de63008c155e0dab0db`.
+  All original modes and 28 literal links are represented in metadata;
+  physical CAS payloads are mode 0444 with no actual links. No candidate
+  success, filesystem clone, hermetic replay or production credit is claimed.
+- [x] (2026-09-09) Preserve the separate R3 symlink-mode failure after
+  three complete accounting scans encounter disappearing Dune directories.
+  All 28 inherited mock controls and additional mirror/metadata/accounting
+  checks passed before the single approved attempt. Failed receipt SHA-256
+  is `0ce6360d2d5619c382e80693c58e5985d3f124c21382585deb915e624559e244`.
+  Group 70828 is extinct and reaped. Recorded immutable postflight passes;
+  independent full reconstruction verifies all old/source/Python/installed/
+  loader/file/packet pins. Independently verify 3,460 retained source/context
+  records and 2,281 content-addressed payloads / 126,591,186 bytes in
+  `.agent/artifacts/smallwood-poseidon2-v8/native-static-return-mirror-build-failed-0ce6360d2d5619c3`.
+  Manifest SHA-256 is
+  `41c3e45e32c6604915363d0632164e9d04e10f2134a6b7bdb2cb90071b9b8602`.
+  All 197 links are literal metadata; there are no retained actual links.
+  This remains a failed build, not candidate or security qualification.
 - [ ] Resolve the concrete translator return-value region-erasure mismatch
   in a separately reviewed new candidate, then strictly translate and refine
   the actual checked-loop wrapper under

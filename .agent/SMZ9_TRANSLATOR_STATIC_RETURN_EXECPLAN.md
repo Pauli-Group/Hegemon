@@ -45,9 +45,35 @@ be globally redefined.
   One delivered SIGTERM leaves the owned group extinct and reaped. Neither
   compiler exit status nor immutable postflight completion was recorded;
   cleanup success is not compiler success.
-- [ ] Review and qualify a separate fresh Stage 10 R2 build selecting the
-  installed Dune's documented `--sandbox=copy` mode. Preserve the OS sandbox,
-  symlink rejection, limits, source patch and failed Stage 10 packet.
+- [x] (2026-09-09 05:01 UTC) Review the separate Stage 10 R2 copy-mode
+  packet and pass all 28 fresh mock/read-only controls. The approved build
+  reaches the 736 MiB scratch stop; retain failed receipt
+  `265a7a36d6027d1fb114dfcc0d2e7e1fc824421fd73db9878a16a07fb6bd70db`.
+  Group 69500 is extinct and reaped after SIGTERM. Separate direct read-only
+  reconstruction verifies every old/source/Python/installed/loader/file pin.
+  Independently verify the 3,017-record manifest and 2,090 deduplicated
+  payloads (55,571,639 bytes), with manifest SHA-256
+  `428a6e66a63f716b38daf64cb6f29708d36025bcc1345de63008c155e0dab0db`.
+- [x] (2026-09-09 05:27 UTC) Review and run the separate Stage 10 R3
+  symlink-mode packet after all 28 inherited controls and the corrected
+  mirror/metadata/accounting controls pass. The run fails after 22.844 seconds
+  when three complete scans encounter disappearing Dune sandbox directories.
+  Receipt SHA-256 is
+  `0ce6360d2d5619c382e80693c58e5985d3f124c21382585deb915e624559e244`.
+  Group 70828 is extinct and reaped after SIGTERM. Recorded immutable
+  postflight passes, and independent full reconstruction checks all 3,719
+  old, 2,312 source, 4,932 Python, 10,787 installed, eight loader, 33 file
+  and seven packet pins. No compiler exit or candidate success is credited.
+- [x] Independently verify the R3 retention: 3,460 source/context records,
+  2,281 content-addressed payloads, 126,591,186 unique bytes, and 197 literal
+  links represented only as metadata. Manifest SHA-256 is
+  `41c3e45e32c6604915363d0632164e9d04e10f2134a6b7bdb2cb90071b9b8602`.
+- [x] (2026-09-09 05:35 UTC / September 8 local) Pause at the user's
+  request. No new build or semantic control execution is started. Preserve
+  unfinished Stage 10 R4 and Stage 11 preparation for the next work session.
+- [ ] Resolve independent review concerns in the unintegrated quiescent
+  sampling helper, then complete and review the fresh R4 packet. No resource
+  limit, retry count, macOS sandbox or production gate may be weakened.
 - [ ] Qualify actual-constructor positive and malformed-type negative
   controls against separately linked old and new libraries with checks on.
 - [ ] Strictly translate current wrapper input and compare old arithmetic/
@@ -107,6 +133,56 @@ scratch `/private/tmp/smz9-static-return-stage10r2.raN1Pz91` with unchanged
 source and a separately frozen packet. Do not allow arbitrary build symlinks
 or disable macOS `sandbox-exec` to accommodate the build system.
 
+Stage 10 R2 fails after 11.147 seconds at the conservative scratch stop.
+The last recorded sample is 770,551,808 bytes; the retained final packet
+occupies 856,715,264 allocated bytes, exceeding the sampled ceiling before
+termination. This demonstrates why sampled stops are not continuous quotas.
+The source of growth is repeated preprocessor executable copies in pending
+Dune action sandboxes. Dune 3.24.2's cached source sets a compile-time limit
+of 250 live sandboxes in `src/dune_engine/sandbox.ml:4`, independently of the
+one-compiler-job setting; no supported count or byte-limit setting was found.
+No failed receipt or resource limit is changed.
+
+For a separate R3 candidate, select documented `--sandbox=symlink` and
+recognize only `build/.sandbox/<32-lowercase-hex>/default/<suffix>` links
+whose literal target is the exact relative path to
+`build/default/<same suffix>`. Require non-aliased ancestors and target,
+identical strict resolution, a regular target and link count one. All other
+build links fail. Reject hardlinked regular scratch files, count link
+metadata with `lstat`, never traverse a link during accounting and count
+the real target through the ordinary full-tree walk. Existing source links
+keep their exact 28-record policy; the sole transient socket remains
+`build/.rpc/dune`. Final output inventory occurs after owned-group extinction
+and rejects every remaining link or socket. This sampled guard is not a
+continuous defense against a malicious process changing paths between
+syscalls; the enclosing OS sandbox and pinned tool execution remain explicit
+engineering boundaries. The exact narrow classifier accepts all 84 retained
+Stage 10 internal mirror links. New negative and accounting controls must
+qualify it before any R3 build; do not extrapolate that read-only probe to
+a successful compiler run.
+
+Stage 10 R3 successfully recognizes the narrow internal links but cannot
+complete three consecutive live allocation scans amid Dune sandbox removal.
+The final receipt records a clean owned-group stop and successful immutable
+postflight, independently reconstructed afterward. Its complete failed state
+is retained at
+`.agent/artifacts/smallwood-poseidon2-v8/native-static-return-mirror-build-failed-0ce6360d2d5619c3`.
+No receipt is relabeled and no resource/retry budget is increased.
+
+The cached Dune 3.24.2 `src/dune_rules/pp_spec_rules.ml:408-421` supplies
+`needs_sandboxing` automatically for preprocessors in Dune language 3.3 or
+later; Aeneas uses 3.7. Selecting `--sandbox=none` therefore does not solve
+this PPX churn. No such build was attempted. A scheduling-only proposal
+would briefly stop the exclusively owned, unreaped-leader-reserved compiler
+group, confirm stopped membership, measure the tree and resume it. The draft
+`/private/tmp/smz9-quiescent-scratch-helper.py` remains unintegrated and unrun.
+Independent review requires resolving watchdog independence from its local
+pause lock and resume-after-kill reporting. Kernel-uninterruptible tasks
+prevent any absolute four-second guarantee; only a watchdog trigger can be
+claimed. Finish mocked exception/timer/signal tests before considering this
+proposal for a separately approved fresh packet. The sole normal cleanup
+and reap path, existing time/resource limits and OS sandbox must remain.
+
 The native compiler build has a separate 768 MiB scratch ceiling, a 736 MiB
 conservative stop, one job, 250-second child stop and 300-second total bound.
 The compiled predecessor occupies about 314 MiB, while its source files total
@@ -123,9 +199,13 @@ exception is an explicit host-IPC boundary, not complete network isolation.
 The fresh source copy matches all 2,311 predecessor records before editing.
 Exactly eleven lines in five copied files are changed through apply_patch;
 the complete diff preserves every assertion and the identified stronger
-symbolic comparisons. No compiler execution, repaired translator, successful
-control, generated proof or release is claimed yet. Stage 8 and Stage 9
-failures remain retained.
+symbolic comparisons. All three isolated builds have failed at resource-runner
+boundaries and remain uncredited. No repaired translator, successful
+constructor control, generated proof or release is claimed yet. Stage 8,
+Stage 9, Stage 10, Stage 10 R2 and Stage 10 R3 failures remain retained.
+Work is paused for the night with no task-owned compiler running. The next
+safe step is review and mocked qualification of R4 preparation, not execution
+of a stale or failed packet. See `.agent/SMZ9_NIGHT_CHECKPOINT_2026-09-08.md`.
 
 ## Context and Orientation
 
@@ -219,3 +299,7 @@ explicit isolated native-build resource and local-IPC boundaries.
 2026-09-09 update: retain the failed build and separate successful read-only
 input reconstruction; prepare a distinct documented copy-sandbox build,
 without changing the source correction, OS sandbox or resource boundaries.
+
+2026-09-09 night checkpoint: retain independently verified R2 and R3 failures,
+record Dune's mandatory PPX sandbox behavior and leave quiescent-sampling and
+constructor-control preparation explicitly unqualified. Pause on user request.
