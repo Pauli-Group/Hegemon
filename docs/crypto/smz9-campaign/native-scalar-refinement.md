@@ -372,11 +372,52 @@ Negative-control symlinks are recorded rather than followed or recreated.
 It is an evidence archive, not a hermetic replay or production manifest;
 external toolchain/library dependencies remain pinned, not all copied.
 
-Root-list collection and actual runtime-program binding remain open. In
-particular, the retained LLBC has no declaration for
-`evaluate_smallwood_poseidon2_v8_expression_program` or its program type;
-embedded Rust source text is not an extracted function. That wrapper needs
-a separately bounded extraction before an ordered-root proof. Empty-row
-node evaluation is now checked, but this alone does not qualify complete
-CSR residual evaluation, packed acceptance or full R0. P7, K8 and the
-independent production/release gates remain unchanged.
+## Unchanged-source ordered-root extraction
+
+The original node-only LLBC has no wrapper declaration or program type;
+embedded Rust text is not an extracted function. A separate Charon-only
+Stage 7 now extracts the actual unchanged
+`evaluate_smallwood_poseidon2_v8_expression_program`. The wrapper calls
+the node evaluator, then collects root reads in order, including duplicates,
+and errors on the first invalid root. The new declaration inventory contains
+transparent structured bodies for the wrapper (id 0), nodes (2), `sub` (18),
+`inverse` (19), `add` (21), `mul` (22), and the two closure call bodies.
+
+Twelve mock-only safety checks and independent static review pass before
+the one-shot extraction. It runs offline with no tool installation, using
+the existing compiler and seven checksum-pinned dependencies copied into a
+fresh Cargo home. Networking is denied; writes are restricted to fresh
+scratch subdirectories. The 11.11-second run exits zero and the reserved
+process group is confirmed extinct before its leader is reaped. All three
+immutable input inventories and 18 scratch-input hashes pass independent
+postflight. Across 62 samples, maximum group RSS is 326,647,808 bytes and
+maximum scratch allocation is 85,397,504 bytes, below conservative stops.
+These sampled observations are not a continuous operating-system quota.
+
+The 839,109-byte LLBC has SHA-256
+`936520e11c101e25da0046d0ebb4db40fb083746083d03a5082540625eba44ca`.
+Execution-receipt SHA-256 is
+`a22be43b2054922a30e50b24bed4fe9c9c8bdbf52cbe9e9666ab5c7fd699c887`.
+Main IR embedded bytes exactly match source SHA-256
+`608786dc9232c22612da6ce4e13bab4fdfe354be2065cdc08227a9ceff618454`.
+Charon does not embed the external field crate's source contents; its pinned
+fresh Cargo compilation remains an explicit engineering boundary. Compiler,
+Charon, macOS helpers/libraries and sandbox correspondence are not proved,
+and before/after pins are not an atomic no-ABA snapshot.
+
+The exact evidence archive contains 520 files / 84,258,601 bytes under
+`.agent/artifacts/smallwood-poseidon2-v8/native-root-extraction-a22be43b2054922a`.
+Its copy-manifest SHA-256 is
+`d407a3301381863c8a1c751e76eed650550ea23f1cad1b19ad330700962ca651`.
+It preserves the complete Stage 7 packet and source context, not a hermetic
+replay or production manifest. Independent readback verifies the exact set,
+all retained and source sizes/hashes, and absence of symlinks.
+
+Root-list refinement and actual runtime-program binding remain open. The
+new extraction concretely exposes foreign `Iterator::map`, Map iterator
+`next`, Result `from_iter`, and `Option::copied` dependencies. `Iterator::collect`
+is mapped, but delegates to the missing FromIterator instance. The frozen
+Lean runtime defines the Map structure but lacks those operation bindings. No Aeneas translation
+or Lean proof is claimed for this wrapper. Empty-row node evaluation alone
+does not qualify complete CSR residual execution, packed acceptance or full
+R0. P7, K8 and independent production/release gates remain unchanged.

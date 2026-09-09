@@ -132,11 +132,33 @@ of this work. The security endpoints and resource accounting remain those in
   Independent read-only postflight verifies the exact set, every payload
   size/hash and the 17-root final receipt; no retained symlinks are present.
   All failed variants remain uncredited; this is not a hermetic replay package.
-- [ ] Extract and refine the actual ordered-root collection wrapper, bind
-  the exact runtime program, compose full CSR/packed acceptance, and close
-  the remaining byte/runtime/security obligations. The retained node LLBC
-  lacks that wrapper and its program type. Empty-row node evaluation alone
-  does not establish full CSR execution or full R0.
+- [x] (2026-09-09) Extract the unchanged actual ordered-root wrapper in a
+  separate offline, scratch-only Charon run. Twelve mock-only safety checks
+  and independent review pass before execution. The run completes in 11.11
+  seconds with exact main IR embedded bytes, the program type and all six
+  required transparent local functions. All three input inventories match;
+  all 18 scratch pins pass independent postflight. The owned group exits
+  cleanly. Maximum sampled group RSS is 326,647,808 bytes; maximum observed
+  scratch allocation is 85,397,504 bytes. Receipt SHA-256 is
+  `a22be43b2054922a30e50b24bed4fe9c9c8bdbf52cbe9e9666ab5c7fd699c887`;
+  the 839,109-byte LLBC has SHA-256
+  `936520e11c101e25da0046d0ebb4db40fb083746083d03a5082540625eba44ca`.
+  Retain 520 payload files / 84,258,601 bytes under
+  `.agent/artifacts/smallwood-poseidon2-v8/native-root-extraction-a22be43b2054922a`;
+  copy-manifest SHA-256 is
+  `d407a3301381863c8a1c751e76eed650550ea23f1cad1b19ad330700962ca651`.
+  Independent retention readback verifies every source and retained size/hash,
+  the exact 520-file set, and absence of symlinks.
+  Charon omits embedded external field-source contents; pinned fresh Cargo
+  compilation remains an explicit boundary. This is extraction evidence,
+  not a Lean proof, hermetic replay or production receipt.
+- [ ] Refine the actual ordered-root collection wrapper, bind the exact
+  runtime program, compose full CSR/packed execution and close the remaining
+  byte/runtime/security obligations. The new extraction exposes iterator-map,
+  Map iterator-next, Result-from-iterator and Option-copied operations absent
+  from the frozen Lean runtime. Resolve that boundary explicitly; do not
+  assume wrapper success or silently replace the extracted code. Empty-row
+  node evaluation alone does not establish full CSR execution or full R0.
 
 - [x] (2026-09-08 19:11 UTC) Strictly qualify the final 97 authorization
   nonlinear roots in ten source modules. All 230 exact declaration audits,
