@@ -1,17 +1,22 @@
-# Actual Rust scalar refinements
+# Actual Rust scalar and node-evaluator refinements
 
-Status: checked isolated source-extraction results, 2026-09-08 UTC. These
-four helper refinements advance R0; they do not close whole-evaluator,
-acceptance, binary or cryptographic refinement.
+Status: checked isolated source-extraction results, 2026-09-09 UTC. Four
+helper refinements, all ten node constructors, and the complete canonical
+node-array loop are checked, including actual empty witness rows for
+public-only programs. These results advance R0; they do not close program
+root collection, acceptance, binary or cryptographic refinement. The node
+subject has exactly two explicit kernel-proof arguments, as detailed below.
 
 ## Exact statements
 
 The selected source is the unchanged
 `circuits/transaction/src/smallwood_poseidon2_v8_ir.rs`, SHA-256
 `608786dc9232c22612da6ce4e13bab4fdfe354be2065cdc08227a9ceff618454`.
-The target definitions are imported unchanged from
+The first scalar receipts import their target definitions unchanged from
 `formal/lean/Hegemon/Transaction/Poseidon2V8RelationProgram.lean`, SHA-256
 `a4c9714d6a8d21b0ffe1e1539d838917fb505708f2c0fde4f30fb222ba0151a9`.
+The later node-body closure rebuilds the current metadata-only source revision,
+documented below, rather than silently rebinding those earlier receipts.
 Charon extracts the actual selected source bodies and Aeneas emits the Lean
 functions against which the proofs run. Neither generated functions nor
 target field definitions are replaced by handwritten substitutes.
@@ -251,7 +256,7 @@ the separate node `-checks` replay remains a distinct, still finite check.
 Translator correctness, actual-array induction, acceptance and full R0 are
 still open.
 
-## Generated node definitions compile; body proof remains unrun
+## Generated node definitions compile; body proof remains unverified
 
 On September 8 the isolated `initial-r2` check successfully compiles the
 exact generated Types and Funs with Lean 4.31.0. All three version/compile
@@ -261,7 +266,117 @@ checks and no live child groups. Its receipt SHA-256 is
 at `/private/tmp/smz9-aeneas-stage1.IgNKumAA/stage6-nodes-lean.fbqPGn/initial-r2/INITIAL_COMPILE_RECEIPT.json`.
 The earlier missing-search-root preflight failure is preserved separately.
 
-The proposed 440-line body proof has not been run. Independent review of
-its V2 runner found incomplete directory-symlink guards, an unpinned loaded
-resource-policy file and a missing final historical peak-RSS assertion.
-Execution was withheld; no body, full-array or R0 theorem is credited.
+Independent review of the proposed 440-line proof's V2 runner found incomplete
+directory-symlink guards, an unpinned loaded resource-policy file and a missing
+final historical peak-RSS assertion. V2 execution was withheld. A separately
+reviewed V3 corrects those guards. Its actual preflight passes two positive,
+seven malformed-axiom and four path/link controls, then rejects a source-pin
+change before launching Lean. The failed receipt is preserved at
+`/private/tmp/smz9-aeneas-stage1.IgNKumAA/stage6-nodes-lean.fbqPGn/body-proof-v3/RECEIPT.json`,
+SHA-256 `47f69f3e5d4a7289c0e16e263beca9feb49b597a5c4b296ecc1e70f7e6f3248b`.
+
+The changed source is `Poseidon2V8RelationProgram.lean`: commit
+`dfd720527c5a6be546c21388716983e9b92274d3` changes only its three program-identity
+constants, leaving field/evaluator definitions unchanged. Its current SHA-256
+is `170cd4e999b08445cf46c7abde03aefd8790b567f6d04ca5d84bfb62d8616a9d`.
+The scalar/inverse receipts above remain historical checks against their
+original pinned source; they are not silently rebound. A distinct V4 executes
+a fresh build of all four current Hegemon modules, eight unchanged generated
+modules, three unchanged scalar/inverse proofs and the original node-body
+proof. None of the old Hegemon/generated/proof output directories enters its
+import search path. The first fifteen compilations pass, including exact
+scalar/inverse axiom audits; the final node-body proof fails on iterator,
+let-pair and Vec-index proof simplification. Its failed receipt SHA-256 is
+`2a7f6a9ba8d3b6597aad665d3d6b80c06563270e2180d641c6f2aea8761884ae`.
+
+The failed proof also exposes two native-decision axioms from the generated
+body's implicit error-string bounds. The unchanged Aeneas `toStr` definition
+supplies those bounds using `decide +native`. Because Lean audits dependencies
+in theorem types as well as proof terms, merely improving the downstream proof
+cannot remove the original body constant's dependency. No body theorem is
+credited from this run.
+
+A separate V5 candidate attempts exactly two explicit `(by decide)` arguments
+at the existing `toStr` calls, but fails because `U32.max` requires its defining
+equation. V6 uses `(by simp only [U32.max_eq]; decide)` at those exact two sites.
+Both concrete ASCII-bound roots compile with only `propext`, and the fresh
+derivative compiles. The earlier proposed no-axioms claim is not achieved;
+the permitted-standard-axioms gate is unchanged. An exact text validator
+rejects any other generated-code change. Rust, LLBC, translator, libraries
+and original generated source remain untouched. This is a proof-argument
+derivative, not byte-identical generated output or a theorem about the old
+elaborated constants.
+
+V6-V9 preserve failed mechanical proof simplifications. V10 is uncredited:
+the coordinator invokes system Python rather than the previously used
+Homebrew Python 3.14.5, and the process monitor lacks `os.waitid`. The harness
+terminates the owned child; after the parent exits, a targeted PID/group
+62665 query returns no process. No broad cleanup is performed. V11 restores
+the qualified interpreter and verifies its required API before launch, but
+catches a coordinator edit placed in Add rather than Bit. V12 starts from
+the V9 proof and adds the single local let-unfold line only inside Bit.
+All prior sources, receipts and logs remain failed, uncredited evidence.
+
+The V12 check passes all 21 exact native node-body roots on the unchanged
+V6 derivative. Every root uses only `propext`, `Classical.choice` and
+`Quot.sound`. Two positive, seven malformed-axiom and four path/link controls
+pass, as do the separate two-positive/seven-negative string-bound audit
+controls. Complete before/after checks cover 136 pinned inputs and 16,797
+dependency records. Peak child RSS is 2,249,539,584 bytes; elapsed time is
+18.72 seconds, with one compiler job, M2800, a 3 GiB group cap, a five-minute
+deadline and the unchanged cumulative 50 MiB packet limit. Its receipt is
+`/private/tmp/smz9-aeneas-stage1.IgNKumAA/stage6-nodes-lean.fbqPGn/body-proof-v12/RECEIPT.json`,
+SHA-256 `01aad797e0b92f0cb19e785168420a294e7b213f2a3de4710677b164fbc4d53f`.
+
+## Complete canonical node-array loop
+
+The V3 loop qualification passes its three main roots and six original-
+predicate boundary controls. It derives every constructor's reads from
+original `CanonicalAt true`, canonical inputs and concrete dimensions. Its
+loop invariant preserves the actual expression slice, iterator/prefix length,
+canonical words and exact remaining `evalExpressionNodes.go` computation;
+the decreasing measure is remaining source-node count. The real empty vector
+and zero iterator initialize the proof. An arbitrary Option-valued target is
+preserved until success is concluded: execution success is not a premise.
+Receipt SHA-256 is
+`c27bf03d1d5d6aac062533da32ea2e04b2bb2ef7e2fea7ded2f9d0b78073d56e`.
+The two earlier loop failures remain uncredited: a reserved binder name and
+abbreviation rewrite, followed by a match-postcondition elaboration issue.
+
+The V4 extension additionally qualifies the original `CanonicalAt false`
+public-only domain. It generalizes only the witness-allowance parameter and
+requires 686 rows conditionally when witnesses are allowed. The original
+three true-case signatures remain exact corollaries. The public-only endpoint
+passes the actual `Slice.new U64` to the native wrapper and `[]` to the
+original semantic evaluator. No padded witness, native-success or semantic-
+success premise is substituted. The proof also excludes every WitnessRow
+constructor in that domain and checks the exact empty row value.
+
+All 17 V4 roots pass the standard-only axiom audit, with 159 frozen input
+pins and 16,798 dependency records revalidated before/after. The main loop
+roots use `propext`, `Classical.choice` and `Quot.sound`; the validity/boundary
+roots use only `propext`. Peak child RSS is 2,244,247,552 bytes and total check
+time is 12.50 seconds under the unchanged one-job/resource/sandbox limits.
+Receipt SHA-256 is
+`a67299c94e885da8caf1c209bfdefe27ddc49e18c180ae12680f63440e382452`.
+
+The 221-file / 29,208,236-byte exact evidence archive is
+`.agent/artifacts/smallwood-poseidon2-v8/native-refinement-nodes-v4-a67299c94e885da8`.
+Copy-manifest SHA-256 is
+`1139e9f82b67f57016f36512d5cc10c02ca5d8b948196c79f7d3e4132f4a9bf2`.
+Independent read-only postflight verifies the exact payload set, every size
+and hash, the 17-root final receipt, and absence of retained symlinks.
+It preserves original/derivative sources, successful and failed runs, compiled
+outputs, logs, dependency manifests and externally pinned source inputs.
+Negative-control symlinks are recorded rather than followed or recreated.
+It is an evidence archive, not a hermetic replay or production manifest;
+external toolchain/library dependencies remain pinned, not all copied.
+
+Root-list collection and actual runtime-program binding remain open. In
+particular, the retained LLBC has no declaration for
+`evaluate_smallwood_poseidon2_v8_expression_program` or its program type;
+embedded Rust source text is not an extracted function. That wrapper needs
+a separately bounded extraction before an ordered-root proof. Empty-row
+node evaluation is now checked, but this alone does not qualify complete
+CSR residual evaluation, packed acceptance or full R0. P7, K8 and the
+independent production/release gates remain unchanged.
