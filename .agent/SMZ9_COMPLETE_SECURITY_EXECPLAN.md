@@ -179,6 +179,25 @@ of this work. The security endpoints and resource accounting remain those in
   copy-manifest SHA-256
   `331c12578469a1999057c4872fe6b0e565e68440c8f2d59ab641f49f3f634e80`.
   No retry, check disabling or frozen-tool modification occurs.
+- [x] (2026-09-09) Preserve the failed isolated static-return candidate
+  build. The eleven-line concrete-only erasure correction is frozen in five
+  new copied source files; the stronger symbolic-to-symbolic lifetime
+  comparisons remain intact.
+  The approved build is stopped when Dune creates an internal sandbox
+  symlink rejected by the resource guard. Its owned group is extinct after
+  SIGTERM. Failed receipt SHA-256 is
+  `fe7de8169930e6d910e4d7fe434854822c15e4d41b6a9992a64ed9fa701a01ff`;
+  no compiler-success or immutable-postflight credit is recorded. Separate
+  independent read-only reconstruction verifies all frozen/source/dependency
+  inputs unchanged. Independently verify 2,275 retained regular payloads /
+  45,819,510 bytes and 112 literal link records in
+  `.agent/artifacts/smallwood-poseidon2-v8/native-static-return-build-failed-fe7de8169930e6d9`.
+  Copy-manifest SHA-256 is
+  `5c9ba0cf726f1db596c754fad38a6c6f261c515d3157339057e49d7bce7f142f`.
+  This archive contains zero actual symlinks and represents the failed
+  filesystem; it is not a literal clone or hermetic replay. A fresh reviewed
+  copy-sandbox build, actual-constructor controls and strict translation
+  remain open under `.agent/SMZ9_TRANSLATOR_STATIC_RETURN_EXECPLAN.md`.
 - [ ] Resolve the concrete translator return-value region-erasure mismatch
   in a separately reviewed new candidate, then strictly translate and refine
   the actual checked-loop wrapper under

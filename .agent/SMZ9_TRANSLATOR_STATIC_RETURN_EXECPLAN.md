@@ -38,7 +38,16 @@ be globally redefined.
   new scratch; independently check every literal symlink and regular byte.
 - [x] (2026-09-09) Apply exactly eleven line replacements in five copied source files,
   retaining all assertions, control flow and earlier two projector fixes.
-- [ ] Prepare, review and authorize one bounded offline new-candidate build.
+- [x] (2026-09-09 04:48 UTC) Review the one-shot Stage 10 packet and pass
+  all 28 mock/read-only controls. The approved build stops on an unmodeled
+  Dune action-sandbox symlink; retain failed receipt
+  `fe7de8169930e6d910e4d7fe434854822c15e4d41b6a9992a64ed9fa701a01ff`.
+  One delivered SIGTERM leaves the owned group extinct and reaped. Neither
+  compiler exit status nor immutable postflight completion was recorded;
+  cleanup success is not compiler success.
+- [ ] Review and qualify a separate fresh Stage 10 R2 build selecting the
+  installed Dune's documented `--sandbox=copy` mode. Preserve the OS sandbox,
+  symlink rejection, limits, source patch and failed Stage 10 packet.
 - [ ] Qualify actual-constructor positive and malformed-type negative
   controls against separately linked old and new libraries with checks on.
 - [ ] Strictly translate current wrapper input and compare old arithmetic/
@@ -84,6 +93,19 @@ corrections at lines 108 and 261 remain. Preserve Charon substitutions,
 static-sensitive global handling, invariant lines 411 and 678-679, and the
 copyability predicate. This bounded candidate is not a global lifetime-model
 repair and must be rejected if its controls or strict translation fail.
+
+Stage 10's default Dune action sandbox created an internal dependency
+symlink under `build/.sandbox`; the resource guard rejected it after 12.43
+seconds, and the same guard prevented recorded immutable postflight.
+Independent read-only reconstruction subsequently verifies all 3,719 frozen
+records, 2,312 new source records, 4,932 Python records, 10,787 installed
+artifact records, eight loader chains, 21 file pins and seven packet pins.
+That separate check does not retroactively make the failed receipt pass.
+The installed `man/man1/dune-build.1:49-50` documents `--sandbox=copy`;
+actions requiring another sandbox mode may override it. Test this in fresh
+scratch `/private/tmp/smz9-static-return-stage10r2.raN1Pz91` with unchanged
+source and a separately frozen packet. Do not allow arbitrary build symlinks
+or disable macOS `sandbox-exec` to accommodate the build system.
 
 The native compiler build has a separate 768 MiB scratch ceiling, a 736 MiB
 conservative stop, one job, 250-second child stop and 300-second total bound.
@@ -193,3 +215,7 @@ system-library and platform correspondence remain engineering assumptions.
 Initial revision: define a concrete-only representation correction with
 stronger symbolic comparisons preserved, actual-constructor controls and
 explicit isolated native-build resource and local-IPC boundaries.
+
+2026-09-09 update: retain the failed build and separate successful read-only
+input reconstruction; prepare a distinct documented copy-sandbox build,
+without changing the source correction, OS sandbox or resource boundaries.
