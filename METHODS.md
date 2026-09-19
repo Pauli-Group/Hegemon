@@ -332,6 +332,15 @@ This means the source-chain witness is not the blocker for BCH; the final proof 
 
 ### Independent transaction proofs and proof sidecars (product block path)
 
+The September 18 fixed-cap authorization/nullifier repair is a new candidate
+relation, not an in-place reinterpretation of retained HGV8RP03 proofs. Keep
+the old artifacts unchanged. Check the five-digit secret codec, full note-key
+commitment, mode/slot-independent two-block nullifier, v5 address/ciphertext
+identity, and wallet recovery together. Development checks and exact remaining
+mathematical obligations are recorded in
+`.agent/prod-closure-2026-09-18/README.md`; regeneration and lifecycle passes
+must refer to the repaired candidate before activation.
+
 The intended new-block path requires every shielded transfer to carry one canonical self-contained transaction proof. No transaction-proof family is currently authorized for new blocks. When a successor is authorized, block-template construction must preflight the ordered proofs through the consensus verifier, and the block must carry no `proven_batch`, `block_artifact`, receipt root, commitment proof, or recursive candidate. Import must verify each proof, derive the canonical ordered claims and DA projection, and apply the resulting state transition.
 
 * Candidate-artifact submissions are retired and never selected for new blocks.
@@ -343,6 +352,22 @@ The intended new-block path requires every shielded transfer to carry one canoni
 
 For current SMZ9 research, use the event boundaries and reproducible checks in
 the [privacy and soundness dossier](docs/crypto/smz9-campaign/README.md).
+The SMZ9 prover now commits bounded 512-point subcoset FFT blocks instead of
+retaining every full-domain evaluation table. It retains coefficients for
+Horner evaluation at checked opening points, restores the original indexed
+leaf positions, and keeps the Merkle tree and leaf tapes. The previous 145
+tables at `2^23` eight-byte field elements required 9.0625 GiB before other
+allocations. Small-domain differential tests compare full indexed leaves,
+roots and openings with the former table implementation, including repeated
+and nonmonotone openings and index/point mismatch rejection. Two current-source
+development proofs generated and verified on September 12 within the approved
+8 GiB lane; their sampled process-group maxima were approximately 2.27 GiB.
+This is sampled execution evidence, not a continuous peak-memory guarantee.
+Mask/tape draw order and proof encoding are unchanged, but the parallel hash
+evaluation schedule changes; these tests do not establish full oracle-trace
+equivalence or close the privacy, soundness or production-authorization gates.
+The two proofs use one rebuilt executable, not independently qualified builds.
+
 Do not substitute a matrix-selected accumulated completion into the fixed
 full-domain `p^-5` theorem. A valid finite-family argument fixes the complete
 candidate family before the matrix and pays `L*p^-5`; merely bounding how many
@@ -358,6 +383,17 @@ Rust sampler's error path. Conditional input entropy alone also does not
 justify programming an oracle to an output chosen before that input. The
 full Lean gate, axiom audit and unchanged vectors check these local artifacts;
 they do not close either end-to-end security obligation or authorize release.
+
+Deterministic RNG source refinement now isolates the unchanged canonical-word
+and tape-partition helpers in
+`circuits/transaction/src/smallwood_poseidon2_v8_rng_refinement/mapping.rs`.
+The production parent retains the original import paths through reexports.
+An extraction harness must include that actual file and the actual error
+module, with the real field dependency; copied helper models or stub errors
+are not source binding. The helper accepts any positive exact tape width,
+whereas the outer sampler separately requires eight-byte alignment. Module
+relocation and focused tests do not prove provider freshness, full coin-layout
+refinement, persistent-oracle transfer, or the end-to-end privacy bound.
 
 For forward typed-witness lowering, use the named prefix/dense/hash constructors in
 the [honest-construction dossier](docs/crypto/smz9-campaign/honest-construction-and-batch-law.md).
@@ -597,6 +633,28 @@ For the retained `ReceiptRoot` research-vector path, direct verifier tests consu
 
 ### Release lifecycle evidence execution
 
+The additive SMZA runner is
+`circuits/transaction/examples/smallwood_poseidon2_v8_smza_artifact.rs`.
+Its `project`, `generate NEW_DIRECTORY` and `verify DIRECTORY` commands use a
+distinct schema and create-only tree under
+`.agent/artifacts/smallwood-poseidon2-v8-smza`. Generation makes two fresh
+OS-entropy prover invocations in one process, not two independent builds.
+Each preserves complete proof, context, native leaf, envelope and inline
+bytes, and binds the current v5 source inventory. SMZA local audits check
+canonical accepting bytes, the actual coupled PCS rank map and the 38-tail
+maps. Its honest prover consumes 14,811 accepted field words, a 32-byte salt
+and 2^23 independent 64-byte leaf tapes: at least 536,989,432 source bytes.
+Rejection can increase consumption. SMZA's witness-interpolation phase is
+sequential, as are its other entropy phases: rejection refills complete before
+the next row starts, and errors stop before later calls. Subsequent parallel
+hashing performs no entropy calls. Historical q20 keeps its existing schedule,
+and its formal receipts are not q38 evidence.
+The full carrier cap is 169,772 bytes; the unchanged 64 MiB action-byte budget
+fits at most 395 such maximum-sized records before block overhead, separately
+from the unchanged 512-action count ceiling. This is a byte bound, not a
+soundness-history bound. Fresh SMZA source and lifecycle checks remain
+necessary, and passing them alone does not enable production authority.
+
 Local retained-candidate carrier evidence is separate from the production
 release gate below. The `cee3cb81` repaired snapshot passes both its retained
 in-process reorg test and a guarded real HTTP/PQ socket test for each fresh
@@ -609,6 +667,23 @@ natural oversized and multi-chunk cases are outside this receipt. See
 [fresh repaired-proof execution](docs/crypto/smz9-campaign/repaired-proof-execution.md#completed-source-frozen-local-carrier-milestone)
 for the immutable source, proof, executable and receipt hashes. Neither this
 test-only capability nor its receipt authorizes production.
+
+For a retained socket test under an external resource supervisor, the optional
+`HEGEMON_TEST_RETAINED_SMZ9_OUTER_PGID` mode keeps the native parent, carrier
+workers and inventory subprocesses in the supervisor's existing process group.
+Set it only in an exec shim whose PID equals its process-group ID, then exec
+the exact ignored socket-parent test with no extra arguments. The native
+test-only helpers validate the canonical group ID, exact parent/child selector
+and live group membership. The live PGID lookup uses the existing Python
+inventory dependency's `os.getpgid`, with a two-second timeout and bounded
+output; macOS's setuid `/bin/ps` cannot launch inside this sandbox. Pin the
+Python executable on the inherited `PATH`. Shared-group cleanup kills only direct children;
+the outer supervisor must retain its own leader until every group member has
+exited, including on failure. Without this variable, isolated child groups and
+their existing cleanup behavior remain unchanged. This mode changes process
+containment, not the proof, network protocol or production capability. Both
+test source files are in the v5 source inventory, so changed harness bytes
+require refreshed source-bound candidate evidence before lifecycle execution.
 
 Static release documents are not trusted as executable evidence. For every local certificate, report, receipt, and release manifest, the successor checker requires a source-owned exact command, reruns it without a shell, and parses one canonical JSON receipt. That receipt binds the evidence id and kind, profile and relation program, one clean Git revision, the recomputed source inventory before and after execution, both retained proof SHA-512 values, the source-derived deployed-security report, the reviewed release workflow, and a SHA-512 commitment to the complete native capability tuple. Release source inventory v2 walks the shipped Cargo graphs rooted at `transaction-circuit`, `hegemon-node`, `wallet`, and `walletd` under their exact release feature selections, recursively loads active workspace-excluded local packages, explicitly records inactive optional local dependencies, and includes the root Cargo/toolchain files plus the complete `formal/crypto` and `formal/lean` source trees while excluding their build outputs. The tuple contains the network, circuit and crypto version, family, action, backend, profile, domain set, relation digest, activation height, stablecoin genesis root, and distinct note genesis root. The relation digest must equal the first 48 bytes of the exact relation-program SHA-512, every root limb must be canonical, activation height must fit the V8 scalar range, and root-only fresh activation fixes the note root to the source-derived empty depth-32 tree. A dedicated capability manifest repeats that tuple exactly. A dedicated zero-value-balance receipt requires the relation, wallet projection, and native projection to reject nonzero public sign or magnitude while the transparent pool is disabled. The adaptive whole-view and global SHA-512/QROM lifetime receipt schemas require fixed formal source paths and digests, future-only positive deployed theorem names, all concrete release inputs, both proof digests, the capability digest, and at least 128 concrete bits; current conditional theorems cannot populate either receipt. An independent review must use a source-trusted ML-DSA-87 key and command, an exact 2,592-byte public key, canonical signed review artifact, and exact 4,627-byte detached signature. The positive theorem command inventories and independent-review trust-root inventory remain empty.
 

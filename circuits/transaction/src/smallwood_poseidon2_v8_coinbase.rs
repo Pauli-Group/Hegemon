@@ -26,9 +26,9 @@ pub enum SmallwoodPoseidon2V8CoinbaseError {
     HashInputRejected,
 }
 
-const WALLET_SPEND_FIELD_KDF_DOMAIN: &[u8] = b"hegemon.wallet.poseidon2-v8.spend-field.sha512.v1\0";
 const WALLET_RECIPIENT_FIELD_KDF_DOMAIN: &[u8] =
     b"hegemon.wallet.poseidon2-v8.recipient-field.sha512.v1\0";
+use crate::smallwood_poseidon2_v8_hash_schedule::SMALLWOOD_POSEIDON2_V8_SINGLE_KEY_DOMAIN;
 
 fn canonical(words: &[u64]) -> bool {
     words.iter().all(|word| *word < GOLDILOCKS_MODULUS)
@@ -133,13 +133,34 @@ pub fn poseidon2_v8_two_note_frontier(
 
 /// Exact SingleKey authorization public key constrained by HGV8RP03.
 pub fn poseidon2_v8_single_key_authorization_key(
-    spend_key: [u64; 4],
+    spend_key: [u64; 5],
 ) -> Result<[u64; 4], SmallwoodPoseidon2V8CoinbaseError> {
-    if spend_key == [0; 4] {
+    let digest = poseidon2_v8_single_key_authorization_digest(spend_key)?;
+    Ok([digest[0], digest[1], digest[2], digest[3]])
+}
+
+/// Full SingleKey authorization commitment.  The seven-limb value is split
+/// between the note authorization key and its three authorization-extension
+/// words; truncating it back to four limbs would restore the credential-alias
+/// attack this successor relation is intended to remove.
+pub fn poseidon2_v8_single_key_authorization_digest(
+    spend_key: [u64; 5],
+) -> Result<[u64; 7], SmallwoodPoseidon2V8CoinbaseError> {
+    if spend_key[0] == 0 {
         return Err(SmallwoodPoseidon2V8CoinbaseError::ZeroSpendKey);
     }
-    let digest = sponge_words(NULLIFIER_DOMAIN_TAG, &spend_key)?;
-    Ok([digest[1], digest[2], digest[3], digest[4]])
+    sponge_words(
+        SMALLWOOD_POSEIDON2_V8_SINGLE_KEY_DOMAIN,
+        &[
+            spend_key[0],
+            spend_key[1],
+            spend_key[2],
+            spend_key[3],
+            spend_key[4],
+            0,
+            0,
+        ],
+    )
 }
 
 /// Canonical little-endian address/key representation for four V8 field words.
@@ -157,13 +178,8 @@ fn decode_words(bytes: [u8; 32]) -> [u64; 4] {
     })
 }
 
-/// Map secret key material uniformly into four Goldilocks elements.
-///
-/// Every lane consumes a domain-separated 128-bit SHA-512 candidate and uses
-/// rejection before reduction. This avoids the roughly 2^-32 bias created by
-/// reducing a raw 64-bit word modulo the Goldilocks prime. The rejected tail
-/// is smaller than 2^-64 of the 128-bit sample space.
-fn hash_secret_to_field_words(
+/// Map public key material uniformly into four Goldilocks elements.
+fn hash_public_to_field_words(
     domain: &[u8],
     bytes: [u8; 32],
 ) -> Result<[u64; 4], SmallwoodPoseidon2V8CoinbaseError> {
@@ -198,14 +214,37 @@ fn hash_secret_to_field_words(
 
 pub fn poseidon2_v8_spend_key_words(
     bytes: [u8; 32],
-) -> Result<[u64; 4], SmallwoodPoseidon2V8CoinbaseError> {
-    hash_secret_to_field_words(WALLET_SPEND_FIELD_KDF_DOMAIN, bytes)
+) -> Result<[u64; 5], SmallwoodPoseidon2V8CoinbaseError> {
+    // Exact little-endian base-p encoding.  Since p^5 > 2^256, this map is
+    // injective over all 256-bit secrets; five independently hashed residues
+    // would not provide that property.
+    let mut quotient = core::array::from_fn::<_, 4, _>(|limb| {
+        u64::from_le_bytes(bytes[limb * 8..(limb + 1) * 8].try_into().unwrap())
+    });
+    let modulus = u128::from(GOLDILOCKS_MODULUS);
+    let mut words = [0u64; 5];
+    for word in &mut words {
+        let mut remainder = 0u128;
+        for limb in (0..quotient.len()).rev() {
+            let dividend = (remainder << 64) | u128::from(quotient[limb]);
+            quotient[limb] = (dividend / modulus) as u64;
+            remainder = dividend % modulus;
+        }
+        *word = remainder as u64;
+    }
+    if quotient != [0; 4] {
+        return Err(SmallwoodPoseidon2V8CoinbaseError::KeyDerivationExhausted);
+    }
+    if words[0] == 0 {
+        return Err(SmallwoodPoseidon2V8CoinbaseError::ZeroDerivedKey);
+    }
+    Ok(words)
 }
 
 pub fn poseidon2_v8_recipient_key_words(
     bytes: [u8; 32],
 ) -> Result<[u64; 4], SmallwoodPoseidon2V8CoinbaseError> {
-    hash_secret_to_field_words(WALLET_RECIPIENT_FIELD_KDF_DOMAIN, bytes)
+    hash_public_to_field_words(WALLET_RECIPIENT_FIELD_KDF_DOMAIN, bytes)
 }
 
 /// Decode a public address or plaintext field without normalization.
@@ -233,7 +272,7 @@ mod tests {
 
     #[test]
     fn fixture_key_and_coinbase_commitments_are_pinned() {
-        let spend = [11, 12, 13, 14];
+        let spend = [11, 12, 13, 14, 1];
         let authorization_key = poseidon2_v8_single_key_authorization_key(spend).unwrap();
         let first = SmallwoodPoseidon2V8NoteOpening {
             value: 499_429_223,
@@ -286,7 +325,7 @@ mod tests {
 
     #[test]
     fn helpers_match_the_exact_transaction_schedule() {
-        let spend = [11, 12, 13, 14];
+        let spend = [11, 12, 13, 14, 1];
         let authorization_key = poseidon2_v8_single_key_authorization_key(spend).unwrap();
         let opening = SmallwoodPoseidon2V8NoteOpening {
             value: 499_429_223,
@@ -333,7 +372,7 @@ mod tests {
         );
         assert_eq!(
             poseidon2_v8_note_commitment(opening).unwrap(),
-            schedule.calls[75].final_digest()
+            schedule.calls[77].final_digest()
         );
     }
 
@@ -342,19 +381,21 @@ mod tests {
         let words = poseidon2_v8_spend_key_words([0xff; 32]).unwrap();
         assert!(words.into_iter().all(|word| word < GOLDILOCKS_MODULUS));
         assert_eq!(
-            poseidon2_v8_words_from_canonical_bytes(poseidon2_v8_words_to_bytes(words)),
-            Ok(words)
+            poseidon2_v8_words_from_canonical_bytes(poseidon2_v8_words_to_bytes(
+                words[..4].try_into().unwrap()
+            )),
+            Ok(words[..4].try_into().unwrap())
         );
         assert_eq!(
             poseidon2_v8_words_from_canonical_bytes([0xff; 32]),
             Err(SmallwoodPoseidon2V8CoinbaseError::NonCanonicalWord)
         );
         assert_eq!(
-            poseidon2_v8_single_key_authorization_key([0; 4]),
+            poseidon2_v8_single_key_authorization_key([0; 5]),
             Err(SmallwoodPoseidon2V8CoinbaseError::ZeroSpendKey)
         );
         assert_ne!(
-            poseidon2_v8_spend_key_words([0x42; 32]).unwrap(),
+            poseidon2_v8_spend_key_words([0x42; 32]).unwrap()[..4],
             poseidon2_v8_recipient_key_words([0x42; 32]).unwrap()
         );
     }

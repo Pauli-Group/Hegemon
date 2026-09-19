@@ -371,6 +371,10 @@ impl<V> RecordingPoseidon2V8Verifier<V> {
 impl<V: poseidon2_v8_state::Poseidon2V8ExactLeafVerifier>
     poseidon2_v8_state::Poseidon2V8ExactLeafVerifier for RecordingPoseidon2V8Verifier<V>
 {
+    fn native_leaf_profile(&self) -> poseidon2_v8_state::Poseidon2V8NativeLeafProfile {
+        self.inner.native_leaf_profile()
+    }
+
     fn verify_exact_v8_leaf(
         &mut self,
         block: poseidon2_v8_state::Poseidon2V8BlockContext,

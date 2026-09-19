@@ -22,6 +22,7 @@ use crate::{
         verify_statement_with_transcript_backend_profile_and_domain, SmallwoodDecsEvaluationDomain,
         SmallwoodProofWireIdentityV1, SmallwoodTranscriptBackend, SmallwoodVerifierTraceV1,
         POSEIDON2_V8_SMZ9_SMALLWOOD_NO_GRINDING_PROFILE,
+        POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE,
         SMALLWOOD_POSEIDON2_V8_SMZ9_MAX_COMPACT_AUTHENTICATION_NODES,
         SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_SMZ9,
     },
@@ -209,6 +210,348 @@ impl SmallwoodPoseidon2V8Smz9HonestMapAuditV1 {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodPoseidon2V8SmzaHonestMapAuditV1 {
+    pub piop_openings: usize,
+    pub decs_openings: usize,
+    pub lvcs_opened_combinations: usize,
+    pub witness_interpolation_coin_count: usize,
+    pub witness_opening_view_count: usize,
+    pub witness_interpolation_rank: usize,
+    pub pcs_unstack_coin_count: usize,
+    pub pcs_partial_view_count: usize,
+    pub pcs_unstack_block_count: usize,
+    pub pcs_unstack_min_block_rank: usize,
+    pub pcs_unstack_total_rank: usize,
+    pub nonlinear_piop_coin_count: usize,
+    pub nonlinear_piop_view_count: usize,
+    pub nonlinear_piop_low_rank: usize,
+    pub linear_piop_coin_count: usize,
+    pub linear_piop_view_count: usize,
+    pub linear_piop_low_rank: usize,
+    pub lvcs_tail_coin_count: usize,
+    pub lvcs_joint_view_count: usize,
+    pub lvcs_tail_evaluation_rank: usize,
+    pub lvcs_selected_combination_rank: usize,
+    pub decs_mask_coin_count: usize,
+    pub decs_evaluation_high_view_count: usize,
+    pub decs_low_coefficient_rank: usize,
+}
+
+impl SmallwoodPoseidon2V8SmzaHonestMapAuditV1 {
+    /// True only for the exact square, full-rank decomposition checked by the
+    /// constructor.  This is an algebraic audit result, not a release receipt.
+    pub fn exact_square_full_rank_decomposition(&self) -> bool {
+        self.witness_interpolation_coin_count == self.witness_opening_view_count
+            && self.witness_interpolation_rank == self.piop_openings
+            && self.pcs_unstack_coin_count == self.pcs_partial_view_count
+            && self.pcs_unstack_block_count == self.pcs_unstack_coin_count / self.piop_openings
+            && self.pcs_unstack_min_block_rank == self.piop_openings
+            && self.pcs_unstack_total_rank == self.pcs_unstack_coin_count
+            && self.nonlinear_piop_coin_count == self.nonlinear_piop_view_count
+            && self.nonlinear_piop_low_rank == self.piop_openings
+            && self.linear_piop_coin_count == self.linear_piop_view_count
+            && self.linear_piop_low_rank == self.piop_openings
+            && self.lvcs_tail_coin_count == self.lvcs_joint_view_count
+            && self.lvcs_tail_evaluation_rank == self.decs_openings
+            && self.lvcs_selected_combination_rank == self.lvcs_opened_combinations
+            && self.decs_mask_coin_count == self.decs_evaluation_high_view_count
+            && self.decs_low_coefficient_rank == self.decs_openings
+    }
+}
+
+pub fn audit_smallwood_poseidon2_v8_smza_honest_maps_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    trace: &SmallwoodVerifierTraceV1,
+) -> Result<SmallwoodPoseidon2V8SmzaHonestMapAuditV1, TransactionCircuitError> {
+    let profile = POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE;
+    let geometry = crate::smallwood_engine::derive_smallwood_core_geometry_v1(statement, profile)?;
+    if geometry.packing_factor != 64
+        || profile.nb_opened_evals != 6
+        || profile.beta != 2
+        || geometry.row_count != 686
+        || geometry.constraint_degree != 8
+        || geometry.nb_lvcs_cols != 368
+        || geometry.interpolation_point_count != 406
+    {
+        return Err(violation("SMZA local audit source geometry drift"));
+    }
+    trace.validate_sections_v1()?;
+    if trace.profile != POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE
+        || trace.proof.wire_identity != SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza
+    {
+        return Err(violation(
+            "SMZA honest-map audit requires the exact profile-9 proof identity",
+        ));
+    }
+    if !trace.proof.auxiliary_witness_words.is_empty()
+        || trace.proof.auxiliary_witness_limb_count != 0
+    {
+        return Err(violation(
+            "SMZA honest-map audit refuses witness-dependent auxiliary proof words",
+        ));
+    }
+
+    let opening_points = trace.transcript_eval_points_v1();
+    ensure_distinct_outside_prefix(
+        opening_points,
+        profile.nb_opened_evals,
+        geometry.packing_factor,
+        "PIOP opening",
+    )?;
+    let decs_points = trace.decs_eval_points_v1();
+    ensure_distinct_outside_prefix(
+        decs_points,
+        profile.decs_nb_opened_evals,
+        geometry.nb_lvcs_cols + profile.decs_nb_opened_evals,
+        "DECS evaluation",
+    )?;
+
+    ensure_matrix_shape(
+        trace.pcs_opened_witness_row_scalars_v1(),
+        profile.nb_opened_evals,
+        geometry.nb_polys,
+        "opened witness",
+    )?;
+    ensure_matrix_shape(
+        trace.proof.piop_ppol_highs_v1(),
+        profile.rho,
+        geometry.mpol_poly_degree + 1 - profile.nb_opened_evals,
+        "nonlinear PIOP highs",
+    )?;
+    ensure_matrix_shape(
+        trace.proof.piop_plin_highs_v1(),
+        profile.rho,
+        geometry.mlin_poly_degree - profile.nb_opened_evals,
+        "linear PIOP highs",
+    )?;
+    ensure_matrix_shape(
+        trace.pcs_partial_evals_v1(),
+        profile.nb_opened_evals,
+        geometry.nb_unstacked_cols - geometry.nb_polys,
+        "PCS partial evaluations",
+    )?;
+    ensure_matrix_shape(
+        trace.pcs_rcombi_tails_v1(),
+        geometry.nb_lvcs_opened_combi,
+        profile.decs_nb_opened_evals,
+        "LVCS random-combination tails",
+    )?;
+    ensure_matrix_shape(
+        trace.pcs_subset_evals_v1(),
+        profile.decs_nb_opened_evals,
+        geometry.subset_cols,
+        "LVCS subset evaluations",
+    )?;
+    ensure_matrix_shape(
+        trace.decs_masking_evals_v1(),
+        profile.decs_nb_opened_evals,
+        profile.decs_eta,
+        "DECS masking evaluations",
+    )?;
+    ensure_matrix_shape(
+        trace.decs_high_coeffs_v1(),
+        profile.decs_eta,
+        geometry.nb_lvcs_cols,
+        "DECS high coefficients",
+    )?;
+    ensure_matrix_shape(
+        trace.pcs_coeffs_v1(),
+        geometry.nb_lvcs_opened_combi,
+        geometry.nb_lvcs_rows,
+        "LVCS combination coefficients",
+    )?;
+
+    let witness_interpolation_rank = matrix_rank(
+        crate::smallwood_engine::smallwood_smza_witness_randomness_matrix_v1(opening_points)?,
+    )?;
+    let pcs_unstack_blocks =
+        smza_actual_pcs_diagonal_blocks(opening_points, &geometry, profile.rho)?;
+    let expected_pcs_unstack_blocks = geometry.nb_unstacked_cols - geometry.nb_polys;
+    if pcs_unstack_blocks.len() != expected_pcs_unstack_blocks {
+        return Err(violation(format!(
+            "SMZA PCS-unstack block count mismatch: actual={} expected={expected_pcs_unstack_blocks}",
+            pcs_unstack_blocks.len()
+        )));
+    }
+    let mut pcs_unstack_block_ranks = Vec::with_capacity(pcs_unstack_blocks.len());
+    for block in pcs_unstack_blocks {
+        ensure_matrix_shape(
+            &block,
+            profile.nb_opened_evals,
+            profile.nb_opened_evals,
+            "PCS-unstack block",
+        )?;
+        pcs_unstack_block_ranks.push(matrix_rank(block)?);
+    }
+    let pcs_unstack_min_block_rank = pcs_unstack_block_ranks.iter().copied().min().unwrap_or(0);
+    let pcs_unstack_total_rank = pcs_unstack_block_ranks.iter().sum();
+    let nonlinear_piop_low_rank =
+        matrix_rank(power_matrix(opening_points, 0, profile.nb_opened_evals))?;
+    let linear_piop_low_rank = matrix_rank(linear_zero_sum_low_matrix(opening_points)?)?;
+    let lvcs_tail_evaluation_rank = matrix_rank(lvcs_tail_evaluation_matrix_for_geometry(
+        decs_points,
+        geometry.nb_lvcs_cols,
+        profile.decs_nb_opened_evals,
+    )?)?;
+    let selected_columns = (0..profile.nb_opened_evals)
+        .chain(
+            (geometry.packing_factor + profile.nb_opened_evals)
+                ..(geometry.packing_factor + 2 * profile.nb_opened_evals),
+        )
+        .collect::<Vec<_>>();
+    let selected_combinations = trace
+        .pcs_coeffs_v1()
+        .iter()
+        .map(|row| selected_columns.iter().map(|&column| row[column]).collect())
+        .collect();
+    let lvcs_selected_combination_rank = matrix_rank(selected_combinations)?;
+    let decs_low_coefficient_rank =
+        matrix_rank(power_matrix(decs_points, 0, profile.decs_nb_opened_evals))?;
+
+    let report = SmallwoodPoseidon2V8SmzaHonestMapAuditV1 {
+        piop_openings: profile.nb_opened_evals,
+        decs_openings: profile.decs_nb_opened_evals,
+        lvcs_opened_combinations: geometry.nb_lvcs_opened_combi,
+        witness_interpolation_coin_count: geometry.row_count * profile.nb_opened_evals,
+        witness_opening_view_count: geometry.row_count * profile.nb_opened_evals,
+        witness_interpolation_rank,
+        pcs_unstack_coin_count: (geometry.nb_unstacked_cols - geometry.nb_polys)
+            * profile.nb_opened_evals,
+        pcs_partial_view_count: (geometry.nb_unstacked_cols - geometry.nb_polys)
+            * profile.nb_opened_evals,
+        pcs_unstack_block_count: pcs_unstack_block_ranks.len(),
+        pcs_unstack_min_block_rank,
+        pcs_unstack_total_rank,
+        nonlinear_piop_coin_count: profile.rho * (geometry.mpol_poly_degree + 1),
+        nonlinear_piop_view_count: profile.rho
+            * (profile.nb_opened_evals + geometry.mpol_poly_degree + 1 - profile.nb_opened_evals),
+        nonlinear_piop_low_rank,
+        linear_piop_coin_count: profile.rho * geometry.mlin_poly_degree,
+        linear_piop_view_count: profile.rho
+            * (profile.nb_opened_evals + geometry.mlin_poly_degree - profile.nb_opened_evals),
+        linear_piop_low_rank,
+        lvcs_tail_coin_count: geometry.nb_lvcs_rows * profile.decs_nb_opened_evals,
+        lvcs_joint_view_count: geometry.nb_lvcs_opened_combi * profile.decs_nb_opened_evals
+            + geometry.subset_cols * profile.decs_nb_opened_evals,
+        lvcs_tail_evaluation_rank,
+        lvcs_selected_combination_rank,
+        decs_mask_coin_count: profile.decs_eta * ((geometry.interpolation_point_count - 1) + 1),
+        decs_evaluation_high_view_count: profile.decs_eta
+            * (profile.decs_nb_opened_evals + geometry.nb_lvcs_cols),
+        decs_low_coefficient_rank,
+    };
+    if !report.exact_square_full_rank_decomposition() {
+        return Err(violation(format!(
+            "SMZA honest-map decomposition is not exact and full rank: {report:?}"
+        )));
+    }
+    Ok(report)
+}
+
+/// Diagonal blocks of the actual triangular PCS coin-to-partial-column map.
+/// `pcs_commit` adds a coin in column i at K+t and subtracts it in column
+/// i+1 at t (or delta+t in the final column). Reverse column elimination
+/// therefore has diagonal -V blocks and one final -diag(r^delta)V block.
+/// These are deliberately distinct from the legacy opening-policy blocks.
+fn smza_actual_pcs_diagonal_blocks(
+    points: &[u64],
+    geometry: &crate::smallwood_engine::SmallwoodCoreGeometryV1,
+    rho: usize,
+) -> Result<Vec<Vec<Vec<u64>>>, TransactionCircuitError> {
+    let mut blocks = Vec::new();
+    for degree in [geometry.mpol_poly_degree, geometry.mlin_poly_degree] {
+        let width = (degree + 1 - points.len()).div_ceil(geometry.packing_factor);
+        let delta = geometry.packing_factor * width + points.len() - (degree + 1);
+        if width < 2 {
+            return Err(violation("SMZA PCS mask width is invalid"));
+        }
+        for _ in 0..rho {
+            for column in 0..width - 1 {
+                let first_power = if column == width - 2 { delta } else { 0 };
+                blocks.push(
+                    power_matrix(points, first_power, points.len())
+                        .into_iter()
+                        .map(|row| row.into_iter().map(|value| sub_mod(0, value)).collect())
+                        .collect(),
+                );
+            }
+        }
+    }
+    Ok(blocks)
+}
+
+/// Local executable checks only: no q20 Lean receipt or full privacy/PQ128 claim.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodPoseidon2V8SmzaAcceptedProofLocalAuditV1 {
+    pub schema: String,
+    pub proof_bytes: usize,
+    pub proof_sha512_hex: String,
+    pub canonical_decode_reencode_exact: bool,
+    pub verifier_trace_replay_exact: bool,
+    pub candidate_verifier_accepts: bool,
+    pub honest_map_audit: SmallwoodPoseidon2V8SmzaHonestMapAuditV1,
+    pub full_privacy_claim: bool,
+    pub pq128_claim: bool,
+    pub production_eligible: bool,
+}
+
+pub fn validate_accepted_smallwood_poseidon2_v8_smza_local_audit_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    binded_data: &[u8],
+    proof_bytes: &[u8],
+) -> Result<SmallwoodPoseidon2V8SmzaAcceptedProofLocalAuditV1, TransactionCircuitError> {
+    use crate::smallwood_engine::{
+        build_smallwood_poseidon2_v8_smza_verifier_trace_v1, decode_smallwood_smza_proof_trace_v1,
+        encode_smallwood_smza_proof_trace_v1,
+    };
+    let engine_relation =
+        crate::smallwood_poseidon2_v8_frontend::SmallwoodPoseidon2V8SmzaEngineRelation::new(
+            statement,
+        )?;
+    let decoded = decode_smallwood_smza_proof_trace_v1(proof_bytes)?;
+    if encode_smallwood_smza_proof_trace_v1(&decoded)? != proof_bytes
+        || !decoded.auxiliary_witness_words.is_empty()
+        || decoded.auxiliary_witness_limb_count != 0
+    {
+        return Err(violation(
+            "SMZA local audit requires canonical self-contained bytes",
+        ));
+    }
+    let trace = build_smallwood_poseidon2_v8_smza_verifier_trace_v1(
+        &engine_relation,
+        binded_data,
+        proof_bytes,
+    )?;
+    trace.validate_sections_v1()?;
+    if !trace.accept {
+        return Err(violation(
+            "SMZA local audit requires an accepting rebuilt trace",
+        ));
+    }
+    verify_statement_with_transcript_backend_profile_and_domain(
+        &engine_relation,
+        binded_data,
+        proof_bytes,
+        POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE,
+        SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )?;
+    let honest_map_audit = audit_smallwood_poseidon2_v8_smza_honest_maps_v1(statement, &trace)?;
+    Ok(SmallwoodPoseidon2V8SmzaAcceptedProofLocalAuditV1 {
+        schema: "hegemon.smallwood.poseidon2-v8.smza.accepted-proof-local-audit.v1".to_owned(),
+        proof_bytes: proof_bytes.len(),
+        proof_sha512_hex: sha512_hex(proof_bytes),
+        canonical_decode_reencode_exact: true,
+        verifier_trace_replay_exact: true,
+        candidate_verifier_accepts: true,
+        honest_map_audit,
+        full_privacy_claim: false,
+        pq128_claim: false,
+        production_eligible: false,
+    })
+}
+
 fn violation(message: impl Into<String>) -> TransactionCircuitError {
     TransactionCircuitError::ConstraintViolationOwned(message.into())
 }
@@ -359,9 +702,17 @@ fn linear_zero_sum_low_matrix(
 fn lvcs_tail_evaluation_matrix(
     target_points: &[u64],
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
-    let source_count = SMZ9_LVCS_COLUMNS + SMZ9_DECS_OPENINGS;
-    let mut derivative_inverses = Vec::with_capacity(SMZ9_DECS_OPENINGS);
-    for source in 0..SMZ9_DECS_OPENINGS {
+    lvcs_tail_evaluation_matrix_for_geometry(target_points, SMZ9_LVCS_COLUMNS, SMZ9_DECS_OPENINGS)
+}
+
+fn lvcs_tail_evaluation_matrix_for_geometry(
+    target_points: &[u64],
+    columns: usize,
+    tail: usize,
+) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
+    let source_count = columns + tail;
+    let mut derivative_inverses = Vec::with_capacity(tail);
+    for source in 0..tail {
         let denominator = (0..source_count)
             .filter(|&other| other != source)
             .fold(1u64, |acc, other| {
@@ -375,7 +726,7 @@ fn lvcs_tail_evaluation_matrix(
             let source_polynomial = (0..source_count).fold(1u64, |acc, source| {
                 mul_mod(acc, sub_mod(target, source as u64))
             });
-            (0..SMZ9_DECS_OPENINGS)
+            (0..tail)
                 .map(|source| {
                     let without_source =
                         mul_mod(source_polynomial, inv_mod(sub_mod(target, source as u64))?);
@@ -873,6 +1224,82 @@ pub fn report_smallwood_poseidon2_v8_smz9_executable_zk_refinement_v1(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn smza_source_geometry_and_actual_pcs_rank_map() {
+        let statement = super::SmallwoodPoseidon2V8PublicStatement::default();
+        let relation =
+            super::SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(&statement)
+                .unwrap();
+        let profile = super::POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE;
+        let geometry =
+            crate::smallwood_engine::derive_smallwood_core_geometry_v1(&relation, profile).unwrap();
+        assert_eq!(
+            (geometry.nb_lvcs_cols, geometry.interpolation_point_count),
+            (368, 406)
+        );
+        assert_eq!(profile.decs_nb_opened_evals, 38);
+        let points = (101..107).collect::<Vec<u64>>();
+        let blocks =
+            super::smza_actual_pcs_diagonal_blocks(&points, &geometry, profile.rho).unwrap();
+        assert_eq!(blocks.len(), geometry.nb_unstacked_cols - geometry.nb_polys);
+        assert!(blocks
+            .into_iter()
+            .all(|block| super::matrix_rank(block).unwrap() == 6));
+        // Build the coupled PCS map directly from pcs_commit's next-column
+        // subtraction and compare its rank to the triangular decomposition.
+        for degree in [geometry.mpol_poly_degree, geometry.mlin_poly_degree] {
+            let width = (degree + 1 - points.len()).div_ceil(geometry.packing_factor);
+            let delta = geometry.packing_factor * width + points.len() - degree - 1;
+            let n = (width - 1) * points.len();
+            let mut matrix = vec![vec![0; n]; n];
+            for partial in 1..width {
+                for (j, &point) in points.iter().enumerate() {
+                    for coin in 0..points.len() {
+                        let row = (partial - 1) * points.len() + j;
+                        let power = if partial == width - 1 {
+                            delta + coin
+                        } else {
+                            coin
+                        };
+                        matrix[row][(partial - 1) * points.len() + coin] =
+                            super::sub_mod(0, super::pow_mod(point, power as u64));
+                        if partial < width - 1 {
+                            matrix[row][partial * points.len() + coin] =
+                                super::pow_mod(point, (geometry.packing_factor + coin) as u64);
+                        }
+                    }
+                }
+            }
+            assert_eq!(super::matrix_rank(matrix).unwrap(), n);
+        }
+        let decs_points = (1001..1039).collect::<Vec<u64>>();
+        assert_eq!(
+            super::matrix_rank(
+                super::lvcs_tail_evaluation_matrix_for_geometry(
+                    &decs_points,
+                    geometry.nb_lvcs_cols,
+                    38
+                )
+                .unwrap()
+            )
+            .unwrap(),
+            38
+        );
+        let mut duplicate = decs_points;
+        duplicate[1] = duplicate[0];
+        assert!(
+            super::matrix_rank(
+                super::lvcs_tail_evaluation_matrix_for_geometry(
+                    &duplicate,
+                    geometry.nb_lvcs_cols,
+                    38
+                )
+                .unwrap()
+            )
+            .unwrap()
+                < 38
+        );
+    }
     use super::*;
 
     #[test]

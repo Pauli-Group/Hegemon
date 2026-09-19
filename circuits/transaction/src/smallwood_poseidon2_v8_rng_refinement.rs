@@ -30,7 +30,10 @@ use crate::smallwood_poseidon2_v8_zk_refinement::{
     SMZ9_NONLINEAR_MASK_POLYNOMIAL_DEGREE, SMZ9_PACKED_POLYNOMIALS, SMZ9_PIOP_OPENINGS,
     SMZ9_UNSTACKED_COLUMNS, SMZ9_WITNESS_POLYNOMIALS,
 };
-use hegemon_field::GOLDILOCKS_MODULUS;
+
+mod mapping;
+pub use mapping::SMALLWOOD_SMZ9_GOLDILOCKS_MODULUS_V1;
+pub(crate) use mapping::{append_fixed_width_tapes_v1, canonical_goldilocks_word_v1};
 
 pub const SMALLWOOD_SMZ9_RUNTIME_RNG_REFINEMENT_SCHEMA_V2: &str =
     "hegemon.smallwood.poseidon2-v8.smz9.runtime-rng-refinement.v2";
@@ -61,8 +64,6 @@ pub const SMALLWOOD_SMZ9_FORMAL_IDEAL_EXACT_SMZ9_OUTPUT_THEOREM_V1: &str =
 pub const SMALLWOOD_SMZ9_FORMAL_FIELD_OUTPUT_STATISTICAL_DISTANCE_DEFINITION_V1: &str =
     "HegemonCrypto.SmallWood.V8Smz9RuntimeDistribution.epsilonFieldOutputStatistical";
 
-/// Order of the Goldilocks field used by HGV8RP03/SMZ9.
-pub const SMALLWOOD_SMZ9_GOLDILOCKS_MODULUS_V1: u64 = GOLDILOCKS_MODULUS;
 /// Cardinality of the raw `u64` candidate space.  This needs `u128` because
 /// `2^64` has no `u64` representation.
 pub const SMALLWOOD_SMZ9_RAW_WORD_CARDINALITY_V1: u128 = 1u128 << 64;
@@ -144,14 +145,6 @@ pub struct SmallwoodSmz9RuntimeRngRefinementV2 {
     pub production_authorized: bool,
 }
 
-/// Exact predicate shared by the production `getrandom` sampler and the
-/// typed `CryptoRng` sampler.  There is no `% p` operation: accepted words are
-/// already the unique canonical representatives of field elements.
-#[inline]
-pub(crate) fn canonical_goldilocks_word_v1(candidate: u64) -> Option<u64> {
-    (candidate < SMALLWOOD_SMZ9_GOLDILOCKS_MODULUS_V1).then_some(candidate)
-}
-
 /// Source-injectable form of the production field sampler.  The production
 /// caller supplies `getrandom::fill`; focused tests supply scripted bytes.
 /// Each refill asks for exactly the number of outputs still missing, matching
@@ -194,23 +187,6 @@ pub(crate) fn fixed_bytes_with_source_v1<const N: usize>(
     let mut output = [0u8; N];
     fill(&mut output)?;
     Ok(output)
-}
-
-/// Partition a fixed-length byte draw into ordered DECS leaf tapes.  For a
-/// fixed count and width, flattening is its inverse, so ideal uniform input
-/// bytes remain ideal uniform tapes without conditioning or loss.
-pub(crate) fn append_fixed_width_tapes_v1(
-    tapes: &mut Vec<Vec<u8>>,
-    bytes: &[u8],
-    tape_bytes: usize,
-) -> Result<(), TransactionCircuitError> {
-    if tape_bytes == 0 || bytes.len() % tape_bytes != 0 {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood runtime randomness tape partition is not exact",
-        ));
-    }
-    tapes.extend(bytes.chunks_exact(tape_bytes).map(<[u8]>::to_vec));
-    Ok(())
 }
 
 /// Source-injectable form of the production DECS tape sampler.  The returned

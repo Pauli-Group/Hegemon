@@ -681,7 +681,7 @@ impl SmallwoodPoseidon2V8NoteOpening {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SmallwoodPoseidon2V8InputWitness {
     pub active: bool,
-    pub spend_key: [u64; 4],
+    pub spend_key: [u64; 5],
     pub note: SmallwoodPoseidon2V8NoteOpening,
     pub position: u64,
     pub siblings: [SmallwoodPoseidon2V8Digest; SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH],
@@ -691,7 +691,7 @@ pub struct SmallwoodPoseidon2V8InputWitness {
 impl SmallwoodPoseidon2V8InputWitness {
     pub const ZERO: Self = Self {
         active: false,
-        spend_key: [0; 4],
+        spend_key: [0; 5],
         note: SmallwoodPoseidon2V8NoteOpening::ZERO,
         position: 0,
         siblings: [[0; 7]; SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH],
@@ -833,6 +833,9 @@ impl SmallwoodPoseidon2V8AccumulatorOpening {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SmallwoodPoseidon2V8PrivateAuthWitness {
     pub mode: SmallwoodPrivateAuthMode,
+    /// Shared hidden nullifier key for predicate/value-lock notes.  It is
+    /// unused and canonically zero for SingleKey spends.
+    pub policy_nullifier_key: [u64; 5],
     pub current: SmallwoodPoseidon2V8AccumulatorOpening,
     pub next: SmallwoodPoseidon2V8AccumulatorOpening,
     pub policy_signer_tags: [SmallwoodPoseidon2V8SignerTag; SMALLWOOD_MULTISIG_MAX_SIGNERS],
@@ -842,6 +845,7 @@ impl Default for SmallwoodPoseidon2V8PrivateAuthWitness {
     fn default() -> Self {
         Self {
             mode: SmallwoodPrivateAuthMode::SingleKey,
+            policy_nullifier_key: [0; 5],
             current: SmallwoodPoseidon2V8AccumulatorOpening::ZERO,
             next: SmallwoodPoseidon2V8AccumulatorOpening::ZERO,
             policy_signer_tags: [[0; SMALLWOOD_SIGNER_TAG_WORDS]; SMALLWOOD_MULTISIG_MAX_SIGNERS],
@@ -860,6 +864,7 @@ impl SmallwoodPoseidon2V8PrivateAuthWitness {
 
     fn push_words(self, words: &mut Vec<u64>) {
         words.push(self.mode_word());
+        words.extend_from_slice(&self.policy_nullifier_key);
         self.current.push_words(words);
         self.next.push_words(words);
         for tag in self.policy_signer_tags {
@@ -874,6 +879,7 @@ impl SmallwoodPoseidon2V8PrivateAuthWitness {
             2 => SmallwoodPrivateAuthMode::FinalThresholdSpend,
             _ => return Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationShape),
         };
+        let policy_nullifier_key = cursor.array()?;
         let current = SmallwoodPoseidon2V8AccumulatorOpening::parse(cursor)?;
         let next = SmallwoodPoseidon2V8AccumulatorOpening::parse(cursor)?;
         let mut policy_signer_tags =
@@ -883,6 +889,7 @@ impl SmallwoodPoseidon2V8PrivateAuthWitness {
         }
         Ok(Self {
             mode,
+            policy_nullifier_key,
             current,
             next,
             policy_signer_tags,
@@ -911,11 +918,12 @@ impl Default for SmallwoodPoseidon2V8Witness {
 
 pub const SMALLWOOD_POSEIDON2_V8_NOTE_WORDS: usize = 18;
 pub const SMALLWOOD_POSEIDON2_V8_INPUT_WITNESS_WORDS: usize =
-    1 + 4 + SMALLWOOD_POSEIDON2_V8_NOTE_WORDS + 1 + 32 * 7 + 4;
+    1 + 5 + SMALLWOOD_POSEIDON2_V8_NOTE_WORDS + 1 + 32 * 7 + 4;
 pub const SMALLWOOD_POSEIDON2_V8_OUTPUT_WITNESS_WORDS: usize =
     1 + SMALLWOOD_POSEIDON2_V8_NOTE_WORDS + 4;
 pub const SMALLWOOD_POSEIDON2_V8_ACCUMULATOR_WORDS: usize = 7 + 7 + 3 + 6;
 pub const SMALLWOOD_POSEIDON2_V8_AUTH_WITNESS_WORDS: usize = 1
+    + 5
     + 2 * SMALLWOOD_POSEIDON2_V8_ACCUMULATOR_WORDS
     + SMALLWOOD_MULTISIG_MAX_SIGNERS * SMALLWOOD_SIGNER_TAG_WORDS;
 pub const SMALLWOOD_POSEIDON2_V8_STABLE_WITNESS_WORDS: usize = 55 + 4 + 4 * 7 + 7;
@@ -927,12 +935,12 @@ pub const SMALLWOOD_POSEIDON2_V8_WITNESS_WORDS: usize = 2
 pub const SMALLWOOD_POSEIDON2_V8_WITNESS_BYTES: usize = SMALLWOOD_POSEIDON2_V8_WITNESS_WORDS * 8;
 
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_NOTE_WORDS == 18);
-const _: () = assert!(SMALLWOOD_POSEIDON2_V8_INPUT_WITNESS_WORDS == 252);
+const _: () = assert!(SMALLWOOD_POSEIDON2_V8_INPUT_WITNESS_WORDS == 253);
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_OUTPUT_WITNESS_WORDS == 23);
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_ACCUMULATOR_WORDS == 23);
-const _: () = assert!(SMALLWOOD_POSEIDON2_V8_AUTH_WITNESS_WORDS == 77);
+const _: () = assert!(SMALLWOOD_POSEIDON2_V8_AUTH_WITNESS_WORDS == 82);
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_STABLE_WITNESS_WORDS == 94);
-const _: () = assert!(SMALLWOOD_POSEIDON2_V8_WITNESS_WORDS == 721);
+const _: () = assert!(SMALLWOOD_POSEIDON2_V8_WITNESS_WORDS == 728);
 
 impl SmallwoodPoseidon2V8Witness {
     pub fn to_witness_words(self) -> [u64; SMALLWOOD_POSEIDON2_V8_WITNESS_WORDS] {
@@ -1288,7 +1296,8 @@ fn validate_authorization(
 ) -> Result<(), SmallwoodPoseidon2V8SurfaceError> {
     match auth.mode {
         SmallwoodPrivateAuthMode::SingleKey => {
-            if auth.current != SmallwoodPoseidon2V8AccumulatorOpening::ZERO
+            if auth.policy_nullifier_key != [0; 5]
+                || auth.current != SmallwoodPoseidon2V8AccumulatorOpening::ZERO
                 || auth.next != SmallwoodPoseidon2V8AccumulatorOpening::ZERO
                 || auth.policy_signer_tags != [[0; SMALLWOOD_SIGNER_TAG_WORDS]; 6]
             {
@@ -1299,6 +1308,10 @@ fn validate_authorization(
             // The compact accumulator update has one canonical next-note slot: output zero.
             if inputs != [true, true] || !outputs[0] {
                 return Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationShape);
+            }
+            ensure_canonical_words(&auth.policy_nullifier_key)?;
+            if auth.policy_nullifier_key[0] == 0 {
+                return Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationOpening);
             }
             validate_accumulator_opening(auth.current)?;
             validate_accumulator_opening(auth.next)?;
@@ -1331,6 +1344,10 @@ fn validate_authorization(
         SmallwoodPrivateAuthMode::FinalThresholdSpend => {
             if inputs != [true, true] {
                 return Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationShape);
+            }
+            ensure_canonical_words(&auth.policy_nullifier_key)?;
+            if auth.policy_nullifier_key[0] == 0 {
+                return Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationOpening);
             }
             validate_accumulator_opening(auth.current)?;
             validate_signer_tags(auth.current.signer_count as usize, auth.policy_signer_tags)?;
@@ -1418,7 +1435,7 @@ impl SmallwoodPoseidon2V8Witness {
             } else {
                 input.note.validate_active()?;
                 ensure_canonical_words(&input.spend_key)?;
-                if is_zero(&input.spend_key) || input.position >> 32 != 0 {
+                if input.spend_key[0] == 0 || input.position >> 32 != 0 {
                     return Err(SmallwoodPoseidon2V8SurfaceError::ScalarOutOfRange);
                 }
                 for sibling in input.siblings {
@@ -1662,7 +1679,7 @@ mod tests {
     fn active_input(tag: u64) -> SmallwoodPoseidon2V8InputWitness {
         SmallwoodPoseidon2V8InputWitness {
             active: true,
-            spend_key: [tag; 4],
+            spend_key: [tag; 5],
             note: SmallwoodPoseidon2V8NoteOpening {
                 value: 0,
                 asset_id: NATIVE_ASSET_ID,
@@ -1722,6 +1739,7 @@ mod tests {
                 tags[1] = [6, 7, 8, 9, 10];
                 SmallwoodPoseidon2V8PrivateAuthWitness {
                     mode,
+                    policy_nullifier_key: [41, 42, 43, 44, 1],
                     current: opening(0, &[]),
                     next: opening(1, &[0]),
                     policy_signer_tags: tags,
@@ -1733,6 +1751,7 @@ mod tests {
                 tags[1] = [6, 7, 8, 9, 10];
                 SmallwoodPoseidon2V8PrivateAuthWitness {
                     mode,
+                    policy_nullifier_key: [41, 42, 43, 44, 1],
                     current: opening(1, &[0]),
                     next: SmallwoodPoseidon2V8AccumulatorOpening::ZERO,
                     policy_signer_tags: tags,
@@ -1753,7 +1772,7 @@ mod tests {
             if input_active {
                 statement.nullifiers[slot] = digest(10 + slot as u64 * 10);
                 let mut input = active_input(100 + slot as u64 * 100);
-                input.spend_key = [777; 4];
+                input.spend_key = [777; 5];
                 witness.inputs[slot] = input;
             }
             let output_active = mask & (1 << (slot + 2)) != 0;

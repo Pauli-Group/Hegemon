@@ -18,10 +18,10 @@ use crate::smallwood_poseidon2_v8_semantics::{
     smallwood_poseidon2_v8_nonlinear_expression_program,
 };
 
-pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_MAGIC: [u8; 8] = *b"HGV8RP03";
+pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_MAGIC: [u8; 8] = *b"HGV8RP04";
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_GRAMMAR: u16 = 3;
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_SECTION_COUNT: u16 = 9;
-pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES: usize = 853_429;
+pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES: usize = 843_715;
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512_BYTES: usize = 64;
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST_BYTES: usize = 48;
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_IS_PRODUCTION_AUTHORITY: bool = false;
@@ -43,25 +43,28 @@ pub const SMALLWOOD_POSEIDON2_V8_PROOF_COLUMNS: usize = 368;
 pub const SMALLWOOD_POSEIDON2_V8_PACKED_WITNESS_WORDS: usize =
     SMALLWOOD_POSEIDON2_V8_ROW_COUNT * SMALLWOOD_POSEIDON2_V8_PACKING_FACTOR;
 pub const SMALLWOOD_POSEIDON2_V8_CONSTRAINT_DEGREE: usize = 8;
-pub const SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINTS: usize = 830;
+pub const SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINTS: usize = 773;
 /// Exact number of nodes in the relation-id-bound nonlinear expression DAG.
-pub const SMALLWOOD_POSEIDON2_V8_NONLINEAR_EXPRESSION_NODES: usize = 8_271;
-pub const SMALLWOOD_POSEIDON2_V8_HASH_LIVE_CALLS: usize = 125;
+pub const SMALLWOOD_POSEIDON2_V8_NONLINEAR_EXPRESSION_NODES: usize = 8_130;
+pub const SMALLWOOD_POSEIDON2_V8_HASH_LIVE_CALLS: usize = 128;
 pub const SMALLWOOD_POSEIDON2_V8_HASH_PADDED_CALLS: usize = 128;
 pub const SMALLWOOD_POSEIDON2_V8_HASH_ROWS: usize = 364;
 pub const SMALLWOOD_POSEIDON2_V8_AUXILIARY_WORDS: usize = 0;
 
-pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_COUNT: usize = 86;
-pub const SMALLWOOD_POSEIDON2_V8_PUBLIC_VERSION_DOMAIN_DESCRIPTOR_COUNT: usize = 56;
+pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_COUNT: usize = 92;
+pub const SMALLWOOD_POSEIDON2_V8_PUBLIC_VERSION_DOMAIN_DESCRIPTOR_COUNT: usize = 58;
 pub const SMALLWOOD_POSEIDON2_V8_GLOBAL_BINDING_DESCRIPTOR_COUNT: usize = 8;
-pub const SMALLWOOD_POSEIDON2_V8_MINIMUM_LINEAR_CONSTRAINTS: usize = 19_935;
-pub const SMALLWOOD_POSEIDON2_V8_MAXIMUM_LINEAR_CONSTRAINTS: usize = 20_509;
-pub const SMALLWOOD_POSEIDON2_V8_MAXIMUM_SUMMED_IDENTITY_UNION: usize = 21_339;
+/// Canonical-public extrema: coefficient support depends only on the four activity bits,
+/// stable direction, and four asset-index bits. Empty rows have gated-zero targets, except
+/// disabled stable roots, whose equality is required by public-structure validation.
+pub const SMALLWOOD_POSEIDON2_V8_MINIMUM_LINEAR_CONSTRAINTS: usize = 19_838;
+pub const SMALLWOOD_POSEIDON2_V8_MAXIMUM_LINEAR_CONSTRAINTS: usize = 20_510;
+pub const SMALLWOOD_POSEIDON2_V8_MAXIMUM_SUMMED_IDENTITY_UNION: usize = 21_283;
 /// Number of compiler-family instances before public-shape specialization and normalized empty
 /// rows are removed.  This is a DSL inventory count, not an emitted relation count.
-pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_INSTANCES: usize = 20_605;
+pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_INSTANCES: usize = 20_602;
 /// Exact number of nodes in the public-only CSR specialization expression DAG.
-pub const SMALLWOOD_POSEIDON2_V8_CSR_EXPRESSION_NODES: usize = 565;
+pub const SMALLWOOD_POSEIDON2_V8_CSR_EXPRESSION_NODES: usize = 564;
 
 /// Reduced Goldilocks-field encoding of the external `u64::MAX` balance-slot padding marker.
 /// Padding is excluded from every active-note/stable-asset membership product.
@@ -104,36 +107,36 @@ pub const SMALLWOOD_POSEIDON2_V8_REQUIRED_GEOMETRY_WORDS: [u64; 37] = [
     686,
     64,
     8,
-    125,
     128,
-    3,
+    128,
+    0,
     2,
     150,
     182,
     166,
     332,
-    830,
-    19_935,
-    20_509,
-    21_339,
+    773,
+    19_838,
+    20_510,
+    21_283,
     368,
     43_904,
 ];
 
-/// Pinned SHA-512 KAT for the canonical HGV8RP03 executable program transcript.
+/// Pinned SHA-512 KAT for the canonical HGV8RP04 executable program transcript.
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512: [u8; SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512_BYTES] = [
-    0x7e, 0x50, 0xeb, 0xa0, 0x7d, 0x84, 0x43, 0x3a, 0x53, 0xa6, 0xc8, 0x5e, 0xd2, 0xb3, 0xef, 0xec,
-    0xbe, 0xff, 0x10, 0x3c, 0xa4, 0x02, 0xbb, 0x93, 0x18, 0x31, 0xe1, 0x59, 0x8e, 0x6c, 0x9a, 0xb8,
-    0xfa, 0x13, 0x8c, 0x9b, 0x2f, 0x0c, 0xb9, 0xd2, 0x1b, 0xf2, 0xbf, 0x04, 0x4b, 0x50, 0xd4, 0xd0,
-    0x57, 0xae, 0x0b, 0xb1, 0x2e, 0x4d, 0xef, 0x00, 0xec, 0x52, 0x76, 0x52, 0x45, 0xcf, 0x9e, 0x17,
+    0x58, 0x0e, 0xe0, 0x45, 0xad, 0x26, 0xfe, 0x3f, 0x38, 0x51, 0x85, 0x71, 0x71, 0x07, 0xb7, 0xd6,
+    0x69, 0xef, 0x02, 0x4a, 0x71, 0x0f, 0x05, 0x25, 0x53, 0x0d, 0x7c, 0x60, 0x0b, 0x3d, 0xce, 0xcd,
+    0xc9, 0x69, 0x63, 0xa0, 0x1f, 0x32, 0x71, 0x66, 0xde, 0xa7, 0x8e, 0x9b, 0x93, 0xed, 0xb2, 0x09,
+    0x7e, 0xfb, 0x62, 0xad, 0xb1, 0x01, 0xc6, 0xce, 0x05, 0x18, 0xf6, 0xe7, 0x16, 0x98, 0x48, 0xe6,
 ];
 
 /// First 48 bytes of [`SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512`].  This value names a compiler
 /// program; it does not authorize that program for production.
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST: [u8; SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST_BYTES] = [
-    0x7e, 0x50, 0xeb, 0xa0, 0x7d, 0x84, 0x43, 0x3a, 0x53, 0xa6, 0xc8, 0x5e, 0xd2, 0xb3, 0xef, 0xec,
-    0xbe, 0xff, 0x10, 0x3c, 0xa4, 0x02, 0xbb, 0x93, 0x18, 0x31, 0xe1, 0x59, 0x8e, 0x6c, 0x9a, 0xb8,
-    0xfa, 0x13, 0x8c, 0x9b, 0x2f, 0x0c, 0xb9, 0xd2, 0x1b, 0xf2, 0xbf, 0x04, 0x4b, 0x50, 0xd4, 0xd0,
+    0x58, 0x0e, 0xe0, 0x45, 0xad, 0x26, 0xfe, 0x3f, 0x38, 0x51, 0x85, 0x71, 0x71, 0x07, 0xb7, 0xd6,
+    0x69, 0xef, 0x02, 0x4a, 0x71, 0x0f, 0x05, 0x25, 0x53, 0x0d, 0x7c, 0x60, 0x0b, 0x3d, 0xce, 0xcd,
+    0xc9, 0x69, 0x63, 0xa0, 0x1f, 0x32, 0x71, 0x66, 0xde, 0xa7, 0x8e, 0x9b, 0x93, 0xed, 0xb2, 0x09,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,13 +199,15 @@ pub struct SmallwoodPoseidon2V8DomainDescriptor {
     pub value: u64,
 }
 
-pub const SMALLWOOD_POSEIDON2_V8_DOMAINS: [SmallwoodPoseidon2V8DomainDescriptor; 21] = [
+pub const SMALLWOOD_POSEIDON2_V8_DOMAINS: [SmallwoodPoseidon2V8DomainDescriptor; 23] = [
     domain("note", 1),
-    domain("nullifier_and_spend_prf", 2),
+    domain("nullifier_v2", 0x484e_554c_5632_0001),
+    domain("single_key_authorization_v2", 0x4853_4b41_5632_0001),
+    domain("authorization_secret_binding_v2", 0x484d_4244_5632_0001),
     domain("transaction_merkle_node", 4),
     domain("authorization_accumulator", 6),
     domain("authorization_policy", 7),
-    domain("authorization_value_lock", 8),
+    domain("authorization_value_lock", 0x4856_4c4b_5632_0001),
     domain("action_intent", SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_DOMAIN),
     domain("stable_config_chunk_0", 0x4853_4338_4346_3000),
     domain("stable_config_chunk_1", 0x4853_4338_4346_3100),
@@ -251,20 +256,22 @@ const NONLINEAR_PREFIX_SPANS: &[SmallwoodPoseidon2V8NonlinearFamilySpan] = &[
     nonlinear_span("base.policy_root_match", 1),
     nonlinear_span("auth.mode_boolean", 3),
     nonlinear_span("auth.mode_one_hot", 1),
-    nonlinear_span("auth.single_mode_canonical_zero", 109),
-    nonlinear_span("auth.effective_input_prf", 1),
-    nonlinear_span("auth.effective_input_key", 4),
-    nonlinear_span("auth.effective_input_prf", 1),
-    nonlinear_span("auth.effective_input_key", 4),
+    nonlinear_span("auth.single_mode_canonical_zero", 89),
+    nonlinear_span("auth.key_nonzero_and_padding", 4),
+    nonlinear_span("auth.effective_input_commitment", 1),
+    nonlinear_span("auth.effective_input_secret", 1),
+    nonlinear_span("auth.effective_input_commitment", 1),
+    nonlinear_span("auth.effective_input_secret", 1),
     nonlinear_span("auth.approval_final_activity", 5),
-    nonlinear_span("auth.approval_output_key", 4),
-    nonlinear_span("auth.threshold_signer_encoding", 17),
-    nonlinear_span("auth.count_transition", 20),
+    nonlinear_span("auth.approval_output_commitment", 1),
+    nonlinear_span("auth.secondary_mode_digest", 1),
+    nonlinear_span("auth.threshold_signer_encoding", 11),
+    nonlinear_span("auth.count_transition", 3),
     nonlinear_span("auth.approval_bitmaps", 26),
-    nonlinear_span("auth.membership_transition", 57),
+    nonlinear_span("auth.membership_transition", 55),
     nonlinear_span("auth.inactive_policy_tags", 30),
     nonlinear_span("auth.signer_tag_distinctness", 30),
-    nonlinear_span("auth.final_mode", 30),
+    nonlinear_span("auth.final_mode", 22),
 ];
 
 const fn nonlinear_span(name: &'static str, count: u16) -> SmallwoodPoseidon2V8NonlinearFamilySpan {
@@ -280,7 +287,7 @@ pub struct SmallwoodPoseidon2V8NonlinearDescriptor {
     pub coordinate_1: u16,
 }
 
-/// Return all 830 identities in evaluator order.  Hash coordinates are `(group, round*16+lane)`
+/// Return all 773 identities in evaluator order.  Hash coordinates are `(group, round*16+lane)`
 /// for full-round wires, `(group, round)` for partial-round wires, and `(group, lane)` for final
 /// state bindings.  Non-hash families use zero coordinates and their explicit local index.
 pub fn smallwood_poseidon2_v8_nonlinear_descriptors() -> Vec<SmallwoodPoseidon2V8NonlinearDescriptor>
@@ -298,7 +305,7 @@ pub fn smallwood_poseidon2_v8_nonlinear_descriptors() -> Vec<SmallwoodPoseidon2V
                 .expect("prefix family count fits u16");
         }
     }
-    debug_assert_eq!(out.len(), 471);
+    debug_assert_eq!(out.len(), 414);
     for group in 0..2u16 {
         for round in 0..4u16 {
             for lane in 0..16u16 {
@@ -329,7 +336,7 @@ pub fn smallwood_poseidon2_v8_nonlinear_descriptors() -> Vec<SmallwoodPoseidon2V
             push_nonlinear(&mut out, "poseidon.final_state", lane, group, lane);
         }
     }
-    debug_assert_eq!(out.len(), 803);
+    debug_assert_eq!(out.len(), 746);
     push_nonlinear(&mut out, "stable.role_selector_domain", 0, 0, 0);
     push_nonlinear(&mut out, "stable.selected_role_inverse", 0, 0, 0);
     push_nonlinear(&mut out, "stable.boolean_row", 0, 0, 0);
@@ -395,12 +402,14 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_COUNT] = [
     csr!(
         "base.raw_replicate",
-        15_561,
+        14_742,
         "w[row,lane],w[row,0]",
         "1,-1",
         "0",
         Always
     ),
+    csr!("base.auth_vector_padding", 786, "auth.vector[unused_lane],unused_raw,key0_mirrors", "1,-1", "0", Always),
+    csr!("base.spend_key_tail_mirror", 8, "stable.spend_key,auth.global_key", "1,-public[input]", "0", Always),
     csr!(
         "base.input_inactive_raw",
         68,
@@ -459,7 +468,7 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     ),
     csr!(
         "base.spend_key_inactive",
-        8,
+        0,
         "w[stable_source_112+input*4+limb]",
         "1-public[input]",
         "0",
@@ -467,7 +476,7 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     ),
     csr!(
         "base.spend_key_equal",
-        4,
+        0,
         "w[key0],w[key1]",
         "public[0]*public[1],-public[0]*public[1]",
         "0",
@@ -483,15 +492,15 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     ),
     csr!(
         "hash.transaction_prf_to_legacy",
-        5,
-        "raw.auth_legacy[limb],hash_final[0,limb]",
+        7,
+        "auth.legacy_vector[limb],hash_final[0,limb]",
         "1,-1",
         "0",
         Always
     ),
     csr!(
         "hash.input_note_initial",
-        72,
+        78,
         "hash_initial[input_note_call+block,lane],semantic_or_prior",
         "sponge_v1",
         "domain_len_mode_pad_suite",
@@ -547,23 +556,23 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     ),
     csr!(
         "hash.input_nullifier_initial",
-        32,
-        "hash_initial[nullifier_call,lane],auth_prf_position_rho",
+        64,
+        "hash_initial[nullifier_call+block,lane],secret_seven_words_position_rho",
         "sponge_v1",
         "domain_len_mode_pad_suite",
         Always
     ),
     csr!(
         "base.input_nullifier_public",
-        14,
-        "hash_final[nullifier_call,limb]",
+        18,
+        "hash_final[nullifier_call+1,limb];output0_key_mirror",
         "public[input]",
         "public[input]*public[4+input*7+limb]",
         NormalizeDropEmptyZero
     ),
     csr!(
         "hash.output_note_initial",
-        72,
+        75,
         "hash_initial[output_note_call+block,lane],semantic_or_prior",
         "sponge_v1",
         "domain_len_mode_pad_suite",
@@ -588,7 +597,7 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     csr!(
         "hash.action_intent_initial",
         240,
-        "hash_initial[79+block,lane],public_projection_or_prior",
+        "hash_initial[81+block,lane],public_projection_or_prior",
         "sponge_v1",
         "projection(public;zero=[4,18),[47,54),[87,94),[113,120))",
         Always
@@ -596,7 +605,7 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     csr!(
         "auth.intent_digest_copy",
         7,
-        "raw.auth_statement[limb],hash_final[93,limb]",
+        "raw.auth_statement[limb],hash_final[95,limb]",
         "1,-1",
         "0",
         Always
@@ -604,7 +613,7 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     csr!(
         "hash.authorization_policy_initial",
         64,
-        "hash_initial[94+block,lane],policy_source_or_prior",
+        "hash_initial[96+block,lane],policy_source_or_prior",
         "sponge_v1",
         "domain_len_mode_pad_suite",
         Always
@@ -628,15 +637,15 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     csr!(
         "hash.authorization_current_initial",
         48,
-        "hash_initial[98+block,lane],current_accumulator_or_prior",
+        "hash_initial[100+block,lane],current_accumulator_or_prior",
         "sponge_v1",
         "domain_len_mode_pad_suite",
         Always
     ),
     csr!(
         "auth.current_digest_copy",
-        7,
-        "raw.auth_current[limb],hash_final[100,limb]",
+        0,
+        "retired.current_digest_copy",
         "1,-1",
         "0",
         Always
@@ -644,43 +653,47 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     csr!(
         "hash.authorization_next_initial",
         48,
-        "hash_initial[101+block,lane],effective_next_accumulator_or_prior",
+        "hash_initial[103+block,lane],effective_next_accumulator_or_prior",
         "sponge_v1",
         "domain_len_mode_pad_suite",
         Always
     ),
     csr!(
         "auth.next_digest_copy",
-        7,
-        "raw.auth_next[limb],hash_final[103,limb]",
+        0,
+        "retired.next_digest_copy",
         "1,-1",
         "0",
         Always
     ),
     csr!(
         "hash.authorization_value_lock_initial",
-        32,
-        "hash_initial[104+block,lane],policy_intent_or_prior",
-        "sponge_v1",
-        "domain_len_mode_pad_suite",
+        16,
+        "hash_initial[106,lane],policy_intent",
+        "compress14_v1",
+        "domain_and_suite",
         Always
     ),
     csr!(
         "auth.value_lock_digest_copy",
-        7,
-        "raw.auth_value_lock[limb],hash_final[105,limb]",
+        0,
+        "retired.value_lock_digest_copy",
         "1,-1",
         "0",
         Always
     ),
     csr!(
         "hash.padding_initial_zero",
-        48,
-        "hash_initial[call_125_127,lane]",
+        0,
+        "empty_dummy_call_range",
         "1",
         "0",
         Always
     ),
+    csr!("hash.authorization_bound_current_initial", 16, "hash_initial[107,lane],policy_key,current_digest", "compress14_v1", "domain_and_suite", Always),
+    csr!("hash.authorization_bound_secondary_initial", 16, "hash_initial[108,lane],policy_key,secondary_digest", "compress14_v1", "domain_and_suite", Always),
+    csr!("auth.bound_digest_vectors", 14, "auth.bound_vector,hash_final[107_108,limb]", "1,-1", "0", Always),
+    csr!("auth.candidate_digest_vectors", 26, "auth.candidate_vector,hash_final[0_105_106,limb]", "1,-1", "0", Always),
     csr!(
         "stable.disabled_private_source",
         94,
@@ -812,7 +825,7 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     csr!(
         "hash.stable_config_chunk_initial",
         64,
-        "hash_initial[106_109,lane],stable_config_chunk",
+        "hash_initial[109_112,lane],stable_config_chunk",
         "compress14_v1",
         "chunk_domain_and_suite",
         Always
@@ -820,7 +833,7 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     csr!(
         "hash.stable_config_tree_initial",
         48,
-        "hash_initial[110_112,lane],prior_digest",
+        "hash_initial[113_115,lane],prior_digest",
         "compress14_v1",
         "tree_domain_and_suite",
         Always
@@ -828,7 +841,7 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     csr!(
         "hash.stable_state_leaf_initial",
         32,
-        "hash_initial[113_114,lane],config_digest_counters_index",
+        "hash_initial[116_117,lane],config_digest_counters_index",
         "compress14_v1",
         "state_leaf_domain_and_suite",
         Always
@@ -836,7 +849,7 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     csr!(
         "hash.stable_path_initial",
         128,
-        "hash_initial[115_122,lane],oriented_prior_and_sibling",
+        "hash_initial[118_125,lane],oriented_prior_and_sibling",
         "compress14_v1",
         "state_node_domain(level)_and_suite",
         Always
@@ -844,7 +857,7 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     csr!(
         "stable.public_roots",
         14,
-        "hash_final[121_122,limb]",
+        "hash_final[124_125,limb]",
         "enabled(public[83]);before-attempt disabled arm binds public[95+limb]-public[102+limb]",
         "enabled*public[95_108] or disabled root pass-through",
         NormalizeDropEmptyZero
@@ -852,7 +865,7 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     csr!(
         "hash.stable_issuer_initial",
         32,
-        "hash_initial[123_124,lane],issuer_secret_and_public",
+        "hash_initial[126_127,lane],issuer_secret_and_public",
         "compress14_v1",
         "issuer_domain_and_suite",
         Always
@@ -860,7 +873,7 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     csr!(
         "stable.issuer_commitment",
         7,
-        "hash_final[123,limb],stable.source[6+limb]",
+        "hash_final[126,limb],stable.source[6+limb]",
         "mint,-mint",
         "0",
         NormalizeDropEmptyZero
@@ -868,7 +881,7 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     csr!(
         "stable.issuer_authorization",
         7,
-        "hash_final[124,limb]",
+        "hash_final[127,limb]",
         "mint",
         "mint*public[113+limb]",
         NormalizeDropEmptyZero
@@ -1257,7 +1270,7 @@ pub struct SmallwoodPoseidon2V8HashCallDescriptor {
     pub output_binding: &'static str,
 }
 
-/// Build the gap-free 125-call role and binding program.  For sponge calls, `block`, `blocks`,
+/// Build the gap-free 128-call role and binding program.  For sponge calls, `block`, `blocks`,
 /// `input_words`, and the named preimage determine every initial lane under `rate8-sponge-v1`:
 /// later blocks add the prior final rate lanes, and the first/final capacity lanes bind domain,
 /// length, mode, final marker, and suite.  For `compress14-v1`, the two named seven-limb operands
@@ -1270,8 +1283,8 @@ pub fn smallwood_poseidon2_v8_hash_call_descriptors() -> Vec<SmallwoodPoseidon2V
         "transaction_prf",
         0,
         0,
-        2,
-        4,
+        0x4853_4b41_5632_0001,
+        7,
         "transaction_spend_key",
         "transaction_prf_digest",
     );
@@ -1303,9 +1316,9 @@ pub fn smallwood_poseidon2_v8_hash_call_descriptors() -> Vec<SmallwoodPoseidon2V
             "input_nullifier",
             input,
             0,
-            2,
-            6,
-            "input_auth_prf_position_rho",
+            0x484e_554c_5632_0001,
+            12,
+            "input_secret_seven_words_position_rho",
             "input_nullifier_digest",
         );
     }
@@ -1361,15 +1374,35 @@ pub fn smallwood_poseidon2_v8_hash_call_descriptors() -> Vec<SmallwoodPoseidon2V
         "authorization_effective_next_opening",
         "authorization_next_digest",
     );
-    push_sponge_calls(
+    push_compress_call(
         &mut out,
         "authorization_value_lock",
         0,
         0,
-        8,
-        14,
-        "authorization_policy_and_intent",
+        0x4856_4c4b_5632_0001,
+        "authorization_policy_digest",
+        "action_intent_digest",
         "authorization_value_lock_digest",
+    );
+    push_compress_call(
+        &mut out,
+        "authorization_bound_current",
+        0,
+        0,
+        0x484d_4244_5632_0001,
+        "authorization_secret_seven_words",
+        "authorization_current_digest",
+        "authorization_bound_current_digest",
+    );
+    push_compress_call(
+        &mut out,
+        "authorization_bound_secondary",
+        0,
+        0,
+        0x484d_4244_5632_0001,
+        "authorization_secret_seven_words",
+        "authorization_secondary_digest",
+        "authorization_bound_secondary_digest",
     );
     let chunk_domains = [
         0x4853_4338_4346_3000,
@@ -1395,8 +1428,8 @@ pub fn smallwood_poseidon2_v8_hash_call_descriptors() -> Vec<SmallwoodPoseidon2V
         0,
         0,
         0x4853_4338_434e_3000,
-        "call_106_digest",
-        "call_107_digest",
+        "call_109_digest",
+        "call_110_digest",
         "stable_config_node_digest",
     );
     push_compress_call(
@@ -1405,8 +1438,8 @@ pub fn smallwood_poseidon2_v8_hash_call_descriptors() -> Vec<SmallwoodPoseidon2V
         1,
         0,
         0x4853_4338_434e_3100,
-        "call_108_digest",
-        "call_109_digest",
+        "call_111_digest",
+        "call_112_digest",
         "stable_config_node_digest",
     );
     push_compress_call(
@@ -1415,8 +1448,8 @@ pub fn smallwood_poseidon2_v8_hash_call_descriptors() -> Vec<SmallwoodPoseidon2V
         0,
         0,
         0x4853_4338_4346_5200,
-        "call_110_digest",
-        "call_111_digest",
+        "call_113_digest",
+        "call_114_digest",
         "stable_config_root_digest",
     );
     push_compress_call(
@@ -1425,7 +1458,7 @@ pub fn smallwood_poseidon2_v8_hash_call_descriptors() -> Vec<SmallwoodPoseidon2V
         0,
         0,
         0x4853_4338_4c45_4146,
-        "call_112_digest",
+        "call_115_digest",
         "stable_before_counters_and_index",
         "stable_before_leaf_digest",
     );
@@ -1435,7 +1468,7 @@ pub fn smallwood_poseidon2_v8_hash_call_descriptors() -> Vec<SmallwoodPoseidon2V
         1,
         0,
         0x4853_4338_4c45_4146,
-        "call_112_digest",
+        "call_115_digest",
         "stable_after_public_counters_and_index",
         "stable_after_leaf_digest",
     );
@@ -1856,7 +1889,7 @@ fn global_binding_program_descriptors() -> Vec<SmallwoodPoseidon2V8ProgramDescri
         SmallwoodPoseidon2V8ProgramDescriptor {
             opcode: 0x0703,
             words: vec![7, 87, 94],
-            label: "relation.binding[0,7)=expected-action-intent=call[93].final[0,7)".to_owned(),
+            label: "relation.binding[0,7)=expected-action-intent=call[95].final[0,7)".to_owned(),
         },
         SmallwoodPoseidon2V8ProgramDescriptor {
             opcode: 0x0704,
@@ -1866,8 +1899,8 @@ fn global_binding_program_descriptors() -> Vec<SmallwoodPoseidon2V8ProgramDescri
         },
         SmallwoodPoseidon2V8ProgramDescriptor {
             opcode: 0x0705,
-            words: vec![125, 128, 16, 48],
-            label: "calls[125,128).initial[0,16)=0".to_owned(),
+            words: vec![128, 128, 16, 0],
+            label: "calls[128,128).initial[0,16)=0".to_owned(),
         },
         SmallwoodPoseidon2V8ProgramDescriptor {
             opcode: 0x0706,
@@ -1876,13 +1909,13 @@ fn global_binding_program_descriptors() -> Vec<SmallwoodPoseidon2V8ProgramDescri
         },
         SmallwoodPoseidon2V8ProgramDescriptor {
             opcode: 0x0707,
-            words: vec![64, 8, 830, 19_935, 20_509, 21_339, 5, 6, 2, 23, 20, 5],
+            words: vec![64, 8, 773, 19_838, 20_510, 21_283, 5, 6, 2, 23, 20, 5],
             label: "DirectPacked64Poseidon2V8Sha512Smz9\0Sha512Poseidon2V8Smz9\0rho5-open6-beta2-N23-q20-eta5".to_owned(),
         },
         SmallwoodPoseidon2V8ProgramDescriptor {
             opcode: 0x0708,
             words: vec![64, 48],
-            label: "SHA-512\0HGV8RP03-canonical-executable-program-prefix[0,48)".to_owned(),
+            label: "SHA-512\0HGV8RP04-canonical-executable-program-prefix[0,48)".to_owned(),
         },
     ];
     debug_assert_eq!(
@@ -1997,8 +2030,8 @@ pub fn smallwood_poseidon2_v8_program_digest_matches() -> bool {
 }
 
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_PACKED_WITNESS_WORDS == 43_904);
-const _: () = assert!(SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINTS == 830);
-const _: () = assert!(SMALLWOOD_POSEIDON2_V8_HASH_LIVE_CALLS == 125);
+const _: () = assert!(SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINTS == 773);
+const _: () = assert!(SMALLWOOD_POSEIDON2_V8_HASH_LIVE_CALLS == 128);
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512_BYTES == 64);
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST_BYTES == 48);
 
@@ -2374,9 +2407,9 @@ mod tests {
     fn lean_generated_v8_relation_program_vectors_match_source() {
         let vectors: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../testdata/formal_core_vectors/poseidon2_v8_relation_program_transcript.json"
+            "/../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp04_transcript.json"
         )))
-        .expect("parse Lean-generated HGV8RP03 relation-program vector");
+        .expect("parse Lean-generated HGV8RP04 relation-program vector");
         let bytes = encode_smallwood_poseidon2_v8_program();
         let sha512 = smallwood_poseidon2_v8_program_sha512_from_bytes(&bytes);
         let relation_id = smallwood_poseidon2_v8_program_digest_from_bytes(&bytes);
@@ -2416,23 +2449,23 @@ mod tests {
         );
         assert_eq!(
             vectors["fixed_geometry"]["linear_compiler_families"].as_u64(),
-            Some(86)
+            Some(92)
         );
         assert_eq!(
             vectors["fixed_geometry"]["linear_compiler_family_instances"].as_u64(),
-            Some(20_605)
+            Some(20_602)
         );
         assert_eq!(
             vectors["fixed_geometry"]["minimum_linear_constraints"].as_u64(),
-            Some(19_935)
+            Some(19_838)
         );
         assert_eq!(
             vectors["fixed_geometry"]["maximum_linear_constraints"].as_u64(),
-            Some(20_509)
+            Some(20_510)
         );
         assert_eq!(
             vectors["fixed_geometry"]["maximum_summed_identity_union"].as_u64(),
-            Some(21_339)
+            Some(21_283)
         );
 
         for case in vectors["mutation_cases"]
@@ -2471,19 +2504,56 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "one-time create-new candidate fixture emission; does not produce a proof"]
+    fn emit_hgv8rp04_program_fixture() {
+        use std::io::Write;
+        let bytes = encode_smallwood_poseidon2_v8_program();
+        assert_eq!(bytes.len(), SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES);
+        assert_eq!(
+            smallwood_poseidon2_v8_program_sha512_from_bytes(&bytes),
+            SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512
+        );
+        assert_eq!(
+            smallwood_poseidon2_v8_program_digest_from_bytes(&bytes),
+            SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST
+        );
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp04.bin");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .expect("candidate fixture must not already exist");
+        file.write_all(&bytes)
+            .expect("write exact pinned candidate program");
+        file.sync_all().expect("flush candidate program");
+        assert_eq!(
+            std::fs::read(&path).expect("read back candidate program"),
+            bytes
+        );
+        eprintln!("Created {}", path.display());
+    }
+
+    #[test]
     fn source_program_bytes_match_checked_in_canonical_artifact() {
         let source_program = encode_smallwood_poseidon2_v8_program();
         let checked_in_program = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../testdata/formal_core_vectors/poseidon2_v8_relation_program.bin"
+            "/../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp04.bin"
         ));
 
-        assert_eq!(source_program.as_slice(), checked_in_program.as_slice());
+        assert!(
+            source_program.as_slice() == checked_in_program.as_slice(),
+            "source program differs from the pinned HGV8RP04 fixture"
+        );
 
         let mut mutated = checked_in_program.to_vec();
         let last = mutated.len() - 1;
         mutated[last] ^= 1;
-        assert_ne!(source_program, mutated);
+        assert!(
+            source_program != mutated,
+            "fixture mutation must change the program"
+        );
         assert_ne!(
             smallwood_poseidon2_v8_program_sha512_from_bytes(&mutated),
             SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512
@@ -2493,31 +2563,31 @@ mod tests {
     #[test]
     fn program_descriptor_inventory_is_exact_and_gap_free() {
         let nonlinear = smallwood_poseidon2_v8_nonlinear_descriptors();
-        assert_eq!(nonlinear.len(), 830);
+        assert_eq!(nonlinear.len(), 773);
         assert!(nonlinear
             .iter()
             .enumerate()
             .all(|(index, descriptor)| usize::from(descriptor.global_index) == index));
         assert_eq!(nonlinear[128].family, "base.policy_root_match");
         assert_eq!(nonlinear[129].family, "auth.mode_boolean");
-        assert_eq!(nonlinear[470].family, "auth.final_mode");
-        assert_eq!(nonlinear[471].family, "poseidon.external_initial_sbox_wire");
-        assert_eq!(nonlinear[802].family, "poseidon.final_state");
-        assert_eq!(nonlinear[803].family, "stable.role_selector_domain");
+        assert_eq!(nonlinear[413].family, "auth.final_mode");
+        assert_eq!(nonlinear[414].family, "poseidon.external_initial_sbox_wire");
+        assert_eq!(nonlinear[745].family, "poseidon.final_state");
+        assert_eq!(nonlinear[746].family, "stable.role_selector_domain");
 
         let calls = smallwood_poseidon2_v8_hash_call_descriptors();
-        assert_eq!(calls.len(), 125);
+        assert_eq!(calls.len(), 128);
         assert!(calls
             .iter()
             .enumerate()
             .all(|(index, call)| usize::from(call.index) == index));
         assert_eq!(calls[0].role, "transaction_prf");
         assert_eq!(calls[4].role, "input_merkle");
-        assert_eq!(calls[79].role, "action_intent");
-        assert_eq!(calls[106].role, "stable_config_chunk");
-        assert_eq!(calls[124].role, "stable_issuer_authorization");
+        assert_eq!(calls[81].role, "action_intent");
+        assert_eq!(calls[109].role, "stable_config_chunk");
+        assert_eq!(calls[127].role, "stable_issuer_authorization");
 
-        assert_eq!(SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES.len(), 86);
+        assert_eq!(SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES.len(), 92);
         assert_eq!(
             SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES
                 .iter()
@@ -2525,7 +2595,7 @@ mod tests {
                 .sum::<usize>(),
             SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_INSTANCES
         );
-        assert_eq!(SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_INSTANCES, 20_605);
+        assert_eq!(SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_INSTANCES, 20_602);
         assert_eq!(
             smallwood_poseidon2_v8_nonlinear_expression_program()
                 .expressions
@@ -2538,9 +2608,9 @@ mod tests {
                 .len(),
             SMALLWOOD_POSEIDON2_V8_CSR_EXPRESSION_NODES
         );
-        assert_eq!(SMALLWOOD_POSEIDON2_V8_REQUIRED_GEOMETRY_WORDS[32], 19_935);
-        assert_eq!(SMALLWOOD_POSEIDON2_V8_REQUIRED_GEOMETRY_WORDS[33], 20_509);
-        assert_eq!(SMALLWOOD_POSEIDON2_V8_REQUIRED_GEOMETRY_WORDS[34], 21_339);
+        assert_eq!(SMALLWOOD_POSEIDON2_V8_REQUIRED_GEOMETRY_WORDS[32], 19_838);
+        assert_eq!(SMALLWOOD_POSEIDON2_V8_REQUIRED_GEOMETRY_WORDS[33], 20_510);
+        assert_eq!(SMALLWOOD_POSEIDON2_V8_REQUIRED_GEOMETRY_WORDS[34], 21_283);
     }
 
     #[test]
@@ -2609,11 +2679,11 @@ mod tests {
 
         let expected_counts = [
             37u32,
-            56,
+            58,
             1,
-            830,
-            86,
-            125,
+            773,
+            92,
+            128,
             8,
             SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINTS as u32,
             SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_INSTANCES as u32,
@@ -2755,10 +2825,58 @@ mod tests {
     fn artifact_codec_relation_digest_matches_program_bytes() {
         let program = encode_smallwood_poseidon2_v8_program();
         assert_eq!(
-            protocol_shielded_pool::poseidon2_pending_action_artifact::SMALLWOOD_POSEIDON2_V8_ARTIFACT_RELATION_DIGEST,
+            protocol_shielded_pool::poseidon2_pending_action_artifact::SMALLWOOD_POSEIDON2_V8_HGV8RP04_ARTIFACT_RELATION_DIGEST,
             smallwood_poseidon2_v8_program_digest_from_bytes(&program),
             "offline pending-action codec must bind the current executable relation"
         );
+    }
+
+    #[test]
+    fn fixed_cap_program_inventory_diagnostic() {
+        let nonlinear = smallwood_poseidon2_v8_nonlinear_expression_program();
+        let csr = smallwood_poseidon2_v8_csr_expression_program();
+        eprintln!(
+            "INVENTORY nonlinear={} nonlinear_exprs={} csr_exprs={} attempts={}",
+            nonlinear.roots.len(),
+            nonlinear.expressions.len(),
+            csr.expressions.len(),
+            csr.attempts.len()
+        );
+        assert_eq!(
+            nonlinear.roots.len(),
+            SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINTS
+        );
+        assert_eq!(
+            nonlinear.expressions.len(),
+            SMALLWOOD_POSEIDON2_V8_NONLINEAR_EXPRESSION_NODES
+        );
+        assert_eq!(
+            csr.expressions.len(),
+            SMALLWOOD_POSEIDON2_V8_CSR_EXPRESSION_NODES
+        );
+        assert_eq!(
+            csr.attempts.len(),
+            SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_INSTANCES
+        );
+        for (index, family) in SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES
+            .iter()
+            .enumerate()
+        {
+            let actual = csr
+                .attempts
+                .iter()
+                .filter(|attempt| usize::from(attempt.family) == index)
+                .count();
+            eprintln!(
+                "INVENTORY {} actual={} pinned={}",
+                family.name, actual, family.instances
+            );
+            assert_eq!(
+                actual, family.instances as usize,
+                "CSR family {}",
+                family.name
+            );
+        }
     }
 
     #[test]
@@ -2767,7 +2885,7 @@ mod tests {
         let sha512 = smallwood_poseidon2_v8_program_sha512_from_bytes(&bytes);
         let relation_id = smallwood_poseidon2_v8_program_digest_from_bytes(&bytes);
         eprintln!(
-            "HGV8RP03 bytes={} sha512={} relation_id={} nonlinear_exprs={} csr_exprs={}",
+            "HGV8RP04 bytes={} sha512={} relation_id={} nonlinear_exprs={} csr_exprs={}",
             bytes.len(),
             lowercase_hex(&sha512),
             lowercase_hex(&relation_id),

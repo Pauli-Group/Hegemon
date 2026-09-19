@@ -98,7 +98,10 @@ fn retained_carrier_inline_prefix_for_action(
     blocks: &[crate::native::NativeBlockMeta],
     proof_action: &[u8],
 ) -> usize {
-    assert!(!proof_action.is_empty(), "retained proof action must be installed");
+    assert!(
+        !proof_action.is_empty(),
+        "retained proof action must be installed"
+    );
     blocks
         .iter()
         .position(|block| {
@@ -117,9 +120,9 @@ pub(super) fn retained_carrier_inline_response_prefix(
         .lock()
         .expect("retained response selection must not bypass a poisoned lock");
     let state = slot.as_ref()?;
-    state.locators.then(|| {
-        retained_carrier_inline_prefix_for_action(blocks, &state.proof_action)
-    })
+    state
+        .locators
+        .then(|| retained_carrier_inline_prefix_for_action(blocks, &state.proof_action))
 }
 
 #[test]
@@ -343,11 +346,10 @@ fn retained_carrier_snapshot(
                 return Err("stored action does not exact-decode".into());
             }
             if action.action_id == ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE {
-                let decoded = decode_poseidon2_production_smz9_inline_args_exact(
-                    expected,
-                    &action.public_args,
-                )
-                .map_err(|e| format!("stored retained leaf decode: {e:?}"))?;
+                let decoded = retained_carrier_production()
+                    .connector
+                    .decode_inline_args(&action.public_args)
+                    .map_err(|e| format!("stored retained leaf decode: {e:?}"))?;
                 leaves.push(serde_json::json!({
                     "leaf": hex::encode(decoded.envelope().native_leaf()),
                     "proof": hex::encode(decoded.envelope().decoded_native_leaf().proof()),
@@ -445,12 +447,40 @@ fn retained_carrier_assert_denied() {
 }
 
 fn retained_carrier_production() -> Poseidon2V8ProductionBinding {
-    test_production(protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NETWORK_ID)
-        .with_test_activation_genesis_hash(
-            crate::native::genesis_meta(RETAINED_CARRIER_POW_BITS)
-                .expect("retained process genesis")
-                .hash,
+    let production =
+        test_production(protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NETWORK_ID)
+            .with_test_activation_genesis_hash(
+                crate::native::genesis_meta(RETAINED_CARRIER_POW_BITS)
+                    .expect("retained process genesis")
+                    .hash,
+            );
+    if retained_carrier_smza_selected() {
+        production.with_test_smza_profile()
+    } else {
+        production
+    }
+}
+
+fn retained_carrier_manifest_env() -> &'static str {
+    if retained_carrier_smza_selected() {
+        "HEGEMON_TEST_RETAINED_SMZA_MANIFEST_PATH"
+    } else {
+        RETAINED_SMZ9_TEST_MANIFEST_ENV
+    }
+}
+
+fn retained_carrier_wallet_request(
+    expected: Poseidon2ProductionExpectedContext,
+    envelope: &[u8],
+) -> serde_json::Value {
+    if retained_carrier_smza_selected() {
+        wallet::node_rpc::prepare_poseidon2_smza_submit_request_json_for_retained_test(
+            expected, envelope,
         )
+        .unwrap()
+    } else {
+        retained_wallet_rpc_request(expected, envelope)
+    }
 }
 
 fn retained_carrier_service_config(
@@ -470,9 +500,7 @@ fn retained_carrier_isolated_command(
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     let inherited = std::env::vars_os().filter(|(key, _)| {
         let key = key.to_string_lossy();
-        !key.starts_with("HEGEMON_")
-            && key != "PQ_IDENTITY_SEED"
-            && key != "PQ_IDENTITY_SEED_PATH"
+        !key.starts_with("HEGEMON_") && key != "PQ_IDENTITY_SEED" && key != "PQ_IDENTITY_SEED_PATH"
     });
     let mut command = std::process::Command::new(executable);
     command
@@ -486,6 +514,9 @@ fn retained_carrier_isolated_command(
         .env("HEGEMON_MINE", "0")
         .env("HEGEMON_MINE_THREADS", "1")
         .env("HEGEMON_BOOTSTRAP_AUTHORING", "0");
+    if let Some(group) = retained_carrier_outer_process_group()? {
+        command.env(RETAINED_CARRIER_OUTER_GROUP_ENV, group.to_string());
+    }
     Ok(command)
 }
 
@@ -582,7 +613,7 @@ fn retained_rp03_socket_child() {
     let session = std::env::var(RETAINED_CARRIER_SESSION_ENV).expect("parent child session");
     assert_lower_hex(&session, 16, "retained child session");
     // No subprocess or node service may start until the parent has verified
-    // that this exact PID owns its newly created process group.
+    // that this exact PID belongs to its expected owned process group.
     let mut input = std::io::BufReader::new(std::io::stdin());
     let startup_line = retained_carrier_line(&mut input, 4096)
         .expect("bounded process-group startup frame")
@@ -591,9 +622,14 @@ fn retained_rp03_socket_child() {
         serde_json::from_slice(&startup_line).expect("exact process-group startup grammar");
     assert_eq!(startup.session, session);
     assert_eq!(startup.pid, std::process::id());
-    assert_eq!(startup.process_group, startup.pid);
+    assert_eq!(
+        startup.process_group,
+        retained_carrier_outer_process_group()
+            .expect("validate supervised outer process group")
+            .unwrap_or(startup.pid)
+    );
     let manifest =
-        std::env::var(RETAINED_SMZ9_TEST_MANIFEST_ENV).expect("explicit fresh candidate manifest");
+        std::env::var(retained_carrier_manifest_env()).expect("explicit fresh candidate manifest");
     let manifest_sha =
         std::env::var(RETAINED_CARRIER_SHA_ENV).expect("explicit fresh manifest SHA512");
     let role = std::env::var(RETAINED_CARRIER_ROLE_ENV).expect("explicit child role");
@@ -661,18 +697,22 @@ fn retained_rp03_socket_child() {
             overflow: false,
         });
     }
-    let retained_manifest =
-        load_retained_smz9_manifest(production.expected_context(), Some(&manifest));
-    let pin = if artifact_role == RETAINED_SMZ9_PRIMARY_ROLE {
-        &retained_manifest.primary
+    let artifact = if retained_carrier_smza_selected() {
+        load_retained_smza_socket_artifact(&manifest, &artifact_role, production)
     } else {
-        &retained_manifest.independent
+        let retained_manifest =
+            load_retained_smz9_manifest(production.expected_context(), Some(&manifest));
+        let pin = if artifact_role == RETAINED_SMZ9_PRIMARY_ROLE {
+            &retained_manifest.primary
+        } else {
+            &retained_manifest.independent
+        };
+        load_retained_smz9_artifact(
+            pin,
+            &retained_manifest.source_inventory,
+            production.expected_context(),
+        )
     };
-    let artifact = load_retained_smz9_artifact(
-        pin,
-        &retained_manifest.source_inventory,
-        production.expected_context(),
-    );
     retained_carrier_observations()
         .lock()
         .expect("bind exact retained action to transport selection")
@@ -750,12 +790,15 @@ fn retained_rp03_socket_child() {
                     .and_then(std::sync::Weak::upgrade)
                     .expect("source node exists");
                 assert!(index < 2 && node.best_tip().0 == u64::from(index));
-                let (bytes, sha) = if index == 0 {
-                    (RETAINED_V8_COINBASE_0_SCALE, RETAINED_V8_COINBASE_0_SHA512)
+                let (bytes, sha) = if retained_carrier_smza_selected() {
+                    let (bytes, sha) = retained_smza_manifest_coinbase(index);
+                    (bytes, sha)
+                } else if index == 0 {
+                    (RETAINED_V8_COINBASE_0_SCALE.to_vec(), RETAINED_V8_COINBASE_0_SHA512.to_owned())
                 } else {
-                    (RETAINED_V8_COINBASE_1_SCALE, RETAINED_V8_COINBASE_1_SHA512)
+                    (RETAINED_V8_COINBASE_1_SCALE.to_vec(), RETAINED_V8_COINBASE_1_SHA512.to_owned())
                 };
-                let (action, _) = retained_coinbase_action(u64::from(index) + 1, bytes, sha);
+                let (action, _) = retained_coinbase_action(u64::from(index) + 1, &bytes, &sha);
                 mine_exact_pending_fixture(&node, &action);
                 retained_carrier_snapshot(&artifact, production.expected_context())
             }
@@ -917,7 +960,15 @@ impl RetainedCarrierProcess {
                 "--test-threads=1",
             ])
             .env(RETAINED_CARRIER_SESSION_ENV, &session)
-            .env(RETAINED_SMZ9_TEST_MANIFEST_ENV, manifest)
+            .env(retained_carrier_manifest_env(), manifest)
+            .env(
+                "HEGEMON_TEST_RETAINED_CARRIER_PROFILE",
+                if retained_carrier_smza_selected() {
+                    "SMZA"
+                } else {
+                    "SMZ9"
+                },
+            )
             .env(RETAINED_CARRIER_SHA_ENV, manifest_sha512)
             .env(RETAINED_CARRIER_ROLE_ENV, role)
             .env(RETAINED_CARRIER_BASE_ENV, &base)
@@ -1171,7 +1222,11 @@ impl Drop for RetainedCarrierProcess {
         self.input.take();
         if let Some(mut child) = self.child.take() {
             // Failure cleanup only. Never included in a clean-stop receipt.
-            if let Some(group) = self.confirmed_group.take() {
+            if let Some(group) = self
+                .confirmed_group
+                .take()
+                .filter(|group| *group == child.id())
+            {
                 let _ = retained_carrier_kill_process_group(child.id(), group);
             }
             let _ = child.kill();
@@ -1521,12 +1576,14 @@ fn retained_carrier_episode(
     *mutated_envelope
         .last_mut()
         .ok_or("empty retained envelope")? ^= 1;
-    let mutated_request = retained_wallet_rpc_request(expected, &mutated_envelope);
+    let mutated_request = retained_carrier_wallet_request(expected, &mutated_envelope);
     let mutated_projection =
         crate::native::decode_submit_action_rpc_request(mutated_request.clone())
             .and_then(|request| crate::native::admit_native_action_request_projection(&request))
             .map_err(|e| format!("opaque mutation wallet projection: {e}"))?;
-    let mutated = decode_poseidon2_production_smz9_inline_args_exact(expected, &mutated_projection)
+    let mutated = retained_carrier_production()
+        .connector
+        .decode_inline_args(&mutated_projection)
         .map_err(|e| format!("opaque mutation exact envelope: {e:?}"))?;
     if mutated.envelope().raw() != mutated_envelope.as_slice() {
         return Err("wallet projection altered the opaque mutation".into());
@@ -1540,12 +1597,16 @@ fn retained_carrier_episode(
     )?;
     if mutation_response["success"] != false
         || !mutation_response["tx_hash"].is_null()
-        || !mutation_response["error"]
-            .as_str()
-            .is_some_and(|error| error.contains("SMZ9 proof rejected"))
+        || !mutation_response["error"].as_str().is_some_and(|error| {
+            error.contains(if retained_carrier_smza_selected() {
+                "SMZA proof rejected"
+            } else {
+                "SMZ9 proof rejected"
+            })
+        })
     {
         return Err(format!(
-            "actual HTTP did not reject the opaque proof at the SMZ9 verifier: {mutation_response}"
+            "actual HTTP did not reject the opaque proof at the selected source verifier: {mutation_response}"
         ));
     }
     let mutation_source =
@@ -1582,7 +1643,10 @@ fn retained_carrier_episode(
         &client,
         source.rpc,
         "hegemon_submitAction",
-        serde_json::json!([retained_wallet_rpc_request(expected, &artifact.envelope)]),
+        serde_json::json!([retained_carrier_wallet_request(
+            expected,
+            &artifact.envelope
+        )]),
     )?;
     if submission["success"] != true
         || !submission["error"].is_null()
@@ -1669,7 +1733,9 @@ fn retained_carrier_episode(
         .as_str()
         .ok_or("proof block hash missing")?
         .to_string();
-    eprintln!("Retained carrier {artifact_role}: exact proof block mined; waiting for relay import");
+    eprintln!(
+        "Retained carrier {artifact_role}: exact proof block mined; waiting for relay import"
+    );
     relay.wait_for(
         "relay canonical proof block and raw typed-state rows",
         |snapshot| {
@@ -1691,7 +1757,9 @@ fn retained_carrier_episode(
     if !retained_carrier_same_chain(&source_three, &relay_three) {
         return Err("tracked-idle source/relay raw chain or typed-state bytes differ".into());
     }
-    eprintln!("Retained carrier {artifact_role}: relay block verification and canonical state passed");
+    eprintln!(
+        "Retained carrier {artifact_role}: relay block verification and canonical state passed"
+    );
     let source_http =
         retained_carrier_http_block(&runtime, &client, &source, &source_three, artifact)?;
     let relay_http =
@@ -1880,7 +1948,9 @@ fn retained_carrier_executable_identity() -> RetainedCarrierResult<serde_json::V
 #[ignore = "requires fresh explicit RP03 manifest; launches isolated actual HTTP/PQ child processes"]
 fn retained_rp03_actual_socket_process_carriers() {
     retained_carrier_assert_denied();
-    let manifest = std::env::var(RETAINED_SMZ9_TEST_MANIFEST_ENV)
+    let outer_process_group = retained_carrier_outer_process_group()
+        .expect("validate optional supervisor-owned process group");
+    let manifest = std::env::var(retained_carrier_manifest_env())
         .expect("explicit fresh candidate manifest is mandatory for actual carrier execution");
     let manifest_sha512 = std::env::var(RETAINED_CARRIER_SHA_ENV)
         .expect("explicit fresh candidate manifest SHA512 is mandatory");
@@ -1899,10 +1969,45 @@ fn retained_rp03_actual_socket_process_carriers() {
         retained_carrier_verify_live_manifest(&manifest, &manifest_sha512, &directory)?;
         let executable = retained_carrier_executable_identity()?;
         let expected = retained_carrier_production().expected_context();
-        let pins = load_retained_smz9_manifest(expected, Some(&manifest));
-        let primary = load_retained_smz9_artifact(&pins.primary, &pins.source_inventory, expected);
-        let independent =
-            load_retained_smz9_artifact(&pins.independent, &pins.source_inventory, expected);
+        let (primary, independent, inventory) = if retained_carrier_smza_selected() {
+            let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .canonicalize()
+                .unwrap();
+            let manifest_path = retained_carrier_manifest_path(&workspace, &manifest)?;
+            let json: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(manifest_path).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+            let inventory = &json["proof_source_inventory"];
+            (
+                load_retained_smza_socket_artifact(
+                    &manifest,
+                    RETAINED_SMZ9_PRIMARY_ROLE,
+                    retained_carrier_production(),
+                ),
+                load_retained_smza_socket_artifact(
+                    &manifest,
+                    RETAINED_SMZ9_INDEPENDENT_ROLE,
+                    retained_carrier_production(),
+                ),
+                RetainedSourceInventoryPin {
+                    root_sha512: inventory["root_sha512"]
+                        .as_str()
+                        .ok_or("inventory root")?
+                        .into(),
+                    file_count: inventory["file_count"].as_u64().ok_or("inventory count")?,
+                    total_bytes: inventory["total_bytes"].as_u64().ok_or("inventory bytes")?,
+                },
+            )
+        } else {
+            let pins = load_retained_smz9_manifest(expected, Some(&manifest));
+            (
+                load_retained_smz9_artifact(&pins.primary, &pins.source_inventory, expected),
+                load_retained_smz9_artifact(&pins.independent, &pins.source_inventory, expected),
+                pins.source_inventory,
+            )
+        };
         if primary.proof == independent.proof
             || primary.wire_salt_hex == independent.wire_salt_hex
             || primary.decs_transcript_root_hex == independent.decs_transcript_root_hex
@@ -1932,13 +2037,14 @@ fn retained_rp03_actual_socket_process_carriers() {
         }
         retained_carrier_assert_denied();
         Ok(
-            serde_json::json!({"schema": "hegemon.retained-smz9.actual-socket-carriers-v1", "pass": true,
+            serde_json::json!({"schema": if retained_carrier_smza_selected() { "hegemon.retained-smza.actual-socket-carriers-v1" } else { "hegemon.retained-smz9.actual-socket-carriers-v1" }, "pass": true,
             "parent_pid": std::process::id(), "test_executable": executable,
+            "supervisor_owned_process_group": outer_process_group,
             "child_arguments": ["--ignored", "--exact", RETAINED_CARRIER_CHILD_TEST, "--nocapture", "--test-threads=1"],
             "manifest": manifest, "manifest_sha512": manifest_sha512,
-            "source_inventory_root_sha512": pins.source_inventory.root_sha512,
-            "source_inventory_file_count": pins.source_inventory.file_count,
-            "source_inventory_total_bytes": pins.source_inventory.total_bytes,
+            "source_inventory_root_sha512": inventory.root_sha512,
+            "source_inventory_file_count": inventory.file_count,
+            "source_inventory_total_bytes": inventory.total_bytes,
             "source_inventory_verified_before_and_after": true,
             "episodes": [primary_result, independent_result], "production_authority_denied": true}),
         )
@@ -1946,7 +2052,7 @@ fn retained_rp03_actual_socket_process_carriers() {
     let receipt = match &result {
         Ok(receipt) => receipt.clone(),
         Err(error) => {
-            serde_json::json!({"schema": "hegemon.retained-smz9.actual-socket-carriers-v1",
+            serde_json::json!({"schema": if retained_carrier_smza_selected() { "hegemon.retained-smza.actual-socket-carriers-v1" } else { "hegemon.retained-smz9.actual-socket-carriers-v1" },
             "pass": false, "manifest": manifest, "manifest_sha512": manifest_sha512, "error": error,
             "note": "Failure cleanup is not clean-restart evidence; no lifecycle completion claimed."})
         }
@@ -1964,6 +2070,13 @@ fn retained_rp03_actual_socket_process_carriers() {
     result.expect(
         "actual socket process carriers must pass every byte, peer, state and shutdown assertion",
     );
+}
+
+#[test]
+#[ignore = "requires exact selector and explicit SMZA manifest; actual HTTP/PQ child processes"]
+fn retained_smza_actual_socket_process_carriers() {
+    assert!(retained_carrier_smza_selected(), "SMZA requires --ignored --exact native::poseidon2_v8_verifier::tests::retained_smza_actual_socket_process_carriers --nocapture --test-threads=1");
+    retained_rp03_actual_socket_process_carriers();
 }
 
 #[test]
@@ -2111,6 +2224,62 @@ wait
         !status.status.success() || state.trim().is_empty() || state.trim().starts_with('Z'),
         "owned descendant remains running after process-group cleanup: {state}"
     );
+}
+
+#[test]
+fn retained_carrier_outer_group_admission_is_exact_and_parent_owned() {
+    let arguments = |test: &str| {
+        [
+            "--ignored",
+            "--exact",
+            test,
+            "--nocapture",
+            "--test-threads=1",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>()
+    };
+    let parent = arguments(
+        "native::poseidon2_v8_verifier::tests::retained_rp03_actual_socket_process_carriers",
+    );
+    let smza_parent = arguments(
+        "native::poseidon2_v8_verifier::tests::retained_smza_actual_socket_process_carriers",
+    );
+    let child = arguments(RETAINED_CARRIER_CHILD_TEST);
+    assert_eq!(
+        validate_retained_carrier_outer_process_group("12345", &parent, 12345, 12345),
+        Ok(12345)
+    );
+    assert_eq!(
+        validate_retained_carrier_outer_process_group("12345", &smza_parent, 12345, 12345),
+        Ok(12345)
+    );
+    assert!(validate_retained_carrier_outer_process_group("12345", &smza_parent, 12346, 12345).is_err());
+    assert!(validate_retained_carrier_outer_process_group("12345", &smza_parent, 12345, 12346).is_err());
+    let mut extra_smza = smza_parent.clone();
+    extra_smza.push("--list".into());
+    assert!(validate_retained_carrier_outer_process_group("12345", &extra_smza, 12345, 12345).is_err());
+    assert_eq!(
+        validate_retained_carrier_outer_process_group("12345", &child, 12346, 12345),
+        Ok(12345)
+    );
+    for raw in ["", "0", "1", "012345", "+12345", "12345 ", "4294967296"] {
+        assert!(validate_retained_carrier_outer_process_group(raw, &parent, 12345, 12345).is_err());
+    }
+    assert!(validate_retained_carrier_outer_process_group("12345", &parent, 12346, 12345).is_err());
+    assert!(validate_retained_carrier_outer_process_group("12345", &child, 12345, 12345).is_err());
+    assert!(validate_retained_carrier_outer_process_group("12345", &child, 12346, 12346).is_err());
+    let mut extra = parent.clone();
+    extra.push("--list".into());
+    assert!(validate_retained_carrier_outer_process_group("12345", &extra, 12345, 12345).is_err());
+    assert!(validate_retained_carrier_outer_process_group(
+        "12345",
+        &arguments("other"),
+        12345,
+        12345
+    )
+    .is_err());
 }
 
 #[test]

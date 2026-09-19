@@ -8,8 +8,6 @@
 //!
 //! This module constrains only the permutation traces.  The transaction adapter must add linear
 //! bindings from every live call's initial/final state rows to the corresponding semantic wires.
-//! The three padding lanes are different: their sixteen initial words are canonically zero and
-//! the zero bindings exported here are mandatory relation constraints.
 
 #![forbid(unsafe_code)]
 
@@ -21,7 +19,7 @@ use transaction_core::poseidon2_width16::{
     POSEIDON2_WIDTH16_WIDTH,
 };
 
-pub const SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT: usize = 125;
+pub const SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT: usize = 128;
 pub const SMALLWOOD_POSEIDON2_V8_HASH_PACKING_FACTOR: usize = 64;
 pub const SMALLWOOD_POSEIDON2_V8_HASH_GROUP_COUNT: usize =
     SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT.div_ceil(SMALLWOOD_POSEIDON2_V8_HASH_PACKING_FACTOR);
@@ -48,7 +46,7 @@ pub const SMALLWOOD_POSEIDON2_V8_HASH_MAX_CONSTRAINT_DEGREE: usize = 7;
 
 const _: () = assert!(POSEIDON2_WIDTH16_STEPS == 31);
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_HASH_GROUP_COUNT == 2);
-const _: () = assert!(SMALLWOOD_POSEIDON2_V8_HASH_DUMMY_CALL_COUNT == 3);
+const _: () = assert!(SMALLWOOD_POSEIDON2_V8_HASH_DUMMY_CALL_COUNT == 0);
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_HASH_SBOX_WIRES_PER_CALL == 150);
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_HASH_ROWS_PER_GROUP == 182);
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_HASH_ROW_COUNT == 364);
@@ -230,7 +228,7 @@ fn write_call_rows(
     }
 }
 
-/// Materialize the exact compressed witness rows for 125 live width-16 Poseidon2 calls.
+/// Materialize the exact compressed witness rows for 128 live width-16 Poseidon2 calls.
 pub fn build_smallwood_poseidon2_v8_hash_rows(
     initial_states: &[[u64; POSEIDON2_WIDTH16_WIDTH]],
 ) -> Result<SmallwoodPoseidon2V8HashRows, SmallwoodPoseidon2V8HashConstraintError> {
@@ -580,22 +578,14 @@ mod tests {
     fn exact_two_group_geometry_and_dummy_bindings() {
         assert_eq!(SMALLWOOD_POSEIDON2_V8_HASH_GROUP_COUNT, 2);
         assert_eq!(SMALLWOOD_POSEIDON2_V8_HASH_PADDED_CALL_COUNT, 128);
-        assert_eq!(SMALLWOOD_POSEIDON2_V8_HASH_DUMMY_CALL_COUNT, 3);
+        assert_eq!(SMALLWOOD_POSEIDON2_V8_HASH_DUMMY_CALL_COUNT, 0);
         assert_eq!(SMALLWOOD_POSEIDON2_V8_HASH_SBOX_WIRES_PER_CALL, 150);
         assert_eq!(SMALLWOOD_POSEIDON2_V8_HASH_ROWS_PER_GROUP, 182);
         assert_eq!(SMALLWOOD_POSEIDON2_V8_HASH_ROW_COUNT, 364);
         assert_eq!(SMALLWOOD_POSEIDON2_V8_HASH_CONSTRAINTS_PER_GROUP, 166);
         assert_eq!(SMALLWOOD_POSEIDON2_V8_HASH_CONSTRAINT_COUNT, 332);
         let bindings = smallwood_poseidon2_v8_hash_dummy_zero_witness_indices();
-        assert_eq!(bindings.len(), 48);
-        assert_eq!(
-            bindings[0],
-            smallwood_poseidon2_v8_hash_call_initial_witness_index(125, 0)
-        );
-        assert_eq!(
-            bindings[47],
-            smallwood_poseidon2_v8_hash_call_initial_witness_index(127, 15)
-        );
+        assert!(bindings.is_empty());
     }
 
     #[test]
@@ -625,8 +615,8 @@ mod tests {
         let material = build_smallwood_poseidon2_v8_hash_rows(&inputs).unwrap();
         for group in 0..SMALLWOOD_POSEIDON2_V8_HASH_GROUP_COUNT {
             let lane = if group + 1 == SMALLWOOD_POSEIDON2_V8_HASH_GROUP_COUNT {
-                SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT % SMALLWOOD_POSEIDON2_V8_HASH_PACKING_FACTOR
-                    - 1
+                (SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT - 1)
+                    % SMALLWOOD_POSEIDON2_V8_HASH_PACKING_FACTOR
             } else {
                 7
             };
@@ -679,7 +669,7 @@ mod tests {
     }
 
     #[test]
-    fn dummy_lanes_are_zero_started_and_fully_constrained() {
+    fn reclaimed_last_lane_is_live_and_fully_constrained() {
         let material = build_smallwood_poseidon2_v8_hash_rows(&initial_states()).unwrap();
         for call in
             SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT..SMALLWOOD_POSEIDON2_V8_HASH_PADDED_CALL_COUNT
@@ -695,17 +685,16 @@ mod tests {
         }
 
         let mut initial_mutation = material.clone();
-        let call = SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT;
+        assert_eq!(SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT, SMALLWOOD_POSEIDON2_V8_HASH_PADDED_CALL_COUNT);
+        let call = SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT - 1;
         let group = smallwood_poseidon2_v8_hash_call_group(call);
         let lane = smallwood_poseidon2_v8_hash_call_lane(call);
-        initial_mutation.rows[smallwood_poseidon2_v8_hash_initial_row(group, 0)][lane] = 1;
-        assert_eq!(
+        let initial_row = smallwood_poseidon2_v8_hash_initial_row(group, 0);
+        initial_mutation.rows[initial_row][lane] = (initial_mutation.rows[initial_row][lane] + 1) % GOLDILOCKS_MODULUS;
+        assert!(matches!(
             verify_smallwood_poseidon2_v8_hash_rows(initial_mutation.as_rows()),
-            Err(SmallwoodPoseidon2V8HashConstraintError::NonZeroDummyInput {
-                call,
-                state_lane: 0,
-            })
-        );
+            Err(SmallwoodPoseidon2V8HashConstraintError::ConstraintViolation { .. })
+        ));
 
         let mut trace_mutation = material;
         trace_mutation.rows[smallwood_poseidon2_v8_hash_sbox_wire_row(group, 17)][lane] =

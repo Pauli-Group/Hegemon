@@ -19,7 +19,7 @@
 use crate::smallwood_engine::{
     projected_poseidon2_v8_compact448_inner_proof_bytes,
     projected_poseidon2_v8_compact448_q20_inner_proof_bytes,
-    projected_poseidon2_v8_smz9_inner_proof_bytes,
+    projected_poseidon2_v8_smz9_inner_proof_bytes, projected_poseidon2_v8_smza_inner_proof_bytes,
     prove_statement_with_transcript_backend_profile_and_domain,
     report_smallwood_backend_opening_surface_with_profile_and_domain_v1,
     verify_statement_with_transcript_backend_profile_and_domain, SmallwoodArithmetization,
@@ -27,9 +27,11 @@ use crate::smallwood_engine::{
     SmallwoodTranscriptBackend, POSEIDON2_V8_COMPACT448_Q20_SMALLWOOD_NO_GRINDING_PROFILE,
     POSEIDON2_V8_COMPACT448_SMALLWOOD_NO_GRINDING_PROFILE,
     POSEIDON2_V8_SMZ9_SMALLWOOD_NO_GRINDING_PROFILE,
+    POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE,
     SMALLWOOD_POSEIDON2_V8_COMPACT448_MAX_INNER_PROOF_BYTES,
     SMALLWOOD_POSEIDON2_V8_COMPACT448_Q20_MAX_INNER_PROOF_BYTES,
     SMALLWOOD_POSEIDON2_V8_MAX_INNER_PROOF_BYTES,
+    SMALLWOOD_POSEIDON2_V8_SMZA_MAX_INNER_PROOF_BYTES,
     SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_COMPACT448_Q20_SMC8,
     SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_COMPACT448_SMC7,
     SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_SMZ9,
@@ -57,6 +59,9 @@ pub const SMALLWOOD_POSEIDON2_V8_FAMILY_ID: u16 = 1;
 pub const SMALLWOOD_POSEIDON2_V8_ACTION_ID: u16 = 10;
 pub const SMALLWOOD_POSEIDON2_V8_BACKEND_ID: u8 = TxProofBackend::SmallwoodCandidate as u8;
 pub const SMALLWOOD_POSEIDON2_V8_PROFILE_ID: u8 = 6;
+pub const SMALLWOOD_POSEIDON2_V8_SMZA_PROFILE_ID: u8 = 9;
+pub const SMALLWOOD_POSEIDON2_V8_SMZA_DOMAIN_SET: u16 = 5;
+pub const SMALLWOOD_POSEIDON2_V8_SMZA_INLINE_ACTION_BYTES: usize = 169_547;
 /// Inactive compact measurement profile. It is not present in versioning,
 /// capability, manifest, admission, or frontend routing tables.
 pub const SMALLWOOD_POSEIDON2_V8_COMPACT448_PROFILE_ID: u8 = 7;
@@ -165,6 +170,84 @@ pub trait SmallwoodPoseidon2V8FrontendRelation: SmallwoodConstraintAdapter {
     fn compiler_complete(&self) -> bool;
 }
 
+/// Explicit SMZA engine selector over the unchanged executable source relation.
+/// Historical callers keep the original SMZ9 adapter; all relation methods are
+/// delegated unchanged and only the additive engine selector differs.
+pub(crate) struct SmallwoodPoseidon2V8SmzaEngineRelation<'a> {
+    source: &'a (dyn SmallwoodConstraintAdapter + Sync),
+}
+
+impl<'a> SmallwoodPoseidon2V8SmzaEngineRelation<'a> {
+    pub(crate) fn new(
+        source: &'a (dyn SmallwoodConstraintAdapter + Sync),
+    ) -> Result<Self, TransactionCircuitError> {
+        if source.arithmetization() != SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "SMZA engine selection requires the unchanged source V8 relation adapter",
+            ));
+        }
+        Ok(Self { source })
+    }
+}
+
+impl SmallwoodConstraintAdapter for SmallwoodPoseidon2V8SmzaEngineRelation<'_> {
+    fn arithmetization(&self) -> SmallwoodArithmetization {
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza
+    }
+    fn row_count(&self) -> usize {
+        self.source.row_count()
+    }
+    fn packing_factor(&self) -> usize {
+        self.source.packing_factor()
+    }
+    fn constraint_degree(&self) -> usize {
+        self.source.constraint_degree()
+    }
+    fn linear_constraint_count(&self) -> usize {
+        self.source.linear_constraint_count()
+    }
+    fn constraint_count(&self) -> usize {
+        self.source.constraint_count()
+    }
+    fn linear_constraint_offsets(&self) -> &[u32] {
+        self.source.linear_constraint_offsets()
+    }
+    fn linear_constraint_indices(&self) -> &[u32] {
+        self.source.linear_constraint_indices()
+    }
+    fn linear_constraint_coefficients(&self) -> &[u64] {
+        self.source.linear_constraint_coefficients()
+    }
+    fn linear_targets(&self) -> &[u64] {
+        self.source.linear_targets()
+    }
+    fn auxiliary_witness_words(&self) -> &[u64] {
+        self.source.auxiliary_witness_words()
+    }
+    fn auxiliary_witness_limb_count(&self) -> Option<usize> {
+        self.source.auxiliary_witness_limb_count()
+    }
+    fn linear_constraint_form(&self) -> crate::smallwood_semantics::SmallwoodLinearConstraintForm {
+        self.source.linear_constraint_form()
+    }
+    fn nonlinear_eval_view<'a>(
+        &self,
+        point: u64,
+        rows: &'a [u64],
+        auxiliary: &'a [u64],
+    ) -> crate::smallwood_semantics::SmallwoodNonlinearEvalView<'a> {
+        self.source.nonlinear_eval_view(point, rows, auxiliary)
+    }
+    fn compute_constraints_u64(
+        &self,
+        view: crate::smallwood_semantics::SmallwoodNonlinearEvalView<'_>,
+        out: &mut [u64],
+    ) -> Result<(), TransactionCircuitError> {
+        self.source.compute_constraints_u64(view, out)
+    }
+}
+
 /// Rebuild the verifier relation from exact leaf public data.
 ///
 /// The production implementation must call the fixed-topology,
@@ -232,6 +315,22 @@ pub struct SmallwoodPoseidon2V8VerifierInput {
 }
 
 impl SmallwoodPoseidon2V8VerifierInput {
+    /// Additive q=38 binding; old unsuffixed methods remain SMZ9.
+    pub fn smza_candidate_transcript_preamble_v1(
+        &self,
+    ) -> Result<SmallwoodPoseidon2V8BindingPreamble, TransactionCircuitError> {
+        let mut preamble = SmallwoodPoseidon2V8BindingPreamble::from_verifier_input_with_profile(
+            self,
+            SMALLWOOD_POSEIDON2_V8_SMZA_PROFILE_ID,
+            *b"SMZA",
+        )?;
+        write_u16(
+            &mut preamble.bytes,
+            PREAMBLE_OFFSET_DOMAIN_SET,
+            SMALLWOOD_POSEIDON2_V8_SMZA_DOMAIN_SET,
+        );
+        Ok(preamble)
+    }
     pub fn from_relation(
         network_id: u32,
         relation: &impl SmallwoodPoseidon2V8FrontendRelation,
@@ -493,6 +592,214 @@ impl SmallwoodPoseidon2V8Compact448Q20CandidateProofV1 {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct SmallwoodPoseidon2V8SmzaCandidateProof {
+    verifier_input: SmallwoodPoseidon2V8VerifierInput,
+    proof_bytes: Vec<u8>,
+    projected_max_proof_bytes: usize,
+    projected_action_bytes: usize,
+    measured_action_bytes: usize,
+}
+
+impl SmallwoodPoseidon2V8SmzaCandidateProof {
+    pub const fn verifier_input(&self) -> &SmallwoodPoseidon2V8VerifierInput {
+        &self.verifier_input
+    }
+
+    pub fn proof_bytes(&self) -> &[u8] {
+        &self.proof_bytes
+    }
+
+    pub fn into_proof_bytes(self) -> Vec<u8> {
+        self.proof_bytes
+    }
+
+    pub const fn projected_max_proof_bytes(&self) -> usize {
+        self.projected_max_proof_bytes
+    }
+
+    pub const fn projected_action_bytes(&self) -> usize {
+        self.projected_action_bytes
+    }
+
+    pub const fn measured_action_bytes(&self) -> usize {
+        self.measured_action_bytes
+    }
+}
+
+pub fn compile_and_prove_smallwood_poseidon2_v8_smza_candidate_v1(
+    statement: &SmallwoodPoseidon2V8PublicStatement,
+    witness: &SmallwoodPoseidon2V8Witness,
+    network_id: u32,
+) -> Result<SmallwoodPoseidon2V8SmzaCandidateProof, TransactionCircuitError> {
+    let lowered = compile_smallwood_poseidon2_v8_relation(statement, witness).map_err(|error| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "SmallWood Poseidon2 V8 q38 relation compilation failed: {error}"
+        ))
+    })?;
+    let candidate = prove_smallwood_poseidon2_v8_smza_candidate_with_relation_v1(
+        &lowered.adapter,
+        &lowered.witness_values,
+        network_id,
+    )?;
+    verify_smallwood_poseidon2_v8_smza_candidate_v1(
+        candidate.verifier_input(),
+        candidate.proof_bytes(),
+    )?;
+    Ok(candidate)
+}
+
+fn prove_smallwood_poseidon2_v8_smza_candidate_with_relation_v1(
+    relation: &(impl SmallwoodPoseidon2V8FrontendRelation + Sync),
+    witness_values: &[u64],
+    network_id: u32,
+) -> Result<SmallwoodPoseidon2V8SmzaCandidateProof, TransactionCircuitError> {
+    ensure_relation_contract(relation)?;
+    if relation.relation_digest() != &SMALLWOOD_POSEIDON2_V8_RELATION_DIGEST {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SmallWood Poseidon2 V8 SMZA prover requires the exact source-owned relation digest",
+        ));
+    }
+    let expected_witness_words = relation
+        .row_count()
+        .checked_mul(relation.packing_factor())
+        .ok_or(TransactionCircuitError::ConstraintViolation(
+            "SmallWood Poseidon2 V8 SMZA compiler geometry overflows witness length",
+        ))?;
+    if witness_values.len() != expected_witness_words {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "SmallWood Poseidon2 V8 SMZA witness length mismatch: actual={} expected={expected_witness_words}",
+            witness_values.len()
+        )));
+    }
+    for (index, value) in witness_values.iter().copied().enumerate() {
+        if value >= SMALLWOOD_POSEIDON2_V8_GOLDILOCKS_MODULUS {
+            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "SmallWood Poseidon2 V8 SMZA witness word {index} is not canonical Goldilocks"
+            )));
+        }
+    }
+    let verifier_input = SmallwoodPoseidon2V8VerifierInput::from_relation(network_id, relation);
+    let preamble = verifier_input.smza_candidate_transcript_preamble_v1()?;
+    let projected_max_proof_bytes =
+        project_smallwood_poseidon2_v8_smza_candidate_bytes_v1(relation)?;
+    let engine_relation = SmallwoodPoseidon2V8SmzaEngineRelation::new(relation)?;
+    let proof_bytes = prove_statement_with_transcript_backend_profile_and_domain(
+        &engine_relation,
+        witness_values,
+        preamble.as_bytes(),
+        POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE,
+        SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )?;
+    ensure_smza_bytes(&proof_bytes)?;
+    ensure_smza_routed_size(proof_bytes.len(), relation.public_values(), "q38 measured")?;
+    if proof_bytes.len() > projected_max_proof_bytes {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "SmallWood Poseidon2 V8 SMZA measured proof {} exceeds compiler projection {projected_max_proof_bytes}",
+            proof_bytes.len()
+        )));
+    }
+    verify_smallwood_poseidon2_v8_smza_candidate_with_relation_v1(
+        relation,
+        &verifier_input,
+        &proof_bytes,
+    )?;
+    Ok(SmallwoodPoseidon2V8SmzaCandidateProof {
+        measured_action_bytes: smallwood_poseidon2_v8_exact_action_bytes(
+            relation.public_values(),
+            proof_bytes.len(),
+        )?,
+        projected_action_bytes: smallwood_poseidon2_v8_exact_action_bytes(
+            relation.public_values(),
+            projected_max_proof_bytes,
+        )?,
+        verifier_input,
+        proof_bytes,
+        projected_max_proof_bytes,
+    })
+}
+
+fn verify_smallwood_poseidon2_v8_smza_candidate_with_relation_v1(
+    relation: &(impl SmallwoodPoseidon2V8FrontendRelation + Sync),
+    input: &SmallwoodPoseidon2V8VerifierInput,
+    proof_bytes: &[u8],
+) -> Result<(), TransactionCircuitError> {
+    ensure_relation_contract(relation)?;
+    ensure_relation_matches_input(relation, input)?;
+    if relation.relation_digest() != &SMALLWOOD_POSEIDON2_V8_RELATION_DIGEST {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SmallWood Poseidon2 V8 SMZA verifier requires the exact source-owned relation digest",
+        ));
+    }
+    ensure_smza_bytes(proof_bytes)?;
+    ensure_smza_routed_size(proof_bytes.len(), &input.public_values, "q38 received")?;
+    let preamble = input.smza_candidate_transcript_preamble_v1()?;
+    crate::smallwood_poseidon2_v8_zk_refinement::validate_accepted_smallwood_poseidon2_v8_smza_local_audit_v1(
+        relation,
+        preamble.as_bytes(),
+        proof_bytes,
+    )?;
+    Ok(())
+}
+
+/// Reconstruct HGV8RP03 from the statement and verify only SMZA candidate.
+pub fn verify_smallwood_poseidon2_v8_smza_candidate_v1(
+    input: &SmallwoodPoseidon2V8VerifierInput,
+    proof_bytes: &[u8],
+) -> Result<(), TransactionCircuitError> {
+    let factory = SmallwoodPoseidon2V8SourceRelationFactory;
+    validate_verifier_input(input)?;
+    ensure_factory_matches_input(&factory, input)?;
+    let relation = factory.build_verifier_relation(input)?;
+    verify_smallwood_poseidon2_v8_smza_candidate_with_relation_v1(&relation, input, proof_bytes)
+}
+
+pub fn report_smallwood_poseidon2_v8_smza_candidate_v1(
+    input: &SmallwoodPoseidon2V8VerifierInput,
+    proof_bytes: &[u8],
+) -> Result<SmallwoodBackendOpeningSurfaceReportV1, TransactionCircuitError> {
+    let factory = SmallwoodPoseidon2V8SourceRelationFactory;
+    validate_verifier_input(input)?;
+    ensure_factory_matches_input(&factory, input)?;
+    let relation = factory.build_verifier_relation(input)?;
+    verify_smallwood_poseidon2_v8_smza_candidate_with_relation_v1(&relation, input, proof_bytes)?;
+    let preamble = input.smza_candidate_transcript_preamble_v1()?;
+    let engine_relation = SmallwoodPoseidon2V8SmzaEngineRelation::new(&relation)?;
+    report_smallwood_backend_opening_surface_with_profile_and_domain_v1(
+        &engine_relation,
+        preamble.as_bytes(),
+        proof_bytes,
+        POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE,
+        SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )
+}
+
+/// Source-owned trace seam for SMZA artifact and native callers. Reconstructs
+/// HGV8RP03 from public inputs and applies the explicit successor selector.
+/// Ordinary acceptance must still use the candidate verifier/local audit.
+pub fn build_smallwood_poseidon2_v8_smza_candidate_verifier_trace_v1(
+    input: &SmallwoodPoseidon2V8VerifierInput,
+    proof_bytes: &[u8],
+) -> Result<crate::smallwood_engine::SmallwoodVerifierTraceV1, TransactionCircuitError> {
+    let factory = SmallwoodPoseidon2V8SourceRelationFactory;
+    validate_verifier_input(input)?;
+    ensure_factory_matches_input(&factory, input)?;
+    let relation = factory.build_verifier_relation(input)?;
+    ensure_relation_contract(&relation)?;
+    ensure_relation_matches_input(&relation, input)?;
+    ensure_smza_bytes(proof_bytes)?;
+    ensure_smza_routed_size(proof_bytes.len(), &input.public_values, "trace")?;
+    let preamble = input.smza_candidate_transcript_preamble_v1()?;
+    let engine_relation = SmallwoodPoseidon2V8SmzaEngineRelation::new(&relation)?;
+    crate::smallwood_engine::build_smallwood_poseidon2_v8_smza_verifier_trace_v1(
+        &engine_relation,
+        preamble.as_bytes(),
+        proof_bytes,
+    )
+}
+
 /// Exact proof budget for this activity mask. Ciphertexts are part of the
 /// canonical action even though they are not repeated inside the SMZ9 proof.
 pub fn smallwood_poseidon2_v8_routed_proof_budget(
@@ -549,6 +856,48 @@ pub fn project_smallwood_poseidon2_v8_candidate_bytes(
     let projected = projected_poseidon2_v8_smz9_inner_proof_bytes(relation)?;
     ensure_routed_size(projected, relation.public_values(), "projected")?;
     Ok(projected)
+}
+
+pub fn project_smallwood_poseidon2_v8_smza_candidate_bytes_v1(
+    relation: &(impl SmallwoodPoseidon2V8FrontendRelation + Sync),
+) -> Result<usize, TransactionCircuitError> {
+    ensure_relation_contract(relation)?;
+    let engine_relation = SmallwoodPoseidon2V8SmzaEngineRelation::new(relation)?;
+    let projected = projected_poseidon2_v8_smza_inner_proof_bytes(&engine_relation)?;
+    if projected != SMALLWOOD_POSEIDON2_V8_SMZA_MAX_INNER_PROOF_BYTES {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SMZA source projection drift",
+        ));
+    }
+    ensure_smza_routed_size(projected, relation.public_values(), "projected")?;
+    Ok(projected)
+}
+
+fn ensure_smza_bytes(bytes: &[u8]) -> Result<(), TransactionCircuitError> {
+    if !bytes.starts_with(b"SMZA")
+        || bytes.len() > SMALLWOOD_POSEIDON2_V8_SMZA_MAX_INNER_PROOF_BYTES
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SMZA requires its exact wire identity and inner cap",
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_smza_routed_size(
+    size: usize,
+    public_values: &[u64; SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS],
+    _kind: &str,
+) -> Result<(), TransactionCircuitError> {
+    if size > SMALLWOOD_POSEIDON2_V8_SMZA_MAX_INNER_PROOF_BYTES
+        || smallwood_poseidon2_v8_exact_action_bytes(public_values, size)?
+            > SMALLWOOD_POSEIDON2_V8_SMZA_INLINE_ACTION_BYTES
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SMZA exceeds inner or activity-derived action cap",
+        ));
+    }
+    Ok(())
 }
 
 /// Exact inactive profile-7 projection for the unchanged HGV8RP03 relation.
@@ -1290,6 +1639,92 @@ const _: [(); SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING.crypto as usize] = 
 mod tests {
     use super::*;
     use crate::smallwood_semantics::{SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView};
+
+    #[test]
+    fn smza_identity_and_caps_are_additive() {
+        let relation = TestRelation::new();
+        let input = SmallwoodPoseidon2V8VerifierInput::from_relation(17, &relation);
+        let old = input.transcript_preamble().unwrap();
+        let new = input.smza_candidate_transcript_preamble_v1().unwrap();
+        assert_eq!(&new.as_bytes()[..8], b"HGV8PB02");
+        assert_eq!(new.as_bytes()[PREAMBLE_OFFSET_PROFILE], 9);
+        assert_eq!(&new.as_bytes()[20..22], &5u16.to_le_bytes());
+        assert_eq!(&new.as_bytes()[32..36], b"SMZA");
+        assert_eq!(&old.as_bytes()[32..36], b"SMZ9");
+        assert_eq!(&old.as_bytes()[36..], &new.as_bytes()[36..]);
+        for magic in [b"SMZ9", b"SMC7", b"SMC8"] {
+            assert!(ensure_smza_bytes(magic).is_err());
+        }
+        assert!(ensure_smz9_bytes(b"SMZA").is_err());
+        let mut bytes = vec![0; SMALLWOOD_POSEIDON2_V8_SMZA_MAX_INNER_PROOF_BYTES];
+        bytes[..4].copy_from_slice(b"SMZA");
+        assert!(ensure_smza_bytes(&bytes).is_ok());
+        bytes.push(0);
+        assert!(ensure_smza_bytes(&bytes).is_err());
+        let mut words = input.public_values;
+        words[2] = 1;
+        words[3] = 1;
+        assert_eq!(
+            smallwood_poseidon2_v8_exact_action_bytes(&words, 164_113).unwrap(),
+            169_547
+        );
+        assert!(ensure_smza_routed_size(164_113, &words, "test").is_ok());
+        assert!(ensure_smza_routed_size(164_114, &words, "test").is_err());
+        assert!(ensure_routed_size(164_113, &words, "old").is_err());
+    }
+
+    #[test]
+    fn smza_real_source_projection_selects_the_additive_engine() {
+        let statement = SmallwoodPoseidon2V8PublicStatement::default();
+        let relation =
+            SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(&statement).unwrap();
+        assert_eq!(
+            relation.arithmetization(),
+            SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        );
+        // The engine itself continues rejecting the historical selector.
+        assert!(projected_poseidon2_v8_smza_inner_proof_bytes(&relation).is_err());
+        assert_eq!(
+            project_smallwood_poseidon2_v8_smza_candidate_bytes_v1(&relation).unwrap(),
+            164_113
+        );
+        assert_eq!(
+            project_smallwood_poseidon2_v8_candidate_bytes(&relation).unwrap(),
+            122_863
+        );
+        let selected = SmallwoodPoseidon2V8SmzaEngineRelation::new(&relation).unwrap();
+        assert_eq!(
+            selected.arithmetization(),
+            SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza
+        );
+        assert!(projected_poseidon2_v8_smz9_inner_proof_bytes(&selected).is_err());
+        assert_eq!(
+            selected.linear_constraint_offsets(),
+            relation.linear_constraint_offsets()
+        );
+        assert_eq!(
+            selected.linear_constraint_indices(),
+            relation.linear_constraint_indices()
+        );
+        assert_eq!(
+            selected.linear_constraint_coefficients(),
+            relation.linear_constraint_coefficients()
+        );
+        assert_eq!(selected.linear_targets(), relation.linear_targets());
+        let rows = vec![0; relation.row_count()];
+        let mut original = vec![0; relation.constraint_count()];
+        let mut successor = original.clone();
+        relation
+            .compute_constraints_u64(relation.nonlinear_eval_view(101, &rows, &[]), &mut original)
+            .unwrap();
+        selected
+            .compute_constraints_u64(
+                selected.nonlinear_eval_view(101, &rows, &[]),
+                &mut successor,
+            )
+            .unwrap();
+        assert_eq!(original, successor);
+    }
 
     #[derive(Clone)]
     struct TestRelation {

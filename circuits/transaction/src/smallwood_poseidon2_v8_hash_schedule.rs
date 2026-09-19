@@ -1,4 +1,4 @@
-//! Canonical 125-call Poseidon2 V8 transaction hash schedule.
+//! Canonical 128-call Poseidon2 V8 transaction hash schedule.
 //!
 //! This module materializes prover trace inputs and exports verifier-shape
 //! source descriptors.  It does not validate transaction semantics and does
@@ -45,11 +45,14 @@ use crate::{
     },
 };
 
-pub const SMALLWOOD_POSEIDON2_V8_SCHEDULE_LIVE_CALLS: usize = 125;
+pub const SMALLWOOD_POSEIDON2_V8_SCHEDULE_LIVE_CALLS: usize = 128;
 pub const SMALLWOOD_POSEIDON2_V8_SCHEDULE_PADDED_CALLS: usize = 128;
 pub const SMALLWOOD_POSEIDON2_V8_AUTH_POLICY_DOMAIN: u64 = 7;
 pub const SMALLWOOD_POSEIDON2_V8_AUTH_ACCUMULATOR_DOMAIN: u64 = 6;
-pub const SMALLWOOD_POSEIDON2_V8_AUTH_VALUE_LOCK_DOMAIN: u64 = 8;
+pub const SMALLWOOD_POSEIDON2_V8_SINGLE_KEY_DOMAIN: u64 = 0x4853_4b41_5632_0001;
+pub const SMALLWOOD_POSEIDON2_V8_NULLIFIER_DOMAIN: u64 = 0x484e_554c_5632_0001;
+pub const SMALLWOOD_POSEIDON2_V8_AUTH_VALUE_LOCK_DOMAIN: u64 = 0x4856_4c4b_5632_0001;
+pub const SMALLWOOD_POSEIDON2_V8_AUTH_MODE_BIND_DOMAIN: u64 = 0x484d_4244_5632_0001;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SmallwoodPoseidon2V8HashRoleRange {
@@ -58,9 +61,10 @@ pub struct SmallwoodPoseidon2V8HashRoleRange {
     pub end: usize,
 }
 
-/// Gap-free canonical live-call order.  The three padding calls are outside
-/// these ranges at `[125,128)`.
-pub const SMALLWOOD_POSEIDON2_V8_HASH_ROLE_RANGES: [SmallwoodPoseidon2V8HashRoleRange; 20] = [
+/// Gap-free canonical live-call order.  Every physical call is live; the
+/// successor relation consumes the former three padding calls without
+/// increasing the fixed 128-call carrier.
+pub const SMALLWOOD_POSEIDON2_V8_HASH_ROLE_RANGES: [SmallwoodPoseidon2V8HashRoleRange; 22] = [
     SmallwoodPoseidon2V8HashRoleRange {
         name: "transaction_prf",
         start: 0,
@@ -79,87 +83,97 @@ pub const SMALLWOOD_POSEIDON2_V8_HASH_ROLE_RANGES: [SmallwoodPoseidon2V8HashRole
     SmallwoodPoseidon2V8HashRoleRange {
         name: "input_0_nullifier",
         start: 36,
-        end: 37,
+        end: 38,
     },
     SmallwoodPoseidon2V8HashRoleRange {
         name: "input_1_note",
-        start: 37,
-        end: 40,
+        start: 38,
+        end: 41,
     },
     SmallwoodPoseidon2V8HashRoleRange {
         name: "input_1_merkle",
-        start: 40,
-        end: 72,
-    },
-    SmallwoodPoseidon2V8HashRoleRange {
-        name: "input_1_nullifier",
-        start: 72,
+        start: 41,
         end: 73,
     },
     SmallwoodPoseidon2V8HashRoleRange {
-        name: "output_0_note",
+        name: "input_1_nullifier",
         start: 73,
-        end: 76,
+        end: 75,
+    },
+    SmallwoodPoseidon2V8HashRoleRange {
+        name: "output_0_note",
+        start: 75,
+        end: 78,
     },
     SmallwoodPoseidon2V8HashRoleRange {
         name: "output_1_note",
-        start: 76,
-        end: 79,
+        start: 78,
+        end: 81,
     },
     SmallwoodPoseidon2V8HashRoleRange {
         name: "action_intent",
-        start: 79,
-        end: 94,
+        start: 81,
+        end: 96,
     },
     SmallwoodPoseidon2V8HashRoleRange {
         name: "authorization_policy",
-        start: 94,
-        end: 98,
+        start: 96,
+        end: 100,
     },
     SmallwoodPoseidon2V8HashRoleRange {
         name: "authorization_current",
-        start: 98,
-        end: 101,
+        start: 100,
+        end: 103,
     },
     SmallwoodPoseidon2V8HashRoleRange {
         name: "authorization_next",
-        start: 101,
-        end: 104,
-    },
-    SmallwoodPoseidon2V8HashRoleRange {
-        name: "authorization_value_lock",
-        start: 104,
+        start: 103,
         end: 106,
     },
     SmallwoodPoseidon2V8HashRoleRange {
-        name: "stable_config_chunks",
+        name: "authorization_value_lock",
         start: 106,
-        end: 110,
+        end: 107,
     },
     SmallwoodPoseidon2V8HashRoleRange {
-        name: "stable_config_tree",
-        start: 110,
+        name: "authorization_bound_current",
+        start: 107,
+        end: 108,
+    },
+    SmallwoodPoseidon2V8HashRoleRange {
+        name: "authorization_bound_secondary",
+        start: 108,
+        end: 109,
+    },
+    SmallwoodPoseidon2V8HashRoleRange {
+        name: "stable_config_chunks",
+        start: 109,
         end: 113,
     },
     SmallwoodPoseidon2V8HashRoleRange {
-        name: "stable_state_leaves",
+        name: "stable_config_tree",
         start: 113,
-        end: 115,
+        end: 116,
+    },
+    SmallwoodPoseidon2V8HashRoleRange {
+        name: "stable_state_leaves",
+        start: 116,
+        end: 118,
     },
     SmallwoodPoseidon2V8HashRoleRange {
         name: "stable_paths",
-        start: 115,
-        end: 123,
+        start: 118,
+        end: 126,
     },
     SmallwoodPoseidon2V8HashRoleRange {
         name: "stable_issuer_commitment",
-        start: 123,
-        end: 124,
+        start: 126,
+        end: 127,
     },
     SmallwoodPoseidon2V8HashRoleRange {
         name: "stable_issuer_authorization",
-        start: 124,
-        end: 125,
+        start: 127,
+        end: 128,
     },
 ];
 
@@ -233,8 +247,15 @@ pub enum SmallwoodPoseidon2V8SemanticWordRef {
     TransactionSpendKey {
         limb: usize,
     },
-    InputAuthorizationPrf {
+    AuthorizationNullifierKey {
+        limb: usize,
+    },
+    AuthorizationSecondaryDigest {
+        limb: usize,
+    },
+    InputNullifierKey {
         input: usize,
+        limb: usize,
     },
     InputNote {
         input: usize,
@@ -380,13 +401,15 @@ pub enum SmallwoodPoseidon2V8HashCallRole {
     TransactionPrf,
     InputNote { input: usize, block: usize },
     InputMerkle { input: usize, level: usize },
-    InputNullifier { input: usize },
+    InputNullifier { input: usize, block: usize },
     OutputNote { output: usize, block: usize },
     ActionIntent { block: usize },
     AuthorizationPolicy { block: usize },
     AuthorizationCurrent { block: usize },
     AuthorizationNext { block: usize },
-    AuthorizationValueLock { block: usize },
+    AuthorizationValueLock,
+    AuthorizationBoundCurrent,
+    AuthorizationBoundSecondary,
     StableConfigChunk { chunk: usize },
     StableConfigNode { node: usize },
     StableStateLeaf { after: bool },
@@ -408,6 +431,8 @@ pub enum SmallwoodPoseidon2V8HashDigestRef {
     AuthorizationCurrent,
     AuthorizationNext,
     AuthorizationValueLock,
+    AuthorizationBoundCurrent,
+    AuthorizationBoundSecondary,
     StableConfigChunk { chunk: usize },
     StableConfigNode { node: usize },
     StableStateLeaf { after: bool },
@@ -454,7 +479,7 @@ impl SmallwoodPoseidon2V8HashScheduleMaterial {
     ) -> &[SmallwoodPoseidon2V8HashCall; SMALLWOOD_POSEIDON2_V8_SCHEDULE_LIVE_CALLS] {
         self.calls[..SMALLWOOD_POSEIDON2_V8_SCHEDULE_LIVE_CALLS]
             .try_into()
-            .expect("the schedule has exactly 125 live calls")
+            .expect("the schedule has exactly 128 live calls")
     }
 
     pub fn initial_states(
@@ -723,7 +748,7 @@ impl ScheduleBuilder {
             self.calls.push(SmallwoodPoseidon2V8HashCall {
                 index,
                 mode: SmallwoodPoseidon2V8HashCallMode::Padding,
-                role: SmallwoodPoseidon2V8HashCallRole::Padding { lane: index - 125 },
+                role: SmallwoodPoseidon2V8HashCallRole::Padding { lane: index - 128 },
                 initial_bindings: [SmallwoodPoseidon2V8HashLaneBinding::ZERO;
                     POSEIDON2_WIDTH16_WIDTH],
                 initial_state,
@@ -967,10 +992,13 @@ pub fn build_smallwood_poseidon2_v8_hash_schedule(
     } else if statement.input_flags[1] {
         witness.inputs[1].spend_key
     } else {
-        [0; 4]
+        [0; 5]
     };
-    let prf_words = (0..4)
+    let prf_words = (0..7)
         .map(|limb| {
+            if limb >= 5 {
+                return BoundWord::ZERO;
+            }
             BoundWord::semantic(
                 global_spend_key[limb],
                 SmallwoodPoseidon2V8SemanticWordRef::TransactionSpendKey { limb },
@@ -979,43 +1007,33 @@ pub fn build_smallwood_poseidon2_v8_hash_schedule(
         .collect::<Vec<_>>();
     builder.push_sponge(
         &[SmallwoodPoseidon2V8HashCallRole::TransactionPrf],
-        NULLIFIER_DOMAIN_TAG,
+        SMALLWOOD_POSEIDON2_V8_SINGLE_KEY_DOMAIN,
         &prf_words,
         SmallwoodPoseidon2V8HashDigestRef::TransactionPrf,
     )?;
 
-    let legacy_prf = builder.calls[0].final_state[0];
-    let current_accumulator_values = accumulator_words(witness.auth.current, true)
-        .into_iter()
-        .map(|word| word.value)
-        .collect::<Vec<_>>();
-    let current_digest = materialize_sponge_digest(
-        SMALLWOOD_POSEIDON2_V8_AUTH_ACCUMULATOR_DOMAIN,
-        &current_accumulator_values,
-    );
-    let value_lock_values = witness
-        .auth
-        .current
-        .policy_root
-        .into_iter()
-        .chain(witness.auth.current.intent_digest)
-        .collect::<Vec<_>>();
-    let value_lock_digest = materialize_sponge_digest(
-        SMALLWOOD_POSEIDON2_V8_AUTH_VALUE_LOCK_DOMAIN,
-        &value_lock_values,
-    );
-    let effective_input_prfs = core::array::from_fn::<_, 2, _>(|input| {
-        if !statement.input_flags[input] {
-            return 0;
-        }
-        match (witness.auth.mode, input) {
-            (SmallwoodPrivateAuthMode::SingleKey, _) => legacy_prf,
-            (SmallwoodPrivateAuthMode::ApprovalStep, 0) => current_digest[4],
-            (SmallwoodPrivateAuthMode::ApprovalStep, _) => legacy_prf,
-            (SmallwoodPrivateAuthMode::FinalThresholdSpend, 0) => value_lock_digest[4],
-            (SmallwoodPrivateAuthMode::FinalThresholdSpend, _) => current_digest[4],
-        }
+    let single_key: [u64; 7] =
+        core::array::from_fn(|limb| global_spend_key.get(limb).copied().unwrap_or(0));
+    let policy_key: [u64; 7] = core::array::from_fn(|limb| {
+        witness
+            .auth
+            .policy_nullifier_key
+            .get(limb)
+            .copied()
+            .unwrap_or(0)
     });
+    let effective_input_keys: [[u64; 7]; 2] =
+        core::array::from_fn(|input| match (witness.auth.mode, input) {
+            (SmallwoodPrivateAuthMode::SingleKey, _) => single_key,
+            (SmallwoodPrivateAuthMode::ApprovalStep, 0) => policy_key,
+            (SmallwoodPrivateAuthMode::ApprovalStep, _) => single_key,
+            (SmallwoodPrivateAuthMode::FinalThresholdSpend, _) => policy_key,
+        });
+    let mode_binding_key = if witness.auth.mode == SmallwoodPrivateAuthMode::SingleKey {
+        single_key
+    } else {
+        policy_key
+    };
 
     for input in 0..2 {
         let note_roles = core::array::from_fn::<_, 3, _>(|block| {
@@ -1070,11 +1088,13 @@ pub fn build_smallwood_poseidon2_v8_hash_schedule(
             )?;
             position >>= 1;
         }
-        let mut nullifier_words = Vec::with_capacity(6);
-        nullifier_words.push(BoundWord::semantic(
-            effective_input_prfs[input],
-            SmallwoodPoseidon2V8SemanticWordRef::InputAuthorizationPrf { input },
-        ));
+        let mut nullifier_words = Vec::with_capacity(12);
+        for limb in 0..7 {
+            nullifier_words.push(BoundWord::semantic(
+                effective_input_keys[input][limb],
+                SmallwoodPoseidon2V8SemanticWordRef::InputNullifierKey { input, limb },
+            ));
+        }
         let active = statement.input_flags[input];
         nullifier_words.push(BoundWord::semantic(
             if active {
@@ -1098,8 +1118,11 @@ pub fn build_smallwood_poseidon2_v8_hash_schedule(
             ));
         }
         builder.push_sponge(
-            &[SmallwoodPoseidon2V8HashCallRole::InputNullifier { input }],
-            NULLIFIER_DOMAIN_TAG,
+            &[
+                SmallwoodPoseidon2V8HashCallRole::InputNullifier { input, block: 0 },
+                SmallwoodPoseidon2V8HashCallRole::InputNullifier { input, block: 1 },
+            ],
+            SMALLWOOD_POSEIDON2_V8_NULLIFIER_DOMAIN,
             &nullifier_words,
             SmallwoodPoseidon2V8HashDigestRef::InputNullifier { input },
         )?;
@@ -1167,6 +1190,8 @@ pub fn build_smallwood_poseidon2_v8_hash_schedule(
         SmallwoodPoseidon2V8HashDigestRef::AuthorizationPolicy,
     )?;
 
+    let mut current_call = 0usize;
+    let mut next_call = 0usize;
     for current in [true, false] {
         let roles = core::array::from_fn::<_, 3, _>(|block| {
             if current {
@@ -1187,7 +1212,7 @@ pub fn build_smallwood_poseidon2_v8_hash_schedule(
                 approved_slots: witness.auth.next.approved_slots,
             }
         };
-        builder.push_sponge(
+        let call = builder.push_sponge(
             &roles,
             SMALLWOOD_POSEIDON2_V8_AUTH_ACCUMULATOR_DOMAIN,
             &accumulator_words(opening, current),
@@ -1197,33 +1222,68 @@ pub fn build_smallwood_poseidon2_v8_hash_schedule(
                 SmallwoodPoseidon2V8HashDigestRef::AuthorizationNext
             },
         )?;
+        if current {
+            current_call = call;
+        } else {
+            next_call = call;
+        }
     }
 
-    let mut value_lock_words = Vec::with_capacity(14);
-    for limb in 0..7 {
-        value_lock_words.push(BoundWord::semantic(
+    let value_lock_left = core::array::from_fn(|limb| {
+        BoundWord::semantic(
             witness.auth.current.policy_root[limb],
             SmallwoodPoseidon2V8SemanticWordRef::AuthorizationCurrent {
                 word: SmallwoodPoseidon2V8AccumulatorWordRef::PolicyRoot { limb },
             },
-        ));
-    }
-    for limb in 0..7 {
-        value_lock_words.push(BoundWord::semantic(
+        )
+    });
+    let value_lock_right = core::array::from_fn(|limb| {
+        BoundWord::semantic(
             witness.auth.current.intent_digest[limb],
             SmallwoodPoseidon2V8SemanticWordRef::AuthorizationCurrent {
                 word: SmallwoodPoseidon2V8AccumulatorWordRef::IntentDigest { limb },
             },
-        ));
-    }
-    builder.push_sponge(
-        &[
-            SmallwoodPoseidon2V8HashCallRole::AuthorizationValueLock { block: 0 },
-            SmallwoodPoseidon2V8HashCallRole::AuthorizationValueLock { block: 1 },
-        ],
+        )
+    });
+    let value_lock_call = builder.push_compress14(
+        SmallwoodPoseidon2V8HashCallRole::AuthorizationValueLock,
         SMALLWOOD_POSEIDON2_V8_AUTH_VALUE_LOCK_DOMAIN,
-        &value_lock_words,
+        value_lock_left,
+        value_lock_right,
         SmallwoodPoseidon2V8HashDigestRef::AuthorizationValueLock,
+    )?;
+
+    let policy_key_words: [BoundWord; 7] = core::array::from_fn(|limb| {
+        BoundWord::semantic(
+            mode_binding_key[limb],
+            SmallwoodPoseidon2V8SemanticWordRef::AuthorizationNullifierKey { limb },
+        )
+    });
+    builder.push_compress14(
+        SmallwoodPoseidon2V8HashCallRole::AuthorizationBoundCurrent,
+        SMALLWOOD_POSEIDON2_V8_AUTH_MODE_BIND_DOMAIN,
+        policy_key_words,
+        builder.call_digest_words(current_call),
+        SmallwoodPoseidon2V8HashDigestRef::AuthorizationBoundCurrent,
+    )?;
+
+    let secondary_call = match witness.auth.mode {
+        SmallwoodPrivateAuthMode::FinalThresholdSpend => value_lock_call,
+        SmallwoodPrivateAuthMode::SingleKey | SmallwoodPrivateAuthMode::ApprovalStep => next_call,
+    };
+    let secondary_digest = builder.calls[secondary_call].final_digest();
+    let secondary_words: [BoundWord; 7] = core::array::from_fn(|limb| {
+        BoundWord::semantic(
+            secondary_digest[limb],
+            SmallwoodPoseidon2V8SemanticWordRef::AuthorizationSecondaryDigest { limb },
+        )
+    });
+    builder.push_compress14(
+        SmallwoodPoseidon2V8HashCallRole::AuthorizationBoundSecondary,
+        SMALLWOOD_POSEIDON2_V8_AUTH_MODE_BIND_DOMAIN,
+        policy_key_words,
+        secondary_words,
+        SmallwoodPoseidon2V8HashDigestRef::AuthorizationBoundSecondary,
     )?;
 
     append_stable_schedule(&mut builder, statement, witness)?;
@@ -1446,7 +1506,7 @@ mod tests {
         let mut witness = SmallwoodPoseidon2V8Witness::default();
         for input in 0..2 {
             witness.inputs[input].active = true;
-            witness.inputs[input].spend_key = [101, 102, 103, 104];
+            witness.inputs[input].spend_key = [101, 102, 103, 104, 1];
             witness.inputs[input].note = SmallwoodPoseidon2V8NoteOpening {
                 value: 10 + input as u64,
                 asset_id: 0,
@@ -1545,57 +1605,46 @@ mod tests {
     }
 
     #[test]
-    fn exact_125_call_schedule_pads_to_128_and_rows_verify() {
+    fn exact_128_call_schedule_and_rows_verify() {
         let (statement, witness) = fixture();
         let material = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
-        assert_eq!(material.live_calls().len(), 125);
-        assert_eq!(material.initial_states().len(), 125);
-        assert_eq!(material.final_digests().len(), 125);
+        assert_eq!(material.live_calls().len(), 128);
+        assert_eq!(material.initial_states().len(), 128);
+        assert_eq!(material.final_digests().len(), 128);
         verify_smallwood_poseidon2_v8_hash_rows(material.packed_rows.as_rows()).unwrap();
         let mut range_cursor = 0;
         for range in SMALLWOOD_POSEIDON2_V8_HASH_ROLE_RANGES {
             assert_eq!(range.start, range_cursor, "gap before {}", range.name);
             range_cursor = range.end;
         }
-        assert_eq!(range_cursor, 125);
-        for call in 125..128 {
-            assert_eq!(
-                material.calls[call].mode,
-                SmallwoodPoseidon2V8HashCallMode::Padding
-            );
-            assert_eq!(material.calls[call].initial_state, [0; 16]);
-            assert_eq!(
-                material.calls[call].initial_bindings,
-                [SmallwoodPoseidon2V8HashLaneBinding::ZERO; 16]
-            );
-        }
+        assert_eq!(range_cursor, 128);
         assert_eq!(
             material.calls[0].role,
             SmallwoodPoseidon2V8HashCallRole::TransactionPrf
         );
         assert_eq!(
             material.calls[36].role,
-            SmallwoodPoseidon2V8HashCallRole::InputNullifier { input: 0 }
+            SmallwoodPoseidon2V8HashCallRole::InputNullifier { input: 0, block: 0 }
         );
         assert_eq!(
-            material.calls[79].role,
+            material.calls[81].role,
             SmallwoodPoseidon2V8HashCallRole::ActionIntent { block: 0 }
         );
         assert_eq!(
-            material.calls[124].role,
+            material.calls[127].role,
             SmallwoodPoseidon2V8HashCallRole::StableIssuerAuthorization
         );
         assert_eq!(
-            material.calls[93].final_digest(),
+            material.calls[95].final_digest(),
             statement.expected_action_intent().unwrap()
         );
         let config_digest = stablecoin_poseidon2_v8_config_digest(witness.stablecoin.config);
         assert_eq!(
-            material.calls[112].final_digest(),
+            material.calls[115].final_digest(),
             config_digest.map(|word| word.as_canonical_u64())
         );
         assert_eq!(
-            material.calls[121].final_digest(),
+            material.calls[124].final_digest(),
             stablecoin_poseidon2_v8_root(
                 statement.stablecoin.asset_id,
                 config_digest,
@@ -1606,7 +1655,7 @@ mod tests {
             .map(|word| word.as_canonical_u64())
         );
         assert_eq!(
-            material.calls[122].final_digest(),
+            material.calls[125].final_digest(),
             stablecoin_poseidon2_v8_root(
                 statement.stablecoin.asset_id,
                 config_digest,
@@ -1617,7 +1666,7 @@ mod tests {
             .map(|word| word.as_canonical_u64())
         );
         assert_eq!(
-            material.calls[123].final_digest(),
+            material.calls[126].final_digest(),
             stablecoin_poseidon2_v8_issuer_commitment(
                 statement.stablecoin.asset_id,
                 statement.stablecoin.policy_version,
@@ -1626,7 +1675,7 @@ mod tests {
             .map(|word| word.as_canonical_u64())
         );
         assert_eq!(
-            material.calls[124].final_digest(),
+            material.calls[127].final_digest(),
             stablecoin_poseidon2_v8_issuer_authorization(
                 &statement.stablecoin.action_intent,
                 &witness.stablecoin.issuer_secret,
@@ -1644,7 +1693,7 @@ mod tests {
             .iter()
             .filter(|call| call.mode == SmallwoodPoseidon2V8HashCallMode::Compress14)
             .count();
-        assert_eq!(compress_calls, 64 + 19);
+        assert_eq!(compress_calls, 64 + 19 + 3);
         for call in material
             .live_calls()
             .iter()
@@ -1665,7 +1714,12 @@ mod tests {
 
         let mut changed_witness = witness;
         changed_witness.inputs[0].spend_key[0] += 1;
-        assert_changed_calls(&statement, &changed_witness, &base, vec![0, 36, 72]);
+        assert_changed_calls(
+            &statement,
+            &changed_witness,
+            &base,
+            vec![0, 36, 37, 73, 74, 107, 108],
+        );
 
         let mut changed_witness = witness;
         changed_witness.inputs[0].note.randomness[0] += 1;
@@ -1682,7 +1736,7 @@ mod tests {
             &changed_statement,
             &witness,
             &base,
-            (84..94).collect::<Vec<_>>(),
+            (86..96).collect::<Vec<_>>(),
         );
 
         let mut changed_statement = statement;
@@ -1695,9 +1749,9 @@ mod tests {
             &statement,
             &changed_witness,
             &base,
-            [107, 110, 112]
+            [110, 113, 115]
                 .into_iter()
-                .chain(113..123)
+                .chain(116..126)
                 .collect::<Vec<_>>(),
         );
     }
@@ -1710,7 +1764,7 @@ mod tests {
         changed_witness.inputs[0].position ^= 1 << 5;
         let changed =
             build_smallwood_poseidon2_v8_hash_schedule(&statement, &changed_witness).unwrap();
-        assert_eq!(changed_calls(&base, &changed), (9..37).collect::<Vec<_>>());
+        assert_eq!(changed_calls(&base, &changed), (9..38).collect::<Vec<_>>());
         assert!(matches!(
             changed.calls[9].initial_bindings[0].terms[0],
             Some(SmallwoodPoseidon2V8HashLaneTerm::OrientedMerkleOperand {
@@ -1723,88 +1777,43 @@ mod tests {
     }
 
     #[test]
-    fn authorization_prf_selection_and_final_effective_next_are_exact() {
+    fn nullifiers_use_secret_keys_independently_of_slot_and_mode() {
         let (statement, mut witness) = fixture();
+        witness.auth.policy_nullifier_key = [201, 202, 203, 204, 1];
+        witness.inputs[1].position = witness.inputs[0].position;
+        witness.inputs[1].note.rho = witness.inputs[0].note.rho;
         witness.auth.mode = SmallwoodPrivateAuthMode::FinalThresholdSpend;
-        witness.auth.current = SmallwoodPoseidon2V8AccumulatorOpening {
-            policy_root: [11, 12, 13, 14, 15, 16, 17],
-            intent_digest: [21, 22, 23, 24, 25, 26, 27],
-            threshold: 2,
-            signer_count: 2,
-            approval_count: 2,
-            approved_slots: [true, true, false, false, false, false],
-        };
-        witness.auth.next = SmallwoodPoseidon2V8AccumulatorOpening::ZERO;
-        let material = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
-        let mut effective_words = Vec::with_capacity(23);
-        effective_words.extend(witness.auth.current.policy_root);
-        effective_words.extend(witness.auth.current.intent_digest);
-        effective_words.extend([
-            witness.auth.current.threshold,
-            witness.auth.current.signer_count,
-            0,
-        ]);
-        effective_words.extend([0; 6]);
+        let final_schedule =
+            build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
         assert_eq!(
-            material.calls[103].final_digest(),
-            reference_sponge_digest(
-                SMALLWOOD_POSEIDON2_V8_AUTH_ACCUMULATOR_DOMAIN,
-                &effective_words,
-            )
+            final_schedule.calls[37].final_digest(),
+            final_schedule.calls[74].final_digest()
         );
-        assert!(matches!(
-            material.calls[101].initial_bindings[0].terms[0],
-            Some(SmallwoodPoseidon2V8HashLaneTerm::Semantic(
-                SmallwoodPoseidon2V8SemanticWordRef::AuthorizationCurrent {
-                    word: SmallwoodPoseidon2V8AccumulatorWordRef::PolicyRoot { limb: 0 }
-                }
-            ))
-        ));
-        assert!(matches!(
-            material.calls[103].initial_bindings[0].terms[1],
-            Some(SmallwoodPoseidon2V8HashLaneTerm::Semantic(
-                SmallwoodPoseidon2V8SemanticWordRef::AuthorizationNext {
-                    word: SmallwoodPoseidon2V8AccumulatorWordRef::ApprovalCount
-                }
-            ))
-        ));
-
-        let legacy_prf = material.calls[0].final_state[0];
-        let current_prf = material.calls[100].final_state[4];
-        let value_lock_prf = material.calls[105].final_state[4];
-        assert_eq!(material.calls[36].initial_state[0], value_lock_prf);
-        assert_eq!(material.calls[72].initial_state[0], current_prf);
-        for input in 0..2 {
-            let call = if input == 0 { 36 } else { 72 };
-            assert!(matches!(
-                material.calls[call].initial_bindings[0].terms[0],
-                Some(SmallwoodPoseidon2V8HashLaneTerm::Semantic(
-                    SmallwoodPoseidon2V8SemanticWordRef::InputAuthorizationPrf {
-                        input: bound_input
-                    }
-                )) if bound_input == input
-            ));
-        }
-
-        let (statement, mut approval_witness) = fixture();
-        approval_witness.auth.mode = SmallwoodPrivateAuthMode::ApprovalStep;
-        let approval =
-            build_smallwood_poseidon2_v8_hash_schedule(&statement, &approval_witness).unwrap();
         assert_eq!(
-            approval.calls[36].initial_state[0],
-            approval.calls[100].final_state[4]
+            &final_schedule.calls[36].initial_state[..7],
+            &[201, 202, 203, 204, 1, 0, 0]
         );
-        assert_eq!(approval.calls[72].initial_state[0], legacy_prf);
-
-        let (mut statement, mut single_witness) = fixture();
-        single_witness.auth.mode = SmallwoodPrivateAuthMode::SingleKey;
-        statement.input_flags[1] = false;
-        let single =
-            build_smallwood_poseidon2_v8_hash_schedule(&statement, &single_witness).unwrap();
+        witness.auth.mode = SmallwoodPrivateAuthMode::ApprovalStep;
+        let approval = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
         assert_eq!(
-            single.calls[36].initial_state[0],
-            single.calls[0].final_state[0]
+            approval.calls[37].final_digest(),
+            final_schedule.calls[37].final_digest()
         );
-        assert_eq!(&single.calls[72].initial_state[..6], &[0; 6]);
+        witness.auth.mode = SmallwoodPrivateAuthMode::SingleKey;
+        let single = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
+        assert_eq!(
+            single.calls[74].final_digest(),
+            approval.calls[74].final_digest()
+        );
+        witness.inputs[0].spend_key[4] += 1;
+        let changed = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
+        assert_ne!(
+            single.calls[0].final_digest(),
+            changed.calls[0].final_digest()
+        );
+        assert_ne!(
+            single.calls[37].final_digest(),
+            changed.calls[37].final_digest()
+        );
     }
 }

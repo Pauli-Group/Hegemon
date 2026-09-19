@@ -484,7 +484,8 @@ impl PackedRowLayout {
                 panic!("the fresh HX512 adapter must not use legacy Poseidon row layouts")
             }
             SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
-            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => {
+            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
                 panic!("the fresh Poseidon2 V8 adapter must use its dedicated width-16 row layout")
             }
         }

@@ -12184,8 +12184,7 @@ fn poseidon2_v8_rpc_projection_uses_exact_route_cap_and_canonical_parser() {
     };
     assert_eq!(
         native_action_request_public_args_cap(request.family_id, request.action_id),
-        transaction_circuit::smallwood_poseidon2_v8_security::SMALLWOOD_POSEIDON2_V8_MAX_ACTION_BYTES
-            as usize
+        protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES
     );
     assert_eq!(
         evaluate_native_action_request_projection(&request).expect("canonical projection"),
@@ -12208,7 +12207,7 @@ fn poseidon2_v8_rpc_projection_uses_exact_route_cap_and_canonical_parser() {
     );
 
     request.public_args = "A".repeat(encoded_len_limit(
-        protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_MAX_ACTION_BYTES,
+        protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES,
     ) + 1);
     assert_eq!(
         evaluate_native_action_request_projection(&request),

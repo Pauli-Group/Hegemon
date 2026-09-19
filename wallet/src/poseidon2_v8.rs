@@ -54,6 +54,12 @@ const POSEIDON2_V8_MAX_FIELD_SCALAR_HEIGHT: u64 = (1u64 << 63) - 1;
 pub(crate) fn poseidon2_v8_production_context_at(
     height: u64,
 ) -> Result<Poseidon2ProductionExpectedContext, WalletError> {
+    poseidon2_v8_production_selection_at(height).map(|(context, _)| context)
+}
+
+pub(crate) fn poseidon2_v8_production_selection_at(
+    height: u64,
+) -> Result<(Poseidon2ProductionExpectedContext, WalletProofRoute), WalletError> {
     let capability = protocol_versioning::smallwood_poseidon2_production_capability()
         .ok_or(WalletError::InvalidState(PRODUCTION_DISABLED))?;
     let source_digest = *SmallwoodPoseidon2V8SourceRelationFactory.expected_relation_digest();
@@ -65,8 +71,6 @@ pub(crate) fn poseidon2_v8_production_context_at(
         || capability.family_id() != POSEIDON2_PRODUCTION_TRANSPORT_FAMILY_ID
         || capability.action_id() != POSEIDON2_PRODUCTION_TRANSPORT_ACTION_ID
         || capability.backend_id() != POSEIDON2_PRODUCTION_TRANSPORT_BACKEND_ID
-        || capability.proof_profile_id() != POSEIDON2_PRODUCTION_SMZ9_TRANSPORT_PROFILE_ID
-        || capability.domain_set() != POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET
         || capability.activation_height() > POSEIDON2_V8_MAX_FIELD_SCALAR_HEIGHT
         || capability
             .stablecoin_genesis_root()
@@ -83,13 +87,17 @@ pub(crate) fn poseidon2_v8_production_context_at(
             "SmallWood Poseidon2 V8 production capability tuple is invalid or inactive",
         ));
     }
-    Poseidon2ProductionExpectedContext::new(capability.network_id(), source_digest).map_err(
-        |error| {
+    let route = WalletProofRoute::from_source_tuple(
+        capability.proof_profile_id(),
+        capability.domain_set(),
+    )?;
+    Poseidon2ProductionExpectedContext::new(capability.network_id(), source_digest)
+        .map(|context| (context, route))
+        .map_err(|error| {
             WalletError::Serialization(format!(
                 "SmallWood Poseidon2 V8 production context rejected: {error}"
             ))
-        },
-    )
+        })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -157,6 +165,81 @@ trait Poseidon2V8WalletProofEngine {
 
 #[derive(Clone, Copy, Debug, Default)]
 struct SourcePoseidon2V8WalletProofEngine;
+
+/// An explicit source-owned candidate route; callers cannot downgrade a proof
+/// by changing a numeric profile or falling back after verification failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WalletProofRoute {
+    Smz9,
+    Smza,
+}
+
+impl WalletProofRoute {
+    /// Resolve only framing before RPC; full context and height authorization
+    /// must still pass `poseidon2_v8_production_selection_at` before submission.
+    pub(crate) fn source_framing() -> Result<Self, WalletError> {
+        let capability = protocol_versioning::smallwood_poseidon2_production_capability()
+            .ok_or(WalletError::InvalidState(PRODUCTION_DISABLED))?;
+        Self::from_source_tuple(capability.proof_profile_id(), capability.domain_set())
+    }
+
+    fn from_source_tuple(profile: u8, domain: u16) -> Result<Self, WalletError> {
+        use protocol_shielded_pool::poseidon2_production_transport::{
+            POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET,
+            POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID,
+        };
+        match (profile, domain) {
+            (POSEIDON2_PRODUCTION_SMZ9_TRANSPORT_PROFILE_ID, POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET) => Ok(Self::Smz9),
+            (POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID, POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET) => Ok(Self::Smza),
+            _ => Err(WalletError::InvalidState("SmallWood Poseidon2 V8 production capability has an unsupported profile/domain tuple")),
+        }
+    }
+
+    fn max_inline_args_bytes(self) -> usize {
+        match self {
+            Self::Smz9 => SMALLWOOD_POSEIDON2_V8_WALLET_MAX_INLINE_ARGS_BYTES,
+            Self::Smza => protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct SourcePoseidon2V8SmzaWalletProofEngine;
+
+impl Poseidon2V8WalletProofEngine for SourcePoseidon2V8SmzaWalletProofEngine {
+    fn expected_relation_digest(&self) -> [u8; 48] {
+        *SmallwoodPoseidon2V8SourceRelationFactory.expected_relation_digest()
+    }
+
+    fn prove(
+        &self,
+        statement: &SmallwoodPoseidon2V8PublicStatement,
+        witness: &SmallwoodPoseidon2V8Witness,
+        network_id: u32,
+    ) -> Result<Poseidon2V8ProofMaterial, WalletError> {
+        let candidate =
+            transaction_circuit::compile_and_prove_smallwood_poseidon2_v8_smza_candidate_v1(
+                statement, witness, network_id,
+            )
+            .map_err(wallet_proof_error)?;
+        Ok(Poseidon2V8ProofMaterial {
+            verifier_input: candidate.verifier_input().clone(),
+            projected_max_proof_bytes: candidate.projected_max_proof_bytes(),
+            projected_inline_args_bytes: candidate.projected_action_bytes(),
+            measured_inline_args_bytes: candidate.measured_action_bytes(),
+            proof_bytes: candidate.into_proof_bytes(),
+        })
+    }
+
+    fn verify(
+        &self,
+        input: &SmallwoodPoseidon2V8VerifierInput,
+        proof_bytes: &[u8],
+    ) -> Result<(), WalletError> {
+        transaction_circuit::verify_smallwood_poseidon2_v8_smza_candidate_v1(input, proof_bytes)
+            .map_err(wallet_proof_error)
+    }
+}
 
 impl Poseidon2V8WalletProofEngine for SourcePoseidon2V8WalletProofEngine {
     fn expected_relation_digest(&self) -> [u8; 48] {
@@ -227,6 +310,40 @@ fn prepare_poseidon2_v8_with_engine(
     inline_ciphertexts: SmallwoodPoseidon2V8InlineCiphertexts,
     engine: &impl Poseidon2V8WalletProofEngine,
 ) -> Result<PreparedPoseidon2V8Submission, WalletError> {
+    prepare_poseidon2_v8_route_with_engine(
+        expected,
+        statement,
+        witness,
+        inline_ciphertexts,
+        engine,
+        WalletProofRoute::Smz9,
+    )
+}
+
+fn prepare_poseidon2_v8_route_with_engine(
+    expected: Poseidon2ProductionExpectedContext,
+    statement: SmallwoodPoseidon2V8PublicStatement,
+    witness: SmallwoodPoseidon2V8Witness,
+    inline_ciphertexts: SmallwoodPoseidon2V8InlineCiphertexts,
+    engine: &impl Poseidon2V8WalletProofEngine,
+    route: WalletProofRoute,
+) -> Result<PreparedPoseidon2V8Submission, WalletError> {
+    use protocol_shielded_pool::poseidon2_production_transport::{
+        decode_poseidon2_production_smza_native_leaf_exact,
+        encode_poseidon2_production_smza_envelope, encode_poseidon2_production_smza_inline_args,
+        encode_poseidon2_production_smza_native_leaf, POSEIDON2_PRODUCTION_SMZA_INNER_PROOF_MAGIC,
+        POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES,
+    };
+    let (magic, max_inline_args_bytes) = match route {
+        WalletProofRoute::Smz9 => (
+            POSEIDON2_PRODUCTION_SMZ9_INNER_PROOF_MAGIC,
+            SMALLWOOD_POSEIDON2_V8_WALLET_MAX_INLINE_ARGS_BYTES,
+        ),
+        WalletProofRoute::Smza => (
+            POSEIDON2_PRODUCTION_SMZA_INNER_PROOF_MAGIC,
+            POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES,
+        ),
+    };
     if statement.value_balance_sign || statement.value_balance_magnitude != 0 {
         return Err(WalletError::Serialization(
             "SmallWood Poseidon2 V8 production requires zero value_balance because no transparent pool exists"
@@ -277,12 +394,17 @@ fn prepare_poseidon2_v8_with_engine(
             "SmallWood Poseidon2 V8 prover returned a different relation binding".to_owned(),
         ));
     }
-    if material.proof_bytes.len() < POSEIDON2_PRODUCTION_SMZ9_INNER_PROOF_MAGIC.len()
-        || material.proof_bytes[..POSEIDON2_PRODUCTION_SMZ9_INNER_PROOF_MAGIC.len()]
-            != POSEIDON2_PRODUCTION_SMZ9_INNER_PROOF_MAGIC
-    {
+    if material.proof_bytes.len() < magic.len() || material.proof_bytes[..magic.len()] != magic {
         return Err(WalletError::Serialization(
-            "SmallWood Poseidon2 V8 wallet accepts only the fresh SMZ9 proof wire".to_owned(),
+            match route {
+                WalletProofRoute::Smz9 => {
+                    "SmallWood Poseidon2 V8 wallet accepts only the fresh SMZ9 proof wire"
+                }
+                WalletProofRoute::Smza => {
+                    "SmallWood Poseidon2 V8 wallet accepts only the fresh SMZA proof wire"
+                }
+            }
+            .to_owned(),
         ));
     }
     let recomputed_projected_inline_args_bytes = smallwood_poseidon2_v8_exact_action_bytes(
@@ -296,11 +418,11 @@ fn prepare_poseidon2_v8_with_engine(
             material.projected_inline_args_bytes, recomputed_projected_inline_args_bytes
         )));
     }
-    if material.projected_inline_args_bytes > SMALLWOOD_POSEIDON2_V8_WALLET_MAX_INLINE_ARGS_BYTES {
+    if material.projected_inline_args_bytes > max_inline_args_bytes {
         return Err(WalletError::Serialization(format!(
             "SmallWood Poseidon2 V8 compiler projects {} inline-argument bytes above the {} byte wallet cap",
             material.projected_inline_args_bytes,
-            SMALLWOOD_POSEIDON2_V8_WALLET_MAX_INLINE_ARGS_BYTES
+            max_inline_args_bytes
         )));
     }
     if material.measured_inline_args_bytes > material.projected_inline_args_bytes {
@@ -318,7 +440,11 @@ fn prepare_poseidon2_v8_with_engine(
         inline_ciphertexts.ciphertexts[0].as_ref(),
         inline_ciphertexts.ciphertexts[1].as_ref(),
     ];
-    let native_leaf = encode_poseidon2_production_smz9_native_leaf(
+    let encode_leaf = match route {
+        WalletProofRoute::Smz9 => encode_poseidon2_production_smz9_native_leaf,
+        WalletProofRoute::Smza => encode_poseidon2_production_smza_native_leaf,
+    };
+    let native_leaf = encode_leaf(
         expected,
         &public_values,
         &relation_balance_binding,
@@ -331,30 +457,39 @@ fn prepare_poseidon2_v8_with_engine(
         ))
     })?;
 
-    let decoded = decode_poseidon2_production_smz9_native_leaf_exact(expected, &native_leaf)
-        .map_err(|error| {
-            WalletError::Serialization(format!(
-                "SmallWood Poseidon2 V8 native leaf readback rejected: {error}"
-            ))
-        })?;
+    let decode_leaf = match route {
+        WalletProofRoute::Smz9 => decode_poseidon2_production_smz9_native_leaf_exact,
+        WalletProofRoute::Smza => decode_poseidon2_production_smza_native_leaf_exact,
+    };
+    let decoded = decode_leaf(expected, &native_leaf).map_err(|error| {
+        WalletError::Serialization(format!(
+            "SmallWood Poseidon2 V8 native leaf readback rejected: {error}"
+        ))
+    })?;
     if decoded.proof() != material.proof_bytes.as_slice() {
         return Err(WalletError::Serialization(
             "SmallWood Poseidon2 V8 transport changed the locally verified proof bytes".to_owned(),
         ));
     }
 
-    let envelope =
-        encode_poseidon2_production_smz9_envelope(expected, &native_leaf).map_err(|error| {
-            WalletError::Serialization(format!(
-                "SmallWood Poseidon2 V8 envelope construction rejected: {error}"
-            ))
-        })?;
-    let inline_args =
-        encode_poseidon2_production_smz9_inline_args(expected, &envelope).map_err(|error| {
-            WalletError::Serialization(format!(
-                "SmallWood Poseidon2 V8 SCALE action construction rejected: {error}"
-            ))
-        })?;
+    let encode_envelope = match route {
+        WalletProofRoute::Smz9 => encode_poseidon2_production_smz9_envelope,
+        WalletProofRoute::Smza => encode_poseidon2_production_smza_envelope,
+    };
+    let envelope = encode_envelope(expected, &native_leaf).map_err(|error| {
+        WalletError::Serialization(format!(
+            "SmallWood Poseidon2 V8 envelope construction rejected: {error}"
+        ))
+    })?;
+    let encode_args = match route {
+        WalletProofRoute::Smz9 => encode_poseidon2_production_smz9_inline_args,
+        WalletProofRoute::Smza => encode_poseidon2_production_smza_inline_args,
+    };
+    let inline_args = encode_args(expected, &envelope).map_err(|error| {
+        WalletError::Serialization(format!(
+            "SmallWood Poseidon2 V8 SCALE action construction rejected: {error}"
+        ))
+    })?;
     let recomputed_inline_args_bytes =
         smallwood_poseidon2_v8_exact_action_bytes(&public_values, material.proof_bytes.len())
             .map_err(wallet_proof_error)?;
@@ -368,11 +503,11 @@ fn prepare_poseidon2_v8_with_engine(
             material.measured_inline_args_bytes
         )));
     }
-    if inline_args.len() > SMALLWOOD_POSEIDON2_V8_WALLET_MAX_INLINE_ARGS_BYTES {
+    if inline_args.len() > max_inline_args_bytes {
         return Err(WalletError::Serialization(format!(
             "SmallWood Poseidon2 V8 inline arguments have {} bytes above the {} byte wallet cap",
             inline_args.len(),
-            SMALLWOOD_POSEIDON2_V8_WALLET_MAX_INLINE_ARGS_BYTES
+            max_inline_args_bytes
         )));
     }
 
@@ -394,6 +529,54 @@ fn prepare_poseidon2_v8_with_engine(
         inline_args_bytes: inline_args.len(),
         derived_new_nullifiers,
     })
+}
+
+/// Compile, prove, independently verify and package the genuine wallet witness
+/// through the explicit q38 SMZA candidate route. This local rehearsal surface
+/// grants no submission authority and is absent from ordinary wallet builds.
+#[cfg(feature = "poseidon2-v8-retained-test-support")]
+pub fn prepare_poseidon2_v8_smza_request_for_retained_test(
+    expected: Poseidon2ProductionExpectedContext,
+    statement: SmallwoodPoseidon2V8PublicStatement,
+    witness: SmallwoodPoseidon2V8Witness,
+    inline_ciphertexts: SmallwoodPoseidon2V8InlineCiphertexts,
+) -> Result<serde_json::Value, WalletError> {
+    let prepared = prepare_poseidon2_v8_route_with_engine(
+        expected,
+        statement,
+        witness,
+        inline_ciphertexts,
+        &SourcePoseidon2V8SmzaWalletProofEngine,
+        WalletProofRoute::Smza,
+    )?;
+    let envelope = protocol_shielded_pool::poseidon2_production_transport::encode_poseidon2_production_smza_envelope(expected, &prepared.native_leaf)
+        .map_err(wallet_surface_error)?;
+    crate::node_rpc::prepare_poseidon2_smza_submit_request_json_for_retained_test(
+        expected, &envelope,
+    )
+}
+
+/// Construct a q38 rehearsal from the existing wallet-owned note selection,
+/// Merkle witnesses and encrypted self-spend output path. The mirror must
+/// already hold the intended canonical parent. No network call or production
+/// authority is created by this local, feature-gated preparation helper.
+#[cfg(feature = "poseidon2-v8-retained-test-support")]
+pub fn prepare_poseidon2_v8_smza_wallet_self_spend_request_for_retained_test(
+    expected: Poseidon2ProductionExpectedContext,
+    store: &WalletStore,
+    output_address_indices: [u32; 2],
+) -> Result<serde_json::Value, WalletError> {
+    let spend = crate::poseidon2_v8_coinbase::build_poseidon2_v8_wallet_self_spend(
+        store,
+        output_address_indices,
+        &mut rand::rngs::OsRng,
+    )?;
+    prepare_poseidon2_v8_smza_request_for_retained_test(
+        expected,
+        spend.material.statement,
+        spend.material.witness,
+        spend.material.inline_ciphertexts,
+    )
 }
 
 impl NodeRpcClient {
@@ -463,25 +646,35 @@ impl NodeRpcClient {
         // This method accepts no outer nullifier metadata. The 56-byte
         // nullifiers are derived from the two seven-limb public statement
         // slots; the RPC helper emits an empty legacy 48-byte list.
-        let expected = poseidon2_v8_production_context_at(authority.height())?;
+        let (expected, route) = poseidon2_v8_production_selection_at(authority.height())?;
         let prepared = tokio::task::spawn_blocking(move || {
             authority.ensure_route(
                 protocol_shielded_pool::family::ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE,
                 protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING,
             )?;
-            let expected_at_proving = poseidon2_v8_production_context_at(authority.height())?;
-            if expected_at_proving != expected {
+            let selection_at_proving = poseidon2_v8_production_selection_at(authority.height())?;
+            if selection_at_proving != (expected, route) {
                 return Err(WalletError::InvalidState(
                     "SmallWood Poseidon2 V8 production capability changed during proving",
                 ));
             }
-            prepare_poseidon2_v8_with_engine(
-                expected,
-                statement,
-                witness,
-                inline_ciphertexts,
-                &SourcePoseidon2V8WalletProofEngine,
-            )
+            match route {
+                WalletProofRoute::Smz9 => prepare_poseidon2_v8_with_engine(
+                    expected,
+                    statement,
+                    witness,
+                    inline_ciphertexts,
+                    &SourcePoseidon2V8WalletProofEngine,
+                ),
+                WalletProofRoute::Smza => prepare_poseidon2_v8_route_with_engine(
+                    expected,
+                    statement,
+                    witness,
+                    inline_ciphertexts,
+                    &SourcePoseidon2V8SmzaWalletProofEngine,
+                    WalletProofRoute::Smza,
+                ),
+            }
         })
         .await
         .map_err(|error| {
@@ -493,12 +686,10 @@ impl NodeRpcClient {
         })??;
 
         // `PreparedPoseidon2V8Submission` has no witness. Its exact native leaf
-        // contains the only owned copy of the verified SMZ9 proof.
+        // contains the only owned copy of the verified source-selected proof.
         debug_assert_eq!(prepared.expected, expected);
         debug_assert_eq!(prepared.proof_bytes().len(), prepared.proof_len);
-        debug_assert!(
-            prepared.inline_args_bytes <= SMALLWOOD_POSEIDON2_V8_WALLET_MAX_INLINE_ARGS_BYTES
-        );
+        debug_assert!(prepared.inline_args_bytes <= route.max_inline_args_bytes());
         debug_assert!(prepared.derived_new_nullifiers.len() <= 2);
         self.submit_poseidon2_production_native_leaf(&prepared.native_leaf)
             .await
@@ -515,6 +706,53 @@ mod tests {
         SmallwoodPoseidon2V8InputWitness, SmallwoodPoseidon2V8NoteOpening,
         SmallwoodPoseidon2V8OutputWitness,
     };
+
+    #[test]
+    fn smza_wallet_route_preserves_maximum_proof_and_rejects_smz9() {
+        let (statement, witness, inline) = two_output_fixture();
+        let mut engine = FixtureEngine::new(164_113);
+        engine.proof_bytes[..4].copy_from_slice(b"SMZA");
+        engine.projected_max_proof_override = Some(164_113);
+        let prepared = prepare_poseidon2_v8_route_with_engine(
+            context(),
+            statement,
+            witness,
+            inline,
+            &engine,
+            WalletProofRoute::Smza,
+        )
+        .expect("bounded SMZA wallet material");
+        assert_eq!(prepared.inline_args_bytes, 169_547);
+        assert_eq!(prepared.proof_bytes(), engine.proof_bytes);
+        assert_eq!(&prepared.native_leaf[..8], b"HGV8TX03");
+        assert_eq!(engine.verify_calls.get(), 1);
+
+        let (statement, witness, inline) = two_output_fixture();
+        let old_engine = FixtureEngine::new(113);
+        assert!(prepare_poseidon2_v8_route_with_engine(
+            context(),
+            statement,
+            witness,
+            inline,
+            &old_engine,
+            WalletProofRoute::Smza,
+        )
+        .is_err());
+        assert_eq!(old_engine.verify_calls.get(), 0);
+
+        let (statement, witness, inline) = two_output_fixture();
+        engine.projected_max_proof_override = Some(164_114);
+        assert!(prepare_poseidon2_v8_route_with_engine(
+            context(),
+            statement,
+            witness,
+            inline,
+            &engine,
+            WalletProofRoute::Smza,
+        )
+        .is_err());
+        assert_eq!(engine.verify_calls.get(), 1);
+    }
 
     struct FixtureEngine {
         relation_digest: [u8; 48],
@@ -665,7 +903,7 @@ mod tests {
             inputs: [
                 SmallwoodPoseidon2V8InputWitness {
                     active: true,
-                    spend_key: [1, 2, 3, 4],
+                    spend_key: [1, 2, 3, 4, 5],
                     note: active_zero_value_note(),
                     position: 0,
                     siblings: [[0; 7]; 32],

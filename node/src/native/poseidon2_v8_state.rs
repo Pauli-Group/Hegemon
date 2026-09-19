@@ -12,7 +12,10 @@
 
 #![allow(dead_code)]
 
-use protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_MAX_NATIVE_LEAF_BYTES;
+use protocol_shielded_pool::poseidon2_production_transport::{
+    preflight_poseidon2_production_smza_native_leaf_exact,
+    POSEIDON2_PRODUCTION_MAX_NATIVE_LEAF_BYTES, POSEIDON2_PRODUCTION_SMZA_MAX_NATIVE_LEAF_BYTES,
+};
 use sha2::{Digest, Sha512};
 use sled::transaction::{
     ConflictableTransactionError, ConflictableTransactionResult, TransactionError,
@@ -614,10 +617,32 @@ impl Poseidon2V8PublicTransition {
     }
 }
 
+/// Closed source-owned leaf ceilings. Even a custom test verifier can only
+/// select a supported ceiling; it cannot supply an arbitrary byte allowance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Poseidon2V8NativeLeafProfile {
+    Smz9,
+    Smza,
+}
+
+impl Poseidon2V8NativeLeafProfile {
+    const fn max_native_leaf_bytes(self) -> usize {
+        match self {
+            Self::Smz9 => POSEIDON2_PRODUCTION_MAX_NATIVE_LEAF_BYTES,
+            Self::Smza => POSEIDON2_PRODUCTION_SMZA_MAX_NATIVE_LEAF_BYTES,
+        }
+    }
+}
+
 /// The production implementation must parse and verify the exact canonical
-/// native leaf, then return the proof-public stablecoin transition.  Returning
+/// native leaf, then return the proof-public stablecoin transition. Returning
 /// `Ok` is the only capability that can create a durable forward transition.
 pub(crate) trait Poseidon2V8ExactLeafVerifier {
+    /// Closed source profiles, never a caller-supplied allocation ceiling.
+    /// Every implementation must select or forward its profile explicitly;
+    /// wrappers must not silently fall back to a historical profile.
+    fn native_leaf_profile(&self) -> Poseidon2V8NativeLeafProfile;
+
     fn verify_exact_v8_leaf(
         &mut self,
         block: Poseidon2V8BlockContext,
@@ -1448,7 +1473,10 @@ impl Poseidon2V8StateStore {
                 block.exact_native_leaves.len(),
                 block.trailing_coinbase_commitment.is_some(),
             )?;
-            validate_leaf_batch(block.exact_native_leaves)?;
+            validate_leaf_batch_for_profile(
+                block.exact_native_leaves,
+                Some(verifier.native_leaf_profile()),
+            )?;
             let next_proof_lifetime =
                 proof_lifetime.checked_accept_block(block.exact_native_leaves.len())?;
             let context = block.context;
@@ -1899,6 +1927,13 @@ impl From<sled::Error> for Poseidon2V8StateError {
 }
 
 fn validate_leaf_batch(leaves: &[&[u8]]) -> Result<usize, Poseidon2V8StateError> {
+    validate_leaf_batch_for_profile(leaves, None)
+}
+
+fn validate_leaf_batch_for_profile(
+    leaves: &[&[u8]],
+    selected_profile: Option<Poseidon2V8NativeLeafProfile>,
+) -> Result<usize, Poseidon2V8StateError> {
     if leaves.len() > MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK {
         return Err(Poseidon2V8StateError::TooManyLeaves);
     }
@@ -1907,11 +1942,24 @@ fn validate_leaf_batch(leaves: &[&[u8]]) -> Result<usize, Poseidon2V8StateError>
         if leaf.is_empty() {
             return Err(Poseidon2V8StateError::EmptyLeaf { index });
         }
-        if leaf.len() > POSEIDON2_PRODUCTION_MAX_NATIVE_LEAF_BYTES {
+        // Constructors and byte commitments have no verifier yet. Their
+        // larger structural ceiling requires an exact SMZA frame, including
+        // its profile/domain and nested proof magic, with no allocations.
+        let framing_profile = if preflight_poseidon2_production_smza_native_leaf_exact(leaf).is_ok()
+        {
+            Poseidon2V8NativeLeafProfile::Smza
+        } else {
+            Poseidon2V8NativeLeafProfile::Smz9
+        };
+        let maximum = selected_profile
+            .unwrap_or(framing_profile)
+            .max_native_leaf_bytes()
+            .min(framing_profile.max_native_leaf_bytes());
+        if leaf.len() > maximum {
             return Err(Poseidon2V8StateError::LeafTooLarge {
                 index,
                 observed: leaf.len(),
-                maximum: POSEIDON2_PRODUCTION_MAX_NATIVE_LEAF_BYTES,
+                maximum,
             });
         }
         total = total
@@ -2133,6 +2181,75 @@ fn expect_magic(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_leaf_caps_follow_exact_framing_and_selected_profile() {
+        use protocol_shielded_pool::poseidon2_production_transport::{
+            encode_poseidon2_production_smza_native_leaf, Poseidon2ProductionExpectedContext,
+            POSEIDON2_PRODUCTION_SMZA_MAX_PROOF_BYTES,
+        };
+        let expected = Poseidon2ProductionExpectedContext::new(17, [0x42; 48]).unwrap();
+        let mut proof = vec![0xa5; POSEIDON2_PRODUCTION_SMZA_MAX_PROOF_BYTES];
+        proof[..4].copy_from_slice(b"SMZA");
+        let leaf = encode_poseidon2_production_smza_native_leaf(
+            expected,
+            &[0; 120],
+            &[0; 7],
+            [None, None],
+            &proof,
+        )
+        .unwrap();
+        assert!(leaf.len() > POSEIDON2_PRODUCTION_MAX_NATIVE_LEAF_BYTES);
+        assert_eq!(
+            Poseidon2V8NativeLeafProfile::Smz9.max_native_leaf_bytes(),
+            131_072
+        );
+        assert_eq!(
+            Poseidon2V8NativeLeafProfile::Smza.max_native_leaf_bytes(),
+            169_511
+        );
+        let leaves = [leaf.as_slice()];
+        assert_eq!(validate_leaf_batch(&leaves).unwrap(), leaf.len());
+        assert_eq!(
+            leaf_sequence_commitment(&leaves).unwrap().1,
+            leaf.len() as u64
+        );
+        validate_leaf_batch_for_profile(&leaves, Some(Poseidon2V8NativeLeafProfile::Smza)).unwrap();
+        assert!(matches!(
+            validate_leaf_batch_for_profile(&leaves, Some(Poseidon2V8NativeLeafProfile::Smz9)),
+            Err(Poseidon2V8StateError::LeafTooLarge {
+                maximum: 131_072,
+                ..
+            })
+        ));
+        let oversized = vec![0; POSEIDON2_PRODUCTION_SMZA_MAX_NATIVE_LEAF_BYTES + 1];
+        assert!(matches!(
+            validate_leaf_batch_for_profile(
+                &[&oversized],
+                Some(Poseidon2V8NativeLeafProfile::Smza)
+            ),
+            Err(Poseidon2V8StateError::LeafTooLarge { .. })
+        ));
+        let over_count = vec![leaf.as_slice(); MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK + 1];
+        assert!(matches!(
+            validate_leaf_batch(&over_count),
+            Err(Poseidon2V8StateError::TooManyLeaves)
+        ));
+        let over_bytes = vec![leaf.as_slice(); MAX_NATIVE_BLOCK_ACTION_BYTES / leaf.len() + 1];
+        assert!(matches!(
+            validate_leaf_batch(&over_bytes),
+            Err(Poseidon2V8StateError::LeafBatchTooLarge)
+        ));
+        let mut historical_magic = leaf;
+        historical_magic[..8].copy_from_slice(b"HGV8TX02");
+        assert!(matches!(
+            validate_leaf_batch(&[&historical_magic]),
+            Err(Poseidon2V8StateError::LeafTooLarge {
+                maximum: 131_072,
+                ..
+            })
+        ));
+    }
+
     use super::*;
     use crate::native::{
         apply_poseidon2_v8_plan_and_admit_atomic_manifest_in_transaction, NativeAtomicCommitKind,
@@ -2210,6 +2327,10 @@ mod tests {
     }
 
     impl Poseidon2V8ExactLeafVerifier for ScriptedVerifier {
+        fn native_leaf_profile(&self) -> Poseidon2V8NativeLeafProfile {
+            Poseidon2V8NativeLeafProfile::Smz9
+        }
+
         fn verify_exact_v8_leaf(
             &mut self,
             _block: Poseidon2V8BlockContext,
@@ -2269,6 +2390,10 @@ mod tests {
     }
 
     impl Poseidon2V8ExactLeafVerifier for FixtureVerifier {
+        fn native_leaf_profile(&self) -> Poseidon2V8NativeLeafProfile {
+            Poseidon2V8NativeLeafProfile::Smz9
+        }
+
         fn verify_exact_v8_leaf(
             &mut self,
             block: Poseidon2V8BlockContext,
@@ -3274,6 +3399,7 @@ mod tests {
             3_275_605_879_553_790_158,
             18_179_312_849_545_706_498,
             6_480_565_605_584_441_507,
+            5,
         ])
         .unwrap();
         let first_opening = SmallwoodPoseidon2V8NoteOpening {

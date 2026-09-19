@@ -35,6 +35,7 @@ pub(crate) struct Poseidon2V8PendingAction {
     action_id: ActionId48,
     encoded_bytes: usize,
     exact_leaf_bytes: usize,
+    max_encoded_bytes: usize,
     transition: Poseidon2V8PublicTransition,
 }
 
@@ -49,6 +50,14 @@ impl Poseidon2V8PendingAction {
             action_id,
             encoded_bytes: canonical_encoded_bytes,
             exact_leaf_bytes: exact_native_leaf.len(),
+            // Production callers supply a contextually decoded, source-verified
+            // exact leaf. Select the larger cap only for exact additive framing;
+            // unknown/historical forms retain the old conservative ceiling.
+            max_encoded_bytes: if protocol_shielded_pool::poseidon2_production_transport::preflight_poseidon2_production_smza_native_leaf_exact(exact_native_leaf).is_ok() {
+                super::POSEIDON2_V8_SMZA_MAX_PENDING_ACTION_BYTES
+            } else {
+                POSEIDON2_V8_MAX_PENDING_ACTION_BYTES
+            },
             transition,
         }
     }
@@ -319,11 +328,11 @@ fn validate_and_index_actions(
                 action_id: action.action_id,
             });
         }
-        if action.encoded_bytes > POSEIDON2_V8_MAX_PENDING_ACTION_BYTES {
+        if action.encoded_bytes > action.max_encoded_bytes {
             return Err(Poseidon2V8PendingError::CarrierTooLarge {
                 action_id: action.action_id,
                 observed: action.encoded_bytes,
-                maximum: POSEIDON2_V8_MAX_PENDING_ACTION_BYTES,
+                maximum: action.max_encoded_bytes,
             });
         }
         if !action_ids.insert(action.action_id) {

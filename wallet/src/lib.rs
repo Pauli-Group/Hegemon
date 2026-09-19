@@ -47,9 +47,16 @@ pub use multisig::{
     MultisigIntentRecipient, MultisigIntentState, MultisigSpendIntent, MultisigStoredApproval,
     VerifiedApproval,
 };
+#[cfg(all(feature = "rpc-client", feature = "poseidon2-v8-retained-test-support"))]
+pub use node_rpc::prepare_poseidon2_smza_submit_request_json_for_retained_test;
 #[cfg(feature = "rpc-client")]
 pub use node_rpc::{BlockingNodeRpcClient, ChainMetadata, NodeRpcClient, NodeRpcConfig};
 pub use notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
+#[cfg(all(feature = "rpc-client", feature = "poseidon2-v8-retained-test-support"))]
+pub use poseidon2_v8::{
+    prepare_poseidon2_v8_smza_request_for_retained_test,
+    prepare_poseidon2_v8_smza_wallet_self_spend_request_for_retained_test,
+};
 #[cfg(feature = "rpc-client")]
 pub use poseidon2_v8::{
     Poseidon2ProductionExpectedContext, SmallwoodPoseidon2V8InlineCiphertexts,

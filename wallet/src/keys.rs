@@ -13,12 +13,14 @@ use synthetic_crypto::{
 };
 use transaction_circuit::hashing_pq::spend_auth_key_bytes;
 
-use crate::{address::ShieldedAddress, error::WalletError};
+use crate::{
+    address::{ShieldedAddress, POSEIDON2_V8_ADDRESS_VERSION},
+    error::WalletError,
+};
 
 const KEY_SIZE: usize = 32;
 const ADDRESS_VERSION: u8 = 3;
 const ADDRESS_CRYPTO_SUITE: u16 = CRYPTO_SUITE_GAMMA;
-const POSEIDON2_V8_ADDRESS_VERSION: u8 = 4;
 const POSEIDON2_V8_ADDRESS_CRYPTO_SUITE: u16 = CRYPTO_SUITE_ETA;
 
 /// Derive the legacy 32-byte account id from a deterministic ML-DSA seed.
@@ -119,7 +121,7 @@ impl SpendKey {
         spend_auth_key_bytes(&self.0)
     }
 
-    pub fn poseidon2_v8_words(&self) -> Result<[u64; 4], WalletError> {
+    pub fn poseidon2_v8_words(&self) -> Result<[u64; 5], WalletError> {
         transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_spend_key_words(self.0)
             .map_err(|error| {
                 WalletError::Serialization(format!(
@@ -192,6 +194,7 @@ pub struct AddressKeyMaterial {
     diversifier: [u8; KEY_SIZE],
     pub pk_recipient: [u8; KEY_SIZE],
     pub pk_auth: [u8; KEY_SIZE],
+    pub pk_auth_extension: [u8; 24],
     keypair: MlKemKeyPair,
 }
 
@@ -224,8 +227,15 @@ impl AddressKeyMaterial {
                 ))
             })?;
         let spend_words = spend.poseidon2_v8_words()?;
-        let authorization_words = transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_single_key_authorization_key(spend_words)
+        let authorization_digest = transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_single_key_authorization_digest(spend_words)
             .map_err(|error| WalletError::Serialization(format!("V8 authorization key derivation failed: {error:?}")))?;
+        let authorization_words: [u64; 4] = authorization_digest[..4]
+            .try_into()
+            .expect("the V8 authorization prefix has four limbs");
+        let mut pk_auth_extension = [0u8; 24];
+        for (limb, word) in authorization_digest[4..].iter().copied().enumerate() {
+            pk_auth_extension[limb * 8..(limb + 1) * 8].copy_from_slice(&word.to_le_bytes());
+        }
         let keypair = encryption.derive_keypair(&diversifier, index);
         Ok(Self {
             version: POSEIDON2_V8_ADDRESS_VERSION,
@@ -240,6 +250,7 @@ impl AddressKeyMaterial {
                 transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_words_to_bytes(
                     authorization_words,
                 ),
+            pk_auth_extension,
             keypair,
         })
     }
@@ -261,6 +272,7 @@ impl AddressKeyMaterial {
             diversifier,
             pk_recipient,
             pk_auth,
+            pk_auth_extension: [0u8; 24],
             keypair,
         })
     }
@@ -281,6 +293,7 @@ impl AddressKeyMaterial {
             diversifier_index: self.diversifier_index,
             pk_recipient: self.pk_recipient,
             pk_auth: self.pk_auth,
+            pk_auth_extension: self.pk_auth_extension,
             pk_enc: self.keypair.public_key(),
         }
     }
@@ -303,6 +316,20 @@ impl AddressKeyMaterial {
 
     pub fn diversifier(&self) -> [u8; KEY_SIZE] {
         self.diversifier
+    }
+
+    pub fn poseidon2_v8_authorization_extension_words(&self) -> Result<[u64; 3], WalletError> {
+        let mut words = [0u64; 3];
+        for (limb, chunk) in self.pk_auth_extension.chunks_exact(8).enumerate() {
+            let word = u64::from_le_bytes(chunk.try_into().expect("eight-byte auth-extension limb"));
+            if word >= transaction_circuit::constants::FIELD_MODULUS_U64 {
+                return Err(WalletError::AddressEncoding(
+                    "non-canonical V8 authorization extension".into(),
+                ));
+            }
+            words[limb] = word;
+        }
+        Ok(words)
     }
 
     pub fn decapsulate(

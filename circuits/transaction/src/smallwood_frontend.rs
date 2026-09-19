@@ -1462,6 +1462,7 @@ fn hash_smallwood_production_constraint_table(
         SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => 10,
         SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8 => 16,
         SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => 17,
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => 18,
     };
     hasher.update(&[arithmetization_id]);
     for value in [
@@ -1531,6 +1532,7 @@ fn hash_smallwood_production_runtime_structure(map: &SmallwoodProductionConstrai
         SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => 10,
         SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8 => 16,
         SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => 17,
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => 18,
     };
     hasher.update(&[arithmetization_id]);
     for value in [
@@ -1610,6 +1612,7 @@ fn hash_smallwood_production_runtime_surface_parts(
         SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => 10,
         SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8 => 16,
         SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => 17,
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => 18,
     };
     hasher.update(&[arithmetization_id]);
     for value in [
@@ -2107,6 +2110,7 @@ fn is_compressed_level5_arithmetization(arithmetization: SmallwoodArithmetizatio
             | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1
             | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
             | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza
     )
 }
 
@@ -2119,6 +2123,8 @@ fn transcript_backend_for_arithmetization(
         SmallwoodTranscriptBackend::Sha512Poseidon2V8
     } else if arithmetization == SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 {
         SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9
+    } else if arithmetization == SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza {
+        SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
     } else if arithmetization
         == SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3
     {
@@ -2139,6 +2145,7 @@ fn evaluation_domain_for_arithmetization(
             | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1
             | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
             | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza
     ) {
         crate::smallwood_engine::SmallwoodDecsEvaluationDomain::Radix2DisjointCoset
     } else if is_compressed_level5_arithmetization(arithmetization) {
@@ -2601,7 +2608,8 @@ pub fn prove_smallwood_candidate_with_arithmetization_and_auth(
         }
         SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
         | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
-        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => {
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
             Err(TransactionCircuitError::ConstraintViolation(
                 "fresh proof relation requires its dedicated adapter entrypoint",
             ))
@@ -2700,7 +2708,8 @@ pub fn projected_smallwood_candidate_proof_bytes_for_arithmetization_with_profil
         }
         SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
         | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
-        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => {
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
             Err(TransactionCircuitError::ConstraintViolation(
                 "fresh proof sizing requires its dedicated relation adapter",
             ))
@@ -2761,7 +2770,8 @@ pub fn build_smallwood_candidate_profile_surface_for_arithmetization(
         }
         SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
         | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
-        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => {
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "fresh relation surfaces are supplied by their dedicated adapter",
             ));
@@ -2962,7 +2972,8 @@ pub fn exact_smallwood_candidate_backend_opening_surface_report_from_witness(
         }
         SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
         | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
-        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => {
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "fresh opening reports require their dedicated relation adapter",
             ));
@@ -3093,7 +3104,8 @@ pub fn project_smallwood_candidate_lvcs_planner_report_from_witness(
         }
         SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
         | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
-        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => {
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "fresh relation planning requires its dedicated adapter",
             ));
@@ -3284,7 +3296,8 @@ fn exact_smallwood_candidate_proof_artifacts_from_context_with_profile(
         }
         SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
         | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
-        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => {
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "fresh relation proving requires its dedicated adapter",
             ));
@@ -3631,6 +3644,9 @@ fn smallwood_candidate_verifier_profile_material_with_parameters(
         SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => {
             b"candidate-smallwood-poseidon2-width16-v8-sha512-smz9".as_slice()
         }
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
+            b"candidate-smallwood-poseidon2-width16-v8-sha512-smza".as_slice()
+        }
     });
     material.extend_from_slice(
         match transcript_backend_for_arithmetization(arithmetization) {
@@ -3655,6 +3671,9 @@ fn smallwood_candidate_verifier_profile_material_with_parameters(
             }
             SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9 => {
                 b"hegemon.smallwood.poseidon2-v8.smz9.sha512.profile.v1".as_slice()
+            }
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza => {
+                b"hegemon.smallwood.poseidon2-v8.smza.sha512.profile.v1".as_slice()
             }
             SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 => {
                 b"hegemon.smallwood.poseidon2-v8.smc7.sha512-448.profile.v1".as_slice()
@@ -3822,7 +3841,8 @@ fn compact_binding_shape_for_arithmetization(
         | SmallwoodArithmetization::DirectPacked64V1
         | SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
         | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
-        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => None,
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => None,
     }
 }
 

@@ -32,6 +32,27 @@ Everything else is negotiable.
 
 ### 0.3 Native node cutover posture
 
+September 18 repair candidate: `HGV8RP04` / relation `.v3` replaces the narrow
+nullifier secret with an injective five-field encoding and binds the full
+seven-field authorization commitment using the existing note words. Address
+and ciphertext version 5 carry its authorization extension; old version 4 is
+not reinterpreted. The candidate keeps q38, 247 raw rows, 686 total rows and
+the existing byte caps below. It is undergoing integration and is not yet
+qualified or activated. Prior HGV8RP03 evidence remains historical evidence,
+not qualification of this changed relation.
+
+The additive SMZA candidate uses proof profile 9/domain set 5, `HGV8TX03`
+native leaves and `SWP8LC03` envelopes over the unchanged, digest-bound
+HGV8RP03 relation. It uses 38 DECS queries, 38 fresh LVCS tails per row and
+degree-405 DECS masks, retaining full SHA-512, six PIOP openings and the
+2^23-point DECS domain. Its source ceilings are 164,113 proof bytes, 169,547
+inline-argument bytes and 169,772 complete `PendingAction` bytes. Historical
+SMZ9 identities and caps are unchanged. Wallet and native constructors select
+only the exact source-capability profile/domain pair, never a caller override
+or cross-profile fallback. The actual production capability remains absent:
+SMZA implementation and local tests do not establish complete adaptive ZK,
+quantum knowledge extraction, lifetime security or release authorization.
+
 Tag-release publication is byte-bound to the attested build outputs. Each platform packages `hegemon-node`, `wallet`, and `walletd` by copying from the same opened file descriptors whose native formats, sizes, and SHA-256 digests match the source release manifest; logical symlinks and reparse points reject, source mutation during inspection or copy rejects, and output files are created exclusively. Every uploaded platform bundle carries a manifest over its exact assets and checksum files. The only job with `contents: write` reopens all downloaded bundles without following symlinks, requires exact file sets and common source provenance, rechecks every asset and checksum, and assembles only those verified bytes for the draft GitHub release. `scripts/check_ci_release_gate_policy.py` parses executable workflow steps and pins this verify/audit/package/upload/download/assemble/publish order, including exact commands and unconditional execution.
 
 The native review fixture uses its initial schema. Its malformed-STARK case recomputes the canonical receipt proof digest after mutating proof bytes, so both verifiers must reach and reject inside SmallWood proof verification rather than obtaining credit from an earlier receipt mismatch. Each receipt-root context embeds the exact full encoded child tx-leaf artifacts, their SHA-256 digests, and their complete transaction contexts. Production and reference root verification independently verify every child artifact before comparing the root leaf statement, witness commitment, and proof identity, so self-described leaf metadata cannot substitute for the artifact being aggregated.
@@ -626,6 +647,14 @@ The bridge long-range proof-shape admission table is represented in Lean as well
 ### 2.6 Independent transaction proof mode
 
 The active product path is an ordered chain of independent native SmallWood transaction proofs. Every shielded transfer carries one canonical `tx_leaf` artifact. Block authors preflight those proofs and publish no `proven_batch`, `block_artifact`, receipt root, commitment proof, or recursive candidate. Import verifies each transaction proof, its parent-state anchor, the ordered DA projection, and the resulting state transition through `InlineRequired`. Historical `recursive_block_v1` and `recursive_block_v2` artifacts remain readable only for replaying blocks that already contain them; the native `receipt_root` object is decode-only.
+
+The SMZ9 prover's commitment implementation uses bounded subcoset FFT blocks
+and coefficient-based openings to avoid retaining the full evaluation matrix.
+This changes local computation and parallel hashing order, not the intended
+indexed leaf values, verifier relation or self-contained proof grammar. The
+differential tests and measured development runs are described in METHODS;
+they do not establish universal implementation or oracle-trace refinement,
+and do not authorize this proof family for production.
 
 * Block authors include only the ordered shielded transfer actions and the miner-local coinbase action. Candidate-artifact actions are retired from new block construction.
 * A chain-level `ProofAvailabilityPolicy` still has the wire values `InlineRequired` and `SelfContained` for compatibility. New blocks use `InlineRequired`; `SelfContainedAggregation` is entered only when replaying a historical block that already carries one recursive artifact.

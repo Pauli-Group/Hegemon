@@ -58,6 +58,28 @@ pub const SMALLWOOD_POSEIDON2_V8_MAX_COMPACT_AUTH_PATH_BYTES: usize = 2
     + SMALLWOOD_POSEIDON2_V8_MAX_COMPACT_AUTHENTICATION_NODES * DIGEST_BYTES;
 /// Fresh successor proof profile.  SMZ9 is additive: the q=19/open=5 SMZ8
 /// grammar above remains decodable only under its historical profile.
+/// Profile 9 uses fresh q=38 tails and full SHA-512 commitments.
+pub const SMALLWOOD_POSEIDON2_V8_SMZA_DECS_OPENED_LEAF_COUNT: usize = 38;
+pub const SMALLWOOD_POSEIDON2_V8_SMZA_DECS_OPENED_TAPE_BYTES: usize =
+    38 * SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES;
+pub const SMALLWOOD_POSEIDON2_V8_SMZA_MAX_COMPACT_AUTHENTICATION_NODES: usize = 672;
+pub const SMALLWOOD_POSEIDON2_V8_SMZA_MAX_COMPACT_AUTH_PATH_BYTES: usize =
+    2 + 38 + 672 * DIGEST_BYTES;
+pub const SMALLWOOD_POSEIDON2_V8_SMZA_MAX_INNER_PROOF_BYTES: usize = 164_113;
+pub const SMALLWOOD_POSEIDON2_V8_SMZA_SHA512_PROFILE_DOMAIN: &[u8] =
+    b"hegemon.smallwood.poseidon2-v8.smza.sha512.profile.v1";
+pub const SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_SMZA: [u8; 4] = *b"SMZA";
+pub const POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE: SmallwoodNoGrindingProfileV1 =
+    SmallwoodNoGrindingProfileV1 {
+        rho: 5,
+        nb_opened_evals: 6,
+        beta: 2,
+        opening_pow_bits: 0,
+        decs_nb_evals: 1 << 23,
+        decs_nb_opened_evals: 38,
+        decs_eta: 5,
+        decs_pow_bits: 0,
+    };
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_DECS_OPENED_LEAF_COUNT: usize = 20;
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_DECS_OPENED_TAPE_BYTES: usize =
     SMALLWOOD_POSEIDON2_V8_SMZ9_DECS_OPENED_LEAF_COUNT * SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES;
@@ -396,6 +418,8 @@ pub enum SmallwoodArithmetization {
     /// selector preserves every historical bincode discriminant, including
     /// the q=19/open=5 SMZ8 candidate.
     DirectPacked64Poseidon2V8Sha512Smz9,
+    /// Additive q=38 profile-9 selector; historical discriminants stay fixed.
+    DirectPacked64Poseidon2V8Sha512Smza,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -432,6 +456,7 @@ fn decs_challenge_format_for_arithmetization(
             | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1
             | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
             | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza
             | SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
     ) {
         SmallwoodDecsChallengeFormat::Uniform
@@ -464,6 +489,9 @@ pub fn smallwood_no_grinding_profile_for_arithmetization(
         }
         SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => {
             POSEIDON2_V8_SMZ9_SMALLWOOD_NO_GRINDING_PROFILE
+        }
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
+            POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE
         }
         SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate => {
             HX512_SMALLWOOD_NO_GRINDING_PROFILE_V1
@@ -510,6 +538,8 @@ pub enum SmallwoodTranscriptBackend {
     /// Inactive profile-8 sibling: complete SHA-512, 56 observed commitment
     /// bytes, and the unchanged q=20 SMZ9 sampling tuple.
     Sha512Poseidon2V8Compact448Q20Smc8,
+    /// Additive q=38 profile-9 full SHA-512 transcript.
+    Sha512Poseidon2V8Smza,
 }
 
 impl SmallwoodTranscriptBackend {
@@ -520,7 +550,8 @@ impl SmallwoodTranscriptBackend {
             | Self::Sha512V6
             | Self::Hx512Candidate
             | Self::Sha512Poseidon2V8
-            | Self::Sha512Poseidon2V8Smz9 => DIGEST_BYTES,
+            | Self::Sha512Poseidon2V8Smz9
+            | Self::Sha512Poseidon2V8Smza => DIGEST_BYTES,
             Self::Sha512Poseidon2V8Compact448Smc7 | Self::Sha512Poseidon2V8Compact448Q20Smc8 => {
                 SMALLWOOD_POSEIDON2_V8_COMPACT448_DIGEST_BYTES
             }
@@ -541,6 +572,7 @@ impl SmallwoodTranscriptBackend {
                 | Self::FullSha512First48CommitmentV3
                 | Self::Sha512Poseidon2V8
                 | Self::Sha512Poseidon2V8Smz9
+                | Self::Sha512Poseidon2V8Smza
                 | Self::Sha512Poseidon2V8Compact448Smc7
                 | Self::Sha512Poseidon2V8Compact448Q20Smc8
         )
@@ -562,6 +594,7 @@ impl SmallwoodTranscriptBackend {
             }
             Self::Sha512Poseidon2V8 => Some(SMALLWOOD_POSEIDON2_V8_SHA512_PROFILE_DOMAIN),
             Self::Sha512Poseidon2V8Smz9 => Some(SMALLWOOD_POSEIDON2_V8_SMZ9_SHA512_PROFILE_DOMAIN),
+            Self::Sha512Poseidon2V8Smza => Some(SMALLWOOD_POSEIDON2_V8_SMZA_SHA512_PROFILE_DOMAIN),
             Self::Sha512Poseidon2V8Compact448Smc7 => {
                 Some(SMALLWOOD_POSEIDON2_V8_COMPACT448_SHA512_PROFILE_DOMAIN)
             }
@@ -1543,6 +1576,8 @@ pub enum SmallwoodProofWireIdentityV1 {
     /// Internal marker for the additive HX512 core proof. It has no historical
     /// magic and is rejected by every SMW/SMZ encoder and decoder.
     FreshHx512Candidate,
+    /// Additive q=38 profile-9 strict wire; historical identities stay fixed.
+    StrictZkSha512Poseidon2V8Smza,
 }
 
 impl SmallwoodProofWireIdentityV1 {
@@ -1553,6 +1588,7 @@ impl SmallwoodProofWireIdentityV1 {
                 | Self::StrictZkSha512V6Smz2
                 | Self::StrictZkSha512Poseidon2V8Smz8
                 | Self::StrictZkSha512Poseidon2V8Smz9
+                | Self::StrictZkSha512Poseidon2V8Smza
                 | Self::StrictZkSha512Poseidon2V8Compact448Smc7
                 | Self::StrictZkSha512Poseidon2V8Compact448Q20Smc8
                 | Self::FreshHx512Candidate
@@ -1571,6 +1607,10 @@ impl SmallwoodProofWireIdentityV1 {
             )),
             Self::StrictZkSha512Poseidon2V8Smz9 => Some((
                 SMALLWOOD_POSEIDON2_V8_SMZ9_DECS_OPENED_LEAF_COUNT,
+                SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES,
+            )),
+            Self::StrictZkSha512Poseidon2V8Smza => Some((
+                SMALLWOOD_POSEIDON2_V8_SMZA_DECS_OPENED_LEAF_COUNT,
                 SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES,
             )),
             Self::StrictZkSha512Poseidon2V8Compact448Smc7 => Some((
@@ -1594,6 +1634,7 @@ impl SmallwoodProofWireIdentityV1 {
             Self::StrictZkSha512Level5Smz1 | Self::StrictZkSha512V6Smz2 => Some(20),
             Self::StrictZkSha512Poseidon2V8Smz8
             | Self::StrictZkSha512Poseidon2V8Smz9
+            | Self::StrictZkSha512Poseidon2V8Smza
             | Self::StrictZkSha512Poseidon2V8Compact448Smc7
             | Self::StrictZkSha512Poseidon2V8Compact448Q20Smc8 => Some(23),
             Self::FreshHx512Candidate => Some(20),
@@ -1632,6 +1673,9 @@ fn proof_wire_identity_for_backend_and_domain(
             SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9 => {
                 Ok(SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smz9)
             }
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza => {
+                Ok(SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza)
+            }
             SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 => {
                 Ok(SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Compact448Smc7)
             }
@@ -1664,6 +1708,11 @@ fn proof_wire_identity_for_backend_and_domain(
         SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9 => {
             Err(TransactionCircuitError::ConstraintViolation(
                 "smallwood fresh V8 successor backend requires the SMZ9 disjoint-coset wire",
+            ))
+        }
+        SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza => {
+            Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood fresh V8 successor backend requires the SMZA disjoint-coset wire",
             ))
         }
         SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 => {
@@ -2432,6 +2481,7 @@ impl SmallwoodProofWireIdentityV1 {
             | Self::StrictZkSha512V6Smz2
             | Self::StrictZkSha512Poseidon2V8Smz8
             | Self::StrictZkSha512Poseidon2V8Smz9
+            | Self::StrictZkSha512Poseidon2V8Smza
             | Self::FreshHx512Candidate => DIGEST_BYTES,
             Self::StrictZkSha512Poseidon2V8Compact448Smc7
             | Self::StrictZkSha512Poseidon2V8Compact448Q20Smc8 => {
@@ -2451,6 +2501,7 @@ impl SmallwoodProofWireIdentityV1 {
             Self::StrictZkSha512V6Smz2 => &SMALLWOOD_PROOF_WIRE_MAGIC_STRICT_ZK_V2,
             Self::StrictZkSha512Poseidon2V8Smz8 => &SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8,
             Self::StrictZkSha512Poseidon2V8Smz9 => &SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_SMZ9,
+            Self::StrictZkSha512Poseidon2V8Smza => &SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_SMZA,
             Self::StrictZkSha512Poseidon2V8Compact448Smc7 => {
                 &SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_COMPACT448_SMC7
             }
@@ -3054,6 +3105,13 @@ fn encode_smallwood_proof_bytes_v1(
             "smallwood SMZ8/SMZ9 inner proof exceeds the 131072-byte cap",
         ));
     }
+    if proof.wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza
+        && out.len() > SMALLWOOD_POSEIDON2_V8_SMZA_MAX_INNER_PROOF_BYTES
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood SMZA inner proof exceeds the exact 164113-byte cap",
+        ));
+    }
     if proof.wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Compact448Smc7
         && out.len() > SMALLWOOD_POSEIDON2_V8_COMPACT448_MAX_INNER_PROOF_BYTES
     {
@@ -3095,6 +3153,8 @@ fn decode_smallwood_proof_bytes_prefix_v1(
         SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smz8
     } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_SMZ9 {
         SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smz9
+    } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_SMZA {
+        SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza
     } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_COMPACT448_SMC7 {
         SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Compact448Smc7
     } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_COMPACT448_Q20_SMC8 {
@@ -3112,6 +3172,13 @@ fn decode_smallwood_proof_bytes_prefix_v1(
     {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood SMZ8/SMZ9 inner proof exceeds the 131072-byte cap",
+        ));
+    }
+    if wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza
+        && proof_bytes.len() > SMALLWOOD_POSEIDON2_V8_SMZA_MAX_INNER_PROOF_BYTES
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood SMZA inner proof exceeds the exact 164113-byte cap",
         ));
     }
     if wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Compact448Smc7
@@ -4173,6 +4240,7 @@ pub fn ensure_row_polynomial_arithmetization(
         | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1
         | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
         | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza
         | SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate => Ok(()),
     }
 }
@@ -4476,6 +4544,7 @@ fn transcript_xof_words(
         | SmallwoodTranscriptBackend::FullSha512First48CommitmentV3
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9
+        | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Q20Smc8 => {
             update_verifier_operation_profile_v1(|profile| {
@@ -4533,6 +4602,7 @@ fn transcript_xof_digest(
         | SmallwoodTranscriptBackend::FullSha512First48CommitmentV3
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9
+        | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Q20Smc8 => {
             sha512_commitment_domain_digest(backend, domain, words, 0)
@@ -4568,9 +4638,56 @@ fn blake3_compress2_words(words: &[u64; 8]) -> [u64; 4] {
 }
 
 #[derive(Clone, Debug)]
+enum DecsEvaluationStorage {
+    Tables {
+        committed: Vec<Vec<u64>>,
+        masking: Vec<Vec<u64>>,
+    },
+    /// The SMZ9 prover retains the exact coefficient-form polynomials rather
+    /// than all N evaluations. Openings evaluate these at the bound point.
+    Polynomials {
+        committed: Vec<Vec<u64>>,
+        masking: Vec<Vec<u64>>,
+        domain: SmallwoodDisjointCosetDescriptorV1,
+    },
+}
+
+impl DecsEvaluationStorage {
+    fn opening(
+        &self,
+        index: usize,
+        point: u64,
+    ) -> Result<(Vec<u64>, Vec<u64>), TransactionCircuitError> {
+        Ok(match self {
+            Self::Tables { committed, masking } => (
+                committed.iter().map(|poly| poly[index]).collect(),
+                masking.iter().map(|poly| poly[index]).collect(),
+            ),
+            Self::Polynomials {
+                committed,
+                masking,
+                domain,
+            } => {
+                if domain.point_for_leaf_index(index)? != point {
+                    return Err(TransactionCircuitError::ConstraintViolation(
+                        "smallwood DECS table index does not match its algebraic evaluation point",
+                    ));
+                }
+                (
+                    committed
+                        .iter()
+                        .map(|poly| poly_eval(poly, point))
+                        .collect(),
+                    masking.iter().map(|poly| poly_eval(poly, point)).collect(),
+                )
+            }
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
 struct DecsKey {
-    committed_domain_evals: Vec<Vec<u64>>,
-    masking_domain_evals: Vec<Vec<u64>>,
+    evaluations: DecsEvaluationStorage,
     leaf_tapes: Vec<Vec<u8>>,
     dec_polys: Vec<Vec<u64>>,
     /// Commitment-time DECS coefficients retained only by the prover.  They
@@ -4697,6 +4814,35 @@ fn ensure_poseidon2_v8_smz9_profile(
     if decs_evaluation_domain != SmallwoodDecsEvaluationDomain::Radix2DisjointCoset {
         return Err(TransactionCircuitError::ConstraintViolation(
             "Smallwood Poseidon2 V8/SMZ9 requires the exact disjoint-coset DECS domain",
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_poseidon2_v8_smza_profile(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    profile: SmallwoodNoGrindingProfileV1,
+    decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
+) -> Result<(), TransactionCircuitError> {
+    if statement.arithmetization() != SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "Smallwood Poseidon2 V8/SMZA requires the dedicated appended arithmetization",
+        ));
+    }
+    if statement.packing_factor() != 64 {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "Smallwood Poseidon2 V8/SMZA requires the exact 64-wide packing domain",
+        ));
+    }
+    if profile != POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "Smallwood Poseidon2 V8/SMZA requires the exact rho5/open6/beta2/N2^23/q38/eta5 profile",
+        ));
+    }
+    if decs_evaluation_domain != SmallwoodDecsEvaluationDomain::Radix2DisjointCoset {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "Smallwood Poseidon2 V8/SMZA requires the exact disjoint-coset DECS domain",
         ));
     }
     Ok(())
@@ -4890,6 +5036,9 @@ pub(crate) fn prove_statement_with_transcript_backend_profile_and_domain(
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9 {
         ensure_poseidon2_v8_smz9_profile(statement, profile, decs_evaluation_domain)?;
     }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza {
+        ensure_poseidon2_v8_smza_profile(statement, profile, decs_evaluation_domain)?;
+    }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 {
         ensure_poseidon2_v8_compact448_profile(statement, profile, decs_evaluation_domain)?;
     }
@@ -4903,6 +5052,7 @@ pub(crate) fn prove_statement_with_transcript_backend_profile_and_domain(
                 | SmallwoodTranscriptBackend::Sha512V6
                 | SmallwoodTranscriptBackend::Sha512Poseidon2V8
                 | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9
+                | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
                 | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7
                 | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Q20Smc8
         )
@@ -4957,6 +5107,9 @@ pub(crate) fn prove_statement_core_with_transcript_backend_profile_and_domain(
     }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9 {
         ensure_poseidon2_v8_smz9_profile(statement, profile, decs_evaluation_domain)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza {
+        ensure_poseidon2_v8_smza_profile(statement, profile, decs_evaluation_domain)?;
     }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 {
         ensure_poseidon2_v8_compact448_profile(statement, profile, decs_evaluation_domain)?;
@@ -5034,9 +5187,15 @@ pub(crate) fn prove_statement_core_with_transcript_backend_profile_and_domain(
         decs_evaluation_domain,
     )?;
     log_stage("binded_words", &mut last_stage);
-    let witness_polys = if transcript_backend == SmallwoodTranscriptBackend::Hx512Candidate {
-        // The fresh RNG budget is thread-local and sequence-exact. Keeping this
-        // phase sequential prevents Rayon workers from escaping that budget.
+    let witness_polys = if matches!(
+        transcript_backend,
+        SmallwoodTranscriptBackend::Hx512Candidate
+            | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
+    ) {
+        // Hx512's fresh RNG budget is thread-local and sequence-exact. SMZA
+        // likewise samples complete witness rows in canonical order, including
+        // rejection refills and early errors; no sibling RNG calls outlive an
+        // error. The much larger DECS hashing work remains parallel.
         witness_values
             .chunks_exact(cfg.packing_factor)
             .map(|row_values| {
@@ -5268,6 +5427,9 @@ pub(crate) fn verify_statement_with_transcript_backend_profile_and_domain(
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9 {
         ensure_poseidon2_v8_smz9_profile(statement, profile, decs_evaluation_domain)?;
     }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza {
+        ensure_poseidon2_v8_smza_profile(statement, profile, decs_evaluation_domain)?;
+    }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 {
         ensure_poseidon2_v8_compact448_profile(statement, profile, decs_evaluation_domain)?;
     }
@@ -5316,6 +5478,9 @@ pub(crate) fn verify_statement_core_with_transcript_backend_profile_and_domain(
     }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9 {
         ensure_poseidon2_v8_smz9_profile(statement, profile, decs_evaluation_domain)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza {
+        ensure_poseidon2_v8_smza_profile(statement, profile, decs_evaluation_domain)?;
     }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 {
         ensure_poseidon2_v8_compact448_profile(statement, profile, decs_evaluation_domain)?;
@@ -5700,6 +5865,26 @@ pub fn build_smallwood_poseidon2_v8_smz9_verifier_trace_v1(
     )
 }
 
+pub fn build_smallwood_poseidon2_v8_smza_verifier_trace_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    binded_data: &[u8],
+    proof_bytes: &[u8],
+) -> Result<SmallwoodVerifierTraceV1, TransactionCircuitError> {
+    ensure_poseidon2_v8_smza_profile(
+        statement,
+        POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )?;
+    build_smallwood_verifier_trace_with_profile_and_domain_v1(
+        statement,
+        binded_data,
+        proof_bytes,
+        POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE,
+        SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )
+}
+
 /// Rebuild the inactive profile-7 verifier trace for measurement and tests.
 /// This does not select SMC7 for the frontend or grant production authority.
 pub fn build_smallwood_poseidon2_v8_compact448_verifier_trace_v1(
@@ -5839,6 +6024,17 @@ pub fn encode_smallwood_smz9_proof_trace_v1(
     encode_smallwood_proof_trace_v1(trace)
 }
 
+pub fn encode_smallwood_smza_proof_trace_v1(
+    trace: &SmallwoodProofTraceV1,
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    if trace.wire_identity != SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood Poseidon2 V8 successor encoder requires exact SMZA inner-wire identity",
+        ));
+    }
+    encode_smallwood_proof_trace_v1(trace)
+}
+
 pub fn encode_smallwood_smc7_proof_trace_v1(
     trace: &SmallwoodProofTraceV1,
 ) -> Result<Vec<u8>, TransactionCircuitError> {
@@ -5890,6 +6086,18 @@ pub fn decode_smallwood_smz9_proof_trace_v1(
     if proof.wire_identity != SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smz9 {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood Poseidon2 V8 successor decoder requires exact SMZ9 inner-wire identity",
+        ));
+    }
+    smallwood_proof_to_trace_v1(&proof)
+}
+
+pub fn decode_smallwood_smza_proof_trace_v1(
+    proof_bytes: &[u8],
+) -> Result<SmallwoodProofTraceV1, TransactionCircuitError> {
+    let proof = decode_smallwood_proof_bytes_v1(proof_bytes)?;
+    if proof.wire_identity != SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood Poseidon2 V8 successor decoder requires exact SMZA inner-wire identity",
         ));
     }
     smallwood_proof_to_trace_v1(&proof)
@@ -6333,6 +6541,27 @@ pub fn smallwood_smz9_programmed_merkle_joint_cap_v1(
             .decs_nb_evals
             .ilog2() as usize,
         maximum_strict_leaf_programs: POSEIDON2_V8_SMZ9_SMALLWOOD_NO_GRINDING_PROFILE
+            .decs_nb_opened_evals,
+        maximum_total_programs,
+    })
+}
+
+pub fn smallwood_smza_programmed_merkle_joint_cap_v1(
+) -> Result<SmallwoodStrictZkProgrammedMerkleJointCapV1, TransactionCircuitError> {
+    let maximum_total_programs = maximum_smallwood_compact_authentication_nodes_v1(
+        POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE.decs_nb_evals,
+        POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE.decs_nb_opened_evals,
+    )?;
+    if maximum_total_programs != SMALLWOOD_POSEIDON2_V8_SMZA_MAX_COMPACT_AUTHENTICATION_NODES {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood SMZA compact Merkle joint cap drift",
+        ));
+    }
+    Ok(SmallwoodStrictZkProgrammedMerkleJointCapV1 {
+        tree_depth: POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE
+            .decs_nb_evals
+            .ilog2() as usize,
+        maximum_strict_leaf_programs: POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE
             .decs_nb_opened_evals,
         maximum_total_programs,
     })
@@ -7367,7 +7596,9 @@ pub fn sample_smallwood_strict_whole_view_coins_v1<R: CryptoRng + RngCore + ?Siz
             "smallwood strict-view CryptoRng draw ledger does not bind the formal coin shape",
         ));
     }
-    sampler.ledger.formal_coin_shape_bound = true;
+    // SMZA has checked executable coin dimensions, but no transferred q20 formal receipt.
+    sampler.ledger.formal_coin_shape_bound =
+        transcript_backend != SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza;
     Ok(SmallwoodStrictZkWholeViewSampleV1 {
         coins,
         draw_ledger: sampler.ledger,
@@ -7506,7 +7737,7 @@ fn validate_smallwood_strict_whole_view_coin_shapes_v1(
 
 /// Simulate the exact strict SmallWood serialized view without reading a raw
 /// witness.  `Sha512Level5` emits SMZ1; the same geometry-generic path emits
-/// SMZ8, SMZ9, or inactive SMC7/SMC8 when called with the corresponding V8 backend
+/// SMZ8, SMZ9, SMZA, or inactive SMC7/SMC8 with the corresponding V8 backend
 /// and exact profile.
 pub fn simulate_smallwood_strict_whole_view_v1(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
@@ -7520,11 +7751,12 @@ pub fn simulate_smallwood_strict_whole_view_v1(
         SmallwoodTranscriptBackend::Sha512Level5
             | SmallwoodTranscriptBackend::Sha512Poseidon2V8
             | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9
+            | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
             | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7
             | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Q20Smc8
     ) {
         return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood strict-view simulator supports only SMZ1, SMZ8, SMZ9, SMC7, or SMC8 SHA-512 backends",
+            "smallwood strict-view simulator supports only SMZ1, SMZ8, SMZ9, SMZA, SMC7, or SMC8 SHA-512 backends",
         ));
     }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8 {
@@ -7536,6 +7768,13 @@ pub fn simulate_smallwood_strict_whole_view_v1(
     }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9 {
         ensure_poseidon2_v8_smz9_profile(
+            statement,
+            profile,
+            SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+        )?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza {
+        ensure_poseidon2_v8_smza_profile(
             statement,
             profile,
             SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
@@ -8349,6 +8588,10 @@ pub fn report_smallwood_lvcs_planner_projection_v1(
         ),
         SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => (
             SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9,
+            SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+        ),
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => (
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
             SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
         ),
         SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3 => (
@@ -10990,6 +11233,176 @@ pub fn lvcs_recompute_rows(
     Ok(evals)
 }
 
+/// Hash the exact full SMZ9 or SMZA domain without materializing a polynomial-by-N
+/// matrix. For B >= every polynomial length and S=N/B, the block at offset r
+/// evaluates indices r + S*j using the B-point coset shift*omega_N^r. Since
+/// omega_N^S = omega_B, these are exactly the original N-point FFT values.
+/// Hashes are restored to their original leaf-index order before tree building.
+/// This uses the selected conventional full-SHA-512 backend: V6 and HX512
+/// retain their existing sequential, session-bound transcript paths.
+fn strict_coset_leaf_hashes_bounded(
+    committed: &[Vec<u64>],
+    masking: &[Vec<u64>],
+    leaf_tapes: &[Vec<u8>],
+    salt: &[u8],
+    domain: SmallwoodDisjointCosetDescriptorV1,
+    backend: SmallwoodTranscriptBackend,
+) -> Result<Vec<[u8; DIGEST_BYTES]>, TransactionCircuitError> {
+    let max_len = committed
+        .iter()
+        .chain(masking)
+        .map(Vec::len)
+        .max()
+        .unwrap_or(1);
+    let block_size =
+        max_len
+            .checked_next_power_of_two()
+            .ok_or(TransactionCircuitError::ConstraintViolation(
+                "smallwood DECS block size overflow",
+            ))?;
+    if block_size > domain.domain_size || leaf_tapes.len() != domain.domain_size {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood bounded DECS polynomial or leaf-tape shape mismatch",
+        ));
+    }
+    let stride = domain.domain_size / block_size;
+    let root = radix2_subgroup_generator(domain.domain_size)?;
+    let blocks = (0..stride)
+        .into_par_iter()
+        .map(|offset| {
+            let shift = mul_mod(domain.shift, pow_mod(root, offset as u64));
+            let tables = committed
+                .iter()
+                .chain(masking)
+                .map(|poly| {
+                    let mut values = vec![0u64; block_size];
+                    evaluate_poly_on_radix2_coset_into(poly, &mut values, shift)?;
+                    Ok(values)
+                })
+                .collect::<Result<Vec<_>, TransactionCircuitError>>()?;
+            let mut evaluations = vec![0u64; tables.len()];
+            let mut hashes = Vec::with_capacity(block_size);
+            for j in 0..block_size {
+                let index = offset + stride * j;
+                for (value, table) in evaluations.iter_mut().zip(&tables) {
+                    *value = table[j];
+                }
+                hashes.push(hash_strict_zk_merkle_leaf(
+                    committed.len(),
+                    &evaluations,
+                    index,
+                    &leaf_tapes[index],
+                    salt,
+                    backend,
+                )?);
+            }
+            Ok(hashes)
+        })
+        .collect::<Result<Vec<_>, TransactionCircuitError>>()?;
+    let mut leaves = vec![[0u8; DIGEST_BYTES]; domain.domain_size];
+    for (offset, hashes) in blocks.into_iter().enumerate() {
+        for (j, hash) in hashes.into_iter().enumerate() {
+            leaves[offset + stride * j] = hash;
+        }
+    }
+    Ok(leaves)
+}
+
+#[cfg(test)]
+fn smz9_coset_leaf_hashes_bounded(
+    committed: &[Vec<u64>],
+    masking: &[Vec<u64>],
+    leaf_tapes: &[Vec<u8>],
+    salt: &[u8],
+    domain: SmallwoodDisjointCosetDescriptorV1,
+) -> Result<Vec<[u8; DIGEST_BYTES]>, TransactionCircuitError> {
+    strict_coset_leaf_hashes_bounded(
+        committed,
+        masking,
+        leaf_tapes,
+        salt,
+        domain,
+        SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decs_commit_strict_bounded(
+    nb_polys: usize,
+    poly_degree: usize,
+    decs_eta: usize,
+    decs_challenge_format: SmallwoodDecsChallengeFormat,
+    decs_nb_evals: usize,
+    initial_domain_evals: &[Vec<u64>],
+    salt: &[u8],
+    statement_binding: &[u64],
+    decs_leaf_tape_bytes: usize,
+    backend: SmallwoodTranscriptBackend,
+) -> Result<DecsKey, TransactionCircuitError> {
+    let started = Instant::now();
+    let trace_enabled = std::env::var_os("HEGEMON_SMALLWOOD_TRACE").is_some();
+    // Keep the existing entropy chronology: all masking polynomials first,
+    // followed by the unchanged fixed-width tape sampler in leaf-index order.
+    let masking = (0..decs_eta)
+        .map(|_| random_poly(poly_degree))
+        .collect::<Result<Vec<_>, _>>()?;
+    let initial_len = poly_degree + 1;
+    let domain = SmallwoodDisjointCosetDescriptorV1::derive(decs_nb_evals, initial_len)?;
+    let committed = initial_domain_evals
+        .par_iter()
+        .map(|evals| interpolate_consecutive(evals))
+        .collect::<Result<Vec<_>, _>>()?;
+    let leaf_tapes = random_decs_leaf_tapes(decs_nb_evals, decs_leaf_tape_bytes)?;
+    if trace_enabled {
+        eprintln!(
+            "[smallwood/decs_commit] bounded_polynomials_and_tapes: total={:?}",
+            started.elapsed()
+        );
+    }
+    let leaves =
+        strict_coset_leaf_hashes_bounded(&committed, &masking, &leaf_tapes, salt, domain, backend)?;
+    let mut tree_levels = vec![leaves];
+    let root = merkle_build_levels(&mut tree_levels, backend);
+    if trace_enabled {
+        eprintln!(
+            "[smallwood/decs_commit] bounded_merkle_tree: total={:?}",
+            started.elapsed()
+        );
+    }
+    let hash_mt = hash_merkle_root_with_binding(salt, &root, backend, statement_binding);
+    let gamma_all =
+        derive_decs_challenge(nb_polys, decs_eta, decs_challenge_format, &hash_mt, backend);
+    let mut combined_domain_evals = vec![vec![0u64; initial_len]; decs_eta];
+    mat_mul(
+        &mut combined_domain_evals,
+        &gamma_all,
+        initial_domain_evals,
+        decs_eta,
+        nb_polys,
+        initial_len,
+    );
+    let dec_polys = combined_domain_evals
+        .par_iter()
+        .enumerate()
+        .map(|(k, evals)| {
+            let mut poly = interpolate_consecutive(evals)?;
+            poly_add_assign(&mut poly, &masking[k]);
+            Ok::<_, TransactionCircuitError>(poly)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(DecsKey {
+        evaluations: DecsEvaluationStorage::Polynomials {
+            committed,
+            masking,
+            domain,
+        },
+        leaf_tapes,
+        dec_polys,
+        gamma_all,
+        tree_levels,
+    })
+}
+
 fn decs_commit(
     nb_polys: usize,
     poly_degree: usize,
@@ -11003,6 +11416,25 @@ fn decs_commit(
     statement_binding: &[u64],
     decs_leaf_tape_bytes: usize,
 ) -> Result<DecsKey, TransactionCircuitError> {
+    if matches!(
+        transcript_backend,
+        SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9
+            | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
+    ) && decs_evaluation_domain == SmallwoodDecsEvaluationDomain::Radix2DisjointCoset
+    {
+        return decs_commit_strict_bounded(
+            nb_polys,
+            poly_degree,
+            decs_eta,
+            decs_challenge_format,
+            decs_nb_evals,
+            initial_domain_evals,
+            salt,
+            statement_binding,
+            decs_leaf_tape_bytes,
+            transcript_backend,
+        );
+    }
     let trace_enabled = std::env::var_os("HEGEMON_SMALLWOOD_TRACE").is_some();
     let started = Instant::now();
     let mut last = started;
@@ -11186,8 +11618,10 @@ fn decs_commit(
         .collect::<Result<Vec<_>, _>>()?;
     log_stage("dec_polys", &mut last);
     Ok(DecsKey {
-        committed_domain_evals,
-        masking_domain_evals,
+        evaluations: DecsEvaluationStorage::Tables {
+            committed: committed_domain_evals,
+            masking: masking_domain_evals,
+        },
         leaf_tapes,
         dec_polys,
         gamma_all,
@@ -11237,17 +11671,9 @@ fn decs_open(
     };
     let mut masking_evals = Vec::with_capacity(indices.len());
     for (j, &idx) in indices.iter().enumerate() {
-        evals_out[j] = key
-            .committed_domain_evals
-            .iter()
-            .map(|poly| poly[idx])
-            .collect();
-        masking_evals.push(
-            key.masking_domain_evals
-                .iter()
-                .map(|poly| poly[idx])
-                .collect::<Vec<_>>(),
-        );
+        let (committed, masking) = key.evaluations.opening(idx, field_eval_points[j])?;
+        evals_out[j] = committed;
+        masking_evals.push(masking);
     }
     for (opening, &field_point) in field_eval_points.iter().enumerate() {
         for (combination, dec_poly) in key.dec_polys.iter().enumerate() {
@@ -12075,6 +12501,7 @@ fn serialized_proof_size_hint_with_profile(
         wire_identity,
         SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Compact448Smc7
             | SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Compact448Q20Smc8
+            | SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza
     ) {
         let opened_leaf_count = profile.decs_nb_opened_evals;
         let total_nodes = maximum_smallwood_compact_authentication_nodes_v1(
@@ -12305,6 +12732,34 @@ pub fn projected_poseidon2_v8_smz9_inner_proof_bytes(
         ))
 }
 
+pub fn projected_poseidon2_v8_smza_inner_proof_bytes(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+) -> Result<usize, TransactionCircuitError> {
+    let profile = POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE;
+    ensure_poseidon2_v8_smza_profile(
+        statement,
+        profile,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )?;
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    if maximum_smallwood_compact_authentication_nodes_v1(
+        profile.decs_nb_evals,
+        profile.decs_nb_opened_evals,
+    )? != SMALLWOOD_POSEIDON2_V8_SMZA_MAX_COMPACT_AUTHENTICATION_NODES
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood SMZA compact-auth protocol constant drift",
+        ));
+    }
+    serialized_proof_size_hint_with_profile(
+        &cfg,
+        profile,
+        statement.auxiliary_witness_words().len(),
+        SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )
+}
+
 /// Project the exact maximum canonical SMC7 inner-wire bytes. HGV8RP03 keeps
 /// the SMZ9 relation adapter and six PIOP openings; SMC7 changes the DECS
 /// query count to nineteen and serializes each complete-SHA-512 commitment as
@@ -12467,6 +12922,7 @@ fn smallwood_piop_opening_points_are_valid_for_profile(
         && (!matches!(
             profile,
             POSEIDON2_V8_SMZ9_SMALLWOOD_NO_GRINDING_PROFILE
+                | POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE
                 | POSEIDON2_V8_COMPACT448_SMALLWOOD_NO_GRINDING_PROFILE
         ) || smallwood_smz9_pcs_unstack_blocks_v1(eval_points).is_some_and(|blocks| {
             blocks
@@ -12502,7 +12958,7 @@ fn smallwood_piop_opening_points_are_valid_for_profile(
 /// is inverted by back-substitution and Vandermonde inversion at distinct
 /// nonzero points. Do not change this helper to that different map without an
 /// explicit protocol change: doing so would change accepted opening points.
-pub(crate) fn smallwood_smz9_pcs_unstack_blocks_v1(
+pub(crate) fn smallwood_packed64_open6_pcs_unstack_blocks_v1(
     eval_points: &[u64],
 ) -> Option<Vec<Vec<Vec<u64>>>> {
     const NONLINEAR_POLYNOMIALS: usize = 5;
@@ -12540,6 +12996,19 @@ pub(crate) fn smallwood_smz9_pcs_unstack_blocks_v1(
         blocks.push(block(1, 63));
     }
     (blocks.len() == BLOCK_COUNT).then_some(blocks)
+}
+
+pub(crate) fn smallwood_smz9_pcs_unstack_blocks_v1(
+    eval_points: &[u64],
+) -> Option<Vec<Vec<Vec<u64>>>> {
+    smallwood_packed64_open6_pcs_unstack_blocks_v1(eval_points)
+}
+
+/// Shared packing64/open6 arithmetic only; this is not a q38 security certificate.
+pub(crate) fn smallwood_smza_pcs_unstack_blocks_v1(
+    eval_points: &[u64],
+) -> Option<Vec<Vec<Vec<u64>>>> {
+    smallwood_packed64_open6_pcs_unstack_blocks_v1(eval_points)
 }
 
 /// Compute the exact correction factor used by the linear PIOP verifier.
@@ -15478,13 +15947,16 @@ mod tests {
             &decs_eval_points,
         )
         .unwrap();
+        let committed_domain_evals = match &pcs_key.lvcs_key.decs_key.evaluations {
+            DecsEvaluationStorage::Tables { committed, .. } => committed,
+            DecsEvaluationStorage::Polynomials { .. } => {
+                panic!("Blake3 regression must retain full evaluation tables")
+            }
+        };
         let opened_rows = decs_eval_points
             .iter()
             .map(|&idx| {
-                pcs_key
-                    .lvcs_key
-                    .decs_key
-                    .committed_domain_evals
+                committed_domain_evals
                     .iter()
                     .map(|poly| poly[idx as usize])
                     .collect::<Vec<_>>()
@@ -16479,7 +16951,7 @@ fn poly_restore(
 /// not the bare monomial `X^(64+t)`.  This helper deliberately calls the same
 /// `poly_restore` primitive as the prover, so the accepted-proof audit and the
 /// honest prover cannot drift to different witness-map formulas.
-pub(crate) fn smallwood_smz9_witness_randomness_matrix_v1(
+pub(crate) fn smallwood_packed64_open6_witness_randomness_matrix_v1(
     eval_points: &[u64],
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
     const PACKING_FACTOR: usize = 64;
@@ -16515,6 +16987,19 @@ pub(crate) fn smallwood_smz9_witness_randomness_matrix_v1(
                 .collect::<Vec<_>>()
         })
         .collect())
+}
+
+pub(crate) fn smallwood_smz9_witness_randomness_matrix_v1(
+    eval_points: &[u64],
+) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
+    smallwood_packed64_open6_witness_randomness_matrix_v1(eval_points)
+}
+
+/// Shared packing64/open6 arithmetic only; this is not a q38 security certificate.
+pub(crate) fn smallwood_smza_witness_randomness_matrix_v1(
+    eval_points: &[u64],
+) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
+    smallwood_packed64_open6_witness_randomness_matrix_v1(eval_points)
 }
 
 fn points_are_consecutive(points: &[u64]) -> bool {
@@ -17048,6 +17533,127 @@ mod complete_zk_domain_tests {
     }
 
     #[test]
+    fn smza_profile_codec_projection_and_historical_rejection_are_exact() {
+        let profile = POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE;
+        assert_eq!(
+            profile,
+            smallwood_no_grinding_profile_for_arithmetization(
+                SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza
+            )
+        );
+        assert_eq!(
+            (
+                profile.rho,
+                profile.nb_opened_evals,
+                profile.beta,
+                profile.decs_nb_evals,
+                profile.decs_nb_opened_evals,
+                profile.decs_eta
+            ),
+            (5, 6, 2, 1 << 23, 38, 5)
+        );
+        assert_eq!(
+            SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 as u8,
+            17
+        );
+        assert_eq!(
+            SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza as u8,
+            18
+        );
+        assert_eq!(SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza as u8, 10);
+        assert_eq!(
+            SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza as u8,
+            10
+        );
+        assert_eq!(
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza.digest_bytes(),
+            64
+        );
+        assert_eq!(
+            maximum_smallwood_compact_authentication_nodes_v1(1 << 23, 38).unwrap(),
+            672
+        );
+        assert_eq!(SMALLWOOD_POSEIDON2_V8_SMZA_DECS_OPENED_TAPE_BYTES, 2432);
+        assert_eq!(
+            SMALLWOOD_POSEIDON2_V8_SMZA_MAX_COMPACT_AUTH_PATH_BYTES,
+            43048
+        );
+        let fresh = sha512_raw_domain_digest(
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
+            SMALLWOOD_LEVEL5_PIOP_INPUT_DOMAIN,
+            &[1, 2, 3],
+            0,
+        );
+        for backend in [
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8,
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9,
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7,
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Q20Smc8,
+        ] {
+            assert_ne!(
+                fresh,
+                sha512_raw_domain_digest(
+                    backend,
+                    SMALLWOOD_LEVEL5_PIOP_INPUT_DOMAIN,
+                    &[1, 2, 3],
+                    0
+                )
+            );
+        }
+        let trace =
+            minimal_strict_trace(SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza);
+        let encoded = encode_smallwood_smza_proof_trace_v1(&trace).unwrap();
+        assert_eq!(&encoded[..4], b"SMZA");
+        assert_eq!(
+            decode_smallwood_smza_proof_trace_v1(&encoded).unwrap(),
+            trace
+        );
+        assert!(decode_smallwood_smz8_proof_trace_v1(&encoded).is_err());
+        assert!(decode_smallwood_smz9_proof_trace_v1(&encoded).is_err());
+        assert!(decode_smallwood_smc7_proof_trace_v1(&encoded).is_err());
+        assert!(decode_smallwood_smc8_proof_trace_v1(&encoded).is_err());
+        for identity in [
+            SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smz8,
+            SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smz9,
+            SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Compact448Smc7,
+            SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Compact448Q20Smc8,
+        ] {
+            let old = encode_smallwood_proof_trace_v1(&minimal_strict_trace(identity)).unwrap();
+            assert!(decode_smallwood_smza_proof_trace_v1(&old).is_err());
+        }
+        let mut over_cap = vec![0u8; 164114];
+        over_cap[..4].copy_from_slice(b"SMZA");
+        assert!(decode_smallwood_smza_proof_trace_v1(&over_cap)
+            .unwrap_err()
+            .to_string()
+            .contains("164113-byte cap"));
+        let statement = StructuralIdentityWitnessStatement::new_for_arithmetization(
+            SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza,
+            686,
+            64,
+            8,
+            830,
+            0,
+        )
+        .unwrap();
+        let geometry = derive_smallwood_core_geometry_v1(&statement, profile).unwrap();
+        assert_eq!(geometry.nb_lvcs_cols, 368);
+        assert_eq!(geometry.interpolation_point_count - 1, 405);
+        assert_eq!(geometry.rcombi_cols, 38);
+        assert_eq!(geometry.masking_rows, 38);
+        assert_eq!(
+            projected_poseidon2_v8_smza_inner_proof_bytes(&statement).unwrap(),
+            164113
+        );
+        assert!(ensure_poseidon2_v8_smz9_profile(
+            &statement,
+            POSEIDON2_V8_SMZ9_SMALLWOOD_NO_GRINDING_PROFILE,
+            SmallwoodDecsEvaluationDomain::Radix2DisjointCoset
+        )
+        .is_err());
+    }
+
+    #[test]
     fn smz9_profile_codec_projection_and_smz8_rejection_are_exact() {
         let profile = smallwood_no_grinding_profile_for_arithmetization(
             SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9,
@@ -17511,6 +18117,225 @@ mod complete_zk_domain_tests {
                 .expect("derive deliberately stale geometry");
         assert_ne!(stale_descriptor.shift, descriptor.shift);
         assert!(descriptor.point_for_leaf_index(1 << 20).is_err());
+    }
+
+    #[test]
+    fn smz9_bounded_cosets_match_every_full_table_leaf_and_root() {
+        let backend = SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9;
+        let salt = [0x53u8; SALT_BYTES];
+        // Includes one-point blocks, several nonzero block offsets, and B=N.
+        for (domain_size, coefficient_count) in [(16, 1), (32, 5), (16, 9)] {
+            let domain = SmallwoodDisjointCosetDescriptorV1::derive(domain_size, coefficient_count)
+                .expect("derive bounded-test coset");
+            let committed = vec![
+                (0..coefficient_count)
+                    .map(|i| (i * 17 + 3) as u64)
+                    .collect(),
+                vec![7],
+            ];
+            let masking = vec![
+                vec![11],
+                vec![2; coefficient_count.saturating_sub(1).max(1)],
+            ];
+            let leaf_tapes = (0..domain_size)
+                .map(|i| vec![(i * 7 + 1) as u8; 64])
+                .collect::<Vec<_>>();
+            let mut tables = Vec::new();
+            for poly in committed.iter().chain(&masking) {
+                let mut table = vec![0; domain_size];
+                evaluate_poly_on_radix2_coset_into(poly, &mut table, domain.shift)
+                    .expect("evaluate reference full domain");
+                tables.push(table);
+            }
+            let reference = (0..domain_size)
+                .map(|index| {
+                    hash_strict_zk_merkle_leaf_from_tables(
+                        &bytes_to_words_unchecked(&salt),
+                        &tables[..committed.len()],
+                        &tables[committed.len()..],
+                        index,
+                        &leaf_tapes[index],
+                        backend,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let bounded =
+                smz9_coset_leaf_hashes_bounded(&committed, &masking, &leaf_tapes, &salt, domain)
+                    .expect("hash bounded full domain");
+            assert_eq!(
+                bounded, reference,
+                "N={domain_size}, coefficients={coefficient_count}"
+            );
+            assert_eq!(
+                merkle_build_levels(&mut vec![bounded], backend),
+                merkle_build_levels(&mut vec![reference], backend),
+            );
+
+            let stored = DecsEvaluationStorage::Polynomials {
+                committed,
+                masking,
+                domain,
+            };
+            // Nonmonotone and repeated openings must retain the original table semantics.
+            for index in [domain_size - 1, 0, domain_size / 2, 0, 1] {
+                let point = domain
+                    .point_for_leaf_index(index)
+                    .expect("derive exact opening point");
+                let (committed_values, masking_values) = stored
+                    .opening(index, point)
+                    .expect("open coefficient storage");
+                assert_eq!(
+                    committed_values
+                        .into_iter()
+                        .chain(masking_values)
+                        .collect::<Vec<_>>(),
+                    tables.iter().map(|table| table[index]).collect::<Vec<_>>(),
+                );
+                assert!(stored.opening(index, add_mod(point, 1)).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn smza_bounded_cosets_match_every_full_table_leaf_and_root() {
+        let backend = SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza;
+        let salt = [0x53u8; SALT_BYTES];
+        // Includes one-point blocks, several nonzero block offsets, and B=N.
+        for (domain_size, coefficient_count) in [(64, 38), (128, 43), (512, 406)] {
+            let domain = SmallwoodDisjointCosetDescriptorV1::derive(domain_size, coefficient_count)
+                .expect("derive bounded-test coset");
+            let committed = vec![
+                (0..coefficient_count)
+                    .map(|i| (i * 17 + 3) as u64)
+                    .collect(),
+                vec![7],
+            ];
+            let masking = vec![
+                vec![11],
+                vec![2; coefficient_count.saturating_sub(1).max(1)],
+            ];
+            let leaf_tapes = (0..domain_size)
+                .map(|i| vec![(i * 7 + 1) as u8; 64])
+                .collect::<Vec<_>>();
+            let mut tables = Vec::new();
+            for poly in committed.iter().chain(&masking) {
+                let mut table = vec![0; domain_size];
+                evaluate_poly_on_radix2_coset_into(poly, &mut table, domain.shift)
+                    .expect("evaluate reference full domain");
+                tables.push(table);
+            }
+            let reference = (0..domain_size)
+                .map(|index| {
+                    hash_strict_zk_merkle_leaf_from_tables(
+                        &bytes_to_words_unchecked(&salt),
+                        &tables[..committed.len()],
+                        &tables[committed.len()..],
+                        index,
+                        &leaf_tapes[index],
+                        backend,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let bounded = strict_coset_leaf_hashes_bounded(
+                &committed,
+                &masking,
+                &leaf_tapes,
+                &salt,
+                domain,
+                backend,
+            )
+            .expect("hash bounded full domain");
+            assert_eq!(
+                bounded, reference,
+                "N={domain_size}, coefficients={coefficient_count}"
+            );
+            assert_eq!(
+                merkle_build_levels(&mut vec![bounded], backend),
+                merkle_build_levels(&mut vec![reference], backend),
+            );
+
+            let stored = DecsEvaluationStorage::Polynomials {
+                committed,
+                masking,
+                domain,
+            };
+            // Nonmonotone and repeated openings must retain the original table semantics.
+            for index in [domain_size - 1, 0, domain_size / 2, 0, 1] {
+                let point = domain
+                    .point_for_leaf_index(index)
+                    .expect("derive exact opening point");
+                let (committed_values, masking_values) = stored
+                    .opening(index, point)
+                    .expect("open coefficient storage");
+                assert_eq!(
+                    committed_values
+                        .into_iter()
+                        .chain(masking_values)
+                        .collect::<Vec<_>>(),
+                    tables.iter().map(|table| table[index]).collect::<Vec<_>>(),
+                );
+                assert!(stored.opening(index, add_mod(point, 1)).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn smz9_bounded_commitment_opens_and_checks_index_point_binding() {
+        let domain_size = 32;
+        let initial = vec![vec![3, 4, 9, 10, 19], vec![7, 3, 21, 1, 8]];
+        let salt = [0x27u8; SALT_BYTES];
+        let key = decs_commit(
+            initial.len(),
+            4,
+            2,
+            SmallwoodDecsChallengeFormat::Uniform,
+            domain_size,
+            &initial,
+            &salt,
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9,
+            SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+            &[],
+            64,
+        )
+        .expect("commit bounded SMZ9 test table");
+        assert!(matches!(
+            &key.evaluations,
+            DecsEvaluationStorage::Polynomials { .. }
+        ));
+        let indexes = [0, 7, 31];
+        let mut points = decs_field_evaluation_points(
+            SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+            domain_size,
+            5,
+            &indexes,
+        )
+        .expect("derive canonical test points");
+        let mut evals = vec![Vec::new(); indexes.len()];
+        decs_open(
+            initial.len(),
+            4,
+            indexes.len(),
+            &key,
+            &indexes,
+            &points,
+            &mut evals,
+            [0; NONCE_BYTES],
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9,
+        )
+        .expect("bounded opening satisfies unchanged combination check");
+        points[1] = add_mod(points[1], 1);
+        assert!(decs_open(
+            initial.len(),
+            4,
+            indexes.len(),
+            &key,
+            &indexes,
+            &points,
+            &mut evals,
+            [0; NONCE_BYTES],
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9,
+        )
+        .is_err());
     }
 
     #[test]

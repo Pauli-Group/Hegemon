@@ -15,7 +15,10 @@ use transaction_circuit::{
         poseidon2_v8_note_commitment, poseidon2_v8_two_note_frontier,
         poseidon2_v8_words_from_canonical_bytes, poseidon2_v8_words_to_bytes,
     },
-    smallwood_poseidon2_v8_hash_schedule::build_smallwood_poseidon2_v8_hash_schedule,
+    smallwood_poseidon2_v8_hash_schedule::{
+        build_smallwood_poseidon2_v8_hash_schedule, SmallwoodPoseidon2V8HashDigestRef,
+        SmallwoodPoseidon2V8HashFinalBinding, SmallwoodPoseidon2V8HashScheduleMaterial,
+    },
     smallwood_poseidon2_v8_types::{
         smallwood_poseidon2_v8_ciphertext_commitment, SmallwoodPoseidon2V8Digest,
         SmallwoodPoseidon2V8InlineCiphertexts, SmallwoodPoseidon2V8InputWitness,
@@ -46,6 +49,38 @@ fn random_field_words<R: RngCore + ?Sized>(rng: &mut R) -> [u64; 4] {
     }
 }
 
+fn address_authorization_extension(address: &ShieldedAddress) -> Result<[u64; 3], WalletError> {
+    if address.version != POSEIDON2_V8_ADDRESS_VERSION {
+        return Err(WalletError::AddressEncoding(
+            "V8 authorization extension requires an address-v5 recipient".into(),
+        ));
+    }
+    authorization_extension_words(address.pk_auth_extension)
+}
+
+fn authorization_extension_words(bytes: [u8; 24]) -> Result<[u64; 3], WalletError> {
+    let mut words = [0u64; 3];
+    for (limb, chunk) in bytes.chunks_exact(8).enumerate() {
+        let word = u64::from_le_bytes(chunk.try_into().expect("eight-byte auth-extension limb"));
+        if word >= FIELD_MODULUS_U64 {
+            return Err(WalletError::AddressEncoding(
+                "non-canonical V8 authorization extension".into(),
+            ));
+        }
+        words[limb] = word;
+    }
+    Ok(words)
+}
+
+fn random_single_key_note_randomness<R: RngCore + ?Sized>(
+    address: &ShieldedAddress,
+    rng: &mut R,
+) -> Result<[u64; 4], WalletError> {
+    let extension = address_authorization_extension(address)?;
+    let fresh = random_field_words(rng);
+    Ok([extension[0], extension[1], extension[2], fresh[0]])
+}
+
 pub fn protocol_opening_to_relation(
     opening: Poseidon2V8CoinbaseNoteOpening,
 ) -> SmallwoodPoseidon2V8NoteOpening {
@@ -74,7 +109,7 @@ pub fn build_poseidon2_v8_coinbase_args<R: RngCore + ?Sized>(
         recipient_key,
         authorization_key,
         rho: random_field_words(rng),
-        randomness: random_field_words(rng),
+        randomness: random_single_key_note_randomness(address, rng)?,
     };
     build_poseidon2_v8_coinbase_args_from_opening(address, opening, rng)
 }
@@ -93,7 +128,7 @@ pub fn build_poseidon2_v8_coinbase_args_from_opening<R: RngCore + ?Sized>(
         || address.crypto_suite != protocol_versioning::CRYPTO_SUITE_ETA
     {
         return Err(WalletError::AddressEncoding(
-            "V8 coinbase requires an address-v4/Eta recipient".into(),
+            "V8 coinbase requires an address-v5/Eta recipient".into(),
         ));
     }
     if opening.value == 0 || u128::from(opening.value) > MAX_IN_CIRCUIT_VALUE {
@@ -110,6 +145,7 @@ pub fn build_poseidon2_v8_coinbase_args_from_opening<R: RngCore + ?Sized>(
         .map_err(|_| WalletError::AddressEncoding("non-canonical V8 recipient key".into()))?;
     let authorization_key = poseidon2_v8_words_from_canonical_bytes(address.pk_auth)
         .map_err(|_| WalletError::AddressEncoding("non-canonical V8 authorization key".into()))?;
+    let authorization_extension = address_authorization_extension(address)?;
     if recipient_key == [0; 4]
         || authorization_key == [0; 4]
         || opening.rho == [0; 4]
@@ -119,7 +155,10 @@ pub fn build_poseidon2_v8_coinbase_args_from_opening<R: RngCore + ?Sized>(
             "zero V8 recipient, authorization key, rho, or randomness".into(),
         ));
     }
-    if opening.recipient_key != recipient_key || opening.authorization_key != authorization_key {
+    if opening.recipient_key != recipient_key
+        || opening.authorization_key != authorization_key
+        || opening.randomness[..3] != authorization_extension
+    {
         return Err(WalletError::AddressEncoding(
             "V8 coinbase opening is not owned by the supplied address".into(),
         ));
@@ -175,6 +214,11 @@ pub fn decrypt_poseidon2_v8_coinbase_opening(
         randomness: poseidon2_v8_words_from_canonical_bytes(plaintext.r)
             .map_err(|_| WalletError::NoteMismatch("non-canonical V8 randomness"))?,
     };
+    if recovered.randomness[..3] != material.poseidon2_v8_authorization_extension_words()? {
+        return Err(WalletError::NoteMismatch(
+            "V8 coinbase authorization extension mismatch",
+        ));
+    }
     if recovered != protocol_opening_to_relation(args.miner_note.opening) {
         return Err(WalletError::NoteMismatch(
             "V8 coinbase ciphertext/opening mismatch",
@@ -229,7 +273,7 @@ pub fn build_poseidon2_v8_owned_spend_inputs(
         || material.crypto_suite() != protocol_versioning::CRYPTO_SUITE_ETA
     {
         return Err(WalletError::AddressEncoding(
-            "V8 spend inputs require address-v4/Eta key material".into(),
+            "V8 spend inputs require address-v5/Eta key material".into(),
         ));
     }
     if positions[0] == positions[1]
@@ -256,9 +300,12 @@ pub fn build_poseidon2_v8_owned_spend_inputs(
     let authorization_key = poseidon2_v8_words_from_canonical_bytes(material.pk_auth)
         .map_err(|_| WalletError::AddressEncoding("non-canonical V8 authorization key".into()))?;
     let spend_words = spend_key.poseidon2_v8_words()?;
-    let derived_authorization = transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_single_key_authorization_key(spend_words)
+    let derived_authorization = transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_single_key_authorization_digest(spend_words)
         .map_err(|error| WalletError::Serialization(format!("V8 spend authorization derivation failed: {error:?}")))?;
-    if derived_authorization != authorization_key {
+    let authorization_extension = authorization_extension_words(material.pk_auth_extension)?;
+    if derived_authorization[..4] != authorization_key
+        || derived_authorization[4..] != authorization_extension
+    {
         return Err(WalletError::NoteMismatch(
             "V8 spend key does not authorize the supplied wallet address",
         ));
@@ -268,6 +315,7 @@ pub fn build_poseidon2_v8_owned_spend_inputs(
             || note.asset_id != NATIVE_ASSET_ID
             || note.recipient_key != recipient_key
             || note.authorization_key != authorization_key
+            || note.randomness[..3] != authorization_extension
         {
             return Err(WalletError::NoteMismatch(
                 "V8 spend note is not a positive native note owned by this wallet",
@@ -309,13 +357,16 @@ fn build_poseidon2_v8_owned_spend_input(
     let authorization_key = poseidon2_v8_words_from_canonical_bytes(material.pk_auth)
         .map_err(|_| WalletError::AddressEncoding("non-canonical V8 authorization key".into()))?;
     let spend_words = spend_key.poseidon2_v8_words()?;
-    let derived_authorization = transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_single_key_authorization_key(spend_words)
+    let derived_authorization = transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_single_key_authorization_digest(spend_words)
         .map_err(|error| WalletError::Serialization(format!("V8 spend authorization derivation failed: {error:?}")))?;
+    let authorization_extension = authorization_extension_words(material.pk_auth_extension)?;
     if note.value == 0
         || note.asset_id != NATIVE_ASSET_ID
         || note.recipient_key != recipient_key
         || note.authorization_key != authorization_key
-        || authorization_key != derived_authorization
+        || note.randomness[..3] != authorization_extension
+        || derived_authorization[..4] != authorization_key
+        || derived_authorization[4..] != authorization_extension
     {
         return Err(WalletError::NoteMismatch(
             "V8 spend note is not owned by the selected wallet address",
@@ -340,6 +391,30 @@ pub struct Poseidon2V8SpendMaterial {
     pub inline_ciphertexts: SmallwoodPoseidon2V8InlineCiphertexts,
 }
 
+/// Select semantic digests, independent of schedule call-number changes.
+fn bind_spend_hash_outputs(
+    statement: &mut SmallwoodPoseidon2V8PublicStatement,
+    hashes: &SmallwoodPoseidon2V8HashScheduleMaterial,
+) -> Result<(), WalletError> {
+    let digest = |wanted| {
+        hashes
+            .calls
+            .iter()
+            .find(|call| call.final_binding == SmallwoodPoseidon2V8HashFinalBinding::Digest(wanted))
+            .map(|call| call.final_digest())
+            .ok_or(WalletError::InvalidState("V8 spend digest binding missing"))
+    };
+    for input in 0..2 {
+        statement.nullifiers[input] =
+            digest(SmallwoodPoseidon2V8HashDigestRef::InputNullifier { input })?;
+    }
+    for output in 0..2 {
+        statement.commitments[output] =
+            digest(SmallwoodPoseidon2V8HashDigestRef::OutputNote { output })?;
+    }
+    Ok(())
+}
+
 /// Build a complete two-input/two-output SingleKey V8 self-spend from exact
 /// action-11 carrier bytes owned by one wallet root.
 ///
@@ -354,11 +429,6 @@ pub fn build_poseidon2_v8_two_coinbase_self_spend<R: RngCore + CryptoRng + ?Size
     output_address_indices: [u32; 2],
     rng: &mut R,
 ) -> Result<Poseidon2V8SpendMaterial, WalletError> {
-    const INPUT_0_NULLIFIER_FINAL: usize = 36;
-    const INPUT_1_NULLIFIER_FINAL: usize = 72;
-    const OUTPUT_0_NOTE_FINAL: usize = 75;
-    const OUTPUT_1_NOTE_FINAL: usize = 78;
-
     if parent_height >= FIELD_MODULUS_U64 {
         return Err(WalletError::Serialization(
             "V8 spend parent height is not a canonical field word".into(),
@@ -425,13 +495,16 @@ pub fn build_poseidon2_v8_two_coinbase_self_spend<R: RngCore + CryptoRng + ?Size
             poseidon2_v8_words_from_canonical_bytes(address.pk_auth).map_err(|_| {
                 WalletError::AddressEncoding("non-canonical V8 output authorization".into())
             })?;
-        if authorization_key != notes[0].authorization_key {
+        let authorization_extension = address_authorization_extension(&address)?;
+        if authorization_key != notes[0].authorization_key
+            || notes[0].randomness[..3] != authorization_extension
+        {
             return Err(WalletError::AddressEncoding(
                 "V8 SingleKey output address is not authorized by the source spend key".into(),
             ));
         }
         let rho = random_field_words(rng);
-        let randomness = random_field_words(rng);
+        let randomness = random_single_key_note_randomness(&address, rng)?;
         let note = SmallwoodPoseidon2V8NoteOpening {
             value: notes[output].value,
             asset_id: NATIVE_ASSET_ID,
@@ -486,14 +559,7 @@ pub fn build_poseidon2_v8_two_coinbase_self_spend<R: RngCore + CryptoRng + ?Size
         build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).map_err(|error| {
             WalletError::Serialization(format!("V8 spend hash schedule: {error:?}"))
         })?;
-    statement.nullifiers = [
-        hashes.calls[INPUT_0_NULLIFIER_FINAL].final_digest(),
-        hashes.calls[INPUT_1_NULLIFIER_FINAL].final_digest(),
-    ];
-    statement.commitments = [
-        hashes.calls[OUTPUT_0_NOTE_FINAL].final_digest(),
-        hashes.calls[OUTPUT_1_NOTE_FINAL].final_digest(),
-    ];
+    bind_spend_hash_outputs(&mut statement, &hashes)?;
     statement.validate_public_structure().map_err(|error| {
         WalletError::Serialization(format!("V8 self-spend statement: {error:?}"))
     })?;
@@ -529,11 +595,6 @@ pub fn build_poseidon2_v8_wallet_self_spend<R: RngCore + CryptoRng + ?Sized>(
     output_address_indices: [u32; 2],
     rng: &mut R,
 ) -> Result<Poseidon2V8WalletSpend, WalletError> {
-    const INPUT_0_NULLIFIER_FINAL: usize = 36;
-    const INPUT_1_NULLIFIER_FINAL: usize = 72;
-    const OUTPUT_0_NOTE_FINAL: usize = 75;
-    const OUTPUT_1_NOTE_FINAL: usize = 78;
-
     let context = store.poseidon2_v8_spend_context()?;
     if context.tip.height >= FIELD_MODULUS_U64
         || context.notes[0].position == context.notes[1].position
@@ -574,13 +635,16 @@ pub fn build_poseidon2_v8_wallet_self_spend<R: RngCore + CryptoRng + ?Sized>(
             poseidon2_v8_words_from_canonical_bytes(address.pk_auth).map_err(|_| {
                 WalletError::AddressEncoding("non-canonical V8 output authorization".into())
             })?;
-        if authorization_key != context.notes[0].opening.authorization_key {
+        let authorization_extension = address_authorization_extension(&address)?;
+        if authorization_key != context.notes[0].opening.authorization_key
+            || context.notes[0].opening.randomness[..3] != authorization_extension
+        {
             return Err(WalletError::AddressEncoding(
                 "V8 SingleKey output address is not authorized by the source spend key".into(),
             ));
         }
         let rho = random_field_words(rng);
-        let randomness = random_field_words(rng);
+        let randomness = random_single_key_note_randomness(&address, rng)?;
         let note = SmallwoodPoseidon2V8NoteOpening {
             value: context.notes[output].opening.value,
             asset_id: NATIVE_ASSET_ID,
@@ -644,14 +708,7 @@ pub fn build_poseidon2_v8_wallet_self_spend<R: RngCore + CryptoRng + ?Sized>(
         build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).map_err(|error| {
             WalletError::Serialization(format!("V8 spend hash schedule: {error:?}"))
         })?;
-    statement.nullifiers = [
-        hashes.calls[INPUT_0_NULLIFIER_FINAL].final_digest(),
-        hashes.calls[INPUT_1_NULLIFIER_FINAL].final_digest(),
-    ];
-    statement.commitments = [
-        hashes.calls[OUTPUT_0_NOTE_FINAL].final_digest(),
-        hashes.calls[OUTPUT_1_NOTE_FINAL].final_digest(),
-    ];
+    bind_spend_hash_outputs(&mut statement, &hashes)?;
     statement.validate_public_structure().map_err(|error| {
         WalletError::Serialization(format!("V8 wallet self-spend statement: {error:?}"))
     })?;
@@ -747,12 +804,32 @@ mod tests {
         let recipient = poseidon2_v8_words_from_canonical_bytes(address.pk_recipient).unwrap();
         let authorization = poseidon2_v8_words_from_canonical_bytes(address.pk_auth).unwrap();
         assert_eq!(
+            authorization,
+            [
+                4_878_808_653_854_375_386,
+                15_704_130_448_495_857_300,
+                420_778_687_531_148_047,
+                1_878_863_322_166_853_742
+            ]
+        );
+        assert_eq!(
+            material
+                .poseidon2_v8_authorization_extension_words()
+                .unwrap(),
+            [
+                5_551_091_740_101_773_036,
+                4_468_278_513_200_243_473,
+                13_630_218_852_427_362_977
+            ]
+        );
+        assert_eq!(
             spend,
             [
-                12_387_129_418_859_519_852,
-                3_275_605_879_553_790_158,
-                18_179_312_849_545_706_498,
-                6_480_565_605_584_441_507,
+                7_168_953_366_546_811_868,
+                2_906_145_813_326_798_190,
+                1_270_714_600_746_738_463,
+                12_813_674_516_097_660_753,
+                0,
             ]
         );
         assert_eq!(
@@ -764,7 +841,7 @@ mod tests {
                 17_300_113_818_709_955_652,
             ]
         );
-        assert_eq!(
+        assert_ne!(
             authorization,
             [
                 1_741_146_651_100_274_088,
@@ -778,10 +855,15 @@ mod tests {
             poseidon2_v8_single_key_authorization_key(spend).unwrap()
         );
 
-        for (rho, randomness, seed) in [
+        for (rho, mut randomness, seed) in [
             ([31, 32, 33, 34], [41, 42, 43, 44], 101),
             ([51, 52, 53, 54], [61, 62, 63, 64], 102),
         ] {
+            randomness[..3].copy_from_slice(
+                &material
+                    .poseidon2_v8_authorization_extension_words()
+                    .unwrap(),
+            );
             let opening = Poseidon2V8CoinbaseNoteOpening {
                 value: 499_429_223,
                 asset_id: NATIVE_ASSET_ID,
@@ -801,14 +883,14 @@ mod tests {
     }
 
     #[test]
-    fn retained_carriers_build_exact_wallet_owned_spend_tuple() {
+    fn repaired_carriers_build_wallet_owned_spend_and_reject_old_carriers() {
         let root = RootSecret::from_bytes([0x51; 32]);
         let keys = root.derive();
         let material = keys.poseidon2_v8_address(9).unwrap();
         let address = material.shielded_address();
         let recipient = poseidon2_v8_words_from_canonical_bytes(address.pk_recipient).unwrap();
         let authorization = poseidon2_v8_words_from_canonical_bytes(address.pk_auth).unwrap();
-        let input_openings = [
+        let mut input_openings = [
             Poseidon2V8CoinbaseNoteOpening {
                 value: 499_429_223,
                 asset_id: NATIVE_ASSET_ID,
@@ -827,12 +909,20 @@ mod tests {
             },
         ];
 
-        // Reproduce every encrypted carrier from one lifecycle RNG stream.
+        for opening in &mut input_openings {
+            opening.randomness[..3].copy_from_slice(
+                &material
+                    .poseidon2_v8_authorization_extension_words()
+                    .unwrap(),
+            );
+        }
+        // New relation carriers are distinct; retained old bytes stay unchanged.
         let mut rng = StdRng::seed_from_u64(301);
         let expected_coinbase = [
             RETAINED_V8_COINBASE_0_SCALE.as_slice(),
             RETAINED_V8_COINBASE_1_SCALE.as_slice(),
         ];
+        let mut fresh_coinbase = Vec::new();
         for input in 0..2 {
             let args = build_poseidon2_v8_coinbase_args_from_opening(
                 &address,
@@ -840,9 +930,10 @@ mod tests {
                 &mut rng,
             )
             .unwrap();
-            assert_eq!(args.encode(), expected_coinbase[input]);
+            assert_ne!(args.encode(), expected_coinbase[input]);
+            fresh_coinbase.push(args.encode());
         }
-        let spend = build_poseidon2_v8_two_coinbase_self_spend(
+        assert!(build_poseidon2_v8_two_coinbase_self_spend(
             &root,
             9,
             expected_coinbase,
@@ -850,31 +941,53 @@ mod tests {
             [9, 9],
             &mut rng,
         )
+        .is_err());
+        let spend = build_poseidon2_v8_two_coinbase_self_spend(
+            &root,
+            9,
+            [fresh_coinbase[0].as_slice(), fresh_coinbase[1].as_slice()],
+            2,
+            [9, 9],
+            &mut rng,
+        )
         .unwrap();
 
-        assert_eq!(
+        let compiled = transaction_circuit::smallwood_poseidon2_v8_semantics::compile_smallwood_poseidon2_v8_relation(
+            &spend.statement, &spend.witness).unwrap();
+        compiled
+            .adapter
+            .verify_packed_witness(&compiled.witness_values)
+            .unwrap();
+
+        assert_ne!(
             spend.inline_ciphertexts.ciphertexts,
             [
                 Some(*RETAINED_V8_OUTPUT_0_RAW),
                 Some(*RETAINED_V8_OUTPUT_1_RAW)
             ]
         );
-        assert_eq!(
+        assert_ne!(
             spend.witness.outputs.map(|output| output.note),
             RETAINED_V8_OUTPUT_OPENINGS.map(protocol_opening_to_relation)
         );
-        assert_eq!(
+        assert_ne!(
             sha512_hex(&spend.statement.to_public_bytes()),
             RETAINED_V8_STATEMENT_SHA512
         );
-        assert_eq!(
+        assert_ne!(
             sha512_hex(&spend.witness.to_witness_bytes()),
             RETAINED_V8_WITNESS_SHA512
         );
-        assert_eq!(
+        assert_ne!(
             sha512_hex(&spend.inline_ciphertexts.to_inline_ciphertext_bytes()),
             RETAINED_V8_INLINE_CIPHERTEXT_SHA512
         );
+        assert_eq!(sha512_hex(&spend.statement.to_public_bytes()),
+            "4d7d28543e8a795ede947da241226543d7d14bd79a2e67e3de3e23ef005496502e1efc674527531433b1d479a53ea464936bbf5108cf1a789ad09a2ebcd94a80");
+        assert_eq!(sha512_hex(&spend.witness.to_witness_bytes()),
+            "14215237086f0c130bfb70f6025bdf1a54f34d2c37afe93a60f5b7346b66d000736fafcf6df545b55970697786045025b92a70b1389811937925e75f0f65ecd6");
+        assert_eq!(sha512_hex(&spend.inline_ciphertexts.to_inline_ciphertext_bytes()),
+            "1101e122f9164f05ee7c27bf159eee0ad5985aa03924d4433633360848dc68d7a0ecb2b137cc3c62f8e2bdcca6a5dd394466960f7051b95a9dc196f3d4315077");
 
         let commitments = [
             poseidon2_v8_note_commitment(protocol_opening_to_relation(input_openings[0])).unwrap(),
@@ -904,13 +1017,13 @@ mod tests {
             assert_eq!(plaintext.r, poseidon2_v8_words_to_bytes(opening.randomness));
         }
 
-        let mut mutated_coinbase = *RETAINED_V8_COINBASE_0_SCALE;
+        let mut mutated_coinbase = fresh_coinbase[0].clone();
         *mutated_coinbase.last_mut().unwrap() ^= 1;
         let mut mutation_rng = StdRng::seed_from_u64(999);
         assert!(build_poseidon2_v8_two_coinbase_self_spend(
             &root,
             9,
-            [&mutated_coinbase, RETAINED_V8_COINBASE_1_SCALE.as_slice()],
+            [&mutated_coinbase, fresh_coinbase[1].as_slice()],
             2,
             [9, 9],
             &mut mutation_rng,
@@ -919,16 +1032,13 @@ mod tests {
         assert!(build_poseidon2_v8_two_coinbase_self_spend(
             &root,
             9,
-            [
-                RETAINED_V8_COINBASE_0_SCALE.as_slice(),
-                RETAINED_V8_COINBASE_0_SCALE.as_slice(),
-            ],
+            [fresh_coinbase[0].as_slice(), fresh_coinbase[0].as_slice(),],
             2,
             [9, 9],
             &mut mutation_rng,
         )
         .is_err());
-        let mut mutated_output = *RETAINED_V8_OUTPUT_0_RAW;
+        let mut mutated_output = spend.inline_ciphertexts.ciphertexts[0].unwrap();
         *mutated_output.last_mut().unwrap() ^= 1;
         assert!(NoteCiphertext::from_da_bytes(&mutated_output)
             .and_then(|ciphertext| ciphertext.decrypt(&material))

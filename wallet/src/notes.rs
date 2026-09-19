@@ -103,7 +103,7 @@ impl NotePlaintext {
 /// Size of the ciphertext portion in chain format
 pub const CHAIN_CIPHERTEXT_SIZE: usize = 579;
 const NOTE_ENCRYPTION_VERSION: u8 = 3;
-const POSEIDON2_V8_NOTE_ENCRYPTION_VERSION: u8 = 4;
+const POSEIDON2_V8_NOTE_ENCRYPTION_VERSION: u8 = crate::address::POSEIDON2_V8_ADDRESS_VERSION;
 pub const NOTE_CIPHERTEXT_KEM_RANDOMNESS_LEN: usize = 32;
 pub const NOTE_CIPHERTEXT_AEAD_KEY_LEN: usize = 32;
 pub const NOTE_CIPHERTEXT_AEAD_NONCE_LEN: usize = 12;

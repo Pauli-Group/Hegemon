@@ -8,6 +8,9 @@
 //! public statement words. The outer `SWP8LC02` header and canonical SCALE
 //! vector carry that self-contained leaf byte-for-byte through every native
 //! lifecycle boundary.
+//! The additive q38 SMZA helpers preserve this grammar under `HGV8TX03` /
+//! `SWP8LC03`, profile 9 and domain set 5, with independent larger byte caps.
+//! Selecting one profile never accepts another profile's bytes or parameters.
 //!
 //! This module is transport only. A source-owned V8 relation module must supply
 //! the one expected nonzero relation digest and network id to contextual decode.
@@ -36,6 +39,17 @@ pub const POSEIDON2_PRODUCTION_INNER_PROOF_MAGIC: [u8; 4] = *b"SMZ8";
 pub const POSEIDON2_PRODUCTION_SMZ9_TRANSPORT_MAGIC: [u8; 8] = *b"SWP8LC02";
 pub const POSEIDON2_PRODUCTION_SMZ9_NATIVE_LEAF_MAGIC: [u8; 8] = *b"HGV8TX02";
 pub const POSEIDON2_PRODUCTION_SMZ9_INNER_PROOF_MAGIC: [u8; 4] = *b"SMZ9";
+/// Additive q38 full-SHA-512 transport. These identities do not authorize proofs.
+pub const POSEIDON2_PRODUCTION_SMZA_TRANSPORT_MAGIC: [u8; 8] = *b"SWP8LC03";
+pub const POSEIDON2_PRODUCTION_SMZA_NATIVE_LEAF_MAGIC: [u8; 8] = *b"HGV8TX03";
+pub const POSEIDON2_PRODUCTION_SMZA_INNER_PROOF_MAGIC: [u8; 4] = *b"SMZA";
+pub const POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID: u8 = 9;
+pub const POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET: u16 = 5;
+pub const POSEIDON2_PRODUCTION_SMZA_MAX_PROOF_BYTES: usize = 164_113;
+pub const POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES: usize = 169_547;
+pub const POSEIDON2_PRODUCTION_SMZA_MAX_ENVELOPE_BYTES: usize = 169_543;
+pub const POSEIDON2_PRODUCTION_SMZA_MAX_NATIVE_LEAF_BYTES: usize = 169_511;
+pub const POSEIDON2_PRODUCTION_SMZA_MAX_ROUTED_NATIVE_LEAF_BYTES: usize = 169_511;
 
 pub const POSEIDON2_PRODUCTION_TRANSPORT_CIRCUIT: u16 = CIRCUIT_V8;
 pub const POSEIDON2_PRODUCTION_TRANSPORT_CRYPTO_SUITE: u16 = CRYPTO_SUITE_ETA;
@@ -54,6 +68,12 @@ struct Poseidon2ProductionWireProfile {
     native_leaf_magic: [u8; 8],
     inner_proof_magic: [u8; 4],
     profile_id: u8,
+    domain_set: u16,
+    max_proof_bytes: usize,
+    max_native_leaf_bytes: usize,
+    max_routed_native_leaf_bytes: usize,
+    max_envelope_bytes: usize,
+    max_action_bytes: usize,
 }
 
 const POSEIDON2_PRODUCTION_SMZ8_WIRE_PROFILE: Poseidon2ProductionWireProfile =
@@ -62,6 +82,12 @@ const POSEIDON2_PRODUCTION_SMZ8_WIRE_PROFILE: Poseidon2ProductionWireProfile =
         native_leaf_magic: POSEIDON2_PRODUCTION_NATIVE_LEAF_MAGIC,
         inner_proof_magic: POSEIDON2_PRODUCTION_INNER_PROOF_MAGIC,
         profile_id: POSEIDON2_PRODUCTION_TRANSPORT_PROFILE_ID,
+        domain_set: POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET,
+        max_proof_bytes: POSEIDON2_PRODUCTION_MAX_PROOF_BYTES,
+        max_native_leaf_bytes: POSEIDON2_PRODUCTION_MAX_NATIVE_LEAF_BYTES,
+        max_routed_native_leaf_bytes: POSEIDON2_PRODUCTION_MAX_ROUTED_NATIVE_LEAF_BYTES,
+        max_envelope_bytes: POSEIDON2_PRODUCTION_MAX_ENVELOPE_BYTES,
+        max_action_bytes: POSEIDON2_PRODUCTION_MAX_ACTION_BYTES,
     };
 
 const POSEIDON2_PRODUCTION_SMZ9_WIRE_PROFILE: Poseidon2ProductionWireProfile =
@@ -70,6 +96,21 @@ const POSEIDON2_PRODUCTION_SMZ9_WIRE_PROFILE: Poseidon2ProductionWireProfile =
         native_leaf_magic: POSEIDON2_PRODUCTION_SMZ9_NATIVE_LEAF_MAGIC,
         inner_proof_magic: POSEIDON2_PRODUCTION_SMZ9_INNER_PROOF_MAGIC,
         profile_id: POSEIDON2_PRODUCTION_SMZ9_TRANSPORT_PROFILE_ID,
+        ..POSEIDON2_PRODUCTION_SMZ8_WIRE_PROFILE
+    };
+
+const POSEIDON2_PRODUCTION_SMZA_WIRE_PROFILE: Poseidon2ProductionWireProfile =
+    Poseidon2ProductionWireProfile {
+        transport_magic: POSEIDON2_PRODUCTION_SMZA_TRANSPORT_MAGIC,
+        native_leaf_magic: POSEIDON2_PRODUCTION_SMZA_NATIVE_LEAF_MAGIC,
+        inner_proof_magic: POSEIDON2_PRODUCTION_SMZA_INNER_PROOF_MAGIC,
+        profile_id: POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID,
+        domain_set: POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET,
+        max_proof_bytes: POSEIDON2_PRODUCTION_SMZA_MAX_PROOF_BYTES,
+        max_native_leaf_bytes: POSEIDON2_PRODUCTION_SMZA_MAX_NATIVE_LEAF_BYTES,
+        max_routed_native_leaf_bytes: POSEIDON2_PRODUCTION_SMZA_MAX_ROUTED_NATIVE_LEAF_BYTES,
+        max_envelope_bytes: POSEIDON2_PRODUCTION_SMZA_MAX_ENVELOPE_BYTES,
+        max_action_bytes: POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES,
     };
 
 pub const POSEIDON2_PRODUCTION_PUBLIC_STATEMENT_WORDS: usize = 120;
@@ -134,6 +175,16 @@ pub const fn poseidon2_production_max_routed_proof_bytes(active_outputs: usize) 
     }
     POSEIDON2_PRODUCTION_MAX_ROUTED_PROOF_BYTES_NO_OUTPUTS
         .checked_sub(active_outputs * POSEIDON2_PRODUCTION_CIPHERTEXT_BYTES)
+}
+
+/// SMZA's independent inner-proof cap still applies when outputs are inactive.
+pub const fn poseidon2_production_smza_max_routed_proof_bytes(
+    active_outputs: usize,
+) -> Option<usize> {
+    if active_outputs > POSEIDON2_PRODUCTION_MAX_OUTPUTS {
+        return None;
+    }
+    Some(POSEIDON2_PRODUCTION_SMZA_MAX_PROOF_BYTES)
 }
 
 pub const fn poseidon2_production_action_overhead_bytes(active_outputs: usize) -> Option<usize> {
@@ -524,6 +575,109 @@ pub fn encode_poseidon2_production_smz9_native_leaf(
     )
 }
 
+pub fn encode_poseidon2_production_smza_native_leaf(
+    expected: Poseidon2ProductionExpectedContext,
+    public_statement: &[u64; POSEIDON2_PRODUCTION_PUBLIC_STATEMENT_WORDS],
+    relation_balance_binding: &[u64; POSEIDON2_PRODUCTION_RELATION_BALANCE_BINDING_LIMBS],
+    ciphertexts: [Option<&[u8; POSEIDON2_PRODUCTION_CIPHERTEXT_BYTES]>;
+        POSEIDON2_PRODUCTION_MAX_OUTPUTS],
+    proof: &[u8],
+) -> Result<Vec<u8>, Poseidon2ProductionTransportError> {
+    encode_poseidon2_production_native_leaf_with_profile(
+        POSEIDON2_PRODUCTION_SMZA_WIRE_PROFILE,
+        expected,
+        public_statement,
+        relation_balance_binding,
+        ciphertexts,
+        proof,
+    )
+}
+
+pub fn preflight_poseidon2_production_smza_native_leaf_exact(
+    leaf: &[u8],
+) -> Result<DecodedPoseidon2ProductionNativeLeaf<'_>, Poseidon2ProductionTransportError> {
+    preflight_poseidon2_production_native_leaf_with_profile_exact(
+        leaf,
+        POSEIDON2_PRODUCTION_SMZA_WIRE_PROFILE,
+    )
+}
+
+pub fn decode_poseidon2_production_smza_native_leaf_exact(
+    expected: Poseidon2ProductionExpectedContext,
+    leaf: &[u8],
+) -> Result<DecodedPoseidon2ProductionNativeLeaf<'_>, Poseidon2ProductionTransportError> {
+    preflight_poseidon2_production_smza_native_leaf_exact(leaf)?.ensure_context(expected)
+}
+
+pub fn encode_poseidon2_production_smza_envelope(
+    expected: Poseidon2ProductionExpectedContext,
+    native_leaf: &[u8],
+) -> Result<Vec<u8>, Poseidon2ProductionTransportError> {
+    encode_poseidon2_production_envelope_with_profile(
+        POSEIDON2_PRODUCTION_SMZA_WIRE_PROFILE,
+        expected,
+        native_leaf,
+    )
+}
+
+pub fn preflight_poseidon2_production_smza_envelope_exact(
+    envelope: &[u8],
+) -> Result<DecodedPoseidon2ProductionEnvelope<'_>, Poseidon2ProductionTransportError> {
+    preflight_poseidon2_production_envelope_with_profile_exact(
+        envelope,
+        POSEIDON2_PRODUCTION_SMZA_WIRE_PROFILE,
+    )
+}
+
+pub fn decode_poseidon2_production_smza_envelope_exact(
+    expected: Poseidon2ProductionExpectedContext,
+    envelope: &[u8],
+) -> Result<DecodedPoseidon2ProductionEnvelope<'_>, Poseidon2ProductionTransportError> {
+    preflight_poseidon2_production_smza_envelope_exact(envelope)?.ensure_context(expected)
+}
+
+pub fn encode_poseidon2_production_smza_inline_args(
+    expected: Poseidon2ProductionExpectedContext,
+    envelope: &[u8],
+) -> Result<Vec<u8>, Poseidon2ProductionTransportError> {
+    encode_poseidon2_production_inline_args_with_profile(
+        POSEIDON2_PRODUCTION_SMZA_WIRE_PROFILE,
+        expected,
+        envelope,
+    )
+}
+
+pub fn preflight_poseidon2_production_smza_inline_args_exact(
+    encoded: &[u8],
+) -> Result<DecodedPoseidon2ProductionInlineArgs<'_>, Poseidon2ProductionTransportError> {
+    preflight_poseidon2_production_inline_args_with_profile_exact(
+        encoded,
+        POSEIDON2_PRODUCTION_SMZA_WIRE_PROFILE,
+    )
+}
+
+pub fn decode_poseidon2_production_smza_inline_args_exact(
+    expected: Poseidon2ProductionExpectedContext,
+    encoded: &[u8],
+) -> Result<DecodedPoseidon2ProductionInlineArgs<'_>, Poseidon2ProductionTransportError> {
+    preflight_poseidon2_production_smza_inline_args_exact(encoded)?.ensure_context(expected)
+}
+
+pub fn ensure_poseidon2_production_smza_stage_bytes(
+    expected: Poseidon2ProductionExpectedContext,
+    canonical_envelope: &[u8],
+    observed_action_args: &[u8],
+    stage: Poseidon2ProductionTransportStage,
+) -> Result<(), Poseidon2ProductionTransportError> {
+    ensure_poseidon2_production_stage_bytes_with_profile(
+        POSEIDON2_PRODUCTION_SMZA_WIRE_PROFILE,
+        expected,
+        canonical_envelope,
+        observed_action_args,
+        stage,
+    )
+}
+
 fn encode_poseidon2_production_native_leaf_with_profile(
     wire: Poseidon2ProductionWireProfile,
     expected: Poseidon2ProductionExpectedContext,
@@ -545,7 +699,7 @@ fn encode_poseidon2_production_native_leaf_with_profile(
         .ok_or(Poseidon2ProductionTransportError::LengthOverflow)?
         .checked_add(proof.len())
         .ok_or(Poseidon2ProductionTransportError::LengthOverflow)?;
-    validate_native_leaf_len(native_leaf_len)?;
+    validate_native_leaf_len(native_leaf_len, wire)?;
     let proof_len = u32::try_from(proof.len())
         .map_err(|_| Poseidon2ProductionTransportError::LengthOverflow)?;
     let leaf_len = u32::try_from(native_leaf_len)
@@ -562,7 +716,7 @@ fn encode_poseidon2_production_native_leaf_with_profile(
     leaf.extend_from_slice(&POSEIDON2_PRODUCTION_TRANSPORT_ACTION_ID.to_le_bytes());
     leaf.push(POSEIDON2_PRODUCTION_TRANSPORT_BACKEND_ID);
     leaf.push(wire.profile_id);
-    leaf.extend_from_slice(&POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET.to_le_bytes());
+    leaf.extend_from_slice(&wire.domain_set.to_le_bytes());
     leaf.extend_from_slice(&(POSEIDON2_PRODUCTION_PUBLIC_STATEMENT_WORDS as u16).to_le_bytes());
     leaf.extend_from_slice(
         &(POSEIDON2_PRODUCTION_RELATION_BALANCE_BINDING_LIMBS as u16).to_le_bytes(),
@@ -610,17 +764,17 @@ fn preflight_poseidon2_production_native_leaf_with_profile_exact(
     leaf: &[u8],
     wire: Poseidon2ProductionWireProfile,
 ) -> Result<DecodedPoseidon2ProductionNativeLeaf<'_>, Poseidon2ProductionTransportError> {
-    if leaf.len() > POSEIDON2_PRODUCTION_MAX_NATIVE_LEAF_BYTES {
+    if leaf.len() > wire.max_native_leaf_bytes {
         return Err(Poseidon2ProductionTransportError::NativeLeafTooLarge {
             observed: leaf.len(),
-            maximum: POSEIDON2_PRODUCTION_MAX_NATIVE_LEAF_BYTES,
+            maximum: wire.max_native_leaf_bytes,
         });
     }
-    if leaf.len() > POSEIDON2_PRODUCTION_MAX_ROUTED_NATIVE_LEAF_BYTES {
+    if leaf.len() > wire.max_routed_native_leaf_bytes {
         return Err(
             Poseidon2ProductionTransportError::NativeLeafExceedsInlineBudget {
                 observed: leaf.len(),
-                maximum: POSEIDON2_PRODUCTION_MAX_ROUTED_NATIVE_LEAF_BYTES,
+                maximum: wire.max_routed_native_leaf_bytes,
             },
         );
     }
@@ -658,9 +812,9 @@ fn preflight_poseidon2_production_native_leaf_with_profile_exact(
         return Err(Poseidon2ProductionTransportError::NonZeroReserved(reserved));
     }
     let proof_len = read_u32_le(leaf, LEAF_OFFSET_PROOF_LEN) as usize;
-    validate_hard_proof_len(proof_len)?;
+    validate_hard_proof_len(proof_len, wire)?;
     let declared_leaf_len = read_u32_le(leaf, LEAF_OFFSET_NATIVE_LEAF_LEN) as usize;
-    validate_native_leaf_len(declared_leaf_len)?;
+    validate_native_leaf_len(declared_leaf_len, wire)?;
     if declared_leaf_len < POSEIDON2_PRODUCTION_NATIVE_LEAF_FIXED_BYTES {
         return Err(Poseidon2ProductionTransportError::Truncated {
             declared: POSEIDON2_PRODUCTION_NATIVE_LEAF_FIXED_BYTES,
@@ -696,7 +850,7 @@ fn preflight_poseidon2_production_native_leaf_with_profile_exact(
     });
     let active_slots = output_activity(&statement_words)?;
     let active_outputs = active_slots.iter().filter(|active| **active).count();
-    validate_routed_proof_len(proof_len, active_outputs)?;
+    validate_routed_proof_len(proof_len, active_outputs, wire)?;
     let ciphertext_bytes = active_outputs
         .checked_mul(POSEIDON2_PRODUCTION_CIPHERTEXT_BYTES)
         .ok_or(Poseidon2ProductionTransportError::LengthOverflow)?;
@@ -794,10 +948,10 @@ fn encode_poseidon2_production_envelope_with_profile(
     let envelope_len = POSEIDON2_PRODUCTION_TRANSPORT_HEADER_BYTES
         .checked_add(native_leaf.len())
         .ok_or(Poseidon2ProductionTransportError::LengthOverflow)?;
-    if envelope_len > POSEIDON2_PRODUCTION_MAX_ENVELOPE_BYTES {
+    if envelope_len > wire.max_envelope_bytes {
         return Err(Poseidon2ProductionTransportError::EnvelopeTooLarge {
             observed: envelope_len,
-            maximum: POSEIDON2_PRODUCTION_MAX_ENVELOPE_BYTES,
+            maximum: wire.max_envelope_bytes,
         });
     }
     let proof_len = u32::try_from(decoded_leaf.proof.len())
@@ -816,7 +970,7 @@ fn encode_poseidon2_production_envelope_with_profile(
     envelope.extend_from_slice(&POSEIDON2_PRODUCTION_TRANSPORT_ACTION_ID.to_le_bytes());
     envelope.push(POSEIDON2_PRODUCTION_TRANSPORT_BACKEND_ID);
     envelope.push(wire.profile_id);
-    envelope.extend_from_slice(&POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET.to_le_bytes());
+    envelope.extend_from_slice(&wire.domain_set.to_le_bytes());
     envelope.push(POSEIDON2_PRODUCTION_TRANSPORT_INLINE_MODE);
     envelope.push(0);
     envelope.extend_from_slice(&proof_len.to_le_bytes());
@@ -849,10 +1003,10 @@ fn preflight_poseidon2_production_envelope_with_profile_exact(
     envelope: &[u8],
     wire: Poseidon2ProductionWireProfile,
 ) -> Result<DecodedPoseidon2ProductionEnvelope<'_>, Poseidon2ProductionTransportError> {
-    if envelope.len() > POSEIDON2_PRODUCTION_MAX_ENVELOPE_BYTES {
+    if envelope.len() > wire.max_envelope_bytes {
         return Err(Poseidon2ProductionTransportError::EnvelopeTooLarge {
             observed: envelope.len(),
-            maximum: POSEIDON2_PRODUCTION_MAX_ENVELOPE_BYTES,
+            maximum: wire.max_envelope_bytes,
         });
     }
     if envelope.len() < POSEIDON2_PRODUCTION_TRANSPORT_HEADER_BYTES {
@@ -885,9 +1039,9 @@ fn preflight_poseidon2_production_envelope_with_profile_exact(
         ));
     }
     let proof_len = read_u32_le(envelope, TRANSPORT_OFFSET_PROOF_LEN) as usize;
-    validate_hard_proof_len(proof_len)?;
+    validate_hard_proof_len(proof_len, wire)?;
     let native_leaf_len = read_u32_le(envelope, TRANSPORT_OFFSET_NATIVE_LEAF_LEN) as usize;
-    validate_native_leaf_len(native_leaf_len)?;
+    validate_native_leaf_len(native_leaf_len, wire)?;
     let declared_total = POSEIDON2_PRODUCTION_TRANSPORT_HEADER_BYTES
         .checked_add(native_leaf_len)
         .ok_or(Poseidon2ProductionTransportError::LengthOverflow)?;
@@ -969,10 +1123,10 @@ fn encode_poseidon2_production_inline_args_with_profile(
     let total_len = prefix_len
         .checked_add(envelope.len())
         .ok_or(Poseidon2ProductionTransportError::LengthOverflow)?;
-    if total_len > POSEIDON2_PRODUCTION_MAX_ACTION_BYTES {
+    if total_len > wire.max_action_bytes {
         return Err(Poseidon2ProductionTransportError::ActionBytesTooLarge {
             observed: total_len,
-            maximum: POSEIDON2_PRODUCTION_MAX_ACTION_BYTES,
+            maximum: wire.max_action_bytes,
         });
     }
     let mut action = Vec::new();
@@ -1007,19 +1161,19 @@ fn preflight_poseidon2_production_inline_args_with_profile_exact(
     encoded: &[u8],
     wire: Poseidon2ProductionWireProfile,
 ) -> Result<DecodedPoseidon2ProductionInlineArgs<'_>, Poseidon2ProductionTransportError> {
-    if encoded.len() > POSEIDON2_PRODUCTION_MAX_ACTION_BYTES {
+    if encoded.len() > wire.max_action_bytes {
         return Err(Poseidon2ProductionTransportError::ActionBytesTooLarge {
             observed: encoded.len(),
-            maximum: POSEIDON2_PRODUCTION_MAX_ACTION_BYTES,
+            maximum: wire.max_action_bytes,
         });
     }
     let (declared_len, payload_offset) = decode_compact_u32(encoded)?;
     let declared_len = usize::try_from(declared_len)
         .map_err(|_| Poseidon2ProductionTransportError::CompactLengthOverflow)?;
-    if declared_len > POSEIDON2_PRODUCTION_MAX_ENVELOPE_BYTES {
+    if declared_len > wire.max_envelope_bytes {
         return Err(Poseidon2ProductionTransportError::EnvelopeTooLarge {
             observed: declared_len,
-            maximum: POSEIDON2_PRODUCTION_MAX_ENVELOPE_BYTES,
+            maximum: wire.max_envelope_bytes,
         });
     }
     let payload_end = payload_offset
@@ -1187,7 +1341,7 @@ fn validate_route_fields(
     expect_u16(
         bytes,
         offsets.6,
-        POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET,
+        wire.domain_set,
         Poseidon2ProductionTransportError::UnsupportedDomainSet,
     )
 }
@@ -1210,8 +1364,8 @@ fn validate_proof(
     active_outputs: usize,
     wire: Poseidon2ProductionWireProfile,
 ) -> Result<(), Poseidon2ProductionTransportError> {
-    validate_hard_proof_len(proof.len())?;
-    validate_routed_proof_len(proof.len(), active_outputs)?;
+    validate_hard_proof_len(proof.len(), wire)?;
+    validate_routed_proof_len(proof.len(), active_outputs, wire)?;
     if proof.len() < wire.inner_proof_magic.len() {
         return Err(Poseidon2ProductionTransportError::InnerProofTooShort(
             proof.len(),
@@ -1224,14 +1378,17 @@ fn validate_proof(
     Ok(())
 }
 
-fn validate_hard_proof_len(proof_len: usize) -> Result<(), Poseidon2ProductionTransportError> {
+fn validate_hard_proof_len(
+    proof_len: usize,
+    wire: Poseidon2ProductionWireProfile,
+) -> Result<(), Poseidon2ProductionTransportError> {
     if proof_len == 0 {
         return Err(Poseidon2ProductionTransportError::EmptyProof);
     }
-    if proof_len > POSEIDON2_PRODUCTION_MAX_PROOF_BYTES {
+    if proof_len > wire.max_proof_bytes {
         return Err(Poseidon2ProductionTransportError::ProofTooLarge {
             observed: proof_len,
-            maximum: POSEIDON2_PRODUCTION_MAX_PROOF_BYTES,
+            maximum: wire.max_proof_bytes,
         });
     }
     Ok(())
@@ -1240,8 +1397,13 @@ fn validate_hard_proof_len(proof_len: usize) -> Result<(), Poseidon2ProductionTr
 fn validate_routed_proof_len(
     proof_len: usize,
     active_outputs: usize,
+    wire: Poseidon2ProductionWireProfile,
 ) -> Result<(), Poseidon2ProductionTransportError> {
-    let maximum = poseidon2_production_max_routed_proof_bytes(active_outputs)
+    let overhead = poseidon2_production_action_overhead_bytes(active_outputs)
+        .ok_or(Poseidon2ProductionTransportError::LengthOverflow)?;
+    let maximum = wire
+        .max_action_bytes
+        .checked_sub(overhead)
         .ok_or(Poseidon2ProductionTransportError::LengthOverflow)?;
     if proof_len > maximum {
         return Err(
@@ -1324,18 +1486,19 @@ fn validate_ciphertext_bindings(
 
 fn validate_native_leaf_len(
     native_leaf_len: usize,
+    wire: Poseidon2ProductionWireProfile,
 ) -> Result<(), Poseidon2ProductionTransportError> {
-    if native_leaf_len > POSEIDON2_PRODUCTION_MAX_NATIVE_LEAF_BYTES {
+    if native_leaf_len > wire.max_native_leaf_bytes {
         return Err(Poseidon2ProductionTransportError::NativeLeafTooLarge {
             observed: native_leaf_len,
-            maximum: POSEIDON2_PRODUCTION_MAX_NATIVE_LEAF_BYTES,
+            maximum: wire.max_native_leaf_bytes,
         });
     }
-    if native_leaf_len > POSEIDON2_PRODUCTION_MAX_ROUTED_NATIVE_LEAF_BYTES {
+    if native_leaf_len > wire.max_routed_native_leaf_bytes {
         return Err(
             Poseidon2ProductionTransportError::NativeLeafExceedsInlineBudget {
                 observed: native_leaf_len,
-                maximum: POSEIDON2_PRODUCTION_MAX_ROUTED_NATIVE_LEAF_BYTES,
+                maximum: wire.max_routed_native_leaf_bytes,
             },
         );
     }
@@ -1479,6 +1642,14 @@ fn decode_compact_u32(encoded: &[u8]) -> Result<(u32, usize), Poseidon2Productio
 }
 
 const _: [(); 4] = [(); compact_u32_encoded_len(POSEIDON2_PRODUCTION_MAX_ENVELOPE_BYTES)];
+const _: [(); 4] = [(); compact_u32_encoded_len(POSEIDON2_PRODUCTION_SMZA_MAX_ENVELOPE_BYTES)];
+const _: [(); POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES] = [();
+    POSEIDON2_PRODUCTION_SMZA_MAX_PROOF_BYTES + POSEIDON2_PRODUCTION_MAX_INLINE_NON_PROOF_BYTES];
+const _: [(); POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES] =
+    [(); POSEIDON2_PRODUCTION_SMZA_MAX_ENVELOPE_BYTES + POSEIDON2_PRODUCTION_SCALE_PREFIX_BYTES];
+const _: [(); POSEIDON2_PRODUCTION_SMZA_MAX_ENVELOPE_BYTES] = [();
+    POSEIDON2_PRODUCTION_SMZA_MAX_ROUTED_NATIVE_LEAF_BYTES
+        + POSEIDON2_PRODUCTION_TRANSPORT_HEADER_BYTES];
 const _: [(); POSEIDON2_PRODUCTION_TRANSPORT_CIRCUIT as usize] =
     [(); SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING.circuit as usize];
 const _: [(); POSEIDON2_PRODUCTION_TRANSPORT_CRYPTO_SUITE as usize] =
@@ -1687,6 +1858,199 @@ mod tests {
             decoded.envelope().decoded_native_leaf().proof(),
             proof.as_slice()
         );
+    }
+
+    #[test]
+    fn smza_framing_roundtrip_maximum_all_activity_masks() {
+        // Fake proof bytes exercise transport only, never cryptographic verification.
+        let mut proof = vec![0xa7; POSEIDON2_PRODUCTION_SMZA_MAX_PROOF_BYTES];
+        proof[..4].copy_from_slice(b"SMZA");
+        let ciphertexts = ciphertexts();
+        for mask in 0u8..4 {
+            let statement = statement_with_output_mask(&ciphertexts, mask);
+            let outputs = core::array::from_fn(|slot| {
+                (mask & (1 << slot) != 0).then_some(&ciphertexts[slot])
+            });
+            let leaf = encode_poseidon2_production_smza_native_leaf(
+                context(),
+                &statement,
+                &binding(),
+                outputs,
+                &proof,
+            )
+            .unwrap();
+            let envelope = encode_poseidon2_production_smza_envelope(context(), &leaf).unwrap();
+            let action =
+                encode_poseidon2_production_smza_inline_args(context(), &envelope).unwrap();
+            let decoded =
+                decode_poseidon2_production_smza_inline_args_exact(context(), &action).unwrap();
+            assert_eq!(decoded.envelope().decoded_native_leaf().proof(), proof);
+            assert_eq!(decoded.envelope().native_leaf(), leaf);
+            assert_eq!(
+                action.len(),
+                164_113 + 1_140 + mask.count_ones() as usize * 2_147
+            );
+            if mask == 3 {
+                assert_eq!(leaf.len(), 169_511);
+                assert_eq!(envelope.len(), 169_543);
+                assert_eq!(action.len(), 169_547);
+            }
+            ensure_poseidon2_production_smza_stage_bytes(
+                context(),
+                &envelope,
+                &action,
+                Poseidon2ProductionTransportStage::FreshNodeVerify,
+            )
+            .unwrap();
+            let mut over_proof = proof.clone();
+            over_proof.push(0);
+            assert!(matches!(
+                encode_poseidon2_production_smza_native_leaf(
+                    context(),
+                    &statement,
+                    &binding(),
+                    outputs,
+                    &over_proof,
+                ),
+                Err(Poseidon2ProductionTransportError::ProofTooLarge {
+                    maximum: 164_113,
+                    ..
+                })
+            ));
+        }
+        assert_eq!(POSEIDON2_PRODUCTION_MAX_ACTION_BYTES, 131_072);
+        assert_eq!(poseidon2_production_smza_max_routed_proof_bytes(3), None);
+    }
+
+    #[test]
+    fn smza_framing_rejects_cross_profile_context_and_noncanonical_fields() {
+        let mut proof = smz9_proof(211);
+        proof[..4].copy_from_slice(b"SMZA");
+        let ciphertexts = ciphertexts();
+        let statement = statement_with_outputs(&ciphertexts, 2);
+        let leaf = encode_poseidon2_production_smza_native_leaf(
+            context(),
+            &statement,
+            &binding(),
+            [Some(&ciphertexts[0]), Some(&ciphertexts[1])],
+            &proof,
+        )
+        .unwrap();
+        let envelope = encode_poseidon2_production_smza_envelope(context(), &leaf).unwrap();
+        let action = encode_poseidon2_production_smza_inline_args(context(), &envelope).unwrap();
+        assert!(decode_poseidon2_production_smz9_native_leaf_exact(context(), &leaf).is_err());
+        assert!(decode_poseidon2_production_smz9_envelope_exact(context(), &envelope).is_err());
+        assert!(decode_poseidon2_production_smz9_inline_args_exact(context(), &action).is_err());
+        assert!(decode_historical_poseidon2_v8_smz8_inline_args_exact(context(), &action).is_err());
+        for old_wire in [
+            POSEIDON2_PRODUCTION_SMZ8_WIRE_PROFILE,
+            POSEIDON2_PRODUCTION_SMZ9_WIRE_PROFILE,
+        ] {
+            let mut old_proof = proof.clone();
+            old_proof[..4].copy_from_slice(&old_wire.inner_proof_magic);
+            let old_leaf = encode_poseidon2_production_native_leaf_with_profile(
+                old_wire,
+                context(),
+                &statement,
+                &binding(),
+                [Some(&ciphertexts[0]), Some(&ciphertexts[1])],
+                &old_proof,
+            )
+            .unwrap();
+            let old_envelope =
+                encode_poseidon2_production_envelope_with_profile(old_wire, context(), &old_leaf)
+                    .unwrap();
+            let old_action = encode_poseidon2_production_inline_args_with_profile(
+                old_wire,
+                context(),
+                &old_envelope,
+            )
+            .unwrap();
+            assert!(preflight_poseidon2_production_smza_native_leaf_exact(&old_leaf).is_err());
+            assert!(preflight_poseidon2_production_smza_envelope_exact(&old_envelope).is_err());
+            assert!(preflight_poseidon2_production_smza_inline_args_exact(&old_action).is_err());
+            assert!(encode_poseidon2_production_smza_envelope(context(), &old_leaf).is_err());
+        }
+        for offset in [
+            0,
+            LEAF_OFFSET_PROFILE,
+            LEAF_OFFSET_DOMAIN_SET,
+            LEAF_OFFSET_RESERVED,
+            LEAF_OFFSET_CIPHERTEXTS,
+            leaf.len() - proof.len(),
+        ] {
+            let mut bad = leaf.clone();
+            bad[offset] ^= 1;
+            assert!(
+                preflight_poseidon2_production_smza_native_leaf_exact(&bad).is_err(),
+                "offset {offset}"
+            );
+        }
+        for offset in [
+            0,
+            TRANSPORT_OFFSET_PROFILE,
+            TRANSPORT_OFFSET_DOMAIN_SET,
+            POSEIDON2_PRODUCTION_TRANSPORT_HEADER_BYTES + LEAF_OFFSET_PROFILE,
+        ] {
+            let mut bad = envelope.clone();
+            bad[offset] ^= 1;
+            assert!(preflight_poseidon2_production_smza_envelope_exact(&bad).is_err());
+        }
+        let mut bad_field = leaf.clone();
+        bad_field[LEAF_OFFSET_STATEMENT..LEAF_OFFSET_STATEMENT + 8]
+            .copy_from_slice(&POSEIDON2_PRODUCTION_GOLDILOCKS_MODULUS.to_le_bytes());
+        assert!(preflight_poseidon2_production_smza_native_leaf_exact(&bad_field).is_err());
+        for wrong in [
+            Poseidon2ProductionExpectedContext::new(18, [0x42; 48]).unwrap(),
+            Poseidon2ProductionExpectedContext::new(17, [0x43; 48]).unwrap(),
+        ] {
+            assert!(decode_poseidon2_production_smza_inline_args_exact(wrong, &action).is_err());
+        }
+    }
+
+    #[test]
+    fn smza_framing_rejects_actual_and_declared_caps_before_payload() {
+        assert!(matches!(
+            preflight_poseidon2_production_smza_native_leaf_exact(&vec![0; 169_512]),
+            Err(Poseidon2ProductionTransportError::NativeLeafTooLarge { .. })
+        ));
+        assert!(matches!(
+            preflight_poseidon2_production_smza_envelope_exact(&vec![0; 169_544]),
+            Err(Poseidon2ProductionTransportError::EnvelopeTooLarge { .. })
+        ));
+        assert!(matches!(
+            preflight_poseidon2_production_smza_inline_args_exact(&vec![0; 169_548]),
+            Err(Poseidon2ProductionTransportError::ActionBytesTooLarge { .. })
+        ));
+        let mut prefix = Vec::new();
+        encode_compact_u32(169_544, &mut prefix);
+        assert!(matches!(
+            preflight_poseidon2_production_smza_inline_args_exact(&prefix),
+            Err(Poseidon2ProductionTransportError::EnvelopeTooLarge { .. })
+        ));
+        let leaf = encode_poseidon2_production_smza_native_leaf(
+            context(),
+            &statement(),
+            &binding(),
+            [None, None],
+            b"SMZA",
+        )
+        .unwrap();
+        let mut leaf_header = leaf[..POSEIDON2_PRODUCTION_NATIVE_LEAF_HEADER_BYTES].to_vec();
+        leaf_header[LEAF_OFFSET_PROOF_LEN..LEAF_OFFSET_PROOF_LEN + 4]
+            .copy_from_slice(&164_114u32.to_le_bytes());
+        assert!(matches!(
+            preflight_poseidon2_production_smza_native_leaf_exact(&leaf_header),
+            Err(Poseidon2ProductionTransportError::ProofTooLarge { .. })
+        ));
+        let envelope = encode_poseidon2_production_smza_envelope(context(), &leaf).unwrap();
+        let mut header = envelope[..POSEIDON2_PRODUCTION_TRANSPORT_HEADER_BYTES].to_vec();
+        header[TRANSPORT_OFFSET_NATIVE_LEAF_LEN..TRANSPORT_OFFSET_NATIVE_LEAF_LEN + 4]
+            .copy_from_slice(&169_512u32.to_le_bytes());
+        assert!(matches!(
+            preflight_poseidon2_production_smza_envelope_exact(&header),
+            Err(Poseidon2ProductionTransportError::NativeLeafTooLarge { .. })
+        ));
     }
 
     #[test]

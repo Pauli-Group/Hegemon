@@ -12,12 +12,13 @@
 use codec::Encode;
 use protocol_shielded_pool::poseidon2_production_transport::{
     decode_poseidon2_production_smz9_inline_args_exact,
-    decode_poseidon2_production_smz9_native_leaf_exact, Poseidon2ProductionExpectedContext,
+    decode_poseidon2_production_smz9_native_leaf_exact,
+    decode_poseidon2_production_smza_inline_args_exact,
+    decode_poseidon2_production_smza_native_leaf_exact, DecodedPoseidon2ProductionInlineArgs,
+    Poseidon2ProductionExpectedContext, Poseidon2ProductionTransportError,
     POSEIDON2_PRODUCTION_PUBLIC_STATEMENT_WORDS,
-    POSEIDON2_PRODUCTION_RELATION_BALANCE_BINDING_LIMBS,
-    POSEIDON2_PRODUCTION_SMZ9_TRANSPORT_PROFILE_ID, POSEIDON2_PRODUCTION_TRANSPORT_ACTION_ID,
-    POSEIDON2_PRODUCTION_TRANSPORT_BACKEND_ID, POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET,
-    POSEIDON2_PRODUCTION_TRANSPORT_FAMILY_ID,
+    POSEIDON2_PRODUCTION_RELATION_BALANCE_BINDING_LIMBS, POSEIDON2_PRODUCTION_TRANSPORT_ACTION_ID,
+    POSEIDON2_PRODUCTION_TRANSPORT_BACKEND_ID, POSEIDON2_PRODUCTION_TRANSPORT_FAMILY_ID,
 };
 use transaction_circuit::smallwood_poseidon2_v8_frontend::{
     V8_PUBLIC_AFTER_ROOT, V8_PUBLIC_BEFORE_ROOT, V8_PUBLIC_PARENT_HEIGHT,
@@ -129,10 +130,10 @@ impl<'a> Poseidon2V8ActionView<'a> {
         {
             return Err("V8 pending action route/binding mismatch".to_owned());
         }
-        if action.encoded_size() > POSEIDON2_V8_MAX_PENDING_ACTION_BYTES {
+        if action.encoded_size() > production.connector.max_pending_action_bytes() {
             return Err(format!(
                 "V8 full pending action exceeds the route-specific {}-byte cap",
-                POSEIDON2_V8_MAX_PENDING_ACTION_BYTES
+                production.connector.max_pending_action_bytes()
             ));
         }
         if action.anchor != [0u8; 48]
@@ -146,11 +147,10 @@ impl<'a> Poseidon2V8ActionView<'a> {
             );
         }
 
-        let decoded = decode_poseidon2_production_smz9_inline_args_exact(
-            production.expected_context(),
-            &action.public_args,
-        )
-        .map_err(|error| format!("V8 pending action contextual decode rejected: {error}"))?;
+        let decoded = production
+            .connector
+            .decode_inline_args(&action.public_args)
+            .map_err(|error| format!("V8 pending action contextual decode rejected: {error}"))?;
         let leaf = decoded.envelope().decoded_native_leaf();
         let mut public_values = [0u64; SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS];
         for (index, value) in public_values.iter_mut().enumerate() {
@@ -297,11 +297,10 @@ pub(crate) fn pending_poseidon2_v8_action_from_inline_args(
     binding: KernelVersionBinding,
     public_args: Vec<u8>,
 ) -> Result<PendingAction, String> {
-    let decoded = decode_poseidon2_production_smz9_inline_args_exact(
-        production.expected_context(),
-        &public_args,
-    )
-    .map_err(|error| format!("V8 action contextual decode rejected: {error}"))?;
+    let decoded = production
+        .connector
+        .decode_inline_args(&public_args)
+        .map_err(|error| format!("V8 action contextual decode rejected: {error}"))?;
     let leaf = decoded.envelope().decoded_native_leaf();
     let mut public_values = [0u64; SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS];
     for (index, value) in public_values.iter_mut().enumerate() {
@@ -340,6 +339,27 @@ pub(crate) fn pending_poseidon2_v8_action_from_inline_args(
     };
     Poseidon2V8ActionView::from_pending(production, height, &action)?;
     Ok(action)
+}
+
+/// Shared payload/replay validation must use the same source-selected profile
+/// as the height-aware verifier. This check confers no authoring authority;
+/// the caller still validates the actual block height and complete action.
+pub(crate) fn preflight_poseidon2_v8_selected_action_args(
+    public_args: &[u8],
+) -> Result<(), String> {
+    if let Some(production) = Poseidon2V8ProductionBinding::from_source_for_replay()? {
+        production
+            .connector()
+            .decode_inline_args(public_args)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    } else {
+        // Preserve dormant q20 syntax inspection without enabling an SMZA
+        // route or retrying a rejected selected-profile decode as another one.
+        protocol_shielded_pool::poseidon2_production_transport::preflight_poseidon2_production_smz9_inline_args_exact(public_args)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
 }
 
 /// The complete release-owned V8 runtime authority after all source identity,
@@ -472,6 +492,23 @@ const RETAINED_CARRIER_CHILD_TEST_NAME: &str =
     "native::poseidon2_v8_verifier::tests::retained_rp03_socket_child";
 
 #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+fn retained_carrier_smza_selected() -> bool {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let exact = |name: &str| {
+        args == [
+            "--ignored",
+            "--exact",
+            name,
+            "--nocapture",
+            "--test-threads=1",
+        ]
+    };
+    exact("native::poseidon2_v8_verifier::tests::retained_smza_actual_socket_process_carriers")
+        || (exact(RETAINED_CARRIER_CHILD_TEST_NAME)
+            && std::env::var("HEGEMON_TEST_RETAINED_CARRIER_PROFILE").as_deref() == Ok("SMZA"))
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
 pub(crate) struct Poseidon2V8ProcessTestBindingGuard {
     _not_send: std::marker::PhantomData<std::rc::Rc<()>>,
 }
@@ -585,6 +622,33 @@ fn retained_carrier_manifest_path(
     relative: &str,
 ) -> Result<std::path::PathBuf, String> {
     let path = std::path::Path::new(relative);
+    if retained_carrier_smza_selected() {
+        let parent = std::path::Path::new(".agent/artifacts/smallwood-poseidon2-v8-smza");
+        if path.is_absolute()
+            || path.file_name().and_then(|s| s.to_str()) != Some("manifest.json")
+            || path.parent().and_then(|p| p.parent()) != Some(parent)
+            || !path
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            return Err("SMZA carrier requires its distinct canonical artifact manifest".into());
+        }
+        let mut current = workspace.to_path_buf();
+        for component in path.components() {
+            current.push(component.as_os_str());
+            if std::fs::symlink_metadata(&current)
+                .map_err(|e| e.to_string())?
+                .file_type()
+                .is_symlink()
+            {
+                return Err("SMZA artifact manifest path contains a symlink".into());
+            }
+        }
+        if !current.is_file() || current.canonicalize().map_err(|e| e.to_string())? != current {
+            return Err("SMZA manifest is not a canonical regular file".into());
+        }
+        return Ok(current);
+    }
     let parent = std::path::Path::new(".agent/artifacts/smallwood-poseidon2-v8");
     if path.is_absolute()
         || path.parent() != Some(parent)
@@ -654,6 +718,14 @@ pub(crate) fn install_poseidon2_v8_process_test_binding(
         session,
         expected_manifest_sha512,
     )?;
+    if let Ok(profile) = std::env::var("HEGEMON_TEST_RETAINED_CARRIER_PROFILE") {
+        if profile != "SMZA" && profile != "SMZ9" {
+            return Err("unknown retained process proof profile".into());
+        }
+    }
+    if binding.connector.smza != retained_carrier_smza_selected() {
+        return Err("retained process binding profile differs from exact selector".into());
+    }
     for name in ["HEGEMON_PQ_IDENTITY_SEED", "HEGEMON_PQ_IDENTITY_SEED_PATH"] {
         if std::env::var_os(name).is_some() {
             return Err(format!(
@@ -725,9 +797,70 @@ pub(crate) fn retained_carrier_inventory_tool_pins() -> serde_json::Value {
 }
 
 #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+pub(crate) const RETAINED_CARRIER_OUTER_GROUP_ENV: &str = "HEGEMON_TEST_RETAINED_SMZ9_OUTER_PGID";
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+pub(crate) fn validate_retained_carrier_outer_process_group(
+    raw: &str,
+    arguments: &[String],
+    pid: u32,
+    actual_group: u32,
+) -> Result<u32, String> {
+    let group = raw
+        .parse::<u32>()
+        .map_err(|_| "invalid outer process group")?;
+    let smz9_parent =
+        "native::poseidon2_v8_verifier::tests::retained_rp03_actual_socket_process_carriers";
+    let smza_parent =
+        "native::poseidon2_v8_verifier::tests::retained_smza_actual_socket_process_carriers";
+    let exact = |test: &str| {
+        arguments
+            == [
+                "--ignored",
+                "--exact",
+                test,
+                "--nocapture",
+                "--test-threads=1",
+            ]
+    };
+    if group <= 1
+        || raw != group.to_string()
+        || actual_group != group
+        || !((exact(smz9_parent) || exact(smza_parent)) && pid == group
+            || exact(RETAINED_CARRIER_CHILD_TEST_NAME) && pid != group)
+    {
+        return Err("outer process group requires the exact owned socket parent or child".into());
+    }
+    Ok(group)
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+pub(crate) fn retained_carrier_outer_process_group() -> Result<Option<u32>, String> {
+    let raw = match std::env::var(RETAINED_CARRIER_OUTER_GROUP_ENV) {
+        Ok(raw) => raw,
+        Err(std::env::VarError::NotPresent) => return Ok(None),
+        Err(error) => return Err(format!("invalid outer process group environment: {error}")),
+    };
+    let pid = std::process::id();
+    let group = retained_carrier_read_process_group(pid)?;
+    validate_retained_carrier_outer_process_group(
+        &raw,
+        &std::env::args().skip(1).collect::<Vec<_>>(),
+        pid,
+        group,
+    )
+    .map(Some)
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
 pub(crate) fn retained_carrier_new_process_group(
     command: &mut std::process::Command,
 ) -> Result<(), String> {
+    // Optional exact-test mode keeps every descendant inside the supervisor's
+    // reserved outer group. The default still creates an isolated child group.
+    if retained_carrier_outer_process_group()?.is_some() {
+        return Ok(());
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -743,12 +876,31 @@ pub(crate) fn retained_carrier_new_process_group(
 
 #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
 pub(crate) fn retained_carrier_confirm_process_group(pid: u32) -> Result<u32, String> {
-    use std::io::Read;
     if pid <= 1 || pid == std::process::id() {
         return Err("retained process group must name a newly owned child PID".into());
     }
-    let mut inspector = std::process::Command::new("/bin/ps")
-        .args(["-o", "pgid=", "-p", &pid.to_string()])
+    let expected = retained_carrier_outer_process_group()?.unwrap_or(pid);
+    let group = retained_carrier_read_process_group(pid)?;
+    if group != expected {
+        return Err("owned child did not enter its expected process group".into());
+    }
+    Ok(group)
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+fn retained_carrier_read_process_group(pid: u32) -> Result<u32, String> {
+    use std::io::Read;
+    // macOS /bin/ps is setuid and cannot be spawned inside the retained
+    // lifecycle sandbox. Python is already required by the inventory preflight;
+    // its getpgid syscall needs no privilege or additional sandbox permission.
+    let mut inspector = std::process::Command::new("python3")
+        .args([
+            "-I",
+            "-B",
+            "-c",
+            "import os, sys; print(os.getpgid(int(sys.argv[1])))",
+            &pid.to_string(),
+        ])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -782,8 +934,8 @@ pub(crate) fn retained_carrier_confirm_process_group(pid: u32) -> Result<u32, St
         .trim()
         .parse::<u32>()
         .map_err(|error| format!("parse owned process group: {error}"))?;
-    if !status.success() || group != pid {
-        return Err("owned child did not enter a new process group matching its PID".into());
+    if !status.success() || group <= 1 {
+        return Err("process-group inspection did not return a valid group".into());
     }
     Ok(group)
 }
@@ -835,7 +987,10 @@ impl Drop for RetainedCarrierPreflightProcess {
         if self.finished {
             return;
         }
-        if let Some(group) = self.confirmed_group {
+        if let Some(group) = self
+            .confirmed_group
+            .filter(|group| *group == self.child.id())
+        {
             let _ = retained_carrier_kill_process_group(self.child.id(), group);
         }
         let _ = self.child.kill();
@@ -880,14 +1035,31 @@ pub(crate) fn retained_carrier_verify_live_manifest(
     }
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)
         .map_err(|error| format!("decode retained candidate manifest: {error}"))?;
-    let artifact_root = manifest["artifact_root"]
-        .as_str()
-        .ok_or("retained candidate manifest omits artifact_root")?;
+    if retained_carrier_smza_selected() {
+        if manifest["schema"] != "hegemon-smallwood-poseidon2-v8-smza-retained-artifact-v1"
+            || manifest["production_eligible"] != false
+            || serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())? != manifest_bytes
+        {
+            return Err("SMZA requires its own exact canonical nonauthorizing manifest".into());
+        }
+    } else if manifest["schema"] == "hegemon-smallwood-poseidon2-v8-smza-retained-artifact-v1" {
+        return Err("SMZA manifest cannot enter the historical selector".into());
+    }
+    let artifact_root = if retained_carrier_smza_selected() {
+        candidate_manifest_relative
+            .rsplit_once('/')
+            .map(|(parent, _)| parent)
+    } else {
+        manifest["artifact_root"].as_str()
+    }
+    .ok_or("retained candidate manifest omits artifact_root")?;
     let artifact_path = std::path::Path::new(artifact_root);
     if artifact_path.parent()
-        != Some(std::path::Path::new(
-            ".agent/artifacts/smallwood-poseidon2-v8",
-        ))
+        != Some(std::path::Path::new(if retained_carrier_smza_selected() {
+            ".agent/artifacts/smallwood-poseidon2-v8-smza"
+        } else {
+            ".agent/artifacts/smallwood-poseidon2-v8"
+        }))
         || !artifact_path
             .components()
             .all(|component| matches!(component, std::path::Component::Normal(_)))
@@ -934,16 +1106,22 @@ def pinned_module(name, path, raw):
 checker = pinned_module("retained_inventory_checker", checker_path, checker_raw)
 policy = pinned_module("retained_inventory_policy", policy_path, policy_raw)
 manifest_path = root / relative
-manifest, raw = checker.load_json_exact(manifest_path, canonical=True)
+smza = pathlib.PurePosixPath(relative).parent.parent == pathlib.PurePosixPath(".agent/artifacts/smallwood-poseidon2-v8-smza")
+manifest, raw = checker.load_json_exact(manifest_path, canonical=not smza)
 checker.require(hashlib.sha512(raw).hexdigest() == expected_sha, "inventory manifest SHA512 mismatch")
 before = policy.recompute_retained_proof_source_inventory(root)
 summary = {key: before[key] for key in ("schema", "file_count", "root_sha512", "total_bytes")}
-checker.require(manifest["source_inventory"] == summary, "manifest differs from live source inventory")
+if manifest.get("schema") == "hegemon-smallwood-poseidon2-v8-smza-retained-artifact-v1":
+    checker.require(manifest.get("production_eligible") is False, "SMZA candidate must remain nonauthorizing")
+    checker.require(manifest["identity"]["profile_id"] == 9 and manifest["identity"]["domain_set"] == 5, "wrong SMZA identity")
+    checker.require(manifest["proof_source_inventory"] == before, "SMZA full v5 inventory differs from current source")
+else:
+    checker.require(manifest["source_inventory"] == summary, "manifest differs from live source inventory")
 after = policy.recompute_retained_proof_source_inventory(root)
 checker.require(after == before, "source inventory changed during preflight")
 checker.require(manifest_path.read_bytes() == raw, "manifest changed during inventory preflight")
 checker.require(checker_path.read_bytes() == checker_raw and policy_path.read_bytes() == policy_raw, "inventory tooling changed during preflight")
-print(json.dumps({"schema": "hegemon.retained-smz9.inventory-preflight-v1", "source_inventory": summary, "native_verifiers_executed": False, "inventory_tool_pins": {"checker": {"path": str(checker_path.relative_to(root)), "bytes": len(checker_raw), "sha512": checker_sha}, "policy": {"path": str(policy_path.relative_to(root)), "bytes": len(policy_raw), "sha512": policy_sha}}}, sort_keys=True))
+print(json.dumps({"schema": "hegemon.retained-smza.inventory-preflight-v1" if smza else "hegemon.retained-smz9.inventory-preflight-v1", "source_inventory": summary, "native_verifiers_executed": False, "inventory_tool_pins": {"checker": {"path": str(checker_path.relative_to(root)), "bytes": len(checker_raw), "sha512": checker_sha}, "policy": {"path": str(policy_path.relative_to(root)), "bytes": len(policy_raw), "sha512": policy_sha}}}, sort_keys=True))
 "#;
     let child_selector = std::env::args().skip(1).collect::<Vec<_>>()
         == [
@@ -953,7 +1131,9 @@ print(json.dumps({"schema": "hegemon.retained-smz9.inventory-preflight-v1", "sou
             "--nocapture",
             "--test-threads=1",
         ];
-    let group_owner = if child_selector {
+    let group_owner = if let Some(group) = retained_carrier_outer_process_group()? {
+        group
+    } else if child_selector {
         std::process::id()
     } else {
         0
@@ -1158,8 +1338,10 @@ impl Poseidon2V8ProductionBinding {
             || usize::try_from(capability.max_proof_actions_per_block()).ok()
                 != Some(MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK)
             || capability.backend_id() != POSEIDON2_PRODUCTION_TRANSPORT_BACKEND_ID
-            || capability.proof_profile_id() != POSEIDON2_PRODUCTION_SMZ9_TRANSPORT_PROFILE_ID
-            || capability.domain_set() != POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET
+            || !matches!(
+                (capability.proof_profile_id(), capability.domain_set()),
+                (6, 4) | (9, 5)
+            )
         {
             return Err("production V8 capability identity/route tuple mismatch".to_owned());
         }
@@ -1255,6 +1437,13 @@ impl Poseidon2V8ProductionBinding {
         self
     }
 
+    /// Explicit candidate-only selection. No production capability is created.
+    #[cfg(test)]
+    pub(crate) fn with_test_smza_profile(mut self) -> Self {
+        self.connector.smza = true;
+        self
+    }
+
     #[cfg(test)]
     pub(crate) fn with_test_activation_genesis_hash(mut self, hash: [u8; 32]) -> Self {
         self.activation_genesis_hash = hash;
@@ -1265,6 +1454,7 @@ impl Poseidon2V8ProductionBinding {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Poseidon2V8NativeVerifierConnector {
     expected: Poseidon2ProductionExpectedContext,
+    smza: bool,
 }
 
 impl Poseidon2V8NativeVerifierConnector {
@@ -1279,6 +1469,16 @@ impl Poseidon2V8NativeVerifierConnector {
         {
             return Err("production V8 capability carries the wrong binding".to_owned());
         }
+        let smza = match (capability.proof_profile_id(), capability.domain_set()) {
+            (6, 4) => false,
+            (9, 5) => true,
+            _ => {
+                return Err(
+                    "production V8 capability carries an unknown or mixed proof profile/domain"
+                        .into(),
+                )
+            }
+        };
         let source_factory = SmallwoodPoseidon2V8SourceRelationFactory;
         if capability.relation_digest() != *source_factory.expected_relation_digest() {
             return Err(
@@ -1291,7 +1491,7 @@ impl Poseidon2V8NativeVerifierConnector {
             capability.relation_digest(),
         )
         .map_err(|error| format!("invalid release-owned V8 verifier context: {error}"))?;
-        Ok(Self { expected })
+        Ok(Self { expected, smza })
     }
 
     fn for_expected_network(network_id: u32) -> Result<Self, String> {
@@ -1299,11 +1499,33 @@ impl Poseidon2V8NativeVerifierConnector {
         let relation_digest = *source_factory.expected_relation_digest();
         let expected = Poseidon2ProductionExpectedContext::new(network_id, relation_digest)
             .map_err(|error| format!("invalid source-owned V8 verifier context: {error}"))?;
-        Ok(Self { expected })
+        Ok(Self {
+            expected,
+            smza: false,
+        })
     }
 
     pub(crate) const fn expected_context(self) -> Poseidon2ProductionExpectedContext {
         self.expected
+    }
+
+    fn max_pending_action_bytes(self) -> usize {
+        if self.smza {
+            super::POSEIDON2_V8_SMZA_MAX_PENDING_ACTION_BYTES
+        } else {
+            POSEIDON2_V8_MAX_PENDING_ACTION_BYTES
+        }
+    }
+
+    fn decode_inline_args(
+        self,
+        bytes: &[u8],
+    ) -> Result<DecodedPoseidon2ProductionInlineArgs<'_>, Poseidon2ProductionTransportError> {
+        if self.smza {
+            decode_poseidon2_production_smza_inline_args_exact(self.expected, bytes)
+        } else {
+            decode_poseidon2_production_smz9_inline_args_exact(self.expected, bytes)
+        }
     }
 
     #[cfg(test)]
@@ -1313,6 +1535,14 @@ impl Poseidon2V8NativeVerifierConnector {
 }
 
 impl Poseidon2V8ExactLeafVerifier for Poseidon2V8NativeVerifierConnector {
+    fn native_leaf_profile(&self) -> super::poseidon2_v8_state::Poseidon2V8NativeLeafProfile {
+        if self.smza {
+            super::poseidon2_v8_state::Poseidon2V8NativeLeafProfile::Smza
+        } else {
+            super::poseidon2_v8_state::Poseidon2V8NativeLeafProfile::Smz9
+        }
+    }
+
     fn verify_exact_v8_leaf(
         &mut self,
         block: Poseidon2V8BlockContext,
@@ -1321,11 +1551,12 @@ impl Poseidon2V8ExactLeafVerifier for Poseidon2V8NativeVerifierConnector {
     ) -> Result<Poseidon2V8PublicTransition, String> {
         // Exact transport/context/ciphertext-hash checks all complete before
         // the relation is reconstructed or the proof engine is entered.
-        let decoded =
+        let decoded = (if self.smza {
+            decode_poseidon2_production_smza_native_leaf_exact(self.expected, exact_native_leaf)
+        } else {
             decode_poseidon2_production_smz9_native_leaf_exact(self.expected, exact_native_leaf)
-                .map_err(|error| {
-                    format!("V8 leaf {leaf_index} contextual decode rejected: {error}")
-                })?;
+        })
+        .map_err(|error| format!("V8 leaf {leaf_index} contextual decode rejected: {error}"))?;
 
         let mut public_values = [0u64; SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS];
         for (index, value) in public_values.iter_mut().enumerate() {
@@ -1360,7 +1591,11 @@ impl Poseidon2V8ExactLeafVerifier for Poseidon2V8NativeVerifierConnector {
             &verifier_input.public_values,
         )
         .map_err(|error| format!("V8 leaf {leaf_index} {error}"))?;
-        verify_smallwood_poseidon2_v8_candidate(&verifier_input, decoded.proof()).map_err(
+        (if self.smza {
+            transaction_circuit::smallwood_poseidon2_v8_frontend::verify_smallwood_poseidon2_v8_smza_candidate_v1(&verifier_input, decoded.proof())
+        } else {
+            verify_smallwood_poseidon2_v8_candidate(&verifier_input, decoded.proof())
+        }).map_err(
             |error| {
                 #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
                 tests::retained_carrier_rejected_leaf(
@@ -1369,7 +1604,7 @@ impl Poseidon2V8ExactLeafVerifier for Poseidon2V8NativeVerifierConnector {
                     exact_native_leaf,
                     decoded.proof(),
                 );
-                format!("V8 leaf {leaf_index} SMZ9 proof rejected: {error}")
+                format!("V8 leaf {leaf_index} {} proof rejected: {error}", if self.smza { "SMZA" } else { "SMZ9" })
             },
         )?;
         #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
@@ -2783,6 +3018,10 @@ mod tests {
     }
 
     impl Poseidon2V8ExactLeafVerifier for ExactRetainedLeafVerifier {
+        fn native_leaf_profile(&self) -> super::super::poseidon2_v8_state::Poseidon2V8NativeLeafProfile {
+            self.connector.native_leaf_profile()
+        }
+
         fn verify_exact_v8_leaf(
             &mut self,
             block: Poseidon2V8BlockContext,
@@ -3440,6 +3679,8 @@ mod tests {
             );
         }
     }
+
+    include!("poseidon2_v8_smza_tests.rs");
 
     fn action_fixture(
         production: Poseidon2V8ProductionBinding,

@@ -34,8 +34,8 @@ use protocol_shielded_pool::{
     poseidon2_v8_coinbase::{MintPoseidon2V8CoinbaseArgs, Poseidon2V8CoinbaseNoteOpening},
     poseidon2_v8_retained_vectors::{
         RETAINED_V8_COINBASE_0_SCALE, RETAINED_V8_COINBASE_1_SCALE,
-        RETAINED_V8_INLINE_CIPHERTEXT_SHA512, RETAINED_V8_OUTPUT_0_RAW, RETAINED_V8_OUTPUT_1_RAW,
-        RETAINED_V8_OUTPUT_OPENINGS, RETAINED_V8_STATEMENT_SHA512, RETAINED_V8_WITNESS_SHA512,
+        RETAINED_V8_INLINE_CIPHERTEXT_SHA512, RETAINED_V8_STATEMENT_SHA512,
+        RETAINED_V8_WITNESS_SHA512,
     },
 };
 use protocol_versioning::{CIRCUIT_V8, CRYPTO_SUITE_ETA};
@@ -56,8 +56,9 @@ use std::{
 use transaction_circuit::{
     build_smallwood_poseidon2_v8_smz9_verifier_trace_v1,
     smallwood_poseidon2_v8_coinbase::{
-        poseidon2_v8_note_commitment, poseidon2_v8_single_key_authorization_key,
-        poseidon2_v8_two_note_frontier, Poseidon2V8TwoNoteFrontier,
+        poseidon2_v8_note_commitment, poseidon2_v8_single_key_authorization_digest,
+        poseidon2_v8_spend_key_words, poseidon2_v8_two_note_frontier, poseidon2_v8_words_to_bytes,
+        Poseidon2V8TwoNoteFrontier,
     },
     smallwood_poseidon2_v8_frontend::{
         compile_and_prove_smallwood_poseidon2_v8_candidate,
@@ -97,6 +98,101 @@ use transaction_core::{
 
 type RunnerResult<T> = Result<T, Box<dyn Error>>;
 
+// Pure source-owned fixture/inventory access for additive artifact runners.
+// No q20 generation metadata, proof, projection, or manifest is reused.
+pub(crate) fn shared_positive_fixture() -> RunnerResult<(
+    SmallwoodPoseidon2V8PublicStatement,
+    SmallwoodPoseidon2V8Witness,
+    SmallwoodPoseidon2V8InlineCiphertexts,
+    Value,
+)> {
+    let (statement, witness, ciphertexts) = maximum_shape_fixture()?;
+    let descriptor =
+        fixture_descriptor(RETAINED_PROOF_PRIMARY, &statement, &witness, &ciphertexts)?;
+    Ok((statement, witness, ciphertexts, descriptor))
+}
+
+pub(crate) fn shared_current_source_inventory() -> RunnerResult<Value> {
+    Ok(compute_proof_source_inventory()?.report)
+}
+
+/// Fresh action-11 bytes for the exact notes spent by the repaired fixture.
+/// The frozen historical carriers are used only by their separate regression tests.
+pub(crate) fn shared_coinbase_fixture_files() -> RunnerResult<[(&'static str, Vec<u8>); 2]> {
+    use protocol_shielded_pool::{
+        poseidon2_v8_coinbase::{
+            Poseidon2V8CoinbaseNoteData, POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES,
+        },
+        types::EncryptedNote,
+    };
+    let openings = retained_coinbase_public_openings()?;
+    let (statement, witness, _) = maximum_shape_fixture()?;
+    let mut files = [
+        ("coinbase-height1.bin", Vec::new()),
+        ("coinbase-height2.bin", Vec::new()),
+    ];
+    let mut commitments = [[0; 7]; 2];
+    for index in 0..2 {
+        let opening = relation_opening_from_protocol(openings[index]);
+        if opening != witness.inputs[index].note || witness.inputs[index].position != index as u64 {
+            return Err(runner_error(
+                "fresh action-11 opening differs from its spent note",
+            ));
+        }
+        // This helper checks authenticated v5 decryption against all plaintext opening fields.
+        let raw = repaired_ciphertext(opening, 0x31 + index as u8)?;
+        commitments[index] = note_commitment(opening)?;
+        let args = MintPoseidon2V8CoinbaseArgs {
+            miner_note: Poseidon2V8CoinbaseNoteData {
+                opening: openings[index],
+                commitment: commitments[index],
+                encrypted_note: EncryptedNote {
+                    ciphertext: raw[..579].try_into().expect("fixed ciphertext container"),
+                    kem_ciphertext: raw[579..].to_vec(),
+                },
+            },
+        };
+        let encoded = args.encode();
+        let mut cursor = encoded.as_slice();
+        let decoded = MintPoseidon2V8CoinbaseArgs::decode(&mut cursor)?;
+        if encoded.len() != POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES
+            || !cursor.is_empty()
+            || decoded != args
+            || decoded.encode() != encoded
+            || decoded.miner_note.encrypted_note.ciphertext[0] != 5
+            || note_commitment(relation_opening_from_protocol(decoded.miner_note.opening))?
+                != decoded.miner_note.commitment
+        {
+            return Err(runner_error(
+                "fresh action-11 carrier failed exact opening/ciphertext/commitment readback",
+            ));
+        }
+        files[index].1 = encoded;
+    }
+    let frontier = canonical_two_note_frontier(commitments);
+    if frontier.root != statement.merkle_root
+        || frontier.paths[0] != witness.inputs[0].siblings
+        || frontier.paths[1] != witness.inputs[1].siblings
+    {
+        return Err(runner_error(
+            "fresh action-11 carrier frontier differs from spent fixture",
+        ));
+    }
+    Ok(files)
+}
+
+pub(crate) fn shared_relation_program() -> RunnerResult<Vec<u8>> {
+    validated_relation_program()
+}
+
+pub(crate) fn shared_relation_mutations(
+    statement: &SmallwoodPoseidon2V8PublicStatement,
+    adapter: &SmallwoodPoseidon2V8ConstraintAdapter,
+    witness_values: &[u64],
+) -> RunnerResult<Vec<Value>> {
+    reject_relation_mutations(statement, adapter, witness_values)
+}
+
 const NETWORK_ID: u32 = 0x4847_4d38;
 const MAXIMUM_SHAPE_MASK: u8 = 0b1111;
 const EXPECTED_PROJECTED_PROOF_BYTES: usize = 122_863;
@@ -105,28 +201,32 @@ const EXPECTED_PROJECTED_RPC_ENVELOPE_BYTES: usize = 128_293;
 const EXPECTED_PROJECTED_PENDING_ACTION_BYTES: usize = 128_522;
 const INPUT_0_NOTE_FINAL: usize = 3;
 const INPUT_0_ROOT_FINAL: usize = 35;
-const INPUT_0_NULLIFIER_FINAL: usize = 36;
-const INPUT_1_NOTE_FINAL: usize = 39;
-const INPUT_1_ROOT_FINAL: usize = 71;
-const INPUT_1_NULLIFIER_FINAL: usize = 72;
-const OUTPUT_0_NOTE_FINAL: usize = 75;
-const OUTPUT_1_NOTE_FINAL: usize = 78;
+const INPUT_0_NULLIFIER_FINAL: usize = 37;
+const INPUT_1_NOTE_FINAL: usize = 40;
+const INPUT_1_ROOT_FINAL: usize = 72;
+const INPUT_1_NULLIFIER_FINAL: usize = 74;
+const OUTPUT_0_NOTE_FINAL: usize = 77;
+const OUTPUT_1_NOTE_FINAL: usize = 80;
 const RETAINED_PROOF_PRIMARY: &str = "retained_proof_primary";
 const RETAINED_PROOF_INDEPENDENT: &str = "retained_proof_independent";
 const RETAINED_LIFECYCLE_SEED: &str = "retained_lifecycle_seed";
-const RETAINED_SPEND_FIXTURE_GROUP: &str = "retained_coinbase_spend_positions_0_1_v1";
+const RETAINED_SPEND_FIXTURE_GROUP: &str = "repaired_v5_coinbase_spend_positions_0_1_v1";
 const RETAINED_ZERO_SEED_FIXTURE_GROUP: &str = "retained_zero_value_seed_0x2_v1";
 const RETAINED_SPEND_PARENT_HEIGHT: u64 = 2;
 const RETAINED_SEED_PARENT_HEIGHT: u64 = 0;
 const RETAINED_STABLECOIN_ROOT: [Felt; 7] = [Felt::ZERO; 7];
-// Exact `RootSecret([0x51; 32]).derive()` V8 spend words. The wallet owns this
-// key and derives the matching address-v4/Eta recipient at index 9.
-const RETAINED_SPEND_KEY: [u64; 4] = [
-    12_387_129_418_859_519_852,
-    3_275_605_879_553_790_158,
-    18_179_312_849_545_706_498,
-    6_480_565_605_584_441_507,
-];
+// Fresh repaired fixture; this public test seed is not an operator wallet secret.
+fn fixture_wallet_subkey(label: &[u8]) -> [u8; 32] {
+    let mut material = label.to_vec();
+    material.extend_from_slice(&[0x51; 32]);
+    synthetic_crypto::deterministic::expand_to_length(b"wallet-hkdf", &material, 32)
+        .try_into()
+        .expect("fixed wallet subkey length")
+}
+fn repaired_spend_key() -> RunnerResult<[u64; 5]> {
+    poseidon2_v8_spend_key_words(fixture_wallet_subkey(b"spend"))
+        .map_err(|error| runner_error(format!("repaired fixture key codec: {error:?}")))
+}
 const RETAINED_RECIPIENT_KEY: [u64; 4] = [
     14_132_942_956_216_209_493,
     7_685_267_610_787_277_800,
@@ -136,7 +236,7 @@ const RETAINED_RECIPIENT_KEY: [u64; 4] = [
 const RETAINED_COINBASE_AMOUNTS: [u64; 2] = [499_429_223, 499_429_223];
 const LEGACY_ARTIFACT_SCHEMA: &str = "hegemon-smallwood-poseidon2-v8-retained-artifact-v4";
 const FINAL_ARTIFACT_SCHEMA: &str = "hegemon-smallwood-poseidon2-v8-retained-artifact-v5";
-const PROGRAM_MAGIC_ASCII: &str = "HGV8RP03";
+const PROGRAM_MAGIC_ASCII: &str = "HGV8RP04";
 const NATIVE_LEAF_MAGIC_ASCII: &str = "HGV8TX02";
 const TRANSPORT_MAGIC_ASCII: &str = "SWP8LC02";
 const GENERATION_PROVENANCE_SCHEMA: &str =
@@ -175,11 +275,11 @@ fn runner_error(message: impl Into<String>) -> Box<dyn Error> {
 }
 
 fn ensure_frozen_identity_constants() -> RunnerResult<()> {
-    if protocol_shielded_pool::poseidon2_pending_action_artifact::SMALLWOOD_POSEIDON2_V8_ARTIFACT_RELATION_DIGEST
+    if protocol_shielded_pool::poseidon2_pending_action_artifact::SMALLWOOD_POSEIDON2_V8_HGV8RP04_ARTIFACT_RELATION_DIGEST
         != SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST
     {
         return Err(runner_error(
-            "offline pending-action codec relation digest differs from the source program",
+            "explicit repaired candidate relation digest differs from the source program",
         ));
     }
     if SMALLWOOD_POSEIDON2_V8_PROGRAM_MAGIC.as_slice() != PROGRAM_MAGIC_ASCII.as_bytes()
@@ -194,9 +294,20 @@ fn ensure_frozen_identity_constants() -> RunnerResult<()> {
         || SMALLWOOD_POSEIDON2_V8_PROFILE_ID != 6
         || SMALLWOOD_POSEIDON2_V8_DOMAIN_SET != 4
         || SMALLWOOD_POSEIDON2_V8_RELATION_ID
-            != "hegemon.smallwood.poseidon2-v8.stablecoin-relation.v2"
+            != "hegemon.smallwood.poseidon2-v8.stablecoin-relation.v3"
     {
         return Err(runner_error("frozen V8 identity constants drifted"));
+    }
+    Ok(())
+}
+
+fn ensure_legacy_pending_action_relation() -> RunnerResult<()> {
+    if SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST
+        != protocol_shielded_pool::poseidon2_pending_action_artifact::SMALLWOOD_POSEIDON2_V8_ARTIFACT_RELATION_DIGEST
+    {
+        return Err(runner_error(
+            "the historical q20 PendingAction codec cannot encode or verify HGV8RP04; use the explicit SMZA candidate runner",
+        ));
     }
     Ok(())
 }
@@ -213,7 +324,7 @@ fn validated_relation_program() -> RunnerResult<Vec<u8>> {
         || recomputed_program_digest != SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST
     {
         return Err(runner_error(
-            "V8 source-derived HGV8RP03 relation program digest is not pinned",
+            "V8 source-derived HGV8RP04 relation program digest is not pinned",
         ));
     }
     Ok(relation_program)
@@ -1170,15 +1281,20 @@ fn verify_generation_provenance(
 fn note_with_authorization(
     tag: u64,
     value: u64,
-    authorization_key: [u64; 4],
+    authorization_key: [u64; 7],
 ) -> SmallwoodPoseidon2V8NoteOpening {
     SmallwoodPoseidon2V8NoteOpening {
         value,
         asset_id: NATIVE_ASSET_ID,
-        recipient_key: core::array::from_fn(|limb| tag + 10 + limb as u64),
-        authorization_key,
+        recipient_key: RETAINED_RECIPIENT_KEY,
+        authorization_key: authorization_key[..4].try_into().unwrap(),
         rho: core::array::from_fn(|limb| tag + 20 + limb as u64),
-        randomness: core::array::from_fn(|limb| tag + 30 + limb as u64),
+        randomness: [
+            authorization_key[4],
+            authorization_key[5],
+            authorization_key[6],
+            tag + 33,
+        ],
     }
 }
 
@@ -1195,6 +1311,87 @@ fn relation_opening_from_protocol(
     }
 }
 
+/// Deterministic v5 encryption for the public RootSecret([0x51;32])/index9 test wallet.
+/// This constructs new authenticated bytes; no frozen v4 carrier is relabeled.
+fn repaired_ciphertext(
+    opening: SmallwoodPoseidon2V8NoteOpening,
+    tag: u8,
+) -> RunnerResult<SmallwoodPoseidon2V8Ciphertext> {
+    use synthetic_crypto::{
+        ml_kem::MlKemKeyPair,
+        note_encryption::{NoteCiphertext, NotePlaintext},
+        traits::KemKeyPair,
+    };
+    let mut diversifier_hash = sha2::Sha256::new();
+    diversifier_hash.update(b"diversifier");
+    diversifier_hash.update(fixture_wallet_subkey(b"derive"));
+    diversifier_hash.update(9u32.to_le_bytes());
+    let diversifier: [u8; 32] = diversifier_hash.finalize().into();
+    let view = fixture_wallet_subkey(b"view");
+    let recipient_hash = hegemon_hash384::blake2b_384_domain_hash(
+        hegemon_hash384::domains::WALLET_RECIPIENT_KEY_V3,
+        [view.as_slice(), diversifier.as_slice()],
+    );
+    let recipient =
+        transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_recipient_key_words(
+            recipient_hash[..32].try_into().unwrap(),
+        )
+        .map_err(|error| runner_error(format!("fixture recipient derivation: {error:?}")))?;
+    if opening.recipient_key != recipient {
+        return Err(runner_error(
+            "fresh fixture recipient differs from wallet derivation",
+        ));
+    }
+    let mut seed = b"addr-seed".to_vec();
+    seed.extend_from_slice(&fixture_wallet_subkey(b"enc"));
+    seed.extend_from_slice(&diversifier);
+    seed.extend_from_slice(&9u32.to_le_bytes());
+    let keypair = MlKemKeyPair::generate_deterministic(&seed);
+    let plaintext = NotePlaintext::new(
+        opening.value,
+        opening.asset_id,
+        poseidon2_v8_words_to_bytes(opening.rho),
+        poseidon2_v8_words_to_bytes(opening.randomness),
+        Vec::new(),
+    );
+    let recipient_bytes = poseidon2_v8_words_to_bytes(recipient);
+    let encrypted = NoteCiphertext::encrypt(
+        &keypair.public_key(),
+        recipient_bytes,
+        5,
+        CRYPTO_SUITE_ETA,
+        9,
+        &plaintext,
+        &[tag; 32],
+    )?;
+    if encrypted.decrypt(keypair.secret_key(), recipient_bytes, 9)? != plaintext {
+        return Err(runner_error(
+            "fresh v5 ciphertext does not decrypt to its exact opening",
+        ));
+    }
+    let mut raw = [0u8; SMALLWOOD_POSEIDON2_V8_CIPHERTEXT_BYTES];
+    raw[0] = encrypted.version;
+    raw[1..3].copy_from_slice(&encrypted.crypto_suite.to_le_bytes());
+    raw[3..7].copy_from_slice(&encrypted.diversifier_index.to_le_bytes());
+    let mut cursor = 7usize;
+    for payload in [&encrypted.note_payload, &encrypted.memo_payload] {
+        if cursor + 4 + payload.len() > 579 {
+            return Err(runner_error(
+                "fresh ciphertext payload exceeds canonical container",
+            ));
+        }
+        raw[cursor..cursor + 4].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+        cursor += 4;
+        raw[cursor..cursor + payload.len()].copy_from_slice(payload);
+        cursor += payload.len();
+    }
+    if encrypted.kem_ciphertext.len() != raw.len() - 579 {
+        return Err(runner_error("fresh ciphertext KEM length mismatch"));
+    }
+    raw[579..].copy_from_slice(&encrypted.kem_ciphertext);
+    Ok(raw)
+}
+
 fn ciphertext(tag: u8) -> SmallwoodPoseidon2V8Ciphertext {
     core::array::from_fn(|index| {
         tag.wrapping_add((index as u8).wrapping_mul(29))
@@ -1202,8 +1399,8 @@ fn ciphertext(tag: u8) -> SmallwoodPoseidon2V8Ciphertext {
     })
 }
 
-fn single_key_authorization_key(spend_key: [u64; 4]) -> RunnerResult<[u64; 4]> {
-    poseidon2_v8_single_key_authorization_key(spend_key)
+fn single_key_authorization_key(spend_key: [u64; 5]) -> RunnerResult<[u64; 7]> {
+    poseidon2_v8_single_key_authorization_digest(spend_key)
         .map_err(|error| runner_error(format!("single-key PRF materialization failed: {error:?}")))
 }
 
@@ -1247,44 +1444,26 @@ fn canonical_two_note_frontier(commitments: [SmallwoodPoseidon2V8Digest; 2]) -> 
 }
 
 /// Deterministic positive-value note openings produced by the first two V8
-/// coinbase blocks in the retained lifecycle fixture.  The coinbase action
-/// carries the matching public note commitment; no private opening is inferred
-/// from ciphertext bytes or from a receipt.
+/// coinbase blocks in the fresh repaired fixture. These are newly constructed
+/// openings, not decoded or relabeled historical carriers. The native lifecycle
+/// must still construct and verify matching action-11 carriers before promotion.
 fn retained_coinbase_public_openings() -> RunnerResult<[Poseidon2V8CoinbaseNoteOpening; 2]> {
-    let authorization_key = single_key_authorization_key(RETAINED_SPEND_KEY)?;
-    let carriers = [
-        RETAINED_V8_COINBASE_0_SCALE.as_slice(),
-        RETAINED_V8_COINBASE_1_SCALE.as_slice(),
-    ];
-    let mut openings = [Poseidon2V8CoinbaseNoteOpening::default(); 2];
-    for (index, carrier) in carriers.into_iter().enumerate() {
-        let mut cursor = carrier;
-        let args = MintPoseidon2V8CoinbaseArgs::decode(&mut cursor)
-            .map_err(|error| runner_error(format!("decode retained coinbase {index}: {error}")))?;
-        if !cursor.is_empty() || args.encode().as_slice() != carrier {
-            return Err(runner_error(format!(
-                "retained coinbase {index} is not canonical SCALE"
-            )));
+    let authorization = single_key_authorization_key(repaired_spend_key()?)?;
+    Ok(core::array::from_fn(|index| {
+        let note = note_with_authorization(
+            11 + index as u64 * 20,
+            RETAINED_COINBASE_AMOUNTS[index],
+            authorization,
+        );
+        Poseidon2V8CoinbaseNoteOpening {
+            value: note.value,
+            asset_id: note.asset_id,
+            recipient_key: RETAINED_RECIPIENT_KEY,
+            authorization_key: note.authorization_key,
+            rho: note.rho,
+            randomness: note.randomness,
         }
-        let opening = args.miner_note.opening;
-        if opening.value != RETAINED_COINBASE_AMOUNTS[index]
-            || opening.asset_id != NATIVE_ASSET_ID
-            || opening.recipient_key != RETAINED_RECIPIENT_KEY
-            || opening.authorization_key != authorization_key
-        {
-            return Err(runner_error(format!(
-                "retained coinbase {index} is not owned by the pinned wallet vector"
-            )));
-        }
-        let relation_opening = relation_opening_from_protocol(opening);
-        if note_commitment(relation_opening)? != args.miner_note.commitment {
-            return Err(runner_error(format!(
-                "retained coinbase {index} commitment differs from its opening"
-            )));
-        }
-        openings[index] = opening;
-    }
-    Ok(openings)
+    }))
 }
 
 fn retained_coinbase_note_openings() -> RunnerResult<[SmallwoodPoseidon2V8NoteOpening; 2]> {
@@ -1292,7 +1471,7 @@ fn retained_coinbase_note_openings() -> RunnerResult<[SmallwoodPoseidon2V8NoteOp
 }
 
 fn retained_zero_value_seed_note_openings() -> RunnerResult<[SmallwoodPoseidon2V8NoteOpening; 2]> {
-    let authorization_key = single_key_authorization_key(RETAINED_SPEND_KEY)?;
+    let authorization_key = single_key_authorization_key(repaired_spend_key()?)?;
     Ok([
         note_with_authorization(5_000, 0, authorization_key),
         note_with_authorization(5_100, 0, authorization_key),
@@ -1321,7 +1500,10 @@ fn retained_lifecycle_seed_fixture() -> RunnerResult<(
     }
 
     let inline_ciphertexts = SmallwoodPoseidon2V8InlineCiphertexts {
-        ciphertexts: [Some(ciphertext(0x21)), Some(ciphertext(0x72))],
+        ciphertexts: [
+            Some(repaired_ciphertext(output_notes[0], 0x21)?),
+            Some(repaired_ciphertext(output_notes[1], 0x72)?),
+        ],
     };
     for output in 0..2 {
         statement.ciphertext_commitments[output] = smallwood_poseidon2_v8_ciphertext_commitment(
@@ -1365,34 +1547,31 @@ fn maximum_shape_fixture_from_input_notes(
     for input in 0..2 {
         witness.inputs[input] = SmallwoodPoseidon2V8InputWitness {
             active: true,
-            spend_key: RETAINED_SPEND_KEY,
+            spend_key: repaired_spend_key()?,
             note: input_notes[input],
             position: input as u64,
             siblings: [[0; 7]; 32],
             balance_slot_selectors: [true, false, false, false],
         };
     }
+    let authorization = single_key_authorization_key(repaired_spend_key()?)?;
+    let mut output_ciphertexts = [None, None];
     for output in 0..2 {
-        let note = relation_opening_from_protocol(RETAINED_V8_OUTPUT_OPENINGS[output]);
-        if note.value != input_notes[output].value
-            || note.authorization_key != single_key_authorization_key(RETAINED_SPEND_KEY)?
-        {
-            return Err(runner_error(format!(
-                "retained wallet output {output} does not conserve or authorize value"
-            )));
-        }
+        let mut note = note_with_authorization(
+            30_000 + output as u64 * 100,
+            input_notes[output].value,
+            authorization,
+        );
+        note.recipient_key = RETAINED_RECIPIENT_KEY;
+        output_ciphertexts[output] = Some(repaired_ciphertext(note, 0x71 + output as u8)?);
         witness.outputs[output] = SmallwoodPoseidon2V8OutputWitness {
             active: true,
             note,
             balance_slot_selectors: [true, false, false, false],
         };
     }
-
     let inline_ciphertexts = SmallwoodPoseidon2V8InlineCiphertexts {
-        ciphertexts: [
-            Some(*RETAINED_V8_OUTPUT_0_RAW),
-            Some(*RETAINED_V8_OUTPUT_1_RAW),
-        ],
+        ciphertexts: output_ciphertexts,
     };
     for output in 0..2 {
         statement.ciphertext_commitments[output] = smallwood_poseidon2_v8_ciphertext_commitment(
@@ -1408,7 +1587,9 @@ fn maximum_shape_fixture_from_input_notes(
     let transaction_prf =
         build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness)?.calls[0].final_digest();
     for input in 0..2 {
-        if witness.inputs[input].note.authorization_key != transaction_prf[1..5] {
+        if witness.inputs[input].note.authorization_key != transaction_prf[..4]
+            || witness.inputs[input].note.randomness[..3] != transaction_prf[4..]
+        {
             return Err(runner_error(format!(
                 "supplied input note {input} does not authorize the retained spend key"
             )));
@@ -1584,7 +1765,7 @@ fn fixture_descriptor(
         );
         descriptor.insert(
             "economic_value_source".to_owned(),
-            json!("v8_coinbase_action_11"),
+            json!("fresh_repaired_v5_openings_requiring_action_11_lifecycle"),
         );
         descriptor.insert("economic_production_evidence".to_owned(), json!(false));
         descriptor.insert(
@@ -1966,6 +2147,7 @@ fn canonical_rewrap_rejected_at_verifier_file_seam(
 ) -> RunnerResult<bool> {
     let envelope = encode_poseidon2_production_smz9_envelope(expected, native_leaf)?;
     let inline_args = encode_poseidon2_production_smz9_inline_args(expected, &envelope)?;
+    ensure_legacy_pending_action_relation()?;
     let pending_action = encode_poseidon2_v8_pending_action_artifact(NETWORK_ID, &inline_args)?;
     verify_poseidon2_v8_pending_action_artifact_exact(
         NETWORK_ID,
@@ -2175,6 +2357,7 @@ fn reject_pending_action_mutations(
     exact_inline_args: &[u8],
     encoded_pending_action: &[u8],
 ) -> RunnerResult<Vec<Value>> {
+    ensure_legacy_pending_action_relation()?;
     let receipts = audit_poseidon2_v8_pending_action_artifact_mutations_v1(
         network_id,
         exact_inline_args,
@@ -2662,7 +2845,7 @@ fn verify_artifact_with_legacy_generator_check(
         || relation_digest != SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST
     {
         return Err(runner_error(
-            "read-back HGV8RP03 program identity does not match the proof relation digest",
+            "read-back HGV8RP04 program identity does not match the proof relation digest",
         ));
     }
 
@@ -2709,6 +2892,7 @@ fn verify_artifact_with_legacy_generator_check(
             "artifact opening-surface report differs from fresh proof parsing",
         ));
     }
+    ensure_legacy_pending_action_relation()?;
     let pending_action = verify_poseidon2_v8_pending_action_artifact_exact(
         network_id,
         &inline_args_bytes,
@@ -3093,7 +3277,7 @@ fn verify_retained_chain(
             )
     {
         return Err(runner_error(
-            "verify-chain statement is not the nonzero-height HGV8RP03 maximum shape",
+            "verify-chain statement is not the nonzero-height HGV8RP04 maximum shape",
         ));
     }
 
@@ -3433,6 +3617,7 @@ fn reseal_v4(
 }
 
 fn generate(artifact_role: &str, output_root: &Path) -> RunnerResult<PathBuf> {
+    ensure_legacy_pending_action_relation()?;
     ensure_artifact_role(artifact_role)?;
     let generation_provenance_start = begin_generation_provenance()?;
     let source_inventory_start = compute_proof_source_inventory()?;
@@ -3923,9 +4108,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn retained_coinbase_openings_and_position_zero_one_paths_are_exact() -> RunnerResult<()> {
+    fn historical_coinbase_openings_and_position_zero_one_paths_are_exact() -> RunnerResult<()> {
+        let public_openings = [
+            RETAINED_V8_COINBASE_0_SCALE.as_slice(),
+            RETAINED_V8_COINBASE_1_SCALE.as_slice(),
+        ]
+        .map(|bytes| {
+            MintPoseidon2V8CoinbaseArgs::decode(&mut &bytes[..])
+                .unwrap()
+                .miner_note
+                .opening
+        });
         assert_eq!(
-            single_key_authorization_key(RETAINED_SPEND_KEY)?,
+            public_openings[0].authorization_key,
             [
                 1_741_146_651_100_274_088,
                 9_539_478_460_468_656_252,
@@ -3933,7 +4128,6 @@ mod tests {
                 1_436_916_868_072_586_276,
             ]
         );
-        let public_openings = retained_coinbase_public_openings()?;
         assert_eq!(
             public_openings[0].note_hash_words(),
             [
@@ -3957,7 +4151,7 @@ mod tests {
                 1_436_916_868_072_586_276,
             ]
         );
-        let notes = retained_coinbase_note_openings()?;
+        let notes = public_openings.map(relation_opening_from_protocol);
         let commitments = [note_commitment(notes[0])?, note_commitment(notes[1])?];
         assert_eq!(
             commitments,
@@ -4013,15 +4207,15 @@ mod tests {
         assert_eq!(primary.statement, independent.statement);
         assert_eq!(primary.witness, independent.witness);
         assert_eq!(primary.fixture, independent.fixture);
-        assert_eq!(
+        assert_ne!(
             sha512_hex(&primary.statement.to_public_bytes()),
             RETAINED_V8_STATEMENT_SHA512
         );
-        assert_eq!(
+        assert_ne!(
             sha512_hex(&primary.witness.to_witness_bytes()),
             RETAINED_V8_WITNESS_SHA512
         );
-        assert_eq!(
+        assert_ne!(
             sha512_hex(&primary.inline_ciphertexts.to_inline_ciphertext_bytes()),
             RETAINED_V8_INLINE_CIPHERTEXT_SHA512
         );

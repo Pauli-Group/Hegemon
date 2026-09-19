@@ -48,16 +48,16 @@ use transaction_core::{
 
 const INPUT_0_NOTE_FINAL: usize = 3;
 const INPUT_0_ROOT_FINAL: usize = 35;
-const INPUT_0_NULLIFIER_FINAL: usize = 36;
-const INPUT_1_NOTE_FINAL: usize = 39;
-const INPUT_1_ROOT_FINAL: usize = 71;
-const INPUT_1_NULLIFIER_FINAL: usize = 72;
-const OUTPUT_0_NOTE_FINAL: usize = 75;
-const OUTPUT_1_NOTE_FINAL: usize = 78;
-const POLICY_FINAL: usize = 97;
-const CURRENT_FINAL: usize = 100;
-const NEXT_FINAL: usize = 103;
-const VALUE_LOCK_FINAL: usize = 105;
+const INPUT_0_NULLIFIER_FINAL: usize = 37;
+const INPUT_1_NOTE_FINAL: usize = 40;
+const INPUT_1_ROOT_FINAL: usize = 72;
+const INPUT_1_NULLIFIER_FINAL: usize = 74;
+const OUTPUT_0_NOTE_FINAL: usize = 77;
+const OUTPUT_1_NOTE_FINAL: usize = 80;
+const POLICY_FINAL: usize = 99;
+const BOUND_CURRENT_FINAL: usize = 107;
+const BOUND_NEXT_FINAL: usize = 108;
+const BOUND_VALUE_LOCK_FINAL: usize = 108;
 const DISABLED_PARENT_HEIGHT: u64 = 9_001;
 
 fn install_disabled_stablecoin_context(statement: &mut SmallwoodPoseidon2V8PublicStatement) {
@@ -121,6 +121,11 @@ fn note(tag: u64, value: u64, asset_id: u64) -> SmallwoodPoseidon2V8NoteOpening 
     }
 }
 
+fn install_authorization(note: &mut SmallwoodPoseidon2V8NoteOpening, commitment: [u64; 7]) {
+    note.authorization_key.copy_from_slice(&commitment[..4]);
+    note.randomness[..3].copy_from_slice(&commitment[4..]);
+}
+
 fn set_activity(
     mask: u8,
     statement: &mut SmallwoodPoseidon2V8PublicStatement,
@@ -132,7 +137,7 @@ fn set_activity(
         if active {
             witness.inputs[input] = SmallwoodPoseidon2V8InputWitness {
                 active: true,
-                spend_key: [101, 102, 103, 104],
+                spend_key: [101, 102, 103, 104, 1],
                 note: note(1_000 + input as u64 * 100, 0, NATIVE_ASSET_ID),
                 position: input as u64,
                 siblings: [[0; 7]; 32],
@@ -266,10 +271,7 @@ fn single_key_fixture(
         .final_digest();
     for input in 0..2 {
         if statement.input_flags[input] {
-            witness.inputs[input]
-                .note
-                .authorization_key
-                .copy_from_slice(&legacy[1..5]);
+            install_authorization(&mut witness.inputs[input].note, legacy);
         }
     }
     install_merkle_paths(&mut statement, &mut witness);
@@ -297,6 +299,7 @@ fn approval_fixture(
     let intent = digest(9_000);
     witness.auth = SmallwoodPoseidon2V8PrivateAuthWitness {
         mode: SmallwoodPrivateAuthMode::ApprovalStep,
+        policy_nullifier_key: [201, 202, 203, 204, 1],
         current: opening(digest(9_100), intent, 0, [false; 6]),
         next: opening(
             digest(9_100),
@@ -312,20 +315,11 @@ fn approval_fixture(
     witness.auth.next.policy_root = root;
 
     let material = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
-    let current = material.calls[CURRENT_FINAL].final_digest();
-    let next = material.calls[NEXT_FINAL].final_digest();
-    witness.inputs[0]
-        .note
-        .authorization_key
-        .copy_from_slice(&current[..4]);
-    witness.inputs[1]
-        .note
-        .authorization_key
-        .copy_from_slice(&legacy[1..5]);
-    witness.outputs[0]
-        .note
-        .authorization_key
-        .copy_from_slice(&next[..4]);
+    let current = material.calls[BOUND_CURRENT_FINAL].final_digest();
+    let next = material.calls[BOUND_NEXT_FINAL].final_digest();
+    install_authorization(&mut witness.inputs[0].note, current);
+    install_authorization(&mut witness.inputs[1].note, legacy);
+    install_authorization(&mut witness.outputs[0].note, next);
 
     install_merkle_paths(&mut statement, &mut witness);
     install_transaction_public_hashes(&mut statement, &witness);
@@ -353,20 +347,11 @@ fn six_signer_approval_fixture() -> (
 
     let material = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
     let legacy = material.calls[0].final_digest();
-    let current = material.calls[CURRENT_FINAL].final_digest();
-    let next = material.calls[NEXT_FINAL].final_digest();
-    witness.inputs[0]
-        .note
-        .authorization_key
-        .copy_from_slice(&current[..4]);
-    witness.inputs[1]
-        .note
-        .authorization_key
-        .copy_from_slice(&legacy[1..5]);
-    witness.outputs[0]
-        .note
-        .authorization_key
-        .copy_from_slice(&next[..4]);
+    let current = material.calls[BOUND_CURRENT_FINAL].final_digest();
+    let next = material.calls[BOUND_NEXT_FINAL].final_digest();
+    install_authorization(&mut witness.inputs[0].note, current);
+    install_authorization(&mut witness.inputs[1].note, legacy);
+    install_authorization(&mut witness.outputs[0].note, next);
 
     install_merkle_paths(&mut statement, &mut witness);
     install_transaction_public_hashes(&mut statement, &witness);
@@ -392,6 +377,7 @@ fn final_fixture(
     let tags = policy_tags(legacy[..5].try_into().unwrap());
     witness.auth = SmallwoodPoseidon2V8PrivateAuthWitness {
         mode: SmallwoodPrivateAuthMode::FinalThresholdSpend,
+        policy_nullifier_key: [201, 202, 203, 204, 1],
         current: opening(
             digest(9_100),
             digest(9_200),
@@ -414,16 +400,10 @@ fn final_fixture(
     witness.auth.current.intent_digest = statement.expected_action_intent().unwrap();
 
     let material = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
-    let current = material.calls[CURRENT_FINAL].final_digest();
-    let value_lock = material.calls[VALUE_LOCK_FINAL].final_digest();
-    witness.inputs[0]
-        .note
-        .authorization_key
-        .copy_from_slice(&value_lock[..4]);
-    witness.inputs[1]
-        .note
-        .authorization_key
-        .copy_from_slice(&current[..4]);
+    let current = material.calls[BOUND_CURRENT_FINAL].final_digest();
+    let value_lock = material.calls[BOUND_VALUE_LOCK_FINAL].final_digest();
+    install_authorization(&mut witness.inputs[0].note, value_lock);
+    install_authorization(&mut witness.inputs[1].note, current);
 
     install_merkle_paths(&mut statement, &mut witness);
     install_transaction_public_hashes(&mut statement, &witness);
@@ -557,7 +537,7 @@ fn stable_fixture(
             statement.input_flags[0] = true;
             witness.inputs[0] = SmallwoodPoseidon2V8InputWitness {
                 active: true,
-                spend_key: [101, 102, 103, 104],
+                spend_key: [101, 102, 103, 104, 1],
                 note: note(13_000, MAGNITUDE, u64::from(ASSET)),
                 position: 0,
                 siblings: [[0; 7]; 32],
@@ -567,10 +547,7 @@ fn stable_fixture(
                 .unwrap()
                 .calls[0]
                 .final_digest();
-            witness.inputs[0]
-                .note
-                .authorization_key
-                .copy_from_slice(&legacy[1..5]);
+            install_authorization(&mut witness.inputs[0].note, legacy);
             install_merkle_paths(&mut statement, &mut witness);
         }
         StablecoinPoseidon2V8Direction::Disabled => unreachable!(),
@@ -816,7 +793,7 @@ fn padding_asset_cannot_escape_the_executable_balance_relation() {
         } else {
             INPUT_1_NOTE_FINAL
         };
-        let merkle_start = if input == 0 { 4 } else { 40 };
+        let merkle_start = if input == 0 { 4 } else { 41 };
         for level in 0..32 {
             let call = merkle_start + level;
             let previous = if level == 0 {
@@ -918,7 +895,7 @@ fn every_typed_nonzero_authorization_field_is_linked_to_the_packed_verifier() {
             Err(
                 SmallwoodPoseidon2V8RelationError::NonlinearConstraintViolation {
                     lane: condition,
-                    constraint: 804,
+                    constraint: SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINT_COUNT - 26,
                 }
             )
         );
@@ -939,8 +916,8 @@ fn every_typed_nonzero_authorization_field_is_linked_to_the_packed_verifier() {
     }
 
     let mut zero_spend_key = witness;
-    zero_spend_key.inputs[0].spend_key = [0; 4];
-    zero_spend_key.inputs[1].spend_key = [0; 4];
+    zero_spend_key.inputs[0].spend_key = [0; 5];
+    zero_spend_key.inputs[1].spend_key = [0; 5];
     assert!(zero_spend_key
         .validate_against_statement(&statement)
         .is_err());
@@ -974,20 +951,11 @@ fn approval_step_rejects_wrong_new_signer_tag_after_rebinding_policy_root() {
 
     let material = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
     let legacy = material.calls[0].final_digest();
-    let current = material.calls[CURRENT_FINAL].final_digest();
-    let next = material.calls[NEXT_FINAL].final_digest();
-    witness.inputs[0]
-        .note
-        .authorization_key
-        .copy_from_slice(&current[..4]);
-    witness.inputs[1]
-        .note
-        .authorization_key
-        .copy_from_slice(&legacy[1..5]);
-    witness.outputs[0]
-        .note
-        .authorization_key
-        .copy_from_slice(&next[..4]);
+    let current = material.calls[BOUND_CURRENT_FINAL].final_digest();
+    let next = material.calls[BOUND_NEXT_FINAL].final_digest();
+    install_authorization(&mut witness.inputs[0].note, current);
+    install_authorization(&mut witness.inputs[1].note, legacy);
+    install_authorization(&mut witness.outputs[0].note, next);
 
     install_merkle_paths(&mut statement, &mut witness);
     install_transaction_public_hashes(&mut statement, &witness);
@@ -995,6 +963,64 @@ fn approval_step_rejects_wrong_new_signer_tag_after_rebinding_policy_root() {
         .validate_against_statement(&statement)
         .expect("typed validation intentionally omits the executable signer-identity equation");
     assert!(compile_smallwood_poseidon2_v8_relation(&statement, &witness).is_err());
+}
+
+#[test]
+fn complete_authorization_and_secret_bindings_reject_recommitted_aliases() {
+    for (statement, witness) in [
+        single_key_fixture(0b1111),
+        approval_fixture(0b1111),
+        final_fixture(0b1111),
+    ] {
+        compile_and_replay(&statement, &witness);
+        for input in 0..2 {
+            for limb in 0..7 {
+                let mut changed_statement = statement;
+                let mut changed_witness = witness;
+                let note = &mut changed_witness.inputs[input].note;
+                if limb < 4 {
+                    note.authorization_key[limb] ^= 1;
+                } else {
+                    note.randomness[limb - 4] ^= 1;
+                }
+                // Recommit the changed note and authenticate its new Merkle root.  Rejection
+                // must therefore come from authorization, not a stale note/tree commitment.
+                install_merkle_paths(&mut changed_statement, &mut changed_witness);
+                install_transaction_public_hashes(&mut changed_statement, &changed_witness);
+                assert!(
+                    compile_smallwood_poseidon2_v8_relation(&changed_statement, &changed_witness,)
+                        .is_err(),
+                    "mode {:?}, input {input}, authorization limb {limb}",
+                    witness.auth.mode
+                );
+            }
+        }
+        let mut changed_statement = statement;
+        let mut changed_witness = witness;
+        if witness.auth.mode == SmallwoodPrivateAuthMode::SingleKey {
+            for input in &mut changed_witness.inputs {
+                input.spend_key[4] += 1;
+            }
+        } else {
+            changed_witness.auth.policy_nullifier_key[4] += 1;
+        }
+        install_transaction_public_hashes(&mut changed_statement, &changed_witness);
+        assert!(
+            compile_smallwood_poseidon2_v8_relation(&changed_statement, &changed_witness,).is_err(),
+            "a different fifth secret digit cannot spend the existing note"
+        );
+    }
+    let (statement, witness) = approval_fixture(0b1111);
+    for limb in 0..3 {
+        let mut changed_statement = statement;
+        let mut changed_witness = witness;
+        changed_witness.outputs[0].note.randomness[limb] ^= 1;
+        install_transaction_public_hashes(&mut changed_statement, &changed_witness);
+        assert!(
+            compile_smallwood_poseidon2_v8_relation(&changed_statement, &changed_witness,).is_err(),
+            "approval output must bind extension limb {limb}"
+        );
+    }
 }
 
 #[test]
@@ -1031,7 +1057,7 @@ fn stable_role_source_hash_root_and_issuer_mutations_fail_closed() {
 
     let lowered = compile_smallwood_poseidon2_v8_relation(&mint_statement, &mint_witness).unwrap();
     let mut wrong_hash = lowered.witness_values.clone();
-    let relative = smallwood_poseidon2_v8_hash_call_initial_witness_index(106, 0);
+    let relative = smallwood_poseidon2_v8_hash_call_initial_witness_index(109, 0);
     let index =
         SMALLWOOD_POSEIDON2_V8_HASH_ROW_START * SMALLWOOD_POSEIDON2_V8_PACKING_FACTOR + relative;
     wrong_hash[index] ^= 1;
@@ -1180,39 +1206,39 @@ fn report_statement_specialized_linear_constraint_inventory() {
     assert_eq!(
         &entries[..16],
         &[
-            ("single", 0, 20_509),
-            ("single", 1, 20_243),
-            ("single", 2, 20_243),
-            ("single", 3, 19_981),
-            ("single", 4, 20_486),
-            ("single", 5, 20_220),
-            ("single", 6, 20_220),
-            ("single", 7, 19_958),
-            ("single", 8, 20_486),
-            ("single", 9, 20_220),
-            ("single", 10, 20_220),
-            ("single", 11, 19_958),
-            ("single", 12, 20_463),
-            ("single", 13, 20_197),
-            ("single", 14, 20_197),
-            ("single", 15, 19_935),
+            ("single", 0, 20_510),
+            ("single", 1, 20_248),
+            ("single", 2, 20_248),
+            ("single", 3, 19_986),
+            ("single", 4, 20_487),
+            ("single", 5, 20_225),
+            ("single", 6, 20_225),
+            ("single", 7, 19_963),
+            ("single", 8, 20_487),
+            ("single", 9, 20_225),
+            ("single", 10, 20_225),
+            ("single", 11, 19_963),
+            ("single", 12, 20_464),
+            ("single", 13, 20_202),
+            ("single", 14, 20_202),
+            ("single", 15, 19_940),
         ]
     );
     assert_eq!(
         &entries[16..],
         &[
-            ("approval", 7, 19_958),
-            ("approval", 15, 19_935),
-            ("final", 3, 19_981),
-            ("final", 7, 19_958),
-            ("final", 11, 19_958),
-            ("final", 15, 19_935),
-            ("mint", 4, 20_384),
-            ("burn", 1, 20_165),
+            ("approval", 7, 19_963),
+            ("approval", 15, 19_940),
+            ("final", 3, 19_986),
+            ("final", 7, 19_963),
+            ("final", 11, 19_963),
+            ("final", 15, 19_940),
+            ("mint", 4, 20_385),
+            ("burn", 1, 20_170),
         ]
     );
     assert_eq!(
         entries.iter().map(|(_, _, count)| *count).max(),
-        Some(20_509)
+        Some(20_510)
     );
 }

@@ -1024,7 +1024,7 @@ fn recovered_opening(
     plaintext: &crate::notes::NotePlaintext,
     material: &crate::keys::AddressKeyMaterial,
 ) -> Result<SmallwoodPoseidon2V8NoteOpening, WalletError> {
-    Ok(SmallwoodPoseidon2V8NoteOpening {
+    let opening = SmallwoodPoseidon2V8NoteOpening {
         value: plaintext.value,
         asset_id: plaintext.asset_id,
         recipient_key: poseidon2_v8_words_from_canonical_bytes(material.pk_recipient)
@@ -1035,7 +1035,13 @@ fn recovered_opening(
             .map_err(|_| WalletError::NoteMismatch("noncanonical V8 rho"))?,
         randomness: poseidon2_v8_words_from_canonical_bytes(plaintext.r)
             .map_err(|_| WalletError::NoteMismatch("noncanonical V8 randomness"))?,
-    })
+    };
+    if opening.randomness[..3] != material.poseidon2_v8_authorization_extension_words()? {
+        return Err(WalletError::NoteMismatch(
+            "V8 note authorization extension does not match routed key material",
+        ));
+    }
+    Ok(opening)
 }
 
 fn owned_note_nullifier(
@@ -1062,7 +1068,7 @@ fn owned_note_nullifier(
         .find(|call| {
             matches!(
                 call.role,
-                SmallwoodPoseidon2V8HashCallRole::InputNullifier { input: 0 }
+                SmallwoodPoseidon2V8HashCallRole::InputNullifier { input: 0, block: 1 }
             )
         })
         .map(|call| call.final_digest())

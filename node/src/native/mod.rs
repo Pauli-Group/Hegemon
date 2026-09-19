@@ -217,6 +217,10 @@ pub const POSEIDON2_V8_MAX_PENDING_ACTION_OUTER_BYTES: usize = 225;
 pub const POSEIDON2_V8_MAX_PENDING_ACTION_BYTES: usize =
     protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_MAX_ACTION_BYTES
         + POSEIDON2_V8_MAX_PENDING_ACTION_OUTER_BYTES;
+/// Additive q38 SMZA route cap; historical q20 limits remain unchanged.
+pub const POSEIDON2_V8_SMZA_MAX_PENDING_ACTION_BYTES: usize =
+    protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES
+        + POSEIDON2_V8_MAX_PENDING_ACTION_OUTER_BYTES;
 /// Local typed form of the protocol-versioning QROM action ceiling. Both V8
 /// transactions and the paired V8 coinbase consume this budget. The
 /// independent 64 MiB encoded-action budget is not evidence for this cap.
@@ -3711,6 +3715,7 @@ pub(crate) fn native_action_request_route_payload_decodes_exactly(
             // route must use contextual decode with the source-owned network
             // id and V8 relation digest before proof verification.
             preflight_poseidon2_production_smz9_inline_args_exact(public_args).is_ok()
+                || protocol_shielded_pool::poseidon2_production_transport::preflight_poseidon2_production_smza_inline_args_exact(public_args).is_ok()
         }
         (FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT) => {
             decode_scale_exact::<SubmitCandidateArtifactArgs>(
@@ -3737,8 +3742,10 @@ pub(crate) const fn native_action_request_public_args_cap(family_id: u16, action
     if family_id == FAMILY_SHIELDED_POOL
         && action_id == ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
     {
-        transaction_circuit::smallwood_poseidon2_v8_security::SMALLWOOD_POSEIDON2_V8_MAX_ACTION_BYTES
-            as usize
+        // Before decoding, the shared route can only apply the largest exact
+        // profile ceiling. Syntax/context decoding then enforces each profile's
+        // own cap; q20 retains 131,072 bytes.
+        protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES
     } else if family_id == FAMILY_SHIELDED_POOL && action_id == ACTION_MINT_POSEIDON2_V8_COINBASE {
         POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES
     } else {

@@ -1133,6 +1133,23 @@ RETAINED_FIXED_IDENTITY_VALUES: dict[str, object] = {
     "max_inline_route_args_bytes": 131_072,
     "max_v8_pending_action_bytes": 131_297,
 }
+# Structural identity recognition is separate from release evidence support.
+# These values describe the additive source-owned SMZA transport; they do not
+# add a registry entry or permit reuse of the q20 security certificates below.
+SMZA_FIXED_IDENTITY_VALUES: dict[str, object] = {
+    **RETAINED_FIXED_IDENTITY_VALUES,
+    "profile_wire_id": 9,
+    "domain_set": 5,
+    "activation_height": 1,
+    "envelope_magic_hex": "535750384c433033",
+    "native_leaf_magic_hex": "4847563854583033",
+    "inner_proof_wire_magic_hex": "534d5a41",
+    "max_proof_bytes": 164_113,
+    "max_outer_envelope_bytes": 169_543,
+    "max_inline_route_args_bytes": 169_547,
+    "max_v8_pending_action_bytes": 169_772,
+}
+
 RETAINED_ARTIFACT_PROFILE = {
     "rho": 5,
     "opened_evaluations": 6,
@@ -6573,19 +6590,44 @@ def validate_identity(value: object, label: str) -> dict[str, object]:
             f"{label}.max_v8_pending_action_bytes must equal "
             "max_inline_route_args_bytes + 225"
         )
-    for field, expected in RETAINED_FIXED_IDENTITY_VALUES.items():
+    profile_tuple = (identity["profile_wire_id"], identity["domain_set"])
+    if profile_tuple == (6, 4):
+        fixed_identity = RETAINED_FIXED_IDENTITY_VALUES
+        profile_name = "V8/SMZ9"
+    elif profile_tuple == (9, 5):
+        fixed_identity = SMZA_FIXED_IDENTITY_VALUES
+        profile_name = "V8/SMZA"
+    else:
+        reject(f"{label} carries an unknown or mixed proof profile/domain")
+    for field, expected in fixed_identity.items():
         if identity[field] != expected:
             reject(
-                f"{label} identity does not match the frozen V8/SMZ9 profile: "
+                f"{label} identity does not match the frozen {profile_name} profile: "
                 f"{field} must equal {expected!r}"
             )
     return identity
+
+
+def require_release_profile_evidence_contract(identity: Mapping[str, object]) -> None:
+    """Do not authorize SMZA by relabeling the existing q20 evidence contract.
+
+    Identity validation can already describe the exact successor. Its actual
+    q38 formal source/theorem roots and physical security receipts must be
+    installed with dedicated validators before registry/bundle acceptance.
+    This is a missing implementation/evidence contract, not missing consent.
+    """
+    if (identity["profile_wire_id"], identity["domain_set"]) == (9, 5):
+        reject(
+            "SMZA identity is recognized, but its source-bound q38 security "
+            "evidence contract is not installed; SMZ9/q20 receipts cannot authorize it"
+        )
 
 
 def validate_registry_entry(key: str, profile: AuthorizedProfile) -> None:
     if profile.profile_id != key or not key:
         reject("source-owned registry key/profile mismatch")
     identity = validate_identity(dict(profile.identity), f"registry[{key}].identity")
+    require_release_profile_evidence_contract(identity)
     if profile.max_proof_bytes != identity["max_proof_bytes"]:
         reject("source-owned registry max_proof_bytes does not match its exact identity")
     bundle_path = require_relative_path(
@@ -6926,6 +6968,7 @@ def validate_evidence_bundle(
     if artifact_command_runner is run_artifact_verifier_command:
         require_source_bound_hermetic_release_authority(profile.profile_id, root)
     identity = validate_identity(bundle["identity"], "evidence bundle.identity")
+    require_release_profile_evidence_contract(identity)
     if identity != dict(profile.identity):
         reject("evidence bundle identity does not match the source-owned registry")
     source_revision = require_string(

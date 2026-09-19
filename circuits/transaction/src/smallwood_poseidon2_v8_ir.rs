@@ -513,15 +513,30 @@ pub fn evaluate_smallwood_poseidon2_v8_expression_program(
     rows: &[u64],
 ) -> Result<Vec<u64>, &'static str> {
     let values =
-        evaluate_smallwood_poseidon2_v8_expression_nodes(&program.expressions, public, rows)?;
+        match evaluate_smallwood_poseidon2_v8_expression_nodes(&program.expressions, public, rows) {
+            Ok(values) => values,
+            Err(error) => return Err(error),
+        };
     let mut roots = Vec::new();
-    for root in program.roots.iter() {
-        let value = *values
-            .get(*root as usize)
-            .ok_or("V8 executable program root is out of range")?;
+    let mut invalid_root = false;
+    let mut root_index = 0usize;
+    while root_index < program.roots.len() {
+        let root = program.roots[root_index];
+        let value = match values.get(root as usize) {
+            Some(value) => *value,
+            None => {
+                invalid_root = true;
+                break;
+            }
+        };
         roots.push(value);
+        root_index += 1;
     }
-    Ok(roots)
+    if invalid_root {
+        Err("V8 executable program root is out of range")
+    } else {
+        Ok(roots)
+    }
 }
 
 #[cfg(test)]

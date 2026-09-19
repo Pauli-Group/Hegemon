@@ -34,7 +34,7 @@ use transaction_core::{
 };
 
 pub const SMALLWOOD_POSEIDON2_V8_RELATION_ID: &str =
-    "hegemon.smallwood.poseidon2-v8.stablecoin-relation.v2";
+    "hegemon.smallwood.poseidon2-v8.stablecoin-relation.v3";
 pub const SMALLWOOD_POSEIDON2_V8_PACKING_FACTOR: usize = 64;
 /// Base rows before the fixed 39-row stablecoin tail.  The 647-row base uses
 /// the canonical one-permutation `poseidon2_width16_compress14` Merkle node

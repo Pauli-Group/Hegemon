@@ -1,7 +1,7 @@
 //! Executable width-16 Poseidon2 relation for the fresh V8 SmallWood profile.
 //!
 //! This module is intentionally independent of the historical width-12 relation.  It owns the
-//! fixed 686-row layout, the ordered 125-call hash schedule, verifier reconstruction from the
+//! fixed 686-row layout, the ordered 128-call hash schedule, verifier reconstruction from the
 //! canonical 120-word statement, and the prover-only packed assignment.  Production authority is
 //! deliberately outside this module.
 
@@ -10,7 +10,7 @@
 use thiserror::Error;
 
 use transaction_core::constants::{
-    BALANCE_SLOT_PADDING_FIELD_ID, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG,
+    BALANCE_SLOT_PADDING_FIELD_ID, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG,
 };
 use transaction_core::poseidon2_width16::{
     Felt, POSEIDON2_WIDTH16_RATE, POSEIDON2_WIDTH16_SPONGE_MODE_MARKER,
@@ -42,6 +42,9 @@ use crate::smallwood_poseidon2_v8_hash_constraints::{
 };
 use crate::smallwood_poseidon2_v8_hash_schedule::{
     build_smallwood_poseidon2_v8_hash_schedule, SmallwoodPoseidon2V8HashScheduleError,
+    SMALLWOOD_POSEIDON2_V8_AUTH_ACCUMULATOR_DOMAIN, SMALLWOOD_POSEIDON2_V8_AUTH_MODE_BIND_DOMAIN,
+    SMALLWOOD_POSEIDON2_V8_AUTH_POLICY_DOMAIN, SMALLWOOD_POSEIDON2_V8_AUTH_VALUE_LOCK_DOMAIN,
+    SMALLWOOD_POSEIDON2_V8_NULLIFIER_DOMAIN, SMALLWOOD_POSEIDON2_V8_SINGLE_KEY_DOMAIN,
 };
 use crate::smallwood_poseidon2_v8_ir::{
     begin_smallwood_poseidon2_v8_expression_program,
@@ -114,21 +117,23 @@ const AUTH_ROW_START: usize = 92;
 const INLINE_MERKLE_GROUPS: usize = 7;
 const INLINE_POLICY_ROW_START: usize = SMALLWOOD_POSEIDON2_V8_INLINE_ROW_START + 28;
 const AUTH_INTENT_DOMAIN: u64 = SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_DOMAIN;
-const AUTH_POLICY_DOMAIN: u64 = 7;
-const AUTH_ACCUMULATOR_DOMAIN: u64 = 6;
-const AUTH_VALUE_LOCK_DOMAIN: u64 = 8;
+const AUTH_POLICY_DOMAIN: u64 = SMALLWOOD_POSEIDON2_V8_AUTH_POLICY_DOMAIN;
+const AUTH_ACCUMULATOR_DOMAIN: u64 = SMALLWOOD_POSEIDON2_V8_AUTH_ACCUMULATOR_DOMAIN;
+const AUTH_VALUE_LOCK_DOMAIN: u64 = SMALLWOOD_POSEIDON2_V8_AUTH_VALUE_LOCK_DOMAIN;
 const MODULUS: u64 = hegemon_field::GOLDILOCKS_MODULUS;
 const NEG_ONE: u64 = MODULUS - 1;
 
-pub const SMALLWOOD_POSEIDON2_V8_TRANSACTION_CALLS: core::ops::Range<usize> = 0..79;
-pub const SMALLWOOD_POSEIDON2_V8_INTENT_CALLS: core::ops::Range<usize> = 79..94;
-pub const SMALLWOOD_POSEIDON2_V8_POLICY_CALLS: core::ops::Range<usize> = 94..98;
-pub const SMALLWOOD_POSEIDON2_V8_CURRENT_ACCUMULATOR_CALLS: core::ops::Range<usize> = 98..101;
-pub const SMALLWOOD_POSEIDON2_V8_NEXT_ACCUMULATOR_CALLS: core::ops::Range<usize> = 101..104;
-pub const SMALLWOOD_POSEIDON2_V8_VALUE_LOCK_CALLS: core::ops::Range<usize> = 104..106;
-pub const SMALLWOOD_POSEIDON2_V8_STABLE_CALLS: core::ops::Range<usize> = 106..125;
+pub const SMALLWOOD_POSEIDON2_V8_TRANSACTION_CALLS: core::ops::Range<usize> = 0..81;
+pub const SMALLWOOD_POSEIDON2_V8_INTENT_CALLS: core::ops::Range<usize> = 81..96;
+pub const SMALLWOOD_POSEIDON2_V8_POLICY_CALLS: core::ops::Range<usize> = 96..100;
+pub const SMALLWOOD_POSEIDON2_V8_CURRENT_ACCUMULATOR_CALLS: core::ops::Range<usize> = 100..103;
+pub const SMALLWOOD_POSEIDON2_V8_NEXT_ACCUMULATOR_CALLS: core::ops::Range<usize> = 103..106;
+pub const SMALLWOOD_POSEIDON2_V8_VALUE_LOCK_CALLS: core::ops::Range<usize> = 106..107;
+pub const SMALLWOOD_POSEIDON2_V8_BOUND_CURRENT_CALLS: core::ops::Range<usize> = 107..108;
+pub const SMALLWOOD_POSEIDON2_V8_BOUND_SECONDARY_CALLS: core::ops::Range<usize> = 108..109;
+pub const SMALLWOOD_POSEIDON2_V8_STABLE_CALLS: core::ops::Range<usize> = 109..128;
 
-const _: () = assert!(SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT == 125);
+const _: () = assert!(SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT == 128);
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_HASH_ROW_COUNT == 364);
 const _: () = assert!(
     SMALLWOOD_POSEIDON2_V8_HASH_ROW_START + SMALLWOOD_POSEIDON2_V8_HASH_ROW_COUNT
@@ -138,7 +143,8 @@ const _: () = assert!(
     SMALLWOOD_POSEIDON2_V8_STABLE_ROW_START + SMALLWOOD_POSEIDON2_V8_STABLE_ROW_COUNT
         == SMALLWOOD_POSEIDON2_V8_ROW_COUNT
 );
-const _: () = assert!(79 + 15 + 4 + 3 + 3 + 2 + 19 == SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT);
+const _: () =
+    assert!(81 + 15 + 4 + 3 + 3 + 1 + 1 + 1 + 19 == SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT);
 const _: () = assert!(
     INPUTS * INPUT_ROWS + OUTPUTS * OUTPUT_ROWS + AUTH_ROWS == SMALLWOOD_POSEIDON2_V8_RAW_ROW_COUNT
 );
@@ -258,24 +264,38 @@ const fn output_auth_key_row(output: usize, limb: usize) -> usize {
 }
 
 const AUTH_MODE: usize = 0;
-const AUTH_INPUT_PRF: usize = AUTH_MODE + 3;
-const AUTH_INPUT_KEY: usize = AUTH_INPUT_PRF + 2;
-const AUTH_LEGACY: usize = AUTH_INPUT_KEY + 8;
-const AUTH_CURRENT: usize = AUTH_LEGACY + 5;
-const AUTH_NEXT: usize = AUTH_CURRENT + 7;
-const AUTH_VALUE_LOCK: usize = AUTH_NEXT + 7;
-const AUTH_STATEMENT: usize = AUTH_VALUE_LOCK + 7;
+const AUTH_INPUT_NOTE_VECTOR: usize = AUTH_MODE + 3;
+const AUTH_INPUT_NULLIFIER_VECTOR: usize = AUTH_INPUT_NOTE_VECTOR + 2;
+const AUTH_LEGACY_TAG: usize = AUTH_INPUT_NULLIFIER_VECTOR + 2;
+const AUTH_LEGACY_VECTOR: usize = AUTH_LEGACY_TAG + 5;
+const AUTH_NEXT_VECTOR: usize = AUTH_LEGACY_VECTOR + 1;
+const AUTH_VALUE_LOCK_VECTOR: usize = AUTH_NEXT_VECTOR + 1;
+const AUTH_SECONDARY_INPUT_VECTOR: usize = AUTH_VALUE_LOCK_VECTOR + 1;
+const AUTH_BOUND_CURRENT_VECTOR: usize = AUTH_SECONDARY_INPUT_VECTOR + 1;
+const AUTH_BOUND_SECONDARY_VECTOR: usize = AUTH_BOUND_CURRENT_VECTOR + 1;
+const AUTH_OUTPUT_0_VECTOR: usize = AUTH_BOUND_SECONDARY_VECTOR + 1;
+const AUTH_GLOBAL_KEY_0: usize = AUTH_OUTPUT_0_VECTOR + 1;
+const AUTH_POLICY_KEY_0: usize = AUTH_GLOBAL_KEY_0 + 1;
+const AUTH_STATEMENT: usize = AUTH_POLICY_KEY_0 + 1;
 const AUTH_POLICY: usize = AUTH_STATEMENT + 7;
 const AUTH_INTENT: usize = AUTH_POLICY + 7;
 const AUTH_SCALAR: usize = AUTH_INTENT + 7;
-const AUTH_THRESHOLD_FLAGS: usize = AUTH_SCALAR + 18;
-const AUTH_SIGNER_FLAGS: usize = AUTH_THRESHOLD_FLAGS + 6;
-const AUTH_COUNT_FLAGS: usize = AUTH_SIGNER_FLAGS + 6;
-const AUTH_NEXT_COUNT_FLAGS: usize = AUTH_COUNT_FLAGS + 7;
-const AUTH_POLICY_TAGS: usize = AUTH_NEXT_COUNT_FLAGS + 7;
+const AUTH_SIGNER_FLAGS: usize = AUTH_SCALAR + 17;
+const AUTH_RANGE_DIFFS: usize = AUTH_SIGNER_FLAGS + 6;
+const AUTH_OUTPUT_0_EXTENSION: usize = AUTH_RANGE_DIFFS + 2;
+const AUTH_POLICY_TAGS: usize = AUTH_OUTPUT_0_EXTENSION + 3;
 const AUTH_MEMBERSHIP: usize = AUTH_POLICY_TAGS + 30;
 const AUTH_DISTINCT_INV: usize = AUTH_MEMBERSHIP + 6;
-const _: () = assert!(AUTH_DISTINCT_INV + 15 == AUTH_ROWS);
+const AUTH_GLOBAL_KEY_VECTOR: usize = AUTH_DISTINCT_INV + 15;
+const AUTH_POLICY_KEY_VECTOR: usize = AUTH_GLOBAL_KEY_VECTOR + 1;
+const AUTH_USED: usize = AUTH_POLICY_KEY_VECTOR + 1;
+const fn auth_global_key_vector_row() -> usize {
+    auth_row(AUTH_GLOBAL_KEY_VECTOR)
+}
+const fn auth_policy_key_vector_row() -> usize {
+    auth_row(AUTH_POLICY_KEY_VECTOR)
+}
+const _: () = assert!(AUTH_USED <= AUTH_ROWS);
 
 #[inline]
 const fn auth_row(offset: usize) -> usize {
@@ -286,28 +306,52 @@ const fn auth_mode_row(mode: usize) -> usize {
     auth_row(AUTH_MODE + mode)
 }
 #[inline]
-const fn auth_input_prf_row(input: usize) -> usize {
-    auth_row(AUTH_INPUT_PRF + input)
+const fn auth_input_note_vector_row(input: usize) -> usize {
+    auth_row(AUTH_INPUT_NOTE_VECTOR + input)
 }
 #[inline]
-const fn auth_input_key_row(input: usize, limb: usize) -> usize {
-    auth_row(AUTH_INPUT_KEY + input * 4 + limb)
+const fn auth_input_nullifier_vector_row(input: usize) -> usize {
+    auth_row(AUTH_INPUT_NULLIFIER_VECTOR + input)
 }
 #[inline]
-const fn auth_legacy_row(limb: usize) -> usize {
-    auth_row(AUTH_LEGACY + limb)
+const fn auth_legacy_tag_row(limb: usize) -> usize {
+    auth_row(AUTH_LEGACY_TAG + limb)
 }
 #[inline]
-const fn auth_current_row(limb: usize) -> usize {
-    auth_row(AUTH_CURRENT + limb)
+const fn auth_legacy_vector_row() -> usize {
+    auth_row(AUTH_LEGACY_VECTOR)
 }
 #[inline]
-const fn auth_next_row(limb: usize) -> usize {
-    auth_row(AUTH_NEXT + limb)
+const fn auth_next_vector_row() -> usize {
+    auth_row(AUTH_NEXT_VECTOR)
 }
 #[inline]
-const fn auth_value_lock_row(limb: usize) -> usize {
-    auth_row(AUTH_VALUE_LOCK + limb)
+const fn auth_value_lock_vector_row() -> usize {
+    auth_row(AUTH_VALUE_LOCK_VECTOR)
+}
+#[inline]
+const fn auth_secondary_input_vector_row() -> usize {
+    auth_row(AUTH_SECONDARY_INPUT_VECTOR)
+}
+#[inline]
+const fn auth_bound_current_vector_row() -> usize {
+    auth_row(AUTH_BOUND_CURRENT_VECTOR)
+}
+#[inline]
+const fn auth_bound_secondary_vector_row() -> usize {
+    auth_row(AUTH_BOUND_SECONDARY_VECTOR)
+}
+#[inline]
+const fn auth_output_0_vector_row() -> usize {
+    auth_row(AUTH_OUTPUT_0_VECTOR)
+}
+#[inline]
+const fn auth_global_key_0_row() -> usize {
+    auth_row(AUTH_GLOBAL_KEY_0)
+}
+#[inline]
+const fn auth_policy_key_0_row() -> usize {
+    auth_row(AUTH_POLICY_KEY_0)
 }
 #[inline]
 const fn auth_statement_row(limb: usize) -> usize {
@@ -350,28 +394,20 @@ const fn auth_next_approved_row(slot: usize) -> usize {
     auth_scalar_row(10 + slot)
 }
 #[inline]
-const fn auth_reserved_signer_row() -> usize {
+const fn auth_key_product_inverse_row() -> usize {
     auth_scalar_row(16)
-}
-#[inline]
-const fn auth_reserved_inverse_row() -> usize {
-    auth_scalar_row(17)
-}
-#[inline]
-const fn auth_threshold_flag_row(flag: usize) -> usize {
-    auth_row(AUTH_THRESHOLD_FLAGS + flag)
 }
 #[inline]
 const fn auth_signer_flag_row(flag: usize) -> usize {
     auth_row(AUTH_SIGNER_FLAGS + flag)
 }
 #[inline]
-const fn auth_count_flag_row(flag: usize) -> usize {
-    auth_row(AUTH_COUNT_FLAGS + flag)
+const fn auth_signer_minus_threshold_row() -> usize {
+    auth_row(AUTH_RANGE_DIFFS)
 }
 #[inline]
-const fn auth_next_count_flag_row(flag: usize) -> usize {
-    auth_row(AUTH_NEXT_COUNT_FLAGS + flag)
+const fn auth_count_minus_threshold_row() -> usize {
+    auth_row(AUTH_RANGE_DIFFS + 1)
 }
 #[inline]
 const fn auth_policy_tag_row(slot: usize, limb: usize) -> usize {
@@ -607,16 +643,12 @@ fn push_auth_constraints(
     let signer_count = rows[auth_signer_count_row()];
     let count = rows[auth_count_row()];
     let next_count = rows[auth_next_count_row()];
-    let reserved_signer = rows[auth_reserved_signer_row()];
-    let reserved_inverse = rows[auth_reserved_inverse_row()];
+    let key_product_inverse = rows[auth_key_product_inverse_row()];
+    let signer_minus_threshold = rows[auth_signer_minus_threshold_row()];
+    let count_minus_threshold = rows[auth_count_minus_threshold_row()];
     let approved: [u64; 6] = core::array::from_fn(|slot| rows[auth_approved_row(slot)]);
     let next_approved: [u64; 6] = core::array::from_fn(|slot| rows[auth_next_approved_row(slot)]);
-    let threshold_flags: [u64; 6] =
-        core::array::from_fn(|slot| rows[auth_threshold_flag_row(slot)]);
     let signer_flags: [u64; 6] = core::array::from_fn(|slot| rows[auth_signer_flag_row(slot)]);
-    let count_flags: [u64; 7] = core::array::from_fn(|slot| rows[auth_count_flag_row(slot)]);
-    let next_count_flags: [u64; 7] =
-        core::array::from_fn(|slot| rows[auth_next_count_flag_row(slot)]);
     let memberships: [u64; 6] = core::array::from_fn(|slot| rows[auth_membership_row(slot)]);
 
     for limb in 0..DIGEST {
@@ -628,18 +660,15 @@ fn push_auth_constraints(
         signer_count,
         count,
         next_count,
-        reserved_signer,
-        reserved_inverse,
+        signer_minus_threshold,
+        count_minus_threshold,
     ] {
         out.push(fmul(single, value));
     }
     for value in approved
         .into_iter()
         .chain(next_approved)
-        .chain(threshold_flags)
         .chain(signer_flags)
-        .chain(count_flags)
-        .chain(next_count_flags)
         .chain(memberships)
     {
         out.push(fmul(single, value));
@@ -652,41 +681,51 @@ fn push_auth_constraints(
     for pair in 0..PAIRS {
         out.push(fmul(single, rows[auth_distinct_inverse_row(pair)]));
     }
+    // Both key families use the canonical wallet codec, whose first base-p
+    // digit is required to be nonzero.  One inverse per family makes that
+    // rejection part of the relation rather than a host-only convention.
+    let any_input = fsub(fadd(public[0], public[1]), fmul(public[0], public[1]));
+    let required_key_product = fmul(
+        rows[auth_global_key_0_row()],
+        fadd(single, fmul(non_single, rows[auth_policy_key_0_row()])),
+    );
+    out.push(fsub(
+        fmul(required_key_product, key_product_inverse),
+        any_input,
+    ));
+    out.push(fmul(fsub(1, any_input), key_product_inverse));
+    out.push(fmul(single, rows[auth_policy_key_vector_row()]));
+    out.push(fmul(fsub(1, any_input), rows[auth_global_key_vector_row()]));
 
-    let current_prf = rows[auth_current_row(4)];
-    let value_lock_prf = rows[auth_value_lock_row(4)];
-    let legacy_prf = rows[auth_legacy_row(0)];
     for input in 0..INPUTS {
         let flag = public[input];
-        let approval_prf = if input == 0 { current_prf } else { legacy_prf };
-        let final_prf = if input == 0 {
-            value_lock_prf
-        } else {
-            current_prf
-        };
+        let legacy = rows[auth_legacy_vector_row()];
+        let current = rows[auth_bound_current_vector_row()];
+        let secondary = rows[auth_bound_secondary_vector_row()];
+        let approval_commitment = if input == 0 { current } else { legacy };
+        let final_commitment = if input == 0 { secondary } else { current };
         let expected = fmul(
             flag,
             fadd(
-                fmul(single, legacy_prf),
-                fadd(fmul(approval, approval_prf), fmul(final_mode, final_prf)),
+                fmul(single, legacy),
+                fadd(
+                    fmul(approval, approval_commitment),
+                    fmul(final_mode, final_commitment),
+                ),
             ),
         );
-        out.push(fsub(rows[auth_input_prf_row(input)], expected));
-        for limb in 0..4 {
-            let legacy = rows[auth_legacy_row(1 + limb)];
-            let current = rows[auth_current_row(limb)];
-            let value_lock = rows[auth_value_lock_row(limb)];
-            let approval_key = if input == 0 { current } else { legacy };
-            let final_key = if input == 0 { value_lock } else { current };
-            let expected = fmul(
-                flag,
-                fadd(
-                    fmul(single, legacy),
-                    fadd(fmul(approval, approval_key), fmul(final_mode, final_key)),
-                ),
-            );
-            out.push(fsub(rows[auth_input_key_row(input, limb)], expected));
-        }
+        out.push(fsub(rows[auth_input_note_vector_row(input)], expected));
+        let global = rows[auth_global_key_vector_row()];
+        let policy = rows[auth_policy_key_vector_row()];
+        let selected = if input == 0 {
+            fadd(fmul(single, global), fmul(non_single, policy))
+        } else {
+            fadd(
+                fmul(final_mode, policy),
+                fmul(fadd(single, approval), global),
+            )
+        };
+        out.push(fsub(rows[auth_input_nullifier_vector_row(input)], selected));
     }
 
     out.push(fmul(approval, fsub(public[0], 1)));
@@ -694,31 +733,24 @@ fn push_auth_constraints(
     out.push(fmul(approval, fsub(public[2], 1)));
     out.push(fmul(final_mode, fsub(public[0], 1)));
     out.push(fmul(final_mode, fsub(public[1], 1)));
-    for limb in 0..4 {
-        out.push(fmul(
-            approval,
-            fsub(
-                rows[output_auth_key_row(0, limb)],
-                rows[auth_next_row(limb)],
-            ),
-        ));
-    }
+    out.push(fmul(
+        approval,
+        fsub(
+            rows[auth_output_0_vector_row()],
+            rows[auth_bound_secondary_vector_row()],
+        ),
+    ));
+    out.push(fsub(
+        rows[auth_secondary_input_vector_row()],
+        fadd(
+            fmul(fadd(single, approval), rows[auth_next_vector_row()]),
+            fmul(final_mode, rows[auth_value_lock_vector_row()]),
+        ),
+    ));
 
-    for bit in threshold_flags {
-        out.push(fmul(non_single, fbool(bit)));
-    }
-    out.push(fmul(non_single, fsub(field_sum(threshold_flags), 1)));
     out.push(fmul(
         non_single,
-        fsub(
-            threshold,
-            field_sum(
-                threshold_flags
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, bit)| fmul(bit, (i + 1) as u64)),
-            ),
-        ),
+        field_product((1..=6).map(|value| fsub(threshold, value))),
     ));
     for bit in signer_flags {
         out.push(fmul(non_single, fbool(bit)));
@@ -736,49 +768,23 @@ fn push_auth_constraints(
             ),
         ),
     ));
-    let mut threshold_too_large = 0;
-    for (index, bit) in threshold_flags.into_iter().enumerate() {
-        threshold_too_large = fadd(
-            threshold_too_large,
-            fmul(bit, field_sum(signer_flags[..index].iter().copied())),
-        );
-    }
-    out.push(fmul(non_single, threshold_too_large));
-
-    for bit in count_flags {
-        out.push(fmul(non_single, fbool(bit)));
-    }
-    out.push(fmul(non_single, fsub(field_sum(count_flags), 1)));
     out.push(fmul(
         non_single,
-        fsub(
-            count,
-            field_sum(
-                count_flags
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, bit)| fmul(bit, i as u64)),
-            ),
-        ),
+        fsub(signer_minus_threshold, fsub(signer_count, threshold)),
     ));
-    for bit in next_count_flags {
-        out.push(fmul(approval, fbool(bit)));
-    }
-    out.push(fmul(approval, fsub(field_sum(next_count_flags), 1)));
+    out.push(fmul(
+        non_single,
+        field_product((0..=5).map(|value| fsub(signer_minus_threshold, value))),
+    ));
+    out.push(fmul(
+        non_single,
+        field_product((0..=6).map(|value| fsub(count, value))),
+    ));
     out.push(fmul(
         approval,
-        fsub(
-            next_count,
-            field_sum(
-                next_count_flags
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, bit)| fmul(bit, i as u64)),
-            ),
-        ),
+        field_product((0..=6).map(|value| fsub(next_count, value))),
     ));
     out.push(fmul(approval, fsub(fsub(next_count, count), 1)));
-    out.push(fmul(approval, count_flags[6]));
 
     let slot_active = |slot: usize| field_sum(signer_flags[slot..].iter().copied());
     for slot in 0..SIGNERS {
@@ -804,8 +810,6 @@ fn push_auth_constraints(
             fsub(fsub(next_approved[slot], approved[slot]), memberships[slot]),
         ));
     }
-    out.push(fmul(approval, reserved_signer));
-    out.push(fmul(approval, reserved_inverse));
     for bit in memberships {
         out.push(fmul(approval, fbool(bit)));
     }
@@ -819,7 +823,7 @@ fn push_auth_constraints(
             out.push(fmul(
                 fmul(approval, memberships[slot]),
                 fsub(
-                    rows[auth_legacy_row(limb)],
+                    rows[auth_legacy_tag_row(limb)],
                     rows[auth_policy_tag_row(slot, limb)],
                 ),
             ));
@@ -852,17 +856,14 @@ fn push_auth_constraints(
         }
     }
 
-    let mut below = 0;
-    for (threshold_index, threshold_flag) in threshold_flags.into_iter().enumerate() {
-        below = fadd(
-            below,
-            fmul(
-                threshold_flag,
-                field_sum(count_flags[..=threshold_index].iter().copied()),
-            ),
-        );
-    }
-    out.push(fmul(final_mode, below));
+    out.push(fmul(
+        final_mode,
+        fsub(count_minus_threshold, fsub(count, threshold)),
+    ));
+    out.push(fmul(
+        final_mode,
+        field_product((0..=5).map(|value| fsub(count_minus_threshold, value))),
+    ));
     for limb in 0..DIGEST {
         out.push(fmul(
             final_mode,
@@ -872,12 +873,6 @@ fn push_auth_constraints(
     out.push(fmul(final_mode, next_count));
     for value in next_approved {
         out.push(fmul(final_mode, value));
-    }
-    out.push(fmul(final_mode, reserved_signer));
-    out.push(fmul(final_mode, reserved_inverse));
-    out.push(fmul(final_mode, fsub(next_count_flags[0], 1)));
-    for value in &next_count_flags[1..] {
-        out.push(fmul(final_mode, *value));
     }
     for value in memberships {
         out.push(fmul(final_mode, value));
@@ -1286,25 +1281,25 @@ fn input_note_call(input: usize) -> usize {
     if input == 0 {
         1
     } else {
-        37
+        38
     }
 }
 fn input_merkle_call(input: usize, level: usize) -> usize {
     if input == 0 {
         4 + level
     } else {
-        40 + level
+        41 + level
     }
 }
 fn input_nullifier_call(input: usize) -> usize {
     if input == 0 {
         36
     } else {
-        72
+        73
     }
 }
 fn output_note_call(output: usize) -> usize {
-    73 + output * 3
+    75 + output * 3
 }
 
 fn inline_slot(input: usize, level: usize, limb: usize) -> (usize, usize) {
@@ -1327,11 +1322,69 @@ fn build_base_linear_constraints(
     // Raw semantic rows are scalar values replicated across all SIMD lanes.  This makes every
     // cross-row base predicate a genuine low-degree row-polynomial identity.
     csr.set_family("base.raw_replicate");
+    let vector_rows = [
+        auth_input_note_vector_row(0),
+        auth_input_note_vector_row(1),
+        auth_input_nullifier_vector_row(0),
+        auth_input_nullifier_vector_row(1),
+        auth_legacy_vector_row(),
+        auth_next_vector_row(),
+        auth_value_lock_vector_row(),
+        auth_secondary_input_vector_row(),
+        auth_bound_current_vector_row(),
+        auth_bound_secondary_vector_row(),
+        auth_output_0_vector_row(),
+        auth_global_key_vector_row(),
+        auth_policy_key_vector_row(),
+    ];
     for row in SMALLWOOD_POSEIDON2_V8_RAW_ROW_START
         ..SMALLWOOD_POSEIDON2_V8_RAW_ROW_START + SMALLWOOD_POSEIDON2_V8_RAW_ROW_COUNT
     {
+        if vector_rows.contains(&row) {
+            continue;
+        }
         for lane in 1..SMALLWOOD_POSEIDON2_V8_PACKING_FACTOR {
             csr.equality(packed_index(row, lane), packed_index(row, 0));
+        }
+    }
+    csr.set_family("base.auth_vector_padding");
+    for row in vector_rows {
+        let used = if row == auth_input_nullifier_vector_row(0)
+            || row == auth_input_nullifier_vector_row(1)
+            || row == auth_global_key_vector_row()
+            || row == auth_policy_key_vector_row()
+        {
+            5
+        } else {
+            DIGEST
+        };
+        for lane in used..SMALLWOOD_POSEIDON2_V8_PACKING_FACTOR {
+            csr.zero(packed_index(row, lane));
+        }
+    }
+    csr.equality(
+        raw_index(auth_global_key_0_row()),
+        packed_index(auth_global_key_vector_row(), 0),
+    );
+    csr.equality(
+        raw_index(auth_policy_key_0_row()),
+        packed_index(auth_policy_key_vector_row(), 0),
+    );
+    for row in auth_row(AUTH_OUTPUT_0_EXTENSION)..auth_row(AUTH_POLICY_TAGS) {
+        csr.zero(raw_index(row));
+    }
+    for row in auth_row(AUTH_USED)..auth_row(AUTH_ROWS) {
+        csr.zero(raw_index(row));
+    }
+
+    csr.set_family("base.spend_key_tail_mirror");
+    for input in 0..INPUTS {
+        for limb in 0..4 {
+            csr.bind(
+                stable_source(112 + input * 4 + limb),
+                LinearExpression::witness(packed_index(auth_global_key_vector_row(), limb))
+                    .scale(public[input]),
+            );
         }
     }
 
@@ -1415,28 +1468,30 @@ fn build_base_linear_constraints(
         ));
     }
 
-    // The global spend secret is explicit in spare source slots.  Both active inputs must carry
-    // the same key; an inactive slot is zero and cannot smuggle an unconstrained second secret.
-    let both = fmul(public[0], public[1]);
-    let mut chosen_spend_sources = Vec::with_capacity(4);
-    for limb in 0..4 {
-        let key0 = tail_source_index(112 + limb);
-        let key1 = tail_source_index(116 + limb);
-        csr.set_family("base.spend_key_inactive");
-        csr.push([(key0, fsub(1, public[0]))], 0);
-        csr.push([(key1, fsub(1, public[1]))], 0);
-        csr.set_family("base.spend_key_equal");
-        csr.push([(key0, both), (key1, fsub(0, both))], 0);
-        let chosen = LinearExpression::witness(key0)
-            .scale(public[0])
-            .add(LinearExpression::witness(key1).scale(fmul(fsub(1, public[0]), public[1])));
-        chosen_spend_sources.push(Some(chosen));
-    }
+    let chosen_spend_sources = (0..7)
+        .map(|limb| {
+            if limb >= 5 {
+                return Some(LinearExpression::constant(0));
+            }
+            Some(LinearExpression::witness(packed_index(
+                auth_global_key_vector_row(),
+                limb,
+            )))
+        })
+        .collect::<Vec<_>>();
     csr.set_family("hash.transaction_prf_initial");
-    bind_sponge(csr, 0, NULLIFIER_DOMAIN_TAG, &chosen_spend_sources);
+    bind_sponge(
+        csr,
+        0,
+        SMALLWOOD_POSEIDON2_V8_SINGLE_KEY_DOMAIN,
+        &chosen_spend_sources,
+    );
     csr.set_family("hash.transaction_prf_to_legacy");
-    for limb in 0..5 {
-        csr.equality(raw_index(auth_legacy_row(limb)), hash_final_index(0, limb));
+    for limb in 0..DIGEST {
+        csr.equality(
+            packed_index(auth_legacy_vector_row(), limb),
+            hash_final_index(0, limb),
+        );
     }
 
     for input in 0..INPUTS {
@@ -1445,8 +1500,15 @@ fn build_base_linear_constraints(
         note_sources[0] = Some(LinearExpression::witness(raw_index(input_value_row(input))));
         note_sources[1] = Some(LinearExpression::witness(raw_index(input_asset_row(input))));
         for limb in 0..4 {
-            note_sources[14 + limb] = Some(LinearExpression::witness(raw_index(
-                auth_input_key_row(input, limb),
+            note_sources[14 + limb] = Some(LinearExpression::witness(packed_index(
+                auth_input_note_vector_row(input),
+                limb,
+            )));
+        }
+        for limb in 0..3 {
+            note_sources[10 + limb] = Some(LinearExpression::witness(packed_index(
+                auth_input_note_vector_row(input),
+                4 + limb,
             )));
         }
         csr.set_family("hash.input_note_initial");
@@ -1497,9 +1559,18 @@ fn build_base_linear_constraints(
             );
         }
 
-        let mut nullifier_sources = vec![Some(LinearExpression::witness(raw_index(
-            auth_input_prf_row(input),
-        )))];
+        let mut nullifier_sources = (0..5)
+            .map(|limb| {
+                Some(LinearExpression::witness(packed_index(
+                    auth_input_nullifier_vector_row(input),
+                    limb,
+                )))
+            })
+            .collect::<Vec<_>>();
+        nullifier_sources.extend([
+            Some(LinearExpression::constant(0)),
+            Some(LinearExpression::constant(0)),
+        ]);
         let mut position = LinearExpression::default();
         for bit in 0..MERKLE_DEPTH {
             position
@@ -1513,13 +1584,13 @@ fn build_base_linear_constraints(
         bind_sponge(
             csr,
             nullifier_call,
-            NULLIFIER_DOMAIN_TAG,
+            SMALLWOOD_POSEIDON2_V8_NULLIFIER_DOMAIN,
             &nullifier_sources,
         );
         csr.set_family("base.input_nullifier_public");
         for limb in 0..DIGEST {
             csr.push(
-                [(hash_final_index(nullifier_call, limb), public[input])],
+                [(hash_final_index(nullifier_call + 1, limb), public[input])],
                 fmul(public[input], public[4 + input * DIGEST + limb]),
             );
         }
@@ -1535,9 +1606,30 @@ fn build_base_linear_constraints(
             output,
         ))));
         for limb in 0..4 {
-            note_sources[14 + limb] = Some(LinearExpression::witness(raw_index(
-                output_auth_key_row(output, limb),
-            )));
+            if output == 0 {
+                note_sources[14 + limb] = Some(LinearExpression::witness(packed_index(
+                    auth_output_0_vector_row(),
+                    limb,
+                )));
+            } else {
+                note_sources[14 + limb] = Some(LinearExpression::witness(raw_index(
+                    output_auth_key_row(output, limb),
+                )));
+            }
+        }
+        if output == 0 {
+            for limb in 0..3 {
+                note_sources[10 + limb] = Some(LinearExpression::witness(packed_index(
+                    auth_output_0_vector_row(),
+                    4 + limb,
+                )));
+            }
+            for limb in 0..4 {
+                csr.equality(
+                    raw_index(output_auth_key_row(0, limb)),
+                    packed_index(auth_output_0_vector_row(), limb),
+                );
+            }
         }
         csr.set_family("hash.output_note_initial");
         bind_sponge(csr, note_call, NOTE_DOMAIN_TAG, &note_sources);
@@ -1569,12 +1661,12 @@ fn build_base_linear_constraints(
         .map(|value| Some(LinearExpression::constant(value)))
         .collect::<Vec<_>>();
     csr.set_family("hash.action_intent_initial");
-    bind_sponge(csr, 79, AUTH_INTENT_DOMAIN, &intent_sources);
+    bind_sponge(csr, 81, AUTH_INTENT_DOMAIN, &intent_sources);
     csr.set_family("auth.intent_digest_copy");
     for limb in 0..DIGEST {
         csr.equality(
             raw_index(auth_statement_row(limb)),
-            hash_final_index(93, limb),
+            hash_final_index(95, limb),
         );
     }
 
@@ -1592,7 +1684,7 @@ fn build_base_linear_constraints(
         }
     }
     csr.set_family("hash.authorization_policy_initial");
-    bind_sponge(csr, 94, AUTH_POLICY_DOMAIN, &policy_sources);
+    bind_sponge(csr, 96, AUTH_POLICY_DOMAIN, &policy_sources);
     csr.set_family("auth.policy_inline_bindings");
     for limb in 0..DIGEST {
         csr.bind(
@@ -1601,7 +1693,7 @@ fn build_base_linear_constraints(
         );
         csr.bind(
             packed_index(INLINE_POLICY_ROW_START + 1, limb),
-            LinearExpression::witness(hash_final_index(97, limb)),
+            LinearExpression::witness(hash_final_index(99, limb)),
         );
         csr.bind(
             packed_index(INLINE_POLICY_ROW_START + 2, limb),
@@ -1618,38 +1710,80 @@ fn build_base_linear_constraints(
 
     bind_accumulator_sponge(
         csr,
-        98,
-        AUTH_CURRENT,
+        100,
         AUTH_ACCUMULATOR_DOMAIN,
         "hash.authorization_current_initial",
-        "auth.current_digest_copy",
     );
     bind_accumulator_sponge(
         csr,
-        101,
-        AUTH_NEXT,
+        103,
         AUTH_ACCUMULATOR_DOMAIN,
         "hash.authorization_next_initial",
-        "auth.next_digest_copy",
     );
-    let mut value_lock_sources = Vec::with_capacity(14);
-    for limb in 0..DIGEST {
-        value_lock_sources.push(Some(LinearExpression::witness(raw_index(auth_policy_row(
-            limb,
-        )))));
-    }
-    for limb in 0..DIGEST {
-        value_lock_sources.push(Some(LinearExpression::witness(raw_index(auth_intent_row(
-            limb,
-        )))));
-    }
     csr.set_family("hash.authorization_value_lock_initial");
-    bind_sponge(csr, 104, AUTH_VALUE_LOCK_DOMAIN, &value_lock_sources);
-    csr.set_family("auth.value_lock_digest_copy");
+    bind_compress14(
+        csr,
+        106,
+        AUTH_VALUE_LOCK_DOMAIN,
+        core::array::from_fn(|limb| LinearExpression::witness(raw_index(auth_policy_row(limb)))),
+        core::array::from_fn(|limb| LinearExpression::witness(raw_index(auth_intent_row(limb)))),
+    );
+    csr.set_family("auth.candidate_digest_vectors");
     for limb in 0..DIGEST {
         csr.equality(
-            raw_index(auth_value_lock_row(limb)),
+            packed_index(auth_next_vector_row(), limb),
             hash_final_index(105, limb),
+        );
+        csr.equality(
+            packed_index(auth_value_lock_vector_row(), limb),
+            hash_final_index(106, limb),
+        );
+        csr.equality(
+            packed_index(auth_legacy_vector_row(), limb),
+            hash_final_index(0, limb),
+        );
+        if limb < 5 {
+            csr.equality(
+                raw_index(auth_legacy_tag_row(limb)),
+                hash_final_index(0, limb),
+            );
+        }
+    }
+
+    let binding_key: [LinearExpression; DIGEST] = core::array::from_fn(|limb| {
+        if limb < 5 {
+            LinearExpression::witness(packed_index(auth_input_nullifier_vector_row(0), limb))
+        } else {
+            LinearExpression::default()
+        }
+    });
+    csr.set_family("hash.authorization_bound_current_initial");
+    bind_compress14(
+        csr,
+        107,
+        SMALLWOOD_POSEIDON2_V8_AUTH_MODE_BIND_DOMAIN,
+        binding_key.clone(),
+        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(102, limb))),
+    );
+    csr.set_family("hash.authorization_bound_secondary_initial");
+    bind_compress14(
+        csr,
+        108,
+        SMALLWOOD_POSEIDON2_V8_AUTH_MODE_BIND_DOMAIN,
+        binding_key,
+        core::array::from_fn(|limb| {
+            LinearExpression::witness(packed_index(auth_secondary_input_vector_row(), limb))
+        }),
+    );
+    csr.set_family("auth.bound_digest_vectors");
+    for limb in 0..DIGEST {
+        csr.equality(
+            packed_index(auth_bound_current_vector_row(), limb),
+            hash_final_index(107, limb),
+        );
+        csr.equality(
+            packed_index(auth_bound_secondary_vector_row(), limb),
+            hash_final_index(108, limb),
         );
     }
 
@@ -1665,10 +1799,8 @@ fn build_base_linear_constraints(
 fn bind_accumulator_sponge(
     csr: &mut CsrBuilder,
     call: usize,
-    digest_offset: usize,
     domain: u64,
     initial_family: &'static str,
-    digest_family: &'static str,
 ) {
     let mut sources = Vec::with_capacity(23);
     for limb in 0..DIGEST {
@@ -1681,7 +1813,7 @@ fn bind_accumulator_sponge(
             limb,
         )))));
     }
-    let (count_row, approved_row): (usize, fn(usize) -> usize) = if digest_offset == AUTH_CURRENT {
+    let (count_row, approved_row): (usize, fn(usize) -> usize) = if call == 100 {
         (auth_count_row(), auth_approved_row)
     } else {
         (auth_next_count_row(), auth_next_approved_row)
@@ -1700,13 +1832,6 @@ fn bind_accumulator_sponge(
     }
     csr.set_family(initial_family);
     bind_sponge(csr, call, domain, &sources);
-    csr.set_family(digest_family);
-    for limb in 0..DIGEST {
-        csr.equality(
-            raw_index(auth_row(digest_offset + limb)),
-            hash_final_index(call + 2, limb),
-        );
-    }
 }
 
 #[inline]
@@ -1800,7 +1925,7 @@ fn push_stable_nonlinear_constraints(rows: &[u64], out: &mut Vec<u64>) {
     }
 }
 
-/// Build all 830 nonlinear identities from the same constructors consumed by the verifier.
+/// Build all 773 nonlinear identities from the same constructors consumed by the verifier.
 /// The u64 base/auth/stable constructors enter symbolic mode through the field helpers above;
 /// the Poseidon2 kernel already exposes its source-owned generic ring evaluator.
 pub(crate) fn smallwood_poseidon2_v8_nonlinear_expression_program(
@@ -2485,18 +2610,11 @@ fn build_stable_linear_constraints(
     // digest on inactive arms, so every lane remains satisfiable without weakening the active
     // nonzero requirement.
     let any_input = fsub(fadd(public[0], public[1]), fmul(public[0], public[1]));
-    let chosen_spend_key = |limb: usize| {
-        LinearExpression::witness(stable_source(112 + limb))
-            .scale(public[0])
-            .add(
-                LinearExpression::witness(stable_source(116 + limb))
-                    .scale(fmul(fsub(1, public[0]), public[1])),
-            )
-    };
     csr.set_family("stable.role_live_diff");
     for limb in 0..DIGEST {
-        let expression = if limb < 4 {
-            chosen_spend_key(limb).scale(any_input)
+        let expression = if limb < 5 {
+            LinearExpression::witness(packed_index(auth_global_key_vector_row(), limb))
+                .scale(any_input)
         } else {
             LinearExpression::constant(0)
         }
@@ -2587,29 +2705,29 @@ fn build_stable_linear_constraints(
                 LinearExpression::constant(0)
             }
         });
-        bind_compress14(csr, 106 + chunk, chunk_domains[chunk], left, right);
+        bind_compress14(csr, 109 + chunk, chunk_domains[chunk], left, right);
     }
     csr.set_family("hash.stable_config_tree_initial");
     bind_compress14(
         csr,
-        110,
+        113,
         STABLECOIN_POSEIDON2_V8_DOMAIN_CONFIG_NODE_0,
-        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(106, limb))),
-        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(107, limb))),
-    );
-    bind_compress14(
-        csr,
-        111,
-        STABLECOIN_POSEIDON2_V8_DOMAIN_CONFIG_NODE_1,
-        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(108, limb))),
         core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(109, limb))),
+        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(110, limb))),
     );
     bind_compress14(
         csr,
-        112,
-        STABLECOIN_POSEIDON2_V8_DOMAIN_CONFIG_ROOT,
-        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(110, limb))),
+        114,
+        STABLECOIN_POSEIDON2_V8_DOMAIN_CONFIG_NODE_1,
         core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(111, limb))),
+        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(112, limb))),
+    );
+    bind_compress14(
+        csr,
+        115,
+        STABLECOIN_POSEIDON2_V8_DOMAIN_CONFIG_ROOT,
+        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(113, limb))),
+        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(114, limb))),
     );
     let index = (0..4).fold(0, |value, bit| {
         fadd(value, fmul(fbit(public[84], bit), 1u64 << bit))
@@ -2625,18 +2743,18 @@ fn build_stable_linear_constraints(
         _ => LinearExpression::constant(0),
     });
     let config_digest =
-        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(112, limb)));
+        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(115, limb)));
     csr.set_family("hash.stable_state_leaf_initial");
     bind_compress14(
         csr,
-        113,
+        116,
         STABLECOIN_POSEIDON2_V8_DOMAIN_STATE_LEAF,
         config_digest.clone(),
         before_right,
     );
     bind_compress14(
         csr,
-        114,
+        117,
         STABLECOIN_POSEIDON2_V8_DOMAIN_STATE_LEAF,
         config_digest,
         after_right,
@@ -2644,8 +2762,8 @@ fn build_stable_linear_constraints(
     csr.set_family("hash.stable_path_initial");
     for level in 0..STABLECOIN_POSEIDON2_V8_DEPTH {
         let bit = fbit(public[84], level);
-        for (path, leaf_call) in [(0usize, 113usize), (1, 114)] {
-            let call = 115 + level * 2 + path;
+        for (path, leaf_call) in [(0usize, 116usize), (1, 117)] {
+            let call = 118 + level * 2 + path;
             let previous = if level == 0 { leaf_call } else { call - 2 };
             let left = core::array::from_fn(|limb| {
                 LinearExpression::witness(hash_final_index(previous, limb))
@@ -2679,18 +2797,18 @@ fn build_stable_linear_constraints(
             fsub(public[95 + limb], public[102 + limb]),
         );
         csr.push(
-            [(hash_final_index(121, limb), enabled)],
+            [(hash_final_index(124, limb), enabled)],
             fadd(fmul(enabled, public[95 + limb]), disabled_passthrough),
         );
         csr.push(
-            [(hash_final_index(122, limb), enabled)],
+            [(hash_final_index(125, limb), enabled)],
             fmul(enabled, public[102 + limb]),
         );
     }
     csr.set_family("hash.stable_issuer_initial");
     bind_compress14(
         csr,
-        123,
+        126,
         STABLECOIN_POSEIDON2_V8_DOMAIN_ISSUER_COMMITMENT,
         core::array::from_fn(|limb| LinearExpression::witness(stable_source(83 + limb))),
         core::array::from_fn(|limb| match limb {
@@ -2701,7 +2819,7 @@ fn build_stable_linear_constraints(
     );
     bind_compress14(
         csr,
-        124,
+        127,
         STABLECOIN_POSEIDON2_V8_DOMAIN_ISSUER_AUTHORIZATION,
         core::array::from_fn(|limb| LinearExpression::witness(stable_source(83 + limb))),
         core::array::from_fn(|limb| LinearExpression::constant(public[87 + limb])),
@@ -2710,14 +2828,14 @@ fn build_stable_linear_constraints(
         csr.set_family("stable.issuer_commitment");
         csr.push(
             [
-                (hash_final_index(123, limb), mint),
+                (hash_final_index(126, limb), mint),
                 (stable_source(6 + limb), fsub(0, mint)),
             ],
             0,
         );
         csr.set_family("stable.issuer_authorization");
         csr.push(
-            [(hash_final_index(124, limb), mint)],
+            [(hash_final_index(127, limb), mint)],
             fmul(mint, public[113 + limb]),
         );
     }
@@ -2857,7 +2975,7 @@ pub struct SmallwoodPoseidon2V8CallRoleRange {
 }
 
 /// Exact ordered role table.  Half-open ranges cover every live call once and only once.
-pub const SMALLWOOD_POSEIDON2_V8_CALL_ROLE_TABLE: [SmallwoodPoseidon2V8CallRoleRange; 20] = [
+pub const SMALLWOOD_POSEIDON2_V8_CALL_ROLE_TABLE: [SmallwoodPoseidon2V8CallRoleRange; 22] = [
     SmallwoodPoseidon2V8CallRoleRange {
         name: "transaction_prf",
         start: 0,
@@ -2876,91 +2994,100 @@ pub const SMALLWOOD_POSEIDON2_V8_CALL_ROLE_TABLE: [SmallwoodPoseidon2V8CallRoleR
     SmallwoodPoseidon2V8CallRoleRange {
         name: "input_0_nullifier",
         start: 36,
-        end: 37,
+        end: 38,
     },
     SmallwoodPoseidon2V8CallRoleRange {
         name: "input_1_note",
-        start: 37,
-        end: 40,
+        start: 38,
+        end: 41,
     },
     SmallwoodPoseidon2V8CallRoleRange {
         name: "input_1_merkle",
-        start: 40,
-        end: 72,
-    },
-    SmallwoodPoseidon2V8CallRoleRange {
-        name: "input_1_nullifier",
-        start: 72,
+        start: 41,
         end: 73,
     },
     SmallwoodPoseidon2V8CallRoleRange {
-        name: "output_0_note",
+        name: "input_1_nullifier",
         start: 73,
-        end: 76,
+        end: 75,
+    },
+    SmallwoodPoseidon2V8CallRoleRange {
+        name: "output_0_note",
+        start: 75,
+        end: 78,
     },
     SmallwoodPoseidon2V8CallRoleRange {
         name: "output_1_note",
-        start: 76,
-        end: 79,
+        start: 78,
+        end: 81,
     },
     SmallwoodPoseidon2V8CallRoleRange {
         name: "action_intent",
-        start: 79,
-        end: 94,
+        start: 81,
+        end: 96,
     },
     SmallwoodPoseidon2V8CallRoleRange {
         name: "authorization_policy",
-        start: 94,
-        end: 98,
+        start: 96,
+        end: 100,
     },
     SmallwoodPoseidon2V8CallRoleRange {
         name: "authorization_current",
-        start: 98,
-        end: 101,
+        start: 100,
+        end: 103,
     },
     SmallwoodPoseidon2V8CallRoleRange {
         name: "authorization_next",
-        start: 101,
-        end: 104,
-    },
-    SmallwoodPoseidon2V8CallRoleRange {
-        name: "authorization_value_lock",
-        start: 104,
+        start: 103,
         end: 106,
     },
     SmallwoodPoseidon2V8CallRoleRange {
-        name: "stable_config_chunks",
+        name: "authorization_value_lock",
         start: 106,
-        end: 110,
+        end: 107,
     },
     SmallwoodPoseidon2V8CallRoleRange {
-        name: "stable_config_tree",
-        start: 110,
+        name: "authorization_bound_current",
+        start: 107,
+        end: 108,
+    },
+    SmallwoodPoseidon2V8CallRoleRange {
+        name: "authorization_bound_secondary",
+        start: 108,
+        end: 109,
+    },
+    SmallwoodPoseidon2V8CallRoleRange {
+        name: "stable_config_chunks",
+        start: 109,
         end: 113,
     },
     SmallwoodPoseidon2V8CallRoleRange {
-        name: "stable_state_leaves",
+        name: "stable_config_tree",
         start: 113,
-        end: 115,
+        end: 116,
     },
     SmallwoodPoseidon2V8CallRoleRange {
-        name: "stable_authenticated_paths",
-        start: 115,
-        end: 123,
+        name: "stable_state_leaves",
+        start: 116,
+        end: 118,
+    },
+    SmallwoodPoseidon2V8CallRoleRange {
+        name: "stable_paths",
+        start: 118,
+        end: 126,
     },
     SmallwoodPoseidon2V8CallRoleRange {
         name: "stable_issuer_commitment",
-        start: 123,
-        end: 124,
+        start: 126,
+        end: 127,
     },
     SmallwoodPoseidon2V8CallRoleRange {
         name: "stable_issuer_authorization",
-        start: 124,
-        end: 125,
+        start: 127,
+        end: 128,
     },
 ];
-
-pub const SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINT_COUNT: usize = 830;
+pub const SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINT_COUNT: usize = 773;
 
 fn set_replicated_row(rows: &mut [[u64; 64]], row: usize, value: u64) {
     rows[row].fill(value);
@@ -3044,50 +3171,79 @@ fn build_smallwood_poseidon2_v8_assignment(
         set_replicated_row(&mut rows, auth_mode_row(index), value);
     }
     let legacy = schedule.calls[0].final_digest();
-    let current = schedule.calls[100].final_digest();
-    let next = schedule.calls[103].final_digest();
-    let value_lock = schedule.calls[105].final_digest();
-    let statement_digest = schedule.calls[93].final_digest();
-    let computed_policy = schedule.calls[97].final_digest();
-    let policy = if witness.auth.mode == SmallwoodPrivateAuthMode::SingleKey {
-        [0; DIGEST]
-    } else {
+    let next = schedule.calls[105].final_digest();
+    let value_lock = schedule.calls[106].final_digest();
+    let current = schedule.calls[107].final_digest();
+    let secondary = schedule.calls[108].final_digest();
+    let statement_digest = schedule.calls[95].final_digest();
+    let computed_policy = schedule.calls[99].final_digest();
+    let non_single = witness.auth.mode != SmallwoodPrivateAuthMode::SingleKey;
+    let policy = if non_single {
         computed_policy
+    } else {
+        [0; DIGEST]
     };
+    let any_input = statement.input_flags[0] || statement.input_flags[1];
+    let global_key = if statement.input_flags[0] {
+        witness.inputs[0].spend_key
+    } else if statement.input_flags[1] {
+        witness.inputs[1].spend_key
+    } else {
+        [0; 5]
+    };
+    let policy_key = witness.auth.policy_nullifier_key;
+    rows[auth_global_key_vector_row()][..5].copy_from_slice(&global_key);
+    rows[auth_policy_key_vector_row()][..5].copy_from_slice(&policy_key);
+    set_replicated_row(&mut rows, auth_global_key_0_row(), global_key[0]);
+    set_replicated_row(&mut rows, auth_policy_key_0_row(), policy_key[0]);
+    let key_product = fmul(global_key[0], if non_single { policy_key[0] } else { 1 });
+    set_replicated_row(
+        &mut rows,
+        auth_key_product_inverse_row(),
+        if any_input { finv(key_product) } else { 0 },
+    );
     for input in 0..INPUTS {
-        let (prf, key) = if !statement.input_flags[input] {
-            (0, [0; 4])
+        let commitment = if !statement.input_flags[input] {
+            [0; DIGEST]
         } else {
-            match witness.auth.mode {
-                SmallwoodPrivateAuthMode::SingleKey => {
-                    (legacy[0], legacy[1..5].try_into().unwrap())
-                }
-                SmallwoodPrivateAuthMode::ApprovalStep if input == 0 => {
-                    (current[4], current[..4].try_into().unwrap())
-                }
-                SmallwoodPrivateAuthMode::ApprovalStep => {
-                    (legacy[0], legacy[1..5].try_into().unwrap())
-                }
-                SmallwoodPrivateAuthMode::FinalThresholdSpend if input == 0 => {
-                    (value_lock[4], value_lock[..4].try_into().unwrap())
-                }
-                SmallwoodPrivateAuthMode::FinalThresholdSpend => {
-                    (current[4], current[..4].try_into().unwrap())
-                }
+            match (witness.auth.mode, input) {
+                (SmallwoodPrivateAuthMode::SingleKey, _) => legacy,
+                (SmallwoodPrivateAuthMode::ApprovalStep, 0) => current,
+                (SmallwoodPrivateAuthMode::ApprovalStep, _) => legacy,
+                (SmallwoodPrivateAuthMode::FinalThresholdSpend, 0) => secondary,
+                (SmallwoodPrivateAuthMode::FinalThresholdSpend, _) => current,
             }
         };
-        set_replicated_row(&mut rows, auth_input_prf_row(input), prf);
-        for limb in 0..4 {
-            set_replicated_row(&mut rows, auth_input_key_row(input, limb), key[limb]);
-        }
+        rows[auth_input_note_vector_row(input)][..DIGEST].copy_from_slice(&commitment);
+        let key = match (witness.auth.mode, input) {
+            (SmallwoodPrivateAuthMode::SingleKey, _) => global_key,
+            (SmallwoodPrivateAuthMode::ApprovalStep, 0) => policy_key,
+            (SmallwoodPrivateAuthMode::ApprovalStep, _) => global_key,
+            (SmallwoodPrivateAuthMode::FinalThresholdSpend, _) => policy_key,
+        };
+        rows[auth_input_nullifier_vector_row(input)][..5].copy_from_slice(&key);
     }
     for limb in 0..5 {
-        set_replicated_row(&mut rows, auth_legacy_row(limb), legacy[limb]);
+        set_replicated_row(&mut rows, auth_legacy_tag_row(limb), legacy[limb]);
     }
+    for (row, digest) in [
+        (auth_legacy_vector_row(), legacy),
+        (auth_next_vector_row(), next),
+        (auth_value_lock_vector_row(), value_lock),
+        (
+            auth_secondary_input_vector_row(),
+            if mode[2] == 1 { value_lock } else { next },
+        ),
+        (auth_bound_current_vector_row(), current),
+        (auth_bound_secondary_vector_row(), secondary),
+    ] {
+        rows[row][..DIGEST].copy_from_slice(&digest);
+    }
+    rows[auth_output_0_vector_row()][..4]
+        .copy_from_slice(&witness.outputs[0].note.authorization_key);
+    rows[auth_output_0_vector_row()][4..7]
+        .copy_from_slice(&witness.outputs[0].note.randomness[..3]);
     for (row_fn, digest) in [
-        (auth_current_row as fn(usize) -> usize, current),
-        (auth_next_row as fn(usize) -> usize, next),
-        (auth_value_lock_row as fn(usize) -> usize, value_lock),
         (auth_statement_row as fn(usize) -> usize, statement_digest),
         (auth_policy_row as fn(usize) -> usize, policy),
     ] {
@@ -3110,8 +3266,22 @@ fn build_smallwood_poseidon2_v8_assignment(
         (auth_signer_count_row(), current_opening.signer_count),
         (auth_count_row(), current_opening.approval_count),
         (auth_next_count_row(), next_opening.approval_count),
-        (auth_reserved_signer_row(), 0),
-        (auth_reserved_inverse_row(), 0),
+        (
+            auth_signer_minus_threshold_row(),
+            current_opening
+                .signer_count
+                .saturating_sub(current_opening.threshold),
+        ),
+        (
+            auth_count_minus_threshold_row(),
+            if mode[2] == 1 {
+                current_opening
+                    .approval_count
+                    .saturating_sub(current_opening.threshold)
+            } else {
+                0
+            },
+        ),
     ] {
         set_replicated_row(&mut rows, row, value);
     }
@@ -3128,32 +3298,12 @@ fn build_smallwood_poseidon2_v8_assignment(
         );
     }
     let non_single = witness.auth.mode != SmallwoodPrivateAuthMode::SingleKey;
-    let threshold_flags = if non_single {
-        positive_flags(current_opening.threshold)
-    } else {
-        [0; SIGNERS]
-    };
     let signer_flags = if non_single {
         positive_flags(current_opening.signer_count)
     } else {
         [0; SIGNERS]
     };
-    let current_count_flags = if non_single {
-        count_flags_0_to_6(current_opening.approval_count)
-    } else {
-        [0; SIGNERS + 1]
-    };
-    let next_count_flags = match witness.auth.mode {
-        SmallwoodPrivateAuthMode::SingleKey => [0; SIGNERS + 1],
-        SmallwoodPrivateAuthMode::ApprovalStep => count_flags_0_to_6(next_opening.approval_count),
-        SmallwoodPrivateAuthMode::FinalThresholdSpend => count_flags_0_to_6(0),
-    };
     for slot in 0..SIGNERS {
-        set_replicated_row(
-            &mut rows,
-            auth_threshold_flag_row(slot),
-            threshold_flags[slot],
-        );
         set_replicated_row(&mut rows, auth_signer_flag_row(slot), signer_flags[slot]);
         for limb in 0..SIGNER_TAG_WORDS {
             set_replicated_row(
@@ -3162,18 +3312,6 @@ fn build_smallwood_poseidon2_v8_assignment(
                 witness.auth.policy_signer_tags[slot][limb],
             );
         }
-    }
-    for slot in 0..=SIGNERS {
-        set_replicated_row(
-            &mut rows,
-            auth_count_flag_row(slot),
-            current_count_flags[slot],
-        );
-        set_replicated_row(
-            &mut rows,
-            auth_next_count_flag_row(slot),
-            next_count_flags[slot],
-        );
     }
     for slot in 0..SIGNERS {
         let membership = u64::from(
@@ -3300,7 +3438,7 @@ fn build_smallwood_poseidon2_v8_assignment(
     } else if statement.input_flags[1] {
         witness.inputs[1].spend_key
     } else {
-        [0; 4]
+        [0; 5]
     };
     let mut extra_role_differences = Vec::<[u64; DIGEST]>::with_capacity(9);
     extra_role_differences.push(core::array::from_fn(|limb| {
@@ -3563,7 +3701,7 @@ pub fn smallwood_poseidon2_v8_decoder_sources() -> Vec<SmallwoodPoseidon2V8Decod
             SmallwoodPoseidon2V8DecoderOperation::StatementWord,
             [activity_public_word, 0, 0, 0],
         );
-        for limb in 0..4 {
+        for limb in 0..5 {
             let mut arguments = decoder_sponge_arguments(0, limb);
             arguments[3] = activity_public_word;
             push(
@@ -3679,18 +3817,30 @@ pub fn smallwood_poseidon2_v8_decoder_sources() -> Vec<SmallwoodPoseidon2V8Decod
             0,
         ],
     );
+    for limb in 0..5 {
+        push(
+            family,
+            SmallwoodPoseidon2V8DecoderOperation::RawWord,
+            [
+                packed_index(auth_policy_key_vector_row(), limb) as u64,
+                0,
+                0,
+                0,
+            ],
+        );
+    }
     for word in 0..23 {
         push(
             family,
             SmallwoodPoseidon2V8DecoderOperation::SpongeSource,
-            decoder_sponge_arguments(98, word),
+            decoder_sponge_arguments(100, word),
         );
     }
     for word in 0..23 {
         push(
             family,
             SmallwoodPoseidon2V8DecoderOperation::ApprovalSelectedSpongeSource,
-            decoder_sponge_arguments(101, word),
+            decoder_sponge_arguments(103, word),
         );
     }
     for slot in 0..SIGNERS {
@@ -3710,7 +3860,7 @@ pub fn smallwood_poseidon2_v8_decoder_sources() -> Vec<SmallwoodPoseidon2V8Decod
 
     let family = SmallwoodPoseidon2V8DecoderFamily::Stablecoin;
     for word in 0..55 {
-        let call = 106 + word / 14;
+        let call = 109 + word / 14;
         let lane = word % 14;
         push(
             family,
@@ -3729,15 +3879,15 @@ pub fn smallwood_poseidon2_v8_decoder_sources() -> Vec<SmallwoodPoseidon2V8Decod
             family,
             SmallwoodPoseidon2V8DecoderOperation::HashInitialWord,
             [
-                hash_initial_index(113, lane) as u64,
-                113,
+                hash_initial_index(116, lane) as u64,
+                116,
                 lane as u64,
                 counter as u64,
             ],
         );
     }
     for level in 0..STABLECOIN_POSEIDON2_V8_DEPTH {
-        let call = 115 + 2 * level;
+        let call = 118 + 2 * level;
         for limb in 0..DIGEST {
             push(
                 family,
@@ -3756,8 +3906,8 @@ pub fn smallwood_poseidon2_v8_decoder_sources() -> Vec<SmallwoodPoseidon2V8Decod
             family,
             SmallwoodPoseidon2V8DecoderOperation::HashInitialWord,
             [
-                hash_initial_index(123, limb) as u64,
-                123,
+                hash_initial_index(126, limb) as u64,
+                126,
                 limb as u64,
                 limb as u64,
             ],
@@ -3812,13 +3962,13 @@ pub fn decode_smallwood_poseidon2_v8_packed_witness(
 
     let raw = |row: usize| packed[raw_index(row)];
     let mut words = Vec::with_capacity(SMALLWOOD_POSEIDON2_V8_TYPED_WITNESS_WORDS);
-    let global_spend_key: [u64; 4] =
+    let global_spend_key: [u64; 5] =
         core::array::from_fn(|limb| decode_sponge_source_word(packed, 0, limb));
 
     for input in 0..INPUTS {
         let active = statement.input_flags[input];
         words.push(u64::from(active));
-        words.extend(if active { global_spend_key } else { [0; 4] });
+        words.extend(if active { global_spend_key } else { [0; 5] });
         let note = decode_note_witness_words(packed, input_note_call(input));
         words.extend(note);
 
@@ -3868,10 +4018,11 @@ pub fn decode_smallwood_poseidon2_v8_packed_witness(
         }
     };
     words.push(mode_word);
-    let current = decode_accumulator_words(packed, 98);
+    words.extend((0..5).map(|limb| packed[packed_index(auth_policy_key_vector_row(), limb)]));
+    let current = decode_accumulator_words(packed, 100);
     words.extend(current);
     if mode_word == 1 {
-        words.extend(decode_accumulator_words(packed, 101));
+        words.extend(decode_accumulator_words(packed, 103));
     } else {
         words.extend([0u64; 23]);
     }
@@ -3881,20 +4032,20 @@ pub fn decode_smallwood_poseidon2_v8_packed_witness(
         }
     }
 
-    // The 55 stable configuration words are the fourteen data lanes of calls 106..110, with
+    // The 55 stable configuration words are the fourteen data lanes of calls 109..113, with
     // the final chunk using only thirteen live words.
     for word in 0..55 {
-        let call = 106 + word / 14;
+        let call = 109 + word / 14;
         let lane = word % 14;
         words.push(packed_hash_initial(packed, call, lane));
     }
     // Before counters occupy the right input of the before-state leaf compression.
     for lane in DIGEST..DIGEST + 4 {
-        words.push(packed_hash_initial(packed, 113, lane));
+        words.push(packed_hash_initial(packed, 116, lane));
     }
     let mut stable_index = u64::from(statement.stablecoin.asset_id & 15);
     for level in 0..STABLECOIN_POSEIDON2_V8_DEPTH {
-        let call = 115 + 2 * level;
+        let call = 118 + 2 * level;
         let sibling_start = if stable_index & 1 == 0 { DIGEST } else { 0 };
         for limb in 0..DIGEST {
             words.push(packed_hash_initial(packed, call, sibling_start + limb));
@@ -3902,7 +4053,7 @@ pub fn decode_smallwood_poseidon2_v8_packed_witness(
         stable_index >>= 1;
     }
     for limb in 0..DIGEST {
-        words.push(packed_hash_initial(packed, 123, limb));
+        words.push(packed_hash_initial(packed, 126, limb));
     }
 
     debug_assert_eq!(words.len(), SMALLWOOD_POSEIDON2_V8_TYPED_WITNESS_WORDS);
@@ -4450,7 +4601,7 @@ mod tests {
             assert!(role.end > role.start);
             cursor = role.end;
         }
-        assert_eq!(cursor, 125);
+        assert_eq!(cursor, 128);
     }
 
     #[test]
@@ -4459,9 +4610,9 @@ mod tests {
         let adapter =
             SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(&statement).unwrap();
         assert_eq!(adapter.geometry().witness_rows, 686);
-        assert_eq!(adapter.geometry().hash_calls, 125);
+        assert_eq!(adapter.geometry().hash_calls, 128);
         assert_eq!(adapter.geometry().auxiliary_words, 0);
-        assert_eq!(adapter.geometry().nonlinear_constraints, 830);
+        assert_eq!(adapter.geometry().nonlinear_constraints, 773);
         assert_eq!(adapter.geometry().linear_constraints, 20_509);
         assert!(adapter.compiler_complete());
         assert_ne!(adapter.relation_digest(), &[0; 48]);
@@ -4469,7 +4620,7 @@ mod tests {
         assert_eq!(refinement.relation_digest, *adapter.relation_digest());
         assert_eq!(refinement.packed_lanes, 64);
         assert_eq!(refinement.nonlinear_expression_nodes, 8_271);
-        assert_eq!(refinement.nonlinear_roots, 830);
+        assert_eq!(refinement.nonlinear_roots, 773);
         assert_eq!(refinement.csr_expression_nodes, 565);
         assert_eq!(refinement.csr_attempts, 20_605);
         assert_eq!(
@@ -4572,37 +4723,14 @@ mod tests {
             }
         }
         for input in 0..INPUTS {
-            for offset in 0..5 {
-                let root = 242 + input * 5 + offset;
-                let expected_row = if offset == 0 {
-                    auth_input_prf_row(input)
-                } else {
-                    auth_input_key_row(input, offset - 1)
-                };
-                let expected_family = if offset == 0 {
-                    "auth.effective_input_prf"
-                } else {
-                    "auth.effective_input_key"
-                };
-                let expected_local = if offset == 0 {
-                    input as u16
-                } else {
-                    (input * 4 + offset - 1) as u16
-                };
-                let descriptor = &descriptors[root];
-                match program.expressions[program.roots[root] as usize] {
-                    SmallwoodPoseidon2V8Expr::Sub { left, .. } => assert_eq!(
-                        program.expressions[left as usize],
-                        SmallwoodPoseidon2V8Expr::WitnessRow(expected_row as u16)
-                    ),
-                    expression => panic!("auth root {root} is not subtraction: {expression:?}"),
-                }
-                assert_eq!(usize::from(descriptor.global_index), root);
-                assert_eq!(
-                    (descriptor.family, descriptor.local_index),
-                    (expected_family, expected_local),
-                    "root {root}"
-                );
+            for row in [
+                auth_input_note_vector_row(input),
+                auth_input_nullifier_vector_row(input),
+            ] {
+                assert!(program
+                    .roots
+                    .iter()
+                    .any(|root| witness_rows(*root, &program.expressions).contains(&(row as u16))));
             }
         }
     }
@@ -4729,6 +4857,134 @@ mod tests {
         }
     }
 
+    /// Measurement only: evaluate the committed CSR and apply its exact row normalization
+    /// without consulting the cursor's geometry bounds.  No verifier path calls this helper.
+    #[test]
+    fn diagnose_canonical_shape_linear_counts() {
+        use crate::smallwood_poseidon2_v8_ir::SmallwoodPoseidon2V8Expr as Expr;
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let program = executable_csr_program();
+        let mut dependencies = Vec::<BTreeSet<u16>>::new();
+        for expression in &program.expressions {
+            let mut public = BTreeSet::new();
+            let operands: Vec<u32> = match *expression {
+                Expr::Constant(_) => vec![],
+                Expr::Public(word) => {
+                    public.insert(word);
+                    vec![]
+                }
+                Expr::WitnessRow(_) => panic!("CSR specialization must not depend on witness rows"),
+                Expr::Add { left, right }
+                | Expr::Sub { left, right }
+                | Expr::Mul { left, right } => vec![left, right],
+                Expr::Neg { value } | Expr::Inverse { value } | Expr::Bit { value, .. } => {
+                    vec![value]
+                }
+                Expr::SelectEqual {
+                    left,
+                    right,
+                    equal,
+                    not_equal,
+                } => vec![left, right, equal, not_equal],
+            };
+            for operand in operands {
+                public.extend(dependencies[operand as usize].iter().copied());
+            }
+            dependencies.push(public);
+        }
+        let coefficient_dependencies = program
+            .attempts
+            .iter()
+            .flat_map(|attempt| {
+                attempt
+                    .terms
+                    .iter()
+                    .flat_map(|(_, root)| dependencies[*root as usize].iter().copied())
+            })
+            .collect::<BTreeSet<_>>();
+        println!("CSR_COEFFICIENT_PUBLIC_DEPENDENCIES {coefficient_dependencies:?}");
+
+        let mut extrema = (usize::MAX, 0usize);
+        let mut empty_targets = BTreeSet::new();
+        for direction in 0..3 {
+            let mut mode_extrema = (usize::MAX, 0usize);
+            for mask in 0u8..16 {
+                for path in 0u32..16 {
+                    let mut statement = canonical_statement_for_mask_and_seed(mask, 101, 0);
+                    if direction != 0 {
+                        // Sixteen positive assets cover every four-bit stable Merkle orientation.
+                        let asset = path + 16;
+                        statement.balance_assets[1] = u64::from(asset);
+                        statement.stablecoin.direction = if direction == 1 {
+                            StablecoinPoseidon2V8Direction::Mint
+                        } else {
+                            StablecoinPoseidon2V8Direction::Burn
+                        };
+                        statement.stablecoin.asset_id = asset;
+                        statement.stablecoin.policy_version = 1;
+                        statement.stablecoin.magnitude = 1;
+                        statement.compatibility_stablecoin.enabled = true;
+                        statement.compatibility_stablecoin.asset_id = u64::from(asset);
+                        statement.compatibility_stablecoin.policy_version = 1;
+                        statement.compatibility_stablecoin.issuance_sign = direction == 1;
+                        statement.compatibility_stablecoin.issuance_magnitude = 1;
+                        statement.stablecoin.action_intent = statement
+                            .expected_action_intent()
+                            .unwrap()
+                            .map(Felt::from_u64);
+                    }
+                    statement.validate_public_structure().unwrap();
+                    let values = evaluate_smallwood_poseidon2_v8_expression_nodes(
+                        &program.expressions,
+                        &statement.to_public_words(),
+                        &[],
+                    )
+                    .unwrap();
+                    let mut count = 0usize;
+                    for attempt in &program.attempts {
+                        let mut terms = BTreeMap::<u32, u64>::new();
+                        for (index, root) in &attempt.terms {
+                            let entry = terms.entry(*index).or_default();
+                            *entry = fadd(*entry, values[*root as usize] % MODULUS);
+                        }
+                        terms.retain(|_, coefficient| *coefficient != 0);
+                        let target = values[attempt.target as usize];
+                        if terms.is_empty() {
+                            empty_targets.insert((attempt.family, attempt.target));
+                        }
+                        count += usize::from(!terms.is_empty() || target != 0);
+                    }
+                    mode_extrema.0 = mode_extrema.0.min(count);
+                    mode_extrema.1 = mode_extrema.1.max(count);
+                    if count < extrema.0 || count > extrema.1 {
+                        println!("CSR_EXTREMUM direction={direction} mask={mask} path={path} count={count}");
+                    }
+                    extrema.0 = extrema.0.min(count);
+                    extrema.1 = extrema.1.max(count);
+                }
+            }
+            println!(
+                "CSR_MODE_EXTREMA direction={direction} min={} max={}",
+                mode_extrema.0, mode_extrema.1
+            );
+        }
+        for (family, target) in empty_targets {
+            println!(
+                "CSR_EMPTY_TARGET family={} root={target} dependencies={:?}",
+                SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES[family as usize].name,
+                dependencies[target as usize]
+            );
+        }
+        println!(
+            "CSR_CANONICAL_SHAPE_EXTREMA min={} max={}",
+            extrema.0, extrema.1
+        );
+        // These are measured structurally admitted shapes, not a proof that arbitrary public
+        // scalar values cannot change an empty row's target.  The dependency receipt above is
+        // provided so that the latter claim can be checked separately before pinning bounds.
+    }
+
     proptest::proptest! {
         #![proptest_config(proptest::test_runner::Config::with_cases(32))]
 
@@ -4838,7 +5094,7 @@ mod tests {
             lowered.witness_values.len(),
             SMALLWOOD_POSEIDON2_V8_WITNESS_WORDS
         );
-        assert_eq!(lowered.adapter.geometry().nonlinear_constraints, 830);
+        assert_eq!(lowered.adapter.geometry().nonlinear_constraints, 773);
         lowered
             .adapter
             .verify_packed_witness(&lowered.witness_values)

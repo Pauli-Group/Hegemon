@@ -46,6 +46,7 @@ use tokio::sync::RwLock;
 use crate::error::WalletError;
 use crate::hx512_lifecycle::Hx512CandidateRpcRequest;
 use crate::notes::NoteCiphertext;
+use crate::poseidon2_v8::{poseidon2_v8_production_selection_at, WalletProofRoute};
 use crate::poseidon2_v8_sync::{canonical_action_id_exact, Poseidon2V8CanonicalBlock};
 use crate::prover::FreshTransactionProofAuthority;
 use crate::rpc::TransactionBundle;
@@ -1563,7 +1564,7 @@ impl NodeRpcClient {
         hex_to_action_id(&tx_hash)
     }
 
-    /// Submit one exact `HGV8TX02` native leaf through the additive SMZ9
+    /// Submit one exact native leaf through the source-authorized SMZ9 or SMZA
     /// transport. The node currently rejects action 10 at its fixed route
     /// discriminator because production authority is false.
     ///
@@ -1575,7 +1576,21 @@ impl NodeRpcClient {
         &self,
         native_leaf: &[u8],
     ) -> Result<ActionId48, WalletError> {
-        preflight_poseidon2_smz9_native_leaf_before_rpc(native_leaf)?;
+        use protocol_shielded_pool::poseidon2_production_transport::{
+            encode_poseidon2_production_smza_envelope,
+            preflight_poseidon2_production_smza_native_leaf_exact,
+        };
+        let route = WalletProofRoute::source_framing()?;
+        match route {
+            WalletProofRoute::Smz9 => preflight_poseidon2_smz9_native_leaf_before_rpc(native_leaf)?,
+            WalletProofRoute::Smza => {
+                preflight_poseidon2_production_smza_native_leaf_exact(native_leaf).map_err(
+                    |error| {
+                        WalletError::Serialization(format!("invalid SMZA native leaf: {error}"))
+                    },
+                )?;
+            }
+        }
         let height = self
             .get_chain_metadata()
             .await?
@@ -1584,18 +1599,26 @@ impl NodeRpcClient {
             .ok_or(WalletError::InvalidState(
                 "SmallWood Poseidon2 V8 candidate height overflow",
             ))?;
-        let expected = crate::poseidon2_v8::poseidon2_v8_production_context_at(height)?;
-        let envelope =
-            encode_poseidon2_production_smz9_envelope(expected, native_leaf).map_err(|error| {
-                WalletError::Serialization(format!(
-                    "invalid SmallWood Poseidon2 V8/SMZ9 native leaf: {error}"
-                ))
-            })?;
+        let (expected, authorized_route) = poseidon2_v8_production_selection_at(height)?;
+        if authorized_route != route {
+            return Err(WalletError::InvalidState(
+                "SmallWood Poseidon2 V8 capability changed before leaf submission",
+            ));
+        }
+        let encode_envelope = match route {
+            WalletProofRoute::Smz9 => encode_poseidon2_production_smz9_envelope,
+            WalletProofRoute::Smza => encode_poseidon2_production_smza_envelope,
+        };
+        let envelope = encode_envelope(expected, native_leaf).map_err(|error| {
+            WalletError::Serialization(format!(
+                "invalid SmallWood Poseidon2 V8/SMZ9 native leaf: {error}"
+            ))
+        })?;
         self.submit_poseidon2_production_envelope(&envelope).await
     }
 
-    /// Construct the self-contained `HGV8TX02` leaf around exact ciphertexts
-    /// and one unchanged `SMZ9` proof, then submit the canonical V8 wrapper.
+    /// Construct the source-authorized leaf around exact ciphertexts and one
+    /// unchanged proof, then submit the canonical V8 wrapper.
     pub async fn submit_poseidon2_production_transaction(
         &self,
         public_statement: &[u64; POSEIDON2_PRODUCTION_PUBLIC_STATEMENT_WORDS],
@@ -1603,7 +1626,23 @@ impl NodeRpcClient {
         ciphertexts: [Option<&[u8; POSEIDON2_PRODUCTION_CIPHERTEXT_BYTES]>; 2],
         proof: &[u8],
     ) -> Result<ActionId48, WalletError> {
-        preflight_poseidon2_smz9_proof_before_rpc(proof)?;
+        use protocol_shielded_pool::poseidon2_production_transport::{
+            encode_poseidon2_production_smza_native_leaf,
+            POSEIDON2_PRODUCTION_SMZA_INNER_PROOF_MAGIC, POSEIDON2_PRODUCTION_SMZA_MAX_PROOF_BYTES,
+        };
+        let route = WalletProofRoute::source_framing()?;
+        match route {
+            WalletProofRoute::Smz9 => preflight_poseidon2_smz9_proof_before_rpc(proof)?,
+            WalletProofRoute::Smza => {
+                if !proof.starts_with(&POSEIDON2_PRODUCTION_SMZA_INNER_PROOF_MAGIC)
+                    || proof.len() > POSEIDON2_PRODUCTION_SMZA_MAX_PROOF_BYTES
+                {
+                    return Err(WalletError::Serialization(
+                        "invalid SMZA proof framing".to_owned(),
+                    ));
+                }
+            }
+        }
         let height = self
             .get_chain_metadata()
             .await?
@@ -1612,8 +1651,17 @@ impl NodeRpcClient {
             .ok_or(WalletError::InvalidState(
                 "SmallWood Poseidon2 V8 candidate height overflow",
             ))?;
-        let expected = crate::poseidon2_v8::poseidon2_v8_production_context_at(height)?;
-        let native_leaf = encode_poseidon2_production_smz9_native_leaf(
+        let (expected, authorized_route) = poseidon2_v8_production_selection_at(height)?;
+        if authorized_route != route {
+            return Err(WalletError::InvalidState(
+                "SmallWood Poseidon2 V8 capability changed before transaction submission",
+            ));
+        }
+        let encode_leaf = match route {
+            WalletProofRoute::Smz9 => encode_poseidon2_production_smz9_native_leaf,
+            WalletProofRoute::Smza => encode_poseidon2_production_smza_native_leaf,
+        };
+        let native_leaf = encode_leaf(
             expected,
             public_statement,
             relation_balance_binding,
@@ -1629,8 +1677,8 @@ impl NodeRpcClient {
             .await
     }
 
-    /// Submit one prebuilt `SWP8LC02` envelope without changing its native-leaf
-    /// or nested SMZ9 proof bytes.
+    /// Submit one prebuilt source-authorized envelope without changing its
+    /// native leaf or nested proof bytes.
     pub async fn submit_poseidon2_production_envelope(
         &self,
         envelope_bytes: &[u8],
@@ -1644,9 +1692,16 @@ impl NodeRpcClient {
             protocol_shielded_pool::family::ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE,
             protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING,
         )?;
-        preflight_poseidon2_smz9_envelope_before_rpc(envelope_bytes)?;
-        let expected = crate::poseidon2_v8::poseidon2_v8_production_context_at(authority.height())?;
-        let request = prepare_poseidon2_smz9_submit_request(expected, envelope_bytes)?;
+        let (expected, route) = poseidon2_v8_production_selection_at(authority.height())?;
+        let request = match route {
+            WalletProofRoute::Smz9 => {
+                preflight_poseidon2_smz9_envelope_before_rpc(envelope_bytes)?;
+                prepare_poseidon2_smz9_submit_request(expected, envelope_bytes)?
+            }
+            WalletProofRoute::Smza => {
+                prepare_poseidon2_smza_submit_request(expected, envelope_bytes)?
+            }
+        };
         let client = self.client.read().await;
         let response: SubmitActionResponse = client
             .request("hegemon_submitAction", rpc_params![request])
@@ -2266,6 +2321,49 @@ pub fn prepare_poseidon2_smz9_submit_request_json_for_retained_test(
             "encode retained SmallWood Poseidon2 V8 RPC request JSON: {error}"
         ))
     })
+}
+
+/// Exact SMZA candidate JSON projection through the wallet's existing native
+/// request representation. It does not acquire production submission authority.
+#[cfg(any(test, feature = "poseidon2-v8-retained-test-support"))]
+pub fn prepare_poseidon2_smza_submit_request_json_for_retained_test(
+    expected: Poseidon2ProductionExpectedContext,
+    envelope_bytes: &[u8],
+) -> Result<serde_json::Value, WalletError> {
+    let request = prepare_poseidon2_smza_submit_request(expected, envelope_bytes)?;
+    serde_json::to_value(request).map_err(|error| {
+        WalletError::Serialization(format!(
+            "encode retained SmallWood Poseidon2 V8/SMZA RPC request JSON: {error}"
+        ))
+    })
+}
+
+fn prepare_poseidon2_smza_submit_request(
+    expected: Poseidon2ProductionExpectedContext,
+    envelope_bytes: &[u8],
+) -> Result<SubmitActionRequest, WalletError> {
+    use protocol_shielded_pool::poseidon2_production_transport::{
+        decode_poseidon2_production_smza_envelope_exact,
+        encode_poseidon2_production_smza_inline_args,
+    };
+    decode_poseidon2_production_smza_envelope_exact(expected, envelope_bytes).map_err(|error| {
+        WalletError::Serialization(format!(
+            "invalid SmallWood Poseidon2 V8/SMZA envelope: {error}"
+        ))
+    })?;
+    let public_args = encode_poseidon2_production_smza_inline_args(expected, envelope_bytes)
+        .map_err(|error| {
+            WalletError::Serialization(format!(
+                "invalid SmallWood Poseidon2 V8/SMZA inline args: {error}"
+            ))
+        })?;
+    let envelope = build_shielded_envelope(
+        protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING,
+        protocol_shielded_pool::family::ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE,
+        Vec::new(),
+        public_args,
+    );
+    SubmitActionRequest::from_envelope(&envelope)
 }
 
 fn validate_canonical_action_body_chunk(
@@ -3344,6 +3442,70 @@ mod tests {
             transaction_circuit::smallwood_v5_envelope::SMALLWOOD_V5_ENVELOPE_HEADER_BYTES
                 + transaction_circuit::smallwood_v5_envelope::SMALLWOOD_V5_STATEMENT_BYTES;
         assert_eq!(&decoded.envelope[proof_start..], proof.as_slice());
+    }
+
+    #[test]
+    fn poseidon2_v8_smza_request_preserves_bytes_and_rejects_profile_domain_and_trailing() {
+        use protocol_shielded_pool::poseidon2_production_transport::*;
+        let expected = Poseidon2ProductionExpectedContext::new(17, [0x42; 48]).unwrap();
+        let ciphertexts = [[0x41; 2147], [0x42; 2147]];
+        let mut statement = [0; 120];
+        for slot in 0..2 {
+            statement[2 + slot] = 1;
+            let digest = transaction_circuit::hashing_pq::ciphertext_hash_bytes(&ciphertexts[slot]);
+            for (limb, bytes) in digest.chunks_exact(8).enumerate() {
+                statement[32 + slot * 6 + limb] = u64::from_be_bytes(bytes.try_into().unwrap());
+            }
+        }
+        let binding = [0; 7];
+        let mut proof = vec![0xa5; POSEIDON2_PRODUCTION_SMZA_MAX_PROOF_BYTES];
+        proof[..4].copy_from_slice(b"SMZA");
+        let leaf = encode_poseidon2_production_smza_native_leaf(
+            expected,
+            &statement,
+            &binding,
+            [Some(&ciphertexts[0]), Some(&ciphertexts[1])],
+            &proof,
+        )
+        .unwrap();
+        let envelope = encode_poseidon2_production_smza_envelope(expected, &leaf).unwrap();
+        let json =
+            prepare_poseidon2_smza_submit_request_json_for_retained_test(expected, &envelope)
+                .unwrap();
+        let request: SubmitActionRequest = serde_json::from_value(json).unwrap();
+        assert!(request.new_nullifiers.is_empty());
+        let args = base64::engine::general_purpose::STANDARD
+            .decode(request.public_args)
+            .unwrap();
+        assert_eq!(args.len(), 169_547);
+        let decoded = decode_poseidon2_production_smza_inline_args_exact(expected, &args).unwrap();
+        assert_eq!(decoded.raw(), args);
+        assert_eq!(decoded.envelope().raw(), envelope);
+        assert_eq!(decoded.envelope().native_leaf(), leaf);
+        let inner = decoded.envelope().decoded_native_leaf();
+        assert_eq!(inner.proof(), proof);
+        assert_eq!(inner.ciphertext(0), Some(&ciphertexts[0]));
+        assert_eq!(inner.ciphertext(1), Some(&ciphertexts[1]));
+        assert!(prepare_poseidon2_smz9_submit_request(expected, &envelope).is_err());
+        for offset in [19, 20] {
+            let mut wrong = envelope.clone();
+            wrong[offset] ^= 1;
+            assert!(
+                prepare_poseidon2_smza_submit_request_json_for_retained_test(expected, &wrong)
+                    .is_err()
+            );
+        }
+        let mut trailing = envelope.clone();
+        trailing.push(0);
+        assert!(
+            prepare_poseidon2_smza_submit_request_json_for_retained_test(expected, &trailing)
+                .is_err()
+        );
+        let wrong_context = Poseidon2ProductionExpectedContext::new(18, [0x42; 48]).unwrap();
+        assert!(
+            prepare_poseidon2_smza_submit_request_json_for_retained_test(wrong_context, &envelope)
+                .is_err()
+        );
     }
 
     #[test]
