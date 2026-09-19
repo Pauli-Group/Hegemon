@@ -109,10 +109,14 @@ only `propext`, `Classical.choice`, and `Quot.sound`; no count assumption remain
 The analysis-only support threshold65536 does not increase q38, degree405, or
 proof bytes. Accepted-execution readout, actual sampler-event and RP04 arithmetic
 instantiation, quantum/lifetime composition, and full adaptive privacy remain
-open. Initialized leaf overlap and the initialized CMS boundedness prefix pass;
-the separate concrete full-domain resampling check currently hits the existing
-RAM guard and is not counted as checked. The whole-view interpreter and its
-initialized-purification/Born-average identity are still incomplete.
+open. Initialized leaf overlap and the initialized CMS boundedness prefix pass.
+A further retained local per-basis collision lemma now passes, but is not yet
+included in the117-source published bundle. The global resampling assembly
+still fails Lean and is not counted as checked. All six local degree chunks
+pass, but their combined certificate facade fails aggregation/flattening.
+The whole-view interpreter's seven-constructor
+initialized-purification/Born-average identity is written but unchecked; the
+chronological application still needs the actual q38 coin dimensions.
 
 Wallet multisig and release-profile checks report absent fresh-proof route
 authority; their tests remain enabled. The app end-to-end coinbase timeout and

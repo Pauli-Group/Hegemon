@@ -40,6 +40,12 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
 - [x] Check the initialized CMS state, coordinate isometry, database-size
   invariant, and boundedness of the actual raw query run. The concrete
   full-domain resampling theorem remains separate and incomplete.
+- [x] Check the extracted full-domain per-basis collision estimate in the
+  retained local Lean lane. This additional sublemma is not yet in the
+  published117-source bundle and does not close full adaptive privacy.
+- [x] Check all six split RP04 degree-data chunks in the retained local lane.
+  The combined degree-certificate facade still fails aggregation/flattening;
+  the full certificate and accepted-transcript theorem are not marked complete.
 - [x] Validate the expanded source manifest: 37 checked roots and80 recursive
   custom dependencies (117 files). Source/hash validation is not a fresh build
   of the entire bundle; individual matched PASS receipts are retained.
@@ -70,10 +76,14 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
   and recorded-transcript arithmetic chain still need successful integration.
 - [ ] Finish adaptive privacy: check initialized resampling, chronological
   DECS/PIOP transport, measured nonleaf composition, and the whole-game
-  interpreter identity. The initialized CMS prefix passes; concrete full-domain
-  resampling currently hits the existing RAM guard. The remaining whole-game
-  identity must equate initialized-oracle purification acceptance with the
-  average named-oracle acceptance over all seven program constructors.
+  interpreter identity. The initialized CMS prefix and extracted per-basis
+  collision estimate pass; the global resampling assembly still fails
+  recursion-depth and bounded-state name resolution.
+  The seven-constructor initialized-purification/average-acceptance identity
+  is written but not checked. The chronological application wrapper must use
+  the q38 coin dimensions, not the legacy20-query types; its generic measured
+  oracle core has been separated but still has finite-trace instance and
+  proof errors. The whole-view check was not run because that core failed.
 - [ ] Connect the completed arguments to the repaired relation and activate
   the fresh-proof route. Wallet multisig and release-profile checks currently
   report missing route authority; their tests remain enabled.
