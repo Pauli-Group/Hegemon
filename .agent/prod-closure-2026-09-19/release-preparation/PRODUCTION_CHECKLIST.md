@@ -18,11 +18,14 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
 - [x] Check the three repaired native tests, RP04 coinbase KAT and schedule,
   hash-kernel vectors, executable-ROM report, auxiliary geometry projection,
   and recursive-block verified-record mutation tests.
-- [x] Reach 49 checked components in the current counting/quantum batch,
+- [x] Reach 53 checked components in the current counting/quantum batch,
   including Hensel root shift, Taylor coefficient height, the full-numerator
   endpoint, actual localized response tracking, Newton truncation, and the
   actual root source with both variable-height bounds and its concrete full numerator.
-  Source-manifest validation of the published 53-file bundle also passes.
+  The latest checks add uniform simple specialization, actual quotient residual
+  and localized residual counts, and Record/Split on the physical quantum basis.
+  Source-manifest validation of the expanded 54-file bundle also passes
+  (31 checked roots plus 23 recursive dependencies).
 - [x] Check the formal source hash, both targeted module-parser regressions,
   all 14 governance tests, and the claims/active-progress CLI checks.
   These existing policy checks do not certify the incomplete security proof.
@@ -30,6 +33,9 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
   still pending. Refresh the current diagnostic report pin and preserve the
   historical RP03 report as a byte-pinned test fixture; successor-authorization
   tests pass without adding a registry entry or changing production flags.
+- [x] Fix the formal-checker formatting failure and isolate the three PoW-rule
+  fixtures from decoder-only transaction authority. All seven `pow_rules` tests
+  pass with their original rejection assertions; no production rule is changed.
 
 ## Remaining
 

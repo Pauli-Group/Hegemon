@@ -28,6 +28,7 @@
     "SmzaFixedAdviceBadCell",
     "SmzaFixedAdvicePrefix",
     "SmzaInitializedStageRouting",
+    "SmzaPhysicalStageRecord",
     "SmzaRawStageGeometry",
     "SmzaSelectedStageSearch"
   ],
@@ -404,6 +405,15 @@
       "sha256": "cedf16a4ed611a5807e5b0ac76ea7019c6ccd803b31fc3e31fc37f28dab275fb"
     },
     {
+      "module": "SmzaPhysicalStageRecord",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaPhysicalStageRecord.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaPhysicalStageRecord.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "a520d256e08bba968986cd1e3fabdf17113c7823510ccd84a7c12c8d622d39d1"
+    },
+    {
       "module": "SmzaPrefixTransportR2",
       "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-soundness-resume.LWbKdJ/SmzaPrefixTransportR2.lean",
       "receipt_pins": [],
@@ -493,6 +503,7 @@
     "SmzaFixedAdviceBadCell",
     "SmzaFixedAdvicePrefix",
     "SmzaInitializedStageRouting",
+    "SmzaPhysicalStageRecord",
     "SmzaRawStageGeometry",
     "SmzaSelectedStageSearch"
   ],
@@ -628,4 +639,3 @@
     ".agent/prod-closure-2026-09-19/program"
   ]
 }
-

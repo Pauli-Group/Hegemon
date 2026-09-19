@@ -35,12 +35,14 @@ records a native-source-only refresh and `production_eligible: false`.
 - The source verifier, canonical readback, mutation controls, in-process
   lifecycle, actual-socket lifecycle, and software-evidence checker passed.
   These local receipts are retained separately, not bulk-uploaded in this PR.
-- The PR includes 30 PASS-receipt-matched Lean component roots plus their 23
+- The PR includes 31 PASS-receipt-matched Lean component roots plus their 23
   recursive custom dependencies, pinned by source hash. The portable source
   checker and reproduction instructions are included. This is not the completed
   q38 theorem; source-manifest validation is distinct from a new Lean build.
   Components include actual factor coverage/degree ledgers, regular-start
   counting, primitive origin-root coverage, and initialized quantum routing.
+  The newest root derives Record/Split intertwining for explicitly defined
+  physical kernels; it does not supply the still-missing common accepted readout.
 - The q38 work remains formal/source evidence, not an end-to-end deployed
   security proof. The full q38 counting bound, adaptive privacy,
   accepted-transcript extraction, quantum/binding/lifetime composition, and
@@ -84,9 +86,13 @@ Checked CI repairs:
 - Successor-authorization tests pass after refreshing the non-authorizing
   current-report pin and separating the byte-pinned historical RP03 test
   report. No production flag, identity, or source registry entry is enabled.
+- Formal-checker formatting passes. All seven PoW-rule tests pass after the
+  three PoW/timestamp/subsidy fixtures stop introducing unrelated decoder-only
+  transactions. Their original rejection assertions remain unchanged, with
+  diagnostic messages added; no production validation or test is disabled.
 
-The local counting/quantum batch has 49 checked components, not 49 completed
-security arguments. Only the 30-root source closure described above is currently
+The local counting/quantum batch has 53 checked components, not 53 completed
+security arguments. Only the 31-root source closure described above is currently
 packaged in the mathematical evidence bundle. The global counting theorem still
 needs kernel validation; accepted-execution readout, quantum/lifetime composition,
 and adaptive privacy remain open. The split initialized privacy check remains

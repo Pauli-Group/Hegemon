@@ -11988,7 +11988,9 @@ mod tests {
             let error = parse_rust_binding_module_source(source, path)
                 .err()
                 .expect("production include must reject");
-            assert!(error.to_string().contains("unsupported include! source injection"));
+            assert!(error
+                .to_string()
+                .contains("unsupported include! source injection"));
         }
     }
 

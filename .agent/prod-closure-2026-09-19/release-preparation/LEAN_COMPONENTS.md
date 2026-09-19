@@ -6,6 +6,11 @@ custom-source dependencies. Unfinished drafts are excluded from its build.
 The local PASS receipts establish component checks, not the global q38 count,
 full adaptive privacy, or production authorization.
 
+The current manifest contains 31 checked roots and 23 recursive dependencies.
+The added `SmzaPhysicalStageRecord` root proves physical Record/Split kernel
+conjugation and operator intertwining. Accepted readout and common-execution
+identification remain separate open obligations.
+
 Validate the packaged source hashes and recursive custom imports, without
 invoking a compiler:
 
