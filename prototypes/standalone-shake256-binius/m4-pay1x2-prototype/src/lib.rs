@@ -20,7 +20,7 @@ use binius_m4_verifier::VerifierM4;
 use binius_prover::OptimalPackedB128;
 use binius_transcript::{ProverTranscript, VerifierTranscript};
 use binius_verifier::config::StdChallenger;
-use hegemon_standalone_shake256_prototype::{MerkleNode, SemanticDigest, merkle_parent};
+use hegemon_standalone_shake256_prototype::{merkle_parent, MerkleNode, SemanticDigest};
 
 pub const CHILD_BYTES: usize = 56;
 pub const CHILD_WORDS: usize = CHILD_BYTES / 8;

@@ -321,7 +321,8 @@ impl AddressKeyMaterial {
     pub fn poseidon2_v8_authorization_extension_words(&self) -> Result<[u64; 3], WalletError> {
         let mut words = [0u64; 3];
         for (limb, chunk) in self.pk_auth_extension.chunks_exact(8).enumerate() {
-            let word = u64::from_le_bytes(chunk.try_into().expect("eight-byte auth-extension limb"));
+            let word =
+                u64::from_le_bytes(chunk.try_into().expect("eight-byte auth-extension limb"));
             if word >= transaction_circuit::constants::FIELD_MODULUS_U64 {
                 return Err(WalletError::AddressEncoding(
                     "non-canonical V8 authorization extension".into(),

@@ -4613,7 +4613,7 @@ mod tests {
         assert_eq!(adapter.geometry().hash_calls, 128);
         assert_eq!(adapter.geometry().auxiliary_words, 0);
         assert_eq!(adapter.geometry().nonlinear_constraints, 773);
-        assert_eq!(adapter.geometry().linear_constraints, 20_509);
+        assert_eq!(adapter.geometry().linear_constraints, 20_510);
         assert!(adapter.compiler_complete());
         assert_ne!(adapter.relation_digest(), &[0; 48]);
         let refinement = adapter.source_program_refinement();

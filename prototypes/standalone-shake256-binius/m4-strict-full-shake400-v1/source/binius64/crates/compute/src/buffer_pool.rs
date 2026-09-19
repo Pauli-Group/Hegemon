@@ -14,11 +14,11 @@
 //! borrows a block's memory as a `Vec<T>` for its lifetime and hands it back on drop.
 
 use std::{
-	collections::HashMap,
-	fmt,
-	mem::{self, MaybeUninit},
-	ops::{Deref, DerefMut},
-	sync::Mutex,
+    collections::HashMap,
+    fmt,
+    mem::{self, MaybeUninit},
+    ops::{Deref, DerefMut},
+    sync::Mutex,
 };
 
 /// The alignment, in bytes, of every pooled block.
@@ -46,105 +46,105 @@ struct AlignedChunk(#[allow(dead_code)] [u8; BUFFER_ALIGN]);
 /// list sits behind a [`Mutex`], so allocation and reclamation may happen from any thread.
 #[derive(Default)]
 pub struct BufferPool {
-	free_list: Mutex<HashMap<usize, Vec<Vec<AlignedChunk>>>>,
+    free_list: Mutex<HashMap<usize, Vec<Vec<AlignedChunk>>>>,
 }
 
 impl BufferPool {
-	/// Creates a new, empty pool.
-	pub fn new() -> Self {
-		Self::default()
-	}
+    /// Creates a new, empty pool.
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-	/// Allocates a [`PoolVec`] with room for at least `capacity` elements.
-	///
-	/// The element capacity is rounded up to a power of two large enough that the resulting byte
-	/// length is a whole number of aligned chunks. If the free list holds a
-	/// block of that size it is reused; otherwise a fresh block is allocated. The returned buffer
-	/// is empty; fill it through the [`PoolVec`] interface.
-	///
-	/// # Panics
-	///
-	/// Panics at compile time (via a `const` assertion) if `T`'s alignment exceeds `BUFFER_ALIGN`.
-	/// Panics at runtime if the requested capacity cannot be represented by a pooled allocation.
-	pub fn alloc_vec<T>(&self, capacity: usize) -> PoolVec<'_, T> {
-		PoolVec {
-			pool: self,
-			data: self.alloc_data(capacity),
-		}
-	}
+    /// Allocates a [`PoolVec`] with room for at least `capacity` elements.
+    ///
+    /// The element capacity is rounded up to a power of two large enough that the resulting byte
+    /// length is a whole number of aligned chunks. If the free list holds a
+    /// block of that size it is reused; otherwise a fresh block is allocated. The returned buffer
+    /// is empty; fill it through the [`PoolVec`] interface.
+    ///
+    /// # Panics
+    ///
+    /// Panics at compile time (via a `const` assertion) if `T`'s alignment exceeds `BUFFER_ALIGN`.
+    /// Panics at runtime if the requested capacity cannot be represented by a pooled allocation.
+    pub fn alloc_vec<T>(&self, capacity: usize) -> PoolVec<'_, T> {
+        PoolVec {
+            pool: self,
+            data: self.alloc_data(capacity),
+        }
+    }
 
-	fn alloc_data<T>(&self, capacity: usize) -> Vec<T> {
-		const {
-			assert!(
-				mem::align_of::<T>() <= BUFFER_ALIGN,
-				"element alignment exceeds the pool's buffer alignment"
-			);
-		}
+    fn alloc_data<T>(&self, capacity: usize) -> Vec<T> {
+        const {
+            assert!(
+                mem::align_of::<T>() <= BUFFER_ALIGN,
+                "element alignment exceeds the pool's buffer alignment"
+            );
+        }
 
-		// A zero-sized type never allocates, and a zero-capacity request need not; in both cases
-		// there is no block to pool, so hand back a plain `Vec`.
-		if mem::size_of::<T>() == 0 || capacity == 0 {
-			return Vec::with_capacity(capacity);
-		}
+        // A zero-sized type never allocates, and a zero-capacity request need not; in both cases
+        // there is no block to pool, so hand back a plain `Vec`.
+        if mem::size_of::<T>() == 0 || capacity == 0 {
+            return Vec::with_capacity(capacity);
+        }
 
-		// `elem_multiple` is the smallest number of `T`s whose byte length is divisible by
-		// `BUFFER_ALIGN`. `BUFFER_ALIGN` is a power of two, so `elem_multiple` is also a power of
-		// two. Rounding the requested element count to a power of two at least this large gives an
-		// exact common layout for `Vec<T>` and `Vec<AlignedChunk>`, including for digest outputs
-		// such as `[u8; 50]` whose size is not a power of two.
-		let elem_multiple = BUFFER_ALIGN / gcd(BUFFER_ALIGN, mem::size_of::<T>());
-		let elem_cap = capacity
-			.checked_next_power_of_two()
-			.expect("pooled element capacity overflow")
-			.max(elem_multiple);
-		let byte_len = elem_cap
-			.checked_mul(mem::size_of::<T>())
-			.expect("pooled byte length overflow");
-		debug_assert!(byte_len.is_multiple_of(BUFFER_ALIGN));
-		let n_chunks = byte_len / BUFFER_ALIGN;
+        // `elem_multiple` is the smallest number of `T`s whose byte length is divisible by
+        // `BUFFER_ALIGN`. `BUFFER_ALIGN` is a power of two, so `elem_multiple` is also a power of
+        // two. Rounding the requested element count to a power of two at least this large gives an
+        // exact common layout for `Vec<T>` and `Vec<AlignedChunk>`, including for digest outputs
+        // such as `[u8; 50]` whose size is not a power of two.
+        let elem_multiple = BUFFER_ALIGN / gcd(BUFFER_ALIGN, mem::size_of::<T>());
+        let elem_cap = capacity
+            .checked_next_power_of_two()
+            .expect("pooled element capacity overflow")
+            .max(elem_multiple);
+        let byte_len = elem_cap
+            .checked_mul(mem::size_of::<T>())
+            .expect("pooled byte length overflow");
+        debug_assert!(byte_len.is_multiple_of(BUFFER_ALIGN));
+        let n_chunks = byte_len / BUFFER_ALIGN;
 
-		let reused = self
-			.free_list
-			.lock()
-			.expect("free list mutex poisoned")
-			.get_mut(&n_chunks)
-			.and_then(Vec::pop);
+        let reused = self
+            .free_list
+            .lock()
+            .expect("free list mutex poisoned")
+            .get_mut(&n_chunks)
+            .and_then(Vec::pop);
 
-		let mut block = reused.unwrap_or_else(|| Vec::with_capacity(n_chunks));
-		let ptr = block.as_mut_ptr().cast::<T>();
-		// The block owns the allocation; forget it so its `Drop` does not free the memory we are
-		// about to hand to the `Vec`.
-		mem::forget(block);
-		// SAFETY: `ptr` comes from a `Vec<AlignedChunk>` with capacity `n_chunks`, i.e. an
-		// allocation of `byte_len` bytes aligned to `BUFFER_ALIGN >= align_of::<T>()`. `T`'s size
-		// divides `byte_len` by construction, so it holds exactly `elem_cap` elements. The length
-		// is zero, so no element needs to be initialized.
-		unsafe { Vec::from_raw_parts(ptr, 0, elem_cap) }
-	}
+        let mut block = reused.unwrap_or_else(|| Vec::with_capacity(n_chunks));
+        let ptr = block.as_mut_ptr().cast::<T>();
+        // The block owns the allocation; forget it so its `Drop` does not free the memory we are
+        // about to hand to the `Vec`.
+        mem::forget(block);
+        // SAFETY: `ptr` comes from a `Vec<AlignedChunk>` with capacity `n_chunks`, i.e. an
+        // allocation of `byte_len` bytes aligned to `BUFFER_ALIGN >= align_of::<T>()`. `T`'s size
+        // divides `byte_len` by construction, so it holds exactly `elem_cap` elements. The length
+        // is zero, so no element needs to be initialized.
+        unsafe { Vec::from_raw_parts(ptr, 0, elem_cap) }
+    }
 
-	fn reclaim(&self, n_chunks: usize, block: Vec<AlignedChunk>) {
-		self.free_list
-			.lock()
-			.expect("free list mutex poisoned")
-			.entry(n_chunks)
-			.or_default()
-			.push(block);
-	}
+    fn reclaim(&self, n_chunks: usize, block: Vec<AlignedChunk>) {
+        self.free_list
+            .lock()
+            .expect("free list mutex poisoned")
+            .entry(n_chunks)
+            .or_default()
+            .push(block);
+    }
 }
 
 const fn gcd(mut a: usize, mut b: usize) -> usize {
-	while b != 0 {
-		let remainder = a % b;
-		a = b;
-		b = remainder;
-	}
-	a
+    while b != 0 {
+        let remainder = a % b;
+        a = b;
+        b = remainder;
+    }
+    a
 }
 
 impl fmt::Debug for BufferPool {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		f.debug_struct("BufferPool").finish_non_exhaustive()
-	}
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BufferPool").finish_non_exhaustive()
+    }
 }
 
 /// A `Vec`-like buffer borrowed from a [`BufferPool`] for `'alloc`.
@@ -153,284 +153,290 @@ impl fmt::Debug for BufferPool {
 /// block is returned to the pool for reuse. Only the growth and mutation methods actually used by
 /// callers are exposed; add more as needed rather than mirroring all of [`Vec`].
 pub struct PoolVec<'alloc, T> {
-	pool: &'alloc BufferPool,
-	data: Vec<T>,
+    pool: &'alloc BufferPool,
+    data: Vec<T>,
 }
 
 impl<T> PoolVec<'_, T> {
-	/// Returns the number of elements the buffer can hold without reallocating.
-	pub const fn capacity(&self) -> usize {
-		self.data.capacity()
-	}
+    /// Returns the number of elements the buffer can hold without reallocating.
+    pub const fn capacity(&self) -> usize {
+        self.data.capacity()
+    }
 
-	/// Appends an element to the back of the buffer.
-	pub fn push(&mut self, value: T) {
-		self.assert_spare_capacity(1);
-		self.data.push(value);
-	}
+    /// Appends an element to the back of the buffer.
+    pub fn push(&mut self, value: T) {
+        self.assert_spare_capacity(1);
+        self.data.push(value);
+    }
 
-	fn assert_spare_capacity(&self, additional: usize) {
-		let required = self
-			.data
-			.len()
-			.checked_add(additional)
-			.expect("pooled vector length overflow");
-		assert!(
-			required <= self.data.capacity(),
-			"PoolVec cannot grow beyond its original pooled allocation"
-		);
-	}
+    fn assert_spare_capacity(&self, additional: usize) {
+        let required = self
+            .data
+            .len()
+            .checked_add(additional)
+            .expect("pooled vector length overflow");
+        assert!(
+            required <= self.data.capacity(),
+            "PoolVec cannot grow beyond its original pooled allocation"
+        );
+    }
 
-	/// Clears the buffer, removing all elements while retaining its capacity.
-	pub fn clear(&mut self) {
-		self.data.clear();
-	}
+    /// Clears the buffer, removing all elements while retaining its capacity.
+    pub fn clear(&mut self) {
+        self.data.clear();
+    }
 
-	/// Shrinks the buffer to its first `len` elements, retaining its capacity.
-	///
-	/// Has no effect if `len` is at least the current length. Mirrors [`Vec::truncate`].
-	pub fn truncate(&mut self, len: usize) {
-		self.data.truncate(len);
-	}
+    /// Shrinks the buffer to its first `len` elements, retaining its capacity.
+    ///
+    /// Has no effect if `len` is at least the current length. Mirrors [`Vec::truncate`].
+    pub fn truncate(&mut self, len: usize) {
+        self.data.truncate(len);
+    }
 
-	/// Returns the spare capacity of the buffer as a slice of `MaybeUninit<T>`.
-	///
-	/// Mirrors [`Vec::spare_capacity_mut`]: used to write into a freshly allocated buffer in place
-	/// (e.g. in parallel) before committing the length with [`set_len`](Self::set_len).
-	pub fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<T>] {
-		self.data.spare_capacity_mut()
-	}
+    /// Returns the spare capacity of the buffer as a slice of `MaybeUninit<T>`.
+    ///
+    /// Mirrors [`Vec::spare_capacity_mut`]: used to write into a freshly allocated buffer in place
+    /// (e.g. in parallel) before committing the length with [`set_len`](Self::set_len).
+    pub fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<T>] {
+        self.data.spare_capacity_mut()
+    }
 
-	/// Forces the length of the buffer to `new_len`.
-	///
-	/// # Safety
-	///
-	/// Same contract as [`Vec::set_len`]: `new_len` must be at most [`capacity`](Self::capacity)
-	/// and the elements in `0..new_len` must be initialized.
-	pub unsafe fn set_len(&mut self, new_len: usize) {
-		unsafe { self.data.set_len(new_len) }
-	}
+    /// Forces the length of the buffer to `new_len`.
+    ///
+    /// # Safety
+    ///
+    /// Same contract as [`Vec::set_len`]: `new_len` must be at most [`capacity`](Self::capacity)
+    /// and the elements in `0..new_len` must be initialized.
+    pub unsafe fn set_len(&mut self, new_len: usize) {
+        unsafe { self.data.set_len(new_len) }
+    }
 }
 
 impl<T: Clone> PoolVec<'_, T> {
-	/// Appends all elements of `other` to the back of the buffer.
-	pub fn extend_from_slice(&mut self, other: &[T]) {
-		self.assert_spare_capacity(other.len());
-		self.data.extend_from_slice(other);
-	}
+    /// Appends all elements of `other` to the back of the buffer.
+    pub fn extend_from_slice(&mut self, other: &[T]) {
+        self.assert_spare_capacity(other.len());
+        self.data.extend_from_slice(other);
+    }
 
-	/// Resizes the buffer to `new_len`, filling any new slots with `value`.
-	pub fn resize(&mut self, new_len: usize, value: T) {
-		if new_len > self.data.len() {
-			self.assert_spare_capacity(new_len - self.data.len());
-		}
-		self.data.resize(new_len, value);
-	}
+    /// Resizes the buffer to `new_len`, filling any new slots with `value`.
+    pub fn resize(&mut self, new_len: usize, value: T) {
+        if new_len > self.data.len() {
+            self.assert_spare_capacity(new_len - self.data.len());
+        }
+        self.data.resize(new_len, value);
+    }
 }
 
 impl<T: Clone> Clone for PoolVec<'_, T> {
-	/// Clones into a fresh block drawn from the same pool, so the clone is itself a genuine pooled
-	/// buffer whose [`Drop`] reclaims correctly. (A `#[derive]`d clone would duplicate the inner
-	/// `Vec` into a plain, non-pool allocation, which the reclaiming `Drop` must never hand back to
-	/// the free list.)
-	fn clone(&self) -> Self {
-		let mut cloned = self.pool.alloc_vec::<T>(self.data.len());
-		cloned.extend_from_slice(&self.data);
-		cloned
-	}
+    /// Clones into a fresh block drawn from the same pool, so the clone is itself a genuine pooled
+    /// buffer whose [`Drop`] reclaims correctly. (A `#[derive]`d clone would duplicate the inner
+    /// `Vec` into a plain, non-pool allocation, which the reclaiming `Drop` must never hand back to
+    /// the free list.)
+    fn clone(&self) -> Self {
+        let mut cloned = self.pool.alloc_vec::<T>(self.data.len());
+        cloned.extend_from_slice(&self.data);
+        cloned
+    }
 }
 
 impl<T> Drop for PoolVec<'_, T> {
-	fn drop(&mut self) {
-		let mut data = mem::take(&mut self.data);
-		let elem_cap = data.capacity();
-		if mem::size_of::<T>() == 0 || elem_cap == 0 {
-			// Nothing was allocated (zero-sized `T` or an empty buffer); let the `Vec` drop.
-			return;
-		}
-		let byte_len = elem_cap * mem::size_of::<T>();
-		// Only the blocks we hand out are `BUFFER_ALIGN`-aligned and a whole number of chunks. If
-		// the `Vec` outgrew its block and reallocated into its own (element-aligned) storage, the
-		// pointer or byte length no longer matches; let such a `Vec` drop normally.
-		if !byte_len.is_multiple_of(BUFFER_ALIGN)
-			|| !(data.as_ptr() as usize).is_multiple_of(BUFFER_ALIGN)
-		{
-			return;
-		}
-		// Run the elements' destructors while keeping the block's allocation, so a block returned
-		// to the pool holds no live values.
-		data.clear();
-		let n_chunks = byte_len / BUFFER_ALIGN;
-		let ptr = data.as_ptr() as *mut AlignedChunk;
-		// Take the allocation away from the `Vec` so it is not freed, then rebuild the owning
-		// block.
-		mem::forget(data);
-		// SAFETY: this memory was handed out from a `Vec<AlignedChunk>` of exactly `n_chunks`
-		// chunks (checked above: `BUFFER_ALIGN`-aligned, `byte_len` a multiple of
-		// `BUFFER_ALIGN`), so reconstructing that `Vec` restores the original owner and frees
-		// with the correct layout.
-		let block = unsafe { Vec::<AlignedChunk>::from_raw_parts(ptr, 0, n_chunks) };
-		self.pool.reclaim(n_chunks, block);
-	}
+    fn drop(&mut self) {
+        let mut data = mem::take(&mut self.data);
+        let elem_cap = data.capacity();
+        if mem::size_of::<T>() == 0 || elem_cap == 0 {
+            // Nothing was allocated (zero-sized `T` or an empty buffer); let the `Vec` drop.
+            return;
+        }
+        let byte_len = elem_cap * mem::size_of::<T>();
+        // Only the blocks we hand out are `BUFFER_ALIGN`-aligned and a whole number of chunks. If
+        // the `Vec` outgrew its block and reallocated into its own (element-aligned) storage, the
+        // pointer or byte length no longer matches; let such a `Vec` drop normally.
+        if !byte_len.is_multiple_of(BUFFER_ALIGN)
+            || !(data.as_ptr() as usize).is_multiple_of(BUFFER_ALIGN)
+        {
+            return;
+        }
+        // Run the elements' destructors while keeping the block's allocation, so a block returned
+        // to the pool holds no live values.
+        data.clear();
+        let n_chunks = byte_len / BUFFER_ALIGN;
+        let ptr = data.as_ptr() as *mut AlignedChunk;
+        // Take the allocation away from the `Vec` so it is not freed, then rebuild the owning
+        // block.
+        mem::forget(data);
+        // SAFETY: this memory was handed out from a `Vec<AlignedChunk>` of exactly `n_chunks`
+        // chunks (checked above: `BUFFER_ALIGN`-aligned, `byte_len` a multiple of
+        // `BUFFER_ALIGN`), so reconstructing that `Vec` restores the original owner and frees
+        // with the correct layout.
+        let block = unsafe { Vec::<AlignedChunk>::from_raw_parts(ptr, 0, n_chunks) };
+        self.pool.reclaim(n_chunks, block);
+    }
 }
 
 impl<T> Deref for PoolVec<'_, T> {
-	type Target = [T];
+    type Target = [T];
 
-	fn deref(&self) -> &[T] {
-		&self.data
-	}
+    fn deref(&self) -> &[T] {
+        &self.data
+    }
 }
 
 impl<T> DerefMut for PoolVec<'_, T> {
-	fn deref_mut(&mut self) -> &mut [T] {
-		&mut self.data
-	}
+    fn deref_mut(&mut self) -> &mut [T] {
+        &mut self.data
+    }
 }
 
 impl<T> Extend<T> for PoolVec<'_, T> {
-	fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
-		for value in iter {
-			self.push(value);
-		}
-	}
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        for value in iter {
+            self.push(value);
+        }
+    }
 }
 
 impl<T: fmt::Debug> fmt::Debug for PoolVec<'_, T> {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		f.debug_list().entries(self.data.iter()).finish()
-	}
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.data.iter()).finish()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-	use super::*;
+    use super::*;
 
-	#[test]
-	fn alloc_vec_reserves_capacity_and_starts_empty() {
-		let pool = BufferPool::new();
-		let buffer = pool.alloc_vec::<u64>(16);
-		assert!(buffer.is_empty());
-		assert!(buffer.capacity() >= 16);
-	}
+    #[test]
+    fn alloc_vec_reserves_capacity_and_starts_empty() {
+        let pool = BufferPool::new();
+        let buffer = pool.alloc_vec::<u64>(16);
+        assert!(buffer.is_empty());
+        assert!(buffer.capacity() >= 16);
+    }
 
-	#[test]
-	fn push_extend_and_deref() {
-		let pool = BufferPool::new();
-		let mut buffer = pool.alloc_vec::<u64>(4);
-		buffer.push(1);
-		buffer.extend_from_slice(&[2, 3]);
-		buffer.extend([4, 5]);
-		assert_eq!(&*buffer, &[1, 2, 3, 4, 5]);
+    #[test]
+    fn push_extend_and_deref() {
+        let pool = BufferPool::new();
+        let mut buffer = pool.alloc_vec::<u64>(4);
+        buffer.push(1);
+        buffer.extend_from_slice(&[2, 3]);
+        buffer.extend([4, 5]);
+        assert_eq!(&*buffer, &[1, 2, 3, 4, 5]);
 
-		buffer[0] = 10;
-		assert_eq!(buffer[0], 10);
+        buffer[0] = 10;
+        assert_eq!(buffer[0], 10);
 
-		buffer.resize(3, 0);
-		assert_eq!(&*buffer, &[10, 2, 3]);
+        buffer.resize(3, 0);
+        assert_eq!(&*buffer, &[10, 2, 3]);
 
-		buffer.clear();
-		assert!(buffer.is_empty());
-	}
+        buffer.clear();
+        assert!(buffer.is_empty());
+    }
 
-	#[test]
-	fn buffers_are_aligned_and_sized_to_a_power_of_two_byte_length() {
-		let pool = BufferPool::new();
-		let buffer = pool.alloc_vec::<u64>(10);
-		// 10 * 8 = 80 bytes rounds up to a 128-byte block: 16 `u64`s.
-		assert_eq!(buffer.capacity(), 16);
-		assert!((buffer.as_ptr() as usize).is_multiple_of(BUFFER_ALIGN));
-		// Small requests still take a whole minimum-size block.
-		assert_eq!(pool.alloc_vec::<u64>(1).capacity(), BUFFER_ALIGN / size_of::<u64>());
-	}
+    #[test]
+    fn buffers_are_aligned_and_sized_to_a_power_of_two_byte_length() {
+        let pool = BufferPool::new();
+        let buffer = pool.alloc_vec::<u64>(10);
+        // 10 * 8 = 80 bytes rounds up to a 128-byte block: 16 `u64`s.
+        assert_eq!(buffer.capacity(), 16);
+        assert!((buffer.as_ptr() as usize).is_multiple_of(BUFFER_ALIGN));
+        // Small requests still take a whole minimum-size block.
+        assert_eq!(
+            pool.alloc_vec::<u64>(1).capacity(),
+            BUFFER_ALIGN / size_of::<u64>()
+        );
+    }
 
-	#[test]
-	fn non_power_of_two_elements_use_an_exact_recyclable_size_class() {
-		let pool = BufferPool::new();
-		type Digest400 = [u8; 50];
+    #[test]
+    fn non_power_of_two_elements_use_an_exact_recyclable_size_class() {
+        let pool = BufferPool::new();
+        type Digest400 = [u8; 50];
 
-		let addr = {
-			let mut buffer = pool.alloc_vec::<Digest400>(10);
-			// 32 elements are 1,600 bytes: exactly 25 aligned chunks.
-			assert_eq!(buffer.capacity(), 32);
-			assert_eq!(buffer.capacity() * size_of::<Digest400>(), 25 * BUFFER_ALIGN);
-			assert!((buffer.as_ptr() as usize).is_multiple_of(BUFFER_ALIGN));
-			buffer.push([7; 50]);
-			buffer.as_ptr() as usize
-		};
+        let addr = {
+            let mut buffer = pool.alloc_vec::<Digest400>(10);
+            // 32 elements are 1,600 bytes: exactly 25 aligned chunks.
+            assert_eq!(buffer.capacity(), 32);
+            assert_eq!(
+                buffer.capacity() * size_of::<Digest400>(),
+                25 * BUFFER_ALIGN
+            );
+            assert!((buffer.as_ptr() as usize).is_multiple_of(BUFFER_ALIGN));
+            buffer.push([7; 50]);
+            buffer.as_ptr() as usize
+        };
 
-		let recycled = pool.alloc_vec::<Digest400>(10);
-		assert_eq!(recycled.as_ptr() as usize, addr);
-		assert!(recycled.is_empty());
-	}
+        let recycled = pool.alloc_vec::<Digest400>(10);
+        assert_eq!(recycled.as_ptr() as usize, addr);
+        assert!(recycled.is_empty());
+    }
 
-	#[test]
-	#[should_panic(expected = "PoolVec cannot grow beyond its original pooled allocation")]
-	fn growth_past_the_original_pool_block_fails_before_reallocation() {
-		let pool = BufferPool::new();
-		let mut buffer = pool.alloc_vec::<u64>(1);
-		buffer.extend((0..buffer.capacity()).map(|value| value as u64));
-		buffer.push(u64::MAX);
-	}
+    #[test]
+    #[should_panic(expected = "PoolVec cannot grow beyond its original pooled allocation")]
+    fn growth_past_the_original_pool_block_fails_before_reallocation() {
+        let pool = BufferPool::new();
+        let mut buffer = pool.alloc_vec::<u64>(1);
+        buffer.extend((0..buffer.capacity()).map(|value| value as u64));
+        buffer.push(u64::MAX);
+    }
 
-	#[test]
-	fn freed_block_is_recycled_for_a_matching_request() {
-		let pool = BufferPool::new();
+    #[test]
+    fn freed_block_is_recycled_for_a_matching_request() {
+        let pool = BufferPool::new();
 
-		let addr = {
-			let buffer = pool.alloc_vec::<u64>(10);
-			buffer.as_ptr() as usize
-		};
-		// The freed block backs the next request of the same size, and comes back empty despite
-		// having been filled before.
-		let mut buffer = pool.alloc_vec::<u64>(10);
-		assert_eq!(buffer.as_ptr() as usize, addr);
-		assert!(buffer.is_empty());
-		buffer.extend_from_slice(&[1, 2, 3]);
-		assert_eq!(&*buffer, &[1, 2, 3]);
-	}
+        let addr = {
+            let buffer = pool.alloc_vec::<u64>(10);
+            buffer.as_ptr() as usize
+        };
+        // The freed block backs the next request of the same size, and comes back empty despite
+        // having been filled before.
+        let mut buffer = pool.alloc_vec::<u64>(10);
+        assert_eq!(buffer.as_ptr() as usize, addr);
+        assert!(buffer.is_empty());
+        buffer.extend_from_slice(&[1, 2, 3]);
+        assert_eq!(&*buffer, &[1, 2, 3]);
+    }
 
-	#[test]
-	fn a_block_freed_by_one_type_is_reused_by_another_of_the_same_byte_size() {
-		let pool = BufferPool::new();
-		// A `u64` buffer of 8 elements and a `u8` buffer of 64 elements are both one 64-byte block,
-		// so the freed block is reused across the two element types.
-		let addr = {
-			let buffer = pool.alloc_vec::<u64>(8);
-			buffer.as_ptr() as usize
-		};
-		let buffer = pool.alloc_vec::<u8>(64);
-		assert_eq!(buffer.as_ptr() as usize, addr);
-	}
+    #[test]
+    fn a_block_freed_by_one_type_is_reused_by_another_of_the_same_byte_size() {
+        let pool = BufferPool::new();
+        // A `u64` buffer of 8 elements and a `u8` buffer of 64 elements are both one 64-byte block,
+        // so the freed block is reused across the two element types.
+        let addr = {
+            let buffer = pool.alloc_vec::<u64>(8);
+            buffer.as_ptr() as usize
+        };
+        let buffer = pool.alloc_vec::<u8>(64);
+        assert_eq!(buffer.as_ptr() as usize, addr);
+    }
 
-	#[test]
-	fn distinct_sizes_do_not_share_blocks() {
-		let pool = BufferPool::new();
-		let small = {
-			let buffer = pool.alloc_vec::<u64>(4);
-			buffer.as_ptr() as usize
-		};
-		// A larger request needs a bigger block and cannot reuse the small freed one.
-		let big = pool.alloc_vec::<u64>(64);
-		assert_ne!(big.as_ptr() as usize, small);
-	}
+    #[test]
+    fn distinct_sizes_do_not_share_blocks() {
+        let pool = BufferPool::new();
+        let small = {
+            let buffer = pool.alloc_vec::<u64>(4);
+            buffer.as_ptr() as usize
+        };
+        // A larger request needs a bigger block and cannot reuse the small freed one.
+        let big = pool.alloc_vec::<u64>(64);
+        assert_ne!(big.as_ptr() as usize, small);
+    }
 
-	#[test]
-	fn free_list_holds_multiple_blocks_of_the_same_size() {
-		let pool = BufferPool::new();
+    #[test]
+    fn free_list_holds_multiple_blocks_of_the_same_size() {
+        let pool = BufferPool::new();
 
-		let (addr_a, addr_b) = {
-			let a = pool.alloc_vec::<u64>(8);
-			let b = pool.alloc_vec::<u64>(8);
-			assert_ne!(a.as_ptr() as usize, b.as_ptr() as usize);
-			(a.as_ptr() as usize, b.as_ptr() as usize)
-		};
+        let (addr_a, addr_b) = {
+            let a = pool.alloc_vec::<u64>(8);
+            let b = pool.alloc_vec::<u64>(8);
+            assert_ne!(a.as_ptr() as usize, b.as_ptr() as usize);
+            (a.as_ptr() as usize, b.as_ptr() as usize)
+        };
 
-		// Both freed blocks are available; two fresh allocations reuse exactly them.
-		let c = pool.alloc_vec::<u64>(8);
-		let d = pool.alloc_vec::<u64>(8);
-		let reused = [c.as_ptr() as usize, d.as_ptr() as usize];
-		assert!(reused.contains(&addr_a));
-		assert!(reused.contains(&addr_b));
-	}
+        // Both freed blocks are available; two fresh allocations reuse exactly them.
+        let c = pool.alloc_vec::<u64>(8);
+        let d = pool.alloc_vec::<u64>(8);
+        let reused = [c.as_ptr() as usize, d.as_ptr() as usize];
+        assert!(reused.contains(&addr_a));
+        assert!(reused.contains(&addr_b));
+    }
 }

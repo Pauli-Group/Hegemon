@@ -22,38 +22,36 @@ use sha2::{Digest as ShaDigest, Sha512};
 use thiserror::Error;
 
 use crate::full_blake2b448_relation::{
-    CandidateBooleanConstraint, CandidateBooleanTrace, CandidateSourceBitBinding,
-    CandidateHashAlgorithm, FullBlake2b448Relation, FullBlake2b448RelationError,
-    FullBlake2b448Statement, SecretHashProfile, SourceByte, SourceKind, CANDIDATE_STATEMENT_BYTES,
-    CANDIDATE_STATEMENT_LIMBS, DIGEST_BYTES, ExecutableHashCall, ExecutableHashTrace,
+    CandidateBooleanConstraint, CandidateBooleanTrace, CandidateHashAlgorithm,
+    CandidateSourceBitBinding, ExecutableHashCall, ExecutableHashTrace, FullBlake2b448Relation,
+    FullBlake2b448RelationError, FullBlake2b448Statement, SecretHashProfile, SourceByte,
+    SourceKind, CANDIDATE_STATEMENT_BYTES, CANDIDATE_STATEMENT_LIMBS, DIGEST_BYTES,
     PHYSICAL_HASH_CALLS,
 };
 use crate::full_shake448_relation::{
     FullShake448ConstraintSystem, FullShake448HashConstraintSystem, FullShake448QirInstance,
-    FullShake448QirProgram, FullShake448RelationError, FullShake448Statement,
-    RelationStats as FullShakeRelationStats, ValidatedFullShake448Relation,
-    QirConstraintFamily, QirLinearCombination, QirR1csConstraint, QirByteSourceKind,
-    InputWitness, OutputWitness, PrivateAuthWitness, V6HashInvocationCoverage,
-    REJECTED_UNIFORM_SHAKE256_INVOCATIONS,
+    FullShake448QirProgram, FullShake448RelationError, FullShake448Statement, InputWitness,
+    OutputWitness, PrivateAuthWitness, QirByteSourceKind, QirConstraintFamily,
+    QirLinearCombination, QirR1csConstraint, RelationStats as FullShakeRelationStats,
+    V6HashInvocationCoverage, ValidatedFullShake448Relation, REJECTED_UNIFORM_SHAKE256_INVOCATIONS,
 };
 use crate::full_shake448_statement::{
     StablecoinStatementBinding, V6ActivationBinding, V6HashAlgorithm, V6HashPurpose,
-    V6StatementProjection, V6_STATEMENT_BYTES, V6_STATEMENT_LIMBS,
-    V6_CANONICAL_CIPHERTEXT_BYTES, GOLDILOCKS_MODULUS,
-};
-use crate::smallwood_shake256_full_relation::{
-    verify_constraint_system, Shake256Constraint, Shake256RelationError, Shake256TraceBindingCoverage,
-    Shake256Wire,
-};
-use crate::smallwood_v6_adapter::{
-    identity_from_shake_constraint_for_mixed, pack_mixed_executable_relation,
-    V6ConstraintFamily, V6ExecutableIdentity, V6HashLoweringCoverage,
-    V6PublicBitBinding, V6SmallwoodLoweredRelation, V6SmallwoodLoweringError,
-    V6SmallwoodLoweringGeometry, V6SmallwoodConstraintAdapter,
+    V6StatementProjection, GOLDILOCKS_MODULUS, V6_CANONICAL_CIPHERTEXT_BYTES, V6_STATEMENT_BYTES,
+    V6_STATEMENT_LIMBS,
 };
 use crate::smallwood_engine::{
     projected_smallwood_structural_proof_bytes_with_backend_v1, SmallwoodArithmetization,
     SmallwoodNoGrindingProfileV1, SmallwoodTranscriptBackend,
+};
+use crate::smallwood_shake256_full_relation::{
+    verify_constraint_system, Shake256Constraint, Shake256RelationError,
+    Shake256TraceBindingCoverage, Shake256Wire,
+};
+use crate::smallwood_v6_adapter::{
+    identity_from_shake_constraint_for_mixed, pack_mixed_executable_relation, V6ConstraintFamily,
+    V6ExecutableIdentity, V6HashLoweringCoverage, V6PublicBitBinding, V6SmallwoodConstraintAdapter,
+    V6SmallwoodLoweredRelation, V6SmallwoodLoweringError, V6SmallwoodLoweringGeometry,
 };
 use crate::TransactionCircuitError;
 
@@ -327,7 +325,8 @@ fn build_mixed_hash_aggregate(
 ) -> Result<MixedHashAggregate, SmallwoodMixedHashAdapterError> {
     let schedule = validate_mixed_schedule(relation.hash_calls())?;
     let shadow_statement_bytes = shadow_statement_bytes(relation.statement_bytes());
-    let mut witness = Vec::with_capacity((MIXED_SHADOW_STATEMENT_BYTES + CANDIDATE_STATEMENT_BYTES) * 8);
+    let mut witness =
+        Vec::with_capacity((MIXED_SHADOW_STATEMENT_BYTES + CANDIDATE_STATEMENT_BYTES) * 8);
     let mut constraints = Vec::new();
     let mut source_wire_index = BTreeMap::new();
     let mut source_bit_wires = BTreeMap::new();
@@ -364,7 +363,10 @@ fn build_mixed_hash_aggregate(
     let mut invocation_coverages = Vec::with_capacity(79);
     let mut hash_invocation_coverages = Vec::with_capacity(79);
 
-    for (slot, call) in full_slot_calls(relation.hash_calls())?.into_iter().enumerate() {
+    for (slot, call) in full_slot_calls(relation.hash_calls())?
+        .into_iter()
+        .enumerate()
+    {
         let output = call_output_assignment(call)?;
         let output_symbol = full_output_symbol(slot);
         let target_wires = allocate_logical_digest_output(
@@ -435,7 +437,10 @@ fn validate_mixed_schedule(
     hasher.update(b"hegemon.smallwood.mixed-sha3-shake.schedule.v1");
     for call in calls {
         let permutations = match (&call.algorithm, &call.trace) {
-            (CandidateHashAlgorithm::Sha3_512Truncated448, ExecutableHashTrace::CandidateBoolean(trace)) => {
+            (
+                CandidateHashAlgorithm::Sha3_512Truncated448,
+                ExecutableHashTrace::CandidateBoolean(trace),
+            ) => {
                 sha3_calls += 1;
                 sha3_permutations += trace.permutation_count;
                 trace.permutation_count
@@ -469,8 +474,12 @@ fn validate_mixed_schedule(
         shake_permutations,
         schedule_digest,
     };
-    if (schedule.sha3_calls, schedule.shake_calls, schedule.sha3_permutations, schedule.shake_permutations)
-        != (15, 68, 46, 105)
+    if (
+        schedule.sha3_calls,
+        schedule.shake_calls,
+        schedule.sha3_permutations,
+        schedule.shake_permutations,
+    ) != (15, 68, 46, 105)
     {
         return Err(SmallwoodMixedHashAdapterError::Profile(
             "split SHA3/SHAKE schedule geometry",
@@ -645,9 +654,7 @@ fn allocate_source_bit(
     source_bit_wires: &mut BTreeMap<String, Vec<Shake256Wire>>,
 ) -> Result<Shake256Wire, SmallwoodMixedHashAdapterError> {
     if bit_index >= 8 || value > 1 {
-        return Err(SmallwoodMixedHashAdapterError::Binding(
-            "source bit shape",
-        ));
+        return Err(SmallwoodMixedHashAdapterError::Binding("source bit shape"));
     }
     let key = (symbol.to_owned(), byte_index, bit_index);
     if let Some(&wire) = source_wire_index.get(&key) {
@@ -920,7 +927,8 @@ fn append_candidate_constraint(
             let left = wire(left.index());
             let right = wire(right.index());
             let carry_in = wire(carry_in.index());
-            let xor_ab = derived(local_value(left.index() - offset) ^ local_value(right.index() - offset));
+            let xor_ab =
+                derived(local_value(left.index() - offset) ^ local_value(right.index() - offset));
             let xor_abc = derived(local_value(sum.index()));
             constraints.push(Shake256Constraint::Xor {
                 left,
@@ -1023,8 +1031,18 @@ fn lower_aggregate(
         witness: relation.witness().clone(),
         qir,
         stats: FullShakeRelationStats {
-            active_inputs: relation.statement().input_flags.into_iter().filter(|active| *active).count(),
-            active_outputs: relation.statement().output_flags.into_iter().filter(|active| *active).count(),
+            active_inputs: relation
+                .statement()
+                .input_flags
+                .into_iter()
+                .filter(|active| *active)
+                .count(),
+            active_outputs: relation
+                .statement()
+                .output_flags
+                .into_iter()
+                .filter(|active| *active)
+                .count(),
             hash_invocations: REJECTED_UNIFORM_SHAKE256_INVOCATIONS,
             keccak_permutations: aggregate.schedule.sha3_permutations
                 + aggregate.schedule.shake_permutations,
@@ -1044,9 +1062,8 @@ fn lower_aggregate(
     )?;
     full.verify_rejected_uniform_sha256()?;
 
-    let mut identities = Vec::with_capacity(
-        full.shake_constraints.len() + full.non_hash_constraints.len(),
-    );
+    let mut identities =
+        Vec::with_capacity(full.shake_constraints.len() + full.non_hash_constraints.len());
     for constraint in full.shake_constraints.iter().copied() {
         identities.push(identity_from_shake_constraint_for_mixed(constraint)?);
     }
@@ -1082,9 +1099,7 @@ fn lower_aggregate(
     Ok(result)
 }
 
-fn shadow_full_statement(
-    statement: &FullBlake2b448Statement,
-) -> FullShake448Statement {
+fn shadow_full_statement(statement: &FullBlake2b448Statement) -> FullShake448Statement {
     let pad = |value: &[u8; 48]| {
         let mut padded = [0u8; DIGEST_BYTES];
         padded[..48].copy_from_slice(value);
@@ -1202,7 +1217,10 @@ fn identity_from_qir_constraint(
         }
         if right_constant != 0 {
             let position = push_operand(&mut operands, left.wire.index());
-            terms.push(v6_term(field_mul(left_coefficient, right_constant), &[position]));
+            terms.push(v6_term(
+                field_mul(left_coefficient, right_constant),
+                &[position],
+            ));
         }
         for right in &constraint.right.terms {
             let right_coefficient = right.coefficient % GOLDILOCKS_MODULUS;
@@ -1223,7 +1241,10 @@ fn identity_from_qir_constraint(
             continue;
         }
         let position = push_operand(&mut operands, right.wire.index());
-        terms.push(v6_term(field_mul(left_constant, right_coefficient), &[position]));
+        terms.push(v6_term(
+            field_mul(left_constant, right_coefficient),
+            &[position],
+        ));
     }
     for output in &constraint.output.terms {
         let coefficient = output.coefficient % GOLDILOCKS_MODULUS;
@@ -1239,7 +1260,8 @@ fn identity_from_qir_constraint(
         ));
     }
     let polynomial = crate::smallwood_v6_adapter::V6PolynomialTemplate::new(operands.len(), terms)?;
-    V6ExecutableIdentity::new(qir_family(constraint.family), operands, polynomial).map_err(Into::into)
+    V6ExecutableIdentity::new(qir_family(constraint.family), operands, polynomial)
+        .map_err(Into::into)
 }
 
 fn push_operand(operands: &mut Vec<usize>, wire: usize) -> u16 {
@@ -1283,7 +1305,14 @@ fn field_add(left: u64, right: u64) -> u64 {
 }
 
 fn field_sub(left: u64, right: u64) -> u64 {
-    field_add(left, if right == 0 { 0 } else { GOLDILOCKS_MODULUS - right })
+    field_add(
+        left,
+        if right == 0 {
+            0
+        } else {
+            GOLDILOCKS_MODULUS - right
+        },
+    )
 }
 
 fn field_mul(left: u64, right: u64) -> u64 {
@@ -1291,7 +1320,11 @@ fn field_mul(left: u64, right: u64) -> u64 {
 }
 
 fn field_neg(value: u64) -> u64 {
-    if value == 0 { 0 } else { GOLDILOCKS_MODULUS - value }
+    if value == 0 {
+        0
+    } else {
+        GOLDILOCKS_MODULUS - value
+    }
 }
 
 fn bind_public_digest_outputs(
@@ -1306,9 +1339,12 @@ fn bind_public_digest_outputs(
         ));
     }
     let mut gate = |symbol: &str, statement_offset: usize, selector_offset: usize| {
-        let outputs = output_bit_wires
-            .get(symbol)
-            .ok_or(SmallwoodMixedHashAdapterError::Binding("missing hash output"))?;
+        let outputs =
+            output_bit_wires
+                .get(symbol)
+                .ok_or(SmallwoodMixedHashAdapterError::Binding(
+                    "missing hash output",
+                ))?;
         if outputs.len() != DIGEST_BYTES * 8 {
             return Err(SmallwoodMixedHashAdapterError::OutputWidth {
                 symbol: symbol.to_owned(),
@@ -1330,9 +1366,9 @@ fn bind_public_digest_outputs(
     gate("digest.nullifier[1]", 126, 11)?;
     gate("digest.ciphertext[0]", 294, 12)?;
     gate("digest.ciphertext[1]", 350, 13)?;
-    let balance = output_bit_wires
-        .get("digest.balance_tag")
-        .ok_or(SmallwoodMixedHashAdapterError::Binding("missing balance output"))?;
+    let balance = output_bit_wires.get("digest.balance_tag").ok_or(
+        SmallwoodMixedHashAdapterError::Binding("missing balance output"),
+    )?;
     if balance.len() != DIGEST_BYTES * 8 {
         return Err(SmallwoodMixedHashAdapterError::OutputWidth {
             symbol: "digest.balance_tag".to_owned(),

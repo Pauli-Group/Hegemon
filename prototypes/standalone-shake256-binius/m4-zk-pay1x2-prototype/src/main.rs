@@ -3,16 +3,16 @@
 use std::{env, fs, process, time::Instant};
 
 use binius_core::{
-    Word,
     constraint_system::{AndConstraint, ConstraintSystem, ValueIndex, ValueVec},
+    Word,
 };
 use binius_field::BinaryField128bGhash as B128;
-use binius_hash::{StdHashSuite, binary_merkle_tree::HashSuite};
+use binius_hash::{binary_merkle_tree::HashSuite, StdHashSuite};
 use binius_iop::{fri, merkle_tree::BinaryMerkleTreeScheme};
-use binius_prover::{OptimalPackedB128, zk_config::ZKProver};
+use binius_prover::{zk_config::ZKProver, OptimalPackedB128};
 use binius_transcript::{
-    ProverTranscript, VerifierTranscript,
     fiat_shamir::{Challenger, HasherChallenger},
+    ProverTranscript, VerifierTranscript,
 };
 use binius_utils::{DeserializeBytes, SerializeBytes};
 use binius_verifier::{config::StdChallenger, zk_config::ZKVerifier};
@@ -23,7 +23,7 @@ use hegemon_binius_strict_hash_profile::{
 use hegemon_m4_full_pay1x2_prototype::{
     canonical_fixture, generate_fixture_witness, pack_public_words, serialize_private_witness,
 };
-use rand::{RngExt, SeedableRng, rngs::StdRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 

@@ -83,7 +83,8 @@ impl ShieldedAddress {
         } else {
             0
         };
-        let mut out = Vec::with_capacity(1 + 2 + 4 + 32 + 32 + extension_len + ML_KEM_PUBLIC_KEY_LEN);
+        let mut out =
+            Vec::with_capacity(1 + 2 + 4 + 32 + 32 + extension_len + ML_KEM_PUBLIC_KEY_LEN);
         out.push(self.version);
         out.extend_from_slice(&self.crypto_suite.to_le_bytes());
         out.extend_from_slice(&self.diversifier_index.to_le_bytes());
@@ -97,9 +98,9 @@ impl ShieldedAddress {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, WalletError> {
-        let version = *bytes.first().ok_or_else(|| {
-            WalletError::AddressEncoding("empty address payload".into())
-        })?;
+        let version = *bytes
+            .first()
+            .ok_or_else(|| WalletError::AddressEncoding("empty address payload".into()))?;
         let extension_len = if version == POSEIDON2_V8_ADDRESS_VERSION {
             POSEIDON2_V8_AUTH_EXTENSION_LEN
         } else {
@@ -140,7 +141,8 @@ impl ShieldedAddress {
             let authorization = transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_words_from_canonical_bytes(pk_auth)
                 .map_err(|_| WalletError::AddressEncoding("non-canonical V8 authorization key".into()))?;
             for chunk in pk_auth_extension.chunks_exact(8) {
-                let word = u64::from_le_bytes(chunk.try_into().expect("eight-byte auth-extension limb"));
+                let word =
+                    u64::from_le_bytes(chunk.try_into().expect("eight-byte auth-extension limb"));
                 if word >= transaction_circuit::constants::FIELD_MODULUS_U64 {
                     return Err(WalletError::AddressEncoding(
                         "non-canonical V8 authorization extension".into(),
@@ -287,9 +289,8 @@ mod tests {
         old_identity.drain(71..95);
         assert!(super::ShieldedAddress::from_bytes(&old_identity).is_err());
         let mut noncanonical = bytes;
-        noncanonical[71..79].copy_from_slice(
-            &transaction_circuit::constants::FIELD_MODULUS_U64.to_le_bytes(),
-        );
+        noncanonical[71..79]
+            .copy_from_slice(&transaction_circuit::constants::FIELD_MODULUS_U64.to_le_bytes());
         assert!(super::ShieldedAddress::from_bytes(&noncanonical).is_err());
     }
 }

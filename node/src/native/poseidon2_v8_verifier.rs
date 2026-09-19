@@ -2201,9 +2201,12 @@ mod tests {
 
     #[test]
     fn retained_smz9_manifest_selector_defaults_to_exact_old_pointer() {
-        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("node crate has a workspace parent");
+        let workspace = tempfile::tempdir().expect("default manifest workspace");
+        let workspace_root = workspace.path();
+        let manifest = workspace_root.join(RETAINED_SMZ9_MANIFEST_PATH);
+        std::fs::create_dir_all(manifest.parent().expect("manifest parent"))
+            .expect("default manifest parent");
+        std::fs::write(&manifest, b"{}\n").expect("default manifest fixture");
         assert_eq!(
             retained_smz9_manifest_relative_path(None),
             Path::new(RETAINED_SMZ9_MANIFEST_PATH)
@@ -3018,7 +3021,9 @@ mod tests {
     }
 
     impl Poseidon2V8ExactLeafVerifier for ExactRetainedLeafVerifier {
-        fn native_leaf_profile(&self) -> super::super::poseidon2_v8_state::Poseidon2V8NativeLeafProfile {
+        fn native_leaf_profile(
+            &self,
+        ) -> super::super::poseidon2_v8_state::Poseidon2V8NativeLeafProfile {
             self.connector.native_leaf_profile()
         }
 

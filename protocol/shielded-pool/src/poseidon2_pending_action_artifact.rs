@@ -25,8 +25,8 @@ use crate::types::{BlockProofMode, CandidateArtifact, ProofArtifactKind, StarkPr
 /// The first 48 bytes of the retained HGV8RP03-format program's SHA-512 digest.
 ///
 /// This is an artifact identity, not production authority.  The native
-/// conformance test exact-compares it with the transaction compiler's source
-/// constant so either side changing alone fails.
+/// conformance test exact-compares it with the retained RP03 program bytes.
+/// The repaired RP04 compiler has its own distinct identity below.
 pub const SMALLWOOD_POSEIDON2_V8_ARTIFACT_RELATION_DIGEST: [u8; 48] = [
     0x7e, 0x50, 0xeb, 0xa0, 0x7d, 0x84, 0x43, 0x3a, 0x53, 0xa6, 0xc8, 0x5e, 0xd2, 0xb3, 0xef, 0xec,
     0xbe, 0xff, 0x10, 0x3c, 0xa4, 0x02, 0xbb, 0x93, 0x18, 0x31, 0xe1, 0x59, 0x8e, 0x6c, 0x9a, 0xb8,

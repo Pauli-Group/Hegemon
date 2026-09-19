@@ -174,7 +174,7 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
 const EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3: &str =
     "51512c473f20c40c3a88b9f2a1ba0d2e81b9a25a6591c025967b306121801657";
 const EXPECTED_FORMAL_SOURCE_TREE_BLAKE3: &str =
-    "7595c5df4a7b83bc039aa6423c9b40bc4bfc095c89065ec309b18d860aeada6f";
+    "328f54862048ed34f847031d947e32b6001a683fd2666a3cb6e99c85ca776a22";
 const PROGRESS_PERCENT_EPSILON: f64 = 0.0001;
 const CLAIMS_SCHEMA_VERSION: u32 = 2;
 const BLUEPRINT_SCHEMA_VERSION: u32 = 2;
@@ -3413,23 +3413,58 @@ fn rust_module_candidate_exists(root: &Path, relative: &Path) -> Result<bool> {
 }
 
 fn parse_rust_binding_module_source(source: &str, source_path: &Path) -> Result<syn::File> {
-    let sanitized = sanitize_rust_source(source);
-    let mut cursor = 0usize;
-    while let Some(include_start) = find_rust_token(&sanitized, "include", cursor) {
-        let bang = skip_ascii_whitespace(&sanitized, include_start + "include".len());
-        ensure!(
-            sanitized.as_bytes().get(bang) != Some(&b'!'),
-            "implementation binding source {} uses unsupported include! source injection",
-            source_path.display()
-        );
-        cursor = include_start + "include".len();
+    use syn::visit::Visit;
+    struct IncludeVisitor<'a> {
+        source_path: &'a Path,
+        found: bool,
     }
-    syn::parse_file(source).with_context(|| {
+    impl<'ast> Visit<'ast> for IncludeVisitor<'_> {
+        fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
+            // Match the module collector's existing exact #[cfg(test)]
+            // exclusion. Compound/production cfgs are not excluded.
+            if matches!(
+                rust_module_is_exactly_test_only(
+                    &module.attrs,
+                    self.source_path,
+                    &module.ident.to_string()
+                ),
+                Ok(true)
+            ) {
+                return;
+            }
+            syn::visit::visit_item_mod(self, module);
+        }
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            self.found |= mac.path.segments.iter().any(|part| part.ident == "include");
+            // Retain detection inside macro_rules and other unexpanded token
+            // bodies; only visiting expression macros would miss those.
+            let sanitized = sanitize_rust_source(&mac.tokens.to_string());
+            let mut cursor = 0;
+            while let Some(start) = find_rust_token(&sanitized, "include", cursor) {
+                let bang = skip_ascii_whitespace(&sanitized, start + "include".len());
+                self.found |= sanitized.as_bytes().get(bang) == Some(&b'!');
+                cursor = start + "include".len();
+            }
+            syn::visit::visit_macro(self, mac);
+        }
+    }
+    let parsed = syn::parse_file(source).with_context(|| {
         format!(
             "parse {} implementation binding module source",
             source_path.display()
         )
-    })
+    })?;
+    let mut visitor = IncludeVisitor {
+        source_path,
+        found: false,
+    };
+    visitor.visit_file(&parsed);
+    ensure!(
+        !visitor.found,
+        "implementation binding source {} uses unsupported include! source injection",
+        source_path.display()
+    );
+    Ok(parsed)
 }
 
 fn collect_rust_external_module_sources(
@@ -11933,6 +11968,28 @@ mod tests {
             rust_non_test_file_submodules(source, Path::new("src/native/mod.rs")).unwrap(),
             vec!["admission".to_owned(), "util".to_owned()]
         );
+    }
+
+    #[test]
+    fn binding_include_detection_excludes_only_exact_test_modules() {
+        let path = Path::new("src/native/mod.rs");
+        assert!(parse_rust_binding_module_source(
+            "#[cfg(test)] mod tests { include!(\"fixture.rs\"); } fn live() {}",
+            path
+        )
+        .is_ok());
+        for source in [
+            "include!(\"live.rs\");",
+            "mod live { include!(\"live.rs\"); }",
+            "#[cfg(any(test, feature = \"live\"))] mod mixed { include!(\"live.rs\"); }",
+            "macro_rules! inject { () => { include!(\"live.rs\"); } }",
+            "fn live() { include!(\"live.rs\"); }",
+        ] {
+            let error = parse_rust_binding_module_source(source, path)
+                .err()
+                .expect("production include must reject");
+            assert!(error.to_string().contains("unsupported include! source injection"));
+        }
     }
 
     #[test]

@@ -1,9 +1,9 @@
 use std::{env, fs, path::PathBuf, process::ExitCode};
 
 use hegemon_m4_full_pay1x2_prototype::{
-    PAY1X2_SHAKE256_PERMUTATIONS, PRIVATE_WITNESS_BYTES, PUBLIC_STATEMENT_BYTES, UPSTREAM_REVISION,
     build_pay1x2_m4, canonical_fixture, circuit_stats, generate_fixture_witness,
-    prove_and_check_gates,
+    prove_and_check_gates, PAY1X2_SHAKE256_PERMUTATIONS, PRIVATE_WITNESS_BYTES,
+    PUBLIC_STATEMENT_BYTES, UPSTREAM_REVISION,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};

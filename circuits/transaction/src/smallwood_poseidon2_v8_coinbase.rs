@@ -288,38 +288,40 @@ mod tests {
             ..first
         };
 
+        // Keep the three values in one KAT so a relation migration reports
+        // the complete fixture, not only the first changed digest.
         assert_eq!(
-            authorization_key,
-            [
-                13_716_589_041_896_251_888,
-                7_653_814_911_847_573_096,
-                18_326_611_932_581_645_674,
-                12_666_541_127_096_208_357,
-            ]
-        );
-        assert_eq!(
-            poseidon2_v8_note_commitment(first).unwrap(),
-            [
-                14_190_982_358_320_892_828,
-                6_519_186_064_328_488_013,
-                4_837_938_219_055_100_842,
-                10_491_100_827_743_008_328,
-                6_097_835_599_076_572_527,
-                4_521_321_718_360_833_602,
-                11_585_935_781_327_892_684,
-            ]
-        );
-        assert_eq!(
-            poseidon2_v8_note_commitment(second).unwrap(),
-            [
-                8_872_850_046_208_439_127,
-                1_646_929_781_440_745_613,
-                306_088_226_661_596_892,
-                3_826_681_039_087_492_020,
-                10_299_789_949_585_762_613,
-                6_055_554_393_182_204_574,
-                2_834_852_315_365_894_987,
-            ]
+            (
+                authorization_key,
+                poseidon2_v8_note_commitment(first).unwrap(),
+                poseidon2_v8_note_commitment(second).unwrap()
+            ),
+            (
+                [
+                    4_335_368_457_673_528_895,
+                    17_539_337_196_454_429_162,
+                    527_005_711_942_183_961,
+                    18_018_826_094_776_252_376,
+                ],
+                [
+                    4_259_102_068_664_337_607,
+                    12_842_525_904_770_577_563,
+                    14_692_995_364_108_697_038,
+                    5_452_045_797_109_045_041,
+                    9_882_672_471_147_301_335,
+                    4_596_210_274_768_714_330,
+                    6_352_910_682_942_966_854,
+                ],
+                [
+                    593_397_281_640_023_448,
+                    8_648_307_245_067_471_069,
+                    12_598_351_267_293_547_622,
+                    2_964_713_529_965_986_256,
+                    3_882_095_863_928_355_106,
+                    7_142_966_254_791_898_052,
+                    9_228_783_474_071_656_713,
+                ]
+            )
         );
     }
 
@@ -365,7 +367,7 @@ mod tests {
             ..SmallwoodPoseidon2V8Witness::default()
         };
         let schedule = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
-        assert_eq!(authorization_key, schedule.calls[0].final_digest()[1..5]);
+        assert_eq!(authorization_key, schedule.calls[0].final_digest()[..4]);
         assert_eq!(
             poseidon2_v8_note_commitment(opening).unwrap(),
             schedule.calls[3].final_digest()

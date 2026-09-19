@@ -19,7 +19,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::{B128, E384, authenticated_basefold::sha512};
+use crate::{authenticated_basefold::sha512, B128, E384};
 
 /// Canonical proof magic.
 pub const MIXED_BASEFOLD_PCS_MAGIC: [u8; 8] = *b"HGMBF101";
@@ -2213,7 +2213,10 @@ mod tests {
         let report = project_retained_m4_mixed_depth(STRICT_SCREEN_QUERY_COUNT).unwrap();
         assert_eq!(report.tree_depths, [13, 18, 20, 11, 16, 12, 9]);
         assert_eq!(report.opened_leaves, [315, 319, 319, 296, 318, 310, 233]);
-        assert_eq!(report.frontier_nodes, [1224, 2807, 3445, 637, 2171, 919, 197]);
+        assert_eq!(
+            report.frontier_nodes,
+            [1224, 2807, 3445, 637, 2171, 919, 197]
+        );
         assert_eq!(report.e384_lower_bound_bytes, 1_548_704);
         assert_eq!(report.e512_mixed_lower_bound_bytes, 1_763_232);
         assert_eq!(report.e512_stock_scalar_lower_bound_bytes, 1_883_136);

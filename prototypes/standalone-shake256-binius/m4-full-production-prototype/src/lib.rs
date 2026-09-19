@@ -12,7 +12,7 @@ use std::array;
 use std::fmt;
 
 use binius_circuits::{bytes::swap_bytes, keccak::permutation::keccak_f1600};
-use binius_core::{Word, constraint_system::m4::WitnessM4};
+use binius_core::{constraint_system::m4::WitnessM4, Word};
 use binius_frontend::{CircuitBuilder, CircuitM4, PopulateM4Error, Wire};
 #[cfg(feature = "prototype-weak")]
 use binius_hash::StdHashSuite;
@@ -34,9 +34,9 @@ use hegemon_standalone_full_shake256_relation_prototype::composed_envelope::{
 #[cfg(feature = "prototype-weak")]
 use hegemon_standalone_full_shake256_relation_prototype::decode_canonical_statement;
 use hegemon_standalone_full_shake256_relation_prototype::{
-    ActivationBinding, BALANCE_SLOTS, CANONICAL_STATEMENT_BYTES, DIGEST_BYTES, FIELD_MODULUS,
-    FullWitness, MAX_INPUTS, MAX_NOTE_VALUE, MAX_OUTPUTS, MAX_SIGNERS, MERKLE_DEPTH,
-    NATIVE_ASSET_ID, NoteKind, NoteOpening, PADDING_ASSET_ID, PrivateAuthMode,
+    ActivationBinding, FullWitness, NoteKind, NoteOpening, PrivateAuthMode, BALANCE_SLOTS,
+    CANONICAL_STATEMENT_BYTES, DIGEST_BYTES, FIELD_MODULUS, MAX_INPUTS, MAX_NOTE_VALUE,
+    MAX_OUTPUTS, MAX_SIGNERS, MERKLE_DEPTH, NATIVE_ASSET_ID, PADDING_ASSET_ID,
     RESERVED_REDUCED_PADDING_ASSET_ID, SHIELDED_POOL_FAMILY_ID, STATEMENT_GRAMMAR_VERSION,
     STATEMENT_MAGIC, TARGET_ACTION_ID, TARGET_BACKEND_ID, TARGET_CIRCUIT_VERSION,
     TARGET_CRYPTO_SUITE, TARGET_PROOF_PROFILE,
@@ -2676,9 +2676,9 @@ mod source_contract_tests {
     use hegemon_standalone_full_shake256_relation_prototype::action_adapter::RouteAuthority;
     #[cfg(feature = "prototype-weak")]
     use hegemon_standalone_full_shake256_relation_prototype::composed_envelope::{
-        CanonicalCiphertextValidator, FullProofVerifier, MAX_CANONICAL_CIPHERTEXT_BYTES,
-        ProspectiveFullInlineAction, action_binding_digest, encode_envelope, reconstruct_statement,
-        verify_composed_action,
+        action_binding_digest, encode_envelope, reconstruct_statement, verify_composed_action,
+        CanonicalCiphertextValidator, FullProofVerifier, ProspectiveFullInlineAction,
+        MAX_CANONICAL_CIPHERTEXT_BYTES,
     };
     #[cfg(feature = "prototype-weak")]
     use hegemon_standalone_full_shake256_relation_prototype::expected_balance_tag;
@@ -2843,43 +2843,37 @@ mod source_contract_tests {
         changed_ciphertext[0] ^= 1;
         let mut changed_action = action.clone();
         changed_action.ciphertexts[0] = changed_ciphertext.as_slice();
-        assert!(
-            verify_composed_action(
-                &envelope,
-                &changed_action,
-                &authority,
-                &ExactTestCiphertext,
-                &verifier,
-            )
-            .is_err()
-        );
+        assert!(verify_composed_action(
+            &envelope,
+            &changed_action,
+            &authority,
+            &ExactTestCiphertext,
+            &verifier,
+        )
+        .is_err());
 
         let mut changed_proof = proof.clone();
         let midpoint = changed_proof.len() / 2;
         changed_proof[midpoint] ^= 1;
         let changed_envelope = encode_envelope(&changed_proof).unwrap();
-        assert!(
-            verify_composed_action(
-                &changed_envelope,
-                &action,
-                &authority,
-                &ExactTestCiphertext,
-                &verifier,
-            )
-            .is_err()
-        );
+        assert!(verify_composed_action(
+            &changed_envelope,
+            &action,
+            &authority,
+            &ExactTestCiphertext,
+            &verifier,
+        )
+        .is_err());
 
         let mut trailing = envelope;
         trailing.push(0);
-        assert!(
-            verify_composed_action(
-                &trailing,
-                &action,
-                &authority,
-                &ExactTestCiphertext,
-                &verifier,
-            )
-            .is_err()
-        );
+        assert!(verify_composed_action(
+            &trailing,
+            &action,
+            &authority,
+            &ExactTestCiphertext,
+            &verifier,
+        )
+        .is_err());
     }
 }

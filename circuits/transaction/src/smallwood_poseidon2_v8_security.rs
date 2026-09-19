@@ -2685,9 +2685,9 @@ mod tests {
         let report = report_smallwood_poseidon2_v8_current_source_security_v1().unwrap();
         assert_eq!(report.row_count, 686);
         assert_eq!(report.proof_columns, 368);
-        assert_eq!(report.nonlinear_identity_count, 830);
-        assert_eq!(report.maximum_linear_identity_count, 20_509);
-        assert_eq!(report.maximum_summed_identity_union, 21_339);
+        assert_eq!(report.nonlinear_identity_count, 773);
+        assert_eq!(report.maximum_linear_identity_count, 20_510);
+        assert_eq!(report.maximum_summed_identity_union, 21_283);
         assert_eq!(report.proof_wire_magic_ascii, "SMZ9");
         assert_eq!(report.profile_wire_id, 6);
         assert_eq!(report.piop_openings, 6);

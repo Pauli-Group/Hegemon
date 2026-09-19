@@ -4,7 +4,7 @@
 //! and therefore makes no PCS, hiding, zero-knowledge, PQ, or production claim.
 
 use hegemon_strict_mixed_field_prototype::{
-    B128, prove_toy_mixed_sumcheck, verify_toy_mixed_sumcheck_exact,
+    prove_toy_mixed_sumcheck, verify_toy_mixed_sumcheck_exact, B128,
 };
 
 fn main() {

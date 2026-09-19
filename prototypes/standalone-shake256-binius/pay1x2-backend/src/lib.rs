@@ -13,10 +13,10 @@ use binius_spartan_frontend::{
     constraint_system::ConstraintWire,
 };
 use hegemon_standalone_pay1x2_statement_prototype::CANONICAL_STATEMENT_BYTES;
-use hegemon_standalone_shake256_binius_backend::{STATE_BITS, keccak_f1600};
+use hegemon_standalone_shake256_binius_backend::{keccak_f1600, STATE_BITS};
 use hegemon_standalone_shake256_prototype::{
-    PROFILE_TAG, SEMANTIC_DIGEST_BYTES, SHAKE256_RATE_BYTES, SPEND_KEY_DERIVATION_ROLE_TAG,
-    SPEND_KEY_OUTPUT_ORDER_TAG, SemanticRole,
+    SemanticRole, PROFILE_TAG, SEMANTIC_DIGEST_BYTES, SHAKE256_RATE_BYTES,
+    SPEND_KEY_DERIVATION_ROLE_TAG, SPEND_KEY_OUTPUT_ORDER_TAG,
 };
 
 pub const MERKLE_DEPTH: usize = 32;
@@ -239,12 +239,10 @@ fn assert_wire_geometry<W: Copy>(wires: &Pay1x2Wires<W>) {
     assert_eq!(wires.spend_key.len(), SPEND_KEY_BITS);
     assert_eq!(wires.position.len(), U64_BITS);
     assert_eq!(wires.siblings.len(), MERKLE_DEPTH);
-    assert!(
-        wires
-            .siblings
-            .iter()
-            .all(|sibling| sibling.len() == DIGEST_BITS)
-    );
+    assert!(wires
+        .siblings
+        .iter()
+        .all(|sibling| sibling.len() == DIGEST_BITS));
     for note in [
         &wires.input_note,
         &wires.output_notes[0],

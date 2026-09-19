@@ -9,7 +9,7 @@
 use std::array;
 
 use binius_circuits::{bytes::swap_bytes, keccak::permutation::keccak_f1600};
-use binius_core::{Word, constraint_system::m4::WitnessM4};
+use binius_core::{constraint_system::m4::WitnessM4, Word};
 use binius_frontend::{CircuitBuilder, CircuitM4, CircuitStat, PopulateM4Error, Wire};
 use binius_hash::StdHashSuite;
 use binius_m4_prover::ProverM4;
@@ -18,14 +18,14 @@ use binius_prover::OptimalPackedB128;
 use binius_transcript::{ProverTranscript, VerifierTranscript};
 use binius_verifier::config::StdChallenger;
 use hegemon_standalone_pay1x2_relation_prototype::{
-    MERKLE_DEPTH, Pay1x2Statement, Pay1x2Witness, valid_fixture, verify_relation,
+    valid_fixture, verify_relation, Pay1x2Statement, Pay1x2Witness, MERKLE_DEPTH,
 };
 use hegemon_standalone_pay1x2_statement_prototype::{
-    CANONICAL_STATEMENT_BYTES, CanonicalCiphertextBytes, KAT_NETWORK_IDENTITY, adapt_action,
+    adapt_action, CanonicalCiphertextBytes, CANONICAL_STATEMENT_BYTES, KAT_NETWORK_IDENTITY,
 };
 use hegemon_standalone_shake256_prototype::{
-    NoteOpening, PROFILE_TAG, SEMANTIC_DIGEST_BYTES, SPEND_KEY_DERIVATION_ROLE_TAG,
-    SPEND_KEY_OUTPUT_ORDER_TAG, SemanticRole,
+    NoteOpening, SemanticRole, PROFILE_TAG, SEMANTIC_DIGEST_BYTES, SPEND_KEY_DERIVATION_ROLE_TAG,
+    SPEND_KEY_OUTPUT_ORDER_TAG,
 };
 
 pub const UPSTREAM_REVISION: &str = "3f96163049f680b2909f6545690bd929f1b48c44";

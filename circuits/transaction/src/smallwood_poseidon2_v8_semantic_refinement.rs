@@ -441,7 +441,7 @@ mod tests {
         let witness = SmallwoodPoseidon2V8Witness::default();
         let receipt = audit_smallwood_poseidon2_v8_typed_lowering(&statement, &witness).unwrap();
         assert_eq!(receipt.public_words, 120);
-        assert_eq!(receipt.typed_witness_words, 721);
+        assert_eq!(receipt.typed_witness_words, 728);
         assert_eq!(receipt.packed_witness_words, 43_904);
         assert!(receipt.packed_program_accepts_typed_lowering);
         assert!(receipt.arbitrary_packed_decoder_available);

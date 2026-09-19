@@ -512,11 +512,14 @@ pub fn evaluate_smallwood_poseidon2_v8_expression_program(
     public: &[u64],
     rows: &[u64],
 ) -> Result<Vec<u64>, &'static str> {
-    let values =
-        match evaluate_smallwood_poseidon2_v8_expression_nodes(&program.expressions, public, rows) {
-            Ok(values) => values,
-            Err(error) => return Err(error),
-        };
+    let values = match evaluate_smallwood_poseidon2_v8_expression_nodes(
+        &program.expressions,
+        public,
+        rows,
+    ) {
+        Ok(values) => values,
+        Err(error) => return Err(error),
+    };
     let mut roots = Vec::new();
     let mut invalid_root = false;
     let mut root_index = 0usize;

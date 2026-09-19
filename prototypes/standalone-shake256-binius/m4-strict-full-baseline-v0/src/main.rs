@@ -9,22 +9,19 @@ use std::{
     time::Instant,
 };
 
-use binius_prover::{OptimalPackedB128, zk_config::ZKProver};
-use binius_transcript::{
-    ProverTranscript, VerifierTranscript,
-    fiat_shamir::HasherChallenger,
-};
+use binius_prover::{zk_config::ZKProver, OptimalPackedB128};
+use binius_transcript::{fiat_shamir::HasherChallenger, ProverTranscript, VerifierTranscript};
 use binius_verifier::zk_config::ZKVerifier;
 use hegemon_binius_strict_hash_profile::{StrictShake256HashSuite, StrictTranscriptDigest};
 use hegemon_m4_full_production_prototype::strict_baseline_material::{
-    StrictBaselineMaterial, canonical, ciphertext_hash_variant,
+    canonical, ciphertext_hash_variant, StrictBaselineMaterial,
 };
-use rand::{RngExt, SeedableRng, rngs::StdRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use serde_json::json;
 use sha2::{Digest as Sha2Digest, Sha256};
 use sha3::{
-    Shake256,
     digest::{ExtendableOutput, Update, XofReader},
+    Shake256,
 };
 
 const UPSTREAM_REVISION: &str = "3f96163049f680b2909f6545690bd929f1b48c44";

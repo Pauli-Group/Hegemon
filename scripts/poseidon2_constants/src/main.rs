@@ -98,9 +98,7 @@ fn main() {
     println!("    {},", format_rows(&initial, "    "));
     println!("    {},", format_rows(&terminal, "    "));
     println!("];\n");
-    println!(
-        "pub const INTERNAL_ROUND_CONSTANTS: [u64; POSEIDON2_INTERNAL_ROUNDS] = ["
-    );
+    println!("pub const INTERNAL_ROUND_CONSTANTS: [u64; POSEIDON2_INTERNAL_ROUNDS] = [");
     for value in internal {
         println!("    {},", to_hex_u64(value));
     }

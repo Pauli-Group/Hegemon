@@ -1932,7 +1932,7 @@ mod tests {
             ] {
                 let surface = mask_surface(mask, mode);
                 let words = surface.witness.to_witness_words();
-                assert_eq!(words.len(), 721);
+                assert_eq!(words.len(), 728);
                 assert_eq!(
                     SmallwoodPoseidon2V8Witness::try_from_witness_words(&words).unwrap(),
                     surface.witness
@@ -2026,7 +2026,9 @@ mod tests {
         );
 
         let mut witness = surface.witness.to_witness_words();
-        witness[248] = 2;
+        // RP04's five-limb witness layout moves this boolean mutation to the
+        // first input activity flag; word 248 is now a canonical field limb.
+        witness[0] = 2;
         assert_eq!(
             SmallwoodPoseidon2V8Witness::try_from_witness_words(&witness),
             Err(SmallwoodPoseidon2V8SurfaceError::NonBoolean)

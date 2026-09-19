@@ -39624,6 +39624,7 @@ fn protocol_v8_artifact_codec_matches_private_pending_action_v3_exactly() {
         verify_poseidon2_v8_pending_action_artifact_exact,
         SMALLWOOD_POSEIDON2_V8_ARTIFACT_NETWORK_ID,
         SMALLWOOD_POSEIDON2_V8_ARTIFACT_RELATION_DIGEST,
+        SMALLWOOD_POSEIDON2_V8_HGV8RP04_ARTIFACT_RELATION_DIGEST,
         SMALLWOOD_POSEIDON2_V8_PENDING_ACTION_MAX_BYTES,
         SMALLWOOD_POSEIDON2_V8_PENDING_ACTION_MAX_OUTER_BYTES,
         SMALLWOOD_POSEIDON2_V8_PENDING_ACTION_MUTATION_NAMES_V1,
@@ -39640,8 +39641,20 @@ fn protocol_v8_artifact_codec_matches_private_pending_action_v3_exactly() {
 
     assert_eq!(
         SMALLWOOD_POSEIDON2_V8_ARTIFACT_RELATION_DIGEST,
+        transaction_circuit::smallwood_poseidon2_v8_program::smallwood_poseidon2_v8_program_digest_from_bytes(
+            include_bytes!("../../../testdata/formal_core_vectors/poseidon2_v8_relation_program.bin"),
+        ),
+        "retained RP03 artifact relation digest must remain pinned to its program bytes"
+    );
+    assert_eq!(
+        SMALLWOOD_POSEIDON2_V8_HGV8RP04_ARTIFACT_RELATION_DIGEST,
         transaction_circuit::smallwood_poseidon2_v8_program::SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST,
-        "protocol artifact relation digest must remain source-pinned"
+        "current RP04 artifact relation digest must remain source-pinned"
+    );
+    assert_ne!(
+        SMALLWOOD_POSEIDON2_V8_ARTIFACT_RELATION_DIGEST,
+        SMALLWOOD_POSEIDON2_V8_HGV8RP04_ARTIFACT_RELATION_DIGEST,
+        "retained and repaired program identities must stay distinct"
     );
     let expected = Poseidon2ProductionExpectedContext::new(
         SMALLWOOD_POSEIDON2_V8_ARTIFACT_NETWORK_ID,

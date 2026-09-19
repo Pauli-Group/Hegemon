@@ -1,6 +1,6 @@
 use std::{cell::Cell, env, process::ExitCode, time::Instant};
 
-use binius_field::{BinaryField128bGhash as B128, arch::OptimalPackedB128};
+use binius_field::{arch::OptimalPackedB128, BinaryField128bGhash as B128};
 use binius_hash::StdHashSuite;
 use binius_spartan_frontend::{
     circuit_builder::{
@@ -10,35 +10,35 @@ use binius_spartan_frontend::{
     constraint_system::{ConstraintSystem, ConstraintWire, Witness, WitnessLayout},
 };
 use binius_spartan_prover::Prover;
-use binius_spartan_verifier::{Verifier, config::StdChallenger};
+use binius_spartan_verifier::{config::StdChallenger, Verifier};
 use binius_transcript::{ProverTranscript, VerifierTranscript};
 use hegemon_standalone_pay1x2_relation_prototype::{
-    MAX_NOTE_VALUE, Pay1x2Statement, Pay1x2Witness, derive_statement_unchecked, valid_fixture,
-    verify_relation,
+    derive_statement_unchecked, valid_fixture, verify_relation, Pay1x2Statement, Pay1x2Witness,
+    MAX_NOTE_VALUE,
 };
 use hegemon_standalone_pay1x2_statement_prototype::{
-    BlockId48, CANONICAL_STATEMENT_BYTES, CanonicalCiphertextBytes, ChainId32,
-    KAT_NETWORK_IDENTITY, NetworkBinding56, NetworkIdentity, ProspectiveActionId,
+    adapt_action, adapt_canonical_action, verify_canonical_action_statement, BlockId48,
+    CanonicalCiphertextBytes, ChainId32, NetworkBinding56, NetworkIdentity, ProspectiveActionId,
     ProspectiveCandidateArtifact, ProspectiveFamilyId, ProspectiveKernelBinding,
-    ProspectivePay1x2InlineAction, ProspectiveStablecoinBinding, RulesHash48, adapt_action,
-    adapt_canonical_action, verify_canonical_action_statement,
+    ProspectivePay1x2InlineAction, ProspectiveStablecoinBinding, RulesHash48,
+    CANONICAL_STATEMENT_BYTES, KAT_NETWORK_IDENTITY,
 };
 use hegemon_standalone_shake256_binius_backend::bytes_to_field_bits;
 use hegemon_standalone_shake256_pay1x2_binius_backend::{
-    DIGEST_BITS, KECCAK_CHI_MULTIPLICATIONS, MERKLE_DEPTH, NoteWires, OFFSET_ANCHOR,
-    OFFSET_BALANCE_TAG, OFFSET_CIPHERTEXT_0, OFFSET_CIPHERTEXT_1, OFFSET_FEE,
-    OFFSET_NETWORK_BINDING, OFFSET_NULLIFIER, OFFSET_OUTPUT_0, OFFSET_OUTPUT_1,
-    PAY1X2_SHAKE256_PERMUTATIONS, PRIVATE_WITNESS_BYTES, PUBLIC_STATEMENT_BYTES, Pay1x2Wires,
-    StatementWires, allocate_pay1x2_wires, constrain_pay1x2,
+    allocate_pay1x2_wires, constrain_pay1x2, NoteWires, Pay1x2Wires, StatementWires, DIGEST_BITS,
+    KECCAK_CHI_MULTIPLICATIONS, MERKLE_DEPTH, OFFSET_ANCHOR, OFFSET_BALANCE_TAG,
+    OFFSET_CIPHERTEXT_0, OFFSET_CIPHERTEXT_1, OFFSET_FEE, OFFSET_NETWORK_BINDING, OFFSET_NULLIFIER,
+    OFFSET_OUTPUT_0, OFFSET_OUTPUT_1, PAY1X2_SHAKE256_PERMUTATIONS, PRIVATE_WITNESS_BYTES,
+    PUBLIC_STATEMENT_BYTES,
 };
 use hegemon_standalone_shake256_prototype::{NoteOpening, PROFILE_TAG};
-use rand::{SeedableRng, rngs::StdRng};
-use serde_json::{Value, json};
+use rand::{rngs::StdRng, SeedableRng};
+use serde_json::{json, Value};
 use standalone_proof_envelope_prototype::{
-    BackendId as EnvelopeBackendId, CanonicalStatement as EnvelopeCanonicalStatement,
-    ENVELOPE_HEADER_BYTES, ENVELOPE_VERSION_V1, ProofBinding, ProofProfile as EnvelopeProofProfile,
-    StandaloneProofVerifier, VerificationError as EnvelopeVerificationError, encode_envelope,
-    verify_envelope_exact,
+    encode_envelope, verify_envelope_exact, BackendId as EnvelopeBackendId,
+    CanonicalStatement as EnvelopeCanonicalStatement, ProofBinding,
+    ProofProfile as EnvelopeProofProfile, StandaloneProofVerifier,
+    VerificationError as EnvelopeVerificationError, ENVELOPE_HEADER_BYTES, ENVELOPE_VERSION_V1,
 };
 
 const BACKEND_SCHEMA: &str = "hegemon.standalone-shake256.backend-measurement.v1";

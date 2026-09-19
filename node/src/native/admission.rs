@@ -561,8 +561,10 @@ pub(crate) fn native_action_wire_replay_projection_step(
         // ciphertext archive/state stream. This projection is therefore an
         // exact zero-row effect after route-local payload validation.
         if is_poseidon2_v8_action(action) {
-            super::poseidon2_v8_verifier::preflight_poseidon2_v8_selected_action_args(&action.public_args)
-                .map_err(|error| anyhow!("decode V8 wire replay projection failed: {error}"))?;
+            super::poseidon2_v8_verifier::preflight_poseidon2_v8_selected_action_args(
+                &action.public_args,
+            )
+            .map_err(|error| anyhow!("decode V8 wire replay projection failed: {error}"))?;
         } else {
             admitted_poseidon2_v8_coinbase_commitment(action)?;
         }
@@ -1114,8 +1116,10 @@ pub(crate) fn validate_transfer_action_payload(action: &PendingAction) -> Result
                 "Poseidon2 V8 action must not carry legacy 48-byte anchor, nullifier, commitment, or artifact state"
             ));
         }
-        super::poseidon2_v8_verifier::preflight_poseidon2_v8_selected_action_args(&action.public_args)
-            .map_err(|error| anyhow!("Poseidon2 V8 action framing rejected: {error}"))?;
+        super::poseidon2_v8_verifier::preflight_poseidon2_v8_selected_action_args(
+            &action.public_args,
+        )
+        .map_err(|error| anyhow!("Poseidon2 V8 action framing rejected: {error}"))?;
         return Ok(());
     }
     if action.nullifiers.is_empty() {

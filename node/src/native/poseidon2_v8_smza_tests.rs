@@ -99,7 +99,10 @@ fn load_retained_smza_socket_artifact(
         manifest["artifacts"][role]["proof_evidence"]["decs_transcript_root_hex"],
         decs_transcript_root_hex
     );
-    for (height, name) in [(1_u64, "coinbase-height1.bin"), (2_u64, "coinbase-height2.bin")] {
+    for (height, name) in [
+        (1_u64, "coinbase-height1.bin"),
+        (2_u64, "coinbase-height2.bin"),
+    ] {
         let path = root.join(name);
         let metadata = std::fs::symlink_metadata(&path).unwrap();
         assert!(metadata.is_file() && !metadata.file_type().is_symlink());
@@ -153,8 +156,8 @@ fn load_retained_smza_socket_artifact(
 #[cfg(feature = "poseidon2-v8-retained-test-support")]
 pub(crate) fn retained_smza_manifest_coinbase(index: u8) -> (Vec<u8>, String) {
     assert!(index < 2);
-    let relative = std::env::var("HEGEMON_TEST_RETAINED_SMZA_MANIFEST_PATH")
-        .expect("explicit SMZA manifest");
+    let relative =
+        std::env::var("HEGEMON_TEST_RETAINED_SMZA_MANIFEST_PATH").expect("explicit SMZA manifest");
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -167,8 +170,7 @@ pub(crate) fn retained_smza_manifest_coinbase(index: u8) -> (Vec<u8>, String) {
         sha512_hex(&manifest_bytes),
         std::env::var(RETAINED_CARRIER_SHA_ENV).expect("pinned SMZA manifest SHA512")
     );
-    let value: serde_json::Value =
-        serde_json::from_slice(&manifest_bytes).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
     let name = format!("coinbase-height{}.bin", u64::from(index) + 1);
     let path = root.join(&name);
     let metadata = std::fs::symlink_metadata(&path).unwrap();

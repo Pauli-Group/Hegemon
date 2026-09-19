@@ -7,15 +7,15 @@
 #![forbid(unsafe_code)]
 
 use binius_hash::{
-    CompressionFunction, ParallelCompressionAdaptor, ParallelDigestAdapter,
-    binary_merkle_tree::HashSuite,
+    binary_merkle_tree::HashSuite, CompressionFunction, ParallelCompressionAdaptor,
+    ParallelDigestAdapter,
 };
-use binius_transcript::{ProverTranscript, VerifierTranscript, fiat_shamir::Challenger};
+use binius_transcript::{fiat_shamir::Challenger, ProverTranscript, VerifierTranscript};
 use digest::{
+    block_api::BlockSizeUser,
+    consts::{U136, U50},
     ExtendableOutput, FixedOutput, FixedOutputReset, HashMarker, Output, OutputSizeUser, Reset,
     Update, XofFixedWrapper, XofReader,
-    block_api::BlockSizeUser,
-    consts::{U50, U136},
 };
 use shake::Shake256;
 
@@ -330,14 +330,14 @@ impl HashSuite for StrictShake256HashSuite {
 mod tests {
     use binius_compute::GlobalAllocator;
     use binius_field::BinaryField128bGhash as B128;
-    use binius_hash::CompressionFunction;
     use binius_hash::binary_merkle_tree::BinaryMerkleTree;
+    use binius_hash::CompressionFunction;
     use binius_transcript::fiat_shamir::{CanSample, Challenger, HasherChallenger};
     use binius_transcript::{Buf, BufMut};
     use digest::Digest;
     use shake::{
-        Shake256,
         digest::{ExtendableOutput, Update, XofReader},
+        Shake256,
     };
 
     use super::*;

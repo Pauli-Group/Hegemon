@@ -194,6 +194,7 @@ import Hegemon.Transaction.Poseidon2Width16Kernel
 import Hegemon.Transaction.Poseidon2V8RelationProgram
 import Hegemon.Transaction.Poseidon2V8PublicDecoder
 import Hegemon.Transaction.Poseidon2V8ConstraintRefinement
+import Hegemon.Transaction.Poseidon2V8ConstraintRefinementHgv8rp04
 import Hegemon.Transaction.Poseidon2V8SemanticSpecification
 import Hegemon.Transaction.Poseidon2V8DecoderRefinement
 import Hegemon.Transaction.Poseidon2V8SemanticAdequacy

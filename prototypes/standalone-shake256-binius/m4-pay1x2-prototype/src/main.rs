@@ -1,7 +1,7 @@
 use std::{env, time::Instant};
 
 use hegemon_standalone_shake256_m4_pay1x2_prototype::{
-    KAT_LEFT, KAT_OUTPUT, KAT_RIGHT, MerkleParentCircuit, prove, scalar_kat, verify_exact,
+    prove, scalar_kat, verify_exact, MerkleParentCircuit, KAT_LEFT, KAT_OUTPUT, KAT_RIGHT,
 };
 use serde_json::json;
 

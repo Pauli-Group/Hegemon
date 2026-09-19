@@ -745,6 +745,23 @@ fn verify_recursive_block_artifact_against_verified_records(
     envelope: &ProofEnvelope,
 ) -> Result<BlockArtifactVerifyReport, ProofError> {
     let verified_records = verify_native_tx_leaf_artifact_records(txs, artifacts)?;
+    verify_recursive_block_artifact_from_verified_records(
+        &verified_records,
+        expected_commitment,
+        semantic,
+        envelope,
+    )
+}
+
+// Called only after the external artifact wrapper verifies every transaction
+// leaf. Unit tests can exercise recursive replay with explicit verified records
+// without presenting their sentinel leaf bytes as a valid proof.
+fn verify_recursive_block_artifact_from_verified_records(
+    verified_records: &[VerifiedNativeTxLeaf],
+    expected_commitment: &[u8; 48],
+    semantic: &BlockSemanticInputsV1,
+    envelope: &ProofEnvelope,
+) -> Result<BlockArtifactVerifyReport, ProofError> {
     let block_records = verified_records
         .iter()
         .enumerate()
@@ -765,7 +782,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                 recursive_block_admission_error(
                     label,
                     admission_input,
-                    txs.len(),
+                    verified_records.len(),
                     None,
                     None,
                     None,
@@ -781,7 +798,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                     return Err(recursive_block_admission_error(
                         label,
                         decode_input,
-                        txs.len(),
+                        verified_records.len(),
                         None,
                         None,
                         Some(err.to_string()),
@@ -792,7 +809,7 @@ fn verify_recursive_block_artifact_against_verified_records(
             let decoded_input = RecursiveBlockArtifactAdmissionInput {
                 header_version_matches: parsed.artifact.header.artifact_version_rec
                     == RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
-                tx_count_matches: parsed.public.tx_count as usize == txs.len(),
+                tx_count_matches: parsed.public.tx_count as usize == verified_records.len(),
                 statement_commitment_matches: parsed.public.tx_statements_commitment
                     == *expected_commitment,
                 ..admission_input
@@ -801,7 +818,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                 recursive_block_admission_error(
                     label,
                     decoded_input,
-                    txs.len(),
+                    verified_records.len(),
                     Some(parsed.public.tx_count),
                     Some(parsed.artifact.header.artifact_version_rec),
                     None,
@@ -821,7 +838,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                 recursive_block_admission_error(
                     label,
                     replay_input,
-                    txs.len(),
+                    verified_records.len(),
                     Some(parsed.public.tx_count),
                     Some(parsed.artifact.header.artifact_version_rec),
                     None,
@@ -834,7 +851,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                 ))
             })?;
             Ok(BlockArtifactVerifyReport {
-                tx_count: txs.len(),
+                tx_count: verified_records.len(),
                 verified_statement_commitment: *expected_commitment,
                 verify_ms: start_verify.elapsed().as_millis(),
                 verify_batch_ms: 0,
@@ -854,7 +871,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                 recursive_block_admission_error(
                     label,
                     admission_input,
-                    txs.len(),
+                    verified_records.len(),
                     None,
                     None,
                     None,
@@ -870,7 +887,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                     return Err(recursive_block_admission_error(
                         label,
                         decode_input,
-                        txs.len(),
+                        verified_records.len(),
                         None,
                         None,
                         Some(err.to_string()),
@@ -881,7 +898,7 @@ fn verify_recursive_block_artifact_against_verified_records(
             let decoded_input = RecursiveBlockArtifactAdmissionInput {
                 header_version_matches: parsed.artifact.header.artifact_version_rec
                     == RECURSIVE_BLOCK_ARTIFACT_VERSION_V2,
-                tx_count_matches: parsed.public.tx_count as usize == txs.len(),
+                tx_count_matches: parsed.public.tx_count as usize == verified_records.len(),
                 statement_commitment_matches: parsed.public.tx_statements_commitment
                     == *expected_commitment,
                 ..admission_input
@@ -890,7 +907,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                 recursive_block_admission_error(
                     label,
                     decoded_input,
-                    txs.len(),
+                    verified_records.len(),
                     Some(parsed.public.tx_count),
                     Some(parsed.artifact.header.artifact_version_rec),
                     None,
@@ -910,7 +927,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                 recursive_block_admission_error(
                     label,
                     replay_input,
-                    txs.len(),
+                    verified_records.len(),
                     Some(parsed.public.tx_count),
                     Some(parsed.artifact.header.artifact_version_rec),
                     None,
@@ -923,7 +940,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                 ))
             })?;
             Ok(BlockArtifactVerifyReport {
-                tx_count: txs.len(),
+                tx_count: verified_records.len(),
                 verified_statement_commitment: *expected_commitment,
                 verify_ms: start_verify.elapsed().as_millis(),
                 verify_batch_ms: 0,
@@ -6700,7 +6717,7 @@ mod tests {
     }
 
     #[test]
-    fn recursive_block_v2_product_wrapper_rejects_independent_artifact_mutations() {
+    fn recursive_block_v2_verified_replay_rejects_independent_artifact_mutations() {
         let fixture = receipt_root_caller_fixture();
         let records = fixture
             .verified_records
@@ -6739,50 +6756,60 @@ mod tests {
                 .expect("serialize recursive_block_v2 fixture"),
             };
 
-        verify_recursive_block_artifact_against_verified_records(
+        let sentinel_error = verify_recursive_block_artifact_against_verified_records(
             &fixture.transactions,
             &fixture.tx_artifacts,
             &fixture.statement_commitment,
             &semantic,
             &envelope_for(&artifact),
         )
-        .expect("canonical recursive_block_v2 fixture must pass the product wrapper");
+        .expect_err("the external wrapper must not accept sentinel transaction-leaf bytes");
+        assert!(
+            sentinel_error
+                .to_string()
+                .contains("native tx-leaf verification failed")
+        );
+
+        verify_recursive_block_artifact_from_verified_records(
+            &fixture.verified_records,
+            &fixture.statement_commitment,
+            &semantic,
+            &envelope_for(&artifact),
+        )
+        .expect("canonical recursive_block_v2 fixture must pass verified-record replay");
 
         let mut proof_mutation = artifact.clone();
         let proof_index = proof_mutation.artifact.proof_bytes.len() / 2;
         proof_mutation.artifact.proof_bytes[proof_index] ^= 1;
-        let proof_error = verify_recursive_block_artifact_against_verified_records(
-            &fixture.transactions,
-            &fixture.tx_artifacts,
+        let proof_error = verify_recursive_block_artifact_from_verified_records(
+            &fixture.verified_records,
             &fixture.statement_commitment,
             &semantic,
             &envelope_for(&proof_mutation),
         )
-        .expect_err("mutated V2 proof bytes must reject through the product wrapper");
+        .expect_err("mutated V2 proof bytes must reject through verified-record replay");
         assert!(proof_error.to_string().contains("verification failed"));
 
         let mut public_mutation = artifact.clone();
         public_mutation.public.da_root[0] ^= 1;
-        let public_error = verify_recursive_block_artifact_against_verified_records(
-            &fixture.transactions,
-            &fixture.tx_artifacts,
+        let public_error = verify_recursive_block_artifact_from_verified_records(
+            &fixture.verified_records,
             &fixture.statement_commitment,
             &semantic,
             &envelope_for(&public_mutation),
         )
-        .expect_err("mutated V2 replayed public fields must reject through the product wrapper");
+        .expect_err("mutated V2 replayed public fields must reject through verified-record replay");
         assert!(public_error.to_string().contains("public replay mismatch"));
 
         let mut final_root_mutation = artifact;
         final_root_mutation.public.end_shielded_root[0] ^= 1;
-        let final_root_error = verify_recursive_block_artifact_against_verified_records(
-            &fixture.transactions,
-            &fixture.tx_artifacts,
+        let final_root_error = verify_recursive_block_artifact_from_verified_records(
+            &fixture.verified_records,
             &fixture.statement_commitment,
             &semantic,
             &envelope_for(&final_root_mutation),
         )
-        .expect_err("mutated V2 final state root must reject through the product wrapper");
+        .expect_err("mutated V2 final state root must reject through verified-record replay");
         assert!(
             final_root_error
                 .to_string()

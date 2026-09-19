@@ -394,6 +394,9 @@ lean_exe gen_smallwood_production_constraint_refinement_vectors where
 lean_exe gen_poseidon2_v8_constraint_refinement_vectors where
   root := `Hegemon.Transaction.GeneratePoseidon2V8ConstraintRefinementVectors
 
+lean_exe gen_poseidon2_v8_rp04_constraint_refinement_vectors where
+  root := `Hegemon.Transaction.GeneratePoseidon2V8ConstraintRefinementHgv8rp04Vectors
+
 lean_exe gen_poseidon2_v8_semantic_adequacy_vectors where
   root := `Hegemon.Transaction.GeneratePoseidon2V8SemanticAdequacyVectors
 

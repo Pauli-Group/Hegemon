@@ -49,11 +49,13 @@ pub const SMALLWOOD_POSEIDON2_V8_SMZ9_EXECUTABLE_ZK_BINDING: &[u8] =
     b"hegemon.smallwood.poseidon2-v8.smz9.executable-zk-refinement.v1\0";
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_EXECUTABLE_ZK_SEED: [u8; 64] = [0x93; 64];
 /// Byte-exact pin for the checked-in, source-rebuilt executable refinement vector.
+/// RP04 uses `docs/crypto/smallwood_poseidon2_v8_rp04_smz9_executable_zk_refinement.json`;
+/// the separately retained RP03 report is not evidence for this program.
 /// Updating this pin requires deliberately regenerating and reviewing the vector; it is not a
 /// cryptographic or production-authority receipt.
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_EXECUTABLE_ZK_REPORT_BYTES: usize = 4_230;
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_EXECUTABLE_ZK_REPORT_SHA512_HEX: &str =
-    "e89ff29b047d85c6121689c4d298f031141d2dac6452f182d5d8d53cdd4ef7694c8616909ade6be95bcf1b1e06e98dd25b13df79bd7372be9a5af0500fe9015b";
+    "53f50293f531a2246a2809c4acdbad5c4fde662e8f55cd70bc54a46c9654bad23c944fd3e18ef7b81e18abdd1d0bd30946730cc6845097b7c1fe30081fa2b1af";
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_ACCEPTED_PROOF_REFINEMENT_SCHEMA: &str =
     "hegemon.smallwood.poseidon2-v8.smz9.accepted-proof-refinement.v1";
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_LEAN_WIRE_MODEL: &str =
@@ -1048,7 +1050,7 @@ pub fn report_smallwood_poseidon2_v8_smz9_executable_zk_refinement_v1(
     let relation = SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(&statement)
         .map_err(|error| {
             violation(format!(
-                "SMZ9 executable ZK refinement could not rebuild HGV8RP03: {error}"
+                "SMZ9 executable ZK refinement could not rebuild HGV8RP04: {error}"
             ))
         })?;
     if relation.relation_digest() != &SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST
@@ -1393,9 +1395,9 @@ mod tests {
     }
 
     #[test]
-    fn exact_hgv8rp03_executable_rom_refinement_is_rebuilt_and_qrom_receipts_stay_absent() {
+    fn exact_hgv8rp04_executable_rom_refinement_is_rebuilt_and_qrom_receipts_stay_absent() {
         let report = report_smallwood_poseidon2_v8_smz9_executable_zk_refinement_v1()
-            .expect("rebuild exact HGV8RP03 executable ZK refinement");
+            .expect("rebuild exact HGV8RP04 executable ZK refinement");
         assert_eq!(
             report.schema,
             SMALLWOOD_POSEIDON2_V8_SMZ9_EXECUTABLE_ZK_REFINEMENT_SCHEMA

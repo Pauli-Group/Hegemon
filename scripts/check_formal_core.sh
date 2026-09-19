@@ -162,6 +162,9 @@ printf '\n[4/14] Verifying Lean-generated Rust conformance vectors\n'
     "$ROOT/testdata/formal_core_vectors/poseidon2_v8_hash_kernel_refinement.json" \
     <(lake exe gen_poseidon2_v8_constraint_refinement_vectors)
   diff -u \
+    "$ROOT/testdata/formal_core_vectors/poseidon2_v8_rp04_hash_kernel_refinement.json" \
+    <(lake exe gen_poseidon2_v8_rp04_constraint_refinement_vectors)
+  diff -u \
     "$ROOT/testdata/formal_core_vectors/poseidon2_v8_relation_program_transcript.json" \
     <(lake exe gen_poseidon2_v8_relation_program_vectors)
   diff -u \

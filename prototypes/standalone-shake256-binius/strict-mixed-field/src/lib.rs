@@ -2075,10 +2075,12 @@ mod tests {
             ),
             Err(MixedFieldError::SumcheckClaimMismatch { round: 0 })
         );
-        assert!(
-            verify_toy_mixed_sumcheck(&proved.proof, proved.public_claim, b"sumcheck-context-v2")
-                .is_err()
-        );
+        assert!(verify_toy_mixed_sumcheck(
+            &proved.proof,
+            proved.public_claim,
+            b"sumcheck-context-v2"
+        )
+        .is_err());
 
         let (encoded, _) = proved.proof.encode_counted().unwrap();
         assert_eq!(

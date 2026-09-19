@@ -249,26 +249,86 @@ pub struct CounterfeitMutationCase {
 }
 
 pub const COUNTERFEIT_MUTATION_MATRIX: [CounterfeitMutationCase; 20] = [
-    CounterfeitMutationCase { name: "all_empty_activity", disposition: CounterfeitDisposition::M4Reject },
-    CounterfeitMutationCase { name: "invalid_authorization_shape", disposition: CounterfeitDisposition::M4Reject },
-    CounterfeitMutationCase { name: "signed_balance_drift", disposition: CounterfeitDisposition::M4Reject },
-    CounterfeitMutationCase { name: "stable_mint_or_burn_drift", disposition: CounterfeitDisposition::M4Reject },
-    CounterfeitMutationCase { name: "missing_consensus_state", disposition: CounterfeitDisposition::M4Reject },
-    CounterfeitMutationCase { name: "wrong_state_seam_version", disposition: CounterfeitDisposition::M4Reject },
-    CounterfeitMutationCase { name: "zero_manifest_commitment", disposition: CounterfeitDisposition::M4Reject },
-    CounterfeitMutationCase { name: "manifest_commitment_equality_mismatch", disposition: CounterfeitDisposition::M4Reject },
-    CounterfeitMutationCase { name: "current_height_equality_mismatch", disposition: CounterfeitDisposition::M4Reject },
-    CounterfeitMutationCase { name: "missing_selected_entry", disposition: CounterfeitDisposition::M4Reject },
-    CounterfeitMutationCase { name: "statement_entry_binding_mismatch", disposition: CounterfeitDisposition::M4Reject },
-    CounterfeitMutationCase { name: "inactive_or_closed_lifecycle", disposition: CounterfeitDisposition::M4Reject },
-    CounterfeitMutationCase { name: "future_or_stale_oracle", disposition: CounterfeitDisposition::M4Reject },
-    CounterfeitMutationCase { name: "disputed_attestation", disposition: CounterfeitDisposition::M4Reject },
-    CounterfeitMutationCase { name: "zero_or_over_cap_issuance", disposition: CounterfeitDisposition::M4Reject },
-    CounterfeitMutationCase { name: "note_nullifier_merkle_or_ciphertext_link_drift", disposition: CounterfeitDisposition::M4Reject },
-    CounterfeitMutationCase { name: "forged_policy_hash_derivation", disposition: CounterfeitDisposition::HostOracleOnly },
-    CounterfeitMutationCase { name: "forged_whole_manifest_commitment", disposition: CounterfeitDisposition::HostOracleOnly },
-    CounterfeitMutationCase { name: "forged_selected_entry_membership", disposition: CounterfeitDisposition::HostOracleOnly },
-    CounterfeitMutationCase { name: "forged_consensus_expected_root_or_height", disposition: CounterfeitDisposition::HostOracleOnly },
+    CounterfeitMutationCase {
+        name: "all_empty_activity",
+        disposition: CounterfeitDisposition::M4Reject,
+    },
+    CounterfeitMutationCase {
+        name: "invalid_authorization_shape",
+        disposition: CounterfeitDisposition::M4Reject,
+    },
+    CounterfeitMutationCase {
+        name: "signed_balance_drift",
+        disposition: CounterfeitDisposition::M4Reject,
+    },
+    CounterfeitMutationCase {
+        name: "stable_mint_or_burn_drift",
+        disposition: CounterfeitDisposition::M4Reject,
+    },
+    CounterfeitMutationCase {
+        name: "missing_consensus_state",
+        disposition: CounterfeitDisposition::M4Reject,
+    },
+    CounterfeitMutationCase {
+        name: "wrong_state_seam_version",
+        disposition: CounterfeitDisposition::M4Reject,
+    },
+    CounterfeitMutationCase {
+        name: "zero_manifest_commitment",
+        disposition: CounterfeitDisposition::M4Reject,
+    },
+    CounterfeitMutationCase {
+        name: "manifest_commitment_equality_mismatch",
+        disposition: CounterfeitDisposition::M4Reject,
+    },
+    CounterfeitMutationCase {
+        name: "current_height_equality_mismatch",
+        disposition: CounterfeitDisposition::M4Reject,
+    },
+    CounterfeitMutationCase {
+        name: "missing_selected_entry",
+        disposition: CounterfeitDisposition::M4Reject,
+    },
+    CounterfeitMutationCase {
+        name: "statement_entry_binding_mismatch",
+        disposition: CounterfeitDisposition::M4Reject,
+    },
+    CounterfeitMutationCase {
+        name: "inactive_or_closed_lifecycle",
+        disposition: CounterfeitDisposition::M4Reject,
+    },
+    CounterfeitMutationCase {
+        name: "future_or_stale_oracle",
+        disposition: CounterfeitDisposition::M4Reject,
+    },
+    CounterfeitMutationCase {
+        name: "disputed_attestation",
+        disposition: CounterfeitDisposition::M4Reject,
+    },
+    CounterfeitMutationCase {
+        name: "zero_or_over_cap_issuance",
+        disposition: CounterfeitDisposition::M4Reject,
+    },
+    CounterfeitMutationCase {
+        name: "note_nullifier_merkle_or_ciphertext_link_drift",
+        disposition: CounterfeitDisposition::M4Reject,
+    },
+    CounterfeitMutationCase {
+        name: "forged_policy_hash_derivation",
+        disposition: CounterfeitDisposition::HostOracleOnly,
+    },
+    CounterfeitMutationCase {
+        name: "forged_whole_manifest_commitment",
+        disposition: CounterfeitDisposition::HostOracleOnly,
+    },
+    CounterfeitMutationCase {
+        name: "forged_selected_entry_membership",
+        disposition: CounterfeitDisposition::HostOracleOnly,
+    },
+    CounterfeitMutationCase {
+        name: "forged_consensus_expected_root_or_height",
+        disposition: CounterfeitDisposition::HostOracleOnly,
+    },
 ];
 
 pub type DiagnosticActivationBinding = V6ActivationBinding;
@@ -1275,12 +1335,10 @@ fn map_candidate_consensus_state(
             .try_into()
             .expect("six-word attestation commitment"),
         attestation_disputed: words[STATE_ATTESTATION_DISPUTED_WORD],
-        expected_manifest_state_commitment_v1: words
-            [STATE_EXPECTED_MANIFEST_COMMITMENT_WORDS]
+        expected_manifest_state_commitment_v1: words[STATE_EXPECTED_MANIFEST_COMMITMENT_WORDS]
             .try_into()
             .expect("six-word expected manifest-state commitment"),
-        provided_manifest_state_commitment_v1: words
-            [STATE_PROVIDED_MANIFEST_COMMITMENT_WORDS]
+        provided_manifest_state_commitment_v1: words[STATE_PROVIDED_MANIFEST_COMMITMENT_WORDS]
             .try_into()
             .expect("six-word provided manifest-state commitment"),
     }
@@ -1778,7 +1836,9 @@ fn state_words_or(builder: &CircuitBuilder, words: &[Wire]) -> Wire {
     words
         .iter()
         .copied()
-        .fold(builder.add_constant_64(0), |acc, word| builder.bor(acc, word))
+        .fold(builder.add_constant_64(0), |acc, word| {
+            builder.bor(acc, word)
+        })
 }
 
 fn constrain_candidate_stablecoin_consensus_state(
@@ -1802,7 +1862,10 @@ fn constrain_candidate_stablecoin_consensus_state(
         ("oracle_feed", state.oracle_feed),
         ("policy_version", state.policy_version),
     ] {
-        builder.assert_zero(format!("stable.state.{name}.high32"), builder.shr(value, 32));
+        builder.assert_zero(
+            format!("stable.state.{name}.high32"),
+            builder.shr(value, 32),
+        );
     }
     for (name, value) in [
         ("entry_present", state.entry_present),
@@ -1921,7 +1984,11 @@ fn constrain_candidate_stablecoin_consensus_state(
     assert_implies(
         builder,
         "stable.state.lifecycle_not_retired",
-        and_msb(builder, enabled, low_bool_msb(builder, state.retired_present)),
+        and_msb(
+            builder,
+            enabled,
+            low_bool_msb(builder, state.retired_present),
+        ),
         builder.icmp_ult(state.provided_current_height, state.retired_at),
     );
     assert_implies(
@@ -3272,9 +3339,7 @@ fn pack_statement_words(
 }
 
 fn pack_bytes48_words(bytes: &[u8; LIVE_STABLECOIN_BINDING_WORDS * 8]) -> [u64; 6] {
-    array::from_fn(|word| {
-        u64::from_le_bytes(bytes[word * 8..word * 8 + 8].try_into().unwrap())
-    })
+    array::from_fn(|word| u64::from_le_bytes(bytes[word * 8..word * 8 + 8].try_into().unwrap()))
 }
 
 fn pack_u128_words(value: u128) -> [u64; 2] {
@@ -3300,8 +3365,7 @@ fn pack_consensus_state_words(
         words[STATE_ATTESTATION_ID_WORD] = entry.attestation_id;
         words[STATE_MIN_COLLATERAL_WORDS]
             .copy_from_slice(&pack_u128_words(entry.min_collateral_ratio_ppm));
-        words[STATE_MAX_MINT_WORDS]
-            .copy_from_slice(&pack_u128_words(entry.max_mint_per_epoch));
+        words[STATE_MAX_MINT_WORDS].copy_from_slice(&pack_u128_words(entry.max_mint_per_epoch));
         words[STATE_ORACLE_MAX_AGE_WORD] = entry.oracle_max_age;
         words[STATE_ORACLE_SUBMITTED_AT_WORD] = entry.oracle_submitted_at;
         words[STATE_ENABLED_AT_WORD] = entry.enabled_at;
@@ -3309,10 +3373,9 @@ fn pack_consensus_state_words(
         words[STATE_RETIRED_AT_WORD] = entry.retired_at.unwrap_or(0);
         words[STATE_POLICY_VERSION_WORD] = u64::from(entry.policy_version);
         words[STATE_ACTIVE_WORD] = u64::from(entry.active);
-        words[STATE_POLICY_HASH_WORDS]
-            .copy_from_slice(&pack_bytes48_words(&scalar_candidate::live_stablecoin_policy_hash(
-                entry,
-            )));
+        words[STATE_POLICY_HASH_WORDS].copy_from_slice(&pack_bytes48_words(
+            &scalar_candidate::live_stablecoin_policy_hash(entry),
+        ));
         words[STATE_ORACLE_COMMITMENT_WORDS]
             .copy_from_slice(&pack_bytes48_words(&entry.oracle_commitment));
         words[STATE_ATTESTATION_COMMITMENT_WORDS]
@@ -3426,9 +3489,7 @@ pub fn source_digest() -> [u8; 64] {
     );
     ShaDigest::update(
         &mut hasher,
-        include_bytes!(
-            "../../../../protocol/kernel/src/stablecoin_manifest_commitment_v1.rs"
-        ),
+        include_bytes!("../../../../protocol/kernel/src/stablecoin_manifest_commitment_v1.rs"),
     );
     ShaDigest::update(
         &mut hasher,
@@ -5187,11 +5248,7 @@ mod tests {
                 encode_diagnostic_statement(&burn_statement, burn_statement.activation);
             let burn_state = consensus_state_for_manifest(&burn_statement, &burn_manifest, 20);
             candidate
-                .generate_witness_with_consensus_state(
-                    &burn_encoded,
-                    &burn_witness,
-                    &burn_state,
-                )
+                .generate_witness_with_consensus_state(&burn_encoded, &burn_witness, &burn_state)
                 .unwrap()
                 .verify(&cs)
                 .unwrap();
@@ -5226,11 +5283,7 @@ mod tests {
                 encode_diagnostic_statement(&mint_statement, mint_statement.activation);
             let mint_state = consensus_state_for_manifest(&mint_statement, &mint_manifest, 20);
             candidate
-                .generate_witness_with_consensus_state(
-                    &mint_encoded,
-                    &mint_witness,
-                    &mint_state,
-                )
+                .generate_witness_with_consensus_state(&mint_encoded, &mint_witness, &mint_state)
                 .unwrap()
                 .verify(&cs)
                 .unwrap();
@@ -5391,8 +5444,8 @@ mod tests {
         refresh_fixture_public_bindings(profile, &mut statement, &mut witness);
         let encoded = encode_diagnostic_statement(&statement, statement.activation);
         let state = consensus_state_for_manifest(&statement, &manifest, 20);
-        let authority = scalar_candidate::StablecoinAuthority::try_from_statement(&statement)
-            .unwrap();
+        let authority =
+            scalar_candidate::StablecoinAuthority::try_from_statement(&statement).unwrap();
         scalar_candidate::validate_stablecoin_consensus_state_seam(authority, &state).unwrap();
 
         let candidate = build_candidate_m4(profile, statement.activation);

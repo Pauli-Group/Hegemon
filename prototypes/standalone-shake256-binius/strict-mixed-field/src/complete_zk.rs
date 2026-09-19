@@ -1176,8 +1176,8 @@ impl B128RawOpeningModel {
     }
 }
 
-pub fn two_b128_dummy_endpoint_counterexample()
--> Result<EndpointSpanCounterexample, CompleteZkError> {
+pub fn two_b128_dummy_endpoint_counterexample(
+) -> Result<EndpointSpanCounterexample, CompleteZkError> {
     let weights = [E384::ONE, E384::Y];
     let translation = E384::Y * E384::Y;
     let mut columns = vec![Vec::new(); 3];
@@ -1965,8 +1965,8 @@ pub struct DiamondConstruction41BackendAssessment {
     pub production_authorized: bool,
 }
 
-pub const fn current_diamond_construction_4_1_backend_assessment()
--> DiamondConstruction41BackendAssessment {
+pub const fn current_diamond_construction_4_1_backend_assessment(
+) -> DiamondConstruction41BackendAssessment {
     DiamondConstruction41BackendAssessment {
         paper_perfect_iop_zero_knowledge: true,
         large_field_polynomial_backend_required: true,
@@ -2455,11 +2455,10 @@ mod tests {
         assert_eq!(audit.combined_rank, 2);
         assert!(!audit.witness_translations_contained);
         let leak = audit.leak.unwrap();
-        assert!(
-            leak.observation_combination
-                .iter()
-                .any(|&coefficient| coefficient != B128::ZERO)
-        );
+        assert!(leak
+            .observation_combination
+            .iter()
+            .any(|&coefficient| coefficient != B128::ZERO));
         assert_ne!(leak.exposed_witness_functional, vec![B128::ZERO]);
     }
 

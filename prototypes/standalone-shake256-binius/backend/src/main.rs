@@ -1,6 +1,6 @@
 use std::{env, process::ExitCode, time::Instant};
 
-use binius_field::{BinaryField128bGhash as B128, arch::OptimalPackedB128};
+use binius_field::{arch::OptimalPackedB128, BinaryField128bGhash as B128};
 use binius_hash::StdHashSuite;
 use binius_spartan_frontend::{
     circuit_builder::{ConstraintBuilder, InstanceGenerator, WitnessGenerator},
@@ -8,14 +8,14 @@ use binius_spartan_frontend::{
     constraint_system::{ConstraintSystem, ConstraintWire, Witness, WitnessLayout},
 };
 use binius_spartan_prover::Prover;
-use binius_spartan_verifier::{Verifier, config::StdChallenger};
+use binius_spartan_verifier::{config::StdChallenger, Verifier};
 use binius_transcript::{ProverTranscript, VerifierTranscript};
 use hegemon_standalone_shake256_binius_backend::{
-    DIGEST_BITS, DIGEST_BYTES, FRAME_BYTES, MERKLE_PARENT_ROLE, PROFILE_TAG, ParentWires,
-    allocate_parent_wires, bytes_to_field_bits, constrain_parent, hex, parent_hash,
+    allocate_parent_wires, bytes_to_field_bits, constrain_parent, hex, parent_hash, ParentWires,
+    DIGEST_BITS, DIGEST_BYTES, FRAME_BYTES, MERKLE_PARENT_ROLE, PROFILE_TAG,
 };
-use rand::{SeedableRng, rngs::StdRng};
-use serde_json::{Value, json};
+use rand::{rngs::StdRng, SeedableRng};
+use serde_json::{json, Value};
 
 const BACKEND_SCHEMA: &str = "hegemon.standalone-shake256.backend-measurement.v1";
 const PROFILE: &str = "pay1x2";

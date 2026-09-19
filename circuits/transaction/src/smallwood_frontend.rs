@@ -7534,6 +7534,9 @@ fn projected_smallwood_backend_proof_bytes_with_profile_from_material(
     auxiliary_witness_limb_count: usize,
     profile: SmallwoodNoGrindingProfileV1,
 ) -> Result<usize, TransactionCircuitError> {
+    // This is a size-only adapter. Preserve the auxiliary shape so metadata
+    // validation counts the same variables as the material being projected.
+    let auxiliary_shape_words = vec![0; auxiliary_witness_limb_count];
     let packed_statement = crate::smallwood_semantics::PackedStatement::new_with_auxiliary(
         arithmetization,
         &statement.public_values,
@@ -7544,7 +7547,7 @@ fn projected_smallwood_backend_proof_bytes_with_profile_from_material(
         &linear_constraints.term_indices,
         &linear_constraints.term_coefficients,
         &linear_constraints.targets,
-        &[],
+        &auxiliary_shape_words,
         auxiliary_witness_limb_count,
     );
     projected_smallwood_backend_proof_bytes_with_profile_backend_and_domain_statement(
@@ -7562,6 +7565,8 @@ fn smallwood_candidate_soundness_report_from_material(
     auxiliary_witness_limb_count: usize,
     profile: SmallwoodNoGrindingProfileV1,
 ) -> Result<SmallwoodNoGrindingSoundnessReportV1, TransactionCircuitError> {
+    // The report needs the auxiliary variable count, not secret limb values.
+    let auxiliary_shape_words = vec![0; auxiliary_witness_limb_count];
     let packed_statement = crate::smallwood_semantics::PackedStatement::new_with_auxiliary(
         arithmetization,
         &statement.public_values,
@@ -7572,7 +7577,7 @@ fn smallwood_candidate_soundness_report_from_material(
         &linear_constraints.term_indices,
         &linear_constraints.term_coefficients,
         &linear_constraints.targets,
-        &[],
+        &auxiliary_shape_words,
         auxiliary_witness_limb_count,
     );
     report_smallwood_no_grinding_soundness_v1(

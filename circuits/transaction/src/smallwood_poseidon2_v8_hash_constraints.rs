@@ -685,12 +685,16 @@ mod tests {
         }
 
         let mut initial_mutation = material.clone();
-        assert_eq!(SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT, SMALLWOOD_POSEIDON2_V8_HASH_PADDED_CALL_COUNT);
+        assert_eq!(
+            SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT,
+            SMALLWOOD_POSEIDON2_V8_HASH_PADDED_CALL_COUNT
+        );
         let call = SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT - 1;
         let group = smallwood_poseidon2_v8_hash_call_group(call);
         let lane = smallwood_poseidon2_v8_hash_call_lane(call);
         let initial_row = smallwood_poseidon2_v8_hash_initial_row(group, 0);
-        initial_mutation.rows[initial_row][lane] = (initial_mutation.rows[initial_row][lane] + 1) % GOLDILOCKS_MODULUS;
+        initial_mutation.rows[initial_row][lane] =
+            (initial_mutation.rows[initial_row][lane] + 1) % GOLDILOCKS_MODULUS;
         assert!(matches!(
             verify_smallwood_poseidon2_v8_hash_rows(initial_mutation.as_rows()),
             Err(SmallwoodPoseidon2V8HashConstraintError::ConstraintViolation { .. })
@@ -741,13 +745,13 @@ mod tests {
 
         let vectors: LeanV8HashKernelVectors = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../testdata/formal_core_vectors/poseidon2_v8_hash_kernel_refinement.json"
+            "/../../testdata/formal_core_vectors/poseidon2_v8_rp04_hash_kernel_refinement.json"
         )))
         .unwrap();
 
         assert_eq!(
             vectors.schema,
-            "hegemon.poseidon2-v8.source-executable-refinement-v2"
+            "hegemon.poseidon2-v8.source-executable-refinement-rp04-v1"
         );
         assert_eq!(
             vectors.claim_scope,
@@ -760,7 +764,7 @@ mod tests {
         );
         assert_eq!(
             vectors.semantic_target_id,
-            "hegemon.smallwood.poseidon2-v8.stablecoin-relation.v2"
+            "hegemon.smallwood.poseidon2-v8.stablecoin-relation.v3"
         );
         assert_eq!(vectors.compiler_coverage, "source_executable_program_bound");
         assert!(vectors.compiler_complete);

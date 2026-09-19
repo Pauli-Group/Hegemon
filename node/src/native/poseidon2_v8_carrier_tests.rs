@@ -794,9 +794,15 @@ fn retained_rp03_socket_child() {
                     let (bytes, sha) = retained_smza_manifest_coinbase(index);
                     (bytes, sha)
                 } else if index == 0 {
-                    (RETAINED_V8_COINBASE_0_SCALE.to_vec(), RETAINED_V8_COINBASE_0_SHA512.to_owned())
+                    (
+                        RETAINED_V8_COINBASE_0_SCALE.to_vec(),
+                        RETAINED_V8_COINBASE_0_SHA512.to_owned(),
+                    )
                 } else {
-                    (RETAINED_V8_COINBASE_1_SCALE.to_vec(), RETAINED_V8_COINBASE_1_SHA512.to_owned())
+                    (
+                        RETAINED_V8_COINBASE_1_SCALE.to_vec(),
+                        RETAINED_V8_COINBASE_1_SHA512.to_owned(),
+                    )
                 };
                 let (action, _) = retained_coinbase_action(u64::from(index) + 1, &bytes, &sha);
                 mine_exact_pending_fixture(&node, &action);
@@ -2255,11 +2261,17 @@ fn retained_carrier_outer_group_admission_is_exact_and_parent_owned() {
         validate_retained_carrier_outer_process_group("12345", &smza_parent, 12345, 12345),
         Ok(12345)
     );
-    assert!(validate_retained_carrier_outer_process_group("12345", &smza_parent, 12346, 12345).is_err());
-    assert!(validate_retained_carrier_outer_process_group("12345", &smza_parent, 12345, 12346).is_err());
+    assert!(
+        validate_retained_carrier_outer_process_group("12345", &smza_parent, 12346, 12345).is_err()
+    );
+    assert!(
+        validate_retained_carrier_outer_process_group("12345", &smza_parent, 12345, 12346).is_err()
+    );
     let mut extra_smza = smza_parent.clone();
     extra_smza.push("--list".into());
-    assert!(validate_retained_carrier_outer_process_group("12345", &extra_smza, 12345, 12345).is_err());
+    assert!(
+        validate_retained_carrier_outer_process_group("12345", &extra_smza, 12345, 12345).is_err()
+    );
     assert_eq!(
         validate_retained_carrier_outer_process_group("12345", &child, 12346, 12345),
         Ok(12345)

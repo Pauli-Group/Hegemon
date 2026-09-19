@@ -9,8 +9,8 @@
 use binius_field::{BinaryField128bGhash as B128, Field};
 use binius_spartan_frontend::circuit_builder::CircuitBuilder;
 use sha3::{
-    Shake256,
     digest::{ExtendableOutput, Update, XofReader},
+    Shake256,
 };
 
 pub const DIGEST_BYTES: usize = 56;
