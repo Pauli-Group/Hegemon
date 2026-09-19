@@ -91,12 +91,15 @@ Checked CI repairs:
   transactions. Their original rejection assertions remain unchanged, with
   diagnostic messages added; no production validation or test is disabled.
 
-The local counting/quantum batch has 53 checked components, not 53 completed
+The local counting/quantum batch has 55 checked components, not 55 completed
 security arguments. Only the 31-root source closure described above is currently
 packaged in the mathematical evidence bundle. The global counting theorem still
 needs kernel validation; accepted-execution readout, quantum/lifetime composition,
 and adaptive privacy remain open. The split initialized privacy check remains
 incomplete: its latest bounded attempt fails elaboration recursion depth.
+The latest counting passes are bivariate coefficient-height transport and
+cleared incidence. Actual nonaffine branch counting still has two invalid
+degree-bound theorem references; downstream global assembly is not yet checked.
 
 Wallet multisig and release-profile checks report absent fresh-proof route
 authority; their tests remain enabled. The app end-to-end coinbase timeout and

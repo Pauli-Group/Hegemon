@@ -18,12 +18,13 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
 - [x] Check the three repaired native tests, RP04 coinbase KAT and schedule,
   hash-kernel vectors, executable-ROM report, auxiliary geometry projection,
   and recursive-block verified-record mutation tests.
-- [x] Reach 53 checked components in the current counting/quantum batch,
+- [x] Reach 55 checked components in the current counting/quantum batch,
   including Hensel root shift, Taylor coefficient height, the full-numerator
   endpoint, actual localized response tracking, Newton truncation, and the
   actual root source with both variable-height bounds and its concrete full numerator.
   The latest checks add uniform simple specialization, actual quotient residual
   and localized residual counts, and Record/Split on the physical quantum basis.
+  Bivariate coefficient-height transport and cleared incidence also pass.
   Source-manifest validation of the expanded 54-file bundle also passes
   (31 checked roots plus 23 recursive dependencies).
 - [x] Check the formal source hash, both targeted module-parser regressions,
@@ -43,6 +44,8 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
   concrete extension-field adapter. The source includes the smaller
   1,694,784,843,179 bound and implies the original 12,310,499,043,179 budget;
   neither changes the query count or serialized proof size.
+  The next failing component is actual nonaffine branch counting: two
+  degree-bound theorem references need correction before its check can pass.
 - [ ] Close accepted-execution readout and four stage-event identifications,
   the algebra-event bound, transcript/commitment binding, and RP04 semantic
   ledger reduction. The counted composition source no longer assumes the
