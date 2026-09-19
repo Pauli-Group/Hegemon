@@ -1,0 +1,631 @@
+{
+  "checked_roots": [
+    "Mca38AffineBadLabelCount",
+    "Mca38NestedContentExceptions",
+    "Mca38NestedFactorCoverage",
+    "Mca38NestedFactorSeparability",
+    "Mca38NestedIndependentUnion",
+    "Mca38NestedInterpolationHeights",
+    "Mca38NestedRegularPartition",
+    "Mca38NestedRegularPoint",
+    "Mca38NonidenticalIncidenceCount",
+    "Mca38OriginFactorCoverage",
+    "Mca38PrimitiveFactorDegreeBudget",
+    "Mca38RbrActualMultiplicity",
+    "Mca38RbrGlobalMultiplicity",
+    "Mca38RbrPolynomialEndpoint",
+    "Mca38RoundByRoundInterpolation",
+    "Mca38RoundByRoundParameters",
+    "Mca38SeparateStageLedger",
+    "Mca38UniversalMatrixEvent",
+    "Q38CmsControlledSwap",
+    "Q38CmsIndexedSwap",
+    "Q38CmsSwapConjugation",
+    "Q38FreshSwapFiber",
+    "Q38FreshSwapIsometry",
+    "Q38StateValuedCoinTransport",
+    "SmzaChallengeStageTargets",
+    "SmzaFixedAdviceBadCell",
+    "SmzaFixedAdvicePrefix",
+    "SmzaInitializedStageRouting",
+    "SmzaRawStageGeometry",
+    "SmzaSelectedStageSearch"
+  ],
+  "custom_sources": [
+    {
+      "module": "Mca38ActualMultiplicityR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/counting-interpolation/Mca38ActualMultiplicityR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "32d02ab2f4491e9232840ce0d990e5a09b6b4185ca189a0ecd83e97024b28f54"
+    },
+    {
+      "module": "Mca38AffineBadLabelCount",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38AffineBadLabelCount.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38AffineBadLabelCount.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "8fbe7009bd459efd19a021ce48cb722fa1782243f6d0a663ceca84855376a3b9"
+    },
+    {
+      "module": "Mca38EliminationDegree",
+      "path": ".agent/q38-counting-2026-09-18/Mca38EliminationDegree.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "96016403ac591f02b33449efb48ab22038e8b6cf7c38aa76221bf25cd2810919"
+    },
+    {
+      "module": "Mca38GsInterpolationR3",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/counting-interpolation/Mca38GsInterpolationR3.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "a87221aeaca535f843aa115f14ec8c9d23f5c70e086772f2bf3a680a15010152"
+    },
+    {
+      "module": "Mca38HasseCoefficientR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/counting-interpolation/Mca38HasseCoefficientR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "6f1d126a81bca7656807fe6ae67722f139d4e9c2b8583a697f04b40d20a1e34a"
+    },
+    {
+      "module": "Mca38LocalMultiplicityR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/counting-interpolation/Mca38LocalMultiplicityR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "4061299ac4203d5b874b291914ab6a54015c1371609cb1e05c5d379930b291f0"
+    },
+    {
+      "module": "Mca38NestedContentExceptions",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NestedContentExceptions.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NestedContentExceptions.pass.latest.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "b54775209998ce3ffd4c5efcf35de1a79cc727ccc4708e780f536e472b267c0c"
+    },
+    {
+      "module": "Mca38NestedFactorCoverage",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NestedFactorCoverage.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NestedFactorCoverage.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "5420f6e2a0d831442d28b19101d730b22b5f82df9f77ccec05607b3aa0ede146"
+    },
+    {
+      "module": "Mca38NestedFactorSeparability",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NestedFactorSeparability.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NestedFactorSeparability.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "cd0f3b9433c3132814de86dfc5f304b2b8e67cc341d4aa53efa965ec4eed1bab"
+    },
+    {
+      "module": "Mca38NestedIndependentUnion",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NestedIndependentUnion.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NestedIndependentUnion.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "8f599eb24f25e3b07a076fc34e765843f1c934a66803461dd2bf701100397a46"
+    },
+    {
+      "module": "Mca38NestedInterpolationHeights",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NestedInterpolationHeights.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NestedInterpolationHeights.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "55795c919edfd138b513e61d8906d6d1fbea590f19aaec65944d868252cbc090"
+    },
+    {
+      "module": "Mca38NestedRegularPartition",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NestedRegularPartition.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NestedRegularPartition.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "57ca159aa016edc372b5b08f9b0e19e53ba5bfca215b9c138087aa8b0b0417ce"
+    },
+    {
+      "module": "Mca38NestedRegularPoint",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NestedRegularPoint.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NestedRegularPoint.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "2d80af8216204b2aaefcb425abafe8663efa697a5bc34e9089c82d55911061a5"
+    },
+    {
+      "module": "Mca38NonidenticalIncidenceCount",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NonidenticalIncidenceCount.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NonidenticalIncidenceCount.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "ad4c1794d6eb33a5de3f0b94c93dc76dc167d56b73e2cb926b64a06b92f52b29"
+    },
+    {
+      "module": "Mca38OriginFactorCoverage",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38OriginFactorCoverage.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38OriginFactorCoverage.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "ed4f9b4ec76a9ea71847f1456304e3c51acda75aaf182e5a3ced5b5efff8ab08"
+    },
+    {
+      "module": "Mca38PrimitiveFactorDegreeBudget",
+      "path": ".agent/q38-counting-2026-09-19/branches/Mca38PrimitiveFactorDegreeBudget.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38PrimitiveFactorDegreeBudget.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "bc8bd75b2199ba9fc9038019003dcdf0dd791cf593b5438c70cad7850c747f8a"
+    },
+    {
+      "module": "Mca38RbrActualMultiplicity",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38RbrActualMultiplicity.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38RbrActualMultiplicity.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "f6741f2f6ca41a3d2c309a881e023c316f944842287f0003af3a036f4d096c4b"
+    },
+    {
+      "module": "Mca38RbrGlobalMultiplicity",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38RbrGlobalMultiplicity.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38RbrGlobalMultiplicity.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "97b9fc1c16c16610308f63751df4099e8489ff95a9989f3f3d253b79a6bef14a"
+    },
+    {
+      "module": "Mca38RbrPolynomialEndpoint",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38RbrPolynomialEndpoint.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38RbrPolynomialEndpoint.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "0a821020ef54ad06760b99aab1e991b1d674c418ef34e2d2b118f47b37416101"
+    },
+    {
+      "module": "Mca38RoundByRoundInterpolation",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38RoundByRoundInterpolation.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38RoundByRoundInterpolation.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "6dc4b134f9fceaf19547b8dee4b7d8dc4edf3a447d49eff37eddbba3b77e95e4"
+    },
+    {
+      "module": "Mca38RoundByRoundParameters",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38RoundByRoundParameters.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38RoundByRoundParameters.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "2621a5be47ec53fe9d7696b82f7c7588e749abb29a62e8f5ec1fff2b766f6693"
+    },
+    {
+      "module": "Mca38SeparateStageLedger",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38SeparateStageLedger.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38SeparateStageLedger.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "4e33528386104fb0e0f9374748f73f08d88fe3bf3cccb08d01560829c772fe0c"
+    },
+    {
+      "module": "Mca38SpecializationDegreeR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/counting-interpolation/Mca38SpecializationDegreeR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "1f89e2b525b5310ccb3e295599df57d82fba2ffce21b8e088a34ce75a1d9722a"
+    },
+    {
+      "module": "Mca38UniversalMatrixEvent",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38UniversalMatrixEvent.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38UniversalMatrixEvent.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "5baf2da4badca31a6df5befdb36a292a884f575f8e217a391760cadea0ef0622"
+    },
+    {
+      "module": "Q38CmsControlledSwap",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsControlledSwap.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsControlledSwap.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "213bc7730c7fad99f3d4878eadacff9dc9e7c9f2233de72b110a277fc984f14c"
+    },
+    {
+      "module": "Q38CmsIndexedSwap",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsIndexedSwap.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsIndexedSwap.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "098f2c5d809d62e5c0cce4aa98310b5de37a7044ba9be02628c05bb65311d8ab"
+    },
+    {
+      "module": "Q38CmsSwapConjugation",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsSwapConjugation.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsSwapConjugation.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "dc74d9951523945cb638698d1d993dcfe4f532781d82924736bc11da0bc687b0"
+    },
+    {
+      "module": "Q38CompleteAlgebraR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/privacy-algebra/Q38CompleteAlgebraR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "e7acc22faac283a53595a5c0edc18b529b70ee6c5ef69aa63b9fa6f8e7b9b786"
+    },
+    {
+      "module": "Q38FieldAllocation",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smz9-q38-collection.0EJpVRpz/Q38FieldAllocation.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "37f6c9d5dabb7c127f7aff05591b8f70a1ef999fe899fdb7c62fde4b977c1ec9"
+    },
+    {
+      "module": "Q38FreshSwapFiber",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38FreshSwapFiber.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38FreshSwapFiber.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "ef9348b9646b47a0cd3fb1dc7239e503a767fe974b36a6e60769cbfba8864d3c"
+    },
+    {
+      "module": "Q38FreshSwapIsometry",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38FreshSwapIsometry.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38FreshSwapIsometry.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "0cd63271cc81dee63e0167ff4b30810c4bb25a74e0323f5cf189fe6f542ac7e3"
+    },
+    {
+      "module": "Q38JointSimulatorR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/privacy-algebra/Q38JointSimulatorR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "890eee7a3802693044ad075fb6303899129bd33b6b9bb4e97567bb6c351a151f"
+    },
+    {
+      "module": "Q38MaskFeedback",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/privacy-algebra/Q38MaskFeedback.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "2c44cba370f89734d17e437ceceaceda8ce7af47c1976d39ec81ed7bf675e5bc"
+    },
+    {
+      "module": "Q38RemainingAlgebra",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/privacy-algebra/Q38RemainingAlgebra.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "d239d17cabc9140e02c0d49df411a8422ed8ab63ad65ea63cf48d8ee59ebced9"
+    },
+    {
+      "module": "Q38StateValuedCoinTransport",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38StateValuedCoinTransport.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38StateValuedCoinTransport.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "2dd277dd86cb89d8344ed925bc7dcd8cb2b6f0b63dab39700e7ed91e44d2f084"
+    },
+    {
+      "module": "Q38TailRankR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/privacy-algebra/Q38TailRankR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "78d4ac0b7da4ccc0caf6fe5b9ce753b0d8fa8d6f823e62f2f3527a3a0816fa8b"
+    },
+    {
+      "module": "SmallWoodV8SmzaOnlineParserR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-parser-resume.Xmj8bJCn/SmallWoodV8SmzaOnlineParserR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "ffd9c57e66389e13e1167bf2f3dd5a6e188c7d98cc78efebae7f85c2f80d9dca"
+    },
+    {
+      "module": "SmallWoodV8SmzaOracleParserR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-parser-resume.Xmj8bJCn/SmallWoodV8SmzaOracleParserR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "11013322aaf669ae42adcd074dbe6b09e140a2565c5a9c42a557f247a2db675e"
+    },
+    {
+      "module": "SmzaChallengeStageTargets",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaChallengeStageTargets.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaChallengeStageTargets.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "24b2474f5b8d5ff2117e640a2f39f8454bcb4aa535b879ab9ff32e0e1f5bc5a7"
+    },
+    {
+      "module": "SmzaCoherentRecord",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-soundness-resume.LWbKdJ/SmzaCoherentRecord.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "d6d8d07c42d8198fde52f06d365d610a6225cc8ee4ac0379278f23c66a100efd"
+    },
+    {
+      "module": "SmzaControlledCmsR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-soundness-resume.LWbKdJ/SmzaControlledCmsR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "afd14c23914981db9b67f1609e7a62d5c9325febea7cc70235cebc1a4d1a63f6"
+    },
+    {
+      "module": "SmzaFixedAdviceBadCell",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaFixedAdviceBadCell.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaFixedAdviceBadCell.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "a438897859f7dc49bfd6891190b5bc4d4c7dfb1b71aa38fefb62ccf7ce656252"
+    },
+    {
+      "module": "SmzaFixedAdvicePrefix",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaFixedAdvicePrefix.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaFixedAdvicePrefix.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "0316e03ab40f67431f602cf9e63bf4ddb6a1105f3a736313d22c0883e61a7405"
+    },
+    {
+      "module": "SmzaInitializedStageRouting",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaInitializedStageRouting.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaInitializedStageRouting.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "3df29c2ab4dd29dbf874c1e8714f313e62c4ac274cbacba5e6ab081f60d57a34"
+    },
+    {
+      "module": "SmzaOnlineAssemblyR6",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-soundness-resume.LWbKdJ/SmzaOnlineAssemblyR6.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "cedf16a4ed611a5807e5b0ac76ea7019c6ccd803b31fc3e31fc37f28dab275fb"
+    },
+    {
+      "module": "SmzaPrefixTransportR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-soundness-resume.LWbKdJ/SmzaPrefixTransportR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "b7a7904449906aeb640c829f5e50d2cb6b0fc211005bf7b0012ea8e679099fc0"
+    },
+    {
+      "module": "SmzaRawStageGeometry",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRawStageGeometry.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRawStageGeometry.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "1fa0d442d975f0d4e875202b836826e422ddc508c0c08dec2f7d70f457b724ba"
+    },
+    {
+      "module": "SmzaRecordSplitR3",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-soundness-resume.LWbKdJ/SmzaRecordSplitR3.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "6dcfd636eeb0325898bfb722ef019ed4fd6bf4c132e243fa0bf47d9ea28d0076"
+    },
+    {
+      "module": "SmzaRecordSupportR5",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-soundness-resume.LWbKdJ/SmzaRecordSupportR5.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "b27f3d2ea8e1b128e93691cc00c0629e1431af925de3d28da07222579cd0feee"
+    },
+    {
+      "module": "SmzaSelectedStageSearch",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaSelectedStageSearch.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaSelectedStageSearch.pass.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "3c52f3d2d10cf33afbb4e7c4f3663f6ad0410e0cc8fd23f3cc5fa7c240f087b9"
+    },
+    {
+      "module": "SmzaStageControlledSplit",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaStageControlledSplit.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "51458e094addd9fbee28b210a5f7ef37743e736d465353ff5e4dc9580bff6a19"
+    },
+    {
+      "module": "SmzaStageGlobalSplit",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaStageGlobalSplit.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "8cdb879303945f14b33fa37c2b37676775c2809c8849c6cdbde4bae9448fa585"
+    },
+    {
+      "module": "SmzaStageVectorInstability",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaStageVectorInstability.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "9ee9c6db998ea8865a0a1716eaa30c37162fff331cc515e16d70cbbb02deedff"
+    }
+  ],
+  "entry_modules": [
+    "Mca38AffineBadLabelCount",
+    "Mca38NestedContentExceptions",
+    "Mca38NestedFactorCoverage",
+    "Mca38NestedFactorSeparability",
+    "Mca38NestedIndependentUnion",
+    "Mca38NestedInterpolationHeights",
+    "Mca38NestedRegularPartition",
+    "Mca38NestedRegularPoint",
+    "Mca38NonidenticalIncidenceCount",
+    "Mca38OriginFactorCoverage",
+    "Mca38PrimitiveFactorDegreeBudget",
+    "Mca38RbrActualMultiplicity",
+    "Mca38RbrGlobalMultiplicity",
+    "Mca38RbrPolynomialEndpoint",
+    "Mca38RoundByRoundInterpolation",
+    "Mca38RoundByRoundParameters",
+    "Mca38SeparateStageLedger",
+    "Mca38UniversalMatrixEvent",
+    "Q38CmsControlledSwap",
+    "Q38CmsIndexedSwap",
+    "Q38CmsSwapConjugation",
+    "Q38FreshSwapFiber",
+    "Q38FreshSwapIsometry",
+    "Q38StateValuedCoinTransport",
+    "SmzaChallengeStageTargets",
+    "SmzaFixedAdviceBadCell",
+    "SmzaFixedAdvicePrefix",
+    "SmzaInitializedStageRouting",
+    "SmzaRawStageGeometry",
+    "SmzaSelectedStageSearch"
+  ],
+  "evidence_notes": [
+    "Default roots are only modules with retained PASS receipts whose preflight and postflight source digest matches the current file.",
+    "Recursive dependencies are included even when they lack a PASS receipt.",
+    "Tracked formal/lean, HegemonCrypto, and Mathlib sources are external roots; cached .olean files do not establish fresh source verification."
+  ],
+  "excluded_unchecked_sources": [
+    "GeneratePoseidon2V8RelationProgramHgv8rp04Vectors",
+    "Mca38ActualDerivativeDenominator",
+    "Mca38ActualDerivativeDenominatorR2",
+    "Mca38ActualFiniteResidual",
+    "Mca38ActualFullNumerator",
+    "Mca38ActualNonaffineBranchCount",
+    "Mca38ActualNonzeroBranchCount",
+    "Mca38ActualOriginAssignment",
+    "Mca38ActualPositionIncidenceCount",
+    "Mca38ActualResidualNorm",
+    "Mca38ActualResidualSpecialization",
+    "Mca38ActualRootSource",
+    "Mca38ActualRootSourceHeight",
+    "Mca38AlgebraicAffineDescent",
+    "Mca38AlgebraicAffineDescentR2",
+    "Mca38BaseFieldRegularPoint",
+    "Mca38BivariateHeightInterface",
+    "Mca38BranchAudit",
+    "Mca38ClearedIncidence",
+    "Mca38ClearedResidualAssembly",
+    "Mca38CommonRegularPoint",
+    "Mca38FiniteFactorLocalization",
+    "Mca38FiniteHeightInduction",
+    "Mca38FiniteHenselLedgerArithmetic",
+    "Mca38FiniteHenselR2",
+    "Mca38FullNumeratorEndpoint",
+    "Mca38HenselActualRecurrenceR3",
+    "Mca38HenselCompositionR3",
+    "Mca38HenselHeightR3",
+    "Mca38HenselPolynomialHeight",
+    "Mca38HenselRootShift",
+    "Mca38HenselTransferR2",
+    "Mca38LocalizedNewtonStart",
+    "Mca38LocalizedNewtonTruncation",
+    "Mca38LocalizedResidualCount",
+    "Mca38LocalizedResponseTracking",
+    "Mca38LocalizedSourceSpecialization",
+    "Mca38NestedTranslation",
+    "Mca38NewtonBranchDichotomy",
+    "Mca38NewtonBranchDichotomyR2",
+    "Mca38SharedNumeratorBidegree",
+    "Mca38SimpleFactorStartR2",
+    "Mca38SmallDegreeSeparable",
+    "Mca38TaylorCoefficientHeight",
+    "Mca38TranslatedRegularOrigin",
+    "Mca38TrivariateFactorCoverage",
+    "Mca38UniformSpecialization",
+    "Mca38UnitHenselHeight",
+    "Mca38WeightedBranchUnions",
+    "Poseidon2V8RelationProgramHgv8rp04",
+    "Q38AdaptiveOpening",
+    "Q38AdaptiveOpeningAudit",
+    "Q38AdaptiveResamplingObservation",
+    "Q38AdaptiveResamplingSupport",
+    "Q38ChronologicalStateAlgebra",
+    "Q38CmsInitializedResampling",
+    "Q38CmsResamplingCoordinates",
+    "Q38ControlledFreshSwap",
+    "Q38ControlledFreshSwapCore",
+    "Q38FreshLabelResampling",
+    "Q38FreshLabelResamplingAudit",
+    "Q38LeafFrameHybridR4",
+    "Q38MeasuredCmsNonleaf",
+    "Q38OpenedTapeConditioningR5",
+    "Q38RetainedOpenedOverlay",
+    "Q38SelectionCompiler",
+    "Q38SelectionFeedback",
+    "SmzaAcceptedRp04Security",
+    "SmzaPiopGoodOutcomeR2",
+    "SmzaQ38LvcsOpening",
+    "SmzaQ38McaSourceBindingR2",
+    "SmzaQ38OpeningFieldReadbackR3",
+    "SmzaQ38OracleExtraction",
+    "SmzaQ38Recovery",
+    "SmzaRp04ActualProgram",
+    "SmzaRp04CalculatedExtraction",
+    "SmzaRp04Components",
+    "SmzaRp04DecodedPolynomialSource",
+    "SmzaRp04Degree",
+    "SmzaRp04ExtractionAudit",
+    "SmzaRp04NonlinearAudit",
+    "SmzaRp04NonlinearTransport",
+    "SmzaRp04PackedAcceptance",
+    "SmzaRp04PackedAudit",
+    "SmzaRp04ProgramPiop",
+    "SmzaRp04PublicContext",
+    "SmzaRp04RestoredTranscriptChecks",
+    "SmzaRp04ScalarCheckTransport",
+    "SmzaRp04SourceAcceptance"
+  ],
+  "external_modules": [
+    "Mathlib.",
+    "Batteries.",
+    "Std.",
+    "Lean.",
+    "Plausible.",
+    "Cli.",
+    "Qq.",
+    "Aesop.",
+    "Hegemon.",
+    "HegemonCrypto."
+  ],
+  "external_roots": [
+    "formal/lean",
+    "formal/crypto/HegemonCrypto",
+    "formal/crypto/.lake/packages/mathlib",
+    "formal/crypto/.lake/packages/batteries",
+    "formal/crypto/.lake/packages/Qq",
+    "formal/crypto/.lake/packages/aesop"
+  ],
+  "missing_custom_imports": [],
+  "purpose": "Portable source/import closure for PASS-receipt-matched RP04/q38 Lean roots and their recursive custom dependencies. Hashes pin source bytes only; they do not claim fresh Lean verification.",
+  "resolved_aliases": {
+    "Hegemon.Transaction.Balance": "formal/lean/Hegemon/Transaction/Balance.lean",
+    "Hegemon.Transaction.Poseidon2V8SemanticSpecification": "formal/lean/Hegemon/Transaction/Poseidon2V8SemanticSpecification.lean",
+    "Q38FieldAllocation": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smz9-q38-collection.0EJpVRpz/Q38FieldAllocation.lean"
+  },
+  "schema": "smza-checked-lean-manifest-v1",
+  "source_roots": [
+    ".agent/q38-counting-2026-09-19/factor",
+    ".agent/q38-counting-2026-09-19/branches",
+    ".agent/prod-closure-2026-09-19/privacy",
+    ".agent/prod-closure-2026-09-19/extraction",
+    ".agent/prod-closure-2026-09-19/program"
+  ]
+}
+
