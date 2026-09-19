@@ -28,13 +28,20 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
 - [x] Check joint four-role bad-event composition on one initialized oracle
   execution. Concrete role densities and accepted-claim event inclusion remain
   to instantiate; this is not yet the full accepted-transcript soundness theorem.
+- [x] Apply the universal count to the actual140-column MCA matrix and the
+  final q38 small-support event. Both local density bounds and their combined
+  loss below2^-265 pass Lean and the standard-axiom-only audit. This is local
+  decoder accounting, not a265-bit whole-system security claim.
 - [x] Check canonical RP04 leaf-byte injectivity and recorded Merkle opening
   transport, including salt, index, tape, all145 field words and internal nodes.
   Arbitrary raw transcript framing and accepted arithmetic composition remain.
 - [x] Check initialized privacy leaf overlap. Full initialized resampling and
   the adaptive whole-view privacy theorem have not yet passed.
-- [x] Validate the expanded source manifest: 35 checked roots and79 recursive
-  custom dependencies (114 files). Source/hash validation is not a fresh build
+- [x] Check the initialized CMS state, coordinate isometry, database-size
+  invariant, and boundedness of the actual raw query run. The concrete
+  full-domain resampling theorem remains separate and incomplete.
+- [x] Validate the expanded source manifest: 37 checked roots and80 recursive
+  custom dependencies (117 files). Source/hash validation is not a fresh build
   of the entire bundle; individual matched PASS receipts are retained.
 - [x] Check the formal source hash, both targeted module-parser regressions,
   all 14 governance tests, and the claims/active-progress CLI checks.
@@ -46,6 +53,13 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
 - [x] Fix the formal-checker formatting failure and isolate the three PoW-rule
   fixtures from decoder-only transaction authority. All seven `pow_rules` tests
   pass with their original rejection assertions; no production rule is changed.
+- [x] Repair the newly observed transaction-core ceiling-division lint and
+  Sled reopen contention in the HX512 persistence test. The focused core
+  clippy check and exact-value persistence/restart test pass. The test retries
+  only transient `WouldBlock`, with a2-second bound; all data assertions remain.
+- [x] Refresh the CI-observed governance input hash and rerun all14 focused
+  governance tests successfully. The existing claims checker also passes;
+  this does not approve the121 pending source reviews or the security contract.
 
 ## Remaining
 
@@ -56,8 +70,10 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
   and recorded-transcript arithmetic chain still need successful integration.
 - [ ] Finish adaptive privacy: check initialized resampling, chronological
   DECS/PIOP transport, measured nonleaf composition, and the whole-game
-  interpreter identity. Initialized resampling currently hits the existing
-  RAM guard; its source is not counted as a checked proof.
+  interpreter identity. The initialized CMS prefix passes; concrete full-domain
+  resampling currently hits the existing RAM guard. The remaining whole-game
+  identity must equate initialized-oracle purification acceptance with the
+  average named-oracle acceptance over all seven program constructors.
 - [ ] Connect the completed arguments to the repaired relation and activate
   the fresh-proof route. Wallet multisig and release-profile checks currently
   report missing route authority; their tests remain enabled.

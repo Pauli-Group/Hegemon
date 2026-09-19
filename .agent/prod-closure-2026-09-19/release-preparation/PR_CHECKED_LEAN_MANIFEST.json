@@ -22,6 +22,7 @@
     "Q38CmsControlledSwap",
     "Q38CmsIndexedSwap",
     "Q38CmsInitializedLeafOverlap",
+    "Q38CmsInitializedResampling",
     "Q38CmsSwapConjugation",
     "Q38FreshSwapFiber",
     "Q38FreshSwapIsometry",
@@ -33,6 +34,7 @@
     "SmzaJointRoleOracleExecution",
     "SmzaPhysicalStageRecord",
     "SmzaRawStageGeometry",
+    "SmzaRp04McaLoss",
     "SmzaRp04RawRecordedMerkle",
     "SmzaSelectedStageSearch"
   ],
@@ -647,6 +649,15 @@
       "sha256": "0180b49bc6647e730e3b81e527940731eef80942caa3a9ccd8797dbbd86a066d"
     },
     {
+      "module": "Q38CmsInitializedResampling",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsInitializedResampling.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsInitializedResampling.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "2ccb2bf8c97165f00d26ec1e57d2b4d855ad4b76c1db3f14e590dd8121493965"
+    },
+    {
       "module": "Q38CmsResamplingCoordinates",
       "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsResamplingCoordinates.lean",
       "receipt_pins": [
@@ -924,6 +935,24 @@
       "sha256": "b27f3d2ea8e1b128e93691cc00c0629e1431af925de3d28da07222579cd0feee"
     },
     {
+      "module": "SmzaRp04McaLoss",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04McaLoss.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04McaLoss.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "825f9c4dd3de6eef98350aaf7da0666680dde1aa140009c6c84ed3faeb1ea169"
+    },
+    {
+      "module": "SmzaRp04McaRoleCells",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04McaRoleCells.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04McaRoleCells.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "0a78422c108b5f65b7a9797a1b7e8bfb6b0cd544b77b77f0174e534b3f2b98a8"
+    },
+    {
       "module": "SmzaRp04Payload",
       "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04Payload.lean",
       "receipt_pins": [
@@ -995,6 +1024,7 @@
     "Q38CmsControlledSwap",
     "Q38CmsIndexedSwap",
     "Q38CmsInitializedLeafOverlap",
+    "Q38CmsInitializedResampling",
     "Q38CmsSwapConjugation",
     "Q38FreshSwapFiber",
     "Q38FreshSwapIsometry",
@@ -1006,6 +1036,7 @@
     "SmzaJointRoleOracleExecution",
     "SmzaPhysicalStageRecord",
     "SmzaRawStageGeometry",
+    "SmzaRp04McaLoss",
     "SmzaRp04RawRecordedMerkle",
     "SmzaSelectedStageSearch"
   ],

@@ -1,0 +1,12 @@
+'HegemonCrypto.SmallWood.SmzaRp04McaRoleCells.matrix_bad_card_bound' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+'HegemonCrypto.SmallWood.SmzaRp04McaRoleCells.matrix_bad_output_density' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+'HegemonCrypto.SmallWood.SmzaRp04McaRoleCells.small_support_output_density' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+'HegemonCrypto.SmallWood.SmzaRp04McaLoss.combined_mca_local_loss_below_265_bits' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]

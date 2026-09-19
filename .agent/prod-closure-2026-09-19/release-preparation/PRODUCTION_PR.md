@@ -35,7 +35,7 @@ records a native-source-only refresh and `production_eligible: false`.
 - The source verifier, canonical readback, mutation controls, in-process
   lifecycle, actual-socket lifecycle, and software-evidence checker passed.
   These local receipts are retained separately, not bulk-uploaded in this PR.
-- The PR includes 35 PASS-receipt-matched Lean component roots plus their79
+- The PR includes 37 PASS-receipt-matched Lean component roots plus their80
   recursive custom dependencies, pinned by source hash. The portable source
   checker and reproduction instructions are included. The universal q38
   middle-support counting theorem and concrete field adapter now pass Lean;
@@ -44,7 +44,10 @@ records a native-source-only refresh and `production_eligible: false`.
   counting, primitive origin-root coverage, and initialized quantum routing.
   New roots add a joint four-role bound on one initialized quantum execution,
   canonical RP04 Merkle leaf injectivity/opening transport, and initialized
-  privacy leaf overlap. Actual accepted-event identification and full adaptive
+  privacy leaf overlap and initialized CMS boundedness. The actual140-column
+  decoder's two local losses now compose below2^-265, with a standard-axiom-only
+  audit; this is not a265-bit whole-system security claim.
+  Actual accepted-event identification and full adaptive
   privacy remain separate obligations.
 - The q38 work remains formal/source evidence, not an end-to-end deployed
   security proof. Adaptive privacy,
@@ -93,15 +96,23 @@ Checked CI repairs:
   three PoW/timestamp/subsidy fixtures stop introducing unrelated decoder-only
   transactions. Their original rejection assertions remain unchanged, with
   diagnostic messages added; no production validation or test is disabled.
+- The subsequent transaction-core `manual_div_ceil` lint is repaired; focused
+  `cargo clippy -p transaction-core --lib -- -D warnings` passes. The HX512
+  persistence/restart test passes with a2-second reopen retry restricted to
+  transient Sled `WouldBlock` errors and its original exact-byte assertions.
+  The CI-observed governance hash is refreshed and all14 focused tests pass
+  again; the claims checker passes without approving any pending source review.
 
-The 35-root,114-source mathematical bundle now includes the checked global
+The 37-root,117-source mathematical bundle now includes the checked global
 counting theorem and concrete field specialization. Their axiom audit reports
 only `propext`, `Classical.choice`, and `Quot.sound`; no count assumption remains.
 The analysis-only support threshold65536 does not increase q38, degree405, or
 proof bytes. Accepted-execution readout, actual sampler-event and RP04 arithmetic
 instantiation, quantum/lifetime composition, and full adaptive privacy remain
-open. Initialized leaf overlap passes; full initialized resampling currently
-hits the existing RAM guard and is not counted as checked.
+open. Initialized leaf overlap and the initialized CMS boundedness prefix pass;
+the separate concrete full-domain resampling check currently hits the existing
+RAM guard and is not counted as checked. The whole-view interpreter and its
+initialized-purification/Born-average identity are still incomplete.
 
 Wallet multisig and release-profile checks report absent fresh-proof route
 authority; their tests remain enabled. The app end-to-end coinbase timeout and

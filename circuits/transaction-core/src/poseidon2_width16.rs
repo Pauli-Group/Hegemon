@@ -425,7 +425,7 @@ pub const fn poseidon2_width16_sponge_permutation_count(input_len: usize) -> Opt
     } else if input_len == 0 {
         Some(1)
     } else {
-        Some((input_len + POSEIDON2_WIDTH16_RATE - 1) / POSEIDON2_WIDTH16_RATE)
+        Some(input_len.div_ceil(POSEIDON2_WIDTH16_RATE))
     }
 }
 

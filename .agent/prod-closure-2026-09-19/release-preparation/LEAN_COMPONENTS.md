@@ -7,9 +7,14 @@ The local PASS receipts now include the global q38 count and its concrete
 field adapter. They do not establish full adaptive privacy, final accepted
 transcript extraction, or production authorization.
 
-The current manifest contains 35 checked roots and79 recursive dependencies.
+The current manifest contains 37 checked roots and80 recursive dependencies.
 New roots include `Mca38UniversalBadLineCount`, `SmzaJointRoleOracleExecution`,
-`SmzaRp04RawRecordedMerkle`, and `Q38CmsInitializedLeafOverlap`.
+`SmzaRp04RawRecordedMerkle`, `Q38CmsInitializedLeafOverlap`,
+`SmzaRp04McaLoss`, and the initialized prefix `Q38CmsInitializedResampling`.
+The MCA adapter proves the two actual local densities and their combined
+loss below2^-265; its separate audit also reports only standard logical axioms.
+The initialized CMS prefix proves state/isometry/database boundedness, not
+the still-unchecked full-domain resampling or whole-view privacy endpoints.
 The joint quantum result uses one initialized execution; concrete role density
 and accepted-event inclusion premises still need their actual instantiations.
 The Merkle result binds canonical typed leaf/internal-node inputs; it does not

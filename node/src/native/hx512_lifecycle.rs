@@ -890,7 +890,19 @@ mod tests {
             tree.insert(&durable.key, durable.value.as_slice()).unwrap();
             database.flush().unwrap();
         }
-        let database = sled::open(directory.path()).unwrap();
+        let reopen_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let database = loop {
+            match sled::open(directory.path()) {
+                Ok(database) => break database,
+                Err(sled::Error::Io(ref io_error))
+                    if io_error.kind() == std::io::ErrorKind::WouldBlock
+                        && std::time::Instant::now() < reopen_deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Err(error) => panic!("reopening lifecycle sled database: {error}"),
+            }
+        };
         let tree = database.open_tree("hx512_inactive_pending").unwrap();
         let value = tree.get(&key).unwrap().unwrap().to_vec();
         assert_eq!(value, raw_action);
