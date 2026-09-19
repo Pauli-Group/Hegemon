@@ -16,11 +16,11 @@
     "proof_mode": "inline_self_contained"
   },
   "diagnostic_source_security_report": {
-    "bytes": 136119,
+    "bytes": 134613,
     "path": "docs/crypto/smallwood_poseidon2_v8_smz9_source_security_report.json",
     "production_authorizing": false,
     "schema": "hegemon.smallwood.poseidon2-v8.smz9.source-security-report.v3",
-    "sha512": "5346d68e30c7ec99d197669679159af777ae7663029e22fc84da8fbf5e353b1829b4f4368b6449510b25bbf1e1022281891a114f51783148e2423c538e0b5110"
+    "sha512": "8fb998ef5a52c18c26a95ed46984337d179e7203f9b5c65881c4d4166a5927bfbb31fa870c391a9fa1eb3c95b4caded470ee8dfb92cbf5b0a6adec8f7007e32f"
   },
   "executable_zk_refinement_report": {
     "bytes": 4230,

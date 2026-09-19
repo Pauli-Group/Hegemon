@@ -26,6 +26,10 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
 - [x] Check the formal source hash, both targeted module-parser regressions,
   all 14 governance tests, and the claims/active-progress CLI checks.
   These existing policy checks do not certify the incomplete security proof.
+- [x] Pass the full existing blueprint checker with all 121 review statuses
+  still pending. Refresh the current diagnostic report pin and preserve the
+  historical RP03 report as a byte-pinned test fixture; successor-authorization
+  tests pass without adding a registry entry or changing production flags.
 
 ## Remaining
 

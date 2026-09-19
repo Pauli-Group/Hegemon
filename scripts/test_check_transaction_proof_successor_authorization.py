@@ -20,6 +20,9 @@ import check_transaction_proof_successor_authorization as gate
 
 TEST_PROFILE_ID = "hegemon.smallwood.poseidon2.v8-eta.smz9.v1"
 TEST_BUNDLE_PATH = "config/smallwood-v8-poseidon2-successor-evidence-bundle.json"
+TEST_RP03_DIAGNOSTIC_REPORT_PATH = (
+    "testdata/formal_core_vectors/poseidon2_v8_rp03_diagnostic_security_report.json"
+)
 TEST_SOURCE_REVISION = "ab" * 20
 TEST_REVIEW_TRUST_ROOT_ID = "test-only-independent-review-root"
 TEST_REVIEW_PUBLIC_KEY_PATH = (
@@ -398,10 +401,13 @@ def make_fixture(
                 f"// exact V8 release fixture source {index}: {evidence_id}\n"
             ).encode("utf-8")
         elif evidence_id == "source_derived_composed_security_report":
+            # This synthetic authority fixture exercises the retained RP03
+            # profile. The live diagnostic report now describes RP04 and
+            # must not be relabeled as evidence for the historical program.
             security_report = json.loads(
                 (
                     ROOT
-                    / gate.NON_AUTHORIZING_DIAGNOSTIC_SECURITY_REPORT_PATH
+                    / TEST_RP03_DIAGNOSTIC_REPORT_PATH
                 ).read_text(encoding="utf-8")
             )
             for assumption in security_report["assumptions"]:
@@ -2069,6 +2075,14 @@ def main() -> None:
         "scripts/transaction_proof_successor_authorized_registry.py",
     }:
         raise SystemExit("release authority source exclusion set drifted")
+    retained_diagnostic_payload = (ROOT / TEST_RP03_DIAGNOSTIC_REPORT_PATH).read_bytes()
+    if len(retained_diagnostic_payload) != 136_119 or hashlib.sha512(
+        retained_diagnostic_payload
+    ).hexdigest() != (
+        "5346d68e30c7ec99d197669679159af777ae7663029e22fc84da8fbf5e353b1829"
+        "b4f4368b6449510b25bbf1e1022281891a114f51783148e2423c538e0b5110"
+    ):
+        raise SystemExit("retained RP03 diagnostic fixture drifted")
     diagnostic_payload = (
         ROOT / gate.NON_AUTHORIZING_DIAGNOSTIC_SECURITY_REPORT_PATH
     ).read_bytes()

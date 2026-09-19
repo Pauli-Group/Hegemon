@@ -78,8 +78,12 @@ Checked CI repairs:
 - Separately named RP04 Lean program/refinement and generated vectors pass;
   historical RP03 evidence remains separate and unchanged.
 - Formal source hash, two module-parser regressions, 14 governance tests, and
-  claims/active-progress policy checks pass. These policy results do not close
+  claims/active-progress and full blueprint policy checks pass. All 121 source
+  reviews remain pending. These policy results do not close
   the mathematical security contract or approve pending source reviews.
+- Successor-authorization tests pass after refreshing the non-authorizing
+  current-report pin and separating the byte-pinned historical RP03 test
+  report. No production flag, identity, or source registry entry is enabled.
 
 The local counting/quantum batch has 49 checked components, not 49 completed
 security arguments. Only the 30-root source closure described above is currently
