@@ -35,16 +35,19 @@ records a native-source-only refresh and `production_eligible: false`.
 - The source verifier, canonical readback, mutation controls, in-process
   lifecycle, actual-socket lifecycle, and software-evidence checker passed.
   These local receipts are retained separately, not bulk-uploaded in this PR.
-- The PR includes 31 PASS-receipt-matched Lean component roots plus their 23
+- The PR includes 35 PASS-receipt-matched Lean component roots plus their79
   recursive custom dependencies, pinned by source hash. The portable source
-  checker and reproduction instructions are included. This is not the completed
-  q38 theorem; source-manifest validation is distinct from a new Lean build.
+  checker and reproduction instructions are included. The universal q38
+  middle-support counting theorem and concrete field adapter now pass Lean;
+  source-manifest validation is distinct from a new all-component Lean build.
   Components include actual factor coverage/degree ledgers, regular-start
   counting, primitive origin-root coverage, and initialized quantum routing.
-  The newest root derives Record/Split intertwining for explicitly defined
-  physical kernels; it does not supply the still-missing common accepted readout.
+  New roots add a joint four-role bound on one initialized quantum execution,
+  canonical RP04 Merkle leaf injectivity/opening transport, and initialized
+  privacy leaf overlap. Actual accepted-event identification and full adaptive
+  privacy remain separate obligations.
 - The q38 work remains formal/source evidence, not an end-to-end deployed
-  security proof. The full q38 counting bound, adaptive privacy,
+  security proof. Adaptive privacy,
   accepted-transcript extraction, quantum/binding/lifetime composition, and
   existing release review remain open. Universal Rust/compiler/OS proofs are
   explicitly outside this task; no such prerequisite is added.
@@ -91,15 +94,14 @@ Checked CI repairs:
   transactions. Their original rejection assertions remain unchanged, with
   diagnostic messages added; no production validation or test is disabled.
 
-The local counting/quantum batch has 55 checked components, not 55 completed
-security arguments. Only the 31-root source closure described above is currently
-packaged in the mathematical evidence bundle. The global counting theorem still
-needs kernel validation; accepted-execution readout, quantum/lifetime composition,
-and adaptive privacy remain open. The split initialized privacy check remains
-incomplete: its latest bounded attempt fails elaboration recursion depth.
-The latest counting passes are bivariate coefficient-height transport and
-cleared incidence. Actual nonaffine branch counting still has two invalid
-degree-bound theorem references; downstream global assembly is not yet checked.
+The 35-root,114-source mathematical bundle now includes the checked global
+counting theorem and concrete field specialization. Their axiom audit reports
+only `propext`, `Classical.choice`, and `Quot.sound`; no count assumption remains.
+The analysis-only support threshold65536 does not increase q38, degree405, or
+proof bytes. Accepted-execution readout, actual sampler-event and RP04 arithmetic
+instantiation, quantum/lifetime composition, and full adaptive privacy remain
+open. Initialized leaf overlap passes; full initialized resampling currently
+hits the existing RAM guard and is not counted as checked.
 
 Wallet multisig and release-profile checks report absent fresh-proof route
 authority; their tests remain enabled. The app end-to-end coinbase timeout and

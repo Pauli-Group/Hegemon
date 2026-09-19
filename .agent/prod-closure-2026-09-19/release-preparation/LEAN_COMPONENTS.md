@@ -3,13 +3,17 @@
 This source bundle is **not the complete production security contract**.
 The manifest selects previously checked component roots and their recursive
 custom-source dependencies. Unfinished drafts are excluded from its build.
-The local PASS receipts establish component checks, not the global q38 count,
-full adaptive privacy, or production authorization.
+The local PASS receipts now include the global q38 count and its concrete
+field adapter. They do not establish full adaptive privacy, final accepted
+transcript extraction, or production authorization.
 
-The current manifest contains 31 checked roots and 23 recursive dependencies.
-The added `SmzaPhysicalStageRecord` root proves physical Record/Split kernel
-conjugation and operator intertwining. Accepted readout and common-execution
-identification remain separate open obligations.
+The current manifest contains 35 checked roots and79 recursive dependencies.
+New roots include `Mca38UniversalBadLineCount`, `SmzaJointRoleOracleExecution`,
+`SmzaRp04RawRecordedMerkle`, and `Q38CmsInitializedLeafOverlap`.
+The joint quantum result uses one initialized execution; concrete role density
+and accepted-event inclusion premises still need their actual instantiations.
+The Merkle result binds canonical typed leaf/internal-node inputs; it does not
+by itself identify every accepted raw transcript with those typed inputs.
 
 Validate the packaged source hashes and recursive custom imports, without
 invoking a compiler:
@@ -40,7 +44,10 @@ The new counting route uses the degree-405 truncated Newton response directly:
 either one affine pair covers every specialization of a branch, or at most405
 positions have identical generic incidence. This does not require that the
 generic Newton residual vanish. Consequently the separate residual-exception
-case can be omitted. Its proposed total is1,694,784,843,179, below the existing
-12,310,499,043,179 target. The complete formal assembly of that shorter argument
-remains pending. Query count, protocol degrees and serialized proof-size caps
-are unchanged.
+case can be omitted. Its checked total is1,694,784,843,179, below the existing
+12,310,499,043,179 target. The global assembly and concrete extension-field
+adapter both pass. The audit of `actual_global_incidence_label_count` and
+`universal_badLineLabels_65536` reports only Lean's standard logical axioms:
+`propext`, `Classical.choice`, and `Quot.sound`. No counting assumption is
+supplied to the universal endpoint. Query count, protocol degrees and serialized
+proof-size caps are unchanged.
