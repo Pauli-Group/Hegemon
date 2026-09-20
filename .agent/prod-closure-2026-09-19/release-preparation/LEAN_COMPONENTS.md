@@ -7,7 +7,7 @@ The local PASS receipts now include the global q38 count and its concrete
 field adapter. They do not establish full adaptive privacy, final accepted
 transcript extraction, or production authorization.
 
-The current manifest contains 65 checked roots and132 recursive dependencies.
+The current manifest contains 85 checked roots and134 recursive dependencies.
 New roots include `Mca38UniversalBadLineCount`, `SmzaJointRoleOracleExecution`,
 `SmzaRp04RawRecordedMerkle`, `Q38CmsInitializedLeafOverlap`,
 `SmzaRp04McaLoss`, and the initialized prefix `Q38CmsInitializedResampling`.
@@ -36,6 +36,25 @@ The initialized CMS prefix proves state/isometry/database boundedness, not
 the whole-view adaptive probability bound. Full-domain initialized resampling,
 the four-role numerical ledger, FPP coefficient readback with its binding suffix,
 and DECS evaluation/rotation readback now have matched PASS receipts.
+RP04 accepted-program natural-number balance, public-target readback for every
+recovered candidate, chronological prefix labels and DECS interpolation also
+pass. The RP04 lifetime ledger reduction, raw wrapper/prefix readback,
+reconstructed DECS-head binding and generic whole-view continuation bound now
+also pass. Raw-field successful-fiber symmetry, exact raw root/opening scalar
+readback, and deterministic verifier checks now pass under their stated
+collision-free assumptions. Phase/decompression isometry and the quantum
+selected-coordinate raw-record collision bound also pass: 6*T^3/2^512,
+or162/2^320 at the existing lifetime cap. That last endpoint is not the separate
+Poseidon2 commitment-binding assumption. The initialized arbitrary-continuation
+probability theorem now passes as well, deriving support, normalization and
+the canonical oracle-family representation for the actual empty-database run.
+The dependent-continuation extension also passes, allowing the program to use
+the same revealed tape rather than assuming independence from it.
+The single-database verifier endpoint now unifies the Merkle/PIOP readback
+under one record-collision event. RP04 balance-prefix equality uses kernel
+reduction; accepted balance and lifetime-cap audits report only standard
+logical axioms. The accepted-execution probability and full adaptive privacy
+applications remain separate.
 The checked whole-view identity does not discharge its separately stated
 `ExternalAdaptiveReprogramming` premise. The initialized full-domain aggregation
 and bounded-support interfaces and their concrete assembly now pass.

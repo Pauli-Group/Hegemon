@@ -35,7 +35,7 @@ records a native-source-only refresh and `production_eligible: false`.
 - The source verifier, canonical readback, mutation controls, in-process
   lifecycle, actual-socket lifecycle, and software-evidence checker passed.
   These local receipts are retained separately, not bulk-uploaded in this PR.
-- The PR includes 65 PASS-receipt-matched Lean component roots plus their132
+- The PR includes 85 PASS-receipt-matched Lean component roots plus their134
   recursive custom dependencies, pinned by source hash. The portable source
   checker and reproduction instructions are included. The universal q38
   middle-support counting theorem and concrete field adapter now pass Lean;
@@ -64,7 +64,27 @@ records a native-source-only refresh and `production_eligible: false`.
   now pass. FPP readback preserves all1104 context-binding suffix bytes;
   DECS readback preserves its evaluation wire order and interpolation rotation.
   Initialized full-domain resampling and the four-role numerical ledger also
-  pass. The final whole-execution applications remain
+  pass. RP04 natural-number balance now follows from the actual accepted
+  program and note-call/CSR/range projection. Public-target readback proves
+  one recorded reconstruction suffices for every recovered candidate; the
+  chronological labels and DECS interpolation also pass. The RP04 lifetime
+  ledger reduction, raw wrapper/prefix readback, reconstructed DECS-head binding
+  and generic whole-view continuation bound now pass too. Raw-field sampler
+  fibers, raw Merkle-root readback, five/twelve scalar checks and deterministic
+  verifier readback also pass under their explicit record/database assumptions.
+  The single-database endpoint now derives the same verifier checks using one
+  collision-free record relation for Merkle openings and both PIOP hashes.
+  Balance-prefix equality now uses kernel reduction; balance and lifetime-cap
+  axiom audits report only standard logical axioms.
+  Phase/decompression isometry and the initialized quantum raw-record collision
+  bound 6*T^3/2^512 pass. At the existing lifetime cap the latter is162/2^320;
+  it is distinct from the Poseidon2 commitment-binding assumption.
+  The initialized resampling probability bound through an arbitrary phase-game
+  continuation now passes without assuming the desired bound, including
+  continuations depending on the same revealed tape. The actual
+  complete leaf-request execution identity and adaptive round composition
+  remain separate from this checked one-request endpoint.
+  The final whole-execution applications remain
   incomplete; the whole-view identity does not discharge the existing
   `ExternalAdaptiveReprogramming` premise in its adaptive-bound application.
   Actual role composition requires separate conditioning of earlier challenge
@@ -126,7 +146,7 @@ Checked CI repairs:
   The CI-observed governance hash is refreshed and all14 focused tests pass
   again; the claims checker passes without approving any pending source review.
 
-The current mathematical bundle contains 65 checked roots and197 sources.
+The current mathematical bundle contains 85 checked roots and219 sources.
 The global q38 count, complete degree certificate, packed canonicality,
 actual-program connection and calculated extraction pass. The per-basis
 resampling estimate, global initialized resampling and whole-view execution
@@ -140,6 +160,14 @@ Wallet multisig and release-profile checks report absent fresh-proof route
 authority; their tests remain enabled. The app end-to-end coinbase timeout and
 remaining full CI checks have not been resolved. No all-green CI, production
 eligibility, or completed independent review is claimed.
+CI at `71f526aa` also reports stale policy pins, stale transaction assertions,
+broader Clippy failures and a PoW compatibility failure. Earlier targeted
+passes above are historical checks, not a claim that this head passes CI.
+This update refreshes the two stale policy pins and reruns all14 retained
+governance tests successfully without rebuilding. It corrects two stale Rust
+test expectations from current RP04 data; those changed tests have not been
+recompiled or rerun. The separate historical semantic-decoder fixture still
+needs a genuinely generated RP04 successor.
 
 The existing CI release workflow can build manifest-bound binaries and create a
 draft GitHub release after its authorization/security jobs pass. It is not a

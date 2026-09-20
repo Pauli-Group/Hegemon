@@ -95,8 +95,42 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
   headroom above2^-129 for the remaining binding/lifetime losses.
   This arithmetic does not itself identify accepted-failure events or close
   binding and lifetime composition.
-- [x] Validate the expanded source manifest: 65 checked roots and132 recursive
-  custom dependencies (197 files). Source/hash validation is not a fresh build
+- [x] Prove RP04 accepted-program balance over natural numbers, using the actual
+  note-call positions1/38/75/78, RP04 CSR links and range reconstruction. No
+  legacy RP03 acceptance/refinement premise supplies the result. The RP04
+  lifetime ledger now also passes: its cap follows outside the identified
+  extraction and commitment-binding failures, with zero semantic-ledger loss.
+- [x] Prove that one recorded verifier reconstruction binds every recovered
+  candidate: its linear target and omitted-constant correction depend only on
+  public inputs. Check the chronological trace labels and DECS interpolation.
+- [x] Check reconstructed DECS-head binding, exact recorded wrapper/prefix
+  readback, and the generic whole-view continuation probability bound.
+  Its application to the actual adaptive privacy game remains below.
+- [x] Check exact raw-field sampler fibers, raw Merkle-root readback and the
+  five MCA/twelve LVCS accepted scalar checks. The deterministic verifier
+  readback passes with its stated collision-free-record/database assumptions.
+- [x] Reduce the deterministic verifier readback to a single collision-free
+  record relation for Merkle openings and both PIOP hash checks. No separate
+  database-equality premise remains in this endpoint. Identifying that event
+  in the complete quantum verifier execution remains a separate obligation.
+- [x] Check phase/decompression isometry and the selected 512-bit raw-record
+  collision bound on an initialized quantum CMS execution. Its loss is
+  6*T^3/2^512; at T <= 3*2^64 it is 162/2^320, below the retained 2^-129
+  headroom. This is not a proof of Poseidon2 commitment-binding hardness.
+- [x] Derive the initialized quantum resampling probability bound through an
+  arbitrary phase-game continuation from the actual empty-database execution.
+  The total-support invariant, normalization and canonical oracle-family
+  representation are proved, not supplied as the desired privacy conclusion.
+  Full adaptive request-round composition remains a separate obligation.
+- [x] Extend that bound to continuations depending on the same revealed tape.
+  The diagonal tape/state/program average is checked with the same loss; no
+  independence between the continuation and its tape is assumed.
+- [x] Replace the RP04 balance-prefix native evaluation with kernel reduction
+  and recheck the lifetime ledger against it. The axiom audit finds no axioms
+  for the prefix equality and only standard logical axioms for accepted
+  balance and the lifetime-cap endpoint.
+- [x] Validate the expanded source manifest: 85 checked roots and134 recursive
+  custom dependencies (219 files). Source/hash validation is not a fresh build
   of the entire bundle; individual matched PASS receipts are retained.
 - [x] Check the formal source hash, both targeted module-parser regressions,
   all 14 governance tests, and the claims/active-progress CLI checks.
@@ -115,12 +149,17 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
 - [x] Refresh the CI-observed governance input hash and rerun all14 focused
   governance tests successfully. The existing claims checker also passes;
   this does not approve the121 pending source reviews or the security contract.
+- [x] Refresh the two subsequent CI-stale policy pins and rerun the retained
+  governance test binary: all14 tests pass. No compilation or review-status
+  change is involved. Two stale Rust fixture expectations are corrected from
+  current RP04 data; those changed tests have not been recompiled or rerun.
 
 ## Remaining
 
 - [ ] Close accepted-execution readout and four stage-event identifications,
-  the algebra-event bound, transcript/commitment binding, and RP04 semantic
-  ledger reduction. The universal decoder count is now checked. The actual
+  the algebra-event bound, and transcript/commitment binding. RP04 natural-number
+  balance and the lifetime ledger reduction now pass. The universal decoder
+  count is checked. The actual
   degree certificate, packed-program canonicality and calculated extraction
   now pass, as do chronological algebra and the recorded PIOP binding adapter.
   Raw sampler event densities and complete accepted-event identification still
@@ -134,12 +173,19 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
   The seven-constructor initialized-purification/average-acceptance identity,
   chronological q38 algebra and measured application wrapper now pass.
   The remaining whole-game probability bound must be derived rather than
-  supplied through `ExternalAdaptiveReprogramming`.
+  supplied through `ExternalAdaptiveReprogramming`. The generic continuation
+  bound, exact phase-isometry and initialized arbitrary-continuation
+  specialization now pass. The remaining link identifies that measured
+  continuation with the actual complete leaf-request program on the same
+  persistent database, followed by adaptive request-round composition.
 - [ ] Connect the completed arguments to the repaired relation and activate
   the fresh-proof route. Wallet multisig and release-profile checks currently
   report missing route authority; their tests remain enabled.
 - [ ] Finish CI evidence refresh, including the existing source-review
   checker, and verify the final affected source/artifact lifecycle.
+  At published head `71f526aa`, CI still reports stale policy pins, transaction
+  fixture assertions, broader Clippy failures, a PoW compatibility failure,
+  and the app coinbase timeout. These are not represented as passing.
 - [ ] Complete the existing release review and mark the PR ready.
 
 Source-only theorem drafts, old snapshot passes, and a passing finite report

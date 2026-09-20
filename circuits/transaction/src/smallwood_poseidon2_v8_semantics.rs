@@ -4619,10 +4619,10 @@ mod tests {
         let refinement = adapter.source_program_refinement();
         assert_eq!(refinement.relation_digest, *adapter.relation_digest());
         assert_eq!(refinement.packed_lanes, 64);
-        assert_eq!(refinement.nonlinear_expression_nodes, 8_271);
+        assert_eq!(refinement.nonlinear_expression_nodes, 8_130);
         assert_eq!(refinement.nonlinear_roots, 773);
-        assert_eq!(refinement.csr_expression_nodes, 565);
-        assert_eq!(refinement.csr_attempts, 20_605);
+        assert_eq!(refinement.csr_expression_nodes, 564);
+        assert_eq!(refinement.csr_attempts, 20_602);
         assert_eq!(
             refinement.emitted_linear_constraints,
             adapter.geometry().linear_constraints

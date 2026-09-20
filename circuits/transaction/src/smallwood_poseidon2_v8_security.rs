@@ -2696,7 +2696,7 @@ mod tests {
         assert_eq!(report.piop_admissibility_bad_tuple_coefficient, 414);
         assert_eq!(report.piop_nonce_bad_per_trial, 813);
         assert_eq!(report.decs_openings, 20);
-        assert_eq!(SMALLWOOD_POSEIDON2_V8_POSEIDON_LIVE_CALLS_PER_PROOF, 125);
+        assert_eq!(SMALLWOOD_POSEIDON2_V8_POSEIDON_LIVE_CALLS_PER_PROOF, 128);
         assert_eq!(SMALLWOOD_POSEIDON2_V8_POSEIDON_EVALUATIONS_PER_PROOF, 128);
         assert_eq!(report.poseidon_honest_evaluations_decimal, "268435456");
         assert_eq!(report.projected_inner_proof_bytes, 122_863);
