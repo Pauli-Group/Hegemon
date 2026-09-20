@@ -7,7 +7,7 @@ The local PASS receipts now include the global q38 count and its concrete
 field adapter. They do not establish full adaptive privacy, final accepted
 transcript extraction, or production authorization.
 
-The current manifest contains 42 checked roots and97 recursive dependencies.
+The current manifest contains 54 checked roots and132 recursive dependencies.
 New roots include `Mca38UniversalBadLineCount`, `SmzaJointRoleOracleExecution`,
 `SmzaRp04RawRecordedMerkle`, `Q38CmsInitializedLeafOverlap`,
 `SmzaRp04McaLoss`, and the initialized prefix `Q38CmsInitializedResampling`.
@@ -17,6 +17,15 @@ measured-oracle core (`Q38MeasuredCmsNonleafCore`), and the full-domain
 per-basis estimate (`Q38CmsInitializedFullDomainPerBasis`).
 `SmzaRecordedTracePath` proves that the actual least-preimage extractor
 recovers any collision-free recorded path within its explicit recursion budget.
+The RP04 packed-program canonicality and calculated-extraction roots also pass,
+including their actual-program and restored-scalar-check dependency chain.
+The latter classifies failures into the named decoder/algebra events, with
+recorded binding and adaptive probability composition still to discharge.
+Recorded wrapper-prefix readback, recursion-fuel invariance, exact role-table
+conditioning, conditioned-query embedding, actual q38 chronological privacy
+algebra and its measured application wrapper also pass. Chronological soundness
+event accounting and typed/raw PIOP reconstruction pass as well. The final
+whole-execution soundness/privacy applications remain incomplete.
 The MCA adapter proves the two actual local densities and their combined
 loss below2^-265; its separate audit also reports only standard logical axioms.
 The initialized CMS prefix proves state/isometry/database boundedness, not

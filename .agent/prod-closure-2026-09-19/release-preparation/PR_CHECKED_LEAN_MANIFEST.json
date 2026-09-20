@@ -19,6 +19,7 @@
     "Mca38SeparateStageLedger",
     "Mca38UniversalBadLineCount",
     "Mca38UniversalMatrixEvent",
+    "Q38ChronologicalStateAlgebra",
     "Q38CmsControlledSwap",
     "Q38CmsIndexedSwap",
     "Q38CmsInitializedFullDomainPerBasis",
@@ -27,6 +28,7 @@
     "Q38CmsSwapConjugation",
     "Q38FreshSwapFiber",
     "Q38FreshSwapIsometry",
+    "Q38MeasuredCmsNonleaf",
     "Q38MeasuredCmsNonleafCore",
     "Q38StateValuedCoinTransport",
     "SmzaChallengeStageTargets",
@@ -35,12 +37,22 @@
     "SmzaInitializedStageRouting",
     "SmzaJointRoleOracleExecution",
     "SmzaPhysicalStageRecord",
+    "SmzaRawRecordedPrefix",
     "SmzaRawStageGeometry",
+    "SmzaRawTraceDepth",
     "SmzaRecordedTracePath",
+    "SmzaRoleDomainActiveEmbedding",
+    "SmzaRoleDomainConditionedRun",
+    "SmzaRoleDomainConditioning",
+    "SmzaRp04CalculatedExtraction",
+    "SmzaRp04ChronologicalAlgebra",
     "SmzaRp04Degree",
     "SmzaRp04McaLoss",
+    "SmzaRp04PackedAcceptance",
     "SmzaRp04RawRecordedMerkle",
+    "SmzaRp04RawRecordedTranscript",
     "SmzaRp04RecordedClaims",
+    "SmzaRp04RecordedTranscript",
     "SmzaSelectedStageSearch"
   ],
   "custom_sources": [
@@ -627,6 +639,15 @@
       "sha256": "a6c7e34475449f99248e6e788e88d7ba0cb3a902ca8476d00a5ea380fc78524d"
     },
     {
+      "module": "Q38ChronologicalStateAlgebra",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38ChronologicalStateAlgebra.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38ChronologicalStateAlgebra.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "79b08c6e1a7e7f816db6dc44b1abb26cef282bd132e167802cac8f4da137d713"
+    },
+    {
       "module": "Q38CmsControlledSwap",
       "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsControlledSwap.lean",
       "receipt_pins": [
@@ -777,6 +798,15 @@
       "sha256": "2c44cba370f89734d17e437ceceaceda8ce7af47c1976d39ec81ed7bf675e5bc"
     },
     {
+      "module": "Q38MeasuredCmsNonleaf",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38MeasuredCmsNonleaf.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38MeasuredCmsNonleaf.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "89de467311ff2477cd8c1cd1751cc7f19712069250f543e4b61c09653c68d5ee"
+    },
+    {
       "module": "Q38MeasuredCmsNonleafCore",
       "path": ".agent/prod-closure-2026-09-19/privacy/Q38MeasuredCmsNonleafCore.lean",
       "receipt_pins": [
@@ -925,6 +955,13 @@
       "sha256": "a520d256e08bba968986cd1e3fabdf17113c7823510ccd84a7c12c8d622d39d1"
     },
     {
+      "module": "SmzaPiopGoodOutcomeR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/extraction-core/SmzaPiopGoodOutcomeR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "031d8d05fb08dd42dd0debf911be40df95948ce82e571885f1f0a44cf411d545"
+    },
+    {
       "module": "SmzaPrefixTransportR2",
       "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-soundness-resume.LWbKdJ/SmzaPrefixTransportR2.lean",
       "receipt_pins": [],
@@ -946,6 +983,13 @@
       "sha256": "a83cc0ba46726ee4eba2000eb1ee697fe2296f3bc5a54957bf4db87b25f29776"
     },
     {
+      "module": "SmzaQ38OpeningFieldReadbackR3",
+      "path": ".agent/prod-closure-2026-09-18/extraction/SmzaQ38OpeningFieldReadbackR3.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "aa7d65d3d8fe63e85866579ae5f305bb0c3a8f98d236cfbe70e4da0178e4e95d"
+    },
+    {
       "module": "SmzaQ38OracleExtraction",
       "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/extraction-core/SmzaQ38OracleExtraction.lean",
       "receipt_pins": [],
@@ -960,6 +1004,15 @@
       "sha256": "3344f9976afd53090623eed591862c4698eea4c03eea60e791bab1a968ec3d9e"
     },
     {
+      "module": "SmzaRawRecordedPrefix",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRawRecordedPrefix.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRawRecordedPrefix.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "ba287b845a0976b6e582f55732a3a48bfde87865601cd1049b00a9e5d2d494ff"
+    },
+    {
       "module": "SmzaRawStageGeometry",
       "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRawStageGeometry.lean",
       "receipt_pins": [
@@ -967,6 +1020,15 @@
       ],
       "receipt_verified": true,
       "sha256": "1fa0d442d975f0d4e875202b836826e422ddc508c0c08dec2f7d70f457b724ba"
+    },
+    {
+      "module": "SmzaRawTraceDepth",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRawTraceDepth.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRawTraceDepth.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "c65a00a1e260f5c817daa53f967103df81b1ee20e2deae05f431dd46ad5ff8bf"
     },
     {
       "module": "SmzaRecordSplitR3",
@@ -990,6 +1052,60 @@
       ],
       "receipt_verified": true,
       "sha256": "7f332d861c24f3f353555cdc21b30c556dafdb23741cc90d5dd86b9c59606262"
+    },
+    {
+      "module": "SmzaRoleDomainActiveEmbedding",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRoleDomainActiveEmbedding.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRoleDomainActiveEmbedding.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "18e355d4f2a2c2b71adcad9f58152a645e3de70904584b37bd241412a1911337"
+    },
+    {
+      "module": "SmzaRoleDomainConditionedRun",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRoleDomainConditionedRun.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRoleDomainConditionedRun.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "034a2e3feee400cf9296a1716bb5a17977b8a9f20e26f863ae34ddeab840edd9"
+    },
+    {
+      "module": "SmzaRoleDomainConditioning",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRoleDomainConditioning.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRoleDomainConditioning.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "96bee51ff274eacf65f037ee498c1cdc861dfedc414dfc52da9fb13ee2ec2934"
+    },
+    {
+      "module": "SmzaRp04ActualProgram",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ActualProgram.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ActualProgram.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "e05e24f5fc3ccad0fa2d6ff7c34fb3fb228cef3b6f1921596f7a2ef44842904f"
+    },
+    {
+      "module": "SmzaRp04CalculatedExtraction",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04CalculatedExtraction.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04CalculatedExtraction.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "308019bdb04b96275c4ccc94fe398615cd3210dd9216a392987b2b605b9e3d84"
+    },
+    {
+      "module": "SmzaRp04ChronologicalAlgebra",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ChronologicalAlgebra.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ChronologicalAlgebra.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "fa4060a704b6f7d0a831c0d662767be59d67eacc09633c89db4e43f88c896caa"
     },
     {
       "module": "SmzaRp04Components",
@@ -1053,6 +1169,15 @@
       ],
       "receipt_verified": true,
       "sha256": "1a19977b57157cb382439878cdb20395ec9258e5ff0b141b3115669a0ce2d5f4"
+    },
+    {
+      "module": "SmzaRp04DecodedPolynomialSource",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04DecodedPolynomialSource.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04DecodedPolynomialSource.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "02294912950c9539c1d943036225019b22121fb2d02f8b9b929e0b576c13ae57"
     },
     {
       "module": "SmzaRp04Degree",
@@ -1145,6 +1270,249 @@
       "sha256": "0a78422c108b5f65b7a9797a1b7e8bfb6b0cd544b77b77f0174e534b3f2b98a8"
     },
     {
+      "module": "SmzaRp04NonlinearTransport",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04NonlinearTransport.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04NonlinearTransport.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "94225eb013530fed335a38183f70e3129c9e731af12c00159af7895375667f52"
+    },
+    {
+      "module": "SmzaRp04PackedAcceptance",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedAcceptance.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedAcceptance.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "1d82f2617d317bcc7e424dd7eec73481e91fa70eb2e0fce5b3ba395cd761749e"
+    },
+    {
+      "module": "SmzaRp04PackedAcceptanceChecks",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedAcceptanceChecks.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedAcceptanceChecks.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "96a7e4ea847064a734cfb05d42572068665dce22337c24f690145e53e1660616"
+    },
+    {
+      "module": "SmzaRp04PackedAcceptanceData",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedAcceptanceData.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedAcceptanceData.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "a6bd060b6392dee9be376cb827e45bc65d20bca6440d1eab306390aa5db98b31"
+    },
+    {
+      "module": "SmzaRp04PackedCanonicalPart00",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCanonicalPart00.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCanonicalPart00.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "f47f1f287f7106d53d9311a43ccb3f6b75021a353176f201dce90d2e6fcdf928"
+    },
+    {
+      "module": "SmzaRp04PackedCanonicalPart01",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCanonicalPart01.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCanonicalPart01.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "49712a839603e447d4678e63886b2d226b07129e11a051823b7b82945c3cabfb"
+    },
+    {
+      "module": "SmzaRp04PackedCanonicalPart02",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCanonicalPart02.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCanonicalPart02.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "dc92170482dba2d27fae9e6b8c7e64c6643f5c38f42daa943671c849e109f3fb"
+    },
+    {
+      "module": "SmzaRp04PackedCanonicalPart03",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCanonicalPart03.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCanonicalPart03.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "d9e9aa062e83c1e76edb74ad2c0c3e5aeaa86caf733ed87d4c103fa1699dd21f"
+    },
+    {
+      "module": "SmzaRp04PackedCanonicalPart04",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCanonicalPart04.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCanonicalPart04.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "a58a26a7ae06315b028b94a618c7d73f4122ffc96fd9c9ec6d9cf09dc2de8015"
+    },
+    {
+      "module": "SmzaRp04PackedCanonicalPart05",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCanonicalPart05.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCanonicalPart05.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "f050259b27694ed2e3cb76be175c8fbe0fd5d70a5cd009e5f8e63f5402c28eea"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart00",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart00.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart00.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "0b9ace0f88887d439e540b02f17302332d34a4377fc2128258c7f663389b74df"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart01",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart01.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart01.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "adbb991c55c83b87734d351b48cacabb385a47cea956b22d607dee053445a6b0"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart02",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart02.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart02.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "ee1dc258bf529433e539a60140076a8a30bfe147f37e88e0dd316d53f668cdf9"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart03",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart03.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart03.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "f459e9a025d87235c77141f16876b68fd93f2f4083ab2cf1393c77ef86ce7fae"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart04",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart04.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart04.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "386f0033e74694466f6363bbddf618a7e6b5ab5b1362260fef94c72403e101c4"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart05",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart05.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart05.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "dc5882c328ea7c0d0b579c4f9588aad377d15731a51480f90887261c1d5ab45b"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart06",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart06.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart06.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "4c4de11a335a441579741c4e6275998dde520b74ef4918b76bdbf53f2902f521"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart07",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart07.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart07.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "95536c76cdba165b04c755f7e07013804342f893629f8878976d468da23830fa"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart08",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart08.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart08.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "10e6d7389677343b06a2f0697f6e74f9f3b101b86cf83395ae351aef30a33a6e"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart09",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart09.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart09.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "34d5bebc14846a1d8c3effd023d72351d4494af04d02766ac1fbe57c419aa275"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart10",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart10.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart10.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "4dd9f9875c7fa486a935ca8f5780f99357228ef51b9c898754da11ba6e97d075"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart11",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart11.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart11.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "8f776283d163e1c19959c21290b48fcbe844bca369977986fe7e6ba905764e62"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart12",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart12.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart12.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "e33bbad3c6df7aecaaf15f692d26b45d12a1cec3511dbe28e91d662e50c9d0f8"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart13",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart13.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart13.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "b20f1e260c20f1d32ad2a17fc14bd4b4e71dd7af2a4b946103bae328ca345482"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart14",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart14.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart14.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "009b332aa97e30fbd2d32db310b224b5e23dcea3bc44a79817856b865f09b45b"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart15",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart15.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart15.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "5cb347b8dfbeaea1253a1dbe4796773de6ad393d324d22ba4130603632194a73"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart16",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart16.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart16.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "9f253008617df73533604766e6c91cecc57e51ed8d842c5a5a4a80435d84d272"
+    },
+    {
       "module": "SmzaRp04Payload",
       "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04Payload.lean",
       "receipt_pins": [
@@ -1152,6 +1520,24 @@
       ],
       "receipt_verified": true,
       "sha256": "765571606993eb27c61f8e66399df6d165a37f16a03b125514e27a866e33aae2"
+    },
+    {
+      "module": "SmzaRp04ProgramPiop",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ProgramPiop.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ProgramPiop.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "e0c1ae64faea81a4d6f8f1e8ce6b7c75db8dc05c6eed793ddea7954ffdb30999"
+    },
+    {
+      "module": "SmzaRp04PublicContext",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PublicContext.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PublicContext.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "051d866e2da34895637ac24936f5c4d22cf538f984d480730dd3363a4091dd86"
     },
     {
       "module": "SmzaRp04RawRecordedMerkle",
@@ -1163,6 +1549,15 @@
       "sha256": "c411dfda8af380da8734cb7cc461d707d85a75114d3b72d396114cd32016ca76"
     },
     {
+      "module": "SmzaRp04RawRecordedTranscript",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RawRecordedTranscript.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RawRecordedTranscript.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "3bb7fdaa21d5172ad232fe9560d0d2278af343d27b07c35ce3eacfbb123e6ed5"
+    },
+    {
       "module": "SmzaRp04RecordedClaims",
       "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RecordedClaims.lean",
       "receipt_pins": [
@@ -1170,6 +1565,42 @@
       ],
       "receipt_verified": true,
       "sha256": "7fdc225271a8f32c41784d4575d90e393d7c1bc1141c614a3f8080d0efb0274b"
+    },
+    {
+      "module": "SmzaRp04RecordedTranscript",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RecordedTranscript.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RecordedTranscript.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "58036182e825d4d4b7441d68e5714a56a733fdab6658eeceec61cd49c19b1185"
+    },
+    {
+      "module": "SmzaRp04RestoredTranscriptChecks",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RestoredTranscriptChecks.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RestoredTranscriptChecks.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "286c79f9f5817cd999228956b88e9e9f8162dc286f0a6fd5388ea030b66eea8f"
+    },
+    {
+      "module": "SmzaRp04ScalarCheckTransport",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ScalarCheckTransport.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ScalarCheckTransport.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "65f4277d8df03e1138178a40d67b4ac86b5b8304e43285ee03a94adc5eb795fd"
+    },
+    {
+      "module": "SmzaRp04SourceAcceptance",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04SourceAcceptance.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04SourceAcceptance.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "9b835417674588d13589ddcffeabe0ed158e6393df1e04c0794fadca6e445e6d"
     },
     {
       "module": "SmzaSelectedStageSearch",
@@ -1222,6 +1653,7 @@
     "Mca38SeparateStageLedger",
     "Mca38UniversalBadLineCount",
     "Mca38UniversalMatrixEvent",
+    "Q38ChronologicalStateAlgebra",
     "Q38CmsControlledSwap",
     "Q38CmsIndexedSwap",
     "Q38CmsInitializedFullDomainPerBasis",
@@ -1230,6 +1662,7 @@
     "Q38CmsSwapConjugation",
     "Q38FreshSwapFiber",
     "Q38FreshSwapIsometry",
+    "Q38MeasuredCmsNonleaf",
     "Q38MeasuredCmsNonleafCore",
     "Q38StateValuedCoinTransport",
     "SmzaChallengeStageTargets",
@@ -1238,12 +1671,22 @@
     "SmzaInitializedStageRouting",
     "SmzaJointRoleOracleExecution",
     "SmzaPhysicalStageRecord",
+    "SmzaRawRecordedPrefix",
     "SmzaRawStageGeometry",
+    "SmzaRawTraceDepth",
     "SmzaRecordedTracePath",
+    "SmzaRoleDomainActiveEmbedding",
+    "SmzaRoleDomainConditionedRun",
+    "SmzaRoleDomainConditioning",
+    "SmzaRp04CalculatedExtraction",
+    "SmzaRp04ChronologicalAlgebra",
     "SmzaRp04Degree",
     "SmzaRp04McaLoss",
+    "SmzaRp04PackedAcceptance",
     "SmzaRp04RawRecordedMerkle",
+    "SmzaRp04RawRecordedTranscript",
     "SmzaRp04RecordedClaims",
+    "SmzaRp04RecordedTranscript",
     "SmzaSelectedStageSearch"
   ],
   "evidence_notes": [
@@ -1382,6 +1825,7 @@
     ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smz9-q38-soundness.LvokDs",
     ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-parser-resume.Xmj8bJCn",
     ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-soundness-resume.LWbKdJ",
+    ".agent/prod-closure-2026-09-18/extraction",
     ".agent/prod-closure-2026-09-19/extraction",
     ".agent/prod-closure-2026-09-19/privacy",
     ".agent/q38-counting-2026-09-18",

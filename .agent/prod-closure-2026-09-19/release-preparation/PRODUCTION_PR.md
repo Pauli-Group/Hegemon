@@ -35,7 +35,7 @@ records a native-source-only refresh and `production_eligible: false`.
 - The source verifier, canonical readback, mutation controls, in-process
   lifecycle, actual-socket lifecycle, and software-evidence checker passed.
   These local receipts are retained separately, not bulk-uploaded in this PR.
-- The PR includes 42 PASS-receipt-matched Lean component roots plus their97
+- The PR includes 54 PASS-receipt-matched Lean component roots plus their132
   recursive custom dependencies, pinned by source hash. The portable source
   checker and reproduction instructions are included. The universal q38
   middle-support counting theorem and concrete field adapter now pass Lean;
@@ -51,6 +51,13 @@ records a native-source-only refresh and `production_eligible: false`.
   generic measured-oracle core, and full-domain per-basis bound also pass.
   Recorded paths now provably read back through the actual least-preimage
   extractor under its bounded recursion and recorded collision-free event.
+  RP04 packed-program canonicality and calculated extraction now pass, together
+  with their actual-program connection and restored-scalar-check dependencies.
+  Recorded wrapper-prefix readback, recursion-fuel invariance, role-table
+  conditioning and actual q38 chronological privacy algebra also pass.
+  The exact conditioned run, ActiveKey-only query embedding, measured q38
+  wrapper, chronological soundness accounting and raw PIOP reconstruction
+  now pass as well. The final whole-execution applications remain incomplete.
   Actual role composition requires separate conditioning of earlier challenge
   tables and a union on the same execution; the generic joint-advice theorem
   is not being represented as the completed RP04 argument.
@@ -110,20 +117,14 @@ Checked CI repairs:
   The CI-observed governance hash is refreshed and all14 focused tests pass
   again; the claims checker passes without approving any pending source review.
 
-The 37-root,117-source mathematical bundle now includes the checked global
-counting theorem and concrete field specialization. Their axiom audit reports
-only `propext`, `Classical.choice`, and `Quot.sound`; no count assumption remains.
-The analysis-only support threshold65536 does not increase q38, degree405, or
-proof bytes. Accepted-execution readout, actual sampler-event and RP04 arithmetic
-instantiation, quantum/lifetime composition, and full adaptive privacy remain
-open. Initialized leaf overlap and the initialized CMS boundedness prefix pass.
-A further retained local per-basis collision lemma now passes, but is not yet
-included in the117-source published bundle. The global resampling assembly
-still fails Lean and is not counted as checked. All six local degree chunks
-pass, but their combined certificate facade fails aggregation/flattening.
-The whole-view interpreter's seven-constructor
-initialized-purification/Born-average identity is written but unchecked; the
-chronological application still needs the actual q38 coin dimensions.
+The current mathematical bundle contains 54 checked roots and186 sources.
+The global q38 count, complete degree certificate, packed canonicality,
+actual-program connection and calculated extraction pass. The per-basis
+resampling estimate is included; global initialized resampling and whole-view
+privacy remain under check. Accepted-execution event identification,
+raw sampler-event accounting, remaining transcript binding and the final
+quantum/lifetime composition remain open. No new mathematical assumption,
+protocol degree, query count or serialized proof-size increase is introduced.
 
 Wallet multisig and release-profile checks report absent fresh-proof route
 authority; their tests remain enabled. The app end-to-end coinbase timeout and

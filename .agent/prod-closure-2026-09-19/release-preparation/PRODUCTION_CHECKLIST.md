@@ -52,8 +52,25 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
   is introduced.
 - [x] Prove that collision-free recorded paths are recovered by the actual
   least-preimage extractor within its explicit recursion budget.
-- [x] Validate the expanded source manifest: 42 checked roots and97 recursive
-  custom dependencies (139 files). Source/hash validation is not a fresh build
+- [x] Check RP04 packed-program canonicality and all coordinate bounds, then
+  its public context, decoded source, actual-program connection, scalar-check
+  transport, restored-transcript checks and calculated extraction. The latter
+  derives failed extraction from the named decoder/algebra events; it does not
+  yet discharge their adaptive quantum probabilities or transcript binding.
+- [x] Prove that sufficient extraction fuel recovers the same full subtree at
+  each wrapper stage, including readback along recorded wrapper prefixes.
+- [x] Check exact role-table conditioning, finite averaging and same-execution
+  event union, then the exact conditioned run and its ActiveKey-only oracle
+  embedding. Fixed-role queries are private contractions, not oracle calls.
+  The final role-bound application to accepted events remains separate.
+- [x] Check the chronological privacy algebra with the actual q38 coin
+  dimensions and its measured execution wrapper. Whole-game composition remains.
+- [x] Check chronological algebraic bad-event accounting and recorded PIOP
+  reconstruction, including the omitted linear constant and the actual SMZA
+  raw-byte framing/database bridge. Complete accepted-execution integration
+  still needs the other role/claim bindings.
+- [x] Validate the expanded source manifest: 54 checked roots and132 recursive
+  custom dependencies (186 files). Source/hash validation is not a fresh build
   of the entire bundle; individual matched PASS receipts are retained.
 - [x] Check the formal source hash, both targeted module-parser regressions,
   all 14 governance tests, and the claims/active-progress CLI checks.
@@ -78,19 +95,19 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
 - [ ] Close accepted-execution readout and four stage-event identifications,
   the algebra-event bound, transcript/commitment binding, and RP04 semantic
   ledger reduction. The universal decoder count is now checked. The actual
-  degree certificate now passes; packed-program canonicality, chronological
-  algebra, raw sampler event densities and recorded-transcript arithmetic
-  still need successful integration. Actual quantum labels use earlier
-  challenge answers: complete role-specific conditioning and a same-execution
-  event union, rather than treating live earlier tables as fixed joint advice.
+  degree certificate, packed-program canonicality and calculated extraction
+  now pass, as do chronological algebra and the recorded PIOP binding adapter.
+  Raw sampler event densities and complete accepted-event identification still
+  need successful integration. Apply the checked role-specific conditioning,
+  active-query embedding and same-execution union to the actual role events;
+  live earlier tables cannot be treated as fixed joint advice.
 - [ ] Finish adaptive privacy: check initialized resampling, chronological
-  DECS/PIOP transport, measured nonleaf composition, and the whole-game
+  DECS/PIOP transport and the whole-game
   interpreter identity. The initialized CMS prefix and extracted per-basis
   collision estimate pass; the global resampling assembly remains under check.
   The seven-constructor initialized-purification/average-acceptance identity
-  is written but not checked. The chronological application wrapper must use
-  the q38 coin dimensions, not the legacy20-query types; its generic measured
-  oracle core now passes. The whole-view check has run and exposed finite
+  is written but not checked. The chronological q38 algebra and measured
+  application wrapper now pass. The whole-view check has run and exposed finite
   Fourier/measurement proof obligations, which remain under repair.
 - [ ] Connect the completed arguments to the repaired relation and activate
   the fresh-proof route. Wallet multisig and release-profile checks currently
