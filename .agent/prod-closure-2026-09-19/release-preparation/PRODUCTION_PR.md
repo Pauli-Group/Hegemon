@@ -35,7 +35,7 @@ records a native-source-only refresh and `production_eligible: false`.
 - The source verifier, canonical readback, mutation controls, in-process
   lifecycle, actual-socket lifecycle, and software-evidence checker passed.
   These local receipts are retained separately, not bulk-uploaded in this PR.
-- The PR includes 54 PASS-receipt-matched Lean component roots plus their132
+- The PR includes 65 PASS-receipt-matched Lean component roots plus their132
   recursive custom dependencies, pinned by source hash. The portable source
   checker and reproduction instructions are included. The universal q38
   middle-support counting theorem and concrete field adapter now pass Lean;
@@ -57,7 +57,16 @@ records a native-source-only refresh and `production_eligible: false`.
   conditioning and actual q38 chronological privacy algebra also pass.
   The exact conditioned run, ActiveKey-only query embedding, measured q38
   wrapper, chronological soundness accounting and raw PIOP reconstruction
-  now pass as well. The final whole-execution applications remain incomplete.
+  now pass as well. The complete seven-constructor initialized whole-view
+  execution identity, canonical word readback, and three chronological algebraic
+  bad-cell densities also pass. Exact SMZA PIOP payload/coefficient readback
+  and the conditioned role bound on the original full-oracle physical execution
+  now pass. FPP readback preserves all1104 context-binding suffix bytes;
+  DECS readback preserves its evaluation wire order and interpolation rotation.
+  Initialized full-domain resampling and the four-role numerical ledger also
+  pass. The final whole-execution applications remain
+  incomplete; the whole-view identity does not discharge the existing
+  `ExternalAdaptiveReprogramming` premise in its adaptive-bound application.
   Actual role composition requires separate conditioning of earlier challenge
   tables and a union on the same execution; the generic joint-advice theorem
   is not being represented as the completed RP04 argument.
@@ -117,11 +126,12 @@ Checked CI repairs:
   The CI-observed governance hash is refreshed and all14 focused tests pass
   again; the claims checker passes without approving any pending source review.
 
-The current mathematical bundle contains 54 checked roots and186 sources.
+The current mathematical bundle contains 65 checked roots and197 sources.
 The global q38 count, complete degree certificate, packed canonicality,
 actual-program connection and calculated extraction pass. The per-basis
-resampling estimate is included; global initialized resampling and whole-view
-privacy remain under check. Accepted-execution event identification,
+resampling estimate, global initialized resampling and whole-view execution
+identity are included; the adaptive whole-view probability bound remains open.
+Accepted-execution event identification,
 raw sampler-event accounting, remaining transcript binding and the final
 quantum/lifetime composition remain open. No new mathematical assumption,
 protocol degree, query count or serialized proof-size increase is introduced.

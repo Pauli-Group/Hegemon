@@ -7,7 +7,7 @@ The local PASS receipts now include the global q38 count and its concrete
 field adapter. They do not establish full adaptive privacy, final accepted
 transcript extraction, or production authorization.
 
-The current manifest contains 54 checked roots and132 recursive dependencies.
+The current manifest contains 65 checked roots and132 recursive dependencies.
 New roots include `Mca38UniversalBadLineCount`, `SmzaJointRoleOracleExecution`,
 `SmzaRp04RawRecordedMerkle`, `Q38CmsInitializedLeafOverlap`,
 `SmzaRp04McaLoss`, and the initialized prefix `Q38CmsInitializedResampling`.
@@ -24,17 +24,28 @@ recorded binding and adaptive probability composition still to discharge.
 Recorded wrapper-prefix readback, recursion-fuel invariance, exact role-table
 conditioning, conditioned-query embedding, actual q38 chronological privacy
 algebra and its measured application wrapper also pass. Chronological soundness
-event accounting and typed/raw PIOP reconstruction pass as well. The final
+event accounting and typed/raw PIOP reconstruction pass as well. Exact canonical
+word readback, the three chronological algebraic bad-cell densities, and the
+seven-constructor initialized whole-view execution identity now pass. Exact
+SMZA PIOP payload/coefficient readback and the role-conditioned quantum bound
+on the original full-table physical execution also pass. The final
 whole-execution soundness/privacy applications remain incomplete.
 The MCA adapter proves the two actual local densities and their combined
 loss below2^-265; its separate audit also reports only standard logical axioms.
 The initialized CMS prefix proves state/isometry/database boundedness, not
-the still-unchecked full-domain resampling or whole-view privacy endpoints.
+the whole-view adaptive probability bound. Full-domain initialized resampling,
+the four-role numerical ledger, FPP coefficient readback with its binding suffix,
+and DECS evaluation/rotation readback now have matched PASS receipts.
+The checked whole-view identity does not discharge its separately stated
+`ExternalAdaptiveReprogramming` premise. The initialized full-domain aggregation
+and bounded-support interfaces and their concrete assembly now pass.
 The generic joint quantum result uses one initialized execution. Actual RP04
 labels need earlier challenge answers, so the production composition must
 condition on the other role tables separately and union events in the same
 physical execution; treating those live tables as one fixed advice is invalid.
-That actual execution composition remains incomplete.
+That role-conditioned execution bound now passes, including exact averaging
+back to the original physical execution. Actual RP04 accepted-event inclusion
+and the final same-execution composition remain incomplete.
 The Merkle result binds canonical typed leaf/internal-node inputs; it does not
 by itself identify every accepted raw transcript with those typed inputs.
 

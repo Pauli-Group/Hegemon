@@ -35,11 +35,11 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
 - [x] Check canonical RP04 leaf-byte injectivity and recorded Merkle opening
   transport, including salt, index, tape, all145 field words and internal nodes.
   Arbitrary raw transcript framing and accepted arithmetic composition remain.
-- [x] Check initialized privacy leaf overlap. Full initialized resampling and
-  the adaptive whole-view privacy theorem have not yet passed.
+- [x] Check initialized privacy leaf overlap. The adaptive whole-view privacy
+  theorem remains separate from this local estimate.
 - [x] Check the initialized CMS state, coordinate isometry, database-size
   invariant, and boundedness of the actual raw query run. The concrete
-  full-domain resampling theorem remains separate and incomplete.
+  full-domain resampling theorem now also passes, as recorded below.
 - [x] Check the extracted full-domain per-basis collision estimate in the
   retained local Lean lane and include it in the source bundle. This does not
   close full adaptive privacy.
@@ -69,8 +69,34 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
   reconstruction, including the omitted linear constant and the actual SMZA
   raw-byte framing/database bridge. Complete accepted-execution integration
   still needs the other role/claim bindings.
-- [x] Validate the expanded source manifest: 54 checked roots and132 recursive
-  custom dependencies (186 files). Source/hash validation is not a fresh build
+- [x] Check the complete seven-constructor whole-view oracle execution identity,
+  including the initialized family and literal fresh-input swap. Its existing
+  GHHM-bound application still takes an external theorem premise: this identity
+  does not by itself close the adaptive privacy bound.
+- [x] Check exact canonical word readback and the three chronological RP04
+  algebraic bad-cell densities. The capped raw-sampler lift remains separate.
+- [x] Check exact SMZA PIOP payload parsing and recovery of all3,105 coefficients
+  from the actual canonical bytes. No legacy profile is substituted.
+- [x] Prove the role-specific quantum bound on the original full-table physical
+  execution, allowing advice from the other role tables through exact finite
+  conditioning. The ActiveKey-only CMS query count is unchanged. Actual RP04
+  accepted-claim inclusion is the remaining application obligation.
+- [x] Check exact FPP coefficient readback while preserving the1104 trailing
+  context-binding bytes, and DECS evaluation readback with its368-head/38-tail
+  wire order and rotation to interpolation order. No coefficients are inferred
+  by misinterpreting DECS evaluations.
+- [x] Close the initialized full-domain resampling disturbance estimate from
+  the actual CMS bounded-support state. The adaptive continuation/hybrid
+  probability bound remains a separate endpoint.
+- [x] Check the four-role numerical ledger, including the q38 LVCS count,
+  capped quantum stage terms and claimed-output bridge under its stated caps.
+  The conservative ledger charges the CMS and transported coupling terms
+  separately and proves a stage budget below2^-129, leaving explicit
+  headroom above2^-129 for the remaining binding/lifetime losses.
+  This arithmetic does not itself identify accepted-failure events or close
+  binding and lifetime composition.
+- [x] Validate the expanded source manifest: 65 checked roots and132 recursive
+  custom dependencies (197 files). Source/hash validation is not a fresh build
   of the entire bundle; individual matched PASS receipts are retained.
 - [x] Check the formal source hash, both targeted module-parser regressions,
   all 14 governance tests, and the claims/active-progress CLI checks.
@@ -98,17 +124,17 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
   degree certificate, packed-program canonicality and calculated extraction
   now pass, as do chronological algebra and the recorded PIOP binding adapter.
   Raw sampler event densities and complete accepted-event identification still
-  need successful integration. Apply the checked role-specific conditioning,
-  active-query embedding and same-execution union to the actual role events;
+  need successful integration. The role-specific conditioned quantum bound
+  now passes on the original physical execution. Apply it and the checked
+  same-execution union to the actual role events;
   live earlier tables cannot be treated as fixed joint advice.
-- [ ] Finish adaptive privacy: check initialized resampling, chronological
-  DECS/PIOP transport and the whole-game
-  interpreter identity. The initialized CMS prefix and extracted per-basis
-  collision estimate pass; the global resampling assembly remains under check.
-  The seven-constructor initialized-purification/average-acceptance identity
-  is written but not checked. The chronological q38 algebra and measured
-  application wrapper now pass. The whole-view check has run and exposed finite
-  Fourier/measurement proof obligations, which remain under repair.
+- [ ] Finish adaptive privacy: compose initialized resampling, chronological
+  DECS/PIOP transport and the whole-game interpreter identity. The initialized
+  CMS state, per-basis collision estimate and global resampling assembly pass.
+  The seven-constructor initialized-purification/average-acceptance identity,
+  chronological q38 algebra and measured application wrapper now pass.
+  The remaining whole-game probability bound must be derived rather than
+  supplied through `ExternalAdaptiveReprogramming`.
 - [ ] Connect the completed arguments to the repaired relation and activate
   the fresh-proof route. Wallet multisig and release-profile checks currently
   report missing route authority; their tests remain enabled.
