@@ -41,13 +41,19 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
   invariant, and boundedness of the actual raw query run. The concrete
   full-domain resampling theorem remains separate and incomplete.
 - [x] Check the extracted full-domain per-basis collision estimate in the
-  retained local Lean lane. This additional sublemma is not yet in the
-  published117-source bundle and does not close full adaptive privacy.
-- [x] Check all six split RP04 degree-data chunks in the retained local lane.
-  The combined degree-certificate facade still fails aggregation/flattening;
-  the full certificate and accepted-transcript theorem are not marked complete.
-- [x] Validate the expanded source manifest: 37 checked roots and80 recursive
-  custom dependencies (117 files). Source/hash validation is not a fresh build
+  retained local Lean lane and include it in the source bundle. This does not
+  close full adaptive privacy.
+- [x] Check all six split RP04 degree-data chunks and the complete combined
+  degree certificate, preserving every generated expression and bound.
+- [x] Check the generic measured-oracle core, including finite public traces
+  and initialized execution. The actual whole-view application remains open.
+- [x] Derive the five MCA and twelve LVCS scalar checks on the extracted oracle
+  from collision-free recorded Merkle payloads. No decoder-success premise
+  is introduced.
+- [x] Prove that collision-free recorded paths are recovered by the actual
+  least-preimage extractor within its explicit recursion budget.
+- [x] Validate the expanded source manifest: 42 checked roots and97 recursive
+  custom dependencies (139 files). Source/hash validation is not a fresh build
   of the entire bundle; individual matched PASS receipts are retained.
 - [x] Check the formal source hash, both targeted module-parser regressions,
   all 14 governance tests, and the claims/active-progress CLI checks.
@@ -72,18 +78,20 @@ universal Rust/compiler/OS proof, or proof-size increase is required.
 - [ ] Close accepted-execution readout and four stage-event identifications,
   the algebra-event bound, transcript/commitment binding, and RP04 semantic
   ledger reduction. The universal decoder count is now checked. The actual
-  RP04 degree certificate, chronological algebra, raw sampler event densities,
-  and recorded-transcript arithmetic chain still need successful integration.
+  degree certificate now passes; packed-program canonicality, chronological
+  algebra, raw sampler event densities and recorded-transcript arithmetic
+  still need successful integration. Actual quantum labels use earlier
+  challenge answers: complete role-specific conditioning and a same-execution
+  event union, rather than treating live earlier tables as fixed joint advice.
 - [ ] Finish adaptive privacy: check initialized resampling, chronological
   DECS/PIOP transport, measured nonleaf composition, and the whole-game
   interpreter identity. The initialized CMS prefix and extracted per-basis
-  collision estimate pass; the global resampling assembly still fails
-  recursion-depth and bounded-state name resolution.
+  collision estimate pass; the global resampling assembly remains under check.
   The seven-constructor initialized-purification/average-acceptance identity
   is written but not checked. The chronological application wrapper must use
   the q38 coin dimensions, not the legacy20-query types; its generic measured
-  oracle core has been separated but still has finite-trace instance and
-  proof errors. The whole-view check was not run because that core failed.
+  oracle core now passes. The whole-view check has run and exposed finite
+  Fourier/measurement proof obligations, which remain under repair.
 - [ ] Connect the completed arguments to the repaired relation and activate
   the fresh-proof route. Wallet multisig and release-profile checks currently
   report missing route authority; their tests remain enabled.

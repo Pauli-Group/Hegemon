@@ -7,16 +7,25 @@ The local PASS receipts now include the global q38 count and its concrete
 field adapter. They do not establish full adaptive privacy, final accepted
 transcript extraction, or production authorization.
 
-The current manifest contains 37 checked roots and80 recursive dependencies.
+The current manifest contains 42 checked roots and97 recursive dependencies.
 New roots include `Mca38UniversalBadLineCount`, `SmzaJointRoleOracleExecution`,
 `SmzaRp04RawRecordedMerkle`, `Q38CmsInitializedLeafOverlap`,
 `SmzaRp04McaLoss`, and the initialized prefix `Q38CmsInitializedResampling`.
+It also includes the complete RP04 degree certificate (`SmzaRp04Degree`),
+recorded-opening MCA/LVCS readback (`SmzaRp04RecordedClaims`), the generic
+measured-oracle core (`Q38MeasuredCmsNonleafCore`), and the full-domain
+per-basis estimate (`Q38CmsInitializedFullDomainPerBasis`).
+`SmzaRecordedTracePath` proves that the actual least-preimage extractor
+recovers any collision-free recorded path within its explicit recursion budget.
 The MCA adapter proves the two actual local densities and their combined
 loss below2^-265; its separate audit also reports only standard logical axioms.
 The initialized CMS prefix proves state/isometry/database boundedness, not
 the still-unchecked full-domain resampling or whole-view privacy endpoints.
-The joint quantum result uses one initialized execution; concrete role density
-and accepted-event inclusion premises still need their actual instantiations.
+The generic joint quantum result uses one initialized execution. Actual RP04
+labels need earlier challenge answers, so the production composition must
+condition on the other role tables separately and union events in the same
+physical execution; treating those live tables as one fixed advice is invalid.
+That actual execution composition remains incomplete.
 The Merkle result binds canonical typed leaf/internal-node inputs; it does not
 by itself identify every accepted raw transcript with those typed inputs.
 

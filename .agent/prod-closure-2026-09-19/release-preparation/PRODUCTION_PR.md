@@ -35,7 +35,7 @@ records a native-source-only refresh and `production_eligible: false`.
 - The source verifier, canonical readback, mutation controls, in-process
   lifecycle, actual-socket lifecycle, and software-evidence checker passed.
   These local receipts are retained separately, not bulk-uploaded in this PR.
-- The PR includes 37 PASS-receipt-matched Lean component roots plus their80
+- The PR includes 42 PASS-receipt-matched Lean component roots plus their97
   recursive custom dependencies, pinned by source hash. The portable source
   checker and reproduction instructions are included. The universal q38
   middle-support counting theorem and concrete field adapter now pass Lean;
@@ -47,6 +47,13 @@ records a native-source-only refresh and `production_eligible: false`.
   privacy leaf overlap and initialized CMS boundedness. The actual140-column
   decoder's two local losses now compose below2^-265, with a standard-axiom-only
   audit; this is not a265-bit whole-system security claim.
+  The complete RP04 degree certificate, recorded MCA/LVCS opening readback,
+  generic measured-oracle core, and full-domain per-basis bound also pass.
+  Recorded paths now provably read back through the actual least-preimage
+  extractor under its bounded recursion and recorded collision-free event.
+  Actual role composition requires separate conditioning of earlier challenge
+  tables and a union on the same execution; the generic joint-advice theorem
+  is not being represented as the completed RP04 argument.
   Actual accepted-event identification and full adaptive
   privacy remain separate obligations.
 - The q38 work remains formal/source evidence, not an end-to-end deployed

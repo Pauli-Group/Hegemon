@@ -21,11 +21,13 @@
     "Mca38UniversalMatrixEvent",
     "Q38CmsControlledSwap",
     "Q38CmsIndexedSwap",
+    "Q38CmsInitializedFullDomainPerBasis",
     "Q38CmsInitializedLeafOverlap",
     "Q38CmsInitializedResampling",
     "Q38CmsSwapConjugation",
     "Q38FreshSwapFiber",
     "Q38FreshSwapIsometry",
+    "Q38MeasuredCmsNonleafCore",
     "Q38StateValuedCoinTransport",
     "SmzaChallengeStageTargets",
     "SmzaFixedAdviceBadCell",
@@ -34,8 +36,11 @@
     "SmzaJointRoleOracleExecution",
     "SmzaPhysicalStageRecord",
     "SmzaRawStageGeometry",
+    "SmzaRecordedTracePath",
+    "SmzaRp04Degree",
     "SmzaRp04McaLoss",
     "SmzaRp04RawRecordedMerkle",
+    "SmzaRp04RecordedClaims",
     "SmzaSelectedStageSearch"
   ],
   "custom_sources": [
@@ -640,6 +645,33 @@
       "sha256": "098f2c5d809d62e5c0cce4aa98310b5de37a7044ba9be02628c05bb65311d8ab"
     },
     {
+      "module": "Q38CmsInitializedFullDomainAggregationProbe",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsInitializedFullDomainAggregationProbe.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsInitializedFullDomainAggregationProbe.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "346dcb859e6330ec88aa45fa3b86e68c01ebb236b3ca402c8325342dd644949d"
+    },
+    {
+      "module": "Q38CmsInitializedFullDomainImportProbe",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsInitializedFullDomainImportProbe.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsInitializedFullDomainImportProbe.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "a9057ddb730251f530d89eed51f6602bd48fa8ff4f4373fc0de0e7016b719587"
+    },
+    {
+      "module": "Q38CmsInitializedFullDomainPerBasis",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsInitializedFullDomainPerBasis.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsInitializedFullDomainPerBasis.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "ecc11657f98772e2d2881705ef3fef83fad3a966236ccfceae63b661fbba6ccf"
+    },
+    {
       "module": "Q38CmsInitializedLeafOverlap",
       "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsInitializedLeafOverlap.lean",
       "receipt_pins": [
@@ -743,6 +775,15 @@
       "receipt_pins": [],
       "receipt_verified": false,
       "sha256": "2c44cba370f89734d17e437ceceaceda8ce7af47c1976d39ec81ed7bf675e5bc"
+    },
+    {
+      "module": "Q38MeasuredCmsNonleafCore",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38MeasuredCmsNonleafCore.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38MeasuredCmsNonleafCore.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "8e0a9c2d9a3033438f1429ece0eedd6f02ed45b8518b2fe750929f07fdc1b755"
     },
     {
       "module": "Q38RemainingAlgebra",
@@ -891,6 +932,13 @@
       "sha256": "b7a7904449906aeb640c829f5e50d2cb6b0fc211005bf7b0012ea8e679099fc0"
     },
     {
+      "module": "SmzaQ38LvcsOpening",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/extraction-core/SmzaQ38LvcsOpening.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "37320688b5f683a889f75f60bb725fa0723a1586c185cae869db52bfc7329bd5"
+    },
+    {
       "module": "SmzaQ38McaSourceBindingR2",
       "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/extraction-core/SmzaQ38McaSourceBindingR2.lean",
       "receipt_pins": [],
@@ -935,6 +983,150 @@
       "sha256": "b27f3d2ea8e1b128e93691cc00c0629e1431af925de3d28da07222579cd0feee"
     },
     {
+      "module": "SmzaRecordedTracePath",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRecordedTracePath.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRecordedTracePath.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "7f332d861c24f3f353555cdc21b30c556dafdb23741cc90d5dd86b9c59606262"
+    },
+    {
+      "module": "SmzaRp04Components",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04Components.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04Components.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "5cb107c57eb09f2f806def20d863b2d149bef8f3d694419a117d918ef3f52027"
+    },
+    {
+      "module": "SmzaRp04ComponentsPart00",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ComponentsPart00.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ComponentsPart00.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "601b538da4a5de9cce481c828e5c4565bb639e4339160a72e3a0e58e63159016"
+    },
+    {
+      "module": "SmzaRp04ComponentsPart01",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ComponentsPart01.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ComponentsPart01.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "768073ff06661a172464e05d8da336d32f512aa84f1337fcdf8bb22bac08a4e5"
+    },
+    {
+      "module": "SmzaRp04ComponentsPart02",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ComponentsPart02.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ComponentsPart02.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "a0b6da792472a1ff7ef13116e88a774f8eb662da5eaccf9897e6a1c753ac79b9"
+    },
+    {
+      "module": "SmzaRp04ComponentsPart03",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ComponentsPart03.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ComponentsPart03.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "2564be5dccc53787f3bb96d7fed6817b8b846d076f046b7d55c615f34e0b22b6"
+    },
+    {
+      "module": "SmzaRp04ComponentsPart04",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ComponentsPart04.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ComponentsPart04.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "d4042c1315746a0897f8d8f4894feb8b530827c640715bdea506ae20d88d31a2"
+    },
+    {
+      "module": "SmzaRp04ComponentsPart05",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ComponentsPart05.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ComponentsPart05.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "1a19977b57157cb382439878cdb20395ec9258e5ff0b141b3115669a0ce2d5f4"
+    },
+    {
+      "module": "SmzaRp04Degree",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04Degree.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04Degree.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "7229dfb727a5f8994aac4c9747349744785aa3ebef78f1bf5976cad5be6b083e"
+    },
+    {
+      "module": "SmzaRp04DegreeData",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04DegreeData.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04DegreeData.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "5142e900a868288d216caf7ad16d84ba7eda6121fb49bbe9e3c392446fb44d43"
+    },
+    {
+      "module": "SmzaRp04DegreePart00",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04DegreePart00.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04DegreePart00.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "0c5a49227f1a695e2966c3d08d31dd5ca99e06b2f1d40fc2c8136e0d2a48ea39"
+    },
+    {
+      "module": "SmzaRp04DegreePart01",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04DegreePart01.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04DegreePart01.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "bc28689ecf54c28f067ee42d847975d6b8372c8c4cff00852fdd9cc317edeaa2"
+    },
+    {
+      "module": "SmzaRp04DegreePart02",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04DegreePart02.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04DegreePart02.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "497ecb6239da406cebfb113dd8702429dcb63298e6181cf8ac77be52aba64a4a"
+    },
+    {
+      "module": "SmzaRp04DegreePart03",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04DegreePart03.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04DegreePart03.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "615d4f25acd179ef61e51c374e8d3fee94834ace760712e5ccf9c099a7089b51"
+    },
+    {
+      "module": "SmzaRp04DegreePart04",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04DegreePart04.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04DegreePart04.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "59e6b538cf302cb258f0673a74e68f568f657cf1d63aa05b9eaf88ed45bf76a3"
+    },
+    {
+      "module": "SmzaRp04DegreePart05",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04DegreePart05.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04DegreePart05.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "faed034064f40baab4626151f694a42ed000f09ef183e2cdeec507135986a1b1"
+    },
+    {
       "module": "SmzaRp04McaLoss",
       "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04McaLoss.lean",
       "receipt_pins": [
@@ -969,6 +1161,15 @@
       ],
       "receipt_verified": true,
       "sha256": "c411dfda8af380da8734cb7cc461d707d85a75114d3b72d396114cd32016ca76"
+    },
+    {
+      "module": "SmzaRp04RecordedClaims",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RecordedClaims.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RecordedClaims.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "7fdc225271a8f32c41784d4575d90e393d7c1bc1141c614a3f8080d0efb0274b"
     },
     {
       "module": "SmzaSelectedStageSearch",
@@ -1023,11 +1224,13 @@
     "Mca38UniversalMatrixEvent",
     "Q38CmsControlledSwap",
     "Q38CmsIndexedSwap",
+    "Q38CmsInitializedFullDomainPerBasis",
     "Q38CmsInitializedLeafOverlap",
     "Q38CmsInitializedResampling",
     "Q38CmsSwapConjugation",
     "Q38FreshSwapFiber",
     "Q38FreshSwapIsometry",
+    "Q38MeasuredCmsNonleafCore",
     "Q38StateValuedCoinTransport",
     "SmzaChallengeStageTargets",
     "SmzaFixedAdviceBadCell",
@@ -1036,8 +1239,11 @@
     "SmzaJointRoleOracleExecution",
     "SmzaPhysicalStageRecord",
     "SmzaRawStageGeometry",
+    "SmzaRecordedTracePath",
+    "SmzaRp04Degree",
     "SmzaRp04McaLoss",
     "SmzaRp04RawRecordedMerkle",
+    "SmzaRp04RecordedClaims",
     "SmzaSelectedStageSearch"
   ],
   "evidence_notes": [
