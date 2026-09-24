@@ -32287,6 +32287,33 @@ fn transfer_action_inactive_sidecar_precedes_repartitioned_tx_leaf_binding_alias
 }
 
 #[test]
+fn transfer_action_rejects_sidecar_repartitioned_tx_leaf_binding_alias() {
+    let anchor = [0x42u8; 48];
+    let mut action = test_sidecar_transfer_action(anchor, [34u8; 48], [134u8; 48], 0);
+    let mut args = ShieldedTransferSidecarArgs::decode(&mut &action.public_args[..])
+        .expect("decode test args");
+    args.proof = test_repartitioned_transfer_proof_alias(
+        anchor,
+        action.nullifiers[0],
+        action.commitments[0],
+        action.ciphertext_hashes[0],
+        args.balance_slot_asset_ids,
+        args.fee,
+        args.stablecoin.clone(),
+        action.binding,
+    );
+    action.public_args = args.encode();
+    action.tx_hash = pending_action_hash(&action);
+
+    // The sidecar route is globally inactive in native V3, so its route gate
+    // is covered separately above. Exercise the route-local payload contract
+    // directly to ensure an activated sidecar route cannot accept this alias.
+    let err = validate_transfer_action_payload(&action)
+        .expect_err("repartitioned sidecar proof must fail payload admission");
+    assert!(err.to_string().contains("proof binding hash mismatch"), "{err}");
+}
+
+#[test]
 fn transfer_action_inactive_sidecar_precedes_value_balance_binding_alias() {
     let pow_bits = 0x207f_ffff;
     let state = test_state(genesis_meta(pow_bits).expect("genesis"));

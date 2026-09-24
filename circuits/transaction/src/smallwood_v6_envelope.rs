@@ -1146,12 +1146,11 @@ mod tests {
         for offset in 0..V6_STATEMENT_BYTES {
             let mut changed = canonical.clone();
             changed[SMALLWOOD_V6_STATEMENT_OFFSET + offset] ^= 1;
-            match decode_v6_envelope_exact(&changed) {
-                Ok(decoded) => assert!(
+            if let Ok(decoded) = decode_v6_envelope_exact(&changed) {
+                assert!(
                     bind_v6_node_context(&decoded, expected).is_err(),
                     "offset {offset}"
-                ),
-                Err(_) => {}
+                );
             }
         }
     }

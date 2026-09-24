@@ -31,7 +31,7 @@ use thiserror::Error;
 use crate::full_shake448_statement::{
     decode_v6_statement, encode_v6_ciphertext_hash_frame, encode_v6_semantic_frame,
     encode_v6_statement, project_v6_statement, Digest448, FullShake448Statement,
-    FullShake448StatementError, SignedMagnitude, V6ActivationBinding, V6StatementProjection,
+    FullShake448StatementError, SignedMagnitude, V6ActivationBinding,
     GOLDILOCKS_MODULUS, KEY_OUTPUT_ORDER_TAG, ROLE_ACCUMULATOR, ROLE_BALANCE_TAG, ROLE_INTENT,
     ROLE_MERKLE_NODE, ROLE_NOTE_COMMITMENT, ROLE_NULLIFIER, ROLE_POLICY, ROLE_SPEND_KEYS,
     ROLE_VALUE_LOCK, V6_BALANCE_SLOTS, V6_CANONICAL_CIPHERTEXT_BYTES, V6_DIGEST_BYTES,
