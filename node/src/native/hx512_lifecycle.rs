@@ -889,6 +889,8 @@ mod tests {
             let tree = database.open_tree("hx512_inactive_pending").unwrap();
             tree.insert(&durable.key, durable.value.as_slice()).unwrap();
             database.flush().unwrap();
+            drop(tree);
+            drop(database);
         }
         let reopen_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         let database = loop {
