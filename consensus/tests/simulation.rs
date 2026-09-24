@@ -2,7 +2,7 @@ mod common;
 
 use common::{
     BftBlockParams, PowBlockParams, assemble_bft_block, assemble_pow_block, dummy_coinbase,
-    dummy_transaction, make_validators, validator_set,
+    make_validators, validator_set,
 };
 use consensus::proof::HashVerifier;
 use consensus::{BftConsensus, CommitmentTreeState, NullifierSet, PowConsensus};
@@ -17,13 +17,12 @@ async fn bft_consensus_liveness_and_slashing() {
     let mut consensus = BftConsensus::new(validator_set, genesis_tree.clone(), HashVerifier);
 
     let base_nullifiers = NullifierSet::new();
-    let transactions = vec![dummy_transaction(1), dummy_transaction(2)];
     let (block, _, _) = assemble_bft_block(BftBlockParams {
         height: 1,
         view: 1,
         parent_hash: [0u8; 32],
         timestamp_ms: 1_000,
-        transactions,
+        transactions: Vec::new(),
         validators: &validators,
         signer_indices: &[0, 1, 2],
         base_nullifiers: &base_nullifiers,
@@ -65,13 +64,12 @@ async fn bft_consensus_liveness_and_slashing() {
     assert!(update.slashing.is_empty());
 
     // Assemble a conflicting block for the same view to trigger slashing.
-    let conflicting_txs = vec![dummy_transaction(5)];
     let (conflict, _, _) = assemble_bft_block(BftBlockParams {
         height: 1,
         view: 1,
         parent_hash: [0u8; 32],
         timestamp_ms: 1_050,
-        transactions: conflicting_txs,
+        transactions: Vec::new(),
         validators: &validators,
         signer_indices: &[0, 1, 2],
         base_nullifiers: &NullifierSet::new(),
@@ -99,12 +97,11 @@ fn pow_chain_accepts_valid_work() {
         pow_bits,
     );
     let base_nullifiers = NullifierSet::new();
-    let transactions = vec![dummy_transaction(11)];
     let (block, _, _) = assemble_pow_block(PowBlockParams {
         height: 1,
         parent_hash: [0u8; 32],
         timestamp_ms: 2_000,
-        transactions,
+        transactions: Vec::new(),
         miner: &miner,
         base_nullifiers: &base_nullifiers,
         base_commitment_tree: &genesis_tree,

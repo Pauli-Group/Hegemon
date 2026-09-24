@@ -36158,6 +36158,46 @@ fn bridge_inbound_payload_hash_must_match_payload() {
 }
 
 #[test]
+fn inbound_bridge_rejects_message_binding_tampering() {
+    // The public V3 route is intentionally inactive; its route gate is tested
+    // separately. Exercise only the inbound payload contract here, as the
+    // sidecar alias test does for its route-local admission contract.
+    let tamper_cases: [(&str, Box<dyn Fn(&mut InboundBridgeArgsV1)>, &str); 3] = [
+        (
+            "source nonce",
+            Box::new(|args| args.source_message_nonce = args.source_message_nonce.wrapping_add(1)),
+            "replay key does not match",
+        ),
+        (
+            "destination",
+            Box::new(|args| args.message.destination_chain_id = [0x55u8; 32]),
+            "not addressed to Hegemon",
+        ),
+        (
+            "payload hash",
+            Box::new(|args| args.message.payload_hash = [0x55u8; 48]),
+            "payload hash mismatch",
+        ),
+    ];
+
+    for (binding, tamper, expected_error) in tamper_cases {
+        let mut action = test_inbound_bridge_action(b"bound inbound bridge payload");
+        let mut args = InboundBridgeArgsV1::decode(&mut &action.public_args[..])
+            .expect("decode inbound bridge test args");
+        tamper(&mut args);
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_bridge_action_payload(&action)
+            .expect_err("tampered inbound binding must fail payload admission");
+        assert!(
+            err.to_string().contains(expected_error),
+            "tampered {binding} failed for the wrong reason: {err}"
+        );
+    }
+}
+
+#[test]
 fn bridge_inbound_resource_projection_uses_native_caps() {
     let action = test_inbound_bridge_action(b"inbound payload");
     let args = InboundBridgeArgsV1::decode(&mut &action.public_args[..])
