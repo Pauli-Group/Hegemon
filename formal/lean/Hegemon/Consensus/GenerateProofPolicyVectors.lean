@@ -1,6 +1,7 @@
-import Hegemon.Consensus.ProofPolicy
+import Hegemon.Consensus.NativeTxLeafAuthorityBoundary
 
 open Hegemon.Consensus
+open Hegemon.Consensus.NativeTxLeafAuthorityBoundary
 
 def boolJson (value : Bool) : String :=
   if value then "true" else "false"
@@ -19,7 +20,8 @@ def rejectionJson : Option ProofPolicyReject -> String
   | some ProofPolicyReject.emptyBlockCarriesProof => "\"empty_block_carries_proof\""
   | some ProofPolicyReject.missingTransactionProofs => "\"missing_transaction_proofs\""
   | some ProofPolicyReject.transactionProofCountMismatch => "\"transaction_proof_count_mismatch\""
-  | some ProofPolicyReject.unsupportedInlineRequired => "\"unsupported_inline_required\""
+  | some ProofPolicyReject.independentProvenBatch => "\"independent_proven_batch\""
+  | some ProofPolicyReject.independentBlockArtifact => "\"independent_block_artifact\""
   | some ProofPolicyReject.missingProvenBatch => "\"missing_proven_batch\""
   | some ProofPolicyReject.missingTransactionValidityClaims =>
       "\"missing_transaction_validity_claims\""
@@ -79,6 +81,20 @@ def recursiveComplete : ProofPolicyInput :=
     hasTxValidityClaims := true
   }
 
+def independentComplete : ProofPolicyInput :=
+  {
+    txCount := 2,
+    verificationMode := VerificationMode.inlineRequired,
+    hasProvenBatch := false,
+    batchMode := BatchMode.inlineTx,
+    commitmentProofBytes := 0,
+    hasBlockArtifact := false,
+    hasReceiptRoot := false,
+    hasTxValidityArtifacts := true,
+    txValidityArtifactCount := 2,
+    hasTxValidityClaims := false
+  }
+
 def receiptRootComplete : ProofPolicyInput :=
   {
     txCount := 2,
@@ -96,6 +112,17 @@ def receiptRootComplete : ProofPolicyInput :=
 def withTxCount (input : ProofPolicyInput) (txCount : Nat) : ProofPolicyInput :=
   { input with txCount }
 
+def productionRegistryKindJson : ProductionRegistryArtifactKind → String
+  | .inlineTx => "inline_tx"
+  | .txLeaf => "tx_leaf"
+  | .receiptRoot => "receipt_root"
+  | .recursiveBlockV1 => "recursive_block_v1"
+  | .recursiveBlockV2 => "recursive_block_v2"
+
+def productionRegistryCaseJson (kind : ProductionRegistryArtifactKind) : String :=
+  "    { \"artifact_kind\": \"" ++ productionRegistryKindJson kind
+    ++ "\", \"expected_registered\": " ++ boolJson (productionRegistryIncludes kind) ++ " }"
+
 def vectorJson : String :=
   "{\n"
     ++ "  \"schema_version\": 1,\n"
@@ -108,9 +135,12 @@ def vectorJson : String :=
     ++ proofPolicyCaseJson "nonempty-requires-tx-artifacts"
       { recursiveComplete with hasTxValidityArtifacts := false } ++ ",\n"
     ++ proofPolicyCaseJson "nonempty-rejects-tx-artifact-count-mismatch"
-      { recursiveComplete with txValidityArtifactCount := 1 } ++ ",\n"
-    ++ proofPolicyCaseJson "nonempty-rejects-inline-required-mode"
-      { recursiveComplete with verificationMode := VerificationMode.inlineRequired } ++ ",\n"
+      { independentComplete with txValidityArtifactCount := 1 } ++ ",\n"
+    ++ proofPolicyCaseJson "independent-rejects-proven-batch"
+      { independentComplete with hasProvenBatch := true } ++ ",\n"
+    ++ proofPolicyCaseJson "independent-rejects-block-artifact"
+      { independentComplete with hasBlockArtifact := true } ++ ",\n"
+    ++ proofPolicyCaseJson "independent-complete-accepted" independentComplete ++ ",\n"
     ++ proofPolicyCaseJson "nonempty-requires-proven-batch"
       { recursiveComplete with hasProvenBatch := false } ++ ",\n"
     ++ proofPolicyCaseJson "nonempty-requires-tx-validity-claims"
@@ -127,7 +157,12 @@ def vectorJson : String :=
     ++ proofPolicyCaseJson "receipt-root-without-payload-retired"
       { receiptRootComplete with hasReceiptRoot := false } ++ ",\n"
     ++ proofPolicyCaseJson "receipt-root-with-payload-retired" receiptRootComplete ++ "\n"
-    ++ "  ]\n"
+    ++ "  ],\n"
+    ++ "  \"production_registry_cases\": [\n"
+    ++ String.intercalate ",\n"
+      ([ .inlineTx, .txLeaf, .receiptRoot, .recursiveBlockV1, .recursiveBlockV2 ].map
+        productionRegistryCaseJson)
+    ++ "\n  ]\n"
     ++ "}\n"
 
 def main : IO Unit :=

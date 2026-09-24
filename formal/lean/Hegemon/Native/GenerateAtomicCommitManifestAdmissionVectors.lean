@@ -9,6 +9,8 @@ def kindJson : AtomicCommitKind -> String
   | AtomicCommitKind.minedBlockCommit => "\"mined_block_commit\""
   | AtomicCommitKind.tipExtensionBatchCommit => "\"tip_extension_batch_commit\""
   | AtomicCommitKind.canonicalReorgCommit => "\"canonical_reorg_commit\""
+  | AtomicCommitKind.canonicalSuffixReorgCommit =>
+      "\"canonical_suffix_reorg_commit\""
   | AtomicCommitKind.canonicalIndexRepair => "\"canonical_index_repair\""
   | AtomicCommitKind.noncanonicalBlockRecord => "\"noncanonical_block_record\""
 
@@ -42,6 +44,10 @@ def rejectionJson : Option AtomicCommitManifestReject -> String
       "\"ciphertext_archive_write_mismatch\""
   | some AtomicCommitManifestReject.stagedCiphertextRemovalMismatch =>
       "\"staged_ciphertext_removal_mismatch\""
+  | some AtomicCommitManifestReject.poseidon2V8PlanCardinality =>
+      "\"poseidon2_v8_plan_cardinality\""
+  | some AtomicCommitManifestReject.poseidon2V8PlanApplicationMismatch =>
+      "\"poseidon2_v8_plan_application_mismatch\""
 
 def natJson (value : Nat) : String :=
   toString value
@@ -62,6 +68,8 @@ def caseJson (name : String) (input : AtomicCommitManifestInput) : String :=
     ++ "      \"source_ciphertext_index_count\": " ++ natJson input.sourceCiphertextIndexCount ++ ",\n"
     ++ "      \"source_ciphertext_archive_count\": " ++ natJson input.sourceCiphertextArchiveCount ++ ",\n"
     ++ "      \"source_staged_ciphertext_removal_count\": " ++ natJson input.sourceStagedCiphertextRemovalCount ++ ",\n"
+    ++ "      \"source_poseidon2_v8_plan_count\": " ++ natJson input.sourcePoseidon2V8PlanCount ++ ",\n"
+    ++ "      \"poseidon2_v8_plan_application_count\": " ++ natJson input.poseidon2V8PlanApplicationCount ++ ",\n"
     ++ "      \"block_record_writes\": " ++ natJson input.blockRecordWrites ++ ",\n"
     ++ "      \"height_index_writes\": " ++ natJson input.heightIndexWrites ++ ",\n"
     ++ "      \"best_pointer_writes\": " ++ natJson input.bestPointerWrites ++ ",\n"
@@ -86,6 +94,8 @@ def vectorJson : String :=
     ++ caseJson "valid-mined-block-commit" validMinedBlockCommit ++ ",\n"
     ++ caseJson "valid-tip-extension-batch-commit" validTipExtensionBatchCommit ++ ",\n"
     ++ caseJson "valid-canonical-reorg-commit" validCanonicalReorgCommit ++ ",\n"
+    ++ caseJson "valid-canonical-suffix-reorg-commit"
+      validCanonicalSuffixReorgCommit ++ ",\n"
     ++ caseJson "valid-canonical-index-repair" validCanonicalIndexRepair ++ ",\n"
     ++ caseJson "valid-noncanonical-block-record" validNoncanonicalBlockRecord ++ ",\n"
     ++ caseJson "valid-noncanonical-block-record-batch" validNoncanonicalBlockRecordBatch ++ ",\n"
@@ -101,6 +111,8 @@ def vectorJson : String :=
       { validNoncanonicalBlockRecordBatch with blockRecordWrites := 3 } ++ ",\n"
     ++ caseJson "canonical-reorg-block-record-write-rejected"
       { validCanonicalReorgCommit with blockRecordWrites := 1 } ++ ",\n"
+    ++ caseJson "canonical-suffix-reorg-block-record-write-rejected"
+      { validCanonicalSuffixReorgCommit with blockRecordWrites := 1 } ++ ",\n"
     ++ caseJson "height-index-write-mismatch-rejected"
       { validMinedBlockCommit with heightIndexWrites := 0 } ++ ",\n"
     ++ caseJson "tip-extension-batch-height-index-write-mismatch-rejected"
@@ -126,7 +138,17 @@ def vectorJson : String :=
     ++ caseJson "ciphertext-archive-write-mismatch-rejected"
       { validMinedBlockCommit with ciphertextArchiveWrites := 2 } ++ ",\n"
     ++ caseJson "staged-ciphertext-removal-mismatch-rejected"
-      { validMinedBlockCommit with stagedCiphertextRemovals := 2 } ++ "\n"
+      { validMinedBlockCommit with stagedCiphertextRemovals := 2 } ++ ",\n"
+    ++ caseJson "poseidon2-v8-plan-cardinality-rejected"
+      { validCanonicalSuffixReorgCommit with
+        sourcePoseidon2V8PlanCount := 2,
+        poseidon2V8PlanApplicationCount := 2 } ++ ",\n"
+    ++ caseJson "missing-poseidon2-v8-plan-application-rejected"
+      { validCanonicalSuffixReorgCommit with
+        poseidon2V8PlanApplicationCount := 0 } ++ ",\n"
+    ++ caseJson "extra-poseidon2-v8-plan-application-rejected"
+      { validCanonicalSuffixReorgCommit with
+        sourcePoseidon2V8PlanCount := 0 } ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

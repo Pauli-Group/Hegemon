@@ -9,8 +9,12 @@ use std::{
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 use transaction_core::{
-    constants::POSEIDON2_WIDTH,
+    constants::{
+        POSEIDON2_EXTERNAL_ROUNDS, POSEIDON2_INTERNAL_ROUNDS, POSEIDON2_STEPS as POSEIDON_STEPS,
+        POSEIDON2_WIDTH,
+    },
     poseidon2::{poseidon2_step_ring, Felt},
+    poseidon2_constants::{EXTERNAL_ROUND_CONSTANTS, INTERNAL_ROUND_CONSTANTS},
     range::{RANGE_LIMB_BITS, RANGE_LIMB_COUNT, RANGE_TOP_LIMB_MAX},
 };
 
@@ -26,7 +30,6 @@ const MAX_INPUTS: usize = 2;
 const MAX_OUTPUTS: usize = 2;
 const BALANCE_SLOTS: usize = 4;
 const MERKLE_DEPTH: usize = 32;
-const POSEIDON_STEPS: usize = 31;
 const POSEIDON_ROWS_PER_PERMUTATION: usize = POSEIDON_STEPS + 1;
 const HASH_LIMBS: usize = 6;
 const INLINE_MERKLE_BINDING_SLOTS: usize = MAX_INPUTS * MERKLE_DEPTH * HASH_LIMBS;
@@ -113,6 +116,14 @@ const BASE_INPUT_ROWS: usize = 1 + 1 + MERKLE_DEPTH;
 const PUBLIC_VALUE_RANGE_VALUE_COUNT: usize = 3;
 const VALUE_RANGE_VALUE_COUNT: usize = MAX_INPUTS + MAX_OUTPUTS + PUBLIC_VALUE_RANGE_VALUE_COUNT;
 const VALUE_RANGE_ROWS: usize = VALUE_RANGE_VALUE_COUNT * RANGE_LIMB_COUNT;
+const DENSE_RANGE_ORDINARY_DIGITS: usize = 30;
+const fn dense_range_rows(packing_factor: usize) -> usize {
+    (VALUE_RANGE_VALUE_COUNT * DENSE_RANGE_ORDINARY_DIGITS).div_ceil(packing_factor) + 1
+}
+const COMPRESSED_POSEIDON_SBOX_ROWS: usize =
+    (POSEIDON2_EXTERNAL_ROUNDS * 2 * POSEIDON2_WIDTH) + POSEIDON2_INTERNAL_ROUNDS;
+const COMPRESSED_POSEIDON_ROWS_PER_GROUP: usize =
+    POSEIDON2_WIDTH + COMPRESSED_POSEIDON_SBOX_ROWS + POSEIDON2_WIDTH;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum SmallwoodConstraintExpression {
@@ -365,10 +376,12 @@ struct PackedRowLayout {
     output_rows: usize,
     stable_binding_rows: usize,
     value_range_rows: usize,
+    dense_value_range_rows: usize,
     inline_merkle_aggregates: bool,
     committed_inline_bindings: bool,
     poseidon_rows_per_permutation: usize,
     skip_initial_mds_poseidon: bool,
+    compressed_poseidon_wires: bool,
 }
 
 impl PackedRowLayout {
@@ -380,10 +393,12 @@ impl PackedRowLayout {
                     output_rows: 2 + HASH_LIMBS + OUTPUT_AUTH_KEY_ROWS,
                     stable_binding_rows: 1 + (HASH_LIMBS * 3),
                     value_range_rows: 0,
+                    dense_value_range_rows: 0,
                     inline_merkle_aggregates: false,
                     committed_inline_bindings: false,
                     poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION,
                     skip_initial_mds_poseidon: false,
+                    compressed_poseidon_wires: false,
                 }
             }
             SmallwoodArithmetization::DirectPacked64CompactBindingsV1
@@ -394,20 +409,24 @@ impl PackedRowLayout {
                 output_rows: 2 + OUTPUT_AUTH_KEY_ROWS,
                 stable_binding_rows: 0,
                 value_range_rows: 0,
+                dense_value_range_rows: 0,
                 inline_merkle_aggregates: false,
                 committed_inline_bindings: false,
                 poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION,
                 skip_initial_mds_poseidon: false,
+                compressed_poseidon_wires: false,
             },
             SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => Self {
                 input_rows: INPUT_ROWS,
                 output_rows: 2 + OUTPUT_AUTH_KEY_ROWS,
                 stable_binding_rows: 0,
                 value_range_rows: 0,
+                dense_value_range_rows: 0,
                 inline_merkle_aggregates: false,
                 committed_inline_bindings: false,
                 poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION - 1,
                 skip_initial_mds_poseidon: true,
+                compressed_poseidon_wires: false,
             },
             SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
             | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
@@ -416,10 +435,12 @@ impl PackedRowLayout {
                     output_rows: 2 + HASH_LIMBS + OUTPUT_AUTH_KEY_ROWS,
                     stable_binding_rows: 0,
                     value_range_rows: 0,
+                    dense_value_range_rows: 0,
                     inline_merkle_aggregates: true,
                     committed_inline_bindings: false,
                     poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION - 1,
                     skip_initial_mds_poseidon: true,
+                    compressed_poseidon_wires: false,
                 }
             }
             SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => {
@@ -428,11 +449,44 @@ impl PackedRowLayout {
                     output_rows: 2 + HASH_LIMBS + OUTPUT_AUTH_KEY_ROWS,
                     stable_binding_rows: 0,
                     value_range_rows: VALUE_RANGE_ROWS,
+                    dense_value_range_rows: 0,
                     inline_merkle_aggregates: true,
                     committed_inline_bindings: true,
                     poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION - 1,
                     skip_initial_mds_poseidon: true,
+                    compressed_poseidon_wires: false,
                 }
+            }
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5
+            | SmallwoodArithmetization::DirectPacked128CompressedLevel5
+            | SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3
+            | SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2
+            | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => Self {
+                input_rows: BASE_INPUT_ROWS,
+                output_rows: 2 + HASH_LIMBS + OUTPUT_AUTH_KEY_ROWS,
+                stable_binding_rows: 0,
+                value_range_rows: 0,
+                dense_value_range_rows: if matches!(
+                    arithmetization,
+                    SmallwoodArithmetization::DirectPacked128CompressedLevel5
+                ) {
+                    dense_range_rows(128)
+                } else {
+                    dense_range_rows(64)
+                },
+                inline_merkle_aggregates: true,
+                committed_inline_bindings: true,
+                poseidon_rows_per_permutation: 2,
+                skip_initial_mds_poseidon: false,
+                compressed_poseidon_wires: true,
+            },
+            SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate => {
+                panic!("the fresh HX512 adapter must not use legacy Poseidon row layouts")
+            }
+            SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
+            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
+                panic!("the fresh Poseidon2 V8 adapter must use its dedicated width-16 row layout")
             }
         }
     }
@@ -446,7 +500,11 @@ impl PackedRowLayout {
     }
 
     const fn poseidon_transition_count(self) -> usize {
-        self.poseidon_rows_per_permutation - 1
+        if self.compressed_poseidon_wires {
+            0
+        } else {
+            self.poseidon_rows_per_permutation - 1
+        }
     }
 
     const fn poseidon_last_row(self) -> usize {
@@ -462,6 +520,14 @@ impl PackedRowLayout {
             }
         } else {
             logical_row
+        }
+    }
+
+    const fn poseidon_rows_per_group(self) -> usize {
+        if self.compressed_poseidon_wires {
+            COMPRESSED_POSEIDON_ROWS_PER_GROUP
+        } else {
+            self.poseidon_rows_per_permutation * POSEIDON2_WIDTH
         }
     }
 
@@ -1349,7 +1415,15 @@ fn inline_binding_row_count(layout: PackedRowLayout, packing_factor: usize) -> u
 
 #[inline]
 fn inline_binding_rows_start(statement: &PackedStatement<'_>) -> usize {
-    PUBLIC_ROWS + PackedRowLayout::for_arithmetization(statement.arithmetization).secret_rows()
+    let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
+    PUBLIC_ROWS + layout.secret_rows() + layout.dense_value_range_rows
+}
+
+#[inline]
+fn dense_value_range_rows_start(statement: &PackedStatement<'_>) -> usize {
+    let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
+    debug_assert!(layout.dense_value_range_rows > 0);
+    PUBLIC_ROWS + layout.secret_rows()
 }
 
 #[inline]
@@ -1371,7 +1445,10 @@ fn row_inline_policy_binding(statement: &PackedStatement<'_>, component: usize) 
 #[inline]
 fn poseidon_rows_start(statement: &PackedStatement<'_>) -> usize {
     let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
-    PUBLIC_ROWS + layout.secret_rows() + inline_binding_row_count(layout, statement.packing_factor)
+    PUBLIC_ROWS
+        + layout.secret_rows()
+        + layout.dense_value_range_rows
+        + inline_binding_row_count(layout, statement.packing_factor)
 }
 #[inline]
 fn poseidon_group_row(
@@ -1381,9 +1458,29 @@ fn poseidon_group_row(
     limb: usize,
 ) -> usize {
     let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
-    poseidon_rows_start(statement)
-        + (group * layout.poseidon_rows_per_permutation + step_row) * POSEIDON2_WIDTH
-        + limb
+    let group_start = poseidon_rows_start(statement) + group * layout.poseidon_rows_per_group();
+    if layout.compressed_poseidon_wires {
+        if step_row == 0 {
+            group_start + limb
+        } else {
+            debug_assert_eq!(step_row, layout.poseidon_last_row());
+            group_start + POSEIDON2_WIDTH + COMPRESSED_POSEIDON_SBOX_ROWS + limb
+        }
+    } else {
+        group_start + step_row * POSEIDON2_WIDTH + limb
+    }
+}
+
+#[inline]
+fn compressed_poseidon_group_row(
+    statement: &PackedStatement<'_>,
+    group: usize,
+    packed_row: usize,
+) -> usize {
+    let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
+    debug_assert!(layout.compressed_poseidon_wires);
+    debug_assert!(packed_row < COMPRESSED_POSEIDON_ROWS_PER_GROUP);
+    poseidon_rows_start(statement) + group * COMPRESSED_POSEIDON_ROWS_PER_GROUP + packed_row
 }
 
 #[inline]
@@ -1603,15 +1700,19 @@ fn constraint_count(arithmetization: SmallwoodArithmetization, packing_factor: u
         1 + 1 + 7
     };
     let balance_constraints = BALANCE_SLOTS;
-    let value_range_constraints = layout.value_range_rows;
+    let value_range_constraints = layout.value_range_rows + layout.dense_value_range_rows;
     let auth_constraints = AUTH_CONSTRAINTS;
-    let poseidon_transition = poseidon_group_count(packing_factor)
-        * layout.poseidon_transition_count()
-        * if layout.committed_inline_bindings {
-            POSEIDON2_WIDTH
-        } else {
-            1
-        };
+    let poseidon_transition = if layout.compressed_poseidon_wires {
+        poseidon_group_count(packing_factor) * (COMPRESSED_POSEIDON_SBOX_ROWS + POSEIDON2_WIDTH)
+    } else {
+        poseidon_group_count(packing_factor)
+            * layout.poseidon_transition_count()
+            * if layout.committed_inline_bindings {
+                POSEIDON2_WIDTH
+            } else {
+                1
+            }
+    };
     public_bools
         + input_constraints
         + output_constraints
@@ -1625,8 +1726,7 @@ fn constraint_count(arithmetization: SmallwoodArithmetization, packing_factor: u
 #[cfg(test)]
 pub(crate) fn production_constraint_family_ranges() -> Vec<SmallwoodProductionConstraintFamilyRange>
 {
-    let arithmetization =
-        SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2;
+    let arithmetization = SmallwoodArithmetization::DirectPacked64CompressedLevel5;
     let packing_factor = 64;
     let layout = PackedRowLayout::for_arithmetization(arithmetization);
     let counts = [
@@ -1638,13 +1738,21 @@ pub(crate) fn production_constraint_family_ranges() -> Vec<SmallwoodProductionCo
         ("output_validity", MAX_OUTPUTS * (1 + HASH_LIMBS)),
         ("stablecoin", 6 + HASH_LIMBS * 3),
         ("balance_conservation", BALANCE_SLOTS),
-        ("value_ranges", layout.value_range_rows),
+        (
+            "value_ranges",
+            layout.value_range_rows + layout.dense_value_range_rows,
+        ),
         ("spend_authorization", AUTH_CONSTRAINTS),
         (
             "poseidon_transitions",
-            poseidon_group_count(packing_factor)
-                * layout.poseidon_transition_count()
-                * POSEIDON2_WIDTH,
+            if layout.compressed_poseidon_wires {
+                poseidon_group_count(packing_factor)
+                    * (COMPRESSED_POSEIDON_SBOX_ROWS + POSEIDON2_WIDTH)
+            } else {
+                poseidon_group_count(packing_factor)
+                    * layout.poseidon_transition_count()
+                    * POSEIDON2_WIDTH
+            },
         ),
     ];
     let mut start = 0;
@@ -1959,6 +2067,18 @@ fn compute_constraints_ring<R: PrimeCharacteristicRing>(
                 );
                 c += 1;
             }
+        }
+    }
+    if layout.dense_value_range_rows > 0 {
+        let start = dense_value_range_rows_start(statement);
+        for row in 0..layout.dense_value_range_rows {
+            let value = rows[start + row];
+            out[c] = if row + 1 == layout.dense_value_range_rows {
+                felt_bool_v(value)
+            } else {
+                value * (value - R::ONE) * (value - R::from_u64(2)) * (value - R::from_u64(3))
+            };
+            c += 1;
         }
     }
 
@@ -2407,27 +2527,88 @@ fn compute_constraints_ring<R: PrimeCharacteristicRing>(
     }
 
     for group in 0..poseidon_group_count(statement.packing_factor) {
-        for step in 0..layout.poseidon_transition_count() {
-            let mut state = [R::ZERO; POSEIDON2_WIDTH];
-            let mut next_actual = [R::ZERO; POSEIDON2_WIDTH];
-            for limb in 0..POSEIDON2_WIDTH {
-                state[limb] = rows[poseidon_group_row(statement, group, step, limb)];
-                next_actual[limb] = rows[poseidon_group_row(statement, group, step + 1, limb)];
+        if layout.compressed_poseidon_wires {
+            let mut state = core::array::from_fn(|limb| {
+                rows[compressed_poseidon_group_row(statement, group, limb)]
+            });
+            poseidon2_step_ring(&mut state, 0);
+            let mut wire_row = POSEIDON2_WIDTH;
+
+            for (round, round_constants) in EXTERNAL_ROUND_CONSTANTS[0]
+                .iter()
+                .enumerate()
+                .take(POSEIDON2_EXTERNAL_ROUNDS)
+            {
+                let step = 1 + round;
+                for (limb, round_constant) in round_constants.iter().enumerate() {
+                    let wire = rows[compressed_poseidon_group_row(statement, group, wire_row)];
+                    let round_constant = R::from_u64(*round_constant);
+                    out[c] = wire - (state[limb] + round_constant);
+                    c += 1;
+                    state[limb] = wire - round_constant;
+                    wire_row += 1;
+                }
+                poseidon2_step_ring(&mut state, step);
             }
-            apply_poseidon_transition(layout, step, &mut state);
-            if layout.committed_inline_bindings {
+            for (round, round_constant) in INTERNAL_ROUND_CONSTANTS
+                .iter()
+                .enumerate()
+                .take(POSEIDON2_INTERNAL_ROUNDS)
+            {
+                let step = 1 + POSEIDON2_EXTERNAL_ROUNDS + round;
+                let wire = rows[compressed_poseidon_group_row(statement, group, wire_row)];
+                let round_constant = R::from_u64(*round_constant);
+                out[c] = wire - (state[0] + round_constant);
+                c += 1;
+                state[0] = wire - round_constant;
+                wire_row += 1;
+                poseidon2_step_ring(&mut state, step);
+            }
+            for (round, round_constants) in EXTERNAL_ROUND_CONSTANTS[1]
+                .iter()
+                .enumerate()
+                .take(POSEIDON2_EXTERNAL_ROUNDS)
+            {
+                let step = 1 + POSEIDON2_EXTERNAL_ROUNDS + POSEIDON2_INTERNAL_ROUNDS + round;
+                for (limb, round_constant) in round_constants.iter().enumerate() {
+                    let wire = rows[compressed_poseidon_group_row(statement, group, wire_row)];
+                    let round_constant = R::from_u64(*round_constant);
+                    out[c] = wire - (state[limb] + round_constant);
+                    c += 1;
+                    state[limb] = wire - round_constant;
+                    wire_row += 1;
+                }
+                poseidon2_step_ring(&mut state, step);
+            }
+            debug_assert_eq!(wire_row, POSEIDON2_WIDTH + COMPRESSED_POSEIDON_SBOX_ROWS);
+            for limb in 0..POSEIDON2_WIDTH {
+                let actual = rows[compressed_poseidon_group_row(statement, group, wire_row + limb)];
+                out[c] = actual - state[limb];
+                c += 1;
+            }
+        } else {
+            for step in 0..layout.poseidon_transition_count() {
+                let mut state = [R::ZERO; POSEIDON2_WIDTH];
+                let mut next_actual = [R::ZERO; POSEIDON2_WIDTH];
                 for limb in 0..POSEIDON2_WIDTH {
-                    out[c] = next_actual[limb] - state[limb];
+                    state[limb] = rows[poseidon_group_row(statement, group, step, limb)];
+                    next_actual[limb] = rows[poseidon_group_row(statement, group, step + 1, limb)];
+                }
+                apply_poseidon_transition(layout, step, &mut state);
+                if layout.committed_inline_bindings {
+                    for limb in 0..POSEIDON2_WIDTH {
+                        out[c] = next_actual[limb] - state[limb];
+                        c += 1;
+                    }
+                } else {
+                    out[c] = aggregate_weighted_differences(
+                        poseidon_transition_challenges
+                            [poseidon_transition_challenge_index(layout, group, step)],
+                        &next_actual,
+                        &state,
+                    );
                     c += 1;
                 }
-            } else {
-                out[c] = aggregate_weighted_differences(
-                    poseidon_transition_challenges
-                        [poseidon_transition_challenge_index(layout, group, step)],
-                    &next_actual,
-                    &state,
-                );
-                c += 1;
             }
         }
     }
@@ -2436,11 +2617,13 @@ fn compute_constraints_ring<R: PrimeCharacteristicRing>(
 pub(crate) fn production_constraint_program(
     statement: &PackedStatement<'_>,
 ) -> Result<SmallwoodProductionConstraintProgram, TransactionCircuitError> {
-    if statement.arithmetization
-        != SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
-    {
+    if !matches!(
+        statement.arithmetization,
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5
+            | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1
+    ) {
         return Err(TransactionCircuitError::ConstraintViolation(
-            "production constraint program requires the deployed committed SmallWood relation",
+            "production constraint program requires the compact 64-lane Level-5 SmallWood relation",
         ));
     }
     if statement.public_values.len() != PUBLIC_VALUE_COUNT

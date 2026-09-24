@@ -1,0 +1,199 @@
+{
+  "authority": {
+    "complete_zero_knowledge_proved": false,
+    "local_candidate_completeness_lemma": true,
+    "paper_specification_unambiguous": false,
+    "pq128_composition_proved": false,
+    "production_authorized": false,
+    "qrom_security_proved": false,
+    "repair_author_selected": false,
+    "theorem_11_3_inherited": false
+  },
+  "claim_boundary": "Finite-field differential evidence and an algebraic local lemma only; not an implementation or proof of Theorem 11.3, complete ZK, QROM security, or production authority.",
+  "mutations": {
+    "candidate_dropped_scalar_rejects": true,
+    "candidate_exact_joint_relation_accepts": true,
+    "candidate_mutated_mu_rejects": true,
+    "candidate_mutated_scalar_rejects": true,
+    "characteristic_two_destroys_factor_two_hiding": true,
+    "endpoint_alpha_destroys_value_hiding": true,
+    "endpoint_zero_mask_preserves_boolean_constraint": true,
+    "interior_alpha_value_is_uniform": true,
+    "invalid_r1cs_row_rejects": true,
+    "mutated_mask_endpoint_breaks_boolean_constraint": true,
+    "printed_charitable_projection_has_counterexample": true,
+    "printed_identity_pair_state_rejected": true,
+    "scaled_two_exact_joint_relation_accepts": true,
+    "scaled_two_unscaled_output_rejects": true,
+    "step3_one_step8_two_hybrid_rejects": true
+  },
+  "public_value_slice": {
+    "alpha_last": 2,
+    "branches": {
+      "candidate-coefficient-1-times-identity": {
+        "max_multiplicity": 125,
+        "min_multiplicity": 125,
+        "scope": "value-claim slice (v_A,v_B,v_C,mu), not the full protocol view",
+        "support": 125,
+        "total_coefficient_triples": 15625,
+        "two_witness_distributions_equal": true
+      },
+      "coefficient-2-scaled-times-identity": {
+        "max_multiplicity": 125,
+        "min_multiplicity": 125,
+        "scope": "value-claim slice (v_A,v_B,v_C,mu), not the full protocol view",
+        "support": 125,
+        "total_coefficient_triples": 15625,
+        "two_witness_distributions_equal": true
+      },
+      "printed-coefficient-1-identity": {
+        "max_multiplicity": 125,
+        "min_multiplicity": 125,
+        "scope": "value-claim slice (v_A,v_B,v_C,mu), not the full protocol view",
+        "support": 125,
+        "total_coefficient_triples": 15625,
+        "two_witness_distributions_equal": true
+      }
+    },
+    "endpoint_evaluation_histogram": {
+      "0": 5,
+      "1": 5,
+      "2": 5,
+      "3": 5,
+      "4": 5
+    },
+    "inner_message_length": 4,
+    "negative_controls": {
+      "alpha_last_zero_support": 1,
+      "characteristic_two_factor_two_support": 1
+    },
+    "prime": 5,
+    "public_terms": [
+      2,
+      0,
+      0
+    ],
+    "same_public_r1cs_valid_for_both_witnesses": true,
+    "witness_contribution_one": [
+      0,
+      0,
+      0
+    ],
+    "witness_contribution_two": [
+      4,
+      0,
+      0
+    ]
+  },
+  "randomized_r1cs": {
+    "branches": {
+      "candidate-coefficient-1-times-identity": {
+        "boolean_constraint_passes": 384,
+        "charitable_projection_failures": 0,
+        "charitable_projection_passes": 0,
+        "trials": 384,
+        "typed_relation_failures": 0,
+        "typed_relation_passes": 384,
+        "typed_trials": 384
+      },
+      "coefficient-2-scaled-times-identity": {
+        "boolean_constraint_passes": 384,
+        "charitable_projection_failures": 0,
+        "charitable_projection_passes": 0,
+        "trials": 384,
+        "typed_relation_failures": 0,
+        "typed_relation_passes": 384,
+        "typed_trials": 384
+      },
+      "printed-coefficient-1-identity": {
+        "boolean_constraint_passes": 384,
+        "charitable_projection_failures": 289,
+        "charitable_projection_passes": 95,
+        "trials": 384,
+        "typed_relation_failures": 0,
+        "typed_relation_passes": 0,
+        "typed_trials": 0
+      }
+    },
+    "inner_message_length": 4,
+    "per_prime": {
+      "11": {
+        "candidate-coefficient-1-times-identity": {
+          "relation_failures": 0,
+          "relation_passes": 96,
+          "trials": 96
+        },
+        "coefficient-2-scaled-times-identity": {
+          "relation_failures": 0,
+          "relation_passes": 96,
+          "trials": 96
+        },
+        "printed-coefficient-1-identity": {
+          "relation_failures": 80,
+          "relation_passes": 16,
+          "trials": 96
+        }
+      },
+      "13": {
+        "candidate-coefficient-1-times-identity": {
+          "relation_failures": 0,
+          "relation_passes": 96,
+          "trials": 96
+        },
+        "coefficient-2-scaled-times-identity": {
+          "relation_failures": 0,
+          "relation_passes": 96,
+          "trials": 96
+        },
+        "printed-coefficient-1-identity": {
+          "relation_failures": 82,
+          "relation_passes": 14,
+          "trials": 96
+        }
+      },
+      "5": {
+        "candidate-coefficient-1-times-identity": {
+          "relation_failures": 0,
+          "relation_passes": 96,
+          "trials": 96
+        },
+        "coefficient-2-scaled-times-identity": {
+          "relation_failures": 0,
+          "relation_passes": 96,
+          "trials": 96
+        },
+        "printed-coefficient-1-identity": {
+          "relation_failures": 61,
+          "relation_passes": 35,
+          "trials": 96
+        }
+      },
+      "7": {
+        "candidate-coefficient-1-times-identity": {
+          "relation_failures": 0,
+          "relation_passes": 96,
+          "trials": 96
+        },
+        "coefficient-2-scaled-times-identity": {
+          "relation_failures": 0,
+          "relation_passes": 96,
+          "trials": 96
+        },
+        "printed-coefficient-1-identity": {
+          "relation_failures": 66,
+          "relation_passes": 30,
+          "trials": 96
+        }
+      }
+    },
+    "primes": [
+      5,
+      7,
+      11,
+      13
+    ],
+    "seed_sha512": "be4d4530a78fcaf4872b39c05da8967b7a22dc27bcb759f27d8babe2dddd4174e74de66fe1ef58b1ac40f240df2bc9e1131caeaee7a030b38519d5c0afde7f79",
+    "trials_per_prime": 96
+  },
+  "schema": "hegemon.cfw26-section11-repair-audit.experiment.v1"
+}

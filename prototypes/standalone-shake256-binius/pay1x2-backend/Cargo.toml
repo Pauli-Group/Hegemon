@@ -1,0 +1,39 @@
+[package]
+name = "hegemon-standalone-shake256-pay1x2-binius-backend"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Keep the prototype isolated from the production workspace. Nothing in this
+# crate is reachable from consensus admission.
+[workspace]
+resolver = "2"
+
+[dependencies]
+binius-field = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-hash = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-spartan-frontend = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-spartan-prover = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-spartan-verifier = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-transcript = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+hegemon-standalone-pay1x2-relation-prototype = { path = "../../../circuits/standalone-pay1x2-relation-prototype" }
+hegemon-standalone-pay1x2-statement-prototype = { path = "../../../circuits/standalone-pay1x2-statement-prototype" }
+hegemon-standalone-shake256-binius-backend = { path = "../backend" }
+hegemon-standalone-shake256-prototype = { path = "../../../circuits/standalone-shake256-prototype" }
+rand = { version = "0.10.1", default-features = false, features = ["std", "std_rng", "thread_rng"] }
+serde_json = "1.0.140"
+standalone-proof-envelope-prototype = { path = "../../../circuits/standalone-proof-envelope-prototype" }
+
+[profile.dev]
+opt-level = 1
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false
+
+[profile.release]
+lto = "thin"
+debug = 0
+incremental = false

@@ -168,18 +168,18 @@ def check_vectors(vectors: dict) -> int:
 
 
 def check_bundle(bundle: dict) -> tuple[int, int]:
-    if bundle.get("schema_version") != 1:
-        raise SystemExit("checked-in native backend vector bundle must use schema_version 1")
+    if bundle.get("schema_version") != 2:
+        raise SystemExit("checked-in native backend vector bundle must use schema_version 2")
     if bundle.get("generator_id") != "hegemon.superneo-bench.native-review":
         raise SystemExit("checked-in native backend vector bundle generator_id mismatch")
     active = bundle.get("active_tx_profile")
     if not isinstance(active, dict):
         raise SystemExit("checked-in native backend vector bundle lacks active_tx_profile")
     expected_active = {
-        "circuit_version": 3,
-        "crypto_suite": 2,
+        "circuit_version": 4,
+        "crypto_suite": 3,
         "proof_backend": "SmallwoodCandidate",
-        "arithmetization": "DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2",
+        "arithmetization": "DirectPacked64CompressedLevel5",
         "public_value_count": 78,
     }
     for field, expected in expected_active.items():
@@ -188,13 +188,13 @@ def check_bundle(bundle: dict) -> tuple[int, int]:
                 f"checked-in native backend vector bundle active profile {field} "
                 f"must be {expected!r}, got {active.get(field)!r}"
             )
-    profile_digest = active.get("verifier_profile_sha384_hex")
+    profile_digest = active.get("verifier_profile_blake2b384_hex")
     if not isinstance(profile_digest, str) or len(profile_digest) != 96:
-        raise SystemExit("active verifier_profile_sha384_hex must be 48-byte hex")
+        raise SystemExit("active verifier_profile_blake2b384_hex must be 48-byte hex")
     try:
         bytes.fromhex(profile_digest)
     except ValueError as exc:
-        raise SystemExit("active verifier_profile_sha384_hex is invalid hex") from exc
+        raise SystemExit("active verifier_profile_blake2b384_hex is invalid hex") from exc
 
     vector_cases = bundle.get("cases")
     if not isinstance(vector_cases, list) or len(vector_cases) != len(REQUIRED_CASES):
@@ -232,8 +232,8 @@ def check_bundle(bundle: dict) -> tuple[int, int]:
             tx = tx_context.get("tx") if isinstance(tx_context, dict) else None
             if not isinstance(tx, dict) or (
                 tx.get("version_circuit"), tx.get("version_crypto")
-            ) != (3, 2):
-                raise SystemExit(f"{name}: tx context is not active V3 (3,2)")
+            ) != (4, 3):
+                raise SystemExit(f"{name}: tx context is not active V4 (4,3)")
             require_hex(
                 tx_context.get("statement_digest_hex"),
                 48,
@@ -271,9 +271,9 @@ def check_bundle(bundle: dict) -> tuple[int, int]:
                 tx = tx_context.get("tx") if isinstance(tx_context, dict) else None
                 if not isinstance(tx, dict) or (
                     tx.get("version_circuit"), tx.get("version_crypto")
-                ) != (3, 2):
+                ) != (4, 3):
                     raise SystemExit(
-                        f"{name}: leaf {leaf_index} tx context is not active V3 (3,2)"
+                        f"{name}: leaf {leaf_index} tx context is not active V4 (4,3)"
                     )
                 require_review_receipt(
                     tx_context.get("receipt"),

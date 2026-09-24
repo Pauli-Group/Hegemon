@@ -1,0 +1,688 @@
+diff --git a/crates/iop-prover/src/fri/fold.rs b/crates/iop-prover/src/fri/fold.rs
+index ed1038c..ee1dae1 100644
+--- a/crates/iop-prover/src/fri/fold.rs
++++ b/crates/iop-prover/src/fri/fold.rs
+@@ -414,12 +414,18 @@ where
+ 			.map(|_| channel.sample_bits(index_bits))
+ 			.collect::<Vec<_>>();
+ 
+-		// Send the per-oracle batched query openings, then the canonical terminal message. Its
+-		// commitment was created with the message shape in the final commit round.
+-		query_prover.prove_queries(&indices, channel);
+ 		let terminal_message =
+ 			Self::terminal_message(ntt, log_terminal_dim, log_inv_rate, &terminate_codeword);
+-		channel.send_committed_vector(&terminal_commitment, terminal_message.to_ref());
++		if query_prover.supports_terminal_target_elision() {
++			// Decommitment advice does not feed Fiat-Shamir. Authenticate the terminal message first,
++			// then use its queried codeword entries as division-free fold targets for the initial
++			// leaves.
++			channel.send_committed_vector(&terminal_commitment, terminal_message.to_ref());
++			query_prover.prove_queries_omitting_fold_targets(&indices, channel);
++		} else {
++			query_prover.prove_queries(&indices, channel);
++			channel.send_committed_vector(&terminal_commitment, terminal_message.to_ref());
++		}
+ 	}
+ }
+ 
+@@ -627,7 +633,12 @@ impl<F: Field, P: PackedField<Scalar = F>, C, Data: Deref<Target = [P]>>
+ 					});
+ 			}
+ 
+-			oracles.push(BrakedownOracleProver::new(codeword, commitment, log_lift));
++			oracles.push(BrakedownOracleProver::new(
++				codeword,
++				commitment,
++				fold_challenges,
++				log_lift,
++			));
+ 		}
+ 
+ 		let combined_codeword = FieldBuffer::new(self.log_code_len, values);
+diff --git a/crates/iop-prover/src/fri/query.rs b/crates/iop-prover/src/fri/query.rs
+index 893e12e..1a9e3ab 100644
+--- a/crates/iop-prover/src/fri/query.rs
++++ b/crates/iop-prover/src/fri/query.rs
+@@ -32,6 +32,8 @@ where
+ {
+ 	codeword: FieldBuffer<P, Data>,
+ 	commitment: C,
++	/// Challenges that fold each committed leaf into its virtual-oracle value.
++	fold_challenges: Vec<P::Scalar>,
+ 	/// log2 the lift factor (oracle padding). The committed codeword is virtually duplicated
+ 	/// `2^log_lift` times to reach the common first-round length; a query at global index `k`
+ 	/// opens the committed codeword at `k >> log_lift`. Zero when no lifting is needed.
+@@ -48,13 +50,35 @@ where
+ 	/// `log_lift` is the oracle-padding lift factor (the committed codeword is virtually duplicated
+ 	/// `2^log_lift` times to reach the common first-round length); pass `0` when no lifting is
+ 	/// needed.
+-	pub const fn new(codeword: FieldBuffer<P, Data>, commitment: C, log_lift: usize) -> Self {
++	pub const fn new(
++		codeword: FieldBuffer<P, Data>,
++		commitment: C,
++		fold_challenges: Vec<P::Scalar>,
++		log_lift: usize,
++	) -> Self {
+ 		Self {
+ 			codeword,
+ 			commitment,
++			fold_challenges,
+ 			log_lift,
+ 		}
+ 	}
++
++	fn open_queries_omitting_fold_targets<Channel>(
++		&self,
++		indices: &[Channel::Word],
++		channel: &mut Channel,
++	) where
++		Channel: MerkleIPProverChannel<P::Scalar, Commitment = C>,
++	{
++		assert_eq!(self.log_lift, 0);
++		channel.send_openings_omitting_fold_targets(
++			&self.commitment,
++			self.codeword.to_ref(),
++			indices,
++			&self.fold_challenges,
++		);
++	}
+ }
+ 
+ impl<F, P, C, Data> ProxTestOracleProver<F> for BrakedownOracleProver<P, C, Data>
+@@ -103,6 +127,21 @@ where
+ 	pub const fn new(oracles: Vec<BrakedownOracleProver<P, C, Data>>) -> Self {
+ 		Self { oracles }
+ 	}
++
++	pub fn supports_terminal_target_elision(&self) -> bool {
++		self.oracles.len() == 1 && self.oracles[0].log_lift == 0
++	}
++
++	pub fn open_queries_omitting_fold_targets<Channel>(
++		&self,
++		indices: &[Channel::Word],
++		channel: &mut Channel,
++	) where
++		Channel: MerkleIPProverChannel<P::Scalar, Commitment = C>,
++	{
++		assert!(self.supports_terminal_target_elision());
++		self.oracles[0].open_queries_omitting_fold_targets(indices, channel);
++	}
+ }
+ 
+ impl<F, P, C, Data> ProxTestOracleProver<F> for BatchBrakedownOracleProver<P, C, Data>
+@@ -259,4 +298,21 @@ where
+ 			indices = coset_indices;
+ 		}
+ 	}
++
++	pub fn supports_terminal_target_elision(&self) -> bool {
++		self.fri_oracles.is_empty() && self.codeword_oracle.supports_terminal_target_elision()
++	}
++
++	/// Opens the sole initial oracle in the division-free slope basis using terminal targets.
++	pub fn prove_queries_omitting_fold_targets<Channel>(
++		&self,
++		indices: &[Channel::Word],
++		channel: &mut Channel,
++	) where
++		Channel: MerkleIPProverChannel<F, Commitment = C>,
++	{
++		assert!(self.supports_terminal_target_elision());
++		self.codeword_oracle
++			.open_queries_omitting_fold_targets(indices, channel);
++	}
+ }
+diff --git a/crates/iop-prover/src/merkle_channel.rs b/crates/iop-prover/src/merkle_channel.rs
+index 102bec9..fc04ae5 100644
+--- a/crates/iop-prover/src/merkle_channel.rs
++++ b/crates/iop-prover/src/merkle_channel.rs
+@@ -22,7 +22,7 @@ use binius_core::word::Word;
+ use binius_field::{Field, PackedField};
+ use binius_hash::binary_merkle_tree::{BinaryMerkleTree, HashSuite};
+ use binius_ip_prover::channel::{IPProverChannel, WordIPProverChannel};
+-use binius_math::FieldSlice;
++use binius_math::{FieldSlice, multilinear::evaluate::decompose_multilinear_evaluation};
+ use binius_transcript::{ProverTranscript, fiat_shamir::Challenger};
+ use binius_utils::{SerializeBytes, checked_arithmetics::checked_log_2};
+ use digest::Output;
+@@ -83,6 +83,21 @@ pub trait MerkleIPProverChannel<F: Field>: WordIPProverChannel<F> {
+ 		self.send_openings(commitment, data, indices);
+ 	}
+ 
++	/// Sends leaves in the division-free slope basis when their multilinear fold targets are known.
++	///
++	/// The default wire remains the ordinary full-leaf opening. Transcript channels override this
++	/// only for the single-oracle terminal-target FRI path.
++	fn send_openings_omitting_fold_targets<P: PackedField<Scalar = F>>(
++		&mut self,
++		commitment: &Self::Commitment,
++		data: FieldSlice<P>,
++		indices: &[Self::Word],
++		fold_challenges: &[F],
++	) {
++		let _ = fold_challenges;
++		self.send_openings(commitment, data, indices);
++	}
++
+ 	/// Sends the full committed vector, bound by a Merkle commitment.
+ 	///
+ 	/// ## Preconditions
+@@ -362,6 +377,66 @@ where
+ 		debug_assert_eq!(live.len(), 1);
+ 	}
+ 
++	fn send_openings_omitting_fold_targets<P: PackedField<Scalar = F>>(
++		&mut self,
++		commitment: &Self::Commitment,
++		data: FieldSlice<P>,
++		indices: &[Word],
++		fold_challenges: &[F],
++	) {
++		let tree_depth = commitment.depth;
++		debug_assert_eq!(tree_depth, data.log_len() - commitment.log_leaf_size);
++		let leaf_size = 1 << commitment.log_leaf_size;
++		assert_eq!(leaf_size, 1 << fold_challenges.len());
++
++		let indices = indices
++			.iter()
++			.map(|index| index.as_u64() as usize)
++			.collect::<Vec<_>>();
++		assert!(indices.iter().all(|&index| index < 1 << tree_depth));
++		let mut unique_indices = indices;
++		unique_indices.sort_unstable();
++		unique_indices.dedup();
++		let mut advice = self.transcript.borrow_mut().decommitment();
++		for &index in &unique_indices {
++			let leaf = data.chunk(commitment.log_leaf_size, index);
++			let values = leaf.iter_scalars().collect::<Vec<_>>();
++			let (_, slopes) = decompose_multilinear_evaluation(&values, fold_challenges);
++			advice.write_scalar_iter(slopes);
++		}
++
++		let branches = unique_indices
++			.iter()
++			.map(|&index| {
++				commitment
++					.committed
++					.branch(index, 0)
++					.expect("precondition: every distinct query index is in the committed tree")
++			})
++			.collect::<Vec<_>>();
++		let mut live = unique_indices
++			.iter()
++			.copied()
++			.enumerate()
++			.map(|(representative, index)| (index, representative))
++			.collect::<BTreeMap<_, _>>();
++		for level in 0..tree_depth {
++			let mut parents = BTreeMap::new();
++			for (&index, &representative) in &live {
++				let sibling = index ^ 1;
++				if index & 1 == 1 && live.contains_key(&sibling) {
++					continue;
++				}
++				if !live.contains_key(&sibling) {
++					advice.write(&branches[representative][level]);
++				}
++				parents.entry(index >> 1).or_insert(representative);
++			}
++			live = parents;
++		}
++		debug_assert_eq!(live.len(), 1);
++	}
++
+ 	fn send_committed_vector<P: PackedField<Scalar = F>>(
+ 		&mut self,
+ 		commitment: &Self::Commitment,
+@@ -379,11 +454,13 @@ where
+ #[cfg(test)]
+ mod tests {
+ 	use binius_core::word::Word;
+-	use binius_field::{BinaryField128bGhash as B128, PackedBinaryGhash2x128b};
++	use binius_field::{BinaryField128bGhash as B128, Field, PackedBinaryGhash2x128b};
+ 	use binius_hash::{StdDigest, StdHashSuite};
+ 	use binius_iop::merkle_channel::{MerkleIPVerifierChannel, VerifierMerkleTranscriptChannel};
+ 	use binius_ip::channel::WordIPVerifierChannel;
+-	use binius_math::{FieldBuffer, test_utils::random_scalars};
++	use binius_math::{
++		FieldBuffer, multilinear::evaluate::evaluate_inplace_scalars, test_utils::random_scalars,
++	};
+ 	use binius_transcript::{ProverTranscript, fiat_shamir::HasherChallenger};
+ 	use rand::prelude::*;
+ 
+@@ -528,6 +605,96 @@ mod tests {
+ 		verifier_channel.into_transcript().finalize().unwrap();
+ 	}
+ 
++	#[test]
++	fn test_merkle_channel_omits_and_reconstructs_fold_targets() {
++		let mut rng = StdRng::seed_from_u64(0x0048_4547_454d_4f4e);
++		let scalars = random_scalars::<B128>(&mut rng, 1 << LOG_LEN);
++		let data = FieldBuffer::<P, _>::from_values(&scalars);
++		let fold_challenges = random_scalars::<B128>(&mut rng, LOG_LEAF_SIZE);
++		// Exercise unsorted leaves and one exact duplicate.
++		let leaf_indices = [12_u64, 3, 12, 4, 31].map(Word::from_u64).to_vec();
++		let targets = leaf_indices
++			.iter()
++			.map(|index| {
++				let index = index.as_u64() as usize;
++				evaluate_inplace_scalars(
++					scalars[index * LEAF_SIZE..(index + 1) * LEAF_SIZE].to_vec(),
++					&fold_challenges,
++				)
++			})
++			.collect::<Vec<_>>();
++
++		let mut prover_channel =
++			ProverChannel::new(ProverTranscript::new(StdChallenger::default()));
++		let commitment = prover_channel.send_merkle_commitment(data.to_ref(), LEAF_SIZE);
++		prover_channel.send_openings_omitting_fold_targets(
++			&commitment,
++			data.to_ref(),
++			&leaf_indices,
++			&fold_challenges,
++		);
++
++		let transcript = prover_channel.into_transcript().into_verifier();
++		let mut verifier_channel = VerifierChannel::new(transcript);
++		let commitment = verifier_channel
++			.recv_merkle_commitment(LEAF_SIZE, DEPTH)
++			.unwrap();
++		let values = verifier_channel
++			.recv_openings_with_fold_targets(&commitment, &leaf_indices, &targets, &fold_challenges)
++			.unwrap();
++		for (leaf, index) in values.chunks(LEAF_SIZE).zip(&leaf_indices) {
++			let index = index.as_u64() as usize;
++			assert_eq!(leaf, &scalars[index * LEAF_SIZE..(index + 1) * LEAF_SIZE]);
++		}
++		verifier_channel.into_transcript().finalize().unwrap();
++	}
++
++	#[test]
++	fn test_merkle_channel_rejects_wrong_fold_target() {
++		let mut rng = StdRng::seed_from_u64(0x5441_5247_4554);
++		let scalars = random_scalars::<B128>(&mut rng, 1 << LOG_LEN);
++		let data = FieldBuffer::<P, _>::from_values(&scalars);
++		let fold_challenges = random_scalars::<B128>(&mut rng, LOG_LEAF_SIZE);
++		let leaf_indices = [3_u64, 7, 19].map(Word::from_u64).to_vec();
++		let mut targets = leaf_indices
++			.iter()
++			.map(|index| {
++				let index = index.as_u64() as usize;
++				evaluate_inplace_scalars(
++					scalars[index * LEAF_SIZE..(index + 1) * LEAF_SIZE].to_vec(),
++					&fold_challenges,
++				)
++			})
++			.collect::<Vec<_>>();
++
++		let mut prover_channel =
++			ProverChannel::new(ProverTranscript::new(StdChallenger::default()));
++		let commitment = prover_channel.send_merkle_commitment(data.to_ref(), LEAF_SIZE);
++		prover_channel.send_openings_omitting_fold_targets(
++			&commitment,
++			data.to_ref(),
++			&leaf_indices,
++			&fold_challenges,
++		);
++
++		let transcript = prover_channel.into_transcript().into_verifier();
++		let mut verifier_channel = VerifierChannel::new(transcript);
++		let commitment = verifier_channel
++			.recv_merkle_commitment(LEAF_SIZE, DEPTH)
++			.unwrap();
++		targets[1] += B128::ONE;
++		assert!(
++			verifier_channel
++				.recv_openings_with_fold_targets(
++					&commitment,
++					&leaf_indices,
++					&targets,
++					&fold_challenges,
++				)
++				.is_err()
++		);
++	}
++
+ 	#[test]
+ 	fn test_merkle_channel_rejects_openings_at_wrong_index() {
+ 		let mut rng = StdRng::seed_from_u64(0);
+diff --git a/crates/iop/src/fri/batch.rs b/crates/iop/src/fri/batch.rs
+index e2c7ab3..dde9347 100644
+--- a/crates/iop/src/fri/batch.rs
++++ b/crates/iop/src/fri/batch.rs
+@@ -70,6 +70,37 @@ impl<E, C> BrakedownOracle<E, C> {
+ 			log_lift,
+ 		}
+ 	}
++
++	const fn supports_terminal_target_elision(&self) -> bool {
++		self.log_lift == 0
++	}
++
++	fn open_queries_with_fold_targets<F, Channel>(
++		&self,
++		indices: &[Channel::Word],
++		targets: &[E],
++		channel: &mut Channel,
++	) -> Result<Vec<E>, Error>
++	where
++		F: BinaryField,
++		E: FieldOps<Scalar = F>,
++		Channel: MerkleIPVerifierChannel<F, Commitment = C, Elem = E>,
++	{
++		assert!(self.supports_terminal_target_elision());
++		let values = channel.recv_openings_with_fold_targets(
++			&self.commitment,
++			indices,
++			targets,
++			&self.challenges,
++		)?;
++		let leaf_size = 1 << self.challenges.len();
++		for (leaf, target) in values.chunks(leaf_size).zip(targets) {
++			let folded =
++				multilinear::evaluate::evaluate_inplace_scalars(leaf.to_vec(), &self.challenges);
++			channel.assert_zero(folded - target.clone())?;
++		}
++		Ok(targets.to_vec())
++	}
+ }
+ 
+ impl<F: BinaryField, E: FieldOps<Scalar = F>, C> ProxTestOracle<F, E> for BrakedownOracle<E, C> {
+@@ -122,6 +153,27 @@ impl<E, C> BatchBrakedownOracle<E, C> {
+ 			outer_challenges,
+ 		}
+ 	}
++
++	pub fn supports_terminal_target_elision(&self) -> bool {
++		self.oracles.len() == 1
++			&& self.outer_challenges.is_empty()
++			&& self.oracles[0].supports_terminal_target_elision()
++	}
++
++	pub fn open_queries_with_fold_targets<F, Channel>(
++		&self,
++		indices: &[Channel::Word],
++		targets: &[E],
++		channel: &mut Channel,
++	) -> Result<Vec<E>, Error>
++	where
++		F: BinaryField,
++		E: FieldOps<Scalar = F>,
++		Channel: MerkleIPVerifierChannel<F, Commitment = C, Elem = E>,
++	{
++		assert!(self.supports_terminal_target_elision());
++		self.oracles[0].open_queries_with_fold_targets(indices, targets, channel)
++	}
+ }
+ 
+ impl<F: BinaryField, E: FieldOps<Scalar = F>, C> ProxTestOracle<F, E>
+diff --git a/crates/iop/src/fri/verify.rs b/crates/iop/src/fri/verify.rs
+index f6485c7..286b83b 100644
+--- a/crates/iop/src/fri/verify.rs
++++ b/crates/iop/src/fri/verify.rs
+@@ -196,9 +196,30 @@ where
+ 			.take(self.params.n_test_queries())
+ 			.collect::<Vec<_>>();
+ 
++		// With one unlifted input and no later fold oracle, authenticate the terminal message before
++		// the query advice and use its queried entries as division-free leaf-fold targets.
++		let preloaded_terminal = if self.fri_oracles.is_empty()
++			&& self.codeword_oracle.supports_terminal_target_elision()
++		{
++			let terminal = self.receive_terminal_codeword(channel)?;
++			let targets = indices
++				.iter()
++				.map(|index| channel.select(&terminal, index))
++				.collect::<Vec<_>>();
++			let claims = self
++				.codeword_oracle
++				.open_queries_with_fold_targets(&indices, &targets, channel)?;
++			Some((terminal, claims))
++		} else {
++			None
++		};
++
+ 		// Open and reduce the queries through each oracle in turn, receiving the per-oracle
+ 		// batched openings over the channel.
+-		let mut claims = self.codeword_oracle.open_queries(&indices, channel)?;
++		let (terminal, mut claims) = match preloaded_terminal {
++			Some((terminal, claims)) => (Some(terminal), claims),
++			None => (None, self.codeword_oracle.open_queries(&indices, channel)?),
++		};
+ 		for (oracle, &arity) in self.fri_oracles.iter().zip(self.params.fold_arities()) {
+ 			claims = oracle.reduce_queries(&indices, &claims, channel)?;
+ 			indices = indices
+@@ -208,7 +229,23 @@ where
+ 		}
+ 
+ 		// Check the fully-reduced queries against the terminal codeword sent in full.
+-		self.verify_terminal_queries(&claims, &indices, channel)
++		self.verify_terminal_queries(&claims, &indices, terminal, channel)
++	}
++
++	fn receive_terminal_codeword<Channel>(&self, channel: &mut Channel) -> Result<Vec<E>, Error>
++	where
++		Channel: MerkleIPVerifierChannel<F, Commitment = C, Elem = E>,
++	{
++		let n_final_challenges = self.params.n_final_challenges();
++		let log_inv_rate = self.params.rs_code().log_inv_rate();
++		let terminal_message = channel.recv_committed_vector(&self.terminal_commitment)?;
++		let domain_context = GaoMateerOnTheFly::generate(self.params.rs_code().log_len());
++		Ok(encode_terminal_message(
++			&domain_context,
++			n_final_challenges,
++			log_inv_rate,
++			&terminal_message,
++		))
+ 	}
+ 
+ 	/// Verifies the canonical terminal message the prover sends at the end of the query phase.
+@@ -221,6 +258,7 @@ where
+ 		&self,
+ 		claims: &[E],
+ 		indices: &[Channel::Word],
++		preloaded_terminal: Option<Vec<E>>,
+ 		channel: &mut Channel,
+ 	) -> Result<E, Error>
+ 	where
+@@ -229,14 +267,11 @@ where
+ 		let n_final_challenges = self.params.n_final_challenges();
+ 		let log_inv_rate = self.params.rs_code().log_inv_rate();
+ 
+-		let terminal_message = channel.recv_committed_vector(&self.terminal_commitment)?;
+ 		let domain_context = GaoMateerOnTheFly::generate(self.params.rs_code().log_len());
+-		let terminate_codeword = encode_terminal_message(
+-			&domain_context,
+-			n_final_challenges,
+-			log_inv_rate,
+-			&terminal_message,
+-		);
++		let terminate_codeword = match preloaded_terminal {
++			Some(terminal) => terminal,
++			None => self.receive_terminal_codeword(channel)?,
++		};
+ 
+ 		// Check the fully-reduced claims against the terminal codeword the verifier holds in full.
+ 		iter::zip(claims, indices).try_for_each(|(claim, index)| {
+diff --git a/crates/iop/src/merkle_channel.rs b/crates/iop/src/merkle_channel.rs
+index d4127f1..69dbcab 100644
+--- a/crates/iop/src/merkle_channel.rs
++++ b/crates/iop/src/merkle_channel.rs
+@@ -18,6 +18,7 @@ use binius_core::word::Word;
+ use binius_field::{BinaryField, Field};
+ use binius_hash::binary_merkle_tree::HashSuite;
+ use binius_ip::channel::{IPVerifierChannel, WordIPVerifierChannel};
++use binius_math::multilinear::evaluate::reconstruct_multilinear_evaluations;
+ use binius_transcript::{VerifierTranscript, fiat_shamir::Challenger};
+ use binius_utils::{DeserializeBytes, FixedSizeSerializeBytes};
+ use digest::Output;
+@@ -72,6 +73,22 @@ pub trait MerkleIPVerifierChannel<F: Field>: WordIPVerifierChannel<F> {
+ 		self.recv_openings(commitment, indices)
+ 	}
+ 
++	/// Receives leaves encoded by their division-free slopes and verifier-known fold targets.
++	///
++	/// The default wire receives full leaves. Transcript channels override this only for the
++	/// single-oracle terminal-target FRI path.
++	fn recv_openings_with_fold_targets(
++		&mut self,
++		commitment: &Self::Commitment,
++		indices: &[Self::Word],
++		targets: &[Self::Elem],
++		fold_challenges: &[Self::Elem],
++	) -> Result<Vec<Self::Elem>, Error> {
++		assert_eq!(indices.len(), targets.len());
++		let _ = fold_challenges;
++		self.recv_openings(commitment, indices)
++	}
++
+ 	/// Receives the full committed vector, bound by a Merkle commitment.
+ 	///
+ 	/// Returns `leaf_size << depth` elements, in leaf order.
+@@ -324,6 +341,59 @@ where
+ 		Ok(values)
+ 	}
+ 
++	fn recv_openings_with_fold_targets(
++		&mut self,
++		commitment: &Self::Commitment,
++		indices: &[Word],
++		targets: &[F],
++		fold_challenges: &[F],
++	) -> Result<Vec<F>, Error> {
++		assert_eq!(indices.len(), targets.len());
++		let tree_depth = commitment.commitment.depth;
++		let leaf_size = commitment.leaf_size;
++		assert_eq!(leaf_size, 1 << fold_challenges.len());
++		let indices = indices
++			.iter()
++			.map(|index| index.as_u64() as usize)
++			.collect::<Vec<_>>();
++		assert!(indices.iter().all(|&index| index < 1 << tree_depth));
++
++		let mut targets_by_leaf = BTreeMap::new();
++		for (&index, &target) in indices.iter().zip(targets) {
++			if let Some(previous) = targets_by_leaf.insert(index, target) {
++				assert_eq!(previous, target, "duplicate leaf queries must have one fold target");
++			}
++		}
++		let unique_indices = targets_by_leaf.keys().copied().collect::<Vec<_>>();
++		let mut advice = self.transcript.borrow_mut().decommitment();
++		let unique_leaves = targets_by_leaf
++			.values()
++			.map(|target| {
++				let slopes = advice.read_scalar_slice::<F>(leaf_size - 1)?;
++				Ok(reconstruct_multilinear_evaluations(*target, &slopes, fold_challenges))
++			})
++			.collect::<Result<Vec<_>, binius_transcript::Error>>()?;
++		self.scheme.verify_compact_opening(
++			&commitment.commitment.root,
++			tree_depth,
++			&unique_indices,
++			&unique_leaves,
++			&mut advice,
++		)?;
++
++		let positions = unique_indices
++			.iter()
++			.copied()
++			.enumerate()
++			.map(|(position, index)| (index, position))
++			.collect::<BTreeMap<_, _>>();
++		let mut values = Vec::with_capacity(indices.len() * leaf_size);
++		for index in indices {
++			values.extend_from_slice(&unique_leaves[positions[&index]]);
++		}
++		Ok(values)
++	}
++
+ 	fn recv_committed_vector(&mut self, commitment: &Self::Commitment) -> Result<Vec<F>, Error> {
+ 		let len = commitment.leaf_size << commitment.commitment.depth;
+ 		let data = self
+diff --git a/crates/math/src/multilinear/evaluate.rs b/crates/math/src/multilinear/evaluate.rs
+index 7a814e5..8f898c1 100644
+--- a/crates/math/src/multilinear/evaluate.rs
++++ b/crates/math/src/multilinear/evaluate.rs
+@@ -140,6 +140,61 @@ pub fn evaluate_inplace_scalars<F: FieldOps>(
+ 	evals[0].clone()
+ }
+ 
++/// Re-encodes a multilinear evaluation table as its final value and division-free fold slopes.
++///
++/// Slopes are returned in inverse fold order, with level sizes `1, 2, 4, ...`. Together with the
++/// final value and evaluation point, they form a bijective representation of the original table.
++pub fn decompose_multilinear_evaluation<F: FieldOps>(values: &[F], point: &[F]) -> (F, Vec<F>) {
++	assert_eq!(values.len(), 1 << point.len(), "precondition: values length must be 2^point.len()");
++
++	let mut current = values.to_vec();
++	let mut levels = Vec::with_capacity(point.len());
++	for point_i in point.iter().rev() {
++		let half_len = current.len() >> 1;
++		let mut next = Vec::with_capacity(half_len);
++		let mut slopes = Vec::with_capacity(half_len);
++		for j in 0..half_len {
++			let lo = current[j].clone();
++			let delta = current[j + half_len].clone() - lo.clone();
++			next.push(lo + point_i.clone() * delta.clone());
++			slopes.push(delta);
++		}
++		levels.push(slopes);
++		current = next;
++	}
++
++	let target = current[0].clone();
++	let slopes = levels.into_iter().rev().flatten().collect();
++	(target, slopes)
++}
++
++/// Reconstructs a multilinear evaluation table from its final value and division-free slopes.
++pub fn reconstruct_multilinear_evaluations<F: FieldOps>(
++	target: F,
++	slopes: &[F],
++	point: &[F],
++) -> Vec<F> {
++	assert_eq!(slopes.len(), (1 << point.len()) - 1, "precondition: exact slope count");
++
++	let mut current = vec![target];
++	let mut offset = 0;
++	for point_i in point {
++		let width = current.len();
++		let level = &slopes[offset..offset + width];
++		let mut lower = Vec::with_capacity(width);
++		let mut upper = Vec::with_capacity(width);
++		for (out, delta) in current.into_iter().zip(level) {
++			let lo = out - point_i.clone() * delta.clone();
++			upper.push(lo.clone() + delta.clone());
++			lower.push(lo);
++		}
++		lower.extend(upper);
++		current = lower;
++		offset += width;
++	}
++	current
++}
++
+ #[cfg(test)]
+ mod tests {
+ 	use rand::prelude::*;
+@@ -230,6 +285,18 @@ mod tests {
+ 		}
+ 	}
+ 
++	#[test]
++	fn test_division_free_multilinear_decomposition_roundtrips() {
++		let mut rng = StdRng::seed_from_u64(0x484547454d4f4e);
++		for log_n in 0..=8 {
++			let values = random_scalars::<F>(&mut rng, 1 << log_n);
++			let point = random_scalars::<F>(&mut rng, log_n);
++			let (target, slopes) = decompose_multilinear_evaluation(&values, &point);
++			assert_eq!(target, evaluate_inplace_scalars(values.clone(), &point));
++			assert_eq!(reconstruct_multilinear_evaluations(target, &slopes, &point), values);
++		}
++	}
++
+ 	#[test]
+ 	fn test_linearity() {
+ 		let mut rng = StdRng::seed_from_u64(0);

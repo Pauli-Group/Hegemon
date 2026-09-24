@@ -3,7 +3,7 @@ namespace Native
 namespace MineableActionAdmission
 
 inductive MineableActionReject where
-  | unselectedCandidateArtifact
+  | retiredCandidateArtifact
   | sidecarCiphertextMissing
   | sidecarCiphertextSizeMissing
   | sidecarCiphertextSizeMismatch
@@ -21,10 +21,7 @@ deriving DecidableEq, Repr
 def evaluateMineableAction
     (input : MineableActionInput) : Except MineableActionReject Unit :=
   if input.candidateArtifactRoute then
-    if input.candidateArtifactSelected then
-      Except.ok ()
-    else
-      Except.error MineableActionReject.unselectedCandidateArtifact
+    Except.error MineableActionReject.retiredCandidateArtifact
   else if input.sidecarTransferRoute then
     if input.sidecarCiphertextsAvailable = false then
       Except.error MineableActionReject.sidecarCiphertextMissing
@@ -50,7 +47,7 @@ def mineableActionRejection
 
 def mineableActionPreconditions (input : MineableActionInput) : Bool :=
   if input.candidateArtifactRoute then
-    input.candidateArtifactSelected
+    false
   else if input.sidecarTransferRoute then
     input.sidecarCiphertextsAvailable
       && input.sidecarCiphertextSizesPresent
@@ -99,8 +96,9 @@ def plainAction : MineableActionInput :=
     sidecarCiphertextSizesMatch := false
   }
 
-theorem selected_candidate_accepts :
-    evaluateMineableAction selectedCandidate = Except.ok () := by
+theorem candidate_artifact_is_retired_even_if_marked_selected :
+    evaluateMineableAction selectedCandidate =
+      Except.error MineableActionReject.retiredCandidateArtifact := by
   rfl
 
 theorem valid_sidecar_transfer_accepts :
@@ -111,14 +109,13 @@ theorem plain_action_accepts :
     evaluateMineableAction plainAction = Except.ok () := by
   rfl
 
-theorem unselected_candidate_rejects
+theorem candidate_artifact_rejects
     {input : MineableActionInput}
-    (candidate : input.candidateArtifactRoute = true)
-    (unselected : input.candidateArtifactSelected = false) :
+    (candidate : input.candidateArtifactRoute = true) :
     evaluateMineableAction input =
-      Except.error MineableActionReject.unselectedCandidateArtifact := by
+      Except.error MineableActionReject.retiredCandidateArtifact := by
   unfold evaluateMineableAction
-  simp [candidate, unselected]
+  simp [candidate]
 
 theorem sidecar_ciphertext_missing_rejects
     {input : MineableActionInput}
@@ -159,7 +156,7 @@ theorem candidate_precedes_sidecar_ciphertext_missing :
         candidateArtifactSelected := false,
         sidecarTransferRoute := true,
         sidecarCiphertextsAvailable := false } =
-      Except.error MineableActionReject.unselectedCandidateArtifact := by
+      Except.error MineableActionReject.retiredCandidateArtifact := by
   rfl
 
 theorem plain_action_ignores_sidecar_metadata :
@@ -169,39 +166,36 @@ theorem plain_action_ignores_sidecar_metadata :
 structure MineableSelectionAction where
   actionId : Nat
   transferRoute : Bool
+  sidecarTransferRoute : Bool
   transferMineable : Bool
   candidateArtifactRoute : Bool
+  activeV3RouteAllowed : Bool
   candidateTxCount : Nat
 deriving DecidableEq, Repr
 
 def mineableTransferCount : List MineableSelectionAction -> Nat
   | [] => 0
   | action :: rest =>
-      (if action.transferRoute && action.transferMineable then 1 else 0)
+      (if action.transferRoute && !action.sidecarTransferRoute &&
+          action.activeV3RouteAllowed && action.transferMineable then
+        1
+      else
+        0)
         + mineableTransferCount rest
 
-def firstMatchingCandidate
-    (transferCount : Nat) : List MineableSelectionAction -> Option Nat
-  | [] => none
-  | action :: rest =>
-      if action.candidateArtifactRoute && decide (action.candidateTxCount = transferCount) then
-        some action.actionId
-      else
-        firstMatchingCandidate transferCount rest
-
 def selectedCandidateForOrderedActions
-    (actions : List MineableSelectionAction) : Option Nat :=
-  let transferCount := mineableTransferCount actions
-  if transferCount = 0 then
-    none
-  else
-    firstMatchingCandidate transferCount actions
+    (_actions : List MineableSelectionAction) : Option Nat :=
+  none
 
 def selectionActionAccepts
-    (actions : List MineableSelectionAction)
+    (_actions : List MineableSelectionAction)
     (action : MineableSelectionAction) : Bool :=
   if action.candidateArtifactRoute then
-    selectedCandidateForOrderedActions actions = some action.actionId
+    false
+  else if action.sidecarTransferRoute then
+    false
+  else if !action.activeV3RouteAllowed then
+    false
   else if action.transferRoute then
     action.transferMineable
   else
@@ -228,63 +222,46 @@ structure MineableSelectionFacts
     transferCount = mineableTransferCount actions
   selectedCandidateMatches :
     selectedCandidate = selectedCandidateForOrderedActions actions
-  acceptedCandidateRequiresSelected :
+  candidateArtifactsRejected :
     ∀ action,
       action.candidateArtifactRoute = true ->
-      selectionActionAccepts actions action = true ->
-      selectedCandidate = some action.actionId
-  transferAcceptanceMatchesMineability :
+      selectionActionAccepts actions action = false
+  sidecarTransfersRejected :
     ∀ action,
       action.candidateArtifactRoute = false ->
+      action.sidecarTransferRoute = true ->
+      selectionActionAccepts actions action = false
+  inactiveV3RoutesRejected :
+    ∀ action,
+      action.candidateArtifactRoute = false ->
+      action.sidecarTransferRoute = false ->
+      action.activeV3RouteAllowed = false ->
+      selectionActionAccepts actions action = false
+  inlineTransferAcceptanceMatchesMineability :
+    ∀ action,
+      action.candidateArtifactRoute = false ->
+      action.sidecarTransferRoute = false ->
+      action.activeV3RouteAllowed = true ->
       action.transferRoute = true ->
       selectionActionAccepts actions action = action.transferMineable
   plainActionAccepted :
     ∀ action,
       action.candidateArtifactRoute = false ->
+      action.sidecarTransferRoute = false ->
+      action.activeV3RouteAllowed = true ->
       action.transferRoute = false ->
       selectionActionAccepts actions action = true
 
-theorem selected_candidate_none_when_no_mineable_transfers
-    {actions : List MineableSelectionAction}
-    (noTransfers : mineableTransferCount actions = 0) :
+theorem selected_candidate_always_none
+    (actions : List MineableSelectionAction) :
     selectedCandidateForOrderedActions actions = none := by
-  unfold selectedCandidateForOrderedActions
-  simp [noTransfers]
+  rfl
 
-theorem first_matching_candidate_head_matches
-    {transferCount : Nat}
-    {action : MineableSelectionAction}
-    {rest : List MineableSelectionAction}
-    (candidate : action.candidateArtifactRoute = true)
-    (countMatches : action.candidateTxCount = transferCount) :
-    firstMatchingCandidate transferCount (action :: rest) =
-      some action.actionId := by
-  unfold firstMatchingCandidate
-  simp [candidate, countMatches]
-
-theorem first_matching_candidate_skips_nonmatching_head
-    {transferCount : Nat}
-    {action : MineableSelectionAction}
-    {rest : List MineableSelectionAction}
-    (notMatch :
-      (action.candidateArtifactRoute && decide (action.candidateTxCount = transferCount)) =
-        false) :
-    firstMatchingCandidate transferCount (action :: rest) =
-      firstMatchingCandidate transferCount rest := by
-  change
-    (if action.candidateArtifactRoute && decide (action.candidateTxCount = transferCount) then
-      some action.actionId
-    else
-      firstMatchingCandidate transferCount rest) =
-      firstMatchingCandidate transferCount rest
-  simp [notMatch]
-
-theorem selection_accepts_candidate_iff_selected
+theorem selection_rejects_candidate
     (actions : List MineableSelectionAction)
     (action : MineableSelectionAction)
     (candidate : action.candidateArtifactRoute = true) :
-    selectionActionAccepts actions action =
-      (selectedCandidateForOrderedActions actions = some action.actionId) := by
+    selectionActionAccepts actions action = false := by
   unfold selectionActionAccepts
   simp [candidate]
 
@@ -292,19 +269,42 @@ theorem selection_accepts_transfer_iff_mineable
     (actions : List MineableSelectionAction)
     (action : MineableSelectionAction)
     (notCandidate : action.candidateArtifactRoute = false)
+    (notSidecar : action.sidecarTransferRoute = false)
+    (activeRoute : action.activeV3RouteAllowed = true)
     (transfer : action.transferRoute = true) :
     selectionActionAccepts actions action = action.transferMineable := by
   unfold selectionActionAccepts
-  simp [notCandidate, transfer]
+  simp [notCandidate, notSidecar, activeRoute, transfer]
+
+theorem selection_rejects_sidecar
+    (actions : List MineableSelectionAction)
+    (action : MineableSelectionAction)
+    (notCandidate : action.candidateArtifactRoute = false)
+    (sidecar : action.sidecarTransferRoute = true) :
+    selectionActionAccepts actions action = false := by
+  unfold selectionActionAccepts
+  simp [notCandidate, sidecar]
+
+theorem selection_rejects_inactive_v3_route
+    (actions : List MineableSelectionAction)
+    (action : MineableSelectionAction)
+    (notCandidate : action.candidateArtifactRoute = false)
+    (notSidecar : action.sidecarTransferRoute = false)
+    (inactiveRoute : action.activeV3RouteAllowed = false) :
+    selectionActionAccepts actions action = false := by
+  unfold selectionActionAccepts
+  simp [notCandidate, notSidecar, inactiveRoute]
 
 theorem selection_accepts_plain_action
     (actions : List MineableSelectionAction)
     (action : MineableSelectionAction)
     (notCandidate : action.candidateArtifactRoute = false)
+    (notSidecar : action.sidecarTransferRoute = false)
+    (activeRoute : action.activeV3RouteAllowed = true)
     (notTransfer : action.transferRoute = false) :
     selectionActionAccepts actions action = true := by
   unfold selectionActionAccepts
-  simp [notCandidate, notTransfer]
+  simp [notCandidate, notSidecar, activeRoute, notTransfer]
 
 theorem candidate_prune_drops_candidates_when_transfer_pending
     (actions : List MineableSelectionAction)
@@ -340,17 +340,25 @@ def ordered_mineable_selection_facts
       selectedCandidate := selectedCandidateForOrderedActions actions,
       transferCountMatches := rfl,
       selectedCandidateMatches := rfl,
-      acceptedCandidateRequiresSelected := ?_,
-      transferAcceptanceMatchesMineability := ?_,
+      candidateArtifactsRejected := ?_,
+      sidecarTransfersRejected := ?_,
+      inactiveV3RoutesRejected := ?_,
+      inlineTransferAcceptanceMatchesMineability := ?_,
       plainActionAccepted := ?_
     }
-  · intro action candidate accepted
-    rw [selection_accepts_candidate_iff_selected actions action candidate] at accepted
-    exact accepted
-  · intro action notCandidate transfer
-    exact selection_accepts_transfer_iff_mineable actions action notCandidate transfer
-  · intro action notCandidate notTransfer
-    exact selection_accepts_plain_action actions action notCandidate notTransfer
+  · intro action candidate
+    exact selection_rejects_candidate actions action candidate
+  · intro action notCandidate sidecar
+    exact selection_rejects_sidecar actions action notCandidate sidecar
+  · intro action notCandidate notSidecar inactiveRoute
+    exact selection_rejects_inactive_v3_route
+      actions action notCandidate notSidecar inactiveRoute
+  · intro action notCandidate notSidecar activeRoute transfer
+    exact selection_accepts_transfer_iff_mineable
+      actions action notCandidate notSidecar activeRoute transfer
+  · intro action notCandidate notSidecar activeRoute notTransfer
+    exact selection_accepts_plain_action
+      actions action notCandidate notSidecar activeRoute notTransfer
 
 end MineableActionAdmission
 end Native

@@ -183,6 +183,8 @@ theorem decodedRowsFollowLeafCursor_of_row_action_plan_from_accepts
                   true := by
               simpa [
                 rowActionPlanFromAccepts,
+                rowCommitmentCounts,
+                rowCommitmentStarts,
                 evaluateActionPlanApplicationFrom,
                 startMatches,
                 addChecked
@@ -204,15 +206,17 @@ theorem decodedRowsFollowLeafCursor_of_action_plan_accepts
         (rowActionPlanInput leaf rows) =
         true) :
     decodedRowsFollowLeafCursor leaf rows := by
-  apply
+  have acceptedFrom :
+      rowActionPlanFromAccepts leaf rows 0 = true := by
+    unfold rowActionPlanFromAccepts
+    change
+      actionPlanApplicationAccepts
+          (rowActionPlanInput leaf rows) =
+        true
+    exact accepted
+  exact
     decodedRowsFollowLeafCursor_of_row_action_plan_from_accepts
-      leaf rows 0
-  simpa [
-    rowActionPlanFromAccepts,
-    rowActionPlanInput,
-    actionPlanApplicationAccepts,
-    evaluateActionPlanApplication
-  ] using accepted
+      leaf rows 0 acceptedFrom
 
 theorem commitmentIndexesFrom_eq_rangePrime
     (start : Nat)
@@ -283,12 +287,12 @@ theorem rawIngressAppendSummaries_indexes_eq_rangePrime
       List.range'
         initial.ledger.leafCount
         (orderedDecodedCommitments decodedRows).length := by
-  simpa [
+  simp only [
     rawIngressAppendSummaries,
     Consensus.CommitmentTreeAppend.appendSummaries,
-    Consensus.CommitmentTreeAppend.appendSummary,
     List.map_map
-  ] using
+  ]
+  exact
     range_map_add_eq_rangePrime
       initial.ledger.leafCount
       (orderedDecodedCommitments decodedRows).length

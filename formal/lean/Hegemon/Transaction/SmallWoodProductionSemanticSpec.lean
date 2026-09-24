@@ -1,4 +1,5 @@
 import Hegemon.Transaction.SmallWoodProductionConstraintTableGenerated
+import Hegemon.Transaction.Poseidon2NoteCommitment
 
 set_option maxHeartbeats 0
 set_option maxRecDepth 1000000
@@ -9,8 +10,9 @@ namespace SmallWoodProductionConstraintRefinement
 
 /-
 The generated constraint table is an extraction of the Rust builder.  This file
-is deliberately independent of that extraction: it restates the deployed V3
-non-Poseidon relation as named Lean code and reconstructs its symbolic program.
+is deliberately independent of that extraction: it restates the deployed V4
+compressed relation, including all three Poseidon2 permutations, as named Lean
+code and reconstructs its symbolic program.
 The production-map gate compares the generated roots and expression prefix to
 this program, so regenerating a coherently weakened Rust table cannot bless the
 weakening without also changing this reviewed specification.
@@ -23,9 +25,9 @@ private def merkleDepth : Nat := 32
 private def hashLimbs : Nat := 6
 private def multisigMaxSigners : Nat := 6
 private def signerTagWords : Nat := 5
-private def rangeLimbCount : Nat := 21
+private def denseRangeRowCount : Nat := 5
 private def publicValueCount : Nat := 78
-private def rowCount : Nat := 1531
+private def rowCount : Nat := 699
 
 private def publicInputFlag0 : Nat := 0
 private def publicOutputFlag0 : Nat := 2
@@ -46,13 +48,16 @@ private def publicStableAttestation : Nat := 70
 private def inputRows : Nat := 34
 private def outputRows : Nat := 12
 private def valueRangeBase : Nat := 92
-private def valueRangeRows : Nat := 147
-private def authBase : Nat := valueRangeBase + valueRangeRows
-private def inlineBindingBase : Nat := 388
+private def authBase : Nat := valueRangeBase
+private def denseRangeBase : Nat := authBase + 149
+private def inlineBindingBase : Nat := denseRangeBase + denseRangeRowCount
 private def inlineMerkleGroups : Nat := 6
-private def poseidonRowsBase : Nat := 415
-private def poseidonRowsPerPermutation : Nat := 31
+private def poseidonRowsBase : Nat := 273
+private def poseidonRowsPerPermutation : Nat := 142
 private def poseidonWidth : Nat := 12
+private def compressedPoseidonSboxRows : Nat := 118
+private def compressedPoseidonConstraintCount : Nat := 130
+private def compressedPoseidonGroupCount : Nat := 3
 
 private def authModeRows : Nat := 3
 private def authInputPrfRows : Nat := 2
@@ -83,12 +88,8 @@ private def rowOutputValue (output : Nat) : Nat := rowOutputBase output
 private def rowOutputAsset (output : Nat) : Nat := rowOutputBase output + 1
 private def rowOutputAuthKey (output limb : Nat) : Nat :=
   rowOutputBase output + outputRows - 4 + limb
-private def rowInputValueRangeLimb (input limb : Nat) : Nat :=
-  valueRangeBase + input * rangeLimbCount + limb
-private def rowOutputValueRangeLimb (output limb : Nat) : Nat :=
-  valueRangeBase + (maxInputs + output) * rangeLimbCount + limb
-private def rowPublicValueRangeLimb (publicValue limb : Nat) : Nat :=
-  valueRangeBase + (maxInputs + maxOutputs + publicValue) * rangeLimbCount + limb
+private def rowDenseRange (row : Nat) : Nat :=
+  denseRangeBase + row
 private def rowAuthMode (mode : Nat) : Nat := authBase + mode
 private def rowAuthInputPrf (input : Nat) : Nat := authBase + authModeRows + input
 private def rowAuthInputKey (input limb : Nat) : Nat :=
@@ -241,6 +242,114 @@ private def mulAll (values : List Nat) : BuildM Nat := do
 private def mul3 (left middle right : Nat) : BuildM Nat := do
   mul (← mul left middle) right
 
+private def poseidonSbox (value : Nat) : BuildM Nat := do
+  let value2 ← mul value value
+  let value4 ← mul value2 value2
+  let value6 ← mul value4 value2
+  mul value6 value
+
+private def poseidonApplyMds4 (input : List Nat) : BuildM (List Nat) := do
+  let x0 := input.getD 0 0
+  let x1 := input.getD 1 0
+  let x2 := input.getD 2 0
+  let x3 := input.getD 3 0
+  let t01 ← add x0 x1
+  let t23 ← add x2 x3
+  let t0123 ← add t01 t23
+  let t01123 ← add t0123 x1
+  let t01233 ← add t0123 x3
+  let output3 ← add t01233 (← add x0 x0)
+  let output1 ← add t01123 (← add x2 x2)
+  let output0 ← add t01123 t01
+  let output2 ← add t01233 t23
+  pure [output0, output1, output2, output3]
+
+private def poseidonMdsLight (state : List Nat) : BuildM (List Nat) := do
+  let mut mixed := []
+  for block in List.range 3 do
+    mixed := mixed ++ (← poseidonApplyMds4 ((state.drop (block * 4)).take 4))
+  let mut columnSums := []
+  for column in List.range 4 do
+    let mut sum := 0
+    for block in List.range 3 do
+      sum ← add sum (mixed.getD (block * 4 + column) 0)
+    columnSums := columnSums ++ [sum]
+  let mut output := []
+  for index in List.range poseidonWidth do
+    output := output ++ [← add (mixed.getD index 0) (columnSums.getD (index % 4) 0)]
+  pure output
+
+private def poseidonExternalRound
+    (state roundConstants : List Nat) : BuildM (List Nat) := do
+  let mut sboxed := []
+  for index in List.range poseidonWidth do
+    let roundConstant ← constant (roundConstants.getD index 0)
+    let withConstant ← add (state.getD index 0) roundConstant
+    sboxed := sboxed ++ [← poseidonSbox withConstant]
+  poseidonMdsLight sboxed
+
+private def poseidonInternalRound
+    (state : List Nat)
+    (roundConstantValue : Nat) : BuildM (List Nat) := do
+  let roundConstant ← constant roundConstantValue
+  let first ← poseidonSbox (← add (state.getD 0 0) roundConstant)
+  let sboxed := state.set 0 first
+  let mut sum := 0
+  for value in sboxed do
+    sum ← add sum value
+  let mut output := []
+  for index in List.range poseidonWidth do
+    let diagonal ← constant
+      (Poseidon2NoteCommitment.internalMatrixDiagonal.getD index 0)
+    let scaled ← mul (sboxed.getD index 0) diagonal
+    output := output ++ [← add scaled sum]
+  pure output
+
+private def compressedPoseidonRow (group offset : Nat) : Nat :=
+  poseidonRowsBase + group * poseidonRowsPerPermutation + offset
+
+private def buildCompressedPoseidonGroup (group : Nat) : BuildM Unit := do
+  let groupBase := compressedPoseidonRow group 0
+  let mut state := (List.range poseidonWidth).map fun limb =>
+    witnessRow (groupBase + limb)
+  state ← poseidonMdsLight state
+  let mut wireOffset := poseidonWidth
+
+  for roundConstants in Poseidon2NoteCommitment.externalRoundConstantsInitial do
+    for limb in List.range poseidonWidth do
+      let wire := witnessRow (groupBase + wireOffset)
+      let roundConstant ← constant (roundConstants.getD limb 0)
+      emit (← sub wire (← add (state.getD limb 0) roundConstant))
+      state := state.set limb (← sub wire roundConstant)
+      wireOffset := wireOffset + 1
+    state ← poseidonExternalRound state roundConstants
+
+  for roundConstantValue in Poseidon2NoteCommitment.internalRoundConstants do
+    let wire := witnessRow (groupBase + wireOffset)
+    let roundConstant ← constant roundConstantValue
+    emit (← sub wire (← add (state.getD 0 0) roundConstant))
+    state := state.set 0 (← sub wire roundConstant)
+    wireOffset := wireOffset + 1
+    state ← poseidonInternalRound state roundConstantValue
+
+  for roundConstants in Poseidon2NoteCommitment.externalRoundConstantsTerminal do
+    for limb in List.range poseidonWidth do
+      let wire := witnessRow (groupBase + wireOffset)
+      let roundConstant ← constant (roundConstants.getD limb 0)
+      emit (← sub wire (← add (state.getD limb 0) roundConstant))
+      state := state.set limb (← sub wire roundConstant)
+      wireOffset := wireOffset + 1
+    state ← poseidonExternalRound state roundConstants
+
+  for limb in List.range poseidonWidth do
+    let finalValue := witnessRow
+      (groupBase + poseidonWidth + compressedPoseidonSboxRows + limb)
+    emit (← sub finalValue (state.getD limb 0))
+
+private def buildCompressedPoseidonSemantics : BuildM Unit := do
+  for group in List.range compressedPoseidonGroupCount do
+    buildCompressedPoseidonGroup group
+
 private def boolPolynomial (bit : Nat) : BuildM Nat := do
   mul bit (← sub bit 1)
 
@@ -281,14 +390,10 @@ private def signedFromParts (sign magnitude : Nat) : BuildM Nat := do
   let twiceSign <- add sign sign
   sub magnitude (← mul twiceSign magnitude)
 
-private def boundedValueLimb (limb limbIndex : Nat) : BuildM Nat := do
-  if limbIndex + 1 = rangeLimbCount then
-    boolPolynomial limb
-  else
-    let mut result := 1
-    for digit in List.range 8 do
-      result <- mul result (← sub limb (← constant digit))
-    pure result
+private def radixFourDigitPolynomial (digit : Nat) : BuildM Nat := do
+  let accumulator <- mul digit (← sub digit 1)
+  let accumulator <- mul accumulator (← sub digit (← constant 2))
+  mul accumulator (← sub digit (← constant 3))
 
 private def slotActive (signerCountFlags : List Nat) (slot : Nat) : BuildM Nat :=
   addAll (signerCountFlags.drop slot)
@@ -381,15 +486,9 @@ private def buildBalanceAndRangeSemantics : BuildM Unit := do
       let expected <- mul (← mul stableEnabled stableWeight) signedStableIssuance
       emit (← sub delta expected)
 
-  for input in List.range maxInputs do
-    for limb in List.range rangeLimbCount do
-      emit (← boundedValueLimb (witnessRow (rowInputValueRangeLimb input limb)) limb)
-  for output in List.range maxOutputs do
-    for limb in List.range rangeLimbCount do
-      emit (← boundedValueLimb (witnessRow (rowOutputValueRangeLimb output limb)) limb)
-  for publicIndex in List.range 3 do
-    for limb in List.range rangeLimbCount do
-      emit (← boundedValueLimb (witnessRow (rowPublicValueRangeLimb publicIndex limb)) limb)
+  for row in List.range (denseRangeRowCount - 1) do
+    emit (← radixFourDigitPolynomial (witnessRow (rowDenseRange row)))
+  emit (← boolPolynomial (witnessRow (rowDenseRange (denseRangeRowCount - 1))))
 
 private def buildAuthorizationSemantics : BuildM Unit := do
   let authStart := (← get).roots.length
@@ -587,9 +686,25 @@ def productionSemanticProgram : ProductionSemanticProgramBuilder :=
     buildOutputAndStablecoinSemantics
     buildBalanceAndRangeSemantics
     buildAuthorizationSemantics
+    buildCompressedPoseidonSemantics
   (build.run initialBuilder).2
 
-def productionSemanticConstraintCount : Nat := 642
+def productionPoseidonSemanticConstraintStart : Nat := 500
+
+def productionPoseidonSemanticConstraintCount : Nat :=
+  compressedPoseidonGroupCount * compressedPoseidonConstraintCount
+
+def productionSemanticConstraintCount : Nat :=
+  productionPoseidonSemanticConstraintStart + productionPoseidonSemanticConstraintCount
+
+/--
+The independently rebuilt suffix corresponding exactly to nonlinear roots 500 through 889.
+Its construction runs the deployed initial MDS, four external rounds, twenty-two internal
+rounds, and four terminal external rounds for each of the three packed Poseidon row groups.
+-/
+def productionPoseidonSemanticRoots : List Nat :=
+  (productionSemanticProgram.roots.drop productionPoseidonSemanticConstraintStart).take
+    productionPoseidonSemanticConstraintCount
 
 def productionSemanticProgramBoundB (map : ProductionConstraintMap) : Bool :=
   decide (productionSemanticProgram.roots.length = productionSemanticConstraintCount)
@@ -606,6 +721,22 @@ def semanticAuthorizationSubstitutionMap : ProductionConstraintMap :=
   { activeConstraintMap with
     nonlinearConstraintRoots := activeConstraintMap.nonlinearConstraintRoots.set 268 0 }
 
+def semanticPoseidonTransitionSubstitutionMap : ProductionConstraintMap :=
+  { activeConstraintMap with
+    nonlinearConstraintRoots := activeConstraintMap.nonlinearConstraintRoots.set
+      productionPoseidonSemanticConstraintStart 0 }
+
+/--
+Executable conformance evidence. This closed-table size check deliberately uses `native_decide`;
+it is not the axiom-free equation-to-permutation refinement theorem.
+-/
+theorem production_semantic_program_has_exact_deployed_poseidon_suffix :
+    productionSemanticProgram.roots.length = 890
+      ∧ productionPoseidonSemanticConstraintStart = 500
+      ∧ productionPoseidonSemanticConstraintCount = 390
+      ∧ productionPoseidonSemanticRoots.length = 390 := by
+  native_decide
+
 theorem active_production_semantic_program_is_bound :
     productionSemanticProgramBoundB activeConstraintMap = true := by
   native_decide
@@ -614,12 +745,30 @@ theorem stablecoin_production_semantic_program_is_bound :
     productionSemanticProgramBoundB stablecoinConstraintMap = true := by
   native_decide
 
+theorem production_semantic_program_binding_covers_poseidon_roots_500_through_889
+    {map : ProductionConstraintMap}
+    (bound : productionSemanticProgramBoundB map = true) :
+    map.nonlinearConstraintRoots.take productionSemanticConstraintCount =
+        productionSemanticProgram.roots
+      ∧ map.nonlinearExpressions.take productionSemanticProgram.expressions.length =
+        productionSemanticProgram.expressions := by
+  simp only [productionSemanticProgramBoundB, Bool.and_eq_true] at bound
+  exact ⟨of_decide_eq_true bound.1.2, of_decide_eq_true bound.2⟩
+
 theorem coherent_balance_omission_rejects_independent_semantic_spec :
     productionSemanticProgramBoundB semanticBalanceOmissionMap = false := by
   native_decide
 
 theorem authorization_substitution_rejects_independent_semantic_spec :
     productionSemanticProgramBoundB semanticAuthorizationSubstitutionMap = false := by
+  native_decide
+
+/--
+Executable mutation evidence. Like the other closed generated-table checks in this file, this
+uses `native_decide` and is not used to discharge the production digest-refinement premise.
+-/
+theorem poseidon_transition_substitution_rejects_independent_semantic_spec :
+    productionSemanticProgramBoundB semanticPoseidonTransitionSubstitutionMap = false := by
   native_decide
 
 end SmallWoodProductionConstraintRefinement

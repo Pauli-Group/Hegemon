@@ -1,10 +1,11 @@
+#[cfg(test)]
+use crate::backend_interface::max_native_receipt_root_artifact_bytes;
 use crate::backend_interface::{
     BlockLeafRecordV1, BlockSemanticInputsV1, CommitmentBlockProof, CommitmentBlockProver,
     NativeTxLeafRecord, RECURSIVE_BLOCK_ARTIFACT_VERSION_V1, RECURSIVE_BLOCK_ARTIFACT_VERSION_V2,
-    SerializedStarkInputs, TransactionProof, TxLeafPublicTx, build_tx_leaf_artifact_bytes,
-    decode_native_tx_leaf_artifact_bytes, decode_transaction_proof_bytes_exact,
-    deserialize_recursive_block_artifact_v1, deserialize_recursive_block_artifact_v2,
-    max_native_receipt_root_artifact_bytes, max_native_tx_leaf_artifact_bytes,
+    SerializedStarkInputs, TransactionProof, TxLeafPublicTx, decode_native_tx_leaf_artifact_bytes,
+    decode_transaction_proof_bytes_exact, deserialize_recursive_block_artifact_v1,
+    deserialize_recursive_block_artifact_v2, max_native_tx_leaf_artifact_bytes,
     native_tx_leaf_record_from_artifact, public_replay_v1, public_replay_v2,
     recursive_block_artifact_verifier_profile_digest_v1 as backend_recursive_block_profile_v1,
     recursive_block_artifact_verifier_profile_digest_v2 as backend_recursive_block_profile_v2,
@@ -19,9 +20,12 @@ use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
 use crate::proof_interface::{
     BlockBackendInputs, HeaderProofExt, ProofVerifier, canonical_receipt_from_tx_receipt,
-    experimental_native_receipt_root_verifier_profile,
     experimental_native_tx_leaf_verifier_profile, experimental_tx_leaf_verifier_profile,
     tx_statement_bindings_from_claims, tx_validity_receipts_from_claims, verify_commitments,
+};
+#[cfg(test)]
+use crate::proof_interface::{
+    experimental_native_receipt_root_verifier_profile,
     verify_experimental_native_receipt_root_artifact,
     verify_experimental_native_receipt_root_artifact_from_records,
 };
@@ -30,12 +34,14 @@ use crate::types::{
     TxStatementBinding, TxValidityArtifact, TxValidityClaim, TxValidityReceipt,
     VerifierProfileDigest, da_root, kernel_root_from_shielded_root,
 };
-use crypto::hashes::blake3_384;
+#[cfg(test)]
+use crypto::hashes::{BLAKE2B_384_FRAME_V1, blake2b_384};
+use crypto::hashes::{blake2b_384_domain_hash, blake3_384};
 use parking_lot::Mutex;
 use rayon::prelude::*;
 #[cfg(test)]
 use std::any::Any;
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap};
 #[cfg(test)]
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, LazyLock};
@@ -55,7 +61,7 @@ const RECURSIVE_BLOCK_V1_ARTIFACT_MAX_BYTES: usize =
     block_recursion::RECURSIVE_BLOCK_HEADER_BYTES_V1
         + block_recursion::RECURSIVE_BLOCK_PROOF_BYTES_V1
         + block_recursion::RECURSIVE_BLOCK_PUBLIC_BYTES_V1;
-const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_BYTES: usize = 523_736;
+const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_BYTES: usize = 531_368;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct BlockProofPolicyInput {
@@ -76,7 +82,8 @@ enum BlockProofPolicyRejection {
     EmptyBlockCarriesProof,
     MissingTransactionProofs,
     TransactionProofCountMismatch,
-    UnsupportedInlineRequired,
+    IndependentProvenBatch,
+    IndependentBlockArtifact,
     MissingProvenBatch,
     MissingTransactionValidityClaims,
     LegacyInlineBatch,
@@ -93,7 +100,8 @@ impl BlockProofPolicyRejection {
             Self::EmptyBlockCarriesProof => "empty_block_carries_proof",
             Self::MissingTransactionProofs => "missing_transaction_proofs",
             Self::TransactionProofCountMismatch => "transaction_proof_count_mismatch",
-            Self::UnsupportedInlineRequired => "unsupported_inline_required",
+            Self::IndependentProvenBatch => "independent_proven_batch",
+            Self::IndependentBlockArtifact => "independent_block_artifact",
             Self::MissingProvenBatch => "missing_proven_batch",
             Self::MissingTransactionValidityClaims => "missing_transaction_validity_claims",
             Self::LegacyInlineBatch => "legacy_inline_batch",
@@ -125,7 +133,13 @@ fn evaluate_block_proof_policy(
         return Err(BlockProofPolicyRejection::TransactionProofCountMismatch);
     }
     if input.verification_mode == ProofVerificationMode::InlineRequired {
-        return Err(BlockProofPolicyRejection::UnsupportedInlineRequired);
+        if input.has_proven_batch {
+            return Err(BlockProofPolicyRejection::IndependentProvenBatch);
+        }
+        if input.has_block_artifact {
+            return Err(BlockProofPolicyRejection::IndependentBlockArtifact);
+        }
+        return Ok(());
     }
     if !input.has_proven_batch {
         return Err(BlockProofPolicyRejection::MissingProvenBatch);
@@ -163,10 +177,14 @@ fn proof_policy_rejection_to_error(
                 observed: input.tx_validity_artifact_count,
             }
         }
-        BlockProofPolicyRejection::UnsupportedInlineRequired => ProofError::UnsupportedProofArtifact(
-            "legacy InlineRequired block verification is no longer supported on the product path"
-                .to_string(),
+        BlockProofPolicyRejection::IndependentProvenBatch => ProofError::UnsupportedProofArtifact(
+            "independent transaction-proof blocks must not carry a proven batch".to_string(),
         ),
+        BlockProofPolicyRejection::IndependentBlockArtifact => {
+            ProofError::UnsupportedProofArtifact(
+                "independent transaction-proof blocks must not carry a block artifact".to_string(),
+            )
+        }
         BlockProofPolicyRejection::MissingProvenBatch => {
             ProofError::MissingProvenBatchForSelfContained
         }
@@ -174,7 +192,8 @@ fn proof_policy_rejection_to_error(
             ProofError::MissingTransactionValidityClaims
         }
         BlockProofPolicyRejection::LegacyInlineBatch => ProofError::UnsupportedProofArtifact(
-            "legacy InlineTx proven batches are no longer supported on the product path".to_string(),
+            "legacy InlineTx proven batches are no longer supported on the product path"
+                .to_string(),
         ),
         BlockProofPolicyRejection::RetiredReceiptRoot => ProofError::UnsupportedProofArtifact(
             "ReceiptRoot blocks are decode-only and are not admitted by the SmallWood product path"
@@ -206,15 +225,11 @@ struct NativeTxLeafAdmissionInput {
     receipt_verifier_profile_matches: bool,
     has_expected_artifact_hash: bool,
     expected_artifact_hash_matches: bool,
-    has_cache_entry: bool,
-    cache_receipt_matches: bool,
-    cache_transaction_matches: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeTxLeafAdmissionOutcome {
     NeedsBackendVerification,
-    CacheHit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -225,8 +240,6 @@ enum NativeTxLeafAdmissionRejection {
     ArtifactTooLarge,
     ReceiptVerifierProfileMismatch,
     ArtifactHashMismatch,
-    CacheReceiptMismatch,
-    CacheTransactionMismatch,
 }
 
 impl NativeTxLeafAdmissionOutcome {
@@ -234,7 +247,6 @@ impl NativeTxLeafAdmissionOutcome {
     fn label(self) -> &'static str {
         match self {
             Self::NeedsBackendVerification => "needs_backend_verification",
-            Self::CacheHit => "cache_hit",
         }
     }
 }
@@ -249,8 +261,6 @@ impl NativeTxLeafAdmissionRejection {
             Self::ArtifactTooLarge => "artifact_too_large",
             Self::ReceiptVerifierProfileMismatch => "receipt_verifier_profile_mismatch",
             Self::ArtifactHashMismatch => "artifact_hash_mismatch",
-            Self::CacheReceiptMismatch => "cache_receipt_mismatch",
-            Self::CacheTransactionMismatch => "cache_transaction_mismatch",
         }
     }
 }
@@ -276,17 +286,7 @@ fn evaluate_native_tx_leaf_admission(
     if input.has_expected_artifact_hash && !input.expected_artifact_hash_matches {
         return Err(NativeTxLeafAdmissionRejection::ArtifactHashMismatch);
     }
-    if input.has_cache_entry {
-        if !input.cache_receipt_matches {
-            return Err(NativeTxLeafAdmissionRejection::CacheReceiptMismatch);
-        }
-        if !input.cache_transaction_matches {
-            return Err(NativeTxLeafAdmissionRejection::CacheTransactionMismatch);
-        }
-        Ok(NativeTxLeafAdmissionOutcome::CacheHit)
-    } else {
-        Ok(NativeTxLeafAdmissionOutcome::NeedsBackendVerification)
-    }
+    Ok(NativeTxLeafAdmissionOutcome::NeedsBackendVerification)
 }
 
 fn native_tx_leaf_admission_error(
@@ -326,18 +326,6 @@ fn native_tx_leaf_admission_error(
             ProofError::AggregationProofInputsMismatch(
                 "receipt accumulation artifact hash mismatch".to_string(),
             )
-        }
-        NativeTxLeafAdmissionRejection::CacheReceiptMismatch => {
-            ProofError::TransactionProofInputsMismatch {
-                index: 0,
-                message: "native tx-leaf cache entry receipt mismatch".to_string(),
-            }
-        }
-        NativeTxLeafAdmissionRejection::CacheTransactionMismatch => {
-            ProofError::TransactionProofInputsMismatch {
-                index: 0,
-                message: "native tx-leaf cache entry transaction mismatch".to_string(),
-            }
         }
     }
 }
@@ -397,6 +385,7 @@ fn evaluate_receipt_root_payload_admission(
     Ok(())
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ReceiptRootArtifactAdmissionInput {
     envelope_kind: ProofArtifactKind,
@@ -407,6 +396,7 @@ struct ReceiptRootArtifactAdmissionInput {
     tx_artifact_count_matches: bool,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReceiptRootArtifactAdmissionRejection {
     ArtifactKindMismatch,
@@ -416,8 +406,8 @@ enum ReceiptRootArtifactAdmissionRejection {
     TransactionProofCountMismatch,
 }
 
+#[cfg(test)]
 impl ReceiptRootArtifactAdmissionRejection {
-    #[cfg(test)]
     fn label(self) -> &'static str {
         match self {
             Self::ArtifactKindMismatch => "artifact_kind_mismatch",
@@ -429,6 +419,7 @@ impl ReceiptRootArtifactAdmissionRejection {
     }
 }
 
+#[cfg(test)]
 fn evaluate_receipt_root_artifact_admission(
     input: ReceiptRootArtifactAdmissionInput,
 ) -> Result<(), ReceiptRootArtifactAdmissionRejection> {
@@ -450,6 +441,7 @@ fn evaluate_receipt_root_artifact_admission(
     Ok(())
 }
 
+#[cfg(test)]
 fn receipt_root_artifact_admission_error(
     input: ReceiptRootArtifactAdmissionInput,
     tx_count: usize,
@@ -487,18 +479,20 @@ fn receipt_root_artifact_admission_error(
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ReceiptRootStatementBindingInput {
     statement_commitment_matches: bool,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReceiptRootStatementBindingRejection {
     StatementCommitmentMismatch,
 }
 
+#[cfg(test)]
 impl ReceiptRootStatementBindingRejection {
-    #[cfg(test)]
     fn label(self) -> &'static str {
         match self {
             Self::StatementCommitmentMismatch => "statement_commitment_mismatch",
@@ -506,6 +500,7 @@ impl ReceiptRootStatementBindingRejection {
     }
 }
 
+#[cfg(test)]
 fn evaluate_receipt_root_statement_binding(
     input: ReceiptRootStatementBindingInput,
 ) -> Result<(), ReceiptRootStatementBindingRejection> {
@@ -516,18 +511,20 @@ fn evaluate_receipt_root_statement_binding(
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ReceiptRootVerifiedMetadataInput {
     verified_leaf_count_matches: bool,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReceiptRootVerifiedMetadataRejection {
     VerifiedLeafCountMismatch,
 }
 
+#[cfg(test)]
 impl ReceiptRootVerifiedMetadataRejection {
-    #[cfg(test)]
     fn label(self) -> &'static str {
         match self {
             Self::VerifiedLeafCountMismatch => "verified_leaf_count_mismatch",
@@ -535,6 +532,7 @@ impl ReceiptRootVerifiedMetadataRejection {
     }
 }
 
+#[cfg(test)]
 fn evaluate_receipt_root_verified_metadata(
     input: ReceiptRootVerifiedMetadataInput,
 ) -> Result<(), ReceiptRootVerifiedMetadataRejection> {
@@ -747,6 +745,23 @@ fn verify_recursive_block_artifact_against_verified_records(
     envelope: &ProofEnvelope,
 ) -> Result<BlockArtifactVerifyReport, ProofError> {
     let verified_records = verify_native_tx_leaf_artifact_records(txs, artifacts)?;
+    verify_recursive_block_artifact_from_verified_records(
+        &verified_records,
+        expected_commitment,
+        semantic,
+        envelope,
+    )
+}
+
+// Called only after the external artifact wrapper verifies every transaction
+// leaf. Unit tests can exercise recursive replay with explicit verified records
+// without presenting their sentinel leaf bytes as a valid proof.
+fn verify_recursive_block_artifact_from_verified_records(
+    verified_records: &[VerifiedNativeTxLeaf],
+    expected_commitment: &[u8; 48],
+    semantic: &BlockSemanticInputsV1,
+    envelope: &ProofEnvelope,
+) -> Result<BlockArtifactVerifyReport, ProofError> {
     let block_records = verified_records
         .iter()
         .enumerate()
@@ -767,7 +782,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                 recursive_block_admission_error(
                     label,
                     admission_input,
-                    txs.len(),
+                    verified_records.len(),
                     None,
                     None,
                     None,
@@ -783,7 +798,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                     return Err(recursive_block_admission_error(
                         label,
                         decode_input,
-                        txs.len(),
+                        verified_records.len(),
                         None,
                         None,
                         Some(err.to_string()),
@@ -794,7 +809,7 @@ fn verify_recursive_block_artifact_against_verified_records(
             let decoded_input = RecursiveBlockArtifactAdmissionInput {
                 header_version_matches: parsed.artifact.header.artifact_version_rec
                     == RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
-                tx_count_matches: parsed.public.tx_count as usize == txs.len(),
+                tx_count_matches: parsed.public.tx_count as usize == verified_records.len(),
                 statement_commitment_matches: parsed.public.tx_statements_commitment
                     == *expected_commitment,
                 ..admission_input
@@ -803,7 +818,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                 recursive_block_admission_error(
                     label,
                     decoded_input,
-                    txs.len(),
+                    verified_records.len(),
                     Some(parsed.public.tx_count),
                     Some(parsed.artifact.header.artifact_version_rec),
                     None,
@@ -823,7 +838,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                 recursive_block_admission_error(
                     label,
                     replay_input,
-                    txs.len(),
+                    verified_records.len(),
                     Some(parsed.public.tx_count),
                     Some(parsed.artifact.header.artifact_version_rec),
                     None,
@@ -836,7 +851,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                 ))
             })?;
             Ok(BlockArtifactVerifyReport {
-                tx_count: txs.len(),
+                tx_count: verified_records.len(),
                 verified_statement_commitment: *expected_commitment,
                 verify_ms: start_verify.elapsed().as_millis(),
                 verify_batch_ms: 0,
@@ -856,7 +871,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                 recursive_block_admission_error(
                     label,
                     admission_input,
-                    txs.len(),
+                    verified_records.len(),
                     None,
                     None,
                     None,
@@ -872,7 +887,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                     return Err(recursive_block_admission_error(
                         label,
                         decode_input,
-                        txs.len(),
+                        verified_records.len(),
                         None,
                         None,
                         Some(err.to_string()),
@@ -883,7 +898,7 @@ fn verify_recursive_block_artifact_against_verified_records(
             let decoded_input = RecursiveBlockArtifactAdmissionInput {
                 header_version_matches: parsed.artifact.header.artifact_version_rec
                     == RECURSIVE_BLOCK_ARTIFACT_VERSION_V2,
-                tx_count_matches: parsed.public.tx_count as usize == txs.len(),
+                tx_count_matches: parsed.public.tx_count as usize == verified_records.len(),
                 statement_commitment_matches: parsed.public.tx_statements_commitment
                     == *expected_commitment,
                 ..admission_input
@@ -892,7 +907,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                 recursive_block_admission_error(
                     label,
                     decoded_input,
-                    txs.len(),
+                    verified_records.len(),
                     Some(parsed.public.tx_count),
                     Some(parsed.artifact.header.artifact_version_rec),
                     None,
@@ -912,7 +927,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                 recursive_block_admission_error(
                     label,
                     replay_input,
-                    txs.len(),
+                    verified_records.len(),
                     Some(parsed.public.tx_count),
                     Some(parsed.artifact.header.artifact_version_rec),
                     None,
@@ -925,7 +940,7 @@ fn verify_recursive_block_artifact_against_verified_records(
                 ))
             })?;
             Ok(BlockArtifactVerifyReport {
-                tx_count: txs.len(),
+                tx_count: verified_records.len(),
                 verified_statement_commitment: *expected_commitment,
                 verify_ms: start_verify.elapsed().as_millis(),
                 verify_batch_ms: 0,
@@ -939,78 +954,6 @@ fn verify_recursive_block_artifact_against_verified_records(
             envelope.kind.label()
         ))),
     }
-}
-
-pub fn build_recursive_block_v2_artifact_for_native_txs<BH>(
-    block: &Block<BH>,
-    artifacts: &[TxValidityArtifact],
-    parent_commitment_tree: &CommitmentTreeState,
-) -> Result<RecursiveBlockV2ArtifactBuild, ProofError>
-where
-    BH: HeaderProofExt,
-{
-    verify_commitments(block)?;
-    if block.transactions.is_empty() {
-        return Err(ProofError::ProvenBatchBindingMismatch(
-            "recursive block artifact requires at least one transaction".to_string(),
-        ));
-    }
-    if artifacts.len() != block.transactions.len() {
-        return Err(ProofError::TransactionProofCountMismatch {
-            expected: block.transactions.len(),
-            observed: artifacts.len(),
-        });
-    }
-
-    let claims = tx_validity_claims_from_tx_artifacts(&block.transactions, artifacts)?;
-    let statement_bindings = tx_statement_bindings_from_claims(&claims)?;
-    validate_statement_anchor_history(
-        parent_commitment_tree,
-        block.transactions.len(),
-        &statement_bindings,
-    )?;
-    let tx_statements_commitment = commitment_from_statement_bindings(&statement_bindings)?;
-    if let Some(expected) = block.tx_statements_commitment
-        && expected != tx_statements_commitment
-    {
-        return Err(ProofError::CommitmentProofInputsMismatch(
-            "tx_statements_commitment does not match native tx artifacts".to_string(),
-        ));
-    }
-
-    let verified_records = verify_native_tx_leaf_artifact_records(&block.transactions, artifacts)?;
-    let records = verified_records
-        .iter()
-        .enumerate()
-        .map(|(tx_index, record)| {
-            recursive_block_leaf_record_from_verified(tx_index as u32, record)
-        })
-        .collect::<Vec<_>>();
-    let semantic = recursive_block_semantic_inputs_from_block(
-        block,
-        parent_commitment_tree,
-        tx_statements_commitment,
-    )?;
-    let recursive = crate::backend_interface::prove_block_recursive_v2(
-        &crate::backend_interface::BlockRecursiveProverInputV2 { records, semantic },
-    )
-    .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
-    let artifact_bytes =
-        crate::backend_interface::serialize_recursive_block_artifact_v2(&recursive)
-            .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
-    let da_encoding = crate::types::encode_da_blob(&block.transactions, block.header.da_params())
-        .map_err(|err| ProofError::DaEncoding(err.to_string()))?;
-    let da_chunk_count = u32::try_from(da_encoding.chunks().len())
-        .map_err(|_| ProofError::DaEncoding("DA chunk count exceeds u32".to_string()))?;
-
-    Ok(RecursiveBlockV2ArtifactBuild {
-        artifact_bytes,
-        tx_count: block.transactions.len() as u32,
-        tx_statements_commitment,
-        da_root: da_encoding.root(),
-        da_chunk_count,
-        verifier_profile: backend_recursive_block_profile_v2(),
-    })
 }
 
 fn recursive_block_semantic_inputs_from_block(
@@ -1044,24 +987,32 @@ fn recursive_block_semantic_inputs_from_block(
 
 struct NativeTxLeafVerifyCache {
     capacity: usize,
-    order: VecDeque<[u8; 48]>,
-    entries: HashMap<[u8; 48], VerifiedNativeTxLeaf>,
+    least_recent: Option<[u8; 48]>,
+    most_recent: Option<[u8; 48]>,
+    entries: HashMap<[u8; 48], NativeTxLeafVerifyCacheEntry>,
+}
+
+struct NativeTxLeafVerifyCacheEntry {
+    value: Arc<VerifiedNativeTxLeaf>,
+    older: Option<[u8; 48]>,
+    newer: Option<[u8; 48]>,
 }
 
 impl NativeTxLeafVerifyCache {
     fn new(capacity: usize) -> Self {
         Self {
             capacity,
-            order: VecDeque::new(),
+            least_recent: None,
+            most_recent: None,
             entries: HashMap::new(),
         }
     }
 
-    fn get(&mut self, key: [u8; 48]) -> Option<VerifiedNativeTxLeaf> {
-        let value = self.entries.get(&key).cloned();
+    #[cfg(test)]
+    fn get(&mut self, key: [u8; 48]) -> Option<Arc<VerifiedNativeTxLeaf>> {
+        let value = self.entries.get(&key).map(|entry| Arc::clone(&entry.value));
         if value.is_some() {
-            self.order.retain(|entry| entry != &key);
-            self.order.push_back(key);
+            self.promote(key);
         }
         value
     }
@@ -1071,20 +1022,96 @@ impl NativeTxLeafVerifyCache {
             return;
         }
         if let Some(existing) = self.entries.get_mut(&key) {
-            *existing = value;
-            self.order.retain(|entry| entry != &key);
-            self.order.push_back(key);
+            existing.value = Arc::new(value);
+            self.promote(key);
             return;
         }
         while self.entries.len() >= self.capacity {
-            if let Some(oldest) = self.order.pop_front() {
+            if let Some(oldest) = self.least_recent {
+                self.detach(oldest);
                 self.entries.remove(&oldest);
             } else {
                 break;
             }
         }
-        self.entries.insert(key, value);
-        self.order.push_back(key);
+        self.entries.insert(
+            key,
+            NativeTxLeafVerifyCacheEntry {
+                value: Arc::new(value),
+                older: None,
+                newer: None,
+            },
+        );
+        self.attach_most_recent(key);
+    }
+
+    fn clear(&mut self) {
+        self.least_recent = None;
+        self.most_recent = None;
+        self.entries.clear();
+    }
+
+    fn promote(&mut self, key: [u8; 48]) {
+        if self.most_recent == Some(key) {
+            return;
+        }
+        self.detach(key);
+        self.attach_most_recent(key);
+    }
+
+    fn detach(&mut self, key: [u8; 48]) {
+        let Some((older, newer)) = self
+            .entries
+            .get(&key)
+            .map(|entry| (entry.older, entry.newer))
+        else {
+            return;
+        };
+        match older {
+            Some(older) => {
+                self.entries
+                    .get_mut(&older)
+                    .expect("native tx-leaf LRU older link exists")
+                    .newer = newer;
+            }
+            None => self.least_recent = newer,
+        }
+        match newer {
+            Some(newer) => {
+                self.entries
+                    .get_mut(&newer)
+                    .expect("native tx-leaf LRU newer link exists")
+                    .older = older;
+            }
+            None => self.most_recent = older,
+        }
+        let entry = self
+            .entries
+            .get_mut(&key)
+            .expect("native tx-leaf LRU detached entry exists");
+        entry.older = None;
+        entry.newer = None;
+    }
+
+    fn attach_most_recent(&mut self, key: [u8; 48]) {
+        let previous_most_recent = self.most_recent;
+        {
+            let entry = self
+                .entries
+                .get_mut(&key)
+                .expect("native tx-leaf LRU attached entry exists");
+            entry.older = previous_most_recent;
+            entry.newer = None;
+        }
+        if let Some(previous) = previous_most_recent {
+            self.entries
+                .get_mut(&previous)
+                .expect("native tx-leaf LRU tail exists")
+                .newer = Some(key);
+        } else {
+            self.least_recent = Some(key);
+        }
+        self.most_recent = Some(key);
     }
 }
 
@@ -1104,7 +1131,7 @@ static NATIVE_TX_LEAF_VERIFY_CACHE: LazyLock<Mutex<NativeTxLeafVerifyCache>> =
     });
 
 fn native_tx_leaf_artifact_hash(artifact_bytes: &[u8]) -> [u8; 48] {
-    blake3_384(artifact_bytes)
+    blake2b_384_domain_hash(b"hegemon-native-tx-leaf-verify-cache-v2", [artifact_bytes])
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1118,16 +1145,7 @@ pub struct BlockArtifactVerifyReport {
     pub root_verify_mode: Option<&'static str>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RecursiveBlockV2ArtifactBuild {
-    pub artifact_bytes: Vec<u8>,
-    pub tx_count: u32,
-    pub tx_statements_commitment: [u8; 48],
-    pub da_root: [u8; 48],
-    pub da_chunk_count: u32,
-    pub verifier_profile: VerifierProfileDigest,
-}
-
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeReceiptRootVerifyMode {
     Replay,
@@ -1135,6 +1153,7 @@ enum NativeReceiptRootVerifyMode {
     CrossCheck,
 }
 
+#[cfg(test)]
 impl NativeReceiptRootVerifyMode {
     fn label(self) -> &'static str {
         match self {
@@ -1145,6 +1164,7 @@ impl NativeReceiptRootVerifyMode {
     }
 }
 
+#[cfg(test)]
 fn load_native_receipt_root_verify_mode() -> NativeReceiptRootVerifyMode {
     let Some(raw) = std::env::var("HEGEMON_NATIVE_RECEIPT_ROOT_VERIFY_MODE").ok() else {
         return NativeReceiptRootVerifyMode::VerifiedRecords;
@@ -1165,6 +1185,12 @@ fn load_native_receipt_root_verify_mode() -> NativeReceiptRootVerifyMode {
     }
 }
 
+#[cfg(not(test))]
+pub const fn native_receipt_root_verify_mode_label() -> &'static str {
+    "not_registered"
+}
+
+#[cfg(test)]
 pub fn native_receipt_root_verify_mode_label() -> &'static str {
     load_native_receipt_root_verify_mode().label()
 }
@@ -1244,13 +1270,6 @@ impl Default for VerifierRegistry {
         }));
         registry.register(Arc::new(TxLeafVerifier));
         registry.register(Arc::new(NativeTxLeafVerifier));
-        registry.register(Arc::new(ReceiptRootVerifier));
-        registry.register(Arc::new(RecursiveBlockVerifier {
-            kind: ProofArtifactKind::RecursiveBlockV1,
-        }));
-        registry.register(Arc::new(RecursiveBlockVerifier {
-            kind: ProofArtifactKind::RecursiveBlockV2,
-        }));
         registry
     }
 }
@@ -1405,7 +1424,6 @@ fn verify_native_tx_leaf_artifact_record(
             && artifact.receipt.verifier_profile == native_profile;
         cheap_checks_pass.then(|| native_tx_leaf_artifact_hash(&envelope.artifact_bytes))
     });
-    let cached_record = artifact_hash.and_then(|hash| NATIVE_TX_LEAF_VERIFY_CACHE.lock().get(hash));
     let admission_input = NativeTxLeafAdmissionInput {
         has_envelope: envelope.is_some(),
         envelope_kind: envelope
@@ -1425,21 +1443,9 @@ fn verify_native_tx_leaf_artifact_record(
             (Some(_), None) => false,
             (None, _) => true,
         },
-        has_cache_entry: cached_record.is_some(),
-        cache_receipt_matches: cached_record
-            .as_ref()
-            .map(|record| record.receipt == artifact.receipt)
-            .unwrap_or(true),
-        cache_transaction_matches: cached_record
-            .as_ref()
-            .map(|record| record.tx == tx_view)
-            .unwrap_or(true),
     };
-    let admission = evaluate_native_tx_leaf_admission(admission_input)
+    evaluate_native_tx_leaf_admission(admission_input)
         .map_err(|rejection| native_tx_leaf_admission_error(admission_input, rejection))?;
-    if admission == NativeTxLeafAdmissionOutcome::CacheHit {
-        return Ok(cached_record.expect("cache-hit admission has cached record"));
-    }
     let envelope = envelope.expect("native tx-leaf admission requires an envelope");
     let artifact_hash = artifact_hash.expect("native tx-leaf admission requires artifact hash");
 
@@ -1512,8 +1518,12 @@ impl ArtifactVerifier for NativeTxLeafVerifier {
     }
 }
 
-struct ReceiptRootVerifier;
+#[cfg(test)]
+struct ReceiptRootVerifier {
+    verified_records_fixture: Option<Vec<VerifiedNativeTxLeaf>>,
+}
 
+#[cfg(test)]
 impl ArtifactVerifier for ReceiptRootVerifier {
     fn kind(&self) -> ProofArtifactKind {
         ProofArtifactKind::ReceiptRoot
@@ -1553,7 +1563,29 @@ impl ArtifactVerifier for ReceiptRootVerifier {
         )?;
         let artifacts =
             tx_artifacts.expect("receipt-root artifact admission requires tx artifacts");
-        let verified_records = verify_native_tx_leaf_artifact_records(txs, artifacts)?;
+        let verified_records = if let Some(records) = &self.verified_records_fixture {
+            if records.len() != txs.len() {
+                return Err(ProofError::TransactionProofCountMismatch {
+                    expected: txs.len(),
+                    observed: records.len(),
+                });
+            }
+            for (index, ((tx, artifact), record)) in
+                txs.iter().zip(artifacts).zip(records).enumerate()
+            {
+                if record.tx != tx_leaf_public_tx_from_consensus_tx(tx)
+                    || record.receipt != artifact.receipt
+                {
+                    return Err(ProofError::TransactionProofInputsMismatch {
+                        index,
+                        message: "receipt-root test fixture record mismatch".to_string(),
+                    });
+                }
+            }
+            records.clone()
+        } else {
+            verify_native_tx_leaf_artifact_records(txs, artifacts)?
+        };
         let verified_bindings = verified_records
             .iter()
             .map(|record| record.binding.clone())
@@ -1678,10 +1710,12 @@ pub fn recursive_block_artifact_verifier_profile() -> VerifierProfileDigest {
     backend_recursive_block_profile_v2()
 }
 
+#[cfg(test)]
 struct RecursiveBlockVerifier {
     kind: ProofArtifactKind,
 }
 
+#[cfg(test)]
 impl ArtifactVerifier for RecursiveBlockVerifier {
     fn kind(&self) -> ProofArtifactKind {
         self.kind
@@ -1833,27 +1867,6 @@ pub fn tx_validity_artifact_from_proof(
     })
 }
 
-pub fn tx_validity_artifact_from_tx_leaf_proof(
-    proof: &TransactionProof,
-) -> Result<TxValidityArtifact, ProofError> {
-    let receipt = tx_validity_receipt_from_proof(proof)
-        .map_err(|message| ProofError::TransactionProofInputsMismatch { index: 0, message })?;
-    let built = build_tx_leaf_artifact_bytes(proof).map_err(|err| {
-        ProofError::TransactionProofVerification {
-            index: 0,
-            message: format!("failed to build tx-leaf artifact: {err}"),
-        }
-    })?;
-    Ok(TxValidityArtifact {
-        receipt: receipt.clone(),
-        proof: Some(ProofEnvelope {
-            kind: ProofArtifactKind::TxLeaf,
-            verifier_profile: experimental_tx_leaf_verifier_profile(),
-            artifact_bytes: built.artifact_bytes,
-        }),
-    })
-}
-
 pub fn tx_validity_artifact_from_native_tx_leaf_bytes(
     artifact_bytes: Vec<u8>,
 ) -> Result<TxValidityArtifact, ProofError> {
@@ -1887,9 +1900,7 @@ pub fn tx_validity_artifact_from_receipt(receipt: TxValidityReceipt) -> TxValidi
 }
 
 pub fn clear_verified_native_tx_leaf_store() {
-    let mut guard = NATIVE_TX_LEAF_VERIFY_CACHE.lock();
-    guard.order.clear();
-    guard.entries.clear();
+    NATIVE_TX_LEAF_VERIFY_CACHE.lock().clear();
 }
 
 pub fn prewarm_verified_native_tx_leaf_store(
@@ -2625,9 +2636,15 @@ impl ProofVerifier for ParallelProofVerifier {
         if tx_validity_artifacts.is_none() {
             return Err(ProofError::MissingTransactionProofs);
         }
-        let derived_claims_from_artifacts = tx_validity_artifacts
-            .map(|artifacts| tx_validity_claims_from_tx_artifacts(&block.transactions, artifacts))
-            .transpose()?;
+        let artifacts = tx_validity_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
+        let tx_verify_start = Instant::now();
+        let verified_records =
+            verify_native_tx_leaf_artifact_records(&block.transactions, artifacts)?;
+        let tx_verify_ms = tx_verify_start.elapsed().as_millis();
+        let derived_claims_from_artifacts = verified_records
+            .iter()
+            .map(|record| TxValidityClaim::new(record.receipt.clone(), record.binding.clone()))
+            .collect::<Vec<_>>();
 
         let resolved_claims = if let Some(claims) = block.tx_validity_claims.clone() {
             if claims.len() != block.transactions.len() {
@@ -2637,55 +2654,14 @@ impl ProofVerifier for ParallelProofVerifier {
                     claims.len()
                 )));
             }
-            if let Some(derived_claims) = derived_claims_from_artifacts.as_ref() {
-                ensure_claims_match_verified_artifacts(&claims, derived_claims)?;
-            }
-            Some(derived_claims_from_artifacts.clone().unwrap_or(claims))
+            ensure_claims_match_verified_artifacts(&claims, &derived_claims_from_artifacts)?;
+            derived_claims_from_artifacts
         } else {
-            None
+            derived_claims_from_artifacts
         };
-        if !matches!(
-            verification_mode,
-            ProofVerificationMode::SelfContainedAggregation
-        ) {
-            return Err(ProofError::UnsupportedProofArtifact(
-                "legacy InlineRequired block verification is no longer supported on the product path"
-                    .to_string(),
-            ));
-        }
-
-        let proven_batch = block
-            .proven_batch
-            .as_ref()
-            .ok_or(ProofError::MissingProvenBatchForSelfContained)?;
-        let commitment_proof = &proven_batch.commitment_proof;
-
-        if !matches!(proven_batch.mode, ProvenBatchMode::RecursiveBlock) {
-            return Err(ProofError::UnsupportedProofArtifact(
-                "only RecursiveBlock is admitted by the SmallWood product path".to_string(),
-            ));
-        }
-        if !commitment_proof.proof_bytes.is_empty() {
-            return Err(ProofError::UnsupportedProofArtifact(
-                "recursive block product lane forbids commitment proof bytes".to_string(),
-            ));
-        }
-        let commitment_verify_ms = 0;
-
-        if matches!(
-            verification_mode,
-            ProofVerificationMode::SelfContainedAggregation
-        ) && resolved_claims.is_none()
-        {
-            return Err(ProofError::MissingTransactionValidityClaims);
-        }
-
-        let resolved_claims = resolved_claims
-            .as_deref()
-            .ok_or(ProofError::MissingTransactionValidityClaims)?;
         let identity_projection = canonical_block_identity_projection(
             &block.transactions,
-            resolved_claims,
+            &resolved_claims,
             block.header.da_params(),
         )?;
         let statement_bindings = identity_projection.statement_bindings.as_slice();
@@ -2702,6 +2678,55 @@ impl ProofVerifier for ParallelProofVerifier {
                 "tx_statements_commitment does not match provided transaction claims".to_string(),
             ));
         }
+        if block.header.da_root() != identity_projection.da_root {
+            return Err(ProofError::DaRootMismatch);
+        }
+
+        if matches!(verification_mode, ProofVerificationMode::InlineRequired) {
+            let result = apply_commitments(parent_commitment_tree, &block.transactions)?;
+            tracing::info!(
+                target: "consensus::metrics",
+                tx_count,
+                tx_proof_bytes_total,
+                commitment_proof_bytes = 0,
+                aggregation_proof_bytes = 0,
+                aggregation_proof_uncompressed_bytes = 0,
+                ciphertext_bytes_total,
+                commitment_verify_ms = 0,
+                aggregation_verify_ms = 0,
+                aggregation_verify_batch_ms = 0,
+                aggregation_verify_mode = "independent_tx_leaf",
+                aggregation_cache_hit = false,
+                aggregation_cache_build_ms = 0,
+                aggregation_cache_prewarm_hit = false,
+                aggregation_cache_prewarm_build_ms = 0,
+                aggregation_cache_prewarm_total_ms = 0,
+                tx_verify_ms,
+                total_verify_ms = start_total.elapsed().as_millis(),
+                aggregation_verified = false,
+                "block_proof_verification_metrics"
+            );
+            return Ok(result);
+        }
+
+        let proven_batch = block
+            .proven_batch
+            .as_ref()
+            .ok_or(ProofError::MissingProvenBatchForSelfContained)?;
+        let commitment_proof = &proven_batch.commitment_proof;
+
+        if !matches!(proven_batch.mode, ProvenBatchMode::RecursiveBlock) {
+            return Err(ProofError::UnsupportedProofArtifact(
+                "historical self-contained blocks require RecursiveBlock".to_string(),
+            ));
+        }
+        if !commitment_proof.proof_bytes.is_empty() {
+            return Err(ProofError::UnsupportedProofArtifact(
+                "historical recursive blocks forbid commitment proof bytes".to_string(),
+            ));
+        }
+        let commitment_verify_ms = 0;
+
         let block_artifact = block.block_artifact.clone();
         validate_proven_batch_binding_against_expected(
             proven_batch,
@@ -2716,7 +2741,6 @@ impl ProofVerifier for ParallelProofVerifier {
             total_batch_proof_payload_bytes(proven_batch, block_artifact.as_ref());
         let aggregation_proof_uncompressed_bytes =
             total_batch_proof_uncompressed_bytes(proven_batch, block_artifact.as_ref());
-        let tx_verify_ms = 0u128;
         let aggregation_cache_hit = false;
         let aggregation_cache_build_ms = 0u128;
         let aggregation_cache_prewarm_hit = false;
@@ -2728,7 +2752,6 @@ impl ProofVerifier for ParallelProofVerifier {
             parent_commitment_tree,
             expected_commitment,
         )?;
-        let artifacts = tx_validity_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
         let recursive_artifact = block_artifact
             .as_ref()
             .ok_or(ProofError::MissingAggregationProofForSelfContainedMode)?;
@@ -3004,6 +3027,14 @@ mod tests {
     struct LeanProofPolicyVectorFile {
         schema_version: u32,
         proof_policy_cases: Vec<LeanProofPolicyCase>,
+        production_registry_cases: Vec<LeanProductionRegistryCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanProductionRegistryCase {
+        artifact_kind: String,
+        expected_registered: bool,
     }
 
     #[derive(Debug, Deserialize)]
@@ -3175,9 +3206,6 @@ mod tests {
         receipt_verifier_profile_matches: bool,
         has_expected_artifact_hash: bool,
         expected_artifact_hash_matches: bool,
-        has_cache_entry: bool,
-        cache_receipt_matches: bool,
-        cache_transaction_matches: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
         expected_outcome: Option<String>,
@@ -3440,6 +3468,7 @@ mod tests {
         stablecoin_issuance_magnitude: u64,
         stablecoin_policy_version: u32,
         expected_preimage_hex: String,
+        expected_transcript_hex: String,
         expected_valid: bool,
     }
 
@@ -3539,6 +3568,26 @@ mod tests {
             .strip_prefix("0x")
             .expect("Lean vector hex has 0x prefix");
         hex::decode(trimmed).expect("Lean vector hex decodes")
+    }
+
+    fn framed_blake2b_384_transcript(domain: &[u8], parts: &[&[u8]]) -> Vec<u8> {
+        let mut transcript = Vec::new();
+        transcript.extend_from_slice(BLAKE2B_384_FRAME_V1);
+        transcript.extend_from_slice(
+            &u64::try_from(domain.len())
+                .expect("test domain length fits u64")
+                .to_le_bytes(),
+        );
+        transcript.extend_from_slice(domain);
+        for part in parts {
+            transcript.extend_from_slice(
+                &u64::try_from(part.len())
+                    .expect("test part length fits u64")
+                    .to_le_bytes(),
+            );
+            transcript.extend_from_slice(part);
+        }
+        transcript
     }
 
     #[derive(Clone)]
@@ -3767,6 +3816,23 @@ mod tests {
             assert!(names.insert(case.name.clone()));
             verify_lean_proof_policy_case(case);
         }
+
+        assert_eq!(vectors.production_registry_cases.len(), 5);
+        let registry = VerifierRegistry::default();
+        let mut registry_kinds = BTreeSet::new();
+        for case in &vectors.production_registry_cases {
+            assert!(registry_kinds.insert(case.artifact_kind.clone()));
+            let kind = parse_lean_proof_artifact_kind(&case.artifact_kind);
+            let registered = registry
+                .verifiers
+                .iter()
+                .any(|verifier| verifier.kind() == kind);
+            assert_eq!(
+                registered, case.expected_registered,
+                "{} production registry membership drifted from Lean spec",
+                case.artifact_kind
+            );
+        }
     }
 
     #[test]
@@ -3781,7 +3847,7 @@ mod tests {
             .expect("read generated Lean native tx-leaf admission vectors");
         let vectors: LeanNativeTxLeafAdmissionVectorFile = serde_json::from_str(&raw)
             .expect("parse generated Lean native tx-leaf admission vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
         assert!(
             !vectors.native_tx_leaf_admission_cases.is_empty(),
             "Lean native tx-leaf admission cases must not be empty"
@@ -3833,7 +3899,7 @@ mod tests {
         let vectors: LeanAcceptedSmallwoodBlockCompositionVectorFile = serde_json::from_str(&raw)
             .expect("parse generated Lean accepted-SmallWood block composition vectors");
         assert_eq!(vectors.schema_version, 1);
-        assert_eq!(vectors.production_fields.len(), 70);
+        assert_eq!(vectors.production_fields.len(), 66);
         assert_eq!(vectors.claim_scope_cases.len(), 3);
         assert_eq!(vectors.canonical_transactions.len(), 2);
         assert_eq!(vectors.proof_artifact_cases.len(), 4);
@@ -3853,8 +3919,8 @@ mod tests {
         assert_eq!(
             claim_scope_names,
             BTreeSet::from([
-                "active_v3_beta".to_string(),
-                "legacy_v2_beta".to_string(),
+                "active_v4_gamma".to_string(),
+                "legacy_v3_beta".to_string(),
                 "wrong_crypto_suite".to_string(),
             ])
         );
@@ -4163,10 +4229,6 @@ mod tests {
             "identity_tx_statements_commitment",
             "identity_da_root",
             "identity_da_chunk_count",
-            "proven_batch_tx_count",
-            "proven_batch_tx_statements_commitment",
-            "proven_batch_da_root",
-            "proven_batch_da_chunk_count",
             "accepted_parent_hash",
             "accepted_parent_height",
             "accepted_parent_supply",
@@ -4590,7 +4652,7 @@ mod tests {
             std::fs::read_to_string(&path).expect("read generated Lean statement-hash vectors");
         let vectors: LeanStatementHashVectorFile =
             serde_json::from_str(&raw).expect("parse generated Lean statement-hash vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
         assert!(
             !vectors.statement_hash_cases.is_empty(),
             "Lean statement-hash cases must not be empty"
@@ -4956,10 +5018,30 @@ mod tests {
                 "{} statement preimage bytes drifted from Lean spec",
                 case.name
             );
+            let actual_transcript = framed_blake2b_384_transcript(
+                crate::backend_interface::TX_STATEMENT_HASH_DOMAIN,
+                &[actual_preimage.as_slice()],
+            );
+            assert_eq!(
+                actual_transcript,
+                expected_hex_bytes(&case.expected_transcript_hex),
+                "{} statement hash framing drifted from Lean spec",
+                case.name
+            );
+            let expected_digest = blake2b_384_domain_hash(
+                crate::backend_interface::TX_STATEMENT_HASH_DOMAIN,
+                [actual_preimage.as_slice()],
+            );
             assert_eq!(
                 actual_hash.expect("valid statement hash"),
-                blake3_384(&expected_preimage),
+                expected_digest,
                 "{} statement hash digest no longer hashes the checked preimage",
+                case.name
+            );
+            assert_eq!(
+                expected_digest,
+                blake2b_384(&actual_transcript),
+                "{} central domain hash and explicit transcript diverged",
                 case.name
             );
         }
@@ -5004,9 +5086,6 @@ mod tests {
             receipt_verifier_profile_matches: case.receipt_verifier_profile_matches,
             has_expected_artifact_hash: case.has_expected_artifact_hash,
             expected_artifact_hash_matches: case.expected_artifact_hash_matches,
-            has_cache_entry: case.has_cache_entry,
-            cache_receipt_matches: case.cache_receipt_matches,
-            cache_transaction_matches: case.cache_transaction_matches,
         };
         let result = evaluate_native_tx_leaf_admission(input);
         assert_eq!(
@@ -5156,21 +5235,9 @@ mod tests {
         case: &LeanRecursiveBlockDirectVerifierCase,
     ) {
         let kind = parse_lean_proof_artifact_kind(&case.kind);
-        let (verifier_profile, artifact_bytes) = match kind {
-            ProofArtifactKind::RecursiveBlockV1 => (
-                backend_recursive_block_profile_v1(),
-                crate::backend_interface::serialize_recursive_block_artifact_v1(
-                    &sample_recursive_block_artifact_v1(1),
-                )
-                .expect("serialize recursive_block_v1 artifact"),
-            ),
-            ProofArtifactKind::RecursiveBlockV2 => (
-                backend_recursive_block_profile_v2(),
-                crate::backend_interface::serialize_recursive_block_artifact_v2(
-                    &sample_recursive_block_artifact_v2(1),
-                )
-                .expect("serialize recursive_block_v2 artifact"),
-            ),
+        let verifier_profile = match kind {
+            ProofArtifactKind::RecursiveBlockV1 => backend_recursive_block_profile_v1(),
+            ProofArtifactKind::RecursiveBlockV2 => backend_recursive_block_profile_v2(),
             other => panic!(
                 "unexpected Lean recursive direct verifier kind {}",
                 other.label()
@@ -5180,7 +5247,7 @@ mod tests {
         let envelope = ProofEnvelope {
             kind,
             verifier_profile,
-            artifact_bytes,
+            artifact_bytes: Vec::new(),
         };
         let result = verifier.verify_block_artifact(
             &[tx_with_commitments(vec![])],
@@ -5797,14 +5864,6 @@ mod tests {
         metadata: crate::types::ReceiptRootMetadata,
     }
 
-    struct NativeTxLeafCacheGuard;
-
-    impl Drop for NativeTxLeafCacheGuard {
-        fn drop(&mut self) {
-            clear_verified_native_tx_leaf_store();
-        }
-    }
-
     fn receipt_root_caller_fixture() -> ReceiptRootCallerFixture {
         static FIXTURE: OnceLock<ReceiptRootCallerFixture> = OnceLock::new();
         FIXTURE
@@ -5874,23 +5933,6 @@ mod tests {
         }
     }
 
-    fn install_receipt_root_fixture_cache(
-        fixture: &ReceiptRootCallerFixture,
-    ) -> NativeTxLeafCacheGuard {
-        clear_verified_native_tx_leaf_store();
-        for (artifact, record) in fixture.tx_artifacts.iter().zip(&fixture.verified_records) {
-            let artifact_bytes = &artifact
-                .proof
-                .as_ref()
-                .expect("fixture tx artifact has proof")
-                .artifact_bytes;
-            NATIVE_TX_LEAF_VERIFY_CACHE
-                .lock()
-                .insert(native_tx_leaf_artifact_hash(artifact_bytes), record.clone());
-        }
-        NativeTxLeafCacheGuard
-    }
-
     fn with_receipt_root_backend_override<T>(
         override_fn: ReceiptRootBackendOverride,
         body: impl FnOnce() -> T,
@@ -5941,7 +5983,9 @@ mod tests {
     fn receipt_root_artifact_kind_and_profile_mismatch_reject_before_backend() {
         let _guard = set_native_receipt_root_verify_mode("verified_records");
         let fixture = receipt_root_caller_fixture();
-        let verifier = ReceiptRootVerifier;
+        let verifier = ReceiptRootVerifier {
+            verified_records_fixture: None,
+        };
 
         let mut wrong_kind = fixture.envelope.clone();
         wrong_kind.kind = ProofArtifactKind::TxLeaf;
@@ -5980,12 +6024,14 @@ mod tests {
     fn receipt_root_statement_commitment_mismatch_rejects_before_backend() {
         let _guard = set_native_receipt_root_verify_mode("verified_records");
         let fixture = receipt_root_caller_fixture();
-        let _cache_guard = install_receipt_root_fixture_cache(&fixture);
         let mut wrong_commitment = fixture.statement_commitment;
         wrong_commitment[0] ^= 0x01;
 
         let err = expect_receipt_root_backend_not_called(|| {
-            ReceiptRootVerifier.verify_block_artifact(
+            ReceiptRootVerifier {
+                verified_records_fixture: Some(fixture.verified_records.clone()),
+            }
+            .verify_block_artifact(
                 &fixture.transactions,
                 Some(&fixture.tx_artifacts),
                 &wrong_commitment,
@@ -6003,7 +6049,6 @@ mod tests {
     fn receipt_root_verified_metadata_leaf_count_mismatch_rejects() {
         let _guard = set_native_receipt_root_verify_mode("verified_records");
         let fixture = receipt_root_caller_fixture();
-        let _cache_guard = install_receipt_root_fixture_cache(&fixture);
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_override = Arc::clone(&calls);
         let mut wrong_metadata = fixture.metadata.clone();
@@ -6019,14 +6064,16 @@ mod tests {
                 Ok(wrong_metadata.clone())
             }),
             || {
-                ReceiptRootVerifier
-                    .verify_block_artifact(
-                        &fixture.transactions,
-                        Some(&fixture.tx_artifacts),
-                        &fixture.statement_commitment,
-                        &fixture.envelope,
-                    )
-                    .expect_err("verified metadata leaf-count mismatch must reject")
+                ReceiptRootVerifier {
+                    verified_records_fixture: Some(fixture.verified_records.clone()),
+                }
+                .verify_block_artifact(
+                    &fixture.transactions,
+                    Some(&fixture.tx_artifacts),
+                    &fixture.statement_commitment,
+                    &fixture.envelope,
+                )
+                .expect_err("verified metadata leaf-count mismatch must reject")
             },
         );
         assert_eq!(
@@ -6042,7 +6089,7 @@ mod tests {
     }
 
     #[test]
-    fn native_tx_leaf_cache_hit_requires_same_transaction_view() {
+    fn native_tx_leaf_cache_entry_never_bypasses_backend_verification() {
         clear_verified_native_tx_leaf_store();
         let native_profile = experimental_native_tx_leaf_verifier_profile();
         let original_tx = tx_with_commitments(vec![[1u8; 48]]);
@@ -6076,14 +6123,98 @@ mod tests {
             .insert(native_tx_leaf_artifact_hash(&artifact_bytes), cached);
 
         let err = verify_native_tx_leaf_artifact_record(&mutated_tx, &artifact, None)
-            .expect_err("cache hit for a different transaction view must reject");
+            .expect_err("cached placeholder bytes must still reach and fail exact verification");
         match err {
-            ProofError::TransactionProofInputsMismatch { message, .. } => {
-                assert!(message.contains("transaction mismatch"));
+            ProofError::TransactionProofVerification { message, .. } => {
+                assert!(message.contains("native tx-leaf verification failed"));
+                assert!(!message.contains("cache"));
             }
-            other => panic!("unexpected cache mismatch error: {other:?}"),
+            other => panic!("cache must not influence acceptance: {other:?}"),
         }
         clear_verified_native_tx_leaf_store();
+    }
+
+    fn native_tx_leaf_cache_test_key(index: usize) -> [u8; 48] {
+        let mut key = [0u8; 48];
+        key[..8].copy_from_slice(&(index as u64).to_le_bytes());
+        key[8] = 0xa5;
+        key
+    }
+
+    fn native_tx_leaf_cache_test_record(index: usize) -> VerifiedNativeTxLeaf {
+        let tag = index as u8;
+        let tx = tx_with_commitments(vec![[tag; 48]]);
+        let receipt = TxValidityReceipt::new(
+            [tag.wrapping_add(1); 48],
+            [tag.wrapping_add(2); 48],
+            [tag.wrapping_add(3); 48],
+            experimental_native_tx_leaf_verifier_profile(),
+        );
+        VerifiedNativeTxLeaf {
+            tx: tx_leaf_public_tx_from_consensus_tx(&tx),
+            binding: TxStatementBinding {
+                statement_hash: receipt.statement_hash,
+                anchor: [tag.wrapping_add(4); 48],
+                fee: index as u64,
+                circuit_version: u32::from(tx.version.circuit),
+            },
+            receipt,
+            leaf: fake_native_tx_leaf_record(tag),
+        }
+    }
+
+    #[test]
+    fn native_tx_leaf_cache_evicts_exact_least_recent_entry_in_constant_time() {
+        let mut cache = NativeTxLeafVerifyCache::new(3);
+        for index in 0..3 {
+            cache.insert(
+                native_tx_leaf_cache_test_key(index),
+                native_tx_leaf_cache_test_record(index),
+            );
+        }
+        assert!(cache.get(native_tx_leaf_cache_test_key(0)).is_some());
+        cache.insert(
+            native_tx_leaf_cache_test_key(3),
+            native_tx_leaf_cache_test_record(3),
+        );
+
+        assert!(cache.get(native_tx_leaf_cache_test_key(1)).is_none());
+        assert!(cache.get(native_tx_leaf_cache_test_key(0)).is_some());
+        assert!(cache.get(native_tx_leaf_cache_test_key(2)).is_some());
+        assert!(cache.get(native_tx_leaf_cache_test_key(3)).is_some());
+        assert_eq!(cache.entries.len(), 3);
+    }
+
+    #[test]
+    fn native_tx_leaf_cache_parallel_520_unique_hits_are_exact_and_bounded() {
+        const CAPACITY: usize = 4096;
+        const HITS: usize = 520;
+        let cache = Arc::new(Mutex::new(NativeTxLeafVerifyCache::new(CAPACITY)));
+        for index in 0..CAPACITY {
+            cache.lock().insert(
+                native_tx_leaf_cache_test_key(index),
+                native_tx_leaf_cache_test_record(index),
+            );
+        }
+
+        let started = Instant::now();
+        let hits = (0..HITS)
+            .into_par_iter()
+            .map(|index| {
+                cache
+                    .lock()
+                    .get(native_tx_leaf_cache_test_key(index))
+                    .is_some()
+            })
+            .filter(|hit| *hit)
+            .count();
+        let elapsed = started.elapsed();
+        eprintln!(
+            "native tx-leaf O(1) LRU: {HITS} parallel unique hits at capacity {CAPACITY} in {} us",
+            elapsed.as_micros()
+        );
+        assert_eq!(hits, HITS);
+        assert_eq!(cache.lock().entries.len(), CAPACITY);
     }
 
     #[test]
@@ -6125,62 +6256,6 @@ mod tests {
             load_native_receipt_root_verify_mode(),
             NativeReceiptRootVerifyMode::CrossCheck
         );
-    }
-
-    fn sample_recursive_records(tx_count: u32) -> Vec<crate::backend_interface::BlockLeafRecordV1> {
-        (0..tx_count)
-            .map(|tx_index| crate::backend_interface::BlockLeafRecordV1 {
-                tx_index,
-                receipt_statement_hash: [0x10u8.wrapping_add(tx_index as u8); 48],
-                receipt_proof_digest: [0x20u8.wrapping_add(tx_index as u8); 48],
-                receipt_public_inputs_digest: [0x30u8.wrapping_add(tx_index as u8); 48],
-                receipt_verifier_profile: [0x40u8.wrapping_add(tx_index as u8); 48],
-                leaf_params_fingerprint: [0x50u8.wrapping_add(tx_index as u8); 48],
-                leaf_spec_digest: [0x60u8.wrapping_add(tx_index as u8); 32],
-                leaf_relation_id: [0x70u8.wrapping_add(tx_index as u8); 32],
-                leaf_shape_digest: [0x80u8.wrapping_add(tx_index as u8); 32],
-                leaf_statement_digest: [0x90u8.wrapping_add(tx_index as u8); 48],
-                leaf_commitment_digest: [0xa0u8.wrapping_add(tx_index as u8); 48],
-                leaf_proof_digest: [0xb0u8.wrapping_add(tx_index as u8); 48],
-            })
-            .collect::<Vec<_>>()
-    }
-
-    fn sample_recursive_semantic() -> crate::backend_interface::BlockSemanticInputsV1 {
-        crate::backend_interface::BlockSemanticInputsV1 {
-            tx_statements_commitment: [0u8; 48],
-            start_shielded_root: [3u8; 48],
-            end_shielded_root: [4u8; 48],
-            start_kernel_root: [5u8; 48],
-            end_kernel_root: [6u8; 48],
-            nullifier_root: [7u8; 48],
-            da_root: [8u8; 48],
-            message_root: [11u8; 48],
-            start_tree_commitment: [9u8; 48],
-            end_tree_commitment: [10u8; 48],
-        }
-    }
-
-    fn sample_recursive_block_artifact_v1(
-        tx_count: u32,
-    ) -> crate::backend_interface::RecursiveBlockArtifactV1 {
-        let records = sample_recursive_records(tx_count);
-        let semantic = sample_recursive_semantic();
-        crate::backend_interface::prove_block_recursive_v1(
-            &crate::backend_interface::BlockRecursiveProverInputV1 { records, semantic },
-        )
-        .expect("prove recursive_block_v1 artifact")
-    }
-
-    fn sample_recursive_block_artifact_v2(
-        tx_count: u32,
-    ) -> crate::backend_interface::RecursiveBlockArtifactV2 {
-        let records = sample_recursive_records(tx_count);
-        let semantic = sample_recursive_semantic();
-        crate::backend_interface::prove_block_recursive_v2(
-            &crate::backend_interface::BlockRecursiveProverInputV2 { records, semantic },
-        )
-        .expect("prove recursive_block_v2 artifact")
     }
 
     fn oversized_recursive_block_envelope(kind: ProofArtifactKind) -> ProofEnvelope {
@@ -6583,50 +6658,23 @@ mod tests {
     }
 
     #[test]
-    fn recursive_block_v2_registry_direct_verifier_requires_semantic_replay() {
+    fn recursive_block_artifacts_are_not_registered_for_active_dispatch() {
         let registry = VerifierRegistry::default();
-        let verifier_profile = backend_recursive_block_profile_v2();
-        let verifier = registry
-            .resolve(ProofArtifactKind::RecursiveBlockV2, verifier_profile)
-            .expect("recursive_block_v2 verifier registered");
-        let artifact = sample_recursive_block_artifact_v2(1);
-        let bytes = crate::backend_interface::serialize_recursive_block_artifact_v2(&artifact)
-            .expect("serialize recursive_block_v2 artifact");
-        let envelope = ProofEnvelope {
-            kind: ProofArtifactKind::RecursiveBlockV2,
-            verifier_profile,
-            artifact_bytes: bytes,
-        };
-        let err = verifier
-            .verify_block_artifact(&[tx_with_commitments(vec![])], None, &[0u8; 48], &envelope)
-            .expect_err("registry recursive_block_v2 verifier must require semantic replay");
-        assert_eq!(
-            recursive_block_direct_verifier_error_label(&err),
-            "requires_semantic_replay"
+        assert!(
+            registry
+                .resolve(
+                    ProofArtifactKind::RecursiveBlockV1,
+                    backend_recursive_block_profile_v1(),
+                )
+                .is_err()
         );
-    }
-
-    #[test]
-    fn recursive_block_v1_registry_direct_verifier_requires_semantic_replay() {
-        let registry = VerifierRegistry::default();
-        let verifier_profile = backend_recursive_block_profile_v1();
-        let verifier = registry
-            .resolve(ProofArtifactKind::RecursiveBlockV1, verifier_profile)
-            .expect("recursive_block_v1 verifier registered");
-        let artifact = sample_recursive_block_artifact_v1(1);
-        let bytes = crate::backend_interface::serialize_recursive_block_artifact_v1(&artifact)
-            .expect("serialize recursive_block_v1 artifact");
-        let envelope = ProofEnvelope {
-            kind: ProofArtifactKind::RecursiveBlockV1,
-            verifier_profile,
-            artifact_bytes: bytes,
-        };
-        let err = verifier
-            .verify_block_artifact(&[tx_with_commitments(vec![])], None, &[0u8; 48], &envelope)
-            .expect_err("registry recursive_block_v1 verifier must require semantic replay");
-        assert_eq!(
-            recursive_block_direct_verifier_error_label(&err),
-            "requires_semantic_replay"
+        assert!(
+            registry
+                .resolve(
+                    ProofArtifactKind::RecursiveBlockV2,
+                    backend_recursive_block_profile_v2(),
+                )
+                .is_err()
         );
     }
 
@@ -6635,13 +6683,10 @@ mod tests {
         let verifier = RecursiveBlockVerifier {
             kind: ProofArtifactKind::RecursiveBlockV1,
         };
-        let artifact = sample_recursive_block_artifact_v1(1);
-        let bytes = crate::backend_interface::serialize_recursive_block_artifact_v1(&artifact)
-            .expect("serialize recursive artifact");
         let envelope = ProofEnvelope {
             kind: ProofArtifactKind::RecursiveBlockV1,
             verifier_profile: backend_recursive_block_profile_v1(),
-            artifact_bytes: bytes,
+            artifact_bytes: Vec::new(),
         };
         let err = verifier
             .verify_block_artifact(&[], None, &[0u8; 48], &envelope)
@@ -6657,13 +6702,10 @@ mod tests {
         let verifier = RecursiveBlockVerifier {
             kind: ProofArtifactKind::RecursiveBlockV2,
         };
-        let artifact = sample_recursive_block_artifact_v2(1);
-        let bytes = crate::backend_interface::serialize_recursive_block_artifact_v2(&artifact)
-            .expect("serialize recursive_block_v2 artifact");
         let envelope = ProofEnvelope {
             kind: ProofArtifactKind::RecursiveBlockV2,
             verifier_profile: backend_recursive_block_profile_v2(),
-            artifact_bytes: bytes,
+            artifact_bytes: Vec::new(),
         };
         let err = verifier
             .verify_block_artifact(&[], None, &[0u8; 48], &envelope)
@@ -6675,9 +6717,8 @@ mod tests {
     }
 
     #[test]
-    fn recursive_block_v2_product_wrapper_rejects_independent_artifact_mutations() {
+    fn recursive_block_v2_verified_replay_rejects_independent_artifact_mutations() {
         let fixture = receipt_root_caller_fixture();
-        let _cache_guard = install_receipt_root_fixture_cache(&fixture);
         let records = fixture
             .verified_records
             .iter()
@@ -6686,8 +6727,18 @@ mod tests {
                 recursive_block_leaf_record_from_verified(tx_index as u32, record)
             })
             .collect::<Vec<_>>();
-        let mut semantic = sample_recursive_semantic();
-        semantic.tx_statements_commitment = fixture.statement_commitment;
+        let semantic = crate::backend_interface::BlockSemanticInputsV1 {
+            tx_statements_commitment: fixture.statement_commitment,
+            start_shielded_root: [3u8; 48],
+            end_shielded_root: [4u8; 48],
+            start_kernel_root: [5u8; 48],
+            end_kernel_root: [6u8; 48],
+            nullifier_root: [7u8; 48],
+            da_root: [8u8; 48],
+            message_root: [11u8; 48],
+            start_tree_commitment: [9u8; 48],
+            end_tree_commitment: [10u8; 48],
+        };
         let artifact = crate::backend_interface::prove_block_recursive_v2(
             &crate::backend_interface::BlockRecursiveProverInputV2 {
                 records,
@@ -6705,50 +6756,60 @@ mod tests {
                 .expect("serialize recursive_block_v2 fixture"),
             };
 
-        verify_recursive_block_artifact_against_verified_records(
+        let sentinel_error = verify_recursive_block_artifact_against_verified_records(
             &fixture.transactions,
             &fixture.tx_artifacts,
             &fixture.statement_commitment,
             &semantic,
             &envelope_for(&artifact),
         )
-        .expect("canonical recursive_block_v2 fixture must pass the product wrapper");
+        .expect_err("the external wrapper must not accept sentinel transaction-leaf bytes");
+        assert!(
+            sentinel_error
+                .to_string()
+                .contains("native tx-leaf verification failed")
+        );
+
+        verify_recursive_block_artifact_from_verified_records(
+            &fixture.verified_records,
+            &fixture.statement_commitment,
+            &semantic,
+            &envelope_for(&artifact),
+        )
+        .expect("canonical recursive_block_v2 fixture must pass verified-record replay");
 
         let mut proof_mutation = artifact.clone();
         let proof_index = proof_mutation.artifact.proof_bytes.len() / 2;
         proof_mutation.artifact.proof_bytes[proof_index] ^= 1;
-        let proof_error = verify_recursive_block_artifact_against_verified_records(
-            &fixture.transactions,
-            &fixture.tx_artifacts,
+        let proof_error = verify_recursive_block_artifact_from_verified_records(
+            &fixture.verified_records,
             &fixture.statement_commitment,
             &semantic,
             &envelope_for(&proof_mutation),
         )
-        .expect_err("mutated V2 proof bytes must reject through the product wrapper");
+        .expect_err("mutated V2 proof bytes must reject through verified-record replay");
         assert!(proof_error.to_string().contains("verification failed"));
 
         let mut public_mutation = artifact.clone();
         public_mutation.public.da_root[0] ^= 1;
-        let public_error = verify_recursive_block_artifact_against_verified_records(
-            &fixture.transactions,
-            &fixture.tx_artifacts,
+        let public_error = verify_recursive_block_artifact_from_verified_records(
+            &fixture.verified_records,
             &fixture.statement_commitment,
             &semantic,
             &envelope_for(&public_mutation),
         )
-        .expect_err("mutated V2 replayed public fields must reject through the product wrapper");
+        .expect_err("mutated V2 replayed public fields must reject through verified-record replay");
         assert!(public_error.to_string().contains("public replay mismatch"));
 
         let mut final_root_mutation = artifact;
         final_root_mutation.public.end_shielded_root[0] ^= 1;
-        let final_root_error = verify_recursive_block_artifact_against_verified_records(
-            &fixture.transactions,
-            &fixture.tx_artifacts,
+        let final_root_error = verify_recursive_block_artifact_from_verified_records(
+            &fixture.verified_records,
             &fixture.statement_commitment,
             &semantic,
             &envelope_for(&final_root_mutation),
         )
-        .expect_err("mutated V2 final state root must reject through the product wrapper");
+        .expect_err("mutated V2 final state root must reject through verified-record replay");
         assert!(
             final_root_error
                 .to_string()

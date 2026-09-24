@@ -1,0 +1,14 @@
+[package]
+name = "standalone-proof-envelope-prototype"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Isolated canonical direct-proof envelope prototype for Hegemon"
+license = "MIT"
+
+[dependencies]
+sha3 = { version = "0.10.9", default-features = false }
+
+# Keep this prototype outside the production workspace until the proof backend,
+# statement relation, and strict security profile have all passed their gates.
+[workspace]

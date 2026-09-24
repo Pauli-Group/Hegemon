@@ -1,7 +1,7 @@
 mod common;
 
 use common::{
-    PowBlockParams, assemble_pow_block, dummy_coinbase, dummy_transaction, make_validators,
+    PowBlockParams, assemble_pow_block, dummy_coinbase, make_validators,
 };
 use consensus::CommitmentTreeState;
 use consensus::nullifier::NullifierSet;
@@ -27,7 +27,7 @@ fn runtime_signatures_verify_pow_blocks() {
         height,
         parent_hash,
         timestamp_ms,
-        transactions: vec![dummy_transaction(7)],
+        transactions: vec![],
         miner: &miner,
         base_nullifiers: &base_nullifiers,
         base_commitment_tree: &genesis_tree,

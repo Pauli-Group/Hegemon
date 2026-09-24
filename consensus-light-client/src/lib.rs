@@ -2,9 +2,15 @@
 
 extern crate alloc;
 
+#[cfg(all(test, not(feature = "std")))]
+extern crate std;
+
 use alloc::vec::Vec;
 use codec::{Decode, Encode};
 use core::cmp::Ordering;
+
+mod v3;
+pub use v3::*;
 
 pub use protocol_kernel::bridge::{bridge_message_root, BridgeMessageV1, MessageHash, MessageRoot};
 use sha2::{Digest, Sha256};
@@ -13,10 +19,19 @@ pub type Hash32 = [u8; 32];
 pub type Digest48 = [u8; 48];
 pub type Work48 = [u8; 48];
 
+pub const POW_HEADER_DOMAIN_V1: &[u8] = b"hegemon.pow.header-v1";
+pub const POW_HEADER_DOMAIN_V2: &[u8] = b"hegemon.pow.header-v2";
+pub const POW_HEADER_CANONICAL_LEN_V1: usize = 713;
+pub const POW_HEADER_CANONICAL_LEN_V2: usize = 713;
+
 pub const BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V1: usize = 436;
 pub const BRIDGE_CHECKPOINT_OUTPUT_DOMAIN_V1: &[u8] = b"hegemon.bridge.checkpoint-output-v1";
 pub const BRIDGE_CHECKPOINT_OUTPUT_CANONICAL_LEN_V1: usize =
     BRIDGE_CHECKPOINT_OUTPUT_DOMAIN_V1.len() + BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V1;
+pub const BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V2: usize = 436;
+pub const BRIDGE_CHECKPOINT_OUTPUT_DOMAIN_V2: &[u8] = b"hegemon.bridge.checkpoint-output-v2";
+pub const BRIDGE_CHECKPOINT_OUTPUT_CANONICAL_LEN_V2: usize =
+    BRIDGE_CHECKPOINT_OUTPUT_DOMAIN_V2.len() + BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V2;
 pub const HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGES_V1: usize = 4096;
 pub const HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1: usize = 65_536;
 pub const HEGEMON_LONG_RANGE_PROOF_MAX_MMR_HASHES_V1: usize = 64;
@@ -33,9 +48,28 @@ pub const HEGEMON_LIGHT_CLIENT_RULES_HASH_V1: Hash32 = [
     0x19, 0x28, 0x02, 0xfd, 0x5c, 0x32, 0x06, 0x0e, 0x46, 0xc0, 0x45, 0xfa, 0x28, 0xe6, 0xc1, 0x40,
     0x7e, 0xee, 0x17, 0xfe, 0x80, 0xa0, 0x86, 0x77, 0xe7, 0x54, 0xca, 0xa2, 0x44, 0x54, 0x16, 0x58,
 ];
+/// Canonical rules-hash preimage for the fresh-genesis native V2 rules.
+///
+/// Keep this byte string stable. It commits the production proof/version
+/// profile and the deterministic adaptive-DA rule, so changing any listed
+/// rule requires a new rules hash and genesis rather than reinterpreting an
+/// existing chain.
+pub const HEGEMON_LIGHT_CLIENT_RULES_V2_PREIMAGE: &[u8] = b"hegemon.native.rules-v2\nproof=smallwood-v4\ncrypto-suite=gamma\nsmallwood-beta=2\nsmallwood-decs-openings=23\nsmallwood-eta=5\nsmallwood-hash=sha512\nproof-artifact-policy=inline-required\ncommitment-limbs=6\ntransfer-carriage=inline-only\nda-chunk-tiers=1024,4096,16384\nda-sample-count=4\nda-tier-selection=smallest-fitting-canonical-blob\nda-metadata-schema=v2:derived-root,chunk-size,sample-count,blob-len,chunk-count\npow-da-commitment=canonical-derived-root\nfresh-genesis-domain=hegemon-native-genesis-v2\nsync-protocol-id=0x48474e54\nblock-body-schema=2\nblock-body-hash=blake3(hegemon-native-block-body-v2\\0||u64le(body-len)||canonical-bincode-meta)\nblock-body-chunk-bytes=1048576\nblock-body-max-bytes=68477440\nblock-body-max-chunks=66\nblock-body-inline-bytes=262144\nblock-body-reassembly=per-peer:1,global:4,reserved-bytes:273909760,idle-seconds:120,max-seconds:600\nblock-body-queue=per-peer:256,global:1024\nblock-body-egress=fifo:16,global-active:2,requests-per-10s-peer:2,bytes-per-10s-peer:68477440,bytes-per-10s-global:136954880";
+pub const HEGEMON_LIGHT_CLIENT_RULES_HASH_V2: Hash32 = [
+    0xff, 0x26, 0xff, 0xc9, 0x9a, 0x4b, 0x7b, 0xc9, 0x1a, 0x9a, 0x6c, 0x84, 0x2b, 0x68, 0x73, 0xe7,
+    0x8b, 0x1e, 0xe2, 0x80, 0xcd, 0xea, 0xfc, 0xbf, 0x30, 0x7d, 0x66, 0x0a, 0x35, 0x70, 0xbe, 0x39,
+];
+/// The only rules hash accepted by active native consensus paths.
+pub const HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE: Hash32 = HEGEMON_LIGHT_CLIENT_RULES_HASH_V2;
 pub const HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1: Hash32 = [
     0x3b, 0x55, 0x06, 0x43, 0xbe, 0x84, 0xfd, 0x32, 0x4d, 0xe9, 0xe3, 0xac, 0xcb, 0xf8, 0x0a, 0xb0,
     0x15, 0x61, 0x33, 0x91, 0x35, 0x8a, 0xfc, 0xc6, 0xb8, 0x62, 0x0e, 0x58, 0x18, 0x8b, 0xcb, 0x57,
+];
+pub const HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_V2_PREIMAGE: &[u8] =
+    b"hegemon.native.light-client-verifier-v2\npow-header=v2\nbridge-output=v2\n";
+pub const HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V2: Hash32 = [
+    0xde, 0x0e, 0xc2, 0x78, 0x1a, 0xb6, 0x95, 0x72, 0xb3, 0xbf, 0x32, 0xbd, 0x8d, 0xb0, 0x61, 0x3e,
+    0x2c, 0x2f, 0xac, 0x19, 0x7b, 0xfb, 0x73, 0xb0, 0x94, 0x60, 0xe7, 0x1c, 0x5a, 0xe0, 0xca, 0x70,
 ];
 pub const RISC0_STARK_BRIDGE_PROOF_SYSTEM_ID_V1: Hash32 = [
     0xa3, 0x7c, 0x36, 0x15, 0x3c, 0xc6, 0x72, 0x27, 0x53, 0xd5, 0xb6, 0x7b, 0x3f, 0x7d, 0x9a, 0xde,
@@ -53,6 +87,8 @@ pub enum LightClientError {
     ParentHashMismatch,
     HeightMismatch,
     TimestampDidNotAdvance,
+    TimestampNotAfterMedian,
+    TimestampTooFarInFuture,
     PowBitsMismatch,
     CumulativeWorkMismatch,
     CumulativeWorkOverflow,
@@ -104,6 +140,35 @@ pub struct PowHeaderV1 {
     pub cumulative_work: Work48,
 }
 
+/// Active fresh-chain PoW header. Native V2 carries no miner identity fields;
+/// proof of work and the canonical block/action rules define authority.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+pub struct PowHeaderV2 {
+    pub chain_id: Hash32,
+    pub rules_hash: Hash32,
+    pub height: u64,
+    pub timestamp_ms: u64,
+    pub parent_hash: Hash32,
+    pub state_root: Digest48,
+    pub kernel_root: Digest48,
+    pub nullifier_root: Digest48,
+    pub proof_commitment: Digest48,
+    pub da_root: Digest48,
+    pub action_root: Hash32,
+    pub tx_statements_commitment: Digest48,
+    pub version_commitment: Digest48,
+    pub fee_commitment: Digest48,
+    pub supply_digest: u128,
+    pub tx_count: u32,
+    pub message_root: MessageRoot,
+    pub message_count: u32,
+    pub header_mmr_root: Hash32,
+    pub header_mmr_len: u64,
+    pub pow_bits: u32,
+    pub nonce: Hash32,
+    pub cumulative_work: Work48,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct TrustedCheckpointV1 {
     pub chain_id: Hash32,
@@ -118,7 +183,38 @@ pub struct TrustedCheckpointV1 {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+pub struct TrustedCheckpointV2 {
+    pub chain_id: Hash32,
+    pub rules_hash: Hash32,
+    pub height: u64,
+    pub header_hash: Hash32,
+    pub timestamp_ms: u64,
+    pub pow_bits: u32,
+    pub cumulative_work: Work48,
+    pub header_mmr_root: Hash32,
+    pub header_mmr_len: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct BridgeCheckpointOutputV1 {
+    pub source_chain_id: Hash32,
+    pub rules_hash: Hash32,
+    pub trusted_checkpoint_digest: Hash32,
+    pub checkpoint_height: u64,
+    pub checkpoint_header_hash: Hash32,
+    pub checkpoint_cumulative_work: Work48,
+    pub canonical_tip_height: u64,
+    pub canonical_tip_header_hash: Hash32,
+    pub canonical_tip_cumulative_work: Work48,
+    pub message_root: MessageRoot,
+    pub message_hash: MessageHash,
+    pub message_nonce: u128,
+    pub confirmations_checked: u32,
+    pub min_work_checked: Work48,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+pub struct BridgeCheckpointOutputV2 {
     pub source_chain_id: Hash32,
     pub rules_hash: Hash32,
     pub trusted_checkpoint_digest: Hash32,
@@ -151,6 +247,13 @@ pub struct HeaderMmrLeafWitnessV1 {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+pub struct HeaderMmrLeafWitnessV2 {
+    pub header: PowHeaderV2,
+    pub opening: HeaderMmrOpeningV1,
+    pub parent_opening: HeaderMmrOpeningV1,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct HegemonLightClientProofReceiptV1 {
     pub verifier_hash: Hash32,
     pub parent_checkpoint: TrustedCheckpointV1,
@@ -158,6 +261,16 @@ pub struct HegemonLightClientProofReceiptV1 {
     pub messages: Vec<BridgeMessageV1>,
     pub message_index: u32,
     pub output: BridgeCheckpointOutputV1,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+pub struct HegemonLightClientProofV2 {
+    pub verifier_hash: Hash32,
+    pub parent_checkpoint: TrustedCheckpointV2,
+    pub header: PowHeaderV2,
+    pub messages: Vec<BridgeMessageV1>,
+    pub message_index: u32,
+    pub output: BridgeCheckpointOutputV2,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
@@ -174,6 +287,22 @@ pub struct HegemonLongRangeProofV1 {
     pub sample_headers: Vec<HeaderMmrLeafWitnessV1>,
     pub sample_count: u32,
     pub output: BridgeCheckpointOutputV1,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+pub struct HegemonLongRangeProofV2 {
+    pub verifier_hash: Hash32,
+    pub trusted_checkpoint: TrustedCheckpointV2,
+    pub tip_header: PowHeaderV2,
+    pub tip_parent_opening: HeaderMmrOpeningV1,
+    pub message_header: PowHeaderV2,
+    pub message_header_opening: HeaderMmrOpeningV1,
+    pub message_parent_opening: HeaderMmrOpeningV1,
+    pub messages: Vec<BridgeMessageV1>,
+    pub message_index: u32,
+    pub sample_headers: Vec<HeaderMmrLeafWitnessV2>,
+    pub sample_count: u32,
+    pub output: BridgeCheckpointOutputV2,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -232,8 +361,8 @@ pub struct RiscZeroBridgeReceiptV1 {
 
 impl PowHeaderV1 {
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(713);
-        bytes.extend_from_slice(b"hegemon.pow.header-v1");
+        let mut bytes = Vec::with_capacity(POW_HEADER_CANONICAL_LEN_V1);
+        bytes.extend_from_slice(POW_HEADER_DOMAIN_V1);
         bytes.extend_from_slice(&self.chain_id);
         bytes.extend_from_slice(&self.rules_hash);
         bytes.extend_from_slice(&self.height.to_le_bytes());
@@ -282,6 +411,58 @@ impl PowHeaderV1 {
     }
 }
 
+impl PowHeaderV2 {
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(POW_HEADER_CANONICAL_LEN_V2);
+        bytes.extend_from_slice(POW_HEADER_DOMAIN_V2);
+        bytes.extend_from_slice(&self.chain_id);
+        bytes.extend_from_slice(&self.rules_hash);
+        bytes.extend_from_slice(&self.height.to_le_bytes());
+        bytes.extend_from_slice(&self.timestamp_ms.to_le_bytes());
+        bytes.extend_from_slice(&self.parent_hash);
+        bytes.extend_from_slice(&self.state_root);
+        bytes.extend_from_slice(&self.kernel_root);
+        bytes.extend_from_slice(&self.nullifier_root);
+        bytes.extend_from_slice(&self.proof_commitment);
+        bytes.extend_from_slice(&self.da_root);
+        bytes.extend_from_slice(&self.action_root);
+        bytes.extend_from_slice(&self.tx_statements_commitment);
+        bytes.extend_from_slice(&self.version_commitment);
+        bytes.extend_from_slice(&self.fee_commitment);
+        bytes.extend_from_slice(&self.supply_digest.to_le_bytes());
+        bytes.extend_from_slice(&self.tx_count.to_le_bytes());
+        bytes.extend_from_slice(&self.message_root);
+        bytes.extend_from_slice(&self.message_count.to_le_bytes());
+        bytes.extend_from_slice(&self.header_mmr_root);
+        bytes.extend_from_slice(&self.header_mmr_len.to_le_bytes());
+        bytes.extend_from_slice(&self.pow_bits.to_le_bytes());
+        bytes.extend_from_slice(&self.cumulative_work);
+        bytes
+    }
+
+    pub fn pre_hash(&self) -> Hash32 {
+        hash32(&self.canonical_bytes())
+    }
+
+    pub fn pow_hash(&self) -> Hash32 {
+        pow_hash_from_pre_hash(&self.pre_hash(), self.nonce)
+    }
+
+    pub fn checkpoint(&self) -> TrustedCheckpointV2 {
+        TrustedCheckpointV2 {
+            chain_id: self.chain_id,
+            rules_hash: self.rules_hash,
+            height: self.height,
+            header_hash: self.pow_hash(),
+            timestamp_ms: self.timestamp_ms,
+            pow_bits: self.pow_bits,
+            cumulative_work: self.cumulative_work,
+            header_mmr_root: self.header_mmr_root,
+            header_mmr_len: self.header_mmr_len,
+        }
+    }
+}
+
 pub fn canonical_trusted_checkpoint_bytes_v1(checkpoint: &TrustedCheckpointV1) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(32 + 32 + 8 + 32 + 8 + 4 + 48 + 32 + 8 + 32);
     bytes.extend_from_slice(b"hegemon.pow.trusted-checkpoint-v1");
@@ -299,6 +480,25 @@ pub fn canonical_trusted_checkpoint_bytes_v1(checkpoint: &TrustedCheckpointV1) -
 
 pub fn trusted_checkpoint_digest_v1(checkpoint: &TrustedCheckpointV1) -> Hash32 {
     hash32(&canonical_trusted_checkpoint_bytes_v1(checkpoint))
+}
+
+pub fn canonical_trusted_checkpoint_bytes_v2(checkpoint: &TrustedCheckpointV2) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(236);
+    bytes.extend_from_slice(b"hegemon.pow.trusted-checkpoint-v2");
+    bytes.extend_from_slice(&checkpoint.chain_id);
+    bytes.extend_from_slice(&checkpoint.rules_hash);
+    bytes.extend_from_slice(&checkpoint.height.to_le_bytes());
+    bytes.extend_from_slice(&checkpoint.header_hash);
+    bytes.extend_from_slice(&checkpoint.timestamp_ms.to_le_bytes());
+    bytes.extend_from_slice(&checkpoint.pow_bits.to_le_bytes());
+    bytes.extend_from_slice(&checkpoint.cumulative_work);
+    bytes.extend_from_slice(&checkpoint.header_mmr_root);
+    bytes.extend_from_slice(&checkpoint.header_mmr_len.to_le_bytes());
+    bytes
+}
+
+pub fn trusted_checkpoint_digest_v2(checkpoint: &TrustedCheckpointV2) -> Hash32 {
+    hash32(&canonical_trusted_checkpoint_bytes_v2(checkpoint))
 }
 
 pub fn canonical_bridge_checkpoint_output_bytes_v1(output: &BridgeCheckpointOutputV1) -> Vec<u8> {
@@ -321,6 +521,13 @@ pub fn canonical_bridge_checkpoint_output_bytes_v1(output: &BridgeCheckpointOutp
     bytes
 }
 
+pub fn canonical_bridge_checkpoint_output_bytes_v2(output: &BridgeCheckpointOutputV2) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(BRIDGE_CHECKPOINT_OUTPUT_CANONICAL_LEN_V2);
+    bytes.extend_from_slice(BRIDGE_CHECKPOINT_OUTPUT_DOMAIN_V2);
+    bytes.extend_from_slice(&bridge_checkpoint_output_wire_array_v2(output));
+    bytes
+}
+
 pub fn bridge_checkpoint_output_wire_bytes_v1(output: &BridgeCheckpointOutputV1) -> Vec<u8> {
     bridge_checkpoint_output_wire_array_v1(output).to_vec()
 }
@@ -329,6 +536,48 @@ pub fn bridge_checkpoint_output_wire_array_v1(
     output: &BridgeCheckpointOutputV1,
 ) -> [u8; BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V1] {
     let mut bytes = [0u8; BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V1];
+    let mut cursor = 0usize;
+    write_wire(&mut bytes, &mut cursor, &output.source_chain_id);
+    write_wire(&mut bytes, &mut cursor, &output.rules_hash);
+    write_wire(&mut bytes, &mut cursor, &output.trusted_checkpoint_digest);
+    write_wire(
+        &mut bytes,
+        &mut cursor,
+        &output.checkpoint_height.to_le_bytes(),
+    );
+    write_wire(&mut bytes, &mut cursor, &output.checkpoint_header_hash);
+    write_wire(&mut bytes, &mut cursor, &output.checkpoint_cumulative_work);
+    write_wire(
+        &mut bytes,
+        &mut cursor,
+        &output.canonical_tip_height.to_le_bytes(),
+    );
+    write_wire(&mut bytes, &mut cursor, &output.canonical_tip_header_hash);
+    write_wire(
+        &mut bytes,
+        &mut cursor,
+        &output.canonical_tip_cumulative_work,
+    );
+    write_wire(&mut bytes, &mut cursor, &output.message_root);
+    write_wire(&mut bytes, &mut cursor, &output.message_hash);
+    write_wire(&mut bytes, &mut cursor, &output.message_nonce.to_le_bytes());
+    write_wire(
+        &mut bytes,
+        &mut cursor,
+        &output.confirmations_checked.to_le_bytes(),
+    );
+    write_wire(&mut bytes, &mut cursor, &output.min_work_checked);
+    bytes
+}
+
+pub fn bridge_checkpoint_output_wire_bytes_v2(output: &BridgeCheckpointOutputV2) -> Vec<u8> {
+    bridge_checkpoint_output_wire_array_v2(output).to_vec()
+}
+
+pub fn bridge_checkpoint_output_wire_array_v2(
+    output: &BridgeCheckpointOutputV2,
+) -> [u8; BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V2] {
+    let mut bytes = [0u8; BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V2];
     let mut cursor = 0usize;
     write_wire(&mut bytes, &mut cursor, &output.source_chain_id);
     write_wire(&mut bytes, &mut cursor, &output.rules_hash);
@@ -405,6 +654,48 @@ pub fn decode_bridge_checkpoint_output_wire_v1(
     })
 }
 
+pub fn decode_bridge_checkpoint_output_wire_v2(
+    bytes: &[u8],
+) -> Result<BridgeCheckpointOutputV2, LightClientError> {
+    if bytes.len() != BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V2 {
+        return Err(LightClientError::ReceiptJournalMismatch);
+    }
+    let mut cursor = 0usize;
+    let source_chain_id = read_hash32(bytes, &mut cursor)?;
+    let rules_hash = read_hash32(bytes, &mut cursor)?;
+    let trusted_checkpoint_digest = read_hash32(bytes, &mut cursor)?;
+    let checkpoint_height = read_u64_le(bytes, &mut cursor)?;
+    let checkpoint_header_hash = read_hash32(bytes, &mut cursor)?;
+    let checkpoint_cumulative_work = read_work48(bytes, &mut cursor)?;
+    let canonical_tip_height = read_u64_le(bytes, &mut cursor)?;
+    let canonical_tip_header_hash = read_hash32(bytes, &mut cursor)?;
+    let canonical_tip_cumulative_work = read_work48(bytes, &mut cursor)?;
+    let message_root = read_digest48(bytes, &mut cursor)?;
+    let message_hash = read_digest48(bytes, &mut cursor)?;
+    let message_nonce = read_u128_le(bytes, &mut cursor)?;
+    let confirmations_checked = read_u32_le(bytes, &mut cursor)?;
+    let min_work_checked = read_work48(bytes, &mut cursor)?;
+    if cursor != bytes.len() {
+        return Err(LightClientError::ReceiptJournalMismatch);
+    }
+    Ok(BridgeCheckpointOutputV2 {
+        source_chain_id,
+        rules_hash,
+        trusted_checkpoint_digest,
+        checkpoint_height,
+        checkpoint_header_hash,
+        checkpoint_cumulative_work,
+        canonical_tip_height,
+        canonical_tip_header_hash,
+        canonical_tip_cumulative_work,
+        message_root,
+        message_hash,
+        message_nonce,
+        confirmations_checked,
+        min_work_checked,
+    })
+}
+
 pub fn decode_hegemon_long_range_proof_wire_v1(
     bytes: &[u8],
 ) -> Result<HegemonLongRangeProofV1, LightClientError> {
@@ -443,6 +734,53 @@ pub fn decode_hegemon_long_range_proof_guest_wire_with_policy_v1(
     let output = decode_bridge_checkpoint_output_wire_v1(&bytes[output_start..output_end])?;
     proof.output = output.clone();
     if expected_long_range_output_from_wire_fields(&proof, min_tip_work)? != output {
+        return Err(LightClientError::ReceiptOutputMismatch);
+    }
+    cursor = output_end;
+    if cursor != bytes.len() {
+        return Err(LightClientError::ProofInputMismatch);
+    }
+    Ok((proof, min_confirmations, min_tip_work))
+}
+
+pub fn decode_hegemon_long_range_proof_wire_v2(
+    bytes: &[u8],
+) -> Result<HegemonLongRangeProofV2, LightClientError> {
+    let mut cursor = 0usize;
+    let proof = read_hegemon_long_range_proof_v2(bytes, &mut cursor)?;
+    if cursor != bytes.len() {
+        return Err(LightClientError::ProofInputMismatch);
+    }
+    Ok(proof)
+}
+
+pub fn decode_hegemon_long_range_proof_guest_wire_v2(
+    bytes: &[u8],
+) -> Result<(HegemonLongRangeProofV2, u32, Work48), LightClientError> {
+    decode_hegemon_long_range_proof_guest_wire_with_policy_v2(
+        bytes,
+        HEGEMON_BRIDGE_LONG_RANGE_MIN_CONFIRMATIONS_V1,
+        HEGEMON_BRIDGE_LONG_RANGE_MIN_TIP_WORK_V1,
+    )
+}
+
+pub fn decode_hegemon_long_range_proof_guest_wire_with_policy_v2(
+    bytes: &[u8],
+    min_confirmations: u32,
+    min_tip_work: Work48,
+) -> Result<(HegemonLongRangeProofV2, u32, Work48), LightClientError> {
+    let mut cursor = 0usize;
+    let mut proof = read_hegemon_long_range_proof_without_output_v2(bytes, &mut cursor)?;
+    let output_start = cursor;
+    let output_end = output_start
+        .checked_add(BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V2)
+        .ok_or(LightClientError::ProofInputMismatch)?;
+    if output_end != bytes.len() {
+        return Err(LightClientError::ProofInputMismatch);
+    }
+    let output = decode_bridge_checkpoint_output_wire_v2(&bytes[output_start..output_end])?;
+    proof.output = output.clone();
+    if expected_long_range_output_from_wire_fields_v2(&proof, min_tip_work)? != output {
         return Err(LightClientError::ReceiptOutputMismatch);
     }
     cursor = output_end;
@@ -610,11 +948,56 @@ fn read_pow_header(bytes: &[u8], cursor: &mut usize) -> Result<PowHeaderV1, Ligh
     })
 }
 
+fn read_pow_header_v2(bytes: &[u8], cursor: &mut usize) -> Result<PowHeaderV2, LightClientError> {
+    Ok(PowHeaderV2 {
+        chain_id: read_hash32(bytes, cursor)?,
+        rules_hash: read_hash32(bytes, cursor)?,
+        height: read_u64_le(bytes, cursor)?,
+        timestamp_ms: read_u64_le(bytes, cursor)?,
+        parent_hash: read_hash32(bytes, cursor)?,
+        state_root: read_digest48(bytes, cursor)?,
+        kernel_root: read_digest48(bytes, cursor)?,
+        nullifier_root: read_digest48(bytes, cursor)?,
+        proof_commitment: read_digest48(bytes, cursor)?,
+        da_root: read_digest48(bytes, cursor)?,
+        action_root: read_hash32(bytes, cursor)?,
+        tx_statements_commitment: read_digest48(bytes, cursor)?,
+        version_commitment: read_digest48(bytes, cursor)?,
+        fee_commitment: read_digest48(bytes, cursor)?,
+        supply_digest: read_u128_le(bytes, cursor)?,
+        tx_count: read_u32_le(bytes, cursor)?,
+        message_root: read_digest48(bytes, cursor)?,
+        message_count: read_u32_le(bytes, cursor)?,
+        header_mmr_root: read_hash32(bytes, cursor)?,
+        header_mmr_len: read_u64_le(bytes, cursor)?,
+        pow_bits: read_u32_le(bytes, cursor)?,
+        nonce: read_hash32(bytes, cursor)?,
+        cumulative_work: read_work48(bytes, cursor)?,
+    })
+}
+
 fn read_trusted_checkpoint(
     bytes: &[u8],
     cursor: &mut usize,
 ) -> Result<TrustedCheckpointV1, LightClientError> {
     Ok(TrustedCheckpointV1 {
+        chain_id: read_hash32(bytes, cursor)?,
+        rules_hash: read_hash32(bytes, cursor)?,
+        height: read_u64_le(bytes, cursor)?,
+        header_hash: read_hash32(bytes, cursor)?,
+        timestamp_ms: read_u64_le(bytes, cursor)?,
+        pow_bits: read_u32_le(bytes, cursor)?,
+        cumulative_work: read_work48(bytes, cursor)?,
+        header_mmr_root: read_hash32(bytes, cursor)?,
+        header_mmr_len: read_u64_le(bytes, cursor)?,
+    })
+}
+
+fn read_trusted_checkpoint_v2(
+    bytes: &[u8],
+    cursor: &mut usize,
+) -> Result<TrustedCheckpointV2, LightClientError> {
+    Ok(TrustedCheckpointV2 {
         chain_id: read_hash32(bytes, cursor)?,
         rules_hash: read_hash32(bytes, cursor)?,
         height: read_u64_le(bytes, cursor)?,
@@ -694,11 +1077,60 @@ fn read_header_mmr_leaf_witnesses(
     Ok(out)
 }
 
+fn read_header_mmr_leaf_witness_v2(
+    bytes: &[u8],
+    cursor: &mut usize,
+) -> Result<HeaderMmrLeafWitnessV2, LightClientError> {
+    Ok(HeaderMmrLeafWitnessV2 {
+        header: read_pow_header_v2(bytes, cursor)?,
+        opening: read_header_mmr_opening(bytes, cursor)?,
+        parent_opening: read_header_mmr_opening(bytes, cursor)?,
+    })
+}
+
+fn read_header_mmr_leaf_witnesses_v2(
+    bytes: &[u8],
+    cursor: &mut usize,
+) -> Result<Vec<HeaderMmrLeafWitnessV2>, LightClientError> {
+    let len = read_scale_compact_len_with_cap(
+        bytes,
+        cursor,
+        HEGEMON_LONG_RANGE_PROOF_MAX_SAMPLE_HEADERS_V1,
+    )?;
+    let mut out = Vec::with_capacity(len);
+    for _ in 0..len {
+        out.push(read_header_mmr_leaf_witness_v2(bytes, cursor)?);
+    }
+    Ok(out)
+}
+
 fn read_bridge_checkpoint_output(
     bytes: &[u8],
     cursor: &mut usize,
 ) -> Result<BridgeCheckpointOutputV1, LightClientError> {
     Ok(BridgeCheckpointOutputV1 {
+        source_chain_id: read_hash32(bytes, cursor)?,
+        rules_hash: read_hash32(bytes, cursor)?,
+        trusted_checkpoint_digest: read_hash32(bytes, cursor)?,
+        checkpoint_height: read_u64_le(bytes, cursor)?,
+        checkpoint_header_hash: read_hash32(bytes, cursor)?,
+        checkpoint_cumulative_work: read_work48(bytes, cursor)?,
+        canonical_tip_height: read_u64_le(bytes, cursor)?,
+        canonical_tip_header_hash: read_hash32(bytes, cursor)?,
+        canonical_tip_cumulative_work: read_work48(bytes, cursor)?,
+        message_root: read_digest48(bytes, cursor)?,
+        message_hash: read_digest48(bytes, cursor)?,
+        message_nonce: read_u128_le(bytes, cursor)?,
+        confirmations_checked: read_u32_le(bytes, cursor)?,
+        min_work_checked: read_work48(bytes, cursor)?,
+    })
+}
+
+fn read_bridge_checkpoint_output_v2(
+    bytes: &[u8],
+    cursor: &mut usize,
+) -> Result<BridgeCheckpointOutputV2, LightClientError> {
+    Ok(BridgeCheckpointOutputV2 {
         source_chain_id: read_hash32(bytes, cursor)?,
         rules_hash: read_hash32(bytes, cursor)?,
         trusted_checkpoint_digest: read_hash32(bytes, cursor)?,
@@ -790,8 +1222,73 @@ fn read_hegemon_long_range_proof_without_output(
     })
 }
 
+fn read_hegemon_long_range_proof_v2(
+    bytes: &[u8],
+    cursor: &mut usize,
+) -> Result<HegemonLongRangeProofV2, LightClientError> {
+    let mut proof = read_hegemon_long_range_proof_without_output_v2(bytes, cursor)?;
+    proof.output = read_bridge_checkpoint_output_v2(bytes, cursor)?;
+    Ok(proof)
+}
+
+fn read_hegemon_long_range_proof_without_output_v2(
+    bytes: &[u8],
+    cursor: &mut usize,
+) -> Result<HegemonLongRangeProofV2, LightClientError> {
+    let verifier_hash = read_hash32(bytes, cursor)?;
+    let trusted_checkpoint = read_trusted_checkpoint_v2(bytes, cursor)?;
+    let tip_header = read_pow_header_v2(bytes, cursor)?;
+    let tip_parent_opening = read_header_mmr_opening(bytes, cursor)?;
+    let message_header = read_pow_header_v2(bytes, cursor)?;
+    let message_header_opening = read_header_mmr_opening(bytes, cursor)?;
+    let message_parent_opening = read_header_mmr_opening(bytes, cursor)?;
+    let messages = read_bridge_messages(bytes, cursor)?;
+    let message_index = read_u32_le(bytes, cursor)?;
+    let sample_headers = read_header_mmr_leaf_witnesses_v2(bytes, cursor)?;
+    let sample_count = read_u32_le(bytes, cursor)?;
+    if !(HEGEMON_BRIDGE_LONG_RANGE_MIN_SAMPLE_COUNT_V1
+        ..=HEGEMON_LONG_RANGE_PROOF_MAX_SAMPLE_HEADERS_V1 as u32)
+        .contains(&sample_count)
+    {
+        return Err(LightClientError::ProofInputMismatch);
+    }
+    Ok(HegemonLongRangeProofV2 {
+        verifier_hash,
+        trusted_checkpoint,
+        tip_header,
+        tip_parent_opening,
+        message_header,
+        message_header_opening,
+        message_parent_opening,
+        messages,
+        message_index,
+        sample_headers,
+        sample_count,
+        output: empty_bridge_checkpoint_output_v2(),
+    })
+}
+
 fn empty_bridge_checkpoint_output() -> BridgeCheckpointOutputV1 {
     BridgeCheckpointOutputV1 {
+        source_chain_id: [0u8; 32],
+        rules_hash: [0u8; 32],
+        trusted_checkpoint_digest: [0u8; 32],
+        checkpoint_height: 0,
+        checkpoint_header_hash: [0u8; 32],
+        checkpoint_cumulative_work: [0u8; 48],
+        canonical_tip_height: 0,
+        canonical_tip_header_hash: [0u8; 32],
+        canonical_tip_cumulative_work: [0u8; 48],
+        message_root: [0u8; 48],
+        message_hash: [0u8; 48],
+        message_nonce: 0,
+        confirmations_checked: 0,
+        min_work_checked: [0u8; 48],
+    }
+}
+
+fn empty_bridge_checkpoint_output_v2() -> BridgeCheckpointOutputV2 {
+    BridgeCheckpointOutputV2 {
         source_chain_id: [0u8; 32],
         rules_hash: [0u8; 32],
         trusted_checkpoint_digest: [0u8; 32],
@@ -886,6 +1383,78 @@ pub fn verify_header_chain(
     Ok(current)
 }
 
+pub fn verify_pow_header_v2(
+    parent: &TrustedCheckpointV2,
+    header: &PowHeaderV2,
+) -> Result<Hash32, LightClientError> {
+    verify_pow_header_v2_with_expected_bits(parent, header, parent.pow_bits)
+}
+
+pub fn verify_pow_header_v2_with_expected_bits(
+    parent: &TrustedCheckpointV2,
+    header: &PowHeaderV2,
+    expected_pow_bits: u32,
+) -> Result<Hash32, LightClientError> {
+    if header.chain_id != parent.chain_id {
+        return Err(LightClientError::ChainIdMismatch);
+    }
+    if header.rules_hash != parent.rules_hash {
+        return Err(LightClientError::RulesHashMismatch);
+    }
+    if header.parent_hash != parent.header_hash {
+        return Err(LightClientError::ParentHashMismatch);
+    }
+    if next_height(parent.height) != Some(header.height) {
+        return Err(LightClientError::HeightMismatch);
+    }
+    if header.timestamp_ms <= parent.timestamp_ms {
+        return Err(LightClientError::TimestampDidNotAdvance);
+    }
+    if header.pow_bits != expected_pow_bits {
+        return Err(LightClientError::PowBitsMismatch);
+    }
+    let target = compact_to_target(header.pow_bits)?;
+    let block_work = block_work_from_target(&target);
+    verify_cumulative_work_with_block_work(
+        &parent.cumulative_work,
+        &block_work,
+        &header.cumulative_work,
+    )?;
+    if header.header_mmr_len != header.height {
+        return Err(LightClientError::HeaderMmrMismatch);
+    }
+    let work_hash = header.pow_hash();
+    if !hash_meets_expanded_target(&work_hash, &target) {
+        return Err(LightClientError::InsufficientWork);
+    }
+    Ok(work_hash)
+}
+
+pub fn verify_header_chain_v2(
+    checkpoint: TrustedCheckpointV2,
+    headers: &[PowHeaderV2],
+) -> Result<TrustedCheckpointV2, LightClientError> {
+    if headers.is_empty() {
+        return Err(LightClientError::EmptyHeaderChain);
+    }
+    let mut current = checkpoint;
+    for header in headers {
+        let hash = verify_pow_header_v2(&current, header)?;
+        current = TrustedCheckpointV2 {
+            chain_id: header.chain_id,
+            rules_hash: header.rules_hash,
+            height: header.height,
+            header_hash: hash,
+            timestamp_ms: header.timestamp_ms,
+            pow_bits: header.pow_bits,
+            cumulative_work: header.cumulative_work,
+            header_mmr_root: header.header_mmr_root,
+            header_mmr_len: header.header_mmr_len,
+        };
+    }
+    Ok(current)
+}
+
 pub fn verify_cumulative_work(
     parent_work: &Work48,
     pow_bits: u32,
@@ -933,6 +1502,27 @@ fn expected_cumulative_work_at_height_with_block_work(
     }
     let block_count = height - checkpoint.height;
     let added = mul_work_u64(&block_work, block_count)?;
+    add_work(&checkpoint.cumulative_work, &added)
+}
+
+pub fn expected_cumulative_work_at_height_v2(
+    checkpoint: &TrustedCheckpointV2,
+    height: u64,
+) -> Result<Work48, LightClientError> {
+    let block_work = block_work_from_bits(checkpoint.pow_bits)?;
+    expected_cumulative_work_at_height_with_block_work_v2(checkpoint, height, &block_work)
+}
+
+fn expected_cumulative_work_at_height_with_block_work_v2(
+    checkpoint: &TrustedCheckpointV2,
+    height: u64,
+    block_work: &Work48,
+) -> Result<Work48, LightClientError> {
+    if height < checkpoint.height {
+        return Err(LightClientError::HeightMismatch);
+    }
+    let block_count = height - checkpoint.height;
+    let added = mul_work_u64(block_work, block_count)?;
     add_work(&checkpoint.cumulative_work, &added)
 }
 
@@ -1407,6 +1997,133 @@ pub fn bridge_checkpoint_output_with_tip_from_anchor(
     }
 }
 
+pub fn bridge_checkpoint_output_v2(
+    checkpoint: &TrustedCheckpointV2,
+    message_root: MessageRoot,
+    message: &BridgeMessageV1,
+    confirmations_checked: u32,
+    min_work_checked: Work48,
+) -> BridgeCheckpointOutputV2 {
+    bridge_checkpoint_output_from_anchor_v2(
+        checkpoint,
+        checkpoint,
+        message_root,
+        message,
+        confirmations_checked,
+        min_work_checked,
+    )
+}
+
+pub fn bridge_checkpoint_output_from_anchor_v2(
+    trusted_checkpoint: &TrustedCheckpointV2,
+    checkpoint: &TrustedCheckpointV2,
+    message_root: MessageRoot,
+    message: &BridgeMessageV1,
+    confirmations_checked: u32,
+    min_work_checked: Work48,
+) -> BridgeCheckpointOutputV2 {
+    bridge_checkpoint_output_with_tip_from_anchor_v2(
+        trusted_checkpoint,
+        checkpoint,
+        checkpoint,
+        message_root,
+        message,
+        confirmations_checked,
+        min_work_checked,
+    )
+}
+
+pub fn bridge_checkpoint_output_with_tip_v2(
+    checkpoint: &TrustedCheckpointV2,
+    canonical_tip: &TrustedCheckpointV2,
+    message_root: MessageRoot,
+    message: &BridgeMessageV1,
+    confirmations_checked: u32,
+    min_work_checked: Work48,
+) -> BridgeCheckpointOutputV2 {
+    bridge_checkpoint_output_with_tip_from_anchor_v2(
+        checkpoint,
+        checkpoint,
+        canonical_tip,
+        message_root,
+        message,
+        confirmations_checked,
+        min_work_checked,
+    )
+}
+
+pub fn bridge_checkpoint_output_with_tip_from_anchor_v2(
+    trusted_checkpoint: &TrustedCheckpointV2,
+    checkpoint: &TrustedCheckpointV2,
+    canonical_tip: &TrustedCheckpointV2,
+    message_root: MessageRoot,
+    message: &BridgeMessageV1,
+    confirmations_checked: u32,
+    min_work_checked: Work48,
+) -> BridgeCheckpointOutputV2 {
+    BridgeCheckpointOutputV2 {
+        source_chain_id: checkpoint.chain_id,
+        rules_hash: checkpoint.rules_hash,
+        trusted_checkpoint_digest: trusted_checkpoint_digest_v2(trusted_checkpoint),
+        checkpoint_height: checkpoint.height,
+        checkpoint_header_hash: checkpoint.header_hash,
+        checkpoint_cumulative_work: checkpoint.cumulative_work,
+        canonical_tip_height: canonical_tip.height,
+        canonical_tip_header_hash: canonical_tip.header_hash,
+        canonical_tip_cumulative_work: canonical_tip.cumulative_work,
+        message_root,
+        message_hash: message.message_hash(),
+        message_nonce: message.message_nonce,
+        confirmations_checked,
+        min_work_checked,
+    }
+}
+
+pub fn verify_hegemon_light_client_proof_v2(
+    proof: &HegemonLightClientProofV2,
+    min_confirmations: u32,
+    min_work: Work48,
+) -> Result<BridgeCheckpointOutputV2, LightClientError> {
+    if proof.verifier_hash != HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V2 {
+        return Err(LightClientError::VerifierHashMismatch);
+    }
+    if proof.header.message_count != proof.messages.len() as u32 {
+        return Err(LightClientError::HeaderMessageCountMismatch);
+    }
+    let header_hash = verify_pow_header_v2(&proof.parent_checkpoint, &proof.header)?;
+    let checkpoint = checkpoint_from_header_hash_v2(&proof.header, header_hash);
+    let message_index = usize::try_from(proof.message_index)
+        .map_err(|_| LightClientError::MessageIndexOutOfBounds)?;
+    let Some(message) = proof.messages.get(message_index) else {
+        return Err(LightClientError::MessageIndexOutOfBounds);
+    };
+    if message.source_chain_id != checkpoint.chain_id || message.source_height != checkpoint.height
+    {
+        return Err(LightClientError::ReceiptOutputMismatch);
+    }
+    verify_message_inclusion(proof.header.message_root, &proof.messages, message_index)?;
+    let output = bridge_checkpoint_output_from_anchor_v2(
+        &proof.parent_checkpoint,
+        &checkpoint,
+        proof.header.message_root,
+        message,
+        1,
+        min_work,
+    );
+    if output != proof.output {
+        return Err(LightClientError::ReceiptOutputMismatch);
+    }
+    if output.confirmations_checked < min_confirmations {
+        return Err(LightClientError::ConfirmationPolicyMismatch);
+    }
+    if compare_work(&output.checkpoint_cumulative_work, &min_work) == Ordering::Less
+        || compare_work(&output.min_work_checked, &min_work) == Ordering::Less
+    {
+        return Err(LightClientError::WorkPolicyMismatch);
+    }
+    Ok(output)
+}
+
 pub fn verify_hegemon_light_client_receipt(
     receipt: &HegemonLightClientProofReceiptV1,
     min_confirmations: u32,
@@ -1487,6 +2204,27 @@ pub fn verify_hegemon_long_range_proof_without_claimed_output(
     min_tip_work: Work48,
 ) -> Result<BridgeCheckpointOutputV1, LightClientError> {
     verify_hegemon_long_range_proof_inner(proof, min_confirmations, min_tip_work, None)
+}
+
+pub fn verify_hegemon_long_range_proof_v2(
+    proof: &HegemonLongRangeProofV2,
+    min_confirmations: u32,
+    min_tip_work: Work48,
+) -> Result<BridgeCheckpointOutputV2, LightClientError> {
+    verify_hegemon_long_range_proof_inner_v2(
+        proof,
+        min_confirmations,
+        min_tip_work,
+        Some(&proof.output),
+    )
+}
+
+pub fn verify_hegemon_long_range_proof_without_claimed_output_v2(
+    proof: &HegemonLongRangeProofV2,
+    min_confirmations: u32,
+    min_tip_work: Work48,
+) -> Result<BridgeCheckpointOutputV2, LightClientError> {
+    verify_hegemon_long_range_proof_inner_v2(proof, min_confirmations, min_tip_work, None)
 }
 
 pub fn long_range_confirmations_checked(tip_height: u64, message_height: u64) -> u32 {
@@ -1859,6 +2597,212 @@ fn expected_long_range_output_from_wire_fields(
     ))
 }
 
+fn verify_hegemon_long_range_proof_inner_v2(
+    proof: &HegemonLongRangeProofV2,
+    min_confirmations: u32,
+    min_tip_work: Work48,
+    expected_output: Option<&BridgeCheckpointOutputV2>,
+) -> Result<BridgeCheckpointOutputV2, LightClientError> {
+    if proof.verifier_hash != HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V2 {
+        return Err(LightClientError::VerifierHashMismatch);
+    }
+    if proof.messages.len() > u32::MAX as usize
+        || proof.message_header.message_count != proof.messages.len() as u32
+    {
+        return Err(LightClientError::HeaderMessageCountMismatch);
+    }
+
+    let target = compact_to_target(proof.trusted_checkpoint.pow_bits)?;
+    let block_work = block_work_from_target(&target);
+    let tip_hash = verify_long_range_header_shape_v2(
+        &proof.trusted_checkpoint,
+        &proof.tip_header,
+        &block_work,
+        &target,
+    )?;
+    let message_header_hash = verify_long_range_header_shape_v2(
+        &proof.trusted_checkpoint,
+        &proof.message_header,
+        &block_work,
+        &target,
+    )?;
+    let tip_checkpoint = checkpoint_from_header_hash_v2(&proof.tip_header, tip_hash);
+    let message_checkpoint =
+        checkpoint_from_header_hash_v2(&proof.message_header, message_header_hash);
+
+    let message_index = usize::try_from(proof.message_index)
+        .map_err(|_| LightClientError::MessageIndexOutOfBounds)?;
+    let maybe_message = proof.messages.get(message_index);
+    if !(HEGEMON_BRIDGE_LONG_RANGE_MIN_SAMPLE_COUNT_V1
+        ..=HEGEMON_LONG_RANGE_PROOF_MAX_SAMPLE_HEADERS_V1 as u32)
+        .contains(&proof.sample_count)
+    {
+        return Err(LightClientError::FlyClientSampleMismatch);
+    }
+    let expected_indices = proof
+        .trusted_checkpoint
+        .height
+        .checked_add(1)
+        .map(|sample_start| {
+            flyclient_sample_indices(
+                proof.tip_header.header_mmr_root,
+                tip_hash,
+                message_header_hash,
+                sample_start,
+                proof.tip_header.height,
+                proof.sample_count,
+            )
+        })
+        .unwrap_or_default();
+    let sample_header_heights = proof
+        .sample_headers
+        .iter()
+        .map(|sample| sample.header.height)
+        .collect::<Vec<_>>();
+    let sample_opening_leaf_indices = proof
+        .sample_headers
+        .iter()
+        .map(|sample| sample.opening.leaf_index)
+        .collect::<Vec<_>>();
+    let sample_parent_opening_leaf_indices = proof
+        .sample_headers
+        .iter()
+        .map(|sample| sample.parent_opening.leaf_index)
+        .collect::<Vec<_>>();
+    let confirmations_checked =
+        long_range_confirmations_checked(proof.tip_header.height, proof.message_header.height);
+    let output = maybe_message.map(|message| {
+        bridge_checkpoint_output_with_tip_from_anchor_v2(
+            &proof.trusted_checkpoint,
+            &message_checkpoint,
+            &tip_checkpoint,
+            proof.message_header.message_root,
+            message,
+            confirmations_checked,
+            min_tip_work,
+        )
+    });
+    let expected_output_matches =
+        expected_output.map(|expected| output.as_ref().is_some_and(|actual| actual == expected));
+    evaluate_long_range_proof_shape(&LongRangeProofShapeInput {
+        verifier_hash_matches: proof.verifier_hash == HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V2,
+        message_count: proof.message_header.message_count,
+        messages_len: proof.messages.len(),
+        trusted_height: proof.trusted_checkpoint.height,
+        tip_height: proof.tip_header.height,
+        tip_header_mmr_len: proof.tip_header.header_mmr_len,
+        tip_parent_opening_leaf_index: proof.tip_parent_opening.leaf_index,
+        message_height: proof.message_header.height,
+        message_header_mmr_len: proof.message_header.header_mmr_len,
+        message_opening_leaf_index: proof.message_header_opening.leaf_index,
+        message_parent_opening_leaf_index: proof.message_parent_opening.leaf_index,
+        message_index: proof.message_index,
+        message_source_chain_matches: maybe_message
+            .is_some_and(|message| message.source_chain_id == proof.trusted_checkpoint.chain_id),
+        message_source_height: maybe_message
+            .map(|message| message.source_height)
+            .unwrap_or_default(),
+        sample_count: proof.sample_count,
+        expected_sample_indices: &expected_indices,
+        sample_header_heights: &sample_header_heights,
+        sample_opening_leaf_indices: &sample_opening_leaf_indices,
+        sample_parent_opening_leaf_indices: &sample_parent_opening_leaf_indices,
+        min_confirmations,
+        tip_work: &tip_checkpoint.cumulative_work,
+        min_tip_work: &min_tip_work,
+        expected_output_matches,
+    })?;
+    let output = output.ok_or(LightClientError::MessageIndexOutOfBounds)?;
+
+    let mmr_context = HeaderMmrContext::new(
+        proof.tip_header.header_mmr_root,
+        &proof.message_header_opening,
+    )?;
+    verify_header_parent_link_in_context_v2(
+        &mmr_context,
+        &proof.trusted_checkpoint,
+        &proof.tip_header,
+        &proof.tip_parent_opening,
+    )?;
+    verify_header_mmr_opening_in_context(
+        &mmr_context,
+        message_header_hash,
+        &proof.message_header_opening,
+    )?;
+    verify_header_parent_link_in_context_v2(
+        &mmr_context,
+        &proof.trusted_checkpoint,
+        &proof.message_header,
+        &proof.message_parent_opening,
+    )?;
+    verify_message_inclusion(
+        proof.message_header.message_root,
+        &proof.messages,
+        message_index,
+    )?;
+    for sample in &proof.sample_headers {
+        let sample_hash = verify_long_range_header_shape_v2(
+            &proof.trusted_checkpoint,
+            &sample.header,
+            &block_work,
+            &target,
+        )?;
+        verify_header_mmr_opening_in_context(&mmr_context, sample_hash, &sample.opening)?;
+        verify_header_parent_link_in_context_v2(
+            &mmr_context,
+            &proof.trusted_checkpoint,
+            &sample.header,
+            &sample.parent_opening,
+        )?;
+    }
+    Ok(output)
+}
+
+fn verify_header_parent_link_in_context_v2(
+    context: &HeaderMmrContext<'_>,
+    checkpoint: &TrustedCheckpointV2,
+    header: &PowHeaderV2,
+    parent_opening: &HeaderMmrOpeningV1,
+) -> Result<(), LightClientError> {
+    let parent_height = header
+        .height
+        .checked_sub(1)
+        .ok_or(LightClientError::ParentHashMismatch)?;
+    if parent_height < checkpoint.height || parent_opening.leaf_index != parent_height {
+        return Err(LightClientError::ParentHashMismatch);
+    }
+    if parent_height == checkpoint.height && header.parent_hash != checkpoint.header_hash {
+        return Err(LightClientError::ParentHashMismatch);
+    }
+    verify_header_mmr_opening_in_context(context, header.parent_hash, parent_opening)
+        .map_err(|_| LightClientError::ParentHashMismatch)
+}
+
+fn expected_long_range_output_from_wire_fields_v2(
+    proof: &HegemonLongRangeProofV2,
+    min_tip_work: Work48,
+) -> Result<BridgeCheckpointOutputV2, LightClientError> {
+    let message_index = usize::try_from(proof.message_index)
+        .map_err(|_| LightClientError::MessageIndexOutOfBounds)?;
+    let message = proof
+        .messages
+        .get(message_index)
+        .ok_or(LightClientError::MessageIndexOutOfBounds)?;
+    let message_checkpoint =
+        checkpoint_from_header_hash_v2(&proof.message_header, proof.message_header.pow_hash());
+    let tip_checkpoint =
+        checkpoint_from_header_hash_v2(&proof.tip_header, proof.tip_header.pow_hash());
+    Ok(bridge_checkpoint_output_with_tip_from_anchor_v2(
+        &proof.trusted_checkpoint,
+        &message_checkpoint,
+        &tip_checkpoint,
+        proof.message_header.message_root,
+        message,
+        long_range_confirmations_checked(proof.tip_header.height, proof.message_header.height),
+        min_tip_work,
+    ))
+}
+
 pub fn decode_risc0_bridge_journal(
     receipt: &RiscZeroBridgeReceiptV1,
 ) -> Result<BridgeCheckpointOutputV1, LightClientError> {
@@ -1986,8 +2930,64 @@ fn verify_long_range_header_shape(
     Ok(header_hash)
 }
 
+fn verify_long_range_header_shape_v2(
+    checkpoint: &TrustedCheckpointV2,
+    header: &PowHeaderV2,
+    block_work: &Work48,
+    target: &Hash32,
+) -> Result<Hash32, LightClientError> {
+    if header.chain_id != checkpoint.chain_id {
+        return Err(LightClientError::ChainIdMismatch);
+    }
+    if header.rules_hash != checkpoint.rules_hash {
+        return Err(LightClientError::RulesHashMismatch);
+    }
+    if header.height < checkpoint.height {
+        return Err(LightClientError::HeightMismatch);
+    }
+    if header.timestamp_ms <= checkpoint.timestamp_ms {
+        return Err(LightClientError::TimestampDidNotAdvance);
+    }
+    if header.pow_bits != checkpoint.pow_bits {
+        return Err(LightClientError::PowBitsMismatch);
+    }
+    if header.header_mmr_len != header.height {
+        return Err(LightClientError::HeaderMmrMismatch);
+    }
+    let expected_work = expected_cumulative_work_at_height_with_block_work_v2(
+        checkpoint,
+        header.height,
+        block_work,
+    )?;
+    if header.cumulative_work != expected_work {
+        return Err(LightClientError::CumulativeWorkMismatch);
+    }
+    let header_hash = header.pow_hash();
+    if !hash_meets_expanded_target(&header_hash, target) {
+        return Err(LightClientError::InsufficientWork);
+    }
+    Ok(header_hash)
+}
+
 fn checkpoint_from_header_hash(header: &PowHeaderV1, header_hash: Hash32) -> TrustedCheckpointV1 {
     TrustedCheckpointV1 {
+        chain_id: header.chain_id,
+        rules_hash: header.rules_hash,
+        height: header.height,
+        header_hash,
+        timestamp_ms: header.timestamp_ms,
+        pow_bits: header.pow_bits,
+        cumulative_work: header.cumulative_work,
+        header_mmr_root: header.header_mmr_root,
+        header_mmr_len: header.header_mmr_len,
+    }
+}
+
+fn checkpoint_from_header_hash_v2(
+    header: &PowHeaderV2,
+    header_hash: Hash32,
+) -> TrustedCheckpointV2 {
+    TrustedCheckpointV2 {
         chain_id: header.chain_id,
         rules_hash: header.rules_hash,
         height: header.height,
@@ -2097,11 +3097,13 @@ fn double_sha256(bytes: &[u8]) -> Hash32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{format, string::String, vec};
     use codec::Encode;
     use num_bigint::BigUint;
     use protocol_kernel::bridge::bridge_payload_hash;
     use serde::Deserialize;
     use std::collections::BTreeSet;
+    use std::eprintln;
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -2315,7 +3317,7 @@ mod tests {
     fn checkpoint(pow_bits: u32) -> TrustedCheckpointV1 {
         TrustedCheckpointV1 {
             chain_id: HEGEMON_CHAIN_ID_V1,
-            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
             height: 0,
             header_hash: [0u8; 32],
             timestamp_ms: 0,
@@ -2324,6 +3326,34 @@ mod tests {
             header_mmr_root: header_mmr_root_from_hashes(&[]),
             header_mmr_len: 0,
         }
+    }
+
+    #[test]
+    fn active_rules_hash_v2_matches_canonical_preimage() {
+        assert_eq!(
+            HEGEMON_LIGHT_CLIENT_RULES_HASH_V2,
+            hash32(HEGEMON_LIGHT_CLIENT_RULES_V2_PREIMAGE)
+        );
+        assert_ne!(
+            HEGEMON_LIGHT_CLIENT_RULES_HASH_V2,
+            HEGEMON_LIGHT_CLIENT_RULES_HASH_V1
+        );
+        assert_eq!(
+            HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
+            HEGEMON_LIGHT_CLIENT_RULES_HASH_V2
+        );
+    }
+
+    #[test]
+    fn light_client_verifier_v2_hash_matches_canonical_preimage() {
+        assert_eq!(
+            HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V2,
+            hash32(HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_V2_PREIMAGE)
+        );
+        assert_ne!(
+            HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V2,
+            HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1
+        );
     }
 
     fn mine_child(parent: &TrustedCheckpointV1, pow_bits: u32) -> PowHeaderV1 {

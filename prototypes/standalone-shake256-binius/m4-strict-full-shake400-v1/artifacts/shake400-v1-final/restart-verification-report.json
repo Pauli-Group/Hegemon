@@ -1,0 +1,9 @@
+{
+  "all_mutations_rejected": true,
+  "fresh_forgery_replay_rejected": true,
+  "proof_bytes": 1344828,
+  "proof_sha256": "0ce525a6c790e1be4c47cf6d482b767f455616f06e5ab013d561378d6ab81a56",
+  "schema": "hegemon.full-m4.shake400-repeated-zk-restart-verification.v1",
+  "source_bundle_sha256": "99e6422d8bdf04a28f030a1ab4f02391ba22408d39424b1c42b1593b0a00c2e0",
+  "verified": true
+}

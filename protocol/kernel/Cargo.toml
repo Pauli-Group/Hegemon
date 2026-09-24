@@ -8,6 +8,7 @@ codec = { workspace = true, features = ["max-encoded-len"] }
 scale-info = { workspace = true }
 protocol_versioning = { path = "../versioning", package = "protocol-versioning", default-features = false }
 protocol-shielded-pool = { path = "../shielded-pool", default-features = false }
+hegemon-hash384 = { path = "../../crypto/hash384", features = ["codec", "type-info"] }
 blake3 = { version = "1", default-features = false }
 
 [features]

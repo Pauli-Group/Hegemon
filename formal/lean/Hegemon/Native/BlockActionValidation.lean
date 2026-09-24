@@ -41,6 +41,103 @@ inductive BlockActionReject where
   | transferSidecarCiphertextSizeMismatch
 deriving DecidableEq, Repr
 
+/--
+Global coinbase grammar checked before route payloads, transaction proofs, or
+DA work.  `requireCoinbase` is policy input: active native V2 sets it to false,
+so a miner may forfeit the subsidy, but any coinbase that is present must be
+unique and final.
+-/
+inductive CoinbasePlacementReject where
+  | missingRequiredCoinbase
+  | multipleCoinbase
+  | coinbaseNotFinal
+deriving DecidableEq, Repr
+
+structure CoinbasePlacementInput where
+  requireCoinbase : Bool
+  actionIsCoinbase : List Bool
+deriving DecidableEq, Repr
+
+structure CoinbasePlacementSummary where
+  coinbaseCount : Nat
+  singleCoinbaseIsFinal : Bool
+deriving DecidableEq, Repr
+
+def coinbaseCount : List Bool -> Nat
+  | [] => 0
+  | isCoinbase :: rest =>
+      (if isCoinbase then 1 else 0) + coinbaseCount rest
+
+def finalActionIsCoinbase : List Bool -> Bool
+  | [] => false
+  | [isCoinbase] => isCoinbase
+  | _ :: rest => finalActionIsCoinbase rest
+
+def coinbasePlacementSummary
+    (input : CoinbasePlacementInput) : CoinbasePlacementSummary :=
+  let count := coinbaseCount input.actionIsCoinbase
+  {
+    coinbaseCount := count,
+    singleCoinbaseIsFinal :=
+      count == 1 && finalActionIsCoinbase input.actionIsCoinbase
+  }
+
+def evaluateCoinbasePlacementAdmission
+    (input : CoinbasePlacementInput) :
+    Except CoinbasePlacementReject CoinbasePlacementSummary :=
+  let summary := coinbasePlacementSummary input
+  if summary.coinbaseCount == 0 && input.requireCoinbase then
+    Except.error CoinbasePlacementReject.missingRequiredCoinbase
+  else if 1 < summary.coinbaseCount then
+    Except.error CoinbasePlacementReject.multipleCoinbase
+  else if summary.coinbaseCount == 1 && !summary.singleCoinbaseIsFinal then
+    Except.error CoinbasePlacementReject.coinbaseNotFinal
+  else
+    Except.ok summary
+
+def coinbasePlacementAccepts (input : CoinbasePlacementInput) : Bool :=
+  match evaluateCoinbasePlacementAdmission input with
+  | Except.ok _ => true
+  | Except.error _ => false
+
+theorem optional_coinbase_omission_accepts :
+    evaluateCoinbasePlacementAdmission
+      { requireCoinbase := false, actionIsCoinbase := [false] } =
+      Except.ok { coinbaseCount := 0, singleCoinbaseIsFinal := false } := by
+  rfl
+
+theorem required_coinbase_omission_rejects :
+    evaluateCoinbasePlacementAdmission
+      { requireCoinbase := true, actionIsCoinbase := [false] } =
+      Except.error CoinbasePlacementReject.missingRequiredCoinbase := by
+  rfl
+
+theorem first_coinbase_rejects :
+    evaluateCoinbasePlacementAdmission
+      { requireCoinbase := false, actionIsCoinbase := [true, false] } =
+      Except.error CoinbasePlacementReject.coinbaseNotFinal := by
+  rfl
+
+theorem middle_coinbase_rejects :
+    evaluateCoinbasePlacementAdmission
+      { requireCoinbase := false,
+        actionIsCoinbase := [false, true, false] } =
+      Except.error CoinbasePlacementReject.coinbaseNotFinal := by
+  rfl
+
+theorem multiple_coinbase_precedes_placement_rejection :
+    evaluateCoinbasePlacementAdmission
+      { requireCoinbase := false,
+        actionIsCoinbase := [true, false, true] } =
+      Except.error CoinbasePlacementReject.multipleCoinbase := by
+  rfl
+
+theorem single_final_coinbase_accepts :
+    evaluateCoinbasePlacementAdmission
+      { requireCoinbase := false, actionIsCoinbase := [false, true] } =
+      Except.ok { coinbaseCount := 1, singleCoinbaseIsFinal := true } := by
+  rfl
+
 structure ValidationAction where
   scope : ScopeInput
   payloadValid : Bool

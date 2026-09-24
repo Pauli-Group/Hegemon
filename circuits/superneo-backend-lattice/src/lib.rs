@@ -2,6 +2,7 @@ use anyhow::{anyhow, ensure, Context, Result};
 use blake3::Hasher;
 use getrandom::getrandom;
 use hegemon_field::Goldilocks;
+use hegemon_hash384::{domains::SUPERNEO_PROOF_ARTIFACT_V2, Blake2b384DomainHasher};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     cell::RefCell,
@@ -18,6 +19,19 @@ use superneo_core::{
     LcccsInstance, RecursiveBackend, RecursiveDeciderProfile, RecursiveStatementEncoding,
     SecurityParams,
 };
+
+const ROLE_BACKEND_PARAMS_V2: &[u8] = b"backend-params";
+const ROLE_COMMITMENT_OPENING_V2: &[u8] = b"commitment-opening";
+const ROLE_COMMITMENT_ROWS_V2: &[u8] = b"commitment-rows";
+const ROLE_LEAF_PROOF_V2: &[u8] = b"leaf-proof";
+const ROLE_FOLD_STATEMENT_V2: &[u8] = b"fold-statement";
+const ROLE_FOLD_PROOF_V2: &[u8] = b"fold-proof";
+const ROLE_RECURSIVE_CCCS_PROOF_V2: &[u8] = b"recursive-cccs-proof";
+const ROLE_RECURSIVE_LINEARIZATION_PROOF_V2: &[u8] = b"recursive-linearization-proof";
+const ROLE_RECURSIVE_FOLD_PROOF_V2: &[u8] = b"recursive-fold-proof";
+const ROLE_RECURSIVE_NORMALIZATION_PROOF_V2: &[u8] = b"recursive-normalization-proof";
+const ROLE_RECURSIVE_DECIDER_TRANSCRIPT_V2: &[u8] = b"recursive-decider-transcript";
+const ROLE_RECURSIVE_DECIDER_PROOF_V2: &[u8] = b"recursive-decider-proof";
 use superneo_ring::PackedWitness;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -461,31 +475,45 @@ impl NativeBackendParams {
     }
 
     pub fn parameter_fingerprint(&self) -> [u8; 48] {
-        let mut hasher = Hasher::new();
-        hasher.update(b"hegemon.superneo.native-backend-params.v2");
-        hasher.update(self.manifest.family_label.as_bytes());
-        hasher.update(self.manifest.spec_label.as_bytes());
-        hasher.update(self.manifest.commitment_scheme_label.as_bytes());
-        hasher.update(self.manifest.challenge_schedule_label.as_bytes());
-        hasher.update(self.manifest.maturity_label.as_bytes());
-        hasher.update(&self.security_bits.to_le_bytes());
-        hasher.update(self.ring_profile.label());
-        hasher.update(&(self.matrix_rows as u64).to_le_bytes());
-        hasher.update(&(self.matrix_cols as u64).to_le_bytes());
-        hasher.update(&self.challenge_bits.to_le_bytes());
-        hasher.update(&self.fold_challenge_count.to_le_bytes());
-        hasher.update(&self.max_fold_arity.to_le_bytes());
-        hasher.update(self.transcript_domain_label.as_bytes());
-        hasher.update(&self.decomposition_bits.to_le_bytes());
-        hasher.update(&self.opening_randomness_bits.to_le_bytes());
-        hasher.update(&[match self.commitment_security_model {
+        let security_bits = self.security_bits.to_le_bytes();
+        let matrix_rows = (self.matrix_rows as u64).to_le_bytes();
+        let matrix_cols = (self.matrix_cols as u64).to_le_bytes();
+        let challenge_bits = self.challenge_bits.to_le_bytes();
+        let fold_challenge_count = self.fold_challenge_count.to_le_bytes();
+        let max_fold_arity = self.max_fold_arity.to_le_bytes();
+        let decomposition_bits = self.decomposition_bits.to_le_bytes();
+        let opening_randomness_bits = self.opening_randomness_bits.to_le_bytes();
+        let commitment_security_model = [match self.commitment_security_model {
             CommitmentSecurityModel::GeometryProxy => 0u8,
             CommitmentSecurityModel::BoundedKernelModuleSis => 1u8,
-        }]);
-        hasher.update(commitment_estimator_model_label(self.commitment_estimator_model).as_bytes());
-        hasher.update(&self.max_commitment_message_ring_elems.to_le_bytes());
-        hasher.update(&self.max_claimed_receipt_root_leaves.to_le_bytes());
-        hash48(hasher)
+        }];
+        let max_commitment_message_ring_elems =
+            self.max_commitment_message_ring_elems.to_le_bytes();
+        let max_claimed_receipt_root_leaves = self.max_claimed_receipt_root_leaves.to_le_bytes();
+        let mut hasher = superneo_proof_artifact_hasher(ROLE_BACKEND_PARAMS_V2);
+        hasher
+            .update_part(self.manifest.family_label.as_bytes())
+            .update_part(self.manifest.spec_label.as_bytes())
+            .update_part(self.manifest.commitment_scheme_label.as_bytes())
+            .update_part(self.manifest.challenge_schedule_label.as_bytes())
+            .update_part(self.manifest.maturity_label.as_bytes())
+            .update_part(&security_bits)
+            .update_part(self.ring_profile.label())
+            .update_part(&matrix_rows)
+            .update_part(&matrix_cols)
+            .update_part(&challenge_bits)
+            .update_part(&fold_challenge_count)
+            .update_part(&max_fold_arity)
+            .update_part(self.transcript_domain_label.as_bytes())
+            .update_part(&decomposition_bits)
+            .update_part(&opening_randomness_bits)
+            .update_part(&commitment_security_model)
+            .update_part(
+                commitment_estimator_model_label(self.commitment_estimator_model).as_bytes(),
+            )
+            .update_part(&max_commitment_message_ring_elems)
+            .update_part(&max_claimed_receipt_root_leaves);
+        hasher.finalize()
     }
 
     pub fn spec_digest(&self) -> [u8; 32] {
@@ -2738,22 +2766,32 @@ fn commitment_opening_digest(
     randomness_seed: &[u8; 32],
 ) -> [u8; 48] {
     let randomness_seed = canonicalize_opening_randomness_seed(params, *randomness_seed);
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.commitment-opening.v1");
-    hasher.update(&params.parameter_fingerprint());
-    hasher.update(&(packed.original_len as u64).to_le_bytes());
-    hasher.update(&(packed.used_bits as u64).to_le_bytes());
-    hasher.update(&(packed.coeffs.len() as u64).to_le_bytes());
+    let params_fingerprint = params.parameter_fingerprint();
+    let original_len = (packed.original_len as u64).to_le_bytes();
+    let used_bits = (packed.used_bits as u64).to_le_bytes();
+    let coeff_count = (packed.coeffs.len() as u64).to_le_bytes();
+    let mut coeff_bytes = Vec::with_capacity(packed.coeffs.len() * 8);
     for coeff in &packed.coeffs {
-        hasher.update(&coeff.to_le_bytes());
+        coeff_bytes.extend_from_slice(&coeff.to_le_bytes());
     }
-    hasher.update(&(packed.value_bit_widths.len() as u64).to_le_bytes());
+    let value_bit_width_count = (packed.value_bit_widths.len() as u64).to_le_bytes();
+    let mut value_bit_width_bytes = Vec::with_capacity(packed.value_bit_widths.len() * 2);
     for width in &packed.value_bit_widths {
-        hasher.update(&width.to_le_bytes());
+        value_bit_width_bytes.extend_from_slice(&width.to_le_bytes());
     }
-    hasher.update(&packed.coeff_capacity_bits.to_le_bytes());
-    hasher.update(&randomness_seed);
-    hash48(hasher)
+    let coeff_capacity_bits = packed.coeff_capacity_bits.to_le_bytes();
+    let mut hasher = superneo_proof_artifact_hasher(ROLE_COMMITMENT_OPENING_V2);
+    hasher
+        .update_part(&params_fingerprint)
+        .update_part(&original_len)
+        .update_part(&used_bits)
+        .update_part(&coeff_count)
+        .update_part(&coeff_bytes)
+        .update_part(&value_bit_width_count)
+        .update_part(&value_bit_width_bytes)
+        .update_part(&coeff_capacity_bits)
+        .update_part(&randomness_seed);
+    hasher.finalize()
 }
 
 fn canonicalize_opening_randomness_seed(
@@ -2885,16 +2923,20 @@ fn prepared_matrix_cache_key(pk: &BackendKey, message_len: usize) -> [u8; 32] {
 }
 
 fn digest_commitment_rows(rows: &[RingElem]) -> [u8; 48] {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.commitment-digest.v2");
-    hasher.update(&(rows.len() as u64).to_le_bytes());
+    let row_count = (rows.len() as u64).to_le_bytes();
+    let encoded_len = rows.iter().fold(0usize, |acc, row| {
+        acc.saturating_add(8 + row.coeffs.len().saturating_mul(8))
+    });
+    let mut encoded_rows = Vec::with_capacity(encoded_len);
     for row in rows {
-        hasher.update(&(row.coeffs.len() as u64).to_le_bytes());
+        encoded_rows.extend_from_slice(&(row.coeffs.len() as u64).to_le_bytes());
         for coeff in &row.coeffs {
-            hasher.update(&coeff.to_le_bytes());
+            encoded_rows.extend_from_slice(&coeff.to_le_bytes());
         }
     }
-    hash48(hasher)
+    let mut hasher = superneo_proof_artifact_hasher(ROLE_COMMITMENT_ROWS_V2);
+    hasher.update_part(&row_count).update_part(&encoded_rows);
+    hasher.finalize()
 }
 
 fn derive_fold_challenges(
@@ -3036,30 +3078,43 @@ fn leaf_proof_digest(
     packed: &PackedWitness<u64>,
     commitment_digest: &[u8; 48],
 ) -> [u8; 48] {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.leaf-proof.v2");
-    hasher.update(&pk.params_fingerprint);
-    hasher.update(pk.ring_profile.label());
-    hasher.update(&pk.shape_digest.0);
-    hasher.update(&relation_id.0);
-    hasher.update(&pk.security_bits.to_le_bytes());
-    hasher.update(&pk.challenge_bits.to_le_bytes());
-    hasher.update(&pk.max_fold_arity.to_le_bytes());
-    hasher.update(&pk.transcript_domain_digest);
-    hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
-    hasher.update(&(pk.ring_degree as u64).to_le_bytes());
-    hasher.update(&pk.digit_bits.to_le_bytes());
-    hasher.update(&pk.opening_randomness_bits.to_le_bytes());
-    hasher.update(&statement_digest.0);
-    hasher.update(commitment_digest);
-    hasher.update(&(packed.original_len as u64).to_le_bytes());
-    hasher.update(&(packed.used_bits as u64).to_le_bytes());
-    hasher.update(&packed.coeff_capacity_bits.to_le_bytes());
-    hasher.update(&(packed.coeffs.len() as u64).to_le_bytes());
+    let security_bits = pk.security_bits.to_le_bytes();
+    let challenge_bits = pk.challenge_bits.to_le_bytes();
+    let max_fold_arity = pk.max_fold_arity.to_le_bytes();
+    let commitment_rows = (pk.commitment_rows as u64).to_le_bytes();
+    let ring_degree = (pk.ring_degree as u64).to_le_bytes();
+    let digit_bits = pk.digit_bits.to_le_bytes();
+    let opening_randomness_bits = pk.opening_randomness_bits.to_le_bytes();
+    let original_len = (packed.original_len as u64).to_le_bytes();
+    let used_bits = (packed.used_bits as u64).to_le_bytes();
+    let coeff_capacity_bits = packed.coeff_capacity_bits.to_le_bytes();
+    let coeff_count = (packed.coeffs.len() as u64).to_le_bytes();
+    let mut coeff_bytes = Vec::with_capacity(packed.coeffs.len() * 8);
     for coeff in &packed.coeffs {
-        hasher.update(&coeff.to_le_bytes());
+        coeff_bytes.extend_from_slice(&coeff.to_le_bytes());
     }
-    hash48(hasher)
+    let mut hasher = superneo_proof_artifact_hasher(ROLE_LEAF_PROOF_V2);
+    hasher
+        .update_part(&pk.params_fingerprint)
+        .update_part(pk.ring_profile.label())
+        .update_part(&pk.shape_digest.0)
+        .update_part(&relation_id.0)
+        .update_part(&security_bits)
+        .update_part(&challenge_bits)
+        .update_part(&max_fold_arity)
+        .update_part(&pk.transcript_domain_digest)
+        .update_part(&commitment_rows)
+        .update_part(&ring_degree)
+        .update_part(&digit_bits)
+        .update_part(&opening_randomness_bits)
+        .update_part(&statement_digest.0)
+        .update_part(commitment_digest)
+        .update_part(&original_len)
+        .update_part(&used_bits)
+        .update_part(&coeff_capacity_bits)
+        .update_part(&coeff_count)
+        .update_part(&coeff_bytes);
+    hasher.finalize()
 }
 
 fn fold_statement_digest(
@@ -3068,16 +3123,19 @@ fn fold_statement_digest(
     challenges: &[u64],
     parent_commitment_digest: &[u8; 48],
 ) -> StatementDigest {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.fold-statement.v3");
-    hasher.update(&(challenges.len() as u32).to_le_bytes());
+    let challenge_count = (challenges.len() as u32).to_le_bytes();
+    let mut challenge_bytes = Vec::with_capacity(challenges.len() * 8);
     for challenge in challenges {
-        hasher.update(&challenge.to_le_bytes());
+        challenge_bytes.extend_from_slice(&challenge.to_le_bytes());
     }
-    hasher.update(&left.0);
-    hasher.update(&right.0);
-    hasher.update(parent_commitment_digest);
-    StatementDigest(hash48(hasher))
+    let mut hasher = superneo_proof_artifact_hasher(ROLE_FOLD_STATEMENT_V2);
+    hasher
+        .update_part(&challenge_count)
+        .update_part(&challenge_bytes)
+        .update_part(&left.0)
+        .update_part(&right.0)
+        .update_part(parent_commitment_digest);
+    StatementDigest(hasher.finalize())
 }
 
 fn fold_proof_digest(
@@ -3089,39 +3147,57 @@ fn fold_proof_digest(
     parent_statement_digest: &StatementDigest,
     parent_rows: &[RingElem],
 ) -> [u8; 48] {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.fold-proof.v3");
-    hasher.update(&pk.params_fingerprint);
-    hasher.update(pk.ring_profile.label());
-    hasher.update(&pk.shape_digest.0);
-    hasher.update(&relation_id.0);
-    hasher.update(&pk.security_bits.to_le_bytes());
-    hasher.update(&pk.challenge_bits.to_le_bytes());
-    hasher.update(&pk.fold_challenge_count.to_le_bytes());
-    hasher.update(&pk.max_fold_arity.to_le_bytes());
-    hasher.update(&pk.transcript_domain_digest);
-    hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
-    hasher.update(&(pk.ring_degree as u64).to_le_bytes());
-    hasher.update(&pk.digit_bits.to_le_bytes());
-    hasher.update(&pk.opening_randomness_bits.to_le_bytes());
-    hasher.update(&(challenges.len() as u32).to_le_bytes());
+    let security_bits = pk.security_bits.to_le_bytes();
+    let challenge_bits = pk.challenge_bits.to_le_bytes();
+    let fold_challenge_count = pk.fold_challenge_count.to_le_bytes();
+    let max_fold_arity = pk.max_fold_arity.to_le_bytes();
+    let commitment_rows = (pk.commitment_rows as u64).to_le_bytes();
+    let ring_degree = (pk.ring_degree as u64).to_le_bytes();
+    let digit_bits = pk.digit_bits.to_le_bytes();
+    let opening_randomness_bits = pk.opening_randomness_bits.to_le_bytes();
+    let challenge_count = (challenges.len() as u32).to_le_bytes();
+    let mut challenge_bytes = Vec::with_capacity(challenges.len() * 8);
     for challenge in challenges {
-        hasher.update(&challenge.to_le_bytes());
+        challenge_bytes.extend_from_slice(&challenge.to_le_bytes());
     }
-    hasher.update(&left.statement_digest.0);
-    hasher.update(&right.statement_digest.0);
-    hasher.update(&left.witness_commitment.digest);
-    hasher.update(&right.witness_commitment.digest);
-    hasher.update(&parent_statement_digest.0);
-    hasher.update(&digest_commitment_rows(parent_rows));
-    hasher.update(&(parent_rows.len() as u64).to_le_bytes());
+    let parent_commitment_digest = digest_commitment_rows(parent_rows);
+    let parent_row_count = (parent_rows.len() as u64).to_le_bytes();
+    let encoded_len = parent_rows.iter().fold(0usize, |acc, row| {
+        acc.saturating_add(8 + row.coeffs.len().saturating_mul(8))
+    });
+    let mut encoded_parent_rows = Vec::with_capacity(encoded_len);
     for row in parent_rows {
-        hasher.update(&(row.coeffs.len() as u64).to_le_bytes());
+        encoded_parent_rows.extend_from_slice(&(row.coeffs.len() as u64).to_le_bytes());
         for coeff in &row.coeffs {
-            hasher.update(&coeff.to_le_bytes());
+            encoded_parent_rows.extend_from_slice(&coeff.to_le_bytes());
         }
     }
-    hash48(hasher)
+    let mut hasher = superneo_proof_artifact_hasher(ROLE_FOLD_PROOF_V2);
+    hasher
+        .update_part(&pk.params_fingerprint)
+        .update_part(pk.ring_profile.label())
+        .update_part(&pk.shape_digest.0)
+        .update_part(&relation_id.0)
+        .update_part(&security_bits)
+        .update_part(&challenge_bits)
+        .update_part(&fold_challenge_count)
+        .update_part(&max_fold_arity)
+        .update_part(&pk.transcript_domain_digest)
+        .update_part(&commitment_rows)
+        .update_part(&ring_degree)
+        .update_part(&digit_bits)
+        .update_part(&opening_randomness_bits)
+        .update_part(&challenge_count)
+        .update_part(&challenge_bytes)
+        .update_part(&left.statement_digest.0)
+        .update_part(&right.statement_digest.0)
+        .update_part(&left.witness_commitment.digest)
+        .update_part(&right.witness_commitment.digest)
+        .update_part(&parent_statement_digest.0)
+        .update_part(&parent_commitment_digest)
+        .update_part(&parent_row_count)
+        .update_part(&encoded_parent_rows);
+    hasher.finalize()
 }
 
 fn accumulate_ring_product_narrow_source(
@@ -3283,10 +3359,10 @@ fn mod_pow_u64(mut base: u64, mut exponent: u64, modulus: u64) -> u64 {
     acc
 }
 
-fn hash48(hasher: Hasher) -> [u8; 48] {
-    let mut out = [0u8; 48];
-    hasher.finalize_xof().fill(&mut out);
-    out
+fn superneo_proof_artifact_hasher(role: &[u8]) -> Blake2b384DomainHasher {
+    let mut hasher = Blake2b384DomainHasher::new(SUPERNEO_PROOF_ARTIFACT_V2);
+    hasher.update_part(role);
+    hasher
 }
 
 fn hash32(hasher: Hasher) -> [u8; 32] {
@@ -3530,16 +3606,17 @@ fn recursive_cccs_proof_digest(
     opening: &CommitmentOpening,
     leaf_proof: &LeafDigestProof,
 ) -> [u8; 48] {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.recursive-cccs-proof.v1");
-    hasher.update(&pk.params_fingerprint);
-    hasher.update(&claim.relation_id.0);
-    hasher.update(&claim.shape_digest.0);
-    hasher.update(&serialize_recursive_statement_encoding(&claim.statement));
-    hasher.update(&claim.witness_commitment.digest);
-    hasher.update(&opening.opening_digest);
-    hasher.update(&leaf_proof.proof_digest);
-    hash48(hasher)
+    let statement_bytes = serialize_recursive_statement_encoding(&claim.statement);
+    let mut hasher = superneo_proof_artifact_hasher(ROLE_RECURSIVE_CCCS_PROOF_V2);
+    hasher
+        .update_part(&pk.params_fingerprint)
+        .update_part(&claim.relation_id.0)
+        .update_part(&claim.shape_digest.0)
+        .update_part(&statement_bytes)
+        .update_part(&claim.witness_commitment.digest)
+        .update_part(&opening.opening_digest)
+        .update_part(&leaf_proof.proof_digest);
+    hasher.finalize()
 }
 
 fn recursive_linearization_proof_digest(
@@ -3549,17 +3626,19 @@ fn recursive_linearization_proof_digest(
     opening: &CommitmentOpening,
     leaf_proof: &LeafDigestProof,
 ) -> Result<[u8; 48]> {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.recursive-linearization-proof.v1");
-    hasher.update(&pk.params_fingerprint);
-    hasher.update(&claim.relation_id.0);
-    hasher.update(&claim.shape_digest.0);
-    hasher.update(&serialize_recursive_statement_encoding(&claim.statement));
-    hasher.update(&claim.witness_commitment.digest);
-    hasher.update(&opening.opening_digest);
-    hasher.update(&leaf_proof.proof_digest);
-    hasher.update(&superneo_core::serialize_lcccs_instance(linearized)?);
-    Ok(hash48(hasher))
+    let statement_bytes = serialize_recursive_statement_encoding(&claim.statement);
+    let linearized_bytes = superneo_core::serialize_lcccs_instance(linearized)?;
+    let mut hasher = superneo_proof_artifact_hasher(ROLE_RECURSIVE_LINEARIZATION_PROOF_V2);
+    hasher
+        .update_part(&pk.params_fingerprint)
+        .update_part(&claim.relation_id.0)
+        .update_part(&claim.shape_digest.0)
+        .update_part(&statement_bytes)
+        .update_part(&claim.witness_commitment.digest)
+        .update_part(&opening.opening_digest)
+        .update_part(&leaf_proof.proof_digest)
+        .update_part(&linearized_bytes);
+    Ok(hasher.finalize())
 }
 
 fn digest_recursive_linearization_proof(
@@ -3615,23 +3694,32 @@ fn recursive_fold_proof_digest(
     parent: &LcccsInstance<LatticeCommitment, Goldilocks>,
     proof: &RecursiveFoldProof,
 ) -> Result<[u8; 48]> {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.recursive-fold-proof.v1");
-    hasher.update(&pk.params_fingerprint);
-    hasher.update(&serialize_recursive_statement_encoding(previous_prefix));
-    hasher.update(&superneo_core::serialize_lcccs_instance(left)?);
-    hasher.update(&serialize_recursive_statement_encoding(step_statement));
-    hasher.update(&superneo_core::serialize_lcccs_instance(right)?);
-    hasher.update(linearization_proof_digest);
-    hasher.update(&serialize_recursive_statement_encoding(target_prefix));
-    hasher.update(&superneo_core::serialize_lcccs_instance(parent)?);
-    hasher.update(&proof.left_opening.opening_digest);
-    hasher.update(&proof.parent_opening.opening_digest);
-    hasher.update(&(proof.challenges.len() as u32).to_le_bytes());
+    let previous_prefix_bytes = serialize_recursive_statement_encoding(previous_prefix);
+    let left_bytes = superneo_core::serialize_lcccs_instance(left)?;
+    let step_statement_bytes = serialize_recursive_statement_encoding(step_statement);
+    let right_bytes = superneo_core::serialize_lcccs_instance(right)?;
+    let target_prefix_bytes = serialize_recursive_statement_encoding(target_prefix);
+    let parent_bytes = superneo_core::serialize_lcccs_instance(parent)?;
+    let challenge_count = (proof.challenges.len() as u32).to_le_bytes();
+    let mut challenge_bytes = Vec::with_capacity(proof.challenges.len() * 8);
     for challenge in &proof.challenges {
-        hasher.update(&challenge.to_le_bytes());
+        challenge_bytes.extend_from_slice(&challenge.to_le_bytes());
     }
-    Ok(hash48(hasher))
+    let mut hasher = superneo_proof_artifact_hasher(ROLE_RECURSIVE_FOLD_PROOF_V2);
+    hasher
+        .update_part(&pk.params_fingerprint)
+        .update_part(&previous_prefix_bytes)
+        .update_part(&left_bytes)
+        .update_part(&step_statement_bytes)
+        .update_part(&right_bytes)
+        .update_part(linearization_proof_digest)
+        .update_part(&target_prefix_bytes)
+        .update_part(&parent_bytes)
+        .update_part(&proof.left_opening.opening_digest)
+        .update_part(&proof.parent_opening.opening_digest)
+        .update_part(&challenge_count)
+        .update_part(&challenge_bytes);
+    Ok(hasher.finalize())
 }
 
 fn recursive_normalization_proof_digest(
@@ -3641,15 +3729,18 @@ fn recursive_normalization_proof_digest(
     normalized: &LcccsInstance<LatticeCommitment, Goldilocks>,
     proof: &RecursiveNormalizationProof,
 ) -> Result<[u8; 48]> {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.recursive-normalization-proof.v1");
-    hasher.update(&pk.params_fingerprint);
-    hasher.update(&serialize_recursive_statement_encoding(statement));
-    hasher.update(&superneo_core::serialize_lcccs_instance(high_norm)?);
-    hasher.update(&superneo_core::serialize_lcccs_instance(normalized)?);
-    hasher.update(&proof.high_norm_opening.opening_digest);
-    hasher.update(&proof.normalized_opening.opening_digest);
-    Ok(hash48(hasher))
+    let statement_bytes = serialize_recursive_statement_encoding(statement);
+    let high_norm_bytes = superneo_core::serialize_lcccs_instance(high_norm)?;
+    let normalized_bytes = superneo_core::serialize_lcccs_instance(normalized)?;
+    let mut hasher = superneo_proof_artifact_hasher(ROLE_RECURSIVE_NORMALIZATION_PROOF_V2);
+    hasher
+        .update_part(&pk.params_fingerprint)
+        .update_part(&statement_bytes)
+        .update_part(&high_norm_bytes)
+        .update_part(&normalized_bytes)
+        .update_part(&proof.high_norm_opening.opening_digest)
+        .update_part(&proof.normalized_opening.opening_digest);
+    Ok(hasher.finalize())
 }
 
 fn canonical_recursive_decider_profile(pk: &BackendKey) -> RecursiveDeciderProfile {
@@ -3680,11 +3771,12 @@ fn canonical_recursive_decider_profile(pk: &BackendKey) -> RecursiveDeciderProfi
 }
 
 fn recursive_decider_transcript_digest(transcript_bytes: &[u8]) -> [u8; 48] {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.recursive-decider-transcript-bytes.v1");
-    hasher.update(&(transcript_bytes.len() as u64).to_le_bytes());
-    hasher.update(transcript_bytes);
-    hash48(hasher)
+    let transcript_len = (transcript_bytes.len() as u64).to_le_bytes();
+    let mut hasher = superneo_proof_artifact_hasher(ROLE_RECURSIVE_DECIDER_TRANSCRIPT_V2);
+    hasher
+        .update_part(&transcript_len)
+        .update_part(transcript_bytes);
+    hasher.finalize()
 }
 
 pub fn canonical_recursive_decider_transcript(
@@ -3709,17 +3801,19 @@ fn recursive_decider_proof_digest(
         .context("failed to serialize recursive terminal")?;
     let profile_bytes = superneo_core::serialize_decider_profile(decider_profile)
         .context("failed to serialize recursive decider profile")?;
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.recursive-decider-proof.v1");
-    hasher.update(&pk.params_fingerprint);
-    hasher.update(&pk.shape_digest.0);
-    hasher.update(&profile_bytes);
-    hasher.update(&(statement_bytes.len() as u64).to_le_bytes());
-    hasher.update(&statement_bytes);
-    hasher.update(&(terminal_bytes.len() as u64).to_le_bytes());
-    hasher.update(&terminal_bytes);
-    hasher.update(transcript_digest);
-    Ok(hash48(hasher))
+    let statement_len = (statement_bytes.len() as u64).to_le_bytes();
+    let terminal_len = (terminal_bytes.len() as u64).to_le_bytes();
+    let mut hasher = superneo_proof_artifact_hasher(ROLE_RECURSIVE_DECIDER_PROOF_V2);
+    hasher
+        .update_part(&pk.params_fingerprint)
+        .update_part(&pk.shape_digest.0)
+        .update_part(&profile_bytes)
+        .update_part(&statement_len)
+        .update_part(&statement_bytes)
+        .update_part(&terminal_len)
+        .update_part(&terminal_bytes)
+        .update_part(transcript_digest);
+    Ok(hasher.finalize())
 }
 
 fn hex_nibble(value: u8) -> char {
@@ -3745,12 +3839,12 @@ mod tests {
     use super::{
         build_recursive_lcccs_instance, canonical_recursive_decider_transcript,
         clear_prepared_matrix_cache, recursive_backend_v2, reduce_fold_challenge,
-        reset_kernel_cost_report, review_fold_challenges, review_leaf_proof_digest,
-        take_kernel_cost_report, theorem_backed_transcript_soundness_bits, BackendManifest,
-        CommitmentSecurityModel, LatticeBackend, LatticeCommitment, NativeBackendParams,
-        NativeCommitmentScheme, PreparedCommitmentMatrix, PreparedMatrixCache,
-        RecursiveLatticeDeciderProof, RecursiveLatticeProofBundle, ReviewState, RingElem,
-        RingProfile,
+        reset_kernel_cost_report, review_fold_challenges, review_fold_proof_digest,
+        review_fold_statement_digest, review_leaf_proof_digest, take_kernel_cost_report,
+        theorem_backed_transcript_soundness_bits, BackendManifest, CommitmentSecurityModel,
+        LatticeBackend, LatticeCommitment, NativeBackendParams, NativeCommitmentScheme,
+        PreparedCommitmentMatrix, PreparedMatrixCache, RecursiveLatticeDeciderProof,
+        RecursiveLatticeProofBundle, ReviewState, RingElem, RingProfile,
     };
     use std::sync::Arc;
 
@@ -4003,6 +4097,19 @@ mod tests {
                 &left_commitment,
             )
             .unwrap();
+        assert_eq!(
+            left_proof.proof_digest,
+            review_leaf_proof_digest(
+                backend.native_params(),
+                pk.shape_digest,
+                &superneo_ccs::RelationId::from_label("test"),
+                &left_statement.statement_digest,
+                &left_packed,
+                &left_commitment.digest,
+            )
+            .unwrap(),
+            "producer and independent review helper must use the same V2 leaf digest",
+        );
         let right_proof = backend
             .prove_leaf(
                 &pk,
@@ -4046,6 +4153,31 @@ mod tests {
         let (parent, proof) = backend
             .fold_pair(&pk, &left_instance, &right_instance)
             .unwrap();
+        assert_eq!(
+            parent.statement_digest,
+            review_fold_statement_digest(
+                &left_instance.statement_digest,
+                &right_instance.statement_digest,
+                &proof.challenges,
+                &proof.parent_commitment_digest,
+            ),
+            "producer and independent review helper must use the same V2 fold statement digest",
+        );
+        assert_eq!(
+            proof.proof_digest,
+            review_fold_proof_digest(
+                backend.native_params(),
+                pk.shape_digest,
+                &left_instance.relation_id,
+                &left_instance,
+                &right_instance,
+                &proof.challenges,
+                &proof.parent_statement_digest,
+                &proof.parent_rows,
+            )
+            .unwrap(),
+            "producer and independent review helper must use the same V2 fold proof digest",
+        );
         backend
             .verify_fold(&vk, &parent, &left_instance, &right_instance, &proof)
             .unwrap();
@@ -4066,25 +4198,48 @@ mod tests {
             statement_digest: digest_statement(b"left"),
         };
         let commitment = backend.commit_witness(&pk, &packed).unwrap();
+        let relation_id = superneo_ccs::RelationId::from_label("test");
         let proof = backend
-            .prove_leaf(
-                &pk,
-                &superneo_ccs::RelationId::from_label("test"),
-                &statement,
-                &packed,
-                &commitment,
-            )
+            .prove_leaf(&pk, &relation_id, &statement, &packed, &commitment)
             .unwrap();
+        let mut legacy_hasher = blake3::Hasher::new();
+        legacy_hasher.update(b"hegemon.superneo.leaf-proof.v2");
+        legacy_hasher.update(&pk.params_fingerprint);
+        legacy_hasher.update(pk.ring_profile.label());
+        legacy_hasher.update(&pk.shape_digest.0);
+        legacy_hasher.update(&relation_id.0);
+        legacy_hasher.update(&pk.security_bits.to_le_bytes());
+        legacy_hasher.update(&pk.challenge_bits.to_le_bytes());
+        legacy_hasher.update(&pk.max_fold_arity.to_le_bytes());
+        legacy_hasher.update(&pk.transcript_domain_digest);
+        legacy_hasher.update(&(pk.commitment_rows as u64).to_le_bytes());
+        legacy_hasher.update(&(pk.ring_degree as u64).to_le_bytes());
+        legacy_hasher.update(&pk.digit_bits.to_le_bytes());
+        legacy_hasher.update(&pk.opening_randomness_bits.to_le_bytes());
+        legacy_hasher.update(&statement.statement_digest.0);
+        legacy_hasher.update(&commitment.digest);
+        legacy_hasher.update(&(packed.original_len as u64).to_le_bytes());
+        legacy_hasher.update(&(packed.used_bits as u64).to_le_bytes());
+        legacy_hasher.update(&packed.coeff_capacity_bits.to_le_bytes());
+        legacy_hasher.update(&(packed.coeffs.len() as u64).to_le_bytes());
+        for coeff in &packed.coeffs {
+            legacy_hasher.update(&coeff.to_le_bytes());
+        }
+        let mut legacy_digest = [0u8; 48];
+        legacy_hasher.finalize_xof().fill(&mut legacy_digest);
+        assert_ne!(proof.proof_digest, legacy_digest);
+        let mut legacy_proof = proof.clone();
+        legacy_proof.proof_digest = legacy_digest;
+        assert!(
+            backend
+                .verify_leaf(&vk, &relation_id, &statement, &packed, &legacy_proof)
+                .is_err(),
+            "legacy BLAKE3-XOF48 leaf proof digests must reject"
+        );
         let mut tampered = packed.clone();
         tampered.coeffs[0] ^= 1;
         assert!(backend
-            .verify_leaf(
-                &vk,
-                &superneo_ccs::RelationId::from_label("test"),
-                &statement,
-                &tampered,
-                &proof,
-            )
+            .verify_leaf(&vk, &relation_id, &statement, &tampered, &proof,)
             .is_err());
     }
 
@@ -4608,6 +4763,54 @@ mod tests {
         )
         .unwrap();
         assert_ne!(digest_a, digest_b);
+    }
+
+    #[test]
+    fn v2_artifact_digest_roles_order_and_counts_do_not_alias() {
+        fn framed(role: &[u8], parts: &[&[u8]]) -> [u8; 48] {
+            let mut hasher = super::superneo_proof_artifact_hasher(role);
+            for part in parts {
+                hasher.update_part(part);
+            }
+            hasher.finalize()
+        }
+
+        let count_two = 2u32.to_le_bytes();
+        let count_three = 3u32.to_le_bytes();
+        let challenges_ab = [1u64, 2u64]
+            .into_iter()
+            .flat_map(u64::to_le_bytes)
+            .collect::<Vec<_>>();
+        let challenges_ba = [2u64, 1u64]
+            .into_iter()
+            .flat_map(u64::to_le_bytes)
+            .collect::<Vec<_>>();
+        let challenges_abc = [1u64, 2u64, 0u64]
+            .into_iter()
+            .flat_map(u64::to_le_bytes)
+            .collect::<Vec<_>>();
+
+        let fold = framed(super::ROLE_FOLD_PROOF_V2, &[&count_two, &challenges_ab]);
+        assert_ne!(
+            fold,
+            framed(super::ROLE_LEAF_PROOF_V2, &[&count_two, &challenges_ab],),
+            "fixed role labels must not alias"
+        );
+        assert_ne!(
+            fold,
+            framed(super::ROLE_FOLD_PROOF_V2, &[&count_two, &challenges_ba],),
+            "ordered children/challenges must not alias"
+        );
+        assert_ne!(
+            fold,
+            framed(super::ROLE_FOLD_PROOF_V2, &[&count_three, &challenges_abc],),
+            "explicit vector counts must not alias"
+        );
+        assert_ne!(
+            framed(super::ROLE_FOLD_PROOF_V2, &[b"a", b"bc"]),
+            framed(super::ROLE_FOLD_PROOF_V2, &[b"ab", b"c"]),
+            "framed part boundaries must not alias"
+        );
     }
 
     #[test]

@@ -1,8 +1,10 @@
 import Hegemon.Transaction.SmallWoodSemanticClosure
 import Hegemon.Transaction.NoteCommitmentInputs
+import Hegemon.Transaction.Poseidon2NoteCommitment
 import Hegemon.Transaction.PublicInputBinding
 import Hegemon.Transaction.SmallWoodProductionSemanticSpec
 import Hegemon.Transaction.StatementHash
+import Hegemon.Transaction.SmallWoodKnowledgeSoundnessReduction
 
 set_option maxHeartbeats 0
 set_option maxRecDepth 1000000
@@ -16,6 +18,7 @@ open Hegemon.Transaction.ProofWrapperAdmission
 open Hegemon.Transaction.PublicInputs
 open Hegemon.Transaction.SmallWoodSemanticClosure
 open Hegemon.Transaction.SpendAuthorization
+open Hegemon.Transaction.SmallWoodKnowledgeSoundnessReduction
 
 def activePublicFieldRanges : List PublicFieldRange :=
   [ { name := "input_flags", start := 0, stop := 2 },
@@ -464,10 +467,16 @@ theorem production_note_preimage_has_exact_deployed_word_count
     (productionNotePreimage opening).length = 18 := by
   simp [productionNotePreimage, productionWords4]
 
-opaque productionPoseidon2Sponge : Nat -> List Nat -> Digest
+def productionPoseidon2Sponge (domainTag : Nat) (preimage : List Nat) : List Nat :=
+  Poseidon2NoteCommitment.deployedPoseidon2Sponge domainTag preimage
+
+def productionPoseidon2DigestEncoding (digestFelts : List Nat) : Digest :=
+  digestFelts.foldl
+    (fun digest limb => digest * goldilocksModulus + fieldValue limb) 0
 
 def productionNoteHash (opening : ProductionNoteOpening) : Digest :=
-  productionPoseidon2Sponge 1 (productionNotePreimage opening)
+  productionPoseidon2DigestEncoding
+    (productionPoseidon2Sponge 1 (productionNotePreimage opening))
 
 def ProductionHashCollisionResistance (spec : ProductionNoteHashSpec) : Prop :=
   deployedProductionNoteHashSpecAccepts spec = true
@@ -664,7 +673,7 @@ def productionNonlinearConstraintFamilyIndices : List Nat :=
     NonlinearConstraintFamilySpan.indices
 
 theorem production_nonlinear_constraint_families_cover_every_root_exactly_once :
-    productionNonlinearConstraintFamilyIndices = List.range 1722 := by
+    productionNonlinearConstraintFamilyIndices = List.range 890 := by
   native_decide
 
 structure ProductionLinearConstraintSpec where
@@ -704,9 +713,9 @@ def productionOutputCommitmentLane
 def productionOutputCommitmentPoseidonRow
     (map : ProductionConstraintMap)
     (output chunk step limb : Nat) : Nat :=
-  415 +
-    ((productionOutputCommitmentPermutation output chunk / map.lppcPackingFactor) * 31 + step) *
-      12 + limb
+  273
+    + (productionOutputCommitmentPermutation output chunk / map.lppcPackingFactor) * 142
+    + (if step = 0 then limb else 130 + limb)
 
 def productionOutputCommitmentPoseidonIndex
     (map : ProductionConstraintMap)
@@ -808,9 +817,9 @@ def productionInputCommitmentLane
 def productionInputCommitmentPoseidonRow
     (map : ProductionConstraintMap)
     (input chunk step limb : Nat) : Nat :=
-  415 +
-    ((productionInputCommitmentPermutation input chunk / map.lppcPackingFactor) * 31 + step) *
-      12 + limb
+  273
+    + (productionInputCommitmentPermutation input chunk / map.lppcPackingFactor) * 142
+    + (if step = 0 then limb else 130 + limb)
 
 def productionInputCommitmentPoseidonIndex
     (map : ProductionConstraintMap)
@@ -851,56 +860,69 @@ def productionInputValueRow (input : Nat) : Nat :=
 def productionOutputValueRow (output : Nat) : Nat :=
   68 + output * 12
 
-def productionValueRangeBaseRow : Nat := 92
+def productionDenseRangeBaseRow : Nat := 241
 
-def productionRangeLimbCount : Nat := 21
+def productionDenseRangeOrdinaryDigitCount : Nat := 30
 
-def productionRangeLimbBits : Nat := 3
+def productionDenseRangeRowCount : Nat := 5
 
-def productionRangeLimbCoefficient (limb : Nat) : Nat :=
-  2 ^ (limb * productionRangeLimbBits)
+def productionDenseRangeDigitRow (value digit : Nat) : Nat :=
+  productionDenseRangeBaseRow
+    + (value * productionDenseRangeOrdinaryDigitCount + digit) / 64
 
-def productionInputValueRangeRow (input limb : Nat) : Nat :=
-  productionValueRangeBaseRow + input * productionRangeLimbCount + limb
+def productionDenseRangeDigitLane (value digit : Nat) : Nat :=
+  (value * productionDenseRangeOrdinaryDigitCount + digit) % 64
 
-def productionOutputValueRangeRow (output limb : Nat) : Nat :=
-  productionValueRangeBaseRow + (2 + output) * productionRangeLimbCount + limb
+def productionDenseRangeTopRow : Nat :=
+  productionDenseRangeBaseRow + productionDenseRangeRowCount - 1
 
-def productionPublicValueRangeRow (rangeSlot limb : Nat) : Nat :=
-  productionValueRangeBaseRow + (4 + rangeSlot) * productionRangeLimbCount + limb
+def productionDenseRangeCoefficient (digit : Nat) : Nat :=
+  4 ^ digit
 
 def productionWitnessValueReconstructionSpec
     (map : ProductionConstraintMap)
     (valueRow : Nat)
-    (rangeRow : Nat → Nat) : ProductionLinearConstraintSpec :=
+    (valueIndex : Nat) : ProductionLinearConstraintSpec :=
   { termIndices :=
       productionPackedWitnessIndex map valueRow 0 ::
-        (List.range productionRangeLimbCount).map fun limb =>
-          productionPackedWitnessIndex map (rangeRow limb) 0
+        (List.range productionDenseRangeOrdinaryDigitCount).map (fun digit =>
+          productionPackedWitnessIndex map
+            (productionDenseRangeDigitRow valueIndex digit)
+            (productionDenseRangeDigitLane valueIndex digit))
+        ++ [productionPackedWitnessIndex map productionDenseRangeTopRow valueIndex]
     termCoefficients :=
-      1 :: (List.range productionRangeLimbCount).map fun limb =>
-        goldilocksModulus - productionRangeLimbCoefficient limb
+      1 :: (List.range productionDenseRangeOrdinaryDigitCount).map (fun digit =>
+        goldilocksModulus - productionDenseRangeCoefficient digit)
+        ++ [goldilocksModulus -
+          productionDenseRangeCoefficient productionDenseRangeOrdinaryDigitCount]
     target := 0 }
 
 def productionInputValueReconstructionSpec
     (map : ProductionConstraintMap)
     (input : Nat) : ProductionLinearConstraintSpec :=
   productionWitnessValueReconstructionSpec map
-    (productionInputValueRow input) (productionInputValueRangeRow input)
+    (productionInputValueRow input) input
 
 def productionOutputValueReconstructionSpec
     (map : ProductionConstraintMap)
     (output : Nat) : ProductionLinearConstraintSpec :=
   productionWitnessValueReconstructionSpec map
-    (productionOutputValueRow output) (productionOutputValueRangeRow output)
+    (productionOutputValueRow output) (2 + output)
 
 def productionPublicValueReconstructionSpec
     (map : ProductionConstraintMap)
     (rangeSlot publicValueIndex : Nat) : ProductionLinearConstraintSpec :=
-  { termIndices := (List.range productionRangeLimbCount).map fun limb =>
-      productionPackedWitnessIndex map (productionPublicValueRangeRow rangeSlot limb) 0
-    termCoefficients := (List.range productionRangeLimbCount).map
-      productionRangeLimbCoefficient
+  let valueIndex := 4 + rangeSlot
+  { termIndices :=
+      (List.range productionDenseRangeOrdinaryDigitCount).map (fun digit =>
+        productionPackedWitnessIndex map
+          (productionDenseRangeDigitRow valueIndex digit)
+          (productionDenseRangeDigitLane valueIndex digit))
+        ++ [productionPackedWitnessIndex map productionDenseRangeTopRow valueIndex]
+    termCoefficients :=
+      (List.range productionDenseRangeOrdinaryDigitCount).map
+        productionDenseRangeCoefficient
+        ++ [productionDenseRangeCoefficient productionDenseRangeOrdinaryDigitCount]
     target := publicValueAt map.publicValues publicValueIndex }
 
 def productionMonetaryReconstructionRequiredLinearSpecs
@@ -942,7 +964,7 @@ def productionOutputHashRequiredLinearSpecsPresentB
 
 def productionOutputHashLinearBindingsBoundB
     (map : ProductionConstraintMap) : Bool :=
-  decide (map.lppcRowCount = 1531 ∧ map.lppcPackingFactor = 64)
+  decide (map.lppcRowCount = 699 ∧ map.lppcPackingFactor = 64)
     && (List.range 2).all fun output =>
       if publicValueAt map.publicValues (2 + output) = 1 then
         productionOutputHashRequiredLinearSpecsPresentB map output
@@ -969,7 +991,7 @@ def productionInputHashRequiredLinearSpecsPresentB
 
 def productionInputHashLinearBindingsBoundB
     (map : ProductionConstraintMap) : Bool :=
-  decide (map.lppcRowCount = 1531 ∧ map.lppcPackingFactor = 64)
+  decide (map.lppcRowCount = 699 ∧ map.lppcPackingFactor = 64)
     && (List.range 2).all fun input =>
       if publicValueAt map.publicValues input = 1 then
         productionInputHashRequiredLinearSpecsPresentB map input
@@ -985,7 +1007,7 @@ def productionMonetaryReconstructionBindingsBoundB
     (map : ProductionConstraintMap) : Bool :=
   let indices := productionMonetaryReconstructionConstraintIndices map
   let required := productionMonetaryReconstructionRequiredLinearSpecs map
-  decide (map.lppcRowCount = 1531 ∧ map.lppcPackingFactor = 64)
+  decide (map.lppcRowCount = 699 ∧ map.lppcPackingFactor = 64)
     && decide (indices.length = required.length)
     && (List.range required.length).all fun binding =>
       let constraint := indices.getD binding 0
@@ -1108,10 +1130,10 @@ def productionActivityPatternPublicValues (mask : Nat) : List Nat :=
     ++ List.replicate 45 0
     ++ [0, productionBalanceSlotPadding, productionBalanceSlotPadding,
       productionBalanceSlotPadding]
-    ++ List.replicate 23 0 ++ [3, 2]
+    ++ List.replicate 23 0 ++ [4, 3]
 
 def productionPublicValuesWithBalanceSlots (slots : List Nat) : List Nat :=
-  List.replicate 49 0 ++ slots ++ List.replicate 23 0 ++ [3, 2]
+  List.replicate 49 0 ++ slots ++ List.replicate 23 0 ++ [4, 3]
 
 theorem canonical_production_balance_slots_accept_native_and_padding_suffix :
     canonicalProductionPublicValuesB
@@ -1814,20 +1836,20 @@ structure ProductionConcreteSemanticConsequences
     ProductionConcreteBalanceConservation map witnessValues
 
 theorem production_nonlinear_root_count_is_exact :
-    productionNonlinearConstraintRoots.length = 1722 := by
+    productionNonlinearConstraintRoots.length = 890 := by
   rfl
 
 theorem production_equations_give_concrete_span
     {map : ProductionConstraintMap}
     {witnessValues : List Nat}
     (mapBound : ProductionConstraintMapBound map)
-    (nonlinearConstraintCount : map.nonlinearConstraintCount = 1722)
+    (nonlinearConstraintCount : map.nonlinearConstraintCount = 890)
     (equations :
       forall lane, lane < map.lppcPackingFactor →
         forall constraint, constraint < map.nonlinearConstraintCount →
           nonlinearConstraintEquation map witnessValues lane constraint)
     (span : NonlinearConstraintFamilySpan)
-    (spanBound : span.start + span.count ≤ 1722) :
+    (spanBound : span.start + span.count ≤ 890) :
     ProductionConcreteConstraintSpanSatisfied map witnessValues span := by
   intro lane laneBound relativeConstraint relativeBound
   apply production_nonlinear_equation_has_concrete_tree_meaning mapBound
@@ -1851,7 +1873,7 @@ theorem production_balance_equations_give_concrete_conservation
     {map : ProductionConstraintMap}
     {witnessValues : List Nat}
     (mapBound : ProductionConstraintMapBound map)
-    (nonlinearConstraintCount : map.nonlinearConstraintCount = 1722)
+    (nonlinearConstraintCount : map.nonlinearConstraintCount = 890)
     (equations :
       forall lane, lane < map.lppcPackingFactor →
         forall constraint, constraint < map.nonlinearConstraintCount →
@@ -1913,6 +1935,12 @@ def productionOutputCommitmentFelts
     (output : Nat) : List Nat :=
   (List.range 6).map fun limb =>
     publicValueAt map.publicValues (16 + output * 6 + limb)
+
+def productionOutputCommitmentDigest
+    (map : ProductionConstraintMap)
+    (output : Nat) : Digest :=
+  (productionOutputCommitmentFelts map output).foldl
+    (fun digest limb => digest * goldilocksModulus + fieldValue limb) 0
 
 def productionOutputHashTraceValue
     (map : ProductionConstraintMap)
@@ -2105,17 +2133,70 @@ structure ProductionAcceptedOutputHashImage
     forall binding,
       binding < (productionOutputHashRequiredLinearSpecs map output).length →
         ProductionLinearConstraintSpecExecuted map witnessValues
-          ((productionOutputHashRequiredLinearSpecs map output).getD binding
-            zeroProductionLinearConstraintSpec)
+            ((productionOutputHashRequiredLinearSpecs map output).getD binding
+              zeroProductionLinearConstraintSpec)
 
-def ProductionPoseidon2HashCollisionResistance
-    (spec : ProductionNoteHashSpec) : Prop :=
+def productionDeployedPoseidon2Digest
+    (spec : ProductionNoteHashSpec)
+    (preimage : List Nat) : List Nat :=
+  productionPoseidon2Sponge spec.domainTag preimage
+
+def ProductionPoseidon2NoCollisionFor
+    (spec : ProductionNoteHashSpec)
+    (leftPreimage rightPreimage : List Nat) : Prop :=
   deployedProductionNoteHashSpecAccepts spec = true
-    ∧ forall map leftWitness rightWitness output,
-      ProductionAcceptedOutputHashImage map leftWitness output →
+    ∧ (productionDeployedPoseidon2Digest spec leftPreimage =
+          productionDeployedPoseidon2Digest spec rightPreimage →
+        leftPreimage = rightPreimage)
+
+def ProductionAcceptedOutputHashDigestBinding
+    (spec : ProductionNoteHashSpec)
+    (map : ProductionConstraintMap)
+    (witnessValues : List Nat)
+    (output : Nat) : Prop :=
+  productionDeployedPoseidon2Digest spec
+      (productionOutputHashPreimage map witnessValues output) =
+    productionOutputCommitmentFelts map output
+
+/--
+Explicit implementation-refinement boundary: accepted constraint rows must compute the same
+six-limb deployed Poseidon2 digest as the six public commitment limbs. The exact-map equation
+families do not presently prove this bridge.
+-/
+def ProductionPoseidon2ConstraintDigestRefinementAssumption
+    (spec : ProductionNoteHashSpec) : Prop :=
+  ∀ map witnessValues output,
+    ProductionAcceptedOutputHashImage map witnessValues output →
+      ProductionAcceptedOutputHashDigestBinding spec map witnessValues output
+
+def ProductionPoseidon2AcceptedOutputNoCollisionAssumption
+    (spec : ProductionNoteHashSpec) : Prop :=
+  ∀ map leftWitness rightWitness output,
+    ProductionAcceptedOutputHashImage map leftWitness output →
       ProductionAcceptedOutputHashImage map rightWitness output →
-      productionOutputHashPreimage map leftWitness output =
-        productionOutputHashPreimage map rightWitness output
+        ProductionPoseidon2NoCollisionFor spec
+          (productionOutputHashPreimage map leftWitness output)
+          (productionOutputHashPreimage map rightWitness output)
+
+structure ProductionPoseidon2OutputSecurityAssumptions
+    (spec : ProductionNoteHashSpec) : Prop where
+  constraintDigestRefinement : ProductionPoseidon2ConstraintDigestRefinementAssumption spec
+  noCollisionForAcceptedOutputs : ProductionPoseidon2AcceptedOutputNoCollisionAssumption spec
+
+theorem production_accepted_output_hash_digest_bindings_have_equal_deployed_digest
+    {spec : ProductionNoteHashSpec}
+    {map : ProductionConstraintMap}
+    {leftWitness rightWitness : List Nat}
+    {output : Nat}
+    (leftBinding :
+      ProductionAcceptedOutputHashDigestBinding spec map leftWitness output)
+    (rightBinding :
+      ProductionAcceptedOutputHashDigestBinding spec map rightWitness output) :
+    productionDeployedPoseidon2Digest spec
+        (productionOutputHashPreimage map leftWitness output) =
+      productionDeployedPoseidon2Digest spec
+        (productionOutputHashPreimage map rightWitness output) := by
+  exact leftBinding.trans rightBinding.symm
 
 theorem production_output_hash_preimage_equality_binds_value_and_asset
     {map : ProductionConstraintMap}
@@ -2138,9 +2219,9 @@ theorem production_output_hash_preimage_equality_binds_value_and_asset
   · simpa [productionOutputHashPreimage] using firstEqual
   · simpa [productionOutputHashPreimage] using secondEqual
 
-theorem production_poseidon2_collision_resistance_binds_accepted_output_value_and_asset
+theorem production_poseidon2_no_collision_binds_accepted_output_value_and_asset
     {spec : ProductionNoteHashSpec}
-    (collisionResistance : ProductionPoseidon2HashCollisionResistance spec)
+    (security : ProductionPoseidon2OutputSecurityAssumptions spec)
     {map : ProductionConstraintMap}
     {leftWitness rightWitness : List Nat}
     {output : Nat}
@@ -2155,7 +2236,11 @@ theorem production_poseidon2_collision_resistance_binds_accepted_output_value_an
           productionOutputAsset map rightWitness
             (productionOutputCommitmentLane map output 0) output := by
   apply production_output_hash_preimage_equality_binds_value_and_asset
-  exact collisionResistance.2 map leftWitness rightWitness output leftImage rightImage
+  apply (security.noCollisionForAcceptedOutputs
+    map leftWitness rightWitness output leftImage rightImage).2
+  exact production_accepted_output_hash_digest_bindings_have_equal_deployed_digest
+    (security.constraintDigestRefinement map leftWitness output leftImage)
+    (security.constraintDigestRefinement map rightWitness output rightImage)
 
 def ProductionLinearConstraintEquations
     (map : ProductionConstraintMap)
@@ -2227,7 +2312,7 @@ structure ProductionSmallWoodSemanticConstraintsSatisfied
     ExactProductionConstraintMapEvaluates map witnessValues
   sparseTableWellFormed : map.sparseTableWellFormed
   witnessLength : witnessValues.length = map.lppcRowCount * map.lppcPackingFactor
-  nonlinearConstraintCount : map.nonlinearConstraintCount = 1722
+  nonlinearConstraintCount : map.nonlinearConstraintCount = 890
   linearConstraintEquations :
     ProductionLinearConstraintEquations map witnessValues
   counterfeitCriticalLinearBindings :
@@ -2294,7 +2379,7 @@ theorem production_smallwood_air_rows_are_implementation_equivalent
     of_decide_eq_true witnessLengthDecision
   simp only [nonlinearProgramEvaluatesB, Bool.and_eq_true] at nonlinearRows
   obtain ⟨nonlinearCountDecision, nonlinearLanes⟩ := nonlinearRows
-  have nonlinearConstraintCount : exactMap.nonlinearConstraintCount = 1722 :=
+  have nonlinearConstraintCount : exactMap.nonlinearConstraintCount = 890 :=
     of_decide_eq_true nonlinearCountDecision
   have linearConstraintEquations :
       forall constraint, constraint < exactMap.linearConstraintCount ->
@@ -2326,7 +2411,7 @@ theorem production_smallwood_air_rows_are_implementation_equivalent
     exact equation
   have familyEquations
       (span : NonlinearConstraintFamilySpan)
-      (spanBound : span.start + span.count <= 1722) :
+      (spanBound : span.start + span.count <= 890) :
       ProductionNonlinearFamilyEquations exactMap witnessValues span := by
     apply production_nonlinear_equations_include_family
       nonlinearConstraintEquations span
@@ -2379,14 +2464,126 @@ theorem production_smallwood_air_rows_are_implementation_equivalent
 structure ProductionSmallWoodProofVerifier where
   accepts : List Byte → List Byte → Digest → ProofWrapperInput → Bool
 
-def DeployedSmallWoodProofSystemSoundnessAssumption
+structure DeployedSmallWoodProtocolStatement where
+  exactMap : ProductionConstraintMap
+  serializedPublicInputBytes : List Byte
+  verifierProfile : Digest
+  wrapper : ProofWrapperInput
+
+def deployedSmallWoodProtocolStatement
+    (exactMap : ProductionConstraintMap)
+    (serializedPublicInputBytes : List Byte)
+    (verifierProfile : Digest)
+    (wrapper : ProofWrapperInput) : DeployedSmallWoodProtocolStatement :=
+  { exactMap
+    serializedPublicInputBytes
+    verifierProfile
+    wrapper }
+
+abbrev DeployedSmallWoodProtocolModel :=
+  ProtocolModel
+    DeployedSmallWoodProtocolStatement
+    (List Byte)
+    (List Byte)
+    (List Nat)
+    (List Nat)
+    (List Nat)
+
+abbrev DeployedSmallWoodPrimitiveFailures :=
+  PrimitiveFailurePredicates DeployedSmallWoodProtocolStatement (List Byte)
+
+structure DeployedSmallWoodKnowledgeSoundnessReduction
     (verifier : ProductionSmallWoodProofVerifier)
     (exactMap : ProductionConstraintMap)
     (proofBytes serializedPublicInputBytes : List Byte)
     (verifierProfile : Digest)
-    (wrapper : ProofWrapperInput) : Prop :=
-  verifier.accepts proofBytes serializedPublicInputBytes verifierProfile wrapper = true →
-    exists witnessValues, ExactProductionConstraintMapEvaluates exactMap witnessValues
+    (wrapper : ProofWrapperInput) : Type where
+  model : DeployedSmallWoodProtocolModel
+  primitiveFailures : DeployedSmallWoodPrimitiveFailures
+  protocolReduction : KnowledgeSoundnessReduction model primitiveFailures
+  productionVerifierImplementationMismatch : Prop
+  productionAcceptanceRefinesProtocol :
+    verifier.accepts proofBytes serializedPublicInputBytes verifierProfile wrapper = true →
+      model.verifies
+          (deployedSmallWoodProtocolStatement exactMap serializedPublicInputBytes
+            verifierProfile wrapper)
+          proofBytes = true
+        ∨ productionVerifierImplementationMismatch
+  protocolRelationRefinesExactMap :
+    ∀ witnessValues,
+      model.relation
+          (deployedSmallWoodProtocolStatement exactMap serializedPublicInputBytes
+            verifierProfile wrapper)
+          witnessValues →
+        ExactProductionConstraintMapEvaluates exactMap witnessValues
+
+def DeployedSmallWoodSoundnessFailure
+    {verifier : ProductionSmallWoodProofVerifier}
+    {exactMap : ProductionConstraintMap}
+    {proofBytes serializedPublicInputBytes : List Byte}
+    {verifierProfile : Digest}
+    {wrapper : ProofWrapperInput}
+    (reduction :
+      DeployedSmallWoodKnowledgeSoundnessReduction verifier exactMap proofBytes
+        serializedPublicInputBytes verifierProfile wrapper) : Prop :=
+  reduction.productionVerifierImplementationMismatch
+    ∨ ProtocolSoundnessFailure reduction.primitiveFailures
+        (deployedSmallWoodProtocolStatement exactMap serializedPublicInputBytes
+          verifierProfile wrapper)
+        proofBytes
+
+structure DeployedSmallWoodKnowledgeSoundnessEvidence
+    (verifier : ProductionSmallWoodProofVerifier)
+    (exactMap : ProductionConstraintMap)
+    (proofBytes serializedPublicInputBytes : List Byte)
+    (verifierProfile : Digest)
+    (wrapper : ProofWrapperInput) : Type where
+  reduction :
+    DeployedSmallWoodKnowledgeSoundnessReduction verifier exactMap proofBytes
+      serializedPublicInputBytes verifierProfile wrapper
+  noNamedSoundnessFailure : ¬ DeployedSmallWoodSoundnessFailure reduction
+
+theorem accepted_smallwood_proof_yields_exact_witness_or_named_failure
+    {verifier : ProductionSmallWoodProofVerifier}
+    {exactMap : ProductionConstraintMap}
+    {proofBytes serializedPublicInputBytes : List Byte}
+    {verifierProfile : Digest}
+    {wrapper : ProofWrapperInput}
+    (accepted :
+      verifier.accepts proofBytes serializedPublicInputBytes verifierProfile wrapper = true)
+    (reduction :
+      DeployedSmallWoodKnowledgeSoundnessReduction verifier exactMap proofBytes
+        serializedPublicInputBytes verifierProfile wrapper) :
+    (exists witnessValues,
+        ExactProductionConstraintMapEvaluates exactMap witnessValues)
+      ∨ DeployedSmallWoodSoundnessFailure reduction := by
+  rcases reduction.productionAcceptanceRefinesProtocol accepted with
+    protocolAccepted | implementationMismatch
+  · rcases accepted_protocol_yields_witness_or_named_failure
+      reduction.protocolReduction protocolAccepted with witness | protocolFailure
+    · obtain ⟨witnessValues, _, relation⟩ := witness
+      exact Or.inl ⟨witnessValues,
+        reduction.protocolRelationRefinesExactMap witnessValues relation⟩
+    · exact Or.inr (Or.inr protocolFailure)
+  · exact Or.inr (Or.inl implementationMismatch)
+
+theorem accepted_smallwood_proof_yields_exact_witness_outside_named_failures
+    {verifier : ProductionSmallWoodProofVerifier}
+    {exactMap : ProductionConstraintMap}
+    {proofBytes serializedPublicInputBytes : List Byte}
+    {verifierProfile : Digest}
+    {wrapper : ProofWrapperInput}
+    (accepted :
+      verifier.accepts proofBytes serializedPublicInputBytes verifierProfile wrapper = true)
+    (evidence :
+      DeployedSmallWoodKnowledgeSoundnessEvidence verifier exactMap proofBytes
+        serializedPublicInputBytes verifierProfile wrapper) :
+    exists witnessValues,
+      ExactProductionConstraintMapEvaluates exactMap witnessValues := by
+  rcases accepted_smallwood_proof_yields_exact_witness_or_named_failure
+      accepted evidence.reduction with witness | failure
+  · exact witness
+  · exact False.elim (evidence.noNamedSoundnessFailure failure)
 
 theorem accepted_smallwood_proof_yields_exact_semantic_constraints
     {verifier : ProductionSmallWoodProofVerifier}
@@ -2397,19 +2594,71 @@ theorem accepted_smallwood_proof_yields_exact_semantic_constraints
     (accepted :
       verifier.accepts proofBytes serializedPublicInputBytes verifierProfile wrapper = true)
     (mapBound : ProductionConstraintMapBound exactMap)
-    (proofSystemSoundness :
-      DeployedSmallWoodProofSystemSoundnessAssumption verifier exactMap proofBytes
+    (knowledgeSoundness :
+      DeployedSmallWoodKnowledgeSoundnessEvidence verifier exactMap proofBytes
         serializedPublicInputBytes verifierProfile wrapper) :
     exists witnessValues,
       ProductionSmallWoodSemanticConstraintsSatisfied exactMap witnessValues := by
-  obtain ⟨witnessValues, exactRows⟩ := proofSystemSoundness accepted
+  obtain ⟨witnessValues, exactRows⟩ :=
+    accepted_smallwood_proof_yields_exact_witness_outside_named_failures
+      accepted knowledgeSoundness
   exact ⟨witnessValues,
     production_smallwood_air_rows_are_implementation_equivalent mapBound exactRows⟩
+
+structure ProductionSmallWoodCanonicalSemanticProjection where
+  spendWitnesses : List Nat → List InputSpendWitness
+  inputRows : List Nat → List SmallWoodInputConstraintRow
+  outputWitnesses : List Nat → List SmallWoodOutputWitness
+  outputRows : List Nat → List SmallWoodOutputConstraintRow
+  balanceWitness : List Nat → BalanceWitness
+  balanceSlots : List Nat → List BalanceSlot
+
+/--
+Explicit same-witness specification-refinement boundary. The production map currently exposes
+packed field rows, while `SmallWoodSemanticClosure` uses typed witnesses and its legacy semantic
+hash/Merkle model; no fieldwise decoder/refinement theorem between those models is available.
+-/
+structure ProductionSmallWoodCanonicalSemanticRefinementAssumption
+    (exactMap : ProductionConstraintMap)
+    (shape : PublicInputShape)
+    (merkleRoot : Digest) where
+  projection : ProductionSmallWoodCanonicalSemanticProjection
+  exactRowsRefine :
+    ∀ witnessValues,
+      ProductionSmallWoodSemanticConstraintsSatisfied exactMap witnessValues →
+        SmallWoodSemanticConstraintsSatisfied
+          shape
+          merkleRoot
+          (projection.spendWitnesses witnessValues)
+          (projection.inputRows witnessValues)
+          (projection.outputWitnesses witnessValues)
+          (projection.outputRows witnessValues)
+          (projection.balanceWitness witnessValues)
+          (projection.balanceSlots witnessValues)
+
+def ProductionSmallWoodSameWitnessCanonicalSemanticClosure
+    (exactMap : ProductionConstraintMap)
+    (shape : PublicInputShape)
+    (merkleRoot : Digest) : Prop :=
+  ∃ projection : ProductionSmallWoodCanonicalSemanticProjection,
+    ∃ witnessValues,
+      ProductionSmallWoodSemanticConstraintsSatisfied exactMap witnessValues
+        ∧ SmallWoodSemanticConstraintsSatisfied
+          shape
+          merkleRoot
+          (projection.spendWitnesses witnessValues)
+          (projection.inputRows witnessValues)
+          (projection.outputWitnesses witnessValues)
+          (projection.outputRows witnessValues)
+          (projection.balanceWitness witnessValues)
+          (projection.balanceSlots witnessValues)
 
 structure ProductionAcceptedTransactionRelation
     (verifier : ProductionSmallWoodProofVerifier)
     (exactMap : ProductionConstraintMap)
     (canonicalPublicValues : List Nat)
+    (shape : PublicInputShape)
+    (merkleRoot : Digest)
     (proofBytes serializedPublicInputBytes : List Byte)
     (verifierProfile : Digest)
     (wrapper : ProofWrapperInput) : Prop where
@@ -2418,14 +2667,15 @@ structure ProductionAcceptedTransactionRelation
     verifier.accepts proofBytes serializedPublicInputBytes verifierProfile wrapper = true
   constraintMapBound : ProductionConstraintMapBound exactMap
   canonicalPublicValuesBound : exactMap.publicValues = canonicalPublicValues
-  exactSemanticConstraints :
-    exists witnessValues,
-      ProductionSmallWoodSemanticConstraintsSatisfied exactMap witnessValues
+  sameWitnessCanonicalSemanticClosure :
+    ProductionSmallWoodSameWitnessCanonicalSemanticClosure exactMap shape merkleRoot
 
-theorem accepted_smallwood_proof_yields_transaction_relation
+theorem accepted_smallwood_proof_under_canonical_semantic_refinement_yields_transaction_relation
     {verifier : ProductionSmallWoodProofVerifier}
     {exactMap : ProductionConstraintMap}
     {canonicalPublicValues : List Nat}
+    {shape : PublicInputShape}
+    {merkleRoot : Digest}
     {proofBytes serializedPublicInputBytes : List Byte}
     {verifierProfile : Digest}
     {wrapper : ProofWrapperInput}
@@ -2434,35 +2684,91 @@ theorem accepted_smallwood_proof_yields_transaction_relation
       verifier.accepts proofBytes serializedPublicInputBytes verifierProfile wrapper = true)
     (mapBound : ProductionConstraintMapBound exactMap)
     (publicValuesBound : exactMap.publicValues = canonicalPublicValues)
-    (proofSystemSoundness :
-      DeployedSmallWoodProofSystemSoundnessAssumption verifier exactMap proofBytes
-        serializedPublicInputBytes verifierProfile wrapper) :
+    (knowledgeSoundness :
+      DeployedSmallWoodKnowledgeSoundnessEvidence verifier exactMap proofBytes
+        serializedPublicInputBytes verifierProfile wrapper)
+    (semanticRefinement :
+      ProductionSmallWoodCanonicalSemanticRefinementAssumption exactMap shape merkleRoot) :
     ProductionAcceptedTransactionRelation verifier exactMap canonicalPublicValues
-      proofBytes serializedPublicInputBytes verifierProfile wrapper :=
-  { wrapperAccepted
-    exactProofArtifactAccepted := artifactAccepted
-    constraintMapBound := mapBound
-    canonicalPublicValuesBound := publicValuesBound
-    exactSemanticConstraints :=
-      accepted_smallwood_proof_yields_exact_semantic_constraints
-        artifactAccepted mapBound proofSystemSoundness }
+      shape merkleRoot proofBytes serializedPublicInputBytes verifierProfile wrapper := by
+  obtain ⟨witnessValues, exactSemanticConstraints⟩ :=
+    accepted_smallwood_proof_yields_exact_semantic_constraints
+      artifactAccepted mapBound knowledgeSoundness
+  exact
+    { wrapperAccepted
+      exactProofArtifactAccepted := artifactAccepted
+      constraintMapBound := mapBound
+      canonicalPublicValuesBound := publicValuesBound
+      sameWitnessCanonicalSemanticClosure :=
+        ⟨semanticRefinement.projection, witnessValues, exactSemanticConstraints,
+          semanticRefinement.exactRowsRefine witnessValues exactSemanticConstraints⟩ }
 
-theorem production_accepted_transaction_relation_exposes_same_witness_semantics
+theorem production_accepted_transaction_relation_exposes_canonical_transaction_semantics
     {verifier : ProductionSmallWoodProofVerifier}
     {exactMap : ProductionConstraintMap}
     {canonicalPublicValues : List Nat}
+    {shape : PublicInputShape}
+    {merkleRoot : Digest}
     {proofBytes serializedPublicInputBytes : List Byte}
     {verifierProfile : Digest}
     {wrapper : ProofWrapperInput}
     (relation :
       ProductionAcceptedTransactionRelation verifier exactMap canonicalPublicValues
-        proofBytes serializedPublicInputBytes verifierProfile wrapper) :
+        shape merkleRoot proofBytes serializedPublicInputBytes verifierProfile wrapper) :
+    ∃ spendWitnesses : List InputSpendWitness,
+      ∃ inputRows : List SmallWoodInputConstraintRow,
+        ∃ outputWitnesses : List SmallWoodOutputWitness,
+          ∃ outputRows : List SmallWoodOutputConstraintRow,
+            ∃ balanceWitness : BalanceWitness,
+              ∃ slots : List BalanceSlot,
+                SmallWoodSemanticConstraintsSatisfied
+                    shape
+                    merkleRoot
+                    spendWitnesses
+                    inputRows
+                    outputWitnesses
+                    outputRows
+                    balanceWitness
+                    slots
+                  ∧ AcceptedTransactionRelation
+                    wrapper
+                    shape
+                    merkleRoot
+                    spendWitnesses
+                    balanceWitness
+                    slots := by
+  rcases relation.sameWitnessCanonicalSemanticClosure with
+    ⟨projection, witnessValues, _, semanticConstraints⟩
+  exact
+    ⟨projection.spendWitnesses witnessValues,
+      projection.inputRows witnessValues,
+      projection.outputWitnesses witnessValues,
+      projection.outputRows witnessValues,
+      projection.balanceWitness witnessValues,
+      projection.balanceSlots witnessValues,
+      semanticConstraints,
+      accepted_proof_and_semantic_constraints_imply_transaction_relation
+        relation.wrapperAccepted semanticConstraints⟩
+
+theorem production_accepted_transaction_relation_exposes_same_witness_semantics
+    {verifier : ProductionSmallWoodProofVerifier}
+    {exactMap : ProductionConstraintMap}
+    {canonicalPublicValues : List Nat}
+    {shape : PublicInputShape}
+    {merkleRoot : Digest}
+    {proofBytes serializedPublicInputBytes : List Byte}
+    {verifierProfile : Digest}
+    {wrapper : ProofWrapperInput}
+    (relation :
+      ProductionAcceptedTransactionRelation verifier exactMap canonicalPublicValues
+        shape merkleRoot proofBytes serializedPublicInputBytes verifierProfile wrapper) :
     exists witnessValues,
       ExactProductionConstraintMapEvaluates exactMap witnessValues
         ∧ ProductionSpendAuthorizationConstraintRelation exactMap witnessValues
         ∧ ProductionOutputValidityConstraintRelation exactMap witnessValues
         ∧ ProductionBalanceConservationConstraintRelation exactMap witnessValues := by
-  obtain ⟨witnessValues, semanticConstraints⟩ := relation.exactSemanticConstraints
+  obtain ⟨_, witnessValues, semanticConstraints, _⟩ :=
+    relation.sameWitnessCanonicalSemanticClosure
   exact
     ⟨witnessValues, semanticConstraints.exactConstraintEvaluation,
       semanticConstraints.spendAuthorization,

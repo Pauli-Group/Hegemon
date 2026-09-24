@@ -1,0 +1,79 @@
+{
+  "artifact": "characteristic-two-hvzk-sumcheck-kernel",
+  "claims": {
+    "complete_zk": false,
+    "e384_irreducibility_reproved_here": false,
+    "fiat_shamir_qrom": false,
+    "fresh_independent_masks_required": true,
+    "frontier_eligible": false,
+    "full_extension_masks_required": true,
+    "local_perfect_hiding": true,
+    "mask_source_must_be_bound_before_challenges": true,
+    "round_consistency_preserved": true,
+    "sound_binding_implemented": false,
+    "strict_pq128": false,
+    "terminal_delta_must_remain_hidden": true
+  },
+  "construction": {
+    "delta_recurrence": "Delta_i=Delta_(i-1)*r_i+a_i+b_i*Z(r_i)",
+    "field": "E384=GF(2^128)[Y]/(Y^3+Y+1)",
+    "fresh_full_extension_masks_per_quadratic_round": 2,
+    "fresh_full_extension_masks_for_degree_d": "d",
+    "fresh_full_extension_masks_per_linear_round": 1,
+    "incoming_offset": "Delta_(i-1)*X",
+    "round_mask": "a_i+b_i*Z(X)",
+    "z_polynomial": "X*(X+1)=X^2+X"
+  },
+  "mixed_field": {
+    "b128_modulus_kat": "pass",
+    "b128_only_mask_cosets_disjoint": "proved",
+    "deterministic_e384_cases": 192,
+    "e384_linear_round_encoding_bytes": 48,
+    "e384_round_encoding_bytes": 96,
+    "e384_y_times_y2_kat": "pass"
+  },
+  "open_obligations": [
+    "bind a zero-sum mask polynomial or all round-mask coins before challenges",
+    "import the separate E384 irreducibility certificate",
+    "prove the hidden terminal relation against the committed witness",
+    "open only the combined masked terminal value",
+    "jointly simulate commitments, PCS openings, FRI, Merkle, and outer Spartan",
+    "prove the Fiat--Shamir/QROM composition and exact abort conditioning",
+    "price the binding/hiding PCS rather than treating local zero overhead as complete"
+  ],
+  "scope": "local-degree-aware-linear-and-quadratic-round-view-only",
+  "small_field": {
+    "linear_affine_fibers_exhausted": 64,
+    "missing_constant_mask_tv": "1",
+    "proper_subfield_mask_tv": "1",
+    "quadratic_affine_fibers_exhausted": 256,
+    "reused_constant_mask_tv": "1",
+    "reused_z_mask_tv": "1",
+    "revealed_terminal_delta_constant_translation_tv": "1",
+    "two_round_constant_translation_visible_tv": "0",
+    "unbound_terminal_false_sum_accepts": "true"
+  },
+  "wire": {
+    "binding_commitment_and_opening_bytes": null,
+    "consistency_elision_bytes_per_round": 48,
+    "dense_three_coefficient_bytes_per_round": 144,
+    "e384_bytes": 48,
+    "explicit_e384_elements_per_quadratic_round": 2,
+    "explicit_terminal_delta_bytes": 0,
+    "forbidden_revealed_terminal_delta_bytes": 48,
+    "n15_private_randomness_bytes": 1440,
+    "n15_visible_bytes": 1440,
+    "private_randomness_bytes_per_round": 96,
+    "qualifying_complete_proof_bytes": null,
+    "quadratic_round_wire_coefficients": [
+      "c0",
+      "c1"
+    ],
+    "raw_hidden_mask_material_formula": "96*rounds",
+    "mixed_degree_hidden_mask_material_formula": "48*linear_rounds+96*quadratic_rounds",
+    "mixed_degree_visible_bytes_formula": "48*linear_rounds+96*quadratic_rounds",
+    "reconstructed_coefficient": "c2=current_claim+c1",
+    "visible_bytes_formula": "96*rounds",
+    "visible_bytes_per_quadratic_round": 96
+  }
+}

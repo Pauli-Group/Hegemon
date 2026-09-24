@@ -1,0 +1,183 @@
+{
+  "artifact": "Aurora binary relation mapping negative closeout",
+  "artifact_schema": "hegemon.hx512b01.binary-r1cs.negative-closeout.v1",
+  "verdict": "NO_EXECUTABLE_CHARACTERISTIC_TWO_SPARSE_R1CS",
+  "status": "fail-closed source-macro projection only; no executable binary sparse relation, backend, proof, security, refinement, or production authority",
+  "authority": {
+    "aurora_backend_implemented": false,
+    "aurora_theorem_applies_to_a_retained_matrix": false,
+    "binary_field_profile_selected": false,
+    "complete_zero_knowledge_proved_for_noninteractive_proof": false,
+    "composed_qrom_pq128_proved": false,
+    "consensus_parent_state_authentication_refined": false,
+    "exact_final_geometry_certified": false,
+    "exact_native_verifier_refinement_proved": false,
+    "executable_characteristic_two_sparse_r1cs": false,
+    "expanded_sparse_matrix_retained": false,
+    "fiat_shamir_instantiated": false,
+    "full_binary_relation_compiled": false,
+    "production_authorized": false,
+    "proof_artifact_retained": false,
+    "proof_bytes_measured": false,
+    "release_manifest_authorized": false,
+    "round_by_round_knowledge_soundness_proved": false,
+    "source_macro_to_binary_matrix_refinement_proved": false
+  },
+  "frozen_semantic_inputs": {
+    "statement_bytes": 1141,
+    "verifier_context_bytes": 72,
+    "public_bits_l": 9704,
+    "private_transport_bytes": 11000,
+    "private_transport_bits": 88000,
+    "inputs": 2,
+    "outputs": 2,
+    "activity_masks": 16,
+    "authorization_modes": 5,
+    "mask_mode_pairs": 80,
+    "accepted_mask_mode_pairs": 33,
+    "rejected_mask_mode_pairs": 47,
+    "relation_physical_hash_calls": 90,
+    "relation_blake2b512_compressions": 213,
+    "coverage_in_executable_binary_matrix": false
+  },
+  "last_reproducible_pre_correction_projection": {
+    "claim_boundary": "source-macro counts only; not final geometry and not retained A/B/C coordinates",
+    "source_odd_field_m_constraints": 29509133,
+    "m_constraints": 37364095,
+    "n_nonconstant_variables": 21531353,
+    "l_public_variables": 9704,
+    "matrix_nonzeros_total": 156526483,
+    "characteristic_two_row_delta": 7854962,
+    "characteristic_two_variable_delta": 16,
+    "characteristic_two_nonzero_delta": 33331943,
+    "expanded_coordinates_retained": false,
+    "verified_ir_to_matrix_lowering": false
+  },
+  "corrected_final_geometry": {
+    "m_constraints": null,
+    "n_nonconstant_variables": null,
+    "l_public_variables": 9704,
+    "matrix_nonzeros_total": null,
+    "reason": "policy-master repair and executable IR never froze; no corrected binary lowering exists"
+  },
+  "policy_master_drift": {
+    "retained_pre_correction_rows": 1536,
+    "live_semantic_required_rows": 2560,
+    "missing_rows": 1024,
+    "retained_source_projection_m": 29509133,
+    "live_semantic_source_m": 29510157,
+    "two_independent_masters_bytes": 128,
+    "current_policy_master": {
+      "offset_bytes": 6088,
+      "bytes": 64
+    },
+    "next_policy_master": {
+      "offset_bytes": 6152,
+      "bytes": 64
+    },
+    "mode_contract": {
+      "single_key": "current=zero64 and next=zero64",
+      "accumulator_init": "current=zero64; policy/auth use next",
+      "approval_step": "current=next; first opening uses current and second uses next",
+      "value_lock_creation": "next=zero64; active lanes use current",
+      "final_threshold_spend": "next=zero64; active lanes use current"
+    },
+    "entropy_caveat": "relation equality and zero constraints do not prove wallet generation, uniform sampling, retention, erasure, or lifecycle of active 64-byte masters",
+    "corrected_binary_geometry_recomputed": false
+  },
+  "all_w64_v2_mapping": {
+    "profile": "fresh-v2-all-w64-merkle-w64",
+    "native_type": "StablecoinManifestPublicAuthorityV2",
+    "kernel_source": "protocol/kernel/src/stablecoin_manifest_authority_v2.rs",
+    "kernel_source_sha512": "99268907680ebff599f992e64f15cc9730f451eebd08b6e92776e66ee9afe567d6bf19eb1c1ff2482a3ea4a737a43e941cd04b7cb18f8e533239abdd474d395f",
+    "module_export_only": true,
+    "live_consensus_route": false,
+    "row_bytes": 215,
+    "slot_bytes": 216,
+    "cap": 16,
+    "depth": 4,
+    "membership_semantic_bytes": 475,
+    "membership_transport_bytes": 480,
+    "relation_hash_calls": 7,
+    "membership_relation_blake2b512_compressions": 7,
+    "snapshot_relation_blake2b512_compressions": 1,
+    "total_relation_blake2b512_compressions": 8,
+    "policy_version_domain": "all canonical u32 values including zero",
+    "legacy_48_byte_migration": "reject padding, truncation, and rehash",
+    "context": {
+      "grammar": "manifest_root64 || parent_height:u64le",
+      "bytes": 72,
+      "snapshot_preimage": "parent_height:u64le || manifest_root64",
+      "snapshot_substitution_for_context_allowed": false,
+      "source_macro_equates_statement_manifest_root_and_height": true,
+      "native_parent_authentication_refined": false
+    }
+  },
+  "hx512_identity": {
+    "statement_magic": "HX512B01",
+    "statement_grammar": 1,
+    "circuit_version_hex": "0x5121",
+    "crypto_suite_hex": "0x512b",
+    "family_id_hex": "0x5123",
+    "action_id_hex": "0x5124",
+    "network_id_hex": "0x48583531",
+    "backend_id_hex": "0x51",
+    "proof_profile_hex": "0x52",
+    "domain_set_hex": "0x5127",
+    "identity_bound_by_executable_binary_matrix": false
+  },
+  "aurora_padding_projection": {
+    "basis": "last reproducible pre-correction source-macro projection only",
+    "h1_padded_constraints": 67108864,
+    "h2_padded_z_including_constant": 33554432,
+    "t_max_h1_h2": 67108864,
+    "adapter_m_constraints": 67108864,
+    "adapter_n_variables_excluding_constant": 33554431,
+    "adapter_k_explicit_public_inputs": 16383,
+    "public_zero_padding": 6679,
+    "original_private_and_derived_index_shift": 6679,
+    "zero_constraint_rows": 29744769,
+    "zero_matrix_witness_variables": 12016399,
+    "source_transport_mapping": "each byte is eight separate least-significant-bit-first Boolean field variables; no 2^i field packing",
+    "field_extension_degree": null,
+    "irreducible_polynomial": null,
+    "strict_degree_greater_than_codeword_dimension_witnessed": false,
+    "shifted_domain_disjointness_proved": false,
+    "padding_is_not_backend_or_proof_authority": true
+  },
+  "characteristic_two_repairs_screened": {
+    "odd_field_add_carry_coefficients_reusable": false,
+    "two_row_boolean_full_adder_required_without_selected_beta": true,
+    "parity_only_five_way_one_hot_exact": false,
+    "pairwise_zero_plus_parity_one_hot_required": true,
+    "repairs_lowered_into_full_sparse_matrix": false
+  },
+  "decisive_gaps": [
+    "no frozen executable typed relation IR or zero-residual mutation certificate",
+    "no canonical materialized characteristic-two A/B/C coordinates",
+    "no verified wire allocation for all 90 hash calls and seven V2 authority calls",
+    "four former host predicates reject only in reference and macro evidence",
+    "policy-master source schedule differs by 1024 rows from the retained count projection",
+    "no source-macro-to-binary-matrix refinement",
+    "no selected binary extension field or irreducible polynomial",
+    "no strict extension-degree witness and no shifted-domain disjointness proof",
+    "no native derivation of manifest root and height from authenticated canonical parent state"
+  ],
+  "aurora_theorem_9_2": {
+    "paper": "Aurora: Transparent Succinct Arguments for R1CS",
+    "paper_sha512": "ad9351a0f7010d57fb9f3482fa442a213a2f9192f82f319f6bed74cef07733ece1f95dad8270523e52c80daa1a7f7a33505fc665afafc32dfbf90e4de5971d41",
+    "geometry_condition": "2*max(m,n+1)+2*b <= rho*|L|",
+    "applicability_to_target_relation": null,
+    "reason": "no retained executable binary-field R1CS instance",
+    "proof_symbols": null,
+    "proof_bytes": null,
+    "security_bits": null
+  },
+  "proof": {
+    "artifact": null,
+    "bytes": null,
+    "measured": false,
+    "complete_zero_knowledge": false,
+    "composed_qrom_strict_gt_128": false
+  }
+}

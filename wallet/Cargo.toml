@@ -36,8 +36,10 @@ synthetic-crypto = { path = "../crypto" }
 protocol-versioning = { path = "../protocol/versioning" }
 protocol-kernel = { path = "../protocol/kernel" }
 protocol-shielded-pool = { path = "../protocol/shielded-pool" }
+hegemon-hash384 = { path = "../crypto/hash384" }
 twox-hash = "1.6"
 zeroize = { version = "1.8", features = ["derive"] }
+hegemon-standalone-full-shake256-relation-prototype = { path = "../circuits/standalone-full-shake256-relation-prototype", optional = true }
 
 [dev-dependencies]
 assert_cmd = "2"
@@ -48,6 +50,17 @@ proptest = "1"
 [features]
 default = ["rpc-client"]
 rpc-client = ["dep:jsonrpsee-core", "dep:jsonrpsee-http-client", "dep:jsonrpsee-ws-client"]
+# Exposes only the pure retained-lifecycle JSON request projection used by the
+# node's ignored integration test. It does not install proof authority or alter
+# the wallet's production submission path.
+poseidon2-v8-retained-test-support = ["rpc-client"]
+prospective-full-m4 = ["dep:hegemon-standalone-full-shake256-relation-prototype"]
+hx512-working-proof = ["transaction-circuit/hx512-working-proof-runner"]
+
+[[example]]
+name = "hx512_prove_verify"
+path = "examples/hx512_prove_verify.rs"
+required-features = ["hx512-working-proof"]
 
 [[bin]]
 name = "wallet"

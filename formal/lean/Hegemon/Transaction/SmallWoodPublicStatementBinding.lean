@@ -6,35 +6,66 @@ namespace SmallWoodPublicStatementBinding
 
 open Hegemon.Transaction.SmallWoodTranscriptBinding
 
-def p3PublicInputBaseLength : Nat := 76
+def verifierPublicInputBaseLength : Nat := 76
 
 def smallwoodPublicStatementValueCount : Nat :=
-  p3PublicInputBaseLength + 2
+  verifierPublicInputBaseLength + 2
 
 def smallwoodPublicStatementValues
-    (p3PublicValues : List Nat)
+    (verifierPublicValues : List Nat)
     (circuitVersion cryptoSuite : Nat) : List Nat :=
-  p3PublicValues ++ [circuitVersion, cryptoSuite]
+  verifierPublicValues ++ [circuitVersion, cryptoSuite]
+
+def activeRawWitnessLength : Nat := 241
+def activeRelationRowCount : Nat := 699
+def activePoseidonPermutationCount : Nat := 172
+def activePoseidonStateRowCount : Nat :=
+  activePoseidonPermutationCount *
+    SmallWoodTranscriptBinding.compressedRowsPerPermutation
+def activeExpandedWitnessLength : Nat :=
+  activeRelationRowCount * 64
+def activePackingFactor : Nat := 64
+def activeEffectiveConstraintDegree : Nat := 8
+
+def bincodeVecU64 (values : List Nat) : List Byte :=
+  u64le values.length ++ (values.map u64le).flatten
+
+/--
+Exact bincode 1.x encoding of the active Rust `SmallwoodPublicStatement`.
+
+The field order and widths match the production Rust structure:
+`Vec<u64>`, six `u32` geometry fields, then two `u16` fields. The geometry is
+consensus-fixed for the active 64-lane compressed relation.
+-/
+def smallwoodPublicStatementBytes (statementValues : List Nat) : List Byte :=
+  bincodeVecU64 statementValues
+    ++ u32le statementValues.length
+    ++ u32le activeRawWitnessLength
+    ++ u32le activeRelationRowCount
+    ++ u32le activePoseidonPermutationCount
+    ++ u32le activePoseidonStateRowCount
+    ++ u32le activeExpandedWitnessLength
+    ++ u16le activePackingFactor
+    ++ u16le activeEffectiveConstraintDegree
 
 def validSmallwoodPublicStatementValues
-    (p3PublicValues statementValues : List Nat)
+    (verifierPublicValues statementValues : List Nat)
     (circuitVersion cryptoSuite : Nat) : Bool :=
-  p3PublicValues.length = p3PublicInputBaseLength
+  verifierPublicValues.length = verifierPublicInputBaseLength
     && statementValues =
       smallwoodPublicStatementValues
-        p3PublicValues
+        verifierPublicValues
         circuitVersion
         cryptoSuite
 
 structure PublicStatementSurface where
-  p3PublicValues : List Nat
+  verifierPublicValues : List Nat
   statementValues : List Nat
   circuitVersion : Nat
   cryptoSuite : Nat
   arithmetization : Nat
   statementBytes : List Byte
   transcriptBytes : List Byte
-  statementBytesBindStatementValues : Prop
 
 def transcriptSurface (surface : PublicStatementSurface) :
     TranscriptSurface :=
@@ -46,76 +77,109 @@ def transcriptSurface (surface : PublicStatementSurface) :
 
 def acceptedSmallwoodPublicStatementBinding
     (surface : PublicStatementSurface) : Prop :=
-  surface.p3PublicValues.length = p3PublicInputBaseLength
+  surface.verifierPublicValues.length = verifierPublicInputBaseLength
     ∧ surface.statementValues =
       smallwoodPublicStatementValues
-        surface.p3PublicValues
+        surface.verifierPublicValues
         surface.circuitVersion
         surface.cryptoSuite
-    ∧ surface.statementBytesBindStatementValues
+    ∧ surface.statementBytes =
+      smallwoodPublicStatementBytes surface.statementValues
     ∧ acceptedSmallwoodTranscriptBinding (transcriptSurface surface)
 
 structure SmallWoodPublicStatementBindingFacts
     (surface : PublicStatementSurface) : Prop where
-  p3BaseLength :
-    surface.p3PublicValues.length = p3PublicInputBaseLength
+  verifierBaseLength :
+    surface.verifierPublicValues.length = verifierPublicInputBaseLength
   statementValuesAppendVersion :
     surface.statementValues =
-      surface.p3PublicValues ++ [surface.circuitVersion, surface.cryptoSuite]
+      surface.verifierPublicValues ++ [surface.circuitVersion, surface.cryptoSuite]
   statementValuesExactLength :
     surface.statementValues.length = smallwoodPublicStatementValueCount
   statementBytesBoundary :
-    surface.statementBytesBindStatementValues
+    surface.statementBytes =
+      smallwoodPublicStatementBytes surface.statementValues
   transcriptBinding :
     acceptedSmallwoodTranscriptBinding (transcriptSurface surface)
 
-theorem base_p3_public_vector_length :
-    p3PublicInputBaseLength = 76 := by
+theorem base_verifier_public_vector_length :
+    verifierPublicInputBaseLength = 76 := by
   rfl
 
 theorem smallwood_public_statement_values_append_version_binding
-    (p3PublicValues : List Nat)
+    (verifierPublicValues : List Nat)
     (circuitVersion cryptoSuite : Nat) :
     smallwoodPublicStatementValues
-        p3PublicValues
+        verifierPublicValues
         circuitVersion
         cryptoSuite =
-      p3PublicValues ++ [circuitVersion, cryptoSuite] := by
+      verifierPublicValues ++ [circuitVersion, cryptoSuite] := by
   rfl
 
 theorem smallwood_public_statement_values_length
-    {p3PublicValues : List Nat}
+    {verifierPublicValues : List Nat}
     {circuitVersion cryptoSuite : Nat}
-    (baseLen : p3PublicValues.length = p3PublicInputBaseLength) :
+    (baseLen : verifierPublicValues.length = verifierPublicInputBaseLength) :
     (smallwoodPublicStatementValues
-        p3PublicValues
+        verifierPublicValues
         circuitVersion
         cryptoSuite).length =
       smallwoodPublicStatementValueCount := by
   simp
     [smallwoodPublicStatementValues,
       smallwoodPublicStatementValueCount,
-      p3PublicInputBaseLength,
+      verifierPublicInputBaseLength,
       baseLen]
 
-theorem accepted_smallwood_public_statement_binding_exposes_p3_prefix
+theorem active_public_statement_geometry :
+    activeRawWitnessLength = 241
+      ∧ activeRelationRowCount = 699
+      ∧ activePoseidonPermutationCount = 172
+      ∧ activePoseidonStateRowCount = 24424
+      ∧ activeExpandedWitnessLength = 44736
+      ∧ activePackingFactor = 64
+      ∧ activeEffectiveConstraintDegree = 8 := by
+  decide
+
+theorem smallwood_public_statement_bytes_length
+    {statementValues : List Nat}
+    (statementLength :
+      statementValues.length = smallwoodPublicStatementValueCount) :
+    (smallwoodPublicStatementBytes statementValues).length = 660 := by
+  have encodedValuesLength :
+      ((statementValues.map u64le).flatten).length =
+        statementValues.length * 8 := by
+    clear statementLength
+    induction statementValues with
+    | nil => rfl
+    | cons value rest induction =>
+        simp only [List.map_cons, List.flatten_cons, List.length_append,
+          List.length_cons]
+        rw [u64le_length, induction]
+        omega
+  simp [smallwoodPublicStatementBytes, bincodeVecU64,
+    smallwoodPublicStatementValueCount, verifierPublicInputBaseLength,
+    encodedValuesLength, statementLength, u64le_length, u32le_length,
+    u16le_length]
+
+theorem accepted_smallwood_public_statement_binding_exposes_verifier_prefix
     {surface : PublicStatementSurface}
     (accepted : acceptedSmallwoodPublicStatementBinding surface) :
     surface.statementValues =
-      surface.p3PublicValues ++ [surface.circuitVersion, surface.cryptoSuite] := by
+      surface.verifierPublicValues ++ [surface.circuitVersion, surface.cryptoSuite] := by
   rcases accepted with ⟨_baseLen, statementValues, _bytesBoundary, _transcript⟩
   simpa [smallwoodPublicStatementValues] using statementValues
 
 theorem accepted_smallwood_public_statement_binding_exposes_version_suffix
     {surface : PublicStatementSurface}
     (accepted : acceptedSmallwoodPublicStatementBinding surface) :
-    ∃ p3Prefix,
+    ∃ verifierPrefix,
       surface.statementValues =
-        p3Prefix ++ [surface.circuitVersion, surface.cryptoSuite]
-        ∧ p3Prefix = surface.p3PublicValues := by
+        verifierPrefix ++ [surface.circuitVersion, surface.cryptoSuite]
+        ∧ verifierPrefix = surface.verifierPublicValues := by
   exact
-    ⟨surface.p3PublicValues,
-      accepted_smallwood_public_statement_binding_exposes_p3_prefix accepted,
+    ⟨surface.verifierPublicValues,
+      accepted_smallwood_public_statement_binding_exposes_verifier_prefix accepted,
       rfl⟩
 
 theorem accepted_smallwood_public_statement_binding_forbids_public_value_extension
@@ -126,7 +190,7 @@ theorem accepted_smallwood_public_statement_binding_forbids_public_value_extensi
   rw [statementValues]
   exact
     smallwood_public_statement_values_length
-      (p3PublicValues := surface.p3PublicValues)
+      (verifierPublicValues := surface.verifierPublicValues)
       (circuitVersion := surface.circuitVersion)
       (cryptoSuite := surface.cryptoSuite)
       baseLen
@@ -142,9 +206,9 @@ theorem accepted_smallwood_public_statement_binding_facts
     (accepted : acceptedSmallwoodPublicStatementBinding surface) :
     SmallWoodPublicStatementBindingFacts surface := by
   exact
-    { p3BaseLength := accepted.left,
+    { verifierBaseLength := accepted.left,
       statementValuesAppendVersion :=
-        accepted_smallwood_public_statement_binding_exposes_p3_prefix accepted,
+        accepted_smallwood_public_statement_binding_exposes_verifier_prefix accepted,
       statementValuesExactLength :=
         accepted_smallwood_public_statement_binding_forbids_public_value_extension accepted,
       statementBytesBoundary := accepted.right.right.left,

@@ -1,0 +1,4 @@
+import Mca38UniversalBadLineCount
+
+#print axioms HegemonCrypto.SmallWood.Mca38GlobalIncidenceAssembly.actual_global_incidence_label_count
+#print axioms HegemonCrypto.SmallWood.Mca38UniversalBadLineCount.universal_badLineLabels_65536

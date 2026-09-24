@@ -1,0 +1,6 @@
+import SmzaRp04McaLoss
+
+#print axioms HegemonCrypto.SmallWood.SmzaRp04McaRoleCells.matrix_bad_card_bound
+#print axioms HegemonCrypto.SmallWood.SmzaRp04McaRoleCells.matrix_bad_output_density
+#print axioms HegemonCrypto.SmallWood.SmzaRp04McaRoleCells.small_support_output_density
+#print axioms HegemonCrypto.SmallWood.SmzaRp04McaLoss.combined_mca_local_loss_below_265_bits

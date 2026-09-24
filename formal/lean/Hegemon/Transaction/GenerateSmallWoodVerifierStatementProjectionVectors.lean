@@ -93,64 +93,51 @@ def caseWith
     VerifierStatementProjectionInput :=
   f validInlineMerkleProjectionInput
 
+def activeProjectionCase
+    (name fixture : String)
+    (input : VerifierStatementProjectionInput) :
+    String × String × Nat × VerifierStatementProjectionInput :=
+  (name, fixture, arithDirectPacked64CompressedLevel5, input)
+
 def projectionCases : List (String × String × Nat × VerifierStatementProjectionInput) :=
-  [ ("active-inline-merkle-verifier-statement-projection", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      validInlineMerkleProjectionInput),
-    ("stablecoin-inline-merkle-verifier-statement-projection", "stablecoin_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      validInlineMerkleProjectionInput),
-    ("candidate-wrapper-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with candidateWrapperAccepted := false }),
-    ("public-statement-binding-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with publicStatementBindingAccepted := false }),
-    ("transcript-binding-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with transcriptBindingAccepted := false }),
-    ("arithmetization-mismatch-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with arithmetizationMatches := false }),
-    ("public-values-drift-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with publicValuesMatch := false }),
-    ("row-count-drift-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with rowCountMatches := false }),
-    ("packing-factor-drift-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with packingFactorMatches := false }),
-    ("constraint-degree-drift-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with constraintDegreeMatches := false }),
-    ("linear-offsets-drift-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with linearConstraintOffsetsMatch := false }),
-    ("linear-indices-drift-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with linearConstraintIndicesMatch := false }),
-    ("linear-coefficients-drift-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with linearConstraintCoefficientsMatch := false }),
-    ("linear-targets-drift-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with linearConstraintTargetsMatch := false }),
-    ("auxiliary-limb-count-drift-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with auxiliaryWitnessLimbCountMatches := false }),
-    ("profile-material-drift-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with profileMaterialMatches := false }),
-    ("transcript-bytes-drift-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with transcriptBytesMatch := false }),
-    ("empty-proof-bytes-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with proofBytesNonempty := false }),
-    ("verifier-rejected", "active_inline_merkle",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-      caseWith fun input => { input with verifierAccepted := false }) ]
+  [ activeProjectionCase "active-inline-merkle-verifier-statement-projection"
+      "active_inline_merkle" validInlineMerkleProjectionInput,
+    activeProjectionCase "stablecoin-inline-merkle-verifier-statement-projection"
+      "stablecoin_inline_merkle" validInlineMerkleProjectionInput,
+    activeProjectionCase "candidate-wrapper-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with candidateWrapperAccepted := false }),
+    activeProjectionCase "public-statement-binding-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with publicStatementBindingAccepted := false }),
+    activeProjectionCase "transcript-binding-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with transcriptBindingAccepted := false }),
+    activeProjectionCase "arithmetization-mismatch-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with arithmetizationMatches := false }),
+    activeProjectionCase "public-values-drift-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with publicValuesMatch := false }),
+    activeProjectionCase "row-count-drift-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with rowCountMatches := false }),
+    activeProjectionCase "packing-factor-drift-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with packingFactorMatches := false }),
+    activeProjectionCase "constraint-degree-drift-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with constraintDegreeMatches := false }),
+    activeProjectionCase "linear-offsets-drift-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with linearConstraintOffsetsMatch := false }),
+    activeProjectionCase "linear-indices-drift-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with linearConstraintIndicesMatch := false }),
+    activeProjectionCase "linear-coefficients-drift-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with linearConstraintCoefficientsMatch := false }),
+    activeProjectionCase "linear-targets-drift-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with linearConstraintTargetsMatch := false }),
+    activeProjectionCase "auxiliary-limb-count-drift-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with auxiliaryWitnessLimbCountMatches := false }),
+    activeProjectionCase "profile-material-drift-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with profileMaterialMatches := false }),
+    activeProjectionCase "transcript-bytes-drift-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with transcriptBytesMatch := false }),
+    activeProjectionCase "empty-proof-bytes-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with proofBytesNonempty := false }),
+    activeProjectionCase "verifier-rejected" "active_inline_merkle"
+      (caseWith fun input => { input with verifierAccepted := false }) ]
 
 def vectorJson : String :=
   "{\n"

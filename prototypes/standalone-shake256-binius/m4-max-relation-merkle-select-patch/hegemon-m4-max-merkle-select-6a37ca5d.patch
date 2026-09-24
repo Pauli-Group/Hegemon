@@ -1,0 +1,24 @@
+diff --git a/prototypes/standalone-shake256-binius/m4-full-production-prototype/src/lib.rs b/prototypes/standalone-shake256-binius/m4-full-production-prototype/src/lib.rs
+--- a/prototypes/standalone-shake256-binius/m4-full-production-prototype/src/lib.rs
++++ b/prototypes/standalone-shake256-binius/m4-full-production-prototype/src/lib.rs
+@@ -1544,14 +1544,12 @@ fn constrain_hashes(builder: &CircuitBuilder, wires: &FullM4Wires, modes: &ModeS
+         let mut current = note_commitments[index];
+         for (level, sibling) in wires.inputs[index].siblings.iter().enumerate() {
+             let direction_msb = builder.shl(position, 63 - level as u32);
+-            let mask = builder.sar(direction_msb, 63);
+-            let delta: [Wire; DIGEST_WORDS] = array::from_fn(|word| {
+-                builder.band(mask, builder.bxor(current[word], sibling[word]))
+-            });
+-            let left: [Wire; DIGEST_WORDS] =
+-                array::from_fn(|word| builder.bxor(current[word], delta[word]));
+-            let right: [Wire; DIGEST_WORDS] =
+-                array::from_fn(|word| builder.bxor(sibling[word], delta[word]));
++            let left: [Wire; DIGEST_WORDS] =
++                array::from_fn(|word| builder.select(direction_msb, sibling[word], current[word]));
++            let right: [Wire; DIGEST_WORDS] = array::from_fn(|word| {
++                let pair_xor = builder.bxor(current[word], sibling[word]);
++                builder.bxor(pair_xor, left[word])
++            });
+             let frame = semantic_frame(
+                 builder,
+                 ROLE_MERKLE,

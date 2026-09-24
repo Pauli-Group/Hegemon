@@ -8,6 +8,7 @@ use crate::{
     statement::RecursivePrefixStatementV1,
     BlockRecursionError, Digest32, Digest48,
 };
+use hegemon_field::GOLDILOCKS_MODULUS;
 use rayon::prelude::*;
 use std::sync::OnceLock;
 use transaction_circuit::{
@@ -21,7 +22,7 @@ use transaction_circuit::{
 };
 
 pub const RECURSIVE_BLOCK_ARTIFACT_VERSION_V2: u32 = 2;
-pub const RECURSIVE_BLOCK_ARTIFACT_BYTES_V2: usize = 523_736;
+pub const RECURSIVE_BLOCK_ARTIFACT_BYTES_V2: usize = 531_368;
 pub const TREE_RECURSIVE_CHUNK_SIZE_V2: usize = 1000;
 pub const TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2: usize = 1000;
 const TREE_RECURSIVE_WITNESS_ROW_COUNT_V2: usize = 1;
@@ -34,6 +35,9 @@ const CHUNK_RECORD_WITNESS_BYTES_V2: usize = CHUNK_RECORD_BYTES_V2 - 4;
 const CHUNK_SLOT_BYTES_V2: usize = CHUNK_RECORD_WITNESS_BYTES_V2;
 const TREE_CHILD_WITNESS_HEADER_BYTES_V2: usize = 8;
 const TREE_MERGE_SUMMARY_BYTES_V2: usize = 4 + (48 * 8);
+const TREE_AUXILIARY_BYTES_PER_DATA_WORD_V2: usize = 8;
+const TREE_AUXILIARY_ESCAPE_FLAGS_PER_WORD_V2: usize = 63;
+const TREE_AUXILIARY_ENCODING_LABEL_V2: &[u8] = b"goldilocks-escape-bitmap-63-v1";
 const EMPTY_LINEAR_OFFSETS_V2: [u32; 1] = [0];
 static TREE_PROOF_CAP_REPORT_V2: OnceLock<TreeProofCapReportV2> = OnceLock::new();
 
@@ -222,7 +226,7 @@ impl TreeRelationV2 {
         for _ in records.len()..TREE_RECURSIVE_CHUNK_SIZE_V2 {
             bytes.extend_from_slice(&[0u8; CHUNK_SLOT_BYTES_V2]);
         }
-        let auxiliary_witness_words = bytes_to_limbs_v2(&bytes);
+        let auxiliary_witness_words = bytes_to_limbs_v2(&bytes)?;
         Ok(Self {
             tree_level: 0,
             relation_kind: SmallwoodRecursiveRelationKindV1::ChunkA,
@@ -277,7 +281,7 @@ impl TreeRelationV2 {
         bytes.extend_from_slice(&merge_summary_bytes);
         bytes.extend_from_slice(&left.proof_bytes);
         bytes.extend_from_slice(&right.proof_bytes);
-        let auxiliary_witness_words = bytes_to_limbs_v2(&bytes);
+        let auxiliary_witness_words = bytes_to_limbs_v2(&bytes)?;
         Ok(Self {
             tree_level,
             relation_kind,
@@ -314,7 +318,7 @@ impl TreeRelationV2 {
         bytes.extend_from_slice(&merge_summary_bytes);
         bytes.extend_from_slice(&left_padded);
         bytes.extend_from_slice(&right_padded);
-        let auxiliary_witness_words = bytes_to_limbs_v2(&bytes);
+        let auxiliary_witness_words = bytes_to_limbs_v2(&bytes)?;
         Ok(Self {
             tree_level,
             relation_kind,
@@ -345,7 +349,7 @@ impl TreeRelationV2 {
         put_u32_v2(&mut bytes, child_kind as u32);
         put_u32_v2(&mut bytes, child.proof_bytes.len() as u32);
         bytes.extend_from_slice(&child.proof_bytes);
-        let auxiliary_witness_words = bytes_to_limbs_v2(&bytes);
+        let auxiliary_witness_words = bytes_to_limbs_v2(&bytes)?;
         Ok(Self {
             tree_level,
             relation_kind,
@@ -369,7 +373,7 @@ impl TreeRelationV2 {
         put_u32_v2(&mut bytes, child_kind as u32);
         put_u32_v2(&mut bytes, child.proof_bytes.len() as u32);
         bytes.extend_from_slice(&child_padded);
-        let auxiliary_witness_words = bytes_to_limbs_v2(&bytes);
+        let auxiliary_witness_words = bytes_to_limbs_v2(&bytes)?;
         Ok(Self {
             tree_level,
             relation_kind,
@@ -602,15 +606,52 @@ fn block_recursion_to_tx_error_v2(err: BlockRecursionError) -> TransactionCircui
     TransactionCircuitError::ConstraintViolationOwned(err.to_string())
 }
 
-fn bytes_to_limbs_v2(bytes: &[u8]) -> Vec<u64> {
-    bytes
-        .chunks(8)
-        .map(|chunk| {
-            let mut limb = [0u8; 8];
-            limb[..chunk.len()].copy_from_slice(chunk);
-            u64::from_le_bytes(limb)
-        })
-        .collect()
+fn auxiliary_witness_word_count_v2(byte_len: usize) -> Result<usize, BlockRecursionError> {
+    let data_word_count = byte_len.div_ceil(TREE_AUXILIARY_BYTES_PER_DATA_WORD_V2);
+    let escape_word_count = data_word_count.div_ceil(TREE_AUXILIARY_ESCAPE_FLAGS_PER_WORD_V2);
+    1usize
+        .checked_add(data_word_count)
+        .and_then(|count| count.checked_add(escape_word_count))
+        .ok_or(BlockRecursionError::InvalidField(
+            "tree_v2 auxiliary witness word count overflow",
+        ))
+}
+
+fn bytes_to_limbs_v2(bytes: &[u8]) -> Result<Vec<u64>, BlockRecursionError> {
+    let byte_len = u64::try_from(bytes.len())
+        .map_err(|_| BlockRecursionError::InvalidField("tree_v2 auxiliary witness byte length"))?;
+    if byte_len >= GOLDILOCKS_MODULUS {
+        return Err(BlockRecursionError::InvalidField(
+            "tree_v2 auxiliary witness byte length is not canonical",
+        ));
+    }
+
+    let data_word_count = bytes.len().div_ceil(TREE_AUXILIARY_BYTES_PER_DATA_WORD_V2);
+    let escape_word_count = data_word_count.div_ceil(TREE_AUXILIARY_ESCAPE_FLAGS_PER_WORD_V2);
+    let mut data_words = Vec::with_capacity(data_word_count);
+    let mut escape_words = vec![0u64; escape_word_count];
+    for (index, chunk) in bytes
+        .chunks(TREE_AUXILIARY_BYTES_PER_DATA_WORD_V2)
+        .enumerate()
+    {
+        let mut raw_bytes = [0u8; TREE_AUXILIARY_BYTES_PER_DATA_WORD_V2];
+        raw_bytes[..chunk.len()].copy_from_slice(chunk);
+        let raw_word = u64::from_le_bytes(raw_bytes);
+        if raw_word >= GOLDILOCKS_MODULUS {
+            data_words.push(raw_word - GOLDILOCKS_MODULUS);
+            escape_words[index / TREE_AUXILIARY_ESCAPE_FLAGS_PER_WORD_V2] |=
+                1u64 << (index % TREE_AUXILIARY_ESCAPE_FLAGS_PER_WORD_V2);
+        } else {
+            data_words.push(raw_word);
+        }
+    }
+
+    let mut out = Vec::with_capacity(auxiliary_witness_word_count_v2(bytes.len())?);
+    out.push(byte_len);
+    out.extend(data_words);
+    out.extend(escape_words);
+    debug_assert!(out.iter().all(|word| *word < GOLDILOCKS_MODULUS));
+    Ok(out)
 }
 
 fn limbs_to_exact_bytes_v2(
@@ -624,9 +665,73 @@ fn limbs_to_exact_bytes_v2(
             actual: limb_count,
         });
     }
-    let mut out = Vec::with_capacity(limb_count * 8);
-    for word in &words[..limb_count] {
-        out.extend_from_slice(&word.to_le_bytes());
+    let words = &words[..limb_count];
+    let byte_len_word = *words.first().ok_or(BlockRecursionError::InvalidLength {
+        what: "tree_v2 witness limbs",
+        expected: 1,
+        actual: 0,
+    })?;
+    if words.iter().any(|word| *word >= GOLDILOCKS_MODULUS) {
+        return Err(BlockRecursionError::InvalidField(
+            "tree_v2 witness limb is not canonical",
+        ));
+    }
+    let byte_len = usize::try_from(byte_len_word)
+        .map_err(|_| BlockRecursionError::InvalidField("tree_v2 auxiliary witness byte length"))?;
+    let data_word_count = byte_len.div_ceil(TREE_AUXILIARY_BYTES_PER_DATA_WORD_V2);
+    let expected_word_count = auxiliary_witness_word_count_v2(byte_len)?;
+    if limb_count != expected_word_count {
+        return Err(BlockRecursionError::InvalidLength {
+            what: "tree_v2 encoded witness limbs",
+            expected: expected_word_count,
+            actual: limb_count,
+        });
+    }
+    let escape_words = &words[1 + data_word_count..];
+    if escape_words
+        .iter()
+        .any(|word| *word >= (1u64 << TREE_AUXILIARY_ESCAPE_FLAGS_PER_WORD_V2))
+    {
+        return Err(BlockRecursionError::InvalidField(
+            "tree_v2 escape bitmap is not canonical",
+        ));
+    }
+    if let Some(last_escape_word) = escape_words.last() {
+        let used_bits = data_word_count % TREE_AUXILIARY_ESCAPE_FLAGS_PER_WORD_V2;
+        if used_bits != 0 && (*last_escape_word >> used_bits) != 0 {
+            return Err(BlockRecursionError::InvalidField(
+                "tree_v2 escape bitmap has nonzero padding",
+            ));
+        }
+    }
+
+    let max_escape_residue = u64::MAX - GOLDILOCKS_MODULUS;
+    let mut out = Vec::with_capacity(byte_len);
+    for (index, stored_word) in words[1..1 + data_word_count].iter().copied().enumerate() {
+        let escaped = ((escape_words[index / TREE_AUXILIARY_ESCAPE_FLAGS_PER_WORD_V2]
+            >> (index % TREE_AUXILIARY_ESCAPE_FLAGS_PER_WORD_V2))
+            & 1)
+            == 1;
+        let raw_word = if escaped {
+            if stored_word > max_escape_residue {
+                return Err(BlockRecursionError::InvalidField(
+                    "tree_v2 escaped witness limb residue",
+                ));
+            }
+            stored_word + GOLDILOCKS_MODULUS
+        } else {
+            stored_word
+        };
+        let raw_bytes = raw_word.to_le_bytes();
+        let take = (byte_len - out.len()).min(TREE_AUXILIARY_BYTES_PER_DATA_WORD_V2);
+        if take < TREE_AUXILIARY_BYTES_PER_DATA_WORD_V2
+            && raw_bytes[take..].iter().any(|byte| *byte != 0)
+        {
+            return Err(BlockRecursionError::InvalidField(
+                "tree_v2 witness byte padding is not canonical",
+            ));
+        }
+        out.extend_from_slice(&raw_bytes[..take]);
     }
     Ok(out)
 }
@@ -1771,7 +1876,10 @@ fn projected_tree_relation_proof_bytes_for_aux_bytes_v2(
     auxiliary_witness_bytes: usize,
 ) -> Result<usize, BlockRecursionError> {
     let relation = ProjectionRelationV2 {
-        auxiliary_witness_words: vec![0u64; auxiliary_witness_bytes.div_ceil(8)],
+        auxiliary_witness_words: vec![
+            0u64;
+            auxiliary_witness_word_count_v2(auxiliary_witness_bytes)?
+        ],
     };
     projected_smallwood_recursive_proof_bytes_v1(&tree_recursive_profile_v2(profile), &relation)
         .map_err(|err| {
@@ -2083,10 +2191,25 @@ fn recursive_block_proof_encoding_digest_parts_v2(
     max_supported_txs: u32,
     proof_bytes: u32,
 ) -> Digest32 {
+    recursive_block_proof_encoding_digest_parts_with_auxiliary_encoding_v2(
+        chunk_size,
+        max_supported_txs,
+        proof_bytes,
+        TREE_AUXILIARY_ENCODING_LABEL_V2,
+    )
+}
+
+fn recursive_block_proof_encoding_digest_parts_with_auxiliary_encoding_v2(
+    chunk_size: u32,
+    max_supported_txs: u32,
+    proof_bytes: u32,
+    auxiliary_encoding_label: &[u8],
+) -> Digest32 {
     fold_digest32(
         b"hegemon.block-recursion.proof-encoding-digest.v2",
         &[
             b"smallwood-recursive-proof-v1",
+            auxiliary_encoding_label,
             &chunk_size.to_le_bytes(),
             &max_supported_txs.to_le_bytes(),
             &proof_bytes.to_le_bytes(),
@@ -2455,10 +2578,6 @@ pub(crate) fn verify_block_recursive_v2_surface_with_versioned_artifact_cap(
 #[cfg(test)]
 mod diagnostic_tests {
     use super::*;
-    use transaction_circuit::{
-        build_recursive_verifier_trace_v1, decode_smallwood_proof_trace_v1,
-        projected_smallwood_recursive_envelope_bytes_v1,
-    };
 
     fn digest32(tag: u8, idx: u32) -> [u8; 32] {
         let mut out = [0u8; 32];
@@ -2512,6 +2631,66 @@ mod diagnostic_tests {
                 end_tree_commitment: digest48(0xa9, tx_count),
             },
         }
+    }
+
+    #[test]
+    fn tree_v2_auxiliary_encoding_roundtrips_every_u64_boundary_canonically() {
+        let mut bytes = Vec::new();
+        for value in [
+            0,
+            1,
+            GOLDILOCKS_MODULUS - 1,
+            GOLDILOCKS_MODULUS,
+            GOLDILOCKS_MODULUS + 1,
+            u64::MAX,
+        ] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        bytes.extend_from_slice(&[0x12, 0x34, 0x56]);
+
+        let words = bytes_to_limbs_v2(&bytes).expect("boundary bytes should encode");
+        assert_eq!(
+            words.len(),
+            auxiliary_witness_word_count_v2(bytes.len()).expect("word count")
+        );
+        assert!(words.iter().all(|word| *word < GOLDILOCKS_MODULUS));
+        assert_eq!(
+            limbs_to_exact_bytes_v2(&words, words.len()).expect("boundary words should decode"),
+            bytes
+        );
+    }
+
+    #[test]
+    fn tree_v2_auxiliary_encoding_rejects_noncanonical_forms() {
+        let one_byte = bytes_to_limbs_v2(&[0x01]).expect("one byte should encode");
+
+        let mut wrong_count = one_byte.clone();
+        wrong_count[0] = 9;
+        assert!(limbs_to_exact_bytes_v2(&wrong_count, wrong_count.len()).is_err());
+
+        let mut noncanonical_word = one_byte.clone();
+        noncanonical_word[1] = GOLDILOCKS_MODULUS;
+        assert!(limbs_to_exact_bytes_v2(&noncanonical_word, noncanonical_word.len()).is_err());
+
+        let mut oversized_escape_residue = one_byte.clone();
+        oversized_escape_residue[1] = u64::MAX - GOLDILOCKS_MODULUS + 1;
+        oversized_escape_residue[2] = 1;
+        assert!(
+            limbs_to_exact_bytes_v2(&oversized_escape_residue, oversized_escape_residue.len())
+                .is_err()
+        );
+
+        let mut bitmap_high_bit = one_byte.clone();
+        bitmap_high_bit[2] = 1u64 << TREE_AUXILIARY_ESCAPE_FLAGS_PER_WORD_V2;
+        assert!(limbs_to_exact_bytes_v2(&bitmap_high_bit, bitmap_high_bit.len()).is_err());
+
+        let mut bitmap_padding = one_byte.clone();
+        bitmap_padding[2] = 1u64 << 1;
+        assert!(limbs_to_exact_bytes_v2(&bitmap_padding, bitmap_padding.len()).is_err());
+
+        let mut byte_padding = one_byte.clone();
+        byte_padding[1] = 0x0101;
+        assert!(limbs_to_exact_bytes_v2(&byte_padding, byte_padding.len()).is_err());
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3020,60 +3199,6 @@ mod diagnostic_tests {
     }
 
     #[test]
-    #[ignore = "diagnostic size-report for compact child object experiments"]
-    fn tree_v2_child_object_candidate_size_report() {
-        let tx_count = if TREE_RECURSIVE_CHUNK_SIZE_V2 >= TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 {
-            TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 as u32
-        } else {
-            (TREE_RECURSIVE_CHUNK_SIZE_V2 + 1) as u32
-        };
-        let input = sample_input_v2(tx_count);
-        let artifact = prove_block_recursive_v2(&input).unwrap();
-        let expected_public = public_replay_v2(&input.records, &input.semantic).unwrap();
-        let expected_kind = expected_root_terminal_kind_v2(expected_public.tx_count).unwrap();
-        let expected_profile = expected_root_terminal_profile_v2(expected_public.tx_count).unwrap();
-        let expected_level = tree_root_level_for_tx_count_v2(expected_public.tx_count).unwrap();
-        let expected_statement = recursive_segment_statement_from_public_v2(&expected_public);
-        let (canonical_proof_bytes, _consumed_len) =
-            decode_canonical_tree_proof_prefix_v2(&artifact.artifact.proof_bytes).unwrap();
-        let relation = rebuild_tree_relation_from_proof_v2(
-            expected_profile,
-            expected_kind,
-            expected_level,
-            expected_statement.clone(),
-            &canonical_proof_bytes,
-        )
-        .unwrap();
-        let actual_proof_bytes = canonical_proof_bytes.len();
-        let proof_slice = canonical_proof_bytes.as_slice();
-        let proof_trace = decode_smallwood_proof_trace_v1(proof_slice).unwrap();
-        let descriptor =
-            tree_recursive_descriptor_v2(expected_profile, expected_kind, expected_level);
-        let binding = tree_binding_bytes_v2(&expected_statement);
-        let verifier_trace = build_recursive_verifier_trace_v1(
-            &tree_recursive_profile_v2(expected_profile),
-            &descriptor,
-            &relation,
-            &binding,
-            proof_slice,
-        )
-        .unwrap();
-        let proof_trace_bytes = bincode::serialize(&proof_trace).unwrap();
-        let verifier_trace_bytes = bincode::serialize(&verifier_trace).unwrap();
-        let envelope_bytes =
-            projected_smallwood_recursive_envelope_bytes_v1(&descriptor, actual_proof_bytes)
-                .unwrap();
-        eprintln!(
-            "tree_v2 child object candidates: proof={} proof_trace={} verifier_trace={} envelope={} aux_words={}",
-            actual_proof_bytes,
-            proof_trace_bytes.len(),
-            verifier_trace_bytes.len(),
-            envelope_bytes,
-            relation.auxiliary_witness_words.len()
-        );
-    }
-
-    #[test]
     fn tree_v2_proof_encoding_digest_binds_chunk_geometry() {
         let current = recursive_block_proof_encoding_digest_v2();
         let same_width_old_chunk = recursive_block_proof_encoding_digest_parts_v2(
@@ -3086,8 +3211,16 @@ mod diagnostic_tests {
             TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 as u32,
             783_135u32,
         );
+        let legacy_raw_u64_encoding =
+            recursive_block_proof_encoding_digest_parts_with_auxiliary_encoding_v2(
+                TREE_RECURSIVE_CHUNK_SIZE_V2 as u32,
+                TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 as u32,
+                project_tree_proof_bytes_v2() as u32,
+                b"raw-u64-le-v0",
+            );
         assert_ne!(current, same_width_old_chunk);
         assert_ne!(current, same_chunk_old_width);
+        assert_ne!(current, legacy_raw_u64_encoding);
     }
 
     #[test]

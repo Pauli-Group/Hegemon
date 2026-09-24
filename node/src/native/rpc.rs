@@ -6,37 +6,39 @@ pub(crate) async fn rpc_handler(
     State(node): State<Arc<NativeNode>>,
     Json(payload): Json<Value>,
 ) -> Response {
-    let response = match payload {
+    let dispatch_node = Arc::clone(&node);
+    let response = match tokio::task::spawn_blocking(move || match payload {
         Value::Array(requests) => {
             if requests.is_empty() {
-                return json_response(
-                    &node,
-                    StatusCode::OK,
-                    rpc_error(Value::Null, -32600, "empty JSON-RPC batch"),
-                );
-            }
-            if requests.len() > MAX_NATIVE_RPC_BATCH_REQUESTS {
-                return json_response(
-                    &node,
-                    StatusCode::OK,
-                    rpc_error(
-                        Value::Null,
-                        -32600,
-                        format!(
-                            "JSON-RPC batch too large: {} > {}",
-                            requests.len(),
-                            MAX_NATIVE_RPC_BATCH_REQUESTS
-                        ),
+                rpc_error(Value::Null, -32600, "empty JSON-RPC batch")
+            } else if requests.len() > MAX_NATIVE_RPC_BATCH_REQUESTS {
+                rpc_error(
+                    Value::Null,
+                    -32600,
+                    format!(
+                        "JSON-RPC batch too large: {} > {}",
+                        requests.len(),
+                        MAX_NATIVE_RPC_BATCH_REQUESTS
                     ),
-                );
+                )
+            } else {
+                let responses = requests
+                    .into_iter()
+                    .map(|request| dispatch_rpc_request(&dispatch_node, request))
+                    .collect::<Vec<_>>();
+                Value::Array(responses)
             }
-            let responses = requests
-                .into_iter()
-                .map(|request| dispatch_rpc_request(&node, request))
-                .collect::<Vec<_>>();
-            Value::Array(responses)
         }
-        request => dispatch_rpc_request(&node, request),
+        request => dispatch_rpc_request(&dispatch_node, request),
+    })
+    .await
+    {
+        Ok(response) => response,
+        Err(err) => rpc_error(
+            Value::Null,
+            -32603,
+            format!("native JSON-RPC blocking worker failed: {err}"),
+        ),
     };
     json_response(&node, StatusCode::OK, response)
 }
@@ -101,9 +103,12 @@ pub(crate) fn dispatch_rpc_method(
     }
 
     match method {
-        "rpc_methods" => Ok(json!({
-            "methods": native_rpc_methods(node.rpc_policy()?),
-        })),
+        "rpc_methods" => {
+            let mut methods = native_rpc_methods(node.rpc_policy()?);
+            methods.push("chain_getBlockActionsChunk");
+            methods.sort_unstable();
+            Ok(json!({ "methods": methods }))
+        }
         "system_health" => {
             let (syncing, _) = node.sync_status_fields();
             Ok(json!({
@@ -122,6 +127,7 @@ pub(crate) fn dispatch_rpc_method(
         "chain_getHeader" => chain_get_header(node, params),
         "chain_getBlockHash" => chain_get_block_hash(node, params),
         "chain_getBlock" => chain_get_block(node, params),
+        "chain_getBlockActionsChunk" => chain_get_block_actions_chunk(node, params),
         "state_getRuntimeVersion" => Ok(json!({
             "specName": "hegemon-native",
             "implName": "hegemon-native",
@@ -190,7 +196,7 @@ pub(crate) fn dispatch_rpc_method(
             "height": null,
             "pre_hash": null,
             "parent_hash": null,
-            "network_difficulty": best_pow_bits(node),
+            "network_difficulty": node.best_pow_bits(),
             "share_difficulty": null,
             "reason": "native pool RPC is not enabled in milestone 1",
         })),
@@ -200,7 +206,7 @@ pub(crate) fn dispatch_rpc_method(
             "height": null,
             "pre_hash": null,
             "parent_hash": null,
-            "network_bits": best_pow_bits(node),
+            "network_bits": node.best_pow_bits(),
             "share_bits": null,
             "reason": "native compact-job RPC is not enabled in milestone 1",
         })),
@@ -216,7 +222,7 @@ pub(crate) fn dispatch_rpc_method(
         })),
         "hegemon_poolStatus" => Ok(json!({
             "available": false,
-            "network_difficulty": best_pow_bits(node),
+            "network_difficulty": node.best_pow_bits(),
             "share_difficulty": null,
             "accepted_shares": 0u64,
             "rejected_shares": 0u64,
@@ -224,10 +230,13 @@ pub(crate) fn dispatch_rpc_method(
             "workers": [],
         })),
         "da_getParams" => Ok(json!({
-            "chunk_size": DEFAULT_DA_CHUNK_SIZE,
+            "chunk_size_tiers": NATIVE_DA_CHUNK_SIZE_TIERS,
+            "min_chunk_size": MIN_NATIVE_DA_CHUNK_SIZE,
+            "max_chunk_size": MAX_NATIVE_DA_CHUNK_SIZE,
             "sample_count": DEFAULT_DA_SAMPLE_COUNT,
+            "tier_selection": "smallest-fitting-canonical-blob",
         })),
-        "da_getChunk" => Ok(Value::Null),
+        "da_getChunk" => da_get_chunk(node, params),
         "da_submitCiphertexts" => {
             node.submit_ciphertexts(first_param(&params).cloned().unwrap_or(params))
         }
@@ -255,10 +264,7 @@ pub(crate) fn chain_get_header(node: &NativeNode, params: Value) -> Result<Value
                 .map(header_json)
                 .unwrap_or(Value::Null))
         }
-        Some(Value::Null) | None => {
-            let state = node.state.read();
-            Ok(header_json(&state.best))
-        }
+        Some(Value::Null) | None => Ok(node.best_header_json()),
         Some(_) => Ok(Value::Null),
     }
 }
@@ -273,7 +279,7 @@ pub(crate) fn chain_get_block_hash(node: &NativeNode, params: Value) -> Result<V
             Some(height) => node.hash_by_height(height)?,
             None => None,
         },
-        Some(Value::Null) | None => Some(best_hash(node)),
+        Some(Value::Null) | None => Some(node.best_tip().1),
         Some(_) => None,
     };
     Ok(hash.map(|hash| json!(hex32(&hash))).unwrap_or(Value::Null))
@@ -287,7 +293,7 @@ pub(crate) fn chain_get_block(node: &NativeNode, params: Value) -> Result<Value>
             };
             hash
         }
-        Some(Value::Null) | None => best_hash(node),
+        Some(Value::Null) | None => node.best_tip().1,
         Some(_) => return Ok(Value::Null),
     };
     let Some(meta) = node.header_by_hash(&hash)? else {
@@ -304,6 +310,52 @@ pub(crate) fn chain_get_block(node: &NativeNode, params: Value) -> Result<Value>
                 .collect::<Vec<_>>(),
         },
         "justifications": null,
+    }))
+}
+
+/// Fetch one hash-addressed chunk of the exact canonical SCALE
+/// `Vec<Vec<u8>>` action body. Unlike `chain_getBlock`, this route remains
+/// bounded for consensus-valid blocks above the legacy 2 MiB JSON response
+/// ceiling while returning the header root and a hash of the complete action
+/// body for exact client reassembly.
+pub(crate) fn chain_get_block_actions_chunk(node: &NativeNode, params: Value) -> Result<Value> {
+    let args = params
+        .as_array()
+        .ok_or_else(|| anyhow!("chain_getBlockActionsChunk expects [block_hash, chunk_index]"))?;
+    if args.len() != 2 {
+        return Err(anyhow!(
+            "chain_getBlockActionsChunk expects exactly [block_hash, chunk_index]"
+        ));
+    }
+    let hash_raw = args[0].as_str().ok_or_else(|| {
+        anyhow!("chain_getBlockActionsChunk block_hash must be a 32-byte hex string")
+    })?;
+    let block_hash = parse_hash32(hash_raw).ok_or_else(|| {
+        anyhow!("chain_getBlockActionsChunk block_hash must be a 32-byte hex string")
+    })?;
+    let chunk_index = args[1]
+        .as_u64()
+        .ok_or_else(|| {
+            anyhow!("chain_getBlockActionsChunk chunk_index must be a non-negative integer")
+        })?
+        .try_into()
+        .map_err(|_| anyhow!("chain_getBlockActionsChunk chunk_index exceeds u32"))?;
+    let chunk = node
+        .canonical_action_body_chunk(block_hash, chunk_index)?
+        .ok_or_else(|| anyhow!("unknown native block {}", hex32(&block_hash)))?;
+    Ok(json!({
+        "schema": NATIVE_ACTION_BODY_CHUNK_RPC_SCHEMA,
+        "block_hash": hex32(&chunk.block_hash),
+        "height": chunk.height,
+        "parent_hash": hex32(&chunk.parent_hash),
+        "tx_count": chunk.tx_count,
+        "extrinsics_root": hex32(&chunk.extrinsics_root),
+        "action_body_hash": hex48(chunk.action_body_hash.as_bytes()),
+        "action_body_len": chunk.action_body_len,
+        "chunk_index": chunk.chunk_index,
+        "chunk_count": chunk.chunk_count,
+        "chunk_len": chunk.bytes.len(),
+        "chunk": format!("0x{}", hex::encode(&chunk.bytes)),
     }))
 }
 
@@ -410,7 +462,18 @@ pub(crate) fn validate_wallet_ciphertext_archive_value(bytes: &[u8]) -> Result<(
     Ok(())
 }
 
+fn ensure_native_v3_bridge_witness_export_active() -> Result<()> {
+    Err(anyhow!(
+        "bridge witness export is decode-compatible/research-only and inactive under native V3 pending a PQ128 source-chain authority"
+    ))
+}
+
 pub(crate) fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
+    // Fail before parameter parsing, canonical lookups, historical body
+    // decoding, or proof construction. Active V3 cannot contain a bridge
+    // action, and exporting a legacy SHA-256-authority witness as if it were
+    // active would overstate the end-to-end PQ boundary.
+    ensure_native_v3_bridge_witness_export_active()?;
     let message_index = bridge_witness_message_index(&params)?;
     let explicit_block_hash = bridge_witness_explicit_block_hash(&params)?;
     let block_hash_was_explicit = explicit_block_hash.is_some();
@@ -512,7 +575,7 @@ pub(crate) fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<
         .as_ref()
         .unwrap_or(&parent_checkpoint);
     let message_checkpoint = checkpoint_from_meta(&meta);
-    let output = bridge_checkpoint_output_with_tip_from_anchor(
+    let output = bridge_checkpoint_output_with_tip_from_anchor_v2(
         output_anchor,
         &message_checkpoint,
         &best_checkpoint,
@@ -521,7 +584,7 @@ pub(crate) fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<
         confirmations_checked,
         HEGEMON_BRIDGE_LONG_RANGE_MIN_TIP_WORK_V1,
     );
-    let direct_output = bridge_checkpoint_output_from_anchor(
+    let direct_output = bridge_checkpoint_output_from_anchor_v2(
         &parent_checkpoint,
         &message_checkpoint,
         meta.message_root,
@@ -529,8 +592,8 @@ pub(crate) fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<
         1,
         [0u8; 48],
     );
-    let light_client_receipt = HegemonLightClientProofReceiptV1 {
-        verifier_hash: HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1,
+    let light_client_receipt = HegemonLightClientProofV2 {
+        verifier_hash: HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V2,
         parent_checkpoint: parent_checkpoint.clone(),
         header: header.clone(),
         messages: messages.clone(),
@@ -551,7 +614,7 @@ pub(crate) fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<
         .as_ref()
         .map(|proof| format!("0x{}", hex::encode(proof.encode())));
     Ok(json!({
-        "schema": "hegemon.bridge-witness.v1",
+        "schema": "hegemon.bridge-witness.v2",
         "parent_checkpoint": checkpoint_json(&parent_checkpoint),
         "header": pow_header_json(&header),
         "header_hashes": node.header_hashes_to_hash(parent.hash)?
@@ -562,10 +625,10 @@ pub(crate) fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<
         "messages": messages.iter().map(bridge_message_json).collect::<Vec<_>>(),
         "output": bridge_checkpoint_output_json(&output),
         "canonical": {
-            "parent_checkpoint": format!("0x{}", hex::encode(canonical_trusted_checkpoint_bytes_v1(&parent_checkpoint))),
+            "parent_checkpoint": format!("0x{}", hex::encode(canonical_trusted_checkpoint_bytes_v2(&parent_checkpoint))),
             "header": format!("0x{}", hex::encode(header.canonical_bytes())),
             "message": format!("0x{}", hex::encode(message.encode())),
-            "output": format!("0x{}", hex::encode(canonical_bridge_checkpoint_output_bytes_v1(&output))),
+            "output": format!("0x{}", hex::encode(canonical_bridge_checkpoint_output_bytes_v2(&output))),
             "light_client_receipt": format!("0x{}", hex::encode(light_client_receipt.encode())),
             "long_range_proof": canonical_long_range_proof,
         },
@@ -656,11 +719,11 @@ pub(crate) fn latest_bridge_message_block_hash(
 pub(crate) fn build_long_range_bridge_proof(
     node: &NativeNode,
     message_meta: &NativeBlockMeta,
-    tip_header: &PowHeaderV1,
+    tip_header: &PowHeaderV2,
     messages: &[BridgeMessageV1],
     message_index: usize,
-    output: BridgeCheckpointOutputV1,
-) -> Result<Option<HegemonLongRangeProofV1>> {
+    output: BridgeCheckpointOutputV2,
+) -> Result<Option<HegemonLongRangeProofV2>> {
     if tip_header.height <= message_meta.height {
         return Ok(None);
     }
@@ -715,14 +778,14 @@ pub(crate) fn build_long_range_bridge_proof(
                 .ok_or_else(|| anyhow!("sampled bridge header has no parent"))?,
         )
         .map_err(|err| anyhow!("build sampled parent MMR opening failed: {err:?}"))?;
-        sample_headers.push(HeaderMmrLeafWitnessV1 {
+        sample_headers.push(HeaderMmrLeafWitnessV2 {
             header: pow_header_from_meta(&sample_meta),
             opening,
             parent_opening,
         });
     }
-    Ok(Some(HegemonLongRangeProofV1 {
-        verifier_hash: HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1,
+    Ok(Some(HegemonLongRangeProofV2 {
+        verifier_hash: HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V2,
         trusted_checkpoint: checkpoint_from_meta(&genesis),
         tip_header: tip_header.clone(),
         tip_parent_opening,
@@ -739,14 +802,6 @@ pub(crate) fn build_long_range_bridge_proof(
     }))
 }
 
-fn best_hash(node: &NativeNode) -> Hash32 {
-    node.state.read().best.hash
-}
-
-fn best_pow_bits(node: &NativeNode) -> u32 {
-    node.state.read().best.pow_bits
-}
-
 pub(crate) fn header_json(meta: &NativeBlockMeta) -> Value {
     json!({
         "parentHash": hex32(&meta.parent_hash),
@@ -757,6 +812,11 @@ pub(crate) fn header_json(meta: &NativeBlockMeta) -> Value {
         "rulesHash": hex32(&meta.rules_hash),
         "kernelRoot": hex48(&meta.kernel_root),
         "nullifierRoot": hex48(&meta.nullifier_root),
+        "daRoot": hex48(&meta.da_root),
+        "daChunkSize": meta.da_chunk_size,
+        "daSampleCount": meta.da_sample_count,
+        "daBlobLen": meta.da_blob_len,
+        "daChunkCount": meta.da_chunk_count,
         "messageRoot": hex48(&meta.message_root),
         "messageCount": meta.message_count,
         "headerMmrRoot": hex32(&meta.header_mmr_root),
@@ -770,8 +830,74 @@ pub(crate) fn header_json(meta: &NativeBlockMeta) -> Value {
     })
 }
 
-pub(crate) fn checkpoint_json(checkpoint: &TrustedCheckpointV1) -> Value {
+pub(crate) fn da_get_chunk(node: &NativeNode, params: Value) -> Result<Value> {
+    let args = params
+        .as_array()
+        .ok_or_else(|| anyhow!("da_getChunk expects [block_hash, chunk_index]"))?;
+    if args.len() != 2 {
+        return Err(anyhow!(
+            "da_getChunk expects exactly [block_hash, chunk_index]"
+        ));
+    }
+    let hash_raw = args[0]
+        .as_str()
+        .ok_or_else(|| anyhow!("da_getChunk block_hash must be a 32-byte hex string"))?;
+    let block_hash = parse_hash32(hash_raw)
+        .ok_or_else(|| anyhow!("da_getChunk block_hash must be a 32-byte hex string"))?;
+    let index_u64 = args[1]
+        .as_u64()
+        .ok_or_else(|| anyhow!("da_getChunk chunk_index must be a non-negative integer"))?;
+    let index =
+        u32::try_from(index_u64).map_err(|_| anyhow!("da_getChunk chunk_index exceeds u32"))?;
+
+    // Reject malformed/oversized metadata before any RS allocation.
+    let meta = node
+        .header_by_hash(&block_hash)?
+        .ok_or_else(|| anyhow!("unknown native block {}", hex32(&block_hash)))?;
+    if meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE {
+        return Err(anyhow!("da_getChunk serves only active native V3 blocks"));
+    }
+    if index >= meta.da_chunk_count {
+        return Err(anyhow!(
+            "da_getChunk chunk_index {} out of range for {} chunks",
+            index,
+            meta.da_chunk_count
+        ));
+    }
+    let blob_len = usize::try_from(meta.da_blob_len)
+        .map_err(|_| anyhow!("native DA blob length exceeds host usize"))?;
+    let canonical_params = native_da_params_for_blob_len(blob_len)?;
+    if meta.da_chunk_size != canonical_params.chunk_size
+        || meta.da_sample_count != canonical_params.sample_count
+    {
+        return Err(anyhow!("native block carries non-canonical DA parameters"));
+    }
+    if usize::try_from(meta.da_chunk_count).unwrap_or(usize::MAX) > state_da::MAX_DA_SHARDS {
+        return Err(anyhow!(
+            "native block DA chunk count exceeds protocol bound"
+        ));
+    }
+
+    let encoding = node.canonical_da_encoding_for_block(block_hash)?;
+    let proof = encoding
+        .proof(index)
+        .map_err(|err| anyhow!("build native DA chunk proof failed: {err}"))?;
+    Ok(json!({
+        "block_hash": hex32(&block_hash),
+        "da_root": hex48(&encoding.root()),
+        "chunk_size": encoding.params().chunk_size,
+        "sample_count": encoding.params().sample_count,
+        "blob_len": encoding.data_len(),
+        "chunk_count": encoding.chunks().len(),
+        "chunk_index": proof.chunk.index,
+        "chunk": format!("0x{}", hex::encode(&proof.chunk.data)),
+        "merkle_path": proof.merkle_path.iter().map(hex48).collect::<Vec<_>>(),
+    }))
+}
+
+pub(crate) fn checkpoint_json(checkpoint: &TrustedCheckpointV2) -> Value {
     json!({
+        "schema": "hegemon.pow.trusted-checkpoint-v2",
         "chain_id": hex32(&checkpoint.chain_id),
         "rules_hash": hex32(&checkpoint.rules_hash),
         "height": checkpoint.height,
@@ -784,8 +910,9 @@ pub(crate) fn checkpoint_json(checkpoint: &TrustedCheckpointV1) -> Value {
     })
 }
 
-pub(crate) fn pow_header_json(header: &PowHeaderV1) -> Value {
+pub(crate) fn pow_header_json(header: &PowHeaderV2) -> Value {
     json!({
+        "schema": "hegemon.pow.header-v2",
         "chain_id": hex32(&header.chain_id),
         "rules_hash": hex32(&header.rules_hash),
         "height": header.height,
@@ -819,8 +946,9 @@ pub(crate) fn bridge_message_json(message: &BridgeMessageV1) -> Value {
     })
 }
 
-pub(crate) fn bridge_checkpoint_output_json(output: &BridgeCheckpointOutputV1) -> Value {
+pub(crate) fn bridge_checkpoint_output_json(output: &BridgeCheckpointOutputV2) -> Value {
     json!({
+        "schema": "hegemon.bridge.checkpoint-output-v2",
         "source_chain_id": hex32(&output.source_chain_id),
         "rules_hash": hex32(&output.rules_hash),
         "trusted_checkpoint_digest": hex32(&output.trusted_checkpoint_digest),

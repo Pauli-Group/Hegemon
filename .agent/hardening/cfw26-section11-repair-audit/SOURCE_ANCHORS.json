@@ -1,0 +1,105 @@
+{
+  "schema": "hegemon.cfw26-section11-repair-audit.source-anchors.v1",
+  "claim_boundary": "These anchors identify the local primary-source snapshot and the printed conflict. They do not report an author erratum or select a repair.",
+  "paper": {
+    "citation": "Chiesa, Fenzi, and Weng, Zero-Knowledge IOPPs for Constrained Interleaved Codes, IACR ePrint 2026/391",
+    "url": "https://eprint.iacr.org/2026/391",
+    "local_pdf": "/private/tmp/cfw26-391.pdf",
+    "bytes": 972446,
+    "pages": 82,
+    "sha512": "be9595b264ccbb6e5d848a10e24f907089ff478c7efe99967a5d0f236bffcaf87c53cc82eec53f74856a08a4db8a6884084c8238291f44d06aa2d703eef5c2dd"
+  },
+  "anchors": [
+    {
+      "id": "definition-5.2-identity",
+      "printed_page": 35,
+      "rendered_file": "rendered-source/page-35.png",
+      "rendered_sha512": "f5ff1052d19b70bfa0b8545655e035f918246045638b7d0db2219c5c8d7c52d44ca829f0557e64ca6619ab96868055e83a78c43dec818a26485f01284067452f",
+      "fact": "The identity succinct linear form accepts one matrix state V and returns V."
+    },
+    {
+      "id": "definition-5.4-times",
+      "printed_page": 35,
+      "rendered_file": "rendered-source/page-35.png",
+      "rendered_sha512": "f5ff1052d19b70bfa0b8545655e035f918246045638b7d0db2219c5c8d7c52d44ca829f0557e64ca6619ab96868055e83a78c43dec818a26485f01284067452f",
+      "fact": "The scalar-multiplied form times(sl) accepts the pair (state, epsilon) and returns epsilon times sl(state)."
+    },
+    {
+      "id": "lemma-6.4-outer-characteristic-use",
+      "printed_pages": [38, 39],
+      "rendered_files": [
+        "rendered-source/page-38.png",
+        "rendered-source/page-39.png"
+      ],
+      "rendered_sha512": [
+        "c4491dd6f9d2333a388cdd27379792688616a912d26827f04bbd17ec72e1d798d0031123216eb0df2683c3de85c2483d05bf31aaf5219c480dbb323bc6bf3aae",
+        "3efbabf80c8b79c920891f6b38f8f78eb58804fbc18448b6f1c8fbf1a2fd13c59446dec705986a83716312fb30633c1b8633bc1554023ff9bb8d0d7c047a0bbb"
+      ],
+      "fact": "The earlier sumcheck-HVZK rank argument also invokes characteristic not two, so that theorem premise alone does not select coefficient two in Section 11."
+    },
+    {
+      "id": "definition-11.1-output-relation",
+      "printed_page": 66,
+      "rendered_file": "rendered-source/page-66.png",
+      "rendered_sha512": "150ee60cda58ac14bfbff2e060900947813a1a55c9c2c90f16fbdad04c139dc1cd9c673517b53a48b05e9fb82d22d2d26dfe249de86b48f64c88eadd2f4772d7",
+      "fact": "The output relation adds the main-code inner product and one inner product for each inner mask, and equates that sum to mu."
+    },
+    {
+      "id": "theorem-11.3-forms-and-premises",
+      "printed_pages": [66, 67],
+      "rendered_files": [
+        "rendered-source/page-66.png",
+        "rendered-source/page-67.png"
+      ],
+      "rendered_sha512": [
+        "150ee60cda58ac14bfbff2e060900947813a1a55c9c2c90f16fbdad04c139dc1cd9c673517b53a48b05e9fb82d22d2d26dfe249de86b48f64c88eadd2f4772d7",
+        "91106fecf7beff59aaecf6c58e8eeb36a0cea6c2e7b507ec13a26c1bdfa8fc588d46ba48afe2eb18957755f98421ebb58e5f952aa960bdefbe98877401615289"
+      ],
+      "fact": "The theorem sets every inner form to identity and states the odd-characteristic, mask-length, encoding-ZK, RBR, and HVZK claims."
+    },
+    {
+      "id": "construction-11.4-step-1",
+      "printed_page": 68,
+      "rendered_file": "rendered-source/page-68.png",
+      "rendered_sha512": "b2f7c4a6f0e1dd4146cb91ccca87cb90e3f9492c0190965230a48198538864b22fbc45af84b5ec51691d616053e276770447485af8019a298e0a25b1fe93c84c",
+      "fact": "Each inner mask is sampled subject to evaluations zero at both Boolean endpoints."
+    },
+    {
+      "id": "construction-11.4-step-3",
+      "printed_page": 68,
+      "rendered_file": "rendered-source/page-68.png",
+      "rendered_sha512": "b2f7c4a6f0e1dd4146cb91ccca87cb90e3f9492c0190965230a48198538864b22fbc45af84b5ec51691d616053e276770447485af8019a298e0a25b1fe93c84c",
+      "fact": "Each masked A, B, and C factor contains one copy of the sum of its inner masks."
+    },
+    {
+      "id": "construction-11.4-step-8",
+      "printed_page": 69,
+      "rendered_file": "rendered-source/page-69.png",
+      "rendered_sha512": "e87bee765725868f8ac1aa5649984f71d0a20b6a104ba5add5b395b855d6e29f258146b752d23028762dea86d4f971f27fdfc26aa5c8c5885274e6eb8ca05932",
+      "fact": "The defining line for v_M has one mask sum, while its immediately following claimed decomposition has two mask sums."
+    },
+    {
+      "id": "construction-11.4-step-9",
+      "printed_page": 69,
+      "rendered_file": "rendered-source/page-69.png",
+      "rendered_sha512": "e87bee765725868f8ac1aa5649984f71d0a20b6a104ba5add5b395b855d6e29f258146b752d23028762dea86d4f971f27fdfc26aa5c8c5885274e6eb8ca05932",
+      "fact": "The inner form is printed as identity, but its state is the pair (pow(alpha_i), ze(rho)_M); mu is the ze-weighted sum of v_M minus u_M."
+    },
+    {
+      "id": "theorem-11.3-hvzk-simulator",
+      "printed_pages": [70, 71],
+      "rendered_files": [
+        "rendered-source/page-70.png",
+        "rendered-source/page-71.png"
+      ],
+      "rendered_sha512": [
+        "d96a78a44d856b8e9aa9c61bb271fac688d85daf58bc9fa4a4772a157acb57f792b7951fb00df352dff5f0941bff0403b251059a1546746d3177beb88d9ca008",
+        "97ccceaf56da3364183afc1c817f8890fa8b40bf48a877afdcbcca755bf969476fc29045fe2b34606c29e1dcab288715b34ca301ee6251720b4158ca3619ff22"
+      ],
+      "fact": "The value claim uses coefficient two and its invertibility to argue that the v_M triple is uniform; the rest is only a proof sketch."
+    }
+  ],
+  "unused_rendered_context": {
+    "rendered-source/page-40.png": "3eb66e8b5e1c3f407ec418cf281fad11360446e58c0af93c595af8c2067bfca3c165a43e37bf7cadd32a7e00a0b26306caca1a31368c4163106aed009667e968"
+  }
+}

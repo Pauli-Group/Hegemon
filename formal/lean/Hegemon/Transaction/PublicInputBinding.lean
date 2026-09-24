@@ -162,7 +162,7 @@ def validBinding (pubFields : PublicFields) (serialized : SerializedFields) : Bo
   | some _ => true
   | none => false
 
-structure PublicInputP3BindingFacts
+structure PublicInputVerifierBindingFacts
     (pubFields : PublicFields)
     (serialized : SerializedFields)
     (bound : BoundPublicInputs) : Prop where
@@ -211,12 +211,12 @@ structure PublicInputP3BindingFacts
     bound.stablecoinAttestationCommitment =
       serialized.stablecoinAttestationCommitment
 
-theorem bindPublicInputs_some_implies_p3_binding_facts
+theorem bindPublicInputs_some_implies_verifier_binding_facts
     {pubFields : PublicFields}
     {serialized : SerializedFields}
     {bound : BoundPublicInputs}
     (h : bindPublicInputs pubFields serialized = some bound) :
-    PublicInputP3BindingFacts pubFields serialized bound := by
+    PublicInputVerifierBindingFacts pubFields serialized bound := by
   unfold bindPublicInputs at h
   split at h
   · contradiction
@@ -251,15 +251,15 @@ theorem bindPublicInputs_some_implies_p3_binding_facts
           boundStablecoinAttestationCommitment := rfl }
     · contradiction
 
-theorem validBinding_true_has_p3_binding_facts
+theorem validBinding_true_has_verifier_binding_facts
     {pubFields : PublicFields}
     {serialized : SerializedFields}
     (h : validBinding pubFields serialized = true) :
-    ∃ bound, PublicInputP3BindingFacts pubFields serialized bound := by
+    ∃ bound, PublicInputVerifierBindingFacts pubFields serialized bound := by
   unfold validBinding at h
   split at h
   · rename_i bound hBound
-    exact ⟨bound, bindPublicInputs_some_implies_p3_binding_facts hBound⟩
+    exact ⟨bound, bindPublicInputs_some_implies_verifier_binding_facts hBound⟩
   · contradiction
 
 def validPublicFields : PublicFields :=

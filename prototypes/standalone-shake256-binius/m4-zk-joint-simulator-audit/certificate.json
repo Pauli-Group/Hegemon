@@ -1,0 +1,469 @@
+{
+  "claims": {
+    "basefold_joint_simulator_proved": false,
+    "compiled_full_m4": false,
+    "complete_zk": false,
+    "joint_simulator_proved": false,
+    "outer_spartan_simulator_proved": false,
+    "qrom_composed": false,
+    "strict_pq128": false
+  },
+  "decision": {
+    "conditional_repair": "Preferred: remove the component precommit claim and prove one grouped precommit+private relation. Control: one fresh unused h closes the one direct clear functional only if d is forced nonzero; rank-r exposure needs blinder rank r.",
+    "frontier_eligible": false,
+    "reason_codes": [
+      "OUTER_PRECOMMIT_CORRELATION_LEAK",
+      "EXACT_MULTIPLICITIES_UNCOMPILED",
+      "BASEFOLD_JOINT_SIMULATOR_OPEN",
+      "OUTER_SPARTAN_SIMULATOR_OPEN",
+      "QROM_COMPOSITION_OPEN",
+      "STRICT_E384_BACKEND_OPEN"
+    ],
+    "status": "REJECT_CURRENT_PATCH_REPAIR_CONDITIONAL"
+  },
+  "inventory": {
+    "exact_multiplicities_complete": false,
+    "items": [
+      {
+        "id": "PUBLIC_CONTEXT",
+        "message": "statement and transcript preamble",
+        "multiplicity": "fixed by 912-byte transport and wrapper context",
+        "phase": "context",
+        "protection": "none_required",
+        "witness_dependency": "public_only"
+      },
+      {
+        "id": "COMMIT_K",
+        "message": "Merkle commitment to outer precommit K",
+        "multiplicity": "one oracle",
+        "phase": "pre_challenge",
+        "protection": "BaseFold is_zk vector mask",
+        "witness_dependency": "mask_only_but_later_correlated"
+      },
+      {
+        "id": "COMMIT_SHIFTED_TRACE",
+        "message": "commitment to pi + k_trace*1",
+        "multiplicity": "one and first/only inner oracle",
+        "phase": "pre_challenge",
+        "protection": "constant shift plus independent BaseFold vector mask",
+        "witness_dependency": "direct"
+      },
+      {
+        "id": "INNER_PRIVATE_FIELD_STREAM",
+        "message": "every send_one/send_many field message E_j=m_j+k_j",
+        "multiplicity": "symbolic; exact count requires compiled 83-Keccak wrapper",
+        "phase": "inner_m4",
+        "protection": "fresh precommitted OTP per scalar",
+        "witness_dependency": "direct_or_derived"
+      },
+      {
+        "id": "INNER_PUBLIC_CLAIM_STREAM",
+        "message": "send_public_claim values",
+        "multiplicity": "symbolic",
+        "phase": "inner_m4",
+        "protection": "clear; semantic classification must be audited",
+        "witness_dependency": "declared_public_by_call_site"
+      },
+      {
+        "id": "MASKED_TRACE_CLAIM",
+        "message": "M=s+k_trace*c",
+        "multiplicity": "exactly one",
+        "phase": "inner_ring_switch",
+        "protection": "rank-one mask with fixed-shape c!=0 sampler",
+        "witness_dependency": "direct"
+      },
+      {
+        "id": "OUTER_PRIVATE_COMMITMENT",
+        "message": "commitment to replay/private witness",
+        "multiplicity": "one oracle",
+        "phase": "outer_spartan",
+        "protection": "BaseFold is_zk vector mask and Spartan blinding",
+        "witness_dependency": "direct"
+      },
+      {
+        "id": "OUTER_LIBRA_MASK_COMMITMENT",
+        "message": "commitment to random Libra coefficients",
+        "multiplicity": "one oracle",
+        "phase": "outer_spartan",
+        "protection": "BaseFold is_zk vector mask",
+        "witness_dependency": "mask_only"
+      },
+      {
+        "id": "OUTER_LIBRA_TRANSCRIPT",
+        "message": "mask_eval, batched round coefficients, mask_eval_out",
+        "multiplicity": "depends on compiled outer constraint tier",
+        "phase": "outer_spartan",
+        "protection": "Libra masking; theorem and zero-batch-challenge case open",
+        "witness_dependency": "joint witness_and_mask"
+      },
+      {
+        "id": "OUTER_ENDPOINT_EVALUATIONS",
+        "message": "a_eval, b_eval, c_eval",
+        "multiplicity": "three scalars",
+        "phase": "outer_spartan",
+        "protection": "claimed Spartan dummy/blinding distribution; simulator open",
+        "witness_dependency": "direct_linear_evaluations"
+      },
+      {
+        "id": "OUTER_PRECOMMIT_CLEAR_CLAIM",
+        "message": "precommit_claim=<K,T_K>",
+        "multiplicity": "one direct precommit-oracle functional",
+        "phase": "outer_spartan",
+        "protection": "none in frozen patch",
+        "witness_dependency": "mask_only_in_isolation_but_correlated_with_OTP_stream"
+      },
+      {
+        "id": "BASEFOLD_MASK_INNER_PRODUCTS",
+        "message": "sigma_i=<omega_i,T_i> for every is_zk oracle",
+        "multiplicity": "one per ZK oracle after relation batching",
+        "phase": "combined_basefold",
+        "protection": "must be handled by joint BaseFold simulator",
+        "witness_dependency": "mask_only_but_jointly_correlated"
+      },
+      {
+        "id": "BASEFOLD_MASKED_SUMCHECK",
+        "message": "masked sumcheck rounds and alpha_i evaluations",
+        "multiplicity": "one alpha per committed oracle plus tier-dependent rounds",
+        "phase": "combined_basefold",
+        "protection": "gamma folding; gamma=0 and dependent-functional cases not gated",
+        "witness_dependency": "joint witness_and_mask"
+      },
+      {
+        "id": "FRI_FOLD_COMMITMENTS",
+        "message": "fold-round roots and terminal committed vector",
+        "multiplicity": "parameter-dependent",
+        "phase": "combined_fri",
+        "protection": "joint PCS/FRI simulator required",
+        "witness_dependency": "joint witness_and_mask"
+      },
+      {
+        "id": "MERKLE_QUERY_OPENINGS",
+        "message": "queried leaves, fold cosets, and authentication nodes",
+        "multiplicity": "parameter-dependent",
+        "phase": "combined_fri",
+        "protection": "query-conditioned BaseFold/FRI hiding theorem required",
+        "witness_dependency": "joint witness_and_mask"
+      }
+    ],
+    "protocol_class_complete": true
+  },
+  "rank_audit": {
+    "all_expectations_met": true,
+    "coefficient_c_hex": "cd4d43d7b25354b85ec3253d27bcc000",
+    "conditional_grouped_relation_clear_rank_closed": true,
+    "conditional_rank_one_repair_clear_rank_closed": true,
+    "constructive_c_nonzero_pass": true,
+    "constructive_repair_pass": true,
+    "constructive_trials": 64,
+    "criterion": "rank(R) == rank([R|W])",
+    "current_patch_clear_rank_closed": false,
+    "direct_precommit_functional_rank": 1,
+    "field": "GF(2^128)/(x^128+x^7+x^2+x+1)",
+    "grouped_relation_feasibility": {
+      "delta_basis": "remove the one clear B128 precommit_claim; retain commitments, sigma_i, Phase-A round width, per-oracle alphas, and Phase-B FRI topology",
+      "exact_delta_measured": false,
+      "existing_phase_a_can_express_cross_oracle_group": false,
+      "predicted_serialized_delta_bytes": -16,
+      "reason": "The pinned queue is indexed per oracle, constructs one sumcheck prover per oracle, and requires a component claim for each. Phase B is multi-oracle but begins only after those component claims have already been reduced.",
+      "required_refactor": [
+        "add a queued relation group spanning precommit and private oracle indices",
+        "mask the public total with the sum of their independent sigma_i values",
+        "run one shared Phase-A sumcheck at the maximum member domain",
+        "return one alpha per member oracle for the unchanged combined FRI Phase B",
+        "mirror the exact grouped relation in the verifier"
+      ]
+    },
+    "repair_coefficient_d_hex": "7bd56de87ef6f6044109a237480daaeb",
+    "repair_comparison": {
+      "grouped": "removes the leaking component functional, needs no new blinder or nonzero-d abort gate, and should save one 16-byte scalar, but requires a cross-oracle Phase-A relation refactor",
+      "recommended": "grouped_precommit_private_relation",
+      "unused_blinder_h": "closes exactly rank one with d!=0 and is a useful control, but retains the component claim, adds a precommit coordinate/constraint and paired sampler, and needs one fresh blinder per independent clear-claim rank"
+    },
+    "repair_scope": "Only the isolated direct precommit scalar. Outer Libra endpoints, BaseFold sigma/alpha, FRI, Merkle queries, nonlinear composition, and QROM remain open.",
+    "scenarios": {
+      "basefold_dependent_functionals": {
+        "combined_rank": 2,
+        "contained": false,
+        "expectation_met": true,
+        "expected": false,
+        "mask_columns": 3,
+        "mask_rank": 1,
+        "observations": 2,
+        "witness_columns": 3
+      },
+      "basefold_gamma_zero": {
+        "combined_rank": 2,
+        "contained": false,
+        "expectation_met": true,
+        "expected": false,
+        "mask_columns": 3,
+        "mask_rank": 1,
+        "observations": 2,
+        "witness_columns": 3
+      },
+      "basefold_generic_independent_functionals": {
+        "combined_rank": 2,
+        "contained": true,
+        "expectation_met": true,
+        "expected": true,
+        "mask_columns": 3,
+        "mask_rank": 2,
+        "observations": 2,
+        "witness_columns": 3
+      },
+      "current_patch_clear_precommit_claim": {
+        "combined_rank": 11,
+        "contained": false,
+        "expectation_met": true,
+        "expected": false,
+        "mask_columns": 10,
+        "mask_rank": 10,
+        "observations": 11,
+        "witness_columns": 9
+      },
+      "grouped_precommit_private_total_claim": {
+        "combined_rank": 10,
+        "contained": true,
+        "expectation_met": true,
+        "expected": true,
+        "mask_columns": 10,
+        "mask_rank": 10,
+        "observations": 10,
+        "witness_columns": 9
+      },
+      "ideal_c_nonzero_fresh_masks": {
+        "combined_rank": 10,
+        "contained": true,
+        "expectation_met": true,
+        "expected": true,
+        "mask_columns": 10,
+        "mask_rank": 10,
+        "observations": 10,
+        "witness_columns": 9
+      },
+      "missing_basefold_vector_mask": {
+        "combined_rank": 9,
+        "contained": false,
+        "expectation_met": true,
+        "expected": false,
+        "mask_columns": 4,
+        "mask_rank": 4,
+        "observations": 10,
+        "witness_columns": 9
+      },
+      "rank_one_unused_blinder_d_nonzero": {
+        "combined_rank": 11,
+        "contained": true,
+        "expectation_met": true,
+        "expected": true,
+        "mask_columns": 11,
+        "mask_rank": 11,
+        "observations": 11,
+        "witness_columns": 9
+      },
+      "rank_one_unused_blinder_d_zero": {
+        "combined_rank": 11,
+        "contained": false,
+        "expectation_met": true,
+        "expected": false,
+        "mask_columns": 11,
+        "mask_rank": 10,
+        "observations": 11,
+        "witness_columns": 9
+      },
+      "reused_otp_key": {
+        "combined_rank": 2,
+        "contained": false,
+        "expectation_met": true,
+        "expected": false,
+        "mask_columns": 1,
+        "mask_rank": 1,
+        "observations": 2,
+        "witness_columns": 2
+      },
+      "trace_coefficient_c_zero": {
+        "combined_rank": 6,
+        "contained": false,
+        "expectation_met": true,
+        "expected": false,
+        "mask_columns": 6,
+        "mask_rank": 5,
+        "observations": 6,
+        "witness_columns": 5
+      },
+      "two_claims_one_blinder": {
+        "combined_rank": 12,
+        "contained": false,
+        "expectation_met": true,
+        "expected": false,
+        "mask_columns": 11,
+        "mask_rank": 11,
+        "observations": 12,
+        "witness_columns": 9
+      },
+      "two_claims_two_blinders": {
+        "combined_rank": 12,
+        "contained": true,
+        "expectation_met": true,
+        "expected": true,
+        "mask_columns": 12,
+        "mask_rank": 12,
+        "observations": 12,
+        "witness_columns": 9
+      }
+    }
+  },
+  "residual_assumptions": [
+    {
+      "id": "A_SOURCE_MULTIPLICITY",
+      "statement": "Compile the 83-Keccak maximum relation and extract exact event multiplicities and one-oracle rank.",
+      "status": "OPEN"
+    },
+    {
+      "id": "A_PUBLIC_CLAIM_CLASSIFICATION",
+      "statement": "Prove every send_public_claim call is a function only of public input and prior public challenges.",
+      "status": "OPEN"
+    },
+    {
+      "id": "A_BASEFOLD_JOINT_SIMULATOR",
+      "statement": "Prove a multi-oracle simulator for commitments, sigma_i, gamma folding, sumcheck, alpha_i, FRI, and Merkle queries with correlated K and shifted trace.",
+      "status": "OPEN"
+    },
+    {
+      "id": "A_BASEFOLD_DEGENERACIES",
+      "statement": "Account for gamma=0 and linearly dependent mask/evaluation functionals or add fixed-shape gates and a composed bound.",
+      "status": "OPEN"
+    },
+    {
+      "id": "A_OUTER_SPARTAN_SIMULATOR",
+      "statement": "Prove Libra round masking, endpoint-evaluation hiding, dummy-wire blinding, and precommit/private/mask oracle composition.",
+      "status": "OPEN"
+    },
+    {
+      "id": "A_PRECOMMIT_REPAIR_REALIZATION",
+      "statement": "Implement and prove the grouped precommit+private BaseFold relation, or implement an unused blinder coordinate and prove d nonzero before using the rank-one fallback.",
+      "status": "OPEN"
+    },
+    {
+      "id": "A_ABORT_ROM_QROM",
+      "statement": "Prove abort-conditioned fixed-shape paired challenge selection in ROM and QROM.",
+      "status": "OPEN"
+    },
+    {
+      "id": "A_NONLINEAR_COMPOSITION",
+      "statement": "Lift linear mask-span closure to the nonlinear verifier and simulator distribution without selective-failure leakage.",
+      "status": "OPEN"
+    },
+    {
+      "id": "A_E384_STRICT_BACKEND",
+      "statement": "Realize the mixed B128/E384 IOP and compose strict PQ128 soundness and ZK bounds.",
+      "status": "OPEN"
+    }
+  ],
+  "schema_version": 1,
+  "source_checks": {
+    "all_passed": true,
+    "checks": [
+      {
+        "detail": "684ad2cde0d49fcb095fd542990dd3dcfa246d7a0378b7ec8f7377fcfa9d2c54",
+        "name": "frozen_patch_sha256",
+        "passed": true
+      },
+      {
+        "detail": "67e7f6ac6a15579043de5a9a0565b374667b094890bbf31053a818479697ed91",
+        "name": "m4_source_sha256",
+        "passed": true
+      },
+      {
+        "detail": "source-level geometry assertion",
+        "name": "m4_fixed_83_keccak",
+        "passed": true
+      },
+      {
+        "detail": "source-level one-main gate",
+        "name": "m4_one_main_no_chip",
+        "passed": true
+      },
+      {
+        "detail": "3f8a6e676a80a2766716c3f89591f80a218fd4e33d06d26acf81b80fa907ec74",
+        "name": "pinned_source:crates/spartan-prover/src/wrapper/zk_wrapped_prover_channel.rs",
+        "passed": true
+      },
+      {
+        "detail": "4769dc62a593d1daa0ad3e801e1b3eeb31c560a51fcfcee490a7bb1b17e6084e",
+        "name": "pinned_source:crates/spartan-prover/src/lib.rs",
+        "passed": true
+      },
+      {
+        "detail": "16791256670354bf23825e2757a2781034401ee4a661179e74724af44b9a0eda",
+        "name": "pinned_source:crates/iop-prover/src/basefold/channel.rs",
+        "passed": true
+      },
+      {
+        "detail": "34e8d86f187f22e9ef2884ccbe3062932ee5b2829d7c6a91bff94c5eb7066db9",
+        "name": "pinned_source:crates/iop/src/basefold/channel.rs",
+        "passed": true
+      },
+      {
+        "detail": "3f9a53d04ddc0d5c257dddc1456c83251b807c06da30a5c0d2a5a1d537738d93",
+        "name": "pinned_source:crates/ip-prover/src/sumcheck/zk_mlecheck.rs",
+        "passed": true
+      },
+      {
+        "detail": "5827181784975cc58e91d56344bd316c106eb75381e624c86c6fba47bfa3a086",
+        "name": "pinned_source:crates/m4-prover/src/prove.rs",
+        "passed": true
+      },
+      {
+        "detail": "3e4bae5dc866394a60d21fa148427766ada37cf24e44b12e622d7b3d15a637b4",
+        "name": "pinned_source:crates/m4-verifier/src/verify.rs",
+        "passed": true
+      },
+      {
+        "detail": "ebe1e6e6b741fd2e9c0ea5f83e2428bfd646eadc4a21803e659e1a0fa7141912",
+        "name": "pinned_source:crates/spartan-verifier/src/wrapper/builder_channel.rs",
+        "passed": true
+      },
+      {
+        "detail": "6c7f4aec2b78c31e9fe2d7817bca843e95d423b71d56832ce8968796e5ba98d0",
+        "name": "pinned_source:crates/spartan-prover/src/wrapper/replay_channel.rs",
+        "passed": true
+      },
+      {
+        "detail": "one clear claim and one queued precommit relation in IOPProver::prove",
+        "name": "one_direct_precommit_clear_functional",
+        "passed": true
+      },
+      {
+        "detail": "fresh OTP, M=s+k*c, complete key consumption, one masked oracle",
+        "name": "wrapper_fail_closed_anchors",
+        "passed": true
+      },
+      {
+        "detail": "sigma, gamma, alpha, and combined FRI are all present",
+        "name": "basefold_joint_view_anchors",
+        "passed": true
+      },
+      {
+        "detail": "a grouped precommit+private relation requires a Phase-A queue/prover refactor",
+        "name": "basefold_phase_a_is_per_oracle_not_grouped",
+        "passed": true
+      },
+      {
+        "detail": "outer mask evaluation and batched round stream",
+        "name": "outer_libra_anchors",
+        "passed": true
+      }
+    ],
+    "m4_source_sha256": "67e7f6ac6a15579043de5a9a0565b374667b094890bbf31053a818479697ed91",
+    "patch_sha256": "684ad2cde0d49fcb095fd542990dd3dcfa246d7a0378b7ec8f7377fcfa9d2c54",
+    "pinned_checkout_present": true
+  },
+  "subject": {
+    "m4_keccak_permutations": 83,
+    "m4_relation": "maximum fixed 2-input/2-output one-main source",
+    "name": "Hegemon M4 coefficient-aware joint simulator rank audit",
+    "patch_sha256": "684ad2cde0d49fcb095fd542990dd3dcfa246d7a0378b7ec8f7377fcfa9d2c54",
+    "pinned_revision": "3f96163049f680b2909f6545690bd929f1b48c44"
+  }
+}

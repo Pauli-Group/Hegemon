@@ -15,15 +15,16 @@ const CIRCUIT_VERSION_INDEX: usize = 76;
 const CRYPTO_SUITE_INDEX: usize = 77;
 const FIELD_MODULUS: u64 = transaction_circuit::constants::FIELD_MODULUS_U64;
 const DEPLOYED_PACKING_FACTOR: usize = 64;
-const DEPLOYED_ROW_COUNT: usize = 1531;
+const DEPLOYED_ROW_COUNT: usize = 699;
 const DEPLOYED_INPUT_ROWS: usize = 34;
 const DEPLOYED_OUTPUT_ROWS: usize = 12;
-const DEPLOYED_RANGE_BASE_ROW: usize = 92;
-const DEPLOYED_POSEIDON_BASE_ROW: usize = 415;
-const DEPLOYED_POSEIDON_ROWS_PER_PERMUTATION: usize = 31;
-const DEPLOYED_POSEIDON_WIDTH: usize = 12;
-const DEPLOYED_RANGE_LIMB_COUNT: usize = 21;
-const DEPLOYED_RANGE_LIMB_BITS: usize = 3;
+const DEPLOYED_DENSE_RANGE_BASE_ROW: usize = 241;
+const DEPLOYED_DENSE_RANGE_ORDINARY_DIGITS: usize = 30;
+const DEPLOYED_DENSE_RANGE_TOP_ROW: usize = 245;
+const DEPLOYED_POSEIDON_BASE_ROW: usize = 273;
+const DEPLOYED_POSEIDON_ROWS_PER_GROUP: usize = 142;
+const DEPLOYED_POSEIDON_FINAL_ROW_OFFSET: usize = 130;
+const DEPLOYED_POSEIDON_FINAL_BINDING_STEP: usize = 30;
 
 #[derive(Clone, Copy, Debug)]
 struct TargetBinding {
@@ -224,8 +225,8 @@ fn public_values_for_mask(mask: u8, probe: u8) -> Vec<u64> {
         _ => unreachable!("unsupported target-binding probe"),
     };
     values[49..53].copy_from_slice(&balance_slots);
-    values[CIRCUIT_VERSION_INDEX] = 3;
-    values[CRYPTO_SUITE_INDEX] = 2;
+    values[CIRCUIT_VERSION_INDEX] = 4;
+    values[CRYPTO_SUITE_INDEX] = 3;
     values
 }
 
@@ -638,6 +639,231 @@ fn lean_constraint_expression_list(values: &[SmallwoodConstraintExpression]) -> 
     }
 }
 
+fn production_formal_degrees(
+    expressions: &[SmallwoodConstraintExpression],
+) -> Result<Vec<usize>, Box<dyn std::error::Error>> {
+    let mut degrees = Vec::with_capacity(expressions.len());
+    let prior = |degrees: &[usize], index: usize| {
+        degrees
+            .get(index)
+            .copied()
+            .ok_or_else(|| format!("nonlinear expression references future index {index}"))
+    };
+    for expression in expressions {
+        let degree = match expression {
+            SmallwoodConstraintExpression::Constant(_)
+            | SmallwoodConstraintExpression::PublicValue(_)
+            | SmallwoodConstraintExpression::SlotDenominatorInverse(_)
+            | SmallwoodConstraintExpression::StableSelectorBit(_) => 0,
+            SmallwoodConstraintExpression::WitnessRow(_) => 1,
+            SmallwoodConstraintExpression::Add { left, right }
+            | SmallwoodConstraintExpression::Sub { left, right } => {
+                prior(&degrees, usize::try_from(*left)?)?
+                    .max(prior(&degrees, usize::try_from(*right)?)?)
+            }
+            SmallwoodConstraintExpression::Mul { left, right } => {
+                prior(&degrees, usize::try_from(*left)?)?
+                    .checked_add(prior(&degrees, usize::try_from(*right)?)?)
+                    .ok_or("nonlinear formal degree overflow")?
+            }
+            SmallwoodConstraintExpression::Neg { value } => {
+                prior(&degrees, usize::try_from(*value)?)?
+            }
+        };
+        degrees.push(degree);
+    }
+    Ok(degrees)
+}
+
+const FORMAL_DEGREE_CHUNK_SIZE: usize = 128;
+const FORMAL_DEGREE_CHECKS_PER_MODULE: usize = 10;
+const FORMAL_DEGREE_TABLE_BLOCK_SIZE: usize = 256;
+
+fn formal_degree_chunk_count(expression_count: usize) -> usize {
+    expression_count.div_ceil(FORMAL_DEGREE_CHUNK_SIZE)
+}
+
+fn formal_degree_check_module_count(expression_count: usize) -> usize {
+    formal_degree_chunk_count(expression_count).div_ceil(FORMAL_DEGREE_CHECKS_PER_MODULE)
+}
+
+fn formal_degree_certificate_data(
+    expressions: &[SmallwoodConstraintExpression],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let degrees = production_formal_degrees(expressions)?;
+    let blocks = degrees
+        .chunks(FORMAL_DEGREE_TABLE_BLOCK_SIZE)
+        .map(lean_nat_list)
+        .collect::<Vec<_>>()
+        .join(",\n    ");
+    let mut output = String::new();
+    writeln!(
+        &mut output,
+        "import HegemonCrypto.SmallWoodProductionDegree\n\n\
+set_option maxRecDepth 100000\n\n\
+namespace HegemonCrypto.SmallWood.ProductionPolynomials\n\n\
+/-! Generated formal-degree certificate data. -/\n\n\
+def productionFormalDegreeBlocks : List (List Nat) :=\n  \
+[\n    {blocks}\n  ]\n\n\
+def productionFormalDegreeAt (index : Nat) : Nat :=\n  \
+chunkedDegreeAt productionFormalDegreeBlocks \
+{FORMAL_DEGREE_TABLE_BLOCK_SIZE} index\n\n\
+end HegemonCrypto.SmallWood.ProductionPolynomials"
+    )?;
+    Ok(output)
+}
+
+fn formal_degree_certificate_check(
+    expressions: &[SmallwoodConstraintExpression],
+    module_index: usize,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let module_count = formal_degree_check_module_count(expressions.len());
+    if module_index >= module_count {
+        return Err(format!(
+            "formal-degree check module {module_index} is out of range 0..{module_count}"
+        )
+        .into());
+    }
+    let first_chunk = module_index * FORMAL_DEGREE_CHECKS_PER_MODULE;
+    let stop_chunk = (first_chunk + FORMAL_DEGREE_CHECKS_PER_MODULE)
+        .min(formal_degree_chunk_count(expressions.len()));
+    let import = if module_index == 0 {
+        "HegemonCrypto.SmallWoodProductionDegreeCertificateDataGenerated".to_owned()
+    } else {
+        format!(
+            "HegemonCrypto.SmallWoodProductionDegreeCertificateCheck{}Generated",
+            module_index - 1
+        )
+    };
+    let mut output = String::new();
+    writeln!(
+        &mut output,
+        "import {import}\n\n\
+set_option maxRecDepth 100000\n\
+set_option maxHeartbeats 0\n\n\
+namespace HegemonCrypto.SmallWood.ProductionPolynomials\n\n\
+open Hegemon.Transaction.SmallWoodProductionConstraintRefinement\n\n\
+/-! Generated bounded formal-degree checks, module {module_index}. -/\n"
+    )?;
+
+    let mut checked_facts = Vec::new();
+    for chunk_index in first_chunk..stop_chunk {
+        let start = chunk_index * FORMAL_DEGREE_CHUNK_SIZE;
+        let expression_chunk =
+            &expressions[start..(start + FORMAL_DEGREE_CHUNK_SIZE).min(expressions.len())];
+        let stop = start + expression_chunk.len();
+        writeln!(
+            &mut output,
+            "def productionDegreeExpressionChunk{chunk_index} : \
+List ProductionConstraintExpression :=\n  \
+(productionNonlinearExpressions.drop {start}).take {}\n\n\
+def productionFormalDegreeChunk{chunk_index}CheckedB : Bool :=\n  \
+formalDegreeCertificateAtB productionFormalDegreeAt {start}\n    \
+productionDegreeExpressionChunk{chunk_index}\n",
+            expression_chunk.len()
+        )?;
+        checked_facts.push((
+            format!("production_formal_degree_chunk_{chunk_index}_checked"),
+            format!("productionFormalDegreeChunk{chunk_index}CheckedB = true"),
+        ));
+        checked_facts.push((
+            format!("production_degree_expression_chunk_{chunk_index}_length"),
+            format!(
+                "productionDegreeExpressionChunk{chunk_index}.length = {}",
+                expression_chunk.len()
+            ),
+        ));
+        if stop == expressions.len() {
+            checked_facts.push((
+                "production_nonlinear_expressions_exhausted".to_owned(),
+                format!("productionNonlinearExpressions.drop {stop} = []"),
+            ));
+        }
+    }
+
+    writeln!(
+        &mut output,
+        "theorem production_formal_degree_check_module_{module_index}_checked :\n    \
+{} := by\n  decide\n",
+        checked_facts
+            .iter()
+            .map(|(_, proposition)| proposition.as_str())
+            .collect::<Vec<_>>()
+            .join("\n      ∧ ")
+    )?;
+    for (fact_index, (theorem_name, proposition)) in checked_facts.iter().enumerate() {
+        let projection = if fact_index + 1 == checked_facts.len() {
+            ".2".repeat(fact_index)
+        } else {
+            format!("{}.1", ".2".repeat(fact_index))
+        };
+        writeln!(
+            &mut output,
+            "theorem {theorem_name} :\n    \
+{proposition} :=\n  \
+production_formal_degree_check_module_{module_index}_checked{projection}\n"
+        )?;
+    }
+
+    writeln!(
+        &mut output,
+        "end HegemonCrypto.SmallWood.ProductionPolynomials"
+    )?;
+    Ok(output)
+}
+
+fn formal_degree_certificate(
+    expressions: &[SmallwoodConstraintExpression],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let chunk_count = formal_degree_chunk_count(expressions.len());
+    let final_check_module = formal_degree_check_module_count(expressions.len()) - 1;
+    let mut output = String::new();
+    writeln!(
+        &mut output,
+        "import HegemonCrypto.SmallWoodProductionDegreeCertificateCheck{final_check_module}Generated\n\n\
+namespace HegemonCrypto.SmallWood.ProductionPolynomials\n\n\
+open Hegemon.Transaction.SmallWoodProductionConstraintRefinement\n\n\
+/-! Generated composition of all bounded production formal-degree checks. -/\n\n\
+private theorem productionDegreeRemainder{chunk_count} :\n    \
+formalDegreeCertificateAtB productionFormalDegreeAt {}\n      \
+(productionNonlinearExpressions.drop {}) = true := by\n  \
+rw [production_nonlinear_expressions_exhausted]\n  \
+rfl\n",
+        expressions.len(),
+        expressions.len()
+    )?;
+    for (chunk_index, expression_chunk) in expressions
+        .chunks(FORMAL_DEGREE_CHUNK_SIZE)
+        .enumerate()
+        .rev()
+    {
+        let start = chunk_index * FORMAL_DEGREE_CHUNK_SIZE;
+        writeln!(
+            &mut output,
+            "private theorem productionDegreeRemainder{chunk_index} :\n    \
+formalDegreeCertificateAtB productionFormalDegreeAt {start}\n      \
+(productionNonlinearExpressions.drop {start}) = true :=\n  \
+formalDegreeCertificateAtB_drop_step\n    \
+productionFormalDegreeAt productionNonlinearExpressions\n    \
+{start} {}\n    \
+production_degree_expression_chunk_{chunk_index}_length\n    \
+production_formal_degree_chunk_{chunk_index}_checked\n    \
+productionDegreeRemainder{}\n",
+            expression_chunk.len(),
+            chunk_index + 1
+        )?;
+    }
+    writeln!(
+        &mut output,
+        "theorem production_formal_degree_certificate_checked :\n    \
+formalDegreeCertificateAtB productionFormalDegreeAt 0\n      \
+productionNonlinearExpressions = true := by\n  \
+simpa using productionDegreeRemainder0\n\n\
+end HegemonCrypto.SmallWood.ProductionPolynomials"
+    )?;
+    Ok(output)
+}
+
 fn map_definition(name: &str, map: &SmallwoodProductionConstraintMap) -> String {
     let mut output = String::new();
     writeln!(&mut output, "def {name} : ProductionConstraintMap :=").unwrap();
@@ -883,10 +1109,14 @@ fn output_hash_poseidon_index(
     let packing = map.lppc_packing_factor;
     let permutation = 137 + output * 3 + chunk;
     let lane = permutation % packing;
+    let row_offset = match step {
+        0 => limb,
+        DEPLOYED_POSEIDON_FINAL_BINDING_STEP => DEPLOYED_POSEIDON_FINAL_ROW_OFFSET + limb,
+        _ => panic!("production output binding only addresses Poseidon boundaries"),
+    };
     let row = DEPLOYED_POSEIDON_BASE_ROW
-        + ((permutation / packing) * DEPLOYED_POSEIDON_ROWS_PER_PERMUTATION + step)
-            * DEPLOYED_POSEIDON_WIDTH
-        + limb;
+        + (permutation / packing) * DEPLOYED_POSEIDON_ROWS_PER_GROUP
+        + row_offset;
     u32::try_from(row * packing + lane).expect("production output hash index fits u32")
 }
 
@@ -972,7 +1202,9 @@ fn output_hash_binding_constraint_indices(
     if map.public_values[2 + output] == 0 {
         return Ok(Vec::new());
     }
-    if map.lppc_row_count != 1531 || map.lppc_packing_factor != 64 {
+    if map.lppc_row_count != DEPLOYED_ROW_COUNT
+        || map.lppc_packing_factor != DEPLOYED_PACKING_FACTOR
+    {
         return Err("unexpected deployed output hash geometry".into());
     }
     output_hash_required_linear_specs(map, output)
@@ -1015,10 +1247,14 @@ fn input_hash_poseidon_index(
     let packing = map.lppc_packing_factor;
     let permutation = input_hash_commitment_permutation(input, chunk);
     let lane = permutation % packing;
+    let row_offset = match step {
+        0 => limb,
+        DEPLOYED_POSEIDON_FINAL_BINDING_STEP => DEPLOYED_POSEIDON_FINAL_ROW_OFFSET + limb,
+        _ => panic!("production input binding only addresses Poseidon boundaries"),
+    };
     let row = DEPLOYED_POSEIDON_BASE_ROW
-        + ((permutation / packing) * DEPLOYED_POSEIDON_ROWS_PER_PERMUTATION + step)
-            * DEPLOYED_POSEIDON_WIDTH
-        + limb;
+        + (permutation / packing) * DEPLOYED_POSEIDON_ROWS_PER_GROUP
+        + row_offset;
     u32::try_from(row * packing + lane).expect("production input hash index fits u32")
 }
 
@@ -1119,20 +1355,33 @@ fn packed_index(row: usize) -> u32 {
     u32::try_from(row * DEPLOYED_PACKING_FACTOR).expect("production reconstruction index fits u32")
 }
 
-fn reconstruction_limb_coefficient(limb: usize) -> u64 {
-    1u64 << (limb * DEPLOYED_RANGE_LIMB_BITS)
+fn dense_range_digit_index(value: usize, digit: usize) -> u32 {
+    let slot = value * DEPLOYED_DENSE_RANGE_ORDINARY_DIGITS + digit;
+    u32::try_from(DEPLOYED_DENSE_RANGE_BASE_ROW * DEPLOYED_PACKING_FACTOR + slot)
+        .expect("production dense-range digit index fits u32")
+}
+
+fn dense_range_top_index(value: usize) -> u32 {
+    u32::try_from(DEPLOYED_DENSE_RANGE_TOP_ROW * DEPLOYED_PACKING_FACTOR + value)
+        .expect("production dense-range top-bit index fits u32")
 }
 
 fn witness_value_reconstruction_spec(
     value_row: usize,
-    range_row: usize,
+    value_index: usize,
 ) -> RequiredLinearConstraintSpec {
     let mut term_indices = vec![packed_index(value_row)];
     let mut term_coefficients = vec![1];
-    for limb in 0..DEPLOYED_RANGE_LIMB_COUNT {
-        term_indices.push(packed_index(range_row + limb));
-        term_coefficients.push(FIELD_MODULUS - reconstruction_limb_coefficient(limb));
+    let mut coefficient = 1u64;
+    for digit in 0..DEPLOYED_DENSE_RANGE_ORDINARY_DIGITS {
+        term_indices.push(dense_range_digit_index(value_index, digit));
+        term_coefficients.push(FIELD_MODULUS - coefficient);
+        coefficient = coefficient
+            .checked_mul(4)
+            .expect("production dense-range coefficient fits u64");
     }
+    term_indices.push(dense_range_top_index(value_index));
+    term_coefficients.push(FIELD_MODULUS - coefficient);
     RequiredLinearConstraintSpec {
         term_indices,
         term_coefficients,
@@ -1142,20 +1391,24 @@ fn witness_value_reconstruction_spec(
 
 fn public_value_reconstruction_spec(
     map: &SmallwoodProductionConstraintMap,
-    range_slot: usize,
+    value_index: usize,
     public_value_index: usize,
 ) -> RequiredLinearConstraintSpec {
+    let mut coefficient = 1u64;
+    let mut term_indices = Vec::with_capacity(DEPLOYED_DENSE_RANGE_ORDINARY_DIGITS + 1);
+    let mut term_coefficients = Vec::with_capacity(DEPLOYED_DENSE_RANGE_ORDINARY_DIGITS + 1);
+    for digit in 0..DEPLOYED_DENSE_RANGE_ORDINARY_DIGITS {
+        term_indices.push(dense_range_digit_index(value_index, digit));
+        term_coefficients.push(coefficient);
+        coefficient = coefficient
+            .checked_mul(4)
+            .expect("production dense-range coefficient fits u64");
+    }
+    term_indices.push(dense_range_top_index(value_index));
+    term_coefficients.push(coefficient);
     RequiredLinearConstraintSpec {
-        term_indices: (0..DEPLOYED_RANGE_LIMB_COUNT)
-            .map(|limb| {
-                packed_index(
-                    DEPLOYED_RANGE_BASE_ROW + (4 + range_slot) * DEPLOYED_RANGE_LIMB_COUNT + limb,
-                )
-            })
-            .collect(),
-        term_coefficients: (0..DEPLOYED_RANGE_LIMB_COUNT)
-            .map(reconstruction_limb_coefficient)
-            .collect(),
+        term_indices,
+        term_coefficients,
         target: map.public_values[public_value_index],
     }
 }
@@ -1167,19 +1420,19 @@ fn monetary_reconstruction_required_linear_specs(
     for input in 0..2 {
         specs.push(witness_value_reconstruction_spec(
             input * DEPLOYED_INPUT_ROWS,
-            DEPLOYED_RANGE_BASE_ROW + input * DEPLOYED_RANGE_LIMB_COUNT,
+            input,
         ));
     }
     for output in 0..2 {
         specs.push(witness_value_reconstruction_spec(
             2 * DEPLOYED_INPUT_ROWS + output * DEPLOYED_OUTPUT_ROWS,
-            DEPLOYED_RANGE_BASE_ROW + (2 + output) * DEPLOYED_RANGE_LIMB_COUNT,
+            2 + output,
         ));
     }
     for (range_slot, public_value_index) in [40usize, 42, 57].into_iter().enumerate() {
         specs.push(public_value_reconstruction_spec(
             map,
-            range_slot,
+            4 + range_slot,
             public_value_index,
         ));
     }
@@ -1277,6 +1530,7 @@ fn rust_runtime_contracts(
 pub(crate) struct SmallwoodProductionRuntimeContract {\n\
     pub(crate) activity_mask: u8,\n\
     pub(crate) structure_digest: [u8; 32],\n\
+    pub(crate) surface_structure_digest: [u8; 32],\n\
     pub(crate) normalized_targets_digest: [u8; 32],\n\
     pub(crate) target_bindings: &'static [(u32, u16)],\n\
 }\n\n\
@@ -1294,7 +1548,7 @@ pub(crate) const SMALLWOOD_PRODUCTION_RUNTIME_CONTRACTS:\n\
                 ))
             })
             .collect::<Result<Vec<_>, std::num::TryFromIntError>>()?;
-        let (structure_digest, normalized_targets_digest) =
+        let (structure_digest, surface_structure_digest, normalized_targets_digest) =
             smallwood_production_runtime_contract_digests_for_generation(map, &bindings)?;
         let binding_text = bindings
             .iter()
@@ -1303,8 +1557,9 @@ pub(crate) const SMALLWOOD_PRODUCTION_RUNTIME_CONTRACTS:\n\
             .join(", ");
         writeln!(
             &mut output,
-            "    SmallwoodProductionRuntimeContract {{\n        activity_mask: {mask},\n        structure_digest: {},\n        normalized_targets_digest: {},\n        target_bindings: &[{binding_text}],\n    }},",
+            "    SmallwoodProductionRuntimeContract {{\n        activity_mask: {mask},\n        structure_digest: {},\n        surface_structure_digest: {},\n        normalized_targets_digest: {},\n        target_bindings: &[{binding_text}],\n    }},",
             rust_byte_array(&structure_digest),
+            rust_byte_array(&surface_structure_digest),
             rust_byte_array(&normalized_targets_digest),
         )?;
     }
@@ -1314,13 +1569,21 @@ pub(crate) const SMALLWOOD_PRODUCTION_RUNTIME_CONTRACTS:\n\
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_mode = env::args().nth(1);
-    if output_mode
+    let formal_degree_check_module = output_mode
         .as_deref()
-        .is_some_and(|mode| mode != "--rust-runtime-contract")
-    {
-        return Err(
-            "usage: gen_smallwood_production_constraint_lean [--rust-runtime-contract]".into(),
-        );
+        .and_then(|mode| mode.strip_prefix("--formal-degree-certificate-check="))
+        .map(str::parse::<usize>)
+        .transpose()?;
+    if output_mode.as_deref().is_some_and(|mode| {
+        mode != "--rust-runtime-contract"
+            && mode != "--formal-degree-certificate"
+            && mode != "--formal-degree-certificate-data"
+            && !mode.starts_with("--formal-degree-certificate-check=")
+    }) {
+        return Err("usage: gen_smallwood_production_constraint_lean \
+[--rust-runtime-contract|--formal-degree-certificate|\
+--formal-degree-certificate-data|--formal-degree-certificate-check=N]"
+            .into());
     }
     let active = smallwood_production_constraint_map(&active_witness())?;
     let stablecoin = smallwood_production_constraint_map(&stablecoin_witness())?;
@@ -1329,6 +1592,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         || active.nonlinear_program_digest != stablecoin.nonlinear_program_digest
     {
         return Err("production nonlinear program unexpectedly depends on fixture values".into());
+    }
+    if output_mode.as_deref() == Some("--formal-degree-certificate") {
+        print!(
+            "{}",
+            formal_degree_certificate(&active.nonlinear_expressions)?
+        );
+        return Ok(());
+    }
+    if output_mode.as_deref() == Some("--formal-degree-certificate-data") {
+        print!(
+            "{}",
+            formal_degree_certificate_data(&active.nonlinear_expressions)?
+        );
+        return Ok(());
+    }
+    if let Some(module_index) = formal_degree_check_module {
+        print!(
+            "{}",
+            formal_degree_certificate_check(&active.nonlinear_expressions, module_index)?
+        );
+        return Ok(());
     }
     let baseline_maps = (0u8..16)
         .map(|mask| {

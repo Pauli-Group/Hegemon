@@ -57,7 +57,9 @@ use superneo_hegemon::{
 };
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
 use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
-use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
+use transaction_circuit::hashing_pq::{
+    ciphertext_hash_bytes, felts_to_bytes48, merkle_node, HashFelt,
+};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use transaction_circuit::proof::{
@@ -65,7 +67,10 @@ use transaction_circuit::proof::{
     transaction_proof_digest_from_parts, transaction_verifier_profile_digest_for_version,
     TransactionProof,
 };
-use transaction_circuit::{SmallwoodArithmetization, StablecoinPolicyBinding, TransactionWitness};
+use transaction_circuit::{
+    smallwood_blake2b384_boolean_relation_is_compiled, SmallwoodArithmetization,
+    StablecoinPolicyBinding, TransactionWitness,
+};
 
 const GOLDILOCKS_MODULUS_U64: u64 = 18_446_744_069_414_584_321;
 
@@ -820,7 +825,7 @@ struct ReviewActiveTxProfile {
     proof_backend: String,
     arithmetization: String,
     public_value_count: usize,
-    verifier_profile_sha384_hex: String,
+    verifier_profile_blake2b384_hex: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -836,10 +841,10 @@ struct ReviewVectorCase {
     block_context: Option<ReviewBlockContext>,
 }
 
-const REVIEW_VECTOR_SCHEMA_VERSION: u32 = 1;
+const REVIEW_VECTOR_SCHEMA_VERSION: u32 = 2;
 const REVIEW_VECTOR_GENERATOR_ID: &str = "hegemon.superneo-bench.native-review";
-const ACTIVE_REVIEW_ARITHMETIZATION: SmallwoodArithmetization =
-    SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2;
+const LEGACY_POSEIDON_REVIEW_ARITHMETIZATION: SmallwoodArithmetization =
+    SmallwoodArithmetization::DirectPacked64CompressedLevel5;
 const ACTIVE_REVIEW_PUBLIC_VALUE_COUNT: usize = 78;
 
 const REQUIRED_REVIEW_CASES: [(&str, &str, bool, Option<&str>, &str); 11] = [
@@ -2469,10 +2474,14 @@ fn review_case(
 fn active_review_profile_from_leaf(
     artifact: &superneo_hegemon::NativeTxLeafArtifact,
 ) -> Result<ReviewActiveTxProfile> {
+    ensure!(
+        smallwood_blake2b384_boolean_relation_is_compiled(),
+        "production BLAKE2b-384 Boolean transaction relation is unsupported; Poseidon review artifacts are legacy/research-only"
+    );
     let expected_version = protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
     ensure!(
         artifact.tx.version == expected_version,
-        "review vectors must exercise active SmallWood V3"
+        "review vectors must exercise active SmallWood V4"
     );
     ensure!(
         artifact.proof_backend == protocol_versioning::TxProofBackend::SmallwoodCandidate,
@@ -2485,8 +2494,8 @@ fn active_review_profile_from_leaf(
     )?
     .ok_or_else(|| anyhow::anyhow!("review SmallWood artifact has no arithmetization"))?;
     ensure!(
-        arithmetization == ACTIVE_REVIEW_ARITHMETIZATION,
-        "review vectors must exercise the active V3 arithmetization"
+        arithmetization == LEGACY_POSEIDON_REVIEW_ARITHMETIZATION,
+        "review vectors must exercise the legacy Poseidon fixture arithmetization"
     );
     Ok(ReviewActiveTxProfile {
         circuit_version: expected_version.circuit,
@@ -2494,13 +2503,17 @@ fn active_review_profile_from_leaf(
         proof_backend: format!("{:?}", artifact.proof_backend),
         arithmetization: format!("{arithmetization:?}"),
         public_value_count: ACTIVE_REVIEW_PUBLIC_VALUE_COUNT,
-        verifier_profile_sha384_hex: hex48(transaction_verifier_profile_digest_for_version(
+        verifier_profile_blake2b384_hex: hex48(transaction_verifier_profile_digest_for_version(
             expected_version,
         )),
     })
 }
 
 fn emit_review_vectors(dir: &Path) -> Result<()> {
+    ensure!(
+        smallwood_blake2b384_boolean_relation_is_compiled(),
+        "cannot emit a production review bundle until the BLAKE2b-384 Boolean transaction relation is compiled"
+    );
     fs::create_dir_all(dir)
         .with_context(|| format!("failed to create review vector directory {}", dir.display()))?;
     let params = current_native_backend_params();
@@ -2724,6 +2737,10 @@ fn review_contexts_match<T: Serialize>(left: &Option<T>, right: &Option<T>) -> R
 }
 
 fn validate_review_bundle_contract(bundle: &ReviewVectorBundle) -> Result<()> {
+    ensure!(
+        smallwood_blake2b384_boolean_relation_is_compiled(),
+        "production BLAKE2b-384 Boolean transaction relation is unsupported; legacy Poseidon review bundles cannot authorize production"
+    );
     ensure!(
         bundle.schema_version == REVIEW_VECTOR_SCHEMA_VERSION,
         "review bundle schema_version must be {REVIEW_VECTOR_SCHEMA_VERSION}"
@@ -3443,20 +3460,23 @@ fn derive_synthetic_native_leaf_record(
     base: &NativeTxLeafRecord,
     unique_index: usize,
 ) -> NativeTxLeafRecord {
+    // Benchmark-only corpus diversification. These records never enter an
+    // accepted artifact, receipt, cache key, or verifier decision; production
+    // 48-byte bindings use the registered BLAKE2b-384 domains instead.
     let mut material = Vec::with_capacity(64 + (48 * 3));
     material.extend_from_slice(b"hegemon.native-leaf-record-corpus.synthetic.v1");
     material.extend_from_slice(&(unique_index as u64).to_le_bytes());
     material.extend_from_slice(&base.statement_digest);
     material.extend_from_slice(&base.proof_digest);
     material.extend_from_slice(&base.commitment.digest);
-    let digest = blake3_384(&material);
+    let digest = synthetic_non_authority_blake3_384(&material);
 
     let mut proof_material = Vec::with_capacity(64 + (48 * 2));
     proof_material.extend_from_slice(b"hegemon.native-leaf-record-corpus.synthetic-proof.v1");
     proof_material.extend_from_slice(&(unique_index as u64).to_le_bytes());
     proof_material.extend_from_slice(&base.proof_digest);
     proof_material.extend_from_slice(&digest);
-    let proof_digest = blake3_384(&proof_material);
+    let proof_digest = synthetic_non_authority_blake3_384(&proof_material);
 
     let mut record = base.clone();
     record.statement_digest = digest;
@@ -4964,6 +4984,7 @@ fn sample_witness(seed: u64) -> TransactionWitness {
             r: [seed as u8 + 24; 32],
         },
     };
+    let ciphertext_hash = ciphertext_hash_bytes(&sample_review_ciphertext_bytes());
 
     TransactionWitness {
         inputs: vec![
@@ -4981,7 +5002,7 @@ fn sample_witness(seed: u64) -> TransactionWitness {
             },
         ],
         outputs: vec![output_native, output_asset],
-        ciphertext_hashes: vec![[0u8; 48]; 2],
+        ciphertext_hashes: vec![ciphertext_hash; 2],
         sk_spend,
         merkle_root: felts_to_bytes48(&merkle_root),
         fee: 5,
@@ -4991,6 +5012,14 @@ fn sample_witness(seed: u64) -> TransactionWitness {
     }
 }
 
+fn sample_review_ciphertext_bytes() -> Vec<u8> {
+    // Matches the deterministic EncryptedNote payload used by the native-node
+    // production-fixture tests.
+    let mut bytes = vec![3u8; 579];
+    bytes.extend_from_slice(&[4u8; 32]);
+    bytes
+}
+
 fn build_two_leaf_merkle_tree(
     leaf0: HashFelt,
     leaf1: HashFelt,
@@ -4998,11 +5027,13 @@ fn build_two_leaf_merkle_tree(
     let mut siblings0 = vec![leaf1];
     let mut siblings1 = vec![leaf0];
     let mut current = merkle_node(leaf0, leaf1);
+    let zero = [Goldilocks::new(0); 6];
+    let mut empty_subtree = merkle_node(zero, zero);
     for _ in 1..CIRCUIT_MERKLE_DEPTH {
-        let zero = [Goldilocks::new(0); 6];
-        siblings0.push(zero);
-        siblings1.push(zero);
-        current = merkle_node(current, zero);
+        siblings0.push(empty_subtree);
+        siblings1.push(empty_subtree);
+        current = merkle_node(current, empty_subtree);
+        empty_subtree = merkle_node(empty_subtree, empty_subtree);
     }
     (
         MerklePath {
@@ -5028,7 +5059,9 @@ fn hex48(bytes: [u8; 48]) -> String {
     hex::encode(bytes)
 }
 
-fn blake3_384(bytes: &[u8]) -> [u8; 48] {
+fn synthetic_non_authority_blake3_384(bytes: &[u8]) -> [u8; 48] {
+    // Deliberately scoped to `derive_synthetic_native_leaf_record`: this is a
+    // non-authoritative synthetic benchmark generator, not a protocol hash.
     let mut hasher = Hasher::new();
     hasher.update(bytes);
     let mut output = hasher.finalize_xof();
@@ -5099,7 +5132,6 @@ mod tests {
     use std::fs;
     use superneo_backend_lattice::{LatticeCommitment, RingElem};
     use superneo_ccs::digest_statement;
-    use superneo_hegemon::verify_native_tx_leaf_artifact_bytes_with_params;
 
     fn checked_in_review_bundle() -> ReviewVectorBundle {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -5180,12 +5212,14 @@ mod tests {
     }
 
     #[test]
-    fn review_bundle_contract_rejects_historical_v2_profile() {
+    fn review_bundle_contract_rejects_legacy_poseidon_while_blake2b_relation_is_unsupported() {
         let mut bundle = checked_in_review_bundle();
         bundle.active_tx_profile.circuit_version = 2;
         let err = validate_review_bundle_contract(&bundle)
-            .expect_err("historical V2 review profile must fail closed");
-        assert!(err.to_string().contains("active transaction profile"));
+            .expect_err("legacy Poseidon review profile must fail closed");
+        assert!(err
+            .to_string()
+            .contains("BLAKE2b-384 Boolean transaction relation is unsupported"));
     }
 
     #[test]
@@ -5197,7 +5231,9 @@ mod tests {
         bundle.cases[2].artifact_sha256 = aliased_digest;
         let err = validate_review_bundle_contract(&bundle)
             .expect_err("aliased negative artifact must fail closed");
-        assert!(err.to_string().contains("aliases another case artifact"));
+        assert!(err
+            .to_string()
+            .contains("BLAKE2b-384 Boolean transaction relation is unsupported"));
     }
 
     #[test]
@@ -5255,46 +5291,20 @@ mod tests {
     }
 
     #[test]
-    fn review_vectors_agree_between_production_and_reference_verifiers() {
-        let dir = std::env::temp_dir().join(format!(
-            "hegemon-native-backend-vectors-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("unnamed")
-        ));
-        let _ = fs::remove_dir_all(&dir);
-        emit_review_vectors(&dir).expect("emit review vectors");
-        let (summary, reference_results) =
-            verify_bundle_dir(&dir).expect("reference verifier should run");
-        assert_eq!(
-            summary.failed_cases, 0,
-            "reference verifier failures: {:?}",
-            reference_results
-        );
-        let bundle: ReviewVectorBundle =
-            serde_json::from_slice(&fs::read(dir.join("bundle.json")).expect("read bundle"))
-                .expect("parse local review bundle");
-        for case in &bundle.cases {
-            let production_result = verify_production_review_case(case);
-            if case.expected_valid {
-                production_result.as_ref().unwrap_or_else(|err| {
-                    panic!("production verifier rejected {}: {err}", case.name)
-                });
-            } else {
-                let expected = case
-                    .expected_error_substring
-                    .as_deref()
-                    .expect("invalid case should declare expected substring");
-                let production_err =
-                    production_result.expect_err("production verifier should reject");
-                assert!(
-                    production_err.to_string().contains(expected),
-                    "production verifier error mismatch for {}: {}",
-                    case.name,
-                    production_err
-                );
-            }
-        }
-        let _ = fs::remove_dir_all(&dir);
+    fn checked_in_poseidon_review_vectors_are_not_production_authority() {
+        let dir =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/native_backend_vectors");
+        let reference_err = verify_bundle_dir(&dir)
+            .expect_err("reference verifier must reject the legacy Poseidon review bundle");
+        assert!(reference_err
+            .to_string()
+            .contains("BLAKE2b-384 Boolean transaction relation is unsupported"));
+
+        let production_err = verify_review_bundle_production(&dir)
+            .expect_err("production verifier must reject the legacy Poseidon review bundle");
+        assert!(production_err
+            .to_string()
+            .contains("BLAKE2b-384 Boolean transaction relation is unsupported"));
     }
 
     #[test]
@@ -5320,90 +5330,5 @@ mod tests {
             err.to_string().contains("receipt mismatch"),
             "unexpected error: {err}"
         );
-    }
-
-    fn verify_production_review_case(case: &ReviewVectorCase) -> Result<()> {
-        let artifact_bytes =
-            hex::decode(&case.artifact_hex).context("case artifact_hex must be valid hex")?;
-        match case.kind.as_str() {
-            "native_tx_leaf" => {
-                let ctx = case
-                    .tx_context
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("native_tx_leaf case missing tx_context"))?;
-                let params = current_native_backend_params();
-                let tx = tx_from_review(ctx)?;
-                let receipt = CanonicalTxValidityReceipt {
-                    statement_hash: decode_hex_array_for_test::<48>(
-                        &ctx.receipt.statement_hash_hex,
-                    )?,
-                    proof_digest: decode_hex_array_for_test::<48>(&ctx.receipt.proof_digest_hex)?,
-                    public_inputs_digest: decode_hex_array_for_test::<48>(
-                        &ctx.receipt.public_inputs_digest_hex,
-                    )?,
-                    verifier_profile: decode_hex_array_for_test::<48>(
-                        &ctx.receipt.verifier_profile_hex,
-                    )?,
-                };
-                verify_native_tx_leaf_artifact_bytes_with_params(
-                    &params,
-                    &tx,
-                    &receipt,
-                    &artifact_bytes,
-                )
-                .map(|_| ())
-            }
-            "receipt_root" => {
-                let ctx = case
-                    .block_context
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("receipt_root case missing block_context"))?;
-                let params = current_native_backend_params();
-                let artifacts = receipt_root_artifacts_from_review(&params, ctx)?;
-                verify_native_tx_leaf_receipt_root_artifact_bytes_with_params(
-                    &params,
-                    &artifacts,
-                    &artifact_bytes,
-                )
-                .map(|_| ())
-            }
-            other => Err(anyhow::anyhow!("unsupported review case kind {other}")),
-        }
-    }
-
-    fn decode_hex_array_for_test<const N: usize>(value: &str) -> Result<[u8; N]> {
-        let bytes = hex::decode(value)?;
-        let len = bytes.len();
-        bytes
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("hex string has {} bytes, expected {}", len, N))
-    }
-
-    fn tx_from_review(ctx: &ReviewTxContext) -> Result<superneo_hegemon::TxLeafPublicTx> {
-        Ok(superneo_hegemon::TxLeafPublicTx {
-            nullifiers: ctx
-                .tx
-                .nullifiers_hex
-                .iter()
-                .map(|value| decode_hex_array_for_test::<48>(value))
-                .collect::<Result<Vec<_>>>()?,
-            commitments: ctx
-                .tx
-                .commitments_hex
-                .iter()
-                .map(|value| decode_hex_array_for_test::<48>(value))
-                .collect::<Result<Vec<_>>>()?,
-            ciphertext_hashes: ctx
-                .tx
-                .ciphertext_hashes_hex
-                .iter()
-                .map(|value| decode_hex_array_for_test::<48>(value))
-                .collect::<Result<Vec<_>>>()?,
-            balance_tag: decode_hex_array_for_test::<48>(&ctx.tx.balance_tag_hex)?,
-            version: protocol_versioning::VersionBinding::new(
-                ctx.tx.version_circuit,
-                ctx.tx.version_crypto,
-            ),
-        })
     }
 }

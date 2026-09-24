@@ -37,9 +37,6 @@ lean_exe gen_bridge_mint_payload_raw_admission_vectors where
 lean_exe gen_bridge_verifier_registration_policy_vectors where
   root := `Hegemon.Native.GenerateBridgeVerifierRegistrationPolicyVectors
 
-lean_exe gen_aggregation_v5_vectors where
-  root := `Hegemon.Consensus.GenerateAggregationV5Vectors
-
 lean_exe gen_commitment_tree_append_vectors where
   root := `Hegemon.Consensus.GenerateCommitmentTreeAppendVectors
 
@@ -63,6 +60,9 @@ lean_exe gen_native_tx_leaf_admission_vectors where
 
 lean_exe gen_pow_vectors where
   root := `Hegemon.Consensus.GeneratePowVectors
+
+lean_exe gen_pow_v3_vectors where
+  root := `Hegemon.Consensus.GeneratePowV3Vectors
 
 lean_exe gen_proof_policy_vectors where
   root := `Hegemon.Consensus.GenerateProofPolicyVectors
@@ -256,6 +256,15 @@ lean_exe gen_mineable_action_admission_vectors where
 lean_exe gen_native_miner_identity_vectors where
   root := `Hegemon.Native.GenerateMinerIdentityVectors
 
+lean_exe gen_block_body_chunk_transport_admission_vectors where
+  root := `Hegemon.Native.GenerateBlockBodyChunkTransportAdmissionVectors
+
+lean_exe gen_pending_action_canonicality_vectors where
+  root := `Hegemon.Native.GeneratePendingActionCanonicalityVectors
+
+lean_exe gen_nullifier_accumulator_vectors where
+  root := `Hegemon.Native.GenerateNullifierAccumulatorVectors
+
 lean_exe gen_mined_work_admission_vectors where
   root := `Hegemon.Native.GenerateMinedWorkAdmissionVectors
 
@@ -382,6 +391,18 @@ lean_exe gen_smallwood_verifier_statement_projection_vectors where
 lean_exe gen_smallwood_production_constraint_refinement_vectors where
   root := `Hegemon.Transaction.GenerateSmallWoodProductionConstraintRefinementVectors
 
+lean_exe gen_poseidon2_v8_constraint_refinement_vectors where
+  root := `Hegemon.Transaction.GeneratePoseidon2V8ConstraintRefinementVectors
+
+lean_exe gen_poseidon2_v8_rp04_constraint_refinement_vectors where
+  root := `Hegemon.Transaction.GeneratePoseidon2V8ConstraintRefinementHgv8rp04Vectors
+
+lean_exe gen_poseidon2_v8_semantic_adequacy_vectors where
+  root := `Hegemon.Transaction.GeneratePoseidon2V8SemanticAdequacyVectors
+
+lean_exe gen_poseidon2_v8_relation_program_vectors where
+  root := `Hegemon.Transaction.GeneratePoseidon2V8RelationProgramVectors
+
 lean_exe gen_accepted_smallwood_block_composition_vectors where
   root := `Hegemon.Consensus.GenerateAcceptedSmallWoodBlockCompositionVectors
 
@@ -411,3 +432,6 @@ lean_exe gen_statement_hash_vectors where
 
 lean_exe gen_tx_validity_claim_matching_vectors where
   root := `Hegemon.Transaction.GenerateTxValidityClaimMatchingVectors
+
+lean_exe gen_full_shake_relation_vectors where
+  root := `Hegemon.FullShakeRelation.GenerateFullShakeRelationVectors

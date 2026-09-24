@@ -9,7 +9,7 @@ pub const MAX_NULLIFIERS_PER_TX: u32 = 2;
 pub const MAX_COMMITMENTS_PER_TX: u32 = 2;
 pub const STARK_PROOF_MAX_SIZE: usize = 512 * 1024;
 pub const RECURSIVE_BLOCK_V1_ARTIFACT_MAX_SIZE: usize = 699_452;
-pub const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE: usize = 523_736;
+pub const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE: usize = 531_368;
 pub const RECURSIVE_BLOCK_ARTIFACT_MAX_SIZE: usize = RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE;
 pub const NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE: usize = 530_368;
 pub const BINDING_HASH_SIZE: usize = 64;
@@ -179,7 +179,7 @@ impl BlockProofRoute {
         Self::new(mode, proof_artifact_kind_from_mode(mode))
     }
 
-    pub const fn shipped_recursive_block_v2() -> Self {
+    pub const fn historical_recursive_block_v2() -> Self {
         Self::new(
             BlockProofMode::RecursiveBlock,
             ProofArtifactKind::RecursiveBlockV2,
@@ -218,8 +218,8 @@ pub const fn canonical_recursive_block_artifact_kind() -> ProofArtifactKind {
     ProofArtifactKind::RecursiveBlockV2
 }
 
-pub fn canonical_shipped_block_proof_route() -> BlockProofRoute {
-    BlockProofRoute::shipped_recursive_block_v2()
+pub fn historical_recursive_block_proof_route() -> BlockProofRoute {
+    BlockProofRoute::historical_recursive_block_v2()
 }
 
 pub fn proof_artifact_kind_from_mode(mode: BlockProofMode) -> ProofArtifactKind {
@@ -251,6 +251,10 @@ pub struct RecursiveBlockProofPayload {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+/// Historical aggregate payload retained for decoding existing blocks.
+///
+/// Active blocks carry independent transaction proofs and never author this
+/// payload.
 pub struct CandidateArtifact {
     pub version: u8,
     pub tx_count: u32,

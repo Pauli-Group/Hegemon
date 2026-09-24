@@ -8,7 +8,22 @@ namespace StatementHash
 open Hegemon.Transaction.PublicInputs
 
 def digestWidth : Nat := 48
-def statementHashDomain : List Byte := asciiBytes "tx-statement-v1"
+def blake2b384Frame : List Byte := asciiBytes "hegemon.blake2b-384.frame-v1"
+def statementHashDomain : List Byte := asciiBytes "hegemon.transaction.statement.v2"
+
+def framedPart (part : List Byte) : List Byte :=
+  u64le part.length ++ part
+
+def framedParts : List (List Byte) -> List Byte
+  | [] => []
+  | part :: rest => framedPart part ++ framedParts rest
+
+/-- Exact generic BLAKE2b-384 transcript used by `hegemon-hash384`.
+
+The hash primitive remains an external cryptographic assumption. This executable
+definition fixes only the byte-level domain and part framing consumed by it. -/
+def blake2b384Transcript (domain : List Byte) (parts : List (List Byte)) : List Byte :=
+  blake2b384Frame ++ u64le domain.length ++ domain ++ framedParts parts
 
 structure StatementFields where
   merkleRootSeed : Nat
@@ -76,8 +91,7 @@ def statementPreimage (fields : StatementFields) : Option (List Byte) :=
   | some nullifiers, some commitments, some ciphertextHashes, some valueBalance,
       some stablecoinIssuance =>
       some <|
-        statementHashDomain
-          ++ digestBytes fields.merkleRootSeed
+        digestBytes fields.merkleRootSeed
           ++ nullifiers
           ++ commitments
           ++ ciphertextHashes
@@ -95,7 +109,11 @@ def statementPreimage (fields : StatementFields) : Option (List Byte) :=
           ++ u32le fields.stablecoinPolicyVersion
   | _, _, _, _, _ => none
 
-def publicInputsDigestDomain : List Byte := asciiBytes "tx-public-inputs-digest-v1"
+def statementHashTranscript (fields : StatementFields) : Option (List Byte) :=
+  (statementPreimage fields).map fun payload =>
+    blake2b384Transcript statementHashDomain [payload]
+
+def publicInputsDigestDomain : List Byte := asciiBytes "hegemon.transaction.public-inputs.v2"
 
 structure SerializedPublicInputsFields where
   inputFlags : List Nat
@@ -157,9 +175,12 @@ def serializedPublicInputsPostcard (fields : SerializedPublicInputsFields) : Lis
     ++ postcardBytes (digestBytes fields.stablecoinAttestationCommitmentSeed)
 
 def publicInputsDigestPreimage (fields : SerializedPublicInputsFields) : List Byte :=
-  publicInputsDigestDomain ++ serializedPublicInputsPostcard fields
+  serializedPublicInputsPostcard fields
 
-def proofDigestDomain : List Byte := asciiBytes "tx-proof-digest-v1"
+def publicInputsDigestTranscript (fields : SerializedPublicInputsFields) : List Byte :=
+  blake2b384Transcript publicInputsDigestDomain [publicInputsDigestPreimage fields]
+
+def proofDigestDomain : List Byte := asciiBytes "hegemon.transaction.proof-artifact.v2"
 
 structure ProofDigestFields where
   backendWireId : Nat
@@ -167,7 +188,10 @@ structure ProofDigestFields where
 deriving DecidableEq, Repr
 
 def proofDigestPreimage (fields : ProofDigestFields) : List Byte :=
-  proofDigestDomain ++ [byte fields.backendWireId] ++ fields.proofBytes
+  [byte fields.backendWireId] ++ fields.proofBytes
+
+def proofDigestTranscript (fields : ProofDigestFields) : List Byte :=
+  blake2b384Transcript proofDigestDomain [[byte fields.backendWireId], fields.proofBytes]
 
 def validFields : StatementFields :=
   { merkleRootSeed := 10
@@ -242,15 +266,18 @@ def alternateProofBytesDigestFields : ProofDigestFields :=
   { backendWireId := 2
     proofBytes := [0, 1, 2, 4, 255] }
 
-def expectedPreimageLength : Nat := 600
+def expectedPreimageLength : Nat := 585
 
-theorem statementHashDomain_length : statementHashDomain.length = 15 := by
+theorem blake2b384Frame_length : blake2b384Frame.length = 28 := by
   decide
 
-theorem publicInputsDigestDomain_length : publicInputsDigestDomain.length = 26 := by
+theorem statementHashDomain_length : statementHashDomain.length = 32 := by
   decide
 
-theorem proofDigestDomain_length : proofDigestDomain.length = 18 := by
+theorem publicInputsDigestDomain_length : publicInputsDigestDomain.length = 36 := by
+  decide
+
+theorem proofDigestDomain_length : proofDigestDomain.length = 37 := by
   decide
 
 theorem digestBytes_length (seed : Nat) : (digestBytes seed).length = digestWidth := by
@@ -290,12 +317,15 @@ theorem i128le_length (value : Int) : (i128le value).length = 16 := by
   simp [i128le, u128le_length]
 
 theorem proofDigestPreimage_length (fields : ProofDigestFields) :
-    (proofDigestPreimage fields).length =
-      proofDigestDomain.length + 1 + fields.proofBytes.length := by
-  simp [proofDigestPreimage, Nat.add_comm, Nat.add_left_comm]
+    (proofDigestPreimage fields).length = 1 + fields.proofBytes.length := by
+  simp [proofDigestPreimage, Nat.add_comm]
 
 theorem proofDigestPreimage_valid_smallwood_length :
-    (proofDigestPreimage smallwoodProofDigestFields).length = 24 := by
+    (proofDigestPreimage smallwoodProofDigestFields).length = 6 := by
+  decide
+
+theorem proofDigestTranscript_valid_smallwood_length :
+    (proofDigestTranscript smallwoodProofDigestFields).length = 95 := by
   decide
 
 theorem proofDigestPreimage_binds_proof_bytes :
@@ -331,9 +361,23 @@ theorem statementPreimage_length_of_some {fields : StatementFields} {bytes : Lis
                       have hcLen := paddedDigests_length hc
                       have hctLen := paddedDigests_length hct
                       simp only [List.length_append, List.length_cons,
-                        statementHashDomain_length, digestBytes_length, hnLen, hcLen,
-                        hctLen, u16le_length, u32le_length, u64le_length, i128le_length]
+                        digestBytes_length, hnLen, hcLen, hctLen, u16le_length,
+                        u32le_length, u64le_length, i128le_length]
                       decide
+
+theorem statementHashTranscript_valid_length :
+    (statementHashTranscript validFields).map List.length = some 661 := by
+  native_decide
+
+theorem statementHashTranscript_domain_mutation_nonalias :
+    blake2b384Transcript statementHashDomain [digestBytes 1] !=
+      blake2b384Transcript (asciiBytes "tx-statement-v1") [digestBytes 1] := by
+  native_decide
+
+theorem proofDigestTranscript_part_boundary_nonalias :
+    blake2b384Transcript proofDigestDomain [[1], [2, 3]] !=
+      blake2b384Transcript proofDigestDomain [[1, 2], [3]] := by
+  native_decide
 
 theorem statementPreimage_accepts_valid :
     (statementPreimage validFields).isSome = true := by

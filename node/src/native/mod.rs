@@ -20,30 +20,33 @@ use consensus::{
 #[cfg(test)]
 use consensus_light_client::header_mmr_root_from_hashes;
 use consensus_light_client::{
-    bridge_checkpoint_output_from_anchor, bridge_checkpoint_output_with_tip_from_anchor,
-    canonical_bridge_checkpoint_output_bytes_v1, canonical_trusted_checkpoint_bytes_v1,
+    bridge_checkpoint_output_from_anchor_v2, bridge_checkpoint_output_with_tip_from_anchor_v2,
+    canonical_bridge_checkpoint_output_bytes_v2, canonical_trusted_checkpoint_bytes_v2,
     compare_work, cumulative_work_after, decode_risc0_bridge_journal, empty_header_mmr_root,
     flyclient_sample_indices, hash_meets_target, header_mmr_append_peaks,
     header_mmr_opening_from_hashes, header_mmr_peaks_from_hashes, header_mmr_root_from_peaks,
-    pow_hash_from_pre_hash, verify_pow_header_with_expected_bits, BridgeCheckpointOutputV1,
-    BridgeMessageV1, Hash32, HeaderMmrLeafWitnessV1, HegemonLightClientProofReceiptV1,
-    HegemonLongRangeProofV1, PowHeaderV1, RiscZeroBridgeReceiptV1, TrustedCheckpointV1,
+    pow_hash_from_pre_hash, verify_pow_header_v2_with_expected_bits, BridgeCheckpointOutputV1,
+    BridgeCheckpointOutputV2, BridgeMessageV1, Hash32, HeaderMmrLeafWitnessV2,
+    HegemonLightClientProofV2, HegemonLongRangeProofV2, PowHeaderV2, PowHeaderV3,
+    RiscZeroBridgeReceiptV1, TrustedCheckpointV2, TrustedCheckpointV3,
     HEGEMON_BRIDGE_LONG_RANGE_MIN_SAMPLE_COUNT_V1, HEGEMON_BRIDGE_LONG_RANGE_MIN_TIP_WORK_V1,
-    HEGEMON_CHAIN_ID_V1, HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
-    HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1,
-    HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1, HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
+    HEGEMON_CHAIN_ID_V1, HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
+    HEGEMON_LIGHT_CLIENT_RULES_HASH_V1, HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1,
+    HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V2, HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
 };
-use crypto::ml_dsa::{
-    MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature, ML_DSA_PUBLIC_KEY_LEN, ML_DSA_SIGNATURE_LEN,
+use crypto::hash384::{
+    ActionBodyHash48, ActionId48, ActionRoot48, ActionSemanticId48, BlockId48, BodyHash48,
+    BridgeMessageRoot48, DaRoot48, FeeCommitment48, HeaderMmrHash48, KernelRoot48,
+    NullifierAccumulatorRoot48, ProofCommitment48, RulesHash48, StateRoot48,
+    TransactionStatementsCommitment48, VersionCommitment48, Work64, WorkHash48,
 };
-use crypto::traits::{Signature, SigningKey, VerifyKey};
 use network::{
     p2p::WireMessage,
     service::{ConnectedPeerSnapshot, DirectedProtocolMessage, ProtocolSender},
     wire, GossipRouter, NatTraversalConfig, P2PService, PeerId, PeerIdentity, PeerStore,
     PeerStoreConfig, ProtocolHandle, ProtocolId, ProtocolMessage, RelayConfig,
 };
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Condvar, Mutex, RwLock};
 use protocol_kernel::manifest::{
     kernel_manifest, protocol_manifest, StablecoinPolicyManifestEntry,
 };
@@ -57,23 +60,32 @@ use protocol_kernel::{
 };
 use protocol_shielded_pool::family::{
     MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs,
-    SubmitCandidateArtifactArgs, ACTION_MINT_COINBASE, ACTION_SHIELDED_TRANSFER_INLINE,
-    ACTION_SHIELDED_TRANSFER_SIDECAR, ACTION_SUBMIT_CANDIDATE_ARTIFACT, FAMILY_SHIELDED_POOL,
+    SubmitCandidateArtifactArgs, ACTION_MINT_COINBASE, ACTION_MINT_POSEIDON2_V8_COINBASE,
+    ACTION_SHIELDED_TRANSFER_INLINE, ACTION_SHIELDED_TRANSFER_SIDECAR,
+    ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE, ACTION_SUBMIT_CANDIDATE_ARTIFACT,
+    FAMILY_SHIELDED_POOL,
+};
+use protocol_shielded_pool::poseidon2_production_transport::preflight_poseidon2_production_smz9_inline_args_exact;
+use protocol_shielded_pool::poseidon2_v8_coinbase::{
+    MintPoseidon2V8CoinbaseArgs, POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES,
+    POSEIDON2_V8_COINBASE_RAW_CIPHERTEXT_BYTES,
+};
+use protocol_shielded_pool::smallwood_v5_transport::{
+    decode_smallwood_v5_inline_args_exact, SMALLWOOD_V5_TRANSPORT_ACTION_ID,
 };
 use protocol_shielded_pool::types::{
     BlockProofMode, BlockRewardBundle, CandidateArtifact, CoinbaseNoteData, EncryptedNote,
-    ProofArtifactKind as PoolProofArtifactKind, RecursiveBlockProofPayload,
-    StablecoinPolicyBinding, StarkProof, BLOCK_PROOF_BUNDLE_SCHEMA, DIVERSIFIED_ADDRESS_SIZE,
-    ENCRYPTED_NOTE_SIZE, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES, NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
-    RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
+    ProofArtifactKind as PoolProofArtifactKind, StablecoinPolicyBinding, BLOCK_PROOF_BUNDLE_SCHEMA,
+    DIVERSIFIED_ADDRESS_SIZE, ENCRYPTED_NOTE_SIZE, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES,
+    NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE, RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
 };
 use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
-use protocol_shielded_pool::{NullifierReject, NullifierState};
+use protocol_shielded_pool::{NullifierReject, NullifierState, PersistentKeySet48};
 use rand::{rngs::OsRng, RngCore};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 use sled::transaction::Transactional;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::{self, OpenOptions};
 use std::io::{Cursor, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -82,22 +94,40 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering}
 use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 use tokio::time::{interval, MissedTickBehavior};
 use tower::limit::ConcurrencyLimitLayer;
 use tracing::{debug, info, warn};
 use transaction_circuit::hashing_pq::felts_to_bytes48;
+use transaction_circuit::smallwood_v5_envelope::decode_envelope_exact;
 use transaction_core::hashing_pq::ciphertext_hash_bytes;
 use wallet::{NoteCiphertext, NotePlaintext, ShieldedAddress};
 
 pub(crate) const META_BEST_KEY: &[u8] = b"best";
 pub(crate) const META_GENESIS_KEY: &[u8] = b"genesis";
+pub(crate) const META_NULLIFIER_ACCUMULATOR_KEY: &[u8] = b"nullifier_accumulator_v2";
+pub(crate) const META_CANONICAL_STATE_CHECKPOINT_PREFIX: &[u8] = b"canonical_state_checkpoint_v1/";
+pub(crate) const META_VERIFIED_BLOCK_RECORD_PREFIX: &[u8] = b"verified_block_record_v1/";
+pub(crate) const NATIVE_CANONICAL_STATE_CHECKPOINT_SCHEMA_V1: u16 = 1;
 pub(crate) const NATIVE_DEV_POW_BITS: u32 = consensus::reward::GENESIS_BITS;
 pub(crate) const NATIVE_GENESIS_TIMESTAMP_MS: u64 = 1_782_840_600_000;
 pub(crate) const HASHES_PER_ROUND: u64 = 16_384;
 pub(crate) const MINING_ROUNDS_PER_WORK: u64 = 16;
-pub(crate) const DEFAULT_DA_CHUNK_SIZE: u32 = 1024;
+pub(crate) const NATIVE_DA_CHUNK_SIZE_TIERS: [u32; 3] = [1_024, 4_096, 16_384];
+pub(crate) const MIN_NATIVE_DA_CHUNK_SIZE: u32 = NATIVE_DA_CHUNK_SIZE_TIERS[0];
+pub(crate) const MAX_NATIVE_DA_CHUNK_SIZE: u32 = NATIVE_DA_CHUNK_SIZE_TIERS[2];
 pub(crate) const DEFAULT_DA_SAMPLE_COUNT: u32 = 4;
+pub(crate) const MAX_NATIVE_DA_ENCODING_CACHE_BLOCKS: usize = 8;
+/// Process-local proof-validity cache. Persisted rows are deliberately not
+/// authoritative: a restart must re-run SmallWood verification before any
+/// body can enter this cache.
+pub(crate) const MAX_NATIVE_IN_PROCESS_VERIFIED_BLOCKS: usize = 1_024;
+/// Process-local canonical state snapshots used only after the corresponding
+/// body has been verified in this process. The cap covers the maximum native
+/// sync/reorg response with headroom and prevents checkpoint memory growth.
+pub(crate) const MAX_NATIVE_IN_PROCESS_CANONICAL_CHECKPOINTS: usize = 512;
+pub(crate) const NATIVE_WORK_TEMPLATE_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 pub(crate) const DEFAULT_BRIDGE_FLYCLIENT_SAMPLE_COUNT: u32 =
     HEGEMON_BRIDGE_LONG_RANGE_MIN_SAMPLE_COUNT_V1;
 pub(crate) const MIN_INBOUND_BRIDGE_CONFIRMATIONS: u32 = 2;
@@ -113,16 +143,18 @@ pub(crate) const MAX_NATIVE_BRIDGE_ACTION_DYNAMIC_BYTES: usize =
     MAX_NATIVE_BRIDGE_PROOF_RECEIPT_BYTES + MAX_NATIVE_BRIDGE_MESSAGE_PAYLOAD_BYTES;
 pub(crate) const MAX_NATIVE_BRIDGE_MINT_AMOUNT: u64 = i64::MAX as u64;
 pub(crate) const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
-pub(crate) const MAX_PREPARED_CANDIDATE_ACTIONS: usize = 128;
-pub(crate) const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
+/// Fresh-genesis V2 sync protocol. V1 peers must not exchange blocks whose DA
+/// metadata/body transport rules they cannot validate.
+pub(crate) const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e54;
 pub(crate) const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 256;
 pub(crate) const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize =
     MAX_NATIVE_SYNC_RESPONSE_BLOCKS as usize;
 pub(crate) const MAX_NATIVE_SYNC_RESPONSE_WORKERS: usize = 2;
-pub(crate) const NATIVE_SYNC_CHUNK_RECORD_ENCODING_LEGACY_V1: u8 =
-    NATIVE_BLOCK_META_SCHEMA_LEGACY_V1;
-pub(crate) const NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2: u8 =
-    NATIVE_BLOCK_META_SCHEMA_CURRENT_V2;
+/// Retired chunk record tags retained only for explicit negative decoding
+/// tests. Production chunk admission accepts only the V3 tag exported by
+/// `sync_chunks` and never upgrades either historical grammar.
+pub(crate) const NATIVE_SYNC_CHUNK_RECORD_ENCODING_LEGACY_V1: u8 = 1;
+pub(crate) const NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2: u8 = 2;
 pub(crate) const MAX_NATIVE_SYNC_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_NATIVE_SYNC_CHUNK_SESSIONS: usize = 2;
 pub(crate) const NATIVE_SYNC_CHUNK_SESSION_TTL: Duration = Duration::from_secs(30);
@@ -153,7 +185,6 @@ pub(crate) const APPROVED_PUBLIC_JOIN_SEEDS: &str =
 pub(crate) const AES_GCM_TAG_BYTES: usize = 16;
 pub(crate) const PQ_IDENTITY_SEED_FILE: &str = "pq-identity.seed";
 pub(crate) const PQ_IDENTITY_SEED_LEN: usize = 32;
-pub(crate) const MINER_IDENTITY_SEED_FILE: &str = "miner-identity.seed";
 pub(crate) const MAX_NATIVE_RPC_ACTION_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const MAX_NATIVE_CHAIN_GET_BLOCK_ACTION_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const MAX_NATIVE_DA_CIPHERTEXT_UPLOADS: usize = 1024;
@@ -175,12 +206,120 @@ pub(crate) const MAX_NATIVE_BLOCK_ACTIONS: usize = MAX_NATIVE_MEMPOOL_ACTIONS;
 pub(crate) const MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES: usize =
     MAX_NATIVE_RPC_ACTION_BYTES + 16 * 1024;
 pub(crate) const MAX_NATIVE_BLOCK_ACTION_BYTES: usize = MAX_NATIVE_MEMPOOL_ACTION_BYTES;
+/// Maximum SCALE bytes outside `PendingAction::public_args` for the canonical
+/// two-output V8 shape. This includes the public-argument compact-length
+/// prefix. The exact codec regression below source-binds the value instead of
+/// treating a hand calculation as release evidence.
+pub const POSEIDON2_V8_MAX_PENDING_ACTION_OUTER_BYTES: usize = 225;
+/// Route-specific full-record cap. The nested HGV8/SWP8/SMZ9 parser retains
+/// its independent 131,072-byte inline-argument cap; native relay and block
+/// admission additionally bound the complete SCALE `PendingAction` record.
+pub const POSEIDON2_V8_MAX_PENDING_ACTION_BYTES: usize =
+    protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_MAX_ACTION_BYTES
+        + POSEIDON2_V8_MAX_PENDING_ACTION_OUTER_BYTES;
+/// Additive q38 SMZA route cap; historical q20 limits remain unchanged.
+pub const POSEIDON2_V8_SMZA_MAX_PENDING_ACTION_BYTES: usize =
+    protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES
+        + POSEIDON2_V8_MAX_PENDING_ACTION_OUTER_BYTES;
+/// Local typed form of the protocol-versioning QROM action ceiling. Both V8
+/// transactions and the paired V8 coinbase consume this budget. The
+/// independent 64 MiB encoded-action budget is not evidence for this cap.
+pub(crate) const MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK: usize =
+    protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_MAX_PROOF_ACTIONS_PER_BLOCK as usize;
+pub(crate) const UNOBSERVED_POSEIDON2_V8_PLAN_APPLICATION_COUNT: usize =
+    MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK + 1;
+/// Native V2 permits a miner to forfeit the subsidy by omitting coinbase.
+/// When coinbase is present it is still unique, exact, and final.
+pub(crate) const NATIVE_V2_COINBASE_REQUIRED: bool = false;
 pub(crate) const MAX_NATIVE_BLOCK_META_BYTES: usize =
     MAX_NATIVE_BLOCK_ACTION_BYTES + (MAX_NATIVE_BLOCK_ACTIONS * 32) + 1024 * 1024;
 pub(crate) const MAX_NATIVE_SYNC_MESSAGE_BYTES: usize = wire::MAX_WIRE_FRAME_LEN;
 pub(crate) const MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES: usize = wire::MAX_WIRE_FRAME_LEN / 2;
+/// A range worker retains at most one worst-case native body budget. Small
+/// blocks still fill the normal 64-block request; large bodies return a
+/// canonical prefix and continue through the next range request.
+pub(crate) const MAX_NATIVE_SYNC_RESPONSE_MATERIALIZED_BYTES: usize = MAX_NATIVE_BLOCK_META_BYTES;
 pub(crate) const MAX_NATIVE_SYNC_PENDING_ACTION_BYTES: usize =
     MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES;
+/// Chunk payloads stay far below the encrypted 16 MiB transport frame. This
+/// leaves ample room for the protocol envelope, locator, and AEAD tag while
+/// bounding per-message allocation independently of the native block limit.
+pub(crate) const MAX_NATIVE_BLOCK_BODY_CHUNK_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_NATIVE_BLOCK_BODY_CHUNKS: usize =
+    MAX_NATIVE_BLOCK_META_BYTES.div_ceil(MAX_NATIVE_BLOCK_BODY_CHUNK_BYTES);
+pub(crate) const NATIVE_ACTION_BODY_CHUNK_RPC_SCHEMA: &str = "hegemon.native.action-body-chunk-v1";
+pub(crate) const MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES: usize = 256 * 1024;
+pub(crate) const MAX_NATIVE_BLOCK_BODY_REASSEMBLIES_PER_PEER: usize = 1;
+pub(crate) const MAX_NATIVE_BLOCK_BODY_REASSEMBLIES_GLOBAL: usize = 4;
+pub(crate) const MAX_NATIVE_BLOCK_BODY_REASSEMBLY_RESERVED_BYTES: usize =
+    MAX_NATIVE_BLOCK_META_BYTES * MAX_NATIVE_BLOCK_BODY_REASSEMBLIES_GLOBAL;
+pub(crate) const NATIVE_BLOCK_BODY_REASSEMBLY_TTL: Duration = Duration::from_secs(2 * 60);
+pub(crate) const NATIVE_BLOCK_BODY_REASSEMBLY_MAX_LIFETIME: Duration = Duration::from_secs(10 * 60);
+/// Canonical identity-free native block-body grammar. Schema 2 was an
+/// unreleased identity-bearing interim format and is rejected, never upgraded.
+pub(crate) const NATIVE_BLOCK_BODY_SCHEMA_VERSION: u16 = 3;
+/// Postcard enum tags are part of the native sync wire grammar. The exact V3
+/// locator/body carrier occupies tags 4..=7. PR 203's stored-record chunk
+/// fallback occupies tags 8..=9 and must remain fail-closed until it can
+/// decode and verify the same V3 carrier without any metadata-era conversion.
+/// Tag 10 is the compact tip announcement and has its own bounded admission.
+pub(crate) const NATIVE_SYNC_EXACT_LOCATOR_BODY_TAGS: std::ops::RangeInclusive<u8> = 4..=7;
+pub(crate) const NATIVE_SYNC_RECORD_FALLBACK_TAGS: std::ops::RangeInclusive<u8> = 8..=9;
+pub(crate) const NATIVE_SYNC_ANNOUNCE_TIP_TAG: u8 = 10;
+pub(crate) const MAX_NATIVE_BLOCK_BODY_QUEUE_PER_PEER: usize =
+    MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE;
+pub(crate) const MAX_NATIVE_BLOCK_BODY_QUEUE_GLOBAL: usize =
+    MAX_NATIVE_BLOCK_BODY_QUEUE_PER_PEER * MAX_NATIVE_BLOCK_BODY_REASSEMBLIES_GLOBAL;
+pub(crate) const MAX_NATIVE_BLOCK_BODY_SENDS_GLOBAL: usize = 2;
+pub(crate) const MAX_NATIVE_BLOCK_BODY_SEND_QUEUE_GLOBAL: usize = 16;
+pub(crate) const MAX_NATIVE_BLOCK_BODY_SEND_CACHE_BYTES: usize =
+    MAX_NATIVE_SYNC_RESPONSE_MATERIALIZED_BYTES;
+pub(crate) const MAX_NATIVE_BLOCK_BODY_SEND_CACHE_ENTRIES: usize =
+    MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE;
+pub(crate) const NATIVE_BLOCK_BODY_REQUEST_RATE_WINDOW: Duration = Duration::from_secs(10);
+pub(crate) const MAX_NATIVE_BLOCK_BODY_REQUESTS_PER_WINDOW: u32 = 2;
+pub(crate) const MAX_NATIVE_BLOCK_BODY_EGRESS_BYTES_PER_PEER_WINDOW: usize =
+    MAX_NATIVE_BLOCK_META_BYTES;
+pub(crate) const MAX_NATIVE_BLOCK_BODY_EGRESS_BYTES_GLOBAL_WINDOW: usize =
+    MAX_NATIVE_BLOCK_META_BYTES * MAX_NATIVE_BLOCK_BODY_SENDS_GLOBAL;
+pub(crate) const NATIVE_BLOCK_BODY_REQUEST_RATE_STATE_TTL: Duration = Duration::from_secs(10 * 60);
+pub(crate) const MAX_NATIVE_BLOCK_BODY_REQUEST_RATE_PEERS: usize = 4096;
+pub(crate) const MAX_NATIVE_PENDING_PROOF_ADMISSIONS_IN_FLIGHT: usize = 3;
+pub(crate) const MAX_NATIVE_PEER_PENDING_PROOF_ADMISSIONS_IN_FLIGHT: usize = 1;
+pub(crate) const MAX_NATIVE_LOCAL_PENDING_PROOF_ADMISSIONS_IN_FLIGHT: usize = 1;
+pub(crate) const MAX_NATIVE_WORK_TEMPLATE_PROOFS_IN_FLIGHT: usize = 1;
+pub(crate) const MAX_NATIVE_PEER_PENDING_PROOF_QUEUE: usize = 512;
+pub(crate) const MAX_NATIVE_PEER_PENDING_PROOF_QUEUE_BYTES: usize = MAX_NATIVE_MEMPOOL_ACTION_BYTES;
+pub(crate) const MAX_NATIVE_PEER_PENDING_PROOF_OUTSTANDING_PER_PEER: usize = 2;
+/// Non-proof relays still enter the durable group-commit path, so they run on
+/// bounded blocking workers rather than the Tokio sync receive loop. Multiple
+/// peers may join one group commit, while one active item per peer preserves
+/// fair scheduling.
+pub(crate) const MAX_NATIVE_PEER_NON_PROOF_ADMISSIONS_IN_FLIGHT: usize = 4;
+pub(crate) const MAX_NATIVE_PEER_NON_PROOF_QUEUE: usize = 512;
+pub(crate) const MAX_NATIVE_PEER_NON_PROOF_QUEUE_BYTES: usize = MAX_NATIVE_MEMPOOL_ACTION_BYTES;
+pub(crate) const MAX_NATIVE_PEER_NON_PROOF_OUTSTANDING_PER_PEER: usize = 2;
+pub(crate) const MAX_NATIVE_PEER_PENDING_PROOF_RATE_PEERS: usize = 4_096;
+pub(crate) const MAX_NATIVE_PEER_PENDING_PROOFS_PER_WINDOW: u32 = 128;
+pub(crate) const NATIVE_PEER_PENDING_PROOF_RATE_WINDOW: Duration = Duration::from_secs(10);
+pub(crate) const NATIVE_PEER_INVALID_PROOF_COOLDOWN: Duration = Duration::from_secs(5);
+pub(crate) const NATIVE_PEER_PENDING_PROOF_STATE_TTL: Duration = Duration::from_secs(10 * 60);
+/// Pending-action durability requests wait only this long for siblings before
+/// one leader commits the bounded group. The window is short relative to an
+/// fsync but long enough for concurrent RPC and relay workers to share it.
+pub(crate) const NATIVE_PENDING_ACTION_GROUP_COMMIT_WINDOW: Duration = Duration::from_millis(2);
+pub(crate) const MAX_NATIVE_PENDING_ACTION_GROUP_COMMIT_ACTIONS: usize = 64;
+pub(crate) const MAX_NATIVE_PENDING_ACTION_GROUP_COMMIT_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_NATIVE_PENDING_ACTION_GROUP_COMMIT_QUEUE: usize = 512;
+pub(crate) const MAX_NATIVE_PENDING_ACTION_GROUP_COMMIT_QUEUE_BYTES: usize =
+    MAX_NATIVE_MEMPOOL_ACTION_BYTES;
+pub(crate) const MAX_NATIVE_BLOCK_IMPORTS_IN_FLIGHT: usize = 1;
+pub(crate) const MAX_NATIVE_SYNC_IMPORT_QUEUE_ITEMS: usize = 4;
+pub(crate) const MAX_NATIVE_SYNC_IMPORT_QUEUE_BYTES: usize = MAX_NATIVE_BLOCK_META_BYTES * 2;
+pub(crate) const MAX_NATIVE_PENDING_PROOF_PREFLIGHT_RETRIES: usize = 2;
+pub(crate) const MAX_NATIVE_WORK_TEMPLATE_SNAPSHOT_RETRIES: usize = 2;
+pub(crate) const MAX_NATIVE_REJECTED_PENDING_ACTIONS: usize = 4_096;
+pub(crate) const NATIVE_REJECTED_PENDING_ACTION_TTL: Duration = Duration::from_secs(10 * 60);
 pub(crate) const MAX_NATIVE_MINING_THREADS: u32 = 64;
 pub(crate) const NATIVE_MINING_BACKGROUND_THREAD_CAP: u32 = 2;
 pub(crate) const NATIVE_MINING_RESERVED_SERVICE_THREADS: u32 = 3;
@@ -400,11 +539,122 @@ pub(crate) struct NativeBlockMeta {
     #[serde(default)]
     action_bytes: Vec<Vec<u8>>,
     #[serde(default = "native_empty_digest48_default", with = "serde_array48")]
-    miner_commitment: [u8; 48],
+    da_root: [u8; 48],
     #[serde(default)]
-    miner_public_key: Vec<u8>,
+    da_chunk_size: u32,
     #[serde(default)]
-    miner_signature: Vec<u8>,
+    da_sample_count: u32,
+    #[serde(default)]
+    da_blob_len: u64,
+    #[serde(default)]
+    da_chunk_count: u32,
+}
+
+/// Fresh-genesis native V3 wire/canonical metadata.  Unlike the internal sled
+/// row below, this type is self-contained: peers receive the exact canonical
+/// action bodies needed to reconstruct and validate the block independently.
+/// The distinct fixed-width wrappers make block identity, work, action roots,
+/// MMR roots, rules, and cumulative work impossible to interchange by type.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct NativeBlockMetaV3 {
+    pub(crate) chain_id: [u8; 32],
+    pub(crate) rules_hash: RulesHash48,
+    pub(crate) height: u64,
+    pub(crate) hash: BlockId48,
+    pub(crate) parent_hash: BlockId48,
+    pub(crate) state_root: StateRoot48,
+    pub(crate) kernel_root: KernelRoot48,
+    pub(crate) nullifier_root: NullifierAccumulatorRoot48,
+    pub(crate) proof_commitment: ProofCommitment48,
+    pub(crate) extrinsics_root: ActionRoot48,
+    pub(crate) tx_statements_commitment: TransactionStatementsCommitment48,
+    pub(crate) version_commitment: VersionCommitment48,
+    pub(crate) fee_commitment: FeeCommitment48,
+    pub(crate) message_root: BridgeMessageRoot48,
+    pub(crate) message_count: u32,
+    pub(crate) header_mmr_root: HeaderMmrHash48,
+    pub(crate) header_mmr_len: u64,
+    pub(crate) timestamp_ms: u64,
+    pub(crate) pow_bits: u32,
+    pub(crate) nonce: [u8; 32],
+    pub(crate) work_hash: WorkHash48,
+    pub(crate) cumulative_work: Work64,
+    pub(crate) supply_digest: u128,
+    pub(crate) tx_count: u32,
+    pub(crate) action_bytes: Vec<Vec<u8>>,
+    pub(crate) da_root: DaRoot48,
+    pub(crate) da_chunk_size: u32,
+    pub(crate) da_sample_count: u32,
+    pub(crate) da_blob_len: u64,
+    pub(crate) da_chunk_count: u32,
+}
+
+pub(crate) const NATIVE_STORED_BLOCK_META_SCHEMA_V3: u16 = 3;
+
+/// Internal content-addressed sled row for a V3 block.  It deliberately omits
+/// the potentially 64 MiB action vector and instead binds the exact canonical
+/// SCALE `Vec<Vec<u8>>` blob by a dedicated ActionBodyHash48 and byte length.
+/// This is never a network or consensus wire replacement for NativeBlockMetaV3.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, Serialize, Deserialize)]
+pub(crate) struct StoredNativeBlockMetaV3 {
+    pub(crate) schema_version: u16,
+    pub(crate) chain_id: [u8; 32],
+    pub(crate) rules_hash: RulesHash48,
+    pub(crate) height: u64,
+    pub(crate) hash: BlockId48,
+    pub(crate) parent_hash: BlockId48,
+    pub(crate) state_root: StateRoot48,
+    pub(crate) kernel_root: KernelRoot48,
+    pub(crate) nullifier_root: NullifierAccumulatorRoot48,
+    pub(crate) proof_commitment: ProofCommitment48,
+    pub(crate) extrinsics_root: ActionRoot48,
+    pub(crate) tx_statements_commitment: TransactionStatementsCommitment48,
+    pub(crate) version_commitment: VersionCommitment48,
+    pub(crate) fee_commitment: FeeCommitment48,
+    pub(crate) message_root: BridgeMessageRoot48,
+    pub(crate) message_count: u32,
+    pub(crate) header_mmr_root: HeaderMmrHash48,
+    pub(crate) header_mmr_len: u64,
+    pub(crate) timestamp_ms: u64,
+    pub(crate) pow_bits: u32,
+    pub(crate) nonce: [u8; 32],
+    pub(crate) work_hash: WorkHash48,
+    pub(crate) cumulative_work: Work64,
+    pub(crate) supply_digest: u128,
+    pub(crate) tx_count: u32,
+    pub(crate) body_hash: BodyHash48,
+    pub(crate) body_len: u64,
+    pub(crate) action_body_hash: ActionBodyHash48,
+    pub(crate) action_body_len: u64,
+    pub(crate) da_root: DaRoot48,
+    pub(crate) da_chunk_size: u32,
+    pub(crate) da_sample_count: u32,
+    pub(crate) da_blob_len: u64,
+    pub(crate) da_chunk_count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EncodedNativeActionBodyV3 {
+    pub(crate) hash: ActionBodyHash48,
+    pub(crate) len: u64,
+    pub(crate) bytes: Vec<u8>,
+}
+
+/// One exact bounded slice of a canonical block's SCALE `Vec<Vec<u8>>`
+/// action body. Construction is restricted to the node helper that verifies
+/// every embedded action id and the header action root before releasing bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NativeActionBodyRpcChunk {
+    pub(crate) block_hash: [u8; 32],
+    pub(crate) height: u64,
+    pub(crate) parent_hash: [u8; 32],
+    pub(crate) tx_count: u32,
+    pub(crate) extrinsics_root: [u8; 32],
+    pub(crate) action_body_hash: ActionBodyHash48,
+    pub(crate) action_body_len: u64,
+    pub(crate) chunk_index: u32,
+    pub(crate) chunk_count: u32,
+    pub(crate) bytes: Vec<u8>,
 }
 
 pub(crate) fn native_empty_digest48_default() -> [u8; 48] {
@@ -442,35 +692,94 @@ pub(crate) struct LegacyNativeBlockMetaV1 {
     action_bytes: Vec<Vec<u8>>,
 }
 
-impl From<LegacyNativeBlockMetaV1> for NativeBlockMeta {
-    fn from(meta: LegacyNativeBlockMetaV1) -> Self {
-        Self {
-            chain_id: meta.chain_id,
-            rules_hash: meta.rules_hash,
-            height: meta.height,
-            hash: meta.hash,
-            parent_hash: meta.parent_hash,
-            state_root: meta.state_root,
-            kernel_root: meta.kernel_root,
-            nullifier_root: meta.nullifier_root,
-            extrinsics_root: meta.extrinsics_root,
-            message_root: meta.message_root,
-            message_count: meta.message_count,
-            header_mmr_root: meta.header_mmr_root,
-            header_mmr_len: meta.header_mmr_len,
-            timestamp_ms: meta.timestamp_ms,
-            pow_bits: meta.pow_bits,
-            nonce: meta.nonce,
-            work_hash: meta.work_hash,
-            cumulative_work: meta.cumulative_work,
-            supply_digest: meta.supply_digest,
-            tx_count: meta.tx_count,
-            action_bytes: meta.action_bytes,
-            miner_commitment: [0u8; 48],
-            miner_public_key: Vec::new(),
-            miner_signature: Vec::new(),
-        }
-    }
+/// Exact pre-DA-metadata signed native block schema. It remains decode-only so
+/// operators get a precise fresh-genesis migration failure instead of an
+/// ambiguous wire error.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct LegacySignedNativeBlockMetaV1 {
+    chain_id: [u8; 32],
+    rules_hash: [u8; 32],
+    height: u64,
+    hash: [u8; 32],
+    parent_hash: [u8; 32],
+    #[serde(with = "serde_array48")]
+    state_root: [u8; 48],
+    #[serde(with = "serde_array48")]
+    kernel_root: [u8; 48],
+    #[serde(with = "serde_array48")]
+    nullifier_root: [u8; 48],
+    extrinsics_root: [u8; 32],
+    #[serde(with = "serde_array48")]
+    message_root: [u8; 48],
+    message_count: u32,
+    header_mmr_root: [u8; 32],
+    header_mmr_len: u64,
+    timestamp_ms: u64,
+    pow_bits: u32,
+    nonce: [u8; 32],
+    work_hash: [u8; 32],
+    #[serde(with = "serde_array48")]
+    cumulative_work: [u8; 48],
+    supply_digest: u128,
+    tx_count: u32,
+    #[serde(default)]
+    action_bytes: Vec<Vec<u8>>,
+    #[serde(default = "native_empty_digest48_default", with = "serde_array48")]
+    miner_commitment: [u8; 48],
+    #[serde(default)]
+    miner_public_key: Vec<u8>,
+    #[serde(default)]
+    miner_signature: Vec<u8>,
+}
+
+/// Exact identity-bearing native V2 schema used by the unreleased interim
+/// implementation. It is decode-only so startup and peers receive an
+/// actionable fresh-genesis error; it is never upgraded into active metadata.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct LegacyIdentityNativeBlockMetaV2 {
+    chain_id: [u8; 32],
+    rules_hash: [u8; 32],
+    height: u64,
+    hash: [u8; 32],
+    parent_hash: [u8; 32],
+    #[serde(with = "serde_array48")]
+    state_root: [u8; 48],
+    #[serde(with = "serde_array48")]
+    kernel_root: [u8; 48],
+    #[serde(with = "serde_array48")]
+    nullifier_root: [u8; 48],
+    extrinsics_root: [u8; 32],
+    #[serde(with = "serde_array48")]
+    message_root: [u8; 48],
+    message_count: u32,
+    header_mmr_root: [u8; 32],
+    header_mmr_len: u64,
+    timestamp_ms: u64,
+    pow_bits: u32,
+    nonce: [u8; 32],
+    work_hash: [u8; 32],
+    #[serde(with = "serde_array48")]
+    cumulative_work: [u8; 48],
+    supply_digest: u128,
+    tx_count: u32,
+    #[serde(default)]
+    action_bytes: Vec<Vec<u8>>,
+    #[serde(default = "native_empty_digest48_default", with = "serde_array48")]
+    miner_commitment: [u8; 48],
+    #[serde(default)]
+    miner_public_key: Vec<u8>,
+    #[serde(default)]
+    miner_signature: Vec<u8>,
+    #[serde(default = "native_empty_digest48_default", with = "serde_array48")]
+    da_root: [u8; 48],
+    #[serde(default)]
+    da_chunk_size: u32,
+    #[serde(default)]
+    da_sample_count: u32,
+    #[serde(default)]
+    da_blob_len: u64,
+    #[serde(default)]
+    da_chunk_count: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -489,6 +798,11 @@ pub(crate) struct NativeWork {
     cumulative_work: [u8; 48],
     supply_digest: u128,
     tx_count: u32,
+    da_root: [u8; 48],
+    da_chunk_size: u32,
+    da_sample_count: u32,
+    da_blob_len: u64,
+    da_chunk_count: u32,
     timestamp_ms: u64,
     pow_bits: u32,
     prepared_actions: Option<Arc<Vec<PendingAction>>>,
@@ -520,14 +834,224 @@ pub(crate) enum NativeSyncMessage {
     PendingAction {
         action: Vec<u8>,
     },
+    /// Schema-3 large-block announcement. The canonical bincode body is requested
+    /// separately and is accepted only when it reproduces this locator.
+    AnnounceLocator {
+        locator: NativeBlockBodyLocator,
+    },
+    /// Schema-3 range response. Bodies are requested one at a time so a peer cannot
+    /// reserve an entire response range's maximum block bytes in memory.
+    ResponseLocators {
+        best_height: u64,
+        blocks: Vec<NativeBlockBodyLocator>,
+    },
+    BlockBodyRequest {
+        block_hash: [u8; 32],
+    },
+    BlockBodyChunk {
+        chunk: NativeBlockBodyChunk,
+    },
+    /// PR 203 bounded-record chunk fallback. These variants are additive to
+    /// the V3 locator/body grammar above; they must not rewrite or upgrade a
+    /// stored V3 record or its separately bound canonical action body.
     RequestBlockChunk(NativeSyncBlockChunkRequest),
     BlockChunk(NativeSyncBlockChunk),
     AnnounceTip(NativeSyncTipAnnouncement),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct NativeBlockBodyLocator {
+    schema_version: u16,
+    chain_id: [u8; 32],
+    rules_hash: [u8; 32],
+    height: u64,
+    block_hash: [u8; 32],
+    parent_hash: [u8; 32],
+    #[serde(with = "serde_array48")]
+    cumulative_work: [u8; 48],
+    total_len: u64,
+    body_hash: [u8; 32],
+    chunk_count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct NativeBlockBodyChunk {
+    block_hash: [u8; 32],
+    total_len: u64,
+    body_hash: [u8; 32],
+    chunk_index: u32,
+    chunk_count: u32,
+    chunk_len: u32,
+    #[serde(with = "serde_native_block_body_chunk_bytes")]
+    bytes: Vec<u8>,
+}
+
+/// Fresh V3 body locator grammar. These typed widths stay separate from the
+/// interim 32-byte structs above until the metadata/Pow/transport atomic
+/// cutover; after that cutover, the earlier wire-era tags reject before serde
+/// or reservation rather than adapting mixed-width identities.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct NativeBlockBodyLocatorV3 {
+    schema_version: u16,
+    chain_id: [u8; 32],
+    rules_hash: RulesHash48,
+    height: u64,
+    block_hash: BlockId48,
+    parent_hash: BlockId48,
+    cumulative_work: Work64,
+    total_len: u64,
+    body_hash: BodyHash48,
+    chunk_count: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct NativeBlockBodyRequestV3 {
+    block_hash: BlockId48,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct NativeBlockBodyChunkV3 {
+    block_hash: BlockId48,
+    total_len: u64,
+    body_hash: BodyHash48,
+    chunk_index: u32,
+    chunk_count: u32,
+    chunk_len: u32,
+    #[serde(with = "serde_native_block_body_chunk_bytes")]
+    bytes: Vec<u8>,
+}
+
+pub(crate) mod serde_native_block_body_chunk_bytes {
+    use super::MAX_NATIVE_BLOCK_BODY_CHUNK_BYTES;
+    use serde::de::{Error, SeqAccess, Visitor};
+    use serde::{Deserializer, Serialize, Serializer};
+    use std::fmt;
+
+    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serde_bytes::Bytes::new(bytes).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_bytes(BoundedChunkBytesVisitor)
+    }
+
+    struct BoundedChunkBytesVisitor;
+
+    impl<'de> Visitor<'de> for BoundedChunkBytesVisitor {
+        type Value = Vec<u8>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(
+                formatter,
+                "at most {MAX_NATIVE_BLOCK_BODY_CHUNK_BYTES} native block body chunk bytes"
+            )
+        }
+
+        fn visit_borrowed_bytes<E>(self, value: &'de [u8]) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            self.visit_bytes(value)
+        }
+
+        fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            if value.len() > MAX_NATIVE_BLOCK_BODY_CHUNK_BYTES {
+                return Err(E::custom("native block body chunk bytes exceed limit"));
+            }
+            Ok(value.to_vec())
+        }
+
+        fn visit_byte_buf<E>(self, value: Vec<u8>) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            if value.len() > MAX_NATIVE_BLOCK_BODY_CHUNK_BYTES {
+                return Err(E::custom("native block body chunk bytes exceed limit"));
+            }
+            Ok(value)
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            if sequence
+                .size_hint()
+                .is_some_and(|hint| hint > MAX_NATIVE_BLOCK_BODY_CHUNK_BYTES)
+            {
+                return Err(A::Error::custom(
+                    "native block body chunk bytes exceed limit",
+                ));
+            }
+            let mut bytes = Vec::with_capacity(
+                sequence
+                    .size_hint()
+                    .unwrap_or(0)
+                    .min(MAX_NATIVE_BLOCK_BODY_CHUNK_BYTES),
+            );
+            while let Some(byte) = sequence.next_element::<u8>()? {
+                if bytes.len() >= MAX_NATIVE_BLOCK_BODY_CHUNK_BYTES {
+                    return Err(A::Error::custom(
+                        "native block body chunk bytes exceed limit",
+                    ));
+                }
+                bytes.push(byte);
+            }
+            Ok(bytes)
+        }
+    }
+}
+
 #[derive(Clone, Debug, Encode, Decode)]
 pub(crate) struct PendingAction {
+    tx_hash: ActionId48,
+    binding: KernelVersionBinding,
+    family_id: u16,
+    action_id: u16,
+    anchor: [u8; 48],
+    nullifiers: Vec<[u8; 48]>,
+    commitments: Vec<[u8; 48]>,
+    ciphertext_hashes: Vec<[u8; 48]>,
+    ciphertext_sizes: Vec<u32>,
+    public_args: Vec<u8>,
+    fee: u64,
+    candidate_artifact: Option<CandidateArtifact>,
+}
+
+/// Exact pre-V3 action grammar. It is decode-only and must never be upgraded
+/// into an active action because the 32-byte self identifier and consensus
+/// arrival timestamp are outside the V3 identity model.
+#[derive(Clone, Debug, Encode, Decode)]
+pub(crate) struct LegacyPendingActionV1 {
     tx_hash: [u8; 32],
+    binding: KernelVersionBinding,
+    family_id: u16,
+    action_id: u16,
+    anchor: [u8; 48],
+    nullifiers: Vec<[u8; 48]>,
+    commitments: Vec<[u8; 48]>,
+    ciphertext_hashes: Vec<[u8; 48]>,
+    ciphertext_sizes: Vec<u32>,
+    public_args: Vec<u8>,
+    fee: u64,
+    candidate_artifact: Option<CandidateArtifact>,
+    received_ms: u64,
+}
+
+/// Exact unreleased interim action grammar with a 48-byte identifier but the
+/// retired consensus arrival timestamp. It is identify-and-reject only.
+#[derive(Clone, Debug, Encode, Decode)]
+pub(crate) struct LegacyPendingActionV2 {
+    tx_hash: ActionId48,
     binding: KernelVersionBinding,
     family_id: u16,
     action_id: u16,
@@ -982,17 +1506,6 @@ pub(crate) struct NativeMinedWorkAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeMinerIdentityAdmissionInput {
-    height: u64,
-    public_key_len: usize,
-    signature_len: usize,
-    public_key_bytes_parse: bool,
-    miner_commitment_matches: bool,
-    signature_bytes_parse: bool,
-    signature_verifies: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeWorkTemplateAdmissionInput {
     best_height: u64,
     cumulative_work_advances: bool,
@@ -1197,31 +1710,6 @@ impl NativeMinedWorkAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NativeMinerIdentityAdmissionRejection {
-    InvalidMinerPublicKeyLength,
-    InvalidMinerSignatureLength,
-    InvalidMinerPublicKeyBytes,
-    MinerCommitmentMismatch,
-    InvalidMinerSignatureBytes,
-    NativeMinerSignatureVerificationFailed,
-}
-
-impl NativeMinerIdentityAdmissionRejection {
-    fn label(self) -> &'static str {
-        match self {
-            Self::InvalidMinerPublicKeyLength => "invalid_miner_public_key_length",
-            Self::InvalidMinerSignatureLength => "invalid_miner_signature_length",
-            Self::InvalidMinerPublicKeyBytes => "invalid_miner_public_key_bytes",
-            Self::MinerCommitmentMismatch => "miner_commitment_mismatch",
-            Self::InvalidMinerSignatureBytes => "invalid_miner_signature_bytes",
-            Self::NativeMinerSignatureVerificationFailed => {
-                "native_miner_signature_verification_failed"
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NativeWorkTemplateAdmissionRejection {
     HeightNotNext,
     CumulativeWorkOverflow,
@@ -1321,6 +1809,9 @@ pub(crate) struct NativeBlockActionValidationState {
 pub(crate) struct NativeBlockActionValidationStep {
     scope_input: NativeActionScopeAdmissionInput,
     payload_valid: bool,
+    /// Historical 48-byte transfers retain canonical key ordering. V8 order is
+    /// committed by the block action root and verified against typed state.
+    enforce_legacy_transfer_order: bool,
     transfer_key: [u8; 32],
     transfer_state_input: NativeTransferStateAdmissionInput,
     bridge_replay_key: Option<[u8; 48]>,
@@ -1947,7 +2438,7 @@ pub(crate) struct NativeMaterializedActionPayload {
 #[derive(Clone, Debug)]
 pub(crate) struct NativeCanonicalIndexPlan {
     commitment_entries: Vec<(u64, [u8; 48])>,
-    nullifier_entries: Vec<[u8; 48]>,
+    nullifier_entries: Vec<(u64, [u8; 48])>,
     bridge_replay_entries: Vec<[u8; 48]>,
     ciphertext_index_entries: Vec<([u8; 48], Vec<u8>)>,
     ciphertext_archive_entries: Vec<(u64, Vec<u8>)>,
@@ -2207,6 +2698,7 @@ impl NativeCandidateArtifactAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) struct NativeCandidateArtifactCouplingAdmissionInput {
     transfer_count: usize,
     candidate_artifact_count: usize,
@@ -2214,12 +2706,14 @@ pub(crate) struct NativeCandidateArtifactCouplingAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum NativeCandidateArtifactCouplingAdmissionRejection {
     CandidateWithoutTransfers,
     MissingOrMultipleCandidateArtifact,
     CandidateTxCountMismatch,
 }
 
+#[cfg(test)]
 impl NativeCandidateArtifactCouplingAdmissionRejection {
     #[cfg(test)]
     fn label(self) -> &'static str {
@@ -2243,7 +2737,7 @@ pub(crate) struct NativeMineableActionAdmissionInput {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NativeMineableActionAdmissionRejection {
-    UnselectedCandidateArtifact,
+    RetiredCandidateArtifact,
     SidecarCiphertextMissing,
     SidecarCiphertextSizeMissing,
     SidecarCiphertextSizeMismatch,
@@ -2253,7 +2747,7 @@ impl NativeMineableActionAdmissionRejection {
     #[cfg(test)]
     fn label(self) -> &'static str {
         match self {
-            Self::UnselectedCandidateArtifact => "unselected_candidate_artifact",
+            Self::RetiredCandidateArtifact => "retired_candidate_artifact",
             Self::SidecarCiphertextMissing => "sidecar_ciphertext_missing",
             Self::SidecarCiphertextSizeMissing => "sidecar_ciphertext_size_missing",
             Self::SidecarCiphertextSizeMismatch => "sidecar_ciphertext_size_mismatch",
@@ -2269,6 +2763,7 @@ pub(crate) struct NativeTxLeafActionBindingAdmissionInput {
     input_count_matches: bool,
     output_count_matches: bool,
     version_matches: bool,
+    merkle_root_matches_anchor: bool,
     fee_matches: bool,
     stablecoin_payload_matches: bool,
     balance_tag_matches: bool,
@@ -2287,6 +2782,7 @@ pub(crate) enum NativeTxLeafActionBindingAdmissionRejection {
     InputCount,
     OutputCount,
     Version,
+    MerkleRootMismatch,
     Fee,
     StablecoinPayload,
     BalanceTag,
@@ -2307,6 +2803,7 @@ impl NativeTxLeafActionBindingAdmissionRejection {
             Self::InputCount => "input_count_mismatch",
             Self::OutputCount => "output_count_mismatch",
             Self::Version => "version_mismatch",
+            Self::MerkleRootMismatch => "merkle_root_mismatch",
             Self::Fee => "fee_mismatch",
             Self::StablecoinPayload => "stablecoin_payload_mismatch",
             Self::BalanceTag => "balance_tag_mismatch",
@@ -2364,6 +2861,30 @@ pub(crate) enum NativeCoinbaseAccountingAdmissionRejection {
     AmountMismatch,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeCoinbasePlacementAdmissionInput {
+    coinbase_count: usize,
+    require_coinbase: bool,
+    single_coinbase_is_final: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativeCoinbasePlacementAdmissionRejection {
+    MissingRequiredCoinbase,
+    MultipleCoinbase,
+    CoinbaseNotFinal,
+}
+
+impl NativeCoinbasePlacementAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::MissingRequiredCoinbase => "missing_required_coinbase",
+            Self::MultipleCoinbase => "multiple_coinbase",
+            Self::CoinbaseNotFinal => "coinbase_not_final",
+        }
+    }
+}
+
 impl NativeCoinbaseAccountingAdmissionRejection {
     #[cfg(test)]
     fn label(self) -> &'static str {
@@ -2389,6 +2910,36 @@ pub(crate) struct NativeBlockCommitmentAdmissionInput {
     header_mmr_root_matches: bool,
     header_mmr_len_matches: bool,
     supply_digest_matches: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeDaMetadataAdmissionInput {
+    da_root_matches: bool,
+    da_chunk_size_matches: bool,
+    da_sample_count_matches: bool,
+    da_blob_len_matches: bool,
+    da_chunk_count_matches: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativeDaMetadataAdmissionRejection {
+    DaRoot,
+    DaChunkSize,
+    DaSampleCount,
+    DaBlobLen,
+    DaChunkCount,
+}
+
+impl NativeDaMetadataAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::DaRoot => "da_root_mismatch",
+            Self::DaChunkSize => "da_chunk_size_mismatch",
+            Self::DaSampleCount => "da_sample_count_mismatch",
+            Self::DaBlobLen => "da_blob_len_mismatch",
+            Self::DaChunkCount => "da_chunk_count_mismatch",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2489,10 +3040,19 @@ pub(crate) enum NativeAtomicCommitKind {
     MinedBlockCommit,
     TipExtensionBatchCommit,
     CanonicalReorgCommit,
+    CanonicalSuffixReorgCommit,
     CanonicalIndexRepair,
     NoncanonicalBlockRecord,
 }
 
+/// Admission summary for shared canonical rows and the historical 48-byte
+/// commitment/nullifier/DA indexes only.
+///
+/// This is deliberately not an exhaustive manifest of every sled mutation:
+/// the separate Poseidon2 V8 tree is authorized by a source-verified immutable
+/// `Poseidon2V8CanonicalPlan`, applied in the same tuple transaction, and
+/// checked by its own compare-and-swap/readback contract. Do not add V8 rows to
+/// these legacy counts or cite this summary as V8-plan authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeAtomicCommitManifestAdmissionInput {
     kind: NativeAtomicCommitKind,
@@ -2507,6 +3067,7 @@ pub(crate) struct NativeAtomicCommitManifestAdmissionInput {
     source_ciphertext_index_count: usize,
     source_ciphertext_archive_count: usize,
     source_staged_ciphertext_removal_count: usize,
+    source_poseidon2_v8_plan_count: usize,
     block_record_writes: usize,
     height_index_writes: usize,
     best_pointer_writes: usize,
@@ -2520,6 +3081,7 @@ pub(crate) struct NativeAtomicCommitManifestAdmissionInput {
     ciphertext_index_writes: usize,
     ciphertext_archive_writes: usize,
     staged_ciphertext_removals: usize,
+    poseidon2_v8_plan_application_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2538,6 +3100,8 @@ pub(crate) enum NativeAtomicCommitManifestAdmissionRejection {
     CiphertextIndexWrite,
     CiphertextArchiveWrite,
     StagedCiphertextRemoval,
+    Poseidon2V8PlanCardinality,
+    Poseidon2V8PlanApplication,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2638,6 +3202,8 @@ impl NativeAtomicCommitManifestAdmissionRejection {
             Self::CiphertextIndexWrite => "ciphertext_index_write_mismatch",
             Self::CiphertextArchiveWrite => "ciphertext_archive_write_mismatch",
             Self::StagedCiphertextRemoval => "staged_ciphertext_removal_mismatch",
+            Self::Poseidon2V8PlanCardinality => "poseidon2_v8_plan_cardinality",
+            Self::Poseidon2V8PlanApplication => "poseidon2_v8_plan_application_mismatch",
         }
     }
 }
@@ -3050,6 +3616,19 @@ pub(crate) fn native_submit_action_is_transfer_route(family_id: u16, action_id: 
     family_id == FAMILY_SHIELDED_POOL
         && matches!(
             action_id,
+            ACTION_SHIELDED_TRANSFER_INLINE
+                | ACTION_SHIELDED_TRANSFER_SIDECAR
+                | ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
+        )
+}
+
+/// Only the historical 48-byte transfer grammars carry nullifiers in the
+/// outer RPC envelope. V8 nullifiers are seven canonical field limbs and are
+/// derived exclusively from the exact HGV8 public statement.
+pub(crate) fn native_submit_action_uses_outer_nullifiers(family_id: u16, action_id: u16) -> bool {
+    family_id == FAMILY_SHIELDED_POOL
+        && matches!(
+            action_id,
             ACTION_SHIELDED_TRANSFER_INLINE | ACTION_SHIELDED_TRANSFER_SIDECAR
         )
 }
@@ -3062,6 +3641,11 @@ pub(crate) fn native_submit_action_route_supported(family_id: u16, action_id: u1
             | (FAMILY_BRIDGE, ACTION_REGISTER_BRIDGE_VERIFIER)
             | (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE)
             | (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_SIDECAR)
+            | (FAMILY_SHIELDED_POOL, SMALLWOOD_V5_TRANSPORT_ACTION_ID)
+            | (
+                FAMILY_SHIELDED_POOL,
+                ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
+            )
             | (FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT)
             | (FAMILY_SHIELDED_POOL, ACTION_MINT_COINBASE)
     )
@@ -3121,6 +3705,18 @@ pub(crate) fn native_action_request_route_payload_decodes_exactly(
             )
             .is_ok()
         }
+        (FAMILY_SHIELDED_POOL, SMALLWOOD_V5_TRANSPORT_ACTION_ID) => {
+            decode_smallwood_v5_inline_args_exact(public_args)
+                .is_ok_and(|args| decode_envelope_exact(&args.envelope).is_ok())
+        }
+        (FAMILY_SHIELDED_POOL, ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE) => {
+            // Shape-only syntax preflight is safe while the fixed route gate
+            // remains closed. It is never verification authority: an enabled
+            // route must use contextual decode with the source-owned network
+            // id and V8 relation digest before proof verification.
+            preflight_poseidon2_production_smz9_inline_args_exact(public_args).is_ok()
+                || protocol_shielded_pool::poseidon2_production_transport::preflight_poseidon2_production_smza_inline_args_exact(public_args).is_ok()
+        }
         (FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT) => {
             decode_scale_exact::<SubmitCandidateArtifactArgs>(
                 public_args,
@@ -3137,15 +3733,37 @@ pub(crate) fn native_action_request_route_payload_decodes_exactly(
     }
 }
 
+/// Route-specific decoded public-argument ceiling used before base64 decode.
+///
+/// The compact Poseidon2 route must never inherit the generic two-MiB action
+/// budget. Keeping this projection live while authority is false prevents a
+/// later activation from accidentally moving the allocation boundary.
+pub(crate) const fn native_action_request_public_args_cap(family_id: u16, action_id: u16) -> usize {
+    if family_id == FAMILY_SHIELDED_POOL
+        && action_id == ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
+    {
+        // Before decoding, the shared route can only apply the largest exact
+        // profile ceiling. Syntax/context decoding then enforces each profile's
+        // own cap; q20 retains 131,072 bytes.
+        protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES
+    } else if family_id == FAMILY_SHIELDED_POOL && action_id == ACTION_MINT_POSEIDON2_V8_COINBASE {
+        POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES
+    } else {
+        MAX_NATIVE_RPC_ACTION_BYTES
+    }
+}
+
 pub(crate) fn evaluate_native_action_request_projection(
     request: &SubmitActionRpcRequest,
 ) -> std::result::Result<Vec<u8>, NativeActionRequestProjectionAdmissionRejection> {
-    let transfer_route =
-        native_submit_action_is_transfer_route(request.family_id, request.action_id);
+    let outer_nullifier_route =
+        native_submit_action_uses_outer_nullifiers(request.family_id, request.action_id);
     let route_supported =
         native_submit_action_route_supported(request.family_id, request.action_id);
+    let public_args_cap =
+        native_action_request_public_args_cap(request.family_id, request.action_id);
     let public_args_encoded_within_limit =
-        request.public_args.len() <= encoded_len_limit(MAX_NATIVE_RPC_ACTION_BYTES);
+        request.public_args.len() <= encoded_len_limit(public_args_cap);
     let decoded_public_args = if public_args_encoded_within_limit {
         decode_base64(&request.public_args).ok()
     } else {
@@ -3154,7 +3772,7 @@ pub(crate) fn evaluate_native_action_request_projection(
     let public_args_base64_decodes = decoded_public_args.is_some();
     let public_args_decoded_within_limit = decoded_public_args
         .as_ref()
-        .map(|public_args| public_args.len() <= MAX_NATIVE_RPC_ACTION_BYTES)
+        .map(|public_args| public_args.len() <= public_args_cap)
         .unwrap_or(false);
     let route_payload_decodes_exactly = if route_supported && public_args_decoded_within_limit {
         decoded_public_args
@@ -3171,10 +3789,13 @@ pub(crate) fn evaluate_native_action_request_projection(
         json_decode_accepts: true,
         kernel_envelope_fields_absent: native_action_request_kernel_fields_absent(request),
         route_supported,
-        nullifier_scope_valid: transfer_route || request.new_nullifiers.is_empty(),
+        nullifier_scope_valid: outer_nullifier_route || request.new_nullifiers.is_empty(),
         nullifier_count_within_limit: request.new_nullifiers.len()
             <= transaction_core::constants::MAX_INPUTS,
-        nullifier_hex_valid: native_action_request_nullifiers_decode(request, transfer_route),
+        nullifier_hex_valid: native_action_request_nullifiers_decode(
+            request,
+            outer_nullifier_route,
+        ),
         public_args_encoded_within_limit,
         public_args_base64_decodes,
         public_args_decoded_within_limit,
@@ -3204,28 +3825,183 @@ pub(crate) struct NativePagination {
 pub(crate) struct NativeState {
     best: NativeBlockMeta,
     header_mmr_peaks: Vec<Hash32>,
-    pending_actions: BTreeMap<[u8; 32], PendingAction>,
+    pending_actions: BTreeMap<ActionId48, PendingAction>,
+    /// Domain-separated semantic action identity to its canonical action id.
+    /// Active V3 has no arrival-time field, so both identities cover the same
+    /// canonical body while remaining distinct types/domains. Admission uses
+    /// this index so a full
+    /// mempool does not require re-encoding and hashing every proof twice for
+    /// each new action.
+    pending_action_semantic_index: BTreeMap<ActionSemanticId48, ActionId48>,
+    /// Canonical mining-order key and transaction hash for every pending
+    /// action. Iterating this set yields the exact deterministic template
+    /// order without re-decoding large transfer payloads inside a sort.
+    pending_action_order_index: BTreeSet<([u8; 32], ActionId48)>,
+    /// Exact union of nullifiers carried by pending actions.  Canonical spent
+    /// nullifiers remain in `nullifiers`; keeping the pending half indexed
+    /// avoids cloning/scanning the whole mempool for every admission.
+    pending_nullifiers: BTreeSet<[u8; 48]>,
+    /// Exact replay-key set for pending inbound bridge actions. The persistent
+    /// trie makes per-admission snapshots O(1) while preserving exact-key
+    /// membership (no probabilistic filter or hash-collision assumption).
+    pending_bridge_replay_keys: PersistentKeySet48,
+    /// Exact canonical SCALE byte total for `pending_actions`.
+    pending_mempool_bytes: usize,
     commitment_tree: CommitmentTreeState,
-    nullifiers: BTreeSet<[u8; 48]>,
-    consumed_bridge_messages: BTreeSet<[u8; 48]>,
+    nullifiers: PersistentKeySet48,
+    nullifier_accumulator: NullifierAccumulator,
+    consumed_bridge_messages: PersistentKeySet48,
     stablecoin_policy_authorizations: BTreeSet<Vec<u8>>,
     staged_ciphertexts: BTreeMap<String, u32>,
     staged_proofs: BTreeMap<String, Vec<u8>>,
 }
 
-#[derive(Clone)]
-pub(crate) struct NativeMinerIdentity {
-    secret_key: MlDsaSecretKey,
-    public_key: MlDsaPublicKey,
+/// Compact, block-bound canonical state needed to start fork replay at a
+/// common ancestor without rebuilding the shared prefix. Exact nullifier and
+/// bridge membership are obtained by removing the bounded orphan suffix from
+/// the structurally shared live sets; the Merkle/MMR append frontiers cannot
+/// be reversed and are therefore checkpointed explicitly.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+pub(crate) struct NativeCanonicalStateCheckpointV1 {
+    schema_version: u16,
+    rules_hash: [u8; 32],
+    height: u64,
+    block_hash: [u8; 32],
+    block_body_digest: [u8; 32],
+    commitment_depth: u32,
+    commitment_history_limit: u32,
+    commitment_leaf_count: u64,
+    commitment_root: [u8; 48],
+    commitment_frontier: Vec<[u8; 48]>,
+    commitment_root_history: Vec<[u8; 48]>,
+    nullifier_accumulator: Vec<u8>,
+    header_mmr_peaks: Vec<[u8; 32]>,
+    checkpoint_digest: [u8; 32],
 }
 
-impl NativeMinerIdentity {
-    fn from_seed(seed: &[u8]) -> Self {
-        let secret_key = MlDsaSecretKey::generate_deterministic(seed);
-        let public_key = secret_key.verify_key();
+pub(crate) type NativeCanonicalCheckpointRows = (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>);
+
+pub(crate) struct NativeVerifiedSuffixReplay {
+    pub(crate) state: NativeState,
+    pub(crate) checkpoint_rows: Vec<NativeCanonicalCheckpointRows>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct NativeVerifiedBlockCache {
+    entries: BTreeMap<[u8; 32], [u8; 48]>,
+    order: VecDeque<[u8; 32]>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct NativeCanonicalCheckpointCache {
+    entries: BTreeMap<[u8; 32], NativeCanonicalStateCheckpointV1>,
+    order: VecDeque<[u8; 32]>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RejectedPendingActionCache {
+    entries: BTreeMap<NativePendingRejectionKey, Instant>,
+    order: VecDeque<(NativePendingRejectionKey, Instant)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct NativePendingRejectionKey {
+    parent_hash: [u8; 32],
+    semantic_id: ActionSemanticId48,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct NativeDaEncodingCache {
+    entries: BTreeMap<[u8; 32], Arc<state_da::DaEncoding>>,
+    order: VecDeque<[u8; 32]>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct NativeWorkTemplateCacheEntry {
+    work: NativeWork,
+    built_at: Instant,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativePendingActionStageDisposition {
+    Inserted,
+    Duplicate,
+    TipChanged,
+}
+
+pub(crate) struct NativePendingActionCommitCompletion {
+    result: Mutex<Option<std::result::Result<NativePendingActionStageDisposition, String>>>,
+}
+
+impl NativePendingActionCommitCompletion {
+    fn new() -> Self {
         Self {
-            secret_key,
-            public_key,
+            result: Mutex::new(None),
+        }
+    }
+}
+
+pub(crate) struct NativePendingActionCommitRequest {
+    pending: PendingAction,
+    pending_encoded: Vec<u8>,
+    pending_semantic_hash: ActionSemanticId48,
+    verified_tip: Option<(u64, [u8; 32])>,
+    consumed_staged_proof: Option<([u8; 64], Vec<u8>)>,
+    ignore_duplicate: bool,
+    #[cfg(test)]
+    bypass_active_route_for_group_engine_test: bool,
+    completion: Arc<NativePendingActionCommitCompletion>,
+}
+
+#[derive(Default)]
+pub(crate) struct NativePendingActionGroupCommitState {
+    active: bool,
+    queued_bytes: usize,
+    queue: VecDeque<NativePendingActionCommitRequest>,
+}
+
+pub(crate) struct NativePendingActionGroupCommit {
+    state: Mutex<NativePendingActionGroupCommitState>,
+    wake: Condvar,
+}
+
+impl Default for NativePendingActionGroupCommit {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(NativePendingActionGroupCommitState::default()),
+            wake: Condvar::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct NativePendingActionGroupCommitTestControl {
+    hold_before_drain: AtomicBool,
+    before_drain_entered: AtomicBool,
+    hold_before_flush: AtomicBool,
+    before_flush_entered: AtomicBool,
+    fail_next_transaction: AtomicBool,
+    fail_next_flush: AtomicBool,
+    panic_after_drain: AtomicBool,
+    flush_invocations: AtomicU64,
+    wait_lock: Mutex<()>,
+    wake: Condvar,
+}
+
+#[cfg(test)]
+impl Default for NativePendingActionGroupCommitTestControl {
+    fn default() -> Self {
+        Self {
+            hold_before_drain: AtomicBool::new(false),
+            before_drain_entered: AtomicBool::new(false),
+            hold_before_flush: AtomicBool::new(false),
+            before_flush_entered: AtomicBool::new(false),
+            fail_next_transaction: AtomicBool::new(false),
+            fail_next_flush: AtomicBool::new(false),
+            panic_after_drain: AtomicBool::new(false),
+            flush_invocations: AtomicU64::new(0),
+            wait_lock: Mutex::new(()),
+            wake: Condvar::new(),
         }
     }
 }
@@ -3244,6 +4020,7 @@ pub struct NativeNode {
     ciphertext_archive_tree: sled::Tree,
     da_ciphertext_tree: sled::Tree,
     da_proof_tree: sled::Tree,
+    poseidon2_v8_tree: sled::Tree,
     state: RwLock<NativeState>,
     start_instant: Instant,
     mining: AtomicBool,
@@ -3251,6 +4028,7 @@ pub struct NativeNode {
     mining_round: AtomicU64,
     mining_hashes: AtomicU64,
     blocks_found: AtomicU64,
+    canonical_state_generation: AtomicU64,
     last_announce_height: AtomicU64,
     pending_action_rebroadcast_cursor: AtomicU64,
     sync_target_height: AtomicU64,
@@ -3275,9 +4053,70 @@ pub struct NativeNode {
     sync_chunk_receive_in_flight_peers: Mutex<BTreeSet<PeerId>>,
     mining_tasks: Mutex<Vec<JoinHandle<()>>>,
     sync_tx: Mutex<Option<ProtocolSender>>,
-    miner_identity: NativeMinerIdentity,
-    prepared_candidate_actions: Mutex<BTreeMap<[u8; 32], PendingAction>>,
-    prepared_candidate_build_lock: Mutex<()>,
+    pending_proof_admission_semaphore: Arc<Semaphore>,
+    peer_pending_proof_admission_semaphore: Arc<Semaphore>,
+    local_pending_proof_admission_semaphore: Arc<Semaphore>,
+    work_template_proof_semaphore: Arc<Semaphore>,
+    block_import_semaphore: Arc<Semaphore>,
+    /// Serializes canonical-chain commits while allowing all expensive proof,
+    /// payload, and replay validation to run against an immutable snapshot
+    /// without holding `state`'s writer lock.
+    canonical_import_lock: Mutex<()>,
+    /// Serializes every durable `action_tree` mutation and its matching
+    /// in-memory publication. Global order is this persistence epoch first,
+    /// then `block_store_persistence_lock` when required, then
+    /// `canonical_import_lock`, then a short `state` guard.
+    /// A contender never holds the canonical guard while waiting for the
+    /// epoch, and no `state` guard spans a sled transaction or durability
+    /// barrier.
+    pending_action_persistence_lock: Mutex<()>,
+    /// Serializes content-addressed block-body/refcount and fork-retention
+    /// mutation. Canonical writers acquire `pending_action_persistence_lock`,
+    /// then this block-store epoch, then `canonical_import_lock`, then a short
+    /// `state` guard. Noncanonical writers acquire only this epoch. Neither
+    /// canonical nor state guards are held while waiting for it or across I/O.
+    block_store_persistence_lock: Mutex<()>,
+    /// Advances only when a durable pending-action epoch is published to RAM.
+    /// Callers snapshot it under `state` and compare again before publication.
+    pending_action_generation: AtomicU64,
+    /// Fail-stop gate set when a durability barrier or post-commit readback
+    /// leaves canonical storage health uncertain. A restart performs the
+    /// authoritative sled reload before mutation resumes.
+    native_storage_poisoned: AtomicBool,
+    work_template_build_lock: Mutex<()>,
+    work_template_cache: Mutex<Option<NativeWorkTemplateCacheEntry>>,
+    pending_action_group_commit: NativePendingActionGroupCommit,
+    pending_proof_admissions_in_flight: Arc<Mutex<BTreeSet<ActionSemanticId48>>>,
+    rejected_pending_actions: Mutex<RejectedPendingActionCache>,
+    block_body_send_cache: Mutex<NativeBlockBodySendCache>,
+    da_encoding_cache: Mutex<NativeDaEncodingCache>,
+    da_encoding_build_lock: Mutex<()>,
+    in_process_verified_blocks: Mutex<NativeVerifiedBlockCache>,
+    in_process_canonical_checkpoints: Mutex<NativeCanonicalCheckpointCache>,
+    #[cfg(test)]
+    best_meta_clone_invocations: AtomicU64,
+    #[cfg(test)]
+    full_block_body_load_invocations: AtomicU64,
+    #[cfg(test)]
+    independent_proof_backend_invocations: AtomicU64,
+    #[cfg(test)]
+    work_template_build_invocations: AtomicU64,
+    #[cfg(test)]
+    pending_action_group_commit_test: NativePendingActionGroupCommitTestControl,
+    #[cfg(test)]
+    header_history_rebuild_invocations: AtomicU64,
+    #[cfg(test)]
+    historical_block_proof_replay_invocations: AtomicU64,
+    #[cfg(test)]
+    fail_next_canonical_readback: AtomicBool,
+    #[cfg(test)]
+    reorg_suffix_blocks_examined: AtomicU64,
+    #[cfg(test)]
+    reorg_suffix_body_bytes_examined: AtomicU64,
+    #[cfg(test)]
+    reorg_index_mutations: AtomicU64,
+    // PR 203 bounded-sync instrumentation. These counters describe storage
+    // work only and never act as proof-validity authority.
     #[cfg(test)]
     block_meta_load_count: AtomicU64,
     #[cfg(test)]
@@ -3296,18 +4135,42 @@ pub struct NativeNode {
 
 mod admission;
 mod block_flow;
+mod block_store_v3;
+mod canonical_membership;
+mod fork_retention;
+pub mod hx512_lifecycle;
+mod inactive_smallwood_v7;
 mod mining;
 mod node_impl;
+mod nullifier_accumulator;
+mod poseidon2_v8_pending;
+pub(crate) mod poseidon2_v8_state;
+pub(crate) mod poseidon2_v8_verifier;
 mod pow;
+mod reorg_wal;
 mod rpc;
 mod service;
+pub(crate) mod smallwood_v8_lifetime;
 mod storage;
 mod sync_chunks;
 mod util;
 
 pub(crate) use admission::*;
 pub(crate) use block_flow::*;
+pub(crate) use canonical_membership::*;
 pub(crate) use mining::*;
+pub(crate) use node_impl::NativePendingProofAdmissionGuard;
+#[cfg(test)]
+pub(crate) use node_impl::{
+    apply_poseidon2_v8_plan_and_admit_atomic_manifest_in_transaction,
+    classify_native_da_single_transfer, empty_canonical_suffix_manifest_before_v8_observation,
+    native_canonical_state_checkpoint, native_canonical_state_checkpoint_digest,
+    native_da_transfer_blob_contribution, native_proof_error_is_deterministic,
+    native_retarget_anchor_timestamp_from_parent, select_native_da_action_prefix,
+    select_native_da_capacity_prefix, validate_native_canonical_state_checkpoint,
+    NativeDaCapacitySelectionError, NativeDaSingleTransferDecision,
+};
+pub(crate) use nullifier_accumulator::*;
 pub(crate) use pow::*;
 pub(crate) use rpc::*;
 pub use service::run;
@@ -3317,4 +4180,10 @@ pub(crate) use sync_chunks::*;
 pub(crate) use util::*;
 
 #[cfg(test)]
+mod pending_action_canonicality_tests;
+#[cfg(test)]
+mod poseidon2_v8_coinbase_tests;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod transport_tests;

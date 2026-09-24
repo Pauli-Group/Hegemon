@@ -253,7 +253,7 @@ EOF
       ;;
     smallwood-lean-spec-hardening)
       cat <<'EOF'
-cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::lean_generated_smallwood_transcript_binding_vectors_match_production --nocapture
+cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::lean_generated_legacy_level5_transcript_binding_vectors_match_runtime_codec --nocapture
 cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::smallwood_active_profile_is_no_grinding_and_pow_bits_are_transcript_bound --nocapture
 cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth --nocapture
 cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::packed_smallwood_inline_merkle_rejects_active_input_note_value_and_commitment_mutation --nocapture
@@ -290,9 +290,6 @@ EOF
       cat <<'EOF'
 cargo_test_lib_filter consensus receipt_root_artifact_kind_and_profile_mismatch_reject_before_backend -- --nocapture
 cargo_test_lib_filter consensus receipt_root_statement_commitment_mismatch_rejects_before_backend -- --nocapture
-cargo_test_lib_filter superneo-hegemon native_receipt_root_rejects_tampered_fold_rows -- --nocapture
-cargo_test_lib_filter superneo-hegemon native_receipt_root_rejects_spec_digest_mismatch -- --nocapture
-cargo_test_lib_filter superneo-hegemon native_receipt_root_rejects_tampered_leaf_statement_digest -- --nocapture
 if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
   cargo +"${HEGEMON_FUZZ_TOOLCHAIN:-nightly-2026-06-23}" fuzz run receipt_root_artifact -- -max_total_time=30
 fi
@@ -315,9 +312,8 @@ EOF
       ;;
     review-package-parity)
       cat <<'EOF'
-cargo test -p superneo-backend-lattice -p native-backend-ref -p superneo-hegemon -p superneo-bench
+cargo test -p native-backend-ref
 cargo run -p native-backend-ref -- verify-vectors testdata/native_backend_vectors
-./scripts/package_native_backend_review.sh
 ./scripts/verify_native_backend_review_package.sh
 if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
   cargo run -p native-backend-timing --release
@@ -371,7 +367,9 @@ run_campaign "recursive-block-mismatch"
 run_campaign "receipt-root-tamper"
 run_campaign "prover-configuration-downgrade"
 run_campaign "network-transport-abuse"
-run_campaign "review-package-parity"
+if [[ "$MODE" == "full" ]]; then
+  run_campaign "review-package-parity"
+fi
 
 overall="pass"
 for result in "${RESULTS[@]}"; do

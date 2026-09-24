@@ -1,0 +1,38 @@
+{
+  "schema": "hegemon.smallwood_generic_csr_repair.v1",
+  "date": "2026-08-22",
+  "file": {
+    "path": "circuits/transaction/src/smallwood_engine.rs",
+    "sha256": "03161861d0afbcfad27456d6a59ce70093531271d2761fa740425eb0045a3446"
+  },
+  "invariants": [
+    "checked row_count times packing_factor and u32 witness plus auxiliary address space",
+    "canonical auxiliary words limbs and padding",
+    "offset count equals row_count plus one with zero start strict nonempty rows and exact final term count",
+    "exact index coefficient and target lengths",
+    "nonzero canonical coefficients and canonical targets",
+    "unique in-row indices and every index below the checked variable count",
+    "configuration validation precedes proof decoding in direct verifier and verifier trace",
+    "no malformed term or auxiliary metadata is silently skipped"
+  ],
+  "independent_checks": {
+    "cargo_test_transaction_circuit_generic_csr_locked": {
+      "passed": 6,
+      "failed": 0
+    },
+    "cargo_test_identity_witness_fast_path_rejects_malformed_linear_metadata_locked": {
+      "passed": 1,
+      "failed": 0
+    },
+    "cargo_check_transaction_circuit_lib_locked": true,
+    "git_diff_check": true,
+    "disk_available_kib_after_checks": 32843708
+  },
+  "claim_boundary": {
+    "generic_csr_boundary_hardened": true,
+    "exact_full_transaction_relation_compiled": false,
+    "complete_zero_knowledge": false,
+    "composed_pq_qrom_bits": null,
+    "production_authorized": false
+  }
+}

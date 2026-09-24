@@ -1,0 +1,724 @@
+{
+  "schema": "hegemon.hx512.joint-classical-rom-zk-certificate.v1",
+  "artifact_status": "validated-fail-closed",
+  "generated_utc": "2026-08-22T18:48:16Z",
+  "claim_boundary": "This artifact is an executable conditional whole-view simulator specification and negative release gate. It is not a complete-ZK proof, a QROM proof, a concrete-hash proof, a prover/verifier refinement, or production authority.",
+  "canonical_design": {
+    "profile_state": "provisional-q48-s6-reference-fixture",
+    "grinding_bits": 0,
+    "piop_opening_rule": "event-5-direct-s6-field-sampler",
+    "piop_nonce": "forbidden-absent-zero-byte-sentinel-only",
+    "outer_retry": false,
+    "samplers": {
+      "field_candidate_word_bits": 64,
+      "field_acceptance_rule": "candidate < Goldilocks modulus; duplicates are accepted",
+      "field_extra_candidates": 256,
+      "index_candidate_word_bits": 64,
+      "index_acceptance_rule": "unbiased reduction then first q distinct indexes, canonically sorted",
+      "index_extra_candidates": 512,
+      "abort_poisons_transcript": true,
+      "outer_retry_after_abort": false
+    },
+    "fresh_inner_prefix": [
+      {
+        "name": "decs_root",
+        "bytes": 64,
+        "meaning": "raw Merkle root committed at event 0"
+      },
+      {
+        "name": "piop_input_digest",
+        "bytes": 64,
+        "meaning": "event 2 SHA-512 result, retained as the deferred h3 claim"
+      },
+      {
+        "name": "h_piop",
+        "bytes": 64,
+        "meaning": "event 4 SHA-512 result, retained as the deferred h5 claim"
+      }
+    ],
+    "fresh_inner_prefix_source_refined": false,
+    "wire_field_order_after_prefix": [
+      "PiopPpolHighs",
+      "PiopPlinHighs",
+      "PcsRcombiTails",
+      "LvcsSubsetEvaluations",
+      "PcsPartialEvaluations",
+      "DecsAuthPathCount",
+      "DecsAuthPathLengths",
+      "DecsAuthPathNodes",
+      "DecsLeafTapes",
+      "DecsMaskingEvaluations",
+      "DecsHighCoefficients",
+      "OpenedWitnessRowScalars",
+      "ExactEndOfInput"
+    ]
+  },
+  "reference_fixture": {
+    "authoritative": false,
+    "field_modulus": 18446744069414584321,
+    "packing_factor": 1024,
+    "relation_rows": 11209,
+    "piop_max_constraint_count": 11209,
+    "constraint_degree": 6,
+    "rho": 5,
+    "piop_openings": 6,
+    "beta": 2,
+    "decs_domain_size": 1048576,
+    "decs_openings": 48,
+    "decs_eta": 5,
+    "salt_bytes": 64,
+    "digest_bytes": 64,
+    "leaf_tape_bytes": 72,
+    "polynomial_count": 11219,
+    "nonlinear_mask_degree": 5150,
+    "linear_mask_degree": 2052,
+    "lvcs_rows": 2060,
+    "lvcs_columns": 5625,
+    "opened_combinations": 12,
+    "partial_values_per_opening": 30,
+    "note": "Synthetic q48/s6 geometry retained by smallwood_hx512_zk_certificate.rs. Final compiler row count and identity are not frozen."
+  },
+  "authority_flags": {
+    "classical_rom_joint_simulator_proved": false,
+    "whole_view_distribution_equality_proved": false,
+    "retry_abort_refinement_proved": false,
+    "merkle_programming_refinement_proved": false,
+    "adaptive_fiat_shamir_refinement_proved": false,
+    "adaptive_qrom_lift_proved": false,
+    "concrete_hash_bridge_proved": false,
+    "compiled_prover_refinement_proved": false,
+    "compiled_verifier_refinement_proved": false,
+    "canonical_parser_serializer_refinement_proved": false,
+    "complete_zero_knowledge": false,
+    "production_authorized": false
+  },
+  "evidence_flags": {
+    "field_coverage_complete": true,
+    "conditional_spec_executable": true,
+    "representative_rank_checks": true,
+    "exact_sampler_math": true,
+    "local_evidence_is_whole_view_proof": false
+  },
+  "source_pins": [
+    {
+      "path": "circuits/transaction/src/smallwood_engine.rs",
+      "sha512": "9869efe86e819385021629c5245654f7b3c9d51fb2a6dc737a81006e5ac261398792ab66b8f713fe367fedd6b77118eab7813e7010354c1171ae73af3903ff01",
+      "role": "observed engine and core wire snapshot"
+    },
+    {
+      "path": "circuits/transaction/src/smallwood_hx512_transcript.rs",
+      "sha512": "a33f9c8962ab6127ccc6866bafe1166186d4a3875843d55b7ac612b62e7ae5154726696ad35725f1d5eab22d53a343a9796de11b70fafce8f958b27846742b7c",
+      "role": "observed eight-event transcript and bounded samplers"
+    },
+    {
+      "path": "circuits/transaction/src/smallwood_hx512_zk_certificate.rs",
+      "sha512": "92a02fad6b339b5cb781ebd35197361e6c94ae9593b199b5d7fa542d8fc3cc3d7434591ce7fd2d45a6736f8c3b1f1df60e7879c5c4fdd0a4fff84d42078ac5eb",
+      "role": "observed 33-field inventory and local rank certificate"
+    }
+  ],
+  "paper_pins": [
+    {
+      "path": "/private/tmp/smallwood-2025-1085.pdf",
+      "sha512": "cd035a0739d3c7f2f82fd4a089e3e1bb748cd16c5fa30addc16f2197e49f972be2ed97f760b3eafee480bd978030e9b339a93341a0661daca11738fdc128a8e2",
+      "pages": [9, 12, 17, 23, 31],
+      "role": "DECS, LVCS, PCS, PIOP, and whole-ROM zero-knowledge theorems"
+    },
+    {
+      "path": "/private/tmp/bcs-2016-116.pdf",
+      "sha512": "66557007b59ec3ce3657b22b6b4c5047ef60762b2e6b7d0c2baff16ad5d4dfa77b2f3aa5e8f068f8d260ae9919cf862a23ff685ff0c82356d207ebac3c3f6914",
+      "pages": [27, 32],
+      "role": "IOP-to-NIROP transform and statistical-ZK loss"
+    },
+    {
+      "path": "/private/tmp/cms-2019-834.pdf",
+      "sha512": "1fc3a6cfce5c1ab2e9e0352581f6725c48ee1b52fa6773d456614d4137cb541443010c127a9fbdfd642ebf5249c05503c4ff531f2995e2918ad1190df334367f",
+      "pages": [42],
+      "role": "QROM BCS theorem and statistical-ZK premise"
+    },
+    {
+      "path": "/private/tmp/ghcm-2020-1361.pdf",
+      "sha512": "4c4dea78491790b10ee049c70fd7bef6abc36015d5011243164b0a7c4aaa8134fa88e1fc1ecb6bb7de7566a5324e7d0ec8de44f9303ab4482fe525c037699f8b",
+      "pages": [7],
+      "role": "adaptive QROM reprogramming bound"
+    }
+  ],
+  "source_observations": [
+    {
+      "id": "certificate-nonce-mismatch",
+      "status": "blocking",
+      "observation": "The pinned ZK certificate inventories PiopNonce as four serialized bytes. The pinned fresh core encoder instead requires an all-zero internal nonce sentinel and serializes no nonce. Canonical HX512 design is the zero-byte form."
+    },
+    {
+      "id": "certificate-fresh-wire-grammar-mismatch",
+      "status": "blocking",
+      "observation": "The pinned ZK certificate retains the legacy 4-byte matrix header, 2-byte authentication count, 1-byte path lengths, witness-mode tag, and auxiliary counts. The landed fresh codec uses u32-big-endian matrix dimensions and authentication count/lengths, u64-big-endian field cells, and omits legacy mode/auxiliary fields."
+    },
+    {
+      "id": "legacy-hx512-opening-dispatch",
+      "status": "resolved-in-concurrent-source-awaiting-compiled-refinement",
+      "observation": "The earlier generic route reached the HX512Candidate panic. The later owner edit now directly samples s=6 at transcript event 5 and caches those points with a zero internal sentinel. Focused compiled/refinement evidence remains outside this artifact."
+    },
+    {
+      "id": "deferred-prefix-not-landed",
+      "status": "resolved-in-concurrent-source-awaiting-compiled-refinement",
+      "observation": "The canonical three-digest fresh prefix was absent in the first snapshot and is now present in the owner edit. It still lacks an attached compiled parser/serializer refinement receipt in this artifact."
+    }
+  ],
+  "view_fields": [
+    {
+      "name": "ProfileAndIdentity",
+      "surface": "external-public",
+      "wire_state": "external",
+      "serialized_bytes": null,
+      "producer": "K0-public-shape",
+      "parents": [],
+      "correlation": "Fixes every grammar, geometry, domain, and source pin before simulation. Still unallocated."
+    },
+    {
+      "name": "PublicStatement",
+      "surface": "external-public",
+      "wire_state": "external",
+      "serialized_bytes": 983,
+      "producer": "K0-public-shape",
+      "parents": ["ProfileAndIdentity"],
+      "correlation": "Public input copied byte-for-byte into the statement-binding preimage, not sampled."
+    },
+    {
+      "name": "VerifierContext",
+      "surface": "external-public",
+      "wire_state": "external",
+      "serialized_bytes": 136,
+      "producer": "K0-public-shape",
+      "parents": ["ProfileAndIdentity"],
+      "correlation": "Public chain/network/context binding copied byte-for-byte, not sampled."
+    },
+    {
+      "name": "CanonicalHeader",
+      "surface": "serialized",
+      "wire_state": "outer-framed",
+      "serialized_bytes": "16 + identity_header_bytes",
+      "producer": "K0-public-shape",
+      "parents": ["ProfileAndIdentity"],
+      "correlation": "Total length, identity length and bytes, salt length, and inner length are deterministic and exact."
+    },
+    {
+      "name": "Salt",
+      "surface": "serialized",
+      "wire_state": "outer-fixed",
+      "serialized_bytes": 64,
+      "producer": "K1-independent-entropy",
+      "parents": ["ProfileAndIdentity"],
+      "correlation": "One uniform 512-bit salt is shared by all transcript and Merkle requests. It is independent of every leaf tape."
+    },
+    {
+      "name": "PiopNonce",
+      "surface": "forbidden",
+      "wire_state": "forbidden-absent",
+      "serialized_bytes": 0,
+      "producer": "K2-conditioned-challenge-tapes",
+      "parents": ["TranscriptEvents"],
+      "correlation": "No nonce, no grinding, and no retry loop. The internal zero sentinel has no verifier-view bytes."
+    },
+    {
+      "name": "HPiop",
+      "surface": "serialized-and-derived",
+      "wire_state": "inner-fixed",
+      "serialized_bytes": 64,
+      "producer": "K7-eight-event-rom-programming",
+      "parents": ["PiopPpolHighs", "PiopPlinHighs", "OpenedWitnessRowScalars", "TranscriptEvents"],
+      "correlation": "Exactly the event-4 SHA-512 output and deferred h5 claim; never an independent random digest."
+    },
+    {
+      "name": "PiopPpolHighs",
+      "surface": "serialized",
+      "wire_state": "inner-matrix-u32be-u32be-u64be",
+      "serialized_bytes": "8 + 8*rho*(nonlinear_mask_degree+1-s)",
+      "producer": "K3-piop-perfect-hvzk",
+      "parents": ["PiopOpeningPoints", "TranscriptEvents"],
+      "correlation": "High coefficients and opened P/Q/M values are one conditional affine image; independent sampling is invalid."
+    },
+    {
+      "name": "PiopPlinHighs",
+      "surface": "serialized",
+      "wire_state": "inner-matrix-u32be-u32be-u64be",
+      "serialized_bytes": "8 + 8*rho*(linear_mask_degree-s)",
+      "producer": "K3-piop-perfect-hvzk",
+      "parents": ["PiopOpeningPoints", "TranscriptEvents"],
+      "correlation": "Uniform zero-sum masks are conditioned on the packing-domain sum and share the opened P values."
+    },
+    {
+      "name": "PcsRcombiTails",
+      "surface": "serialized",
+      "wire_state": "inner-matrix-u32be-u32be-u64be",
+      "serialized_bytes": "8 + 8*(beta*s)*q",
+      "producer": "K5-lvcs-decs-conditioning",
+      "parents": ["PcsCombinationHeads", "DecsOpeningIndexes"],
+      "correlation": "Random LVCS tails and reconstructed heads are a single polynomial row; tails cannot be sampled after heads independently."
+    },
+    {
+      "name": "LvcsSubsetEvaluations",
+      "surface": "serialized",
+      "wire_state": "inner-matrix-u32be-u32be-u64be",
+      "serialized_bytes": "8 + 8*q*(lvcs_rows-beta*s)",
+      "producer": "K5-lvcs-decs-conditioning",
+      "parents": ["PcsRcombiTails", "DecsCosetPoints", "LvcsOmittedRows"],
+      "correlation": "Opened subset rows are the Cauchy evaluation of the same random tails and omitted-row solve."
+    },
+    {
+      "name": "PcsPartialEvaluations",
+      "surface": "serialized",
+      "wire_state": "inner-matrix-u32be-u32be-u64be",
+      "serialized_bytes": "8 + 8*s*partial_values_per_opening",
+      "producer": "K4-pcs-equation6-conditioning",
+      "parents": ["OpenedWitnessRowScalars", "PiopOpeningPoints"],
+      "correlation": "For every opening, width-minus-one values are uniform and the final coordinate is solved from PCS Equation 6."
+    },
+    {
+      "name": "DecsAuthPathCount",
+      "surface": "serialized",
+      "wire_state": "inner-u32be",
+      "serialized_bytes": 4,
+      "producer": "K6-decs-lazy-merkle",
+      "parents": ["DecsOpeningIndexes"],
+      "correlation": "Exactly q; not sampled."
+    },
+    {
+      "name": "DecsAuthPathLengths",
+      "surface": "serialized",
+      "wire_state": "inner-q-u32be",
+      "serialized_bytes": 192,
+      "producer": "K6-decs-lazy-merkle",
+      "parents": ["DecsOpeningIndexes"],
+      "correlation": "Deterministic compact multiproof lengths induced by the sorted opening set and shared siblings."
+    },
+    {
+      "name": "DecsAuthPathNodes",
+      "surface": "serialized",
+      "wire_state": "inner-compact-digest-list",
+      "serialized_bytes": "64*sum(compact_path_lengths(opening_indexes))",
+      "producer": "K6-decs-lazy-merkle",
+      "parents": ["DecsOpeningIndexes", "DecsLeafTapes", "DecsMaskingEvaluations", "DecsFullPolynomials", "MerkleRoot"],
+      "correlation": "Overlapping paths share nodes. Unopened maximal-subtree roots are lazy-programmed once, then all ancestors and the root are deterministic."
+    },
+    {
+      "name": "DecsLeafTapes",
+      "surface": "serialized",
+      "wire_state": "inner-fixed-q-tapes",
+      "serialized_bytes": 3456,
+      "producer": "K1-independent-entropy",
+      "parents": ["DecsOpeningIndexes"],
+      "correlation": "The q serialized tapes are the indexed projection of N independent 576-bit tapes committed before event 0."
+    },
+    {
+      "name": "DecsMaskingEvaluations",
+      "surface": "serialized",
+      "wire_state": "inner-matrix-u32be-u32be-u64be",
+      "serialized_bytes": "8 + 8*q*eta",
+      "producer": "K6-decs-lazy-merkle",
+      "parents": ["DecsOpeningIndexes", "DecsFullPolynomials", "TranscriptEvents"],
+      "correlation": "At opened e, M(e)=R(e)-Gamma*P(e); masking evaluations and highs jointly determine R."
+    },
+    {
+      "name": "DecsHighCoefficients",
+      "surface": "serialized",
+      "wire_state": "inner-matrix-u32be-u32be-u64be",
+      "serialized_bytes": "8 + 8*eta*lvcs_columns",
+      "producer": "K6-decs-lazy-merkle",
+      "parents": ["DecsMaskingEvaluations", "DecsFullPolynomials"],
+      "correlation": "High coefficients are not independent of opened masks; together they interpolate each DECS polynomial."
+    },
+    {
+      "name": "OpenedWitnessMode",
+      "surface": "forbidden",
+      "wire_state": "forbidden-absent",
+      "serialized_bytes": 0,
+      "producer": "K8-canonical-serialization",
+      "parents": ["OpenedWitnessRowScalars"],
+      "correlation": "Fresh HX512 has one mandatory row-scalar shape, so no legacy mode tag is serialized."
+    },
+    {
+      "name": "OpenedWitnessRowScalars",
+      "surface": "serialized",
+      "wire_state": "inner-matrix-u32be-u32be-u64be",
+      "serialized_bytes": "8 + 8*s*polynomial_count",
+      "producer": "K3-piop-perfect-hvzk",
+      "parents": ["PiopOpeningPoints", "PiopPpolHighs", "PiopPlinHighs"],
+      "correlation": "These are polynomial openings, not raw witness disclosure; complete hiding requires the joint PIOP affine containment receipt."
+    },
+    {
+      "name": "AuxiliaryLimbCount",
+      "surface": "forbidden",
+      "wire_state": "forbidden-absent",
+      "serialized_bytes": 0,
+      "producer": "K8-canonical-serialization",
+      "parents": ["ProfileAndIdentity"],
+      "correlation": "Fresh aggregate witness fixes auxiliary count to zero before encoding."
+    },
+    {
+      "name": "AuxiliaryWords",
+      "surface": "forbidden",
+      "wire_state": "forbidden-absent",
+      "serialized_bytes": 0,
+      "producer": "K8-canonical-serialization",
+      "parents": ["AuxiliaryLimbCount"],
+      "correlation": "No auxiliary words are permitted or serialized."
+    },
+    {
+      "name": "ExactEndOfInput",
+      "surface": "parser-invariant",
+      "wire_state": "parser-invariant",
+      "serialized_bytes": 0,
+      "producer": "K8-canonical-serialization",
+      "parents": ["CanonicalHeader"],
+      "correlation": "The inner and outer declared lengths must end at the same final byte; trailing data is rejected."
+    },
+    {
+      "name": "PiopOpeningPoints",
+      "surface": "derived-verifier-state",
+      "wire_state": "derived-only",
+      "serialized_bytes": 0,
+      "producer": "K2-conditioned-challenge-tapes",
+      "parents": ["TranscriptEvents"],
+      "correlation": "The first s accepted event-5 field words, with their preceding rejection trace, must be distinct, nonzero, off-domain, and have nonzero linear correction. Current sampler does not itself enforce those latter conditions."
+    },
+    {
+      "name": "PcsCombinationCoefficients",
+      "surface": "derived-verifier-state",
+      "wire_state": "derived-only",
+      "serialized_bytes": 0,
+      "producer": "K4-pcs-equation6-conditioning",
+      "parents": ["PiopOpeningPoints", "ProfileAndIdentity"],
+      "correlation": "Deterministic powers/selector coefficients for beta*s combinations."
+    },
+    {
+      "name": "PcsCombinationHeads",
+      "surface": "derived-verifier-state",
+      "wire_state": "derived-only",
+      "serialized_bytes": 0,
+      "producer": "K4-pcs-equation6-conditioning",
+      "parents": ["PcsPartialEvaluations", "PcsCombinationCoefficients", "OpenedWitnessRowScalars"],
+      "correlation": "Solved heads share the exact partial randomizers and polynomial openings."
+    },
+    {
+      "name": "DecsOpeningIndexes",
+      "surface": "derived-verifier-state",
+      "wire_state": "derived-only",
+      "serialized_bytes": 0,
+      "producer": "K2-conditioned-challenge-tapes",
+      "parents": ["TranscriptEvents", "RetryAbortOutcome"],
+      "correlation": "Sorted first q distinct accepted event-7 indexes; duplicates and bias rejections remain part of the SHAKE output tape."
+    },
+    {
+      "name": "DecsCosetPoints",
+      "surface": "derived-verifier-state",
+      "wire_state": "derived-only",
+      "serialized_bytes": 0,
+      "producer": "K2-conditioned-challenge-tapes",
+      "parents": ["DecsOpeningIndexes", "ProfileAndIdentity"],
+      "correlation": "Deterministic disjoint radix-2 coset projection of opening indexes."
+    },
+    {
+      "name": "LvcsOmittedRows",
+      "surface": "derived-verifier-state",
+      "wire_state": "derived-only",
+      "serialized_bytes": 0,
+      "producer": "K5-lvcs-decs-conditioning",
+      "parents": ["PcsCombinationHeads", "PcsRcombiTails", "DecsCosetPoints"],
+      "correlation": "Unique beta*s Vandermonde solve; not fresh randomness."
+    },
+    {
+      "name": "DecsFullPolynomials",
+      "surface": "derived-verifier-state",
+      "wire_state": "derived-only",
+      "serialized_bytes": 0,
+      "producer": "K6-decs-lazy-merkle",
+      "parents": ["DecsMaskingEvaluations", "DecsHighCoefficients", "DecsCosetPoints"],
+      "correlation": "Unique interpolation of every eta masking polynomial from q low evaluations and high coefficients."
+    },
+    {
+      "name": "MerkleRoot",
+      "surface": "serialized-and-derived",
+      "wire_state": "inner-fixed",
+      "serialized_bytes": 64,
+      "producer": "K6-decs-lazy-merkle",
+      "parents": ["DecsAuthPathNodes", "DecsLeafTapes", "DecsMaskingEvaluations", "LvcsSubsetEvaluations"],
+      "correlation": "Raw committed root is serialized once; verifier recomputation from every compact path must agree."
+    },
+    {
+      "name": "TranscriptEvents",
+      "surface": "serialized-claims-and-derived-state",
+      "wire_state": "mixed",
+      "serialized_bytes": 64,
+      "producer": "K7-eight-event-rom-programming",
+      "parents": ["MerkleRoot", "PiopPpolHighs", "PiopPlinHighs", "PcsCombinationHeads", "PcsRcombiTails", "DecsOpeningIndexes", "PublicStatement", "VerifierContext", "Salt"],
+      "correlation": "Eight chained logical queries plus all Merkle history queries. The 64-byte piop_input_digest is a deferred same-query claim, not a ninth event."
+    },
+    {
+      "name": "RetryAbortOutcome",
+      "surface": "derived-prover-api-state",
+      "wire_state": "derived-only",
+      "serialized_bytes": 0,
+      "producer": "K2-conditioned-challenge-tapes",
+      "parents": ["TranscriptEvents"],
+      "correlation": "Each bounded sampler either succeeds with its complete rejection tape or poisons the transcript and returns error. There is no outer retry; emitted proofs are the real law conditioned on all four samplers succeeding."
+    }
+  ],
+  "simulator_kernels": [
+    {
+      "id": "K0-public-shape",
+      "depends_on": [],
+      "outputs": ["ProfileAndIdentity", "PublicStatement", "VerifierContext", "CanonicalHeader"],
+      "rule": "Copy public inputs and freeze exact grammar; sample nothing."
+    },
+    {
+      "id": "K1-independent-entropy",
+      "depends_on": ["K0-public-shape"],
+      "outputs": ["Salt", "DecsLeafTapes"],
+      "rule": "Sample one uniform 512-bit salt and N mutually independent 576-bit tapes from independent RNG calls before openings; expose only indexed tapes. RNG refinement receipt is absent."
+    },
+    {
+      "id": "K2-conditioned-challenge-tapes",
+      "depends_on": ["K0-public-shape", "K1-independent-entropy"],
+      "outputs": ["PiopNonce", "PiopOpeningPoints", "DecsOpeningIndexes", "DecsCosetPoints", "RetryAbortOutcome"],
+      "rule": "Preselect all four SHAKE raw candidate tapes with the exact bounded rejection laws. Split unconditional abort mass from the emitted-proof law conditioned on success. PiopNonce is the empty value."
+    },
+    {
+      "id": "K3-piop-perfect-hvzk",
+      "depends_on": ["K2-conditioned-challenge-tapes"],
+      "outputs": ["PiopPpolHighs", "PiopPlinHighs", "OpenedWitnessRowScalars"],
+      "rule": "Conditional on Gamma-prime and E-prime, apply SmallWood Theorem 8: sample P, sample zero-sum Q, set M=Q-batched-F(P), and serialize one correlated projection. Actual joint affine containment/universality receipts are absent."
+    },
+    {
+      "id": "K4-pcs-equation6-conditioning",
+      "depends_on": ["K3-piop-perfect-hvzk"],
+      "outputs": ["PcsPartialEvaluations", "PcsCombinationCoefficients", "PcsCombinationHeads"],
+      "rule": "For each polynomial and E-prime point, sample width-minus-one PCS coordinates and solve the last coordinate from Equation 6; derive beta*s combination heads."
+    },
+    {
+      "id": "K5-lvcs-decs-conditioning",
+      "depends_on": ["K2-conditioned-challenge-tapes", "K4-pcs-equation6-conditioning"],
+      "outputs": ["PcsRcombiTails", "LvcsSubsetEvaluations", "LvcsOmittedRows"],
+      "rule": "Sample LVCS random tails once, solve omitted rows once, and evaluate the shared rows at the q selected disjoint-coset points. No field is independently resampled."
+    },
+    {
+      "id": "K6-decs-lazy-merkle",
+      "depends_on": ["K1-independent-entropy", "K2-conditioned-challenge-tapes", "K5-lvcs-decs-conditioning"],
+      "outputs": ["DecsAuthPathCount", "DecsAuthPathLengths", "DecsAuthPathNodes", "DecsMaskingEvaluations", "DecsHighCoefficients", "DecsFullPolynomials", "MerkleRoot"],
+      "rule": "Conditional on Gamma and opened P values, sample R, set opened M=R-Gamma*P, program opened leaves with their tapes, assign each unopened maximal-subtree root once, and deterministically hash/program shared ancestors to one root. Lazy and full-tree distributions still require a ROM refinement proof."
+    },
+    {
+      "id": "K7-eight-event-rom-programming",
+      "depends_on": ["K0-public-shape", "K1-independent-entropy", "K2-conditioned-challenge-tapes", "K3-piop-perfect-hvzk", "K4-pcs-equation6-conditioning", "K5-lvcs-decs-conditioning", "K6-decs-lazy-merkle"],
+      "outputs": ["HPiop", "TranscriptEvents"],
+      "rule": "Program the eight exact chained logical queries to the preselected targets and retain the complete oracle table. Abort on a pre-existing conflicting query. Deferred h3/h5 checks re-evaluate identical framed inputs and are not fresh program events."
+    },
+    {
+      "id": "K8-canonical-serialization",
+      "depends_on": ["K7-eight-event-rom-programming"],
+      "outputs": ["OpenedWitnessMode", "AuxiliaryLimbCount", "AuxiliaryWords", "ExactEndOfInput"],
+      "rule": "Encode the single fresh grammar, omit all forbidden legacy fields, enforce canonical field words and dimensions, and require exact inner/outer end of input. Compiled parser/serializer refinement is absent."
+    }
+  ],
+  "transcript_schedule": [
+    {
+      "ordinal": 0,
+      "stage": "DecsRootBinding",
+      "primitive": "SHA-512",
+      "operation": "absorb",
+      "smallwood_theorem10_oracle": "XOF_1",
+      "program_target": "event0 chain digest from salt and raw Merkle root"
+    },
+    {
+      "ordinal": 1,
+      "stage": "DecsCoefficientChallenge",
+      "primitive": "SHAKE256",
+      "operation": "field-xof",
+      "smallwood_theorem10_oracle": "XOF'_1",
+      "program_target": "Gamma, including the exact rejected-candidate prefix and next-chain bytes"
+    },
+    {
+      "ordinal": 2,
+      "stage": "PiopInputBinding",
+      "primitive": "SHA-512",
+      "operation": "absorb",
+      "smallwood_theorem10_oracle": "XOF_2",
+      "program_target": "h3/piop_input_digest from the exact PCS-plus-public input message"
+    },
+    {
+      "ordinal": 3,
+      "stage": "PiopCoefficientChallenge",
+      "primitive": "SHAKE256",
+      "operation": "field-xof",
+      "smallwood_theorem10_oracle": "XOF'_2",
+      "program_target": "Gamma-prime, including rejection tape and next-chain bytes"
+    },
+    {
+      "ordinal": 4,
+      "stage": "PiopTranscriptBinding",
+      "primitive": "SHA-512",
+      "operation": "absorb",
+      "smallwood_theorem10_oracle": "XOF_3",
+      "program_target": "h5/h_piop from the jointly simulated PIOP transcript"
+    },
+    {
+      "ordinal": 5,
+      "stage": "PiopOpeningChallenge",
+      "primitive": "SHAKE256",
+      "operation": "field-xof",
+      "smallwood_theorem10_oracle": "XOF'_3",
+      "program_target": "six direct PIOP openings, rejection tape, and next-chain bytes; no nonce"
+    },
+    {
+      "ordinal": 6,
+      "stage": "DecsOpeningBinding",
+      "primitive": "SHA-512",
+      "operation": "absorb",
+      "smallwood_theorem10_oracle": "XOF_4",
+      "program_target": "digest of h_piop, combination heads, and recombination tails"
+    },
+    {
+      "ordinal": 7,
+      "stage": "DecsQueryChallenge",
+      "primitive": "SHAKE256",
+      "operation": "index-xof",
+      "smallwood_theorem10_oracle": "XOF'_4",
+      "program_target": "q sorted distinct DECS indexes, bias/duplicate rejection tape, and terminal chain bytes"
+    }
+  ],
+  "oracle_refinement_contract": {
+    "smallwood_abstract_oracles": ["Hash", "XOF_1", "XOF'_1", "XOF_2", "XOF'_2", "XOF_3", "XOF'_3", "XOF_4", "XOF'_4"],
+    "hx512_physical_families": {
+      "SHA-512": ["four scheduled absorb/root roles", "Merkle leaf roles", "Merkle node roles", "opened-tape/history roles"],
+      "SHAKE256": ["four scheduled challenge roles"]
+    },
+    "required_lemma": "A prefix-free tagged-product-RO refinement must prove every length-framed request encoding injective across roles, stages, statement binding, event index, chain digest, descriptor, message, counter, leaf index, level, and node index. It must then replace the abstract independent-oracle game by the two domain-separated physical families without double-counting queries.",
+    "global_query_accounting": "One global Q covers all adversarial SHA-512 and SHAKE256 queries across all logical roles, plus every programmed history and scheduled request. Per-role Q values may partition but may not each reuse the full budget.",
+    "deferred_claim_checks": [
+      {
+        "claim": "piop_input_digest/h3",
+        "logical_query": "event-2 PiopInputBinding",
+        "new_program_event": false,
+        "rule": "Verifier late check must re-evaluate the byte-identical framed query."
+      },
+      {
+        "claim": "h_piop/h5",
+        "logical_query": "event-4 PiopTranscriptBinding",
+        "new_program_event": false,
+        "rule": "Verifier late check must re-evaluate the byte-identical framed query."
+      }
+    ],
+    "prefix_free_tagged_product_ro_lemma_proved": false,
+    "global_q_refinement_proved": false,
+    "deferred_claim_same_query_refinement_proved": false
+  },
+  "retry_abort_law": {
+    "field_stage_exact": "For requested n and B=n+256 independent 64-bit words, accept words x<p. Abort iff fewer than n accepts: Pr[abort]=2^(-64B)*sum_{j=257}^{B} C(B,j)*(2^64-p)^j*p^(B-j). On success, the view includes the ordered rejected/accepted prefix through the nth acceptance and the following 64 SHAKE bytes used as the next chain digest.",
+    "field_stage_executable_bound": "Pr[abort] <= C(B,257)*(2^64-p)^257/2^(64*257), checked with exact integers.",
+    "index_stage_exact": "Because N=2^20 divides 2^64, reduction has zero bias rejection. With q=48 and C=560, Pr[abort]=N^(-C)*sum_{j=0}^{47} falling(N,j)*S(C,j), checked exactly with integer Stirling numbers. Duplicate words remain in the SHAKE tape even though only sorted distinct indexes enter verifier state.",
+    "prover_api_law": "The unconditional algorithm returns either proof or poisoned-sampler error. There is no outer retry. The emitted-proof law is the joint real law conditioned on all four samplers succeeding, not a product of independently conditioned output fields.",
+    "refined_to_compiled_prover": false
+  },
+  "representative_rank_receipts": {
+    "witness-random-highs": 6,
+    "piop-nonlinear-mask": 5151,
+    "piop-linear-zero-sum-mask": 2052,
+    "pcs-equation-6-randomizers": 180,
+    "lvcs-random-tails": 98880,
+    "lvcs-omitted-rows": 12,
+    "decs-masks-and-highs": 28365
+  },
+  "joint_affine_receipt_schema": {
+    "required_per_adaptive_conditioning_point": ["field_modulus", "row_count", "randomness_columns", "witness_columns", "randomness_matrix_sha512", "augmented_matrix_sha512", "rank_randomness", "rank_augmented", "source_map_sha512"],
+    "acceptance_condition": "rank(A_random)=rank([A_random|A_witness]) plus equal fiber cardinality for Y=A_random*r+A_witness*w+b",
+    "warning": "Full ranks of individual projections do not imply this joint condition. The executable checker retains Y1=r,Y2=r+w as a negative counterexample."
+  },
+  "joint_affine_receipts": [],
+  "theorem_premises": [
+    {
+      "id": "SmallWood-Theorem-2",
+      "source": "smallwood-2025-1085.pdf",
+      "pdf_page": 9,
+      "statement_used": "DECS is (t,xi)-HVZK in the ROM with xi<=Q/2^lambda.",
+      "required_mapping": "q<=d, independent tape for every one of N leaves, Gamma and R sampled jointly, opened M(e)=R(e)-Gamma*P(e), unopened leaves consistently programmed, and shared Merkle paths/root derived from one oracle table.",
+      "status": "premises-mapped-refinement-missing"
+    },
+    {
+      "id": "SmallWood-Theorem-4",
+      "source": "smallwood-2025-1085.pdf",
+      "pdf_page": 12,
+      "statement_used": "LVCS inherits HVZK when vbar and P restricted to E are uniform and input-independent and DECS is HVZK.",
+      "required_mapping": "One shared random-tail draw must induce tails, subset evaluations, omitted rows, and DECS P openings under the deployed disjoint coset.",
+      "status": "local-rank-only-joint-conditioning-missing"
+    },
+    {
+      "id": "SmallWood-Theorem-6",
+      "source": "smallwood-2025-1085.pdf",
+      "pdf_page": 17,
+      "statement_used": "PCS inherits HVZK when each vhat is uniform subject to Equation 6 and LVCS is HVZK.",
+      "required_mapping": "Each partial row and solved coordinate must be the exact deployed Equation-6 kernel and must feed the same LVCS view.",
+      "status": "local-rank-only-joint-conditioning-missing"
+    },
+    {
+      "id": "SmallWood-Theorem-8",
+      "source": "smallwood-2025-1085.pdf",
+      "pdf_page": 23,
+      "statement_used": "The PACS PIOP is perfectly HVZK when P is random of degree ell-prime+s-1, Q is random in the packing-sum-zero subspace, and M is deterministically Q minus the batched constraint polynomials.",
+      "required_mapping": "The compiled direct-radix relation must refine the exact P/Q/M distribution for every admissible transcript point, including nonlinear and linear families together.",
+      "status": "representative-ranks-only-universal-joint-receipt-missing"
+    },
+    {
+      "id": "SmallWood-Theorem-10",
+      "source": "smallwood-2025-1085.pdf",
+      "pdf_page": 31,
+      "statement_used": "SmallWood-ARK is ROM ZK with xi<=Q*(2^-lambda+2^-2lambda) when Hash and XOF_i/XOF'_i for i=1..4 are independent random oracles; its proof sketch omits filtering details.",
+      "required_mapping": "Instantiate the complete PIOP/PCS simulator, exact eight-query chain, all history queries, bounded rejection/abort law, prefix-free tagged-product-oracle lemma, and one global Q. With lambda=256 and Q<=2^64 the formula alone has a 191-bit strict floor, but its premises are not refined.",
+      "status": "integer-bound-passes-instantiation-missing"
+    },
+    {
+      "id": "BCS16-Lemma-7.5",
+      "source": "bcs-2016-116.pdf",
+      "pdf_page": 32,
+      "statement_used": "The explicitly programmable ROM transform has z-prime=z+p(x)*2^(-lambda/4+2).",
+      "required_mapping": "At lambda=512, even p=1 gives only 126 bits before union terms, so this direct quantitative route cannot establish strict >128-bit ZK for any nonempty proof.",
+      "status": "exactly-disqualified-as-strict-pq128-route"
+    },
+    {
+      "id": "CMS19-Theorem-8.6(3)",
+      "source": "cms-2019-834.pdf",
+      "pdf_page": 42,
+      "statement_used": "BCS is statistical ZK if its IOP is HVZK.",
+      "required_mapping": "Prove that the deployed protocol is the theorem's BCS construction and that the exact IOP, Merkle simulator, transcript, parser, and prover API refine all theorem premises. The theorem statement alone is not an HX512 joint-view receipt.",
+      "status": "generic-theorem-only-specialization-missing"
+    },
+    {
+      "id": "GHCM20-Proposition-2",
+      "source": "ghcm-2020-1361.pdf",
+      "pdf_page": 7,
+      "statement_used": "R adaptive reprogrammings have distinguishing gap at most (3R/2)*sqrt(q*pmax) under the proposition's distribution premises.",
+      "required_mapping": "Enumerate all eight scheduled programs plus every lazy Merkle/history program, prove each programmed input's conditional pmax after the adversary's fixed suffix, count deferred h3/h5 checks as same-query re-evaluations, and use one global quantum query budget.",
+      "status": "event-and-entropy-refinement-missing"
+    }
+  ],
+  "retained_blockers": [
+    "live-wire-prefix-compiled-refinement-unproved",
+    "certificate-piop-nonce-ledger-mismatch",
+    "certificate-fresh-wire-width-endian-mismatch",
+    "direct-event5-opening-compiled-refinement-unproved",
+    "joint-affine-containment-receipts-missing",
+    "piop-pcs-joint-law-unproved",
+    "lvcs-decs-joint-conditioning-unproved",
+    "merkle-rom-programming-unproved",
+    "retry-abort-distribution-not-refined-to-prover-api",
+    "adaptive-fiat-shamir-programming-unproved",
+    "ghcm-all-programmed-event-accounting-unproved",
+    "independent-oracle-to-domain-separated-hash-refinement-unproved",
+    "concrete-sha512-shake256-qrom-bridge-unproved",
+    "canonical-parser-serializer-refinement-unproved",
+    "compiled-prover-verifier-refinement-unproved",
+    "salt-and-all-leaf-tape-rng-independence-unproved",
+    "final-relation-profile-and-identity-unfrozen",
+    "piop-opening-validity-conditioning-not-enforced-by-event5-sampler",
+    "measured-canonical-proof-artifact-missing",
+    "lifecycle-mutation-restart-reorg-fresh-node-receipts-missing"
+  ]
+}

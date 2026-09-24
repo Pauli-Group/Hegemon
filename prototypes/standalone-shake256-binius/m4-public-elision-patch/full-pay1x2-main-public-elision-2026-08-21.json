@@ -1,0 +1,75 @@
+{
+  "schema": "hegemon.m4-full-pay1x2-main-public-elision.v1",
+  "date": "2026-08-21",
+  "upstream_revision": "3f96163049f680b2909f6545690bd929f1b48c44",
+  "inputs": {
+    "selected_wire_patch": {
+      "path": "../selected-value-patch/codex-terminal-compact-selected-v1.patch",
+      "sha256": "fa442ca4fd18fec239e874134c4cd41d82e2caafacfe987c9ea5867ededd45ee"
+    },
+    "main_public_elision_patch": {
+      "path": "codex-main-public-elision-v1.patch",
+      "sha256": "8607f483270187ff32d2802b5a4584dd208150b31ee8c333b8201b33d9ee0d9c"
+    },
+    "canonical_m4_full_relation_source": {
+      "cargo_toml_sha256": "457d039e7f82baf28431bf119c0058d3a370921c90d587b87faac454855ef600",
+      "cargo_lock_sha256": "abbeb105529b336aa0fa8d76eeee878ea49101b9e8bad7f752064b891d28101f",
+      "lib_rs_sha256": "e624746ba47e81cfd334f90d1c824feca67ca61b49906fad2d5d70b8db94ca2f",
+      "main_rs_sha256": "bf4edb82336d799b5846c19d1307074013636cb44dc977945e05c4b43a3a2494"
+    },
+    "measurement_local_path_manifest": {
+      "note": "dependency locators only were rewritten to the exact patched checkout and absolute local Hegemon prototype paths",
+      "cargo_toml_sha256": "b1a1f34c4a86214952233d79ffd43bef8eed3e0034222be5fd09e8f0fdadbb4e",
+      "cargo_lock_sha256": "a81ee80278595abc8985a2158b97b77f3659b3b64cbd44247cb180d5c3ac8204",
+      "lib_rs_sha256": "e624746ba47e81cfd334f90d1c824feca67ca61b49906fad2d5d70b8db94ca2f",
+      "main_rs_sha256": "bf4edb82336d799b5846c19d1307074013636cb44dc977945e05c4b43a3a2494"
+    }
+  },
+  "relation": {
+    "full_pay1x2": true,
+    "geometry_proxy": false,
+    "single_main": true,
+    "chips": 0,
+    "private_witness_bytes": 2448,
+    "canonical_public_statement_bytes": 478,
+    "shake256_permutations": 40,
+    "and_constraints": 24160,
+    "committed_allocated": 32768
+  },
+  "measurement": {
+    "log_inverse_rate": 3,
+    "proof_bytes": 71280,
+    "envelope_bytes": 71292,
+    "proof_sha256": "2e53ad3b62be531edc66bb5f1f3424d692c42c826c6f3ec002971811d5d8f8f0",
+    "previous_proof_bytes": 72880,
+    "saved_from_previous_bytes": 1600,
+    "prior_frontier_proof_bytes": 244240,
+    "saved_from_prior_frontier_bytes": 172960,
+    "reduction_from_prior_frontier_percent": 70.8155912217491
+  },
+  "elided_messages": {
+    "public_segment_evaluation": "computed exactly from verifier-owned statement words and transcript challenges",
+    "wiring_evaluation": "computed exactly from the fixed constraint system and transcript challenges",
+    "witness_dependent_messages_unchanged": true
+  },
+  "verification": {
+    "upstream_m4_composite_tests_passed": 4,
+    "direct_public_mle_differential_test_passed": true,
+    "full_relation_unit_tests_passed": 4,
+    "honest_roundtrip": true,
+    "all_public_mutations_rejected": true,
+    "changed_proof_rejected": true,
+    "trailing_proof_rejected": true,
+    "exact_proof_file_size_and_digest_matched": true,
+    "clippy_deny_warnings_passed": true
+  },
+  "security": {
+    "transparent_not_zero_knowledge": true,
+    "upstream_query_security_bits": 96,
+    "upstream_merkle_hash": "SHA-256",
+    "upstream_challenge_field": "GF(2^128)",
+    "strict_pq128": false,
+    "formal_refinement_complete": false,
+    "production_authorized": false
+  }
+}

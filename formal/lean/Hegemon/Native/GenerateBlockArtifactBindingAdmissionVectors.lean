@@ -20,6 +20,8 @@ def txLeafActionRejectionJson :
       "\"output_count_mismatch\""
   | some TxLeafActionBindingReject.versionMismatch =>
       "\"version_mismatch\""
+  | some TxLeafActionBindingReject.merkleRootMismatch =>
+      "\"merkle_root_mismatch\""
   | some TxLeafActionBindingReject.feeMismatch =>
       "\"fee_mismatch\""
   | some TxLeafActionBindingReject.stablecoinPayloadMismatch =>
@@ -63,6 +65,8 @@ def txLeafActionBindingCaseJson
     ++ "      \"output_count_matches\": "
       ++ boolJson input.outputCountMatches ++ ",\n"
     ++ "      \"version_matches\": " ++ boolJson input.versionMatches ++ ",\n"
+    ++ "      \"merkle_root_matches_anchor\": "
+      ++ boolJson input.merkleRootMatchesAnchor ++ ",\n"
     ++ "      \"fee_matches\": " ++ boolJson input.feeMatches ++ ",\n"
     ++ "      \"stablecoin_payload_matches\": "
       ++ boolJson input.stablecoinPayloadMatches ++ ",\n"
@@ -106,7 +110,7 @@ def candidateArtifactBindingCaseJson
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"tx_leaf_action_binding_cases\": [\n"
     ++ txLeafActionBindingCaseJson
       "valid-tx-leaf-action-binding" validTxLeafActionBinding ++ ",\n"
@@ -128,6 +132,10 @@ def vectorJson : String :=
     ++ txLeafActionBindingCaseJson
       "version-mismatch-rejected"
       { validTxLeafActionBinding with versionMatches := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "merkle-root-mismatch-rejected"
+      { validTxLeafActionBinding with
+        merkleRootMatchesAnchor := false } ++ ",\n"
     ++ txLeafActionBindingCaseJson
       "fee-mismatch-rejected"
       { validTxLeafActionBinding with feeMatches := false } ++ ",\n"
@@ -179,9 +187,17 @@ def vectorJson : String :=
         outputCountMatches := false,
         versionMatches := false } ++ ",\n"
     ++ txLeafActionBindingCaseJson
-      "version-precedes-fee-stablecoin-and-payload-hashes"
+      "version-precedes-root-fee-stablecoin-and-payload-hashes"
       { validTxLeafActionBinding with
         versionMatches := false,
+        merkleRootMatchesAnchor := false,
+        feeMatches := false,
+        stablecoinPayloadMatches := false,
+        ciphertextPayloadHashesMatch := false } ++ ",\n"
+    ++ txLeafActionBindingCaseJson
+      "merkle-root-precedes-fee-stablecoin-and-payload-hashes"
+      { validTxLeafActionBinding with
+        merkleRootMatchesAnchor := false,
         feeMatches := false,
         stablecoinPayloadMatches := false,
         ciphertextPayloadHashesMatch := false } ++ ",\n"

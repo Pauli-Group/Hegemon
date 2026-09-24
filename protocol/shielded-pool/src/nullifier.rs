@@ -1,6 +1,4 @@
-use alloc::collections::BTreeSet;
-
-use crate::types::Nullifier;
+use crate::{persistent_set::PersistentKeySet48, types::Nullifier};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NullifierReject {
@@ -11,20 +9,26 @@ pub enum NullifierReject {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NullifierState {
-    spent: BTreeSet<Nullifier>,
-    pending: BTreeSet<Nullifier>,
+    spent: PersistentKeySet48,
+    pending: PersistentKeySet48,
 }
 
 impl NullifierState {
-    pub fn new(spent: BTreeSet<Nullifier>, pending: BTreeSet<Nullifier>) -> Self {
-        Self { spent, pending }
+    pub fn new(
+        spent: impl Into<PersistentKeySet48>,
+        pending: impl Into<PersistentKeySet48>,
+    ) -> Self {
+        Self {
+            spent: spent.into(),
+            pending: pending.into(),
+        }
     }
 
-    pub fn spent(&self) -> &BTreeSet<Nullifier> {
+    pub fn spent(&self) -> &PersistentKeySet48 {
         &self.spent
     }
 
-    pub fn pending(&self) -> &BTreeSet<Nullifier> {
+    pub fn pending(&self) -> &PersistentKeySet48 {
         &self.pending
     }
 
@@ -67,6 +71,7 @@ pub fn is_zero_nullifier(nullifier: &Nullifier) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::collections::BTreeSet;
     use serde::Deserialize;
 
     #[derive(Clone, Copy, Debug)]

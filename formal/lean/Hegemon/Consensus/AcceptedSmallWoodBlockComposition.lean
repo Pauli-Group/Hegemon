@@ -16,9 +16,9 @@ open Hegemon.Transaction.SmallWoodProductionConstraintRefinement
 open Hegemon.Transaction.SmallWoodSemanticClosure
 open Hegemon.Transaction.SpendAuthorization
 
-def activeSmallWoodCircuitVersion : Nat := 3
+def activeSmallWoodCircuitVersion : Nat := 4
 
-def activeSmallWoodCryptoSuite : Nat := 2
+def activeSmallWoodCryptoSuite : Nat := 3
 
 def activeSmallWoodVersionAccepts (circuitVersion cryptoSuite : Nat) : Bool :=
   circuitVersion == activeSmallWoodCircuitVersion
@@ -72,13 +72,6 @@ structure CanonicalBlockIdentityProjection where
   orderedBindingCircuitVersions : List Nat
   orderedTransactionCircuitVersions : List Nat
   orderedTransactionCryptoSuites : List Nat
-  txStatementsCommitment : Digest
-  daRoot : Digest
-  daChunkCount : Nat
-deriving DecidableEq, Repr
-
-structure CanonicalProvenBatchBinding where
-  txCount : Nat
   txStatementsCommitment : Digest
   daRoot : Digest
   daChunkCount : Nat
@@ -257,13 +250,6 @@ def expectedIdentityProjection
     daRoot := hashes.daRoot (canonicalBlockDaBlob transactions)
     daChunkCount := hashes.daChunkCount (canonicalBlockDaBlob transactions) }
 
-def expectedProvenBatchBinding
-    (projection : CanonicalBlockIdentityProjection) : CanonicalProvenBatchBinding :=
-  { txCount := projection.txCount
-    txStatementsCommitment := projection.txStatementsCommitment
-    daRoot := projection.daRoot
-    daChunkCount := projection.daChunkCount }
-
 inductive CanonicalAction (Transfer : Type) where
   | transfer (value : Transfer)
   | coinbase (amount : Nat)
@@ -335,7 +321,6 @@ structure AcceptedCanonicalBlock where
   actionBytes : List (List Byte)
   claims : List CanonicalTxClaim
   identityProjection : CanonicalBlockIdentityProjection
-  provenBatch : CanonicalProvenBatchBinding
   supply : CanonicalSupplyTransition
 deriving DecidableEq, Repr
 
@@ -427,7 +412,6 @@ def canonicalBlockAcceptsDecoded
   canonicalHeaderAccepts acceptedParent block
     && block.claims = expectedClaims transactions
     && block.identityProjection = expectedIdentityProjection hashes transactions
-    && block.provenBatch = expectedProvenBatchBinding block.identityProjection
     && canonicalSupplyAccepts transactions coinbaseAmounts block.supply
 
 def canonicalBlockAccepts
@@ -457,25 +441,46 @@ structure AcceptedDeployedSmallWoodBlock
       forall proof, proof ∈ canonicalTransfers actions ->
         DeployedSmallWoodProofAccepted verifier hashes proof
 
-def DeployedSmallWoodBlockProofSystemSoundness
+def DeployedSmallWoodBlockKnowledgeSoundnessEvidence
+    (codec : ProductionActionCodec DeployedSmallWoodProof)
+    (verifier : ProductionSmallWoodProofVerifier)
+    (block : AcceptedCanonicalBlock) : Type :=
+  forall actions,
+    decodeCanonicalActionStream codec block.actionBytes = some actions ->
+    forall proof, proof ∈ canonicalTransfers actions ->
+      DeployedSmallWoodKnowledgeSoundnessEvidence verifier proof.exactMap
+        proof.proofBytes proof.serializedPublicInputBytes proof.verifierProfile proof.wrapper
+
+def DeployedSmallWoodBlockCanonicalSemanticRefinementEvidence
+    (codec : ProductionActionCodec DeployedSmallWoodProof)
+    (block : AcceptedCanonicalBlock) : Type :=
+  forall actions,
+    decodeCanonicalActionStream codec block.actionBytes = some actions ->
+    forall proof, proof ∈ canonicalTransfers actions ->
+      ProductionSmallWoodCanonicalSemanticRefinementAssumption
+        proof.exactMap proof.shape proof.merkleRoot
+
+def DeployedSmallWoodBlockTransactionRelationEvidence
     (codec : ProductionActionCodec DeployedSmallWoodProof)
     (verifier : ProductionSmallWoodProofVerifier)
     (block : AcceptedCanonicalBlock) : Prop :=
   forall actions,
     decodeCanonicalActionStream codec block.actionBytes = some actions ->
     forall proof, proof ∈ canonicalTransfers actions ->
-      DeployedSmallWoodProofSystemSoundnessAssumption verifier proof.exactMap
-        proof.proofBytes proof.serializedPublicInputBytes proof.verifierProfile proof.wrapper
+      ProductionAcceptedTransactionRelation verifier proof.exactMap
+        (productionVerifierPublicValues proof.bound proof.statementFields)
+        proof.shape proof.merkleRoot proof.proofBytes proof.serializedPublicInputBytes
+        proof.verifierProfile proof.wrapper
 
-def DeployedSmallWoodBlockPoseidon2HashCollisionResistance
+def DeployedSmallWoodBlockPoseidon2OutputSecurityAssumptions
     (codec : ProductionActionCodec DeployedSmallWoodProof)
     (block : AcceptedCanonicalBlock) : Prop :=
   forall actions,
     decodeCanonicalActionStream codec block.actionBytes = some actions ->
     forall proof, proof ∈ canonicalTransfers actions ->
-      ProductionPoseidon2HashCollisionResistance proof.noteHashSpec
+      ProductionPoseidon2OutputSecurityAssumptions proof.noteHashSpec
 
-structure RecursiveCrossObjectIdentityFacts
+structure IndependentCrossObjectIdentityFacts
     (hashes : ProductionIdentityFunctions)
     (transactions : List CanonicalTxIdentity)
     (acceptedParent : AcceptedParentState)
@@ -497,13 +502,11 @@ structure RecursiveCrossObjectIdentityFacts
   exactClaims : block.claims = expectedClaims transactions
   exactIdentityProjection :
     block.identityProjection = expectedIdentityProjection hashes transactions
-  exactProvenBatchBinding :
-    block.provenBatch = expectedProvenBatchBinding block.identityProjection
   orderedTransactionCompleteness :
     block.identityProjection.txCount = transactions.length
       ∧ block.identityProjection.orderedTxIds =
         transactions.map (canonicalTransactionId hashes)
-  orderedRecursiveClaims :
+  orderedTransactionClaims :
     block.identityProjection.orderedStatementHashes = transactions.map (fun tx => tx.statementHash)
       ∧ block.identityProjection.orderedProofDigests = transactions.map (fun tx => tx.proofDigest)
       ∧ block.identityProjection.orderedPublicInputsDigests =
@@ -519,18 +522,14 @@ structure RecursiveCrossObjectIdentityFacts
         transactions.map (fun tx => tx.transactionCircuitVersion)
       ∧ block.identityProjection.orderedTransactionCryptoSuites =
         transactions.map (fun tx => tx.transactionCryptoSuite)
-  recursiveAndDaBinding :
+  statementAndDaBinding :
     block.identityProjection.txStatementsCommitment =
         hashes.statementCommitment (transactions.map (fun tx => tx.statementHash))
       ∧ block.identityProjection.daRoot = hashes.daRoot (canonicalBlockDaBlob transactions)
       ∧ block.identityProjection.daChunkCount =
         hashes.daChunkCount (canonicalBlockDaBlob transactions)
-      ∧ block.provenBatch.txCount = block.identityProjection.txCount
-      ∧ block.provenBatch.txStatementsCommitment = block.identityProjection.txStatementsCommitment
-      ∧ block.provenBatch.daRoot = block.identityProjection.daRoot
-      ∧ block.provenBatch.daChunkCount = block.identityProjection.daChunkCount
 
-theorem recursive_identity_facts_of_decoded_acceptance
+theorem independent_identity_facts_of_decoded_acceptance
     {hashes : ProductionIdentityFunctions}
     {transactions : List CanonicalTxIdentity}
     {acceptedParent : AcceptedParentState}
@@ -538,10 +537,9 @@ theorem recursive_identity_facts_of_decoded_acceptance
     (accepted :
       canonicalHeaderAccepts acceptedParent block = true
         ∧ block.claims = expectedClaims transactions
-        ∧ block.identityProjection = expectedIdentityProjection hashes transactions
-        ∧ block.provenBatch = expectedProvenBatchBinding block.identityProjection) :
-    RecursiveCrossObjectIdentityFacts hashes transactions acceptedParent block := by
-  rcases accepted with ⟨header, claims, projection, batch⟩
+        ∧ block.identityProjection = expectedIdentityProjection hashes transactions) :
+    IndependentCrossObjectIdentityFacts hashes transactions acceptedParent block := by
+  rcases accepted with ⟨header, claims, projection⟩
   refine
     { exactHeaderIdentity := by
         simp only [canonicalHeaderAccepts, Bool.and_eq_true] at header
@@ -561,12 +559,11 @@ theorem recursive_identity_facts_of_decoded_acceptance
             of_decide_eq_true daChunkCount, of_decide_eq_true claimedSupply⟩
       exactClaims := claims
       exactIdentityProjection := projection
-      exactProvenBatchBinding := batch
       orderedTransactionCompleteness := ?_
-      orderedRecursiveClaims := ?_
+      orderedTransactionClaims := ?_
       orderedBindingFields := ?_
       transactionVersionBinding := ?_
-      recursiveAndDaBinding := ?_ }
+      statementAndDaBinding := ?_ }
   · rw [projection]
     simp [expectedIdentityProjection]
   · rw [projection]
@@ -575,10 +572,10 @@ theorem recursive_identity_facts_of_decoded_acceptance
     simp [expectedIdentityProjection]
   · rw [projection]
     simp [expectedIdentityProjection]
-  · rw [batch, projection]
-    simp [expectedIdentityProjection, expectedProvenBatchBinding]
+  · rw [projection]
+    simp [expectedIdentityProjection]
 
-theorem accepted_recursive_cross_object_identity_refines_one_canonical_block
+theorem accepted_independent_cross_object_identity_refines_one_canonical_block
     {Transfer : Type}
     {codec : ProductionActionCodec Transfer}
     {hashes : ProductionIdentityFunctions}
@@ -588,7 +585,7 @@ theorem accepted_recursive_cross_object_identity_refines_one_canonical_block
     (accepted : canonicalBlockAccepts codec hashes toIdentity acceptedParent block = true) :
     exists actions,
       decodeCanonicalActionStream codec block.actionBytes = some actions
-        ∧ RecursiveCrossObjectIdentityFacts hashes
+        ∧ IndependentCrossObjectIdentityFacts hashes
           (canonicalTransactions toIdentity actions) acceptedParent block := by
   unfold canonicalBlockAccepts at accepted
   generalize decoded : decodeCanonicalActionStream codec block.actionBytes = result at accepted
@@ -597,8 +594,8 @@ theorem accepted_recursive_cross_object_identity_refines_one_canonical_block
   | some actions =>
       refine ⟨actions, rfl, ?_⟩
       simp [canonicalBlockAcceptsDecoded] at accepted
-      exact recursive_identity_facts_of_decoded_acceptance
-        ⟨accepted.1.1.1.1, accepted.1.1.1.2, accepted.1.1.2, accepted.1.2⟩
+      exact independent_identity_facts_of_decoded_acceptance
+        ⟨accepted.1.1.1, accepted.1.1.2, accepted.1.2⟩
 
 structure CanonicalSupplyCompositionFacts
     (parent : AcceptedParentState)
@@ -677,7 +674,7 @@ theorem consensus_accepted_chain_supply_composition
   | some actions =>
       refine ⟨actions, rfl, ?_⟩
       simp [canonicalBlockAcceptsDecoded] at accepted
-      have header := accepted.1.1.1.1
+      have header := accepted.1.1.1
       simp only [canonicalHeaderAccepts, Bool.and_eq_true] at header
       rcases header with
         ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨_, _⟩, parentHash⟩, _⟩, nextHeight⟩,
@@ -685,21 +682,25 @@ theorem consensus_accepted_chain_supply_composition
       exact supply_facts_of_decoded_acceptance (of_decide_eq_true parentHash)
         (of_decide_eq_true nextHeight) (of_decide_eq_true parentSupply) accepted.2
 
-theorem deployed_smallwood_proof_yields_transaction_relation
+theorem deployed_smallwood_proof_under_canonical_semantic_refinement_yields_transaction_relation
     (verifier : ProductionSmallWoodProofVerifier)
     (hashes : ProductionIdentityFunctions)
     (proof : DeployedSmallWoodProof)
     (accepted : DeployedSmallWoodProofAccepted verifier hashes proof)
-    (proofSystemSoundness :
-      DeployedSmallWoodProofSystemSoundnessAssumption verifier proof.exactMap
-        proof.proofBytes proof.serializedPublicInputBytes proof.verifierProfile proof.wrapper) :
+    (knowledgeSoundness :
+      DeployedSmallWoodKnowledgeSoundnessEvidence verifier proof.exactMap
+        proof.proofBytes proof.serializedPublicInputBytes proof.verifierProfile proof.wrapper)
+    (semanticRefinement :
+      ProductionSmallWoodCanonicalSemanticRefinementAssumption
+        proof.exactMap proof.shape proof.merkleRoot) :
     ProductionAcceptedTransactionRelation verifier proof.exactMap
       (productionVerifierPublicValues proof.bound proof.statementFields)
-      proof.proofBytes proof.serializedPublicInputBytes proof.verifierProfile proof.wrapper := by
-  exact accepted_smallwood_proof_yields_transaction_relation
+      proof.shape proof.merkleRoot proof.proofBytes proof.serializedPublicInputBytes
+      proof.verifierProfile proof.wrapper := by
+  exact accepted_smallwood_proof_under_canonical_semantic_refinement_yields_transaction_relation
     accepted.canonicalSurface.accepted accepted.exactArtifactAccepted
       accepted.constraintMapBound
-      accepted.constraintPublicValuesBound proofSystemSoundness
+      accepted.constraintPublicValuesBound knowledgeSoundness semanticRefinement
 
 structure DeployedNoCounterfeitCriticalPathCertificate
     (hashes : ProductionIdentityFunctions)
@@ -710,7 +711,7 @@ structure DeployedNoCounterfeitCriticalPathCertificate
   completeComposition :
     exists decodedActions,
       decodeCanonicalActionStream codec block.actionBytes = some decodedActions
-        ∧ RecursiveCrossObjectIdentityFacts hashes
+        ∧ IndependentCrossObjectIdentityFacts hashes
           (canonicalTransactions (DeployedSmallWoodProof.identity hashes) decodedActions)
           acceptedParent block
         ∧ CanonicalSupplyCompositionFacts
@@ -721,7 +722,8 @@ structure DeployedNoCounterfeitCriticalPathCertificate
         ∧ (forall proof, proof ∈ canonicalTransfers decodedActions ->
           ProductionAcceptedTransactionRelation verifier proof.exactMap
             (productionVerifierPublicValues proof.bound proof.statementFields)
-            proof.proofBytes proof.serializedPublicInputBytes proof.verifierProfile proof.wrapper)
+            proof.shape proof.merkleRoot proof.proofBytes proof.serializedPublicInputBytes
+            proof.verifierProfile proof.wrapper)
         ∧ (forall proof, proof ∈ canonicalTransfers decodedActions ->
           exists witnessValues,
             ExactProductionConstraintMapEvaluates proof.exactMap witnessValues
@@ -763,14 +765,14 @@ structure DeployedNoCounterfeitCriticalPathCertificate
           proof.ciphertexts.map hashes.ciphertextHash =
             (activeDigests proof.shape.outputFlags proof.shape.ciphertextHashes).map
               StatementHash.digestBytes)
-  activeV3Transactions :
+  activeV4Transactions :
     forall decodedActions,
       decodeCanonicalActionStream codec block.actionBytes = some decodedActions ->
       forall proof, proof ∈ canonicalTransfers decodedActions ->
         proof.statementFields.circuitVersion = activeSmallWoodCircuitVersion
           ∧ proof.statementFields.cryptoSuite = activeSmallWoodCryptoSuite
 
-theorem accepted_deployed_smallwood_block_yields_no_counterfeit_critical_path
+theorem accepted_deployed_smallwood_block_of_assumed_transaction_relations_and_poseidon_boundaries_yields_no_counterfeit_critical_path
     {hashes : ProductionIdentityFunctions}
     {codec : ProductionActionCodec DeployedSmallWoodProof}
     {verifier : ProductionSmallWoodProofVerifier}
@@ -778,12 +780,13 @@ theorem accepted_deployed_smallwood_block_yields_no_counterfeit_critical_path
     {block : AcceptedCanonicalBlock}
     (accepted :
       AcceptedDeployedSmallWoodBlock codec verifier hashes acceptedParent block)
-    (proofSystemSoundness : DeployedSmallWoodBlockProofSystemSoundness codec verifier block)
-    (poseidon2HashCollisionResistance :
-      DeployedSmallWoodBlockPoseidon2HashCollisionResistance codec block) :
+    (transactionRelations :
+      DeployedSmallWoodBlockTransactionRelationEvidence codec verifier block)
+    (poseidon2OutputSecurity :
+      DeployedSmallWoodBlockPoseidon2OutputSecurityAssumptions codec block) :
     DeployedNoCounterfeitCriticalPathCertificate hashes codec verifier acceptedParent block := by
   obtain ⟨actions, decoded, identityFacts⟩ :=
-    accepted_recursive_cross_object_identity_refines_one_canonical_block
+    accepted_independent_cross_object_identity_refines_one_canonical_block
       accepted.canonicalBlockAccepted
   obtain ⟨supplyActions, supplyDecoded, supplyFacts⟩ :=
     consensus_accepted_chain_supply_composition accepted.canonicalBlockAccepted
@@ -795,14 +798,10 @@ theorem accepted_deployed_smallwood_block_yields_no_counterfeit_critical_path
   · exact
       ⟨actions, decoded, identityFacts, supplyFacts, by
         intro proof membership
-        exact deployed_smallwood_proof_yields_transaction_relation verifier hashes proof
-          (accepted.decodedProofsAccepted actions decoded proof membership)
-          (proofSystemSoundness actions decoded proof membership), by
+        exact transactionRelations actions decoded proof membership, by
         intro proof membership
         exact production_accepted_transaction_relation_exposes_same_witness_semantics
-          (deployed_smallwood_proof_yields_transaction_relation verifier hashes proof
-            (accepted.decodedProofsAccepted actions decoded proof membership)
-            (proofSystemSoundness actions decoded proof membership)), by
+          (transactionRelations actions decoded proof membership), by
         intro proof membership
         intro witnessValues semanticConstraints output outputBound active
         have acceptedImage := production_concrete_output_yields_accepted_hash_image
@@ -810,8 +809,8 @@ theorem accepted_deployed_smallwood_block_yields_no_counterfeit_critical_path
           semanticConstraints.outputValidity output outputBound active
         refine ⟨acceptedImage, ?_⟩
         intro alternateWitness alternateImage
-        exact production_poseidon2_collision_resistance_binds_accepted_output_value_and_asset
-          (poseidon2HashCollisionResistance actions decoded proof membership)
+        exact production_poseidon2_no_collision_binds_accepted_output_value_and_asset
+          (poseidon2OutputSecurity actions decoded proof membership)
           acceptedImage alternateImage, by
         intro proof _
         exact deployed_smallwood_identity_uses_exact_transaction_hash_preimage hashes proof, by
@@ -825,6 +824,32 @@ theorem accepted_deployed_smallwood_block_yields_no_counterfeit_critical_path
     subst decodedActions
     let proofAccepted := accepted.decodedProofsAccepted actions decoded proof membership
     exact ⟨proofAccepted.activeCircuitVersion, proofAccepted.activeCryptoSuite⟩
+
+theorem accepted_deployed_smallwood_block_under_explicit_semantic_and_poseidon_boundaries_yields_no_counterfeit_critical_path
+    {hashes : ProductionIdentityFunctions}
+    {codec : ProductionActionCodec DeployedSmallWoodProof}
+    {verifier : ProductionSmallWoodProofVerifier}
+    {acceptedParent : AcceptedParentState}
+    {block : AcceptedCanonicalBlock}
+    (accepted :
+      AcceptedDeployedSmallWoodBlock codec verifier hashes acceptedParent block)
+    (knowledgeSoundness :
+      DeployedSmallWoodBlockKnowledgeSoundnessEvidence codec verifier block)
+    (semanticRefinement :
+      DeployedSmallWoodBlockCanonicalSemanticRefinementEvidence codec block)
+    (poseidon2OutputSecurity :
+      DeployedSmallWoodBlockPoseidon2OutputSecurityAssumptions codec block) :
+    DeployedNoCounterfeitCriticalPathCertificate hashes codec verifier acceptedParent block := by
+  exact
+    accepted_deployed_smallwood_block_of_assumed_transaction_relations_and_poseidon_boundaries_yields_no_counterfeit_critical_path
+      accepted
+      (fun actions decoded proof membership =>
+        deployed_smallwood_proof_under_canonical_semantic_refinement_yields_transaction_relation
+          verifier hashes proof
+          (accepted.decodedProofsAccepted actions decoded proof membership)
+          (knowledgeSoundness actions decoded proof membership)
+          (semanticRefinement actions decoded proof membership))
+      poseidon2OutputSecurity
 
 def productionCompositionFieldMap : List String :=
   [ "transaction_hash_preimage_nullifiers",
@@ -857,9 +882,7 @@ def productionCompositionFieldMap : List String :=
     "identity_ordered_transaction_circuit_versions",
     "identity_ordered_transaction_crypto_suites",
     "canonical_da_blob_bytes", "identity_tx_statements_commitment", "identity_da_root",
-    "identity_da_chunk_count", "proven_batch_tx_count",
-    "proven_batch_tx_statements_commitment", "proven_batch_da_root",
-    "proven_batch_da_chunk_count", "accepted_parent_hash",
+    "identity_da_chunk_count", "accepted_parent_hash",
     "accepted_parent_height", "accepted_parent_supply",
     "block_height", "block_parent_hash",
     "block_action_count", "header_tx_statements_commitment", "header_da_root",
@@ -871,38 +894,41 @@ def productionCompositionFieldMap : List String :=
     "supply_delta", "claimed_supply" ]
 
 theorem production_composition_field_map_is_complete :
-    productionCompositionFieldMap.length = 70 := by
+    productionCompositionFieldMap.length = 66 := by
   decide
 
+/-- Current runtime known-answer bytes: framed BLAKE2b-384 ciphertext-hash-v2,
+then six big-endian Goldilocks representatives. The vector hash adapter below
+is a two-input fixture, not a formal implementation of BLAKE2b. -/
 def vectorCiphertextHashA : List Byte :=
-  [78, 206, 202, 233, 109, 238, 246, 250, 196, 190, 61, 220,
-    165, 221, 250, 98, 140, 220, 78, 189, 82, 89, 51, 58,
-    46, 234, 104, 146, 163, 223, 119, 40, 169, 192, 109, 249,
-    101, 58, 76, 4, 92, 229, 95, 231, 81, 242, 35, 119]
+  [113, 28, 17, 173, 179, 93, 129, 151, 221, 159, 149, 190,
+    82, 238, 219, 96, 103, 130, 253, 247, 78, 129, 248, 119,
+    191, 42, 11, 45, 86, 106, 152, 18, 89, 89, 131, 127,
+    245, 206, 229, 80, 201, 10, 125, 73, 163, 236, 147, 135]
 
 def vectorCiphertextHashB : List Byte :=
-  [137, 222, 168, 247, 204, 153, 33, 4, 122, 123, 68, 145,
-    154, 164, 21, 49, 101, 35, 132, 146, 195, 254, 18, 72,
-    12, 15, 19, 206, 71, 200, 244, 191, 193, 246, 223, 150,
-    75, 169, 2, 81, 163, 103, 7, 63, 174, 183, 44, 165]
+  [210, 126, 229, 198, 65, 173, 66, 145, 136, 57, 180, 216,
+    254, 21, 109, 182, 28, 40, 231, 31, 126, 102, 206, 32,
+    94, 141, 174, 241, 112, 20, 23, 220, 212, 198, 112, 5,
+    173, 108, 42, 174, 41, 203, 240, 159, 55, 77, 174, 1]
 
 def vectorTxIdA : List Byte :=
-  [174, 97, 160, 89, 23, 48, 182, 152, 214, 42, 105, 220, 10, 210, 147, 188,
-    120, 165, 46, 170, 232, 33, 74, 124, 162, 189, 239, 111, 53, 148, 9, 117]
+  [225, 21, 74, 76, 56, 211, 83, 73, 129, 13, 160, 230, 187, 154, 180, 29,
+    64, 72, 144, 31, 152, 124, 173, 140, 163, 141, 92, 76, 88, 132, 214, 18]
 
 def vectorTxIdB : List Byte :=
-  [18, 118, 223, 107, 17, 189, 110, 77, 97, 39, 215, 243, 51, 26, 6, 188,
-    228, 186, 8, 106, 155, 15, 225, 119, 159, 88, 68, 68, 144, 33, 198, 73]
+  [185, 93, 239, 95, 196, 119, 246, 233, 199, 189, 76, 118, 48, 243, 99, 222,
+    161, 223, 47, 68, 205, 37, 166, 61, 196, 16, 32, 92, 24, 66, 156, 126]
 
 def vectorTxAPreimage : List Byte :=
-  u16le 3 ++ u16le 2
+  u16le 4 ++ u16le 3
     ++ StatementHash.digestBytes 1
     ++ StatementHash.digestBytes 2
     ++ vectorCiphertextHashA
     ++ StatementHash.digestBytes 3
 
 def vectorTxBPreimage : List Byte :=
-  u16le 3 ++ u16le 2
+  u16le 4 ++ u16le 3
     ++ StatementHash.digestBytes 6
     ++ StatementHash.digestBytes 7
     ++ vectorCiphertextHashB
@@ -949,8 +975,8 @@ def vectorTxA : CanonicalTxIdentity :=
     transactionBalanceTag := StatementHash.digestBytes 3
     statementBytes := [1, 2], bindingBytes := [3],
     statementHash := 3, proofDigest := 4, publicInputsDigest := 5,
-    verifierProfile := 6, anchorRoot := 7, fee := 3, bindingCircuitVersion := 3,
-    transactionCircuitVersion := 3, transactionCryptoSuite := 2,
+    verifierProfile := 6, anchorRoot := 7, fee := 3, bindingCircuitVersion := 4,
+    transactionCircuitVersion := 4, transactionCryptoSuite := 3,
     ciphertexts := [[8, 9]] }
 
 def vectorTxB : CanonicalTxIdentity :=
@@ -960,8 +986,8 @@ def vectorTxB : CanonicalTxIdentity :=
     transactionBalanceTag := StatementHash.digestBytes 8
     statementBytes := [10], bindingBytes := [11, 12],
     statementHash := 10, proofDigest := 13, publicInputsDigest := 14,
-    verifierProfile := 6, anchorRoot := 15, fee := 5, bindingCircuitVersion := 3,
-    transactionCircuitVersion := 3, transactionCryptoSuite := 2,
+    verifierProfile := 6, anchorRoot := 15, fee := 5, bindingCircuitVersion := 4,
+    transactionCircuitVersion := 4, transactionCryptoSuite := 3,
     ciphertexts := [[16]] }
 
 def vectorTransactions : List CanonicalTxIdentity := [vectorTxA, vectorTxB]
@@ -1009,8 +1035,6 @@ def validVectorBlock : AcceptedCanonicalBlock :=
     actionBytes := vectorActionBytes
     claims := expectedClaims vectorTransactions
     identityProjection := expectedIdentityProjection vectorHashes vectorTransactions
-    provenBatch :=
-      expectedProvenBatchBinding (expectedIdentityProjection vectorHashes vectorTransactions)
     supply := validVectorSupply }
 
 def vectorCanonicalBlockAccepts (block : AcceptedCanonicalBlock) : Bool :=
@@ -1079,7 +1103,7 @@ theorem duplicated_claim_rejects :
       { validVectorBlock with claims := vectorTxA.claim :: validVectorBlock.claims } = false := by
   decide
 
-theorem wrapped_recursive_identity_rejects :
+theorem wrapped_independent_identity_rejects :
     vectorCanonicalBlockAccepts
       { validVectorBlock with
         identityProjection :=
@@ -1092,7 +1116,7 @@ theorem substituted_transaction_preimage_rejects :
       transactionPreimageSubstitutedVectorBlock = false := by
   native_decide
 
-theorem truncated_recursive_identity_rejects :
+theorem truncated_independent_identity_rejects :
     vectorCanonicalBlockAccepts
       { validVectorBlock with
         identityProjection :=
@@ -1104,7 +1128,7 @@ theorem truncated_recursive_identity_rejects :
 theorem mismatched_da_identity_rejects :
     vectorCanonicalBlockAccepts
       { validVectorBlock with
-        provenBatch := { validVectorBlock.provenBatch with daRoot := 0 } } = false := by
+        identityProjection := { validVectorBlock.identityProjection with daRoot := 0 } } = false := by
   decide
 
 theorem mismatched_header_parent_rejects :

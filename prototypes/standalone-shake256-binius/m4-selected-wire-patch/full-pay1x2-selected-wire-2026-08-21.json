@@ -1,0 +1,114 @@
+{
+  "schema": "hegemon.m4-selected-wire-pay1x2-measurement.v1",
+  "date": "2026-08-21",
+  "candidate": "single-main-full-pay1x2-selected-wire",
+  "upstream_revision": "3f96163049f680b2909f6545690bd929f1b48c44",
+  "wire_patch": {
+    "path": "prototypes/standalone-shake256-binius/selected-value-patch/codex-terminal-compact-selected-v1.patch",
+    "sha256": "fa442ca4fd18fec239e874134c4cd41d82e2caafacfe987c9ea5867ededd45ee",
+    "features": [
+      "direct-precommit-mask-cocommitment",
+      "canonical-terminal-message",
+      "canonical-compact-merkle-frontier",
+      "verifier-known-fri-value-elision"
+    ]
+  },
+  "source_sha256": {
+    "Cargo.toml": "457d039e7f82baf28431bf119c0058d3a370921c90d587b87faac454855ef600",
+    "Cargo.lock": "abbeb105529b336aa0fa8d76eeee878ea49101b9e8bad7f752064b891d28101f",
+    "src/lib.rs": "e624746ba47e81cfd334f90d1c824feca67ca61b49906fad2d5d70b8db94ca2f",
+    "src/main.rs": "bf4edb82336d799b5846c19d1307074013636cb44dc977945e05c4b43a3a2494"
+  },
+  "relation": {
+    "full_pay1x2": true,
+    "geometry_proxy": false,
+    "single_main": true,
+    "numbered_chips": 0,
+    "private_witness_bytes": 2448,
+    "canonical_public_statement_bytes": 478,
+    "public_transport_words": 60,
+    "shake256_permutations": 40
+  },
+  "circuit": {
+    "gates": 114231,
+    "eval_instructions": 114235,
+    "zero_constraints": 566,
+    "zero_allocated": 1024,
+    "and_constraints": 24160,
+    "and_allocated": 32768,
+    "imul_constraints": 0,
+    "bmul_constraints": 0,
+    "committed_allocated": 32768,
+    "private_inputs": 306,
+    "public_inputs": 60,
+    "internal_values": 24665
+  },
+  "rates": [
+    {
+      "log_inverse_rate": 1,
+      "proof_bytes": 95280,
+      "honest_roundtrip": true,
+      "all_public_mutations_rejected": true,
+      "changed_proof_rejected": true,
+      "trailing_proof_rejected": true
+    },
+    {
+      "log_inverse_rate": 2,
+      "proof_bytes": 78576,
+      "honest_roundtrip": true,
+      "all_public_mutations_rejected": true,
+      "changed_proof_rejected": true,
+      "trailing_proof_rejected": true
+    },
+    {
+      "log_inverse_rate": 3,
+      "proof_bytes": 72880,
+      "honest_roundtrip": true,
+      "all_public_mutations_rejected": true,
+      "changed_proof_rejected": true,
+      "trailing_proof_rejected": true
+    },
+    {
+      "log_inverse_rate": 4,
+      "proof_bytes": 72912,
+      "honest_roundtrip": true,
+      "all_public_mutations_rejected": true,
+      "changed_proof_rejected": true,
+      "trailing_proof_rejected": true
+    }
+  ],
+  "selected": {
+    "log_inverse_rate": 3,
+    "proof_bytes": 72880,
+    "proof_sha256": "cdad1f6b7039d6a74a4e470f91a89c6d4f8750f3fb53e0c62adb27201c9b785f",
+    "projected_12_byte_envelope_bytes": 72892,
+    "canonical_m4_envelope_route_encoded": false,
+    "prior_verified_envelope_bytes": 244252,
+    "envelope_reduction_bytes": 171360,
+    "envelope_reduction_percent": 70.157051,
+    "half_of_prior_envelope_bytes": 122126,
+    "headroom_below_half_bytes": 49234,
+    "stock_m4_envelope_bytes": 109276,
+    "selected_wire_savings_from_stock_m4_bytes": 36384,
+    "selected_wire_savings_from_stock_m4_percent": 33.295509
+  },
+  "validation": {
+    "scalar_kat": true,
+    "scalar_mutation_cases": 30,
+    "scalar_mutation_cases_rejected": 30,
+    "deterministic_scalar_circuit_differential_variants": 16,
+    "representative_private_regions_bound": true,
+    "public_proof_and_trailing_gates": true,
+    "proof_file_size_verified": true,
+    "proof_file_sha256_verified": true
+  },
+  "security": {
+    "zero_knowledge": false,
+    "transparent": true,
+    "upstream_claimed_bits": 96,
+    "proof_hash": "SHA-256",
+    "challenge_field": "GF(2^128)",
+    "strict_pq128": false,
+    "production_authorized": false
+  }
+}

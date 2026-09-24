@@ -1,0 +1,187 @@
+{
+  "artifact_schema": "hegemon.hvzk-whir-backend-adapter.source.v1",
+  "authority": {
+    "canonical_inner_proof_serializer": false,
+    "complete_zero_knowledge_proved": false,
+    "composed_qrom_pq128_proved": false,
+    "consensus_integration_refinement_proved": false,
+    "exact_plonky3_hash_refinement_proved": false,
+    "expanded_r1cs_matrix_retained": false,
+    "modified_bcs_hiding_term_proved": false,
+    "native_verifier_refinement_proved": false,
+    "production_authorized": false,
+    "r1cs_to_constrained_code_ior_proved": false,
+    "retained_proof_artifact_verified": false
+  },
+  "cfw26_section11_candidate_shape": {
+    "authoritative_theorem_binding": false,
+    "columns": 67108864,
+    "ell_equal_half": 33554432,
+    "ell_log2": 25,
+    "embedded_matrix_nonzeros": 123057296,
+    "one_base_field_half_raw_bytes": 268435456,
+    "one_e320_half_raw_bytes": 1342177280,
+    "paper_communication_shape": {
+      "encoded_oracles": 105,
+      "inner_mask_oracles": 78,
+      "outer_mask_oracles": 26,
+      "plonky3_pcs_mapping_complete": false,
+      "printed_endpoint_state_selects_s_at_one": false,
+      "printed_theorem_carrier_compatible": false,
+      "required_endpoint_state": "pow(1)=(1,1,...)",
+      "required_main_form_typing": "row_M(M,alpha)[b]=Mhat(alpha,b,1)",
+      "step9_typing_defects": 2,
+      "theorem_inherited": false,
+      "typed_main_form_row_defined": false,
+      "witness_oracles": 1,
+      "zk_union_multiplier": 105
+    },
+    "public_zero_padding": 33544279,
+    "row_zero_padding": 32398608,
+    "rows": 67108864,
+    "selected_pcs_polynomial_count": null,
+    "total_assignment_base_field_raw_bytes": 536870912,
+    "total_assignment_e320_raw_bytes": 2684354560,
+    "witness_zero_padding": 14253029
+  },
+  "field_route": {
+    "base_field": "Goldilocks",
+    "base_modulus_decimal": "18446744069414584321",
+    "candidate_extension": "BinomialExtensionField<Goldilocks,5>",
+    "candidate_base_coefficient_bytes": 8,
+    "candidate_extension_degree": 5,
+    "candidate_extension_element_bytes": 40,
+    "candidate_extension_source_feasible": true,
+    "candidate_extension_two_adicity": 32,
+    "challenge_field_selected": false,
+    "composed_security_bits": null,
+    "rejected_unsupported_aliases": [
+      "BinomialExtensionField<Goldilocks,6>",
+      "BinomialExtensionField<Goldilocks,8>"
+    ]
+  },
+  "hash_facade": {
+    "candidate_security_salt": {
+      "actual_minimum_lambda_bits": null,
+      "ell_only_byte_aligned_absolute_floor_bits": 624,
+      "ell_only_byte_aligned_absolute_floor_bytes": 78,
+      "ell_only_floor_accepted_by_security_salt_api": false,
+      "e320_rate_one_byte_aligned_floor_bits": 656,
+      "e320_rate_one_byte_aligned_floor_bytes": 82,
+      "canonical_wire_location_assigned": false,
+      "parameterized_shake256_derivation_present": true,
+      "per_salt_delta_over_64_bytes_at_e320_rate_one_floor": 18,
+      "plonky3_refinement_proved": false,
+      "profile_selected": false,
+      "total_wire_delta_bytes": null,
+      "zero_transcript_statement_floor_salt_sha512": "3b87c9b138209e269726b6cf26c2b0a63baf472d6410bffa3db5a51a9dd3ac9e2a715b357bf966de75064a23d99e35eec7e372252ea076b0f3e14bd4f4833888"
+    },
+    "exact_plonky3_mmcs_refinement": false,
+    "exact_plonky3_transcript_refinement": false,
+    "hash_suite_id": 2,
+    "local_keccak256_fallback_allowed": false,
+    "primitives": [
+      "FIPS 180-4 SHA-512",
+      "FIPS 202 SHAKE256-512"
+    ],
+    "profile_digest_shake256_512": "cd6ebd9d47c004b4f5875b6078b17839e8839b8031ea26b1e2d3bda2206cb7f2e14009a4334209124830ca1d6d6c77df4500770e0491255478015fcee755364d",
+    "source_attestation_sha512": "a2ca1d1600f1854becf9411c61e52388383b8ba184dcad13cc6b87c649333095205826a4219f7be92b2a233c3430c849cea5d942b67d1802f6ba209defee75c1"
+  },
+  "plonky3": {
+    "checkout_head": "5df89eeadae18d6935bb874f8a92808dcc200c9d",
+    "crate_version": "0.6.0",
+    "hiding_pcs_api_source_mapped": true,
+    "role": "hiding multilinear PCS only",
+    "r1cs_carrier_api_present": false,
+    "sha512_64_byte_type_shape_source_feasible": true,
+    "source_built_in_this_campaign": false
+  },
+  "proof": {
+    "artifact": null,
+    "bytes": null,
+    "measurement": null
+  },
+  "relation": {
+    "auxiliary_variables_total": 19301403,
+    "constraints": 20457227,
+    "derived_auxiliary_variables": 19224027,
+    "matrix_nonzeros": 94551238,
+    "nonconstant_variables": 19311555,
+    "private_transport_bits": 77376,
+    "public_variables": 10152,
+    "relation_manifest_digest_shake256_512": "81f88eb0afd355bbd50d90d0760b65e341b4b490a29af3d5e0a8acf1721e42792bd547fd62559263f1c70edf365fb482fde2f88117c3ae98b2360934a3c75254",
+    "z_vector_length_including_constant": 19311556
+  },
+  "security_parameter_source": {
+    "accepted_candidate_sources": [
+      "independent-exact-unique-decoding",
+      "independent-exact-full-johnson"
+    ],
+    "capacity_bound_status": "diagnostic-conjectural-only",
+    "independent_certificate_present": false,
+    "johnson_bound_status": "diagnostic-dominant-term-f64-only",
+    "local_protocol_security_level_is_strict_authority": false,
+    "modified_bcs_hiding_term": {
+      "actual_minimum_lambda_bits": null,
+      "all_105_oracle_code_lengths_fixed": false,
+      "candidate_e320_element_width_fixed": true,
+      "e320_rate_one_integer_lambda_floor_bits": 654,
+      "e320_rate_one_p_bits_floor": 10737660800,
+      "e320_rate_one_p_field_elements_floor": 33555190,
+      "production_field_encoding_fixed": false,
+      "integer_lambda_absolute_floor_bits": 621,
+      "lambda_512_absolute_floor_term_log2": -101,
+      "lambda_512_e320_rate_one_floor_term_log2_approx": -92.6780393147684,
+      "lambda_648_passes_e320_rate_one_floor": false,
+      "lambda_656_passes_e320_rate_one_floor": true,
+      "p_is_total_iop_proof_length": true,
+      "p_lower_bound_log2": 25,
+      "strict_lambda_exclusive_absolute_floor_bits": 620,
+      "total_iop_proof_length_p": null
+    },
+    "production_parameter_source": null,
+    "required_composition_terms": [
+      "PCS",
+      "IOP/IOR",
+      "Fiat-Shamir",
+      "hash",
+      "grinding",
+      "all union terms",
+      "modified-BCS hiding term over total IOP proof length",
+      "QROM reduction"
+    ]
+  },
+  "status": "SOURCE_ONLY_FAIL_CLOSED",
+  "unresolved_gates": [
+    "relation identity is not production frozen",
+    "four stablecoin/consensus groups remain host-only",
+    "expanded sparse R1CS matrices are not retained",
+    "scalar-to-R1CS refinement is absent",
+    "CFW26 Section 11 coefficient and succinct-linear-form state are ambiguous",
+    "R1CS-to-constrained-code carrier is absent",
+    "constrained-code IOPP composition is absent",
+    "total IOP proof length, actual hiding lambda, and canonical salt wire placement are absent",
+    "independently certified exact UniqueDecoding/full-Johnson parameter record is absent",
+    "Plonky3 CapacityBound and dominant-term f64 Johnson estimates are diagnostic only",
+    "role-framed SHA-512/SHAKE transcript and MMCS are not refined to Plonky3",
+    "whole-view complete zero knowledge is not certified for this composition",
+    "strict greater-than-128-bit QROM ledger is incomplete",
+    "canonical inner proof serializer is absent",
+    "Rust verifier and consensus lifecycle refinements are absent",
+    "retained measured proof artifact is absent"
+  ],
+  "wire": {
+    "envelope_header_bytes": 168,
+    "exact_public_argument_bytes": 1269,
+    "exact_statement_bytes": 1361,
+    "hx_statement_bytes": 869,
+    "max_envelope_bytes": 17825792,
+    "max_proof_body_bytes": 16777216,
+    "max_section_bytes": 8388608,
+    "max_sections": 4096,
+    "private_transport_bytes": 9672,
+    "statement_header_bytes": 92,
+    "state_seam_bytes": 400,
+    "state_seam_words": 50
+  }
+}

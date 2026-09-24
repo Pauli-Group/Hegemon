@@ -12,6 +12,8 @@ def kindJson : AtomicCommitKind -> String
   | AtomicCommitKind.minedBlockCommit => "\"mined_block_commit\""
   | AtomicCommitKind.tipExtensionBatchCommit => "\"tip_extension_batch_commit\""
   | AtomicCommitKind.canonicalReorgCommit => "\"canonical_reorg_commit\""
+  | AtomicCommitKind.canonicalSuffixReorgCommit =>
+      "\"canonical_suffix_reorg_commit\""
   | AtomicCommitKind.canonicalIndexRepair => "\"canonical_index_repair\""
   | AtomicCommitKind.noncanonicalBlockRecord =>
       "\"noncanonical_block_record\""
@@ -78,6 +80,10 @@ def manifestJson (input : AtomicCommitManifestInput) : String :=
     ++ toString input.sourceCiphertextArchiveCount ++ ",\n"
     ++ "      \"source_staged_ciphertext_removal_count\": "
     ++ toString input.sourceStagedCiphertextRemovalCount ++ ",\n"
+    ++ "      \"source_poseidon2_v8_plan_count\": "
+    ++ toString input.sourcePoseidon2V8PlanCount ++ ",\n"
+    ++ "      \"poseidon2_v8_plan_application_count\": "
+    ++ toString input.poseidon2V8PlanApplicationCount ++ ",\n"
     ++ "      \"block_record_writes\": "
     ++ toString input.blockRecordWrites ++ ",\n"
     ++ "      \"height_index_writes\": "
@@ -128,6 +134,13 @@ def vectorJson : String :=
       "valid-mined-block-commit-publication"
       validMinedBlockCommitPublication ++ ",\n"
     ++ publicationCaseJson
+      "valid-mined-block-commit-publication-with-poseidon2-v8-plan"
+      { validMinedBlockCommitPublication with
+        commitManifest :=
+          { validMinedBlockCommit with
+            sourcePoseidon2V8PlanCount := 1,
+            poseidon2V8PlanApplicationCount := 1 } } ++ ",\n"
+    ++ publicationCaseJson
       "max-height-predecessor-valid-publication"
       { validMinedBlockCommitPublication with
         minedWork := maxPredecessorAcceptsMaxHeight } ++ ",\n"
@@ -174,7 +187,14 @@ def vectorJson : String :=
       { validMinedBlockCommitPublication with
         commitManifest :=
           { validMinedBlockCommit with
-            plannedActionCount := 1 } } ++ "\n"
+            plannedActionCount := 1 } } ++ ",\n"
+    ++ publicationCaseJson
+      "mined-poseidon2-v8-plan-application-missing-rejected"
+      { validMinedBlockCommitPublication with
+        commitManifest :=
+          { validMinedBlockCommit with
+            sourcePoseidon2V8PlanCount := 1,
+            poseidon2V8PlanApplicationCount := 0 } } ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

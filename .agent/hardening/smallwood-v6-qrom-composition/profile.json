@@ -1,0 +1,190 @@
+{
+  "schema": "hegemon.smallwood.v6-qrom-composition-profile.v2",
+  "profile_id": "hegemon.smallwood.v6.rejected-hgf6hr02-keccak-c1024-xof.sha512.qrom-composition.v2",
+  "identity": {
+    "circuit": 6,
+    "crypto": 5,
+    "family": 1,
+    "action": 8,
+    "backend": 2,
+    "profile": 3,
+    "domain_set": 2
+  },
+  "statement": {
+    "magic": "HGF6ST02",
+    "profile_tag": "HEG-F6V2",
+    "canonical_bytes": 893,
+    "limb_bytes": 7,
+    "public_field_count": 128,
+    "padding_zero_bytes": 3,
+    "chain_binding_bytes": 56,
+    "genesis_binding_bytes": 56,
+    "rules_binding_bytes": 56,
+    "intent_is_in_proof": true,
+    "balance_tag_is_in_proof": true
+  },
+  "proof_system": {
+    "name": "SmallWood-LPPC-PACS-PIOP-LVCS-DECS",
+    "field_order": "18446744069414584321",
+    "rho": 5,
+    "piop_openings": 5,
+    "beta": 2,
+    "packing_factor": 64,
+    "opening_pow_bits": 0,
+    "piop_nonce_trials": 16,
+    "canonical_first_valid_piop_nonce": true,
+    "decs_domain_size": 1048576,
+    "decs_openings": 23,
+    "decs_eta": 5,
+    "decs_pow_bits": 0,
+    "decs_candidate_count": 50,
+    "fixed_first_distinct_decs_sampler": true,
+    "decs_evaluation_domain": "disjoint-coset",
+    "radix2_subgroup_domain_forbidden": true,
+    "opened_leaf_random_tape_index_binding": true,
+    "opened_leaf_random_tape_bytes": 64,
+    "opened_leaf_opening_tape_bytes": 1472,
+    "physical_fiat_shamir_families": 4
+  },
+  "hashes": {
+    "semantic": "HGF6HR02-rejected-nonstandard-KECCAK-c1024-XOF-plus-SHAKE256-448",
+    "semantic_output_bits": 448,
+    "proof_transcript": "SHA-512",
+    "proof_transcript_output_bits": 512,
+    "relation_manifest": "SHA-512",
+    "relation_manifest_output_bits": 512
+  },
+  "hash_role_registry": {
+    "strict_target_bits": 128,
+    "comparison": "primitive-pq-cap-strictly-greater-than-target",
+    "semantic_frame_profile_tag": "HEG-F6V2",
+    "consensus_frame": "hegemon.shake256-448.consensus-frame.v1",
+    "relation_registry_magic": "HGF6HR02",
+    "relation_registry_sha512": "840e4426ab9b8b74e6400f4573109db0b2324df6b2fd81a81f24c2cc801dd0767b8caaa2a58e219db3f0e90494d2312e39fc83642d21b81a6becdf3373a19631",
+    "audit_registry_id": "hegemon.smallwood.v6.hash-role-audit-registry.v2",
+    "audit_registry_sha512": "8b5ef178cad2253035c22f5d4b6dbb3b2245c56bfc458034582545db2240138c53be861b3e8cb51c14a13cc2a4a29bf6171802f89ebc84dc543fb2f586b7b824"
+  },
+  "budgets": {
+    "low_advantage_quantum_queries": "18446744073709551616",
+    "low_advantage_target_bits": 128,
+    "low_advantage_comparison": "strictly-less-than-2^-128",
+    "work_factor_quantum_queries": "340282366920938463463374607431768211456",
+    "work_factor_max_success_numerator": "1",
+    "work_factor_max_success_denominator": "2",
+    "security_epoch_max_proofs": 4294967296,
+    "max_proofs_per_block": 10000,
+    "history_composition": "shared-tagged-product-oracle",
+    "per_proof_history_union_forbidden": true,
+    "history_cap_consensus_enforced": false,
+    "physical_sha512_call_cap_per_proof": null,
+    "physical_sha512_call_cap_enforced": false
+  },
+  "relation_projection": {
+    "semantic_shake_invocations": 79,
+    "semantic_keccak_permutations": 145,
+    "private_shake_invocations": 75,
+    "private_keccak_permutations": 104,
+    "intent_keccak_permutations": 6,
+    "intent_payload_bytes": 725,
+    "intent_frame_bytes": 744,
+    "balance_tag_keccak_permutations": 1,
+    "ciphertext_count": 2,
+    "ciphertext_bytes_each": 2147,
+    "ciphertext_frame_bytes_each": 2182,
+    "ciphertext_shake_invocations": 2,
+    "ciphertext_keccak_permutations": 34,
+    "global_semantic_hash_terms": 3,
+    "per_permutation_collision_union": false
+  },
+  "geometry": {
+    "row_count": null,
+    "nonlinear_constraint_count": null,
+    "linear_constraint_count": null,
+    "effective_constraint_degree": null,
+    "witness_polynomial_degree": null,
+    "consistency_discrepancy_degree": null,
+    "lvcs_column_count": null,
+    "base_game_arity_upper_bound": null
+  },
+  "source_binding": {
+    "files": [
+      {
+        "role": "smallwood_engine",
+        "path": "circuits/transaction/src/smallwood_engine.rs",
+        "sha512": "38084b31b726d2339ae3b5794bba27f410bcf911e6d587bb48efc2950c6c9b1c1c1b1b9b90ab8f8e6ff1069fbfb093fd41f005682dfd00f3f7b389a97e895fff"
+      },
+      {
+        "role": "statement_owner",
+        "path": "circuits/transaction/src/full_shake448_statement.rs",
+        "sha512": "5e60025d5591f9b73602f44ad4d1e8f353ed0ef66453535ef432b803b729e06604fc442727cff04060854041544ff3eb8d2f0fff5ddf5eb3f45705431bc14d40"
+      },
+      {
+        "role": "hash448_registry",
+        "path": "crypto/hash448/src/lib.rs",
+        "sha512": "d582b5e616a80e05ec167bbd8f6fa3fad1808e23e2a3f1ea9ea2c7306d60d4b987021443710d59e85734e9fe1124ed396ed6b7d1aaa254b2e12f88eceef228a5"
+      },
+      {
+        "role": "shake_boolean_relation",
+        "path": "circuits/transaction/src/smallwood_shake256_full_relation.rs",
+        "sha512": "54eb5733b64a365aac03c88d81abae7372b155b2c6487da72248f4101e5491dfa636622b6aa43d48e0c16ce591f23026ad7949b06636d26b077781a26a1fbba5"
+      },
+      {
+        "role": "full_relation",
+        "path": "circuits/transaction/src/full_shake448_relation.rs",
+        "sha512": "2fb40eb09c2dd69b08c0da9aa549e23485a7c6dc58c95c560c9715893beacab1509b6896af49a1c977a1bd6b4b5f86ee464f1c2ac42314210b704834a8f85495"
+      },
+      {
+        "role": "conventional_scalar_candidate",
+        "path": "circuits/transaction/src/full_blake2b448_relation.rs",
+        "sha512": "b029ebec35c9d001d245b843a7ae918a2578ec961f7b0bd6097eb28950644ab2c2a9d9bfc58d87db39ad225b940347eaaaf3f678c3462663d07c3b5c59f0ceab"
+      },
+      {
+        "role": "m4_mixed_candidate",
+        "path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs",
+        "sha512": "1cf8ca5c3b5202cadc8bfe2b075a0a844f31f69ba4ebc646dde672cca94dc72c50c22c856ce3763939d0005f7c90968b5ac56385174d36cfeb99d46ad6495a14"
+      },
+      {
+        "role": "m4_source_checker",
+        "path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/check_source.py",
+        "sha512": "29aa5e390f86a3f2d8c31d7d393d24acd4b9115dcd5d324911a4f761d11a5042636c5f96f8d8fc893db4bb56885ab2385bfa864b33669f32790509c7b2fe3ce3"
+      },
+      {
+        "role": "v6_envelope",
+        "path": "circuits/transaction/src/smallwood_v6_envelope.rs",
+        "sha512": "da2739d074e531d31f2e0fea14411a6e3e92be18e50c31600000b08ed4dc944949b6fb34167595fc2aabf50050ee8bb0dde2a3cdaa74ca0b67cf811bff8626f0"
+      },
+      {
+        "role": "v6_adapter",
+        "path": "circuits/transaction/src/smallwood_v6_adapter.rs",
+        "sha512": "6e6b1359c8bc14a344028853dbca4a5438b612c13781c3f70463545dd7c9e9985aec6f2dac9910508666a47089665a5f2e67d85ad4cedd80050d833368ab82c4"
+      },
+      {
+        "role": "compiled_verifier",
+        "path": "circuits/transaction/src/smallwood_frontend.rs",
+        "sha512": "abecc81f0ca860590bcb8a63488d7535a48ae551dc9c63756bdde89ba7be2824fe9225dff00a2661b4a308548e8b09f1af5a501af79bb204006b57d8731200bc"
+      },
+      {
+        "role": "composition_checker",
+        "path": ".agent/hardening/smallwood-v6-qrom-composition/composition.py",
+        "sha512": "9670767b8108890e43aa0ce6a035a0507b577ab43dd27bfc9bdd629fef867c9a4c37fcf704d07aa136d2cf5a0e3bbc9430d3d29b73d25882c23b4dfa3f6c29de"
+      }
+    ],
+    "relation_manifest_sha512": "6458fedfcd900d548e640eaeaf6e681c0183dc62c721de43e4e623bdb2bddee3d8c66b4dce62b35931312c987b2204d8a6853261ec09bb7b8ed7aa8edacc20b9"
+  },
+  "external_losses": {
+    "lppc_lvcs_decs_pcs_binding": null,
+    "lppc_piop_knowledge_soundness": null,
+    "fiat_shamir_qrom_transform": null,
+    "sha512_standard_to_tagged_product_oracle": null,
+    "sha512_merkle_pcs_binding": null,
+    "sha512_xof_sampling_and_rejection": null,
+    "mixed_shake_relation_instantiation_binding": null,
+    "shake256_collision_binding": null,
+    "nonstandard_keccak_c1024_xof_collision_binding": null,
+    "nonstandard_keccak_c1024_xof_preimage_prf_security": null,
+    "decs_leaf_tape_qrom_hiding": null,
+    "noninteractive_proof_of_knowledge_extraction": null,
+    "global_history_product_oracle_transfer": null,
+    "grinding_retry_abort_composition": null
+  }
+}

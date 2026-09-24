@@ -3,6 +3,58 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FORMAL_MANIFEST="$ROOT/scripts/hegemon_formal_core/Cargo.toml"
+if [ "$#" -gt 1 ]; then
+  printf 'usage: %s [all|preflight|checker|lean|vectors|policy]\n' "$0" >&2
+  exit 2
+fi
+MODE="${1:-all}"
+case "$MODE" in
+  all|preflight|checker|lean|vectors|policy) ;;
+  *)
+    printf 'usage: %s [all|preflight|checker|lean|vectors|policy]\n' "$0" >&2
+    exit 2
+    ;;
+esac
+
+GOVERNANCE_TESTS=(
+  tests::governance_active_gate_evidence_rejects_matrix_mutation
+  tests::governance_active_goal_rejects_authority_redirection
+  tests::governance_active_goal_rejects_complete_at_partial_closure
+  tests::governance_active_goal_rejects_string_only_gate_recipe
+  tests::governance_blueprint_rejects_claim_authority_mismatch
+  tests::governance_claims_accept_explicit_tombstone_against_pinned_baseline
+  tests::governance_claims_reject_coordinated_deletion_without_tombstone
+  tests::governance_claims_reject_tombstoned_required_conditional_target
+  tests::governance_claims_reject_unexecuted_gate_record
+  tests::governance_conditional_authority_cannot_be_marked_production_eligible
+  tests::governance_conditional_matrix_track_rejects_closed_relabeling
+  tests::governance_gate_evidence_rejects_incomplete_test_report
+  tests::governance_gate_evidence_rejects_policy_source_mutations
+  tests::governance_smallwood_conditional_tracks_remain_open_in_policy
+)
+
+run_stage() {
+  [ "$MODE" = all ] || [ "$MODE" = "$1" ]
+}
+
+require_governance_test_inventory() {
+  local expected_inventory
+  local actual_inventory
+  expected_inventory="$(printf '%s: test\n' "${GOVERNANCE_TESTS[@]}")"
+  if ! actual_inventory="$(
+    cargo test --quiet --manifest-path "$FORMAL_MANIFEST" --lib governance_ -- --list
+  )"; then
+    printf 'failed to enumerate the formal governance test inventory\n' >&2
+    return 1
+  fi
+  if [ "$actual_inventory" != "$expected_inventory" ]; then
+    printf 'formal governance test inventory drifted from the pinned 14-test set\n' >&2
+    printf 'expected:\n%s\nobserved:\n%s\n' \
+      "$expected_inventory" "$actual_inventory" >&2
+    return 1
+  fi
+}
+
 if [ -d "${HOME:-}/.cargo/bin" ]; then
   export PATH="${HOME}/.cargo/bin:$PATH"
 fi
@@ -61,29 +113,79 @@ require_pinned_model_checker() {
 
 printf '=== Hegemon formal-core gate ===\n'
 
+if run_stage checker || run_stage preflight; then
+printf '\n[0a/14] Checking the exact formal governance test inventory\n'
+require_governance_test_inventory
+
+printf '\n[0b/14] Executing the pinned formal governance test suite\n'
+cargo test --quiet --manifest-path "$FORMAL_MANIFEST" --lib governance_
+
+if [ "${HEGEMON_FORMAL_GATE_SELF_TEST:-0}" != 1 ]; then
+  printf '\n[0c/14] Checking formal gate CLI and inventory fail-closed behavior\n'
+  bash "$ROOT/scripts/test_formal_gate_cli_args.sh"
+fi
+
 printf '\n[0/14] Checking shipped native runtime dependency graph\n'
 bash "$ROOT/scripts/check_native_runtime_dependencies.sh"
 
-printf '\n[0b/14] Checking generated SmallWood production constraint table\n'
+printf '\n[0d/14] Checking generated SmallWood production constraint table\n'
 bash "$ROOT/scripts/check_smallwood_production_constraint_table.sh"
+
+printf '\n[0e/14] Checking exact HGV8RP03 Lean relation-program components\n'
+bash "$ROOT/scripts/check_poseidon2_v8_relation_program_components_lean.sh"
 
 printf '\n[1/14] Checking formal-core checker formatting\n'
 cargo fmt --manifest-path "$FORMAL_MANIFEST" -- --check
 
 printf '\n[2/14] Running formal-core checker tests\n'
-cargo test --quiet --manifest-path "$FORMAL_MANIFEST"
+cargo test --quiet --manifest-path "$FORMAL_MANIFEST" -- \
+  --skip tests::closed_track_propositions_match_independent_rust_policy
+fi
 
+if run_stage lean || run_stage preflight; then
 printf '\n[3/14] Checking Lean formal proof kernel\n'
 bash "$ROOT/scripts/check_lean_formal.sh"
 
+printf '\n[3b/14] Checking elaborated closed-track proposition policy\n'
+cargo test --quiet --manifest-path "$FORMAL_MANIFEST" \
+  tests::closed_track_propositions_match_independent_rust_policy -- --exact
+
+printf '\n[8/14] Checking active goal progress measure\n'
+run_formal_core check-active-goal-progress "$ROOT/config/active-goal-progress.json"
+fi
+
+if run_stage vectors; then
 printf '\n[4/14] Verifying Lean-generated Rust conformance vectors\n'
+(
+  cd "$ROOT/formal/lean"
+  diff -u \
+    "$ROOT/testdata/formal_core_vectors/poseidon2_v8_hash_kernel_refinement.json" \
+    <(lake exe gen_poseidon2_v8_constraint_refinement_vectors)
+  diff -u \
+    "$ROOT/testdata/formal_core_vectors/poseidon2_v8_rp04_hash_kernel_refinement.json" \
+    <(lake exe gen_poseidon2_v8_rp04_constraint_refinement_vectors)
+  diff -u \
+    "$ROOT/testdata/formal_core_vectors/poseidon2_v8_relation_program_transcript.json" \
+    <(lake exe gen_poseidon2_v8_relation_program_vectors)
+  diff -u \
+    "$ROOT/testdata/formal_core_vectors/poseidon2_v8_semantic_adequacy.json" \
+    <(lake exe gen_poseidon2_v8_semantic_adequacy_vectors)
+)
+run_exact_lib_test \
+  transaction-circuit \
+  smallwood_poseidon2_v8_hash_constraints::tests::lean_generated_v8_hash_kernel_refinement_vectors_match_source
+run_exact_lib_test \
+  transaction-circuit \
+  smallwood_poseidon2_v8_program::tests::lean_generated_v8_relation_program_vectors_match_source
+run_exact_lib_test \
+  transaction-circuit \
+  smallwood_poseidon2_v8_program::tests::source_program_bytes_match_checked_in_canonical_artifact
 LEAN_BRIDGE_VECTORS="$(mktemp)"
 LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS="$(mktemp)"
 LEAN_BRIDGE_LONG_RANGE_VECTORS="$(mktemp)"
 LEAN_BRIDGE_HEADER_MMR_VECTORS="$(mktemp)"
 LEAN_BRIDGE_HEADER_MMR_TRANSCRIPT_VECTORS="$(mktemp)"
 LEAN_BRIDGE_FLYCLIENT_VECTORS="$(mktemp)"
-LEAN_AGGREGATION_V5_VECTORS="$(mktemp)"
 LEAN_COMMITMENT_TREE_APPEND_VECTORS="$(mktemp)"
 LEAN_DA_ROOT_VECTORS="$(mktemp)"
 LEAN_SHIELDED_VECTORS="$(mktemp)"
@@ -161,7 +263,9 @@ LEAN_BRIDGE_VERIFIER_REGISTRATION_SCALE_WIRE_VECTORS="$(mktemp)"
 LEAN_SHIELDED_TRANSFER_INLINE_SCALE_WIRE_VECTORS="$(mktemp)"
 LEAN_SHIELDED_TRANSFER_SIDECAR_SCALE_WIRE_VECTORS="$(mktemp)"
 LEAN_MINEABLE_ACTION_ADMISSION_VECTORS="$(mktemp)"
-LEAN_NATIVE_MINER_IDENTITY_VECTORS="$(mktemp)"
+LEAN_BLOCK_BODY_CHUNK_TRANSPORT_ADMISSION_VECTORS="$(mktemp)"
+LEAN_PENDING_ACTION_CANONICALITY_VECTORS="$(mktemp)"
+LEAN_NULLIFIER_ACCUMULATOR_VECTORS="$(mktemp)"
 LEAN_MINED_WORK_ADMISSION_VECTORS="$(mktemp)"
 LEAN_MINED_BLOCK_COMMIT_PUBLICATION_VECTORS="$(mktemp)"
 LEAN_WORK_TEMPLATE_ADMISSION_VECTORS="$(mktemp)"
@@ -212,7 +316,7 @@ LEAN_PROOF_WRAPPER_ADMISSION_VECTORS="$(mktemp)"
 LEAN_PROOF_WRAPPER_WIRE_VECTORS="$(mktemp)"
 LEAN_STATEMENT_HASH_VECTORS="$(mktemp)"
 LEAN_TX_VALIDITY_CLAIM_MATCHING_VECTORS="$(mktemp)"
-trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS" "$LEAN_BRIDGE_LONG_RANGE_VECTORS" "$LEAN_BRIDGE_HEADER_MMR_VECTORS" "$LEAN_BRIDGE_HEADER_MMR_TRANSCRIPT_VECTORS" "$LEAN_BRIDGE_FLYCLIENT_VECTORS" "$LEAN_AGGREGATION_V5_VECTORS" "$LEAN_COMMITMENT_TREE_APPEND_VECTORS" "$LEAN_DA_ROOT_VECTORS" "$LEAN_SHIELDED_VECTORS" "$LEAN_CONSENSUS_VECTORS" "$LEAN_HEADER_VECTORS" "$LEAN_MINER_IDENTITY_VECTORS" "$LEAN_NATIVE_TX_LEAF_ADMISSION_VECTORS" "$LEAN_POW_VECTORS" "$LEAN_PROOF_POLICY_VECTORS" "$LEAN_PROVEN_BATCH_BINDING_VECTORS" "$LEAN_RECEIPT_ROOT_ADMISSION_VECTORS" "$LEAN_RECURSIVE_BLOCK_ADMISSION_VECTORS" "$LEAN_RECURSIVE_BLOCK_V2_VERIFIER_SURFACE_VECTORS" "$LEAN_RECURSIVE_PUBLIC_REPLAY_VECTORS" "$LEAN_RECURSIVE_SEMANTIC_INPUT_VECTORS" "$LEAN_STATEMENT_ANCHOR_ADMISSION_VECTORS" "$LEAN_SUPPLY_VECTORS" "$LEAN_SUPPLY_INVARIANT_VECTORS" "$LEAN_TREE_TRANSITION_VECTORS" "$LEAN_VERSION_POLICY_VECTORS" "$LEAN_ACTION_ORDER_VECTORS" "$LEAN_ACTION_REQUEST_PROJECTION_ADMISSION_VECTORS" "$LEAN_ACTION_REQUEST_RAW_JSON_PROJECTION_VECTORS" "$LEAN_ATOMIC_COMMIT_MANIFEST_ADMISSION_VECTORS" "$LEAN_ACTION_HASH_ADMISSION_VECTORS" "$LEAN_ACTION_ROOT_TRANSCRIPT_VECTORS" "$LEAN_ACTION_STATE_EFFECT_VECTORS" "$LEAN_ACTION_STREAM_EFFECT_VECTORS" "$LEAN_ACTION_PLAN_APPLICATION_ADMISSION_VECTORS" "$LEAN_ACTION_WIRE_REPLAY_PROJECTION_ADMISSION_VECTORS" "$LEAN_ANNOUNCED_BLOCK_ADMISSION_VECTORS" "$LEAN_BLOCK_INDEX_RELOAD_VECTORS" "$LEAN_CANONICAL_STATE_RELOAD_VECTORS" "$LEAN_BRIDGE_REPLAY_RELOAD_VECTORS" "$LEAN_PENDING_ACTION_RELOAD_VECTORS" "$LEAN_ACTION_SCOPE_ADMISSION_VECTORS" "$LEAN_BLOCK_ACTION_VALIDATION_VECTORS" "$LEAN_BLOCK_ACTION_REPLAY_PUBLICATION_VECTORS" "$LEAN_PENDING_ACTION_FIELD_PROJECTION_VECTORS" "$LEAN_BRIDGE_ACTION_PAYLOAD_ADMISSION_VECTORS" "$LEAN_BRIDGE_ACTION_RESOURCE_ADMISSION_VECTORS" "$LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS" "$LEAN_BRIDGE_MINT_PAYLOAD_ADMISSION_VECTORS" "$LEAN_BRIDGE_VERIFIER_REGISTRATION_POLICY_VECTORS" "$LEAN_BRIDGE_WITNESS_BACKSCAN_VECTORS" "$LEAN_BRIDGE_WITNESS_EXPORT_ADMISSION_VECTORS" "$LEAN_INBOUND_BRIDGE_RECEIPT_ADMISSION_VECTORS" "$LEAN_RISC0_RELEASE_VERIFIER_VECTORS" "$LEAN_NATIVE_BACKEND_REVIEW_POLICY_VECTORS" "$LEAN_NATIVE_BACKEND_ALGEBRA_VECTORS" "$LEAN_NATIVE_BACKEND_RELEASE_POSTURE_VECTORS" "$LEAN_RELEASE_PQ_BINARY_POLICY_VECTORS" "$LEAN_CI_RELEASE_GATE_VECTORS" "$LEAN_DEPENDENCY_AUDIT_POLICY_VECTORS" "$LEAN_ESSENCE_CORE_VECTORS" "$LEAN_TRANSFER_ACTION_PAYLOAD_ADMISSION_VECTORS" "$LEAN_TRANSFER_STATE_ADMISSION_VECTORS" "$LEAN_BLOCK_ARTIFACT_BINDING_ADMISSION_VECTORS" "$LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS" "$LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS" "$LEAN_CANDIDATE_ARTIFACT_SCALE_WIRE_VECTORS" "$LEAN_CANDIDATE_ARTIFACT_COUPLING_ADMISSION_VECTORS" "$LEAN_CANONICAL_REORG_CHAIN_ADMISSION_VECTORS" "$LEAN_CANONICAL_REORG_PERSISTENCE_ADMISSION_VECTORS" "$LEAN_CODEC_ADMISSION_VECTORS" "$LEAN_PENDING_ACTION_SCALE_WIRE_VECTORS" "$LEAN_COINBASE_ACCOUNTING_ADMISSION_VECTORS" "$LEAN_COINBASE_ACTION_PAYLOAD_ADMISSION_VECTORS" "$LEAN_COINBASE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS" "$LEAN_OUTBOUND_BRIDGE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS" "$LEAN_INBOUND_BRIDGE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS" "$LEAN_BRIDGE_VERIFIER_REGISTRATION_SCALE_WIRE_VECTORS" "$LEAN_SHIELDED_TRANSFER_INLINE_SCALE_WIRE_VECTORS" "$LEAN_SHIELDED_TRANSFER_SIDECAR_SCALE_WIRE_VECTORS" "$LEAN_MINEABLE_ACTION_ADMISSION_VECTORS" "$LEAN_NATIVE_MINER_IDENTITY_VECTORS" "$LEAN_MINED_WORK_ADMISSION_VECTORS" "$LEAN_MINED_BLOCK_COMMIT_PUBLICATION_VECTORS" "$LEAN_WORK_TEMPLATE_ADMISSION_VECTORS" "$LEAN_RECURSIVE_ARTIFACT_CONTEXT_ADMISSION_VECTORS" "$LEAN_RESOURCE_BUDGET_ADMISSION_VECTORS" "$LEAN_BOUNDED_REQUEST_ADMISSION_VECTORS" "$LEAN_PREHEAVY_RESOURCE_BOUND_SURFACE_VECTORS" "$LEAN_RPC_ADMISSION_VECTORS" "$LEAN_STAGED_CIPHERTEXT_RELOAD_VECTORS" "$LEAN_STAGED_PROOF_RELOAD_VECTORS" "$LEAN_STABLECOIN_POLICY_AUTHORIZATION_VECTORS" "$LEAN_STORAGE_DURABILITY_ADMISSION_VECTORS" "$LEAN_SYNC_ADMISSION_VECTORS" "$LEAN_SYNC_BLOCK_CHUNK_ADMISSION_VECTORS" "$LEAN_SYNC_BLOCK_RANGE_PUBLICATION_ADMISSION_VECTORS" "$LEAN_SYNC_RAW_INGRESS_VECTORS" "$LEAN_SYNC_RESPONSE_IMPORT_VECTORS" "$LEAN_NETWORK_SECURE_CHANNEL_VECTORS" "$LEAN_PQ_NOISE_VECTORS" "$LEAN_FRAME_RESOURCE_ADMISSION_VECTORS" "$LEAN_PEER_STORE_CAPACITY_ADMISSION_VECTORS" "$LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS" "$LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS" "$LEAN_WALLET_OUTPUT_BATCH_VECTORS" "$LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS" "$LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS" "$LEAN_NATIVE_RECEIPT_ROOT_VECTORS" "$LEAN_TRANSACTION_VECTORS" "$LEAN_NOTE_COMMITMENT_INPUT_VECTORS" "$LEAN_NULLIFIER_INPUT_VECTORS" "$LEAN_SMALLWOOD_SPEND_AUTHORIZATION_VECTORS" "$LEAN_PRIVATE_MULTISIG_ACCUMULATOR_VECTORS" "$LEAN_SMALLWOOD_CANDIDATE_WRAPPER_ADMISSION_VECTORS" "$LEAN_SMALLWOOD_PUBLIC_STATEMENT_BINDING_VECTORS" "$LEAN_SMALLWOOD_VERIFIER_STATEMENT_PROJECTION_VECTORS" "$LEAN_SMALLWOOD_PRODUCTION_CONSTRAINT_REFINEMENT_VECTORS" "$LEAN_ACCEPTED_SMALLWOOD_BLOCK_COMPOSITION_VECTORS" "$LEAN_SMALLWOOD_RECURSIVE_ENVELOPE_WIRE_VECTORS" "$LEAN_SMALLWOOD_TRANSCRIPT_BINDING_VECTORS" "$LEAN_MERKLE_VECTORS" "$LEAN_PUBLIC_INPUT_VECTORS" "$LEAN_PUBLIC_INPUT_BINDING_VECTORS" "$LEAN_PROOF_STATEMENT_BINDING_VECTORS" "$LEAN_PROOF_WRAPPER_ADMISSION_VECTORS" "$LEAN_PROOF_WRAPPER_WIRE_VECTORS" "$LEAN_STATEMENT_HASH_VECTORS" "$LEAN_TX_VALIDITY_CLAIM_MATCHING_VECTORS"' EXIT
+trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS" "$LEAN_BRIDGE_LONG_RANGE_VECTORS" "$LEAN_BRIDGE_HEADER_MMR_VECTORS" "$LEAN_BRIDGE_HEADER_MMR_TRANSCRIPT_VECTORS" "$LEAN_BRIDGE_FLYCLIENT_VECTORS" "$LEAN_COMMITMENT_TREE_APPEND_VECTORS" "$LEAN_DA_ROOT_VECTORS" "$LEAN_SHIELDED_VECTORS" "$LEAN_CONSENSUS_VECTORS" "$LEAN_HEADER_VECTORS" "$LEAN_MINER_IDENTITY_VECTORS" "$LEAN_NATIVE_TX_LEAF_ADMISSION_VECTORS" "$LEAN_POW_VECTORS" "$LEAN_PROOF_POLICY_VECTORS" "$LEAN_PROVEN_BATCH_BINDING_VECTORS" "$LEAN_RECEIPT_ROOT_ADMISSION_VECTORS" "$LEAN_RECURSIVE_BLOCK_ADMISSION_VECTORS" "$LEAN_RECURSIVE_BLOCK_V2_VERIFIER_SURFACE_VECTORS" "$LEAN_RECURSIVE_PUBLIC_REPLAY_VECTORS" "$LEAN_RECURSIVE_SEMANTIC_INPUT_VECTORS" "$LEAN_STATEMENT_ANCHOR_ADMISSION_VECTORS" "$LEAN_SUPPLY_VECTORS" "$LEAN_SUPPLY_INVARIANT_VECTORS" "$LEAN_TREE_TRANSITION_VECTORS" "$LEAN_VERSION_POLICY_VECTORS" "$LEAN_ACTION_ORDER_VECTORS" "$LEAN_ACTION_REQUEST_PROJECTION_ADMISSION_VECTORS" "$LEAN_ACTION_REQUEST_RAW_JSON_PROJECTION_VECTORS" "$LEAN_ATOMIC_COMMIT_MANIFEST_ADMISSION_VECTORS" "$LEAN_ACTION_HASH_ADMISSION_VECTORS" "$LEAN_ACTION_ROOT_TRANSCRIPT_VECTORS" "$LEAN_ACTION_STATE_EFFECT_VECTORS" "$LEAN_ACTION_STREAM_EFFECT_VECTORS" "$LEAN_ACTION_PLAN_APPLICATION_ADMISSION_VECTORS" "$LEAN_ACTION_WIRE_REPLAY_PROJECTION_ADMISSION_VECTORS" "$LEAN_ANNOUNCED_BLOCK_ADMISSION_VECTORS" "$LEAN_BLOCK_INDEX_RELOAD_VECTORS" "$LEAN_CANONICAL_STATE_RELOAD_VECTORS" "$LEAN_BRIDGE_REPLAY_RELOAD_VECTORS" "$LEAN_PENDING_ACTION_RELOAD_VECTORS" "$LEAN_ACTION_SCOPE_ADMISSION_VECTORS" "$LEAN_BLOCK_ACTION_VALIDATION_VECTORS" "$LEAN_BLOCK_ACTION_REPLAY_PUBLICATION_VECTORS" "$LEAN_PENDING_ACTION_FIELD_PROJECTION_VECTORS" "$LEAN_BRIDGE_ACTION_PAYLOAD_ADMISSION_VECTORS" "$LEAN_BRIDGE_ACTION_RESOURCE_ADMISSION_VECTORS" "$LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS" "$LEAN_BRIDGE_MINT_PAYLOAD_ADMISSION_VECTORS" "$LEAN_BRIDGE_VERIFIER_REGISTRATION_POLICY_VECTORS" "$LEAN_BRIDGE_WITNESS_BACKSCAN_VECTORS" "$LEAN_BRIDGE_WITNESS_EXPORT_ADMISSION_VECTORS" "$LEAN_INBOUND_BRIDGE_RECEIPT_ADMISSION_VECTORS" "$LEAN_RISC0_RELEASE_VERIFIER_VECTORS" "$LEAN_NATIVE_BACKEND_REVIEW_POLICY_VECTORS" "$LEAN_NATIVE_BACKEND_ALGEBRA_VECTORS" "$LEAN_NATIVE_BACKEND_RELEASE_POSTURE_VECTORS" "$LEAN_RELEASE_PQ_BINARY_POLICY_VECTORS" "$LEAN_CI_RELEASE_GATE_VECTORS" "$LEAN_DEPENDENCY_AUDIT_POLICY_VECTORS" "$LEAN_ESSENCE_CORE_VECTORS" "$LEAN_TRANSFER_ACTION_PAYLOAD_ADMISSION_VECTORS" "$LEAN_TRANSFER_STATE_ADMISSION_VECTORS" "$LEAN_BLOCK_ARTIFACT_BINDING_ADMISSION_VECTORS" "$LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS" "$LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS" "$LEAN_CANDIDATE_ARTIFACT_SCALE_WIRE_VECTORS" "$LEAN_CANDIDATE_ARTIFACT_COUPLING_ADMISSION_VECTORS" "$LEAN_CANONICAL_REORG_CHAIN_ADMISSION_VECTORS" "$LEAN_CODEC_ADMISSION_VECTORS" "$LEAN_PENDING_ACTION_SCALE_WIRE_VECTORS" "$LEAN_COINBASE_ACCOUNTING_ADMISSION_VECTORS" "$LEAN_COINBASE_ACTION_PAYLOAD_ADMISSION_VECTORS" "$LEAN_COINBASE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS" "$LEAN_OUTBOUND_BRIDGE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS" "$LEAN_INBOUND_BRIDGE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS" "$LEAN_BRIDGE_VERIFIER_REGISTRATION_SCALE_WIRE_VECTORS" "$LEAN_SHIELDED_TRANSFER_INLINE_SCALE_WIRE_VECTORS" "$LEAN_SHIELDED_TRANSFER_SIDECAR_SCALE_WIRE_VECTORS" "$LEAN_MINEABLE_ACTION_ADMISSION_VECTORS" "$LEAN_BLOCK_BODY_CHUNK_TRANSPORT_ADMISSION_VECTORS" "$LEAN_PENDING_ACTION_CANONICALITY_VECTORS" "$LEAN_NULLIFIER_ACCUMULATOR_VECTORS" "$LEAN_MINED_WORK_ADMISSION_VECTORS" "$LEAN_MINED_BLOCK_COMMIT_PUBLICATION_VECTORS" "$LEAN_WORK_TEMPLATE_ADMISSION_VECTORS" "$LEAN_RECURSIVE_ARTIFACT_CONTEXT_ADMISSION_VECTORS" "$LEAN_RESOURCE_BUDGET_ADMISSION_VECTORS" "$LEAN_BOUNDED_REQUEST_ADMISSION_VECTORS" "$LEAN_PREHEAVY_RESOURCE_BOUND_SURFACE_VECTORS" "$LEAN_RPC_ADMISSION_VECTORS" "$LEAN_STAGED_CIPHERTEXT_RELOAD_VECTORS" "$LEAN_STAGED_PROOF_RELOAD_VECTORS" "$LEAN_STABLECOIN_POLICY_AUTHORIZATION_VECTORS" "$LEAN_STORAGE_DURABILITY_ADMISSION_VECTORS" "$LEAN_SYNC_ADMISSION_VECTORS" "$LEAN_SYNC_BLOCK_RANGE_PUBLICATION_ADMISSION_VECTORS" "$LEAN_SYNC_RESPONSE_IMPORT_VECTORS" "$LEAN_NETWORK_SECURE_CHANNEL_VECTORS" "$LEAN_PQ_NOISE_VECTORS" "$LEAN_FRAME_RESOURCE_ADMISSION_VECTORS" "$LEAN_PEER_STORE_CAPACITY_ADMISSION_VECTORS" "$LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS" "$LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS" "$LEAN_WALLET_OUTPUT_BATCH_VECTORS" "$LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS" "$LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS" "$LEAN_NATIVE_RECEIPT_ROOT_VECTORS" "$LEAN_TRANSACTION_VECTORS" "$LEAN_NOTE_COMMITMENT_INPUT_VECTORS" "$LEAN_NULLIFIER_INPUT_VECTORS" "$LEAN_SMALLWOOD_SPEND_AUTHORIZATION_VECTORS" "$LEAN_PRIVATE_MULTISIG_ACCUMULATOR_VECTORS" "$LEAN_SMALLWOOD_CANDIDATE_WRAPPER_ADMISSION_VECTORS" "$LEAN_SMALLWOOD_PUBLIC_STATEMENT_BINDING_VECTORS" "$LEAN_SMALLWOOD_VERIFIER_STATEMENT_PROJECTION_VECTORS" "$LEAN_SMALLWOOD_PRODUCTION_CONSTRAINT_REFINEMENT_VECTORS" "$LEAN_ACCEPTED_SMALLWOOD_BLOCK_COMPOSITION_VECTORS" "$LEAN_SMALLWOOD_RECURSIVE_ENVELOPE_WIRE_VECTORS" "$LEAN_SMALLWOOD_TRANSCRIPT_BINDING_VECTORS" "$LEAN_MERKLE_VECTORS" "$LEAN_PUBLIC_INPUT_VECTORS" "$LEAN_PUBLIC_INPUT_BINDING_VECTORS" "$LEAN_PROOF_STATEMENT_BINDING_VECTORS" "$LEAN_PROOF_WRAPPER_ADMISSION_VECTORS" "$LEAN_PROOF_WRAPPER_WIRE_VECTORS" "$LEAN_STATEMENT_HASH_VECTORS" "$LEAN_TX_VALIDITY_CLAIM_MATCHING_VECTORS" "$LEAN_CANONICAL_REORG_PERSISTENCE_ADMISSION_VECTORS" "$LEAN_SYNC_BLOCK_CHUNK_ADMISSION_VECTORS" "$LEAN_SYNC_RAW_INGRESS_VECTORS"' EXIT
 (
   cd "$ROOT/formal/lean"
   lake exe gen_bridge_vectors > "$LEAN_BRIDGE_VECTORS"
@@ -221,7 +325,6 @@ trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS" "$LE
   lake exe gen_bridge_header_mmr_vectors > "$LEAN_BRIDGE_HEADER_MMR_VECTORS"
   lake exe gen_bridge_header_mmr_transcript_vectors > "$LEAN_BRIDGE_HEADER_MMR_TRANSCRIPT_VECTORS"
   lake exe gen_bridge_flyclient_vectors > "$LEAN_BRIDGE_FLYCLIENT_VECTORS"
-  lake exe gen_aggregation_v5_vectors > "$LEAN_AGGREGATION_V5_VECTORS"
   lake exe gen_commitment_tree_append_vectors > "$LEAN_COMMITMENT_TREE_APPEND_VECTORS"
   lake exe gen_da_root_vectors > "$LEAN_DA_ROOT_VECTORS"
   lake exe gen_shielded_vectors > "$LEAN_SHIELDED_VECTORS"
@@ -300,7 +403,9 @@ trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS" "$LE
   lake exe gen_shielded_transfer_inline_scale_wire_vectors > "$LEAN_SHIELDED_TRANSFER_INLINE_SCALE_WIRE_VECTORS"
   lake exe gen_shielded_transfer_sidecar_scale_wire_vectors > "$LEAN_SHIELDED_TRANSFER_SIDECAR_SCALE_WIRE_VECTORS"
   lake exe gen_mineable_action_admission_vectors > "$LEAN_MINEABLE_ACTION_ADMISSION_VECTORS"
-  lake exe gen_native_miner_identity_vectors > "$LEAN_NATIVE_MINER_IDENTITY_VECTORS"
+  lake exe gen_block_body_chunk_transport_admission_vectors > "$LEAN_BLOCK_BODY_CHUNK_TRANSPORT_ADMISSION_VECTORS"
+  lake exe gen_pending_action_canonicality_vectors > "$LEAN_PENDING_ACTION_CANONICALITY_VECTORS"
+  lake exe gen_nullifier_accumulator_vectors > "$LEAN_NULLIFIER_ACCUMULATOR_VECTORS"
   lake exe gen_mined_work_admission_vectors > "$LEAN_MINED_WORK_ADMISSION_VECTORS"
   lake exe gen_mined_block_commit_publication_vectors > "$LEAN_MINED_BLOCK_COMMIT_PUBLICATION_VECTORS"
   lake exe gen_work_template_admission_vectors > "$LEAN_WORK_TEMPLATE_ADMISSION_VECTORS"
@@ -363,9 +468,6 @@ HEGEMON_LEAN_BRIDGE_HEADER_MMR_TRANSCRIPT_VECTORS="$LEAN_BRIDGE_HEADER_MMR_TRANS
   cargo test -p consensus-light-client lean_generated_header_mmr_transcript_vectors_match_production -- --nocapture
 HEGEMON_LEAN_BRIDGE_FLYCLIENT_VECTORS="$LEAN_BRIDGE_FLYCLIENT_VECTORS" \
   cargo test -p consensus-light-client lean_generated_flyclient_vectors_match_production -- --nocapture
-HEGEMON_LEAN_AGGREGATION_V5_VECTORS="$LEAN_AGGREGATION_V5_VECTORS" \
-  cargo test -p consensus lean_generated_aggregation_v5_header_vectors_match_production -- --nocapture
-cargo test -p consensus aggregation_v5_envelope_decode_matches_zstd_postcard_oracle_on_mutation_corpus --lib -- --nocapture
 HEGEMON_LEAN_COMMITMENT_TREE_APPEND_VECTORS="$LEAN_COMMITMENT_TREE_APPEND_VECTORS" \
   cargo test -p consensus lean_generated_commitment_tree_append_vectors_match_production -- --nocapture
 cargo test -p state-merkle commitment_tree_independent_oracle_append_roots_paths_and_bounds -- --nocapture
@@ -391,6 +493,12 @@ HEGEMON_LEAN_POW_VECTORS="$LEAN_POW_VECTORS" \
   cargo test -p consensus lean_generated_pow_admission_vectors_match_production -- --nocapture
 HEGEMON_LEAN_POW_VECTORS="$LEAN_POW_VECTORS" \
   cargo test -p consensus-light-client lean_generated_pow_admission_vectors_match_light_client -- --nocapture
+(
+  cd "$ROOT/formal/lean"
+  lake exe gen_pow_v3_vectors > "$LEAN_POW_VECTORS"
+)
+HEGEMON_LEAN_POW_V3_VECTORS="$LEAN_POW_VECTORS" \
+  cargo test -p consensus-light-client v3::tests::lean_generated_pow_v3_vectors_match_rust --lib --no-default-features -- --exact --nocapture
 HEGEMON_LEAN_PROOF_POLICY_VECTORS="$LEAN_PROOF_POLICY_VECTORS" \
   cargo test -p consensus lean_generated_proof_policy_vectors_match_production -- --nocapture
 HEGEMON_LEAN_PROVEN_BATCH_BINDING_VECTORS="$LEAN_PROVEN_BATCH_BINDING_VECTORS" \
@@ -424,8 +532,6 @@ HEGEMON_LEAN_SUPPLY_VECTORS="$LEAN_SUPPLY_VECTORS" \
   cargo test -p hegemon-node lean_generated_native_supply_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_ACTION_ORDER_VECTORS="$LEAN_ACTION_ORDER_VECTORS" \
   cargo test -p hegemon-node lean_generated_action_order_vectors_match_production --lib --no-default-features -- --nocapture
-cargo test -p hegemon-node non_transfer_action_order_key_preimage_ignores_received_ms_for_public_routes --lib --no-default-features -- --nocapture
-cargo test -p hegemon-node pending_non_transfer_relative_order_ignores_received_ms_resampling --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_ACTION_REQUEST_PROJECTION_ADMISSION_VECTORS="$LEAN_ACTION_REQUEST_PROJECTION_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_action_request_projection_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_ACTION_REQUEST_RAW_JSON_PROJECTION_VECTORS="$LEAN_ACTION_REQUEST_RAW_JSON_PROJECTION_VECTORS" \
@@ -481,7 +587,7 @@ HEGEMON_LEAN_BRIDGE_ACTION_RESOURCE_ADMISSION_VECTORS="$LEAN_BRIDGE_ACTION_RESOU
 cargo test -p hegemon-node bridge_inbound_resource_projection_uses_native_caps --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node bridge_inbound_proof_receipt_resource_rejects_before_receipt_decode_or_verify --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node bridge_inbound_message_payload_resource_rejects_before_receipt_verify --lib --no-default-features -- --nocapture
-cargo test -p hegemon-node submit_action_routes_bridge_payload_admission_before_staging --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node active_v3_bridge_routes_reject_before_payload_staging_or_witness_reads --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BRIDGE_WITNESS_BACKSCAN_VECTORS="$LEAN_BRIDGE_WITNESS_BACKSCAN_VECTORS" \
   cargo test -p hegemon-node lean_generated_bridge_witness_backscan_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BRIDGE_WITNESS_EXPORT_ADMISSION_VECTORS="$LEAN_BRIDGE_WITNESS_EXPORT_ADMISSION_VECTORS" \
@@ -506,9 +612,11 @@ python3 "$ROOT/scripts/check_release_pq_binary_policy_vectors.py" \
 python3 "$ROOT/scripts/check_ci_release_gate_policy.py" \
   "$LEAN_CI_RELEASE_GATE_VECTORS" \
   --ci-workflow "$ROOT/.github/workflows/ci.yml" \
+  --formal-crypto-workflow "$ROOT/.github/workflows/formal-crypto.yml" \
   --release-workflow "$ROOT/.github/workflows/release.yml" \
   --ruleset-export "$ROOT/.github/rulesets/hegemon-release-required-checks.json"
 python3 -B "$ROOT/scripts/test_check_ci_release_gate_policy.py"
+python3 -B "$ROOT/scripts/test_check_smallwood_production_authorization.py"
 (
   cd "$ROOT/formal/lean"
   python3 -m json.tool "$LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS" >/dev/null
@@ -703,8 +811,12 @@ HEGEMON_LEAN_SHIELDED_TRANSFER_SIDECAR_SCALE_WIRE_VECTORS="$LEAN_SHIELDED_TRANSF
   cargo test -p hegemon-node lean_generated_shielded_transfer_sidecar_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_MINEABLE_ACTION_ADMISSION_VECTORS="$LEAN_MINEABLE_ACTION_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_mineable_action_admission_vectors_match_production --lib --no-default-features -- --nocapture
-HEGEMON_LEAN_NATIVE_MINER_IDENTITY_VECTORS="$LEAN_NATIVE_MINER_IDENTITY_VECTORS" \
-  cargo test -p hegemon-node lean_generated_native_miner_identity_vectors_match_production --lib --no-default-features -- --nocapture
+HEGEMON_LEAN_BLOCK_BODY_CHUNK_TRANSPORT_ADMISSION_VECTORS="$LEAN_BLOCK_BODY_CHUNK_TRANSPORT_ADMISSION_VECTORS" \
+  run_exact_lib_test hegemon-node native::transport_tests::lean_generated_block_body_chunk_transport_admission_vectors_match_production --no-default-features
+HEGEMON_LEAN_PENDING_ACTION_CANONICALITY_VECTORS="$LEAN_PENDING_ACTION_CANONICALITY_VECTORS" \
+  run_exact_lib_test hegemon-node native::pending_action_canonicality_tests::lean_generated_pending_action_canonicality_vectors_match_production --no-default-features
+HEGEMON_LEAN_NULLIFIER_ACCUMULATOR_VECTORS="$LEAN_NULLIFIER_ACCUMULATOR_VECTORS" \
+  run_exact_lib_test hegemon-node native::nullifier_accumulator::tests::lean_nullifier_accumulator_vectors_match_rust --no-default-features
 HEGEMON_LEAN_MINED_WORK_ADMISSION_VECTORS="$LEAN_MINED_WORK_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_mined_work_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_MINED_BLOCK_COMMIT_PUBLICATION_VECTORS="$LEAN_MINED_BLOCK_COMMIT_PUBLICATION_VECTORS" \
@@ -746,7 +858,7 @@ HEGEMON_LEAN_SYNC_BLOCK_CHUNK_ADMISSION_VECTORS="$LEAN_SYNC_BLOCK_CHUNK_ADMISSIO
     --no-default-features
 run_exact_lib_test \
   hegemon-node \
-  native::tests::oversized_valid_native_block_advances_through_bounded_chunk_fallback \
+  native::tests::oversized_legacy_metadata_chunk_fallback_is_closed_at_v3_import_seam \
   --no-default-features
 run_exact_lib_test \
   hegemon-node \
@@ -840,17 +952,16 @@ cargo test -p wallet reencryption_preserves_public_ciphertext_summary_shape --li
 cargo test -p wallet local_wallet_bookkeeping_does_not_change_public_ciphertext_projection --lib -- --nocapture
 cargo test -p wallet local_address_metadata_does_not_change_public_ciphertext_projection --lib -- --nocapture
 cargo test -p wallet full_view_decrypt_binds_plaintext_note_data_commitment_and_witness --lib -- --nocapture
-cargo test -p wallet build_transaction_can_emit_native_tx_leaf_payloads --lib -- --nocapture
+# The production source manifest is intentionally empty until the retained
+# proof and release gates authorize a route. Exercise that fail-closed wallet
+# boundary here.
+cargo test -p wallet fresh_transaction_builder_rejects_direct_artifact_bypass_before_proving --release --lib -- --nocapture
 cargo test -p wallet stablecoin_policy_admission --lib -- --nocapture
 cargo test -p synthetic-crypto note_encryption::tests::test_decrypt_rejects --lib -- --nocapture
-HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS="$LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS" \
-  cargo test -p superneo-hegemon lean_generated_native_tx_leaf_artifact_vectors_match_production -- --nocapture
-cargo test -p superneo-hegemon native_tx_leaf_artifact --lib -- --nocapture
-HEGEMON_LEAN_NATIVE_RECEIPT_ROOT_VECTORS="$LEAN_NATIVE_RECEIPT_ROOT_VECTORS" \
-  cargo test -p superneo-hegemon lean_generated_native_receipt_root_vectors_match_production -- --nocapture
-cargo test -p superneo-hegemon native_receipt_root_parser_matches_independent_oracle_on_mutation_corpus --lib -- --nocapture
-cargo test -p superneo-hegemon superneo_receipts_use_shared_statement_hash_helper --lib -- --nocapture
-cargo test -p superneo-hegemon oversized_public_inputs_without_panic --lib -- --nocapture
+# The Poseidon2 production candidate uses the direct canonical SMZ9 carrier.
+# SuperNEO receipt wrapping is retired and is not a production-readiness gate.
+cargo test -p protocol-shielded-pool poseidon2_production_transport::tests::smz9_profile6_roundtrip_is_additive_exact_and_rejects_smz8_everywhere --lib -- --exact --nocapture
+cargo test -p protocol-shielded-pool poseidon2_pending_action_artifact::tests::maximum_shape_codec_is_exact_and_every_frozen_outer_mutation_rejects --lib -- --exact --nocapture
 HEGEMON_LEAN_TRANSACTION_VECTORS="$LEAN_TRANSACTION_VECTORS" \
   cargo test -p transaction-circuit lean_generated_balance_vectors_match_production -- --nocapture
 HEGEMON_LEAN_NOTE_COMMITMENT_INPUT_VECTORS="$LEAN_NOTE_COMMITMENT_INPUT_VECTORS" \
@@ -868,7 +979,7 @@ HEGEMON_LEAN_PRIVATE_MULTISIG_ACCUMULATOR_VECTORS="$LEAN_PRIVATE_MULTISIG_ACCUMU
 HEGEMON_LEAN_SMALLWOOD_TRANSCRIPT_BINDING_VECTORS="$LEAN_SMALLWOOD_TRANSCRIPT_BINDING_VECTORS" \
   run_exact_lib_test \
     transaction-circuit \
-    smallwood_frontend::tests::lean_generated_smallwood_transcript_binding_vectors_match_production
+    smallwood_frontend::tests::lean_generated_legacy_level5_transcript_binding_vectors_match_runtime_codec
 HEGEMON_LEAN_SMALLWOOD_PUBLIC_STATEMENT_BINDING_VECTORS="$LEAN_SMALLWOOD_PUBLIC_STATEMENT_BINDING_VECTORS" \
   cargo test -p transaction-circuit --test smallwood_public_statement_binding lean_generated_smallwood_public_statement_binding_vectors_match_production -- --nocapture
 HEGEMON_LEAN_SMALLWOOD_VERIFIER_STATEMENT_PROJECTION_VECTORS="$LEAN_SMALLWOOD_VERIFIER_STATEMENT_PROJECTION_VECTORS" \
@@ -912,7 +1023,7 @@ HEGEMON_LEAN_PROOF_WRAPPER_ADMISSION_VECTORS="$LEAN_PROOF_WRAPPER_ADMISSION_VECT
 HEGEMON_LEAN_PROOF_WRAPPER_WIRE_VECTORS="$LEAN_PROOF_WRAPPER_WIRE_VECTORS" \
   cargo test -p transaction-circuit lean_generated_transaction_proof_wrapper_wire_vectors_match_production -- --nocapture
 cargo test -p transaction-circuit transaction_proof_wrapper_exact_decode_matches_bincode_oracle_on_mutation_corpus -- --nocapture
-cargo test -p tx-proof-manifest manifest_rejects_nested_proof_wrapper_admission_failures -- --nocapture
+cargo test -p tx-proof-manifest manifest_rejects_nested_proof_wrapper_admission_failures --release -- --nocapture
 HEGEMON_LEAN_STATEMENT_HASH_VECTORS="$LEAN_STATEMENT_HASH_VECTORS" \
   cargo test -p transaction-circuit lean_generated_statement_hash_vectors_match_production -- --nocapture
 HEGEMON_LEAN_STATEMENT_HASH_VECTORS="$LEAN_STATEMENT_HASH_VECTORS" \
@@ -920,10 +1031,9 @@ HEGEMON_LEAN_STATEMENT_HASH_VECTORS="$LEAN_STATEMENT_HASH_VECTORS" \
 HEGEMON_LEAN_TX_VALIDITY_CLAIM_MATCHING_VECTORS="$LEAN_TX_VALIDITY_CLAIM_MATCHING_VECTORS" \
   cargo test -p consensus lean_generated_tx_validity_claim_matching_vectors_match_production --lib -- --nocapture
 cargo test -p consensus tx_validity_ --lib -- --nocapture
-cargo test -p consensus verify_aggregation_proof_rejects_legacy_v4_by_default --lib -- --nocapture
-HEGEMON_AGG_LEGACY_V4=1 \
-  cargo test -p consensus verify_aggregation_proof_rejects_legacy_v4_even_when_env_set --lib -- --nocapture
+fi
 
+if run_stage policy; then
 printf '\n[5/14] Auditing formal-core checker dependencies\n'
 if ! command -v cargo-audit >/dev/null 2>&1; then
   printf 'cargo-audit is not installed. Install with: cargo install cargo-audit --version 0.22.2 --locked\n' >&2
@@ -931,7 +1041,7 @@ if ! command -v cargo-audit >/dev/null 2>&1; then
 fi
 (
   cd "$ROOT/scripts/hegemon_formal_core"
-  cargo audit --color never
+  cargo audit --color never --deny warnings
 )
 
 printf '\n[6/14] Checking formal inventory\n'
@@ -939,9 +1049,6 @@ run_formal_core check-formal-inventory --root "$ROOT"
 
 printf '\n[7/14] Checking system-model fail-closed gates\n'
 run_formal_core check-system-model-gates "$ROOT/config/system-model-assumption-gates.json"
-
-printf '\n[8/14] Checking active goal progress measure\n'
-run_formal_core check-active-goal-progress "$ROOT/config/active-goal-progress.json"
 
 printf '\n[9/14] Checking formal security claims ledger\n'
 run_formal_core check-claims "$ROOT/config/formal-security-claims.json"
@@ -982,7 +1089,6 @@ if [ "${HEGEMON_FORMAL_RUN_MODEL_CHECKERS:-0}" = "1" ]; then
 else
   printf 'model-checker execution not requested; this gate is not claiming TLC/Apalache evidence\n'
 fi
+fi
 
-rm -f "$LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS" "$LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS" "$LEAN_AIR_BALANCE_BOUNDARY_VECTORS" "$LEAN_BRIDGE_MINT_PAYLOAD_RAW_ADMISSION_VECTORS"
-
-printf '\n=== Hegemon formal-core gate passed ===\n'
+printf '\n=== Hegemon formal-core %s gate passed ===\n' "$MODE"

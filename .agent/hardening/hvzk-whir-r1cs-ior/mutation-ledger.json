@@ -1,0 +1,397 @@
+{
+  "cases": [
+    {
+      "expected": "reject",
+      "id": "FIELD_MODULUS_ENCODING",
+      "mutation": "decode the Goldilocks modulus as a field element",
+      "surface": "field codec",
+      "test": "FieldAndR1CSTests.test_goldilocks_codec_is_exact_little_endian"
+    },
+    {
+      "expected": "reject",
+      "id": "FIELD_BOOL_ALIAS",
+      "mutation": "supply True as an in-memory field element",
+      "surface": "field codec",
+      "test": "FieldAndR1CSTests.test_goldilocks_codec_is_exact_little_endian"
+    },
+    {
+      "expected": "reject",
+      "id": "UPPERCASE_COMPILER_DIGEST",
+      "mutation": "uppercase the compiler-binding digest",
+      "surface": "statement canonicality",
+      "test": "FieldAndR1CSTests.test_compiler_digest_and_dimensions_have_one_in_memory_form"
+    },
+    {
+      "expected": "reject",
+      "id": "BOOL_R1CS_DIMENSIONS",
+      "mutation": "supply booleans as n0 and ell",
+      "surface": "statement geometry",
+      "test": "FieldAndR1CSTests.test_compiler_digest_and_dimensions_have_one_in_memory_form"
+    },
+    {
+      "expected": "reject",
+      "id": "BOOL_PROFILE_QUERY_BOUND",
+      "mutation": "supply True as the query bound",
+      "surface": "profile geometry",
+      "test": "FieldAndR1CSTests.test_compiler_digest_and_dimensions_have_one_in_memory_form"
+    },
+    {
+      "expected": "reject",
+      "id": "GENERAL_GEOMETRY_PUBLIC_EXCEEDS_TOTAL",
+      "mutation": "set public variables larger than all nonconstant variables",
+      "surface": "Section 11 padding projection",
+      "test": "FieldAndR1CSTests.test_reported_hegemon_geometry_is_only_an_exact_padding_projection"
+    },
+    {
+      "expected": "reject",
+      "id": "GENERAL_GEOMETRY_BOOL_COUNT",
+      "mutation": "supply True as the source constraint count",
+      "surface": "Section 11 padding projection",
+      "test": "FieldAndR1CSTests.test_reported_hegemon_geometry_is_only_an_exact_padding_projection"
+    },
+    {
+      "expected": "reject",
+      "id": "WITNESS_COORDINATE_0",
+      "mutation": "increment witness coordinate 0",
+      "surface": "R1CS relation",
+      "test": "FieldAndR1CSTests.test_toy_r1cs_binds_every_witness_coordinate"
+    },
+    {
+      "expected": "reject",
+      "id": "WITNESS_COORDINATE_1",
+      "mutation": "increment witness coordinate 1",
+      "surface": "R1CS relation",
+      "test": "FieldAndR1CSTests.test_toy_r1cs_binds_every_witness_coordinate"
+    },
+    {
+      "expected": "reject",
+      "id": "WITNESS_COORDINATE_2",
+      "mutation": "increment witness coordinate 2",
+      "surface": "R1CS relation",
+      "test": "FieldAndR1CSTests.test_toy_r1cs_binds_every_witness_coordinate"
+    },
+    {
+      "expected": "reject",
+      "id": "WITNESS_COORDINATE_3",
+      "mutation": "increment witness coordinate 3",
+      "surface": "R1CS relation",
+      "test": "FieldAndR1CSTests.test_toy_r1cs_binds_every_witness_coordinate"
+    },
+    {
+      "expected": "reject",
+      "id": "UNSATISFIED_HONEST_PROVER",
+      "mutation": "invoke the honest prover on an unsatisfied witness",
+      "surface": "honest prover",
+      "test": "FieldAndR1CSTests.test_honest_prover_rejects_unsatisfied_witness"
+    },
+    {
+      "expected": "reject",
+      "id": "N0_NOT_EQUAL_ELL",
+      "mutation": "set n0 unequal to ell",
+      "surface": "Section 11 geometry",
+      "test": "FieldAndR1CSTests.test_instance_requires_exact_section11_geometry"
+    },
+    {
+      "expected": "reject",
+      "id": "ELL_NOT_POWER_OF_TWO",
+      "mutation": "set ell to a non-power of two",
+      "surface": "Section 11 geometry",
+      "test": "FieldAndR1CSTests.test_instance_requires_exact_section11_geometry"
+    },
+    {
+      "expected": "reject",
+      "id": "PARSER_TRUNCATED",
+      "mutation": "remove the final transcript byte",
+      "surface": "transcript parser",
+      "test": "HonestTranscriptTests.test_parser_rejects_truncation_trailing_and_unknown_keys"
+    },
+    {
+      "expected": "reject",
+      "id": "PARSER_TRAILING_BYTE",
+      "mutation": "append a newline to the transcript",
+      "surface": "transcript parser",
+      "test": "HonestTranscriptTests.test_parser_rejects_truncation_trailing_and_unknown_keys"
+    },
+    {
+      "expected": "reject",
+      "id": "PARSER_LEADING_BYTE",
+      "mutation": "prepend a space to the transcript",
+      "surface": "transcript parser",
+      "test": "HonestTranscriptTests.test_parser_rejects_truncation_trailing_and_unknown_keys"
+    },
+    {
+      "expected": "reject",
+      "id": "PARSER_UNKNOWN_KEY",
+      "mutation": "insert an unknown top-level key",
+      "surface": "transcript parser",
+      "test": "HonestTranscriptTests.test_parser_rejects_truncation_trailing_and_unknown_keys"
+    },
+    {
+      "expected": "reject",
+      "id": "PARSER_DUPLICATE_KEY",
+      "mutation": "insert a duplicate schema key",
+      "surface": "transcript parser",
+      "test": "HonestTranscriptTests.test_parser_rejects_duplicate_keys_bool_version_and_wrong_nested_type"
+    },
+    {
+      "expected": "reject",
+      "id": "PARSER_BOOL_VERSION",
+      "mutation": "replace integer version 1 with JSON true",
+      "surface": "transcript parser",
+      "test": "HonestTranscriptTests.test_parser_rejects_duplicate_keys_bool_version_and_wrong_nested_type"
+    },
+    {
+      "expected": "reject",
+      "id": "PARSER_WRONG_NESTED_TYPE",
+      "mutation": "replace an oracle object with an integer",
+      "surface": "transcript parser",
+      "test": "HonestTranscriptTests.test_parser_rejects_duplicate_keys_bool_version_and_wrong_nested_type"
+    },
+    {
+      "expected": "reject",
+      "id": "PARSER_MUTABLE_STRING_INPUT",
+      "mutation": "pass decoded text instead of immutable bytes",
+      "surface": "transcript parser",
+      "test": "HonestTranscriptTests.test_parser_rejects_duplicate_keys_bool_version_and_wrong_nested_type"
+    },
+    {
+      "expected": "reject",
+      "id": "TRANSCRIPT_INSTANCE_DIGEST",
+      "mutation": "replace the statement digest",
+      "surface": "direct verifier",
+      "test": "HonestTranscriptTests.test_direct_transcript_mutation_corpus_rejects"
+    },
+    {
+      "expected": "reject",
+      "id": "TRANSCRIPT_COMPILER_DIGEST",
+      "mutation": "replace the compiler-binding digest",
+      "surface": "direct verifier",
+      "test": "HonestTranscriptTests.test_direct_transcript_mutation_corpus_rejects"
+    },
+    {
+      "expected": "reject",
+      "id": "TRANSCRIPT_PROFILE_DIGEST",
+      "mutation": "replace the profile digest",
+      "surface": "direct verifier",
+      "test": "HonestTranscriptTests.test_direct_transcript_mutation_corpus_rejects"
+    },
+    {
+      "expected": "reject",
+      "id": "TRANSCRIPT_MU_TILDE",
+      "mutation": "increment mu_tilde",
+      "surface": "direct verifier",
+      "test": "HonestTranscriptTests.test_direct_transcript_mutation_corpus_rejects"
+    },
+    {
+      "expected": "reject",
+      "id": "TRANSCRIPT_EPSILON",
+      "mutation": "increment epsilon",
+      "surface": "direct verifier",
+      "test": "HonestTranscriptTests.test_direct_transcript_mutation_corpus_rejects"
+    },
+    {
+      "expected": "reject",
+      "id": "TRANSCRIPT_R_VECTOR",
+      "mutation": "increment the first equality challenge",
+      "surface": "direct verifier",
+      "test": "HonestTranscriptTests.test_direct_transcript_mutation_corpus_rejects"
+    },
+    {
+      "expected": "reject",
+      "id": "TRANSCRIPT_OUTER_EVALUATION",
+      "mutation": "increment the first outer-mask evaluation",
+      "surface": "direct verifier",
+      "test": "HonestTranscriptTests.test_direct_transcript_mutation_corpus_rejects"
+    },
+    {
+      "expected": "reject",
+      "id": "TRANSCRIPT_V_VALUE",
+      "mutation": "increment v_A",
+      "surface": "direct verifier",
+      "test": "HonestTranscriptTests.test_direct_transcript_mutation_corpus_rejects"
+    },
+    {
+      "expected": "reject",
+      "id": "TRANSCRIPT_U_VALUE",
+      "mutation": "increment u_A",
+      "surface": "direct verifier",
+      "test": "HonestTranscriptTests.test_direct_transcript_mutation_corpus_rejects"
+    },
+    {
+      "expected": "reject",
+      "id": "TRANSCRIPT_RHO",
+      "mutation": "increment rho",
+      "surface": "direct verifier",
+      "test": "HonestTranscriptTests.test_direct_transcript_mutation_corpus_rejects"
+    },
+    {
+      "expected": "reject",
+      "id": "TRANSCRIPT_JOINT_MU",
+      "mutation": "increment the joint target",
+      "surface": "direct verifier",
+      "test": "HonestTranscriptTests.test_direct_transcript_mutation_corpus_rejects"
+    },
+    {
+      "expected": "reject",
+      "id": "TRANSCRIPT_ROUND_COEFFICIENT",
+      "mutation": "increment the first sumcheck coefficient",
+      "surface": "direct verifier",
+      "test": "HonestTranscriptTests.test_direct_transcript_mutation_corpus_rejects"
+    },
+    {
+      "expected": "reject",
+      "id": "TRANSCRIPT_LAST_ALPHA_BOOLEAN",
+      "mutation": "set the final sumcheck challenge to zero",
+      "surface": "direct verifier",
+      "test": "HonestTranscriptTests.test_direct_transcript_mutation_corpus_rejects"
+    },
+    {
+      "expected": "reject",
+      "id": "ORACLE_NAME",
+      "mutation": "rename the first inner oracle",
+      "surface": "oracle shape",
+      "test": "HonestTranscriptTests.test_oracle_shape_mutations_reject_directly"
+    },
+    {
+      "expected": "reject",
+      "id": "ORACLE_SPEC_DIGEST",
+      "mutation": "replace the first inner oracle's spec digest",
+      "surface": "oracle shape",
+      "test": "HonestTranscriptTests.test_oracle_shape_mutations_reject_directly"
+    },
+    {
+      "expected": "reject",
+      "id": "ORACLE_BLOCK_LENGTH",
+      "mutation": "remove one value from an inner oracle",
+      "surface": "oracle shape",
+      "test": "HonestTranscriptTests.test_oracle_shape_mutations_reject_directly"
+    },
+    {
+      "expected": "reject",
+      "id": "OUTER_ORACLE_COUNT",
+      "mutation": "remove the last outer oracle",
+      "surface": "oracle shape",
+      "test": "HonestTranscriptTests.test_oracle_shape_mutations_reject_directly"
+    },
+    {
+      "expected": "direct_accept_output_reject",
+      "id": "QUERYLESS_ORACLE_CONTENT",
+      "mutation": "increment an unopened witness-oracle coordinate",
+      "surface": "queryless direct/output boundary",
+      "test": "HonestTranscriptTests.test_queryless_direct_verifier_does_not_overclaim_oracle_contents"
+    },
+    {
+      "expected": "reject",
+      "id": "OUTPUT_WITNESS_MESSAGE",
+      "mutation": "increment the first output witness coordinate",
+      "surface": "derived output relation",
+      "test": "HonestTranscriptTests.test_output_witness_mutations_reject"
+    },
+    {
+      "expected": "reject",
+      "id": "OUTPUT_INNER_MASK_ENDPOINT",
+      "mutation": "make an inner mask nonzero at zero",
+      "surface": "derived output relation",
+      "test": "HonestTranscriptTests.test_output_witness_mutations_reject"
+    },
+    {
+      "expected": "reject",
+      "id": "OUTPUT_OUTER_MASK_MESSAGE",
+      "mutation": "increment an outer mask coefficient",
+      "surface": "derived output relation",
+      "test": "HonestTranscriptTests.test_output_witness_mutations_reject"
+    },
+    {
+      "expected": "reject",
+      "id": "QUERY_PLAN_OVER_BOUND",
+      "mutation": "request two coordinates from a one-query oracle",
+      "surface": "public sampler",
+      "test": "SimulatorAndBoundaryTests.test_query_plan_over_bound_or_duplicate_rejects"
+    },
+    {
+      "expected": "reject",
+      "id": "QUERY_PLAN_DUPLICATE",
+      "mutation": "request the same oracle coordinate twice",
+      "surface": "public sampler",
+      "test": "SimulatorAndBoundaryTests.test_query_plan_over_bound_or_duplicate_rejects"
+    },
+    {
+      "expected": "reject",
+      "id": "PUBLIC_VIEW_JOINT_MU",
+      "mutation": "increment the simulated joint target",
+      "surface": "public-view verifier",
+      "test": "SimulatorAndBoundaryTests.test_public_view_mutations_reject"
+    },
+    {
+      "expected": "reject",
+      "id": "PUBLIC_VIEW_MU_TILDE",
+      "mutation": "increment the simulated initial claim",
+      "surface": "public-view verifier",
+      "test": "SimulatorAndBoundaryTests.test_public_view_mutations_reject"
+    },
+    {
+      "expected": "reject",
+      "id": "PUBLIC_VIEW_U_VALUE",
+      "mutation": "increment the simulated public contribution",
+      "surface": "public-view verifier",
+      "test": "SimulatorAndBoundaryTests.test_public_view_mutations_reject"
+    },
+    {
+      "expected": "reject",
+      "id": "PUBLIC_VIEW_DUPLICATE_ORACLE",
+      "mutation": "duplicate an oracle query record",
+      "surface": "public-view verifier",
+      "test": "SimulatorAndBoundaryTests.test_public_view_mutations_reject"
+    },
+    {
+      "expected": "reject",
+      "id": "PRINTED_STEP9_IDENTITY_STATE",
+      "mutation": "feed the printed pair state to Definition 5.2 identity",
+      "surface": "typed succinct linear form",
+      "test": "SimulatorAndBoundaryTests.test_printed_step9_state_is_ill_typed_and_both_repairs_agree"
+    },
+    {
+      "expected": "reject",
+      "id": "PRINTED_STEP9_MAIN_MATRIX_STATE",
+      "mutation": "feed an entire R1CS matrix description to the one-by-ell main identity form",
+      "surface": "typed succinct linear form",
+      "test": "SimulatorAndBoundaryTests.test_printed_step9_state_is_ill_typed_and_both_repairs_agree"
+    },
+    {
+      "expected": "reject",
+      "id": "BRANCH_TAG_1_TO_2",
+      "mutation": "retag a coefficient-1 transcript as coefficient-2",
+      "surface": "branch-relative output relation",
+      "test": "SimulatorAndBoundaryTests.test_printed_step9_state_is_ill_typed_and_both_repairs_agree"
+    },
+    {
+      "expected": "reject",
+      "id": "BRANCH_TAG_2_TO_1",
+      "mutation": "retag a coefficient-2 transcript as coefficient-1",
+      "surface": "branch-relative output relation",
+      "test": "SimulatorAndBoundaryTests.test_printed_step9_state_is_ill_typed_and_both_repairs_agree"
+    },
+    {
+      "expected": "reject",
+      "id": "PAPER_LITERAL_OUTPUT_RELATION",
+      "mutation": "request authority for the unresolved printed output relation",
+      "surface": "paper authority gate",
+      "test": "SimulatorAndBoundaryTests.test_paper_literal_output_relation_always_fails_closed"
+    },
+    {
+      "expected": "reject",
+      "id": "VERIFY_CHANGED_COMPILER_BINDING",
+      "mutation": "verify against an instance with a different compiler digest",
+      "surface": "statement binding",
+      "test": "HonestTranscriptTests.test_statement_matrix_and_compiler_bindings_are_exact"
+    },
+    {
+      "expected": "reject",
+      "id": "VERIFY_CHANGED_MATRIX",
+      "mutation": "verify against an instance with a changed A matrix",
+      "surface": "statement binding",
+      "test": "HonestTranscriptTests.test_statement_matrix_and_compiler_bindings_are_exact"
+    }
+  ],
+  "schema": "hegemon.cfw26-section11-r1cs-ior.mutations.v1"
+}

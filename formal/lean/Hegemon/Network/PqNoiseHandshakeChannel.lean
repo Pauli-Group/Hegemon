@@ -846,24 +846,24 @@ theorem accepted_authenticated_pq_handshake_initial_pq_protect_open_facts
       openNextSendCounter := ?_
       openNextRecvCounter := ?_
       protectOpenSlotsDistinct := ?_ }
-  · simpa [pqChannelStateFromHandshake] using hProtectSlot
-  · simpa [pqChannelStateFromHandshake] using hProtectNotRecv
+  · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using hProtectSlot
+  · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using hProtectNotRecv
   · rw [hProtectSlot]
     exact PqNoise.aad_info_distinct_from_send
   · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using
       hProtectNonce
-  · simpa [pqChannelStateFromHandshake] using hProtectRole
+  · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using hProtectRole
   · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using
       hProtectSend
   · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using
       hProtectRecv
-  · simpa [pqChannelStateFromHandshake] using hOpenSlot
-  · simpa [pqChannelStateFromHandshake] using hOpenNotSend
+  · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using hOpenSlot
+  · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using hOpenNotSend
   · rw [hOpenSlot]
     exact PqNoise.aad_info_distinct_from_recv
   · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using
       hOpenNonce
-  · simpa [pqChannelStateFromHandshake] using hOpenRole
+  · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using hOpenRole
   · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using
       hOpenSend
   · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using
@@ -872,10 +872,10 @@ theorem accepted_authenticated_pq_handshake_initial_pq_protect_open_facts
     have protectedIsRecv :
         protectedSlot = PqNoise.recvSlot surface.role := by
       rw [sameSlot]
-      simpa [pqChannelStateFromHandshake] using hOpenSlot
+      simpa [pqChannelStateFromHandshake, PqNoise.initialState] using hOpenSlot
     have protectedNotRecv :
         protectedSlot ≠ PqNoise.recvSlot surface.role := by
-      simpa [pqChannelStateFromHandshake] using hProtectNotRecv
+      simpa [pqChannelStateFromHandshake, PqNoise.initialState] using hProtectNotRecv
     exact protectedNotRecv protectedIsRecv
 
 theorem accepted_authenticated_pq_handshake_initial_pq_peer_frame_admission_facts
@@ -919,10 +919,10 @@ theorem accepted_authenticated_pq_handshake_initial_pq_peer_frame_admission_fact
       hPeerOpenRecv⟩
   have hProtectedSlotSend :
       protectedSlot = PqNoise.sendSlot surface.role := by
-    simpa [pqChannelStateFromHandshake] using hProtectSlot
+    simpa [pqChannelStateFromHandshake, PqNoise.initialState] using hProtectSlot
   have hPeerOpenedSlotRecv :
       peerOpenedSlot = PqNoise.recvSlot (peerRole surface.role) := by
-    simpa [peerPqChannelStateFromHandshake] using hPeerOpenSlot
+    simpa [peerPqChannelStateFromHandshake, PqNoise.initialState] using hPeerOpenSlot
   have hProtectedNonceZero :
       protectedNonce = PqNoise.nonceFromCounter 0 := by
     simpa [pqChannelStateFromHandshake, PqNoise.initialState] using
@@ -949,8 +949,8 @@ theorem accepted_authenticated_pq_handshake_initial_pq_peer_frame_admission_fact
       peerOpenedNextRole := ?_
       peerOpenedNextSendCounter := ?_
       peerOpenedNextRecvCounter := ?_ }
-  · simpa [pqChannelStateFromHandshake] using hProtectNotRecv
-  · simpa [peerPqChannelStateFromHandshake] using hPeerOpenNotSend
+  · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using hProtectNotRecv
+  · simpa [peerPqChannelStateFromHandshake, PqNoise.initialState] using hPeerOpenNotSend
   · calc
       protectedSlot = PqNoise.sendSlot surface.role := hProtectedSlotSend
       _ = PqNoise.recvSlot (peerRole surface.role) :=
@@ -959,12 +959,12 @@ theorem accepted_authenticated_pq_handshake_initial_pq_peer_frame_admission_fact
   · exact hProtectedNonceZero.trans hPeerOpenedNonceZero.symm
   · rw [hProtectedSlotSend]
     exact PqNoise.aad_info_distinct_from_send
-  · simpa [pqChannelStateFromHandshake] using hProtectRole
+  · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using hProtectRole
   · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using
       hProtectSend
   · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using
       hProtectRecv
-  · simpa [peerPqChannelStateFromHandshake] using hPeerOpenRole
+  · simpa [peerPqChannelStateFromHandshake, PqNoise.initialState] using hPeerOpenRole
   · simpa [peerPqChannelStateFromHandshake, PqNoise.initialState] using
       hPeerOpenSend
   · simpa [peerPqChannelStateFromHandshake, PqNoise.initialState] using
@@ -2452,20 +2452,20 @@ theorem accepted_authenticated_pq_handshake_initial_protect_open_facts
       openNextSendCounter := ?_
       openNextRecvCounter := ?_
       protectOpenSlotsDistinct := ?_ }
-  · simpa [channelStateFromHandshake] using hProtectSlot
-  · simpa [channelStateFromHandshake] using hProtectNotRecv
+  · simpa [channelStateFromHandshake, SecureChannel.initialState] using hProtectSlot
+  · simpa [channelStateFromHandshake, SecureChannel.initialState] using hProtectNotRecv
   · simpa [channelStateFromHandshake, SecureChannel.initialState] using
       hProtectNonce
-  · simpa [channelStateFromHandshake] using hProtectRole
+  · simpa [channelStateFromHandshake, SecureChannel.initialState] using hProtectRole
   · simpa [channelStateFromHandshake, SecureChannel.initialState] using
       hProtectSend
   · simpa [channelStateFromHandshake, SecureChannel.initialState] using
       hProtectRecv
-  · simpa [channelStateFromHandshake] using hOpenSlot
-  · simpa [channelStateFromHandshake] using hOpenNotSend
+  · simpa [channelStateFromHandshake, SecureChannel.initialState] using hOpenSlot
+  · simpa [channelStateFromHandshake, SecureChannel.initialState] using hOpenNotSend
   · simpa [channelStateFromHandshake, SecureChannel.initialState] using
       hOpenNonce
-  · simpa [channelStateFromHandshake] using hOpenRole
+  · simpa [channelStateFromHandshake, SecureChannel.initialState] using hOpenRole
   · simpa [channelStateFromHandshake, SecureChannel.initialState] using
       hOpenSend
   · simpa [channelStateFromHandshake, SecureChannel.initialState] using
@@ -2474,10 +2474,10 @@ theorem accepted_authenticated_pq_handshake_initial_protect_open_facts
     have protectedIsRecv :
         protectedSlot = SecureChannel.recvSlot (secureRole surface.role) := by
       rw [sameSlot]
-      simpa [channelStateFromHandshake] using hOpenSlot
+      simpa [channelStateFromHandshake, SecureChannel.initialState] using hOpenSlot
     have protectedNotRecv :
         protectedSlot ≠ SecureChannel.recvSlot (secureRole surface.role) := by
-      simpa [channelStateFromHandshake] using hProtectNotRecv
+      simpa [channelStateFromHandshake, SecureChannel.initialState] using hProtectNotRecv
     exact protectedNotRecv protectedIsRecv
 
 end PqNoiseHandshakeChannel

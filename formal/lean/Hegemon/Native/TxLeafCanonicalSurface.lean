@@ -26,6 +26,7 @@ def TxLeafActionBindingFacts
     ∧ input.inputCountMatches = true
     ∧ input.outputCountMatches = true
     ∧ input.versionMatches = true
+    ∧ input.merkleRootMatchesAnchor = true
     ∧ input.feeMatches = true
     ∧ input.stablecoinPayloadMatches = true
     ∧ input.balanceTagMatches = true
@@ -415,7 +416,8 @@ theorem tx_leaf_action_accepts_implies_binding_facts
     tx_leaf_action_accepts_implies_preconditions accepted
   cases input with
   | mk nullifiersMatch commitmentsMatch ciphertextHashesMatch
-      inputCountMatches outputCountMatches versionMatches feeMatches
+      inputCountMatches outputCountMatches versionMatches
+      merkleRootMatchesAnchor feeMatches
       stablecoinPayloadMatches balanceTagMatches receiptStatementHashMatches
       publicInputsDigestMatches proofDigestMatches proofBackendMatches
       ciphertextPayloadHashesMatch =>
@@ -423,7 +425,8 @@ theorem tx_leaf_action_accepts_implies_binding_facts
         TxLeafActionBindingFacts,
         txLeafActionBindingPreconditions
       ] at preconditions ⊢
-      rcases preconditions with ⟨h0123456789012, h13⟩
+      rcases preconditions with ⟨h01234567890123, h14⟩
+      rcases h01234567890123 with ⟨h0123456789012, h13⟩
       rcases h0123456789012 with ⟨h012345678901, h12⟩
       rcases h012345678901 with ⟨h01234567890, h11⟩
       rcases h01234567890 with ⟨h0123456789, h10⟩
@@ -438,14 +441,21 @@ theorem tx_leaf_action_accepts_implies_binding_facts
       rcases h01 with ⟨h0, h1⟩
       exact
         ⟨h0, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10,
-          h11, h12, h13⟩
+          h11, h12, h13, h14⟩
+
+theorem tx_leaf_action_accepts_implies_merkle_root_matches_anchor
+    {input : TxLeafActionBindingInput}
+    (accepted : txLeafActionBindingAccepts input = true) :
+    input.merkleRootMatchesAnchor = true := by
+  have facts := tx_leaf_action_accepts_implies_binding_facts accepted
+  exact facts.2.2.2.2.2.2.1
 
 theorem tx_leaf_action_accepts_implies_stablecoin_payload_matches
     {input : TxLeafActionBindingInput}
     (accepted : txLeafActionBindingAccepts input = true) :
     input.stablecoinPayloadMatches = true := by
   have facts := tx_leaf_action_accepts_implies_binding_facts accepted
-  exact facts.2.2.2.2.2.2.2.1
+  exact facts.2.2.2.2.2.2.2.2.1
 
 theorem native_tx_leaf_binding_and_canonical_surface_implies_transaction_relation
     {input : TxLeafActionBindingInput}
@@ -619,7 +629,8 @@ theorem native_tx_leaf_binding_and_canonical_surface_statement_proof_facts
     tx_leaf_action_accepts_implies_binding_facts bindingAccepted
   rcases txLeafFacts with
     ⟨_hNullifiers, _hCommitments, _hCiphertextHashes, _hInputCount,
-      _hOutputCount, _hVersion, _hFee, _hStablecoinPayload, _hBalanceTag,
+      _hOutputCount, _hVersion, _hMerkleRootAnchor, _hFee,
+      _hStablecoinPayload, _hBalanceTag,
       hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
       hProofBackend, hCiphertextPayloadHashes⟩
   exact
@@ -682,9 +693,10 @@ theorem native_tx_leaf_binding_and_canonical_surface_full_statement_artifact_fac
       _hInputActiveCountsMatch,
       _hOutputActiveCountsMatch,
       _hVersionMatches,
+      _hMerkleRootAnchor,
       _hFeeMatches,
-      _hBalanceTagMatches,
       _hStablecoinPayloadMatches,
+      _hBalanceTagMatches,
       hReceiptStatementHashMatches,
       hPublicInputsDigestMatches,
       hProofDigestMatches,
@@ -817,9 +829,10 @@ theorem native_tx_leaf_full_statement_artifact_output_slot_full_binding
       _hInputActiveCountsMatch,
       hOutputActiveCountsMatch,
       _hVersionMatches,
+      _hMerkleRootAnchor,
       _hFeeMatches,
-      _hBalanceTagMatches,
       _hStablecoinPayloadMatches,
+      _hBalanceTagMatches,
       _hReceiptStatementHashMatches,
       _hPublicInputsDigestMatches,
       _hProofDigestMatches,
@@ -918,7 +931,8 @@ theorem native_tx_leaf_accepted_artifact_statement_boundary_facts
     ⟨canonicalFacts, txLeafPreconditions, txLeafFacts⟩
   rcases txLeafFacts with
     ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
-      hOutputCount, hVersion, hFee, hStablecoinPayload, hBalanceTag,
+      hOutputCount, hVersion, hMerkleRootAnchor, hFee,
+      hStablecoinPayload, hBalanceTag,
       hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
       hProofBackend, hCiphertextPayloadHashes⟩
   exact
@@ -939,7 +953,8 @@ theorem native_tx_leaf_accepted_artifact_statement_boundary_facts
       txLeafActionPreconditions := txLeafPreconditions
       txLeafActionBindingFacts :=
         ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
-          hOutputCount, hVersion, hFee, hStablecoinPayload, hBalanceTag,
+          hOutputCount, hVersion, hMerkleRootAnchor, hFee,
+          hStablecoinPayload, hBalanceTag,
           hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
           hProofBackend, hCiphertextPayloadHashes⟩ }
 
@@ -1023,7 +1038,8 @@ theorem native_tx_leaf_canonical_artifact_boundary_facts
     rw [surface.bindingAnchor, ← surface.relationMerkleRoot]
   rcases txLeafFacts with
     ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
-      hOutputCount, hVersion, hFee, hStablecoinPayload, hBalanceTag,
+      hOutputCount, hVersion, hMerkleRootAnchor, hFee,
+      hStablecoinPayload, hBalanceTag,
       hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
       hProofBackend, hCiphertextPayloadHashes⟩
   exact
@@ -1048,7 +1064,8 @@ theorem native_tx_leaf_canonical_artifact_boundary_facts
       txLeafActionPreconditions := txLeafPreconditions
       txLeafActionBindingFacts :=
         ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
-          hOutputCount, hVersion, hFee, hStablecoinPayload, hBalanceTag,
+          hOutputCount, hVersion, hMerkleRootAnchor, hFee,
+          hStablecoinPayload, hBalanceTag,
           hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
           hProofBackend, hCiphertextPayloadHashes⟩
       spendAndBalance := spendAndBalance
@@ -1627,7 +1644,8 @@ theorem native_tx_leaf_canonical_artifact_boundary_active_input_no_theft
     slotFacts.left.left active
   rcases facts.txLeafActionBindingFacts with
     ⟨hNullifiers, _hCommitments, _hCiphertextHashes, hInputCount,
-      _hOutputCount, _hVersion, _hFee, _hStablecoinPayload, _hBalanceTag,
+      _hOutputCount, _hVersion, _hMerkleRootAnchor, _hFee,
+      _hStablecoinPayload, _hBalanceTag,
       hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
       hProofBackend, _hCiphertextPayloadHashes⟩
   exact
@@ -1846,7 +1864,8 @@ theorem proof_keyed_transfer_payload_active_input_no_theft_full_binding
     ⟨payloadBindingHash, proofBindingHash, payloadFee⟩
   rcases facts.nativeArtifactBoundary.txLeafActionBindingFacts with
     ⟨_hNullifiers, _hCommitments, _hCiphertextHashes, _hInputCount,
-      _hOutputCount, _hVersion, hFee, _hStablecoinPayload, _hBalanceTag,
+      _hOutputCount, _hVersion, _hMerkleRootAnchor, hFee,
+      _hStablecoinPayload, _hBalanceTag,
       _hReceiptStatementHash, _hPublicInputsDigest, _hProofDigest,
       _hProofBackend, hCiphertextPayloadHashes⟩
   exact
@@ -1979,7 +1998,8 @@ theorem proof_keyed_transfer_payload_input_slot_authorization_full_binding
     ⟨payloadBindingHash, proofBindingHash, payloadFee⟩
   rcases txLeafFacts with
     ⟨hNullifiers, _hCommitments, _hCiphertextHashes, hInputCount,
-      _hOutputCount, _hVersion, hFee, _hStablecoinPayload, _hBalanceTag,
+      _hOutputCount, _hVersion, _hMerkleRootAnchor, hFee,
+      _hStablecoinPayload, _hBalanceTag,
       hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
       hProofBackend, hCiphertextPayloadHashes⟩
   exact

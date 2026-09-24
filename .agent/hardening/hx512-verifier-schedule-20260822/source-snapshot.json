@@ -1,0 +1,45 @@
+{
+  "schema": "hegemon.hx512.verifier-schedule-source-snapshot.v1",
+  "date": "2026-08-22",
+  "audit_kind": "source_only",
+  "cargo_or_heavy_build_run": false,
+  "production_authorized": false,
+  "engine_authorized": false,
+  "profile_security_authorized": false,
+  "freeze_complete": false,
+  "source_files": {
+    "circuits/transaction/src/smallwood_engine.rs": {
+      "sha512": null,
+      "quiescent": false
+    },
+    "circuits/transaction/src/smallwood_hx512_transcript.rs": {
+      "sha512": "a33f9c8962ab6127ccc6866bafe1166186d4a3875843d55b7ac612b62e7ae5154726696ad35725f1d5eab22d53a343a9796de11b70fafce8f958b27846742b7c",
+      "quiescent": true
+    }
+  },
+  "required_source_conditions": {
+    "event_1_count_is_eta_times_lvcs_rows": true,
+    "fresh_prefix_is_raw_root_h3_h5": false,
+    "fresh_prefix_additional_inner_bytes_is_128": true,
+    "hx_digest_word_roundtrip_preserves_raw_bytes": true,
+    "deferred_claims_save_exact_prior_chain_snapshots": true,
+    "root_then_h3_then_h5_checks_required_before_finish": true,
+    "engine_verifier_executes_deferred_schedule": false,
+    "transcript_prefix_mutation_tests_verified": true,
+    "engine_prefix_and_schedule_mutation_tests_verified": false
+  },
+  "transcript_test_evidence": {
+    "runner": "root agent, not this source-only audit",
+    "command_boundary": "prebuilt /tmp/hx512_transcript_test --nocapture",
+    "passed": 9,
+    "failed": 0,
+    "elapsed_seconds": 15.24,
+    "source_mtime": 1787424026,
+    "binary_mtime": 1787424032,
+    "independent_sibling_source_audit": "no remaining in-module schedule/framing/deferred-claim/mutation defect"
+  },
+  "fail_closed_reasons": [
+    "The transcript-side event-1 mismatch is repaired and independently checked, but the engine owner had not handed off a quiescent prefix/parser/deferred-verifier integration at this snapshot.",
+    "The q48/s6 epsilon-1 paper bound C(N,d+2)/|F|^eta caps at one; the engine's bare |F|^-eta replacement is not theorem-backed, so the profile is not security-authorized."
+  ]
+}

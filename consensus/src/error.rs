@@ -90,8 +90,6 @@ pub enum ProofError {
     CommitmentProofVerification(String),
     #[error("missing commitment proof payload")]
     MissingCommitmentProof,
-    #[error("missing aggregation proof payload")]
-    MissingAggregationProof,
     #[error("self-contained aggregation mode requires a proven-batch payload")]
     MissingProvenBatchForSelfContained,
     #[error("proven-batch payload decode failed: {0}")]
@@ -114,26 +112,10 @@ pub enum ProofError {
     TransactionProofInputsMismatch { index: usize, message: String },
     #[error("transaction proof verification failed at index {index}: {message}")]
     TransactionProofVerification { index: usize, message: String },
-    #[error("aggregation proof requires at least one transaction")]
-    AggregationProofEmptyBlock,
     #[error("aggregation proof inputs mismatch: {0}")]
     AggregationProofInputsMismatch(String),
     #[error("aggregation proof verification failed: {0}")]
     AggregationProofVerification(String),
-    #[error("aggregation proof V4 decode failed: {0}")]
-    AggregationProofV4Decode(String),
-    #[error("aggregation proof V4 binding failed: {0}")]
-    AggregationProofV4Binding(String),
-    #[error("aggregation proof V5 decode failed: {0}")]
-    AggregationProofV5Decode(String),
-    #[error("aggregation proof V5 binding failed: {0}")]
-    AggregationProofV5Binding(String),
-    #[error("flat batch proof encode failed: {0}")]
-    FlatBatchProofEncodeFailed(String),
-    #[error("flat batch proof decode failed: {0}")]
-    FlatBatchProofDecodeFailed(String),
-    #[error("flat batch coverage invalid: {0}")]
-    FlatBatchCoverage(String),
     #[error("unsupported proof artifact: {0}")]
     UnsupportedProofArtifact(String),
     #[error("no verifier registered for proof artifact: {0}")]

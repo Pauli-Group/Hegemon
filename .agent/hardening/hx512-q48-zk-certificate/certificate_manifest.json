@@ -1,0 +1,50 @@
+{
+  "artifact": "hegemon-hx512-smallwood-q48-s6-zk-certificate-candidate-v1",
+  "status": "fail_closed_component_certificate_only",
+  "module": {
+    "path": "circuits/transaction/src/smallwood_hx512_zk_certificate.rs",
+    "sha512": "92a02fad6b339b5cb781ebd35197361e6c94ae9593b199b5d7fa542d8fc3cc3d7434591ce7fd2d45a6736f8c3b1f1df60e7879c5c4fdd0a4fff84d42078ac5eb"
+  },
+  "exec_plan": {
+    "path": ".agent/hardening/hx512-q48-zk-certificate/EXECPLAN.md",
+    "sha512": "ac69a94f949a95e6d7ca23431d0991598cbfa1824d08667ada63176c89a19e05da988113d76be074dc9d63b0bf69f029f3d9a99f91b7e6e4f9acdc3e7f255d86"
+  },
+  "module_export": {
+    "path": "circuits/transaction/src/lib.rs",
+    "exact_line": "pub mod smallwood_hx512_zk_certificate;"
+  },
+  "provisional_profile": {
+    "packing_factor": 1024,
+    "constraint_degree": 6,
+    "piop_openings_s": 6,
+    "decs_openings_q": 48,
+    "decs_eta": 5,
+    "decs_domain_size": 1048576,
+    "salt_bytes": 64,
+    "leaf_tape_bytes": 72,
+    "committed_leaf_tape_count": 1048576,
+    "auxiliary_word_count": 0,
+    "relation_rows": null
+  },
+  "exact_cms_qrom_gate": {
+    "query_bound_log2": 64,
+    "loss_factor": 12,
+    "target_bits": 128,
+    "s5_raw_degree_6168_passes": false,
+    "s6_raw_degree_6174_passes": true
+  },
+  "focused_test": {
+    "kind": "dependency_explicit_standalone_rust_test",
+    "passed": 10,
+    "failed": 0,
+    "integrated_crate_rerun": "blocked_by_unrelated_concurrent_transcript_compile_errors"
+  },
+  "authority": {
+    "classical_rom_joint_simulator_proved": false,
+    "adaptive_qrom_lift_proved": false,
+    "complete_zero_knowledge": false,
+    "compiled_refinement": false,
+    "production_authorized": false,
+    "measured_proof_bytes": null
+  }
+}

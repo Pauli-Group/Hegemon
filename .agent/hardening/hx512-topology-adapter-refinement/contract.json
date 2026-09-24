@@ -1,0 +1,86 @@
+{
+  "schema": "hegemon-hx512-topology-adapter-refinement-v1",
+  "frozen_sources": {
+    "circuits/transaction/src/hx512_production_relation.rs": {
+      "sha512": "e58ec353612262eb419cc4343d6a72c459d5963616fdd0b52f0619a80afc5eb525552417599f75bea892392a682c6d61839d37e9aba0a9cb864dc190807d986c",
+      "production_prefix_bytes": 133958,
+      "production_suffix_marker": "#[cfg(any(test, feature = \"hx512-refinement-evidence\"))]\npub(crate) mod tests",
+      "production_prefix_sha512": "b9614b6a9829432dc5e74ff8047d31f3c77131d79e503165d1bd5272ff5aa7d95ffac68005e6b2d2eff27204229cbf3007be83b3152c2a0758e8b10b59f90f6d",
+      "test_suffix_sha512": "ce6d712704e1883b4d68d3c66a2050d05f0fbe8523e8e5547ccfaa1c693a8367449d9f2d7c5f1e4acad6961c4630620277b4b2efb2fbc8ef1166e24435094ccf",
+      "historical_whole_sha512": [
+        "9a5e18d3706a3770faf245717e62b414a5b97534d2a3188d76e808e2e5daaef7db8933bfe42314073d71a24015b64dd80dbee30b8797c0c36b136ab77114ba35",
+        "e9cdaa4adcdd21427a61b566e0f8ac3d1dcd750a9d92e630cf935d298e9e4460ee87bb473cd94fcd3bc647c93117093430657b416ac510c6c8a28075c7a1d8bf"
+      ],
+      "historical_prefix_byte_equality_proved": false
+    },
+    "circuits/transaction/Cargo.toml": {
+      "sha512": "801047eae737ada473fb19248283a125f3ce86dc3b0745521fc3cfc60918193fc2a679e0a992b621b289ea27f901c65388df8803af2bd5e52a65947d76b628c8"
+    },
+    "circuits/transaction/src/smallwood_hx512_topology.rs": {
+      "sha512": "a4b7c3e5fcbe43aeac37abf268bdfd7e736ea3e0dcba935595518c3bcbc16b329f6831fc97e92cb36fc2e6c27439b09d49c0ccc052f2968d6fa24afb2897a9a0"
+    }
+  },
+  "stable_source_sha256": {
+    "protocol/kernel/src/stablecoin_source_v3.rs": "53c7f957d8729a60be84e648e00bf49ac36c381554f1f496bdda011e5e4c1400",
+    "protocol/kernel/src/stablecoin_transition_v3.rs": "c533ff732b68b02a2ded89770f20385ad570ad7c5653f42580635d0fb50a4df9"
+  },
+  "geometry": {
+    "packing_factor": 1024,
+    "maximum_degree": 6,
+    "auxiliary_words": 0,
+    "hash_call_slots": 95,
+    "maximum_compressions": 226,
+    "hash_base_rows": 11892,
+    "hash_base_cells": 12177408,
+    "explicit_padding_cells": 2500,
+    "operation_count": 285744,
+    "rfc_zero_bytes_by_mode": [8748, 8494, 8240, 8570, 8316],
+    "selected_control_positions": 8,
+    "selected_digest_calls": 4
+  },
+  "test_identity_shape_digest_sha512": "9f86ae65cfc4ad7208597595fac33adbf089ef0be5c42180f8f7c9dc0d16c25fae59a5a4ddd0d37bc20d0a59848a2e19392914a65b7fb51d69fdf39c8dba3a95",
+  "known_forward_call_dependencies": {
+    "4": [72, 77, 78],
+    "5": [73, 77]
+  },
+  "test_evidence_feature": {
+    "name": "hx512-refinement-evidence",
+    "default_enabled": false,
+    "production_release_forbidden": true,
+    "deterministic_case_count": 30,
+    "fixture_constructor": "hx512_refinement_fixtures",
+    "verifier_context_accessor": "verifier_context"
+  },
+  "authorization_mask_replay": {
+    "fixture_constructor": "hx512_mode_mask_classification_fixtures",
+    "mode_count": 5,
+    "mask_count_per_mode": 16,
+    "deterministic_case_count": 80,
+    "accepted_case_count": 26,
+    "rejected_case_count": 54,
+    "grammar_owned": true,
+    "live_adapter_replay_required": true,
+    "static_table_sufficient": false
+  },
+  "post_fixture_topology_replay_complete": false,
+  "required_public_capabilities": [
+    "topology_refinement_certificate",
+    "topology_operation_assignments",
+    "topology_cell_assignments",
+    "topology_dependency_assignments",
+    "topology_source_bindings",
+    "topology_digest_export_bindings",
+    "topology_digest_target_bindings",
+    "topology_zero_padding_assignments",
+    "topology_nonhash_row_range",
+    "topology_constant_provenance",
+    "topology_identity_templates",
+    "topology_logical_identities",
+    "topology_linear_identities",
+    "topology_public_bit_bindings",
+    "topology_packed_row_ownership",
+    "topology_csr_constraints",
+    "topology_constraint_partitions"
+  ],
+  "production_authorized": false
+}

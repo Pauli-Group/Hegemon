@@ -49,18 +49,6 @@
       "owner": "release-engineering",
       "reviewed_at": "2026-08-31",
       "remediation": "Remove paste 1.0.15 by lifting arkworks or RISC0 dependency paths once upstream releases clear the macro dependency."
-    },
-    {
-      "id": "RUSTSEC-2026-0253",
-      "package": "lru",
-      "version": "0.7.8",
-      "kind": "unsound",
-      "expires": "2026-09-30",
-      "tracking": "DEP-2026-0007",
-      "reason": "Transitive through reed-solomon-erasure 6.0.0 in state-da. The active Hegemon path constructs ReedSolomon and calls encode; it does not call LruCache::pop, whose panic-safety flaw requires a panicking key destructor during pop.",
-      "owner": "release-engineering",
-      "reviewed_at": "2026-08-31",
-      "remediation": "Upgrade or replace reed-solomon-erasure so the production graph uses lru 0.18.2 or later, then remove this waiver."
     }
   ]
 }

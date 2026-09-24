@@ -28,6 +28,7 @@ def nativeMetadataSourceJson : Option NativeMetadataDecodeSource -> String
 
 def nativeMetadataRejectionJson : Except NativeMetadataDecodeReject NativeMetadataDecodeSource -> String
   | Except.ok _ => "null"
+  | Except.error .legacyForbidden => "\"legacy_forbidden\""
   | Except.error .currentAndLegacyRejected =>
       "\"current_and_legacy_rejected\""
 
@@ -38,8 +39,6 @@ def nativeMetadataBincodeBudgetRejectionJson :
   | some .actionCountOverLimit => "\"action_count_over_limit\""
   | some .actionPayloadOverLimit => "\"action_payload_over_limit\""
   | some .actionPayloadBytesOverLimit => "\"action_payload_bytes_over_limit\""
-  | some .minerPublicKeyOverLimit => "\"miner_public_key_over_limit\""
-  | some .minerSignatureOverLimit => "\"miner_signature_over_limit\""
 
 def syncCaseJson (name fixture : String) (input : SyncDecodeInput) : String :=
   let result := evaluateSyncDecodeRejection input
@@ -123,14 +122,6 @@ def nativeMetadataBincodeBudgetCaseJson
       ++ toString input.actionPayloadBytesTotal ++ ",\n"
     ++ "      \"max_action_payload_bytes_total\": "
       ++ toString input.maxActionPayloadBytesTotal ++ ",\n"
-    ++ "      \"miner_public_key_bytes\": "
-      ++ toString input.minerPublicKeyBytes ++ ",\n"
-    ++ "      \"max_miner_public_key_bytes\": "
-      ++ toString input.maxMinerPublicKeyBytes ++ ",\n"
-    ++ "      \"miner_signature_bytes\": "
-      ++ toString input.minerSignatureBytes ++ ",\n"
-    ++ "      \"max_miner_signature_bytes\": "
-      ++ toString input.maxMinerSignatureBytes ++ ",\n"
     ++ "      \"expected_valid\": " ++ boolJson (result == none) ++ ",\n"
     ++ "      \"expected_rejection\": "
       ++ nativeMetadataBincodeBudgetRejectionJson result ++ "\n"
@@ -138,7 +129,7 @@ def nativeMetadataBincodeBudgetCaseJson
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 3,\n"
+    ++ "  \"schema_version\": 4,\n"
     ++ "  \"sync_codec_cases\": [\n"
     ++ syncCaseJson "sync-valid-bounded-wire" "valid_request" validSync ++ ",\n"
     ++ syncCaseJson "sync-legacy-bincode-rejected" "legacy_bincode_request"
@@ -170,15 +161,15 @@ def vectorJson : String :=
     ++ "  \"native_metadata_decode_cases\": [\n"
     ++ nativeMetadataCaseJson
       "native-metadata-current-selects-current"
-      "current_signed_meta"
+      "current_identity_free_meta"
       validNativeMetadataCurrent ++ ",\n"
     ++ nativeMetadataCaseJson
-      "native-metadata-legacy-fallback-selects-legacy"
+      "native-metadata-legacy-identified-and-rejected"
       "legacy_unsigned_meta"
       validNativeMetadataLegacy ++ ",\n"
     ++ nativeMetadataCaseJson
       "native-metadata-current-trailing-rejects"
-      "current_signed_meta_trailing"
+      "current_identity_free_meta_trailing"
       trailingNativeMetadataCurrent ++ ",\n"
     ++ nativeMetadataCaseJson
       "native-metadata-legacy-trailing-rejects"
@@ -213,17 +204,7 @@ def vectorJson : String :=
       { validNativeMetadataBincodeBudget with
         actionCount := productionMaxNativeBlockActions,
         largestActionPayloadBytes := productionMaxNativeBlockActionPayloadBytes,
-        actionPayloadBytesTotal := productionMaxNativeBlockActionBytes + 1 } ++ ",\n"
-    ++ nativeMetadataBincodeBudgetCaseJson
-      "native-metadata-bincode-budget-miner-key-overrun"
-      "miner_public_key_overrun"
-      { validNativeMetadataBincodeBudget with
-        minerPublicKeyBytes := productionMaxMlDsaPublicKeyBytes + 1 } ++ ",\n"
-    ++ nativeMetadataBincodeBudgetCaseJson
-      "native-metadata-bincode-budget-miner-signature-overrun"
-      "miner_signature_overrun"
-      { validNativeMetadataBincodeBudget with
-        minerSignatureBytes := productionMaxMlDsaSignatureBytes + 1 } ++ "\n"
+        actionPayloadBytesTotal := productionMaxNativeBlockActionBytes + 1 } ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

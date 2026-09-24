@@ -1,0 +1,197 @@
+{
+  "claims": {
+    "abort_selective_failure_composed": false,
+    "binary_field_backend_implemented": false,
+    "complete_zk": false,
+    "current_mask_rank_closed": false,
+    "exact_hegemon_ligerito_is_supported_miop": false,
+    "production_authorized": false,
+    "qrom_fiat_shamir_composed": false,
+    "source_faithful_veil_ligerito_backend_implemented": false,
+    "strict_pq128": false,
+    "whole_view_simulator_implemented": false
+  },
+  "current_ligerito_view": {
+    "compact_multiproof_adds_hiding_entropy": false,
+    "raw_rows_are_serialized_unchanged": true,
+    "terminal_is_serialized_in_full": true,
+    "witness_dependent_clear_fields": [
+      "wide target and reduction values",
+      "two E384 coefficients per lane-fold sumcheck round",
+      "full E384 folded residual vector",
+      "q by 2^fold_variables raw B128 Reed-Solomon column openings",
+      "Merkle root/frontier and Fiat-Shamir schedule as computational views"
+    ]
+  },
+  "decision": {
+    "frontier_eligible": false,
+    "reason_codes": [
+      "CURRENT_FULL_RESIDUAL_MASK_RANK_FAIL",
+      "EXACT_LIGERITO_TRANSCRIPT_NOT_A_VEIL_MIOP",
+      "SLOP_BACKEND_BASEFOLD_SPECIFIC",
+      "SLOP_TWO_ADIC_FIELD_BOUND_EXCLUDES_BINARY_STACK",
+      "NON_ORACLE_HASH_CHECKS_NOT_ARITHMETIZED",
+      "FULL_M4_CONSTRAINT_GEOMETRY_UNKNOWN",
+      "WHOLE_VIEW_SIMULATOR_NOT_IMPLEMENTED",
+      "FIAT_SHAMIR_QROM_COMPOSITION_ABSENT",
+      "SOURCE_PROVENANCE_DIRTY"
+    ],
+    "status": "REJECT_CURRENT_TRANSCRIPT_SOURCE_FAITHFUL_PORT_REQUIRED"
+  },
+  "existing_patch_compatibility": {
+    "char2_hvzk_sumcheck": "locally hides round polynomials only; it supplies no mask generator for the full residual vector and is unsound/privacy-breaking if terminal delta leaks",
+    "compact_multiproof": "authentication-only compression; leaf values and canonical terminal message remain clear",
+    "m4_coefficient_mask": "one global B128 constant-shift dimension; insufficient for one E384 terminal coordinate",
+    "m4_grouped_relation": "removes one correlated clear BaseFold scalar but does not hide Ligerito residual/openings",
+    "m4_random_tail": "suffix B128 entropy; zero rank on every fully active prefix residual column",
+    "outer_libra": "can inform the non-oracle algebraic wrapper but is not wired to the exact Ligerito view"
+  },
+  "published_source": {
+    "binary_b128_e384_type_compatible": false,
+    "crate": "slop-veil 6.4.0",
+    "crate_archive_sha512": "a550dad8843bd826d2e05151c8707b09f979c979593c71a2e2b900d925726236ef6566a7769fd6eb4ad20f93b4ca9037e267fff4dfaa0e5fd312e31fe80976ba",
+    "field_bound": "F and EF implement TwoAdicField",
+    "only_shipped_zk_iop_context": "KoalaBearDegree4Duplex",
+    "proof_backend": "BaseFold-specific ZkStackedPcsProof",
+    "qrom_theorem_present": false,
+    "sha512_backend_present": false,
+    "simulator_api_present": false,
+    "unrestricted_mask_batch_coefficient_bad_event": "alpha=0",
+    "vcs_dirty": true,
+    "vcs_sha": "f66b4bff51d0ccff51d152e0f7f66b2ffedf3529",
+    "warning_experimental_unaudited": true
+  },
+  "query_padding_rank": {
+    "distinct_queries": [
+      1,
+      2,
+      4
+    ],
+    "field": "GF(2^4) executable analogue",
+    "message_columns": 4,
+    "observation_rank": 3,
+    "padding_coefficients": 3,
+    "production_requirement": "prove the same full-rank projection for every admitted set of distinct Ligerito queries over the actual B128 code domain",
+    "q_minus_one_padding_rank": 2,
+    "q_minus_one_rank_gate_passes": false,
+    "query_count": 3,
+    "rank_gate_passes": true
+  },
+  "rank_counterexample": {
+    "conditional_total_variation": "1",
+    "constant_trace_shift_image": 1,
+    "current_joined_rank": 3,
+    "current_mask_rank": 1,
+    "field": "E384=B128[Y]/(Y^3+Y+1)",
+    "fold_challenges": [
+      "Y",
+      "Y"
+    ],
+    "lane_weights_b128_basis_bits": [
+      5,
+      6,
+      6,
+      4
+    ],
+    "left_null_distinguisher": 2,
+    "random_tail_rank_at_fully_active_prefix_column": 0,
+    "rank_gate_passes_current": false,
+    "rank_gate_passes_local_veil_nonzero_coefficient": true,
+    "rank_gate_passes_veil_zero_coefficient": false,
+    "same_relation_witness_direction_images": [
+      3,
+      6,
+      4
+    ],
+    "veil_joined_rank": 3,
+    "veil_three_coordinate_mask_rank": 3,
+    "veil_zero_mask_coefficient_rank": 0,
+    "witness_observation_rank_over_b128": 3
+  },
+  "schema": "hegemon.ligerito-e384-veil-complete-zk-audit.v1",
+  "source_pins": {
+    "paper_text_sha256": "c08a7e40861a082cf7362d07e067e8fd790eb07701a39781e3ba3ab6bd46b790",
+    "repo_sha256": {
+      ".agent/hardening/binius-pq128-proof-size/strict_refold_pcs_model.py": "3cde106361941c6533d19752f7755c366539620d2a7ef0890b6dde5ab2836f55",
+      ".agent/hardening/binius-pq128-proof-size/strict_refold_pcs_prototype.py": "82b70ad2e791f5cd0dc3d305c0f92a1e015d544a5cc063017c7b2d7d510b19da",
+      "prototypes/standalone-shake256-binius/char2-hvzk-sumcheck-kernel/char2_hvzk_sumcheck_audit.py": "d333eed11a5b025c315d0de684e49841dc03936a74db7adaee5e63fecaf8f08e",
+      "prototypes/standalone-shake256-binius/compact-multiproof-patch/codex-terminal-compact-multiproof-v1.patch": "3887fdf4bf52e0fe551dc95dc0a252f15c2d48154e64cfef4fbaa70556229da3",
+      "prototypes/standalone-shake256-binius/m4-random-tail-integration-patch/hegemon-m4-random-tail-after-zk-stack-3f961630.patch": "0602c48f3cc7545186e625d033c3cefe4563431499977531e365144d12232c18",
+      "prototypes/standalone-shake256-binius/m4-zk-coefficient-mask-patch/hegemon-m4-zk-coefficient-mask-source-only-3f961630.patch": "684ad2cde0d49fcb095fd542990dd3dcfa246d7a0378b7ec8f7377fcfa9d2c54"
+    },
+    "slop_sha256": {
+      ".cargo_vcs_info.json": "3c22b32c71efa652d7f9729e244a7ce4daac2957cb8e0928ce7bc7ad44ce6e4c",
+      "Cargo.toml": "9e2fee7e0432c5437b863fcc66382cf7befb7ec6a0cf81226b192e8d80c60dc3",
+      "README.md": "4e40ce525b683fb636a18589509a6d54f3aa8d8d47b488bedb791daa1c3073c8",
+      "src/compiler/ctx.rs": "e7fed13822b28b62943ce3aff9c289821d1737200536aabbfb01bd56eba4f88b",
+      "src/zk/inner/pcs_traits.rs": "2a022ac56dc958414baf1c63c3a71b3bb710b783ad29112a5a57695264823d3e",
+      "src/zk/inner/prover.rs": "6928d359467d5eeb79b5219e43492bb73078f633ac714ba9b4ee55034ca9f94e",
+      "src/zk/stacked_pcs/basefold_verifier_wrapper.rs": "9480df87b62ede5c2d8d04b4f2a967e4b8f22a3e07f95bf55dff30f96b3a958b",
+      "src/zk/stacked_pcs/mod.rs": "4723733d119b008f0f67618c0196b63ce2e544adf6030df45a260e4000ec53e8",
+      "src/zk/stacked_pcs/prover.rs": "ae0c325fc1e6ed5289db0b690eba57364d8cf56e272438060326dd471885a59e",
+      "src/zk/stacked_pcs/verifier.rs": "37d931449ed33aa0fbb1d0ff7346a7d89ac36d9f7ddc7be8a68977411788d449",
+      "src/zk/verifier_ctx.rs": "96eacaf4d3368b1918b1665808089af83919b45623818b6a47cad2f6f4b011b4"
+    }
+  },
+  "veil_premises": {
+    "all_non_oracle_acceptance_checks_are_polynomial_constraints": false,
+    "all_oracles_are_multilinear_over_one_declared_field": false,
+    "at_most_one_evaluation_query_per_commitment_or_sound_conversion": false,
+    "base_protocol_is_sound_fixed_format_public_coin_miop": false,
+    "fiat_shamir_qrom_transform": false,
+    "hash_merkle_domain_and_parser_refinement": false,
+    "ligerito_simple_mcs_binding_and_iopp_strength": false,
+    "non_oracle_constraint_wrapper_simulator": false,
+    "zk_code_projection_rank_for_actual_distinct_queries": false,
+    "zk_multilinear_pcs_partial_simulator": false,
+    "zk_proximity_generator_with_nonzero_random_column_coefficient": false
+  },
+  "veil_required_geometry": {
+    "base_field": "B128",
+    "challenge_field": "E384",
+    "extension_degree": 3,
+    "full_wire_formula": "64*(q*m + lambda*(ceil_log2(m_plus)+ceil_log2(m_times)) + 3) + 48*((q+1)*(2^p+1) + 3*m_prime + s + 11*lambda + k_pad + p + 25)",
+    "full_wire_formula_authority": "paper-symbolic-only",
+    "profile_totals_are_complete_zk_estimates": false,
+    "profiles": {
+      "n16_q38_64gib_model": {
+        "baseline_plus_direct_floor_only_bytes": 148336,
+        "data_columns": 64,
+        "existing_non_zk_model_bytes": 144496,
+        "fold_variables": 6,
+        "log_relation_size": 16,
+        "mask_column_evaluation_bytes": 144,
+        "message_rows_before_padding": 1024,
+        "opened_mask_column_bytes": 1824,
+        "query_count": 38,
+        "random_mask_b128_elements": 3186,
+        "random_mask_columns": 3,
+        "random_padding_b128_elements": 2432,
+        "rlc_evaluation_claim_bytes": 48,
+        "rlc_padding_vector_bytes": 1824,
+        "source_structure_direct_payload_floor_bytes": 3840
+      },
+      "n16_q61_512mib_model": {
+        "baseline_plus_direct_floor_only_bytes": 174736,
+        "data_columns": 64,
+        "existing_non_zk_model_bytes": 168688,
+        "fold_variables": 6,
+        "log_relation_size": 16,
+        "mask_column_evaluation_bytes": 144,
+        "message_rows_before_padding": 1024,
+        "opened_mask_column_bytes": 2928,
+        "query_count": 61,
+        "random_mask_b128_elements": 3255,
+        "random_mask_columns": 3,
+        "random_padding_b128_elements": 3904,
+        "rlc_evaluation_claim_bytes": 48,
+        "rlc_padding_vector_bytes": 2928,
+        "source_structure_direct_payload_floor_bytes": 6048
+      }
+    },
+    "proximity_generator": "last/random-column coefficient must be nonzero",
+    "random_column": "three full B128 columns forming one uniform E384 column",
+    "random_padding": "q independent B128 coordinates per stacked data column",
+    "same_codeword_length_allowed_only_after_distance_and_query_recomputation": true
+  }
+}

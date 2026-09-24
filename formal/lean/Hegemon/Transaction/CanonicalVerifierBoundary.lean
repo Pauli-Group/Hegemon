@@ -634,7 +634,7 @@ theorem canonical_statement_surface_public_binding_valid
   unfold PublicInputBinding.validBinding
   rw [surface.publicBinding]
 
-theorem canonical_statement_surface_p3_public_input_binding_facts
+theorem canonical_statement_surface_verifier_public_input_binding_facts
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}
     {publicFields : PublicInputBinding.PublicFields}
@@ -657,11 +657,11 @@ theorem canonical_statement_surface_p3_public_input_binding_facts
         bindingFields
         bindingBytes
         merkleRoot) :
-    PublicInputBinding.PublicInputP3BindingFacts
+    PublicInputBinding.PublicInputVerifierBindingFacts
       publicFields
       serializedFields
       bound :=
-  PublicInputBinding.bindPublicInputs_some_implies_p3_binding_facts
+  PublicInputBinding.bindPublicInputs_some_implies_verifier_binding_facts
     surface.publicBinding
 
 theorem canonical_statement_surface_statement_length
@@ -1049,7 +1049,7 @@ theorem canonical_statement_surface_stablecoin_mint_exception_surface
       assetId
       delta := by
   have p3Facts :=
-    canonical_statement_surface_p3_public_input_binding_facts surface
+    canonical_statement_surface_verifier_public_input_binding_facts surface
   rcases
       PublicInputBinding.stablecoinBindingMatches_true_fields
         p3Facts.publicStablecoinBindingMatches with

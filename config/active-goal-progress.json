@@ -1,32 +1,69 @@
 {
-  "schema_version": 1,
-  "generated_for_branch": "codex/deployed-smallwood-no-counterfeit-closure",
+  "schema_version": 2,
+  "generated_for_branch": "codex/smallwood-pq128-experiment",
   "goal_thread_id": "019f29c7-3468-78f2-ba8a-6e6ed94c7b02",
-  "goal_status_when_measured": "paused",
-  "measurement_timestamp": "2026-07-14T11:00:15Z",
-  "formal_source_tree_blake3": "7da36c0e85641ba44e21d193ed0218e265ba57d081d87d02b172d29a3e73b52f",
-  "objective": "On branch codex/deployed-smallwood-no-counterfeit-closure, close the four deployed SmallWood no-counterfeit mechanized tracks with an exact production constraint map, canonical cross-object identity, and accepted-block supply composition; remove the selectable Plonky3 transaction backend from the executable dispatch; preserve runtime and testnet compatibility; run all focused, aggregate, adversarial, release, native-smoke, and headless security validation; open a draft pull request; and drive all required GitHub checks green without merging or deploying.",
+  "goal_status_when_measured": "blocked",
+  "measurement_timestamp": "2026-09-03T17:37:00Z",
+  "formal_source_tree_blake3": "328f54862048ed34f847031d947e32b6001a683fd2666a3cb6e99c85ca776a22",
+  "objective": "On branch codex/smallwood-pq128-experiment, preserve the kernel-checked conditional SmallWood V4/Gamma exact-map and block-composition reductions while the production consensus manifest authorizes active V4/Gamma only and formal security/release authority remains false, and record that the canonical-semantic refinement bridge, shipped-Rust verifier evidence construction, finite-QROM-to-block composition, deployed SHA-512 instantiation loss, and a deployed 128-bit post-quantum soundness guarantee remain open; rebuild the formal targets, retain benchmark evidence, classify historical V2/Beta and V3/Beta formats as decoder compatibility without production authority, and make claim governance fail closed.",
   "objective_must_contain": [
-    "codex/deployed-smallwood-no-counterfeit-closure",
-    "close the four deployed SmallWood no-counterfeit mechanized tracks",
-    "remove the selectable Plonky3 transaction backend from the executable dispatch",
-    "preserve runtime and testnet compatibility",
-    "open a draft pull request",
-    "all required GitHub checks green"
+    "codex/smallwood-pq128-experiment",
+    "conditional SmallWood V4/Gamma",
+    "canonical-semantic refinement bridge",
+    "shipped-Rust verifier evidence construction",
+    "finite-QROM-to-block composition",
+    "deployed 128-bit post-quantum soundness guarantee",
+    "production consensus manifest authorizes active V4/Gamma only",
+    "formal security/release authority remains false",
+    "decoder compatibility without production authority",
+    "claim governance fail closed"
   ],
   "source_matrix_path": "config/highest-standard-formal-verification-matrix.json",
-  "measurement_method": "Recompute the weighted average of config/highest-standard-formal-verification-matrix.json property completion percentages. The formal-surface percentage is valid only when measured in a stable paused, blocked, or complete goal state, every required property id and weight matches the fixed highest-standard theorem set, completed properties have no missing_work or remaining_work, completed properties list current evidence and explicit external assumptions, the matrix overall percent equals the recomputed weighted percent, and this ledger matches both. Mechanized assumption closure is recomputed separately against the checker's fixed track and closed-theorem policy; the public active-goal command also requires every credited theorem in the formal security claims set, rejects symlinks in the formal source tree, verifies formal_source_tree_blake3 against both the deterministic path-and-byte digest of every formal/lean/**/*.lean file and an independent Rust-held expected digest, and runs aggregate Hegemon elaboration plus the axiom audit before emitting a passing result.",
-  "overall_completion_percent": 100.0,
+  "measurement_method": "Recompute the 100% weighted formal-surface inventory and the independent mechanized-assumption closure from config/highest-standard-formal-verification-matrix.json. Overall completion is their minimum, currently 50%, so assumption-bound accepted-proof extraction, deployed AIR/row refinement, and production no-counterfeit composition cannot receive closure credit. The checker pins the claim-id baseline, requires tombstones for deletion, requires source-bound machine-readable executed governance-gate evidence, requires the SmallWood claim and blueprint to carry the same conditional authority record, validates the complete formal Lean tree digest, and audits credited theorem propositions.",
+  "overall_completion_percent": 50.0,
   "weighted_completion_percent": 100.0,
   "total_property_count": 18,
   "completed_property_count": 18,
   "total_weight": 100,
-  "external_assumption_boundary": "100% here means complete under the checked matrix method with explicit named cryptographic assumptions, explicit proof-system assumptions, and explicit fail-closed system-model assumptions. It is not a claim of assumption-free primitive crypto, deployed proof-system soundness, DA retention, storage hardware semantics, external bridge soundness, global traffic-analysis privacy, scanner completeness, or live release-infrastructure honesty.",
+  "external_assumption_boundary": "100% formal-surface accounting is not production authorization; overall completion is capped by mechanized-assumption closure. The production consensus manifest authorizes active V4/Gamma only, with no V2/V3 or recursive historical authorization ranges, while formal security/release authority remains false. The deployed SmallWood claim remains conditional on `DeployedSmallWoodBlockKnowledgeSoundnessEvidence`, `DeployedSmallWoodBlockCanonicalSemanticRefinementEvidence`, and `DeployedSmallWoodBlockPoseidon2OutputSecurityAssumptions`. In particular, `ProductionSmallWoodCanonicalSemanticRefinementAssumption` supplies rather than proves the exact-map-to-canonical-semantic bridge, while `ProductionPoseidon2ConstraintDigestRefinementAssumption` and `ProductionPoseidon2AcceptedOutputNoCollisionAssumption` remain the explicit Poseidon output-binding premises. The knowledge-soundness evidence is not constructed from shipped Rust acceptance. Historical V2/Beta and V3/Beta formats are decoder compatibility only and require explicit bounded activation for consensus authority. The finite-QROM probability theorem is not composed with the block theorem, deployed SHA-512 instantiation loss is not bounded, and no deployed 128-bit post-quantum soundness guarantee is established.",
+  "claim_authority": {
+    "claim_id": "formal.deployed-smallwood-no-counterfeit-critical-path",
+    "authority": {
+      "kind": "conditional_lean",
+      "production_authorized": false,
+      "shipped_rust_verifier_refinement_proved": false,
+      "qrom_failure_bound_composed": false,
+      "deployed_hash_instantiation_loss_bounded": false,
+      "concrete_pq_security_bits": null,
+      "required_assumptions": [
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.DeployedSmallWoodBlockKnowledgeSoundnessEvidence",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.DeployedSmallWoodKnowledgeSoundnessEvidence",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.DeployedSmallWoodBlockCanonicalSemanticRefinementEvidence",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.ProductionSmallWoodCanonicalSemanticRefinementAssumption",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.DeployedSmallWoodBlockPoseidon2OutputSecurityAssumptions",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.ProductionPoseidon2OutputSecurityAssumptions",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.ProductionPoseidon2ConstraintDigestRefinementAssumption",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.ProductionPoseidon2AcceptedOutputNoCollisionAssumption"
+      ]
+    }
+  },
   "acceptance_gates": [
-    "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-active-goal-progress config/active-goal-progress.json",
-    "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
-    "bash scripts/verify_native_backend_review_package.sh",
-    "bash scripts/check_formal_core.sh"
+    {
+      "id": "formal-governance-focused-tests",
+      "evidence_kind": "executed_command",
+      "command": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
+      "status": "passed",
+      "exit_code": 0,
+      "executed_at": "2026-09-20T03:28:27Z",
+      "policy_inputs_blake3": "4ff5324b0a1a538951184f23bfd9d51ea6ede267af57b9db84c75be24400eb91",
+      "report": {
+        "passed": true,
+        "test_filter": "governance_",
+        "tests_failed": 0,
+        "tests_passed": 14
+      },
+      "report_blake3": "4695905af5d1a9db0fd1c3a01c0dcdbfaf3a01ca1b07e6b588cd62a788bd13a0"
+    }
   ],
   "evidence_paths": [
     "config/highest-standard-formal-verification-matrix.json",

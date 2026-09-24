@@ -1,0 +1,166 @@
+{
+  "schema": "hegemon.full-pay1x2-all-private-measurement.v1",
+  "measured_on": "2026-08-19",
+  "relation": {
+    "profile": "pay1x2",
+    "full_v5_delta_circuit": true,
+    "geometry_proxy": false,
+    "prospective_kernel_route": "V5/Delta family=1 action=7",
+    "canonical_statement_bytes": 478,
+    "shake256_permutations": 40,
+    "exact_composed_envelope_verifier": true
+  },
+  "source_guard": {
+    "Cargo.toml": "5a16d82ab9b4092356a5a255f31e108639e21524beb368c76977be7b48230804",
+    "Cargo.lock": "f580927ac4ef7222569b883f6d001382791bb2d1db8461fd73044680ac6eb1f5",
+    "src/lib.rs": "a8fcd0193698f37bea4a297750f66bc9f862f132bbabaf58107f2893a6315d5d",
+    "src/main.rs": "873dc3ea57c6517da262a4032194a6d0a66357bcce930d881425596d70039366"
+  },
+  "patches": {
+    "binius_revision": "3f96163049f680b2909f6545690bd929f1b48c44",
+    "binius64-all-private-inputs.patch_sha256": "13eb638f0dcd5264d12ac83ca30efc49e0ed994066c6bd7dc94f6c389041e05d",
+    "pay1x2-all-private-layout.patch_sha256": "621b56131c17c48b8d301d8725c882620474ba786dce6f10f397baa7d968b83e",
+    "run-full-pay1x2.sh_sha256": "5f19ebc3ea8d997089a3c21432bad8ce25f980bc92918184abefb35bf64c7157"
+  },
+  "constraint_system": {
+    "witness_input_commitment": "private_oracle",
+    "compiled_constraints": 1883192,
+    "padded_constraints": 2097152,
+    "compiled_precommit_wires": 0,
+    "compiled_private_wires": 1876198,
+    "compiled_public_wires": 16384,
+    "private_witness_bytes": 2448,
+    "public_statement_bytes": 478
+  },
+  "rate_sweep": [
+    {
+      "log_inverse_rate": 2,
+      "proof_bytes": 381200,
+      "envelope_bytes": 381212,
+      "setup_ms": 634.6993749999999,
+      "witness_and_relation_gate_ms": 1866.157,
+      "prove_ms": 1211.9885,
+      "verify_ms": 175.361041,
+      "fresh_forgery_prove_ms": 4464.923791,
+      "all_gates_passed": true
+    },
+    {
+      "log_inverse_rate": 3,
+      "proof_bytes": 350800,
+      "envelope_bytes": 350812,
+      "setup_ms": 605.7865409999999,
+      "witness_and_relation_gate_ms": 1686.2685,
+      "prove_ms": 2064.5277499999997,
+      "verify_ms": 184.869083,
+      "fresh_forgery_prove_ms": 6759.024208999999,
+      "all_gates_passed": true
+    },
+    {
+      "log_inverse_rate": 4,
+      "proof_bytes": 355856,
+      "envelope_bytes": 355868,
+      "setup_ms": 608.899875,
+      "witness_and_relation_gate_ms": 1644.516417,
+      "prove_ms": 4341.465083,
+      "verify_ms": 204.75341699999998,
+      "fresh_forgery_prove_ms": 11615.465959,
+      "all_gates_passed": true
+    }
+  ],
+  "selected": {
+    "log_inverse_rate": 3,
+    "proof_bytes": 350800,
+    "envelope_bytes": 350812,
+    "below_512_kib_target": true,
+    "below_1_mib_hard_cap": true,
+    "actions_per_64mib_block": 188,
+    "capacity_block_bytes": 67108864,
+    "capacity_block_fixed_bytes": 2525,
+    "capacity_non_proof_action_bytes": 4967
+  },
+  "comparison_to_frozen_precommit_rate3": {
+    "precommit_proof_bytes": 380496,
+    "all_private_proof_bytes": 350800,
+    "proof_bytes_saved": 29696,
+    "proof_reduction_percent": 7.8045498507211635,
+    "precommit_actions_per_64mib_block": 174,
+    "all_private_actions_per_64mib_block": 188
+  },
+  "rate3_rss_harness_repeat": {
+    "backend_command_wall_ms": 14534.708917002717,
+    "prove_ms": 2211.021209,
+    "verify_ms": 171.816625,
+    "peak_rss_bytes": 5474025472,
+    "peak_rss_source": "rusage_children",
+    "free_bytes_before": 34078777344,
+    "free_bytes_at_backend_exit": 34054352896,
+    "final_free_bytes_after_exact_source_and_target_cleanup": 34244206592,
+    "minimum_reserve_bytes": 17179869184
+  },
+  "verification": {
+    "valid": true,
+    "mutation_rejected": true,
+    "canonical_roundtrip": true,
+    "all_public_mutations_rejected": true,
+    "adapter_profile_mutation_rejected": true,
+    "ciphertext_hash_mutation_rejected": true,
+    "network_binding_mutation_rejected": true,
+    "network_source_mutations_rejected": true,
+    "balance_tag_mutation_rejected": true,
+    "changed_proof_rejected": true,
+    "trailing_proof_rejected": true,
+    "recomputed_balance_violation_rejected": true,
+    "recomputed_native_asset_violation_rejected": true,
+    "recomputed_authorization_violation_rejected": true,
+    "carry_boundary_valid": true,
+    "carry_overflow_rejected": true,
+    "range_boundary_rejected": true,
+    "fresh_change_recipient_accepted": true,
+    "envelope_admission": {
+      "wrong_magic_rejected_before_projection": true,
+      "wrong_version_rejected_before_projection": true,
+      "wrong_backend_rejected_before_projection": true,
+      "wrong_profile_rejected_before_projection": true,
+      "truncated_length_rejected_before_projection": true,
+      "short_declared_length_rejected_before_projection": true,
+      "trailing_envelope_rejected_before_projection": true
+    },
+    "action_projection": {
+      "wrong_kernel_binding_rejected_before_proof": true,
+      "wrong_family_route_rejected_before_proof": true,
+      "wrong_action_route_rejected_before_proof": true,
+      "wrong_ciphertext_count_rejected_before_proof": true,
+      "wrong_ciphertext_size_count_rejected_before_proof": true,
+      "wrong_ciphertext_size_rejected_before_proof": true,
+      "wrong_nullifier_count_rejected_before_proof": true,
+      "wrong_commitment_count_rejected_before_proof": true,
+      "wrong_balance_slot_count_rejected_before_proof": true,
+      "wrong_native_slots_rejected_before_proof": true,
+      "nonzero_value_balance_rejected_before_proof": true,
+      "stablecoin_rejected_before_proof": true,
+      "candidate_artifact_rejected_before_proof": true,
+      "wrong_network_binding_rejected_before_proof": true,
+      "wrong_binding_digest_rejected_before_proof": true
+    },
+    "fresh_forgery_negative_control": {
+      "ciphertext_hash_raw_accepted": true,
+      "ciphertext_hash_composed_rejected": true,
+      "network_binding_raw_accepted": true,
+      "network_binding_composed_rejected": true,
+      "balance_tag_raw_accepted": true,
+      "balance_tag_composed_rejected": true
+    }
+  },
+  "security_profile": {
+    "status": "unsupported",
+    "release_qualified": false,
+    "query_security_bits": 96,
+    "semantic_hash": "SHAKE256-448",
+    "proof_hash": "SHA-256 StdHashSuite",
+    "challenge_field": "GF(2^128) BinaryField128bGhash",
+    "qrom_accounting_complete": false,
+    "composed_pq_bits": null,
+    "zero_knowledge_established": false,
+    "claim": "prototype-only measurement; not Hegemon strict-PQ128"
+  }
+}

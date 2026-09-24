@@ -1,0 +1,31 @@
+[package]
+name = "hegemon-binius-strict-hash-profile"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Isolated until the complete ZK and strict algebraic profile are implemented.
+[workspace]
+resolver = "2"
+
+[dependencies]
+binius-compute = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-core = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-field = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-hash = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-m4-prover = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-m4-verifier = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-prover = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-transcript = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+digest = "0.11.3"
+hegemon-m4-full-pay1x2-prototype = { path = "../m4-full-pay1x2-prototype" }
+serde_json = "1.0.140"
+shake = "0.1.0"
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false

@@ -19,8 +19,17 @@ HGN is a shielded-only monetary protocol built for a quantum-adversarial future.
 ### Protocol overview
 The HGN protocol consists of four tightly-coupled subsystems:
 
+Current September 19 status: the fixed-cap `HGV8RP04` authorization/nullifier
+repair is in integration, not production. It preserves q38 and existing
+proof/action caps. The universal middle-support count and its concrete-field
+adapter now pass Lean with no counting assumption; the actual MCA local loss
+is proved below2^-265. That local result is not whole-system security.
+Accepted-transcript/security composition and full adaptive privacy remain open.
+Fresh RP04 proofs and lifecycle evidence are retained for their recorded source
+snapshot; neither older proofs nor those snapshot passes qualify later changes.
+
 1. **Shielded pool and cryptography (`crypto/`, `circuits/`, `wallet/`)** – The pool is modeled as a sparse Merkle accumulator proven via STARKs. ML-DSA/SLH-DSA signature primitives, ML-KEM key encapsulation, and hash-based commitments (Blake3/SHA3, no Pedersen or ECC) underpin the spend authorization flow. Notes transition between states through the circuits defined in `circuits/`, and users interface with them via the wallet note-management APIs.
-2. **Consensus and networking (`consensus/`, `network/`)** - A PoW protocol seals ordered shielded transactions plus one same-block block artifact. On the shipped lane, wallets submit native `tx_leaf` artifacts, authors compress the ordered verified `tx_leaf` stream into one `recursive_block_v2`, and import verifies that artifact against parent state plus canonical tx order. Historical `ReceiptRoot` enum and wire values remain decode-only tombstones and cannot enter block admission.
+2. **Consensus and networking (`consensus/`, `network/`)** - A PoW protocol seals ordered shielded transactions. Every admitted shielded transaction must be a self-contained proof-carrying object: the wallet creates it, peers validate it before relay, miners include the same canonical proof bytes, and a fresh node revalidates them from the block without a block producer, sidecar, aggregate, receipt, or cache standing in for transaction validity. The current production candidate is the compact SmallWood engine with the repaired Poseidon2 V8 transaction relation, HGV8RP04, and the SMZA q38 profile. Its independently randomized retained proofs measure163,409 and163,281 bytes, below the unchanged164,113-byte cap; in-process and actual-socket lifecycle checks pass for their recorded snapshot. Final affected-source validation remains required. The route remains disabled until complete adaptive zero knowledge, composed post-quantum security, accepted-transcript binding, independent review, and release authorization pass. Universal Rust/compiler/OS proofs are not prerequisites for this mathematical work.
 3. **State and execution (`node/src/native`, `state/`, `protocol/`)** – Mining nodes maintain native on-disk state, aggregate optional miner tips into the shielded coinbase path, replay higher-work side branches into canonical sled indexes, and expose programmable hooks for sidecar applications. The `protocol/` crate codifies transaction formats, serialization, tx-artifact envelopes, and block-artifact verification limits.
 4. **Protocol release artifacts and runbooks (`governance/`, `runbooks/`)** – Version schedules define supported proof bindings, issuance parameters, and emergency upgrade paths. Operational runbooks document incident response, upgrade ceremonies, and miner-facing procedures; see [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) for the end-to-end node + wallet pairing walkthrough referenced throughout this whitepaper.
 
@@ -33,7 +42,6 @@ flowchart TB
 
     subgraph Proving["Proving Layer"]
         CT[circuits/transaction]
-        BR[circuits/block-recursion]
     end
 
     subgraph Crypto["PQ Cryptography"]
@@ -50,34 +58,36 @@ flowchart TB
         NN[node/src/native]
     end
 
-    W -->|craft tx + tx_leaf| CT
-    CT -->|ordered verified tx_leaf stream| BR
-    BR -->|recursive_block_v2| CON
+    W -->|craft self-contained tx + ZK proof| CT
+    CT -->|canonical proof-carrying tx| CON
     CON -->|seal native block| NN
     CT --> CR
-    BR --> SM
+    CON --> SM
 ```
 
 The operator `hegemon-node` binary is native. It starts a fresh chain, stores native block and shielded-state metadata in `sled`, mines development PoW blocks, syncs over the Hegemon PQ service, and preserves the existing JSON-RPC method names for walletd, Electron, and scripts. Version 0.10 launches by native profile and environment rather than legacy JSON chain-spec files; the public 0.10 testnet migration is a fresh-genesis restart with a versioned release record, while private devnets use `--dev` plus an isolated base path.
 
-#### Recursive block artifacts and data availability
-On the shipped lane, blocks carry one same-block `recursive_block_v2` artifact that binds the ordered verified `tx_leaf` stream to the block’s canonical `tx_statements_commitment`, state roots, nullifier root, and DA root. The legacy `commitment_proof` bytes remain empty on that lane. Validators accept a non-empty shielded block by (1) verifying the ordered native `tx_leaf` artifacts, (2) recomputing the semantic tuple from parent state plus block order, and (3) verifying the `recursive_block_v2` artifact against that tuple. `ReceiptRoot` remains decodable for wire/storage compatibility but is rejected by the first consensus proof-policy gate.
+#### Transaction proofs and data availability
+The production architecture is fixed: SmallWood proves a two-input, two-output Poseidon2 V8 transaction relation, with separate SMZ9 and additive SMZA candidate encodings. SMZA uses profile 9/domain set 5, 38 final queries, 38 random tails per row, degree-405 masks, and distinct HGV8TX03/SWP8LC03 carriers. Its source maximum is 164,113 proof bytes and 169,772 complete PendingAction bytes; it is not production-authorized. The following historical SMZ9 sizes and receipts do not authorize SMZA. The repaired executable relation uses the eight-byte `HGV8RP03` semantic-relation-v2 program magic, which identifies the format lineage rather than the relation itself: 686 rows, 368 proof columns, 830 nonlinear identities, 19,935 through 20,509 statement-specialized linear identities, and a maximum 21,339-identity soundness union. Its canonical 853,429-byte program has SHA-512 `7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17`; the first 48 bytes, `7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d0`, are the relation id. It covers every one of the sixteen input/output activity masks, every authorization mode, Merkle membership, nullifiers, canonical zero padding for absent output-note sponge lanes, output commitments, balance conservation, and stablecoin state changes. Disabled stablecoin is a canonical pass-through: it binds the actual parent height and requires the before and after roots to equal the native context's current stablecoin root, while the inactive stablecoin asset, policy, magnitude, action-intent, counters, authorization, and witness fields remain zero. `HGV8TX02`, `SWP8LC02`, SMZ9, profile 6, and the 686-by-368 geometry remain unchanged because the relation digest is the semantic compatibility key. The source capability now carries a distinct seven-limb `note_genesis_root` and requires the canonical empty depth-32 Poseidon2 root for a fresh activation; production capability nevertheless remains absent until every evidence gate passes.
+
+Hegemon has no transparent value pool, so production V8 requires both the sign and magnitude of `value_balance` to be canonical zero. The current digest-bound relation enforces that inside the program, and native projection rejects nonzero values again before verification. The source capability's seven-limb `note_genesis_root` is the canonical empty depth-32 Poseidon2 root for a fresh launch; a root alone cannot bootstrap a nonempty append frontier. The selected positive-value source is the miner-local V8 coinbase action `11`. It carries an exact public opening and encrypted Eta note whose seven-limb commitment is recomputed with the same HGV8RP03-format note hash, is accepted only as the final block action after V8 activation, and is rejected from RPC, peer relay, and the mempool. The historical retained spend fixture uses two exact positive action-11 notes at canonical positions zero and one. That fixture does not bind the current repaired relation, and the route remains capability-gated and not production authorized.
+
+An SMZ9 transaction carries one canonical proof. The same bytes must survive wallet construction, RPC submission, relay, mempool admission, mining, block storage, synchronization, restart, reorganization, and fresh-node replay. The verifier rejects all earlier SMZ8, HGF6, and diagnostic proof formats. Aggregates, receipts, caches, and sidecars are never substitutes for the transaction proof.
+
+The maximum-shape projection is 122,863 proof bytes, 128,293 RPC-envelope bytes, 128,297 SCALE inline-argument bytes, and 128,522 bytes for the complete canonical `PendingAction`, including its 225-byte outer record. The inline form is below its 131,072-byte cap by 2,775 bytes, while the complete record has its separate 131,297-byte cap. Two retained artifact-report-v5 proofs from the superseded pre-repair HGV8RP03 program spend the same exact two action-11 coinbase notes at positions zero and one. The primary proof is 122,735 bytes and its complete record is 128,394 bytes; the independent proof is 122,607 bytes and its complete record is 128,266 bytes. They share the exact 960-byte public statement, historical 852,305-byte relation program, ciphertext fixture, relation binding, network, and transcript preamble while their proof hashes, 32-byte salts, and 64-byte transcript roots differ. They do not bind or verify the current 853,429-byte successor program and must not be relabeled under its relation id. Both reports bind the independently reconstructed 830-file, 22,338,428-byte source inventory root `84002dce5de2e03a63ba275d8a7da08ba58804449ad531073b13731aa3ffe25cdedfa116c70ce484b4e062a73b0fb6e6608f53ccf46eb76cb29fe945786b5d8e`. The retained manifest admits exactly 29 payload files, pins both byte-identical generator binaries and the cross-proof chain report, extracts the same proof bytes from every canonical carrier, and invokes both cryptographic verifiers on both proofs. The feature-gated retained test uses the actual wallet request builder and native RPC admission, the peer decoder and relayed-mempool API, real mining and block persistence, competing-branch reorganization, restart, and fresh announced-block import with unchanged action and proof bytes. It does not open HTTP or peer sockets and does not exercise the locator/body-chunk synchronization transport, so those external transport boundaries remain separate release tests. This closes the in-process retained lifecycle receipt for that historical snapshot, not production authorization: adaptive and global security, current-source artifact resealing, independent review, and hermetic release authority still remain, so the capability and successor registry stay empty. The 64 MiB byte-only screen fits 522 projected-maximum complete records with 20,380 bytes left before other block data, but the shared runtime ceiling is 512 V8 actions. Those counts are throughput limits, not a security-history bound; actual multi-action throughput also requires canonical root-chain validation and duplicate-nullifier rejection.
+
+The frozen source-derived composition report is 136,119 bytes with SHA-512 `5346d68e30c7ec99d197669679159af777ae7663029e22fc84da8fbf5e353b1829b4f4368b6449510b25bbf1e1022281891a114f51783148e2423c538e0b5110`; it records `production_eligible=false`. For an explicitly reviewed total `T` of all observed or generated honest proof views, including rejected, orphaned, offline, side-fork, and repeated views, the report charges SHA-512 exposure `Q + 2^24*T`, Poseidon2 exposure `Q + 128*T`, and the exact SHA exponent `e_q(T) = bit_length(2^q + 2^24*T)`. The canonical accepted-proof count `M = 2,097,152` is arithmetic-only and is never substituted for `T`. The source verifier adapter is HGV8RP03-program-derived for every canonical statement and all 64 packed nonlinear lanes. The transaction compiler is complete only to this source-semantics boundary: verified Rust extraction and an in-Lean RFC 7693 BLAKE2b-384 implementation remain open. Activation also requires the remaining privacy and QROM premises, concrete SHA-512 and Poseidon2 reductions, independent review, and a source-bound hermetic release manifest. Until every gate passes, the capability is `None` and consensus rejects the route.
+
+The retained-v5 proofs and carriers preserve their historical bytes, but their
+frozen source inventory predates the v3 security implementation and is not
+current-source release evidence. No retained manifest was silently repinned.
 
 #### Consensus, block proofs, and state management
-`DESIGN.md §6` and `METHODS.md §5` describe how the `state/merkle`, `circuits/block-recursion`, and `protocol-versioning` crates collaborate to keep the chain coherent as primitives evolve. Miners append transactions to the Poseidon-based forests in `state/merkle`, derive the canonical semantic tuple from parent state plus ordered verified `tx_leaf` artifacts, build `recursive_block_v2` locally, then broadcast a PoW solution. Every transaction carries a `VersionBinding { circuit, crypto }`, and block producers batch those into a `VersionMatrix` whose hash becomes the header’s `version_commitment`. The `protocol-versioning` crate exposes helpers for encoding that matrix plus the per-block `VersionBinding` counts so the network can attest exactly which circuit/crypto combinations were accepted in a slot. On ingest, PoW nodes query `VersionSchedule::first_unsupported` before finalizing state; if a block references a binding that the active protocol manifest does not schedule, consensus raises `ConsensusError::UnsupportedVersion` and refuses to advance the Merkle roots even if the hashpower majority momentarily disagrees.
-
-Consensus verifies the ordered native `tx_leaf` artifacts, then verifies the `recursive_block_v2` artifact against the recomputed semantic tuple and updates state roots locally. Receipt-root helpers remain only for bounded research vectors; the proof-policy gate does not admit that route. The removed `FlatBatches` / `MergeRoot` aggregation family is not part of the current product path.
+`DESIGN.md §6`, `METHODS.md §5`, and `.agent/SMALLWOOD_POSEIDON2_PRODUCTION_EXECPLAN.md` describe how the SmallWood transaction proof, `state/merkle`, and protocol-kernel surfaces evolve together. Every transaction carries its own canonical SMZ9 proof. Mined, announced, replayed, and synchronized blocks must use the same V8 policy gate before proof decoding. The gate remains fail-closed until the exact relation, zero-knowledge and post-quantum security arguments, verifier refinement, retained proofs, lifecycle tests, and release manifest all pass.
 
 Protocol releases roll new bindings through the off-chain release-coordination flow documented in `governance/VERSIONING.md`: authors publish a `VersionProposal`, operators stage verifying keys and commitment-proof parameters, and each adopted release line ships the resulting `VersionSchedule` inside the canonical protocol manifest. Proposals can include `UpgradeDirective`s that mandate a dedicated migration circuit, and both the base binding and upgrade circuit appear in the block’s `version_commitment` so operators can measure uptake via the per-block version counts. The consensus crate enforces these policies by matching each observed binding against the live schedule, surfacing errors for unsanctioned bindings, and honoring retirement heights so deprecated circuits fall out automatically.
 
-Operational touchpoints anchor the theory to daily practice. `consensus/bench` replays the ML-DSA/STARK payload sizes described in `DESIGN.md §6` so operators can benchmark PQ-era throughput before activating new bindings. During an emergency swap, `runbooks/emergency_version_swap.md` walks operators through drafting the `VersionProposal`, enabling the mandated `UpgradeDirective`, and monitoring version uptake until the `VersionSchedule` retires the compromised binding. The current product path is no longer the old inline-proof deployment story. Fresh-chain non-empty shielded blocks now use the native same-block recursive aggregation lane: wallets submit native `tx_leaf` artifacts, block authors attach a same-block native `recursive_block` artifact, and import verifies the block through `SelfContainedAggregation` instead of the legacy `InlineTx` product path. The active default shipping tx-proof backend is now `SmallwoodCandidate`, while the old Plonky3 line remains only as a legacy versioned binding for historical decoding and comparison work. The active native backend package under `audits/native-backend-128b` is a separate receipt-root aggregation surface; it still remains `candidate_under_review` pending external cryptanalysis. Future topology growth is tracked in [docs/SCALABILITY_PATH.md](docs/SCALABILITY_PATH.md). Together, the commitment proofs, version commitments, and protocol-release artifacts keep consensus, state, and operations synchronized without cloning the privacy pool.
-
-The shipped recursive block lane is now `RecursiveBlockV2`. Its current bounded-domain fixed artifact is `523,736` bytes under `TREE_RECURSIVE_CHUNK_SIZE_V2 = 1000`, and it is the only recursive lane in the repo with a current constant-size invariant across its supported domain. The current supported domain is a single bounded chunk (`max_supported_txs = 1000`, `max_tree_level = 0`), which is why this point beats the older shallow-tree schedules on the current backend. The older `recursive_block_v1` `699,404`-byte envelope remains legacy-only because a current recursive-cap diagnostic shows steady-state `v1` recursion projects above that width. Proofless sidecar transfers still add about `468` public on-chain bytes per tx and about `4,294` raw ciphertext bytes per tx in DA:
-
-- on-chain growth: `G_on(T, k) ~= T * (0.0377 + 42.14 / k) GiB/day`
-- raw DA growth: `G_da(T) ~= 0.3455 * T GiB/day`
-
-Here `T` is shielded TPS and `k` is average shielded tx per non-empty shielded block. The detailed packing table and block-interval model live in [docs/SCALABILITY_PATH.md](docs/SCALABILITY_PATH.md).
+Operational touchpoints anchor the theory to daily practice. The measured v4 SMZ9 artifacts are height-zero-only, synthetic-anchor rehearsal evidence. The current repaired relation preserves the disabled-mode parent height and stablecoin root, and the native source capability binds the canonical empty note-tree genesis root. The two retained source-inventory-binding v5 proofs belong to the historical 852,305-byte HGV8RP03-format program at SHA-512 `8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e46a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3`; they pass exact carrier readback, cryptographic verification, and the in-process positive-value restart, reorganization, and fresh announced-block-import lifecycle for that pre-repair snapshot only. They neither verify nor bind the current 853,429-byte program. A separate repaired-digest pair and in-process lifecycle are retained for the historical `b1e5c143f7abf052` source snapshot, not the current source inventory. HTTP, peer-socket, and locator/body-chunk synchronization remain external transport tests. During an emergency swap, `runbooks/emergency_version_swap.md` walks operators through the version proposal and retirement process. Earlier SmallWood encodings and all standalone Binius, M4, and Flock profiles are historical or research-only. Moving proof bytes to a miner cache, aggregate, receipt, or sidecar does not satisfy the self-contained validity rule.
 
 #### Shielded transactions and PQ cryptography
 
@@ -100,20 +110,20 @@ sequenceDiagram
 
 Each note in the MASP-style pool carries `(value, asset_id, pk_recipient, pk_auth, rho, r)` as described in `METHODS.md §1`, and the wallet logic in `wallet/` maintains those fields while deriving commitments via `cm = Hc("note" || enc(value) || asset_id || pk_recipient || rho || r || pk_auth)` before inserting them into the STARK-proven Merkle forest in `state/`. Real asset identifiers must be canonical Goldilocks field representatives and cannot use the balance-slot padding sentinel or its reduced field alias. For private predicate threshold notes, the hidden `pk_auth` slot is a policy commitment key derived from the private `policy_root`, threshold, and policy commitment randomness; no signer set, m/n value, approval count, approval nullifier, or action-layer authorization field is published. The `circuits/transaction` crate enforces that every published commitment matches an in-circuit re-computation, while the note handling API exposes the corresponding secrets so a sender can prove knowledge without leaking them on-chain.
 
-Spend authorization follows the hash-based nullifier scheme from `METHODS.md §1.2` and `DESIGN.md §1`: the wallet derives `sk_nf = H("view_nf" || sk_view)` and the `crypto/` primitives derive `nk = H("nk" || sk_nf)` then `nf = H("nf" || nk || rho || pos)` per note, and the STARK constraints in `circuits/transaction` bind each public nullifier to its witness data so the `state/` nullifier set catches double-spends. The formal spend-authorization boundary now proves that successful authorization aligns the public input-flag/nullifier vectors with the private spend-witness vector length before indexed no-theft facts are used; deployed proof-system soundness and witness extraction remain explicit assumptions. Proof witnesses also include Merkle paths for inputs, and the verifier logic wired through `protocol/` only accepts transactions whose STARK proofs simultaneously demonstrate membership, note opening correctness, and adherence to the MASP value equations.
+Spend authorization follows the hash-based nullifier scheme from `METHODS.md §1.2` and `DESIGN.md §1`. The V8 relation recomputes its nullifiers, note commitments, Merkle path, and authorization commitments with the fixed width-16 Poseidon2 parameter set. It supports single-key spends, approval steps, and final threshold spends, including the exact two-input restrictions of the latter modes. Earlier wallet hash paths remain compatibility code and cannot authorize V8. Exact implementation refinement, proof-system soundness, and complete zero knowledge remain release blockers.
 
-Multi-asset conservation is implemented exactly as `METHODS.md §2` prescribes: the circuit forms a permutation-checked multiset of `(asset_id, signed_delta)` pairs, sorts and compresses them, and emits a `balance_tag` commitment that nodes in `consensus/` compare against fee and issuance rules. By constraining the integer ranges in-field and collapsing per-asset totals, the prover shows that every input and output balances out, and `wallet/` surfaces the same accounting so users can audit multi-asset flows locally.
+Multi-asset conservation follows `METHODS.md §2`: V8 constrains the signed input/output balance, fees, issuance, asset identifiers, and stablecoin transition inside the same 120-word public statement. Seven field limbs bind each externally visible digest or intent value without truncation. Native admission must obtain the expected pre-state from authenticated consensus state, verify the proof against that exact statement, and commit the resulting nullifier and output changes atomically. Native and formal refinement must pass before this balance claim can authorize production.
 
-Post-quantum security hinges on the primitives cataloged in `DESIGN.md §1`: ML-DSA handles miner and protocol-authenticated envelope signatures, SLH-DSA anchors long-lived trust roots, and ML-KEM drives note/viewing key encryption, all exposed via the unified `crypto/` crate. Because the STARK proving stack in `circuits/transaction` and the note authorization flow rely only on hash-based commitments and lattice primitives, the pool stays quantum-safe—no elliptic curves or pairing-based assumptions remain for Shor’s algorithm to break, and symmetric/hash margins are sized conservatively rather than treated as a protocol cliff.
+Post-quantum security hinges on the primitives cataloged in `DESIGN.md §1`: ML-DSA handles protocol- and network-authenticated envelope signatures, SLH-DSA anchors long-lived trust roots, and ML-KEM drives note/viewing key encryption, all exposed via the unified `crypto/` crate. Active native V2 block metadata is identity-free and carries no miner signature; proof of work plus the canonical block and action rules supplies native block authority. The STARK and note-authorization paths avoid elliptic-curve, pairing, and factoring assumptions exposed to Shor’s algorithm. Their deployed soundness still depends on the explicitly recorded hash/QROM, semantic-refinement, and compiled-verifier assumptions; the repository does not relabel an interactive error estimate as an end-to-end post-quantum guarantee.
 
 Wallet note ciphertexts now have a theorem- and vector-checked chain-to-DA boundary: chain bytes remove only the canonical compact ML-KEM length field to form the DA hash preimage, and production parsers must reparse that projected DA form with the same public summary before `ciphertext_hash_bytes` is used.
 
-PoW seals and node-authenticated envelopes use the same PQ signing surface: ML-DSA-backed miner identities with hash-derived 32-byte ids. This keeps address encoding stable while aligning wallet and miner verification around lattice and hash-based primitives.
+Node-authenticated protocol envelopes use ML-DSA-backed identities with hash-derived 32-byte ids. Active native V2 PoW seals do not: they contain no miner public key, identity commitment, or signature, and reward ownership is expressed by the canonical shielded coinbase action. Exact signed identity-bearing V1, unsigned V1, and unreleased identity-bearing V2 encodings are recognized only to reject them and are never upgraded. The generic `PowConsensus` miner-identity gate is a separate compatibility and formal surface.
 
-These guarantees are not just prose: `circuits/formal` captures the nullifier uniqueness and MASP balance invariants in TLA+, and `circuits-bench` plus the `wallet-bench` suite publish the prover and client performance envelopes so reviewers can correlate the whitepaper claims with reproducible benchmarking and formal artifacts.
+These intended guarantees are tracked in code and formal artifacts rather than inferred from prose: `circuits/formal` captures nullifier-uniqueness and MASP-balance models, while retained SmallWood research benchmarks and `wallet-bench` expose performance evidence. None of those legacy benchmarks is a measured proof for a fresh successor relation or a production-security certificate.
 
 #### Assessing resistance to Shor’s algorithm
-HGN deliberately removes every discrete-log or factoring dependency that Shor’s algorithm could exploit. The `crypto/` crate standardizes on lattice- and hash-based primitives—ML-DSA (Dilithium-like) for miner and protocol-authenticated signatures, SLH-DSA (SPHINCS+) for long-lived trust roots, and ML-KEM (Kyber-like) for encrypting note/viewing keys—so there are no RSA or elliptic-curve targets to collapse. Hash commitments use 48-byte digests (BLAKE3-384/SHA3-384 externally, Poseidon2-384 in-circuit), and the symmetric/hash layer is dimensioned conservatively so generic quantum search remains a margin issue rather than the primary driver of the threat model. The STARK proving system is fully transparent and anchored in hash collision resistance, so its soundness does not rely on pairings or number-theoretic assumptions either. Finally, the threat model assumes adversaries already possess Shor-class capabilities against classical public-key systems, which is why the protocol bans downgrades to classical primitives and enforces PQ-safe key sizes. Together, these design choices provide a high degree of resistance to Shor’s algorithm across the entire stack—from note commitments and proofs to networking, release artifacts, and operational guardrails.
+HGN deliberately removes every discrete-log or factoring dependency that Shor’s algorithm could exploit. The `crypto/` crate standardizes on lattice- and hash-based primitives—ML-DSA for authenticated envelopes, SLH-DSA for long-lived trust roots, and ML-KEM for note encryption—so the intended transaction path has no RSA, elliptic-curve, or pairing target. V8 uses Poseidon2 only as an algebraic hash inside the transaction relation and SHA-512 for the SmallWood transcript. Neither is a Shor target, but that fact alone does not establish transaction-proof security. The compiled relation refinement, whole-proof zero-knowledge simulator, proof-system composition, finite quantum-random-oracle bound, lifetime query accounting, and implementation refinement remain release requirements.
 
 #### Privacy architecture and upgrade continuity
 The privacy layer is engineered as a single, MASP-style shielded pool from genesis with no transparent escape hatches: commitments, nullifiers, balance conservation, and diversified address derivation all stay inside transparent STARK proofs built on hash- and lattice-only primitives (ML-DSA/SLH-DSA signatures, ML-KEM note encryption, and hash-based commitments). Selective disclosure relies on incoming/outgoing/full viewing keys rather than transparent outputs, preserving address privacy while enabling audits. The protocol removes discrete-log assumptions and trusted setups entirely, accepting larger proof payloads to gain post-quantum resilience. Versioned circuits and commitment proofs keep the shielded pool intact during upgrades so the privacy set stays unified as the protocol evolves.
@@ -123,15 +133,121 @@ The privacy layer is engineered as a single, MASP-style shielded pool from genes
 | Property | Classical Security | Post-Quantum Security | Notes |
 |----------|-------------------|----------------------|-------|
 | **Note encryption (ML-KEM-1024)** | 256 bits | ~128 bits | NIST Level 5; protects sender→recipient payloads |
-| **Commitment binding (Poseidon2-384)** | ~192 bits | ~128 bits | 48-byte digest; collision security |
-| **Nullifier preimage resistance** | ~384 bits | ~192 bits | 48-byte hash output |
-| **Transaction proof soundness** | ≥128 bits | ≥128 bits | Active default `SmallwoodCandidate` profile; see `docs/crypto/tx_proof_smallwood_no_grinding_soundness.md` |
-| **Signatures (ML-DSA-65)** | ~192 bits | ~128 bits | NIST Level 3; used for block/tx authentication |
-| **Merkle path binding** | ~192 bits | ~128 bits | Poseidon2-384; 32–40 depth tree |
+| **V8 Poseidon2 commitment binding** | Parameter-dependent primitive estimate | About 149-bit generic quantum collision work | Primitive estimate only; the composed proof bound is tracked separately |
+| **V8 sender-to-spend nullifier privacy** | Current secret-scalar domain is below 2^64 when the sender knows the note position and rho | Roughly 2^32 generic coherent-search queries in that known-note game; the 128-bit target is not established | The full seven-word nullifier output does not enlarge its one-word secret input. This is distinct from proof zero knowledge and spending-key recovery. |
+| **V8 authorization/nullifier consistency** | Four-word authorization-key projection requires chosen-collision accounting | About 2^85.33 generic quantum collision queries for an ideal four-Goldilocks-word projection | Same authorized key with a different secret PRF limb can produce different nullifiers for one note. Conditional mechanism identified; no concrete colliding credentials or accepted double-spend proof produced. |
+| **Transaction proof soundness** | Conditional model result | Conditional model result | The frozen composition accounts for `Q + 2^24*T` SHA-512 exposure and `Q + 128*T` Poseidon2 exposure, with `e_q(T) = bit_length(2^q + 2^24*T)`. `T` must be an explicit reviewed bound on every observed or generated honest proof view; the accepted canonical count is not a substitute. Concrete reductions and the remaining refinement, privacy, history, and review premises still block production. |
+| **Signatures (ML-DSA-65)** | ~192 bits | ~128 bits | NIST Level 3; used for protocol/network authentication, not active native V2 block metadata |
+| **V8 Merkle path binding** | Parameter-dependent primitive estimate | At least the selected 128-bit target under the recorded parameter assumptions | Depth 32; exact relation and reduction terms must pass release review |
 
 **Anonymity set**: All notes share a single shielded pool—the anonymity set equals the total note count (currently 2³²–2⁴⁰ capacity). Version upgrades do not partition users into separate privacy pools.
 
 **Information leakage**: Transaction timing and proof size are observable; sender, recipient, amounts, and asset types remain hidden. Viewing keys and proofs of disclosure enable targeted disclosure without breaking pool-wide privacy.
+
+The intended privacy claim above is not a completed guarantee for the current
+V8 candidate. The September 14 mathematical review identified the nullifier
+boundaries in the table. Replacing its secret input with public note data would
+stop the credential-alias replay mechanism but make sender spend recognition
+directly computable; that is not a privacy-preserving repair. The proposed
+direction binds a sufficiently wide secret nullifier key to the authenticated
+note key and proves both binding and sender-auxiliary-input privacy. Exact
+source evidence and primary quantum-query references are retained in the
+[nullifier assessment](.agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/nullifier-assessment/index.json).
+Query estimates are not practical attack runtimes or concrete Poseidon2 security
+certificates. The current relation and production capability have not changed.
+
+The SmallWood parameter result, production status, and attack record are kept
+separate. The active SMZ9 calculation uses the exact 686-row, 368-column,
+degree-eight current relation at relation id
+`7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d0`,
+using the HGV8RP03 format magic, with rho five, six PIOP openings, beta two, a
+`2^23` DECS domain, twenty DECS openings, twenty independent 64-byte tapes, and
+eta five. Its source maximum is 122,863 proof bytes. The two retained v5 proofs,
+at 122,735 and 122,607 bytes, instead bind the historical 852,305-byte program at
+SHA-512
+`8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e46a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3`.
+Their manifest and positive in-process wallet-to-fresh-import lifecycle establish
+canonical-byte preservation and source-verifier replay for that snapshot only;
+they do not verify or bind the current relation. A separate pair of 122,735-byte
+repaired-digest proofs and an in-process lifecycle exist for the historical
+`b1e5c143f7abf052` source snapshot. The later `cee3cb81` source snapshot has
+two independently generated 122,543-byte proofs and completed in-process
+reorg and real HTTP/PQ socket lifecycles, including exact locator/body import,
+clean restart and fresh-node sync. See the [exact source and carrier
+receipt](docs/crypto/smz9-campaign/repaired-proof-execution.md#completed-source-frozen-local-carrier-milestone).
+These isolated tests do not supply production authority or public-network
+release coverage. They bind the pre-metadata-correction `180fca50376f7573`
+program, not the current `7e50eba07d84433a` program. The
+[metadata-order repair](docs/crypto/smz9-campaign/metadata-order-repair.md)
+corrects 45 descriptor records while preserving all executable constraints;
+fresh proofs and lifecycle receipts for its new identity remain pending.
+
+The frozen source-security report is 136,119 bytes with SHA-512
+`5346d68e30c7ec99d197669679159af777ae7663029e22fc84da8fbf5e353b1829b4f4368b6449510b25bbf1e1022281891a114f51783148e2423c538e0b5110`.
+It charges SHA-512 exposure `Q + 2^24*T`, Poseidon2 exposure `Q + 128*T`, and
+uses the exact exponent `e_q(T) = bit_length(2^q + 2^24*T)`. Here `T` means
+every observed or generated honest proof view, including rejected, orphaned,
+offline, side-fork, and repeated views. The canonical accepted count
+`M = 2,097,152`, the 512-action runtime cap, and the 64 MiB byte screen are
+arithmetic or throughput controls only and can never replace a reviewed `T`.
+
+The frozen executable privacy report is 4,230 bytes with SHA-512
+`e89ff29b047d85c6121689c4d298f031141d2dac6452f182d5d8d53cdd4ef7694c8616909ade6be95bcf1b1e06e98dd25b13df79bd7372be9a5af0500fe9015b`.
+The honest SMZ9 prover obtains field candidates, its 32-byte salt, and all
+`2^23` 64-byte DECS tapes through `getrandom::fill`; any provider error aborts
+proof construction. The typed `CryptoRng + RngCore` sampler belongs to the
+whole-view refinement harness and its marker traits do not prove uniformity.
+The shared Rust sampler and Lean model now fix canonical Goldilocks rejection,
+the byte layout, and the exact inventory of 12,201 accepted field coins, at
+least 2,950 successful fills, and at least 536,968,552 source bytes. Under an
+ideal independent uniform raw-word premise, Lean proves the 12,201 field
+outputs are jointly uniform. An explicit, invertible allocation map now proves
+the same joint law for the honest prover's witness, nonlinear and linear masks,
+PCS, LVCS, and DECS field coordinates. Its statistical-distance definition covers
+only those field outputs. For fixed admissible challenges and fixed secret offsets,
+Lean also proves equality of the complete algebraic output distributions, including
+their joint correlations. This does not condition or analyze the actual adaptive
+transcript. It does not prove the runtime distribution, OS entropy
+quality, independence across concurrent calls, the full salt/tape law, or the
+quantum-computational distinguishing bound required for the complete runtime
+coin source. This work changes no SMZ9 wire byte: the 122,863-byte maximum is
+unchanged, as are the historical 122,735/122,607-byte retained proofs, which do
+not bind the current repaired relation. The executable harness also has exact programmable SHA-512
+replay and no salt-only oracle program. Its exact lazy
+strict-128 ceiling is `18,889,465,930,379,069,227,007` observed views. The
+remaining constructor-free premises are refinement from the RNG to independent
+uniform coins, applicability of the adaptive hidden-subtree argument in the
+QROM, concrete SHA-512 random-oracle and global composition, and an enforceable
+bound on `T`. The algebraic simulator distance is zero under those premises;
+the adaptive programming loss is accounted separately.
+
+The source-derived lazy upper bound uses the exact executable constraints
+`leaf <= 20` and `leaf + internal <= 372`. It therefore charges caps of 21
+leaf-plus-final 512-bit events and 352 internal 1024-bit events per view. This
+is a sound loss-maximizing envelope, not a claim that one path attains both
+caps simultaneously.
+
+The compiler and conformance work is complete only to the source-semantics
+boundary: all sixteen masks and authorization modes are covered, but verified
+Rust extraction and an in-Lean RFC 7693 BLAKE2b-384 implementation remain.
+Lean now proves the complete structural validity of the exact current
+853,429-byte program using the HGV8RP03 format magic, including every expression
+reference and all 20,605 indexed linear attempts.
+The research theorem now derives the complete unchanged typed transaction
+semantics from canonical public admission and arbitrary acceptance of this
+packed program, including every authorization mode and enabled stable operation
+([exact endpoint](docs/crypto/smz9-campaign/packed-semantic-endpoint.md)).
+Exact encoding/hash binding, Rust execution refinement, reverse typed-lowering
+completeness, and extraction from accepted proof bytes remain separate
+requirements. This one-way semantic result does not establish privacy or
+knowledge soundness.
+An inactive, unselected q20/56 `SMC8` size candidate measured 119,767 inner
+proof bytes and 125,201 bytes for a two-output action, with source ceilings of
+119,879 and 125,313 bytes. It saves 2,984 bytes at the source worst case while
+retaining q20 conditional arithmetic, but has no retained artifact, transport
+route, manifest, or authorization change. Both reports record production false,
+the capability remains `None`, and consensus continues to reject actions 10 and
+11 until every external premise, refinement, review, and release gate passes.
 
 ### Monetary model
 HGN's core monetary posture is simple: shielded bearer money, predictable issuance, and local custody. Supply is enforced inside the protocol's value-balance rules; block subsidies follow the time-normalized halving schedule described in `TOKENOMICS_CALCULATION.md`, fees can be burned, and all rewards land directly inside the shielded pool rather than a transparent account class.
@@ -147,19 +263,19 @@ Protocol manifests and version schedules still coordinate supported bindings and
 ### Privacy, security, and proof of disclosure
 The architecture prioritizes defense-in-depth:
 
-- **Post-quantum guarantees** – All signatures and key exchanges default to PQ-safe primitives maintained in `crypto/`.
+- **Post-quantum primitive posture** – Signatures and key exchanges default to PQ-safe primitives maintained in `crypto/`; transaction-proof soundness remains conditional on the explicit formal boundaries above.
 - **Soundness and correctness** – Every critical path change must update `DESIGN.md`, `METHODS.md`, and any relevant specification artifacts to keep the implementation auditable.
 - **Proof of disclosure** – Proofs of disclosure and scoped viewing keys let users prove specific facts to counterparties or other verifiers without surrendering the rest of their history.
 
 #### Security and assurance program
-[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) documents the baseline adversary: Shor-capable attackers can compromise classical public-key systems, replay malformed traffic, and attempt to bias randomness. This is why every primitive in `crypto/` sticks to ML-DSA/SLH-DSA signatures, ML-KEM key exchange, ≥256-bit symmetric hashes, and 48-byte digests for commitments, why the STARK proving system avoids trusted setups entirely, and why adaptive compromise controls (view-key rotation, nullifier privacy, parameter pinning) must survive even when an attacker briefly controls wallets or consensus nodes.
+[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) documents the baseline adversary: Shor-capable attackers can compromise classical public-key systems, replay malformed traffic, and attempt to bias randomness. This is why the intended transaction path uses ML-DSA/SLH-DSA signatures, ML-KEM key exchange, conventional wide symmetric hashes, and a future fresh typed semantic-digest profile, why the proof system avoids trusted setups, and why adaptive-compromise controls must survive even when an attacker briefly controls wallets or consensus nodes. No transaction-proof security composition currently closes, so these primitive choices are requirements rather than a release claim.
 
 [DESIGN.md §8](DESIGN.md#8-security-assurance-program) outlines the feedback loops that keep those assumptions observable. External cryptanalysis and third-party audits—tracked in [docs/SECURITY_REVIEWS.md](docs/SECURITY_REVIEWS.md)—tie concrete findings back to functions and commits so the PQ parameter set never drifts silently. The TLA+ models under `circuits/formal/` and `consensus/spec/formal/` make witness layouts, balance invariants, and consensus safety reviewable at every release gate, giving reviewers a mechanical view of each subsystem's state. Continuous integration runs the `security-adversarial` workflow plus dedicated fuzz/property tests for transactions, network handshakes, wallet address derivations, and the root-level `tests/security_pipeline.rs`, so regressions surface as blocking signals with attached artifacts. Together, audits, formal specs, and CI logs ensure every subsystem—from proofs to networking—emits evidence that the live system still matches the whitepaper.
 
 Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) whenever the adversarial suite fails, before releases, or after touching witnesses, networking, or wallet encodings. The runbook pins `PROPTEST_CASES`, executes the four adversarial `cargo test` commands (transaction circuit fuzzing, network handshake mutations, wallet address fuzzing, and the cross-component pipeline), and, when necessary, re-runs the TLA+/Apalache jobs for circuit balance and consensus safety. Findings, seeds, and transcripts are captured and logged into [docs/SECURITY_REVIEWS.md](docs/SECURITY_REVIEWS.md), which enforces that mitigation PRs add regression tests plus design updates. This workflow closes the loop between operator playbooks and the canonical review ledger so the assurance process remains enforceable rather than aspirational.
 
 ### Roadmap
-1. **Alpha** – Deliver end-to-end shielded transfers with synthetic test assets, benchmarked via `circuits-bench` and `wallet-bench`.
+1. **Alpha** – Keep shielded-transfer routing fail-closed while completing the four host-only manifest/consensus authority predicates, executing scalar-to-M4 parity, compiling the exact relation into an odd-field complete-ZK challenger, selecting or rejecting that architecture against composed-PQ128 gates, and measuring only a qualifying maximum-shape proof, alongside wallet performance work.
 2. **Beta** – Harden the PoW consensus path, finalize protocol-manifest operations, and document how external miners can sync, mine, and upgrade safely.
 3. **Launch** – Freeze the core issuance schedule and proof surfaces, publish third-party audits, and release reproducible builds for wallet and mining node binaries.
 
@@ -169,7 +285,7 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 
 | Path | Purpose |
 | --- | --- |
-| `circuits/` | Transaction/block STARK circuits plus the `circuits-bench` prover benchmark. |
+| `circuits/` | Transaction and block proof code, including the SmallWood Poseidon2 V8 candidate and retained rejected research benchmarks. |
 | `consensus/` | Ledger/miner logic and the Go `netbench` throughput simulator under `consensus/bench`. |
 | `crypto/` | Rust crate (`synthetic-crypto`) with ML-DSA/SLH-DSA signatures, ML-KEM, and hash/commitment utilities. |
 

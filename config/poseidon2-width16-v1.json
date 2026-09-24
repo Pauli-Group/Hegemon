@@ -1,0 +1,266 @@
+{
+  "schema": "hegemon.poseidon2.width16.parameters.v1",
+  "parameter_set_id": "hegemon-p2w16-v1-114a4e7eb2684d29",
+  "production_authorized": false,
+  "review_status": "candidate_external_review_required",
+  "required_external_review": true,
+  "parameters": {
+    "field": "Goldilocks",
+    "field_modulus": "18446744069414584321",
+    "width": 16,
+    "rate": 8,
+    "capacity": 8,
+    "digest_field_elements": 7,
+    "sbox_degree": 7,
+    "full_rounds": 8,
+    "partial_rounds": 22,
+    "steps_including_initial_linear": 31,
+    "external_matrix_orientation": "M4_kron_P4",
+    "sponge_max_input_elements": 120,
+    "suite_marker_hex": "0x4845475f50323136",
+    "sponge_mode_marker_hex": "0x53504f4e47455631"
+  },
+  "digests": {
+    "source_sha256": "7f298af6a9268d232b5723823d136c1cd68a5f702a25fad8316edcc3b8ff4daa",
+    "round_constants_sha256": "52247f75c0c7ac08ec42845f962d4301db116a7a74362ef8000cb285790880ec",
+    "internal_diagonal_sha256": "cc55ae3623f501aa05dee94a4741ab618362cbd6b80d459c4aa1533ad2a06529",
+    "external_matrix_sha256": "b3618c4f255c84d136997225410fd7d8954890c05e21f20e93157088a39dbca4",
+    "parameter_set_sha256": "114a4e7eb2684d293d13d306a756b03fc734f19edbfb80a07126ab1b2ad9e529",
+    "p3_reference_lock_sha256": "ce29197c80ed83a9436848129a86ae4d9cb849b49af57b80d71416a98b4a54d1"
+  },
+  "algebra": {
+    "alpha_gcd": 1,
+    "base_full_rounds": 6,
+    "base_partial_rounds": 20,
+    "selected_full_rounds": 8,
+    "selected_partial_rounds": 22,
+    "m4_is_mds": true,
+    "external_determinant": "937890625",
+    "internal_determinant": "13755994508561259921",
+    "internal_power_charpolys_irreducible_1_through_32": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "security": {
+    "digest_cardinality": "726838723110994595580454491358820146921680667193683761620621199757331972192631024799065457686786169537158234280875795500554930240880641",
+    "generic_bht_collision_work_bits": 149.33333333254956,
+    "generic_bht_collision_work_meets_128_bit_target": true,
+    "generic_q_cubed_over_output_success_bound_at_2_pow_128_queries": 5.421010871262764e-20,
+    "max_log2_queries_for_2_pow_minus_128_generic_collision_term": 106.66666666588289,
+    "composed_pq128_soundness_established": false,
+    "skipping_class_t_over_4": 4,
+    "sponge_capacity_meets_transposed_matrix_condition": true,
+    "compression_digest_meets_transposed_matrix_condition": true,
+    "midpoint_two_round_blocks": 15,
+    "midpoint_direct_source_images": 17,
+    "midpoint_direct_count_exceeds_width": true
+  },
+  "known_answer_tests": {
+    "permutation_zero": [
+      "0x60cffc11a095a4f6",
+      "0x72899c1ee607ed14",
+      "0x4df3cc4d6b1bc564",
+      "0xc26fe27ff58ae926",
+      "0x3c3a59baedec60ba",
+      "0x544b7efa6912a7f0",
+      "0x0f58443dbbc8f508",
+      "0x92600a0875753918",
+      "0x993899e6b1a4dc23",
+      "0x176443ed0f40bb61",
+      "0x51329b9a5bef1845",
+      "0x1a62243a788d4043",
+      "0xcbad6a50e2aba4cf",
+      "0x30d6ea344ca06272",
+      "0x342acb06b825e707",
+      "0xe8e5df50ae88b3b8"
+    ],
+    "permutation_sequential": [
+      "0x7bdb37f65a141f74",
+      "0xf5a78c9512b524b0",
+      "0x1f2ea94d2f967151",
+      "0xc7ca3a38b3d8c985",
+      "0x33e53f18cad64aab",
+      "0xd7c3457e364739ff",
+      "0x56ad9901f86041c5",
+      "0xb1a8d11b7e155500",
+      "0xdc4da8ca70b05416",
+      "0xb7a617bf235972f9",
+      "0x648b548bec007bb6",
+      "0x9e0f57c272b5d85a",
+      "0xe5a5534d13edc45f",
+      "0x29e908ddebe00774",
+      "0x36da1da2302878d5",
+      "0x34a03056f44029ce"
+    ],
+    "compress14_sequential": [
+      "0xf1bb4ef4525eb582",
+      "0xcb8f0ea800acf13c",
+      "0xfc47d0a9543704df",
+      "0xc4145b9687e3db12",
+      "0xc28ced6376dac7ad",
+      "0x7808b4de83c4c6de",
+      "0xa24937bf2947a5ff"
+    ],
+    "sponge_sequential": {
+      "0": [
+        "0x88246621f900171c",
+        "0xbec493d1c9ede211",
+        "0x6f8bc1e4b9502097",
+        "0xbc1a0826f9d03656",
+        "0xb995e648f6934949",
+        "0xba2c6f55d32823fd",
+        "0xe800e55fca3e9bce"
+      ],
+      "7": [
+        "0x103b4892a4c7e5e8",
+        "0xbd281b900600a274",
+        "0x6aadf5c78d563e86",
+        "0x2bb7c6b3c8512bd1",
+        "0x253d6acaea57154d",
+        "0x1a79d5fcdc419073",
+        "0x5462b0323bdc7232"
+      ],
+      "8": [
+        "0x27e463b93fee5b0f",
+        "0x2339210c8a1fed88",
+        "0x6323d7c3b2467a78",
+        "0xb138277bd72862a9",
+        "0xb09c4812b78c3829",
+        "0x359003e676ce23c0",
+        "0x73f93347a52a3326"
+      ],
+      "9": [
+        "0xe91c4a3b2e87d886",
+        "0x8b9dce5adc782a70",
+        "0x84692339b9252a47",
+        "0xfed791b59d9bd946",
+        "0x8a7d3016323265ce",
+        "0xaf9023e88381e94d",
+        "0xc8498d953b8b9a30"
+      ],
+      "16": [
+        "0xd75872210fadcf1f",
+        "0x2c4eb9594b5f45af",
+        "0x83a91ca665beac62",
+        "0xa65ba4043d2577ad",
+        "0x6192bcb4c1c67be9",
+        "0x5142975f4e438cf3",
+        "0x1a024d8b6fb91640"
+      ],
+      "34": [
+        "0xc737ead317c82a58",
+        "0x887bb44fb156a40b",
+        "0xb80798ab595f6664",
+        "0xd97ddb6481bcb2fb",
+        "0x9f0ec21172afd88d",
+        "0x87281b64de34fe21",
+        "0xed2b3b0d758c6de5"
+      ],
+      "120": [
+        "0x569914256916c7e0",
+        "0x34d6c4f8d0bb4f7e",
+        "0x656ef34f260c20c2",
+        "0xa93761250f83b0a4",
+        "0x4002f05d44e581a0",
+        "0x06830ad194bcd6d7",
+        "0x6feab84b1df32acc"
+      ]
+    }
+  },
+  "modes": {
+    "compress14": {
+      "state_layout": "left[0..7] || right[0..7] || domain || suite_marker",
+      "permutations": 1,
+      "feed_forward": false,
+      "output_lanes": "state[0..7]"
+    },
+    "sponge": {
+      "rate": 8,
+      "capacity_layout": {
+        "lane_8": "domain",
+        "lane_9": "exact_input_length",
+        "lane_10": "SPONGEV1_mode_marker",
+        "lane_11": "final_block_marker_plus_one",
+        "lane_15": "HEG_P216_suite_marker"
+      },
+      "absorb_operation": "field_addition",
+      "empty_input_permutations": 1,
+      "exact_rate_multiple_extra_permutation": false,
+      "output_lanes": "state[0..7]"
+    }
+  },
+  "provenance": {
+    "round_constants": "Poseidon Appendix-E Grain LFSR tuple (1,0,64,16,8,22)",
+    "round_constants_canonical_serialization": "u64 little endian in initial-full, partial, terminal-full order",
+    "horizen_repository": "https://github.com/HorizenLabs/poseidon2",
+    "horizen_commit": "055bde3f4782731ba5f5ce5888a440a94327eaf3",
+    "horizen_instance_commit": "bb476b9ca38198cf5092487283c8b8c5d4317c4e",
+    "horizen_instance_path": "plain_implementations/src/poseidon2/poseidon2_instance_goldilocks.rs",
+    "horizen_instance_file_sha256": "f59415da892e2be57ef9167bb02c25c60acc0d313c5da9a99ec9d6178cc91eb7",
+    "horizen_generator_path": "poseidon2_rust_params.sage",
+    "horizen_generator_file_sha256": "c301c6d074b58cc27f117f59971f405a16c57d10e6140f1025643fa25ba75223",
+    "p3_goldilocks_version": "0.6.3",
+    "p3_goldilocks_crate_sha256": "d03b3f31080df31be723b876709246f8f1e532e1c5b82efb5281d705c8304c63",
+    "p3_poseidon2_version": "0.6.3",
+    "p3_poseidon2_crate_sha256": "43eb8a73a26d14becaed1c67c3e8a047e4311d7909b402383c82ca9643ba17c6",
+    "p3_reference": "tools/poseidon2-width16-p3-reference",
+    "p3_divergence": "The positive reference instantiates p3-poseidon2 with Hegemon's M4_kron_P4 external layer and original Horizen diagonal. Stock p3-goldilocks 0.6.3 uses a different external orientation and diagonal, so its output is retained only as a required negative control."
+  },
+  "cryptanalysis_screen": {
+    "eprint_2026_306": {
+      "url": "https://eprint.iacr.org/2026/306.pdf",
+      "family": "skipping_class",
+      "disposition": "mitigated_by_M4_kron_P4_pending_external_review",
+      "basis": "The external matrix uses the paper's transposed orientation; capacity 8 and digest 7 both exceed t/4 = 4. This local screen is not an independent security review."
+    },
+    "eprint_2026_1254": {
+      "url": "https://eprint.iacr.org/2026/1254.pdf",
+      "family": "degree_annihilation",
+      "disposition": "no_practical_full_round_transfer_found_pending_external_review",
+      "basis": "The repository's local reduced-round screen found no full 8/22 break; it is not a lower bound."
+    },
+    "eprint_2026_1760": {
+      "url": "https://eprint.iacr.org/2026/1760.pdf",
+      "family": "midpoint_reset",
+      "disposition": "direct_attack_prerequisites_absent_pending_external_review",
+      "basis": "The fixed suite has distinct nonadaptive matrices, no feed-forward, and 15 two-round blocks imply 17 direct source images, exceeding width 16. This only excludes the paper's direct construction."
+    }
+  },
+  "release_blockers": [
+    "Independent exact-parameter cryptanalysis of the permutation and both modes",
+    "Composed SmallWood QROM accounting under the protocol-wide query budget",
+    "Native verifier and relation refinement for every production call site",
+    "Consensus versioning, cross-language vectors, and external implementation review"
+  ]
+}

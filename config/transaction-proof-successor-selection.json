@@ -1,0 +1,8 @@
+{
+  "claim_boundary": "The compact V8/Eta/SMZ9 profile-6 tuple is recorded only in fail-closed candidate manifests, with historical SMZ8/profile-5 kept distinct. No transaction-proof successor is selected, the required receipts remain absent, and this inventory cannot authorize production without a reviewed source-registry entry and exact SHA-512 evidence bundle.",
+  "evidence_bundle_path": null,
+  "identity": null,
+  "profile_id": null,
+  "schema": "hegemon.transaction-proof.successor-selection.v1",
+  "selection": "unselected"
+}

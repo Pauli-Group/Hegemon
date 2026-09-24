@@ -9,7 +9,6 @@ use consensus::proof::{
 };
 use consensus::proof_interface::{
     BlockBackendInputs, HeaderProofExt, ProofVerifier,
-    build_experimental_native_receipt_root_artifact,
     experimental_native_receipt_root_verifier_profile,
 };
 use consensus::types::{
@@ -20,7 +19,10 @@ use consensus::types::{
 use consensus::{CommitmentTreeState, NullifierSet, ProofError};
 use crypto::hashes::blake3_384;
 use std::sync::OnceLock;
-use superneo_hegemon::build_native_tx_leaf_artifact_bytes;
+use superneo_hegemon::{
+    build_native_tx_leaf_artifact_bytes, build_native_tx_leaf_receipt_root_artifact_bytes,
+    decode_native_tx_leaf_artifact_bytes,
+};
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{
     Felt, HashFelt, felts_to_bytes48, merkle_node, spend_auth_key_bytes,
@@ -451,11 +453,21 @@ fn build_receipt_root_block_artifacts(
     ReceiptRootProofPayload,
     ProofEnvelope,
 ) {
-    let tx_validity_artifacts = witnesses
+    let built_leaf_artifacts = witnesses
         .iter()
-        .map(|witness| {
-            let built = build_native_tx_leaf_artifact_bytes(witness).expect("native tx leaf bytes");
-            tx_validity_artifact_from_native_tx_leaf_bytes(built.artifact_bytes)
+        .map(|witness| build_native_tx_leaf_artifact_bytes(witness).expect("native tx leaf bytes"))
+        .collect::<Vec<_>>();
+    let native_artifacts = built_leaf_artifacts
+        .iter()
+        .map(|built| {
+            decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes)
+                .expect("decode native tx leaf bytes")
+        })
+        .collect::<Vec<_>>();
+    let tx_validity_artifacts = built_leaf_artifacts
+        .iter()
+        .map(|built| {
+            tx_validity_artifact_from_native_tx_leaf_bytes(built.artifact_bytes.clone())
                 .expect("native tx leaf artifact")
         })
         .collect::<Vec<_>>();
@@ -463,7 +475,7 @@ fn build_receipt_root_block_artifacts(
         .iter()
         .map(|artifact| artifact.receipt.clone())
         .collect::<Vec<_>>();
-    let built = build_experimental_native_receipt_root_artifact(&tx_validity_artifacts)
+    let built = build_native_tx_leaf_receipt_root_artifact_bytes(&native_artifacts)
         .expect("native receipt-root bytes");
     let verifier_profile = experimental_native_receipt_root_verifier_profile();
     let payload = ReceiptRootProofPayload {

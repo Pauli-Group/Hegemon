@@ -1,0 +1,6 @@
+flowchart LR
+    W[Wallet witness] --> L[ZK Binius leaf proof]
+    L --> M[Mempool admission and proof cache]
+    M --> X[REJECTED: specialized aggregate prover]
+    A[Proof-free ordered actions] --> X
+    X --> Y[Unmeasured aggregate and lost self-contained authority]

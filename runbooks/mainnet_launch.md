@@ -76,16 +76,15 @@ This document provides the pre-launch verification checklist and day-of-launch r
 
 ### 📊 Performance Verified (T-7 days)
 
-- [ ] **STARK Prove Time**
-  - Target: < 10 seconds
-  - Actual: _________________ seconds
+- [ ] **SmallWood Proof Pareto Reproduced**
+  - Selected wrapped proof bytes: _________________
+  - Selected prove time: _________________ seconds
+  - Selected verify time: _________________ ms
   ```bash
-  cargo run -p circuits-bench --release -- --iterations 10
+  cargo test -p transaction-circuit \
+    compressed_level5_radix2_roundtrip_benchmark \
+    --release -- --ignored --nocapture
   ```
-
-- [ ] **STARK Verify Time**
-  - Target: < 200 ms
-  - Actual: _________________ ms
 
 - [ ] **Note Scan Time**
   - Target: < 1 second per 1000 notes

@@ -142,8 +142,8 @@
   },
   "local_judgment": {
     "not_a_proof": "This report is an engineering cryptanalysis note, not a formal lower bound. It should be handed to an external Poseidon/Poseidon2 reviewer for a full Groebner/resultant or dedicated algebraic-search assessment.",
-    "status": "no_practical_break_found",
-    "summary": "The paper is a real review trigger, but its concrete reduced-round CICO-2 attacks do not transfer to Hegemon's full 6-limb Poseidon2-384 digest. Under a two-full-round skip grant, the first remaining partial input has degree 49; reducing one effective alpha factor requires 43 coefficient cancellations before output constraints, far beyond the paper-style control budget. A CICO-2-style solver also leaves four Hegemon output limbs unchecked, adding about 256 bits of residual field constraints if handled by root filtering."
+    "status": "no_practical_reduced_round_break_found_but_strict_pq128_gate_fails",
+    "summary": "The paper is a real review trigger, but its concrete reduced-round CICO-2 attacks do not transfer to Hegemon's full 6-limb Poseidon2-384 digest. Under a two-full-round skip grant, the first remaining partial input has degree 49; reducing one effective alpha factor requires 43 coefficient cancellations before output constraints, far beyond the paper-style control budget. A CICO-2-style solver also leaves four Hegemon output limbs unchecked, adding about 256 bits of residual field constraints if handled by root filtering. Separately, six Goldilocks output/capacity words have an exact generic quantum-collision exponent ceiling of only 127 bits, so this no-break result cannot authorize the strict 128-bit production claim."
   },
   "paper": {
     "concrete_target": {
@@ -165,15 +165,18 @@
     "classical_collision_bits": 191.99999999899228,
     "classical_preimage_bits": 383.99999999798456,
     "digest_bits_from_field_limbs": 383.99999999798456,
+    "digest_cardinality": "39402006141350512473373051550956862238057064441100873236170778780169730842489152586560956553585575830719758776401921",
+    "exact_quantum_collision_exponent_ceiling_bits": 127,
     "quantum_collision_bits_bht": 127.99999999932818,
-    "quantum_preimage_bits_grover": 191.99999999899228
+    "quantum_preimage_bits_grover": 191.99999999899228,
+    "strict_128_bit_quantum_collision_gate": false
   },
   "source_files": {
     "constants_rs": "circuits/transaction-core/src/constants.rs",
-    "constants_rs_sha256": "c8ade6ddeb749c139aee049c9eb40d79d6ba11174a62ac3f8bca15bd411a84e3",
+    "constants_rs_sha256": "3f1ec13a129bdd3bba8d0e07d3198ff1e8c6fa4b2ecec5e517743427264a20e4",
     "poseidon2_constants_rs": "circuits/transaction-core/src/poseidon2_constants.rs",
     "poseidon2_constants_rs_sha256": "c35ab02577669f1b86e6c5321e7c43924d45d46cdd3b5f57fb8ddef0de9bd52c",
     "poseidon2_rs": "circuits/transaction-core/src/poseidon2.rs",
-    "poseidon2_rs_sha256": "7011e87d7dae82ec9b53640031c517a6492979c467b4580b40c2255929f2782d"
+    "poseidon2_rs_sha256": "0432952fef6850604773e6f42b7f9e03b898da1ab316e476069e58450484ec25"
   }
 }
