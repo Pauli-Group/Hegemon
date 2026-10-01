@@ -19,17 +19,59 @@ HGN is a shielded-only monetary protocol built for a quantum-adversarial future.
 ### Protocol overview
 The HGN protocol consists of four tightly-coupled subsystems:
 
-Current September 19 status: the fixed-cap `HGV8RP04` authorization/nullifier
-repair is in integration, not production. It preserves q38 and existing
-proof/action caps. The universal middle-support count and its concrete-field
-adapter now pass Lean with no counting assumption; the actual MCA local loss
-is proved below2^-265. That local result is not whole-system security.
-Accepted-transcript/security composition and full adaptive privacy remain open.
-Fresh RP04 proofs and lifecycle evidence are retained for their recorded source
-snapshot; neither older proofs nor those snapshot passes qualify later changes.
+Current working relation: `HGV8RP05` is a development source, not a
+production-authorized verifier. The canonical source fixture is 848,231 bytes
+with SHA-512
+`4b0acd4289abd6ae2f0544857fd3fd0177dff45c2bae2a400fbf687e375944ffd4cf62b6d071ec1f29abd9ddce99c7e4e305e214238b0d34e3c64d7b5a0cde97`;
+Canonical fixture and vector identity preflight now passes, and the identity-
+regeneration marker is cleared for qualification. Production authority remains
+false. Current Rust vector consumption and retained-artifact development
+qualification are recorded for the streamlined runtime source inventory
+`f6641cd0…`; subsequent test-only edits are assessed separately from those
+immutable proof/lifecycle runs.
+The proof, inline-action, and complete `PendingAction` limits remain 164,113,
+169,547, and 169,772 bytes. Strict module checks and dependency-body audits
+pass for the retained accepted-invalid-branch soundness, pairwise authorization,
+initialized-history conservation, and initialized adaptive two-witness privacy
+endpoints. The two-witness bound is `24T²/2^279`, exactly
+`(27/32)·2^-143` at `T = 3·2^64`; it compares the same public adaptive strategy
+with accepted witnesses and the original real-query budget. These are closed
+mathematical arguments under their stated initialization, query/lifetime and
+primitive-game hypotheses, not universal Rust/compiler/OS proofs. The public
+real-versus-witness-independent-simulator endpoint additionally has a checked
+`12T²/2^279` bound, at most `(27/64)·2^-143` at the same lifetime cap.
+The new single-spend history endpoint has passed strict Lean checking: failure
+of its exact generated-history credential/opening/unspent predicate is below
+`2^-130` plus six induced primitive-game advantages, charging extraction once.
+This quantitative claim covers positive native spends. A separately checked
+all-active theorem classifies occupied, known-empty, or colliding historical
+openings; it is not an all-asset unspent theorem or complete threshold
+approval-registry history.
+The focused implementation review explicitly retains Rust parser/verifier
+correspondence and BLAKE2b implementation/projection as trusted boundaries;
+see [the independent-review dispositions](docs/crypto/RP05_INDEPENDENT_REVIEW_RESOLUTIONS.md).
+The current Rust fixture emitter has passed against the unchanged relation.
+Release activation remains open. The retained streamlined RP05 pair measures
+163,665 bytes each and passes source verification, in-process lifecycle guard
+(23.793 seconds), and actual HTTP/PQ socket lifecycle guard (69.438 seconds), including restart,
+fresh-node sync and clean shutdown; the in-process test also covers reorg.
+The four-gate Q38 evidence contract is installed with exact source and receipt
+pins. These are current-candidate development results, not activation authority.
+Retained RP04 proofs and lifecycle results
+apply only to their recorded historical source snapshot.
+
+The September20 known-opening empty-leaf repair removes an extra preimage
+assumption from the written native-supply reduction without adding proof bytes.
+It changes note-tree roots and persisted-state compatibility; affected-source
+Rust and lifecycle qualification remains separate. RP05 uses full seven-word
+policy signer tags, circuit-enforced accumulator origins, and a statement-
+prefixed SMZA leaf hash. Its two added inverse witnesses fit existing unused
+rows; moving two hash calls from the compacted action intent to the policy
+preserves 128 Poseidon calls. The separate legacy 48-byte multisig wallet and
+its stored records are not migrated by this work.
 
 1. **Shielded pool and cryptography (`crypto/`, `circuits/`, `wallet/`)** – The pool is modeled as a sparse Merkle accumulator proven via STARKs. ML-DSA/SLH-DSA signature primitives, ML-KEM key encapsulation, and hash-based commitments (Blake3/SHA3, no Pedersen or ECC) underpin the spend authorization flow. Notes transition between states through the circuits defined in `circuits/`, and users interface with them via the wallet note-management APIs.
-2. **Consensus and networking (`consensus/`, `network/`)** - A PoW protocol seals ordered shielded transactions. Every admitted shielded transaction must be a self-contained proof-carrying object: the wallet creates it, peers validate it before relay, miners include the same canonical proof bytes, and a fresh node revalidates them from the block without a block producer, sidecar, aggregate, receipt, or cache standing in for transaction validity. The current production candidate is the compact SmallWood engine with the repaired Poseidon2 V8 transaction relation, HGV8RP04, and the SMZA q38 profile. Its independently randomized retained proofs measure163,409 and163,281 bytes, below the unchanged164,113-byte cap; in-process and actual-socket lifecycle checks pass for their recorded snapshot. Final affected-source validation remains required. The route remains disabled until complete adaptive zero knowledge, composed post-quantum security, accepted-transcript binding, independent review, and release authorization pass. Universal Rust/compiler/OS proofs are not prerequisites for this mathematical work.
+2. **Consensus and networking (`consensus/`, `network/`)** - PoW seals ordered shielded transactions. The product validity rule is one canonical, self-contained transaction proof: the same bytes must be admitted by the wallet/RPC and relay paths, included by miners, and revalidated from the block by a fresh node; a sidecar, aggregate, receipt, or cache cannot substitute for transaction validity. The current HGV8RP05 development source is not production-authorized. The stated model endpoints have strict checks and proof-body audits. The retained streamlined 163,665-byte proofs pass source verification and both in-process and actual socket lifecycle qualification; release authority remains separate. Older RP04 proofs remain evidence only for their own recorded source snapshot. These results do not establish universal Rust/compiler/OS correspondence or production authorization.
 3. **State and execution (`node/src/native`, `state/`, `protocol/`)** – Mining nodes maintain native on-disk state, aggregate optional miner tips into the shielded coinbase path, replay higher-work side branches into canonical sled indexes, and expose programmable hooks for sidecar applications. The `protocol/` crate codifies transaction formats, serialization, tx-artifact envelopes, and block-artifact verification limits.
 4. **Protocol release artifacts and runbooks (`governance/`, `runbooks/`)** – Version schedules define supported proof bindings, issuance parameters, and emergency upgrade paths. Operational runbooks document incident response, upgrade ceremonies, and miner-facing procedures; see [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) for the end-to-end node + wallet pairing walkthrough referenced throughout this whitepaper.
 
@@ -110,7 +152,7 @@ sequenceDiagram
 
 Each note in the MASP-style pool carries `(value, asset_id, pk_recipient, pk_auth, rho, r)` as described in `METHODS.md §1`, and the wallet logic in `wallet/` maintains those fields while deriving commitments via `cm = Hc("note" || enc(value) || asset_id || pk_recipient || rho || r || pk_auth)` before inserting them into the STARK-proven Merkle forest in `state/`. Real asset identifiers must be canonical Goldilocks field representatives and cannot use the balance-slot padding sentinel or its reduced field alias. For private predicate threshold notes, the hidden `pk_auth` slot is a policy commitment key derived from the private `policy_root`, threshold, and policy commitment randomness; no signer set, m/n value, approval count, approval nullifier, or action-layer authorization field is published. The `circuits/transaction` crate enforces that every published commitment matches an in-circuit re-computation, while the note handling API exposes the corresponding secrets so a sender can prove knowledge without leaking them on-chain.
 
-Spend authorization follows the hash-based nullifier scheme from `METHODS.md §1.2` and `DESIGN.md §1`. The V8 relation recomputes its nullifiers, note commitments, Merkle path, and authorization commitments with the fixed width-16 Poseidon2 parameter set. It supports single-key spends, approval steps, and final threshold spends, including the exact two-input restrictions of the latter modes. Earlier wallet hash paths remain compatibility code and cannot authorize V8. Exact implementation refinement, proof-system soundness, and complete zero knowledge remain release blockers.
+Spend authorization follows the hash-based nullifier scheme from `METHODS.md §1.2` and `DESIGN.md §1`. The V8 relation recomputes its nullifiers, note commitments, Merkle path, and authorization commitments with the fixed width-16 Poseidon2 parameter set. It supports single-key spends, approval steps, and final threshold spends, including the exact two-input restrictions of the latter modes. Earlier wallet hash paths remain compatibility code and cannot authorize V8. RP05's checked model claims and their positive-native historical scope are stated above. Concrete Rust-to-Lean correspondence and primitive implementation correctness remain explicit trusted boundaries; release review and activation remain separate.
 
 Multi-asset conservation follows `METHODS.md §2`: V8 constrains the signed input/output balance, fees, issuance, asset identifiers, and stablecoin transition inside the same 120-word public statement. Seven field limbs bind each externally visible digest or intent value without truncation. Native admission must obtain the expected pre-state from authenticated consensus state, verify the proof against that exact statement, and commit the resulting nullifier and output changes atomically. Native and formal refinement must pass before this balance claim can authorize production.
 
@@ -134,9 +176,10 @@ The privacy layer is engineered as a single, MASP-style shielded pool from genes
 |----------|-------------------|----------------------|-------|
 | **Note encryption (ML-KEM-1024)** | 256 bits | ~128 bits | NIST Level 5; protects sender→recipient payloads |
 | **V8 Poseidon2 commitment binding** | Parameter-dependent primitive estimate | About 149-bit generic quantum collision work | Primitive estimate only; the composed proof bound is tracked separately |
-| **V8 sender-to-spend nullifier privacy** | Current secret-scalar domain is below 2^64 when the sender knows the note position and rho | Roughly 2^32 generic coherent-search queries in that known-note game; the 128-bit target is not established | The full seven-word nullifier output does not enlarge its one-word secret input. This is distinct from proof zero knowledge and spending-key recovery. |
-| **V8 authorization/nullifier consistency** | Four-word authorization-key projection requires chosen-collision accounting | About 2^85.33 generic quantum collision queries for an ideal four-Goldilocks-word projection | Same authorized key with a different secret PRF limb can produce different nullifiers for one note. Conditional mechanism identified; no concrete colliding credentials or accepted double-spend proof produced. |
-| **Transaction proof soundness** | Conditional model result | Conditional model result | The frozen composition accounts for `Q + 2^24*T` SHA-512 exposure and `Q + 128*T` Poseidon2 exposure, with `e_q(T) = bit_length(2^q + 2^24*T)`. `T` must be an explicit reviewed bound on every observed or generated honest proof view; the accepted canonical count is not a substitute. Concrete reductions and the remaining refinement, privacy, history, and review premises still block production. |
+| **V8 sender-to-spend nullifier privacy** | Current RP05 SingleKey source uses five secret field words, with two fixed zero sponge inputs | The 128-bit target is not yet established for the full adaptive game | The SingleKey nullifier uses the same five-word key as authorization, together with note context. The older one-word-secret estimate does not describe this source; entropy, adaptive privacy, other authorization modes, and the selected release identity still need checked evidence. |
+| **V8 authorization/nullifier consistency** | Current RP05 source binds the full seven-word owner digest to the five-word selected credential | Checked pairwise model bound below `2^-129` plus four induced primitive-game advantages | Pairwise consistency is distinct from the current credential/historical-note single-spend join and complete threshold-history reconstruction. See the public review dispositions for scope; none of these model results grants production authorization. |
+| **RP05 positive-native single-spend history** | Five-word credential and seven-word owner bound to the exact historical note and unspent position | Checked initialized model failure bound below `2^-130` plus six induced primitive-game advantages | Uses the original Born measure and one global extraction charge. The all-active classifier is separate; all-asset/zero-value chronology and complete threshold registry history are not claimed. |
+| **Transaction proof soundness** | Conditional model result | Checked accepted-invalid model bound below `2^-130` at the stated lifetime cap | The initialized QROM proof uses a reviewed charged-query cap, not merely an accepted canonical transaction count. SHA-512 is idealized; concrete primitive advantage bounds and Rust/parser/verifier correspondence remain explicit assumptions/boundaries. |
 | **Signatures (ML-DSA-65)** | ~192 bits | ~128 bits | NIST Level 3; used for protocol/network authentication, not active native V2 block metadata |
 | **V8 Merkle path binding** | Parameter-dependent primitive estimate | At least the selected 128-bit target under the recorded parameter assumptions | Depth 32; exact relation and reduction terms must pass release review |
 

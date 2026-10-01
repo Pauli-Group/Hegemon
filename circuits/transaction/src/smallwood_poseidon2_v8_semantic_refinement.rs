@@ -1,8 +1,8 @@
 //! Exact source-level semantic-refinement receipt for the SmallWood Poseidon2 V8 relation.
 //!
 //! This module records what the executable source proves today without turning test coverage into
-//! a universal theorem.  The typed 120-word statement and 721-word witness are parsed
-//! canonically, validated, lowered to the 43,904-word `HGV8RP03` assignment, and replayed through
+//! a universal theorem.  The typed 120-word statement and 740-word witness are parsed
+//! canonically, validated, lowered to the 43,904-word `HGV8RP05` assignment, and replayed through
 //! the verifier-owned adapter.  The remaining universal obligation is stronger: every arbitrary
 //! packed assignment accepted by that adapter must decode to the fixed higher-level transaction
 //! semantics.  That proof remains false here and in the corresponding Lean status value.
@@ -32,8 +32,9 @@ use transaction_core::{
 use crate::{
     smallwood_frontend::SmallwoodPrivateAuthMode,
     smallwood_poseidon2_v8_program::{
-        SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST, SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512,
-        SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES,
+        SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST,
+        SMALLWOOD_POSEIDON2_V8_PROGRAM_IDENTITY_REGENERATION_REQUIRED,
+        SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512, SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES,
         SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_INSTANCES,
     },
     smallwood_poseidon2_v8_relation::SMALLWOOD_POSEIDON2_V8_RELATION_ID,
@@ -52,9 +53,9 @@ use crate::{
 };
 
 pub const SMALLWOOD_POSEIDON2_V8_SEMANTIC_REFINEMENT_SCHEMA: &str =
-    "hegemon.poseidon2-v8.semantic-adequacy-refinement-v1";
+    "hegemon.poseidon2-v8.semantic-adequacy-refinement-v2";
 pub const SMALLWOOD_POSEIDON2_V8_EXACT_SEMANTIC_TARGET: &str =
-    "hegemon.smallwood.poseidon2-v8.exact-transaction-semantics.v1";
+    "hegemon.smallwood.poseidon2-v8.exact-transaction-semantics.v2";
 pub const SMALLWOOD_POSEIDON2_V8_POSEIDON_PRIMITIVE_SPECIFICATION: &str =
     "hegemon-p2w16-v1-114a4e7eb2684d29";
 pub const SMALLWOOD_POSEIDON2_V8_STABLECOIN_PRIMITIVE_SPECIFICATION: &str =
@@ -217,12 +218,14 @@ pub enum SmallwoodPoseidon2V8SemanticRefinementError {
     Relation(#[from] SmallwoodPoseidon2V8RelationError),
     #[error("the V8 public statement did not round-trip through its canonical 120-word parser")]
     PublicRoundtripMismatch,
-    #[error("the V8 witness did not round-trip through its canonical 721-word parser")]
+    #[error("the V8 witness did not round-trip through its canonical 740-word parser")]
     WitnessRoundtripMismatch,
     #[error("the supplied stablecoin context is not the statement-derived relation context")]
     RelationContextMismatch,
     #[error("the source-program refinement receipt has inconsistent geometry")]
     SourceProgramReceiptMismatch,
+    #[error("the HGV8RP05 source program identity has not been regenerated")]
+    ProgramIdentityRegenerationRequired,
 }
 
 impl From<SmallwoodPoseidon2V8SurfaceError> for SmallwoodPoseidon2V8SemanticRefinementError {
@@ -292,6 +295,14 @@ fn audit_smallwood_poseidon2_v8_typed_lowering_in_context(
     let typed_witness_words = witness.to_witness_words();
     if SmallwoodPoseidon2V8Witness::try_from_witness_words(&typed_witness_words)? != *witness {
         return Err(SmallwoodPoseidon2V8SemanticRefinementError::WitnessRoundtripMismatch);
+    }
+    // Keep typed admission and canonical round-trips observable while the
+    // successor identity is pending, but never lower or accept RP05 under the
+    // historical RP04 pins.
+    if SMALLWOOD_POSEIDON2_V8_PROGRAM_IDENTITY_REGENERATION_REQUIRED {
+        return Err(
+            SmallwoodPoseidon2V8SemanticRefinementError::ProgramIdentityRegenerationRequired,
+        );
     }
 
     let lowered = compile_smallwood_poseidon2_v8_relation(statement, witness)?;
@@ -405,6 +416,16 @@ const _: () = assert!(SMALLWOOD_POSEIDON2_V8_EXACT_SEMANTIC_FAMILIES.len() == 10
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::smallwood_poseidon2_v8_types::SMALLWOOD_POSEIDON2_V8_SIGNER_TAG_WORDS;
+
+    // These are the identifiers fixed by the Lean HGV8RP03 semantic target.
+    // They are intentionally distinct from the source-local HGV8RP05 v2
+    // receipt: the legacy vector does not establish RP05's successor
+    // five-word policy / seven-word signer-tag semantics.
+    const LEGACY_LEAN_SEMANTIC_REFINEMENT_SCHEMA_V1: &str =
+        "hegemon.poseidon2-v8.semantic-adequacy-refinement-v1";
+    const LEGACY_LEAN_EXACT_SEMANTIC_TARGET_V1: &str =
+        "hegemon.smallwood.poseidon2-v8.exact-transaction-semantics.v1";
 
     fn json_u64_array(value: &serde_json::Value) -> Vec<u64> {
         value
@@ -412,15 +433,6 @@ mod tests {
             .expect("Lean KAT is a JSON array")
             .iter()
             .map(|word| word.as_u64().expect("Lean KAT word fits u64"))
-            .collect()
-    }
-
-    fn json_u64_matrix(value: &serde_json::Value) -> Vec<Vec<u64>> {
-        value
-            .as_array()
-            .expect("Lean refinement vector is a JSON matrix")
-            .iter()
-            .map(json_u64_array)
             .collect()
     }
 
@@ -436,21 +448,13 @@ mod tests {
     }
 
     #[test]
-    fn default_typed_surface_replays_but_universal_status_stays_false() {
+    fn rp05_typed_replay_stays_fail_closed_until_identity_regeneration() {
         let statement = SmallwoodPoseidon2V8PublicStatement::default();
         let witness = SmallwoodPoseidon2V8Witness::default();
-        let receipt = audit_smallwood_poseidon2_v8_typed_lowering(&statement, &witness).unwrap();
-        assert_eq!(receipt.public_words, 120);
-        assert_eq!(receipt.typed_witness_words, 728);
-        assert_eq!(receipt.packed_witness_words, 43_904);
-        assert!(receipt.packed_program_accepts_typed_lowering);
-        assert!(receipt.arbitrary_packed_decoder_available);
-        assert!(receipt.canonical_typed_relowering_enforced);
-        assert!(receipt.exact_poseidon2_interpretation_refined);
-        assert!(receipt.source_semantic_gate_enforced);
-        assert!(!receipt.exact_primitive_interpretation_refinement_proved);
-        assert!(!receipt.universal_accepted_witness_soundness_proved);
-        assert!(!receipt.production_authority);
+        assert_eq!(
+            audit_smallwood_poseidon2_v8_typed_lowering(&statement, &witness),
+            Err(SmallwoodPoseidon2V8SemanticRefinementError::ProgramIdentityRegenerationRequired)
+        );
     }
 
     #[test]
@@ -469,17 +473,19 @@ mod tests {
     fn inactive_ciphertexts_are_bound_separately_from_private_relation_words() {
         let statement = SmallwoodPoseidon2V8PublicStatement::default();
         let witness = SmallwoodPoseidon2V8Witness::default();
-        let receipt = audit_smallwood_poseidon2_v8_typed_lowering_with_inline_ciphertexts(
-            &statement,
-            &witness,
-            &SmallwoodPoseidon2V8InlineCiphertexts::default(),
-        )
-        .unwrap();
-        assert!(receipt.inline_ciphertexts_bound);
-        assert!(!receipt.universal_accepted_witness_soundness_proved);
+        assert_eq!(
+            audit_smallwood_poseidon2_v8_typed_lowering_with_inline_ciphertexts(
+                &statement,
+                &witness,
+                &SmallwoodPoseidon2V8InlineCiphertexts::default(),
+            ),
+            Err(SmallwoodPoseidon2V8SemanticRefinementError::ProgramIdentityRegenerationRequired)
+        );
     }
 
     #[test]
+    // Keep the historical filter name for callers; the checked-in vector is
+    // the legacy HGV8RP03 receipt, not a Lean semantic target for current RP05.
     fn lean_generated_semantic_adequacy_receipt_matches_rust_status() {
         let vector: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -488,71 +494,34 @@ mod tests {
         .unwrap();
         assert_eq!(
             vector["schema"],
-            SMALLWOOD_POSEIDON2_V8_SEMANTIC_REFINEMENT_SCHEMA
+            LEGACY_LEAN_SEMANTIC_REFINEMENT_SCHEMA_V1
         );
         assert_eq!(
             vector["semantic_target"],
-            SMALLWOOD_POSEIDON2_V8_EXACT_SEMANTIC_TARGET
+            LEGACY_LEAN_EXACT_SEMANTIC_TARGET_V1
         );
         assert_eq!(vector["relation_program"], "HGV8RP03");
+        // Preserve the metadata mismatch explicitly: these legacy Lean IDs
+        // must not be silently treated as the current HGV8RP05 Rust target.
+        assert_ne!(
+            LEGACY_LEAN_SEMANTIC_REFINEMENT_SCHEMA_V1,
+            SMALLWOOD_POSEIDON2_V8_SEMANTIC_REFINEMENT_SCHEMA
+        );
+        assert_ne!(
+            LEGACY_LEAN_EXACT_SEMANTIC_TARGET_V1,
+            SMALLWOOD_POSEIDON2_V8_EXACT_SEMANTIC_TARGET
+        );
+        // The following legacy dimensions are asserted as vector facts only;
+        // they are not the current RP05 typed witness geometry.
+        assert_eq!(vector["typed_witness_words"], 721);
+        assert_eq!(vector["packed_witness_words"], 43_904);
         assert_eq!(
             vector["checked_in_coverage"],
             "source_verifier_canonical_relowering"
         );
         assert_eq!(vector["typed_lowering_replay_available"], true);
-        assert_eq!(
-            vector["arbitrary_packed_assignment_decoder_available"],
-            SMALLWOOD_POSEIDON2_V8_ARBITRARY_PACKED_DECODER_AVAILABLE
-        );
-        assert_eq!(
-            vector["canonical_typed_relowering_source_verifier_enforced"],
-            SMALLWOOD_POSEIDON2_V8_CANONICAL_TYPED_RELOWERING_ENFORCED
-        );
-        assert_eq!(
-            vector["source_semantic_gate_enforced"],
-            SMALLWOOD_POSEIDON2_V8_SOURCE_SEMANTIC_GATE_ENFORCED
-        );
-        let rust_decoder_sources: Vec<Vec<u64>> = smallwood_poseidon2_v8_decoder_sources()
-            .into_iter()
-            .map(|source| source.to_receipt_words().to_vec())
-            .collect();
-        assert_eq!(
-            json_u64_matrix(&vector["decoder_source_vector"]),
-            rust_decoder_sources
-        );
-        assert_eq!(
-            json_u64_array(&vector["decoder_family_counts"]),
-            [252, 252, 23, 23, 77, 94]
-        );
-        assert_eq!(
-            json_u64_array(&vector["decoder_operation_counts"]),
-            [4, 8, 95, 2, 448, 16, 1, 23, 30, 66, 28]
-        );
-        assert_eq!(
-            json_u64_array(&vector["decoder_activity_mask_branches"]),
-            (0..16).collect::<Vec<_>>()
-        );
-        assert_eq!(
-            json_u64_array(&vector["decoder_authorization_mode_branches"]),
-            [0, 1, 2]
-        );
-        assert_eq!(
-            json_u64_array(&vector["decoder_stablecoin_direction_branches"]),
-            [0, 1, 2]
-        );
-        assert_eq!(
-            json_u64_array(&vector["decoder_stable_tree_index_branches"]),
-            (0..16).collect::<Vec<_>>()
-        );
-        assert_eq!(
-            json_u64_array(&vector["decoder_note_hash_word_order"]),
-            [0, 1, 2, 3, 4, 5, 14, 15, 16, 17, 6, 7, 8, 9, 10, 11, 12, 13]
-        );
         assert_eq!(vector["relowering_compared_packed_words"], 43_904);
-        assert_eq!(
-            vector["concrete_rust_to_lean_universal_refinement_proved"],
-            SMALLWOOD_POSEIDON2_V8_UNIVERSAL_ACCEPTED_WITNESS_SOUNDNESS_PROVED
-        );
+        assert_eq!(vector["concrete_rust_to_lean_universal_refinement_proved"], false);
         assert_eq!(
             vector["poseidon2_primitive_specification"],
             SMALLWOOD_POSEIDON2_V8_POSEIDON_PRIMITIVE_SPECIFICATION
@@ -775,50 +744,68 @@ mod tests {
             json_u64_array(&vector["ciphertext_blake2b_kat_commitment_words"]),
             commitment_words
         );
-        assert_eq!(
-            vector["exact_primitive_interpretation_refinement_proved"],
-            SMALLWOOD_POSEIDON2_V8_EXACT_PRIMITIVE_INTERPRETATION_REFINEMENT_PROVED
-        );
-        assert_eq!(
-            vector["verified_rust_semantics_extraction_absent"],
-            !SMALLWOOD_POSEIDON2_V8_VERIFIED_RUST_SEMANTICS_EXTRACTION_AVAILABLE
-        );
-        assert_eq!(
-            vector["in_lean_rfc7693_blake2b384_implementation_absent"],
-            !SMALLWOOD_POSEIDON2_V8_IN_LEAN_RFC7693_BLAKE2B384_IMPLEMENTATION_AVAILABLE
-        );
-        assert_eq!(
-            vector["universal_accepted_witness_soundness_proved"],
-            SMALLWOOD_POSEIDON2_V8_UNIVERSAL_ACCEPTED_WITNESS_SOUNDNESS_PROVED
-        );
-        assert_eq!(
-            vector["production_authority"],
-            SMALLWOOD_POSEIDON2_V8_SEMANTIC_REFINEMENT_PRODUCTION_AUTHORITY
-        );
-        assert_eq!(vector["public_words"], SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS);
-        assert_eq!(vector["typed_witness_words"], 721);
-        assert_eq!(
-            vector["packed_witness_words"],
-            SMALLWOOD_POSEIDON2_V8_WITNESS_WORDS
-        );
+        assert_eq!(vector["exact_primitive_interpretation_refinement_proved"], false);
+        assert_eq!(vector["verified_rust_semantics_extraction_absent"], true);
+        assert_eq!(vector["in_lean_rfc7693_blake2b384_implementation_absent"], true);
+        assert_eq!(vector["universal_accepted_witness_soundness_proved"], false);
+        assert_eq!(vector["production_authority"], false);
+        assert_eq!(vector["public_words"], 120);
         assert_eq!(vector["value_bound_exclusive"], 1u64 << 61);
         assert_eq!(vector["stablecoin_value_bound_exclusive"], 1u64 << 56);
         assert_eq!(vector["stablecoin_scalar_bound_exclusive"], 1u64 << 63);
         assert_eq!(
-            vector["semantic_families"].as_array().unwrap().len(),
-            SMALLWOOD_POSEIDON2_V8_EXACT_SEMANTIC_FAMILIES.len()
+            SMALLWOOD_POSEIDON2_V8_EXACT_PRIMITIVE_INTERPRETATION_REFINEMENT_PROVED,
+            false
         );
-        for (actual, expected) in vector["semantic_families"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .zip(SMALLWOOD_POSEIDON2_V8_EXACT_SEMANTIC_FAMILIES)
-        {
-            assert_eq!(actual["name"], expected.name);
-            assert_eq!(
-                actual["external_to_private_relation"],
-                expected.external_to_private_relation
-            );
+        assert_eq!(
+            SMALLWOOD_POSEIDON2_V8_UNIVERSAL_ACCEPTED_WITNESS_SOUNDNESS_PROVED,
+            false
+        );
+        assert_eq!(SMALLWOOD_POSEIDON2_V8_SEMANTIC_REFINEMENT_PRODUCTION_AUTHORITY, false);
+    }
+
+    #[test]
+    fn current_rp05_source_receipt_remains_separate_and_fail_closed() {
+        assert_eq!(
+            SMALLWOOD_POSEIDON2_V8_SEMANTIC_REFINEMENT_SCHEMA,
+            "hegemon.poseidon2-v8.semantic-adequacy-refinement-v2"
+        );
+        assert_eq!(
+            SMALLWOOD_POSEIDON2_V8_EXACT_SEMANTIC_TARGET,
+            "hegemon.smallwood.poseidon2-v8.exact-transaction-semantics.v2"
+        );
+        assert_ne!(
+            SMALLWOOD_POSEIDON2_V8_SEMANTIC_REFINEMENT_SCHEMA,
+            LEGACY_LEAN_SEMANTIC_REFINEMENT_SCHEMA_V1
+        );
+        assert_ne!(
+            SMALLWOOD_POSEIDON2_V8_EXACT_SEMANTIC_TARGET,
+            LEGACY_LEAN_EXACT_SEMANTIC_TARGET_V1
+        );
+
+        // Source-local RP05 decoder and typed geometry checks; deliberately no
+        // comparison to the legacy HGV8RP03 decoder vector or 721-word shape.
+        let witness = SmallwoodPoseidon2V8Witness::default();
+        assert_eq!(witness.to_witness_words().len(), 740);
+        assert_eq!(SMALLWOOD_POSEIDON2_V8_SIGNER_TAG_WORDS, 7);
+        let decoder_sources = smallwood_poseidon2_v8_decoder_sources();
+        assert_eq!(decoder_sources.len(), 740);
+        let mut decoder_family_counts = [0usize; 6];
+        for (typed_word, source) in decoder_sources.iter().enumerate() {
+            assert_eq!(source.typed_word, typed_word);
+            assert_eq!(source.to_receipt_words()[0], typed_word as u64);
+            decoder_family_counts[source.family as usize] += 1;
         }
+        assert_eq!(decoder_family_counts, [253, 253, 23, 23, 94, 94]);
+
+        assert!(SMALLWOOD_POSEIDON2_V8_TYPED_LOWERING_REPLAY_AVAILABLE);
+        assert!(SMALLWOOD_POSEIDON2_V8_ARBITRARY_PACKED_DECODER_AVAILABLE);
+        assert!(SMALLWOOD_POSEIDON2_V8_CANONICAL_TYPED_RELOWERING_ENFORCED);
+        assert!(SMALLWOOD_POSEIDON2_V8_SOURCE_SEMANTIC_GATE_ENFORCED);
+        assert!(!SMALLWOOD_POSEIDON2_V8_VERIFIED_RUST_SEMANTICS_EXTRACTION_AVAILABLE);
+        assert!(!SMALLWOOD_POSEIDON2_V8_IN_LEAN_RFC7693_BLAKE2B384_IMPLEMENTATION_AVAILABLE);
+        assert!(!SMALLWOOD_POSEIDON2_V8_EXACT_PRIMITIVE_INTERPRETATION_REFINEMENT_PROVED);
+        assert!(!SMALLWOOD_POSEIDON2_V8_UNIVERSAL_ACCEPTED_WITNESS_SOUNDNESS_PROVED);
+        assert!(!SMALLWOOD_POSEIDON2_V8_SEMANTIC_REFINEMENT_PRODUCTION_AUTHORITY);
     }
 }

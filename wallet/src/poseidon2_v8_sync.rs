@@ -26,8 +26,8 @@ use transaction_circuit::{
     constants::{FIELD_MODULUS_U64, MAX_IN_CIRCUIT_VALUE, NATIVE_ASSET_ID},
     hashing_pq::ciphertext_hash_bytes,
     smallwood_poseidon2_v8_coinbase::{
-        poseidon2_v8_note_commitment, poseidon2_v8_note_tree_compress,
-        poseidon2_v8_words_from_canonical_bytes,
+        poseidon2_v8_default_note_nodes, poseidon2_v8_note_commitment,
+        poseidon2_v8_note_tree_compress, poseidon2_v8_words_from_canonical_bytes,
     },
     smallwood_poseidon2_v8_frontend::{
         SmallwoodPoseidon2V8SourceRelationFactory, SmallwoodPoseidon2V8VerifierRelationFactory,
@@ -50,6 +50,8 @@ use crate::{
 const MAX_CANONICAL_ACTION_BYTES: usize = 8 * 1024 * 1024;
 const NOTE_OPENING_WORDS: usize = 18;
 const POSEIDON2_V8_NOTE_ROOT_HISTORY_LIMIT: usize = 100;
+const POSEIDON2_V8_DEFAULT_REPLAY_REQUIRED: &str =
+    "V8 wallet mirror uses an incompatible legacy note-tree default; reset wallet sync state and replay from genesis";
 
 pub type Poseidon2V8Digest = SmallwoodPoseidon2V8Digest;
 pub type Poseidon2V8Path = [Poseidon2V8Digest; SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH];
@@ -243,6 +245,7 @@ impl Poseidon2V8WalletState {
         let genesis = self.genesis_hash.ok_or(WalletError::InvalidState(
             "V8 wallet mirror is not initialized",
         ))?;
+        self.validate_default_root()?;
         Ok(match self.blocks.last() {
             Some(block) => Poseidon2V8CanonicalTip {
                 height: block.height,
@@ -270,6 +273,7 @@ impl Poseidon2V8WalletState {
     }
 
     pub(crate) fn owned_notes(&self) -> Result<Vec<Poseidon2V8OwnedNoteView>, WalletError> {
+        self.validate_default_root()?;
         let anchor = current_note_root(&self.tree_levels)?;
         self.owned_notes
             .iter()
@@ -308,6 +312,7 @@ impl Poseidon2V8WalletState {
         height: u64,
         block_hash: [u8; 32],
     ) -> Result<(), WalletError> {
+        self.validate_default_root()?;
         if self.canonical_hash(height) != Some(block_hash) {
             return Err(WalletError::InvalidState(
                 "V8 rollback target is not canonical",
@@ -608,6 +613,7 @@ impl Poseidon2V8WalletState {
     }
 
     fn validate_tip(&self) -> Result<(), WalletError> {
+        self.validate_default_root()?;
         let root = current_note_root(&self.tree_levels)?;
         if self.root_log.last().copied() != Some(root)
             || self.blocks.last().is_some_and(|block| {
@@ -635,6 +641,7 @@ impl Poseidon2V8WalletState {
         if self.genesis_hash.is_none() {
             return Ok(());
         }
+        self.validate_default_root()?;
         let commitments = self
             .tree_levels
             .first()
@@ -754,6 +761,19 @@ impl Poseidon2V8WalletState {
             }
         }
         Ok(())
+    }
+
+    fn validate_default_root(&self) -> Result<(), WalletError> {
+        // Wallet deserialization calls `validate` before exposing persisted
+        // state.  Check the immutable first history entry before rebuilding so
+        // a legacy zero-leaf mirror is rejected, never reinterpreted in place.
+        match self.root_log.first().copied() {
+            Some(root) if root == empty_note_root() => Ok(()),
+            Some(_) => Err(WalletError::InvalidState(
+                POSEIDON2_V8_DEFAULT_REPLAY_REQUIRED,
+            )),
+            None => Err(WalletError::InvalidState("V8 root history is empty")),
+        }
     }
 }
 
@@ -1075,16 +1095,8 @@ fn owned_note_nullifier(
         .ok_or(WalletError::InvalidState("V8 nullifier hash call missing"))
 }
 
-fn default_note_nodes() -> [Poseidon2V8Digest; SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH + 1] {
-    let mut nodes = [[0u64; 7]; SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH + 1];
-    for level in 0..SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH {
-        nodes[level + 1] = poseidon2_v8_note_tree_compress(nodes[level], nodes[level]);
-    }
-    nodes
-}
-
 fn empty_note_root() -> Poseidon2V8Digest {
-    default_note_nodes()[SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH]
+    poseidon2_v8_default_note_nodes()[SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH]
 }
 
 fn production_stablecoin_genesis(
@@ -1153,7 +1165,7 @@ fn append_note_tree(
     let position = commitment_count(levels)?;
     ensure_digest("V8 commitment", commitment)?;
     levels[0].push(commitment);
-    let defaults = default_note_nodes();
+    let defaults = poseidon2_v8_default_note_nodes();
     let mut current = commitment;
     let mut node_index = position;
     for level in 0..SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH {
@@ -1216,7 +1228,7 @@ fn note_path_from_levels(
             "V8 note position is outside the tree",
         ));
     }
-    let defaults = default_note_nodes();
+    let defaults = poseidon2_v8_default_note_nodes();
     let mut index = position;
     let mut path = [[0u64; 7]; SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH];
     for level in 0..SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH {
@@ -1238,7 +1250,7 @@ fn note_levels(
     for commitment in commitments {
         ensure_digest("V8 commitment", *commitment)?;
     }
-    let defaults = default_note_nodes();
+    let defaults = poseidon2_v8_default_note_nodes();
     let mut levels = Vec::with_capacity(SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH + 1);
     levels.push(commitments.to_vec());
     for level in 0..SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH {
@@ -1527,6 +1539,71 @@ mod tests {
             }
         );
         store.poseidon2_v8_tip().unwrap()
+    }
+
+    #[test]
+    fn fresh_wallet_mirror_uses_shared_canonical_default_nodes() {
+        let defaults = poseidon2_v8_default_note_nodes();
+        assert_ne!(defaults[0], [0; 7]);
+
+        let mut state = Poseidon2V8WalletState::default();
+        state
+            .ensure_genesis_for_test(GENESIS, TEST_STABLECOIN_ROOT)
+            .unwrap();
+
+        assert!(state.tree_levels[0].is_empty());
+        for (level, expected) in defaults.iter().copied().enumerate().skip(1) {
+            assert_eq!(state.tree_levels[level], vec![expected]);
+        }
+        assert_eq!(
+            state.root_log,
+            vec![defaults[SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH]]
+        );
+        assert_eq!(
+            state.tip().unwrap().anchor,
+            defaults[SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH]
+        );
+        state.validate().unwrap();
+    }
+
+    #[test]
+    fn legacy_zero_default_wallet_mirror_is_rejected_without_mutation() {
+        let mut legacy_defaults = [[0u64; 7]; SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH + 1];
+        for level in 0..SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH {
+            legacy_defaults[level + 1] =
+                poseidon2_v8_note_tree_compress(legacy_defaults[level], legacy_defaults[level]);
+        }
+
+        let mut state = Poseidon2V8WalletState::default();
+        state
+            .ensure_genesis_for_test(GENESIS, TEST_STABLECOIN_ROOT)
+            .unwrap();
+        state.tree_levels = Vec::with_capacity(SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH + 1);
+        state.tree_levels.push(Vec::new());
+        state.tree_levels.extend(
+            legacy_defaults
+                .iter()
+                .copied()
+                .skip(1)
+                .map(|node| vec![node]),
+        );
+        state.root_log = vec![legacy_defaults[SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH]];
+        let legacy_state = state.clone();
+
+        for error in [
+            state.validate().unwrap_err(),
+            state.tip().unwrap_err(),
+            state.owned_notes().unwrap_err(),
+            state.rollback_to(0, GENESIS).unwrap_err(),
+        ] {
+            match error {
+                WalletError::InvalidState(message) => {
+                    assert_eq!(message, POSEIDON2_V8_DEFAULT_REPLAY_REQUIRED)
+                }
+                other => panic!("unexpected legacy mirror error: {other}"),
+            }
+            assert_eq!(state, legacy_state);
+        }
     }
 
     #[test]

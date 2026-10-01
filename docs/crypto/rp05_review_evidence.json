@@ -1,0 +1,250 @@
+{
+  "checked_roots": [
+    "HegemonCrypto.SmallWood.Rp05.soundness",
+    "HegemonCrypto.SmallWood.Rp05.zero_knowledge",
+    "HegemonCrypto.SmallWood.Rp05.authorization",
+    "HegemonCrypto.SmallWood.Rp05.conservation",
+    "HegemonCrypto.SmallWood.Rp05.active_input_historical_credential_classification"
+  ],
+  "claim_scope": {
+    "active_input_pointwise": "A separate source endpoint gives all-active pointwise five-word credential/seven-word owner facts and historical occupied/known-empty/path-collision classification. The known-empty exception remains. It proves neither generic nullifier freshness nor unspentness and does not lift the quantitative bound to all assets or values. Freshness of a local Approval signer slot is a separate source-local property.",
+    "native_quantum": "The formal results are native-quantum only under their stated random-oracle and primitive-game assumptions. They begin at the Lean relation/post-parser boundary and do not prove that every native Rust acceptance refines that model.",
+    "positive_native_quantitative_scope": "The quantitative single-spend failure-mass and unspentness result remains scoped to positive-native spends consumed by the chronological history argument.",
+    "unrestricted_all_asset_chronology": false,
+    "unrestricted_full_threshold_history": false
+  },
+  "clean_checkout_workflow": [
+    "python3 -B scripts/rp05_proof_package.py check-source",
+    "python3 -B scripts/rp05_proof_package.py build",
+    "python3 -B scripts/rp05_proof_package.py check"
+  ],
+  "cold_fresh_check": false,
+  "focused_tests": [
+    {
+      "command": "cargo test -p transaction-circuit smza_profile_codec_projection_and_historical_rejection_are_exact",
+      "name": "smza_profile_codec_projection_and_historical_rejection_are_exact",
+      "source_path": "circuits/transaction/src/smallwood_engine.rs",
+      "source_sha256": "2d55493218d424d38ad54e2dc6ae1849247abcbfa76c6768b4f51baddf2469ef",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p transaction-circuit strict_zk_wire_rejects_arbitrary_opening_counts_before_proving",
+      "name": "strict_zk_wire_rejects_arbitrary_opening_counts_before_proving",
+      "source_path": "circuits/transaction/src/smallwood_engine.rs",
+      "source_sha256": "2d55493218d424d38ad54e2dc6ae1849247abcbfa76c6768b4f51baddf2469ef",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p transaction-circuit inline_ciphertexts_roundtrip_and_bind_all_sixteen_masks",
+      "name": "inline_ciphertexts_roundtrip_and_bind_all_sixteen_masks",
+      "source_path": "circuits/transaction/src/smallwood_poseidon2_v8_types.rs",
+      "source_sha256": "0bc36b573110c243e4acc04855a6c5e3e2e5045f346fceed27a3e66fdecec588",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p transaction-circuit inline_ciphertext_shape_and_length_mutations_fail_closed",
+      "name": "inline_ciphertext_shape_and_length_mutations_fail_closed",
+      "source_path": "circuits/transaction/src/smallwood_poseidon2_v8_types.rs",
+      "source_sha256": "0bc36b573110c243e4acc04855a6c5e3e2e5045f346fceed27a3e66fdecec588",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p transaction-circuit lean_generated_semantic_adequacy_receipt_matches_rust_status",
+      "name": "lean_generated_semantic_adequacy_receipt_matches_rust_status",
+      "source_path": "circuits/transaction/src/smallwood_poseidon2_v8_semantic_refinement.rs",
+      "source_sha256": "b99bd73205f4384b58bdc7d83f40fe3991d83beb71eed8674861907fe50a0c34",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p transaction-circuit current_rp05_source_receipt_remains_separate_and_fail_closed",
+      "name": "current_rp05_source_receipt_remains_separate_and_fail_closed",
+      "source_path": "circuits/transaction/src/smallwood_poseidon2_v8_semantic_refinement.rs",
+      "source_sha256": "b99bd73205f4384b58bdc7d83f40fe3991d83beb71eed8674861907fe50a0c34",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p protocol-shielded-pool smza_framing_rejects_cross_profile_context_and_noncanonical_fields",
+      "name": "smza_framing_rejects_cross_profile_context_and_noncanonical_fields",
+      "source_path": "protocol/shielded-pool/src/poseidon2_production_transport.rs",
+      "source_sha256": "96b71b5617ec6a1b9856c25e6fd44be96a9318aca6128a3be1e5ec2ffc503817",
+      "status": "pass"
+    },
+    {
+      "command": "cargo test -p protocol-shielded-pool smza_framing_roundtrip_maximum_all_activity_masks",
+      "name": "smza_framing_roundtrip_maximum_all_activity_masks",
+      "source_path": "protocol/shielded-pool/src/poseidon2_production_transport.rs",
+      "source_sha256": "96b71b5617ec6a1b9856c25e6fd44be96a9318aca6128a3be1e5ec2ffc503817",
+      "status": "pass"
+    }
+  ],
+  "independently_authenticated": false,
+  "limits": [
+    "Raw local receipts are not included; only their SHA-256 digests are recorded.",
+    "The local canonical release manifest is not included; only its SHA-256 digest is recorded.",
+    "The recorded checks are not an independently authenticated or cold-fresh validation.",
+    "No production capability, activation identity, or deployment is authorized by this summary.",
+    "Reproduce the listed steps with the clean-checkout commands in RP05_REVIEW_REPRODUCTION.md."
+  ],
+  "local_manifest_sha256": [
+    "533b5e99b22e32a13f437bde55c6d50847043404ca6f2175db2ab96fb8cb5646"
+  ],
+  "production_authorized": false,
+  "proof_payloads": [
+    {
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes/rp05-qual-20261001-streamlined-r2/pair/primary/proof.bin",
+      "sha256": "0299e8c6b24b222055d123df53a65de316b8eca2f2e69e100160b90a8f2f90be",
+      "size": 163665
+    },
+    {
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes/rp05-qual-20261001-streamlined-r2/pair/independent/proof.bin",
+      "sha256": "9338949fb5d7394ae119152a4ecd22000967482da3ee41ffbedd5445a8e8b60b",
+      "size": 163665
+    }
+  ],
+  "raw_receipt_sha256": [
+    "05be96407908ca4be885de17518c3a27083fde364859c6da3efbf586a32d8434",
+    "1399371a9cd0549845b69d4e4a38ebf7275c419b60e868132e66d75d9d9af1b5",
+    "3bf5a9a08627adb43c2cb6d822ff5442683279e1ffc9eee167c05252a4d69633",
+    "40607442989e32eeaac513c8c93c59a1e73381bd2d12b5597cc90b7fe094eacd",
+    "4e0076262f908ea550a8a3cc8118fdcc251719ece5f448be755d7a64d45682a7",
+    "5263f460ec94c930861ed193ed1002f45c28a907390fe65ff06d4d49ee6c2ee4",
+    "5433e5360eca6ddf2e97da87de3c07cc819d9a4569d7fb1e6b831edd7026fe85",
+    "5ce9c82c7a9fc63769aa89dfe8140c084e9e00f9947549247810d607726da393",
+    "77d285f6c32e535df381efa6e6bf8bcd625d627fbd8eae4464efab33e5731717",
+    "851cd17af4fcb70adb69e45e95b7ee5cbe90d4243763d8dc816d29d455d58284",
+    "86997760e6f43f4137babca9529aec2c43ec5e1ef0dc95673a6a83f700d538d3",
+    "900ee09e2fa86bec8916bd028ee34c54b971f58c7681041ed67cdb199d83f3d0",
+    "a3f953a05d6243d273ca23c26ef91750b8992d99a76b98b5b05f9283d90e3906",
+    "b6beb598b9fe4d90cb7f8f5636f9981308556aa359f7d80df8cefedf9237b5f6",
+    "c1dcd77c85b550e6e8abf78b5aa5a212e6545b35f500490653e069a9365f0a49"
+  ],
+  "schema": "hegemon.rp05.public-review-evidence.v1",
+  "scope": "source-pinned local review evidence; not release authorization",
+  "source_pins": [
+    {
+      "path": "formal/rp05/source-manifest.json",
+      "sha256": "86006c594efa330685f23485081495b2a600856d53b783bb57a995136a10351a",
+      "size": 518004
+    },
+    {
+      "path": "formal/rp05/README.md",
+      "sha256": "d8236a45788d54d41abea0a6945e2258614232fab28e3ecb968c4083a697b08a",
+      "size": 9831
+    },
+    {
+      "path": "formal/rp05/Rp05/Soundness.lean",
+      "sha256": "f2142c2d155cd5014a590e98d72864962e4a3b3eb55b168c6f7f6960fa905d08",
+      "size": 503
+    },
+    {
+      "path": "formal/rp05/Rp05/Privacy.lean",
+      "sha256": "b8ae23c5c2f5a94f500d27966272369d81cec4ece88799a73486edbe01ea0095",
+      "size": 2329
+    },
+    {
+      "path": "formal/rp05/Rp05/Authorization.lean",
+      "sha256": "ee34a25f77c6189a06a1de98dd57da10497690109bba8f9d1779cb607f247fbd",
+      "size": 3292
+    },
+    {
+      "path": "formal/rp05/Rp05/Conservation.lean",
+      "sha256": "4da17623610367327b7f0e16909ed846e57e9c04938c1bd7a131af10747059f3",
+      "size": 588
+    },
+    {
+      "path": "formal/rp05/shared/Q38Rp05ZeroKnowledgeEndpoint.lean",
+      "sha256": "5c020d63750da87c19d6baa7bf98738dcf640385f55154b931c01d6bab0cd647",
+      "size": 9348
+    },
+    {
+      "path": "formal/rp05/shared/SmzaRp05SingleSpendAuthorizationEndpoint.lean",
+      "sha256": "e017109611231ef273fef3991d98a6207f3da105e2064e5f56aed95b708617c1",
+      "size": 38356
+    },
+    {
+      "path": "formal/rp05/shared/SmzaRp05AllActiveHistoricalCredentialEndpoint.lean",
+      "sha256": "d5ae87d0326fa4773da18cd2f6c5f20150ef4b27a6112f9929afa8a8aef7f1ab",
+      "size": 10055
+    },
+    {
+      "path": "scripts/rp05_proof_package.py",
+      "sha256": "de8807e59776b76771fdab5cd45de61b24d56e1b893e113e696077cf5008c29f",
+      "size": 51563
+    },
+    {
+      "path": "scripts/rp05_release_status.py",
+      "sha256": "d06d4e2df375066f51bc97a599d45d03a66c7b2dd2ddb4c5c79ccecb8060281c",
+      "size": 41572
+    },
+    {
+      "path": "scripts/test_rp05_release_status.py",
+      "sha256": "c3d85aa075f0597b606f7c62a945bbee47b4dbdd46b0e4a83fcb1a873a333bff",
+      "size": 11924
+    },
+    {
+      "path": "circuits/transaction/src/smallwood_engine.rs",
+      "sha256": "2d55493218d424d38ad54e2dc6ae1849247abcbfa76c6768b4f51baddf2469ef",
+      "size": 760581
+    },
+    {
+      "path": "circuits/transaction/src/smallwood_poseidon2_v8_semantic_refinement.rs",
+      "sha256": "b99bd73205f4384b58bdc7d83f40fe3991d83beb71eed8674861907fe50a0c34",
+      "size": 35927
+    },
+    {
+      "path": "circuits/transaction/src/smallwood_poseidon2_v8_types.rs",
+      "sha256": "0bc36b573110c243e4acc04855a6c5e3e2e5045f346fceed27a3e66fdecec588",
+      "size": 103091
+    },
+    {
+      "path": "protocol/shielded-pool/src/poseidon2_production_transport.rs",
+      "sha256": "96b71b5617ec6a1b9856c25e6fd44be96a9318aca6128a3be1e5ec2ffc503817",
+      "size": 95185
+    }
+  ],
+  "status": "local_source_validation_complete",
+  "validation_runs": [
+    {
+      "id": "privacy_public_root_and_body_audit",
+      "qualification": "S/P/C strict outputs match canonical package objects; A reuses its exact-compatible strict receipt. The final body audits cover Authorization and its all-active classifier. The earlier cache-matcher miss is historical and is not credited as a passing audit.",
+      "scope": "S/P/A/C public facades; S 45,282, P 36,399, A 49,927, C 49,876 declarations traversed; standard axioms only; stable pre/post object maps",
+      "status": "pass"
+    },
+    {
+      "id": "focused_rust_implementation_boundary_tests",
+      "qualification": "all eight filters passed on the exact final Rust semantic-refinement source SHA-256 b99bd73205f4384b58bdc7d83f40fe3991d83beb71eed8674861907fe50a0c34",
+      "scope": "eight focused transaction-circuit and protocol-shielded-pool test filters",
+      "status": "pass"
+    },
+    {
+      "id": "single_spend_authorization_root",
+      "qualification": "the final body audit passed with both authorization roots. An earlier cache-matcher miss is historical only and is not counted as a successful audit.",
+      "scope": "native-quantum root and all-active pointwise credential/history adapter",
+      "status": "pass"
+    },
+    {
+      "id": "package_source_closure_after_latest_endpoint_additions",
+      "qualification": "the accepted-role-labels affected-package build and final read-only package check receipts both pass; this is local validation, not an independently authenticated or cold-fresh build",
+      "scope": "source manifest SHA-256 86006c594efa330685f23485081495b2a600856d53b783bb57a995136a10351a; build and read-only check covered 1,471 modules, 108 external imports, and four public roots",
+      "status": "pass"
+    },
+    {
+      "id": "all_active_classifier_and_authorization_facade",
+      "qualification": "the final public facade body audit includes the authorization theorem and all-active classifier and passes; source-local approval-slot freshness does not become a generic nullifier-freshness theorem",
+      "scope": "strict-checked facade SHA-256 ee34a25f77c6189a06a1de98dd57da10497690109bba8f9d1779cb607f247fbd and all-active classifier SHA-256 d5ae87d0326fa4773da18cd2f6c5f20150ef4b27a6112f9929afa8a8aef7f1ab",
+      "status": "pass"
+    },
+    {
+      "id": "privacy_post_package_body_fingerprint",
+      "qualification": "the final source fingerprint and body audit pass on the public zero-knowledge facade; the older two-witness witness-indistinguishability (WI) audit is a separate result and is not used for this claim",
+      "scope": "final P public facade body audit after package adoption",
+      "status": "pass"
+    },
+    {
+      "id": "release_status_helper_tests",
+      "qualification": "helper SHA-256 d06d4e2df375066f51bc97a599d45d03a66c7b2dd2ddb4c5c79ccecb8060281c; tests SHA-256 c3d85aa075f0597b606f7c62a945bbee47b4dbdd46b0e4a83fcb1a873a333bff; test result reported by its validating worker",
+      "scope": "13 focused Python tests for exact output-object receipt matching, including nested modules",
+      "status": "pass"
+    }
+  ]
+}

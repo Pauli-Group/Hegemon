@@ -41,13 +41,16 @@ use crate::{
         SmallwoodPoseidon2V8AccumulatorOpening, SmallwoodPoseidon2V8Digest,
         SmallwoodPoseidon2V8NoteOpening, SmallwoodPoseidon2V8PublicStatement,
         SmallwoodPoseidon2V8Witness, SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_DOMAIN,
-        SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH,
+        SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_WORDS,
+        SMALLWOOD_POSEIDON2_V8_INTENT_OMIT_MERKLE_ROOT_PREFIX,
+        SMALLWOOD_POSEIDON2_V8_INTENT_OMIT_NULLIFIERS, SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH,
+        SMALLWOOD_POSEIDON2_V8_SIGNER_TAG_WORDS,
     },
 };
 
 pub const SMALLWOOD_POSEIDON2_V8_SCHEDULE_LIVE_CALLS: usize = 128;
 pub const SMALLWOOD_POSEIDON2_V8_SCHEDULE_PADDED_CALLS: usize = 128;
-pub const SMALLWOOD_POSEIDON2_V8_AUTH_POLICY_DOMAIN: u64 = 7;
+pub use crate::smallwood_poseidon2_v8_types::SMALLWOOD_POSEIDON2_V8_AUTH_POLICY_DOMAIN;
 pub const SMALLWOOD_POSEIDON2_V8_AUTH_ACCUMULATOR_DOMAIN: u64 = 6;
 pub const SMALLWOOD_POSEIDON2_V8_SINGLE_KEY_DOMAIN: u64 = 0x4853_4b41_5632_0001;
 pub const SMALLWOOD_POSEIDON2_V8_NULLIFIER_DOMAIN: u64 = 0x484e_554c_5632_0001;
@@ -113,11 +116,11 @@ pub const SMALLWOOD_POSEIDON2_V8_HASH_ROLE_RANGES: [SmallwoodPoseidon2V8HashRole
     SmallwoodPoseidon2V8HashRoleRange {
         name: "action_intent",
         start: 81,
-        end: 96,
+        end: 94,
     },
     SmallwoodPoseidon2V8HashRoleRange {
         name: "authorization_policy",
-        start: 96,
+        start: 94,
         end: 100,
     },
     SmallwoodPoseidon2V8HashRoleRange {
@@ -1144,14 +1147,29 @@ pub fn build_smallwood_poseidon2_v8_hash_schedule(
     let intent_words = projection
         .into_iter()
         .enumerate()
-        .map(|(word, value)| {
+        .map(|(projected_word, value)| {
+            let word = if projected_word < 4 {
+                projected_word
+            } else if projected_word < 33 {
+                projected_word + 14
+            } else {
+                projected_word + 16
+            };
+            debug_assert!(
+                !SMALLWOOD_POSEIDON2_V8_INTENT_OMIT_NULLIFIERS.contains(&word)
+                    && !SMALLWOOD_POSEIDON2_V8_INTENT_OMIT_MERKLE_ROOT_PREFIX.contains(&word)
+            );
             BoundWord::semantic(
                 value,
                 SmallwoodPoseidon2V8SemanticWordRef::ActionIntentProjectionWord { word },
             )
         })
         .collect::<Vec<_>>();
-    let intent_roles = (0..15)
+    debug_assert_eq!(
+        intent_words.len(),
+        SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_WORDS
+    );
+    let intent_roles = (0..13)
         .map(|block| SmallwoodPoseidon2V8HashCallRole::ActionIntent { block })
         .collect::<Vec<_>>();
     builder.push_sponge(
@@ -1161,7 +1179,7 @@ pub fn build_smallwood_poseidon2_v8_hash_schedule(
         SmallwoodPoseidon2V8HashDigestRef::ActionIntent,
     )?;
 
-    let mut policy_words = Vec::with_capacity(32);
+    let mut policy_words = Vec::with_capacity(44);
     policy_words.extend([
         BoundWord::semantic(
             witness.auth.current.threshold,
@@ -1173,14 +1191,14 @@ pub fn build_smallwood_poseidon2_v8_hash_schedule(
         ),
     ]);
     for slot in 0..6 {
-        for limb in 0..5 {
+        for limb in 0..SMALLWOOD_POSEIDON2_V8_SIGNER_TAG_WORDS {
             policy_words.push(BoundWord::semantic(
                 witness.auth.policy_signer_tags[slot][limb],
                 SmallwoodPoseidon2V8SemanticWordRef::AuthorizationPolicySignerTag { slot, limb },
             ));
         }
     }
-    let policy_roles = core::array::from_fn::<_, 4, _>(|block| {
+    let policy_roles = core::array::from_fn::<_, 6, _>(|block| {
         SmallwoodPoseidon2V8HashCallRole::AuthorizationPolicy { block }
     });
     builder.push_sponge(
@@ -1535,8 +1553,8 @@ mod tests {
         }
         witness.auth.current.threshold = 2;
         witness.auth.current.signer_count = 2;
-        witness.auth.policy_signer_tags[0] = [1, 2, 3, 4, 5];
-        witness.auth.policy_signer_tags[1] = [6, 7, 8, 9, 10];
+        witness.auth.policy_signer_tags[0] = [1, 2, 3, 4, 5, 6, 7];
+        witness.auth.policy_signer_tags[1] = [8, 9, 10, 11, 12, 13, 14];
         (statement, witness)
     }
 
@@ -1635,7 +1653,7 @@ mod tests {
             SmallwoodPoseidon2V8HashCallRole::StableIssuerAuthorization
         );
         assert_eq!(
-            material.calls[95].final_digest(),
+            material.calls[93].final_digest(),
             statement.expected_action_intent().unwrap()
         );
         let config_digest = stablecoin_poseidon2_v8_config_digest(witness.stablecoin.config);
@@ -1736,7 +1754,7 @@ mod tests {
             &changed_statement,
             &witness,
             &base,
-            (86..96).collect::<Vec<_>>(),
+            (84..94).collect::<Vec<_>>(),
         );
 
         let mut changed_statement = statement;

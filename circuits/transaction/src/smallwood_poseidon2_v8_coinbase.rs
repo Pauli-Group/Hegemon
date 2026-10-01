@@ -101,6 +101,36 @@ pub fn poseidon2_v8_note_tree_compress(
     .map(|word| word.as_canonical_u64())
 }
 
+/// Public zero-value native opening used at every unoccupied tree position.
+///
+/// Knowing this preimage makes any different opening of a default leaf an
+/// ordinary note-binding collision. Keep the complete seven-word SingleKey
+/// identity: it also has a known authorization preimage, unlike a raw-zero
+/// identity. This is a tree default, not an issued or wallet-owned note.
+pub fn poseidon2_v8_empty_note_opening() -> SmallwoodPoseidon2V8NoteOpening {
+    let identity = poseidon2_v8_single_key_authorization_digest([1, 0, 0, 0, 0])
+        .expect("fixed canonical nonzero empty-note key");
+    SmallwoodPoseidon2V8NoteOpening {
+        authorization_key: [identity[0], identity[1], identity[2], identity[3]],
+        randomness: [identity[4], identity[5], identity[6], 0],
+        ..SmallwoodPoseidon2V8NoteOpening::ZERO
+    }
+}
+
+/// Source-owned defaults: a known zero-value leaf, then32 equal-child parents.
+/// Changing these defaults changes every partially filled tree root and
+/// requires a new persisted-tree version; it does not change proof encoding.
+pub fn poseidon2_v8_default_note_nodes(
+) -> [SmallwoodPoseidon2V8Digest; SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH + 1] {
+    let mut nodes = [[0u64; 7]; SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH + 1];
+    nodes[0] = poseidon2_v8_note_commitment(poseidon2_v8_empty_note_opening())
+        .expect("fixed canonical empty-note opening");
+    for level in 0..SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH {
+        nodes[level + 1] = poseidon2_v8_note_tree_compress(nodes[level], nodes[level]);
+    }
+    nodes
+}
+
 /// Exact canonical depth-32 frontier after inserting two commitments at note
 /// positions zero and one.
 pub fn poseidon2_v8_two_note_frontier(
@@ -109,10 +139,7 @@ pub fn poseidon2_v8_two_note_frontier(
     if !canonical(&commitments.concat()) {
         return Err(SmallwoodPoseidon2V8CoinbaseError::NonCanonicalWord);
     }
-    let mut empty = [[0u64; 7]; SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH + 1];
-    for level in 0..SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH {
-        empty[level + 1] = poseidon2_v8_note_tree_compress(empty[level], empty[level]);
-    }
+    let empty = poseidon2_v8_default_note_nodes();
     let mut paths = [[[0u64; 7]; SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH]; 2];
     paths[0][0] = commitments[1];
     paths[1][0] = commitments[0];
@@ -269,6 +296,78 @@ mod tests {
             SmallwoodPoseidon2V8Witness,
         },
     };
+
+    #[test]
+    fn canonical_empty_note_has_known_zero_value_preimage_and_pinned_root() {
+        let opening = poseidon2_v8_empty_note_opening();
+        assert_eq!(opening.value, 0);
+        assert_eq!(opening.asset_id, 0);
+        assert_eq!(opening.recipient_key, [0; 4]);
+        assert_eq!(opening.rho, [0; 4]);
+        assert_eq!(opening.randomness[3], 0);
+        let identity = poseidon2_v8_single_key_authorization_digest([1, 0, 0, 0, 0]).unwrap();
+        assert_eq!(opening.authorization_key, identity[..4]);
+        assert_eq!(opening.randomness[..3], identity[4..]);
+        let nodes = poseidon2_v8_default_note_nodes();
+        assert_eq!(nodes[0], poseidon2_v8_note_commitment(opening).unwrap());
+        assert_eq!(
+            nodes[0],
+            [
+                6_120_416_514_609_926_690,
+                15_655_183_934_609_706_358,
+                34_802_619_457_867_233,
+                8_367_917_033_045_892_226,
+                8_005_251_540_087_790_115,
+                7_109_810_094_751_343_845,
+                4_433_333_151_475_486_468,
+            ]
+        );
+        assert_eq!(
+            nodes[SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH],
+            [
+                17_350_853_413_121_414_251,
+                11_311_714_906_264_832_276,
+                5_494_323_263_975_105_675,
+                16_684_950_828_932_818_263,
+                7_241_422_828_316_666_478,
+                13_669_884_728_521_486_080,
+                15_137_873_680_347_988_554,
+            ]
+        );
+    }
+
+    #[test]
+    fn canonical_empty_note_frontier_reconstructs_both_inserted_paths() {
+        let opening = SmallwoodPoseidon2V8NoteOpening {
+            value: 1,
+            ..poseidon2_v8_empty_note_opening()
+        };
+        let other = SmallwoodPoseidon2V8NoteOpening {
+            rho: [1, 0, 0, 0],
+            ..opening
+        };
+        let commitments = [
+            poseidon2_v8_note_commitment(opening).unwrap(),
+            poseidon2_v8_note_commitment(other).unwrap(),
+        ];
+        let frontier = poseidon2_v8_two_note_frontier(commitments).unwrap();
+        let defaults = poseidon2_v8_default_note_nodes();
+        for index in 0..2 {
+            let mut current = commitments[index];
+            for level in 0..SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH {
+                let sibling = frontier.paths[index][level];
+                if level > 0 {
+                    assert_eq!(sibling, defaults[level]);
+                }
+                current = if (index >> level) & 1 == 0 {
+                    poseidon2_v8_note_tree_compress(current, sibling)
+                } else {
+                    poseidon2_v8_note_tree_compress(sibling, current)
+                };
+            }
+            assert_eq!(current, frontier.root);
+        }
+    }
 
     #[test]
     fn fixture_key_and_coinbase_commitments_are_pinned() {

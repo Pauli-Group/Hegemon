@@ -480,6 +480,24 @@ impl SmallwoodPoseidon2V8BindingPreamble {
     }
 }
 
+/// Fail closed at the frontend boundary before the engine can use an SMZA
+/// leaf namespace. The exact canonical preamble is reconstructed from the
+/// verifier-owned input; callers cannot substitute another 138-word prefix.
+fn validate_smza_leaf_statement_preamble_v1(
+    input: &SmallwoodPoseidon2V8VerifierInput,
+    preamble: &SmallwoodPoseidon2V8BindingPreamble,
+) -> Result<(), TransactionCircuitError> {
+    if preamble.as_bytes().len() != SMALLWOOD_POSEIDON2_V8_BINDING_PREAMBLE_BYTES
+        || preamble.as_words().len() != SMALLWOOD_POSEIDON2_V8_BINDING_PREAMBLE_WORDS
+        || preamble != &input.smza_candidate_transcript_preamble_v1()?
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SmallWood Poseidon2 V8 SMZA leaf binding is not the canonical 1104-byte/138-word preamble",
+        ));
+    }
+    Ok(())
+}
+
 /// One self-verified candidate proof ready for the canonical native leaf.
 /// `proof_bytes` begin with `SMZ9` and are passed to transport unchanged.
 #[derive(Clone, Debug)]
@@ -649,6 +667,71 @@ pub fn compile_and_prove_smallwood_poseidon2_v8_smza_candidate_v1(
     Ok(candidate)
 }
 
+/// Generate and self-verify an RP05 SMZA proof for offline retained-artifact
+/// preparation while the source identity gate still refuses ordinary callers.
+/// The opt-in feature does not add a production admission route.
+#[cfg(feature = "rp05-dev-artifacts")]
+pub fn compile_and_prove_smallwood_poseidon2_v8_smza_development_artifact_v1(
+    statement: &SmallwoodPoseidon2V8PublicStatement,
+    witness: &SmallwoodPoseidon2V8Witness,
+    network_id: u32,
+) -> Result<SmallwoodPoseidon2V8SmzaCandidateProof, TransactionCircuitError> {
+    if protocol_versioning::smallwood_poseidon2_production_authorized() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "RP05 development-artifact route is disabled when production is authorized",
+        ));
+    }
+    let lowered = crate::smallwood_poseidon2_v8_semantics::compile_smallwood_poseidon2_v8_relation_for_development_artifact(
+        statement,
+        witness,
+    )
+    .map_err(|error| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "SmallWood Poseidon2 V8 RP05 development relation compilation failed: {error}"
+        ))
+    })?;
+    prove_smallwood_poseidon2_v8_smza_candidate_with_relation_v1(
+        &lowered.adapter,
+        &lowered.witness_values,
+        network_id,
+    )
+}
+
+/// Check a retained RP05 candidate under the same source-owned relation and
+/// frontend proof gates without lifting ordinary verifier admission.
+#[cfg(feature = "rp05-dev-artifacts")]
+pub fn verify_smallwood_poseidon2_v8_smza_development_artifact_v1(
+    input: &SmallwoodPoseidon2V8VerifierInput,
+    proof_bytes: &[u8],
+) -> Result<(), TransactionCircuitError> {
+    if protocol_versioning::smallwood_poseidon2_production_authorized() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "RP05 development-artifact route is disabled when production is authorized",
+        ));
+    }
+    let factory = SmallwoodPoseidon2V8SourceRelationFactory;
+    validate_verifier_input(input)?;
+    ensure_factory_matches_input(&factory, input)?;
+    let statement = SmallwoodPoseidon2V8PublicStatement::try_from_public_words(
+        &input.public_values,
+    )
+    .map_err(|error| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "SmallWood Poseidon2 V8 development statement reconstruction failed: {error:?}"
+        ))
+    })?;
+    let relation =
+        SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement_for_rp05_development_artifact(
+            &statement,
+        )
+        .map_err(|error| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+                "SmallWood Poseidon2 V8 development relation reconstruction failed: {error}"
+            ))
+        })?;
+    verify_smallwood_poseidon2_v8_smza_candidate_with_relation_v1(&relation, input, proof_bytes)
+}
+
 fn prove_smallwood_poseidon2_v8_smza_candidate_with_relation_v1(
     relation: &(impl SmallwoodPoseidon2V8FrontendRelation + Sync),
     witness_values: &[u64],
@@ -681,6 +764,7 @@ fn prove_smallwood_poseidon2_v8_smza_candidate_with_relation_v1(
     }
     let verifier_input = SmallwoodPoseidon2V8VerifierInput::from_relation(network_id, relation);
     let preamble = verifier_input.smza_candidate_transcript_preamble_v1()?;
+    validate_smza_leaf_statement_preamble_v1(&verifier_input, &preamble)?;
     let projected_max_proof_bytes =
         project_smallwood_poseidon2_v8_smza_candidate_bytes_v1(relation)?;
     let engine_relation = SmallwoodPoseidon2V8SmzaEngineRelation::new(relation)?;
@@ -735,6 +819,7 @@ fn verify_smallwood_poseidon2_v8_smza_candidate_with_relation_v1(
     ensure_smza_bytes(proof_bytes)?;
     ensure_smza_routed_size(proof_bytes.len(), &input.public_values, "q38 received")?;
     let preamble = input.smza_candidate_transcript_preamble_v1()?;
+    validate_smza_leaf_statement_preamble_v1(input, &preamble)?;
     crate::smallwood_poseidon2_v8_zk_refinement::validate_accepted_smallwood_poseidon2_v8_smza_local_audit_v1(
         relation,
         preamble.as_bytes(),
@@ -755,6 +840,68 @@ pub fn verify_smallwood_poseidon2_v8_smza_candidate_v1(
     verify_smallwood_poseidon2_v8_smza_candidate_with_relation_v1(&relation, input, proof_bytes)
 }
 
+/// Frontend-validated evidence for one SMZA verifier invocation. The private
+/// fields bind the recorder result to the exact canonical input used to
+/// reconstruct the source relation and its transcript preamble.
+#[derive(Debug)]
+#[allow(dead_code)] // Consumed by the accepted-run witness integration.
+pub(crate) struct SmallwoodPoseidon2V8SmzaFrontendAcceptedRunAttemptV1 {
+    input: SmallwoodPoseidon2V8VerifierInput,
+    recorded:
+        crate::smallwood_poseidon2_v8_zk_refinement::SmallwoodPoseidon2V8SmzaAcceptedRunAttemptV1,
+}
+
+#[allow(dead_code)] // Consumed by the accepted-run witness integration.
+impl SmallwoodPoseidon2V8SmzaFrontendAcceptedRunAttemptV1 {
+    pub(crate) fn input(&self) -> &SmallwoodPoseidon2V8VerifierInput {
+        &self.input
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        SmallwoodPoseidon2V8VerifierInput,
+        crate::smallwood_poseidon2_v8_zk_refinement::SmallwoodPoseidon2V8SmzaAcceptedRunAttemptV1,
+    ) {
+        (self.input, self.recorded)
+    }
+}
+
+/// Apply the same canonical statement, source-factory, relation, wire-size,
+/// and leaf-preamble gates as the candidate verifier, then record its existing
+/// local audit once. A frontend failure returns before entering the oracle
+/// recorder; an audit failure retains its ordered raw query log in `recorded`.
+#[allow(dead_code)] // Called when constructing the accepted-run witness.
+pub(crate) fn verify_smallwood_poseidon2_v8_smza_candidate_with_evidence_v1(
+    input: &SmallwoodPoseidon2V8VerifierInput,
+    proof_bytes: &[u8],
+) -> Result<SmallwoodPoseidon2V8SmzaFrontendAcceptedRunAttemptV1, TransactionCircuitError> {
+    let factory = SmallwoodPoseidon2V8SourceRelationFactory;
+    validate_verifier_input(input)?;
+    ensure_factory_matches_input(&factory, input)?;
+    let relation = factory.build_verifier_relation(input)?;
+    ensure_relation_contract(&relation)?;
+    ensure_relation_matches_input(&relation, input)?;
+    if relation.relation_digest() != &SMALLWOOD_POSEIDON2_V8_RELATION_DIGEST {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SmallWood Poseidon2 V8 SMZA verifier requires the exact source-owned relation digest",
+        ));
+    }
+    ensure_smza_bytes(proof_bytes)?;
+    ensure_smza_routed_size(proof_bytes.len(), &input.public_values, "q38 received")?;
+    let preamble = input.smza_candidate_transcript_preamble_v1()?;
+    validate_smza_leaf_statement_preamble_v1(input, &preamble)?;
+    let recorded = crate::smallwood_poseidon2_v8_zk_refinement::validate_accepted_smallwood_poseidon2_v8_smza_with_evidence_v1(
+        &relation,
+        preamble.as_bytes(),
+        proof_bytes,
+    )?;
+    Ok(SmallwoodPoseidon2V8SmzaFrontendAcceptedRunAttemptV1 {
+        input: input.clone(),
+        recorded,
+    })
+}
+
 pub fn report_smallwood_poseidon2_v8_smza_candidate_v1(
     input: &SmallwoodPoseidon2V8VerifierInput,
     proof_bytes: &[u8],
@@ -765,6 +912,7 @@ pub fn report_smallwood_poseidon2_v8_smza_candidate_v1(
     let relation = factory.build_verifier_relation(input)?;
     verify_smallwood_poseidon2_v8_smza_candidate_with_relation_v1(&relation, input, proof_bytes)?;
     let preamble = input.smza_candidate_transcript_preamble_v1()?;
+    validate_smza_leaf_statement_preamble_v1(input, &preamble)?;
     let engine_relation = SmallwoodPoseidon2V8SmzaEngineRelation::new(&relation)?;
     report_smallwood_backend_opening_surface_with_profile_and_domain_v1(
         &engine_relation,
@@ -777,7 +925,8 @@ pub fn report_smallwood_poseidon2_v8_smza_candidate_v1(
 }
 
 /// Source-owned trace seam for SMZA artifact and native callers. Reconstructs
-/// HGV8RP03 from public inputs and applies the explicit successor selector.
+/// the current source program from public inputs, retaining the ordinary
+/// identity-admission gate.
 /// Ordinary acceptance must still use the candidate verifier/local audit.
 pub fn build_smallwood_poseidon2_v8_smza_candidate_verifier_trace_v1(
     input: &SmallwoodPoseidon2V8VerifierInput,
@@ -787,12 +936,54 @@ pub fn build_smallwood_poseidon2_v8_smza_candidate_verifier_trace_v1(
     validate_verifier_input(input)?;
     ensure_factory_matches_input(&factory, input)?;
     let relation = factory.build_verifier_relation(input)?;
-    ensure_relation_contract(&relation)?;
-    ensure_relation_matches_input(&relation, input)?;
+    build_smallwood_poseidon2_v8_smza_trace_with_relation_v1(&relation, input, proof_bytes)
+}
+
+/// Offline RP05 trace construction under the same explicit development
+/// feature as proof generation. The source/fixture identity checks are not
+/// skipped, and this does not change ordinary verifier admission. Callers
+/// must separately run the development verifier/local audit before treating
+/// the returned trace as accepted-proof evidence.
+#[cfg(feature = "rp05-dev-artifacts")]
+pub fn build_smallwood_poseidon2_v8_smza_development_artifact_verifier_trace_v1(
+    input: &SmallwoodPoseidon2V8VerifierInput,
+    proof_bytes: &[u8],
+) -> Result<crate::smallwood_engine::SmallwoodVerifierTraceV1, TransactionCircuitError> {
+    let factory = SmallwoodPoseidon2V8SourceRelationFactory;
+    validate_verifier_input(input)?;
+    ensure_factory_matches_input(&factory, input)?;
+    let statement = SmallwoodPoseidon2V8PublicStatement::try_from_public_words(
+        &input.public_values,
+    )
+    .map_err(|error| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "SmallWood Poseidon2 V8 development trace statement reconstruction failed: {error:?}"
+        ))
+    })?;
+    let relation =
+        SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement_for_rp05_development_artifact(
+            &statement,
+        )
+        .map_err(|error| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+                "SmallWood Poseidon2 V8 development trace relation reconstruction failed: {error}"
+            ))
+        })?;
+    build_smallwood_poseidon2_v8_smza_trace_with_relation_v1(&relation, input, proof_bytes)
+}
+
+fn build_smallwood_poseidon2_v8_smza_trace_with_relation_v1(
+    relation: &SmallwoodPoseidon2V8ConstraintAdapter,
+    input: &SmallwoodPoseidon2V8VerifierInput,
+    proof_bytes: &[u8],
+) -> Result<crate::smallwood_engine::SmallwoodVerifierTraceV1, TransactionCircuitError> {
+    ensure_relation_contract(relation)?;
+    ensure_relation_matches_input(relation, input)?;
     ensure_smza_bytes(proof_bytes)?;
     ensure_smza_routed_size(proof_bytes.len(), &input.public_values, "trace")?;
     let preamble = input.smza_candidate_transcript_preamble_v1()?;
-    let engine_relation = SmallwoodPoseidon2V8SmzaEngineRelation::new(&relation)?;
+    validate_smza_leaf_statement_preamble_v1(input, &preamble)?;
+    let engine_relation = SmallwoodPoseidon2V8SmzaEngineRelation::new(relation)?;
     crate::smallwood_engine::build_smallwood_poseidon2_v8_smza_verifier_trace_v1(
         &engine_relation,
         preamble.as_bytes(),
@@ -1640,18 +1831,74 @@ mod tests {
     use super::*;
     use crate::smallwood_semantics::{SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView};
 
+    #[cfg(feature = "rp05-dev-artifacts")]
+    #[test]
+    fn rp05_development_artifact_route_keeps_ordinary_admission_closed() {
+        let statement = SmallwoodPoseidon2V8PublicStatement::default();
+        let relation =
+            SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement_for_rp05_development_artifact(
+                &statement,
+            )
+            .expect("development adapter must bind to exact RP05 source and fixture");
+        assert!(SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(&statement).is_err());
+        assert!(!protocol_versioning::smallwood_poseidon2_production_authorized());
+        let input = SmallwoodPoseidon2V8VerifierInput::from_relation(17, &relation);
+        assert!(verify_smallwood_poseidon2_v8_smza_candidate_v1(&input, b"SMZA").is_err());
+        assert!(
+            verify_smallwood_poseidon2_v8_smza_development_artifact_v1(&input, b"SMZA").is_err()
+        );
+        assert!(
+            build_smallwood_poseidon2_v8_smza_development_artifact_verifier_trace_v1(
+                &input, b"SMZA"
+            )
+            .is_err()
+        );
+        assert!(
+            build_smallwood_poseidon2_v8_smza_candidate_verifier_trace_v1(&input, b"SMZA").is_err()
+        );
+        let mut unrelated = input;
+        unrelated.relation_digest[0] ^= 1;
+        assert!(
+            build_smallwood_poseidon2_v8_smza_development_artifact_verifier_trace_v1(
+                &unrelated, b"SMZA"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn smza_frontend_evidence_rejects_non_source_relation_like_candidate_verifier() {
+        let relation = TestRelation::new();
+        let input = SmallwoodPoseidon2V8VerifierInput::from_relation(17, &relation);
+        let proof_bytes = b"SMZA";
+        let ordinary = verify_smallwood_poseidon2_v8_smza_candidate_v1(&input, proof_bytes)
+            .expect_err("candidate verifier must reject a non-source relation digest");
+        let with_evidence =
+            verify_smallwood_poseidon2_v8_smza_candidate_with_evidence_v1(&input, proof_bytes)
+                .expect_err("evidence entrypoint must reject a non-source relation digest");
+        assert_eq!(ordinary.to_string(), with_evidence.to_string());
+    }
+
     #[test]
     fn smza_identity_and_caps_are_additive() {
         let relation = TestRelation::new();
         let input = SmallwoodPoseidon2V8VerifierInput::from_relation(17, &relation);
         let old = input.transcript_preamble().unwrap();
         let new = input.smza_candidate_transcript_preamble_v1().unwrap();
+        validate_smza_leaf_statement_preamble_v1(&input, &new).unwrap();
+        assert_eq!(new.as_bytes().len(), 1_104);
+        assert_eq!(new.as_words().len(), 138);
         assert_eq!(&new.as_bytes()[..8], b"HGV8PB02");
         assert_eq!(new.as_bytes()[PREAMBLE_OFFSET_PROFILE], 9);
         assert_eq!(&new.as_bytes()[20..22], &5u16.to_le_bytes());
         assert_eq!(&new.as_bytes()[32..36], b"SMZA");
         assert_eq!(&old.as_bytes()[32..36], b"SMZ9");
         assert_eq!(&old.as_bytes()[36..], &new.as_bytes()[36..]);
+        let mut noncanonical_leaf_binding = new.clone();
+        noncanonical_leaf_binding.bytes[PREAMBLE_OFFSET_NETWORK] ^= 1;
+        assert!(
+            validate_smza_leaf_statement_preamble_v1(&input, &noncanonical_leaf_binding).is_err()
+        );
         for magic in [b"SMZ9", b"SMC7", b"SMC8"] {
             assert!(ensure_smza_bytes(magic).is_err());
         }

@@ -77,7 +77,10 @@ use crate::smallwood_poseidon2_v8_relation::{
 use crate::smallwood_poseidon2_v8_types::{
     SmallwoodPoseidon2V8PublicStatement, SmallwoodPoseidon2V8SurfaceError,
     SmallwoodPoseidon2V8Witness, SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_DOMAIN,
-    SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS,
+    SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_WORDS,
+    SMALLWOOD_POSEIDON2_V8_INTENT_OMIT_MERKLE_ROOT_PREFIX,
+    SMALLWOOD_POSEIDON2_V8_INTENT_OMIT_NULLIFIERS, SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS,
+    SMALLWOOD_POSEIDON2_V8_SIGNER_TAG_WORDS,
     SMALLWOOD_POSEIDON2_V8_WITNESS_WORDS as SMALLWOOD_POSEIDON2_V8_TYPED_WITNESS_WORDS,
 };
 use crate::smallwood_semantics::{SmallwoodConstraintAdapter, SmallwoodNonlinearEvalView};
@@ -103,7 +106,7 @@ const INPUTS: usize = 2;
 const OUTPUTS: usize = 2;
 const MERKLE_DEPTH: usize = 32;
 const DIGEST: usize = 7;
-const SIGNER_TAG_WORDS: usize = 5;
+const SIGNER_TAG_WORDS: usize = SMALLWOOD_POSEIDON2_V8_SIGNER_TAG_WORDS;
 const SIGNERS: usize = 6;
 const PAIRS: usize = 15;
 const STABLE_ROLE_CONDITIONS: usize = 21;
@@ -124,8 +127,8 @@ const MODULUS: u64 = hegemon_field::GOLDILOCKS_MODULUS;
 const NEG_ONE: u64 = MODULUS - 1;
 
 pub const SMALLWOOD_POSEIDON2_V8_TRANSACTION_CALLS: core::ops::Range<usize> = 0..81;
-pub const SMALLWOOD_POSEIDON2_V8_INTENT_CALLS: core::ops::Range<usize> = 81..96;
-pub const SMALLWOOD_POSEIDON2_V8_POLICY_CALLS: core::ops::Range<usize> = 96..100;
+pub const SMALLWOOD_POSEIDON2_V8_INTENT_CALLS: core::ops::Range<usize> = 81..94;
+pub const SMALLWOOD_POSEIDON2_V8_POLICY_CALLS: core::ops::Range<usize> = 94..100;
 pub const SMALLWOOD_POSEIDON2_V8_CURRENT_ACCUMULATOR_CALLS: core::ops::Range<usize> = 100..103;
 pub const SMALLWOOD_POSEIDON2_V8_NEXT_ACCUMULATOR_CALLS: core::ops::Range<usize> = 103..106;
 pub const SMALLWOOD_POSEIDON2_V8_VALUE_LOCK_CALLS: core::ops::Range<usize> = 106..107;
@@ -144,7 +147,7 @@ const _: () = assert!(
         == SMALLWOOD_POSEIDON2_V8_ROW_COUNT
 );
 const _: () =
-    assert!(81 + 15 + 4 + 3 + 3 + 1 + 1 + 1 + 19 == SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT);
+    assert!(81 + 13 + 6 + 3 + 3 + 1 + 1 + 1 + 19 == SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT);
 const _: () = assert!(
     INPUTS * INPUT_ROWS + OUTPUTS * OUTPUT_ROWS + AUTH_ROWS == SMALLWOOD_POSEIDON2_V8_RAW_ROW_COUNT
 );
@@ -267,7 +270,7 @@ const AUTH_MODE: usize = 0;
 const AUTH_INPUT_NOTE_VECTOR: usize = AUTH_MODE + 3;
 const AUTH_INPUT_NULLIFIER_VECTOR: usize = AUTH_INPUT_NOTE_VECTOR + 2;
 const AUTH_LEGACY_TAG: usize = AUTH_INPUT_NULLIFIER_VECTOR + 2;
-const AUTH_LEGACY_VECTOR: usize = AUTH_LEGACY_TAG + 5;
+const AUTH_LEGACY_VECTOR: usize = AUTH_LEGACY_TAG + DIGEST;
 const AUTH_NEXT_VECTOR: usize = AUTH_LEGACY_VECTOR + 1;
 const AUTH_VALUE_LOCK_VECTOR: usize = AUTH_NEXT_VECTOR + 1;
 const AUTH_SECONDARY_INPUT_VECTOR: usize = AUTH_VALUE_LOCK_VECTOR + 1;
@@ -284,17 +287,19 @@ const AUTH_SIGNER_FLAGS: usize = AUTH_SCALAR + 17;
 const AUTH_RANGE_DIFFS: usize = AUTH_SIGNER_FLAGS + 6;
 const AUTH_OUTPUT_0_EXTENSION: usize = AUTH_RANGE_DIFFS + 2;
 const AUTH_POLICY_TAGS: usize = AUTH_OUTPUT_0_EXTENSION + 3;
-const AUTH_MEMBERSHIP: usize = AUTH_POLICY_TAGS + 30;
+const AUTH_MEMBERSHIP: usize = AUTH_POLICY_TAGS + SIGNERS * SIGNER_TAG_WORDS;
 const AUTH_DISTINCT_INV: usize = AUTH_MEMBERSHIP + 6;
 const AUTH_GLOBAL_KEY_VECTOR: usize = AUTH_DISTINCT_INV + 15;
 const AUTH_POLICY_KEY_VECTOR: usize = AUTH_GLOBAL_KEY_VECTOR + 1;
-const AUTH_USED: usize = AUTH_POLICY_KEY_VECTOR + 1;
+const AUTH_VALUE_INVERSES: usize = AUTH_POLICY_KEY_VECTOR + 1;
+const AUTH_USED: usize = AUTH_VALUE_INVERSES + 2;
 const fn auth_global_key_vector_row() -> usize {
     auth_row(AUTH_GLOBAL_KEY_VECTOR)
 }
 const fn auth_policy_key_vector_row() -> usize {
     auth_row(AUTH_POLICY_KEY_VECTOR)
 }
+const _: () = assert!(AUTH_USED == 139);
 const _: () = assert!(AUTH_USED <= AUTH_ROWS);
 
 #[inline]
@@ -420,6 +425,10 @@ const fn auth_membership_row(slot: usize) -> usize {
 #[inline]
 const fn auth_distinct_inverse_row(pair: usize) -> usize {
     auth_row(AUTH_DISTINCT_INV + pair)
+}
+#[inline]
+const fn auth_value_inverse_row(output: bool) -> usize {
+    auth_row(AUTH_VALUE_INVERSES + output as usize)
 }
 
 #[inline]
@@ -728,11 +737,55 @@ fn push_auth_constraints(
         out.push(fsub(rows[auth_input_nullifier_vector_row(input)], selected));
     }
 
-    out.push(fmul(approval, fsub(public[0], 1)));
+    // Approval input zero is inactive exactly for the count-zero bootstrap.
+    // T4 rules out an inactive predecessor at positive count; T5 rules out an
+    // active predecessor at count zero using the existing count range.
+    out.push(fmul(fmul(approval, fsub(1, public[0])), count));
+    out.push(fmul(
+        fmul(approval, public[0]),
+        field_product((1..=6).map(|value| fsub(count, value))),
+    ));
     out.push(fmul(approval, fsub(public[1], 1)));
     out.push(fmul(approval, fsub(public[2], 1)));
     out.push(fmul(final_mode, fsub(public[0], 1)));
     out.push(fmul(final_mode, fsub(public[1], 1)));
+
+    // T1--T2: every active ordinary note has a positive 61-bit value.  The
+    // selected factors are one for inactive/accumulator roles and the note
+    // value for ordinary roles, so an inverse exists iff all ordinary active
+    // values are nonzero.
+    let phi = |gate: u64, value: u64| fadd(fsub(1, gate), fmul(gate, value));
+    let input_ordinary_0 = fmul(public[0], fadd(single, final_mode));
+    let input_ordinary_1 = fmul(public[1], fadd(single, approval));
+    let input_product = fmul(
+        phi(input_ordinary_0, rows[input_value_row(0)]),
+        phi(input_ordinary_1, rows[input_value_row(1)]),
+    );
+    out.push(fsub(
+        fmul(rows[auth_value_inverse_row(false)], input_product),
+        1,
+    ));
+    let output_ordinary_0 = fmul(public[2], fadd(single, final_mode));
+    let output_product = fmul(
+        phi(output_ordinary_0, rows[output_value_row(0)]),
+        phi(public[3], rows[output_value_row(1)]),
+    );
+    out.push(fsub(
+        fmul(rows[auth_value_inverse_row(true)], output_product),
+        1,
+    ));
+
+    // T3: accumulator roles are exactly zero-valued native-asset notes.
+    for value in [
+        rows[input_value_row(0)],
+        rows[input_asset_row(0)],
+        rows[output_value_row(0)],
+        rows[output_asset_row(0)],
+    ] {
+        out.push(fmul(approval, value));
+    }
+    out.push(fmul(final_mode, rows[input_value_row(1)]));
+    out.push(fmul(final_mode, rows[input_asset_row(1)]));
     out.push(fmul(
         approval,
         fsub(
@@ -973,7 +1026,7 @@ struct FinalizedCsr {
     family_receipt: SmallwoodPoseidon2V8CsrFamilyReceipt,
 }
 
-/// A CSR table that can only be constructed by specializing the relation-id-bound HGV8RP03
+/// A CSR table that can only be constructed by specializing the relation-id-bound HGV8RP05
 /// program.  Keeping this as a private newtype makes the adapter's source-level refinement a type
 /// invariant: the verifier never stores a table emitted by an independent numeric compiler.
 #[derive(Clone, Debug)]
@@ -1650,11 +1703,19 @@ fn build_base_linear_constraints(
 
     let projection = {
         let mut words = *public;
-        words[4..18].fill(0);
-        words[47..54].fill(0);
+        words[49..54].fill(0);
         words[87..94].fill(0);
         words[113..120].fill(0);
-        words
+        let mut projection = Vec::with_capacity(SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_WORDS);
+        for (source, word) in words.into_iter().enumerate() {
+            if SMALLWOOD_POSEIDON2_V8_INTENT_OMIT_NULLIFIERS.contains(&source)
+                || SMALLWOOD_POSEIDON2_V8_INTENT_OMIT_MERKLE_ROOT_PREFIX.contains(&source)
+            {
+                continue;
+            }
+            projection.push(word);
+        }
+        projection
     };
     let intent_sources = projection
         .into_iter()
@@ -1666,7 +1727,7 @@ fn build_base_linear_constraints(
     for limb in 0..DIGEST {
         csr.equality(
             raw_index(auth_statement_row(limb)),
-            hash_final_index(95, limb),
+            hash_final_index(93, limb),
         );
     }
 
@@ -1684,7 +1745,7 @@ fn build_base_linear_constraints(
         }
     }
     csr.set_family("hash.authorization_policy_initial");
-    bind_sponge(csr, 96, AUTH_POLICY_DOMAIN, &policy_sources);
+    bind_sponge(csr, 94, AUTH_POLICY_DOMAIN, &policy_sources);
     csr.set_family("auth.policy_inline_bindings");
     for limb in 0..DIGEST {
         csr.bind(
@@ -1742,12 +1803,10 @@ fn build_base_linear_constraints(
             packed_index(auth_legacy_vector_row(), limb),
             hash_final_index(0, limb),
         );
-        if limb < 5 {
-            csr.equality(
-                raw_index(auth_legacy_tag_row(limb)),
-                hash_final_index(0, limb),
-            );
-        }
+        csr.equality(
+            raw_index(auth_legacy_tag_row(limb)),
+            hash_final_index(0, limb),
+        );
     }
 
     let binding_key: [LinearExpression; DIGEST] = core::array::from_fn(|limb| {
@@ -1925,7 +1984,7 @@ fn push_stable_nonlinear_constraints(rows: &[u64], out: &mut Vec<u64>) {
     }
 }
 
-/// Build all 773 nonlinear identities from the same constructors consumed by the verifier.
+/// Build all 818 nonlinear identities from the same constructors consumed by the verifier.
 /// The u64 base/auth/stable constructors enter symbolic mode through the field helpers above;
 /// the Poseidon2 kernel already exposes its source-owned generic ring evaluator.
 pub(crate) fn smallwood_poseidon2_v8_nonlinear_expression_program(
@@ -2945,7 +3004,7 @@ fn specialize_executable_csr_program(
     })
 }
 
-// Test oracle proving that the independent numeric emitter agrees with HGV8RP03 specialization
+// Test oracle proving that the independent numeric emitter agrees with HGV8RP05 specialization
 // and that term, target, ordering, and empty-row mutations are detected.
 #[cfg_attr(not(test), allow(dead_code))]
 fn ensure_csr_matches_executable_program(
@@ -2956,7 +3015,7 @@ fn ensure_csr_matches_executable_program(
     if actual != &expected {
         return Err(SmallwoodPoseidon2V8RelationError::CsrProgramMismatch {
             detail: format!(
-                "specialized CSR differs from HGV8RP03 (actual rows {}, terms {}; expected rows {}, terms {})",
+                "specialized CSR differs from HGV8RP05 (actual rows {}, terms {}; expected rows {}, terms {})",
                 actual.targets.len(),
                 actual.indices.len(),
                 expected.targets.len(),
@@ -3024,11 +3083,11 @@ pub const SMALLWOOD_POSEIDON2_V8_CALL_ROLE_TABLE: [SmallwoodPoseidon2V8CallRoleR
     SmallwoodPoseidon2V8CallRoleRange {
         name: "action_intent",
         start: 81,
-        end: 96,
+        end: 94,
     },
     SmallwoodPoseidon2V8CallRoleRange {
         name: "authorization_policy",
-        start: 96,
+        start: 94,
         end: 100,
     },
     SmallwoodPoseidon2V8CallRoleRange {
@@ -3087,7 +3146,7 @@ pub const SMALLWOOD_POSEIDON2_V8_CALL_ROLE_TABLE: [SmallwoodPoseidon2V8CallRoleR
         end: 128,
     },
 ];
-pub const SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINT_COUNT: usize = 773;
+pub const SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINT_COUNT: usize = 818;
 
 fn set_replicated_row(rows: &mut [[u64; 64]], row: usize, value: u64) {
     rows[row].fill(value);
@@ -3175,7 +3234,7 @@ fn build_smallwood_poseidon2_v8_assignment(
     let value_lock = schedule.calls[106].final_digest();
     let current = schedule.calls[107].final_digest();
     let secondary = schedule.calls[108].final_digest();
-    let statement_digest = schedule.calls[95].final_digest();
+    let statement_digest = schedule.calls[93].final_digest();
     let computed_policy = schedule.calls[99].final_digest();
     let non_single = witness.auth.mode != SmallwoodPrivateAuthMode::SingleKey;
     let policy = if non_single {
@@ -3223,7 +3282,7 @@ fn build_smallwood_poseidon2_v8_assignment(
         };
         rows[auth_input_nullifier_vector_row(input)][..5].copy_from_slice(&key);
     }
-    for limb in 0..5 {
+    for limb in 0..DIGEST {
         set_replicated_row(&mut rows, auth_legacy_tag_row(limb), legacy[limb]);
     }
     for (row, digest) in [
@@ -3317,7 +3376,7 @@ fn build_smallwood_poseidon2_v8_assignment(
         let membership = u64::from(
             witness.auth.mode == SmallwoodPrivateAuthMode::ApprovalStep
                 && slot_active(&signer_flags, slot) == 1
-                && witness.auth.policy_signer_tags[slot] == legacy[..5],
+                && witness.auth.policy_signer_tags[slot] == legacy,
         );
         set_replicated_row(&mut rows, auth_membership_row(slot), membership);
     }
@@ -3339,6 +3398,49 @@ fn build_smallwood_poseidon2_v8_assignment(
             pair += 1;
         }
     }
+
+    let phi = |gate: bool, value: u64| if gate { value } else { 1 };
+    let input_product = fmul(
+        phi(
+            statement.input_flags[0]
+                && matches!(
+                    witness.auth.mode,
+                    SmallwoodPrivateAuthMode::SingleKey
+                        | SmallwoodPrivateAuthMode::FinalThresholdSpend
+                ),
+            witness.inputs[0].note.value,
+        ),
+        phi(
+            statement.input_flags[1]
+                && matches!(
+                    witness.auth.mode,
+                    SmallwoodPrivateAuthMode::SingleKey | SmallwoodPrivateAuthMode::ApprovalStep
+                ),
+            witness.inputs[1].note.value,
+        ),
+    );
+    let output_product = fmul(
+        phi(
+            statement.output_flags[0]
+                && matches!(
+                    witness.auth.mode,
+                    SmallwoodPrivateAuthMode::SingleKey
+                        | SmallwoodPrivateAuthMode::FinalThresholdSpend
+                ),
+            witness.outputs[0].note.value,
+        ),
+        phi(statement.output_flags[1], witness.outputs[1].note.value),
+    );
+    set_replicated_row(
+        &mut rows,
+        auth_value_inverse_row(false),
+        finv(input_product),
+    );
+    set_replicated_row(
+        &mut rows,
+        auth_value_inverse_row(true),
+        finv(output_product),
+    );
 
     // Base-four 61-bit ranges for four private values and three verifier constants.
     for (value_index, value) in [
@@ -3581,7 +3683,7 @@ fn decode_accumulator_words(packed: &[u64], first_call: usize) -> [u64; 23] {
     core::array::from_fn(|word| decode_sponge_source_word(packed, first_call, word))
 }
 
-/// Semantic section owning one word in the canonical 721-word typed witness.
+/// Semantic section owning one word in the canonical 740-word typed witness.
 ///
 /// The numeric discriminants are part of the retained Rust/Lean refinement vector.  Changing one
 /// therefore requires regenerating and reviewing that vector rather than silently reinterpreting
@@ -3935,11 +4037,11 @@ fn decode_note_witness_words(packed: &[u64], first_call: usize) -> [u64; 18] {
     })
 }
 
-/// Decode the unique typed 721-word witness carried by an arbitrary canonical V8 packed
+/// Decode the unique typed 740-word witness carried by an arbitrary canonical V8 packed
 /// assignment.
 ///
 /// This decoder does not trust prover-supplied side data.  It reads only coordinates already
-/// consumed by `HGV8RP03`: sponge initial/final states, oriented Merkle operands, replicated raw
+/// consumed by `HGV8RP05`: sponge initial/final states, oriented Merkle operands, replicated raw
 /// rows, and stablecoin compression inputs.  It then runs the canonical typed parser and semantic
 /// surface validator.  The verifier additionally rebuilds the full packed assignment and demands
 /// exact word-for-word equality, so unconstrained or alternate encodings cannot be accepted.
@@ -4094,7 +4196,7 @@ pub struct SmallwoodPoseidon2V8Geometry {
 
 /// Source-level refinement facts for one accepted verifier adapter.
 ///
-/// This receipt says that the stored linear table came from the HGV8RP03 symbolic program and
+/// This receipt says that the stored linear table came from the HGV8RP05 symbolic program and
 /// that nonlinear acceptance executes the relation-id-bound expression DAG for every packed
 /// lane.  It is deliberately not a claim about a compiled machine binary, semantic-specification
 /// adequacy, proof-system soundness, or production authority.
@@ -4134,7 +4236,7 @@ pub enum SmallwoodPoseidon2V8RelationError {
     StableMaterial(SmallwoodPoseidon2V8TailMaterialError),
     #[error("the executable V8 relation compiler is not complete")]
     CompilerIncomplete,
-    #[error("the executable HGV8RP03 relation program does not match its pinned digest")]
+    #[error("the executable HGV8RP05 relation program does not match its pinned digest")]
     ProgramDigestMismatch,
     #[error("packed witness length is {actual}, expected {expected}")]
     WrongWitnessLength { expected: usize, actual: usize },
@@ -4183,12 +4285,50 @@ impl SmallwoodPoseidon2V8ConstraintAdapter {
         if !smallwood_poseidon2_v8_program_digest_matches() {
             return Err(SmallwoodPoseidon2V8RelationError::ProgramDigestMismatch);
         }
+        Self::from_public_statement_after_identity_check(statement)
+    }
+
+    /// Offline RP05 artifact construction only. The normal verifier factory
+    /// still refuses this relation while identity regeneration is pending.
+    #[cfg(feature = "rp05-dev-artifacts")]
+    pub fn from_public_statement_for_rp05_development_artifact(
+        statement: &SmallwoodPoseidon2V8PublicStatement,
+    ) -> Result<Self, SmallwoodPoseidon2V8RelationError> {
+        use crate::smallwood_poseidon2_v8_program::{
+            encode_smallwood_poseidon2_v8_program,
+            smallwood_poseidon2_v8_program_digest_from_bytes,
+            smallwood_poseidon2_v8_program_sha512_from_bytes,
+            SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512, SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES,
+        };
+        if protocol_versioning::smallwood_poseidon2_production_authorized() {
+            return Err(SmallwoodPoseidon2V8RelationError::ProgramDigestMismatch);
+        }
+        let source = encode_smallwood_poseidon2_v8_program();
+        let fixture = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp05.bin"
+        ));
+        if source.len() != SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES
+            || source.as_slice() != fixture
+            || smallwood_poseidon2_v8_program_sha512_from_bytes(&source)
+                != SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512
+            || smallwood_poseidon2_v8_program_digest_from_bytes(&source)
+                != SMALLWOOD_POSEIDON2_V8_RELATION_DIGEST
+        {
+            return Err(SmallwoodPoseidon2V8RelationError::ProgramDigestMismatch);
+        }
+        Self::from_public_statement_after_identity_check(statement)
+    }
+
+    fn from_public_statement_after_identity_check(
+        statement: &SmallwoodPoseidon2V8PublicStatement,
+    ) -> Result<Self, SmallwoodPoseidon2V8RelationError> {
         statement.validate_public_structure()?;
         let public_values = statement.to_public_words();
         let relation_balance_binding = statement.expected_action_intent()?;
         // Do not compile a second numeric relation and compare it after the fact.  The adapter
         // stores only a private `ProgramSpecializedCsr`, constructed directly by interpreting the
-        // relation-id-bound HGV8RP03 CSR program on these canonical public words.
+        // relation-id-bound HGV8RP05 CSR program on these canonical public words.
         let program_csr = ProgramSpecializedCsr::for_public_words(&public_values)?;
         Ok(Self {
             public_values,
@@ -4445,11 +4585,42 @@ impl SmallwoodPoseidon2V8FrontendRelation for SmallwoodPoseidon2V8ConstraintAdap
     }
 }
 
+/// Interpret the current source-owned CSR program for one canonical statement
+/// without consulting the historical relation-identity pins.  This narrow
+/// diagnostic exists only to regenerate statement-specialized count fixtures;
+/// it neither constructs a verifier adapter nor authorizes the successor.
+pub fn smallwood_poseidon2_v8_source_linear_constraint_count_for_regeneration(
+    statement: &SmallwoodPoseidon2V8PublicStatement,
+) -> Result<usize, SmallwoodPoseidon2V8RelationError> {
+    statement.validate_public_structure()?;
+    let program = ProgramSpecializedCsr::for_public_words(&statement.to_public_words())?;
+    Ok(program.finalized().targets.len())
+}
+
 pub fn compile_smallwood_poseidon2_v8_relation(
     statement: &SmallwoodPoseidon2V8PublicStatement,
     witness: &SmallwoodPoseidon2V8Witness,
 ) -> Result<SmallwoodPoseidon2V8LoweredRelation, SmallwoodPoseidon2V8RelationError> {
     let adapter = SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(statement)?;
+    let witness_values = build_smallwood_poseidon2_v8_assignment(statement, witness)?;
+    adapter.verify_packed_witness(&witness_values)?;
+    Ok(SmallwoodPoseidon2V8LoweredRelation {
+        adapter,
+        witness_values,
+    })
+}
+
+/// Compile a witness for offline RP05 proof artifacts under an explicit
+/// development feature. This never changes the production verifier factory.
+#[cfg(feature = "rp05-dev-artifacts")]
+pub fn compile_smallwood_poseidon2_v8_relation_for_development_artifact(
+    statement: &SmallwoodPoseidon2V8PublicStatement,
+    witness: &SmallwoodPoseidon2V8Witness,
+) -> Result<SmallwoodPoseidon2V8LoweredRelation, SmallwoodPoseidon2V8RelationError> {
+    let adapter =
+        SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement_for_rp05_development_artifact(
+            statement,
+        )?;
     let witness_values = build_smallwood_poseidon2_v8_assignment(statement, witness)?;
     adapter.verify_packed_witness(&witness_values)?;
     Ok(SmallwoodPoseidon2V8LoweredRelation {
@@ -4612,17 +4783,17 @@ mod tests {
         assert_eq!(adapter.geometry().witness_rows, 686);
         assert_eq!(adapter.geometry().hash_calls, 128);
         assert_eq!(adapter.geometry().auxiliary_words, 0);
-        assert_eq!(adapter.geometry().nonlinear_constraints, 773);
-        assert_eq!(adapter.geometry().linear_constraints, 20_510);
+        assert_eq!(adapter.geometry().nonlinear_constraints, 818);
+        assert_eq!(adapter.geometry().linear_constraints, 20_496);
         assert!(adapter.compiler_complete());
         assert_ne!(adapter.relation_digest(), &[0; 48]);
         let refinement = adapter.source_program_refinement();
         assert_eq!(refinement.relation_digest, *adapter.relation_digest());
         assert_eq!(refinement.packed_lanes, 64);
         assert_eq!(refinement.nonlinear_expression_nodes, 8_130);
-        assert_eq!(refinement.nonlinear_roots, 773);
-        assert_eq!(refinement.csr_expression_nodes, 564);
-        assert_eq!(refinement.csr_attempts, 20_602);
+        assert_eq!(refinement.nonlinear_roots, 818);
+        assert_eq!(refinement.csr_expression_nodes, 566);
+        assert_eq!(refinement.csr_attempts, 20_588);
         assert_eq!(
             refinement.emitted_linear_constraints,
             adapter.geometry().linear_constraints
@@ -4746,7 +4917,7 @@ mod tests {
         );
         assert!(
             executable_csr_program().attempts.len() > csr.targets.len(),
-            "at least one attempted empty-zero identity must be retained in HGV8RP03"
+            "at least one attempted empty-zero identity must be retained in HGV8RP05"
         );
 
         let mut dropped_term = csr.clone();
@@ -5094,7 +5265,7 @@ mod tests {
             lowered.witness_values.len(),
             SMALLWOOD_POSEIDON2_V8_WITNESS_WORDS
         );
-        assert_eq!(lowered.adapter.geometry().nonlinear_constraints, 773);
+        assert_eq!(lowered.adapter.geometry().nonlinear_constraints, 818);
         lowered
             .adapter
             .verify_packed_witness(&lowered.witness_values)

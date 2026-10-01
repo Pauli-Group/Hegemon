@@ -418,6 +418,79 @@ fn retained_carrier_tracked_idle(snapshot: &serde_json::Value) -> bool {
         && snapshot["responses_in_flight"] == 0
 }
 
+fn retained_carrier_wait_for_stable_idle(
+    mut snapshot: impl FnMut() -> RetainedCarrierResult<serde_json::Value>,
+) -> RetainedCarrierResult<serde_json::Value> {
+    let deadline = std::time::Instant::now() + RETAINED_CARRIER_STAGE_TIMEOUT;
+    let mut first_idle_tip = None;
+    loop {
+        let current = snapshot()?;
+        if retained_carrier_tracked_idle(&current) {
+            let tip = current["tip"].clone();
+            if first_idle_tip.as_ref() == Some(&tip) {
+                return Ok(current);
+            }
+            first_idle_tip = Some(tip);
+        } else {
+            first_idle_tip = None;
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "tracked workers did not remain idle at a stable tip before timeout: tip={}, pending_proofs={}, import_in_flight={}, fallback_chunk_workers={}, responses_in_flight={}",
+                current["tip"],
+                current["pending_proofs"],
+                current["import_in_flight"],
+                current["fallback_chunk_workers"],
+                current["responses_in_flight"]
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+}
+
+#[test]
+fn retained_carrier_stable_idle_wait_retries_transient_busy_snapshot() {
+    let snapshots = std::collections::VecDeque::from([
+        serde_json::json!({"tip": "a", "pending_proofs": 0, "import_in_flight": false, "fallback_chunk_workers": 0, "responses_in_flight": 1}),
+        serde_json::json!({"tip": "a", "pending_proofs": 0, "import_in_flight": false, "fallback_chunk_workers": 0, "responses_in_flight": 0}),
+        serde_json::json!({"tip": "a", "pending_proofs": 0, "import_in_flight": false, "fallback_chunk_workers": 0, "responses_in_flight": 0}),
+    ]);
+    let mut snapshots = snapshots;
+    let mut calls = 0;
+    let result = retained_carrier_wait_for_stable_idle(|| {
+        calls += 1;
+        snapshots
+            .pop_front()
+            .ok_or_else(|| "unexpected extra idle snapshot".to_owned())
+    })
+    .unwrap();
+    assert_eq!(calls, 3);
+    assert_eq!(result["tip"], "a");
+    assert!(retained_carrier_tracked_idle(&result));
+}
+
+#[test]
+fn retained_carrier_stable_idle_wait_resets_on_tip_change_and_reopened_counter() {
+    let mut snapshots = std::collections::VecDeque::from([
+        serde_json::json!({"tip": "a", "pending_proofs": 0, "import_in_flight": false, "fallback_chunk_workers": 0, "responses_in_flight": 0}),
+        serde_json::json!({"tip": "b", "pending_proofs": 0, "import_in_flight": false, "fallback_chunk_workers": 0, "responses_in_flight": 0}),
+        serde_json::json!({"tip": "b", "pending_proofs": 0, "import_in_flight": false, "fallback_chunk_workers": 1, "responses_in_flight": 0}),
+        serde_json::json!({"tip": "c", "pending_proofs": 0, "import_in_flight": false, "fallback_chunk_workers": 0, "responses_in_flight": 0}),
+        serde_json::json!({"tip": "c", "pending_proofs": 0, "import_in_flight": false, "fallback_chunk_workers": 0, "responses_in_flight": 0}),
+    ]);
+    let mut calls = 0;
+    let result = retained_carrier_wait_for_stable_idle(|| {
+        calls += 1;
+        snapshots
+            .pop_front()
+            .ok_or_else(|| "unexpected extra idle snapshot".to_owned())
+    })
+    .unwrap();
+    assert_eq!(calls, 5);
+    assert_eq!(result["tip"], "c");
+    assert!(retained_carrier_tracked_idle(&result));
+}
+
 fn retained_carrier_assert_denied() {
     assert!(protocol_versioning::smallwood_poseidon2_production_capability().is_none());
     for (action, class) in [
@@ -762,21 +835,9 @@ fn retained_rp03_socket_child() {
                 retained_carrier_snapshot(&artifact, production.expected_context())
             }
             RetainedCarrierCommand::Quiesce {} | RetainedCarrierCommand::Shutdown {} => {
-                retained_carrier_snapshot(&artifact, production.expected_context()).and_then(
-                    |first| {
-                        if !retained_carrier_tracked_idle(&first) {
-                            return Err("tracked workers are not idle".into());
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(250));
-                        let second =
-                            retained_carrier_snapshot(&artifact, production.expected_context())?;
-                        if !retained_carrier_tracked_idle(&second) || first["tip"] != second["tip"]
-                        {
-                            return Err("tracked-idle tip changed".into());
-                        }
-                        Ok(second)
-                    },
-                )
+                retained_carrier_wait_for_stable_idle(|| {
+                    retained_carrier_snapshot(&artifact, production.expected_context())
+                })
             }
             RetainedCarrierCommand::MineCoinbase { index } => {
                 assert_eq!(role, "source", "only source may author fixture coinbase");

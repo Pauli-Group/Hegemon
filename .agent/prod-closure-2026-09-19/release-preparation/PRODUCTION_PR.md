@@ -1,176 +1,80 @@
-# RP04 / q38 production cutover — security closure in progress
-
-Draft while the remaining mathematical security arguments are completed.
-This is not yet production-ready and does not activate a production capability.
-
-## Proposed base and branch
-
-- Base: `origin/main` (`86a6469f`); merge-base `b819911d`.
-- Working branch: `codex/smallwood-pq128-experiment`.
-- This includes the existing 55-commit SmallWood/native-proof workstream plus
-  commit `c022de49`, which integrates the 48-file RP04/q38 change, and
-  `3275af8c`, which packages the checked mathematical component source closure.
-  The subsequent repair commit updates RP04 vectors and tests, fixes the TLS
-  dependency advisory, and repairs existing CI checker integration.
+# RP05: public ZK, single-spend history and independent-review resolutions
 
 ## Summary
 
-This PR packages the repaired RP04 implementation and q38 proof profile.
-It includes the native SMZA profile-9/domain-5
-fixture bindings, current-source artifact validation, wallet/native carrier
-changes, and retained lifecycle preparation. The fresh RP04 bundle is retained
-at `artifacts/smallwood-poseidon2-v8-smza/smza-rp04-native-refresh-20260919T180631Z`.
-Its 18 proof payloads are byte-identical to the generated pair; the manifest
-records a native-source-only refresh and `production_eligible: false`.
+Update the RP05 SmallWood Poseidon2 V8 independent transaction-proof path and
+publish its checked formal source package for review. The self-contained proof
+continues unchanged through wallet/RPC, relay, mempool, mining, blocks, sync,
+restart, reorg and fresh-node verification. No proof-format or size increase,
+alternate backend, or authorization bypass is introduced.
 
-## Evidence boundary
+The public package distinguishes its claims:
 
-- The retained RP04 bundle and native lifecycle evidence passed the repository
-  checker for their recorded source snapshot. Subsequent dependency, test,
-  formatting and recursive-replay helper changes require final affected-source
-  validation; the retained passes are not represented as covering every later edit.
-- Independently randomized proofs measure 163,409 and 163,281 bytes, both below
-  the unchanged 164,113-byte cap. Inline carriers are 168,843 and 168,715 bytes,
-  below the unchanged 169,547-byte cap. The query count remains 38.
-- The source verifier, canonical readback, mutation controls, in-process
-  lifecycle, actual-socket lifecycle, and software-evidence checker passed.
-  These local receipts are retained separately, not bulk-uploaded in this PR.
-- The PR includes 85 PASS-receipt-matched Lean component roots plus their134
-  recursive custom dependencies, pinned by source hash. The portable source
-  checker and reproduction instructions are included. The universal q38
-  middle-support counting theorem and concrete field adapter now pass Lean;
-  source-manifest validation is distinct from a new all-component Lean build.
-  Components include actual factor coverage/degree ledgers, regular-start
-  counting, primitive origin-root coverage, and initialized quantum routing.
-  New roots add a joint four-role bound on one initialized quantum execution,
-  canonical RP04 Merkle leaf injectivity/opening transport, and initialized
-  privacy leaf overlap and initialized CMS boundedness. The actual140-column
-  decoder's two local losses now compose below2^-265, with a standard-axiom-only
-  audit; this is not a265-bit whole-system security claim.
-  The complete RP04 degree certificate, recorded MCA/LVCS opening readback,
-  generic measured-oracle core, and full-domain per-basis bound also pass.
-  Recorded paths now provably read back through the actual least-preimage
-  extractor under its bounded recursion and recorded collision-free event.
-  RP04 packed-program canonicality and calculated extraction now pass, together
-  with their actual-program connection and restored-scalar-check dependencies.
-  Recorded wrapper-prefix readback, recursion-fuel invariance, role-table
-  conditioning and actual q38 chronological privacy algebra also pass.
-  The exact conditioned run, ActiveKey-only query embedding, measured q38
-  wrapper, chronological soundness accounting and raw PIOP reconstruction
-  now pass as well. The complete seven-constructor initialized whole-view
-  execution identity, canonical word readback, and three chronological algebraic
-  bad-cell densities also pass. Exact SMZA PIOP payload/coefficient readback
-  and the conditioned role bound on the original full-oracle physical execution
-  now pass. FPP readback preserves all1104 context-binding suffix bytes;
-  DECS readback preserves its evaluation wire order and interpolation rotation.
-  Initialized full-domain resampling and the four-role numerical ledger also
-  pass. RP04 natural-number balance now follows from the actual accepted
-  program and note-call/CSR/range projection. Public-target readback proves
-  one recorded reconstruction suffices for every recovered candidate; the
-  chronological labels and DECS interpolation also pass. The RP04 lifetime
-  ledger reduction, raw wrapper/prefix readback, reconstructed DECS-head binding
-  and generic whole-view continuation bound now pass too. Raw-field sampler
-  fibers, raw Merkle-root readback, five/twelve scalar checks and deterministic
-  verifier readback also pass under their explicit record/database assumptions.
-  The single-database endpoint now derives the same verifier checks using one
-  collision-free record relation for Merkle openings and both PIOP hashes.
-  Balance-prefix equality now uses kernel reduction; balance and lifetime-cap
-  axiom audits report only standard logical axioms.
-  Phase/decompression isometry and the initialized quantum raw-record collision
-  bound 6*T^3/2^512 pass. At the existing lifetime cap the latter is162/2^320;
-  it is distinct from the Poseidon2 commitment-binding assumption.
-  The initialized resampling probability bound through an arbitrary phase-game
-  continuation now passes without assuming the desired bound, including
-  continuations depending on the same revealed tape. The actual
-  complete leaf-request execution identity and adaptive round composition
-  remain separate from this checked one-request endpoint.
-  The final whole-execution applications remain
-  incomplete; the whole-view identity does not discharge the existing
-  `ExternalAdaptiveReprogramming` premise in its adaptive-bound application.
-  Actual role composition requires separate conditioning of earlier challenge
-  tables and a union on the same execution; the generic joint-advice theorem
-  is not being represented as the completed RP04 argument.
-  Actual accepted-event identification and full adaptive
-  privacy remain separate obligations.
-- The q38 work remains formal/source evidence, not an end-to-end deployed
-  security proof. Adaptive privacy,
-  accepted-transcript extraction, quantum/binding/lifetime composition, and
-  existing release review remain open. Universal Rust/compiler/OS proofs are
-  explicitly outside this task; no such prerequisite is added.
-- `protocol/versioning` still returns no production capability. This PR does
-  not activate production, claim a live deployment, or add an external host.
+- `Rp05.zero_knowledge` compares initialized adaptive real execution with a
+  witness-independent public simulator. Loss is `12*T^2/2^279`, at most
+  `(27/64)*2^-143` for `T <= 3*2^64`. The earlier two-witness theorem remains
+  available separately as `privacy_two_witness`.
+- The new single-spend endpoint bounds failure of a literal generated-history
+  credential/opening/unspent predicate for **positive native spends**, on the
+  original Born measure, below `2^-130` plus six explicit induced primitive-game
+  advantages. Extraction loss is charged once. A supplementary all-active
+  theorem classifies occupied historical openings, legitimate known-empty
+  openings, or path collisions, including all seven owner coordinates when
+  occupied.
+- Accepted-invalid-proof soundness and initialized native-history conservation
+  retain their existing checked reductions and explicit cryptographic premises.
 
-## Intended source scope
+## Evidence and reproduction
 
-Include the changed protocol/circuit/native/wallet implementation and the
-RP04-specific checker, tests, vectors, and release-preparation records. The
-relevant source/evidence paths are under `circuits/transaction/`,
-`circuits/block-recursion/`, `node/src/native/`, `protocol/shielded-pool/`,
-`protocol/versioning/`, `wallet/`, `scripts/check_*smallwood*`,
-`scripts/test_check_*smza*`, `testdata/formal_core_vectors/`, and the selected
-`.agent/prod-closure-2026-09-19/release-preparation/` records.
+The affected Lean dependencies, public wrappers and proof bodies are checked;
+the source package has 1,471 modules, 108 external imports and four public roots.
+Only `propext`, `Classical.choice` and `Quot.sound` are admitted by the endpoint
+body audit. The public [evidence summary](https://github.com/Pauli-Group/Hegemon/blob/codex/smallwood-pq128-experiment/docs/crypto/rp05_review_evidence.json)
+records final source and receipt digests and separates retained local evidence
+from clean-checkout reproduction.
 
-Do not include the unrelated `.claude/skills/`, `.codex/skills/`, or `AGENTS.md`
-edits. Do not bulk-add historical `.agent/artifacts/`, old checkpoints, or
-unrelated hardening experiments; retain only evidence explicitly referenced by
-the PR and reproducible from its source paths.
+Both retained independently generated proofs are **163,665 bytes**, below the
+unchanged 164,113-byte ceiling. In-process and real HTTP/PQ socket lifecycle
+checks passed in 23.793s and 69.438s respectively. These are retained
+development-only passes, not newly repeated runs or deployment evidence. The
+verified test-only source delta preserves every runtime byte, proof and relation
+pin; immutable historical receipts have not been rewritten as fresh passes.
+The eight focused implementation-boundary Rust tests pass on the final source.
 
-## Release posture
+See [review reproduction](https://github.com/Pauli-Group/Hegemon/blob/codex/smallwood-pq128-experiment/docs/crypto/RP05_REVIEW_REPRODUCTION.md)
+for source hash/closure checks, a reproducible Lean build and the exact Rust
+test filters. Raw local compiler objects, host-path receipts and the private
+review transcript are excluded; their retained digests are evidence identifiers,
+not independent authentication. A fresh checkout must reproduce its own checks
+and does not inherit release authority from the summary.
 
-Checked CI repairs:
+## Independent review and precise trust boundary
 
-- Rust formatting and regenerated RP04 source-security report.
-- rustls 0.23.45 and required webpki 0.103.15; dependency audit passes with
-  zero unwaived advisories and zero unused waivers. The affected integration
-  target compiles. This is not a live TLS handshake regression test.
-- All three stale/missing native fixture tests, RP04 coinbase KAT/schedule,
-  hash-kernel vector conformance, executable-ROM report, auxiliary geometry
-  projection, and recursive verified-record mutation tests pass locally.
-- Separately named RP04 Lean program/refinement and generated vectors pass;
-  historical RP03 evidence remains separate and unchanged.
-- Formal source hash, two module-parser regressions, 14 governance tests, and
-  claims/active-progress and full blueprint policy checks pass. All 121 source
-  reviews remain pending. These policy results do not close
-  the mathematical security contract or approve pending source reviews.
-- Successor-authorization tests pass after refreshing the non-authorizing
-  current-report pin and separating the byte-pinned historical RP03 test
-  report. No production flag, identity, or source registry entry is enabled.
-- Formal-checker formatting passes. All seven PoW-rule tests pass after the
-  three PoW/timestamp/subsidy fixtures stop introducing unrelated decoder-only
-  transactions. Their original rejection assertions remain unchanged, with
-  diagnostic messages added; no production validation or test is disabled.
-- The subsequent transaction-core `manual_div_ceil` lint is repaired; focused
-  `cargo clippy -p transaction-core --lib -- -D warnings` passes. The HX512
-  persistence/restart test passes with a2-second reopen retry restricted to
-  transient Sled `WouldBlock` errors and its original exact-byte assertions.
-  The CI-observed governance hash is refreshed and all14 focused tests pass
-  again; the claims checker passes without approving any pending source review.
+The independent Daybreak review found no false theorem, project-specific axiom,
+circular endpoint premise or arithmetic counterexample in its four inspected
+model endpoints. Its actionable findings and the implemented resolutions are
+recorded in [the disposition](https://github.com/Pauli-Group/Hegemon/blob/codex/smallwood-pq128-experiment/docs/crypto/RP05_INDEPENDENT_REVIEW_RESOLUTIONS.md).
+The new exports are subsequent resolutions, not a second independent Daybreak
+review of this final patch.
 
-The current mathematical bundle contains 85 checked roots and219 sources.
-The global q38 count, complete degree certificate, packed canonicality,
-actual-program connection and calculated extraction pass. The per-basis
-resampling estimate, global initialized resampling and whole-view execution
-identity are included; the adaptive whole-view probability bound remains open.
-Accepted-execution event identification,
-raw sampler-event accounting, remaining transcript binding and the final
-quantum/lifetime composition remain open. No new mathematical assumption,
-protocol degree, query count or serialized proof-size increase is introduced.
+The [implementation-boundary review](https://github.com/Pauli-Group/Hegemon/blob/codex/smallwood-pq128-experiment/docs/crypto/RP05_IMPLEMENTATION_BOUNDARY.md)
+traces the Rust carrier, decoder, context and local-audit path. Rust-to-Lean
+semantic refinement, compiler/platform execution and BLAKE2b implementation
+correctness remain trusted. BLAKE2b-384's exact framed ciphertext digest is
+projected into six Goldilocks limbs: binding of that **projected commitment** is
+a separate assumption, not an automatic consequence of raw-digest collision
+resistance. The ideal SHA-512 QROM and six explicit Poseidon2 induced-game
+advantages remain theorem premises.
 
-Wallet multisig and release-profile checks report absent fresh-proof route
-authority; their tests remain enabled. The app end-to-end coinbase timeout and
-remaining full CI checks have not been resolved. No all-green CI, production
-eligibility, or completed independent review is claimed.
-CI at `71f526aa` also reports stale policy pins, stale transaction assertions,
-broader Clippy failures and a PoW compatibility failure. Earlier targeted
-passes above are historical checks, not a claim that this head passes CI.
-This update refreshes the two stale policy pins and reruns all14 retained
-governance tests successfully without rebuilding. It corrects two stale Rust
-test expectations from current RP04 data; those changed tests have not been
-recompiled or rerun. The separate historical semantic-decoder fixture still
-needs a genuinely generated RP04 successor.
+The authorization result does **not** establish an unrestricted all-asset or
+zero-value chronological unspent theorem, human ownership, or a complete
+threshold approval-registry history. Known-empty inputs are deliberately kept
+separate from occupied notes. No universal Rust/compiler/OS proof is claimed.
 
-The existing CI release workflow can build manifest-bound binaries and create a
-draft GitHub release after its authorization/security jobs pass. It is not a
-live deployment workflow. The requested deliverable is a production-ready PR,
-not a live deployment. The open security contract must still be closed before
-this change can honestly be presented as production-ready.
+## Review handoff
+
+This publication is PR review, not network deployment. Activation identity,
+release-reviewer trust-root provisioning and production selection are deferred.
+`production_authorized = false`; the production capability remains fail-closed.
+No fresh CI success, merge approval or mainnet readiness is inferred from local
+proof, source, size or lifecycle checks.

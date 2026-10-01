@@ -1,0 +1,31 @@
+{
+  "decs_openings": 38,
+  "gates": [
+    {
+      "bytes": 369803,
+      "gate": "accepted_verifier_soundness",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-recorded-security-gates-20261001-streamlined/accepted_verifier_soundness.json",
+      "sha512": "0d25a442fbc7530458f0e704fc9b4c01f9b41aeec8235c97d029a1bd4a0712c23a42178b0f8e93d3c7a890150d2bc47d9189fb51b74ef3d354111d970c68819f"
+    },
+    {
+      "bytes": 369726,
+      "gate": "adaptive_whole_view_privacy",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-recorded-security-gates-20261001-streamlined/adaptive_whole_view_privacy.json",
+      "sha512": "60293adb398aed213f2098551130c675b2572c4ffff30dcdbdf438db5bf1ad33e0e40262ed9195abf35d9eeba4a2b88059c1b9b84616ea60cb2195e6c372327c"
+    },
+    {
+      "bytes": 371501,
+      "gate": "relation_and_ledger_composition",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-recorded-security-gates-20261001-streamlined/relation_and_ledger_composition.json",
+      "sha512": "7dd00ccf5ee069a212a7e3faeb27c8fcada83384bedc4187140bf5063adfcfbe357519e15a13b1684eb753d65931fe559659b07f3ffb1d8a3b4d2c397de37601"
+    },
+    {
+      "bytes": 370752,
+      "gate": "identity_proof_lifecycle_and_release_review",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes/rp05-qual-20261001-streamlined-r2/recorded-lifecycle-review/identity_proof_lifecycle_and_release_review.json",
+      "sha512": "07d313f2521c0fe38b2f8659bdfeddfc5c4a24e16dffd9fb6be14d64a3ba7313105d5f139d0a5618534e2de15fe304a38c237076adc80de09c484928323bac0e"
+    }
+  ],
+  "profile": "V8/SMZA",
+  "schema": "hegemon.smallwood.poseidon2-v8-smza-q38-evidence.v1"
+}

@@ -21,6 +21,7 @@ import ast
 from dataclasses import dataclass
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -1136,8 +1137,15 @@ RETAINED_FIXED_IDENTITY_VALUES: dict[str, object] = {
 # Structural identity recognition is separate from release evidence support.
 # These values describe the additive source-owned SMZA transport; they do not
 # add a registry entry or permit reuse of the q20 security certificates below.
+RP04_KNOWN_EMPTY_NOTE_GENESIS_ROOT = [
+    17_350_853_413_121_414_251, 11_311_714_906_264_832_276,
+    5_494_323_263_975_105_675, 16_684_950_828_932_818_263,
+    7_241_422_828_316_666_478, 13_669_884_728_521_486_080,
+    15_137_873_680_347_988_554,
+]
 SMZA_FIXED_IDENTITY_VALUES: dict[str, object] = {
     **RETAINED_FIXED_IDENTITY_VALUES,
+    "note_genesis_root": RP04_KNOWN_EMPTY_NOTE_GENESIS_ROOT,
     "profile_wire_id": 9,
     "domain_set": 5,
     "activation_height": 1,
@@ -6608,7 +6616,9 @@ def validate_identity(value: object, label: str) -> dict[str, object]:
     return identity
 
 
-def require_release_profile_evidence_contract(identity: Mapping[str, object]) -> None:
+def require_release_profile_evidence_contract(
+    identity: Mapping[str, object], root: Path | None = None
+) -> None:
     """Do not authorize SMZA by relabeling the existing q20 evidence contract.
 
     Identity validation can already describe the exact successor. Its actual
@@ -6617,10 +6627,56 @@ def require_release_profile_evidence_contract(identity: Mapping[str, object]) ->
     This is a missing implementation/evidence contract, not missing consent.
     """
     if (identity["profile_wire_id"], identity["domain_set"]) == (9, 5):
-        reject(
-            "SMZA identity is recognized, but its source-bound q38 security "
-            "evidence contract is not installed; SMZ9/q20 receipts cannot authorize it"
+        checkout = root or Path(__file__).resolve().parents[1]
+        checker_path = checkout / "scripts/check_rp05_smza_review_bundle.py"
+        if not checker_path.is_file():
+            reject("source-owned RP05 q38 evidence checker is absent")
+        spec = importlib.util.spec_from_file_location(
+            "rp05_smza_q38_contract_for_successor", checker_path
         )
+        if spec is None or spec.loader is None:
+            reject("cannot load source-owned RP05 q38 evidence checker")
+        checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checker)
+        try:
+            q38_status = checker.validate_q38_evidence_contract(checkout)
+        except checker.BundleError as error:
+            reject(f"source-pinned q38 evidence contract rejected: {error}")
+        if q38_status != "source_pinned_evidence_bytes_verified":
+            reject(
+                "SMZA identity is recognized, but q38 evidence remains absent: "
+                "scripts/rp05_smza_q38_evidence_contract.json is source-pinned and "
+                "declares status=not_installed with a fixed evidence path but no hash; "
+                "SMZ9/q20 receipts cannot authorize it"
+            )
+
+
+def check_rp05_smza_candidate_bundle(bundle_dir: Path, root: Path) -> dict[str, object]:
+    """Run the separate candidate checker; this path can never grant authority."""
+    root = Path(os.path.abspath(root))
+    bundle_path = bundle_dir if bundle_dir.is_absolute() else root / bundle_dir
+    checker_path = root / "scripts/check_rp05_smza_review_bundle.py"
+    if not checker_path.is_file():
+        reject("RP05 SMZA candidate checker is absent from the release checkout")
+    spec = importlib.util.spec_from_file_location(
+        "rp05_smza_review_bundle_for_successor", checker_path
+    )
+    if spec is None or spec.loader is None:
+        reject("cannot load the source-owned RP05 SMZA candidate checker")
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    try:
+        result = checker.check_bundle(bundle_path, repository_root=root)
+    except checker.BundleError as error:
+        reject(f"RP05 SMZA candidate rejected: {error}")
+    if (
+        result.get("candidate_bundle_integrity") != "pass"
+        or result.get("q38_evidence_contract")
+        not in {"not_installed", "source_pinned_evidence_bytes_verified"}
+        or result.get("production_authorized") is not False
+    ):
+        reject("RP05 SMZA candidate checker returned an invalid or authorizing result")
+    return result
 
 
 def validate_registry_entry(key: str, profile: AuthorizedProfile) -> None:
@@ -6968,7 +7024,7 @@ def validate_evidence_bundle(
     if artifact_command_runner is run_artifact_verifier_command:
         require_source_bound_hermetic_release_authority(profile.profile_id, root)
     identity = validate_identity(bundle["identity"], "evidence bundle.identity")
-    require_release_profile_evidence_contract(identity)
+    require_release_profile_evidence_contract(identity, root)
     if identity != dict(profile.identity):
         reject("evidence bundle identity does not match the source-owned registry")
     source_revision = require_string(
@@ -7411,6 +7467,12 @@ def main() -> None:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--require-authorized", action="store_true")
     mode.add_argument("--diagnostic-only", action="store_true")
+    mode.add_argument(
+        "--check-rp05-smza-candidate",
+        type=Path,
+        metavar="BUNDLE_DIR",
+        help="check an RP05/SMZA candidate bundle without granting production authority",
+    )
     parser.add_argument(
         "--verify-retained-artifacts",
         action="store_true",
@@ -7421,6 +7483,16 @@ def main() -> None:
     selection_path = args.selection if args.selection.is_absolute() else root / args.selection
     require_authorized = not args.diagnostic_only
     try:
+        if args.check_rp05_smza_candidate is not None:
+            result = check_rp05_smza_candidate_bundle(
+                args.check_rp05_smza_candidate, root
+            )
+            print(
+                "RP05 SMZA candidate review passed: "
+                f"integrity=pass q38={result['q38_evidence_contract']} "
+                "production_authorized=false"
+            )
+            return
         if require_authorized:
             if not args.verify_retained_artifacts:
                 reject("authorization mode requires --verify-retained-artifacts")

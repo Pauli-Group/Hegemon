@@ -22,6 +22,7 @@ use sled::transaction::{
     TransactionalTree,
 };
 use std::collections::{BTreeSet, VecDeque};
+use transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_default_note_nodes as source_poseidon2_v8_default_note_nodes;
 use transaction_core::{
     constants::{CIRCUIT_MERKLE_DEPTH, MERKLE_DOMAIN_TAG},
     poseidon2_width16::{poseidon2_width16_compress14, Felt},
@@ -56,7 +57,7 @@ const LEAF_SEQUENCE_DOMAIN: &[u8] =
     b"hegemon.native.poseidon2-v8.stablecoin-leaf-sequence.sha512.v1\0";
 const BLOCK_RECORD_DOMAIN: &[u8] =
     b"hegemon.native.poseidon2-v8.stablecoin-block-record.sha512.v2\0";
-const NOTE_STATE_MAGIC: &[u8; 8] = b"P2V8NT01";
+const NOTE_STATE_MAGIC: &[u8; 8] = b"P2V8NT02";
 
 const CHECKPOINT_CODEC_BYTES: usize = 8 + 8 + 32 + POSEIDON2_V8_ROOT_CODEC_BYTES;
 const BLOCK_RECORD_CODEC_BYTES: usize = 8
@@ -173,12 +174,13 @@ impl Poseidon2V8NoteTreeState {
         let root = *default_nodes
             .last()
             .ok_or(Poseidon2V8StateError::InvalidNoteTreeDepth)?;
+        let frontier = default_nodes[..CIRCUIT_MERKLE_DEPTH].to_vec();
         let mut root_history = VecDeque::new();
         root_history.push_back(root);
         Ok(Self {
             leaf_count: 0,
             root,
-            frontier: vec![Poseidon2V8NoteRoot::new([0; 7])?; CIRCUIT_MERKLE_DEPTH],
+            frontier,
             default_nodes,
             root_history,
         })
@@ -2067,14 +2069,16 @@ fn compress_note_roots(
 }
 
 fn poseidon2_v8_default_note_nodes() -> Result<Vec<Poseidon2V8NoteRoot>, Poseidon2V8StateError> {
+    let source_nodes = source_poseidon2_v8_default_note_nodes();
+    if source_nodes.len() != CIRCUIT_MERKLE_DEPTH + 1 {
+        return Err(Poseidon2V8StateError::InvalidNoteTreeDepth);
+    }
     let mut nodes = Vec::new();
     nodes
-        .try_reserve_exact(CIRCUIT_MERKLE_DEPTH + 1)
-        .map_err(|_| Poseidon2V8StateError::AllocationFailed(CIRCUIT_MERKLE_DEPTH + 1))?;
-    nodes.push(Poseidon2V8NoteRoot::new([0; POSEIDON2_V8_ROOT_LIMBS])?);
-    for level in 0..CIRCUIT_MERKLE_DEPTH {
-        let child = nodes[level];
-        nodes.push(compress_note_roots(child, child)?);
+        .try_reserve_exact(source_nodes.len())
+        .map_err(|_| Poseidon2V8StateError::AllocationFailed(source_nodes.len()))?;
+    for limbs in source_nodes {
+        nodes.push(Poseidon2V8NoteRoot::new(limbs)?);
     }
     Ok(nodes)
 }
@@ -2473,6 +2477,52 @@ mod tests {
             Err(Poseidon2V8StateError::NonCanonicalRootLimb { index: 6, .. })
         ));
         assert!(Poseidon2V8Root::decode_exact(&encoded[..encoded.len() - 1]).is_err());
+    }
+
+    #[test]
+    fn note_state_v2_codec_roundtrips_canonical_empty_defaults_exactly() {
+        let state = Poseidon2V8NoteTreeState::new_empty().unwrap();
+        assert_eq!(
+            state.frontier.as_slice(),
+            &state.default_nodes[..CIRCUIT_MERKLE_DEPTH]
+        );
+
+        let encoded = state.encode().unwrap();
+        assert_eq!(&encoded[..NOTE_STATE_MAGIC.len()], NOTE_STATE_MAGIC);
+        assert_eq!(
+            Poseidon2V8NoteTreeState::decode_exact(&encoded).unwrap(),
+            state
+        );
+    }
+
+    #[test]
+    fn persisted_note_state_v1_magic_is_rejected_after_default_leaf_migration() {
+        let mut legacy = Poseidon2V8NoteTreeState::new_empty()
+            .unwrap()
+            .encode()
+            .unwrap();
+        legacy[..NOTE_STATE_MAGIC.len()].copy_from_slice(b"P2V8NT01");
+
+        assert!(matches!(
+            Poseidon2V8NoteTreeState::decode_exact(&legacy),
+            Err(Poseidon2V8StateError::CodecMagic("V8 note-tree state"))
+        ));
+    }
+
+    #[test]
+    fn decoded_note_state_continues_append_identically_after_restart() {
+        let mut uninterrupted = Poseidon2V8NoteTreeState::new_empty().unwrap();
+        uninterrupted.append(commitment(700)).unwrap();
+        uninterrupted.append(commitment(800)).unwrap();
+
+        let persisted = uninterrupted.encode().unwrap();
+        let mut restarted = Poseidon2V8NoteTreeState::decode_exact(&persisted).unwrap();
+        assert_eq!(restarted, uninterrupted);
+
+        let expected_root = uninterrupted.append(commitment(900)).unwrap();
+        let restarted_root = restarted.append(commitment(900)).unwrap();
+        assert_eq!(restarted_root, expected_root);
+        assert_eq!(restarted, uninterrupted);
     }
 
     #[test]

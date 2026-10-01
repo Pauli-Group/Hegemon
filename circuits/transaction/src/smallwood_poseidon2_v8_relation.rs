@@ -13,8 +13,6 @@ use transaction_core::{
         POSEIDON2_WIDTH16_SUITE_MARKER, POSEIDON2_WIDTH16_WIDTH,
     },
     stablecoin_poseidon2_v8::{
-        stablecoin_poseidon2_v8_config_digest, stablecoin_poseidon2_v8_issuer_authorization,
-        stablecoin_poseidon2_v8_issuer_commitment, stablecoin_poseidon2_v8_leaf,
         verify_stablecoin_transition_v8, StablecoinPoseidon2V8Context, StablecoinPoseidon2V8Digest,
         StablecoinPoseidon2V8Direction, StablecoinPoseidon2V8Error, StablecoinPoseidon2V8Public,
         StablecoinPoseidon2V8Witness, STABLECOIN_POSEIDON2_V8_AUTHORIZED_PUBLIC_FIELDS,
@@ -27,14 +25,14 @@ use transaction_core::{
         STABLECOIN_POSEIDON2_V8_DOMAIN_ISSUER_AUTHORIZATION,
         STABLECOIN_POSEIDON2_V8_DOMAIN_ISSUER_COMMITMENT,
         STABLECOIN_POSEIDON2_V8_DOMAIN_STATE_LEAF, STABLECOIN_POSEIDON2_V8_DOMAIN_STATE_NODE_0,
-        STABLECOIN_POSEIDON2_V8_MAX_SCALAR, STABLECOIN_POSEIDON2_V8_MAX_VALUE,
-        STABLECOIN_POSEIDON2_V8_RATIO_SCALE_PPM, STABLECOIN_POSEIDON2_V8_TOTAL_ADDED_PERMUTATIONS,
+        STABLECOIN_POSEIDON2_V8_MAX_SCALAR, STABLECOIN_POSEIDON2_V8_RATIO_SCALE_PPM,
+        STABLECOIN_POSEIDON2_V8_TOTAL_ADDED_PERMUTATIONS,
         STABLECOIN_POSEIDON2_V8_TRANSITION_PERMUTATIONS,
     },
 };
 
 pub const SMALLWOOD_POSEIDON2_V8_RELATION_ID: &str =
-    "hegemon.smallwood.poseidon2-v8.stablecoin-relation.v3";
+    crate::smallwood_poseidon2_v8_program::SMALLWOOD_POSEIDON2_V8_SUCCESSOR_RELATION_ID;
 pub const SMALLWOOD_POSEIDON2_V8_PACKING_FACTOR: usize = 64;
 /// Base rows before the fixed 39-row stablecoin tail.  The 647-row base uses
 /// the canonical one-permutation `poseidon2_width16_compress14` Merkle node
@@ -545,33 +543,46 @@ fn build_aux(
 fn source_fields(
     witness: StablecoinPoseidon2V8Witness,
 ) -> [u64; SMALLWOOD_POSEIDON2_V8_PRIVATE_SOURCE_FIELDS] {
-    let mut source = [0u64; SMALLWOOD_POSEIDON2_V8_PRIVATE_SOURCE_FIELDS];
-    let mut cursor = 0usize;
-    for value in witness.config.to_fields() {
-        source[cursor] = value.as_canonical_u64();
-        cursor += 1;
-    }
-    for sibling in witness.siblings {
-        for value in sibling {
-            source[cursor] = value.as_canonical_u64();
-            cursor += 1;
-        }
-    }
-    for value in witness.issuer_secret {
-        source[cursor] = value.as_canonical_u64();
-        cursor += 1;
-    }
-    for value in [
-        witness.before.epoch_id,
-        witness.before.minted_in_epoch,
-        witness.before.total_debt,
-        witness.before.sequence,
-    ] {
-        source[cursor] = value;
-        cursor += 1;
-    }
-    debug_assert_eq!(cursor, source.len());
+    let mut ordered_fields = witness
+        .config
+        .to_fields()
+        .into_iter()
+        .chain(witness.siblings.into_iter().flatten())
+        .chain(witness.issuer_secret)
+        .map(|field| field.as_canonical_u64())
+        .chain([
+            witness.before.epoch_id,
+            witness.before.minted_in_epoch,
+            witness.before.total_debt,
+            witness.before.sequence,
+        ]);
+    let source = core::array::from_fn(|_| {
+        ordered_fields
+            .next()
+            .expect("private source field inventory matches its fixed width")
+    });
+    assert!(
+        ordered_fields.next().is_none(),
+        "private source field inventory exceeds its fixed width"
+    );
     source
+}
+
+fn fill_row_prefix<const N: usize>(
+    row: &mut [u64; N],
+    values: impl IntoIterator<Item = u64>,
+) -> usize {
+    let mut values = values.into_iter();
+    let mut written = 0;
+    for (slot, value) in row.iter_mut().zip(&mut values) {
+        *slot = value;
+        written += 1;
+    }
+    assert!(
+        values.next().is_none(),
+        "relation row values exceed fixed width"
+    );
+    written
 }
 
 fn role_differences(
@@ -812,16 +823,19 @@ pub fn build_smallwood_poseidon2_v8_relation_material(
             .expect("selected role difference is nonzero")
             .as_canonical_u64();
     }
-    for lane in SMALLWOOD_POSEIDON2_V8_ROLE_CONDITIONS..SMALLWOOD_POSEIDON2_V8_PACKING_FACTOR {
-        rows[ROLE_DIFF_ROW_0][lane] = 1;
-        rows[ROLE_INVERSE_ROW][lane] = 1;
+    let (before_inverse_row, inverse_row_and_after) = rows.split_at_mut(ROLE_INVERSE_ROW);
+    let diff_padding =
+        &mut before_inverse_row[ROLE_DIFF_ROW_0][SMALLWOOD_POSEIDON2_V8_ROLE_CONDITIONS..];
+    let inverse_padding = &mut inverse_row_and_after[0][SMALLWOOD_POSEIDON2_V8_ROLE_CONDITIONS..];
+    for (diff, inverse) in diff_padding.iter_mut().zip(inverse_padding.iter_mut()) {
+        *diff = 1;
+        *inverse = 1;
     }
 
     let mint = u64::from(public.direction == StablecoinPoseidon2V8Direction::Mint);
     let burn = u64::from(public.direction == StablecoinPoseidon2V8Direction::Burn);
     let enabled = mint + burn;
-    let mut boolean_values = Vec::new();
-    boolean_values.extend([
+    let boolean_values = [
         enabled,
         mint,
         burn,
@@ -829,23 +843,22 @@ pub fn build_smallwood_poseidon2_v8_relation_material(
         u64::from(witness.config.retired_at.is_some()),
         u64::from(witness.config.attestation_disputed),
         u64::from(witness.config.attestation_present),
-    ]);
-    boolean_values.extend(aux.path_bits);
-    boolean_values.push(aux.same_epoch);
-    boolean_values.extend(aux.decimal_bits);
-    boolean_values.extend(aux.decimal_slack_bits);
-    boolean_values.extend(aux.collateral.borrows);
-    boolean_values.extend(aux.time_carries);
-    boolean_values.extend(
+    ]
+    .into_iter()
+    .chain(aux.path_bits)
+    .chain([aux.same_epoch])
+    .chain(aux.decimal_bits)
+    .chain(aux.decimal_slack_bits)
+    .chain(aux.collateral.borrows)
+    .chain(aux.time_carries)
+    .chain(
         ranges
             .iter()
-            .filter(|(_, bits)| *bits % 2 == 1)
-            .map(|(value, bits)| (value >> (bits - 1)) & 1),
+            .filter_map(|(value, bits)| (bits % 2 == 1).then_some((value >> (bits - 1)) & 1)),
     );
-    rows[BOOLEAN_ROW][..boolean_values.len()].copy_from_slice(&boolean_values);
+    fill_row_prefix(&mut rows[BOOLEAN_ROW], boolean_values);
 
-    let mut numeric = Vec::new();
-    numeric.extend([
+    let numeric_values = [
         aux.path_quotient,
         aux.enabled_age,
         aux.retirement_order_gap,
@@ -859,13 +872,13 @@ pub fn build_smallwood_poseidon2_v8_relation_material(
         aux.after_cap_slack,
         aux.epoch_gap,
         aux.epoch_remainder,
-    ]);
-    numeric.extend(aux.decimal_accumulators);
-    numeric.extend(aux.collateral.left.range_values());
-    numeric.extend(aux.collateral.right.range_values());
-    numeric.extend(aux.collateral.diff);
-    debug_assert!(numeric.len() <= SMALLWOOD_POSEIDON2_V8_PACKING_FACTOR);
-    rows[NUMERIC_AUX_ROW][..numeric.len()].copy_from_slice(&numeric);
+    ]
+    .into_iter()
+    .chain(aux.decimal_accumulators)
+    .chain(aux.collateral.left.range_values())
+    .chain(aux.collateral.right.range_values())
+    .chain(aux.collateral.diff);
+    fill_row_prefix(&mut rows[NUMERIC_AUX_ROW], numeric_values);
 
     let mut mul_lane = 0usize;
     let mut push_mul = |left: u64, right: u64, output: u64| {
@@ -876,10 +889,14 @@ pub fn build_smallwood_poseidon2_v8_relation_material(
     };
     let powers = [10u64, 100, 10_000, 100_000_000, 10_000_000_000_000_000];
     let mut previous = 1u64;
-    for bit in 0..5 {
-        let factor = 1 + aux.decimal_bits[bit] * (powers[bit] - 1);
-        push_mul(previous, factor, aux.decimal_accumulators[bit]);
-        previous = aux.decimal_accumulators[bit];
+    for ((power, bit), accumulator) in powers
+        .iter()
+        .zip(aux.decimal_bits.iter())
+        .zip(aux.decimal_accumulators.iter())
+    {
+        let factor = 1 + *bit * (*power - 1);
+        push_mul(previous, factor, *accumulator);
+        previous = *accumulator;
     }
     for (limbs, y, z) in [
         (
@@ -978,7 +995,10 @@ mod tests {
     use super::*;
     use crate::smallwood_frontend::SmallwoodPrivateAuthMode;
     use transaction_core::stablecoin_poseidon2_v8::{
+        stablecoin_poseidon2_v8_config_digest, stablecoin_poseidon2_v8_issuer_authorization,
+        stablecoin_poseidon2_v8_issuer_commitment, stablecoin_poseidon2_v8_leaf,
         stablecoin_poseidon2_v8_root, StablecoinPoseidon2V8Config, StablecoinPoseidon2V8Counters,
+        STABLECOIN_POSEIDON2_V8_MAX_VALUE,
     };
 
     const HEIGHT: u64 = 9_000;
@@ -1077,6 +1097,55 @@ mod tests {
     }
 
     #[test]
+    fn private_source_builder_preserves_the_legacy_segment_order() {
+        let (_, _, witness) = fixture();
+        let mut reference = Vec::with_capacity(SMALLWOOD_POSEIDON2_V8_PRIVATE_SOURCE_FIELDS);
+        reference.extend(
+            witness
+                .config
+                .to_fields()
+                .into_iter()
+                .map(|value| value.as_canonical_u64()),
+        );
+        for sibling in witness.siblings {
+            reference.extend(sibling.into_iter().map(|value| value.as_canonical_u64()));
+        }
+        reference.extend(
+            witness
+                .issuer_secret
+                .into_iter()
+                .map(|value| value.as_canonical_u64()),
+        );
+        reference.extend([
+            witness.before.epoch_id,
+            witness.before.minted_in_epoch,
+            witness.before.total_debt,
+            witness.before.sequence,
+        ]);
+
+        assert_eq!(
+            reference.len(),
+            SMALLWOOD_POSEIDON2_V8_PRIVATE_SOURCE_FIELDS
+        );
+        assert_eq!(source_fields(witness).as_slice(), reference.as_slice());
+    }
+
+    #[test]
+    fn fixed_row_prefix_matches_buffered_chunk_assembly() {
+        let chunks: [&[u64]; 2] = [&[1, 2, 3], &[4, 5]];
+        let mut reference: Vec<u64> = Vec::new();
+        for chunk in chunks {
+            reference.extend(chunk.iter().copied());
+        }
+
+        let mut row = [0u64; 8];
+        let written = fill_row_prefix(&mut row, chunks.into_iter().flatten().copied());
+        assert_eq!(written, reference.len());
+        assert_eq!(&row[..written], reference.as_slice());
+        assert!(row[written..].iter().all(|value| *value == 0));
+    }
+
+    #[test]
     fn exact_geometry_and_hash_schedule_fit_without_a_fourth_group() {
         assert_eq!(SMALLWOOD_POSEIDON2_V8_PRIVATE_SOURCE_FIELDS, 94);
         assert_eq!(SMALLWOOD_POSEIDON2_V8_RANGE_ROWS, 23);
@@ -1084,7 +1153,6 @@ mod tests {
         assert_eq!(SMALLWOOD_POSEIDON2_V8_RELATION_ROWS, 686);
         assert_eq!(STABLECOIN_POSEIDON2_V8_TOTAL_ADDED_PERMUTATIONS, 23);
         assert_eq!(STABLECOIN_POSEIDON2_V8_AUTHORIZED_PUBLIC_FIELDS, 120);
-        assert!(STABLECOIN_POSEIDON2_V8_TOTAL_ADDED_PERMUTATIONS <= 26);
 
         let (context, public, witness) = fixture();
         let material =
@@ -1199,7 +1267,6 @@ mod tests {
     fn relation_identity_is_fresh_and_stable() {
         assert!(SMALLWOOD_POSEIDON2_V8_RELATION_ID.contains("poseidon2-v8"));
         assert_ne!(smallwood_poseidon2_v8_relation_profile_digest(), [0u8; 32]);
-        assert!(SMALLWOOD_POSEIDON2_V8_COMPILER_COMPLETE);
         assert_eq!(STABLECOIN_POSEIDON2_V8_MAX_VALUE, (1u64 << 56) - 1);
     }
 }

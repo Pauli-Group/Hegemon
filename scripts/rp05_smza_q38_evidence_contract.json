@@ -1,0 +1,15 @@
+{
+  "decs_openings": 38,
+  "evidence_path": "docs/crypto/rp05_smza_q38_evidence.json",
+  "evidence_sha512": "7c5c486422c24b4f3a331909fbac17d5989703b4f37bf656537b96874d79cc45a33cc60b82d49b4ec4c8a579084d8793e5a05699c3370528bf9253bba363a452",
+  "production_authorized": false,
+  "profile": "V8/SMZA",
+  "required_gates": [
+    "accepted_verifier_soundness",
+    "adaptive_whole_view_privacy",
+    "relation_and_ledger_composition",
+    "identity_proof_lifecycle_and_release_review"
+  ],
+  "schema": "hegemon.smallwood.poseidon2-v8-smza-q38-evidence-contract.v1",
+  "status": "installed"
+}

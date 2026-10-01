@@ -43,7 +43,7 @@ class SmzaIdentityTests(unittest.TestCase):
     def test_no_cross_profile_magic_or_cap(self):
         fields = ("envelope_magic_hex", "native_leaf_magic_hex", "inner_proof_wire_magic_hex",
                   "max_proof_bytes", "max_outer_envelope_bytes", "max_inline_route_args_bytes",
-                  "max_v8_pending_action_bytes")
+                  "max_v8_pending_action_bytes", "note_genesis_root")
         for smza in (False, True):
             for field in fields:
                 value = identity(smza)
@@ -63,13 +63,25 @@ class SmzaIdentityTests(unittest.TestCase):
                 with self.assertRaises(gate.SuccessorAuthorizationError):
                     gate.validate_identity(value, "test identity")
 
-    def test_q20_evidence_not_rebranded(self):
+    def test_installed_q38_bytes_do_not_bypass_legacy_registry_evidence(self):
         gate.require_release_profile_evidence_contract(identity(False))
-        with self.assertRaisesRegex(gate.SuccessorAuthorizationError, "q38 security evidence contract"):
-            gate.require_release_profile_evidence_contract(identity(True))
+        # The installed RP05 contract and its four pinned records pass their
+        # byte-integrity validator; that is not a waiver of the registry's
+        # still-legacy evidence schema.
+        gate.require_release_profile_evidence_contract(identity(True))
+        self.assertEqual(len(gate.REQUIRED_EVIDENCE_KINDS), 50)
         profile = gate.AuthorizedProfile("test-only-smza", identity(True), "config/test-only.json",
-                                         "12" * 64, 164113)
-        with self.assertRaisesRegex(gate.SuccessorAuthorizationError, "q38 security evidence contract"):
+                                         "12" * 64, 164113,
+                                         required_evidence=(
+                                             ("accepted_verifier_soundness", "receipt"),
+                                             ("adaptive_whole_view_privacy", "receipt"),
+                                             ("relation_and_ledger_composition", "receipt"),
+                                             ("identity_proof_lifecycle_and_release_review", "receipt"),
+                                         ))
+        with self.assertRaisesRegex(
+            gate.SuccessorAuthorizationError,
+            "source-owned registry may not weaken or reorder required evidence",
+        ):
             gate.validate_registry_entry(profile.profile_id, profile)
 
     def test_unselected_still_denied_and_registry_absent(self):

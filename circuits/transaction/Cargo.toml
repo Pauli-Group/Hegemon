@@ -35,6 +35,7 @@ default = []
 formal-generator = []
 hx512-refinement-evidence = []
 hx512-working-proof-runner = ["hx512-refinement-evidence"]
+rp05-dev-artifacts = []
 slow-smallwood-e2e = []
 stark-fast = ["transaction-core/stark-fast"]
 
@@ -42,6 +43,16 @@ stark-fast = ["transaction-core/stark-fast"]
 name = "gen_smallwood_production_constraint_lean"
 path = "src/bin/gen_smallwood_production_constraint_lean.rs"
 required-features = ["formal-generator"]
+
+[[example]]
+name = "rp05_dev_smza_proof"
+path = "examples/rp05_dev_smza_proof.rs"
+required-features = ["rp05-dev-artifacts"]
+
+[[example]]
+name = "rp05_smza_qualification_artifact"
+path = "examples/rp05_smza_qualification_artifact.rs"
+required-features = ["rp05-dev-artifacts"]
 
 [lints]
 workspace = true

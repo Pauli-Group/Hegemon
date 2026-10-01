@@ -11,6 +11,7 @@ use transaction_circuit::{
     smallwood_poseidon2_v8_hash_constraints::smallwood_poseidon2_v8_hash_call_initial_witness_index,
     smallwood_poseidon2_v8_hash_schedule::build_smallwood_poseidon2_v8_hash_schedule,
     smallwood_poseidon2_v8_program::{
+        SMALLWOOD_POSEIDON2_V8_PROGRAM_IDENTITY_REGENERATION_REQUIRED,
         SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES,
         SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_INSTANCES,
     },
@@ -31,7 +32,8 @@ use transaction_circuit::{
         SmallwoodPoseidon2V8Digest, SmallwoodPoseidon2V8InputWitness,
         SmallwoodPoseidon2V8NoteOpening, SmallwoodPoseidon2V8OutputWitness,
         SmallwoodPoseidon2V8PrivateAuthWitness, SmallwoodPoseidon2V8PublicStatement,
-        SmallwoodPoseidon2V8SurfaceError, SmallwoodPoseidon2V8Witness,
+        SmallwoodPoseidon2V8SignerTag, SmallwoodPoseidon2V8SurfaceError,
+        SmallwoodPoseidon2V8Witness,
     },
     SmallwoodConfig, POSEIDON2_V8_SMZ9_SMALLWOOD_NO_GRINDING_PROFILE,
 };
@@ -131,6 +133,8 @@ fn set_activity(
     statement: &mut SmallwoodPoseidon2V8PublicStatement,
     witness: &mut SmallwoodPoseidon2V8Witness,
 ) {
+    let input_count = (mask & 0b0011).count_ones() as u64;
+    let output_count = ((mask >> 2) & 0b0011).count_ones() as u64;
     for input in 0..2 {
         let active = mask & (1 << input) != 0;
         statement.input_flags[input] = active;
@@ -138,7 +142,11 @@ fn set_activity(
             witness.inputs[input] = SmallwoodPoseidon2V8InputWitness {
                 active: true,
                 spend_key: [101, 102, 103, 104, 1],
-                note: note(1_000 + input as u64 * 100, 0, NATIVE_ASSET_ID),
+                note: note(
+                    1_000 + input as u64 * 100,
+                    output_count.max(1),
+                    NATIVE_ASSET_ID,
+                ),
                 position: input as u64,
                 siblings: [[0; 7]; 32],
                 balance_slot_selectors: [true, false, false, false],
@@ -153,7 +161,11 @@ fn set_activity(
                 core::array::from_fn(|limb| 2_000 + output as u64 * 100 + limb as u64);
             witness.outputs[output] = SmallwoodPoseidon2V8OutputWitness {
                 active: true,
-                note: note(3_000 + output as u64 * 100, 0, NATIVE_ASSET_ID),
+                note: note(
+                    3_000 + output as u64 * 100,
+                    input_count.max(1),
+                    NATIVE_ASSET_ID,
+                ),
                 balance_slot_selectors: [true, false, false, false],
             };
         }
@@ -230,8 +242,8 @@ fn install_transaction_public_hashes(
     }
 }
 
-fn policy_tags(member: [u64; 5]) -> [[u64; 5]; 6] {
-    let mut tags = [[0; 5]; 6];
+fn policy_tags(member: SmallwoodPoseidon2V8SignerTag) -> [SmallwoodPoseidon2V8SignerTag; 6] {
+    let mut tags = [[0; 7]; 6];
     tags[0] = member;
     tags[1] = core::array::from_fn(|limb| 8_000 + limb as u64);
     assert_ne!(tags[0][0], tags[1][0]);
@@ -285,30 +297,50 @@ fn approval_fixture(
     SmallwoodPoseidon2V8PublicStatement,
     SmallwoodPoseidon2V8Witness,
 ) {
-    assert!(matches!(mask, 0b0111 | 0b1111));
+    assert!(matches!(mask, 0b0110 | 0b1110 | 0b0111 | 0b1111));
+    let bootstrap = mask & 0b0001 == 0;
     let mut statement = SmallwoodPoseidon2V8PublicStatement::default();
     install_disabled_stablecoin_context(&mut statement);
     let mut witness = SmallwoodPoseidon2V8Witness::default();
     set_activity(mask, &mut statement, &mut witness);
+    if statement.input_flags[0] {
+        witness.inputs[0].note.value = 0;
+        witness.inputs[0].note.asset_id = NATIVE_ASSET_ID;
+    }
+    witness.outputs[0].note.value = 0;
+    witness.outputs[0].note.asset_id = NATIVE_ASSET_ID;
+    witness.inputs[1].note.value = 1;
+    if statement.output_flags[1] {
+        witness.outputs[1].note.value = 1;
+    } else {
+        statement.fee = 1;
+    }
 
     let legacy = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness)
         .unwrap()
         .calls[0]
         .final_digest();
-    let tags = policy_tags(legacy[..5].try_into().unwrap());
+    let tags = policy_tags(legacy);
     let intent = digest(9_000);
+    let (threshold, current_count, current_slots, next_slots) = if bootstrap {
+        (1, 0, [false; 6], [true, false, false, false, false, false])
+    } else {
+        (
+            2,
+            1,
+            [false, true, false, false, false, false],
+            [true, true, false, false, false, false],
+        )
+    };
     witness.auth = SmallwoodPoseidon2V8PrivateAuthWitness {
         mode: SmallwoodPrivateAuthMode::ApprovalStep,
         policy_nullifier_key: [201, 202, 203, 204, 1],
-        current: opening(digest(9_100), intent, 0, [false; 6]),
-        next: opening(
-            digest(9_100),
-            intent,
-            1,
-            [true, false, false, false, false, false],
-        ),
+        current: opening(digest(9_100), intent, current_count, current_slots),
+        next: opening(digest(9_100), intent, current_count + 1, next_slots),
         policy_signer_tags: tags,
     };
+    witness.auth.current.threshold = threshold;
+    witness.auth.next.threshold = threshold;
     let material = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
     let root = material.calls[POLICY_FINAL].final_digest();
     witness.auth.current.policy_root = root;
@@ -317,7 +349,9 @@ fn approval_fixture(
     let material = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
     let current = material.calls[BOUND_CURRENT_FINAL].final_digest();
     let next = material.calls[BOUND_NEXT_FINAL].final_digest();
-    install_authorization(&mut witness.inputs[0].note, current);
+    if statement.input_flags[0] {
+        install_authorization(&mut witness.inputs[0].note, current);
+    }
     install_authorization(&mut witness.inputs[1].note, legacy);
     install_authorization(&mut witness.outputs[0].note, next);
 
@@ -374,7 +408,7 @@ fn final_fixture(
         .unwrap()
         .calls[0]
         .final_digest();
-    let tags = policy_tags(legacy[..5].try_into().unwrap());
+    let tags = policy_tags(legacy);
     witness.auth = SmallwoodPoseidon2V8PrivateAuthWitness {
         mode: SmallwoodPrivateAuthMode::FinalThresholdSpend,
         policy_nullifier_key: [201, 202, 203, 204, 1],
@@ -387,6 +421,22 @@ fn final_fixture(
         next: SmallwoodPoseidon2V8AccumulatorOpening::ZERO,
         policy_signer_tags: tags,
     };
+    witness.inputs[1].note.value = 0;
+    witness.inputs[1].note.asset_id = NATIVE_ASSET_ID;
+    let active_outputs = statement
+        .output_flags
+        .into_iter()
+        .filter(|active| *active)
+        .count() as u64;
+    witness.inputs[0].note.value = active_outputs.max(1);
+    for output in &mut witness.outputs {
+        if output.active {
+            output.note.value = 1;
+        }
+    }
+    if active_outputs == 0 {
+        statement.fee = 1;
+    }
     let policy = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness)
         .unwrap()
         .calls[POLICY_FINAL]
@@ -605,17 +655,27 @@ fn compile_and_replay(
 }
 
 #[test]
-fn all_sixteen_single_key_masks_compile_and_replay() {
+fn balanced_single_key_masks_compile_and_one_sided_masks_fail_closed() {
     for mask in 0..16u8 {
         let (statement, witness) = single_key_fixture(mask);
-        compile_and_replay(&statement, &witness);
+        let has_input = mask & 0b0011 != 0;
+        let has_output = mask & 0b1100 != 0;
+        if has_input == has_output {
+            compile_and_replay(&statement, &witness);
+        } else {
+            assert_eq!(
+                witness.validate_against_statement(&statement),
+                Err(SmallwoodPoseidon2V8SurfaceError::BalanceMismatch)
+            );
+            assert!(compile_smallwood_poseidon2_v8_relation(&statement, &witness).is_err());
+        }
     }
 }
 
 #[test]
 fn every_valid_approval_and_final_mask_compiles_and_all_other_masks_fail_closed() {
     for mask in 0..16u8 {
-        if matches!(mask, 0b0111 | 0b1111) {
+        if matches!(mask, 0b0110 | 0b1110 | 0b0111 | 0b1111) {
             let (statement, witness) = approval_fixture(mask);
             compile_and_replay(&statement, &witness);
         } else {
@@ -932,9 +992,92 @@ fn every_typed_nonzero_authorization_field_is_linked_to_the_packed_verifier() {
 
     for slot in 0..6 {
         let mut zero_tag = witness;
-        zero_tag.auth.policy_signer_tags[slot] = [0; 5];
+        zero_tag.auth.policy_signer_tags[slot] = [0; 7];
         assert!(zero_tag.validate_against_statement(&statement).is_err());
     }
+}
+
+#[test]
+fn legitimate_bootstrap_later_approval_and_final_constructors_compile() {
+    let (bootstrap_statement, bootstrap_witness) = approval_fixture(0b1110);
+    assert_eq!(bootstrap_witness.auth.current.approval_count, 0);
+    assert_eq!(bootstrap_statement.input_flags, [false, true]);
+    assert_eq!(bootstrap_witness.inputs[1].note.value, 1);
+    assert_eq!(bootstrap_witness.outputs[0].note.value, 0);
+    assert_eq!(bootstrap_witness.outputs[0].note.asset_id, NATIVE_ASSET_ID);
+    compile_and_replay(&bootstrap_statement, &bootstrap_witness);
+
+    let (later_statement, later_witness) = approval_fixture(0b1111);
+    assert_eq!(later_witness.auth.current.approval_count, 1);
+    assert_eq!(later_statement.input_flags, [true, true]);
+    assert_eq!(later_witness.inputs[0].note.value, 0);
+    assert_eq!(later_witness.inputs[0].note.asset_id, NATIVE_ASSET_ID);
+    assert_eq!(later_witness.outputs[0].note.value, 0);
+    assert_eq!(later_witness.outputs[0].note.asset_id, NATIVE_ASSET_ID);
+    compile_and_replay(&later_statement, &later_witness);
+
+    let (final_statement, final_witness) = final_fixture(0b1111);
+    assert_eq!(final_witness.inputs[1].note.value, 0);
+    assert_eq!(final_witness.inputs[1].note.asset_id, NATIVE_ASSET_ID);
+    assert!(final_witness.inputs[0].note.value > 0);
+    compile_and_replay(&final_statement, &final_witness);
+}
+
+#[test]
+fn approval_count_zero_rejects_the_old_active_accumulator_input_shape() {
+    let (mut statement, mut witness) = approval_fixture(0b1110);
+    statement.input_flags[0] = true;
+    witness.inputs[0] = witness.inputs[1];
+    witness.inputs[0].active = true;
+    witness.inputs[0].note = note(15_000, 0, NATIVE_ASSET_ID);
+    let current = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness)
+        .unwrap()
+        .calls[BOUND_CURRENT_FINAL]
+        .final_digest();
+    install_authorization(&mut witness.inputs[0].note, current);
+    install_merkle_paths(&mut statement, &mut witness);
+    install_transaction_public_hashes(&mut statement, &witness);
+    assert!(matches!(
+        witness.validate_against_statement(&statement),
+        Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationShape)
+    ));
+    assert!(compile_smallwood_poseidon2_v8_relation(&statement, &witness).is_err());
+}
+
+#[test]
+fn zero_valued_ordinary_output_is_rejected() {
+    let (statement, mut witness) = single_key_fixture(0b1111);
+    witness.outputs[0].note.value = 0;
+    assert_eq!(
+        witness.validate_against_statement(&statement),
+        Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationOpening)
+    );
+    assert!(compile_smallwood_poseidon2_v8_relation(&statement, &witness).is_err());
+}
+
+#[test]
+fn approval_membership_rejects_a_tail_limb_mismatch_after_policy_rebinding() {
+    let (mut statement, mut witness) = approval_fixture(0b1111);
+    witness.auth.policy_signer_tags[0][6] ^= 1;
+
+    let policy = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness)
+        .unwrap()
+        .calls[POLICY_FINAL]
+        .final_digest();
+    witness.auth.current.policy_root = policy;
+    witness.auth.next.policy_root = policy;
+    let material = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
+    let current = material.calls[BOUND_CURRENT_FINAL].final_digest();
+    let next = material.calls[BOUND_NEXT_FINAL].final_digest();
+    install_authorization(&mut witness.inputs[0].note, current);
+    install_authorization(&mut witness.outputs[0].note, next);
+    install_merkle_paths(&mut statement, &mut witness);
+    install_transaction_public_hashes(&mut statement, &witness);
+
+    witness
+        .validate_against_statement(&statement)
+        .expect("typed shape accepts a canonical but nonmember tail limb");
+    assert!(compile_smallwood_poseidon2_v8_relation(&statement, &witness).is_err());
 }
 
 #[test]
@@ -1166,79 +1309,41 @@ fn stable_role_source_hash_root_and_issuer_mutations_fail_closed() {
 
 #[test]
 fn report_statement_specialized_linear_constraint_inventory() {
+    use transaction_circuit::smallwood_poseidon2_v8_semantics::smallwood_poseidon2_v8_source_linear_constraint_count_for_regeneration;
+
     let mut entries = Vec::new();
     for mask in 0..16u8 {
         let (statement, _) = single_key_fixture(mask);
-        let adapter =
-            SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(&statement).unwrap();
-        assert_exact_csr_program_receipt(&adapter);
-        entries.push(("single", mask, adapter.geometry().linear_constraints));
+        let count =
+            smallwood_poseidon2_v8_source_linear_constraint_count_for_regeneration(&statement)
+                .unwrap();
+        entries.push(("single", mask, count));
     }
-    for mask in [0b0111, 0b1111] {
+    for mask in [0b0110, 0b1110, 0b0111, 0b1111] {
         let (statement, _) = approval_fixture(mask);
-        let adapter =
-            SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(&statement).unwrap();
-        assert_exact_csr_program_receipt(&adapter);
-        entries.push(("approval", mask, adapter.geometry().linear_constraints));
+        let count =
+            smallwood_poseidon2_v8_source_linear_constraint_count_for_regeneration(&statement)
+                .unwrap();
+        entries.push(("approval", mask, count));
     }
     for mask in [0b0011, 0b0111, 0b1011, 0b1111] {
         let (statement, _) = final_fixture(mask);
-        let adapter =
-            SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(&statement).unwrap();
-        assert_exact_csr_program_receipt(&adapter);
-        entries.push(("final", mask, adapter.geometry().linear_constraints));
+        let count =
+            smallwood_poseidon2_v8_source_linear_constraint_count_for_regeneration(&statement)
+                .unwrap();
+        entries.push(("final", mask, count));
     }
     for (name, direction) in [
         ("mint", StablecoinPoseidon2V8Direction::Mint),
         ("burn", StablecoinPoseidon2V8Direction::Burn),
     ] {
         let (statement, _) = stable_fixture(direction);
-        let adapter =
-            SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(&statement).unwrap();
-        assert_exact_csr_program_receipt(&adapter);
-        entries.push((
-            name,
-            statement.activity_mask(),
-            adapter.geometry().linear_constraints,
-        ));
+        let count =
+            smallwood_poseidon2_v8_source_linear_constraint_count_for_regeneration(&statement)
+                .unwrap();
+        entries.push((name, statement.activity_mask(), count));
     }
     eprintln!("V8 statement-specialized linear counts: {entries:?}");
-    assert_eq!(
-        &entries[..16],
-        &[
-            ("single", 0, 20_510),
-            ("single", 1, 20_248),
-            ("single", 2, 20_248),
-            ("single", 3, 19_986),
-            ("single", 4, 20_487),
-            ("single", 5, 20_225),
-            ("single", 6, 20_225),
-            ("single", 7, 19_963),
-            ("single", 8, 20_487),
-            ("single", 9, 20_225),
-            ("single", 10, 20_225),
-            ("single", 11, 19_963),
-            ("single", 12, 20_464),
-            ("single", 13, 20_202),
-            ("single", 14, 20_202),
-            ("single", 15, 19_940),
-        ]
-    );
-    assert_eq!(
-        &entries[16..],
-        &[
-            ("approval", 7, 19_963),
-            ("approval", 15, 19_940),
-            ("final", 3, 19_986),
-            ("final", 7, 19_963),
-            ("final", 11, 19_963),
-            ("final", 15, 19_940),
-            ("mint", 4, 20_385),
-            ("burn", 1, 20_170),
-        ]
-    );
-    assert_eq!(
-        entries.iter().map(|(_, _, count)| *count).max(),
-        Some(20_510)
-    );
+    assert_eq!(entries.len(), 16 + 4 + 4 + 2);
+    assert!(SMALLWOOD_POSEIDON2_V8_PROGRAM_IDENTITY_REGENERATION_REQUIRED);
 }

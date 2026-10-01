@@ -32,6 +32,55 @@ Everything else is negotiable.
 
 ### 0.3 Native node cutover posture
 
+The [current RP05 security scope and review disposition](docs/crypto/RP05_INDEPENDENT_REVIEW_RESOLUTIONS.md)
+and [implementation boundary](docs/crypto/RP05_IMPLEMENTATION_BOUNDARY.md)
+describe the checked endpoints and SMZA acceptance path. The current RP05
+accepted-invalid, authorization, initialized-history conservation and initialized
+adaptive public-simulator ZK endpoints now have strict Lean checks and complete
+proof-body audits. Their initialization, lifetime/query and primitive-game
+hypotheses remain explicit; this is not universal Rust/compiler/OS refinement.
+The current fixture/vector and source-owned proof verification pass against
+the unchanged RP05 relation. At source inventory `b681b128…`, the fresh
+163,281/163,473-byte pair passes in-process lifecycle guard (22.273 seconds) and
+actual HTTP/PQ socket lifecycle guard (66.736 seconds) with unchanged carriers,
+restart, fresh-node sync and clean shutdown; in-process also covers reorg.
+These development qualifications do not select production activation authority.
+
+September20 supply repair: RP04's candidate note-tree default is the
+commitment of a known zero-valued native opening, with full SingleKey identity
+for `[1,0,0,0,0]`, rather than a raw-zero digest. This removes a separate
+fixed-target preimage assumption from native supply accounting. Shared node,
+wallet and fixture helpers derive the new genesis root. Persisted node note
+state uses `P2V8NT02`; old node state and old-default wallet histories reject
+without reinterpretation. No relation row or proof byte is added. This tree
+change needs fresh affected evidence; retained old-root passes stay historical.
+
+September20 authorization successor: `HGV8RP05` uses full seven-word V8
+signer tags and zero/native accumulator slots, with strictly positive active
+ordinary slots. The first Approval has inactive input0 exactly when count
+is zero; every later Approval increments a committed bitmap by one fresh
+signer. Two inverse witnesses fit existing reserved rows. A104-word intent
+projection drops16 forced-zero words, taking13 hash calls instead of15;
+the44-word policy takes6 instead of4. Total rows686, degree8,128 hash calls,
+q38 and carrier caps are unchanged. Only SMZA leaf inputs gain the directly
+included1104-byte canonical public preamble under the v2 leaf domain; no new
+proof field is transmitted. Program identities and affected evidence must be
+regenerated for this source successor. Legacy48-byte wallet multisig is a
+different route and is not rewritten. These source changes now have matching
+development qualification, not production activation authority.
+
+RP05 retained-artifact preparation has an explicit `rp05-dev-artifacts`
+feature. Its prover, verifier and trace seam reconstruct the exact current
+program and checked-in fixture. Canonical fixture/vector identity preflight
+has passed and the identity-regeneration marker is cleared for qualification;
+production admission remains capability-gated. The final1000 qualification
+lane separately passes Rust consumption, actual proof generation, source
+verification and both in-process/socket lifecycle checks; the marker alone
+would not establish those outcomes.
+The qualification example emits source-bound proof pairs and unchanged
+transport carriers, not production authority. Its trace alone is not a local
+acceptance audit: the development verifier must also accept the same bytes.
+
 September 18 repair candidate: `HGV8RP04` / relation `.v3` replaces the narrow
 nullifier secret with an injective five-field encoding and binds the full
 seven-field authorization commitment using the existing note words. Address
@@ -656,6 +705,27 @@ differential tests and measured development runs are described in METHODS;
 they do not establish universal implementation or oracle-trace refinement,
 and do not authorize this proof family for production.
 
+The RP05 mathematical interface is maintained in `formal/rp05`: four public
+entry modules expose soundness, adaptive privacy, authorization/nullifiers and
+history conservation without changing their explicit hypotheses. Its generated
+source tree is the pinned transitive import closure, not a second protocol
+implementation. Shared generic representation transports live under
+`formal/rp05/shared`. The canonical release-evidence manifest is
+`docs/crypto/rp05_release_manifest.json`; the checklist and live proof map consume
+the same evaluated source/object/receipt freshness. Component-node counts do not
+establish endpoint completion or production authority.
+
+The public privacy interface now distinguishes adaptive two-witness
+indistinguishability from real-versus-public-simulator zero knowledge. The
+simulator's compiled program is independent of witness representatives of
+the same public strategy. The current authorization interface separately
+exposes active-input five-word credential/seven-word owner binding and the
+positive-native-spend chronological note/unspent join; it does not silently
+promote pairwise nullifier consistency to unrestricted ownership. See
+`docs/crypto/RP05_INDEPENDENT_REVIEW_RESOLUTIONS.md` for the exact endpoints,
+known-empty-note scope, and residual implementation/primitive trust, including
+the framed six-limb BLAKE2b ciphertext commitment.
+
 * Block authors include only the ordered shielded transfer actions and the miner-local coinbase action. Candidate-artifact actions are retired from new block construction.
 * A chain-level `ProofAvailabilityPolicy` still has the wire values `InlineRequired` and `SelfContained` for compatibility. New blocks use `InlineRequired`; `SelfContainedAggregation` is entered only when replaying a historical block that already carries one recursive artifact.
 * The shipped unsigned transfer format remains native `tx_leaf`; there is no product fallback to legacy inline STARK transfer verification.
@@ -713,7 +783,7 @@ For the fresh-chain 0.10.0 line, the shipped shielded path is native end to end:
 
 That stack is intentionally split into a Hegemon-owned relation layer (`superneo-ccs`), a backend trait layer (`superneo-core`), Goldilocks pay-per-bit witness packing (`superneo-ring`), a direct in-repo folding backend (`superneo-backend-lattice`), Hegemon-specific relations (`superneo-hegemon`), and a benchmark CLI (`superneo-bench`). The first real relation is a transaction-proof receipt relation rather than a full transaction AIR port. That is deliberate: any future compression win has to come from a post-proof primitive that sits after tx proving, not from re-running the hot witness path in another proof system.
 
-The current backend is the structural native candidate `goldilocks_128b_structural_commitment`. It is the only in-tree native backend family still treated as live engineering surface, not accepted production cryptography. Its manifest-owned parameter set binds the exact transcript domain, challenge schedule, commitment geometry, and spec identity; setup rejects overclaims against the computed security floor; tx-leaf artifacts carry the public tx view, serialized STARK public inputs, STARK proof bytes, the derived lattice commitment, the native leaf proof, and an explicit proof-backend byte; verification fail-closes on missing or noncanonical backend encoding, mismatched `spec_digest`, malformed public bytes, STARK proof failure, or deterministic commitment mismatch. The tx-leaf wrapper keeps a process-local setup cache keyed by `(parameter_fingerprint, spec_digest)` so independent transaction proofs do not repeat identical setup while refusing cross-parameter reuse. The live claim is tied to the deterministic public-witness commitment path and an exact bounded-kernel Module-SIS reduction for the implemented bounded message class plus one coefficient-space Euclidean SIS estimate: active-block security counts transaction transcript soundness and the estimator-backed commitment-binding floor, with no receipt-root or block-aggregation composition term. The exact protocol surface is captured in [docs/crypto/native_backend_spec.md](docs/crypto/native_backend_spec.md), the reduction note lives in [docs/crypto/native_backend_commitment_reduction.md](docs/crypto/native_backend_commitment_reduction.md), the code-derived claim model lives in [docs/crypto/native_backend_security_analysis.md](docs/crypto/native_backend_security_analysis.md), and the reproducible review package remains under [audits/native-backend-128b](/Users/pldd/Projects/Reflexivity/Hegemon/audits/native-backend-128b). Its verifier compares packaged source bytes and executable modes directly with immutable `HEAD` tree blobs, and archive extraction rejects special files plus case-folded, Unicode-normalized, Windows-invalid, or filesystem-equivalent member names before writing. CI and release workflows run `scripts/check_native_backend_release_posture.sh` so this family remains `candidate_under_review` / `structural_candidate` unless a separate accepted external-review artifact is deliberately added and the stricter release mode is used; `Hegemon.Native.NativeBackendReleasePosture.accepts_iff_release_posture_preconditions` and its generated vectors prove that release-posture decision table against the packaged review claim. Blueprint target review is acceptance of the CI-gated statement/evidence shape, not external cryptographic acceptance. The active `v8` spec keeps the `512KiB` native tx-leaf proof admission cap. Any retained `verified_leaf_aggregation` claim is historical review metadata and is not part of active block validity, bandwidth, or security accounting.
+The current backend is the structural native candidate `goldilocks_128b_structural_commitment`. It is the only in-tree native backend family still treated as live engineering surface, not accepted production cryptography. Its manifest-owned parameter set binds the exact transcript domain, challenge schedule, commitment geometry, and spec identity; setup rejects overclaims against the computed security floor; tx-leaf artifacts carry the public tx view, serialized STARK public inputs, STARK proof bytes, the derived lattice commitment, the native leaf proof, and an explicit proof-backend byte; verification fail-closes on missing or noncanonical backend encoding, mismatched `spec_digest`, malformed public bytes, STARK proof failure, or deterministic commitment mismatch. The tx-leaf wrapper keeps a process-local setup cache keyed by `(parameter_fingerprint, spec_digest)` so independent transaction proofs do not repeat identical setup while refusing cross-parameter reuse. The live claim is tied to the deterministic public-witness commitment path and an exact bounded-kernel Module-SIS reduction for the implemented bounded message class plus one coefficient-space Euclidean SIS estimate: active-block security counts transaction transcript soundness and the estimator-backed commitment-binding floor, with no receipt-root or block-aggregation composition term. The exact protocol surface is captured in [docs/crypto/native_backend_spec.md](docs/crypto/native_backend_spec.md), the reduction note lives in [docs/crypto/native_backend_commitment_reduction.md](docs/crypto/native_backend_commitment_reduction.md), the code-derived claim model lives in [docs/crypto/native_backend_security_analysis.md](docs/crypto/native_backend_security_analysis.md), and the reproducible review package remains under [audits/native-backend-128b](audits/native-backend-128b). Its verifier compares packaged source bytes and executable modes directly with immutable `HEAD` tree blobs, and archive extraction rejects special files plus case-folded, Unicode-normalized, Windows-invalid, or filesystem-equivalent member names before writing. CI and release workflows run `scripts/check_native_backend_release_posture.sh` so this family remains `candidate_under_review` / `structural_candidate` unless a separate accepted external-review artifact is deliberately added and the stricter release mode is used; `Hegemon.Native.NativeBackendReleasePosture.accepts_iff_release_posture_preconditions` and its generated vectors prove that release-posture decision table against the packaged review claim. Blueprint target review is acceptance of the CI-gated statement/evidence shape, not external cryptographic acceptance. The active `v8` spec keeps the `512KiB` native tx-leaf proof admission cap. Any retained `verified_leaf_aggregation` claim is historical review metadata and is not part of active block validity, bandwidth, or security accounting.
 
 On the product side, authoring emits no `recursive_block_v1` or `recursive_block_v2` artifact. The old V1 and V2 parsers and semantic verifiers remain only so an upgraded node can replay historical blocks without resetting the chain. Their measured widths, caps, and admission models are compatibility facts, not active throughput costs or production authoring targets.
 

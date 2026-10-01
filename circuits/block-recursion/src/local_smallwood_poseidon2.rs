@@ -716,6 +716,37 @@ pub fn lvcs_recompute_rows(
         }
     }
     let coeffs_part1_inv = mat_inv(&coeffs_part1)?;
+    let fullrank = cfg.nb_lvcs_opened_combi;
+    if coeffs_part1.len() != fullrank
+        || coeffs_part1.iter().any(|row| row.len() != fullrank)
+        || coeffs_part1_inv.len() != fullrank
+        || coeffs_part1_inv
+            .iter()
+            .any(|row| row.len() != fullrank)
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood matrix inverse shape mismatch",
+        ));
+    }
+    let mut inverse_product = vec![vec![0u64; fullrank]; fullrank];
+    mat_mul(
+        &mut inverse_product,
+        &coeffs_part1,
+        &coeffs_part1_inv,
+        fullrank,
+        fullrank,
+        fullrank,
+    );
+    let is_identity = (0..fullrank).all(|row| {
+        (0..fullrank).all(|column| {
+            inverse_product[row][column] == if row == column { 1 } else { 0 }
+        })
+    });
+    if !is_identity {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood matrix inverse verification failed",
+        ));
+    }
     let mut evals = vec![vec![0u64; cfg.nb_lvcs_rows]; subset_evals.len()];
     for j in 0..subset_evals.len() {
         let q = combi_polys
@@ -729,6 +760,16 @@ pub fn lvcs_recompute_rows(
             .map(|(&a, &b)| sub_mod(a, b))
             .collect::<Vec<_>>();
         let res = mat_vec_mul_owned(&coeffs_part1_inv, &rhs);
+        if rhs.len() != fullrank || res.len() != fullrank {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood LVCS residual shape mismatch",
+            ));
+        }
+        if mat_vec_mul_owned(&coeffs_part1, &res) != rhs {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood LVCS residual verification failed",
+            ));
+        }
         let mut ind = 0usize;
         for k in 0..cfg.nb_lvcs_rows {
             if ind < cfg.nb_lvcs_opened_combi && cfg.fullrank_cols[ind] == k {

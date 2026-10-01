@@ -621,15 +621,50 @@ fn retained_carrier_manifest_path(
     workspace: &std::path::Path,
     relative: &str,
 ) -> Result<std::path::PathBuf, String> {
+    retained_carrier_manifest_path_for_profile(
+        workspace,
+        relative,
+        retained_carrier_smza_selected(),
+    )
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+fn retained_carrier_manifest_path_for_profile(
+    workspace: &std::path::Path,
+    relative: &str,
+    smza: bool,
+) -> Result<std::path::PathBuf, String> {
     let path = std::path::Path::new(relative);
-    if retained_carrier_smza_selected() {
+    if smza {
         let parent = std::path::Path::new(".agent/artifacts/smallwood-poseidon2-v8-smza");
+        let canonical_relative = path.components().collect::<std::path::PathBuf>();
+        let direct_child_shape = path.parent().and_then(|p| p.parent()) == Some(parent);
+        let lane_pair_shape = path.strip_prefix(parent).is_ok_and(|suffix| {
+            let components = suffix
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>();
+            components.len() == 4
+                && components[0] == "rp05-qualification-lanes"
+                && {
+                    let run_id = components[1].as_bytes();
+                    !run_id.is_empty()
+                        && run_id.len() <= 64
+                        && run_id[0].is_ascii_alphanumeric()
+                        && run_id.iter().all(|byte| {
+                            byte.is_ascii_alphanumeric() || matches!(*byte, b'.' | b'_' | b'-')
+                        })
+                }
+                && components[2] == "pair"
+                && components[3] == "manifest.json"
+        });
         if path.is_absolute()
             || path.file_name().and_then(|s| s.to_str()) != Some("manifest.json")
-            || path.parent().and_then(|p| p.parent()) != Some(parent)
             || !path
                 .components()
                 .all(|c| matches!(c, std::path::Component::Normal(_)))
+            || canonical_relative.to_str() != Some(relative)
+            || !(direct_child_shape || lane_pair_shape)
         {
             return Err("SMZA carrier requires its distinct canonical artifact manifest".into());
         }
@@ -688,6 +723,37 @@ fn retained_carrier_manifest_path(
         return Err("retained carrier manifest must be an exact canonical regular file".into());
     }
     Ok(current)
+}
+
+#[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
+fn retained_carrier_smza_artifact_root_is_canonical(artifact_root: &str) -> bool {
+    let path = std::path::Path::new(artifact_root);
+    let parent = std::path::Path::new(".agent/artifacts/smallwood-poseidon2-v8-smza");
+    let direct_child = path.parent() == Some(parent);
+    let lane_pair = path.strip_prefix(parent).is_ok_and(|suffix| {
+        let components = suffix
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>();
+        components.len() == 3
+            && components[0] == "rp05-qualification-lanes"
+            && {
+                let run_id = components[1].as_bytes();
+                !run_id.is_empty()
+                    && run_id.len() <= 64
+                    && run_id[0].is_ascii_alphanumeric()
+                    && run_id.iter().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(*byte, b'.' | b'_' | b'-')
+                    })
+            }
+            && components[2] == "pair"
+    });
+    !path.is_absolute()
+        && path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+        && path.components().collect::<std::path::PathBuf>().to_str() == Some(artifact_root)
+        && (direct_child || lane_pair)
 }
 
 /// There is deliberately no Boolean or environment-receipt shortcut for live
@@ -1054,16 +1120,18 @@ pub(crate) fn retained_carrier_verify_live_manifest(
     }
     .ok_or("retained candidate manifest omits artifact_root")?;
     let artifact_path = std::path::Path::new(artifact_root);
-    if artifact_path.parent()
-        != Some(std::path::Path::new(if retained_carrier_smza_selected() {
-            ".agent/artifacts/smallwood-poseidon2-v8-smza"
-        } else {
-            ".agent/artifacts/smallwood-poseidon2-v8"
-        }))
-        || !artifact_path
-            .components()
-            .all(|component| matches!(component, std::path::Component::Normal(_)))
-    {
+    let artifact_root_is_canonical = if retained_carrier_smza_selected() {
+        retained_carrier_smza_artifact_root_is_canonical(artifact_root)
+    } else {
+        artifact_path.parent()
+            == Some(std::path::Path::new(
+                ".agent/artifacts/smallwood-poseidon2-v8",
+            ))
+            && artifact_path
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_)))
+    };
+    if !artifact_root_is_canonical {
         return Err("retained artifact root is outside its exact local parent".into());
     }
     static PREFLIGHT_LOG_SEQUENCE: std::sync::atomic::AtomicU64 =
@@ -1106,7 +1174,11 @@ def pinned_module(name, path, raw):
 checker = pinned_module("retained_inventory_checker", checker_path, checker_raw)
 policy = pinned_module("retained_inventory_policy", policy_path, policy_raw)
 manifest_path = root / relative
-smza = pathlib.PurePosixPath(relative).parent.parent == pathlib.PurePosixPath(".agent/artifacts/smallwood-poseidon2-v8-smza")
+relative_path = pathlib.PurePosixPath(relative)
+smza_root = pathlib.PurePosixPath(".agent/artifacts/smallwood-poseidon2-v8-smza")
+lane_suffix = relative_path.parts[len(smza_root.parts):]
+smza_lane_pair = relative_path.parts[:len(smza_root.parts)] == smza_root.parts and len(lane_suffix) == 4 and lane_suffix[0] == "rp05-qualification-lanes" and lane_suffix[2:] == ("pair", "manifest.json")
+smza = relative_path.parent.parent == smza_root or smza_lane_pair
 manifest, raw = checker.load_json_exact(manifest_path, canonical=not smza)
 checker.require(hashlib.sha512(raw).hexdigest() == expected_sha, "inventory manifest SHA512 mismatch")
 before = policy.recompute_retained_proof_source_inventory(root)
@@ -1868,6 +1940,84 @@ mod tests {
             .is_err());
         }
         assert!(POSEIDON2_V8_PROCESS_TEST_BINDING.lock().unwrap().is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "poseidon2-v8-retained-test-support")]
+    fn retained_smza_manifest_guard_accepts_only_the_two_canonical_shapes() {
+        let temporary = tempfile::tempdir().expect("isolated manifest workspace");
+        let workspace = temporary.path().canonicalize().unwrap();
+        let root = workspace.join(".agent/artifacts/smallwood-poseidon2-v8-smza");
+        let direct = root.join("candidate/manifest.json");
+        let lane = root.join(
+            "rp05-qualification-lanes/rp05-qual-20261001t0847-import-streaming/pair/manifest.json",
+        );
+        std::fs::create_dir_all(direct.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(lane.parent().unwrap()).unwrap();
+        std::fs::write(&direct, b"direct candidate").unwrap();
+        std::fs::write(&lane, b"RP05 lane pair").unwrap();
+
+        for accepted in [&direct, &lane] {
+            let relative = accepted.strip_prefix(&workspace).unwrap().to_str().unwrap();
+            assert_eq!(
+                retained_carrier_manifest_path_for_profile(&workspace, relative, true).unwrap(),
+                *accepted,
+            );
+        }
+
+        for accepted_root in [
+            ".agent/artifacts/smallwood-poseidon2-v8-smza/candidate",
+            ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes/rp05-qual-20261001t0847-import-streaming/pair",
+        ] {
+            assert!(
+                retained_carrier_smza_artifact_root_is_canonical(accepted_root),
+                "canonical SMZA artifact root rejected: {accepted_root}"
+            );
+        }
+        for rejected_root in [
+            ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes-sibling/run/pair",
+            ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes/run/not-pair",
+            ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes/run/pair/extra",
+            ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes/../run/pair",
+            ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes/bad run/pair",
+            "/private/tmp/rp05-qualification-lanes/run/pair",
+        ] {
+            assert!(
+                !retained_carrier_smza_artifact_root_is_canonical(rejected_root),
+                "unexpected SMZA artifact root accepted: {rejected_root}"
+            );
+        }
+
+        for rejected in [
+            ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes-sibling/run/pair/manifest.json",
+            ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes/run/not-pair/manifest.json",
+            ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes/run/pair/extra/manifest.json",
+            ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes/../run/pair/manifest.json",
+            "/private/tmp/rp05-qualification-lanes/run/pair/manifest.json",
+            ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes/../manifest.json",
+            ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes/bad run/pair/manifest.json",
+        ] {
+            assert!(
+                retained_carrier_manifest_path_for_profile(&workspace, rejected, true).is_err(),
+                "unexpected SMZA manifest path accepted: {rejected}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(all(unix, feature = "poseidon2-v8-retained-test-support"))]
+    fn retained_smza_manifest_guard_rejects_symlink_in_lane_path() {
+        let temporary = tempfile::tempdir().expect("isolated manifest workspace");
+        let workspace = temporary.path().canonicalize().unwrap();
+        let lane_root =
+            workspace.join(".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes");
+        let real_manifest = lane_root.join("real-run/pair/manifest.json");
+        std::fs::create_dir_all(real_manifest.parent().unwrap()).unwrap();
+        std::fs::write(&real_manifest, b"RP05 lane pair").unwrap();
+        let alias = lane_root.join("run-alias");
+        std::os::unix::fs::symlink(lane_root.join("real-run"), &alias).unwrap();
+        let relative = ".agent/artifacts/smallwood-poseidon2-v8-smza/rp05-qualification-lanes/run-alias/pair/manifest.json";
+        assert!(retained_carrier_manifest_path_for_profile(&workspace, relative, true).is_err());
     }
 
     #[test]

@@ -153,6 +153,9 @@ const SMALLWOOD_LEVEL5_DECS_OPENING_DOMAIN: &[u8] = b"hegemon.smallwood.level5.d
 const SMALLWOOD_LEVEL5_MERKLE_LEAF_DOMAIN: &[u8] = b"hegemon.smallwood.level5.merkle-leaf";
 const SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_V1: &[u8] =
     b"hegemon.smallwood.strict-zk.merkle-leaf.v1";
+const SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_V2: &[u8] =
+    b"hegemon.smallwood.strict-zk.merkle-leaf.v2";
+const SMALLWOOD_SMZA_LEAF_STATEMENT_WORDS: usize = 138;
 /// Every conventional SHA-512 request in the V8 proof absorbs this profile
 /// frame before its role-specific domain.  This keeps the role grammar while
 /// preventing any V8 request from aliasing historical Level-5, V3, or V6
@@ -3760,6 +3763,9 @@ pub struct SmallwoodVerifierTraceV1 {
     pub pcs_transcript_words: Vec<u64>,
     pub piop_input_words: Vec<u64>,
     pub piop_transcript_words: Vec<u64>,
+    /// SHA-512/SMZA digest recomputed from `piop_transcript_words` during this
+    /// trace rebuild; kept distinct from the proof-carried expected digest.
+    pub recomputed_piop_digest: [u8; DIGEST_BYTES],
     pub pcs_trace: SmallwoodPcsVerifierTraceV1,
     pub accept: bool,
 }
@@ -3827,6 +3833,10 @@ impl SmallwoodVerifierTraceV1 {
 
     pub fn transcript_hash_words_v1(&self) -> [u64; DIGEST_WORDS] {
         digest_words_v1(&self.proof.h_piop)
+    }
+
+    pub fn transcript_recomputed_hash_words_v1(&self) -> [u64; DIGEST_WORDS] {
+        digest_words_v1(&self.recomputed_piop_digest)
     }
 
     pub fn flatten_transcript_section_words_v1(&self) -> Vec<u64> {
@@ -4967,6 +4977,33 @@ fn transcript_binding_words_for_domain(
     Ok(binding_words)
 }
 
+/// Select the statement prefix used by strict Merkle leaves.  SMZA alone uses
+/// the canonical 1,104-byte/138-word public preamble directly in every leaf;
+/// historical profiles retain an empty prefix and the v1 leaf address.
+fn strict_zk_leaf_statement_binding<'a>(
+    transcript_backend: SmallwoodTranscriptBackend,
+    binding_words: &'a [u64],
+) -> Result<&'a [u64], TransactionCircuitError> {
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza {
+        if binding_words.len() != SMALLWOOD_SMZA_LEAF_STATEMENT_WORDS {
+            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "smallwood SMZA strict-leaf statement binding has {} words, expected {SMALLWOOD_SMZA_LEAF_STATEMENT_WORDS}",
+                binding_words.len()
+            )));
+        }
+        return Ok(binding_words);
+    }
+    Ok(&[])
+}
+
+fn strict_zk_merkle_leaf_domain(transcript_backend: SmallwoodTranscriptBackend) -> &'static [u8] {
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza {
+        SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_V2
+    } else {
+        SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_V1
+    }
+}
+
 /// Prove the inactive V6 candidate with an already validated exact
 /// `HGV6PB02` preamble.  The generic backend entrypoints intentionally remain
 /// unavailable for V6 so a caller cannot omit the statement-owned preamble.
@@ -5186,6 +5223,8 @@ pub(crate) fn prove_statement_core_with_transcript_backend_profile_and_domain(
         transcript_backend,
         decs_evaluation_domain,
     )?;
+    let leaf_statement_binding =
+        strict_zk_leaf_statement_binding(transcript_backend, &binded_words)?;
     log_stage("binded_words", &mut last_stage);
     let witness_polys = if matches!(
         transcript_backend,
@@ -5230,6 +5269,7 @@ pub(crate) fn prove_statement_core_with_transcript_backend_profile_and_domain(
         transcript_backend,
         decs_evaluation_domain,
         &binded_words,
+        leaf_statement_binding,
         decs_leaf_tape_bytes,
     )?;
     log_stage("pcs_commit", &mut last_stage);
@@ -5420,6 +5460,28 @@ pub(crate) fn verify_statement_with_transcript_backend_profile_and_domain(
     transcript_backend: SmallwoodTranscriptBackend,
     decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
 ) -> Result<(), TransactionCircuitError> {
+    verify_statement_with_transcript_backend_profile_and_domain_and_digest(
+        statement,
+        binded_data,
+        proof_bytes,
+        profile,
+        transcript_backend,
+        decs_evaluation_domain,
+    )
+    .map(|_| ())
+}
+
+/// Verifier entry point for accepted-run evidence that also returns the
+/// digest computed by the ordinary verifier core. The ordinary verifier
+/// wrapper above discards this evidence and retains its existing API.
+pub(crate) fn verify_statement_with_transcript_backend_profile_and_domain_and_digest(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    binded_data: &[u8],
+    proof_bytes: &[u8],
+    profile: SmallwoodNoGrindingProfileV1,
+    transcript_backend: SmallwoodTranscriptBackend,
+    decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
+) -> Result<[u8; DIGEST_BYTES], TransactionCircuitError> {
     ensure_transcript_backend_dispatch_available(transcript_backend)?;
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8 {
         ensure_poseidon2_v8_smz8_profile(statement, profile, decs_evaluation_domain)?;
@@ -5470,7 +5532,7 @@ pub(crate) fn verify_statement_core_with_transcript_backend_profile_and_domain(
     transcript_backend: SmallwoodTranscriptBackend,
     decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
     hiding_tape_bytes: Option<usize>,
-) -> Result<(), TransactionCircuitError> {
+) -> Result<[u8; DIGEST_BYTES], TransactionCircuitError> {
     let sha512_field_xof_scope = enter_smallwood_sha512_field_xof_scope_v1()?;
     ensure_transcript_backend_dispatch_available(transcript_backend)?;
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8 {
@@ -5528,6 +5590,8 @@ pub(crate) fn verify_statement_core_with_transcript_backend_profile_and_domain(
         transcript_backend,
         decs_evaluation_domain,
     )?;
+    let leaf_statement_binding =
+        strict_zk_leaf_statement_binding(transcript_backend, &binded_words)?;
     let eval_points = canonical_piop_opening_points(
         &cfg.packing_points,
         profile,
@@ -5545,6 +5609,7 @@ pub(crate) fn verify_statement_core_with_transcript_backend_profile_and_domain(
         transcript_backend,
         decs_evaluation_domain,
         &binded_words,
+        leaf_statement_binding,
     )?;
     let mut piop_input = pcs_transcript;
     piop_input.extend_from_slice(&binded_words);
@@ -5565,7 +5630,7 @@ pub(crate) fn verify_statement_core_with_transcript_backend_profile_and_domain(
             "smallwood piop transcript hash mismatch",
         ));
     }
-    Ok(())
+    Ok(recomputed)
 }
 
 pub(crate) fn build_smallwood_verifier_trace_v1(
@@ -5638,6 +5703,8 @@ pub(crate) fn build_smallwood_verifier_trace_with_profile_and_domain_v1(
         transcript_backend,
         decs_evaluation_domain,
     )?;
+    let leaf_statement_binding =
+        strict_zk_leaf_statement_binding(transcript_backend, &binding_words)?;
     let eval_points = canonical_piop_opening_points(
         &cfg.packing_points,
         profile,
@@ -5684,13 +5751,14 @@ pub(crate) fn build_smallwood_verifier_trace_with_profile_and_domain_v1(
         &decs_eval_points,
     )?;
     record_verifier_stage_profile_v1("lvcs_rows");
-    let root_digest = decs_recompute_root(
+    let root_digest = decs_recompute_root_with_leaf_binding(
         &cfg,
         &proof.salt,
         &rows,
         &decs_leaf_indexes,
         &proof.pcs.decs,
         transcript_backend,
+        leaf_statement_binding,
     )?;
     record_verifier_stage_profile_v1("merkle_root");
     let hash_mt = hash_merkle_root_with_binding(
@@ -5774,6 +5842,7 @@ pub(crate) fn build_smallwood_verifier_trace_with_profile_and_domain_v1(
         pcs_transcript_words,
         piop_input_words,
         piop_transcript_words,
+        recomputed_piop_digest: recomputed,
         pcs_trace,
         accept: recomputed == proof.h_piop,
     })
@@ -6357,6 +6426,53 @@ fn enter_smallwood_sha512_oracle_overlay_v1(
     Ok(SmallwoodSha512OracleOverlayScopeV1 { active: true })
 }
 
+/// Result of one verifier invocation run under the recorder-only SHA-512
+/// overlay. The operation result is retained separately so query evidence is
+/// available for ordinary verifier errors as well as successful runs.
+pub(crate) struct RecordedOutcome<T> {
+    pub result: Result<T, TransactionCircuitError>,
+    pub queries: Vec<SmallwoodSha512OracleQueryV1>,
+}
+
+/// Record every ordered raw SHA-512 query made by `run`, without programming
+/// any answers. With an empty table the overlay delegates to the unchanged
+/// concrete oracle and records its complete 64-byte output.
+pub(crate) fn record_smallwood_sha512_queries_v1<T>(
+    run: impl FnOnce() -> Result<T, TransactionCircuitError>,
+) -> Result<RecordedOutcome<T>, TransactionCircuitError> {
+    let scope = enter_smallwood_sha512_oracle_overlay_v1(Vec::new(), &[])?;
+    let result = run();
+    let overlay = scope.finish()?;
+    if !overlay.programs.is_empty()
+        || overlay
+            .queries
+            .iter()
+            .any(|query| query.programmed_kind.is_some())
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "recorder-only smallwood SHA-512 overlay unexpectedly programmed an answer",
+        ));
+    }
+    Ok(RecordedOutcome {
+        result,
+        queries: overlay.queries,
+    })
+}
+
+/// Return the number of raw queries recorded so far in the active overlay.
+/// Phase boundaries can use this to delimit calls without re-running code.
+pub(crate) fn smallwood_sha512_recorded_query_count_v1(
+) -> Result<usize, TransactionCircuitError> {
+    SMALLWOOD_SHA512_ORACLE_OVERLAY_V1.with(|slot| {
+        let slot = slot.borrow();
+        slot.as_ref()
+            .map(|state| state.queries.len())
+            .ok_or(TransactionCircuitError::ConstraintViolation(
+                "smallwood SHA-512 query count requested outside a recorder scope",
+            ))
+    })
+}
+
 /// One lazily programmed unopened Merkle subtree in the executable strict-view
 /// simulator.  The `(level, node_index)` pair is the exact position consumed
 /// by the compact authentication-path verifier.
@@ -6718,8 +6834,11 @@ fn canonical_smallwood_programmed_merkle_input_v1(
     cfg: &SmallwoodConfig,
     salt: &[u8; SALT_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
+    leaf_statement_binding: &[u64],
     node: &SmallwoodStrictZkProgrammedMerkleNodeV1,
 ) -> Result<(Vec<u8>, Vec<u64>), TransactionCircuitError> {
+    let leaf_statement_binding =
+        strict_zk_leaf_statement_binding(transcript_backend, leaf_statement_binding)?;
     let level = node.level as usize;
     let node_index = node.node_index as usize;
     let depth = cfg.decs_nb_evals().ilog2() as usize;
@@ -6749,13 +6868,17 @@ fn canonical_smallwood_programmed_merkle_input_v1(
                 ));
             }
             let words = strict_zk_merkle_leaf_words(
+                leaf_statement_binding,
                 &bytes_to_words_unchecked(salt),
                 node_index,
                 tape,
                 committed_evaluations,
                 masking_evaluations,
             )?;
-            Ok((SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_V1.to_vec(), words))
+            Ok((
+                strict_zk_merkle_leaf_domain(transcript_backend).to_vec(),
+                words,
+            ))
         }
         (SmallwoodStrictZkProgrammedMerkleInputV1::MerkleNode { left, right }, 1..) => {
             let mut words = Vec::with_capacity(2 * transcript_backend.digest_words());
@@ -6825,6 +6948,7 @@ fn simulate_smallwood_compact_merkle_program_v1(
     masking_evals: &[Vec<u64>],
     leaf_tapes: &[Vec<u8>],
     transcript_backend: SmallwoodTranscriptBackend,
+    leaf_statement_binding: &[u64],
     program_coins: &mut VecDeque<SmallwoodStrictZkProgrammedMerkleCoinV1>,
 ) -> Result<
     (
@@ -6857,6 +6981,7 @@ fn simulate_smallwood_compact_merkle_program_v1(
             &leaf_tapes[opening],
             salt,
             transcript_backend,
+            leaf_statement_binding,
         )?);
     }
 
@@ -7012,14 +7137,20 @@ fn smallwood_strict_whole_view_oracle_programs_v1(
     cfg: &SmallwoodConfig,
     salt: &[u8; SALT_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
+    leaf_statement_binding: &[u64],
     programmed_merkle_nodes: &[SmallwoodStrictZkProgrammedMerkleNodeV1],
     programmed_final_piop_input_words: &[u64],
     programmed_final_piop_output: [u8; DIGEST_BYTES],
 ) -> Result<Vec<SmallwoodSha512OracleProgramV1>, TransactionCircuitError> {
     let mut programs = Vec::with_capacity(programmed_merkle_nodes.len() + 1);
     for node in programmed_merkle_nodes {
-        let (domain, words) =
-            canonical_smallwood_programmed_merkle_input_v1(cfg, salt, transcript_backend, node)?;
+        let (domain, words) = canonical_smallwood_programmed_merkle_input_v1(
+            cfg,
+            salt,
+            transcript_backend,
+            leaf_statement_binding,
+            node,
+        )?;
         programs.push(SmallwoodSha512OracleProgramV1 {
             key: SmallwoodSha512OracleKeyV1::new(transcript_backend, &domain, &words, 0),
             output: node.digest,
@@ -7051,10 +7182,15 @@ pub fn smallwood_strict_whole_view_oracle_program_inventory_v1(
 ) -> Result<SmallwoodStrictZkOracleProgramInventoryV1, TransactionCircuitError> {
     let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
     let decoded = decode_smallwood_proof_trace_v1(&simulation.proof_bytes)?;
+    let expected_leaf_statement_binding = strict_zk_leaf_statement_binding(
+        transcript_backend,
+        &simulation.concrete_verifier_trace.binding_words,
+    )?;
     let programs = smallwood_strict_whole_view_oracle_programs_v1(
         &cfg,
         &decoded.salt,
         transcript_backend,
+        expected_leaf_statement_binding,
         &simulation.programmed_merkle_nodes,
         &simulation.programmed_final_piop_input_words,
         simulation.programmed_final_piop_output,
@@ -7136,10 +7272,15 @@ pub fn smallwood_strict_whole_view_oracle_program_table_sha512_v1(
 ) -> Result<[u8; DIGEST_BYTES], TransactionCircuitError> {
     let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
     let decoded = decode_smallwood_proof_trace_v1(&simulation.proof_bytes)?;
+    let expected_leaf_statement_binding = strict_zk_leaf_statement_binding(
+        transcript_backend,
+        &simulation.concrete_verifier_trace.binding_words,
+    )?;
     let mut programs = smallwood_strict_whole_view_oracle_programs_v1(
         &cfg,
         &decoded.salt,
         transcript_backend,
+        expected_leaf_statement_binding,
         &simulation.programmed_merkle_nodes,
         &simulation.programmed_final_piop_input_words,
         simulation.programmed_final_piop_output,
@@ -7192,6 +7333,7 @@ fn replay_smallwood_strict_whole_view_oracle_overlay_v1(
     proof_bytes: &[u8],
     cfg: &SmallwoodConfig,
     salt: &[u8; SALT_BYTES],
+    leaf_statement_binding: &[u64],
     programmed_merkle_nodes: &[SmallwoodStrictZkProgrammedMerkleNodeV1],
     programmed_final_piop_input_words: &[u64],
     programmed_final_piop_output: [u8; DIGEST_BYTES],
@@ -7208,6 +7350,7 @@ fn replay_smallwood_strict_whole_view_oracle_overlay_v1(
         cfg,
         salt,
         transcript_backend,
+        leaf_statement_binding,
         programmed_merkle_nodes,
         programmed_final_piop_input_words,
         programmed_final_piop_output,
@@ -7796,6 +7939,14 @@ pub fn simulate_smallwood_strict_whole_view_v1(
     }
     ensure_row_polynomial_arithmetization(statement)?;
     let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    let binding_words = transcript_binding_words_for_domain(
+        &cfg,
+        binded_data,
+        transcript_backend,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )?;
+    let leaf_statement_binding =
+        strict_zk_leaf_statement_binding(transcript_backend, &binding_words)?.to_vec();
     if cfg.auxiliary_witness_word_count != 0 || cfg.auxiliary_witness_limb_count != 0 {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood strict-view simulator refuses witness-dependent auxiliary proof words",
@@ -7895,6 +8046,7 @@ pub fn simulate_smallwood_strict_whole_view_v1(
             &masking_evals,
             &leaf_tapes,
             transcript_backend,
+            &leaf_statement_binding,
             &mut programmed_merkle_coin_cursor,
         )?;
     transcript_scope.finish()?;
@@ -7925,13 +8077,14 @@ pub fn simulate_smallwood_strict_whole_view_v1(
     };
     let proof = smallwood_proof_from_trace_v1(&proof_trace);
     validate_proof_shape_with_hiding_profile(&cfg, &proof, Some(tape_bytes))?;
-    let rebuilt_root = decs_recompute_root(
+    let rebuilt_root = decs_recompute_root_with_leaf_binding(
         &cfg,
         &salt,
         &rows,
         &decs_leaf_indexes,
         &proof_trace.pcs.decs,
         transcript_backend,
+        &leaf_statement_binding,
     )?;
     if rebuilt_root != root_digest {
         return Err(TransactionCircuitError::ConstraintViolation(
@@ -7967,6 +8120,7 @@ pub fn simulate_smallwood_strict_whole_view_v1(
             &proof_bytes,
             &cfg,
             &salt,
+            &leaf_statement_binding,
             &programmed_merkle_nodes,
             &programmed_final_piop_input_words,
             h_piop,
@@ -8047,6 +8201,14 @@ pub fn validate_smallwood_strict_whole_view_simulation_v1(
         ));
     }
     let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    let binding_words = transcript_binding_words_for_domain(
+        &cfg,
+        binded_data,
+        transcript_backend,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )?;
+    let expected_leaf_statement_binding =
+        strict_zk_leaf_statement_binding(transcript_backend, &binding_words)?;
     let rebuilt_histogram = smallwood_strict_zk_programmed_merkle_histogram_v1(
         &simulation.programmed_merkle_nodes,
         cfg.decs_nb_evals().ilog2() as usize,
@@ -8130,6 +8292,7 @@ pub fn validate_smallwood_strict_whole_view_simulation_v1(
             &cfg,
             &rebuilt.proof.salt,
             transcript_backend,
+            expected_leaf_statement_binding,
             node,
         )?;
         if !seen_inputs.insert(input) {
@@ -8150,6 +8313,7 @@ pub fn validate_smallwood_strict_whole_view_simulation_v1(
             &simulation.proof_bytes,
             &cfg,
             &rebuilt.proof.salt,
+            expected_leaf_statement_binding,
             &simulation.programmed_merkle_nodes,
             &simulation.programmed_final_piop_input_words,
             simulation.programmed_final_piop_output,
@@ -9084,13 +9248,14 @@ pub fn smallwood_poseidon2_recompute_root_v1(
     ensure_row_polynomial_arithmetization(statement)?;
     let proof = smallwood_proof_from_trace_v1(proof_trace);
     validate_proof_shape(&cfg, &proof)?;
-    decs_recompute_root(
+    decs_recompute_root_with_leaf_binding(
         &cfg,
         &proof.salt,
         rows,
         decs_leaf_indexes,
         &proof.pcs.decs,
         SmallwoodTranscriptBackend::Poseidon2,
+        &[],
     )
 }
 
@@ -9219,13 +9384,14 @@ pub fn smallwood_poseidon2_pcs_trace_v1(
         &proof.pcs.subset_evals,
         &decs_eval_points,
     )?;
-    let root_digest = decs_recompute_root(
+    let root_digest = decs_recompute_root_with_leaf_binding(
         &cfg,
         &proof.salt,
         &rows,
         &decs_leaf_indexes,
         &proof.pcs.decs,
         SmallwoodTranscriptBackend::Poseidon2,
+        &[],
     )?;
     let hash_mt = hash_merkle_root(
         &proof.salt,
@@ -10410,6 +10576,7 @@ fn pcs_commit(
     transcript_backend: SmallwoodTranscriptBackend,
     decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
     statement_binding: &[u64],
+    leaf_statement_binding: &[u64],
     decs_leaf_tape_bytes: usize,
 ) -> Result<(PcsKey, Vec<u64>), TransactionCircuitError> {
     let trace_enabled = std::env::var_os("HEGEMON_SMALLWOOD_TRACE").is_some();
@@ -10491,6 +10658,7 @@ fn pcs_commit(
         transcript_backend,
         decs_evaluation_domain,
         statement_binding,
+        leaf_statement_binding,
         decs_leaf_tape_bytes,
     )?;
     log_stage("lvcs_commit", &mut last);
@@ -10567,6 +10735,7 @@ fn pcs_recompute_transcript(
     transcript_backend: SmallwoodTranscriptBackend,
     decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
     statement_binding: &[u64],
+    leaf_statement_binding: &[u64],
 ) -> Result<Vec<u64>, TransactionCircuitError> {
     let mut coeffs = vec![vec![0u64; cfg.nb_lvcs_rows]; cfg.nb_lvcs_opened_combi];
     pcs_build_coefficients(cfg, eval_points, &mut coeffs);
@@ -10600,13 +10769,14 @@ fn pcs_recompute_transcript(
         &proof.subset_evals,
         &decs_eval_points,
     )?;
-    let root_words = decs_recompute_root(
+    let root_words = decs_recompute_root_with_leaf_binding(
         cfg,
         salt,
         &rows,
         &decs_leaf_indexes,
         &proof.decs,
         transcript_backend,
+        leaf_statement_binding,
     )?;
     decs_commitment_transcript_with_binding(
         cfg,
@@ -11057,6 +11227,7 @@ fn lvcs_commit(
     transcript_backend: SmallwoodTranscriptBackend,
     decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
     statement_binding: &[u64],
+    leaf_statement_binding: &[u64],
     decs_leaf_tape_bytes: usize,
 ) -> Result<LvcsKey, TransactionCircuitError> {
     let trace_enabled = std::env::var_os("HEGEMON_SMALLWOOD_TRACE").is_some();
@@ -11096,6 +11267,7 @@ fn lvcs_commit(
         transcript_backend,
         decs_evaluation_domain,
         statement_binding,
+        leaf_statement_binding,
         decs_leaf_tape_bytes,
     )?;
     log_stage("decs_commit", &mut last);
@@ -11207,6 +11379,37 @@ pub fn lvcs_recompute_rows(
         }
     }
     let coeffs_part1_inv = mat_inv(&coeffs_part1)?;
+    let fullrank = cfg.nb_lvcs_opened_combi;
+    if coeffs_part1.len() != fullrank
+        || coeffs_part1.iter().any(|row| row.len() != fullrank)
+        || coeffs_part1_inv.len() != fullrank
+        || coeffs_part1_inv
+            .iter()
+            .any(|row| row.len() != fullrank)
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood matrix inverse shape mismatch",
+        ));
+    }
+    let mut inverse_product = vec![vec![0u64; fullrank]; fullrank];
+    mat_mul(
+        &mut inverse_product,
+        &coeffs_part1,
+        &coeffs_part1_inv,
+        fullrank,
+        fullrank,
+        fullrank,
+    );
+    let is_identity = (0..fullrank).all(|row| {
+        (0..fullrank).all(|column| {
+            inverse_product[row][column] == if row == column { 1 } else { 0 }
+        })
+    });
+    if !is_identity {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood matrix inverse verification failed",
+        ));
+    }
     let mut evals = vec![vec![0u64; cfg.nb_lvcs_rows]; subset_evals.len()];
     for j in 0..subset_evals.len() {
         let q = rotated_combis
@@ -11220,6 +11423,16 @@ pub fn lvcs_recompute_rows(
             .map(|(&a, &b)| sub_mod(a, b))
             .collect::<Vec<_>>();
         let res = mat_vec_mul_owned(&coeffs_part1_inv, &rhs);
+        if rhs.len() != fullrank || res.len() != fullrank {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood LVCS residual shape mismatch",
+            ));
+        }
+        if mat_vec_mul_owned(&coeffs_part1, &res) != rhs {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood LVCS residual verification failed",
+            ));
+        }
         let mut ind = 0usize;
         for k in 0..cfg.nb_lvcs_rows {
             if ind < cfg.nb_lvcs_opened_combi && cfg.fullrank_cols[ind] == k {
@@ -11247,7 +11460,9 @@ fn strict_coset_leaf_hashes_bounded(
     salt: &[u8],
     domain: SmallwoodDisjointCosetDescriptorV1,
     backend: SmallwoodTranscriptBackend,
+    leaf_statement_binding: &[u64],
 ) -> Result<Vec<[u8; DIGEST_BYTES]>, TransactionCircuitError> {
+    let leaf_statement_binding = strict_zk_leaf_statement_binding(backend, leaf_statement_binding)?;
     let max_len = committed
         .iter()
         .chain(masking)
@@ -11294,6 +11509,7 @@ fn strict_coset_leaf_hashes_bounded(
                     &leaf_tapes[index],
                     salt,
                     backend,
+                    leaf_statement_binding,
                 )?);
             }
             Ok(hashes)
@@ -11323,6 +11539,7 @@ fn smz9_coset_leaf_hashes_bounded(
         salt,
         domain,
         SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9,
+        &[],
     )
 }
 
@@ -11336,6 +11553,7 @@ fn decs_commit_strict_bounded(
     initial_domain_evals: &[Vec<u64>],
     salt: &[u8],
     statement_binding: &[u64],
+    leaf_statement_binding: &[u64],
     decs_leaf_tape_bytes: usize,
     backend: SmallwoodTranscriptBackend,
 ) -> Result<DecsKey, TransactionCircuitError> {
@@ -11359,8 +11577,15 @@ fn decs_commit_strict_bounded(
             started.elapsed()
         );
     }
-    let leaves =
-        strict_coset_leaf_hashes_bounded(&committed, &masking, &leaf_tapes, salt, domain, backend)?;
+    let leaves = strict_coset_leaf_hashes_bounded(
+        &committed,
+        &masking,
+        &leaf_tapes,
+        salt,
+        domain,
+        backend,
+        leaf_statement_binding,
+    )?;
     let mut tree_levels = vec![leaves];
     let root = merkle_build_levels(&mut tree_levels, backend);
     if trace_enabled {
@@ -11414,6 +11639,7 @@ fn decs_commit(
     transcript_backend: SmallwoodTranscriptBackend,
     decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
     statement_binding: &[u64],
+    leaf_statement_binding: &[u64],
     decs_leaf_tape_bytes: usize,
 ) -> Result<DecsKey, TransactionCircuitError> {
     if matches!(
@@ -11431,6 +11657,7 @@ fn decs_commit(
             initial_domain_evals,
             salt,
             statement_binding,
+            leaf_statement_binding,
             decs_leaf_tape_bytes,
             transcript_backend,
         );
@@ -11543,6 +11770,7 @@ fn decs_commit(
             .map(|leaf_idx| {
                 if let Some(tape) = leaf_tapes.get(leaf_idx) {
                     hash_strict_zk_merkle_leaf_from_tables(
+                        leaf_statement_binding,
                         &salt_words,
                         &committed_domain_evals,
                         &masking_domain_evals,
@@ -11567,6 +11795,7 @@ fn decs_commit(
             .map(|leaf_idx| {
                 if let Some(tape) = leaf_tapes.get(leaf_idx) {
                     hash_strict_zk_merkle_leaf_from_tables(
+                        leaf_statement_binding,
                         &salt_words,
                         &committed_domain_evals,
                         &masking_domain_evals,
@@ -11723,6 +11952,28 @@ pub fn decs_recompute_root(
     proof: &DecsProof,
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<[u8; DIGEST_BYTES], TransactionCircuitError> {
+    decs_recompute_root_with_leaf_binding(
+        cfg,
+        salt,
+        evals,
+        leaf_indexes,
+        proof,
+        transcript_backend,
+        &[],
+    )
+}
+
+fn decs_recompute_root_with_leaf_binding(
+    cfg: &SmallwoodConfig,
+    salt: &[u8],
+    evals: &[Vec<u64>],
+    leaf_indexes: &[u32],
+    proof: &DecsProof,
+    transcript_backend: SmallwoodTranscriptBackend,
+    leaf_statement_binding: &[u64],
+) -> Result<[u8; DIGEST_BYTES], TransactionCircuitError> {
+    let leaf_statement_binding =
+        strict_zk_leaf_statement_binding(transcript_backend, leaf_statement_binding)?;
     if leaf_indexes.len() != evals.len()
         || leaf_indexes.len() != proof.auth_paths.len()
         || leaf_indexes
@@ -11780,6 +12031,7 @@ pub fn decs_recompute_root(
                 &proof.leaf_tapes[j],
                 salt,
                 transcript_backend,
+                leaf_statement_binding,
             )?
         });
         current_indices.push(leaf_indexes[j] as usize);
@@ -12031,6 +12283,7 @@ fn hash_merkle_leave(
 }
 
 fn strict_zk_merkle_leaf_words(
+    statement_binding: &[u64],
     salt_words: &[u64],
     leaf_index: usize,
     tape: &[u8],
@@ -12049,7 +12302,8 @@ fn strict_zk_merkle_leaf_words(
     })?;
     let tape_words = bytes_to_words_unchecked(tape);
     let mut input = Vec::with_capacity(
-        salt_words.len()
+        statement_binding.len()
+            + salt_words.len()
             + 1
             + tape_words.len()
             + 1
@@ -12057,6 +12311,7 @@ fn strict_zk_merkle_leaf_words(
             + 1
             + masking_evaluations.len(),
     );
+    input.extend_from_slice(statement_binding);
     input.extend_from_slice(salt_words);
     input.push(leaf_index);
     input.extend_from_slice(&tape_words);
@@ -12074,7 +12329,10 @@ fn hash_strict_zk_merkle_leaf(
     tape: &[u8],
     salt: &[u8],
     transcript_backend: SmallwoodTranscriptBackend,
+    statement_binding: &[u64],
 ) -> Result<[u8; DIGEST_BYTES], TransactionCircuitError> {
+    let statement_binding =
+        strict_zk_leaf_statement_binding(transcript_backend, statement_binding)?;
     if nb_polys > evals.len() {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood strict-ZK DECS leaf evaluation split is invalid",
@@ -12095,6 +12353,7 @@ fn hash_strict_zk_merkle_leaf(
         })?;
     }
     let input = strict_zk_merkle_leaf_words(
+        statement_binding,
         &bytes_to_words_unchecked(salt),
         leaf_index,
         tape,
@@ -12103,12 +12362,13 @@ fn hash_strict_zk_merkle_leaf(
     )?;
     Ok(transcript_xof_digest(
         transcript_backend,
-        SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_V1,
+        strict_zk_merkle_leaf_domain(transcript_backend),
         &input,
     ))
 }
 
 fn hash_strict_zk_merkle_leaf_from_tables(
+    statement_binding: &[u64],
     salt_words: &[u64],
     committed_domain_evals: &[Vec<u64>],
     masking_domain_evals: &[Vec<u64>],
@@ -12116,12 +12376,15 @@ fn hash_strict_zk_merkle_leaf_from_tables(
     tape: &[u8],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> [u8; DIGEST_BYTES] {
+    let statement_binding = strict_zk_leaf_statement_binding(transcript_backend, statement_binding)
+        .expect("validated strict-ZK leaf statement binding");
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Level5 {
         update_verifier_operation_profile_v1(|profile| {
             profile.sha512_digest_calls += 1;
         });
         let tape_word_count = tape.len().div_ceil(8);
-        let word_count = salt_words.len()
+        let word_count = statement_binding.len()
+            + salt_words.len()
             + 1
             + tape_word_count
             + 1
@@ -12129,9 +12392,13 @@ fn hash_strict_zk_merkle_leaf_from_tables(
             + 1
             + masking_domain_evals.len();
         let mut hasher = Sha512::new();
-        hasher.update((SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_V1.len() as u64).to_le_bytes());
-        hasher.update(SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_V1);
+        let leaf_domain = strict_zk_merkle_leaf_domain(transcript_backend);
+        hasher.update((leaf_domain.len() as u64).to_le_bytes());
+        hasher.update(leaf_domain);
         hasher.update((word_count as u64).to_le_bytes());
+        for word in statement_binding {
+            hasher.update(word.to_le_bytes());
+        }
         for word in salt_words {
             hasher.update(word.to_le_bytes());
         }
@@ -12165,11 +12432,18 @@ fn hash_strict_zk_merkle_leaf_from_tables(
             driver.hash_leaf(&salt, leaf_index, tape, &committed, &masking)
         });
     }
-    let input = strict_zk_merkle_leaf_words(salt_words, leaf_index, tape, &committed, &masking)
-        .expect("validated strict-ZK DECS leaf index");
+    let input = strict_zk_merkle_leaf_words(
+        statement_binding,
+        salt_words,
+        leaf_index,
+        tape,
+        &committed,
+        &masking,
+    )
+    .expect("validated strict-ZK DECS leaf index");
     transcript_xof_digest(
         transcript_backend,
-        SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_V1,
+        strict_zk_merkle_leaf_domain(transcript_backend),
         &input,
     )
 }
@@ -13633,6 +13907,45 @@ mod tests {
             },
             opened_witness: SmallwoodOpenedWitnessBundle::row_scalars(vec![vec![8]], Vec::new(), 0),
         }
+    }
+
+    #[test]
+    fn sha512_recorder_preserves_order_repeats_and_error_outcome() {
+        let backend = SmallwoodTranscriptBackend::Sha512Level5;
+        let domain = b"recorder-test-domain";
+        let words = [3u64, 5, 8];
+        let recorded = record_smallwood_sha512_queries_v1(|| {
+            let first = sha512_raw_domain_digest(backend, domain, &words, 0);
+            assert_eq!(smallwood_sha512_recorded_query_count_v1()?, 1);
+            let second = sha512_raw_domain_digest(backend, domain, &words, 0);
+            Ok((first, second))
+        })
+        .expect("finish recorder scope");
+        let expected = concrete_smallwood_sha512_oracle_query_v1(
+            &SmallwoodSha512OracleKeyV1::new(backend, domain, &words, 0),
+        );
+        assert_eq!(
+            recorded.result.as_ref().expect("recorder operation succeeds"),
+            &(expected, expected)
+        );
+        assert_eq!(recorded.queries.len(), 2);
+        assert_eq!(recorded.queries[0], recorded.queries[1]);
+        assert!(recorded
+            .queries
+            .iter()
+            .all(|query| query.programmed_kind.is_none() && query.output == expected));
+
+        let aborted = record_smallwood_sha512_queries_v1(
+            || -> Result<(), TransactionCircuitError> {
+                sha512_raw_domain_digest(backend, domain, &words, 1);
+                Err(TransactionCircuitError::ConstraintViolation("fixture abort"))
+            },
+        )
+        .expect("recorder must finalize after an ordinary operation error");
+        assert!(aborted.result.is_err());
+        assert_eq!(aborted.queries.len(), 1);
+        assert_eq!(aborted.queries[0].key.counter, 1);
+        assert_eq!(aborted.queries[0].programmed_kind, None);
     }
 
     #[test]
@@ -15864,6 +16177,7 @@ mod tests {
             SmallwoodTranscriptBackend::Blake3,
             SmallwoodDecsEvaluationDomain::Consecutive,
             &binded_words,
+            &[],
             0,
         )
         .unwrap();
@@ -18150,6 +18464,7 @@ mod complete_zk_domain_tests {
             let reference = (0..domain_size)
                 .map(|index| {
                     hash_strict_zk_merkle_leaf_from_tables(
+                        &[],
                         &bytes_to_words_unchecked(&salt),
                         &tables[..committed.len()],
                         &tables[committed.len()..],
@@ -18200,6 +18515,9 @@ mod complete_zk_domain_tests {
     fn smza_bounded_cosets_match_every_full_table_leaf_and_root() {
         let backend = SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza;
         let salt = [0x53u8; SALT_BYTES];
+        let statement_binding = (0..SMALLWOOD_SMZA_LEAF_STATEMENT_WORDS)
+            .map(|index| index as u64 + 1)
+            .collect::<Vec<_>>();
         // Includes one-point blocks, several nonzero block offsets, and B=N.
         for (domain_size, coefficient_count) in [(64, 38), (128, 43), (512, 406)] {
             let domain = SmallwoodDisjointCosetDescriptorV1::derive(domain_size, coefficient_count)
@@ -18227,6 +18545,7 @@ mod complete_zk_domain_tests {
             let reference = (0..domain_size)
                 .map(|index| {
                     hash_strict_zk_merkle_leaf_from_tables(
+                        &statement_binding,
                         &bytes_to_words_unchecked(&salt),
                         &tables[..committed.len()],
                         &tables[committed.len()..],
@@ -18243,6 +18562,7 @@ mod complete_zk_domain_tests {
                 &salt,
                 domain,
                 backend,
+                &statement_binding,
             )
             .expect("hash bounded full domain");
             assert_eq!(
@@ -18294,6 +18614,7 @@ mod complete_zk_domain_tests {
             &salt,
             SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9,
             SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+            &[],
             &[],
             64,
         )
@@ -18450,6 +18771,7 @@ mod complete_zk_domain_tests {
                     &leaf_tapes[leaf_index],
                     &salt,
                     backend,
+                    &[],
                 )
                 .expect("hash deterministic strict-ZK leaf")
             })
@@ -18494,9 +18816,16 @@ mod complete_zk_domain_tests {
             .iter()
             .map(|&index| committed_rows[index].clone())
             .collect::<Vec<_>>();
-        let reconstructed =
-            decs_recompute_root(&cfg, &salt, &opened_rows, &leaf_indexes, &proof, backend)
-                .expect("reconstruct root from compact multiproof with an empty individual path");
+        let reconstructed = decs_recompute_root_with_leaf_binding(
+            &cfg,
+            &salt,
+            &opened_rows,
+            &leaf_indexes,
+            &proof,
+            backend,
+            &[],
+        )
+        .expect("reconstruct root from compact multiproof with an empty individual path");
         assert_eq!(reconstructed, expected_root);
     }
 
@@ -18640,13 +18969,14 @@ mod complete_zk_domain_tests {
             coset_points_miscast_as_indexes,
             trace.pcs_trace.decs_leaf_indexes
         );
-        assert!(decs_recompute_root(
+        assert!(decs_recompute_root_with_leaf_binding(
             &cfg,
             &decoded.salt,
             &trace.pcs_trace.rows,
             &coset_points_miscast_as_indexes,
             &decoded.pcs.decs,
             backend,
+            &[],
         )
         .is_err());
 
@@ -18753,9 +19083,11 @@ mod complete_zk_domain_tests {
             &tape,
             &salt,
             SmallwoodTranscriptBackend::Sha512Level5,
+            &[],
         )
         .expect("hash strict-ZK DECS leaf reference");
         let fast = hash_strict_zk_merkle_leaf_from_tables(
+            &[],
             &salt_words,
             &committed,
             &masking,
@@ -18772,6 +19104,7 @@ mod complete_zk_domain_tests {
             &tape,
             &salt,
             SmallwoodTranscriptBackend::Sha512Level5,
+            &[],
         )
         .expect("hash strict-ZK DECS leaf index mutation");
         assert_ne!(reference, index_mutation);
@@ -18784,9 +19117,161 @@ mod complete_zk_domain_tests {
             &changed_tape,
             &salt,
             SmallwoodTranscriptBackend::Sha512Level5,
+            &[],
         )
         .expect("hash strict-ZK DECS leaf tape mutation");
         assert_ne!(reference, tape_mutation);
+    }
+
+    #[test]
+    fn smza_leaf_v2_binds_exact_statement_and_preserves_legacy_address() {
+        let salt = [9u8; SALT_BYTES];
+        let tape = [7u8; SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES];
+        let evals = [11u64, 12, 21, 22, 31];
+        let statement_a = (0..SMALLWOOD_SMZA_LEAF_STATEMENT_WORDS)
+            .map(|index| index as u64 + 1)
+            .collect::<Vec<_>>();
+        let mut statement_b = statement_a.clone();
+        statement_b[37] ^= 1;
+
+        let a = hash_strict_zk_merkle_leaf(
+            3,
+            &evals,
+            1,
+            &tape,
+            &salt,
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
+            &statement_a,
+        )
+        .expect("hash SMZA statement-a leaf");
+        let b = hash_strict_zk_merkle_leaf(
+            3,
+            &evals,
+            1,
+            &tape,
+            &salt,
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
+            &statement_b,
+        )
+        .expect("hash SMZA statement-b leaf");
+        assert_ne!(a, b);
+        assert_eq!(
+            strict_zk_merkle_leaf_domain(SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza),
+            SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_V2,
+        );
+        assert!(hash_strict_zk_merkle_leaf(
+            3,
+            &evals,
+            1,
+            &tape,
+            &salt,
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
+            &statement_a[..SMALLWOOD_SMZA_LEAF_STATEMENT_WORDS - 1],
+        )
+        .is_err());
+
+        let legacy = hash_strict_zk_merkle_leaf(
+            3,
+            &evals,
+            1,
+            &tape,
+            &salt,
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9,
+            &[],
+        )
+        .expect("hash historical empty-prefix leaf");
+        let legacy_with_ignored_caller_binding = hash_strict_zk_merkle_leaf(
+            3,
+            &evals,
+            1,
+            &tape,
+            &salt,
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9,
+            &statement_a,
+        )
+        .expect("historical leaf selects its unchanged empty prefix");
+        assert_eq!(legacy, legacy_with_ignored_caller_binding);
+        assert_eq!(
+            strict_zk_merkle_leaf_domain(SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9),
+            SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_V1,
+        );
+    }
+
+    #[test]
+    fn smza_programmed_leaf_key_matches_verifier_leaf_encoder() {
+        let statement = StructuralIdentityWitnessStatement::new_for_arithmetization(
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1,
+            8,
+            8,
+            2,
+            17,
+            0,
+        )
+        .expect("construct programmed-key statement");
+        let cfg = SmallwoodConfig::new_with_profile(&statement, COSET_SMOKE_PROFILE)
+            .expect("construct programmed-key config");
+        let salt = [0x5au8; SALT_BYTES];
+        let binding = (0..SMALLWOOD_SMZA_LEAF_STATEMENT_WORDS)
+            .map(|index| 10_000 + index as u64)
+            .collect::<Vec<_>>();
+        let node = SmallwoodStrictZkProgrammedMerkleNodeV1 {
+            level: 0,
+            node_index: 3,
+            input: SmallwoodStrictZkProgrammedMerkleInputV1::StrictZkLeaf {
+                tape: [0x71; DIGEST_BYTES],
+                committed_evaluations: vec![7; cfg.nb_lvcs_rows],
+                masking_evaluations: vec![9; cfg.decs_eta()],
+            },
+            digest: [0x33; DIGEST_BYTES],
+        };
+        let (domain, words) = canonical_smallwood_programmed_merkle_input_v1(
+            &cfg,
+            &salt,
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
+            &binding,
+            &node,
+        )
+        .expect("encode canonical programmed SMZA leaf");
+        let programs = smallwood_strict_whole_view_oracle_programs_v1(
+            &cfg,
+            &salt,
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
+            &binding,
+            &[node],
+            &[],
+            [0x44; DIGEST_BYTES],
+        )
+        .expect("build programmed oracle table");
+        assert_eq!(domain, SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_V2);
+        assert_eq!(&words[..binding.len()], binding.as_slice());
+        assert_eq!(
+            programs[0].key,
+            SmallwoodSha512OracleKeyV1::new(
+                SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
+                &domain,
+                &words,
+                0,
+            )
+        );
+        let overlay = enter_smallwood_sha512_oracle_overlay_v1(programs, &[])
+            .expect("install programmed SMZA leaf table");
+        assert_eq!(
+            transcript_xof_digest(
+                SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
+                &domain,
+                &words,
+            ),
+            [0x33; DIGEST_BYTES],
+        );
+        let replay = overlay
+            .finish()
+            .expect("finish programmed SMZA leaf replay");
+        assert_eq!(
+            replay
+                .hit_counts
+                .get(&SmallwoodSha512OracleProgramKindV1::LazyMerkle),
+            Some(&1),
+        );
     }
 
     #[test]

@@ -1424,14 +1424,10 @@ fn compress_note_nodes(
 }
 
 /// Canonical empty nodes for the depth-32 V8 note tree.  Index zero is the
-/// zero leaf and index `level + 1` is the parent of two index-`level` nodes.
+/// known zero-value leaf and index `level + 1` is its equal-child parent.
 fn canonical_empty_note_nodes(
 ) -> [SmallwoodPoseidon2V8Digest; SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH + 1] {
-    let mut nodes = [[0u64; 7]; SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH + 1];
-    for level in 0..SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH {
-        nodes[level + 1] = compress_note_nodes(nodes[level], nodes[level]);
-    }
-    nodes
+    transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_default_note_nodes()
 }
 
 type TwoNoteFrontier = Poseidon2V8TwoNoteFrontier;

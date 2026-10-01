@@ -498,11 +498,115 @@ pub struct SmallwoodPoseidon2V8SmzaAcceptedProofLocalAuditV1 {
     pub production_eligible: bool,
 }
 
+/// Raw-query offsets in the single verifier invocation. A missing end offset
+/// means that phase was interrupted before it returned. The offsets count
+/// calls, including repeated keys, rather than distinct oracle inputs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[allow(dead_code)] // Consumed by the accepted-run witness integration.
+pub(crate) struct SmallwoodPoseidon2V8SmzaAcceptedRunPhasesV1 {
+    pub trace_start: Option<usize>,
+    pub trace_end: Option<usize>,
+    pub core_start: Option<usize>,
+    pub core_end: Option<usize>,
+}
+
+/// Evidence from one accepted local audit. `binded_data` is the exact
+/// preamble supplied to this entrypoint; the frontend validates its relation
+/// binding before calling the ordinary verifier path.
+#[derive(Debug)]
+#[allow(dead_code)] // Consumed by the accepted-run witness integration.
+pub(crate) struct SmallwoodPoseidon2V8SmzaAcceptedRunEvidenceV1 {
+    pub binded_data: Vec<u8>,
+    pub proof_bytes: Vec<u8>,
+    pub relation_id: &'static str,
+    pub transcript_backend: SmallwoodTranscriptBackend,
+    pub decs_domain: SmallwoodDecsEvaluationDomain,
+    pub trace: SmallwoodVerifierTraceV1,
+    pub audit: SmallwoodPoseidon2V8SmzaAcceptedProofLocalAuditV1,
+    pub phases: SmallwoodPoseidon2V8SmzaAcceptedRunPhasesV1,
+}
+
+/// An abort retains the raw query log and any phase boundaries reached. An
+/// outer error indicates that the recorder itself could not be established or
+/// finalized, so no accepted-run receipt is returned in that case.
+#[derive(Debug)]
+#[allow(dead_code)] // Consumed by the accepted-run witness integration.
+pub(crate) struct SmallwoodPoseidon2V8SmzaAcceptedRunAttemptV1 {
+    pub result: Result<SmallwoodPoseidon2V8SmzaAcceptedRunEvidenceV1, TransactionCircuitError>,
+    pub queries: Vec<crate::smallwood_engine::SmallwoodSha512OracleQueryV1>,
+    pub phases: SmallwoodPoseidon2V8SmzaAcceptedRunPhasesV1,
+}
+
+struct SmallwoodPoseidon2V8SmzaAcceptedRunBodyV1 {
+    audit: SmallwoodPoseidon2V8SmzaAcceptedProofLocalAuditV1,
+    trace: SmallwoodVerifierTraceV1,
+}
+
 pub fn validate_accepted_smallwood_poseidon2_v8_smza_local_audit_v1(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
     binded_data: &[u8],
     proof_bytes: &[u8],
 ) -> Result<SmallwoodPoseidon2V8SmzaAcceptedProofLocalAuditV1, TransactionCircuitError> {
+    Ok(validate_accepted_smallwood_poseidon2_v8_smza_body_v1(
+        statement,
+        binded_data,
+        proof_bytes,
+        None,
+    )?
+    .audit)
+}
+
+/// Execute the existing accepted-proof audit once under the recorder-only
+/// oracle overlay. This is source execution evidence, not a cryptographic
+/// soundness or production-authorization certificate.
+#[allow(dead_code)] // Called when building the accepted-run witness.
+pub(crate) fn validate_accepted_smallwood_poseidon2_v8_smza_with_evidence_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    binded_data: &[u8],
+    proof_bytes: &[u8],
+) -> Result<SmallwoodPoseidon2V8SmzaAcceptedRunAttemptV1, TransactionCircuitError> {
+    let mut phases = SmallwoodPoseidon2V8SmzaAcceptedRunPhasesV1::default();
+    let recorded = crate::smallwood_engine::record_smallwood_sha512_queries_v1(|| {
+        validate_accepted_smallwood_poseidon2_v8_smza_body_v1(
+            statement,
+            binded_data,
+            proof_bytes,
+            Some(&mut phases),
+        )
+    })?;
+    let result = recorded.result.and_then(|body| {
+        if phases.trace_start != Some(0)
+            || phases.trace_end != phases.core_start
+            || phases.core_end != Some(recorded.queries.len())
+        {
+            return Err(violation(
+                "SMZA accepted-run query phases do not cover the recorded log",
+            ));
+        }
+        Ok(SmallwoodPoseidon2V8SmzaAcceptedRunEvidenceV1 {
+            binded_data: binded_data.to_vec(),
+            proof_bytes: proof_bytes.to_vec(),
+            relation_id: SMALLWOOD_POSEIDON2_V8_RELATION_ID,
+            transcript_backend: SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
+            decs_domain: SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+            trace: body.trace,
+            audit: body.audit,
+            phases,
+        })
+    });
+    Ok(SmallwoodPoseidon2V8SmzaAcceptedRunAttemptV1 {
+        result,
+        queries: recorded.queries,
+        phases,
+    })
+}
+
+fn validate_accepted_smallwood_poseidon2_v8_smza_body_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    binded_data: &[u8],
+    proof_bytes: &[u8],
+    mut phases: Option<&mut SmallwoodPoseidon2V8SmzaAcceptedRunPhasesV1>,
+) -> Result<SmallwoodPoseidon2V8SmzaAcceptedRunBodyV1, TransactionCircuitError> {
     use crate::smallwood_engine::{
         build_smallwood_poseidon2_v8_smza_verifier_trace_v1, decode_smallwood_smza_proof_trace_v1,
         encode_smallwood_smza_proof_trace_v1,
@@ -520,27 +624,51 @@ pub fn validate_accepted_smallwood_poseidon2_v8_smza_local_audit_v1(
             "SMZA local audit requires canonical self-contained bytes",
         ));
     }
-    let trace = build_smallwood_poseidon2_v8_smza_verifier_trace_v1(
+    if let Some(offsets) = phases.as_deref_mut() {
+        offsets.trace_start =
+            Some(crate::smallwood_engine::smallwood_sha512_recorded_query_count_v1()?);
+    }
+    let trace_result = build_smallwood_poseidon2_v8_smza_verifier_trace_v1(
         &engine_relation,
         binded_data,
         proof_bytes,
-    )?;
+    );
+    if let Some(offsets) = phases.as_deref_mut() {
+        offsets.trace_end =
+            Some(crate::smallwood_engine::smallwood_sha512_recorded_query_count_v1()?);
+    }
+    let trace = trace_result?;
     trace.validate_sections_v1()?;
     if !trace.accept {
         return Err(violation(
             "SMZA local audit requires an accepting rebuilt trace",
         ));
     }
-    verify_statement_with_transcript_backend_profile_and_domain(
-        &engine_relation,
-        binded_data,
-        proof_bytes,
-        POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE,
-        SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
-        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
-    )?;
+    if let Some(offsets) = phases.as_deref_mut() {
+        offsets.core_start =
+            Some(crate::smallwood_engine::smallwood_sha512_recorded_query_count_v1()?);
+    }
+    let core_result =
+        crate::smallwood_engine::verify_statement_with_transcript_backend_profile_and_domain_and_digest(
+            &engine_relation,
+            binded_data,
+            proof_bytes,
+            POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE,
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
+            SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+        );
+    if let Some(offsets) = phases.as_deref_mut() {
+        offsets.core_end =
+            Some(crate::smallwood_engine::smallwood_sha512_recorded_query_count_v1()?);
+    }
+    let core_digest = core_result?;
+    if core_digest != trace.recomputed_piop_digest {
+        return Err(violation(
+            "SMZA trace digest differs from the accepted verifier core digest",
+        ));
+    }
     let honest_map_audit = audit_smallwood_poseidon2_v8_smza_honest_maps_v1(statement, &trace)?;
-    Ok(SmallwoodPoseidon2V8SmzaAcceptedProofLocalAuditV1 {
+    let audit = SmallwoodPoseidon2V8SmzaAcceptedProofLocalAuditV1 {
         schema: "hegemon.smallwood.poseidon2-v8.smza.accepted-proof-local-audit.v1".to_owned(),
         proof_bytes: proof_bytes.len(),
         proof_sha512_hex: sha512_hex(proof_bytes),
@@ -551,7 +679,8 @@ pub fn validate_accepted_smallwood_poseidon2_v8_smza_local_audit_v1(
         full_privacy_claim: false,
         pq128_claim: false,
         production_eligible: false,
-    })
+    };
+    Ok(SmallwoodPoseidon2V8SmzaAcceptedRunBodyV1 { audit, trace })
 }
 
 fn violation(message: impl Into<String>) -> TransactionCircuitError {
@@ -1226,6 +1355,264 @@ pub fn report_smallwood_poseidon2_v8_smz9_executable_zk_refinement_v1(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "rp05-dev-artifacts")]
+    #[test]
+    fn rp05_retained_proof_records_all_opened_merkle_paths() {
+        use crate::smallwood_engine::SmallwoodSha512OracleKeyV1;
+        use std::collections::BTreeMap;
+
+        const PROFILE: &[u8] =
+            crate::smallwood_engine::SMALLWOOD_POSEIDON2_V8_SMZA_SHA512_PROFILE_DOMAIN;
+        const LEAF: &[u8] = b"hegemon.smallwood.strict-zk.merkle-leaf.v2";
+        const NODE: &[u8] = b"hegemon.smallwood.level5.merkle-node";
+        const ROOT: &[u8] = b"hegemon.smallwood.level5.merkle-root";
+        const PROOF: &[u8] = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agent/artifacts/smallwood-poseidon2-v8-smza/smza-rp05-dev-20260922/proof.bin"
+        ));
+        const PREAMBLE: &[u8] = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agent/artifacts/smallwood-poseidon2-v8-smza/smza-rp05-dev-20260922/preamble.bin"
+        ));
+
+        assert!(!protocol_versioning::smallwood_poseidon2_production_authorized());
+        assert!(
+            crate::smallwood_poseidon2_v8_program::SMALLWOOD_POSEIDON2_V8_PROGRAM_IDENTITY_REGENERATION_REQUIRED
+        );
+        let statement = super::SmallwoodPoseidon2V8PublicStatement::default();
+        let relation = super::SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement_for_rp05_development_artifact(&statement)
+            .expect("exact-pinned RP05 development relation");
+        let input = crate::smallwood_poseidon2_v8_frontend::SmallwoodPoseidon2V8VerifierInput::from_relation(17, &relation);
+        let preamble = input
+            .smza_candidate_transcript_preamble_v1()
+            .expect("canonical RP05 preamble");
+        assert_eq!(preamble.as_bytes(), PREAMBLE);
+        let attempt = super::validate_accepted_smallwood_poseidon2_v8_smza_with_evidence_v1(
+            &relation,
+            preamble.as_bytes(),
+            PROOF,
+        )
+        .expect("recorder setup/finalization");
+        let super::SmallwoodPoseidon2V8SmzaAcceptedRunAttemptV1 {
+            result,
+            queries,
+            phases,
+        } = attempt;
+        let accepted = result.expect("retained RP05 proof must pass the recorded audit");
+        assert_eq!(accepted.binded_data.as_slice(), PREAMBLE);
+        assert_eq!(accepted.proof_bytes.as_slice(), PROOF);
+        assert_eq!(phases.trace_start, Some(0));
+        assert_eq!(phases.trace_end, phases.core_start);
+        assert_eq!(phases.core_end, Some(queries.len()));
+        assert_eq!(
+            accepted.trace.recomputed_piop_digest,
+            accepted.trace.proof.h_piop,
+            "accepted trace must retain the digest computed from its PIOP words"
+        );
+        let core =
+            &queries[phases.core_start.expect("core start")..phases.core_end.expect("core end")];
+        assert!(!core.is_empty());
+
+        // The core verifier alone must record complete key/output pairs. Its
+        // compact sibling hashes come from proof bytes; every opened leaf,
+        // parent preimage, and root wrapper must come from this same log.
+        let mut records = BTreeMap::<SmallwoodSha512OracleKeyV1, [u8; 64]>::new();
+        for query in core {
+            assert_eq!(query.programmed_kind, None);
+            if let Some(previous) = records.insert(query.key.clone(), query.output) {
+                assert_eq!(previous, query.output, "one key changed SHA-512 output");
+            }
+        }
+        let trace = &accepted.trace;
+        let indexes = trace.decs_leaf_indexes_v1();
+        let auth_paths = trace.merkle_auth_paths_v1();
+        assert_eq!(indexes.len(), 38);
+        assert_eq!(auth_paths.len(), indexes.len());
+        assert_eq!(trace.binding_words.len(), 138);
+        let digest_words = |digest: &[u8; 64]| -> Vec<u64> {
+            digest
+                .chunks_exact(8)
+                .map(|chunk| u64::from_le_bytes(chunk.try_into().expect("eight bytes")))
+                .collect()
+        };
+        let salt_words = trace
+            .proof
+            .salt
+            .chunks_exact(8)
+            .map(|chunk| u64::from_le_bytes(chunk.try_into().expect("eight bytes")))
+            .collect::<Vec<_>>();
+        let mut hashes = Vec::with_capacity(indexes.len());
+        let mut positions = indexes
+            .iter()
+            .map(|&index| index as usize)
+            .collect::<Vec<_>>();
+        let mut cursors = vec![0usize; indexes.len()];
+        assert_eq!(trace.proof.pcs.decs.leaf_tapes.len(), indexes.len());
+        assert_eq!(trace.pcs_trace.rows.len(), indexes.len());
+        assert_eq!(trace.proof.pcs.decs.masking_evals.len(), indexes.len());
+        for (opening, &index) in indexes.iter().enumerate() {
+            let tape = &trace.proof.pcs.decs.leaf_tapes[opening];
+            let row = &trace.pcs_trace.rows[opening];
+            let masks = &trace.proof.pcs.decs.masking_evals[opening];
+            assert_eq!(tape.len(), 64);
+            assert_eq!(row.len(), 140);
+            assert_eq!(masks.len(), 5);
+            let mut words = trace.binding_words.clone();
+            words.extend_from_slice(&salt_words);
+            words.push(u64::from(index));
+            words.extend(
+                tape.chunks_exact(8)
+                    .map(|chunk| u64::from_le_bytes(chunk.try_into().expect("eight bytes"))),
+            );
+            words.push(row.len() as u64);
+            words.extend_from_slice(row);
+            words.push(masks.len() as u64);
+            words.extend_from_slice(masks);
+            assert_eq!(words.len(), 298);
+            let key = SmallwoodSha512OracleKeyV1 {
+                profile_domain: Some(PROFILE.to_vec()),
+                role_domain: LEAF.to_vec(),
+                words,
+                counter: 0,
+            };
+            let leaf = *records
+                .get(&key)
+                .expect("exact opened v2 leaf absent from same-run core SHA log");
+            hashes.push(leaf);
+        }
+
+        for _level in 0..23 {
+            let mut level_hashes = BTreeMap::new();
+            for (&position, &hash) in positions.iter().zip(hashes.iter()) {
+                if let Some(previous) = level_hashes.insert(position, hash) {
+                    assert_eq!(previous, hash, "opened subtree hashes disagree");
+                }
+            }
+            let mut parents = Vec::with_capacity(indexes.len());
+            for opening in 0..indexes.len() {
+                let position = positions[opening];
+                let sibling_position = position ^ 1;
+                let sibling = if let Some(hash) = level_hashes.get(&sibling_position) {
+                    *hash
+                } else {
+                    let hash = auth_paths[opening]
+                        .get(cursors[opening])
+                        .copied()
+                        .expect("compact authentication path underflow");
+                    cursors[opening] += 1;
+                    hash
+                };
+                let (left, right) = if position.is_multiple_of(2) {
+                    (&hashes[opening], &sibling)
+                } else {
+                    (&sibling, &hashes[opening])
+                };
+                let mut words = digest_words(left);
+                words.extend(digest_words(right));
+                let key = SmallwoodSha512OracleKeyV1 {
+                    profile_domain: Some(PROFILE.to_vec()),
+                    role_domain: NODE.to_vec(),
+                    words,
+                    counter: 0,
+                };
+                parents.push(
+                    *records
+                        .get(&key)
+                        .expect("opened Merkle parent absent from same-run core SHA log"),
+                );
+            }
+            hashes = parents;
+            positions.iter_mut().for_each(|position| *position /= 2);
+        }
+        assert!(positions.iter().all(|&position| position == 0));
+        assert!(hashes
+            .iter()
+            .all(|hash| *hash == trace.pcs_trace.root_digest));
+        assert!(cursors
+            .iter()
+            .zip(auth_paths)
+            .all(|(cursor, path)| *cursor == path.len()));
+        let mut root_words = salt_words;
+        root_words.extend(digest_words(&trace.pcs_trace.root_digest));
+        root_words.extend_from_slice(&trace.binding_words);
+        let root_key = SmallwoodSha512OracleKeyV1 {
+            profile_domain: Some(PROFILE.to_vec()),
+            role_domain: ROOT.to_vec(),
+            words: root_words,
+            counter: 0,
+        };
+        assert!(
+            records.contains_key(&root_key),
+            "Merkle root wrapper absent from same-run core SHA log"
+        );
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": "hegemon.rp05.dev.accepted-run-merkle-log.v1",
+                "proof_bytes": PROOF.len(),
+                "preamble_bytes": PREAMBLE.len(),
+                "opened_leaf_count": indexes.len(),
+                "path_depth": 23,
+                "recorded_path_edges": indexes.len() * 25,
+                "core_query_calls": core.len(),
+                "core_distinct_keys": records.len(),
+                "trace_query_calls": phases.trace_end.expect("trace end"),
+                "production_authorized": false,
+            })
+        );
+    }
+
+    #[test]
+    fn smza_accepted_run_recorder_preserves_rejection_and_cleans_up() {
+        let statement = super::SmallwoodPoseidon2V8PublicStatement::default();
+        if crate::smallwood_poseidon2_v8_program::SMALLWOOD_POSEIDON2_V8_PROGRAM_IDENTITY_REGENERATION_REQUIRED {
+            // No source-owned RP05 relation is constructible while the
+            // identity gate is active. Keep that gate exercised; the recorder
+            // parity assertions below run once RP05 identities are renewed.
+            assert_eq!(
+                super::SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(&statement)
+                    .expect_err("stale RP04 digest must not construct an RP05 relation"),
+                crate::smallwood_poseidon2_v8_semantics::SmallwoodPoseidon2V8RelationError::ProgramDigestMismatch
+            );
+            return;
+        }
+        let relation =
+            super::SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(&statement)
+                .expect("construct current V8 relation");
+        let malformed_proof = b"not an SMZA proof";
+        let ordinary = super::validate_accepted_smallwood_poseidon2_v8_smza_local_audit_v1(
+            &relation,
+            b"bound preamble",
+            malformed_proof,
+        )
+        .expect_err("ordinary verifier must reject malformed proof");
+        let attempt = super::validate_accepted_smallwood_poseidon2_v8_smza_with_evidence_v1(
+            &relation,
+            b"bound preamble",
+            malformed_proof,
+        )
+        .expect("recorder must finalize after verifier rejection");
+        assert_eq!(
+            ordinary.to_string(),
+            attempt
+                .result
+                .expect_err("recorded verifier must reject")
+                .to_string()
+        );
+        assert!(attempt.queries.is_empty());
+        assert_eq!(
+            attempt.phases,
+            super::SmallwoodPoseidon2V8SmzaAcceptedRunPhasesV1::default()
+        );
+        let second = super::validate_accepted_smallwood_poseidon2_v8_smza_with_evidence_v1(
+            &relation,
+            b"bound preamble",
+            malformed_proof,
+        )
+        .expect("recorder scope must have been released");
+        assert!(second.result.is_err());
+    }
+
     #[test]
     fn smza_source_geometry_and_actual_pcs_rank_map() {
         let statement = super::SmallwoodPoseidon2V8PublicStatement::default();

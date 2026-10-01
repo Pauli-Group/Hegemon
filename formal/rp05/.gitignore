@@ -1,0 +1,4 @@
+/build/
+/generated/.Sources.staging/
+/generated/.Sources.previous/
+/source-manifest.json.tmp

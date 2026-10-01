@@ -119,9 +119,12 @@ fn load_retained_smza_socket_artifact(
         .as_str()
         .unwrap()
         .to_owned();
+    // The RP05 qualification producer recomputes this descriptor from its
+    // shared deterministic fixture and verifies the full source projection.
     assert_eq!(
         witness_definition_sha512,
-        "62644d23ffb2f01aba180f6e1ff36401fdc3011df22e57a841b2292eecc765c27557f6d3ac00c4ce8644e8b5d5490e7e67566c0873aaa773d5b33cdb6999b57f"
+        "f967b2a492010cfa00900c90e416cdb3db5fba4667ceb2d5ee07b649ca121e88d92a94e3cc2c228a93466024a0ddd512bf4d72aad788000651c16327147a263a",
+        "current RP05 witness binding differs from the RP04-era socket pin"
     );
     let input_merkle_path_sha512 = manifest["fixture"]["input_merkle_path_sha512"]
         .as_array()

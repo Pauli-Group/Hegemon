@@ -374,15 +374,16 @@ pub const SMALLWOOD_POSEIDON2_PRODUCTION_MAX_PROOF_ACTIONS_PER_BLOCK: u32 = 512;
 /// A nonempty Merkle root is not a sufficient genesis snapshot because an
 /// append-only tree also needs its leaf count and frontier. Until the release
 /// identity grows such a snapshot, the only sound root-only initialization is
-/// this source-derived empty-tree root.
+/// this source-derived empty-tree root. Unoccupied leaves commit to the known
+/// zero-value opening from `poseidon2_v8_empty_note_opening`, not raw zero.
 pub const SMALLWOOD_POSEIDON2_PRODUCTION_NOTE_GENESIS_ROOT: [u64; 7] = [
-    12_226_185_660_156_925_492,
-    16_548_254_069_300_115_382,
-    17_963_077_431_300_986_894,
-    14_365_881_287_888_804_118,
-    3_161_548_030_029_626_838,
-    2_967_397_566_732_774_316,
-    2_647_985_511_926_568_324,
+    17_350_853_413_121_414_251,
+    11_311_714_906_264_832_276,
+    5_494_323_263_975_105_675,
+    16_684_950_828_932_818_263,
+    7_241_422_828_316_666_478,
+    13_669_884_728_521_486_080,
+    15_137_873_680_347_988_554,
 ];
 
 /// Release-owned capability for the exact V8 transaction-proof route.

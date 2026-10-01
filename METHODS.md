@@ -332,6 +332,107 @@ This means the source-chain witness is not the blocker for BCH; the final proof 
 
 ### Independent transaction proofs and proof sidecars (product block path)
 
+For the RP05/SMZA target, use the
+[current security scope and review disposition](docs/crypto/RP05_INDEPENDENT_REVIEW_RESOLUTIONS.md)
+and [implementation-boundary map](docs/crypto/RP05_IMPLEMENTATION_BOUNDARY.md).
+They separate concrete acceptance, checked mathematical security games, primitive
+assumptions and unchanged-byte lifecycle evidence. All four stated RP05
+mathematical endpoints have strict compilation and actual-body audits. Their
+current source/object/receipt freshness is evaluated from
+`docs/crypto/rp05_release_manifest.json` by
+`python3 -B scripts/rp05_release_status.py`; its generated checklist is
+`.agent/prod-closure-2026-09-19/release-preparation/PRODUCTION_CHECKLIST.md`.
+The checklist's earlier detailed attempt history is preserved separately, rather
+than used as the current release status. The live map consumes the same report.
+
+The maintained public proof interface and reproduction commands are documented
+in `formal/rp05/README.md`. Run
+`python3 -B scripts/rp05_proof_package.py inspect` to inspect the four roots and
+their exact dependency closure, then `check-source`, `build`, and `check` to
+validate the checked-in sources, produce or reuse matching objects, and validate the public
+exports. Reuse requires matching source, dependency and toolchain fingerprints;
+the public statements retain all original initialization and primitive-game
+premises. The shared uniform-average instance transport changes neither these
+statements nor their distributions.
+
+For the October 1 public-claim review, `Rp05.zero_knowledge` is distinct from
+the compatibility two-witness `Rp05.privacy` alias. It exports the initialized
+adaptive real-versus-public-simulator result and witness-independent simulator
+equality. Authorization must name its credential and chronological scope,
+including the deliberate known-empty placeholder case, rather than infer
+single-spend ownership from a pairwise collision statement. The focused
+parser/BLAKE2b boundary and eight reproducible tests are listed in
+`docs/crypto/RP05_IMPLEMENTATION_BOUNDARY.md`; their source/metadata evidence
+does not prove a universal Rust-to-Lean refinement. Changed test-only source
+pins are assessed by an explicit dependency delta, not by overwriting retained
+proof/lifecycle receipts as though they were newly executed.
+
+Reuse matching passed objects and complete input fingerprints; recheck only
+after relevant source/object changes. The retained final1000 reader-refresh lane at
+source inventory `b681b128…` passes fixture/vector/Rust consumption, fresh
+163,281/163,473-byte proof generation and source verification. The unchanged
+pair passes the in-process guard in22.273 seconds and actual HTTP/PQ socket
+guard in66.736 seconds, including restart/fresh sync/clean shutdown;
+in-process also covers reorg. Preserve those results. The source-pinned
+four-gate Q38 contract is installed; its semantic packet check remains distinct
+from production release authority. Rust witness-layout and streaming-encoder
+refactors must preserve the field order, row contents and exact canonical
+program bytes, with focused differential tests and a fresh source-bound
+qualification run. A historical pass is not credited to changed sources.
+
+The October 1 streamlined-source lane `rp05-qual-20261001-streamlined-r2`
+at source inventory `f6641cd0…` completes all ten qualification stages. Both
+fresh proofs are 163,665 bytes, below the unchanged 164,113-byte ceiling. The
+canonical program remains 848,231 bytes with SHA-512 `4b0acd42…`. The unchanged
+pair passes the in-process lifecycle in 23.793 seconds and actual HTTP/PQ socket
+lifecycle in 69.438 seconds; the in-process path includes reorg and both paths
+include restart/fresh import. The refreshed installed four-gate semantic packet
+passes as `PASS_PR_ONLY`. These are changed-source technical results, not an
+activation or independent production-review signature.
+
+The September20 known-opening note-tree repair is represented in the checked
+RP05 source package, current source-fixture vectors and retained affected
+lifecycle qualifications. The shared helper derives
+all default nodes; old node `P2V8NT01` state and old-root wallet histories are
+rejected, not automatically rewritten. Retain old fixtures as historical.
+Only regenerated new-root artifacts and their affected restart/reorg/fresh
+replay checks can qualify this change. The relation and byte caps do not change.
+
+For the September20 `HGV8RP05` authorization successor, preserve the legacy
+48-byte multisig wallet: it does not call the typed V8 production entrypoint.
+Check actual V8 typed constructors for the inactive count-zero Approval
+input, positive ordinary slots, zero/native accumulators and full seven-word
+policy tags. Confirm139 of155 authorization rows and818 nonlinear identities
+from the implemented evaluator. Confirm13 intent plus6 policy sponge calls
+replace15 plus4, with calls100..128 unchanged. SMZA leaf-v2 prepends the
+existing1104-byte public preamble without serializing any new field. Compare
+the bounded and full-table leaf encoders and simulator program-key replay.
+Regenerate program identities and affected proofs before qualification;
+old RP04 pins and proof receipts cannot stand in for those new artifacts.
+For current source-fixture identity vectors, use
+`python3 -B .agent/prod-closure-2026-09-19/release-preparation/generate_rp05_transcript_vector.py`
+for readback; `--write` creates a missing RP05 JSON without replacing different
+bytes. The Rust ignored vector test checks the fresh source encoding and all
+declared mutations separately. This Python-generated vector is not itself a
+Lean proof. The source-bound retained pair is produced by the
+`rp05_smza_qualification_artifact` example with `rp05-dev-artifacts`; it uses
+the matching development verifier and trace seam without opening ordinary
+admission. Proof generation, complete actual PendingAction encoding and native
+lifecycle checks must pass before the artifact becomes release evidence.
+The current extraction and authorization reductions and their public aliases
+are in the checked source closure described by `formal/rp05/README.md`.
+`docs/crypto/RP05_INDEPENDENT_REVIEW_RESOLUTIONS.md` records their exact scope
+and primitive-game assumptions; arithmetic alone is not a Lean receipt.
+The direct extraction construction measures the shared raw
+complement once after public verification, then issues only deduplicated
+challenge-role reads and returns checked witnesses. Count those reads and all
+simulator programming touches in the lifetime budget. Its role events share
+one all-role-total/raw-measured representation; do not combine events from
+four different terminal database measurements or apply ordinary ZK to private
+database inspection. These model arguments are included in the checked RP05
+source closure; refinement from every Rust execution remains trusted as
+specified in `docs/crypto/RP05_IMPLEMENTATION_BOUNDARY.md`.
+
 The September 18 fixed-cap authorization/nullifier repair is a new candidate
 relation, not an in-place reinterpretation of retained HGV8RP03 proofs. Keep
 the old artifacts unchanged. Check the five-digit secret codec, full note-key
@@ -627,7 +728,7 @@ Complete-ZK admission additionally runs the dependency-free audit in `circuits/t
 * bind each leaf to its statement digest and witness-commitment digest in a compact native leaf proof,
 * fold commitments with transcript-derived linear challenges and explicit parent rows so malformed fold rows or mixed parent/child commitments fail algebraic verification rather than falling back to a digest-only placeholder.
 
-For the retained `ReceiptRoot` research-vector path, direct verifier tests consume standalone native `TxLeaf` artifacts instead of decoding inline tx proof bytes. The verifier now reconstructs the expected packed witness from the on-chain tx public view plus the serialized STARK public inputs, verifies the embedded STARK proof bytes directly, rejects mismatched `spec_digest` values and oversized artifacts before deep decode, verifies the deterministic commitment under the manifest-owned parameter set, derives the ordered `TxStatementBinding`s from those verified leaves, and only then accepts the folded receipt root. The older bridge path that still starts from inline tx proofs is benchmarked as `verified_tx_receipt`, but it now exists only as a comparison lane. The native artifact path no longer pays for hidden witness transport or a public commitment-opening object; it pays only for public tx data, STARK proof bytes, the derived commitment rows, and the native leaf proof. The active live security floor therefore comes from transcript soundness minus the explicit receipt-root composition loss, capped by the exact coefficient-space Euclidean SIS estimate computed for the active bounded-kernel Module-SIS instance; it does not count an opening-hiding term because the shipped artifact path does not use a live public opening/seed flow. The exact reduction note now lives in [docs/crypto/native_backend_commitment_reduction.md](docs/crypto/native_backend_commitment_reduction.md). Import hardening adds exact size rejection for native tx-leaf and receipt-root artifacts, a Lean-backed receipt-root structural gate for exact non-empty leaf/fold schedule and fold row dimensions before cryptographic fold checks, plus a reusable verified-native-leaf store keyed by native artifact hash, and the direct research verifier defaults to the `verified_records` root-verification path so it consumes those already-verified native leaf records instead of replaying the full leaf verifier a second time. Replay-heavy root verification remains available as a diagnostic cross-check mode. On the SmallWood candidate backend specifically, the release verifier now fail-closes on exact PCS payload shapes, requires distinct DECS opening indices, binds the full PCS commitment transcript into the PIOP transcript, and derives both commitment-time and verifier-time polynomial openings from the explicit LVCS interpolation domain rather than the earlier broken “rotate and treat as consecutive” shortcut. The redteam regressions also now cover forged self-consistent PCS payloads, wrapper-level PCS splicing, `partial_evals` tampering, and malformed `all_evals` payloads without panic. Block proof policy independently rejects every ReceiptRoot route before these direct research helpers can run during import. Historical backend-hardening plans now live under [.agent/archive/proof-history](/Users/pldd/Projects/Reflexivity/Hegemon/.agent/archive/proof-history), while the exact current spec and claim model remain in [docs/crypto/native_backend_spec.md](docs/crypto/native_backend_spec.md), [docs/crypto/native_backend_commitment_reduction.md](docs/crypto/native_backend_commitment_reduction.md), and [docs/crypto/native_backend_security_analysis.md](docs/crypto/native_backend_security_analysis.md).
+For the retained `ReceiptRoot` research-vector path, direct verifier tests consume standalone native `TxLeaf` artifacts instead of decoding inline tx proof bytes. The verifier now reconstructs the expected packed witness from the on-chain tx public view plus the serialized STARK public inputs, verifies the embedded STARK proof bytes directly, rejects mismatched `spec_digest` values and oversized artifacts before deep decode, verifies the deterministic commitment under the manifest-owned parameter set, derives the ordered `TxStatementBinding`s from those verified leaves, and only then accepts the folded receipt root. The older bridge path that still starts from inline tx proofs is benchmarked as `verified_tx_receipt`, but it now exists only as a comparison lane. The native artifact path no longer pays for hidden witness transport or a public commitment-opening object; it pays only for public tx data, STARK proof bytes, the derived commitment rows, and the native leaf proof. The active live security floor therefore comes from transcript soundness minus the explicit receipt-root composition loss, capped by the exact coefficient-space Euclidean SIS estimate computed for the active bounded-kernel Module-SIS instance; it does not count an opening-hiding term because the shipped artifact path does not use a live public opening/seed flow. The exact reduction note now lives in [docs/crypto/native_backend_commitment_reduction.md](docs/crypto/native_backend_commitment_reduction.md). Import hardening adds exact size rejection for native tx-leaf and receipt-root artifacts, a Lean-backed receipt-root structural gate for exact non-empty leaf/fold schedule and fold row dimensions before cryptographic fold checks, plus a reusable verified-native-leaf store keyed by native artifact hash, and the direct research verifier defaults to the `verified_records` root-verification path so it consumes those already-verified native leaf records instead of replaying the full leaf verifier a second time. Replay-heavy root verification remains available as a diagnostic cross-check mode. On the SmallWood candidate backend specifically, the release verifier now fail-closes on exact PCS payload shapes, requires distinct DECS opening indices, binds the full PCS commitment transcript into the PIOP transcript, and derives both commitment-time and verifier-time polynomial openings from the explicit LVCS interpolation domain rather than the earlier broken “rotate and treat as consecutive” shortcut. The redteam regressions also now cover forged self-consistent PCS payloads, wrapper-level PCS splicing, `partial_evals` tampering, and malformed `all_evals` payloads without panic. Block proof policy independently rejects every ReceiptRoot route before these direct research helpers can run during import. Historical backend-hardening plans remain in the local proof-history archive, while the exact current spec and claim model remain in [docs/crypto/native_backend_spec.md](docs/crypto/native_backend_spec.md), [docs/crypto/native_backend_commitment_reduction.md](docs/crypto/native_backend_commitment_reduction.md), and [docs/crypto/native_backend_security_analysis.md](docs/crypto/native_backend_security_analysis.md).
 
 ---
 

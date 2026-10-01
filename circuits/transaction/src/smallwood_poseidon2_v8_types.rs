@@ -81,19 +81,27 @@ pub const SMALLWOOD_POSEIDON2_V8_PUBLIC_STABLE_V8_AFTER_DEBT: usize = 111;
 pub const SMALLWOOD_POSEIDON2_V8_PUBLIC_STABLE_V8_AFTER_SEQUENCE: usize = 112;
 pub const SMALLWOOD_POSEIDON2_V8_PUBLIC_STABLE_V8_ISSUER_AUTHORIZATION: usize = 113;
 
-pub const SMALLWOOD_POSEIDON2_V8_INTENT_ZERO_NULLIFIERS: core::ops::Range<usize> = 4..18;
-pub const SMALLWOOD_POSEIDON2_V8_INTENT_ZERO_MERKLE_ROOT: core::ops::Range<usize> = 47..54;
+pub const SMALLWOOD_POSEIDON2_V8_INTENT_OMIT_NULLIFIERS: core::ops::Range<usize> = 4..18;
+pub const SMALLWOOD_POSEIDON2_V8_INTENT_OMIT_MERKLE_ROOT_PREFIX: core::ops::Range<usize> = 47..49;
+pub const SMALLWOOD_POSEIDON2_V8_INTENT_ZERO_MERKLE_ROOT: core::ops::Range<usize> = 49..54;
 pub const SMALLWOOD_POSEIDON2_V8_INTENT_ZERO_ACTION_INTENT: core::ops::Range<usize> = 87..94;
 pub const SMALLWOOD_POSEIDON2_V8_INTENT_ZERO_ISSUER_AUTHORIZATION: core::ops::Range<usize> =
     113..120;
-pub const SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_DOMAIN: u64 = 0x4854_5838_494e_5400;
+pub const SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_WORDS: usize = 104;
+/// Successor-only domain: the 104-word injective projection must not be
+/// confused with RP04's zero-padded 120-word projection.
+pub const SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_DOMAIN: u64 = 0x4854_5838_494e_5401;
+/// Successor-only domain for the 44-word full-tag policy opening.
+pub const SMALLWOOD_POSEIDON2_V8_AUTH_POLICY_DOMAIN: u64 = 0x4841_5038_504f_4c01;
 pub const SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_PERMUTATIONS: usize =
-    SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS.div_ceil(POSEIDON2_WIDTH16_RATE);
+    SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_WORDS.div_ceil(POSEIDON2_WIDTH16_RATE);
+
+pub const SMALLWOOD_POSEIDON2_V8_SIGNER_TAG_WORDS: usize = POSEIDON2_WIDTH16_DIGEST;
 
 pub type SmallwoodPoseidon2V8Digest = [u64; POSEIDON2_WIDTH16_DIGEST];
 pub type SmallwoodPoseidon2V8CiphertextCommitment = [u64; 6];
 pub type SmallwoodPoseidon2V8CompatibilityCommitment = [u64; 6];
-pub type SmallwoodPoseidon2V8SignerTag = [u64; SMALLWOOD_SIGNER_TAG_WORDS];
+pub type SmallwoodPoseidon2V8SignerTag = [u64; SMALLWOOD_POSEIDON2_V8_SIGNER_TAG_WORDS];
 
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_INPUTS == 2);
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_OUTPUTS == 2);
@@ -104,9 +112,11 @@ const _: () = assert!(SMALLWOOD_POSEIDON2_V8_MAX_INLINE_CIPHERTEXT_BYTES == 4_29
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_BASE_PUBLIC_WORDS == 83);
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_STABLE_PUBLIC_WORDS == 37);
 const _: () = assert!(STABLECOIN_POSEIDON2_V8_AUTHORIZED_PUBLIC_FIELDS == 120);
-const _: () = assert!(SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_PERMUTATIONS == 15);
+const _: () = assert!(SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_WORDS == 120 - 14 - 2);
+const _: () = assert!(SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_PERMUTATIONS == 13);
 const _: () = assert!(SMALLWOOD_MULTISIG_MAX_SIGNERS == 6);
 const _: () = assert!(SMALLWOOD_SIGNER_TAG_WORDS == 5);
+const _: () = assert!(SMALLWOOD_POSEIDON2_V8_SIGNER_TAG_WORDS == 7);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SmallwoodPoseidon2V8SurfaceError {
@@ -469,20 +479,32 @@ impl SmallwoodPoseidon2V8PublicStatement {
         Self::try_from_public_words(&words)
     }
 
-    /// Return the exact 120-word action-intent preimage.  Nullifiers are
-    /// excluded so approval intent can be fixed before spend nullifiers exist.
-    /// The Merkle root is excluded because FinalThresholdSpend derives its note
-    /// authorization key from this intent, and that note determines the root.
-    /// The action-intent and issuer-authorization fields are also excluded to
-    /// avoid self-reference.  The proof transcript binds the public root
-    /// separately, so it remains part of the verified statement.
-    pub fn action_intent_projection_words(self) -> [u64; SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS] {
+    /// Return the exact 104-word successor action-intent preimage.  The fourteen
+    /// nullifier words and the first two Merkle-root words are omitted rather
+    /// than absorbed as fixed zeroes.  The remaining five Merkle-root words,
+    /// action-intent words, and issuer-authorization words retain their
+    /// canonical zero coordinates, making this an injective compression of the
+    /// former zeroed 120-word semantic projection.
+    pub fn action_intent_projection_words(
+        self,
+    ) -> [u64; SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_WORDS] {
         let mut words = self.to_public_words();
-        words[SMALLWOOD_POSEIDON2_V8_INTENT_ZERO_NULLIFIERS].fill(0);
         words[SMALLWOOD_POSEIDON2_V8_INTENT_ZERO_MERKLE_ROOT].fill(0);
         words[SMALLWOOD_POSEIDON2_V8_INTENT_ZERO_ACTION_INTENT].fill(0);
         words[SMALLWOOD_POSEIDON2_V8_INTENT_ZERO_ISSUER_AUTHORIZATION].fill(0);
-        words
+        let mut projection = [0u64; SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_WORDS];
+        let mut target = 0;
+        for (source, word) in words.into_iter().enumerate() {
+            if SMALLWOOD_POSEIDON2_V8_INTENT_OMIT_NULLIFIERS.contains(&source)
+                || SMALLWOOD_POSEIDON2_V8_INTENT_OMIT_MERKLE_ROOT_PREFIX.contains(&source)
+            {
+                continue;
+            }
+            projection[target] = word;
+            target += 1;
+        }
+        debug_assert_eq!(target, SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_WORDS);
+        projection
     }
 
     pub fn expected_action_intent(
@@ -848,7 +870,8 @@ impl Default for SmallwoodPoseidon2V8PrivateAuthWitness {
             policy_nullifier_key: [0; 5],
             current: SmallwoodPoseidon2V8AccumulatorOpening::ZERO,
             next: SmallwoodPoseidon2V8AccumulatorOpening::ZERO,
-            policy_signer_tags: [[0; SMALLWOOD_SIGNER_TAG_WORDS]; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+            policy_signer_tags: [[0; SMALLWOOD_POSEIDON2_V8_SIGNER_TAG_WORDS];
+                SMALLWOOD_MULTISIG_MAX_SIGNERS],
         }
     }
 }
@@ -883,7 +906,7 @@ impl SmallwoodPoseidon2V8PrivateAuthWitness {
         let current = SmallwoodPoseidon2V8AccumulatorOpening::parse(cursor)?;
         let next = SmallwoodPoseidon2V8AccumulatorOpening::parse(cursor)?;
         let mut policy_signer_tags =
-            [[0u64; SMALLWOOD_SIGNER_TAG_WORDS]; SMALLWOOD_MULTISIG_MAX_SIGNERS];
+            [[0u64; SMALLWOOD_POSEIDON2_V8_SIGNER_TAG_WORDS]; SMALLWOOD_MULTISIG_MAX_SIGNERS];
         for tag in &mut policy_signer_tags {
             *tag = cursor.array()?;
         }
@@ -925,7 +948,7 @@ pub const SMALLWOOD_POSEIDON2_V8_ACCUMULATOR_WORDS: usize = 7 + 7 + 3 + 6;
 pub const SMALLWOOD_POSEIDON2_V8_AUTH_WITNESS_WORDS: usize = 1
     + 5
     + 2 * SMALLWOOD_POSEIDON2_V8_ACCUMULATOR_WORDS
-    + SMALLWOOD_MULTISIG_MAX_SIGNERS * SMALLWOOD_SIGNER_TAG_WORDS;
+    + SMALLWOOD_MULTISIG_MAX_SIGNERS * SMALLWOOD_POSEIDON2_V8_SIGNER_TAG_WORDS;
 pub const SMALLWOOD_POSEIDON2_V8_STABLE_WITNESS_WORDS: usize = 55 + 4 + 4 * 7 + 7;
 pub const SMALLWOOD_POSEIDON2_V8_WITNESS_WORDS: usize = 2
     * SMALLWOOD_POSEIDON2_V8_INPUT_WITNESS_WORDS
@@ -938,9 +961,9 @@ const _: () = assert!(SMALLWOOD_POSEIDON2_V8_NOTE_WORDS == 18);
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_INPUT_WITNESS_WORDS == 253);
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_OUTPUT_WITNESS_WORDS == 23);
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_ACCUMULATOR_WORDS == 23);
-const _: () = assert!(SMALLWOOD_POSEIDON2_V8_AUTH_WITNESS_WORDS == 82);
+const _: () = assert!(SMALLWOOD_POSEIDON2_V8_AUTH_WITNESS_WORDS == 94);
 const _: () = assert!(SMALLWOOD_POSEIDON2_V8_STABLE_WITNESS_WORDS == 94);
-const _: () = assert!(SMALLWOOD_POSEIDON2_V8_WITNESS_WORDS == 728);
+const _: () = assert!(SMALLWOOD_POSEIDON2_V8_WITNESS_WORDS == 740);
 
 impl SmallwoodPoseidon2V8Witness {
     pub fn to_witness_words(self) -> [u64; SMALLWOOD_POSEIDON2_V8_WITNESS_WORDS] {
@@ -955,7 +978,7 @@ impl SmallwoodPoseidon2V8Witness {
         push_stablecoin_witness_words(self.stablecoin, &mut words);
         words
             .try_into()
-            .expect("V8 witness serializer emits the fixed 721-word grammar")
+            .expect("V8 witness serializer emits the fixed 740-word successor grammar")
     }
 
     pub fn try_from_witness_words(words: &[u64]) -> Result<Self, SmallwoodPoseidon2V8SurfaceError> {
@@ -1291,22 +1314,29 @@ fn validate_signer_tags(
 
 fn validate_authorization(
     auth: SmallwoodPoseidon2V8PrivateAuthWitness,
-    inputs: [bool; 2],
-    outputs: [bool; 2],
+    inputs: [SmallwoodPoseidon2V8InputWitness; 2],
+    outputs: [SmallwoodPoseidon2V8OutputWitness; 2],
 ) -> Result<(), SmallwoodPoseidon2V8SurfaceError> {
+    let input_flags = inputs.map(|input| input.active);
+    let output_flags = outputs.map(|output| output.active);
     match auth.mode {
         SmallwoodPrivateAuthMode::SingleKey => {
             if auth.policy_nullifier_key != [0; 5]
                 || auth.current != SmallwoodPoseidon2V8AccumulatorOpening::ZERO
                 || auth.next != SmallwoodPoseidon2V8AccumulatorOpening::ZERO
-                || auth.policy_signer_tags != [[0; SMALLWOOD_SIGNER_TAG_WORDS]; 6]
+                || auth.policy_signer_tags != [[0; SMALLWOOD_POSEIDON2_V8_SIGNER_TAG_WORDS]; 6]
             {
                 return Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationShape);
             }
         }
         SmallwoodPrivateAuthMode::ApprovalStep => {
-            // The compact accumulator update has one canonical next-note slot: output zero.
-            if inputs != [true, true] || !outputs[0] {
+            // Input zero is the predecessor accumulator exactly when the
+            // current count is positive.  Count zero is the sole bootstrap
+            // encoding and has no predecessor note.
+            if !input_flags[1]
+                || !output_flags[0]
+                || input_flags[0] != (auth.current.approval_count != 0)
+            {
                 return Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationShape);
             }
             ensure_canonical_words(&auth.policy_nullifier_key)?;
@@ -1342,7 +1372,7 @@ fn validate_authorization(
             }
         }
         SmallwoodPrivateAuthMode::FinalThresholdSpend => {
-            if inputs != [true, true] {
+            if input_flags != [true, true] {
                 return Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationShape);
             }
             ensure_canonical_words(&auth.policy_nullifier_key)?;
@@ -1356,6 +1386,35 @@ fn validate_authorization(
             {
                 return Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationOpening);
             }
+        }
+    }
+
+    let input_is_accumulator = [
+        auth.mode == SmallwoodPrivateAuthMode::ApprovalStep,
+        auth.mode == SmallwoodPrivateAuthMode::FinalThresholdSpend,
+    ];
+    for (input, accumulator) in inputs.into_iter().zip(input_is_accumulator) {
+        if !input.active {
+            continue;
+        }
+        if accumulator {
+            if input.note.value != 0 || input.note.asset_id != NATIVE_ASSET_ID {
+                return Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationOpening);
+            }
+        } else if input.note.value == 0 {
+            return Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationOpening);
+        }
+    }
+    for (slot, output) in outputs.into_iter().enumerate() {
+        if !output.active {
+            continue;
+        }
+        if auth.mode == SmallwoodPrivateAuthMode::ApprovalStep && slot == 0 {
+            if output.note.value != 0 || output.note.asset_id != NATIVE_ASSET_ID {
+                return Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationOpening);
+            }
+        } else if output.note.value == 0 {
+            return Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationOpening);
         }
     }
     Ok(())
@@ -1469,7 +1528,7 @@ impl SmallwoodPoseidon2V8Witness {
         {
             return Err(SmallwoodPoseidon2V8SurfaceError::SpendKeyMismatch);
         }
-        validate_authorization(self.auth, statement.input_flags, statement.output_flags)?;
+        validate_authorization(self.auth, self.inputs, self.outputs)?;
         validate_balances(statement, self)?;
         Ok(())
     }
@@ -1734,9 +1793,9 @@ mod tests {
                 SmallwoodPoseidon2V8PrivateAuthWitness::default()
             }
             SmallwoodPrivateAuthMode::ApprovalStep => {
-                let mut tags = [[0u64; 5]; 6];
-                tags[0] = [1, 2, 3, 4, 5];
-                tags[1] = [6, 7, 8, 9, 10];
+                let mut tags = [[0u64; 7]; 6];
+                tags[0] = [1, 2, 3, 4, 5, 6, 7];
+                tags[1] = [8, 9, 10, 11, 12, 13, 14];
                 SmallwoodPoseidon2V8PrivateAuthWitness {
                     mode,
                     policy_nullifier_key: [41, 42, 43, 44, 1],
@@ -1746,9 +1805,9 @@ mod tests {
                 }
             }
             SmallwoodPrivateAuthMode::FinalThresholdSpend => {
-                let mut tags = [[0u64; 5]; 6];
-                tags[0] = [1, 2, 3, 4, 5];
-                tags[1] = [6, 7, 8, 9, 10];
+                let mut tags = [[0u64; 7]; 6];
+                tags[0] = [1, 2, 3, 4, 5, 6, 7];
+                tags[1] = [8, 9, 10, 11, 12, 13, 14];
                 SmallwoodPoseidon2V8PrivateAuthWitness {
                     mode,
                     policy_nullifier_key: [41, 42, 43, 44, 1],
@@ -1827,8 +1886,9 @@ mod tests {
         for mask in 0..16u8 {
             let (semantic, action) = mask_action_surface(mask);
             action.validate().unwrap();
-            semantic
-                .validate_with_inline_ciphertexts(&action.inline_ciphertexts)
+            action
+                .inline_ciphertexts
+                .validate_against_statement(&semantic.statement)
                 .unwrap();
 
             let encoded = action.to_inline_ciphertext_bytes();
@@ -1918,7 +1978,11 @@ mod tests {
                 .unwrap(),
                 surface.statement
             );
-            surface.validate().unwrap();
+            // These offset fixtures deliberately carry zero-valued ordinary
+            // notes.  Only the all-inactive SingleKey shape is a valid
+            // successor semantic surface; codec round-trips do not bless the
+            // other fifteen masks.
+            assert_eq!(surface.validate().is_ok(), mask == 0, "mask={mask}");
         }
     }
 
@@ -1932,7 +1996,7 @@ mod tests {
             ] {
                 let surface = mask_surface(mask, mode);
                 let words = surface.witness.to_witness_words();
-                assert_eq!(words.len(), 728);
+                assert_eq!(words.len(), 740);
                 assert_eq!(
                     SmallwoodPoseidon2V8Witness::try_from_witness_words(&words).unwrap(),
                     surface.witness
@@ -1944,32 +2008,132 @@ mod tests {
                     .unwrap(),
                     surface.witness
                 );
-                let expected_valid = match mode {
-                    SmallwoodPrivateAuthMode::SingleKey => true,
-                    SmallwoodPrivateAuthMode::ApprovalStep => {
-                        mask & 0b0011 == 0b0011 && mask & 0b0100 != 0
-                    }
-                    SmallwoodPrivateAuthMode::FinalThresholdSpend => mask & 0b0011 == 0b0011,
-                };
+                let expected_valid = mode == SmallwoodPrivateAuthMode::SingleKey && mask == 0;
                 assert_eq!(
                     surface.validate().is_ok(),
                     expected_valid,
-                    "mask={mask} {mode:?}"
+                    "zero-value codec fixture mask={mask} mode={mode:?}"
                 );
             }
         }
     }
 
     #[test]
-    fn intent_projection_zeroes_four_half_open_ranges_including_root() {
+    fn approval_bootstrap_activity_and_zero_native_roles_are_exact() {
+        let approval = auth(SmallwoodPrivateAuthMode::ApprovalStep);
+        let mut signer = active_input(100);
+        signer.note.value = 9;
+        let accumulator = active_output(200);
+        assert!(validate_authorization(
+            approval,
+            [SmallwoodPoseidon2V8InputWitness::ZERO, signer],
+            [accumulator, SmallwoodPoseidon2V8OutputWitness::ZERO],
+        )
+        .is_ok());
+
+        let mut forged_predecessor = active_input(300);
+        forged_predecessor.note.value = 0;
+        assert_eq!(
+            validate_authorization(
+                approval,
+                [forged_predecessor, signer],
+                [accumulator, SmallwoodPoseidon2V8OutputWitness::ZERO],
+            ),
+            Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationShape)
+        );
+
+        let mut zero_signer = signer;
+        zero_signer.note.value = 0;
+        assert_eq!(
+            validate_authorization(
+                approval,
+                [SmallwoodPoseidon2V8InputWitness::ZERO, zero_signer],
+                [accumulator, SmallwoodPoseidon2V8OutputWitness::ZERO],
+            ),
+            Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationOpening)
+        );
+
+        let mut non_native_accumulator = accumulator;
+        non_native_accumulator.note.asset_id = 1;
+        assert_eq!(
+            validate_authorization(
+                approval,
+                [SmallwoodPoseidon2V8InputWitness::ZERO, signer],
+                [
+                    non_native_accumulator,
+                    SmallwoodPoseidon2V8OutputWitness::ZERO
+                ],
+            ),
+            Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationOpening)
+        );
+
+        let mut zero_ordinary_output = SmallwoodPoseidon2V8OutputWitness::ZERO;
+        zero_ordinary_output.active = true;
+        zero_ordinary_output.note = SmallwoodPoseidon2V8NoteOpening {
+            recipient_key: [1; 4],
+            authorization_key: [2; 4],
+            rho: [3; 4],
+            randomness: [4; 4],
+            ..SmallwoodPoseidon2V8NoteOpening::ZERO
+        };
+        zero_ordinary_output.balance_slot_selectors = [true, false, false, false];
+        assert_eq!(
+            validate_authorization(
+                approval,
+                [SmallwoodPoseidon2V8InputWitness::ZERO, signer],
+                [accumulator, zero_ordinary_output],
+            ),
+            Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationOpening)
+        );
+    }
+
+    #[test]
+    fn full_policy_tag_tail_is_canonical_witness_data() {
+        let mut witness = SmallwoodPoseidon2V8Witness::default();
+        witness.auth = auth(SmallwoodPrivateAuthMode::ApprovalStep);
+        let encoded = witness.to_witness_words();
+        let decoded = SmallwoodPoseidon2V8Witness::try_from_witness_words(&encoded).unwrap();
+        assert_eq!(decoded.auth.policy_signer_tags[0], [1, 2, 3, 4, 5, 6, 7]);
+        let mut mutated = encoded;
+        let first_tag = 2 * SMALLWOOD_POSEIDON2_V8_INPUT_WITNESS_WORDS
+            + 2 * SMALLWOOD_POSEIDON2_V8_OUTPUT_WITNESS_WORDS
+            + 1
+            + 5
+            + 2 * SMALLWOOD_POSEIDON2_V8_ACCUMULATOR_WORDS;
+        mutated[first_tag + 6] += 1;
+        assert_ne!(
+            SmallwoodPoseidon2V8Witness::try_from_witness_words(&mutated)
+                .unwrap()
+                .auth
+                .policy_signer_tags[0],
+            decoded.auth.policy_signer_tags[0]
+        );
+    }
+
+    #[test]
+    fn intent_projection_omits_exactly_sixteen_fixed_zero_coordinates() {
         let mut statement = mask_surface(0b0101, SmallwoodPrivateAuthMode::SingleKey).statement;
         statement.stablecoin.action_intent = felt_digest(1_000);
         statement.stablecoin.issuer_authorization = felt_digest(2_000);
         let projection = statement.action_intent_projection_words();
-        assert_eq!(&projection[4..18], &[0; 14]);
-        assert_eq!(&projection[47..54], &[0; 7]);
-        assert_eq!(&projection[87..94], &[0; 7]);
-        assert_eq!(&projection[113..120], &[0; 7]);
+        assert_eq!(projection.len(), 104);
+        let mut reconstructed = [0u64; 120];
+        let mut projected = 0;
+        for source in 0..120 {
+            if SMALLWOOD_POSEIDON2_V8_INTENT_OMIT_NULLIFIERS.contains(&source)
+                || SMALLWOOD_POSEIDON2_V8_INTENT_OMIT_MERKLE_ROOT_PREFIX.contains(&source)
+            {
+                continue;
+            }
+            reconstructed[source] = projection[projected];
+            projected += 1;
+        }
+        let mut former_projection = statement.to_public_words();
+        former_projection[4..18].fill(0);
+        former_projection[47..54].fill(0);
+        former_projection[87..94].fill(0);
+        former_projection[113..120].fill(0);
+        assert_eq!(reconstructed, former_projection);
 
         let digest_before = statement.expected_action_intent().unwrap();
         statement.nullifiers[0][0] += 1;
@@ -1980,6 +2144,8 @@ mod tests {
         assert_eq!(statement.expected_action_intent().unwrap(), digest_before);
         statement.merkle_root[0] += 1;
         assert_eq!(statement.expected_action_intent().unwrap(), digest_before);
+        statement.fee += 1;
+        assert_ne!(statement.expected_action_intent().unwrap(), digest_before);
     }
 
     #[test]
@@ -2026,8 +2192,8 @@ mod tests {
         );
 
         let mut witness = surface.witness.to_witness_words();
-        // RP04's five-limb witness layout moves this boolean mutation to the
-        // first input activity flag; word 248 is now a canonical field limb.
+        // The successor's full-tag witness layout still begins with the input
+        // activity flag, so mutating word zero exercises Boolean parsing.
         witness[0] = 2;
         assert_eq!(
             SmallwoodPoseidon2V8Witness::try_from_witness_words(&witness),
@@ -2054,7 +2220,7 @@ mod tests {
         );
 
         let mut first_limb_collision = mask_surface(0b0111, SmallwoodPrivateAuthMode::ApprovalStep);
-        first_limb_collision.witness.auth.policy_signer_tags[1] = [1, 90, 91, 92, 93];
+        first_limb_collision.witness.auth.policy_signer_tags[1] = [1, 90, 91, 92, 93, 94, 95];
         assert_eq!(
             first_limb_collision.validate(),
             Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationOpening)
