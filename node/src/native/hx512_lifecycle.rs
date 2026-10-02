@@ -884,14 +884,30 @@ mod tests {
         let durable = encode_hx512_durable_row_seam(staged, &verifier).unwrap();
         let key = durable.key.clone();
 
-        {
-            let database = sled::open(directory.path()).unwrap();
+        const CHILD_DB_ENV: &str = "HEGEMON_HX512_SLED_LIFECYCLE_CHILD_DB";
+        if let Some(path) = std::env::var_os(CHILD_DB_ENV) {
+            // Run the writer in a short-lived process. sled documents reopen
+            // lock races in its `testing` feature; process exit guarantees
+            // the OS has released every descriptor before the parent reopens.
+            let database = sled::open(path).unwrap();
             let tree = database.open_tree("hx512_inactive_pending").unwrap();
             tree.insert(&durable.key, durable.value.as_slice()).unwrap();
             drop(tree);
             database.flush().unwrap();
-            drop(database);
+            return;
         }
+
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "--nocapture",
+                "native::hx512_lifecycle::tests::sled_flush_and_reopen_preserve_the_exact_raw_action_value",
+            ])
+            .env(CHILD_DB_ENV, directory.path())
+            .status()
+            .expect("starting isolated sled writer test process");
+        assert!(status.success(), "isolated sled writer process failed");
+
         let database = sled::open(directory.path())
             .expect("reopening lifecycle sled database after all handles are dropped");
         let tree = database.open_tree("hx512_inactive_pending").unwrap();

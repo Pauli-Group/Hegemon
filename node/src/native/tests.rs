@@ -8643,11 +8643,42 @@ fn reorg_rebuild_failure_preserves_canonical_indexes() {
     let _test_coinbase = poseidon2_v8_verifier::install_poseidon2_v8_test_coinbase(coinbase);
 
     let canonical_work = node.prepare_work().expect("prepare canonical native work");
-    let canonical_seal = mine_native_round(canonical_work.clone(), 0).expect("canonical seal");
+    let mut sibling_candidates = (0..128u64)
+        .filter_map(|round| {
+            let seal = mine_native_round(canonical_work.clone(), round)?;
+            let tip = native_fork_choice_meta(
+                canonical_work.height,
+                seal.work_hash,
+                canonical_work.cumulative_work,
+            );
+            Some((seal, tip))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        sibling_candidates.len() >= 2,
+        "bounded sibling mining must produce at least two valid seals"
+    );
+    sibling_candidates.sort_by(|left, right| {
+        if native_meta_better_than(&left.1, &right.1) {
+            std::cmp::Ordering::Less
+        } else if native_meta_better_than(&right.1, &left.1) {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Equal
+        }
+    });
+    let (canonical_seal, canonical_tip) = sibling_candidates.remove(0);
+    let (side_one_seal, side_one_tip) = sibling_candidates.remove(0);
+    assert_ne!(canonical_tip.hash, side_one_tip.hash);
+    assert!(
+        native_meta_better_than(&canonical_tip, &side_one_tip),
+        "same-height sibling ordering must be strict under canonical fork choice"
+    );
     let canonical = node
         .import_mined_block(&canonical_work, canonical_seal)
         .expect("canonical import")
         .expect("canonical block");
+    assert_eq!(canonical.hash, canonical_tip.hash);
     assert_eq!(node.best_meta().hash, canonical.hash);
     assert_eq!(node.commitment_tree.len(), 0);
     assert_eq!(node.ciphertext_archive_tree.len(), 0);
@@ -8691,10 +8722,14 @@ fn reorg_rebuild_failure_preserves_canonical_indexes() {
     assert_eq!(node.ciphertext_index_tree.len(), 1);
     assert_eq!(node.ciphertext_archive_tree.len(), 1);
 
-    let side_one = (1..128)
-        .map(|round| mined_empty_child(&genesis, 1, test_pow_bits, round))
-        .find(|candidate| !native_meta_better_than(candidate, &canonical))
-        .expect("side child that does not beat canonical tip");
+    let mut side_one = canonical.clone();
+    side_one.hash = side_one_seal.work_hash;
+    side_one.nonce = side_one_seal.nonce;
+    side_one.work_hash = side_one_seal.work_hash;
+    assert!(
+        !native_meta_better_than(&side_one, &canonical),
+        "persisted same-height sibling must not beat the canonical block"
+    );
     persist_block_record(&node.block_tree, &side_one).expect("persist side parent");
 
     let parent_state = test_state(side_one.clone());
@@ -8705,6 +8740,10 @@ fn reorg_rebuild_failure_preserves_canonical_indexes() {
         0,
     );
     let side_two = mined_child_with_actions(&side_one, 2, test_pow_bits, 129, vec![sidecar]);
+    assert!(
+        native_meta_better_than(&side_two, &canonical),
+        "the longer side branch must trigger the intended reorg attempt"
+    );
     persist_block_record(&node.block_tree, &side_two).expect("persist side tip");
 
     let old_height_one = node.hash_by_height(1).expect("height index before reorg");
