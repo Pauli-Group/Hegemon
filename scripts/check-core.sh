@@ -93,9 +93,11 @@ run_test_transaction_lib() {
     --skip smallwood_frontend::tests::lean_generated_smallwood_verifier_statement_projection_vectors_match_production \
     --skip smallwood_recursive::tests::lean_generated_smallwood_recursive_envelope_wire_vectors_match_production
   # Compile the isolated facade against the current native engine and check
-  # its public binding without generating a large proof in routine CI.
+  # public binding plus signed/durable host HTLC admission. Large experimental
+  # proof generation remains an explicit qualification step, not a CI loop.
   CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}" cargo test --locked \
-    --manifest-path experimental/htlc-prototype/proof-backend/Cargo.toml --test binding
+    --manifest-path experimental/htlc-prototype/proof-backend/Cargo.toml \
+    --test binding --test reference_workflow
 }
 
 run_test_transaction_integration() {

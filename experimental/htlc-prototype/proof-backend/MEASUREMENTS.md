@@ -125,7 +125,7 @@ The binding test passed one test in 0.04 seconds after an optimized rebuild of 1
 
 Fresh-process receipt fields retained here from its stdout: `accepted=true`, `preimage_or_assignment_loaded=false`, `production_authorized=false`, `proof_bytes=311618`, `verify_seconds=0.146205750`, the proof SHA-512 above and the current source closure above. It loaded only the public statement and self-contained proof. This current-source roundtrip confirms the real SHA knowledge component still works after integration; it does not remove the size failure, full-HTLC integration obligations or security/release exclusions documented above.
 
-## Final clean-source receipt (2026-10-02, 09:44–09:46 UTC)
+## Historical final clean-source receipt (2026-10-02, 09:44–09:46 UTC)
 
 The coordinator requested one final hygiene edit at checkout HEAD `e471ada3c5adb8f9a88c99227008ddddb56ed096`: remove exactly the extra EOF blank line from `experimental/htlc-prototype/Cargo.toml` and `proof-backend/Cargo.toml`, preserving a final newline and all manifest semantics. No engine, relation, build-generator or other runtime source changed. These manifests enter the source binding, so the final source was rebuilt and received one fresh honest/unchecked-invalid proof pair and separate public-only verification. Earlier source-pinned receipts remain preserved above.
 
@@ -171,3 +171,58 @@ env CARGO_TARGET_DIR=/private/tmp/hegemon-htlc-smallwood-target-20261002 CARGO_B
 ```
 
 Fresh-process stdout receipt: `accepted=true`, `preimage_or_assignment_loaded=false`, `production_authorized=false`, `proof_bytes=311682`, `verify_seconds=0.147421625`, with the final closure and proof hash above. No fresh secret or assignment was retained. The heavy lane was released immediately after this validation, with no additional prover or geometry run. This final component still exceeds the unchanged production cap and does not prove HTLC authorization, timeout, note/nullifier integration, RP05 compatibility or composed PQ128 security.
+## Experimental host workflow and final source refresh (2026-10-02, 15:03–15:08 UTC)
+
+The host workflow addition is separate from the SHA component proof. Native ML-DSA-65 signatures now authorize the parent host reference relation, and a bounded lock/fsync journal records only public admitted-spend fields. The authenticated chain adapter remains an external trust boundary; the example uses an explicitly local trusted height/inclusion fixture. No full HTLC ZK proof, production activation, atomic swap, Bitcoin connector or node lifecycle claim is added.
+
+The assigned checkout was `/private/tmp/rp05-ci-20261001.223oOy`, at HEAD `ea55df910c8e20e520d62a17b7401e792177a3b9` when evidence was recorded, with the additive host Rust sources present in the worktree. No engine, production relation, crypto implementation, parent prototype source or proof profile changed. New backend Rust sources enter the existing conservative source closure; old receipts above remain historical. Final public evidence directory: `/private/tmp/hegemon-htlc-host-evidence-20261002.eNMB6d`, with proof files under `sha-component/`.
+
+Host validation passed eleven integration tests (including the subprocess helper) in 0.13 seconds; the existing public-statement binding test passed one test in 0.03 seconds. Tests cover real claim/refund, the inclusive refund boundary and claim after timeout, both replay branches after reopen, all intent/context/branch message fields, malformed/trailing/wrong-key signature evidence, changed-intent/context/branch admission, wrong SHA preimage, unincluded notes, header/checksum/partial-record/sequence/duplicate damage, bounds, poisoned handles and competing processes. The fresh-key example accepted a claim and mature refund, rejected an immature refund and both replay branches, rejected a competing process as busy, and performed public-only fresh-process readback. Its reopened journal contains exactly two 209-byte records plus the 16-byte header (434 bytes). Fresh private keys, preimage, note openings and assignments were neither written nor printed.
+
+The journal assumes a trusted path and cooperating processes. It offers no automatic crash repair, reorg handling or protection against hostile local rewrites. A chained checksum cannot detect rollback by deleting a whole valid record suffix, including reverting to the header. Admission fsyncs before acknowledgement; errors can leave an uncertain append and poison that handle. These boundaries are explicit in the API and README.
+
+Scoped Clippy correctness checks passed in 21.93 seconds for the host tests/example and existing binding test. Ordinary inherited facade warnings were allowed; no warnings-denied facade claim is made. Formatting and `git diff --check` passed. Release compilation took 1m09s with two Cargo jobs. The initial sandboxed `/usr/bin/time -l` wrapper printed 70.01 seconds but returned 1 after successful tests because the sandbox denied its read-only `sysctl`; compile RSS was therefore unavailable. Diagnostic escalation subsequently allowed the proof run's timing/RSS measurement, and that command exited zero.
+
+| Final frozen-source SHA check | Result |
+| --- | --- |
+| Source closure SHA-256 | `9b095dee66a9cbabf225697d2f8c0d9ff2f589f04a29d671042b2b0afab9e1c7` |
+| Current source inventory | All 135 members matched after proof completion |
+| Honest proof bytes | 311,938; exceeds unchanged 164,113-byte cap by 147,825 |
+| Honest proving, two worker threads | 8.461324875 seconds |
+| Same-process verification | 0.144039292 seconds; accepted |
+| Fresh-process public-only verification | 0.169752542 seconds; accepted |
+| Actual unchecked wrong-witness path | 8.903031584 seconds; generated 311,874-byte proof rejected |
+| Changed digest/context/version/domain/proof and trailing byte | All rejected |
+| Maximum resident set size | 1,561,706,496 bytes |
+| Peak memory footprint | 1,559,725,568 bytes |
+| Whole honest-plus-negative command | 18.28 seconds real; 32.64 user; 0.73 system; zero swaps |
+
+The relation/profile/geometry and all security exclusions are unchanged. This refresh proves that the real SHA component still roundtrips under the new conservative source identity; host authorization/journaling is not included in that component proof.
+
+Commands from the nested backend (format/inventory commands from repository root):
+
+```sh
+/usr/bin/time -l env CARGO_TARGET_DIR=/private/tmp/hegemon-htlc-smallwood-target-20261002 CARGO_BUILD_JOBS=2 cargo test --release --offline --locked --test reference_workflow --test binding
+env CARGO_TARGET_DIR=/private/tmp/hegemon-htlc-smallwood-target-20261002 CARGO_BUILD_JOBS=2 cargo clippy --release --offline --locked --test reference_workflow --test binding --example reference_workflow -- -A warnings -D clippy::correctness
+env CARGO_TARGET_DIR=/private/tmp/hegemon-htlc-smallwood-target-20261002 CARGO_BUILD_JOBS=2 cargo build --release --offline --locked --bin hegemon-isolated-htlc-smallwood --example reference_workflow
+/private/tmp/hegemon-htlc-smallwood-target-20261002/release/examples/reference_workflow --demo /private/tmp/hegemon-htlc-host-evidence-20261002.eNMB6d/host.journal
+/private/tmp/hegemon-htlc-smallwood-target-20261002/release/examples/reference_workflow --inspect /private/tmp/hegemon-htlc-host-evidence-20261002.eNMB6d/host.journal
+/usr/bin/time -l env RAYON_NUM_THREADS=2 HEGEMON_SMALLWOOD_TRACE=1 /private/tmp/hegemon-htlc-smallwood-target-20261002/release/hegemon-isolated-htlc-smallwood --out /private/tmp/hegemon-htlc-host-evidence-20261002.eNMB6d/sha-component --exercise-invalid-engine
+/private/tmp/hegemon-htlc-smallwood-target-20261002/release/hegemon-isolated-htlc-smallwood --verify-artifact /private/tmp/hegemon-htlc-host-evidence-20261002.eNMB6d/sha-component
+cargo fmt --manifest-path experimental/htlc-prototype/proof-backend/Cargo.toml --all -- --check
+git diff --check
+shasum -a 256 -c /private/tmp/hegemon-htlc-host-evidence-20261002.eNMB6d/sha-component/source-closure.sha256
+```
+
+Retained public file SHA-256 digests:
+
+```text
+f1dd9af8720a89aa626c875d7da9af73ba9fd7b98cd2b803a19050c2e18de3d1  host.journal
+1598244e299652a2dc97b922ebeff61b835ebea26596cadd175c30cc9dac5f04  sha-component/claim.smz1
+60039d55284973fc76bc46bf5c68e5dc0a5e45a8252f39cf2f9e752f7ef59784  sha-component/invalid-witness.smz1
+8e67dbd2f68d6783cb45f073cc3befa3a256123a4baf389690a7ebc3bc52aab2  sha-component/statement.json
+913e759c4f934ff02c3e572747d0c889b11d17411f1d4410a19f56bd6cf3fd2f  sha-component/measurement.json
+dcd88c5840f93306ec1e20f33b9af7710de3b92aa8cc06c106002ca8ca7fa65d  sha-component/source-closure.sha256
+```
+
+Honest proof SHA-512: `2d8a561b994c34049e0482e3830b4ef4528f0f6cafaf1de50a37a670f2f12b2e83ff573a826294507a841751a0c4a891decdc2fae93b361455f5aacb5b7fa999`. Public stdout was captured with explicit receipt labels in `host-demo.receipt.json` and `fresh-proof-verification.receipt.json`; neither receipt contains secret inputs. The heavy lane was released at 15:07 UTC, after tests, actual proofs and fresh-process verification. No Rust/manifest source was changed after this evidence freeze.

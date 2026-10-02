@@ -404,6 +404,20 @@ without durable writes. Branch receipts and their source-pin limitations are
 in `.agent/RP05_BOUNDED_VERIFIER_VALIDATION.md`; they do not substitute for the
 final integrated-source qualification.
 
+The isolated HTLC host reference under `experimental/htlc-prototype/proof-backend`
+uses the existing ML-DSA-65 implementation to bind exact public-key identity and
+the reference relation's branch/context/intent authorization message. Its bounded
+local admission journal holds an exclusive process lock across the unspent check,
+host predicate, append and filesystem synchronization. Public records support
+strict reopen/replay checks; no signing key, preimage or private note opening is
+written. Partial records and checksum failures reject rather than being repaired
+implicitly. Local filesystem integrity remains trusted: deletion of an entire
+valid journal suffix cannot be detected without an external trusted head. This
+experiment does not implement chain-context authentication, reorg recovery or a
+complete private HTLC proof. Its host workflow tests run with the isolated binding
+test in the transaction-library CI shard; the separate SHA component proof is
+generated and checked explicitly after source changes.
+
 The September20 known-opening note-tree repair is represented in the checked
 RP05 source package, current source-fixture vectors and retained affected
 lifecycle qualifications. The shared helper derives
