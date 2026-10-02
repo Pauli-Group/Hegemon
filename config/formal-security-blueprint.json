@@ -8,8 +8,8 @@
       "command": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
       "status": "passed",
       "exit_code": 0,
-      "executed_at": "2026-10-02T07:27:46Z",
-      "policy_inputs_blake3": "86da1a3db91e692a647c74dd0e1cd83c9b465a99382fbcd661e0f768bda105cb",
+      "executed_at": "2026-10-02T08:06:50Z",
+      "policy_inputs_blake3": "12159fdded0e50dd35b7786974e7336f44eaef991b74ab607e35c7f2d0ad7575",
       "report": {
         "passed": true,
         "test_filter": "governance_",
@@ -4236,7 +4236,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-11",
         "notes": "Pending final headless review. Same-block fee, burn, coinbase, transaction-order, artifact-identity, and claimed-supply projection is mechanized, while accepted-block no-counterfeit closure remains conditional on the named SmallWood knowledge-soundness, canonical-semantic-refinement, and Poseidon2 output-security evidence bundles.",
-        "content_blake3": "04524076842d405b601abcfc7504202370aa56946c91c32e7530f61caa4f5b7a"
+        "content_blake3": "9fa0dad621ea47f8753f6f065ca259655a4710d75ed7aa4f97a341561f93933a"
       },
       "falsification_cases": [
         {
@@ -15385,7 +15385,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-13",
         "notes": "Pending final headless branch-diff review. Internal review rejected the first caller-populated row certificate and replaced it with an executable exact production-row decision before the conditional production-family reduction was credited; no production no-counterfeit closure was recorded.",
-        "content_blake3": "14bddadec1747b069ff29e1d9086161c8f75efa803c16eb1455c629fc391ee24"
+        "content_blake3": "f164f12318bd258e77d94c70915c6f6761e66611b3149dac5ce089a1eaf61b0d"
       },
       "falsification_cases": [
         {

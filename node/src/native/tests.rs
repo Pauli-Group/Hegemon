@@ -4989,26 +4989,17 @@ fn non_tip_announce_reuses_one_parent_ancestry_for_losing_and_winning_paths() {
     let losing_tmp = tempfile::tempdir().expect("losing tempdir");
     let losing = NativeNode::open(test_config(losing_tmp.path(), pow_bits, "safe", false))
         .expect("losing node");
-    let losing_genesis = losing.best_meta();
-    let _canonical_one = mine_empty_native_block(&losing);
-    let canonical_two = mine_empty_native_block(&losing);
-    let losing_side_one = (1..128)
-        .map(|round| {
-            mined_empty_child_for_chain(std::slice::from_ref(&losing_genesis), pow_bits, round)
-        })
-        .find(|candidate| candidate.hash != canonical_two.parent_hash)
-        .expect("distinct losing side parent");
+    let (losing_canonical_chain, losing_side_chain) =
+        mine_ordered_empty_native_fork(&losing, pow_bits, 2);
+    let canonical_two = losing_canonical_chain[2].clone();
+    let losing_side_one = losing_side_chain[1].clone();
     assert_eq!(
         losing
             .import_announced_block_with_outcome(losing_side_one.clone())
             .expect("store losing side parent"),
         NativeAnnouncedBlockImportOutcome::StoredNoncanonical
     );
-    let losing_side_chain = vec![losing_genesis, losing_side_one.clone()];
-    let losing_side_two = (128..512)
-        .map(|round| mined_empty_child_for_chain(&losing_side_chain, pow_bits, round))
-        .find(|candidate| !native_meta_better_than(candidate, &canonical_two))
-        .expect("nonwinning side child at canonical height");
+    let losing_side_two = losing_side_chain[2].clone();
     losing.reset_block_meta_load_counters();
     losing.reset_streaming_replay_stored_meta_counters();
     assert_eq!(
@@ -5038,21 +5029,15 @@ fn non_tip_announce_reuses_one_parent_ancestry_for_losing_and_winning_paths() {
     let winning_tmp = tempfile::tempdir().expect("winning tempdir");
     let winning = NativeNode::open(test_config(winning_tmp.path(), pow_bits, "safe", false))
         .expect("winning node");
-    let winning_genesis = winning.best_meta();
-    let winning_canonical = mine_empty_native_block(&winning);
-    let winning_side_one = (1..256)
-        .map(|round| {
-            mined_empty_child_for_chain(std::slice::from_ref(&winning_genesis), pow_bits, round)
-        })
-        .find(|candidate| !native_meta_better_than(candidate, &winning_canonical))
-        .expect("nonwinning side parent");
+    let (_winning_canonical_chain, winning_side_chain) =
+        mine_ordered_empty_native_fork(&winning, pow_bits, 1);
+    let winning_side_one = winning_side_chain[1].clone();
     assert_eq!(
         winning
             .import_announced_block_with_outcome(winning_side_one.clone())
             .expect("store winning-path side parent"),
         NativeAnnouncedBlockImportOutcome::StoredNoncanonical
     );
-    let winning_side_chain = vec![winning_genesis, winning_side_one.clone()];
     let winning_side_two = mined_empty_child_for_chain(&winning_side_chain, pow_bits, 512);
     let invalid = mined_empty_child_with_commitment_mutation(
         &winning_side_one,
@@ -10106,12 +10091,9 @@ fn same_process_verified_block_cache_cannot_skip_reorg_proof_verification() {
     let genesis = node.best_meta();
     let production = test_poseidon2_v8_binding_for_genesis(genesis.hash);
     let _test_binding = poseidon2_v8_verifier::install_poseidon2_v8_test_binding(production);
-    let canonical = mine_empty_native_block(&node);
-
-    let side_one = (1..128)
-        .map(|round| mined_empty_child(&genesis, 1, pow_bits, round))
-        .find(|candidate| !native_meta_better_than(candidate, &canonical))
-        .expect("non-winning side parent");
+    let (canonical_chain, side_chain) = mine_ordered_empty_native_fork(&node, pow_bits, 1);
+    let canonical = canonical_chain[1].clone();
+    let side_one = side_chain[1].clone();
     persist_block_record(&node.block_tree, &side_one).expect("persist side parent");
 
     let invalid_action = test_source_context_invalid_poseidon2_v8_action(
@@ -10153,12 +10135,9 @@ fn canonical_reorg_rejects_unknown_invalid_v8_suffix_before_prestorage() {
     let genesis = node.best_meta();
     let production = test_poseidon2_v8_binding_for_genesis(genesis.hash);
     let _test_binding = poseidon2_v8_verifier::install_poseidon2_v8_test_binding(production);
-    let canonical = mine_empty_native_block(&node);
-
-    let side_one = (1..128)
-        .map(|round| mined_empty_child(&genesis, 1, pow_bits, round))
-        .find(|candidate| !native_meta_better_than(candidate, &canonical))
-        .expect("non-winning side parent");
+    let (canonical_chain, side_chain) = mine_ordered_empty_native_fork(&node, pow_bits, 1);
+    let canonical = canonical_chain[1].clone();
+    let side_one = side_chain[1].clone();
     persist_block_record(&node.block_tree, &side_one).expect("persist side parent");
     let invalid_action = test_source_context_invalid_poseidon2_v8_action(production, 2);
     let side_two = mined_child_with_actions(&side_one, 2, pow_bits, 129, vec![invalid_action]);
@@ -38170,6 +38149,62 @@ fn mine_empty_native_block(node: &NativeNode) -> NativeBlockMeta {
     node.import_mined_block(&work, seal)
         .expect("empty native import")
         .expect("empty native block")
+}
+
+/// Mine both empty branches before assigning their fork-choice roles. Searching
+/// a fixed number of unrelated seals for one worse than a wall-clock canonical
+/// header is probabilistic: the canonical hash can rank last in that sample.
+/// Ordering two valid forks guarantees a distinct losing sibling without
+/// changing work, fabricating hashes, or altering the production comparator.
+fn mine_ordered_empty_native_fork(
+    node: &NativeNode,
+    pow_bits: u32,
+    depth: usize,
+) -> (Vec<NativeBlockMeta>, Vec<NativeBlockMeta>) {
+    assert!(depth > 0);
+    let genesis = node.best_meta();
+    assert_eq!(genesis.height, 0, "ordered fork fixture starts at genesis");
+    let mut canonical_chain = vec![genesis.clone()];
+    let mut side_chain = vec![genesis];
+    for height in 1..=depth {
+        canonical_chain.push(mined_empty_child_for_chain(
+            &canonical_chain,
+            pow_bits,
+            (height as u64) * 2,
+        ));
+        side_chain.push(mined_empty_child_for_chain(
+            &side_chain,
+            pow_bits,
+            (height as u64) * 2 + 1,
+        ));
+    }
+    let canonical_tip = canonical_chain.last().expect("canonical fixture tip");
+    let side_tip = side_chain.last().expect("side fixture tip");
+    assert_eq!(canonical_tip.height, side_tip.height);
+    assert_eq!(canonical_tip.cumulative_work, side_tip.cumulative_work);
+    assert_ne!(
+        canonical_tip.hash, side_tip.hash,
+        "distinct valid fork tips"
+    );
+    if native_meta_better_than(side_tip, canonical_tip) {
+        std::mem::swap(&mut canonical_chain, &mut side_chain);
+    }
+    assert!(native_meta_better_than(
+        canonical_chain.last().unwrap(),
+        side_chain.last().unwrap(),
+    ));
+    assert!(!native_meta_better_than(
+        side_chain.last().unwrap(),
+        canonical_chain.last().unwrap(),
+    ));
+    assert_ne!(canonical_chain[1].hash, side_chain[1].hash);
+    for meta in &canonical_chain[1..] {
+        assert!(node
+            .import_announced_block(meta.clone())
+            .expect("import ordered canonical empty fixture"));
+    }
+    assert_eq!(node.best_meta(), *canonical_chain.last().unwrap());
+    (canonical_chain, side_chain)
 }
 
 fn publish_test_canonical_chain(node: &NativeNode, chain: &[NativeBlockMeta]) {
