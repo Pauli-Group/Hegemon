@@ -3348,9 +3348,67 @@ fn wait_for_pending_action_group_queue(node: &NativeNode, expected: usize) {
 }
 
 fn release_pending_action_group_test_hold(node: &NativeNode, hold: &AtomicBool) {
+    let _wait = node.pending_action_group_commit_test.wait_lock.lock();
     hold.store(false, Ordering::Release);
     node.pending_action_group_commit_test.wake.notify_all();
     node.pending_action_group_commit.wake.notify_all();
+}
+
+#[test]
+fn pending_action_group_test_release_requires_predicate_lock() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node =
+        NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+    for before_flush in [false, true] {
+        let wait = node.pending_action_group_commit_test.wait_lock.lock();
+        let hold = if before_flush {
+            &node.pending_action_group_commit_test.hold_before_flush
+        } else {
+            &node.pending_action_group_commit_test.hold_before_drain
+        };
+        hold.store(true, Ordering::Release);
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (completed_tx, completed_rx) = std::sync::mpsc::channel();
+        let worker_node = Arc::clone(&node);
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).expect("report release worker start");
+            let hold = if before_flush {
+                &worker_node
+                    .pending_action_group_commit_test
+                    .hold_before_flush
+            } else {
+                &worker_node
+                    .pending_action_group_commit_test
+                    .hold_before_drain
+            };
+            release_pending_action_group_test_hold(&worker_node, hold);
+            completed_tx.send(()).expect("report release completion");
+        });
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("release worker must start");
+        let early_completion = completed_rx.recv_timeout(Duration::from_millis(100));
+        let held_until_unlock = hold.load(Ordering::Acquire);
+        drop(wait);
+        if early_completion.is_err() {
+            completed_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("release worker must complete after predicate lock is released");
+        }
+        worker.join().expect("release worker");
+        assert!(
+            matches!(
+                early_completion,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ),
+            "release completed without acquiring the predicate lock; before_flush={before_flush}"
+        );
+        assert!(
+            held_until_unlock,
+            "hold cleared before predicate lock release"
+        );
+        assert!(!hold.load(Ordering::Acquire));
+    }
 }
 
 fn pending_action_group_test_transfer(node: &NativeNode, seed: u8) -> PendingAction {
