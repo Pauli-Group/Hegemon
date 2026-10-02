@@ -832,7 +832,7 @@ fn retained_rp03_socket_child() {
         .expect("small actual-service runtime");
     let service = runtime.spawn(crate::native::service::run_with_config(config));
     let ready_deadline = std::time::Instant::now() + RETAINED_CARRIER_STAGE_TIMEOUT;
-    let ready = loop {
+    let mut ready = loop {
         if let Ok(snapshot) = retained_carrier_snapshot(&artifact, production.expected_context()) {
             break snapshot;
         }
@@ -846,6 +846,15 @@ fn retained_rp03_socket_child() {
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
     };
+    let crosshost_source = std::env::var("HEGEMON_TEST_CROSSHOST_SOURCE").as_deref() == Ok("1");
+    if crosshost_source {
+        assert_eq!(role, "source", "remote mode permits SOURCE only");
+        ready["crosshost_source_provenance"] = serde_json::json!({
+            "executable": retained_carrier_executable_identity().expect("remote actual executable hash"),
+            "system": std::env::consts::OS, "machine": std::env::consts::ARCH,
+            "manifest_sha512": manifest_sha, "source_inventory_verified_before": true,
+        });
+    }
     retained_carrier_reply(&session, 0, Ok(ready));
     let mut last_id = 0;
     let mut wallet_artifact_selected = false;
@@ -979,15 +988,21 @@ fn retained_rp03_socket_child() {
             .expect("actual native service shutdown");
     });
     runtime.shutdown_timeout(std::time::Duration::from_secs(10));
+    if crosshost_source {
+        let base =
+            PathBuf::from(std::env::var_os(RETAINED_CARRIER_BASE_ENV).expect("remote child base"));
+        retained_carrier_verify_live_manifest(&manifest, &manifest_sha, &base)
+            .expect("remote full source inventory remains exact after lifecycle");
+    }
     retained_carrier_observations().lock().unwrap().take();
     drop(process_guard);
     assert!(poseidon2_v8_test_binding_at(3).is_none());
     retained_carrier_assert_denied();
-    retained_carrier_reply(
-        &session,
-        u64::MAX,
-        Ok(serde_json::json!({"stopped": true, "authority_denied": true})),
-    );
+    let mut stopped = serde_json::json!({"stopped": true, "authority_denied": true});
+    if crosshost_source {
+        stopped["crosshost_source_inventory_verified_after"] = serde_json::json!(true);
+    }
+    retained_carrier_reply(&session, u64::MAX, Ok(stopped));
 }
 
 struct RetainedCarrierProcess {
@@ -1002,6 +1017,62 @@ struct RetainedCarrierProcess {
     rpc: std::net::SocketAddr,
     p2p: std::net::SocketAddr,
     ready: serde_json::Value,
+    remote: Option<RetainedCarrierRemoteSource>,
+}
+
+// SSH owns only the transport. The Linux broker separately owns and reaps the
+// node PID/group, and supplies its own immutable identity and exit observations.
+struct RetainedCarrierRemoteSource {
+    identity: serde_json::Value,
+    tunnel: Option<RetainedCarrierOwnedTunnel>,
+}
+
+struct RetainedCarrierOwnedTunnel(std::process::Child);
+
+impl Drop for RetainedCarrierOwnedTunnel {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+const RETAINED_CARRIER_REMOTE_LAUNCH_ID: u64 = u64::MAX - 1;
+const RETAINED_CARRIER_REMOTE_EXIT_ID: u64 = u64::MAX - 2;
+
+fn retained_carrier_remote_path(key: &str) -> RetainedCarrierResult<String> {
+    let value = std::env::var(key).map_err(|_| format!("missing explicit {key}"))?;
+    // OpenSSH's remote command uses a shell. Only this restricted absolute path
+    // grammar may appear in that command; all launch data travel over stdin.
+    if !value.starts_with("/tmp/")
+        || value.contains("..")
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"/_-.".contains(&byte))
+    {
+        return Err(format!("{key} must be a plain dedicated /tmp path"));
+    }
+    Ok(value)
+}
+
+fn retained_carrier_remote_identity(
+    identity: &serde_json::Value,
+    expected_executable: &str,
+    expected_manifest: &str,
+) -> RetainedCarrierResult<u32> {
+    let pid = identity["pid"]
+        .as_u64()
+        .filter(|pid| *pid > 1 && *pid <= u64::from(u32::MAX))
+        .ok_or("invalid remote SOURCE PID")?;
+    if identity["process_group"].as_u64() != Some(pid)
+        || identity["system"] != "Linux"
+        || identity["seeds_empty"] != true
+        || identity["subreaper_enabled"] != true
+        || identity["executable_sha512"] != expected_executable
+        || identity["manifest_sha512"] != expected_manifest
+    {
+        return Err("remote SOURCE identity/hash/group/isolation mismatch".into());
+    }
+    Ok(pid as u32)
 }
 
 fn retained_carrier_log(
@@ -1135,6 +1206,7 @@ impl RetainedCarrierProcess {
             rpc: std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0)),
             p2p,
             ready: serde_json::Value::Null,
+            remote: None,
         };
         let child = process.child.as_mut().unwrap();
         process.input = Some(child.stdin.take().ok_or("child stdin missing")?);
@@ -1188,6 +1260,216 @@ impl RetainedCarrierProcess {
             .map_err(|e| format!("ready numeric RPC: {e}"))?;
         if !process.rpc.ip().is_loopback() || process.rpc.port() == 0 {
             return Err("actual child RPC is not bound to numeric loopback".into());
+        }
+        process.ready = ready;
+        Ok(process)
+    }
+
+    fn spawn_remote_source(
+        p2p: std::net::SocketAddr,
+        artifact_role: &str,
+        manifest: &str,
+        manifest_sha512: &str,
+    ) -> RetainedCarrierResult<Self> {
+        use std::io::Write as _;
+        if std::env::consts::OS != "macos" {
+            return Err("cross-host coordinator requires Darwin".into());
+        }
+        let workspace = retained_carrier_remote_path("HEGEMON_TEST_CROSSHOST_WORKSPACE")?;
+        let executable = retained_carrier_remote_path("HEGEMON_TEST_CROSSHOST_EXECUTABLE")?;
+        let executable_sha512 = std::env::var("HEGEMON_TEST_CROSSHOST_EXECUTABLE_SHA512")
+            .map_err(|_| "missing explicit Linux executable SHA512")?;
+        if executable_sha512.len() != 128
+            || !executable_sha512
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err("invalid expected Linux executable SHA512".into());
+        }
+        let session = sha512_hex(
+            format!(
+                "{}:{:?}:remote-source",
+                std::process::id(),
+                std::time::SystemTime::now()
+            )
+            .as_bytes(),
+        )[..32]
+            .to_owned();
+        let logs = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        let (sender, replies) = std::sync::mpsc::sync_channel(8);
+        let mut command = std::process::Command::new("ssh");
+        command
+            .args([
+                "-T",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "ServerAliveInterval=5",
+                "-o",
+                "ServerAliveCountMax=3",
+                "hegemon-dev",
+            ])
+            .arg(format!(
+                "python3 -B {workspace}/scripts/rp05_crosshost_supervisor.py"
+            ))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        retained_carrier_new_process_group(&mut command)?;
+        let child = command
+            .spawn()
+            .map_err(|error| format!("spawn Linux SOURCE SSH broker: {error}"))?;
+        let mut process = Self {
+            child: Some(child),
+            confirmed_group: None,
+            input: None,
+            replies,
+            readers: Vec::new(),
+            logs,
+            session,
+            next_id: 1,
+            rpc: p2p,
+            p2p,
+            ready: serde_json::Value::Null,
+            remote: Some(RetainedCarrierRemoteSource {
+                identity: serde_json::Value::Null,
+                tunnel: None,
+            }),
+        };
+        let child = process.child.as_mut().unwrap();
+        process.input = Some(child.stdin.take().ok_or("SSH stdin missing")?);
+        let stdout = child.stdout.take().ok_or("SSH stdout missing")?;
+        let stderr = child.stderr.take().ok_or("SSH stderr missing")?;
+        let prefix = format!("{RETAINED_CARRIER_PREFIX}{} ", process.session);
+        process.readers.push(retained_carrier_reader(
+            stdout,
+            "stdout",
+            prefix.clone(),
+            sender.clone(),
+            process.logs.clone(),
+        ));
+        process.readers.push(retained_carrier_reader(
+            stderr,
+            "stderr",
+            prefix,
+            sender,
+            process.logs.clone(),
+        ));
+        process.confirmed_group = Some(retained_carrier_confirm_process_group(
+            process.child.as_ref().unwrap().id(),
+        )?);
+        let launch = serde_json::json!({"session": process.session, "workspace": workspace, "executable": executable,
+            "executable_sha512": executable_sha512, "manifest": manifest, "manifest_sha512": manifest_sha512,
+            "profile": if retained_carrier_smza_selected() { "SMZA" } else { "SMZ9" }, "artifact_role": artifact_role});
+        let input = process.input.as_mut().unwrap();
+        input
+            .write_all(&serde_json::to_vec(&launch).map_err(|error| error.to_string())?)
+            .and_then(|_| input.write_all(b"\n"))
+            .and_then(|_| input.flush())
+            .map_err(|error| error.to_string())?;
+        let identity = process.receive(
+            RETAINED_CARRIER_REMOTE_LAUNCH_ID,
+            RETAINED_CARRIER_STAGE_TIMEOUT,
+        )?;
+        let remote_pid =
+            retained_carrier_remote_identity(&identity, &executable_sha512, manifest_sha512)?;
+        if identity["workspace"] != workspace || identity["executable"] != executable {
+            return Err("remote SOURCE used a different workspace or executable path".into());
+        }
+        let broker_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("scripts/rp05_crosshost_supervisor.py");
+        let broker_sha512 =
+            sha512_hex(&std::fs::read(broker_path).map_err(|error| error.to_string())?);
+        if identity["broker_sha512"] != broker_sha512 {
+            return Err("Linux broker differs from local exact source".into());
+        }
+        let ready = process.receive(0, RETAINED_CARRIER_STAGE_TIMEOUT)?;
+        if ready["pid"].as_u64() != Some(u64::from(remote_pid))
+            || ready["crosshost_source_provenance"]["executable"]["sha512"] != executable_sha512
+            || ready["crosshost_source_provenance"]["manifest_sha512"] != manifest_sha512
+            || ready["crosshost_source_provenance"]["source_inventory_verified_before"] != true
+        {
+            return Err("remote ready did not originate from actual Linux node PID".into());
+        }
+        let remote_p2p: std::net::SocketAddr = identity["p2p"]
+            .as_str()
+            .ok_or("remote P2P missing")?
+            .parse()
+            .map_err(|error| format!("remote P2P: {error}"))?;
+        let remote_rpc: std::net::SocketAddr = ready["rpc"]
+            .as_str()
+            .ok_or("remote RPC missing")?
+            .parse()
+            .map_err(|error| format!("remote RPC: {error}"))?;
+        if [remote_p2p, remote_rpc].iter().any(|address| {
+            !address.ip().is_loopback()
+                || !address.is_ipv4()
+                || address.port() == 0
+                || [30333, 9944].contains(&address.port())
+        }) {
+            return Err("remote source listener is not a dedicated private loopback port".into());
+        }
+        process.rpc = retained_carrier_available_loopback()?;
+        let mut tunnel_command = std::process::Command::new("ssh");
+        tunnel_command
+            .args([
+                "-N",
+                "-T",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ExitOnForwardFailure=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "ServerAliveInterval=5",
+                "-o",
+                "ServerAliveCountMax=3",
+                "-L",
+            ])
+            .arg(format!("{}:{}", p2p, remote_p2p))
+            .arg("-L")
+            .arg(format!("{}:{}", process.rpc, remote_rpc))
+            .arg("hegemon-dev")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let tunnel = RetainedCarrierOwnedTunnel(
+            tunnel_command
+                .spawn()
+                .map_err(|error| format!("spawn loopback SSH forwards: {error}"))?,
+        );
+        process.remote = Some(RetainedCarrierRemoteSource {
+            identity,
+            tunnel: Some(tunnel),
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while std::net::TcpStream::connect_timeout(
+            &process.rpc,
+            std::time::Duration::from_millis(100),
+        )
+        .is_err()
+        {
+            if process
+                .remote
+                .as_mut()
+                .unwrap()
+                .tunnel
+                .as_mut()
+                .unwrap()
+                .0
+                .try_wait()
+                .map_err(|error| error.to_string())?
+                .is_some()
+                || std::time::Instant::now() >= deadline
+            {
+                return Err("private SSH forwards did not become ready".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
         }
         process.ready = ready;
         Ok(process)
@@ -1302,6 +1584,9 @@ impl RetainedCarrierProcess {
         if !retained_carrier_tracked_idle(&last) {
             return Err("shutdown acknowledged nonidle tracked workers".into());
         }
+        if self.remote.is_some() {
+            return self.clean_stop_remote(last);
+        }
         let child = self.child.as_mut().ok_or("child already stopped")?;
         let pid = child.id();
         let signal = std::process::Command::new("/bin/kill")
@@ -1355,12 +1640,104 @@ impl RetainedCarrierProcess {
             "idle_scope": "tracked proof/import/fallback workers plus stable tip; active transport state is not directly measured"}),
         )
     }
+
+    fn clean_stop_remote(
+        &mut self,
+        last: serde_json::Value,
+    ) -> RetainedCarrierResult<serde_json::Value> {
+        use std::io::Write as _;
+        let terminate = serde_json::to_vec(
+            &serde_json::json!({"session": self.session, "supervisor": "terminate"}),
+        )
+        .map_err(|error| error.to_string())?;
+        let input = self.input.as_mut().ok_or("SSH control input absent")?;
+        input
+            .write_all(&terminate)
+            .and_then(|_| input.write_all(b"\n"))
+            .and_then(|_| input.flush())
+            .map_err(|error| error.to_string())?;
+        let stopped = self.receive(u64::MAX, std::time::Duration::from_secs(45))?;
+        let remote_exit = self.receive(
+            RETAINED_CARRIER_REMOTE_EXIT_ID,
+            std::time::Duration::from_secs(5),
+        )?;
+        let remote = self.remote.as_ref().unwrap();
+        if stopped["stopped"] != true
+            || stopped["authority_denied"] != true
+            || stopped["crosshost_source_inventory_verified_after"] != true
+            || remote_exit["pid"] != remote.identity["pid"]
+            || remote_exit["process_group"] != remote.identity["process_group"]
+            || remote_exit["exit_code"] != 0
+            || remote_exit["forced_kill"] != false
+            || [
+                "reaped",
+                "process_group_absent",
+                "rpc_closed",
+                "p2p_closed",
+                "executable_unchanged",
+                "manifest_unchanged",
+                "broker_unchanged",
+            ]
+            .iter()
+            .any(|key| remote_exit[*key] != true)
+        {
+            return Err(format!(
+                "Linux node lacks independent clean shutdown evidence: {remote_exit}"
+            ));
+        }
+        self.input.take();
+        let child = self.child.as_mut().ok_or("SSH transport already stopped")?;
+        let ssh_pid = child.id();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let ssh_status = loop {
+            if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+                break status;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("SSH broker transport did not exit after Linux receipt".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        };
+        if !ssh_status.success() {
+            return Err(format!("SSH broker transport failed: {ssh_status}"));
+        }
+        self.child.take();
+        self.confirmed_group.take();
+        self.remote.as_mut().unwrap().tunnel.take();
+        for reader in self.readers.drain(..) {
+            reader.join().map_err(|_| "SSH reader panicked")?;
+        }
+        for address in [self.rpc, self.p2p] {
+            if std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(250))
+                .is_ok()
+            {
+                return Err(format!("local SSH forward remained open: {address}"));
+            }
+        }
+        Ok(
+            serde_json::json!({"node_host": "Linux", "last_snapshot": last, "final_ack": stopped,
+            "remote_node": remote_exit, "ssh_transport_pid": ssh_pid, "ssh_transport_exit_success": true,
+            "local_forwarded_rpc_closed": true, "local_forwarded_p2p_closed": true,
+            "exit_success": true, "forced_kill": false,
+            "idle_scope": "tracked proof/import/fallback workers plus stable tip; active transport state is not directly measured"}),
+        )
+    }
 }
 
 impl Drop for RetainedCarrierProcess {
     fn drop(&mut self) {
         self.input.take();
         if let Some(mut child) = self.child.take() {
+            if self.remote.is_some() {
+                // EOF lets the Linux broker kill/reap its own isolated node.
+                // This cleanup carries no successful lifecycle credit.
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+                while child.try_wait().ok().flatten().is_none()
+                    && std::time::Instant::now() < deadline
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+            }
             // Failure cleanup only. Never included in a clean-stop receipt.
             if let Some(group) = self
                 .confirmed_group
@@ -2185,6 +2562,7 @@ fn retained_carrier_episode(
     artifact_role: &str,
     artifact: &RetainedSmz9Artifact,
     generate_wallet_proof: bool,
+    crosshost_source: bool,
 ) -> RetainedCarrierResult<serde_json::Value> {
     if generate_wallet_proof && !retained_carrier_smza_selected() {
         return Err("fresh wallet socket proof episode requires explicit SMZA selection".into());
@@ -2201,15 +2579,25 @@ fn retained_carrier_episode(
         .map_err(|e| e.to_string())?;
     let expected = retained_carrier_production().expected_context();
     let source_address = retained_carrier_available_loopback()?;
-    let mut source = RetainedCarrierProcess::spawn(
-        "source",
-        &directory.join("source"),
-        source_address,
-        None,
-        artifact_role,
-        manifest,
-        manifest_sha512,
-    )?;
+    let mut source = if crosshost_source {
+        RetainedCarrierProcess::spawn_remote_source(
+            source_address,
+            artifact_role,
+            manifest,
+            manifest_sha512,
+        )?
+    } else {
+        RetainedCarrierProcess::spawn(
+            "source",
+            &directory.join("source"),
+            source_address,
+            None,
+            artifact_role,
+            manifest,
+            manifest_sha512,
+        )?
+    };
+    let remote_source_identity = source.remote.as_ref().map(|remote| remote.identity.clone());
     if source.ready["height"] != 0 || source.ready["test_selected_locator_transport"] != true {
         return Err(
             "source did not start on empty genesis with test-selected locator transport".into(),
@@ -2719,6 +3107,8 @@ fn retained_carrier_episode(
     Ok(serde_json::json!({
         "artifact_role": artifact_role, "directory": directory,
         "episode_kind": if generate_wallet_proof { "fresh-wallet-generated-proof" } else { "fixed-source-fixture-proof" },
+        "crosshost_linux_source_darwin_relay_restart_fresh": crosshost_source,
+        "remote_source_identity": remote_source_identity,
         "wallet_generation": generated.as_ref().map(|(_, _, evidence)| evidence),
         "pending_action_sha512": sha512_hex(&artifact.pending_action_bytes),
         "native_leaf_sha512": sha512_hex(&artifact.native_leaf), "proof_sha512": sha512_hex(&artifact.proof),
@@ -2768,6 +3158,7 @@ fn retained_carrier_executable_identity() -> RetainedCarrierResult<serde_json::V
     }
     Ok(
         serde_json::json!({"path": path, "bytes": total, "sha512": hex::encode(digest.finalize()),
+        "system": std::env::consts::OS, "machine": std::env::consts::ARCH,
         "inventory_tool_pins": retained_carrier_inventory_tool_pins()}),
     )
 }
@@ -2775,6 +3166,10 @@ fn retained_carrier_executable_identity() -> RetainedCarrierResult<serde_json::V
 #[test]
 #[ignore = "requires fresh explicit RP03 manifest; launches isolated actual HTTP/PQ child processes"]
 fn retained_rp03_actual_socket_process_carriers() {
+    retained_carrier_run_socket_process_carriers(false);
+}
+
+fn retained_carrier_run_socket_process_carriers(crosshost_source: bool) {
     retained_carrier_assert_denied();
     let outer_process_group = retained_carrier_outer_process_group()
         .expect("validate optional supervisor-owned process group");
@@ -2852,6 +3247,7 @@ fn retained_rp03_actual_socket_process_carriers() {
             RETAINED_SMZ9_PRIMARY_ROLE,
             &primary,
             false,
+            crosshost_source,
         )?;
         let independent_result = retained_carrier_episode(
             &directory.join("independent"),
@@ -2860,8 +3256,9 @@ fn retained_rp03_actual_socket_process_carriers() {
             RETAINED_SMZ9_INDEPENDENT_ROLE,
             &independent,
             false,
+            crosshost_source,
         )?;
-        let wallet_proof_episode = if retained_carrier_smza_selected() {
+        let wallet_proof_episode = if retained_carrier_smza_selected() && !crosshost_source {
             Some(retained_carrier_episode(
                 &directory.join("fresh-wallet-proof"),
                 &manifest,
@@ -2869,6 +3266,7 @@ fn retained_rp03_actual_socket_process_carriers() {
                 RETAINED_SMZ9_PRIMARY_ROLE,
                 &primary,
                 true,
+                false,
             )?)
         } else {
             None
@@ -2879,7 +3277,8 @@ fn retained_rp03_actual_socket_process_carriers() {
         }
         retained_carrier_assert_denied();
         Ok(
-            serde_json::json!({"schema": if retained_carrier_smza_selected() { "hegemon.retained-smza.actual-socket-carriers-v1" } else { "hegemon.retained-smz9.actual-socket-carriers-v1" }, "pass": true,
+            serde_json::json!({"schema": if crosshost_source { "hegemon.retained-smza.crosshost-socket-carriers-v1" } else if retained_carrier_smza_selected() { "hegemon.retained-smza.actual-socket-carriers-v1" } else { "hegemon.retained-smz9.actual-socket-carriers-v1" }, "pass": true,
+            "crosshost_linux_source_darwin_relay_restart_fresh": crosshost_source,
             "parent_pid": std::process::id(), "test_executable": executable,
             "supervisor_owned_process_group": outer_process_group,
             "child_arguments": ["--ignored", "--exact", RETAINED_CARRIER_CHILD_TEST, "--nocapture", "--test-threads=1"],
@@ -2895,12 +3294,16 @@ fn retained_rp03_actual_socket_process_carriers() {
     let receipt = match &result {
         Ok(receipt) => receipt.clone(),
         Err(error) => {
-            serde_json::json!({"schema": if retained_carrier_smza_selected() { "hegemon.retained-smza.actual-socket-carriers-v1" } else { "hegemon.retained-smz9.actual-socket-carriers-v1" },
+            serde_json::json!({"schema": if crosshost_source { "hegemon.retained-smza.crosshost-socket-carriers-v1" } else if retained_carrier_smza_selected() { "hegemon.retained-smza.actual-socket-carriers-v1" } else { "hegemon.retained-smz9.actual-socket-carriers-v1" },
             "pass": false, "manifest": manifest, "manifest_sha512": manifest_sha512, "error": error,
             "note": "Failure cleanup is not clean-restart evidence; no lifecycle completion claimed."})
         }
     };
-    let receipt_path = directory.join("actual-socket-carrier-receipt.json");
+    let receipt_path = directory.join(if crosshost_source {
+        "crosshost-socket-carrier-receipt.json"
+    } else {
+        "actual-socket-carrier-receipt.json"
+    });
     std::fs::write(
         &receipt_path,
         serde_json::to_vec_pretty(&receipt).expect("encode carrier receipt"),
@@ -2920,6 +3323,43 @@ fn retained_rp03_actual_socket_process_carriers() {
 fn retained_smza_actual_socket_process_carriers() {
     assert!(retained_carrier_smza_selected(), "SMZA requires --ignored --exact native::poseidon2_v8_verifier::tests::retained_smza_actual_socket_process_carriers --nocapture --test-threads=1");
     retained_rp03_actual_socket_process_carriers();
+}
+
+#[test]
+#[ignore = "requires explicit Linux executable/hash and fresh same-source SMZA pair; isolated SSH SOURCE only"]
+fn retained_smza_crosshost_actual_socket_process_carriers() {
+    assert!(
+        retained_carrier_smza_selected(),
+        "exact SMZA cross-host selector required"
+    );
+    retained_carrier_run_socket_process_carriers(true);
+}
+
+#[test]
+fn retained_carrier_remote_identity_rejects_transport_pid_and_changed_hashes() {
+    let executable = "a".repeat(128);
+    let manifest = "b".repeat(128);
+    let identity = serde_json::json!({"pid": 42, "process_group": 42, "system": "Linux", "seeds_empty": true, "subreaper_enabled": true,
+        "executable_sha512": executable, "manifest_sha512": manifest});
+    assert_eq!(
+        retained_carrier_remote_identity(&identity, &executable, &manifest).unwrap(),
+        42
+    );
+    for (key, value) in [
+        ("pid", serde_json::json!(0)),
+        ("process_group", serde_json::json!(43)),
+        ("system", serde_json::json!("Darwin")),
+        ("seeds_empty", serde_json::json!(false)),
+        ("executable_sha512", serde_json::json!(manifest)),
+        ("manifest_sha512", serde_json::json!(executable)),
+    ] {
+        let mut changed = identity.clone();
+        changed[key] = value;
+        assert!(
+            retained_carrier_remote_identity(&changed, &executable, &manifest).is_err(),
+            "accepted changed {key}"
+        );
+    }
 }
 
 #[test]

@@ -504,6 +504,7 @@ fn retained_carrier_smza_selected() -> bool {
         ]
     };
     exact("native::poseidon2_v8_verifier::tests::retained_smza_actual_socket_process_carriers")
+        || exact("native::poseidon2_v8_verifier::tests::retained_smza_crosshost_actual_socket_process_carriers")
         || (exact(RETAINED_CARRIER_CHILD_TEST_NAME)
             && std::env::var("HEGEMON_TEST_RETAINED_CARRIER_PROFILE").as_deref() == Ok("SMZA"))
 }
@@ -879,6 +880,8 @@ pub(crate) fn validate_retained_carrier_outer_process_group(
         "native::poseidon2_v8_verifier::tests::retained_rp03_actual_socket_process_carriers";
     let smza_parent =
         "native::poseidon2_v8_verifier::tests::retained_smza_actual_socket_process_carriers";
+    let crosshost_parent =
+        "native::poseidon2_v8_verifier::tests::retained_smza_crosshost_actual_socket_process_carriers";
     let exact = |test: &str| {
         arguments
             == [
@@ -892,7 +895,7 @@ pub(crate) fn validate_retained_carrier_outer_process_group(
     if group <= 1
         || raw != group.to_string()
         || actual_group != group
-        || !((exact(smz9_parent) || exact(smza_parent)) && pid == group
+        || !((exact(smz9_parent) || exact(smza_parent) || exact(crosshost_parent)) && pid == group
             || exact(RETAINED_CARRIER_CHILD_TEST_NAME) && pid != group)
     {
         return Err("outer process group requires the exact owned socket parent or child".into());
