@@ -28,6 +28,8 @@ EOF
 
 run_lint() {
   cargo fmt --all -- --check
+  cargo fmt --manifest-path experimental/htlc-prototype/Cargo.toml --all -- --check
+  cargo fmt --manifest-path experimental/htlc-prototype/proof-backend/Cargo.toml --all -- --check
   python3 scripts/check_native_startup_policy.py
   python3 -B scripts/check_smallwood_v5_candidate_gate.py
   # Keep correctness and suspicious-code diagnostics blocking. Style and unused
@@ -75,6 +77,9 @@ run_test_base() {
   python3 -B .agent/hardening/smallwood-pqc-zk/test_strict_profile.py
   python3 -B scripts/test_check_smallwood_v5_candidate_gate.py
   python3 -B scripts/check_smallwood_v5_candidate_gate.py
+  python3 -B -m unittest discover -s scripts/tests -p test_rp05_crosshost_supervisor.py
+  CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}" cargo test --locked \
+    --manifest-path experimental/htlc-prototype/Cargo.toml
 }
 
 run_test_transaction_lib() {
@@ -87,6 +92,10 @@ run_test_transaction_lib() {
     --skip smallwood_frontend::tests::lean_generated_legacy_level5_transcript_binding_vectors_match_runtime_codec \
     --skip smallwood_frontend::tests::lean_generated_smallwood_verifier_statement_projection_vectors_match_production \
     --skip smallwood_recursive::tests::lean_generated_smallwood_recursive_envelope_wire_vectors_match_production
+  # Compile the isolated facade against the current native engine and check
+  # its public binding without generating a large proof in routine CI.
+  CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}" cargo test --locked \
+    --manifest-path experimental/htlc-prototype/proof-backend/Cargo.toml --test binding
 }
 
 run_test_transaction_integration() {

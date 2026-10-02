@@ -73,3 +73,54 @@ These are the unchanged native configuration/strict-SMZ1 serializer's conservati
 All four hints exceed 164,113 bytes. Evaluation-table bytes are `(LVCS_rows + eta) * N * 8`; they exclude tapes (67,108,864 bytes), a full binary Merkle node array (134,217,664 bytes), coefficient tables, witnesses and other scratch allocations. They are allocation projections, not measured peak RSS. Larger packing reduces witness rows but increases polynomial degree and opened/masking row costs; it does not establish a production-cap route here.
 
 Full note/nullifier semantics, authentication and authenticated height adapters, HTLC claim/refund constraints, proof security qualification, Rust-to-Lean refinement, unchanged-byte node lifecycle, activation and Bitcoin connector remain outside this increment. No source or parameter change to production RP05 was made.
+
+## Integrated current-source validation (2026-10-02, 09:13–09:16 UTC)
+
+This second retained run validates the integrated checkout `/private/tmp/rp05-ci-20261001.223oOy` at HEAD `9554f71c1355d1a7c6e38c60919d8c64693e5e56`, including the newer flat-RNG source. The isolated facade's first rebuild failed with E0583 because the added RNG child `mod tapes;` resolved against the generated output directory. The coordinator authorized the minimal isolated build-generator repair: resolve both `mapping` and `tapes` declarations to their exact original source paths, preserving all original parent/child function bodies. No underlying engine or relation runtime source was changed for this validation. That build-generator repair is included in the new closure below; documentation is excluded from the closure. Earlier branch receipts above remain intact under their earlier source identity.
+
+New public-only evidence directory: `/private/tmp/hegemon-htlc-native-proof-main-20261002-r1`.
+
+| Check | Current-source measured result |
+| --- | --- |
+| Actual honest proof bytes | 311,618 |
+| Unchanged production cap | 164,113; exceeded by 147,505 bytes |
+| Honest proving | 4.442010959 seconds |
+| Same-process verification | 0.148123542 seconds; accepted |
+| Fresh-process public-only verification | 0.146205750 seconds; accepted |
+| Actual unchecked invalid-witness engine path | 4.539571333 seconds; generated 311,938-byte proof rejected |
+| Changed digest/context/version/domain | all rejected |
+| Changed proof byte / appended byte | both rejected |
+| Wrong-secret preflight | rejected |
+| Source closure SHA-256 | `1d99ebafbf5208284e2eae2296f5be7a7d30f6db9ba6bc4261149f33289a125b` |
+| Toolchain | `rustc 1.91.1 (ed61e7d7e 2025-11-07)` |
+| Maximum resident set size | 1,565,425,664 bytes (macOS `/usr/bin/time -l`) |
+| Peak memory footprint | 1,563,411,944 bytes (same command) |
+| Whole honest-plus-negative command | 9.88 seconds real; 32.40 user; 0.59 system; zero swaps |
+
+The profile, geometry and claimed relation are unchanged: K64/degree3/4,159 rows/1,730 nonlinear batches/210,968 linear equations, no private input pins or auxiliary witness words. Native byte size varies with sampled commitments/opening authentication paths; the 320-byte difference from the earlier run is not a relation/profile optimization. No fresh OS secret or witness was written or logged. The retained source inventory's 133 members were checked against current checkout bytes with `shasum -a 256 -c`, exit zero, after proof completion.
+
+Honest proof SHA-512:
+
+`ef90eecdbb5be4106c8496dae94a46d1042812a287d10126862a4d762e5593cac6ee7e25caff094723499626c5039f063ec4ea7675b68a827dd7bbcfd794938d`
+
+New retained file SHA-256 inventory:
+
+```text
+c3ed7433d80dba22d61e3b6dd5819b6dd5a80b2d85c58a8143059f68e9cc1e4f  claim.smz1
+8d4bfa9412fe8d5fd1a0071cce77972d98080044633d0d6aa774fe7e01bb2bb9  invalid-witness.smz1
+03a846cfe8e0fa1552c7fb93ad36ba9dbfebb2ede30450b2189433b5c2918e84  measurement.json
+b3839d5764c1553eab6bc88f980eae07e21c237f417644bad39b4b355669df54  source-closure.sha256
+c2bde717467a81b797806ed7741c4dc1af294d069b534851b1bc1ef982d4b68e  statement.json
+```
+
+Executed from the integrated nested backend; all commands below exited zero after the one module-resolution repair:
+
+```sh
+env CARGO_TARGET_DIR=/private/tmp/hegemon-htlc-smallwood-target-20261002 CARGO_BUILD_JOBS=1 cargo test --release --offline --locked --test binding
+/usr/bin/time -l env RAYON_NUM_THREADS=4 HEGEMON_SMALLWOOD_TRACE=1 /private/tmp/hegemon-htlc-smallwood-target-20261002/release/hegemon-isolated-htlc-smallwood --out /private/tmp/hegemon-htlc-native-proof-main-20261002-r1 --exercise-invalid-engine
+/private/tmp/hegemon-htlc-smallwood-target-20261002/release/hegemon-isolated-htlc-smallwood --verify-artifact /private/tmp/hegemon-htlc-native-proof-main-20261002-r1
+```
+
+The binding test passed one test in 0.04 seconds after an optimized rebuild of 1 minute 2 seconds. Facade compilation still inherits 81 native warnings, with no warnings-denied facade lint claim. From the integrated parent standalone crate, all eleven locked offline tests passed in 1.37 seconds; clippy with warnings denied passed in 0.33 seconds. Formatting checks passed for both standalone crates. The exclusive heavy lane was released immediately after actual proofs and fresh-process verification; no geometry rerun or production proof build was performed.
+
+Fresh-process receipt fields retained here from its stdout: `accepted=true`, `preimage_or_assignment_loaded=false`, `production_authorized=false`, `proof_bytes=311618`, `verify_seconds=0.146205750`, the proof SHA-512 above and the current source closure above. It loaded only the public statement and self-contained proof. This current-source roundtrip confirms the real SHA knowledge component still works after integration; it does not remove the size failure, full-HTLC integration obligations or security/release exclusions documented above.

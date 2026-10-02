@@ -3463,11 +3463,21 @@ fn retained_carrier_wallet_control_has_bounded_large_frames_and_small_ordinary_f
 
 #[test]
 fn retained_carrier_pending_snapshot_encodes_map_values_without_the_map_key() {
-    let (action, _) = retained_coinbase_action(
-        1,
-        RETAINED_V8_COINBASE_0_SCALE,
-        RETAINED_V8_COINBASE_0_SHA512,
-    );
+    use rand::{rngs::StdRng, SeedableRng};
+
+    // This tests current PendingAction encoding, not the historical RP03
+    // ciphertext fixture. Keep payload validation by using the real wallet
+    // builder with deterministic test-only entropy.
+    let keys = wallet::RootSecret::from_bytes([0x51; 32]).derive();
+    let material = keys.poseidon2_v8_address(9).unwrap();
+    let args = wallet::poseidon2_v8_coinbase::build_poseidon2_v8_coinbase_args(
+        &material.shielded_address(),
+        consensus::reward::block_subsidy(1),
+        &mut StdRng::seed_from_u64(7),
+    )
+    .unwrap();
+    let bytes = args.encode();
+    let (action, _) = retained_coinbase_action(1, &bytes, &sha512_hex(&bytes));
     let expected = hex::encode(action.encode());
     let pending = std::collections::BTreeMap::from([(action.tx_hash, action)]);
     assert_eq!(

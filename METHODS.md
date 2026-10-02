@@ -390,6 +390,20 @@ include restart/fresh import. The refreshed installed four-gate semantic packet
 passes as `PASS_PR_ONLY`. These are changed-source technical results, not an
 activation or independent production-review signature.
 
+The October 2 bounded-verifier experiment compares the actual cached-source
+SMZA candidate verifier in fresh processes, including its required local
+audit. Five rounds of sixteen successful calls give median seconds of
+0.847343 serial, 0.838332 with one worker, 0.445481 with two and 0.244631 with
+four; four-worker peak RSS is 37,371,904 bytes. This 3.46x component result
+excludes node decoding, scheduling and state application and is not network
+TPS. Reproduce with the `rp05_verifier_bench` example and the commands and
+exact proof hashes in `.agent/RP05_BOUNDED_VERIFIER_MEASUREMENTS.json`.
+The separate genuine two-disjoint-spend test demonstrates ordered native
+block acceptance, restart, fresh import and duplicate/mutated-proof rejection
+without durable writes. Branch receipts and their source-pin limitations are
+in `.agent/RP05_BOUNDED_VERIFIER_VALIDATION.md`; they do not substitute for the
+final integrated-source qualification.
+
 The September20 known-opening note-tree repair is represented in the checked
 RP05 source package, current source-fixture vectors and retained affected
 lifecycle qualifications. The shared helper derives

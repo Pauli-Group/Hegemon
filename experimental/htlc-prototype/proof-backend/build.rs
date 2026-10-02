@@ -66,15 +66,20 @@ fn main() {
             }
             if module == "smallwood_poseidon2_v8_rng_refinement" {
                 // Explicit #[path] changes rustc's implicit nested-module base.
-                // Mechanically resolve its one child declaration; keep the
-                // original parent and mapping function bodies unchanged.
-                let mapping = tx_src.join(module).join("mapping.rs");
+                // Mechanically resolve its child declarations; keep the
+                // original parent and child function bodies unchanged.
                 let body = fs::read_to_string(&source).expect("RNG refinement source");
-                assert_eq!(body.matches("mod mapping;").count(), 1);
-                let resolved = body.replace(
-                    "mod mapping;",
-                    &format!("#[path = {:?}]\nmod mapping;", mapping.to_str().unwrap()),
-                );
+                let mut resolved = body;
+                for child in ["mapping", "tapes"] {
+                    let declaration = format!("mod {child};");
+                    assert_eq!(resolved.matches(&declaration).count(), 1);
+                    let path = tx_src.join(module).join(format!("{child}.rs"));
+                    assert!(path.is_file(), "real original RNG child required");
+                    resolved = resolved.replace(
+                        &declaration,
+                        &format!("#[path = {:?}]\n{declaration}", path.to_str().unwrap()),
+                    );
+                }
                 let generated = output.join("rng_refinement_facade.rs");
                 fs::write(&generated, resolved).expect("resolved RNG source facade");
                 facade.push_str(&format!("#[path = {:?}]\n", generated.to_str().unwrap()));

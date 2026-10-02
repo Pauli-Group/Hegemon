@@ -713,6 +713,17 @@ selector, so SMZ9 and SMZA framing, size limits, and activation checks cannot
 silently diverge. Explicit retained-test contexts are absent from ordinary
 builds and do not install production authority.
 
+V8 replay may verify up to four independent exact leaves ahead of ordered
+state application. The source-owned connector uses a shared FIFO pool of at
+most four workers for both window and direct calls; nested calls already on
+that pool execute directly to avoid deadlock. Cheap contextual decoding and
+existing action/byte limits precede dispatch. Results are consumed in canonical
+order with the existing root, nullifier and lifetime checks; worker completion
+order cannot authorize state writes or change the first reported failure.
+Stateful test verifiers keep the sequential default. Single-CPU hosts or pool
+initialization failure retain the legacy per-caller sequential fallback, not a
+claimed global worker bound. Proof bytes and verifier equations are unchanged.
+
 The RP05 mathematical interface is maintained in `formal/rp05`: four public
 entry modules expose soundness, adaptive privacy, authorization/nullifiers and
 history conservation without changing their explicit hypotheses. Its generated
