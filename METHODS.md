@@ -750,6 +750,53 @@ sequential, as are its other entropy phases: rejection refills complete before
 the next row starts, and errors stop before later calls. Subsequent parallel
 hashing performs no entropy calls. Historical q20 keeps its existing schedule,
 and its formal receipts are not q38 evidence.
+
+DECS prover storage is contiguous (`FixedWidthTapesV1`) rather than one allocation
+per tape. The sampler preserves each accounting/fill callback pair, request
+length, byte order, and callback-failure prefix. Size overflow or allocation
+failure returns an error before requesting entropy. Opened tapes are copied to
+the unchanged proof representation. Differential tests compare the previous
+partition helper and the contiguous sampler, including partial final batches,
+failed fills, repeated/nonmonotone openings, and bounded commitment roots.
+Run `cargo run --profile retained-proof -p transaction-circuit --example
+smallwood_tape_storage_bench -- legacy 8388608` and the same command with `flat`
+in separate processes to compare source-bound storage at SMZA geometry. The
+benchmark's allocation counters affect timing; use it for allocation/RSS
+comparisons, not an uninstrumented end-to-end proving-speed claim. Fresh proof
+and lifecycle verification is required for a changed implementation candidate.
+
+A 2026-10-02 macOS run at 8,388,608 tapes measured 8,390,657 allocations and
+742,981,632 peak resident bytes for the old representation, versus one allocation
+and 538,722,304 resident bytes for contiguous storage. Both made 2,048 entropy
+requests for 536,870,912 bytes and produced identical SHA-512 byte checksums.
+The changed implementation then generated and verified two fresh 163,665-byte
+SMZA proofs with unchanged 169,099-byte inline carriers. The retained socket
+test exercised real wallet HTTP recovery of the public fixture's coinbases,
+wallet-built spend input/path agreement, two consumed notes and two received
+outputs, encrypted-store reopen, and fresh-wallet replay through restarted
+and fresh nodes.
+
+A separate third socket episode used the funded durable wallet's self-spend
+builder, fresh `OsRng` outputs and actual source prover, producing a new
+163,217-byte proof in 42.35 seconds (168,651-byte inline carrier). That exact
+proof passed HTTP submission, authenticated PQ relay, mining, canonical-state
+verification, output recovery, wallet reopen, same-identity node restart and
+fresh-node/fresh-wallet replay. The two strict fixed-fixture proof episodes
+remain separate; the receipt records the new result as `wallet_proof_episode`
+and pins its exact statement/proof/carrier hashes. All three socket episodes
+passed in 74.33 seconds in this optimized local run. This is development
+coverage for the public fixture seed, not arbitrary wallet seeds, wallet crash
+recovery, cross-host funded transfers, or public-network activation. The
+explicit `poseidon2-v8-retained-test-support` context is absent from ordinary
+wallet builds and does not replace release authorization. No proof/carrier
+limit or production-capability setting changed.
+
+The older `docs/crypto/rp05_review_evidence.json` remains a source-pinned record
+of its original review and receipts; its Rust source pins are not relabelled as
+an independent review of this implementation follow-up. The mathematical Lean
+sources are unchanged; Rust implementation refinement remains the documented
+trust boundary.
+
 The full carrier cap is 169,772 bytes; the unchanged 64 MiB action-byte budget
 fits at most 395 such maximum-sized records before block overhead, separately
 from the unchanged 512-action count ceiling. This is a byte bound, not a

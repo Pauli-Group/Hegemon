@@ -13,10 +13,14 @@ use protocol_shielded_pool::{
         FAMILY_SHIELDED_POOL,
     },
     poseidon2_production_transport::{
-        decode_poseidon2_production_smz9_inline_args_exact, Poseidon2ProductionExpectedContext,
-        POSEIDON2_PRODUCTION_CIPHERTEXT_BYTES, POSEIDON2_PRODUCTION_SMZ9_TRANSPORT_PROFILE_ID,
-        POSEIDON2_PRODUCTION_TRANSPORT_ACTION_ID, POSEIDON2_PRODUCTION_TRANSPORT_BACKEND_ID,
-        POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET, POSEIDON2_PRODUCTION_TRANSPORT_FAMILY_ID,
+        decode_poseidon2_production_smz9_inline_args_exact,
+        decode_poseidon2_production_smza_inline_args_exact, DecodedPoseidon2ProductionInlineArgs,
+        Poseidon2ProductionExpectedContext, POSEIDON2_PRODUCTION_CIPHERTEXT_BYTES,
+        POSEIDON2_PRODUCTION_SMZ9_TRANSPORT_PROFILE_ID, POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES,
+        POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET,
+        POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID, POSEIDON2_PRODUCTION_TRANSPORT_ACTION_ID,
+        POSEIDON2_PRODUCTION_TRANSPORT_BACKEND_ID, POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET,
+        POSEIDON2_PRODUCTION_TRANSPORT_FAMILY_ID,
     },
     poseidon2_v8_coinbase::{MintPoseidon2V8CoinbaseArgs, POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES},
     types::CandidateArtifact,
@@ -52,9 +56,160 @@ const NOTE_OPENING_WORDS: usize = 18;
 const POSEIDON2_V8_NOTE_ROOT_HISTORY_LIMIT: usize = 100;
 const POSEIDON2_V8_DEFAULT_REPLAY_REQUIRED: &str =
     "V8 wallet mirror uses an incompatible legacy note-tree default; reset wallet sync state and replay from genesis";
+const PRODUCTION_DISABLED: &str = "SmallWood Poseidon2 V8 production capability is disabled";
+const POSEIDON2_V8_MAX_FIELD_SCALAR_HEIGHT: u64 = (1u64 << 63) - 1;
+
+/// An exact source-owned route, never inferred from an untrusted proof header.
+/// Sync and submission consume the same profile/domain selection and caps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WalletProofRoute {
+    Smz9,
+    Smza,
+}
+
+impl WalletProofRoute {
+    /// Framing alone grants no authorization; submission also checks height
+    /// and the complete source capability through the selection below.
+    #[cfg(feature = "rpc-client")]
+    pub(crate) fn source_framing() -> Result<Self, WalletError> {
+        let capability = protocol_versioning::smallwood_poseidon2_production_capability()
+            .ok_or(WalletError::InvalidState(PRODUCTION_DISABLED))?;
+        Self::from_source_tuple(capability.proof_profile_id(), capability.domain_set())
+    }
+
+    fn from_source_tuple(profile: u8, domain: u16) -> Result<Self, WalletError> {
+        match (profile, domain) {
+            (POSEIDON2_PRODUCTION_SMZ9_TRANSPORT_PROFILE_ID, POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET) => Ok(Self::Smz9),
+            (POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID, POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET) => Ok(Self::Smza),
+            _ => Err(WalletError::InvalidState("SmallWood Poseidon2 V8 production capability has an unsupported profile/domain tuple")),
+        }
+    }
+
+    pub(crate) fn max_inline_args_bytes(self) -> usize {
+        match self {
+            Self::Smz9 => transaction_circuit::smallwood_poseidon2_v8_security::SMALLWOOD_POSEIDON2_V8_MAX_ACTION_BYTES as usize,
+            Self::Smza => POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES,
+        }
+    }
+
+    fn decode_inline_args_exact<'a>(
+        self,
+        expected: Poseidon2ProductionExpectedContext,
+        encoded: &'a [u8],
+    ) -> Result<DecodedPoseidon2ProductionInlineArgs<'a>, WalletError> {
+        if encoded.len() > self.max_inline_args_bytes() {
+            return Err(WalletError::Serialization(
+                "V8 transfer action exceeds selected profile limit".into(),
+            ));
+        }
+        let decode = match self {
+            Self::Smz9 => decode_poseidon2_production_smz9_inline_args_exact,
+            Self::Smza => decode_poseidon2_production_smza_inline_args_exact,
+        };
+        decode(expected, encoded).map_err(|error| {
+            WalletError::Serialization(format!("decode V8 transfer action: {error}"))
+        })
+    }
+}
+
+pub(crate) fn poseidon2_v8_production_selection_at(
+    height: u64,
+) -> Result<(Poseidon2ProductionExpectedContext, WalletProofRoute), WalletError> {
+    let capability = protocol_versioning::smallwood_poseidon2_production_capability()
+        .ok_or(WalletError::InvalidState(PRODUCTION_DISABLED))?;
+    let source_digest = *SmallwoodPoseidon2V8SourceRelationFactory.expected_relation_digest();
+    if !capability.active_at(height)
+        || capability.binding()
+            != protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING
+        || capability.network_id() != protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NETWORK_ID
+        || capability.relation_digest() != source_digest
+        || capability.family_id() != POSEIDON2_PRODUCTION_TRANSPORT_FAMILY_ID
+        || capability.action_id() != POSEIDON2_PRODUCTION_TRANSPORT_ACTION_ID
+        || capability.backend_id() != POSEIDON2_PRODUCTION_TRANSPORT_BACKEND_ID
+        || capability.activation_height() > POSEIDON2_V8_MAX_FIELD_SCALAR_HEIGHT
+        || capability
+            .stablecoin_genesis_root()
+            .into_iter()
+            .any(|limb| limb >= FIELD_MODULUS_U64)
+        || capability
+            .note_genesis_root()
+            .into_iter()
+            .any(|limb| limb >= FIELD_MODULUS_U64)
+        || capability.note_genesis_root()
+            != protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NOTE_GENESIS_ROOT
+    {
+        return Err(WalletError::InvalidState(
+            "SmallWood Poseidon2 V8 production capability tuple is invalid or inactive",
+        ));
+    }
+    let route = WalletProofRoute::from_source_tuple(
+        capability.proof_profile_id(),
+        capability.domain_set(),
+    )?;
+    Poseidon2ProductionExpectedContext::new(capability.network_id(), source_digest)
+        .map(|context| (context, route))
+        .map_err(|error| {
+            WalletError::Serialization(format!(
+                "SmallWood Poseidon2 V8 production context rejected: {error}"
+            ))
+        })
+}
 
 pub type Poseidon2V8Digest = SmallwoodPoseidon2V8Digest;
 pub type Poseidon2V8Path = [Poseidon2V8Digest; SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH];
+
+/// Explicit local rehearsal context. This is absent from ordinary builds,
+/// does not install release authority, and cannot alter production resolution.
+/// Retained block actions must already have been verified by the test node;
+/// the wallet mirror checks their canonical framing and state projections.
+#[cfg(any(test, feature = "poseidon2-v8-retained-test-support"))]
+#[derive(Clone, Copy, Debug)]
+pub struct Poseidon2V8RetainedTestContext {
+    expected: Poseidon2ProductionExpectedContext,
+    route: WalletProofRoute,
+    genesis_hash: [u8; 32],
+    stablecoin_genesis_root: Poseidon2V8Digest,
+    activation_height: u64,
+    deactivation_height_exclusive: u64,
+}
+
+#[cfg(any(test, feature = "poseidon2-v8-retained-test-support"))]
+impl Poseidon2V8RetainedTestContext {
+    pub fn new(
+        expected: Poseidon2ProductionExpectedContext,
+        proof_profile_id: u8,
+        domain_set: u16,
+        genesis_hash: [u8; 32],
+        stablecoin_genesis_root: Poseidon2V8Digest,
+        activation_height: u64,
+        deactivation_height_exclusive: u64,
+    ) -> Result<Self, WalletError> {
+        let route = WalletProofRoute::from_source_tuple(proof_profile_id, domain_set)?;
+        if expected.network_id() != protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NETWORK_ID
+            || expected.relation_digest()
+                != *SmallwoodPoseidon2V8SourceRelationFactory.expected_relation_digest()
+            || genesis_hash == [0; 32]
+            || activation_height >= deactivation_height_exclusive
+            || deactivation_height_exclusive > POSEIDON2_V8_MAX_FIELD_SCALAR_HEIGHT
+        {
+            return Err(WalletError::InvalidState(
+                "invalid V8 retained-test context",
+            ));
+        }
+        ensure_digest(
+            "V8 retained-test stablecoin genesis root",
+            stablecoin_genesis_root,
+        )?;
+        Ok(Self {
+            expected,
+            route,
+            genesis_hash,
+            stablecoin_genesis_root,
+            activation_height,
+            deactivation_height_exclusive,
+        })
+    }
+}
 
 /// One canonical native block body fetched by hash from `chain_getBlock`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -241,6 +396,29 @@ impl Poseidon2V8WalletState {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "poseidon2-v8-retained-test-support"))]
+    pub(crate) fn ensure_genesis_for_retained_test(
+        &mut self,
+        context: Poseidon2V8RetainedTestContext,
+    ) -> Result<(), WalletError> {
+        self.ensure_genesis(context.genesis_hash)?;
+        if self.blocks.is_empty() {
+            if self.stablecoin_root.is_some()
+                && self.stablecoin_root != Some(context.stablecoin_genesis_root)
+            {
+                return Err(WalletError::InvalidState(
+                    "V8 retained-test genesis root mismatch",
+                ));
+            }
+            self.stablecoin_root = Some(context.stablecoin_genesis_root);
+        } else if self.blocks[0].stablecoin_root_before != Some(context.stablecoin_genesis_root) {
+            return Err(WalletError::InvalidState(
+                "V8 retained-test genesis root mismatch",
+            ));
+        }
+        self.validate()
+    }
+
     pub(crate) fn tip(&self) -> Result<Poseidon2V8CanonicalTip, WalletError> {
         let genesis = self.genesis_hash.ok_or(WalletError::InvalidState(
             "V8 wallet mirror is not initialized",
@@ -390,6 +568,43 @@ impl Poseidon2V8WalletState {
         block: &Poseidon2V8CanonicalBlock,
         keys: Option<&DerivedKeys>,
     ) -> Result<Poseidon2V8SyncDelta, WalletError> {
+        self.apply_block_with_transfer_decoder(block, keys, |wire| {
+            let (expected, route) = poseidon2_v8_production_selection_at(block.height)?;
+            decode_v8_transfer(wire, expected, route)
+        })
+    }
+
+    #[cfg(any(test, feature = "poseidon2-v8-retained-test-support"))]
+    pub(crate) fn apply_block_for_retained_test(
+        &mut self,
+        block: &Poseidon2V8CanonicalBlock,
+        keys: Option<&DerivedKeys>,
+        context: Poseidon2V8RetainedTestContext,
+    ) -> Result<Poseidon2V8SyncDelta, WalletError> {
+        if self.genesis_hash != Some(context.genesis_hash)
+            || block.height < context.activation_height
+            || block.height >= context.deactivation_height_exclusive
+            || self
+                .blocks
+                .first()
+                .map_or(self.stablecoin_root, |first| first.stablecoin_root_before)
+                != Some(context.stablecoin_genesis_root)
+        {
+            return Err(WalletError::InvalidState(
+                "V8 block is outside the retained-test context",
+            ));
+        }
+        self.apply_block_with_transfer_decoder(block, keys, |wire| {
+            decode_v8_transfer(wire, context.expected, context.route)
+        })
+    }
+
+    fn apply_block_with_transfer_decoder(
+        &mut self,
+        block: &Poseidon2V8CanonicalBlock,
+        keys: Option<&DerivedKeys>,
+        decode_transfer: impl Fn(PendingActionWire) -> Result<DecodedPoseidon2V8Action, WalletError>,
+    ) -> Result<Poseidon2V8SyncDelta, WalletError> {
         let tip = self.tip()?;
         let expected_height = tip
             .height
@@ -413,7 +628,7 @@ impl Poseidon2V8WalletState {
         let mut delta = Poseidon2V8SyncDelta::default();
         let mut introduced_nullifiers = Vec::new();
         for encoded in &block.action_bytes {
-            let Some(action) = decode_v8_action_exact(encoded)? else {
+            let Some(action) = decode_v8_action_exact(encoded, &decode_transfer)? else {
                 continue;
             };
             match action {
@@ -777,13 +992,16 @@ impl Poseidon2V8WalletState {
     }
 }
 
-fn decode_v8_action_exact(encoded: &[u8]) -> Result<Option<DecodedPoseidon2V8Action>, WalletError> {
+fn decode_v8_action_exact(
+    encoded: &[u8],
+    decode_transfer: &impl Fn(PendingActionWire) -> Result<DecodedPoseidon2V8Action, WalletError>,
+) -> Result<Option<DecodedPoseidon2V8Action>, WalletError> {
     let wire = decode_canonical_action_exact(encoded)?;
     if wire.family_id != FAMILY_SHIELDED_POOL {
         return Ok(None);
     }
     match wire.action_id {
-        ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE => decode_v8_transfer(wire).map(Some),
+        ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE => decode_transfer(wire).map(Some),
         ACTION_MINT_POSEIDON2_V8_COINBASE => decode_v8_coinbase(wire).map(Some),
         _ => Ok(None),
     }
@@ -836,7 +1054,11 @@ fn decode_canonical_action_exact(encoded: &[u8]) -> Result<PendingActionWire, Wa
     Ok(wire)
 }
 
-fn decode_v8_transfer(wire: PendingActionWire) -> Result<DecodedPoseidon2V8Action, WalletError> {
+fn decode_v8_transfer(
+    wire: PendingActionWire,
+    expected: Poseidon2ProductionExpectedContext,
+    route: WalletProofRoute,
+) -> Result<DecodedPoseidon2V8Action, WalletError> {
     let expected_binding: PendingVersionBinding =
         protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING.into();
     if wire.binding != expected_binding
@@ -851,11 +1073,7 @@ fn decode_v8_transfer(wire: PendingActionWire) -> Result<DecodedPoseidon2V8Actio
             "noncanonical V8 transfer outer state".into(),
         ));
     }
-    let expected = poseidon2_v8_expected_context()?;
-    let decoded = decode_poseidon2_production_smz9_inline_args_exact(expected, &wire.public_args)
-        .map_err(|error| {
-        WalletError::Serialization(format!("decode V8 transfer action: {error}"))
-    })?;
+    let decoded = route.decode_inline_args_exact(expected, &wire.public_args)?;
     let leaf = decoded.envelope().decoded_native_leaf();
     let statement =
         SmallwoodPoseidon2V8PublicStatement::try_from_public_bytes(leaf.statement_bytes())
@@ -870,7 +1088,7 @@ fn decode_v8_transfer(wire: PendingActionWire) -> Result<DecodedPoseidon2V8Actio
     })?;
     let observed_intent = core::array::from_fn(|limb| {
         leaf.relation_balance_binding_limb(limb)
-            .expect("SMZ9 fixes the seven-limb relation binding")
+            .expect("V8 profiles fix the seven-limb relation binding")
     });
     if observed_intent != expected_intent {
         return Err(WalletError::Serialization(
@@ -987,14 +1205,6 @@ fn pending_action_hash(wire: &PendingActionWire) -> [u8; 48] {
     blake2b_384_domain_hash(domains::ACTION_ID_V3, [body.as_slice()])
 }
 
-fn poseidon2_v8_expected_context() -> Result<Poseidon2ProductionExpectedContext, WalletError> {
-    Poseidon2ProductionExpectedContext::new(
-        protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NETWORK_ID,
-        *SmallwoodPoseidon2V8SourceRelationFactory.expected_relation_digest(),
-    )
-    .map_err(|error| WalletError::Serialization(format!("invalid V8 context: {error}")))
-}
-
 fn recover_coinbase_note(
     args: &MintPoseidon2V8CoinbaseArgs,
     keys: &DerivedKeys,
@@ -1105,18 +1315,8 @@ fn production_stablecoin_genesis(
     let Some(capability) = protocol_versioning::smallwood_poseidon2_production_capability() else {
         return Ok(None);
     };
-    let source_digest = *SmallwoodPoseidon2V8SourceRelationFactory.expected_relation_digest();
-    if !capability.active_at(capability.activation_height())
-        || capability.binding()
-            != protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING
-        || capability.network_id() != protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NETWORK_ID
-        || capability.relation_digest() != source_digest
-        || capability.family_id() != POSEIDON2_PRODUCTION_TRANSPORT_FAMILY_ID
-        || capability.action_id() != POSEIDON2_PRODUCTION_TRANSPORT_ACTION_ID
-        || capability.coinbase_action_id() != ACTION_MINT_POSEIDON2_V8_COINBASE
-        || capability.backend_id() != POSEIDON2_PRODUCTION_TRANSPORT_BACKEND_ID
-        || capability.proof_profile_id() != POSEIDON2_PRODUCTION_SMZ9_TRANSPORT_PROFILE_ID
-        || capability.domain_set() != POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET
+    poseidon2_v8_production_selection_at(capability.activation_height())?;
+    if capability.coinbase_action_id() != ACTION_MINT_POSEIDON2_V8_COINBASE
         || capability.activation_genesis_hash() != genesis_hash
         || capability.note_genesis_root() != empty_note_root()
     {
@@ -1363,7 +1563,8 @@ mod tests {
 
     use protocol_shielded_pool::poseidon2_production_transport::{
         encode_poseidon2_production_smz9_envelope, encode_poseidon2_production_smz9_inline_args,
-        encode_poseidon2_production_smz9_native_leaf,
+        encode_poseidon2_production_smz9_native_leaf, encode_poseidon2_production_smza_envelope,
+        encode_poseidon2_production_smza_inline_args, encode_poseidon2_production_smza_native_leaf,
     };
 
     use crate::{
@@ -1385,6 +1586,34 @@ mod tests {
     const REPLACEMENT_3: [u8; 32] = [0x23; 32];
     const SOURCE_DIVERSIFIER: u32 = 9;
     const TEST_STABLECOIN_ROOT: Poseidon2V8Digest = [1, 2, 3, 4, 5, 6, 7];
+
+    fn retained_test_context(route: WalletProofRoute) -> Poseidon2V8RetainedTestContext {
+        let expected = Poseidon2ProductionExpectedContext::new(
+            protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NETWORK_ID,
+            *SmallwoodPoseidon2V8SourceRelationFactory.expected_relation_digest(),
+        )
+        .unwrap();
+        let (profile, domain) = match route {
+            WalletProofRoute::Smz9 => (
+                POSEIDON2_PRODUCTION_SMZ9_TRANSPORT_PROFILE_ID,
+                POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET,
+            ),
+            WalletProofRoute::Smza => (
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID,
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET,
+            ),
+        };
+        Poseidon2V8RetainedTestContext::new(
+            expected,
+            profile,
+            domain,
+            GENESIS,
+            TEST_STABLECOIN_ROOT,
+            1,
+            4,
+        )
+        .unwrap()
+    }
 
     fn coinbase_args(root: &RootSecret, value: u64, seed: u64) -> MintPoseidon2V8CoinbaseArgs {
         let material = root
@@ -1438,15 +1667,42 @@ mod tests {
     fn transfer_inline_args(
         material: &Poseidon2V8SpendMaterial,
         relation_binding: Poseidon2V8Digest,
+        route: WalletProofRoute,
     ) -> Vec<u8> {
-        let expected = poseidon2_v8_expected_context().unwrap();
+        transfer_inline_args_with_proof_len(material, relation_binding, route, 64)
+    }
+
+    // These bytes exercise transport/readback only. They are not proof evidence.
+    fn transfer_inline_args_with_proof_len(
+        material: &Poseidon2V8SpendMaterial,
+        relation_binding: Poseidon2V8Digest,
+        route: WalletProofRoute,
+        proof_len: usize,
+    ) -> Vec<u8> {
+        let expected = retained_test_context(route).expected;
         let ciphertexts = [
             material.inline_ciphertexts.ciphertexts[0].as_ref(),
             material.inline_ciphertexts.ciphertexts[1].as_ref(),
         ];
-        let mut proof = vec![0xa5; 64];
-        proof[..4].copy_from_slice(b"SMZ9");
-        let native_leaf = encode_poseidon2_production_smz9_native_leaf(
+        let magic = match route {
+            WalletProofRoute::Smz9 => b"SMZ9",
+            WalletProofRoute::Smza => b"SMZA",
+        };
+        let encode_leaf = match route {
+            WalletProofRoute::Smz9 => encode_poseidon2_production_smz9_native_leaf,
+            WalletProofRoute::Smza => encode_poseidon2_production_smza_native_leaf,
+        };
+        let encode_envelope = match route {
+            WalletProofRoute::Smz9 => encode_poseidon2_production_smz9_envelope,
+            WalletProofRoute::Smza => encode_poseidon2_production_smza_envelope,
+        };
+        let encode_inline_args = match route {
+            WalletProofRoute::Smz9 => encode_poseidon2_production_smz9_inline_args,
+            WalletProofRoute::Smza => encode_poseidon2_production_smza_inline_args,
+        };
+        let mut proof = vec![0xa5; proof_len];
+        proof[..4].copy_from_slice(magic);
+        let native_leaf = encode_leaf(
             expected,
             &material.statement.to_public_words(),
             &relation_binding,
@@ -1454,15 +1710,16 @@ mod tests {
             &proof,
         )
         .unwrap();
-        let envelope = encode_poseidon2_production_smz9_envelope(expected, &native_leaf).unwrap();
-        encode_poseidon2_production_smz9_inline_args(expected, &envelope).unwrap()
+        let envelope = encode_envelope(expected, &native_leaf).unwrap();
+        encode_inline_args(expected, &envelope).unwrap()
     }
 
     fn transfer_action_with_binding(
         material: &Poseidon2V8SpendMaterial,
         relation_binding: Poseidon2V8Digest,
+        route: WalletProofRoute,
     ) -> Vec<u8> {
-        let inline_args = transfer_inline_args(material, relation_binding);
+        let inline_args = transfer_inline_args(material, relation_binding, route);
         let raw_ciphertexts = material
             .inline_ciphertexts
             .ciphertexts
@@ -1493,10 +1750,11 @@ mod tests {
         wire.encode()
     }
 
-    fn transfer_action(material: &Poseidon2V8SpendMaterial) -> Vec<u8> {
+    fn transfer_action(material: &Poseidon2V8SpendMaterial, route: WalletProofRoute) -> Vec<u8> {
         transfer_action_with_binding(
             material,
             material.statement.expected_action_intent().unwrap(),
+            route,
         )
     }
 
@@ -1539,6 +1797,259 @@ mod tests {
             }
         );
         store.poseidon2_v8_tip().unwrap()
+    }
+
+    #[test]
+    fn source_profile_selection_accepts_only_exact_profile_domain_pairs() {
+        assert_eq!(
+            WalletProofRoute::from_source_tuple(
+                POSEIDON2_PRODUCTION_SMZ9_TRANSPORT_PROFILE_ID,
+                POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET,
+            )
+            .unwrap(),
+            WalletProofRoute::Smz9
+        );
+        assert_eq!(
+            WalletProofRoute::from_source_tuple(
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID,
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET,
+            )
+            .unwrap(),
+            WalletProofRoute::Smza
+        );
+        for (profile, domain) in [
+            (
+                POSEIDON2_PRODUCTION_SMZ9_TRANSPORT_PROFILE_ID,
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET,
+            ),
+            (
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID,
+                POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET,
+            ),
+            (0, POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET),
+            (u8::MAX, POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET),
+            (POSEIDON2_PRODUCTION_SMZ9_TRANSPORT_PROFILE_ID, 0),
+            (POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID, u16::MAX),
+        ] {
+            assert!(WalletProofRoute::from_source_tuple(profile, domain).is_err());
+        }
+    }
+
+    #[test]
+    fn both_profile_sync_decoders_preserve_context_caps_fee_and_ciphertext_checks() {
+        let directory = tempdir().unwrap();
+        let root = RootSecret::from_bytes([0x51; 32]);
+        let store = WalletStore::create_from_root(
+            directory.path().join("wallet.dat"),
+            PASSPHRASE,
+            root.clone(),
+        )
+        .unwrap();
+        seed_two_owned_coinbases(&store, &root);
+        let spend =
+            build_poseidon2_v8_wallet_self_spend(&store, [4, 7], &mut StdRng::seed_from_u64(203))
+                .unwrap();
+        let binding = spend.material.statement.expected_action_intent().unwrap();
+        for route in [WalletProofRoute::Smz9, WalletProofRoute::Smza] {
+            let context = retained_test_context(route).expected;
+            let encoded = transfer_action(&spend.material, route);
+            let wire = decode_canonical_action_exact(&encoded).unwrap();
+            let decoded = decode_v8_transfer(wire.clone(), context, route).unwrap();
+            let DecodedPoseidon2V8Action::Transfer { statement, .. } = decoded else {
+                panic!("transfer decoded as coinbase");
+            };
+            assert_eq!(statement, spend.material.statement);
+            let other_route = match route {
+                WalletProofRoute::Smz9 => WalletProofRoute::Smza,
+                WalletProofRoute::Smza => WalletProofRoute::Smz9,
+            };
+            assert!(decode_v8_transfer(wire.clone(), context, other_route).is_err());
+            for wrong_context in [
+                Poseidon2ProductionExpectedContext::new(
+                    context.network_id() + 1,
+                    context.relation_digest(),
+                )
+                .unwrap(),
+                Poseidon2ProductionExpectedContext::new(context.network_id(), [0x42; 48]).unwrap(),
+            ] {
+                assert!(decode_v8_transfer(wire.clone(), wrong_context, route).is_err());
+            }
+            let mut bad_fee = wire.clone();
+            bad_fee.fee += 1;
+            assert!(decode_v8_transfer(bad_fee, context, route).is_err());
+            let mut bad_hash = wire.clone();
+            bad_hash.ciphertext_hashes[0][0] ^= 1;
+            assert!(decode_v8_transfer(bad_hash, context, route).is_err());
+            let mut bad_size = wire.clone();
+            bad_size.ciphertext_sizes[0] += 1;
+            assert!(decode_v8_transfer(bad_size, context, route).is_err());
+            let mut missing_metadata = wire.clone();
+            missing_metadata.ciphertext_hashes.pop();
+            missing_metadata.ciphertext_sizes.pop();
+            assert!(decode_v8_transfer(missing_metadata, context, route).is_err());
+            let mut trailing = wire.clone();
+            trailing.public_args.push(0);
+            assert!(decode_v8_transfer(trailing, context, route).is_err());
+            let over_cap = vec![0; route.max_inline_args_bytes() + 1];
+            assert!(route
+                .decode_inline_args_exact(context, &over_cap)
+                .unwrap_err()
+                .to_string()
+                .contains("selected profile limit"));
+        }
+        let smza = transfer_inline_args_with_proof_len(
+            &spend.material, binding, WalletProofRoute::Smza,
+            protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_SMZA_MAX_PROOF_BYTES,
+        );
+        assert_eq!(smza.len(), WalletProofRoute::Smza.max_inline_args_bytes());
+        let expected = retained_test_context(WalletProofRoute::Smza).expected;
+        assert!(WalletProofRoute::Smza
+            .decode_inline_args_exact(expected, &smza)
+            .is_ok());
+        assert!(WalletProofRoute::Smz9
+            .decode_inline_args_exact(expected, &smza)
+            .is_err());
+    }
+
+    #[test]
+    fn retained_context_and_production_route_rejections_preserve_durable_state() {
+        let directory = tempdir().unwrap();
+        let root = RootSecret::from_bytes([0x51; 32]);
+        let path = directory.path().join("wallet.dat");
+        let store = WalletStore::create_from_root(&path, PASSPHRASE, root.clone()).unwrap();
+        let before_tip = seed_two_owned_coinbases(&store, &root);
+        let before_notes = store.poseidon2_v8_owned_notes().unwrap();
+        let spend =
+            build_poseidon2_v8_wallet_self_spend(&store, [4, 7], &mut StdRng::seed_from_u64(204))
+                .unwrap();
+        let block = canonical_block(
+            3,
+            BLOCK_3,
+            BLOCK_2,
+            vec![transfer_action(&spend.material, WalletProofRoute::Smza)],
+        );
+        assert!(protocol_versioning::smallwood_poseidon2_production_capability().is_none());
+        assert!(store
+            .apply_poseidon2_v8_canonical_block(&block)
+            .unwrap_err()
+            .to_string()
+            .contains("capability is disabled"));
+        let context = retained_test_context(WalletProofRoute::Smza);
+        for wrong_context in [
+            Poseidon2V8RetainedTestContext {
+                genesis_hash: [0x44; 32],
+                ..context
+            },
+            Poseidon2V8RetainedTestContext {
+                stablecoin_genesis_root: [7; 7],
+                ..context
+            },
+            Poseidon2V8RetainedTestContext {
+                activation_height: 4,
+                deactivation_height_exclusive: 5,
+                ..context
+            },
+            Poseidon2V8RetainedTestContext {
+                deactivation_height_exclusive: 3,
+                ..context
+            },
+            retained_test_context(WalletProofRoute::Smz9),
+        ] {
+            assert!(store
+                .apply_poseidon2_v8_canonical_block_for_retained_test(&block, wrong_context)
+                .is_err());
+            assert_eq!(store.poseidon2_v8_tip().unwrap(), before_tip);
+            assert_eq!(store.poseidon2_v8_owned_notes().unwrap(), before_notes);
+        }
+        drop(store);
+        let reopened = WalletStore::open(&path, PASSPHRASE).unwrap();
+        assert_eq!(reopened.poseidon2_v8_tip().unwrap(), before_tip);
+        assert_eq!(reopened.poseidon2_v8_owned_notes().unwrap(), before_notes);
+        let delta = reopened
+            .apply_poseidon2_v8_canonical_block_for_retained_test(&block, context)
+            .unwrap();
+        assert_eq!(delta.recovered, 2);
+        assert_eq!(delta.spent, 2);
+    }
+
+    #[test]
+    fn retained_test_context_rejects_mismatched_source_and_unbounded_height() {
+        let context = retained_test_context(WalletProofRoute::Smza);
+        for (expected, profile, domain, genesis, stablecoin, start, end) in [
+            (
+                context.expected,
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID,
+                POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET,
+                GENESIS,
+                TEST_STABLECOIN_ROOT,
+                1,
+                4,
+            ),
+            (
+                Poseidon2ProductionExpectedContext::new(
+                    context.expected.network_id() + 1,
+                    context.expected.relation_digest(),
+                )
+                .unwrap(),
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID,
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET,
+                GENESIS,
+                TEST_STABLECOIN_ROOT,
+                1,
+                4,
+            ),
+            (
+                Poseidon2ProductionExpectedContext::new(context.expected.network_id(), [0x42; 48])
+                    .unwrap(),
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID,
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET,
+                GENESIS,
+                TEST_STABLECOIN_ROOT,
+                1,
+                4,
+            ),
+            (
+                context.expected,
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID,
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET,
+                [0; 32],
+                TEST_STABLECOIN_ROOT,
+                1,
+                4,
+            ),
+            (
+                context.expected,
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID,
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET,
+                GENESIS,
+                [FIELD_MODULUS_U64; 7],
+                1,
+                4,
+            ),
+            (
+                context.expected,
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID,
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET,
+                GENESIS,
+                TEST_STABLECOIN_ROOT,
+                4,
+                4,
+            ),
+            (
+                context.expected,
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID,
+                POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET,
+                GENESIS,
+                TEST_STABLECOIN_ROOT,
+                1,
+                u64::MAX,
+            ),
+        ] {
+            assert!(Poseidon2V8RetainedTestContext::new(
+                expected, profile, domain, genesis, stablecoin, start, end
+            )
+            .is_err());
+        }
     }
 
     #[test]
@@ -1608,6 +2119,15 @@ mod tests {
 
     #[test]
     fn owned_actions_survive_restart_build_spend_and_rollback_exactly() {
+        owned_actions_survive_restart_for_route(WalletProofRoute::Smz9);
+    }
+
+    #[test]
+    fn smza_owned_actions_survive_restart_build_spend_and_rollback_exactly() {
+        owned_actions_survive_restart_for_route(WalletProofRoute::Smza);
+    }
+
+    fn owned_actions_survive_restart_for_route(route: WalletProofRoute) {
         let directory = tempdir().unwrap();
         let path = directory.path().join("wallet.dat");
         let root = RootSecret::from_bytes([0x51; 32]);
@@ -1654,15 +2174,13 @@ mod tests {
             );
         }
 
-        let transfer = transfer_action(&spend.material);
+        let transfer = transfer_action(&spend.material, route);
         assert_eq!(
             store
-                .apply_poseidon2_v8_canonical_block(&canonical_block(
-                    3,
-                    BLOCK_3,
-                    BLOCK_2,
-                    vec![transfer],
-                ))
+                .apply_poseidon2_v8_canonical_block_for_retained_test(
+                    &canonical_block(3, BLOCK_3, BLOCK_2, vec![transfer],),
+                    retained_test_context(route)
+                )
                 .unwrap(),
             Poseidon2V8SyncDelta {
                 commitments: 2,
@@ -1769,6 +2287,11 @@ mod tests {
 
     #[test]
     fn action_id_commitment_and_relation_binding_mutations_fail_atomically() {
+        action_mutations_fail_atomically_for_route(WalletProofRoute::Smz9);
+        action_mutations_fail_atomically_for_route(WalletProofRoute::Smza);
+    }
+
+    fn action_mutations_fail_atomically_for_route(route: WalletProofRoute) {
         let directory = tempdir().unwrap();
         let path = directory.path().join("wallet.dat");
         let root = RootSecret::from_bytes([0x51; 32]);
@@ -1808,14 +2331,12 @@ mod tests {
                 .unwrap();
         let mut wrong_binding = spend.material.statement.expected_action_intent().unwrap();
         wrong_binding[0] ^= 1;
-        let bad_transfer = transfer_action_with_binding(&spend.material, wrong_binding);
+        let bad_transfer = transfer_action_with_binding(&spend.material, wrong_binding, route);
         assert!(store
-            .apply_poseidon2_v8_canonical_block(&canonical_block(
-                3,
-                BLOCK_3,
-                BLOCK_2,
-                vec![bad_transfer],
-            ))
+            .apply_poseidon2_v8_canonical_block_for_retained_test(
+                &canonical_block(3, BLOCK_3, BLOCK_2, vec![bad_transfer],),
+                retained_test_context(route)
+            )
             .is_err());
         assert_eq!(store.poseidon2_v8_tip().unwrap(), funded_tip);
         assert!(store

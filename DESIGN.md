@@ -705,6 +705,14 @@ differential tests and measured development runs are described in METHODS;
 they do not establish universal implementation or oracle-trace refinement,
 and do not authorize this proof family for production.
 
+Prover-only DECS randomness tapes use one checked contiguous allocation, indexed
+by canonical leaf position. Entropy is still requested and accounted for in the
+same fixed-size batches; opened tapes retain the existing proof serialization.
+Wallet submission and canonical sync share one source-capability profile/domain
+selector, so SMZ9 and SMZA framing, size limits, and activation checks cannot
+silently diverge. Explicit retained-test contexts are absent from ordinary
+builds and do not install production authority.
+
 The RP05 mathematical interface is maintained in `formal/rp05`: four public
 entry modules expose soundness, adaptive privacy, authorization/nullifiers and
 history conservation without changing their explicit hypotheses. Its generated

@@ -13,9 +13,7 @@
 use protocol_shielded_pool::poseidon2_production_transport::{
     decode_poseidon2_production_smz9_native_leaf_exact, encode_poseidon2_production_smz9_envelope,
     encode_poseidon2_production_smz9_inline_args, encode_poseidon2_production_smz9_native_leaf,
-    POSEIDON2_PRODUCTION_SMZ9_INNER_PROOF_MAGIC, POSEIDON2_PRODUCTION_SMZ9_TRANSPORT_PROFILE_ID,
-    POSEIDON2_PRODUCTION_TRANSPORT_ACTION_ID, POSEIDON2_PRODUCTION_TRANSPORT_BACKEND_ID,
-    POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET, POSEIDON2_PRODUCTION_TRANSPORT_FAMILY_ID,
+    POSEIDON2_PRODUCTION_SMZ9_INNER_PROOF_MAGIC,
 };
 use transaction_circuit::{
     compile_and_prove_smallwood_poseidon2_v8_candidate, smallwood_poseidon2_v8_exact_action_bytes,
@@ -23,6 +21,7 @@ use transaction_circuit::{
     SmallwoodPoseidon2V8VerifierInput, SmallwoodPoseidon2V8VerifierRelationFactory,
 };
 
+pub(crate) use crate::poseidon2_v8_sync::{poseidon2_v8_production_selection_at, WalletProofRoute};
 use crate::prover::FreshTransactionProofAuthority;
 use crate::{ActionId48, NodeRpcClient, WalletError, WalletStore};
 
@@ -48,56 +47,10 @@ pub const SMALLWOOD_POSEIDON2_V8_PROJECTED_PENDING_ACTION_BYTES: usize =
 pub const SMALLWOOD_POSEIDON2_V8_WALLET_MAX_ACTION_BYTES: usize =
     SMALLWOOD_POSEIDON2_V8_WALLET_MAX_INLINE_ARGS_BYTES;
 
-const PRODUCTION_DISABLED: &str = "SmallWood Poseidon2 V8 production capability is disabled";
-const POSEIDON2_V8_MAX_FIELD_SCALAR_HEIGHT: u64 = (1u64 << 63) - 1;
-
 pub(crate) fn poseidon2_v8_production_context_at(
     height: u64,
 ) -> Result<Poseidon2ProductionExpectedContext, WalletError> {
     poseidon2_v8_production_selection_at(height).map(|(context, _)| context)
-}
-
-pub(crate) fn poseidon2_v8_production_selection_at(
-    height: u64,
-) -> Result<(Poseidon2ProductionExpectedContext, WalletProofRoute), WalletError> {
-    let capability = protocol_versioning::smallwood_poseidon2_production_capability()
-        .ok_or(WalletError::InvalidState(PRODUCTION_DISABLED))?;
-    let source_digest = *SmallwoodPoseidon2V8SourceRelationFactory.expected_relation_digest();
-    if !capability.active_at(height)
-        || capability.binding()
-            != protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING
-        || capability.network_id() != protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NETWORK_ID
-        || capability.relation_digest() != source_digest
-        || capability.family_id() != POSEIDON2_PRODUCTION_TRANSPORT_FAMILY_ID
-        || capability.action_id() != POSEIDON2_PRODUCTION_TRANSPORT_ACTION_ID
-        || capability.backend_id() != POSEIDON2_PRODUCTION_TRANSPORT_BACKEND_ID
-        || capability.activation_height() > POSEIDON2_V8_MAX_FIELD_SCALAR_HEIGHT
-        || capability
-            .stablecoin_genesis_root()
-            .into_iter()
-            .any(|limb| limb >= transaction_circuit::constants::FIELD_MODULUS_U64)
-        || capability
-            .note_genesis_root()
-            .into_iter()
-            .any(|limb| limb >= transaction_circuit::constants::FIELD_MODULUS_U64)
-        || capability.note_genesis_root()
-            != protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NOTE_GENESIS_ROOT
-    {
-        return Err(WalletError::InvalidState(
-            "SmallWood Poseidon2 V8 production capability tuple is invalid or inactive",
-        ));
-    }
-    let route = WalletProofRoute::from_source_tuple(
-        capability.proof_profile_id(),
-        capability.domain_set(),
-    )?;
-    Poseidon2ProductionExpectedContext::new(capability.network_id(), source_digest)
-        .map(|context| (context, route))
-        .map_err(|error| {
-            WalletError::Serialization(format!(
-                "SmallWood Poseidon2 V8 production context rejected: {error}"
-            ))
-        })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -165,43 +118,6 @@ trait Poseidon2V8WalletProofEngine {
 
 #[derive(Clone, Copy, Debug, Default)]
 struct SourcePoseidon2V8WalletProofEngine;
-
-/// An explicit source-owned candidate route; callers cannot downgrade a proof
-/// by changing a numeric profile or falling back after verification failure.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum WalletProofRoute {
-    Smz9,
-    Smza,
-}
-
-impl WalletProofRoute {
-    /// Resolve only framing before RPC; full context and height authorization
-    /// must still pass `poseidon2_v8_production_selection_at` before submission.
-    pub(crate) fn source_framing() -> Result<Self, WalletError> {
-        let capability = protocol_versioning::smallwood_poseidon2_production_capability()
-            .ok_or(WalletError::InvalidState(PRODUCTION_DISABLED))?;
-        Self::from_source_tuple(capability.proof_profile_id(), capability.domain_set())
-    }
-
-    fn from_source_tuple(profile: u8, domain: u16) -> Result<Self, WalletError> {
-        use protocol_shielded_pool::poseidon2_production_transport::{
-            POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET,
-            POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID,
-        };
-        match (profile, domain) {
-            (POSEIDON2_PRODUCTION_SMZ9_TRANSPORT_PROFILE_ID, POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET) => Ok(Self::Smz9),
-            (POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID, POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET) => Ok(Self::Smza),
-            _ => Err(WalletError::InvalidState("SmallWood Poseidon2 V8 production capability has an unsupported profile/domain tuple")),
-        }
-    }
-
-    fn max_inline_args_bytes(self) -> usize {
-        match self {
-            Self::Smz9 => SMALLWOOD_POSEIDON2_V8_WALLET_MAX_INLINE_ARGS_BYTES,
-            Self::Smza => protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES,
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, Default)]
 struct SourcePoseidon2V8SmzaWalletProofEngine;
@@ -1112,7 +1028,9 @@ mod tests {
         assert!(!protocol_versioning::smallwood_poseidon2_production_authorized());
         assert!(matches!(
             poseidon2_v8_production_context_at(0),
-            Err(WalletError::InvalidState(PRODUCTION_DISABLED))
+            Err(WalletError::InvalidState(
+                "SmallWood Poseidon2 V8 production capability is disabled"
+            ))
         ));
     }
 }

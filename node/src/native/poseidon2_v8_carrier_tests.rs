@@ -15,6 +15,8 @@ const RETAINED_CARRIER_BASE_ENV: &str = "HEGEMON_TEST_RETAINED_SMZ9_CHILD_BASE_P
 const RETAINED_CARRIER_P2P_ENV: &str = "HEGEMON_TEST_RETAINED_SMZ9_CHILD_P2P_ADDR";
 const RETAINED_CARRIER_ARTIFACT_ENV: &str = "HEGEMON_TEST_RETAINED_SMZ9_CHILD_ARTIFACT_ROLE";
 const RETAINED_CARRIER_MAX_LINE: usize = 8 * 1024 * 1024;
+const RETAINED_CARRIER_MAX_WALLET_COMMAND_LINE: usize =
+    2 * protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES + 4096;
 const RETAINED_CARRIER_MAX_EVENTS: usize = 512;
 const RETAINED_CARRIER_POW_BITS: u32 = 0x207f_ffff;
 const RETAINED_CARRIER_STAGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
@@ -24,10 +26,31 @@ type RetainedCarrierResult<T> = std::result::Result<T, String>;
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum RetainedCarrierCommand {
     Snapshot {},
-    MineCoinbase { index: u8 },
+    MineCoinbase {
+        index: u8,
+    },
+    SelectWalletArtifact {
+        artifact: RetainedCarrierWalletArtifactSelection,
+    },
     MineExpected {},
     Quiesce {},
     Shutdown {},
+}
+
+/// Exact public carrier selection within the already guarded local child.
+/// It changes test observations only; node admission still verifies the proof.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetainedCarrierWalletArtifactSelection {
+    inline_args_hex: String,
+    statement_sha512: String,
+    pending_action_sha512: String,
+    native_leaf_sha512: String,
+    proof_sha512: String,
+    network_id: u32,
+    relation_digest_hex: String,
+    genesis_hash_hex: String,
+    parent_height: u64,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -36,6 +59,14 @@ struct RetainedCarrierRequest {
     session: String,
     id: u64,
     command: RetainedCarrierCommand,
+}
+
+fn retained_carrier_command_line_limit(command: &RetainedCarrierCommand) -> usize {
+    if matches!(command, RetainedCarrierCommand::SelectWalletArtifact { .. }) {
+        RETAINED_CARRIER_MAX_WALLET_COMMAND_LINE
+    } else {
+        4096
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -770,7 +801,7 @@ fn retained_rp03_socket_child() {
             overflow: false,
         });
     }
-    let artifact = if retained_carrier_smza_selected() {
+    let mut artifact = if retained_carrier_smza_selected() {
         load_retained_smza_socket_artifact(&manifest, &artifact_role, production)
     } else {
         let retained_manifest =
@@ -817,12 +848,17 @@ fn retained_rp03_socket_child() {
     };
     retained_carrier_reply(&session, 0, Ok(ready));
     let mut last_id = 0;
+    let mut wallet_artifact_selected = false;
     loop {
-        let line = retained_carrier_line(&mut input, 4096)
+        let line = retained_carrier_line(&mut input, RETAINED_CARRIER_MAX_WALLET_COMMAND_LINE)
             .expect("bounded parent control line")
             .expect("parent must request clean shutdown before EOF");
         let request: RetainedCarrierRequest =
             serde_json::from_slice(&line).expect("exact child control grammar");
+        assert!(
+            line.len() < retained_carrier_command_line_limit(&request.command),
+            "ordinary control commands retain their exact smaller bound"
+        );
         assert_eq!(request.session, session, "foreign child-control session");
         assert!(
             request.id > last_id && request.id != u64::MAX,
@@ -838,6 +874,43 @@ fn retained_rp03_socket_child() {
                 retained_carrier_wait_for_stable_idle(|| {
                     retained_carrier_snapshot(&artifact, production.expected_context())
                 })
+            }
+            RetainedCarrierCommand::SelectWalletArtifact {
+                artifact: selection,
+            } => {
+                // This local test command neither imports a block nor stages
+                // an action. Exact source verification precedes observation
+                // rebinding, and the normal RPC/PQ admission is still required.
+                let selected = if wallet_artifact_selected {
+                    Err("wallet artifact may be selected only once per guarded child".into())
+                } else {
+                    retained_carrier_decode_wallet_artifact(&selection, &artifact)
+                };
+                match selected {
+                    Ok(selected) => {
+                        wallet_artifact_selected = true;
+                        retained_carrier_observations()
+                            .lock()
+                            .unwrap()
+                            .as_mut()
+                            .unwrap()
+                            .proof_action = selected.pending_action_bytes.clone();
+                        artifact = selected;
+                        retained_carrier_snapshot(&artifact, production.expected_context()).map(
+                            |mut snapshot| {
+                                snapshot["selected_wallet_artifact"] =
+                                    serde_json::to_value(&selection)
+                                        .expect("encode exact public wallet artifact selection");
+                                // Avoid duplicating the large hex carrier in every
+                                // observation; its exact digest remains pinned.
+                                snapshot["selected_wallet_artifact"]["inline_args_hex"] =
+                                    serde_json::Value::Null;
+                                snapshot
+                            },
+                        )
+                    }
+                    Err(error) => Err(error),
+                }
             }
             RetainedCarrierCommand::MineCoinbase { index } => {
                 assert_eq!(role, "source", "only source may author fixture coinbase");
@@ -1170,7 +1243,7 @@ impl RetainedCarrierProcess {
             command,
         };
         let bytes = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
-        if bytes.len() >= 4096 {
+        if bytes.len() >= retained_carrier_command_line_limit(&request.command) {
             return Err("parent command exceeds bounded grammar".into());
         }
         let input = self.input.as_mut().ok_or("child control input is closed")?;
@@ -1565,13 +1638,557 @@ fn retained_carrier_http_block(
     )
 }
 
+// Only the public repaired SMZA fixture uses this wallet seed. These stores
+// exercise the real encrypted persistence, decryption, tree and spend builder;
+// the explicit finite context selects development decoding, never activation.
+const RETAINED_CARRIER_WALLET_PASSPHRASE: &str = "public-smza-lifecycle-fixture";
+
+fn retained_carrier_wallet_same_input_context(
+    actual: &SmallwoodPoseidon2V8PublicStatement,
+    retained: &SmallwoodPoseidon2V8PublicStatement,
+) -> bool {
+    actual.input_flags == retained.input_flags
+        && actual.output_flags == retained.output_flags
+        && actual.nullifiers == retained.nullifiers
+        && actual.merkle_root == retained.merkle_root
+        && actual.fee == retained.fee
+        && actual.value_balance_sign == retained.value_balance_sign
+        && actual.value_balance_magnitude == retained.value_balance_magnitude
+        && actual.balance_assets == retained.balance_assets
+        && actual.compatibility_stablecoin == retained.compatibility_stablecoin
+        && actual.circuit_version == retained.circuit_version
+        && actual.crypto_suite == retained.crypto_suite
+        && actual.stablecoin == retained.stablecoin
+}
+
+fn retained_carrier_decode_wallet_artifact(
+    selection: &RetainedCarrierWalletArtifactSelection,
+    retained: &RetainedSmz9Artifact,
+) -> RetainedCarrierResult<RetainedSmz9Artifact> {
+    use protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES;
+    let production = retained_carrier_production();
+    let expected = production.expected_context();
+    if !retained_carrier_smza_selected()
+        || selection.network_id != expected.network_id()
+        || selection.relation_digest_hex != hex::encode(expected.relation_digest())
+        || selection.genesis_hash_hex != hex::encode(production.activation_genesis_hash())
+        || selection.parent_height != 2
+        || selection.inline_args_hex.is_empty()
+        || selection.inline_args_hex.len() > 2 * POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES
+    {
+        return Err("wallet artifact selection is outside exact bounded SMZA context".into());
+    }
+    let inline_args = hex::decode(&selection.inline_args_hex).map_err(|e| e.to_string())?;
+    if hex::encode(&inline_args) != selection.inline_args_hex {
+        return Err("wallet artifact selection must use canonical lowercase hex".into());
+    }
+    let decoded = production
+        .connector
+        .decode_inline_args(&inline_args)
+        .map_err(|e| format!("selected wallet exact carrier: {e:?}"))?;
+    let leaf = decoded.envelope().decoded_native_leaf();
+    let input = SmallwoodPoseidon2V8VerifierInput {
+        network_id: expected.network_id(),
+        relation_digest: expected.relation_digest(),
+        public_values: core::array::from_fn(|i| {
+            leaf.statement_word(i)
+                .expect("exact wallet statement length")
+        }),
+        relation_balance_binding: core::array::from_fn(|i| {
+            leaf.relation_balance_binding_limb(i)
+                .expect("exact wallet binding length")
+        }),
+    };
+    let statement =
+        SmallwoodPoseidon2V8PublicStatement::try_from_public_words(&input.public_values)
+            .map_err(|e| format!("selected wallet statement: {e:?}"))?;
+    if !retained_carrier_wallet_same_input_context(&statement, &retained.statement)
+        || statement.activity_mask() != 15
+        || selection.statement_sha512 != sha512_hex(&statement.to_public_bytes())
+        || selection.native_leaf_sha512 != sha512_hex(leaf.raw())
+        || selection.proof_sha512 != sha512_hex(leaf.proof())
+    {
+        return Err(
+            "wallet artifact changed funded inputs/context or exact public/proof hashes".into(),
+        );
+    }
+    transaction_circuit::verify_smallwood_poseidon2_v8_smza_candidate_v1(&input, leaf.proof())
+        .map_err(|e| format!("selected wallet source proof verification: {e}"))?;
+    let trace = transaction_circuit::smallwood_poseidon2_v8_frontend::build_smallwood_poseidon2_v8_smza_candidate_verifier_trace_v1(&input, leaf.proof())
+        .map_err(|e| format!("selected wallet source proof trace: {e}"))?;
+    if !trace.accept {
+        return Err("selected wallet source proof trace rejected".into());
+    }
+    let mut pending_action = pending_poseidon2_v8_action_from_inline_args(
+        production,
+        3,
+        protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING.into(),
+        inline_args.clone(),
+    )
+    .map_err(|e| format!("selected wallet pending action: {e}"))?;
+    pending_action.tx_hash = crate::native::pending_action_hash(&pending_action);
+    let pending_action_bytes = pending_action.encode();
+    if selection.pending_action_sha512 != sha512_hex(&pending_action_bytes) {
+        return Err("selected wallet exact PendingAction hash differs".into());
+    }
+    Ok(RetainedSmz9Artifact {
+        proof: leaf.proof().to_vec(),
+        native_leaf: leaf.raw().to_vec(),
+        envelope: decoded.envelope().raw().to_vec(),
+        inline_args: inline_args.clone(),
+        pending_action_bytes,
+        pending_action,
+        statement,
+        // No retained synthetic witness descriptor is attributed to this
+        // wallet-generated witness. Input paths still match the funded notes.
+        witness_definition_sha512: String::new(),
+        input_merkle_path_sha512: retained.input_merkle_path_sha512.clone(),
+        wire_salt_hex: hex::encode(trace.proof.salt),
+        decs_transcript_root_hex: hex::encode(trace.pcs_trace.root_digest),
+    })
+}
+
+fn retained_carrier_wallet_generated_artifact(
+    store: &wallet::WalletStore,
+    retained: &RetainedSmz9Artifact,
+) -> RetainedCarrierResult<(
+    RetainedCarrierWalletArtifactSelection,
+    RetainedSmz9Artifact,
+    serde_json::Value,
+)> {
+    let production = retained_carrier_production();
+    let expected = production.expected_context();
+    let tip = store.poseidon2_v8_tip().map_err(|e| e.to_string())?;
+    let started = std::time::Instant::now();
+    let started_unix_seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    let request = wallet::prepare_poseidon2_v8_smza_wallet_self_spend_request_for_retained_test(
+        expected,
+        store,
+        [9, 9],
+    )
+    .map_err(|e| format!("fresh durable-wallet SMZA proof generation: {e}"))?;
+    let inline_args = crate::native::decode_submit_action_rpc_request(request)
+        .and_then(|request| crate::native::admit_native_action_request_projection(&request))
+        .map_err(|e| format!("fresh wallet RPC request projection: {e}"))?;
+    let decoded = production
+        .connector
+        .decode_inline_args(&inline_args)
+        .map_err(|e| format!("fresh wallet carrier: {e:?}"))?;
+    let leaf = decoded.envelope().decoded_native_leaf();
+    let public_values: [u64; SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS] = core::array::from_fn(|i| {
+        leaf.statement_word(i)
+            .expect("exact fresh wallet statement length")
+    });
+    let statement = SmallwoodPoseidon2V8PublicStatement::try_from_public_words(&public_values)
+        .map_err(|e| format!("fresh wallet statement: {e:?}"))?;
+    let mut pending = pending_poseidon2_v8_action_from_inline_args(
+        production,
+        3,
+        protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING.into(),
+        inline_args.clone(),
+    )
+    .map_err(|e| format!("fresh wallet action: {e}"))?;
+    pending.tx_hash = crate::native::pending_action_hash(&pending);
+    let selection = RetainedCarrierWalletArtifactSelection {
+        inline_args_hex: hex::encode(&inline_args),
+        statement_sha512: sha512_hex(&statement.to_public_bytes()),
+        pending_action_sha512: sha512_hex(&pending.encode()),
+        native_leaf_sha512: sha512_hex(leaf.raw()),
+        proof_sha512: sha512_hex(leaf.proof()),
+        network_id: expected.network_id(),
+        relation_digest_hex: hex::encode(expected.relation_digest()),
+        genesis_hash_hex: hex::encode(production.activation_genesis_hash()),
+        parent_height: tip.height,
+    };
+    let artifact = retained_carrier_decode_wallet_artifact(&selection, retained)?;
+    if artifact.proof == retained.proof
+        || artifact.statement.commitments == retained.statement.commitments
+        || artifact.statement.ciphertext_commitments == retained.statement.ciphertext_commitments
+    {
+        return Err(
+            "fresh wallet proof/output carrier unexpectedly equals the fixed fixture".into(),
+        );
+    }
+    let mut pins = serde_json::to_value(&selection).map_err(|e| e.to_string())?;
+    pins["inline_args_hex"] = serde_json::Value::Null;
+    let evidence = serde_json::json!({
+        "route": "prepare_poseidon2_v8_smza_wallet_self_spend_request_for_retained_test",
+        "parent_pid": std::process::id(), "started_unix_seconds": started_unix_seconds,
+        "elapsed_seconds": started.elapsed().as_secs_f64(), "wallet_parent_height": tip.height,
+        "wallet_parent_block_hash": hex::encode(tip.block_hash), "public_fixture_seed": true,
+        "output_diversifiers": [9, 9], "wallet_outputs_and_prover_entropy": "OsRng",
+        "source_compiled_proved_and_locally_verified": true, "exact_selection": pins,
+        "proof_bytes": artifact.proof.len(), "inline_args_bytes": artifact.inline_args.len(),
+        "pending_action_bytes": artifact.pending_action_bytes.len(),
+        "output_commitments": artifact.statement.commitments,
+        "ciphertext_commitments": artifact.statement.ciphertext_commitments,
+        "claims_excluded": ["fixed-fixture-pair-qualification", "production-activation", "unattested-external-generation"],
+    });
+    Ok((selection, artifact, evidence))
+}
+
+fn retained_carrier_select_wallet_artifact(
+    process: &mut RetainedCarrierProcess,
+    selection: &RetainedCarrierWalletArtifactSelection,
+) -> RetainedCarrierResult<()> {
+    let snapshot = process.command(RetainedCarrierCommand::SelectWalletArtifact {
+        artifact: selection.clone(),
+    })?;
+    let mut expected = serde_json::to_value(selection).map_err(|e| e.to_string())?;
+    expected["inline_args_hex"] = serde_json::Value::Null;
+    if snapshot["selected_wallet_artifact"] != expected {
+        return Err("child did not bind the exact selected wallet artifact/context".into());
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RetainedCarrierWalletState {
+    tip: wallet::Poseidon2V8CanonicalTip,
+    notes: Vec<wallet::Poseidon2V8OwnedNoteView>,
+}
+
+impl RetainedCarrierWalletState {
+    fn read(store: &wallet::WalletStore) -> RetainedCarrierResult<Self> {
+        Ok(Self {
+            tip: store.poseidon2_v8_tip().map_err(|e| e.to_string())?,
+            notes: store
+                .poseidon2_v8_owned_notes()
+                .map_err(|e| e.to_string())?,
+        })
+    }
+
+    fn evidence(&self) -> serde_json::Value {
+        serde_json::json!({
+            "height": self.tip.height, "block_hash": hex::encode(self.tip.block_hash),
+            "anchor": self.tip.anchor, "stablecoin_root": self.tip.stablecoin_root,
+            "unspent_native_value": self.notes.iter().filter(|note| !note.spent).map(|note| note.opening.value).sum::<u64>(),
+            "notes": self.notes.iter().map(|note| serde_json::json!({
+                "position": note.position, "commitment": note.commitment,
+                "nullifier": note.nullifier, "path_sha512": retained_carrier_wallet_path_sha512(&note.path),
+                "value": note.opening.value, "asset_id": note.opening.asset_id,
+                "diversifier_index": note.diversifier_index, "spent": note.spent,
+                "created_height": note.created_height, "created_block_hash": hex::encode(note.created_block_hash),
+            })).collect::<Vec<_>>(),
+        })
+    }
+}
+
+fn retained_carrier_wallet_path_sha512(path: &wallet::Poseidon2V8Path) -> String {
+    let bytes = path
+        .iter()
+        .flatten()
+        .flat_map(|limb| limb.to_le_bytes())
+        .collect::<Vec<_>>();
+    sha512_hex(&bytes)
+}
+
+fn retained_carrier_wallet_context(
+) -> RetainedCarrierResult<wallet::poseidon2_v8_sync::Poseidon2V8RetainedTestContext> {
+    use protocol_shielded_pool::poseidon2_production_transport::{
+        POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET,
+        POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID,
+    };
+    let production = retained_carrier_production();
+    wallet::poseidon2_v8_sync::Poseidon2V8RetainedTestContext::new(
+        production.expected_context(),
+        POSEIDON2_PRODUCTION_SMZA_TRANSPORT_PROFILE_ID,
+        POSEIDON2_PRODUCTION_SMZA_TRANSPORT_DOMAIN_SET,
+        production.activation_genesis_hash(),
+        production.stablecoin_genesis_root().limbs(),
+        production.activation_height(),
+        4,
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn retained_carrier_wallet_apply_http(
+    runtime: &tokio::runtime::Runtime,
+    process: &RetainedCarrierProcess,
+    snapshot: &serde_json::Value,
+    store: &wallet::WalletStore,
+    first_height: u64,
+    last_height: u64,
+) -> RetainedCarrierResult<Vec<wallet::Poseidon2V8CanonicalBlock>> {
+    let context = retained_carrier_wallet_context()?;
+    let rpc = runtime
+        .block_on(wallet::NodeRpcClient::connect(&format!(
+            "http://{}",
+            process.rpc
+        )))
+        .map_err(|e| format!("wallet HTTP client: {e}"))?;
+    if runtime
+        .block_on(rpc.block_hash(0))
+        .map_err(|e| e.to_string())?
+        != Some(retained_carrier_production().activation_genesis_hash())
+    {
+        return Err("wallet HTTP genesis differs from the finite retained context".into());
+    }
+    let mut blocks = Vec::new();
+    for height in first_height..=last_height {
+        let block = runtime
+            .block_on(rpc.canonical_block_actions(height))
+            .map_err(|e| format!("wallet canonical HTTP block {height}: {e}"))?
+            .ok_or_else(|| format!("wallet HTTP canonical block {height} missing"))?;
+        if snapshot["blocks"][height as usize]["hash"] != hex::encode(block.hash)
+            || snapshot["blocks"][height as usize]["actions"]
+                != serde_json::json!(block
+                    .action_bytes
+                    .iter()
+                    .map(hex::encode)
+                    .collect::<Vec<_>>())
+        {
+            return Err(format!(
+                "wallet HTTP block {height} differs from the exact node snapshot"
+            ));
+        }
+        let delta = store
+            .apply_poseidon2_v8_canonical_block_for_retained_test(&block, context)
+            .map_err(|e| format!("wallet apply HTTP block {height}: {e}"))?;
+        let expected = if height < 3 {
+            wallet::poseidon2_v8_sync::Poseidon2V8SyncDelta {
+                commitments: 1,
+                ciphertexts: 1,
+                recovered: 1,
+                spent: 0,
+            }
+        } else {
+            wallet::poseidon2_v8_sync::Poseidon2V8SyncDelta {
+                commitments: 2,
+                ciphertexts: 2,
+                recovered: 2,
+                spent: 2,
+            }
+        };
+        if delta != expected {
+            return Err(format!(
+                "wallet HTTP block {height} recovery/spend counts differ: {delta:?}"
+            ));
+        }
+        blocks.push(block);
+    }
+    Ok(blocks)
+}
+
+fn retained_carrier_wallet_receive(
+    runtime: &tokio::runtime::Runtime,
+    process: &RetainedCarrierProcess,
+    snapshot: &serde_json::Value,
+    path: &Path,
+    artifact: &RetainedSmz9Artifact,
+) -> RetainedCarrierResult<(wallet::WalletStore, RetainedCarrierWalletState)> {
+    use rand::SeedableRng as _;
+    let store = wallet::WalletStore::create_from_root(
+        path,
+        RETAINED_CARRIER_WALLET_PASSPHRASE,
+        wallet::RootSecret::from_bytes([0x51; 32]),
+    )
+    .map_err(|e| e.to_string())?;
+    store
+        .ensure_poseidon2_v8_genesis_for_retained_test(retained_carrier_wallet_context()?)
+        .map_err(|e| e.to_string())?;
+    let funded_blocks =
+        retained_carrier_wallet_apply_http(runtime, process, snapshot, &store, 1, 2)?;
+    let state = RetainedCarrierWalletState::read(&store)?;
+    if state.tip.height != 2
+        || state.tip.anchor != artifact.statement.merkle_root
+        || state.notes.len() != 2
+    {
+        return Err(
+            "wallet coinbase recovery did not reconstruct the retained height-two anchor".into(),
+        );
+    }
+    let frontier =
+        transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_two_note_frontier([
+            state.notes[0].commitment,
+            state.notes[1].commitment,
+        ])
+        .map_err(|e| format!("wallet note frontier: {e:?}"))?;
+    for input in 0..2 {
+        let note = &state.notes[input];
+        // The current SMZA manifest supplies the miner's coinbase bytes. Use
+        // the exact canonical HTTP body just applied, not historical vectors.
+        let actions = &funded_blocks[input].action_bytes;
+        if actions.len() != 1 {
+            return Err("wallet funded HTTP block must contain exactly one coinbase".into());
+        }
+        let mut action_cursor: &[u8] = actions[0].as_slice();
+        let action = PendingAction::decode(&mut action_cursor).map_err(|e| e.to_string())?;
+        if !action_cursor.is_empty()
+            || action.encode() != actions[0]
+            || action.action_id != ACTION_MINT_POSEIDON2_V8_COINBASE
+        {
+            return Err("wallet funded HTTP action is not an exact V8 coinbase".into());
+        }
+        let mut cursor: &[u8] = action.public_args.as_slice();
+        let coinbase = MintPoseidon2V8CoinbaseArgs::decode(&mut cursor)
+            .map_err(|e| format!("retained wallet coinbase: {e}"))?;
+        if !cursor.is_empty() || coinbase.encode() != action.public_args {
+            return Err("wallet funded HTTP coinbase has trailing or noncanonical bytes".into());
+        }
+        let opening = coinbase.miner_note.opening;
+        let recovered = note.opening;
+        if note.spent
+            || note.position != input as u64
+            || note.diversifier_index != 9
+            || note.created_height != input as u64 + 1
+            || note.anchor != state.tip.anchor
+            || note.commitment != coinbase.miner_note.commitment
+            || recovered.value != opening.value
+            || recovered.asset_id != opening.asset_id
+            || recovered.recipient_key != opening.recipient_key
+            || recovered.authorization_key != opening.authorization_key
+            || recovered.rho != opening.rho
+            || recovered.randomness != opening.randomness
+            || note.nullifier != artifact.statement.nullifiers[input]
+            || note.path != frontier.paths[input]
+            || retained_carrier_wallet_path_sha512(&note.path)
+                != artifact.input_merkle_path_sha512[input]
+        {
+            return Err(format!(
+                "wallet recovered input {input} differs from retained opening/path/nullifier"
+            ));
+        }
+    }
+    // This material is built solely from recovered durable notes. Its fresh
+    // random outputs are deliberately not packaged with the retained proof.
+    let spend = wallet::build_poseidon2_v8_wallet_self_spend(
+        &store,
+        [9, 9],
+        &mut rand::rngs::StdRng::seed_from_u64(0x534d5a41),
+    )
+    .map_err(|e| format!("wallet recovered-note spend builder: {e}"))?;
+    let actual = &spend.material.statement;
+    let retained = &artifact.statement;
+    if spend.tip != state.tip
+        || actual.input_flags != retained.input_flags
+        || actual.output_flags != retained.output_flags
+        || actual.nullifiers != retained.nullifiers
+        || actual.merkle_root != retained.merkle_root
+        || actual.fee != retained.fee
+        || actual.value_balance_sign != retained.value_balance_sign
+        || actual.value_balance_magnitude != retained.value_balance_magnitude
+        || actual.balance_assets != retained.balance_assets
+        || actual.compatibility_stablecoin != retained.compatibility_stablecoin
+        || actual.circuit_version != retained.circuit_version
+        || actual.crypto_suite != retained.crypto_suite
+        || actual.stablecoin != retained.stablecoin
+    {
+        return Err(
+            "wallet-built spend input/context statement differs from the retained statement".into(),
+        );
+    }
+    for input in 0..2 {
+        let witness = &spend.material.witness.inputs[input];
+        if !witness.active
+            || witness.note != state.notes[input].opening
+            || witness.position != state.notes[input].position
+            || witness.siblings != state.notes[input].path
+        {
+            return Err(format!(
+                "wallet-built spend input {input} did not use the recovered note/path"
+            ));
+        }
+    }
+    drop(store);
+    let reopened = wallet::WalletStore::open(path, RETAINED_CARRIER_WALLET_PASSPHRASE)
+        .map_err(|e| e.to_string())?;
+    if RetainedCarrierWalletState::read(&reopened)? != state {
+        return Err(
+            "funded wallet close/reopen changed exact tip, notes, paths or nullifiers".into(),
+        );
+    }
+    Ok((reopened, state))
+}
+
+fn retained_carrier_wallet_spend(
+    runtime: &tokio::runtime::Runtime,
+    process: &RetainedCarrierProcess,
+    snapshot: &serde_json::Value,
+    store: wallet::WalletStore,
+    path: &Path,
+    funded: &RetainedCarrierWalletState,
+    artifact: &RetainedSmz9Artifact,
+) -> RetainedCarrierResult<RetainedCarrierWalletState> {
+    retained_carrier_wallet_apply_http(runtime, process, snapshot, &store, 3, 3)?;
+    let state = RetainedCarrierWalletState::read(&store)?;
+    if state.tip.height != 3
+        || hex::encode(state.tip.block_hash) != snapshot["tip"]
+        || state.notes.len() != 4
+        || state.tip.stablecoin_root != funded.tip.stablecoin_root
+    {
+        return Err("wallet transfer did not retain the exact canonical height-three state".into());
+    }
+    let mut expected_tree = Poseidon2V8NoteTreeState::new_empty().map_err(|e| e.to_string())?;
+    for note in &state.notes {
+        expected_tree
+            .append(Poseidon2V8Commitment::new(note.commitment).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    }
+    if state.tip.anchor != expected_tree.root().limbs() {
+        return Err(
+            "wallet height-three root differs from native append of the same four commitments"
+                .into(),
+        );
+    }
+    for input in 0..2 {
+        let spent = &state.notes[input];
+        let previous = &funded.notes[input];
+        let output = &state.notes[input + 2];
+        if !spent.spent
+            || spent.opening != previous.opening
+            || spent.commitment != previous.commitment
+            || spent.nullifier != previous.nullifier
+            || spent.position != previous.position
+            || spent.created_height != previous.created_height
+            || spent.created_block_hash != previous.created_block_hash
+            || spent.anchor != state.tip.anchor
+            || output.spent
+            || output.position != input as u64 + 2
+            || output.created_height != 3
+            || output.created_block_hash != state.tip.block_hash
+            || output.commitment != artifact.statement.commitments[input]
+            || output.opening.value != previous.opening.value
+            || output.opening.asset_id != previous.opening.asset_id
+            || output.diversifier_index != 9
+            || output.anchor != state.tip.anchor
+        {
+            return Err(format!("wallet transfer input/output {input} recovery differs from exact retained statement"));
+        }
+    }
+    let spendable = store
+        .poseidon2_v8_spend_context()
+        .map_err(|e| e.to_string())?;
+    if spendable.tip != state.tip
+        || spendable.notes != [state.notes[2].clone(), state.notes[3].clone()]
+    {
+        return Err("wallet spend selection did not exclude both consumed coinbases".into());
+    }
+    drop(store);
+    let reopened = wallet::WalletStore::open(path, RETAINED_CARRIER_WALLET_PASSPHRASE)
+        .map_err(|e| e.to_string())?;
+    if RetainedCarrierWalletState::read(&reopened)? != state {
+        return Err(
+            "spent wallet close/reopen changed exact tip, notes, paths or nullifiers".into(),
+        );
+    }
+    Ok(state)
+}
+
 fn retained_carrier_episode(
     directory: &Path,
     manifest: &str,
     manifest_sha512: &str,
     artifact_role: &str,
     artifact: &RetainedSmz9Artifact,
+    generate_wallet_proof: bool,
 ) -> RetainedCarrierResult<serde_json::Value> {
+    if generate_wallet_proof && !retained_carrier_smza_selected() {
+        return Err("fresh wallet socket proof episode requires explicit SMZA selection".into());
+    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -1636,6 +2253,50 @@ fn retained_carrier_episode(
         retained_carrier_has_peer(snapshot, &relay_peer) && retained_carrier_tracked_idle(snapshot)
     })?;
     eprintln!("Retained carrier {artifact_role}: authenticated coinbase synchronization passed");
+
+    let source_wallet_path = directory.join("source-wallet.dat");
+    let relay_wallet_path = directory.join("relay-wallet.dat");
+    let mut wallet_receipt = serde_json::json!({"tested": false, "reason": "wallet lifecycle is scoped to the repaired public SMZA fixture"});
+    let wallets = if retained_carrier_smza_selected() {
+        let (source_wallet, source_funded) = retained_carrier_wallet_receive(
+            &runtime,
+            &source,
+            &source_two,
+            &source_wallet_path,
+            artifact,
+        )?;
+        let (relay_wallet, relay_funded) = retained_carrier_wallet_receive(
+            &runtime,
+            &relay,
+            &relay_two,
+            &relay_wallet_path,
+            artifact,
+        )?;
+        if source_funded != relay_funded {
+            return Err("wallet source/relay recovered different exact funded states".into());
+        }
+        Some((source_wallet, source_funded, relay_wallet, relay_funded))
+    } else {
+        None
+    };
+
+    let generated = if generate_wallet_proof {
+        let source_wallet = &wallets
+            .as_ref()
+            .ok_or("fresh wallet episode has no funded wallet")?
+            .0;
+        eprintln!("Retained carrier {artifact_role}: generating genuine durable-wallet SMZA proof");
+        let generated = retained_carrier_wallet_generated_artifact(source_wallet, artifact)?;
+        retained_carrier_select_wallet_artifact(&mut source, &generated.0)?;
+        retained_carrier_select_wallet_artifact(&mut relay, &generated.0)?;
+        Some(generated)
+    } else {
+        None
+    };
+    let artifact = generated
+        .as_ref()
+        .map(|(_, artifact, _)| artifact)
+        .unwrap_or(artifact);
 
     // The public wallet helper is deliberately allowed to package the opaque
     // mutation. Only the actual HTTP source-verifier rejection gets credit.
@@ -1831,6 +2492,50 @@ fn retained_carrier_episode(
         retained_carrier_http_block(&runtime, &client, &source, &source_three, artifact)?;
     let relay_http =
         retained_carrier_http_block(&runtime, &client, &relay, &relay_three, artifact)?;
+    let wallet_spent = if let Some((source_wallet, source_funded, relay_wallet, relay_funded)) =
+        wallets
+    {
+        let source_spent = retained_carrier_wallet_spend(
+            &runtime,
+            &source,
+            &source_three,
+            source_wallet,
+            &source_wallet_path,
+            &source_funded,
+            artifact,
+        )?;
+        let relay_spent = retained_carrier_wallet_spend(
+            &runtime,
+            &relay,
+            &relay_three,
+            relay_wallet,
+            &relay_wallet_path,
+            &relay_funded,
+            artifact,
+        )?;
+        if source_spent != relay_spent {
+            return Err("wallet source/relay recovered different exact spent states".into());
+        }
+        wallet_receipt = serde_json::json!({
+            "tested": true, "profile": "SMZA", "public_fixture_diversifier": 9,
+            "finite_development_heights": [1, 2, 3], "rpc": "NodeRpcClient::canonical_block_actions over actual HTTP",
+            "funded": {"source": source_funded.evidence(), "relay": relay_funded.evidence()},
+            "spent": {"source": source_spent.evidence(), "relay": relay_spent.evidence()},
+            "receive_delta_per_block": {"commitments": 1, "ciphertexts": 1, "recovered": 1, "spent": 0},
+            "spend_delta": {"commitments": 2, "ciphertexts": 2, "recovered": 2, "spent": 2},
+            "wallet_built_spend_input_context_matches_retained_statement": true,
+            "wallet_paths_match_retained_proof_manifest": true,
+            "funded_and_spent_wallet_close_reopen_exact_equality": true,
+            "source_relay_exact_wallet_equality": true,
+            "proof_used": if generate_wallet_proof { "unchanged fresh durable-wallet-generated proof" } else { "unchanged source-bound retained fixture proof" },
+            "fresh_wallet_spend_material_built": true, "fresh_wallet_generated_proof": generate_wallet_proof,
+            "claims_excluded": if generate_wallet_proof { vec!["production-activation", "arbitrary-wallet-seeds", "wallet-reorg", "wallet-crash-recovery"] }
+                else { vec!["fresh-wallet-proof-generation", "production-activation", "arbitrary-wallet-seeds", "wallet-reorg", "wallet-crash-recovery"] },
+        });
+        Some(source_spent)
+    } else {
+        None
+    };
     let old_relay_pid = relay_three["pid"].as_u64().ok_or("relay PID missing")?;
     let relay_stop = relay.clean_stop()?;
 
@@ -1845,6 +2550,9 @@ fn retained_carrier_episode(
         manifest,
         manifest_sha512,
     )?;
+    if let Some((selection, _, _)) = &generated {
+        retained_carrier_select_wallet_artifact(&mut restarted, selection)?;
+    }
     let restart_snapshot = restarted.wait_for(
         "new process replays durable source-verified proof",
         |snapshot| {
@@ -1866,6 +2574,32 @@ fn retained_carrier_episode(
     )?;
     let restart_http =
         retained_carrier_http_block(&runtime, &client, &restarted, &restart_snapshot, artifact)?;
+    if let Some(expected_wallet) = &wallet_spent {
+        let path = directory.join("restart-replay-wallet.dat");
+        let (store, funded) = retained_carrier_wallet_receive(
+            &runtime,
+            &restarted,
+            &restart_snapshot,
+            &path,
+            artifact,
+        )?;
+        let replayed = retained_carrier_wallet_spend(
+            &runtime,
+            &restarted,
+            &restart_snapshot,
+            store,
+            &path,
+            &funded,
+            artifact,
+        )?;
+        if &replayed != expected_wallet {
+            return Err(
+                "new wallet HTTP replay from restarted node changed exact recovered state".into(),
+            );
+        }
+        wallet_receipt["restart_node_fresh_wallet_replay"] = replayed.evidence();
+        wallet_receipt["restart_node_fresh_wallet_exact_equality"] = serde_json::json!(true);
+    }
     let restart_stop = restarted.clean_stop()?;
     eprintln!("Retained carrier {artifact_role}: clean same-identity process restart passed");
 
@@ -1891,6 +2625,9 @@ fn retained_carrier_episode(
         manifest,
         manifest_sha512,
     )?;
+    if let Some((selection, _, _)) = &generated {
+        retained_carrier_select_wallet_artifact(&mut fresh, selection)?;
+    }
     let fresh_peer = fresh.ready["peer_id"]
         .as_str()
         .ok_or("fresh PQ identity missing")?
@@ -1955,11 +2692,34 @@ fn retained_carrier_episode(
     }
     let fresh_http =
         retained_carrier_http_block(&runtime, &client, &fresh, &fresh_three, artifact)?;
+    if let Some(expected_wallet) = &wallet_spent {
+        let path = directory.join("fresh-replay-wallet.dat");
+        let (store, funded) =
+            retained_carrier_wallet_receive(&runtime, &fresh, &fresh_three, &path, artifact)?;
+        let replayed = retained_carrier_wallet_spend(
+            &runtime,
+            &fresh,
+            &fresh_three,
+            store,
+            &path,
+            &funded,
+            artifact,
+        )?;
+        if &replayed != expected_wallet {
+            return Err(
+                "new wallet HTTP replay from fresh node changed exact recovered state".into(),
+            );
+        }
+        wallet_receipt["fresh_node_fresh_wallet_replay"] = replayed.evidence();
+        wallet_receipt["fresh_node_fresh_wallet_exact_equality"] = serde_json::json!(true);
+    }
     let fresh_stop = fresh.clean_stop()?;
     let source_stop = source.clean_stop()?;
     retained_carrier_assert_denied();
     Ok(serde_json::json!({
         "artifact_role": artifact_role, "directory": directory,
+        "episode_kind": if generate_wallet_proof { "fresh-wallet-generated-proof" } else { "fixed-source-fixture-proof" },
+        "wallet_generation": generated.as_ref().map(|(_, _, evidence)| evidence),
         "pending_action_sha512": sha512_hex(&artifact.pending_action_bytes),
         "native_leaf_sha512": sha512_hex(&artifact.native_leaf), "proof_sha512": sha512_hex(&artifact.proof),
         "wire_salt_hex": artifact.wire_salt_hex, "decs_transcript_root_hex": artifact.decs_transcript_root_hex,
@@ -1973,6 +2733,7 @@ fn retained_carrier_episode(
         "source_height_three": source_three, "relay_height_three": relay_three,
         "restart_height_three": restart_snapshot, "fresh_height_three": fresh_three, "source_final": source_final,
         "http": {"source": source_http, "relay": relay_http, "restart": restart_http, "fresh": fresh_http},
+        "wallet": wallet_receipt,
         "shutdown": {"relay": relay_stop, "restart": restart_stop, "fresh": fresh_stop, "source": source_stop},
         "test_selected_locator_transport": true, "production_authority_denied": true,
         "claims_excluded": ["all-active-transport-quiescence", "natural-large-body-selection", "multi-chunk-boundaries", "reorg", "crash-recovery",
@@ -2090,6 +2851,7 @@ fn retained_rp03_actual_socket_process_carriers() {
             &manifest_sha512,
             RETAINED_SMZ9_PRIMARY_ROLE,
             &primary,
+            false,
         )?;
         let independent_result = retained_carrier_episode(
             &directory.join("independent"),
@@ -2097,7 +2859,20 @@ fn retained_rp03_actual_socket_process_carriers() {
             &manifest_sha512,
             RETAINED_SMZ9_INDEPENDENT_ROLE,
             &independent,
+            false,
         )?;
+        let wallet_proof_episode = if retained_carrier_smza_selected() {
+            Some(retained_carrier_episode(
+                &directory.join("fresh-wallet-proof"),
+                &manifest,
+                &manifest_sha512,
+                RETAINED_SMZ9_PRIMARY_ROLE,
+                &primary,
+                true,
+            )?)
+        } else {
+            None
+        };
         retained_carrier_verify_live_manifest(&manifest, &manifest_sha512, &directory)?;
         if retained_carrier_executable_identity()? != executable {
             return Err("test executable changed during retained process episodes".into());
@@ -2113,7 +2888,8 @@ fn retained_rp03_actual_socket_process_carriers() {
             "source_inventory_file_count": inventory.file_count,
             "source_inventory_total_bytes": inventory.total_bytes,
             "source_inventory_verified_before_and_after": true,
-            "episodes": [primary_result, independent_result], "production_authority_denied": true}),
+            "episodes": [primary_result, independent_result],
+            "wallet_proof_episode": wallet_proof_episode, "production_authority_denied": true}),
         )
     })();
     let receipt = match &result {
@@ -2156,6 +2932,7 @@ fn retained_carrier_control_grammar_rejects_payload_injection_and_unknown_comman
         serde_json::json!({"kind": "shutdown", "action": "00"}),
         serde_json::json!({"kind": "mine_coinbase", "index": 0, "action": "00"}),
         serde_json::json!({"kind": "mine_coinbase", "index": 256}),
+        serde_json::json!({"kind": "select_wallet_artifact", "artifact": {}, "unchecked": true}),
     ] {
         assert!(
             serde_json::from_value::<RetainedCarrierCommand>(command.clone()).is_err(),
@@ -2195,6 +2972,53 @@ fn retained_carrier_control_lines_are_bounded_and_require_complete_frames() {
     assert_eq!(retained_carrier_line(&mut valid, 5).unwrap(), None);
     assert!(retained_carrier_line(&mut std::io::Cursor::new(b"abcdef\n"), 5).is_err());
     assert!(retained_carrier_line(&mut std::io::Cursor::new(b"abc"), 5).is_err());
+}
+
+#[test]
+fn retained_carrier_wallet_control_has_bounded_large_frames_and_small_ordinary_frames() {
+    let selection = RetainedCarrierWalletArtifactSelection {
+        inline_args_hex: "00".repeat(protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES),
+        statement_sha512: "1".repeat(128), pending_action_sha512: "2".repeat(128),
+        native_leaf_sha512: "3".repeat(128), proof_sha512: "4".repeat(128),
+        network_id: protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NETWORK_ID,
+        relation_digest_hex: "5".repeat(96), genesis_hash_hex: "6".repeat(64), parent_height: 2,
+    };
+    let request = RetainedCarrierRequest {
+        session: "7".repeat(64),
+        id: 1,
+        command: RetainedCarrierCommand::SelectWalletArtifact {
+            artifact: selection,
+        },
+    };
+    let encoded = serde_json::to_vec(&request).unwrap();
+    let limit = retained_carrier_command_line_limit(&request.command);
+    assert!(encoded.len() > 4096 && encoded.len() < limit);
+    let mut framed = encoded.clone();
+    framed.push(b'\n');
+    assert_eq!(
+        retained_carrier_line(&mut std::io::Cursor::new(framed), limit).unwrap(),
+        Some(encoded)
+    );
+    let mut oversized = vec![b'x'; limit + 1];
+    oversized.push(b'\n');
+    assert!(retained_carrier_line(&mut std::io::Cursor::new(oversized), limit).is_err());
+    assert_eq!(
+        retained_carrier_command_line_limit(&RetainedCarrierCommand::Snapshot {}),
+        4096
+    );
+    assert_eq!(
+        retained_carrier_command_line_limit(&RetainedCarrierCommand::MineExpected {}),
+        4096
+    );
+    let ordinary = RetainedCarrierRequest {
+        session: "8".repeat(4096),
+        id: 2,
+        command: RetainedCarrierCommand::Snapshot {},
+    };
+    assert!(
+        serde_json::to_vec(&ordinary).unwrap().len()
+            >= retained_carrier_command_line_limit(&ordinary.command)
+    );
 }
 
 #[test]

@@ -24,6 +24,7 @@ use crate::{
     smallwood_poseidon2_v8_rng_refinement::{
         canonical_goldilocks_word_v1, fixed_bytes_with_source_v1,
         sample_fixed_width_tapes_with_source_v1, sample_goldilocks_words_with_source_v1,
+        FixedWidthTapesV1,
     },
     smallwood_semantics::{
         SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView,
@@ -4698,7 +4699,7 @@ impl DecsEvaluationStorage {
 #[derive(Clone, Debug)]
 struct DecsKey {
     evaluations: DecsEvaluationStorage,
-    leaf_tapes: Vec<Vec<u8>>,
+    leaf_tapes: FixedWidthTapesV1,
     dec_polys: Vec<Vec<u64>>,
     /// Commitment-time DECS coefficients retained only by the prover.  They
     /// let `decs_open` check that a table index and its algebraic evaluation
@@ -11452,7 +11453,7 @@ pub fn lvcs_recompute_rows(
 fn strict_coset_leaf_hashes_bounded(
     committed: &[Vec<u64>],
     masking: &[Vec<u64>],
-    leaf_tapes: &[Vec<u8>],
+    leaf_tapes: &FixedWidthTapesV1,
     salt: &[u8],
     domain: SmallwoodDisjointCosetDescriptorV1,
     backend: SmallwoodTranscriptBackend,
@@ -11502,7 +11503,11 @@ fn strict_coset_leaf_hashes_bounded(
                     committed.len(),
                     &evaluations,
                     index,
-                    &leaf_tapes[index],
+                    leaf_tapes
+                        .get(index)
+                        .ok_or(TransactionCircuitError::ConstraintViolation(
+                            "smallwood bounded DECS leaf-tape index is invalid",
+                        ))?,
                     salt,
                     backend,
                     leaf_statement_binding,
@@ -11524,7 +11529,7 @@ fn strict_coset_leaf_hashes_bounded(
 fn smz9_coset_leaf_hashes_bounded(
     committed: &[Vec<u64>],
     masking: &[Vec<u64>],
-    leaf_tapes: &[Vec<u8>],
+    leaf_tapes: &FixedWidthTapesV1,
     salt: &[u8],
     domain: SmallwoodDisjointCosetDescriptorV1,
 ) -> Result<Vec<[u8; DIGEST_BYTES]>, TransactionCircuitError> {
@@ -11750,7 +11755,7 @@ fn decs_commit(
     {
         random_decs_leaf_tapes(decs_nb_evals, decs_leaf_tape_bytes)?
     } else {
-        Vec::new()
+        FixedWidthTapesV1::empty()
     };
     let salt_words = bytes_to_words_unchecked(salt);
     let mut tree_levels = vec![vec![[0u8; DIGEST_BYTES]; decs_nb_evals]];
@@ -11891,8 +11896,14 @@ fn decs_open(
     } else {
         indices
             .iter()
-            .map(|&index| key.leaf_tapes[index].clone())
-            .collect()
+            .map(|&index| {
+                key.leaf_tapes.get(index).map(<[u8]>::to_vec).ok_or(
+                    TransactionCircuitError::ConstraintViolation(
+                        "smallwood DECS opening index exceeds the committed tapes",
+                    ),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?
     };
     let mut masking_evals = Vec::with_capacity(indices.len());
     for (j, &idx) in indices.iter().enumerate() {
@@ -17535,7 +17546,7 @@ fn random_bytes<const N: usize>() -> Result<[u8; N], TransactionCircuitError> {
 fn random_decs_leaf_tapes(
     count: usize,
     tape_bytes: usize,
-) -> Result<Vec<Vec<u8>>, TransactionCircuitError> {
+) -> Result<FixedWidthTapesV1, TransactionCircuitError> {
     if tape_bytes == 0 || !tape_bytes.is_multiple_of(8) {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood strict-ZK DECS tape width must be non-zero and word aligned",
@@ -18529,9 +18540,15 @@ mod complete_zk_domain_tests {
                     )
                 })
                 .collect::<Vec<_>>();
-            let bounded =
-                smz9_coset_leaf_hashes_bounded(&committed, &masking, &leaf_tapes, &salt, domain)
-                    .expect("hash bounded full domain");
+            let bounded = smz9_coset_leaf_hashes_bounded(
+                &committed,
+                &masking,
+                &FixedWidthTapesV1::from_bytes(leaf_tapes.concat(), 64)
+                    .expect("construct contiguous reference tapes"),
+                &salt,
+                domain,
+            )
+            .expect("hash bounded full domain");
             assert_eq!(
                 bounded, reference,
                 "N={domain_size}, coefficients={coefficient_count}"
@@ -18613,7 +18630,8 @@ mod complete_zk_domain_tests {
             let bounded = strict_coset_leaf_hashes_bounded(
                 &committed,
                 &masking,
-                &leaf_tapes,
+                &FixedWidthTapesV1::from_bytes(leaf_tapes.concat(), 64)
+                    .expect("construct contiguous reference tapes"),
                 &salt,
                 domain,
                 backend,
@@ -18678,7 +18696,7 @@ mod complete_zk_domain_tests {
             &key.evaluations,
             DecsEvaluationStorage::Polynomials { .. }
         ));
-        let indexes = [0, 7, 31];
+        let indexes = [31, 0, 7, 0];
         let mut points = decs_field_evaluation_points(
             SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
             domain_size,
@@ -18687,7 +18705,7 @@ mod complete_zk_domain_tests {
         )
         .expect("derive canonical test points");
         let mut evals = vec![Vec::new(); indexes.len()];
-        decs_open(
+        let proof = decs_open(
             initial.len(),
             4,
             indexes.len(),
@@ -18699,6 +18717,14 @@ mod complete_zk_domain_tests {
             SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9,
         )
         .expect("bounded opening satisfies unchanged combination check");
+        assert_eq!(
+            proof.leaf_tapes,
+            indexes
+                .iter()
+                .map(|&index| key.leaf_tapes.get(index as usize).unwrap().to_vec())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(proof.leaf_tapes[1], proof.leaf_tapes[3]);
         points[1] = add_mod(points[1], 1);
         assert!(decs_open(
             initial.len(),

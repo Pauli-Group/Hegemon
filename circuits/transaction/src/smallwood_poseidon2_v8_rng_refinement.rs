@@ -20,9 +20,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::TransactionCircuitError;
-use crate::smallwood_engine::{
-    HX512_SMALLWOOD_DECS_TAPES_PER_RNG_CALL_V1, POSEIDON2_V8_SMZ9_SMALLWOOD_NO_GRINDING_PROFILE,
-    SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES,
+use crate::smallwood_engine::POSEIDON2_V8_SMZ9_SMALLWOOD_NO_GRINDING_PROFILE;
+// Expose the source-owned entropy geometry for reproducible sampler tools,
+// without exposing the private prover engine or copying protocol constants.
+pub use crate::smallwood_engine::{
+    HX512_SMALLWOOD_DECS_TAPES_PER_RNG_CALL_V1, SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES,
 };
 use crate::smallwood_poseidon2_v8_zk_refinement::{
     SMZ9_DECS_ETA, SMZ9_DECS_OPENINGS, SMZ9_DECS_POLYNOMIAL_DEGREE, SMZ9_LINEAR_MASK_POLYNOMIALS,
@@ -31,9 +33,17 @@ use crate::smallwood_poseidon2_v8_zk_refinement::{
     SMZ9_UNSTACKED_COLUMNS, SMZ9_WITNESS_POLYNOMIALS,
 };
 
+// Retain the original deterministic mapping module and crate-local exports
+// for source extraction. Production tape storage now uses the contiguous
+// helper; the legacy partition is exercised by differential tests.
+#[allow(dead_code)]
 mod mapping;
+mod tapes;
+#[allow(unused_imports)]
+pub(crate) use mapping::append_fixed_width_tapes_v1;
+pub(crate) use mapping::canonical_goldilocks_word_v1;
 pub use mapping::SMALLWOOD_SMZ9_GOLDILOCKS_MODULUS_V1;
-pub(crate) use mapping::{append_fixed_width_tapes_v1, canonical_goldilocks_word_v1};
+pub(crate) use tapes::FixedWidthTapesV1;
 
 pub const SMALLWOOD_SMZ9_RUNTIME_RNG_REFINEMENT_SCHEMA_V2: &str =
     "hegemon.smallwood.poseidon2-v8.smz9.runtime-rng-refinement.v2";
@@ -190,33 +200,22 @@ pub(crate) fn fixed_bytes_with_source_v1<const N: usize>(
 }
 
 /// Source-injectable form of the production DECS tape sampler.  The returned
-/// vector preserves call order and byte order exactly.
+/// storage preserves call order and byte order exactly, without an allocation
+/// or vector header for every leaf. Opened proof tapes keep their wire format.
 pub(crate) fn sample_fixed_width_tapes_with_source_v1(
     count: usize,
     tape_bytes: usize,
     tapes_per_fill: usize,
-    mut before_fill: impl FnMut(usize) -> Result<(), TransactionCircuitError>,
-    mut fill: impl FnMut(&mut [u8]) -> Result<(), TransactionCircuitError>,
-) -> Result<Vec<Vec<u8>>, TransactionCircuitError> {
-    if tape_bytes == 0 || !tape_bytes.is_multiple_of(8) || tapes_per_fill == 0 {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood runtime randomness tape geometry is invalid",
-        ));
-    }
-    let mut tapes = Vec::with_capacity(count);
-    while tapes.len() < count {
-        let batch_count = (count - tapes.len()).min(tapes_per_fill);
-        let byte_count = batch_count.checked_mul(tape_bytes).ok_or(
-            TransactionCircuitError::ConstraintViolation(
-                "smallwood strict-ZK DECS leaf-tape request overflows addressable memory",
-            ),
-        )?;
-        before_fill(byte_count)?;
-        let mut bytes = vec![0u8; byte_count];
-        fill(&mut bytes)?;
-        append_fixed_width_tapes_v1(&mut tapes, &bytes, tape_bytes)?;
-    }
-    Ok(tapes)
+    before_fill: impl FnMut(usize) -> Result<(), TransactionCircuitError>,
+    fill: impl FnMut(&mut [u8]) -> Result<(), TransactionCircuitError>,
+) -> Result<FixedWidthTapesV1, TransactionCircuitError> {
+    tapes::sample_contiguous_tapes_with_source_v1(
+        count,
+        tape_bytes,
+        tapes_per_fill,
+        before_fill,
+        fill,
+    )
 }
 
 pub fn smallwood_smz9_runtime_rng_refinement_v2(
@@ -630,7 +629,7 @@ mod tests {
             .iter()
             .all(|tape| tape.len() == SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES));
         assert_eq!(
-            tapes.concat(),
+            tapes.iter().flatten().copied().collect::<Vec<_>>(),
             (0..count * SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES)
                 .map(|index| index as u8)
                 .collect::<Vec<_>>()
@@ -649,5 +648,176 @@ mod tests {
         )
         .expect_err("tape entropy failure must abort sampling");
         assert!(error.to_string().contains("scripted tape entropy failure"));
+    }
+
+    /// The previous production sampler, retained only as a differential
+    /// reference. The partition helper is the actual unchanged source helper.
+    fn legacy_tapes_with_source(
+        count: usize,
+        width: usize,
+        batch_limit: usize,
+        mut before_fill: impl FnMut(usize) -> Result<(), TransactionCircuitError>,
+        mut fill: impl FnMut(&mut [u8]) -> Result<(), TransactionCircuitError>,
+    ) -> Result<Vec<Vec<u8>>, TransactionCircuitError> {
+        let mut tapes = Vec::with_capacity(count);
+        while tapes.len() < count {
+            let batch_count = (count - tapes.len()).min(batch_limit);
+            let byte_count = batch_count.checked_mul(width).ok_or(
+                TransactionCircuitError::ConstraintViolation("reference tape size overflow"),
+            )?;
+            before_fill(byte_count)?;
+            let mut bytes = vec![0; byte_count];
+            fill(&mut bytes)?;
+            append_fixed_width_tapes_v1(&mut tapes, &bytes, width)?;
+        }
+        Ok(tapes)
+    }
+
+    #[test]
+    fn contiguous_tapes_match_legacy_bytes_and_exact_callback_chronology() {
+        use std::cell::RefCell;
+        for width in [8, 64, 96] {
+            for batch_limit in [1, 3, HX512_SMALLWOOD_DECS_TAPES_PER_RNG_CALL_V1] {
+                for count in [
+                    0,
+                    1,
+                    batch_limit - 1,
+                    batch_limit,
+                    batch_limit + 1,
+                    2 * batch_limit + 1,
+                ] {
+                    let flat_events = RefCell::new(Vec::new());
+                    let legacy_events = RefCell::new(Vec::new());
+                    let mut flat_offset = 0usize;
+                    let mut legacy_offset = 0usize;
+                    let fill_at_offset = |output: &mut [u8], offset: &mut usize| {
+                        for byte in output {
+                            *byte = (*offset * 73 + *offset / 256 + 19) as u8;
+                            *offset += 1;
+                        }
+                    };
+                    let flat = sample_fixed_width_tapes_with_source_v1(
+                        count,
+                        width,
+                        batch_limit,
+                        |size| {
+                            flat_events.borrow_mut().push(("before", size));
+                            Ok(())
+                        },
+                        |output| {
+                            flat_events.borrow_mut().push(("fill", output.len()));
+                            fill_at_offset(output, &mut flat_offset);
+                            Ok(())
+                        },
+                    )
+                    .expect("sample contiguous tapes");
+                    let legacy = legacy_tapes_with_source(
+                        count,
+                        width,
+                        batch_limit,
+                        |size| {
+                            legacy_events.borrow_mut().push(("before", size));
+                            Ok(())
+                        },
+                        |output| {
+                            legacy_events.borrow_mut().push(("fill", output.len()));
+                            fill_at_offset(output, &mut legacy_offset);
+                            Ok(())
+                        },
+                    )
+                    .expect("sample legacy tapes");
+                    assert_eq!(flat_events.into_inner(), legacy_events.into_inner());
+                    assert_eq!(flat_offset, count * width);
+                    assert_eq!(flat_offset, legacy_offset);
+                    assert_eq!(flat.len(), legacy.len());
+                    assert_eq!(flat.is_empty(), legacy.is_empty());
+                    assert!(flat.iter().eq(legacy.iter().map(Vec::as_slice)));
+                    // Nonmonotone/repeated openings copy the same canonical
+                    // tape bytes into the unchanged opened-proof vectors.
+                    if count > 0 {
+                        let indexes = [count - 1, 0, count / 2, 0];
+                        let opened = indexes
+                            .iter()
+                            .map(|&index| flat.get(index).unwrap().to_vec())
+                            .collect::<Vec<_>>();
+                        assert_eq!(
+                            opened,
+                            indexes
+                                .iter()
+                                .map(|&index| legacy[index].clone())
+                                .collect::<Vec<_>>()
+                        );
+                    }
+                    assert!(flat.get(count).is_none());
+                    assert!(flat.get(usize::MAX).is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn contiguous_tape_failures_match_legacy_callback_prefix_and_error() {
+        use std::cell::{Cell, RefCell};
+        for fail_before in [true, false] {
+            for failing_batch in [0, 1, 2] {
+                let run = |legacy: bool| {
+                    let events = RefCell::new(Vec::new());
+                    let batch = Cell::new(0usize);
+                    let before = |size| {
+                        events.borrow_mut().push(("before", size));
+                        if fail_before && batch.get() == failing_batch {
+                            return Err(TransactionCircuitError::ConstraintViolation(
+                                "scripted accounting failure",
+                            ));
+                        }
+                        Ok(())
+                    };
+                    let fill = |output: &mut [u8]| {
+                        events.borrow_mut().push(("fill", output.len()));
+                        // Also test failure after a provider writes partial bytes.
+                        output[0] = 0x69;
+                        if !fail_before && batch.get() == failing_batch {
+                            return Err(TransactionCircuitError::ConstraintViolation(
+                                "scripted tape failure",
+                            ));
+                        }
+                        batch.set(batch.get() + 1);
+                        Ok(())
+                    };
+                    let error = if legacy {
+                        legacy_tapes_with_source(7, 64, 3, before, fill).unwrap_err()
+                    } else {
+                        sample_fixed_width_tapes_with_source_v1(7, 64, 3, before, fill).unwrap_err()
+                    };
+                    (events.into_inner(), error.to_string())
+                };
+                assert_eq!(run(false), run(true));
+            }
+        }
+    }
+
+    #[test]
+    fn contiguous_tape_invalid_geometry_and_size_fail_before_callbacks() {
+        for (count, width, batch_limit) in [
+            (1, 0, 1),
+            (1, 7, 1),
+            (1, 64, 0),
+            (usize::MAX, 64, 1),
+            (isize::MAX as usize / 8 + 1, 8, 1),
+        ] {
+            assert!(sample_fixed_width_tapes_with_source_v1(
+                count,
+                width,
+                batch_limit,
+                |_| panic!("invalid storage must not charge entropy"),
+                |_| panic!("invalid storage must not request entropy"),
+            )
+            .is_err());
+        }
+        assert!(FixedWidthTapesV1::from_bytes(vec![0; 7], 8).is_err());
+        assert!(FixedWidthTapesV1::from_bytes(Vec::new(), 0).is_err());
+        let empty = FixedWidthTapesV1::empty();
+        assert_eq!(empty.len(), 0);
+        assert!(empty.get(0).is_none());
     }
 }

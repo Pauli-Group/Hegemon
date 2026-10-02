@@ -380,6 +380,16 @@ impl WalletStore {
         })
     }
 
+    /// Initialize an explicit retained development mirror. This feature-gated
+    /// helper neither selects nor installs production proof authority.
+    #[cfg(any(test, feature = "poseidon2-v8-retained-test-support"))]
+    pub fn ensure_poseidon2_v8_genesis_for_retained_test(
+        &self,
+        context: crate::poseidon2_v8_sync::Poseidon2V8RetainedTestContext,
+    ) -> Result<(), WalletError> {
+        self.with_poseidon2_v8_mut(|mirror, _| mirror.ensure_genesis_for_retained_test(context))
+    }
+
     pub fn poseidon2_v8_tip(&self) -> Result<Poseidon2V8CanonicalTip, WalletError> {
         self.with_state(|state| state.poseidon2_v8.tip())
     }
@@ -404,6 +414,19 @@ impl WalletStore {
         block: &Poseidon2V8CanonicalBlock,
     ) -> Result<Poseidon2V8SyncDelta, WalletError> {
         self.with_poseidon2_v8_mut(|mirror, keys| mirror.apply_block(block, keys))
+    }
+
+    /// Mirror a retained test node's verified canonical actions using an
+    /// explicit, bounded development context. No production resolver changes.
+    #[cfg(any(test, feature = "poseidon2-v8-retained-test-support"))]
+    pub fn apply_poseidon2_v8_canonical_block_for_retained_test(
+        &self,
+        block: &Poseidon2V8CanonicalBlock,
+        context: crate::poseidon2_v8_sync::Poseidon2V8RetainedTestContext,
+    ) -> Result<Poseidon2V8SyncDelta, WalletError> {
+        self.with_poseidon2_v8_mut(|mirror, keys| {
+            mirror.apply_block_for_retained_test(block, keys, context)
+        })
     }
 
     pub fn rollback_poseidon2_v8_to(
