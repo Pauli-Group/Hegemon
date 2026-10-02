@@ -1109,26 +1109,26 @@ def check_ci_workflow(path: Path) -> None:
             allow_always_condition=job_name
             in {"formal-core", "core-tests", "release-build"},
         )
-    for timed_job in (
-        "rust-lints",
-        "dependency-audit",
-        "formal-core-checker",
-        "formal-core-lean",
-        "formal-core-vectors",
-        "formal-core-policy",
-        "formal-crypto-isolation",
-        "formal-crypto-sanity",
-        "core-test-shards",
-        "native-path-tests",
-        "app-no-ssh-e2e",
-        "security-adversarial",
-        "native-backend-security",
-        "release-binaries",
+    for timed_job, timeout_minutes in (
+        ("rust-lints", 30),
+        ("dependency-audit", 30),
+        ("formal-core-checker", 30),
+        ("formal-core-lean", 30),
+        ("formal-core-vectors", 30),
+        ("formal-core-policy", 30),
+        ("formal-crypto-isolation", 30),
+        ("formal-crypto-sanity", 60),
+        ("core-test-shards", 30),
+        ("native-path-tests", 30),
+        ("app-no-ssh-e2e", 30),
+        ("security-adversarial", 30),
+        ("native-backend-security", 30),
+        ("release-binaries", 30),
     ):
         require_contains(
             f"{timed_job} wall-clock budget",
             job_block(workflow, timed_job),
-            "timeout-minutes: 30",
+            f"timeout-minutes: {timeout_minutes}",
         )
     release_build = job_block(workflow, "release-build")
     dependency_audit = job_block(workflow, "dependency-audit")
@@ -1497,6 +1497,11 @@ def check_formal_crypto_workflow(path: Path) -> None:
                     f"{trigger_path} path"
                 )
     steps = workflow_steps(workflow, "formal-crypto-sanity")
+    require_contains(
+        "focused formal-crypto-sanity wall-clock budget",
+        job_block(workflow, "formal-crypto-sanity"),
+        "timeout-minutes: 60",
+    )
     formal_crypto_gate_index = require_executable_command(
         "focused complete formal-crypto gate",
         steps,

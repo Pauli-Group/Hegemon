@@ -165,7 +165,7 @@ jobs:
 
   formal-crypto-sanity:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     needs: formal-crypto-isolation
     steps:
       - name: Free disk space

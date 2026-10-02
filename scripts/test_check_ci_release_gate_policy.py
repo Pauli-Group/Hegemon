@@ -221,6 +221,29 @@ def main() -> None:
 
     ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     policy.check_ci_workflow(ROOT / ".github/workflows/ci.yml")
+    ci_formal_crypto_timeout = (
+        "  formal-crypto-sanity:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    timeout-minutes: 60\n"
+    )
+    expect_workflow_rejected(
+        "PR formal-crypto sanity 30-minute timeout regression",
+        policy.check_ci_workflow,
+        replace_once(
+            ci_workflow,
+            ci_formal_crypto_timeout,
+            ci_formal_crypto_timeout.replace("timeout-minutes: 60", "timeout-minutes: 30"),
+        ),
+    )
+    expect_workflow_rejected(
+        "PR formal-crypto sanity missing timeout",
+        policy.check_ci_workflow,
+        replace_once(
+            ci_workflow,
+            ci_formal_crypto_timeout,
+            ci_formal_crypto_timeout.replace("    timeout-minutes: 60\n", ""),
+        ),
+    )
     ci_smz9_parser_step = (
         "      - name: SMZ9 parser/verifier refinement regression\n"
         "        run: ./scripts/run_exact_cargo_lib_test.sh transaction-circuit "
@@ -363,6 +386,31 @@ def main() -> None:
     ).read_text(encoding="utf-8")
     policy.check_formal_crypto_workflow(
         ROOT / ".github/workflows/formal-crypto.yml"
+    )
+    standalone_formal_crypto_timeout = (
+        "  formal-crypto-sanity:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    timeout-minutes: 60\n"
+    )
+    expect_workflow_rejected(
+        "focused formal-crypto sanity 30-minute timeout regression",
+        policy.check_formal_crypto_workflow,
+        replace_once(
+            focused_formal_crypto_workflow,
+            standalone_formal_crypto_timeout,
+            standalone_formal_crypto_timeout.replace(
+                "timeout-minutes: 60", "timeout-minutes: 30"
+            ),
+        ),
+    )
+    expect_workflow_rejected(
+        "focused formal-crypto sanity missing timeout",
+        policy.check_formal_crypto_workflow,
+        replace_once(
+            focused_formal_crypto_workflow,
+            standalone_formal_crypto_timeout,
+            standalone_formal_crypto_timeout.replace("    timeout-minutes: 60\n", ""),
+        ),
     )
     for trigger_path in policy.FORMAL_CRYPTO_POSEIDON2_V8_TRIGGER_PATHS:
         trigger_line = f"      - '{trigger_path}'\n"
