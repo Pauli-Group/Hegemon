@@ -20,6 +20,9 @@ use protocol_shielded_pool::poseidon2_production_transport::{
     POSEIDON2_PRODUCTION_RELATION_BALANCE_BINDING_LIMBS, POSEIDON2_PRODUCTION_TRANSPORT_ACTION_ID,
     POSEIDON2_PRODUCTION_TRANSPORT_BACKEND_ID, POSEIDON2_PRODUCTION_TRANSPORT_FAMILY_ID,
 };
+#[cfg(test)]
+use rayon::prelude::*;
+use std::sync::{mpsc, OnceLock};
 use transaction_circuit::smallwood_poseidon2_v8_frontend::{
     V8_PUBLIC_AFTER_ROOT, V8_PUBLIC_BEFORE_ROOT, V8_PUBLIC_PARENT_HEIGHT,
 };
@@ -37,7 +40,7 @@ use transaction_core::hashing_pq::ciphertext_hash_bytes;
 use super::poseidon2_v8_state::{
     Poseidon2V8BlockContext, Poseidon2V8Commitment, Poseidon2V8ExactLeafVerifier,
     Poseidon2V8NoteRoot, Poseidon2V8Nullifier, Poseidon2V8PublicTransition, Poseidon2V8Root,
-    Poseidon2V8StablecoinEffect, POSEIDON2_V8_MAX_SCALAR,
+    Poseidon2V8StablecoinEffect, POSEIDON2_V8_MAX_SCALAR, POSEIDON2_V8_PROOF_VERIFICATION_WINDOW,
 };
 use super::{
     ActionId48, KernelVersionBinding, PendingAction, ACTION_MINT_POSEIDON2_V8_COINBASE,
@@ -1618,12 +1621,118 @@ impl Poseidon2V8ExactLeafVerifier for Poseidon2V8NativeVerifierConnector {
         }
     }
 
+    fn verify_exact_v8_leaf_window(
+        &mut self,
+        block: Poseidon2V8BlockContext,
+        first_leaf_index: usize,
+        exact_native_leaves: &[&[u8]],
+    ) -> Option<Vec<Result<Poseidon2V8PublicTransition, String>>> {
+        if !(2..=POSEIDON2_V8_PROOF_VERIFICATION_WINDOW).contains(&exact_native_leaves.len()) {
+            return None;
+        }
+        let pool = poseidon2_v8_proof_verification_pool()?;
+        let connector = *self;
+        if pool.current_thread_index().is_some() {
+            // Never block a worker waiting for jobs on its own pool. Recursive
+            // callers already occupy one of the same bounded worker slots.
+            return Some(
+                exact_native_leaves
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, leaf)| {
+                        connector.verify_exact_v8_leaf_inner(block, first_leaf_index + offset, leaf)
+                    })
+                    .collect(),
+            );
+        }
+        // FIFO leaf jobs let already queued local/template calls run before
+        // another peer window. Only this bounded window is owned/queued, and
+        // its results are received in the original canonical index order.
+        let queued = exact_native_leaves
+            .iter()
+            .enumerate()
+            .map(|(offset, leaf)| {
+                connector.queue_exact_v8_leaf(pool, block, first_leaf_index + offset, leaf)
+            })
+            .collect::<Vec<_>>();
+        Some(
+            queued
+                .into_iter()
+                .map(receive_poseidon2_v8_proof_result)
+                .collect(),
+        )
+    }
+
     fn verify_exact_v8_leaf(
         &mut self,
         block: Poseidon2V8BlockContext,
         leaf_index: usize,
         exact_native_leaf: &[u8],
     ) -> Result<Poseidon2V8PublicTransition, String> {
+        if let Some(pool) = poseidon2_v8_proof_verification_pool() {
+            if pool.current_thread_index().is_none() {
+                return receive_poseidon2_v8_proof_result(self.queue_exact_v8_leaf(
+                    pool,
+                    block,
+                    leaf_index,
+                    exact_native_leaf,
+                ));
+            }
+        }
+        self.verify_exact_v8_leaf_inner(block, leaf_index, exact_native_leaf)
+    }
+}
+
+impl Poseidon2V8NativeVerifierConnector {
+    fn queue_exact_v8_leaf(
+        self,
+        pool: &rayon::ThreadPool,
+        block: Poseidon2V8BlockContext,
+        leaf_index: usize,
+        exact_native_leaf: &[u8],
+    ) -> mpsc::Receiver<Result<Poseidon2V8PublicTransition, String>> {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        // Contextual transport/ciphertext gates bound bytes before the owned
+        // worker copy. The node's ActionView pass has already checked public
+        // words and parent height; the unchanged inner verifier rechecks them.
+        let decoded = if self.smza {
+            decode_poseidon2_production_smza_native_leaf_exact(self.expected, exact_native_leaf)
+        } else {
+            decode_poseidon2_production_smz9_native_leaf_exact(self.expected, exact_native_leaf)
+        };
+        #[cfg(test)]
+        let scheduling_probe = poseidon2_v8_scheduling_probe(exact_native_leaf).is_some();
+        #[cfg(not(test))]
+        let scheduling_probe = false;
+        if let Err(error) = decoded {
+            if !scheduling_probe {
+                let _ = sender.send(Err(format!(
+                    "V8 leaf {leaf_index} contextual decode rejected: {error}"
+                )));
+                return receiver;
+            }
+        }
+        let leaf = exact_native_leaf.to_vec();
+        pool.spawn_fifo(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.verify_exact_v8_leaf_inner(block, leaf_index, &leaf)
+            }))
+            .unwrap_or_else(|_| Err(format!("V8 leaf {leaf_index} proof worker panicked")));
+            let _ = sender.send(result);
+        });
+        receiver
+    }
+
+    fn verify_exact_v8_leaf_inner(
+        &self,
+        block: Poseidon2V8BlockContext,
+        leaf_index: usize,
+        exact_native_leaf: &[u8],
+    ) -> Result<Poseidon2V8PublicTransition, String> {
+        #[cfg(test)]
+        if let Some(probe) = poseidon2_v8_scheduling_probe(exact_native_leaf) {
+            return probe.reject_after_observing_dispatch(leaf_index);
+        }
         // Exact transport/context/ciphertext-hash checks all complete before
         // the relation is reconstructed or the proof engine is entered.
         let decoded = (if self.smza {
@@ -1747,6 +1856,92 @@ impl Poseidon2V8ExactLeafVerifier for Poseidon2V8NativeVerifierConnector {
     }
 }
 
+fn receive_poseidon2_v8_proof_result(
+    receiver: mpsc::Receiver<Result<Poseidon2V8PublicTransition, String>>,
+) -> Result<Poseidon2V8PublicTransition, String> {
+    receiver
+        .recv()
+        .unwrap_or_else(|_| Err("V8 proof worker returned no result".to_owned()))
+}
+
+/// One shared pool bounds concurrent native proof work even when peer, local
+/// admission and mining lanes call the verifier at the same time. One-CPU
+/// hosts and pool-initialization failures retain the original sequential path.
+/// Existing admission-lane permits remain separate; external leaf jobs enter
+/// this pool's FIFO injector, and later windows cannot be submitted early.
+fn poseidon2_v8_proof_verification_pool() -> Option<&'static rayon::ThreadPool> {
+    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let workers = std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(1)
+            .min(POSEIDON2_V8_PROOF_VERIFICATION_WINDOW);
+        if workers < 2 {
+            return None;
+        }
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .thread_name(|index| format!("hegemon-v8-proof-{index}"))
+            .build()
+            .ok()
+    })
+    .as_ref()
+}
+
+// Scheduling-only test hook: one exact non-protocol sentinel can reach an
+// instrumented rejecting callback. It never returns an accepted transition,
+// cannot pass ActionView admission, and is absent from ordinary builds.
+#[cfg(test)]
+const POSEIDON2_V8_SCHEDULING_PROBE_LEAF: &[u8] = b"hegemon-v8-rejecting-scheduling-probe";
+
+#[cfg(test)]
+#[derive(Default)]
+struct Poseidon2V8SchedulingProbe {
+    active: std::sync::atomic::AtomicUsize,
+    maximum: std::sync::atomic::AtomicUsize,
+    completed: std::sync::atomic::AtomicUsize,
+    outside_pool: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(test)]
+impl Poseidon2V8SchedulingProbe {
+    fn reject_after_observing_dispatch(
+        &self,
+        leaf_index: usize,
+    ) -> Result<Poseidon2V8PublicTransition, String> {
+        use std::sync::atomic::Ordering;
+        if poseidon2_v8_proof_verification_pool()
+            .is_some_and(|pool| pool.current_thread_index().is_none())
+        {
+            self.outside_pool.store(true, Ordering::SeqCst);
+        }
+        let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.maximum.fetch_max(active, Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        self.completed.fetch_add(1, Ordering::SeqCst);
+        self.active.fetch_sub(1, Ordering::SeqCst);
+        Err(format!("V8 scheduling probe rejection at {leaf_index}"))
+    }
+}
+
+#[cfg(test)]
+fn poseidon2_v8_scheduling_probe_slot(
+) -> &'static std::sync::Mutex<Option<std::sync::Arc<Poseidon2V8SchedulingProbe>>> {
+    static PROBE: OnceLock<std::sync::Mutex<Option<std::sync::Arc<Poseidon2V8SchedulingProbe>>>> =
+        OnceLock::new();
+    PROBE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+#[cfg(test)]
+fn poseidon2_v8_scheduling_probe(
+    leaf: &[u8],
+) -> Option<std::sync::Arc<Poseidon2V8SchedulingProbe>> {
+    if leaf != POSEIDON2_V8_SCHEDULING_PROBE_LEAF {
+        return None;
+    }
+    poseidon2_v8_scheduling_probe_slot().lock().unwrap().clone()
+}
+
 const _: [(); POSEIDON2_PRODUCTION_PUBLIC_STATEMENT_WORDS] =
     [(); SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS];
 const _: [(); POSEIDON2_PRODUCTION_RELATION_BALANCE_BINDING_LIMBS] =
@@ -1755,6 +1950,158 @@ const _: [(); POSEIDON2_PRODUCTION_RELATION_BALANCE_BINDING_LIMBS] =
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_native_proof_window_keeps_absolute_indexes_and_decode_failures() {
+        let mut connector = Poseidon2V8NativeVerifierConnector::for_test_network(
+            protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NETWORK_ID,
+        )
+        .unwrap();
+        let block = Poseidon2V8BlockContext::new(0, [1; 32], 1, [2; 32]).unwrap();
+        let leaves: [&[u8]; 2] = [b"invalid leaf one", b"invalid leaf two"];
+        for smza in [false, true] {
+            connector.smza = smza;
+            let serial = leaves
+                .iter()
+                .enumerate()
+                .map(|(offset, leaf)| connector.verify_exact_v8_leaf(block, 17 + offset, leaf))
+                .collect::<Vec<_>>();
+            if let Some(window) = connector.verify_exact_v8_leaf_window(block, 17, &leaves) {
+                assert_eq!(window, serial);
+            }
+            assert!(connector
+                .verify_exact_v8_leaf_window(block, 17, &[])
+                .is_none());
+            assert!(connector
+                .verify_exact_v8_leaf_window(block, 17, &leaves[..1])
+                .is_none());
+            let oversized_window = vec![leaves[0]; POSEIDON2_V8_PROOF_VERIFICATION_WINDOW + 1];
+            assert!(connector
+                .verify_exact_v8_leaf_window(block, 17, &oversized_window)
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn bounded_native_proof_pool_is_shared_across_simultaneous_callers() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let Some(pool) = poseidon2_v8_proof_verification_pool() else {
+            return;
+        };
+        assert!(pool.current_num_threads() <= POSEIDON2_V8_PROOF_VERIFICATION_WINDOW);
+        let active = AtomicUsize::new(0);
+        let maximum = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let mut callers = Vec::new();
+            for _ in 0..3 {
+                let active = &active;
+                let maximum = &maximum;
+                callers.push(scope.spawn(move || {
+                    let shared = poseidon2_v8_proof_verification_pool().unwrap();
+                    assert!(std::ptr::eq(pool, shared));
+                    shared.install(|| {
+                        (0..POSEIDON2_V8_PROOF_VERIFICATION_WINDOW)
+                            .into_par_iter()
+                            .for_each(|_| {
+                                let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                                maximum.fetch_max(now, Ordering::SeqCst);
+                                std::thread::sleep(std::time::Duration::from_millis(2));
+                                active.fetch_sub(1, Ordering::SeqCst);
+                            })
+                    });
+                }));
+            }
+            for caller in callers {
+                caller.join().unwrap();
+            }
+        });
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        assert!(maximum.load(Ordering::SeqCst) <= pool.current_num_threads());
+    }
+
+    #[test]
+    fn bounded_native_proof_pool_caps_mixed_direct_windows_and_nested_dispatch() {
+        use std::sync::{atomic::Ordering, Arc};
+        let Some(pool) = poseidon2_v8_proof_verification_pool() else {
+            return;
+        };
+        let probe = Arc::new(Poseidon2V8SchedulingProbe::default());
+        {
+            let mut slot = poseidon2_v8_scheduling_probe_slot().lock().unwrap();
+            assert!(slot.is_none());
+            *slot = Some(Arc::clone(&probe));
+        }
+        struct ClearProbe;
+        impl Drop for ClearProbe {
+            fn drop(&mut self) {
+                *poseidon2_v8_scheduling_probe_slot().lock().unwrap() = None;
+            }
+        }
+        let _clear = ClearProbe;
+        let connector = Poseidon2V8NativeVerifierConnector::for_test_network(
+            protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NETWORK_ID,
+        )
+        .unwrap();
+        let block = Poseidon2V8BlockContext::new(0, [1; 32], 1, [2; 32]).unwrap();
+        std::thread::scope(|scope| {
+            let callers = [true, false, false]
+                .into_iter()
+                .map(|window| {
+                    scope.spawn(move || {
+                        let mut connector = connector;
+                        for round in 0..4 {
+                            if window {
+                                let leaves = [POSEIDON2_V8_SCHEDULING_PROBE_LEAF; 4];
+                                let results = connector
+                                    .verify_exact_v8_leaf_window(block, round * 4, &leaves)
+                                    .unwrap();
+                                assert_eq!(results.len(), 4);
+                                for (offset, result) in results.into_iter().enumerate() {
+                                    assert_eq!(
+                                        result.unwrap_err(),
+                                        format!(
+                                            "V8 scheduling probe rejection at {}",
+                                            round * 4 + offset
+                                        )
+                                    );
+                                }
+                            } else {
+                                assert!(connector
+                                    .verify_exact_v8_leaf(
+                                        block,
+                                        round,
+                                        POSEIDON2_V8_SCHEDULING_PROBE_LEAF
+                                    )
+                                    .is_err());
+                            }
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            for caller in callers {
+                caller.join().unwrap();
+            }
+        });
+        // All workers recursively dispatch a direct connector call at once.
+        // A worker that queued and waited on its own pool would deadlock here.
+        pool.scope(|scope| {
+            for index in 0..pool.current_num_threads() {
+                scope.spawn(move |_| {
+                    let mut connector = connector;
+                    assert!(connector
+                        .verify_exact_v8_leaf(block, index, POSEIDON2_V8_SCHEDULING_PROBE_LEAF)
+                        .is_err());
+                });
+            }
+        });
+        assert_eq!(
+            probe.completed.load(Ordering::SeqCst),
+            24 + pool.current_num_threads()
+        );
+        assert_eq!(probe.active.load(Ordering::SeqCst), 0);
+        assert!(!probe.outside_pool.load(Ordering::SeqCst));
+        assert!(probe.maximum.load(Ordering::SeqCst) <= pool.current_num_threads());
+    }
     use crate::native::poseidon2_v8_pending::{
         plan_poseidon2_v8_pending_chain, verify_poseidon2_v8_block_order, Poseidon2V8PendingAction,
         Poseidon2V8PendingCaps,
@@ -2991,6 +3338,226 @@ mod tests {
         .expect("retained wallet RPC request JSON decodes");
         crate::native::admit_native_action_request_projection(&request)
             .expect("retained wallet RPC byte projection is canonical")
+    }
+
+    #[cfg(feature = "poseidon2-v8-retained-test-support")]
+    #[test]
+    #[ignore = "requires generated source-bound disjoint SMZA fixtures selected by HEGEMON_TEST_DISJOINT_SMZA_DIRECTORY"]
+    fn bounded_native_disjoint_smza_block_survives_restart_and_fresh_import() {
+        // Explicit source-candidate fixture binding, not production activation.
+        assert!(protocol_versioning::smallwood_poseidon2_production_capability().is_none());
+        let directory = std::path::PathBuf::from(
+            std::env::var_os("HEGEMON_TEST_DISJOINT_SMZA_DIRECTORY")
+                .expect("select generated disjoint SMZA directory"),
+        );
+        assert!(
+            std::fs::metadata(directory.join("manifest.json"))
+                .unwrap()
+                .len()
+                <= 1_048_576
+        );
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(directory.join("manifest.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            manifest["schema"],
+            "hegemon-smallwood-poseidon2-v8-smza-disjoint-spends-v1"
+        );
+        assert_eq!(manifest["parent_height"], 2);
+        assert_eq!(manifest["disjoint_inputs"], true);
+        assert_eq!(
+            manifest["qualification_scope"],
+            "source_bound_development_only"
+        );
+        assert_eq!(
+            manifest["features"],
+            serde_json::json!(["rp05-dev-artifacts"])
+        );
+        assert_eq!(manifest["production_eligible"], false);
+        assert_eq!(manifest["production_authorized"], false);
+        assert_eq!(manifest["identity"]["profile_id"], 9);
+        assert_eq!(manifest["identity"]["domain_set"], 5);
+        let genesis_hash = crate::native::genesis_meta(0x207f_ffff).unwrap().hash;
+        let production =
+            test_production(protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NETWORK_ID)
+                .with_test_smza_profile()
+                .with_test_activation_genesis_hash(genesis_hash);
+        assert_eq!(
+            manifest["identity"]["network_id"],
+            production.expected_context().network_id()
+        );
+        assert_eq!(
+            manifest["identity"]["relation_digest_hex"],
+            hex::encode(production.expected_context().relation_digest())
+        );
+        let _binding = install_poseidon2_v8_test_binding(production);
+        let read_pinned = |relative: &str, descriptor: &serde_json::Value, cap: usize| {
+            let path = directory.join(relative);
+            let length = std::fs::metadata(&path).unwrap().len();
+            assert!(length <= cap as u64, "oversized fixture {relative}");
+            assert_eq!(descriptor["bytes"].as_u64(), Some(length));
+            let bytes = std::fs::read(path).unwrap();
+            assert_eq!(descriptor["sha512"], sha512_hex(&bytes));
+            bytes
+        };
+        let coinbases = [1, 2].map(|height| {
+            let name = format!("coinbase-height{height}.bin");
+            let bytes = read_pinned(&name, &manifest["fixture_files"][&name], 65_536);
+            retained_coinbase_action(
+                height,
+                &bytes,
+                manifest["fixture_files"][&name]["sha512"].as_str().unwrap(),
+            )
+        });
+        let mut actions = ["spend-note0", "spend-note1"].map(|role| {
+            let artifact = &manifest["artifacts"][role];
+            assert_eq!(artifact["source_owned_verification"], true);
+            let inline = read_pinned(&format!("{role}/inline-args.bin"), &artifact["files"]["inline-args.bin"], protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES);
+            let leaf = read_pinned(&format!("{role}/native-leaf.bin"), &artifact["files"]["native-leaf.bin"], protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_SMZA_MAX_NATIVE_LEAF_BYTES);
+            let mut action = pending_poseidon2_v8_action_from_inline_args(
+                production, 3,
+                protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING.into(),
+                inline,
+            ).expect("source-bound disjoint action exact-decodes");
+            action.tx_hash = crate::native::pending_action_hash(&action);
+            let view = Poseidon2V8ActionView::from_pending(production, 3, &action).unwrap();
+            assert_eq!(view.exact_native_leaf(), leaf);
+            assert_eq!(artifact["fixture"]["statement_sha512"], sha512_hex(&view.statement().to_public_bytes()));
+            assert_eq!(artifact["fixture"]["input_flags"], serde_json::json!([true, false]));
+            assert_eq!(artifact["fixture"]["output_flags"], serde_json::json!([true, false]));
+            assert_eq!(view.statement().input_flags, [true, false]);
+            assert_eq!(view.statement().output_flags, [true, false]);
+            assert_eq!(artifact["fixture"]["active_nullifier_words"], serde_json::json!(view.statement().nullifiers[0]));
+            assert_eq!(artifact["fixture"]["output_commitment_words"], serde_json::json!(view.statement().commitments[0]));
+            (action, leaf)
+        });
+        actions.sort_by_key(|(action, _)| action.tx_hash);
+        let views = actions
+            .each_ref()
+            .map(|(action, _)| Poseidon2V8ActionView::from_pending(production, 3, action).unwrap());
+        assert_ne!(views[0].nullifiers(), views[1].nullifiers());
+        assert_eq!(views[0].note_anchor(), views[1].note_anchor());
+        assert_eq!(
+            hex::encode(
+                views[0]
+                    .note_anchor()
+                    .limbs()
+                    .into_iter()
+                    .flat_map(u64::to_le_bytes)
+                    .collect::<Vec<_>>()
+            ),
+            manifest["note_root_hex"].as_str().unwrap()
+        );
+
+        let live_directory = tempfile::tempdir().unwrap();
+        let config = retained_native_config(live_directory.path(), "disjoint-smza");
+        let node = crate::native::NativeNode::open(config.clone()).unwrap();
+        let block1 = mine_exact_pending_fixture(&node, &coinbases[0].0);
+        let block2 = mine_exact_pending_fixture(&node, &coinbases[1].0);
+        let genesis =
+            Poseidon2V8Checkpoint::new(0, genesis_hash, production.stablecoin_genesis_root());
+        let parent_store =
+            Poseidon2V8StateStore::open(&node.db, genesis, production.note_genesis_root()).unwrap();
+        let parent_tip = parent_store.tip().unwrap();
+        let parent_notes = parent_store.note_tip().unwrap();
+        assert_eq!(parent_tip.height(), 2);
+        assert_eq!(parent_notes.leaf_count(), 2);
+        assert_eq!(parent_notes.root(), views[0].note_anchor());
+        let context = retained_block_context(parent_tip, [0xa3; 32]);
+        let duplicates = [actions[0].1.as_slice(), actions[0].1.as_slice()];
+        let duplicate_error = parent_store
+            .verify_uncommitted_block(
+                Poseidon2V8UnverifiedBlock::new(context, &duplicates).unwrap(),
+                &mut production.connector(),
+            )
+            .expect_err("two valid copies of one spend must not form a valid block");
+        assert!(matches!(
+            duplicate_error,
+            crate::native::poseidon2_v8_state::Poseidon2V8StateError::DuplicateNullifier(_)
+        ));
+        let mut mutated = actions[1].1.clone();
+        *mutated.last_mut().unwrap() ^= 1;
+        let bad_proof_leaves = [actions[0].1.as_slice(), mutated.as_slice()];
+        let proof_error = parent_store
+            .verify_uncommitted_block(
+                Poseidon2V8UnverifiedBlock::new(context, &bad_proof_leaves).unwrap(),
+                &mut production.connector(),
+            )
+            .expect_err("later proof mutation must fail without committing the earlier spend");
+        assert!(matches!(
+            proof_error,
+            crate::native::poseidon2_v8_state::Poseidon2V8StateError::ProofRejected(_)
+        ));
+        assert_eq!(parent_store.tip().unwrap(), parent_tip);
+        assert_eq!(parent_store.note_tip().unwrap(), parent_notes);
+        assert_eq!(parent_store.proof_lifetime_count().unwrap().get(), 0);
+        for view in views {
+            for nullifier in view.nullifiers().into_iter().flatten() {
+                assert!(!parent_store.is_nullifier_spent(nullifier).unwrap());
+            }
+        }
+        drop(parent_store);
+        for (action, _) in &actions {
+            let relayed =
+                crate::native::decode_native_peer_pending_action_v3(&action.encode(), 3).unwrap();
+            let staged = node.stage_relayed_pending_action(relayed).unwrap().unwrap();
+            assert_eq!(staged.encode(), action.encode());
+        }
+        let ordered_bytes = actions.each_ref().map(|(action, _)| action.encode());
+        let block3 = mine_current_retained_template(&node, &ordered_bytes);
+        assert_eq!(block3.height, 3);
+        let store =
+            Poseidon2V8StateStore::open(&node.db, genesis, production.note_genesis_root()).unwrap();
+        let expected_tip = store.tip().unwrap();
+        let expected_notes = store.note_tip().unwrap();
+        assert_eq!(expected_tip.block_hash(), block3.hash);
+        assert_eq!(expected_notes.leaf_count(), 4);
+        assert_eq!(store.proof_lifetime_count().unwrap().get(), 2);
+        for view in views {
+            for nullifier in view.nullifiers().into_iter().flatten() {
+                assert!(store.is_nullifier_spent(nullifier).unwrap());
+            }
+        }
+        drop(store);
+        drop(node);
+        let restarted =
+            crate::native::NativeNode::reopen_after_sled_release_for_test(config).unwrap();
+        assert_eq!(
+            restarted
+                .load_canonical_block_at_height_unverified(3)
+                .unwrap()
+                .action_bytes,
+            ordered_bytes
+        );
+        let restarted_store =
+            Poseidon2V8StateStore::open(&restarted.db, genesis, production.note_genesis_root())
+                .unwrap();
+        assert_eq!(restarted_store.tip().unwrap(), expected_tip);
+        assert_eq!(restarted_store.note_tip().unwrap(), expected_notes);
+        assert_eq!(restarted_store.proof_lifetime_count().unwrap().get(), 2);
+        for view in views {
+            for nullifier in view.nullifiers().into_iter().flatten() {
+                assert!(restarted_store.is_nullifier_spent(nullifier).unwrap());
+            }
+        }
+        let fresh_directory = tempfile::tempdir().unwrap();
+        let fresh = crate::native::NativeNode::open(retained_native_config(
+            fresh_directory.path(),
+            "disjoint-smza-fresh",
+        ))
+        .unwrap();
+        import_exact_retained_blocks(&fresh, &[block1, block2, block3]);
+        let fresh_store =
+            Poseidon2V8StateStore::open(&fresh.db, genesis, production.note_genesis_root())
+                .unwrap();
+        assert_eq!(fresh_store.tip().unwrap(), expected_tip);
+        assert_eq!(fresh_store.note_tip().unwrap(), expected_notes);
+        assert_eq!(fresh_store.proof_lifetime_count().unwrap().get(), 2);
+        for view in views {
+            for nullifier in view.nullifiers().into_iter().flatten() {
+                assert!(fresh_store.is_nullifier_spent(nullifier).unwrap());
+            }
+        }
     }
 
     fn retained_coinbase_action(

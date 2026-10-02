@@ -636,6 +636,10 @@ impl Poseidon2V8NativeLeafProfile {
     }
 }
 
+/// This bound is local scheduling, not protocol geometry: state consumes one
+/// window before any later window can enter proof verification.
+pub(crate) const POSEIDON2_V8_PROOF_VERIFICATION_WINDOW: usize = 4;
+
 /// The production implementation must parse and verify the exact canonical
 /// native leaf, then return the proof-public stablecoin transition. Returning
 /// `Ok` is the only capability that can create a durable forward transition.
@@ -651,6 +655,24 @@ pub(crate) trait Poseidon2V8ExactLeafVerifier {
         leaf_index: usize,
         exact_native_leaf: &[u8],
     ) -> Result<Poseidon2V8PublicTransition, String>;
+
+    /// Optional read-only verification of one already bounded window. Results
+    /// must have the same cardinality/order as leaves and bind the supplied
+    /// context plus absolute leaf index. Stateful verifiers retain their exact
+    /// original call/early-stop behavior through the default sequential path.
+    fn verify_exact_v8_leaf_window(
+        &mut self,
+        _block: Poseidon2V8BlockContext,
+        _first_leaf_index: usize,
+        _exact_native_leaves: &[&[u8]],
+    ) -> Option<Vec<Result<Poseidon2V8PublicTransition, String>>> {
+        None
+    }
+
+    /// Recording wrappers observe a successful window result only when state
+    /// consumes that leaf in canonical order, at the same point as the single
+    /// leaf path. This cannot authorize a leaf or mutate durable state.
+    fn record_window_verified_transition(&mut self, _transition: Poseidon2V8PublicTransition) {}
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1521,49 +1543,77 @@ impl Poseidon2V8StateStore {
                 .collect::<BTreeSet<_>>();
             let mut current_root = cursor.root;
             let mut block_nullifiers = Vec::new();
-            for (leaf_index, leaf) in block.exact_native_leaves.iter().copied().enumerate() {
-                let public = verifier
-                    .verify_exact_v8_leaf(context, leaf_index, leaf)
-                    .map_err(Poseidon2V8StateError::ProofRejected)?;
-                if !public.stablecoin_effect_matches_roots() {
-                    return Err(Poseidon2V8StateError::StablecoinEffectMismatch {
-                        leaf_index,
-                        effect: public.stablecoin_effect,
-                        before_root: public.before_root,
-                        after_root: public.after_root,
-                    });
+            for (window_index, leaves) in block
+                .exact_native_leaves
+                .chunks(POSEIDON2_V8_PROOF_VERIFICATION_WINDOW)
+                .enumerate()
+            {
+                let first_leaf_index = window_index * POSEIDON2_V8_PROOF_VERIFICATION_WINDOW;
+                let prepared =
+                    verifier.verify_exact_v8_leaf_window(context, first_leaf_index, leaves);
+                if prepared
+                    .as_ref()
+                    .is_some_and(|results| results.len() != leaves.len())
+                {
+                    return Err(Poseidon2V8StateError::ProofRejected(
+                        "V8 verifier returned a mismatched proof window".to_owned(),
+                    ));
                 }
-                if public.parent_height != context.parent_height {
-                    return Err(Poseidon2V8StateError::ProofParentHeightMismatch {
-                        expected: context.parent_height,
-                        observed: public.parent_height,
-                    });
-                }
-                if public.before_root != current_root {
-                    return Err(Poseidon2V8StateError::ProofBeforeRootMismatch {
-                        expected: current_root,
-                        observed: public.before_root,
-                    });
-                }
-                if !pre_block_note_roots.contains(&public.note_anchor) {
-                    return Err(Poseidon2V8StateError::UnknownNoteAnchor {
-                        observed: public.note_anchor,
-                    });
-                }
-                for nullifier in public.nullifiers.into_iter().flatten() {
-                    if !attached_nullifiers.insert(nullifier) {
-                        return Err(Poseidon2V8StateError::DuplicateNullifier(nullifier));
+                let mut prepared = prepared.map(Vec::into_iter);
+                for (offset, leaf) in leaves.iter().copied().enumerate() {
+                    let leaf_index = first_leaf_index + offset;
+                    let public = if let Some(results) = prepared.as_mut() {
+                        let public = results
+                            .next()
+                            .expect("checked proof window cardinality")
+                            .map_err(Poseidon2V8StateError::ProofRejected)?;
+                        verifier.record_window_verified_transition(public);
+                        public
+                    } else {
+                        verifier
+                            .verify_exact_v8_leaf(context, leaf_index, leaf)
+                            .map_err(Poseidon2V8StateError::ProofRejected)?
+                    };
+                    if !public.stablecoin_effect_matches_roots() {
+                        return Err(Poseidon2V8StateError::StablecoinEffectMismatch {
+                            leaf_index,
+                            effect: public.stablecoin_effect,
+                            before_root: public.before_root,
+                            after_root: public.after_root,
+                        });
                     }
-                    let persisted = self.tree.get(nullifier_key(nullifier))?.is_some();
-                    if persisted && !detached_nullifiers.contains(&nullifier) {
-                        return Err(Poseidon2V8StateError::SpentNullifier(nullifier));
+                    if public.parent_height != context.parent_height {
+                        return Err(Poseidon2V8StateError::ProofParentHeightMismatch {
+                            expected: context.parent_height,
+                            observed: public.parent_height,
+                        });
                     }
-                    block_nullifiers.push(nullifier);
+                    if public.before_root != current_root {
+                        return Err(Poseidon2V8StateError::ProofBeforeRootMismatch {
+                            expected: current_root,
+                            observed: public.before_root,
+                        });
+                    }
+                    if !pre_block_note_roots.contains(&public.note_anchor) {
+                        return Err(Poseidon2V8StateError::UnknownNoteAnchor {
+                            observed: public.note_anchor,
+                        });
+                    }
+                    for nullifier in public.nullifiers.into_iter().flatten() {
+                        if !attached_nullifiers.insert(nullifier) {
+                            return Err(Poseidon2V8StateError::DuplicateNullifier(nullifier));
+                        }
+                        let persisted = self.tree.get(nullifier_key(nullifier))?.is_some();
+                        if persisted && !detached_nullifiers.contains(&nullifier) {
+                            return Err(Poseidon2V8StateError::SpentNullifier(nullifier));
+                        }
+                        block_nullifiers.push(nullifier);
+                    }
+                    for commitment in public.commitments.into_iter().flatten() {
+                        note_state.append(commitment)?;
+                    }
+                    current_root = public.after_root;
                 }
-                for commitment in public.commitments.into_iter().flatten() {
-                    note_state.append(commitment)?;
-                }
-                current_root = public.after_root;
             }
             // Coinbase is consensus-public issuance, not a transaction proof.
             // Its typed payload has already been checked against subsidy plus
@@ -2431,6 +2481,215 @@ mod tests {
 
     fn empty_note_genesis_root() -> Poseidon2V8NoteRoot {
         Poseidon2V8NoteTreeState::new_empty().unwrap().root()
+    }
+
+    struct WindowTestVerifier {
+        results: Vec<Result<Poseidon2V8PublicTransition, String>>,
+        parallel: bool,
+        verified: Vec<usize>,
+        observed: Vec<Poseidon2V8PublicTransition>,
+        windows: Vec<(usize, usize)>,
+    }
+
+    impl Poseidon2V8ExactLeafVerifier for WindowTestVerifier {
+        fn native_leaf_profile(&self) -> Poseidon2V8NativeLeafProfile {
+            Poseidon2V8NativeLeafProfile::Smz9
+        }
+
+        fn verify_exact_v8_leaf(
+            &mut self,
+            _block: Poseidon2V8BlockContext,
+            leaf_index: usize,
+            _exact_native_leaf: &[u8],
+        ) -> Result<Poseidon2V8PublicTransition, String> {
+            self.verified.push(leaf_index);
+            let public = self.results[leaf_index].clone()?;
+            self.observed.push(public);
+            Ok(public)
+        }
+
+        fn verify_exact_v8_leaf_window(
+            &mut self,
+            _block: Poseidon2V8BlockContext,
+            first: usize,
+            leaves: &[&[u8]],
+        ) -> Option<Vec<Result<Poseidon2V8PublicTransition, String>>> {
+            if !self.parallel {
+                return None;
+            }
+            assert!(leaves.len() <= POSEIDON2_V8_PROOF_VERIFICATION_WINDOW);
+            self.windows.push((first, leaves.len()));
+            // Deliberately compute in reverse order while returning indexed
+            // results, modeling workers that finish out of order.
+            self.verified.extend((first..first + leaves.len()).rev());
+            Some(self.results[first..first + leaves.len()].to_vec())
+        }
+
+        fn record_window_verified_transition(&mut self, public: Poseidon2V8PublicTransition) {
+            self.observed.push(public);
+        }
+    }
+
+    fn window_test_verifier(
+        count: usize,
+        parallel: bool,
+        state_failure: Option<usize>,
+        proof_failures: &[usize],
+    ) -> WindowTestVerifier {
+        let results = (0..count)
+            .map(|index| {
+                if proof_failures.contains(&index) {
+                    return Err(format!("fixture proof rejection at {index}"));
+                }
+                let stable_root = if state_failure == Some(index) {
+                    root(11)
+                } else {
+                    root(10)
+                };
+                Ok(
+                    Poseidon2V8PublicTransition::new_with_shielded_state_and_stablecoin_effect(
+                        0,
+                        stable_root,
+                        stable_root,
+                        Poseidon2V8StablecoinEffect::DisabledNoWrite,
+                        empty_note_genesis_root(),
+                        [Some(nullifier(1_000 + index as u64 * 64)), None],
+                        [Some(commitment(50_000 + index as u64 * 128)), None],
+                    ),
+                )
+            })
+            .collect();
+        WindowTestVerifier {
+            results,
+            parallel,
+            verified: Vec::new(),
+            observed: Vec::new(),
+            windows: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn bounded_proof_windows_match_serial_state_and_durable_rows() {
+        for count in [0, 1, 2, 4, 5, 9] {
+            let leaves = (0..count)
+                .map(|index| vec![index as u8 + 1])
+                .collect::<Vec<_>>();
+            let leaf_refs = leaves.iter().map(Vec::as_slice).collect::<Vec<_>>();
+            let genesis = Poseidon2V8Checkpoint::new(0, hash(1), root(10));
+            let block = Poseidon2V8UnverifiedBlock::new(context(genesis, 2), &leaf_refs).unwrap();
+            let serial_directory = tempfile::tempdir().unwrap();
+            let parallel_directory = tempfile::tempdir().unwrap();
+            let (_serial_database, serial) = open_store(serial_directory.path(), genesis);
+            let (_parallel_database, parallel) = open_store(parallel_directory.path(), genesis);
+            let mut serial_verifier = window_test_verifier(count, false, None, &[]);
+            let mut parallel_verifier = window_test_verifier(count, true, None, &[]);
+            assert_eq!(
+                serial
+                    .apply_verified_block(block, &mut serial_verifier)
+                    .unwrap(),
+                parallel
+                    .apply_verified_block(block, &mut parallel_verifier)
+                    .unwrap()
+            );
+            assert_eq!(serial.note_tip().unwrap(), parallel.note_tip().unwrap());
+            assert_eq!(serial_verifier.observed, parallel_verifier.observed);
+            let rows = |store: &Poseidon2V8StateStore| {
+                store
+                    .tree
+                    .iter()
+                    .map(|row| {
+                        let (key, value) = row.unwrap();
+                        (key.to_vec(), value.to_vec())
+                    })
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(rows(&serial), rows(&parallel));
+            assert_eq!(serial_verifier.verified, (0..count).collect::<Vec<_>>());
+            assert!(parallel_verifier
+                .windows
+                .iter()
+                .all(|(_, len)| *len <= POSEIDON2_V8_PROOF_VERIFICATION_WINDOW));
+        }
+    }
+
+    #[test]
+    fn bounded_proof_windows_preserve_first_proof_or_state_failure_and_stop_lookahead() {
+        let count = 9;
+        let leaves = (0..count)
+            .map(|index| vec![index as u8 + 1])
+            .collect::<Vec<_>>();
+        let leaf_refs = leaves.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let genesis = Poseidon2V8Checkpoint::new(0, hash(1), root(10));
+        let block = Poseidon2V8UnverifiedBlock::new(context(genesis, 2), &leaf_refs).unwrap();
+        for first in [0, 1, 3, 4, 5, 8] {
+            let cases = [
+                (None, vec![first, 8]),
+                (Some(first), vec![]),
+                (
+                    Some(first),
+                    if first < 8 { vec![first + 1] } else { vec![] },
+                ),
+                (Some((first + 1).min(8)), vec![first]),
+                (Some(first), vec![first]),
+            ];
+            for (state_failure, proof_failures) in cases {
+                let serial_directory = tempfile::tempdir().unwrap();
+                let parallel_directory = tempfile::tempdir().unwrap();
+                let (_serial_database, serial) = open_store(serial_directory.path(), genesis);
+                let (_parallel_database, parallel) = open_store(parallel_directory.path(), genesis);
+                let mut serial_verifier =
+                    window_test_verifier(count, false, state_failure, &proof_failures);
+                let mut parallel_verifier =
+                    window_test_verifier(count, true, state_failure, &proof_failures);
+                let serial_error = serial
+                    .apply_verified_block(block, &mut serial_verifier)
+                    .unwrap_err();
+                let parallel_error = parallel
+                    .apply_verified_block(block, &mut parallel_verifier)
+                    .unwrap_err();
+                assert_eq!(serial_error, parallel_error);
+                assert_eq!(serial_verifier.observed, parallel_verifier.observed);
+                assert_eq!(serial.tip().unwrap(), genesis);
+                assert_eq!(parallel.tip().unwrap(), genesis);
+                assert_eq!(parallel.note_tip().unwrap().leaf_count(), 0);
+                assert!(parallel.tree.get(record_key(hash(2))).unwrap().is_none());
+                assert!(parallel_verifier.windows.iter().all(|(start, _)| *start
+                    <= first / POSEIDON2_V8_PROOF_VERIFICATION_WINDOW
+                        * POSEIDON2_V8_PROOF_VERIFICATION_WINDOW));
+                assert!(
+                    parallel_verifier.verified.len()
+                        <= (first / POSEIDON2_V8_PROOF_VERIFICATION_WINDOW + 1)
+                            * POSEIDON2_V8_PROOF_VERIFICATION_WINDOW
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bounded_proof_windows_reject_parent_and_leaf_caps_before_worker_dispatch() {
+        let directory = tempfile::tempdir().unwrap();
+        let genesis = Poseidon2V8Checkpoint::new(0, hash(1), root(10));
+        let (_database, store) = open_store(directory.path(), genesis);
+        let leaves: [&[u8]; 2] = [&[1], &[2]];
+        let wrong_parent = Poseidon2V8Checkpoint::new(0, hash(7), root(10));
+        let block = Poseidon2V8UnverifiedBlock::new(context(wrong_parent, 2), &leaves).unwrap();
+        let mut verifier = window_test_verifier(2, true, None, &[]);
+        assert!(matches!(
+            store.verify_uncommitted_block(block, &mut verifier),
+            Err(Poseidon2V8StateError::ParentCheckpointMismatch { .. })
+        ));
+        assert!(verifier.windows.is_empty());
+        assert!(verifier.verified.is_empty());
+        let oversized = vec![0; POSEIDON2_PRODUCTION_MAX_NATIVE_LEAF_BYTES + 1];
+        assert!(matches!(
+            Poseidon2V8UnverifiedBlock::new(context(genesis, 2), &[&oversized]),
+            Err(Poseidon2V8StateError::LeafTooLarge { .. })
+        ));
+        let too_many = vec![&[1][..]; MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK + 1];
+        assert!(matches!(
+            Poseidon2V8UnverifiedBlock::new(context(genesis, 2), &too_many),
+            Err(Poseidon2V8StateError::TooManyLeaves)
+        ));
     }
 
     fn reopen_store(

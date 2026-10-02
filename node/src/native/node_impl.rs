@@ -375,6 +375,25 @@ impl<V: poseidon2_v8_state::Poseidon2V8ExactLeafVerifier>
         self.inner.native_leaf_profile()
     }
 
+    fn verify_exact_v8_leaf_window(
+        &mut self,
+        block: poseidon2_v8_state::Poseidon2V8BlockContext,
+        first_leaf_index: usize,
+        exact_native_leaves: &[&[u8]],
+    ) -> Option<Vec<std::result::Result<poseidon2_v8_state::Poseidon2V8PublicTransition, String>>>
+    {
+        self.inner
+            .verify_exact_v8_leaf_window(block, first_leaf_index, exact_native_leaves)
+    }
+
+    fn record_window_verified_transition(
+        &mut self,
+        transition: poseidon2_v8_state::Poseidon2V8PublicTransition,
+    ) {
+        self.inner.record_window_verified_transition(transition);
+        self.transitions.push(transition);
+    }
+
     fn verify_exact_v8_leaf(
         &mut self,
         block: poseidon2_v8_state::Poseidon2V8BlockContext,
