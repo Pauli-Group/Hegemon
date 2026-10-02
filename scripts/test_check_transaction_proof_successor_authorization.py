@@ -2118,16 +2118,21 @@ def main() -> None:
     ):
         raise SystemExit("executable-ZK raw report digest drifted")
     executable_zk_document = json.loads(executable_zk_payload.decode("utf-8"))
-    executable_zk_identity = test_identity()
-    executable_zk_identity["relation_program_sha512"] = executable_zk_document[
-        "relation_program_sha512_hex"
-    ]
-    executable_zk_identity["relation_digest_hex"] = executable_zk_document[
-        "relation_digest_hex"
-    ]
-    gate.validate_executable_zk_refinement_report(
-        executable_zk_payload, executable_zk_identity
+    historical_release_identity = test_identity()
+    historical_release_identity["relation_program_sha512"] = (
+        gate.RETAINED_RELATION_PROGRAM_SHA512
     )
+    historical_release_identity["relation_digest_hex"] = (
+        gate.RETAINED_RELATION_PROGRAM_SHA512[:96]
+    )
+    if (
+        executable_zk_document["relation_program_sha512_hex"]
+        == historical_release_identity["relation_program_sha512"]
+    ):
+        raise SystemExit(
+            "current-source diagnostic unexpectedly matches historical release identity"
+        )
+    gate.validate_executable_zk_refinement_report(executable_zk_payload)
     checked_profile_manifest = json.loads(
         (ROOT / "config/smallwood-v8-poseidon2-profile-manifest.json").read_text(
             encoding="utf-8"
@@ -2167,7 +2172,7 @@ def main() -> None:
             name,
             expected,
             lambda: gate.validate_executable_zk_refinement_report(
-                payload, executable_zk_identity
+                payload
             ),
         )
 
@@ -2204,7 +2209,7 @@ def main() -> None:
         "executable-ZK exact byte length mutation",
         "byte length must equal the source-pinned 4230 bytes",
         lambda: gate.validate_executable_zk_refinement_report(
-            executable_zk_payload + b" ", executable_zk_identity
+            executable_zk_payload + b" "
         ),
     )
     same_length_hash_mutation = executable_zk_payload.replace(
@@ -2224,7 +2229,7 @@ def main() -> None:
         "executable-ZK full SHA-512 mutation",
         "SHA-512 does not match the source-pinned raw report",
         lambda: gate.validate_executable_zk_refinement_report(
-            same_length_hash_mutation, executable_zk_identity
+            same_length_hash_mutation
         ),
     )
     gate.require_release_workflow_binding(ROOT)

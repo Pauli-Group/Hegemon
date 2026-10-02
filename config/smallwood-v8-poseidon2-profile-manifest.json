@@ -16,11 +16,11 @@
     "proof_mode": "inline_self_contained"
   },
   "diagnostic_source_security_report": {
-    "bytes": 134613,
+    "bytes": 134011,
     "path": "docs/crypto/smallwood_poseidon2_v8_smz9_source_security_report.json",
     "production_authorizing": false,
     "schema": "hegemon.smallwood.poseidon2-v8.smz9.source-security-report.v3",
-    "sha512": "8fb998ef5a52c18c26a95ed46984337d179e7203f9b5c65881c4d4166a5927bfbb31fa870c391a9fa1eb3c95b4caded470ee8dfb92cbf5b0a6adec8f7007e32f"
+    "sha512": "79ff255c709958f7991e34138fdefcf15d3b7c6771e66190c92ec8746bab36553cfba3d64fc198c85776764eacf0b5250a2c37c9471cd2e12962bf27583f21c5"
   },
   "executable_zk_refinement_report": {
     "bytes": 4230,
@@ -30,7 +30,7 @@
     "production_eligible": false,
     "salt_only_oracle_program_count": 0,
     "schema": "hegemon.smallwood.poseidon2-v8.smz9.executable-zk-refinement.v1",
-    "sha512": "e89ff29b047d85c6121689c4d298f031141d2dac6452f182d5d8d53cdd4ef7694c8616909ade6be95bcf1b1e06e98dd25b13df79bd7372be9a5af0500fe9015b"
+    "sha512": "4ae8af96cdc7a653d8da0c9e4e268bcdd637c5e6a2f35c995f71a6b684b6e81d1a211704fc27924166e307d62b04885489c7dbd10f899fd2f1dc9d70c16e31d2"
   },
   "poseidon2": {
     "capacity": 8,
@@ -48,7 +48,7 @@
   "required_release_receipts": {
     "adaptive_qrom_whole_view_zk": null,
     "cryptographic_role_manifest_sha512": null,
-    "executable_zk_refinement_report_sha512": "e89ff29b047d85c6121689c4d298f031141d2dac6452f182d5d8d53cdd4ef7694c8616909ade6be95bcf1b1e06e98dd25b13df79bd7372be9a5af0500fe9015b",
+    "executable_zk_refinement_report_sha512": "4ae8af96cdc7a653d8da0c9e4e268bcdd637c5e6a2f35c995f71a6b684b6e81d1a211704fc27924166e307d62b04885489c7dbd10f899fd2f1dc9d70c16e31d2",
     "lean_compiled_relation_semantic_refinement": null,
     "lean_poseidon2_relation_refinement": null,
     "lifecycle_same_bytes": null,

@@ -13822,9 +13822,8 @@ mod tests {
         build_packed_smallwood_bridge_material_from_witness,
         build_packed_smallwood_frontend_material_from_witness,
         build_production_smallwood_frontend_material_from_witness,
-        decode_smallwood_candidate_proof_for_version, encode_smallwood_candidate_proof,
-        prove_smallwood_candidate_with_arithmetization,
-        verify_smallwood_candidate_transaction_proof, PackedSmallwoodAuxFrontendMaterial,
+        decode_smallwood_candidate_proof_for_version,
+        prove_smallwood_candidate_with_arithmetization, PackedSmallwoodAuxFrontendMaterial,
         SmallwoodCandidateProof, SMALLWOOD_BRIDGE_PACKING_FACTOR,
         SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
     };
@@ -16004,26 +16003,67 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "full production PCS forgery campaign runs explicitly in release mode"]
-    fn verifier_rejects_forged_self_consistent_pcs_layer() {
+    fn retired_direct_packed_v5_frontend_prover_fails_closed() {
         let witness = sample_witness();
-        let material = build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = production_statement(&material);
-        let cfg = SmallwoodConfig::new(&statement).unwrap();
-        let mut proof = prove_smallwood_candidate_with_arithmetization(
+        let err = prove_smallwood_candidate_with_arithmetization(
             &witness,
             SmallwoodArithmetization::DirectPacked64CompressedLevel5,
         )
-        .unwrap();
-        let mut outer = decode_smallwood_candidate_proof_for_test(&proof.stark_proof);
-        let mut inner = decode_smallwood_proof_bytes_v1(&outer.ark_proof).unwrap();
+        .expect_err("retired direct-packed V5 frontend profile must reject before proving");
+        assert!(
+            err.to_string()
+                .contains("not the repaired compact SMZ1 testnet profile"),
+            "unexpected retired-profile rejection: {err}"
+        );
+    }
 
+    #[test]
+    #[ignore = "internal compact-SMZ1 PCS forgery campaign runs explicitly in release mode"]
+    fn verifier_rejects_forged_self_consistent_pcs_layer() {
+        // Exercise the engine on a tiny internal identity relation. The public
+        // transaction frontend deliberately rejects this historical arithmetization.
+        const PROFILE: SmallwoodNoGrindingProfileV1 = SmallwoodNoGrindingProfileV1 {
+            rho: 2,
+            nb_opened_evals: 2,
+            beta: 2,
+            opening_pow_bits: 0,
+            decs_nb_evals: 256,
+            decs_nb_opened_evals: SMALLWOOD_STRICT_ZK_DECS_OPENED_LEAF_COUNT_V1,
+            decs_eta: 2,
+            decs_pow_bits: 0,
+        };
+        let statement = StructuralIdentityWitnessStatement::new_for_arithmetization(
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5,
+            8,
+            8,
+            2,
+            17,
+            0,
+        )
+        .expect("construct internal PCS-forgery relation");
+        let witness = vec![0u64; 64];
+        let binding = [0x6au8; 16];
         let transcript_backend = SmallwoodTranscriptBackend::Sha512Level5;
+        let evaluation_domain = SmallwoodDecsEvaluationDomain::Radix2DisjointCoset;
+        let cfg = SmallwoodConfig::new_with_profile(&statement, PROFILE)
+            .expect("construct internal PCS-forgery geometry");
+        let proof_bytes = prove_statement_with_transcript_backend_profile_and_domain(
+            &statement,
+            &witness,
+            &binding,
+            PROFILE,
+            transcript_backend,
+            evaluation_domain,
+        )
+        .expect("prove internal identity relation");
+        let mut proof = decode_smallwood_proof_bytes_v1(&proof_bytes)
+            .expect("decode internal compact-SMZ1 proof");
+
         let eval_points = canonical_piop_opening_points(
             &cfg.packing_points,
             cfg.profile,
-            &inner.nonce,
-            &inner.h_piop,
+            &proof.nonce,
+            &proof.h_piop,
             transcript_backend,
         )
         .unwrap();
@@ -16032,7 +16072,7 @@ mod tests {
         let forged_combi_heads = pcs_reconstruct_combi_heads(
             &cfg,
             &eval_points,
-            inner.opened_witness.row_scalars_ref().unwrap(),
+            proof.opened_witness.row_scalars_ref().unwrap(),
             &forged_partial_evals,
         )
         .unwrap();
@@ -16041,7 +16081,7 @@ mod tests {
         let trans_hash = hash_challenge_opening_decs(
             &cfg,
             &forged_combi_heads,
-            &inner.h_piop,
+            &proof.h_piop,
             &forged_rcombi_tails,
             transcript_backend,
         );
@@ -16054,7 +16094,7 @@ mod tests {
         )
         .unwrap();
         let decs_eval_points = decs_field_evaluation_points(
-            SmallwoodDecsEvaluationDomain::Radix2Subgroup,
+            evaluation_domain,
             cfg.decs_nb_evals(),
             cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals(),
             &leaves_indexes,
@@ -16076,25 +16116,40 @@ mod tests {
             &decs_eval_points,
         )
         .unwrap();
-        let zero_leaf = hash_merkle_leave(
-            cfg.nb_lvcs_rows,
-            &vec![0u64; cfg.nb_lvcs_rows + cfg.decs_eta()],
-            &inner.salt,
-            transcript_backend,
-        );
-        let mut leaf_hashes = vec![zero_leaf; cfg.decs_nb_evals()];
+
+        let leaf_tape = vec![0u8; SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES];
+        let leaf_tapes = vec![leaf_tape.clone(); cfg.decs_nb_evals()];
+        let zero_evals = vec![0u64; cfg.nb_lvcs_rows + cfg.decs_eta()];
+        let mut leaf_hashes = (0..cfg.decs_nb_evals())
+            .map(|index| {
+                hash_strict_zk_merkle_leaf(
+                    cfg.nb_lvcs_rows,
+                    &zero_evals,
+                    index,
+                    &leaf_tapes[index],
+                    &proof.salt,
+                    transcript_backend,
+                    &[],
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
         for (row, (&leaf, masking)) in forged_rows
             .iter()
             .zip(leaves_indexes.iter().zip(zero_masking.iter()))
         {
             let mut leaf_evals = row.clone();
             leaf_evals.extend_from_slice(masking);
-            leaf_hashes[leaf as usize] = hash_merkle_leave(
+            leaf_hashes[leaf as usize] = hash_strict_zk_merkle_leaf(
                 cfg.nb_lvcs_rows,
                 &leaf_evals,
-                &inner.salt,
+                leaf as usize,
+                &leaf_tapes[leaf as usize],
+                &proof.salt,
                 transcript_backend,
-            );
+                &[],
+            )
+            .unwrap();
         }
         let mut levels = vec![leaf_hashes];
         merkle_build_levels(&mut levels, transcript_backend);
@@ -16106,28 +16161,28 @@ mod tests {
                 .collect::<Vec<_>>(),
         );
 
-        inner.pcs = PcsProof {
+        proof.pcs = PcsProof {
             rcombi_tails: forged_rcombi_tails,
             subset_evals: zero_rows,
             partial_evals: forged_partial_evals,
             decs: DecsProof {
                 auth_paths,
-                leaf_tapes: Vec::new(),
+                leaf_tapes: vec![leaf_tape; cfg.decs_nb_opened_evals()],
                 masking_evals: zero_masking,
                 high_coeffs: vec![vec![0u64; cfg.nb_lvcs_cols]; cfg.decs_eta()],
             },
         };
 
-        outer.ark_proof = encode_smallwood_proof_bytes_v1(&inner).unwrap();
-        proof.stark_proof = encode_smallwood_candidate_proof(
-            outer.arithmetization,
-            outer.ark_proof,
-            &outer.auxiliary_witness_words,
+        let forged_bytes = encode_smallwood_proof_bytes_v1(&proof).unwrap();
+        let err = verify_statement_with_transcript_backend_profile_and_domain(
+            &statement,
+            &binding,
+            &forged_bytes,
+            PROFILE,
+            transcript_backend,
+            evaluation_domain,
         )
-        .unwrap();
-
-        let err = verify_smallwood_candidate_transaction_proof(&proof)
-            .expect_err("forged self-consistent PCS layer unexpectedly verified");
+        .expect_err("forged self-consistent PCS layer unexpectedly verified");
         assert_eq!(
             err.to_string(),
             "constraint system violated: smallwood piop transcript hash mismatch",

@@ -52,20 +52,20 @@ RELEASE_WORKFLOW_SHA512 = (
     "b2537b5eeb458762aef9f5da385a459e32567099c196f58eac909ae57f0ed6b"
 )
 NON_AUTHORIZING_DIAGNOSTIC_SECURITY_REPORT_SHA512 = (
-    "8fb998ef5a52c18c26a95ed46984337d179e7203f9b5c65881c4d4166a5927bf"
-    "bb31fa870c391a9fa1eb3c95b4caded470ee8dfb92cbf5b0a6adec8f7007e32f"
+    "79ff255c709958f7991e34138fdefcf15d3b7c6771e66190c92ec8746bab3655"
+    "3cfba3d64fc198c85776764eacf0b5250a2c37c9471cd2e12962bf27583f21c5"
 )
 NON_AUTHORIZING_DIAGNOSTIC_SECURITY_REPORT_PATH = (
     "docs/crypto/smallwood_poseidon2_v8_smz9_source_security_report.json"
 )
-NON_AUTHORIZING_DIAGNOSTIC_SECURITY_REPORT_BYTES = 134_613
+NON_AUTHORIZING_DIAGNOSTIC_SECURITY_REPORT_BYTES = 134_011
 EXECUTABLE_ZK_REFINEMENT_REPORT_PATH = (
     "docs/crypto/smallwood_poseidon2_v8_smz9_executable_zk_refinement.json"
 )
 EXECUTABLE_ZK_REFINEMENT_REPORT_BYTES = 4_230
 EXECUTABLE_ZK_REFINEMENT_REPORT_SHA512 = (
-    "e89ff29b047d85c6121689c4d298f031141d2dac6452f182d5d8d53cdd4ef7694"
-    "c8616909ade6be95bcf1b1e06e98dd25b13df79bd7372be9a5af0500fe9015b"
+    "4ae8af96cdc7a653d8da0c9e4e268bcdd637c5e6a2f35c995f71a6b684b6e81d"
+    "1a211704fc27924166e307d62b04885489c7dbd10f899fd2f1dc9d70c16e31d2"
 )
 MAX_SELECTION_JSON_BYTES = 64 * 1024
 MAX_RELEASE_WORKFLOW_BYTES = 512 * 1024
@@ -2085,37 +2085,23 @@ def load_evidence_manifest(payload: bytes, label: str) -> dict[str, object]:
     return require_object(document, label)
 
 
-def validate_executable_zk_refinement_report(
-    payload: bytes,
-    identity: Mapping[str, object],
-) -> None:
+def validate_executable_zk_refinement_report(payload: bytes) -> None:
     """Validate the source-pinned raw executable-ZK report without wrapping it.
 
-    This report deliberately records a non-authorizing simulator/refinement
-    result. It is not shaped like a positive release receipt, so accepting a
-    synthetic generic wrapper would erase its fail-closed claim boundary. The
-    source checker instead pins its one canonical path (at bundle admission),
-    exact bytes and full SHA-512, then reads the raw fields that exclude the
-    omitted salt-only programming route.
+    This current-source diagnostic deliberately records a non-authorizing
+    simulator/refinement result and is independent of the historical profile
+    identity used by retained release artifacts. It is not shaped like a
+    positive release receipt, so accepting a synthetic generic wrapper would
+    erase its fail-closed claim boundary. The source checker pins its canonical
+    path at bundle admission, exact bytes and full SHA-512, and checks the raw
+    schema and non-authorizing posture. It must not be mistaken for evidence
+    bound to, or authorizing, a candidate release identity.
     """
 
     label = f"evidence {EXECUTABLE_ZK_REFINEMENT_EVIDENCE_ID}"
     document = load_evidence_manifest(payload, label)
     if document.get("schema") != EXECUTABLE_ZK_REFINEMENT_SCHEMA:
         reject(f"{label} schema mismatch")
-    if document.get("relation_program_sha512_hex") != identity[
-        "relation_program_sha512"
-    ]:
-        reject(f"{label} relation-program pin mismatch")
-    if document.get("relation_digest_hex") != identity["relation_digest_hex"]:
-        reject(f"{label} relation digest mismatch")
-    if document.get("profile_wire_id") != identity["profile_wire_id"]:
-        reject(f"{label} profile wire id mismatch")
-    expected_magic = bytes.fromhex(str(identity["inner_proof_wire_magic_hex"])).decode(
-        "ascii"
-    )
-    if document.get("proof_wire_magic_ascii") != expected_magic:
-        reject(f"{label} proof wire magic mismatch")
     salt_only_count = document.get("salt_only_oracle_program_count")
     if isinstance(salt_only_count, bool) or salt_only_count != 0:
         reject(f"{label}.salt_only_oracle_program_count must equal integer zero")
@@ -7199,7 +7185,7 @@ def validate_evidence_bundle(
                 f"{identity_pin_field}"
             )
         if evidence_id == EXECUTABLE_ZK_REFINEMENT_EVIDENCE_ID:
-            validate_executable_zk_refinement_report(payload, identity)
+            validate_executable_zk_refinement_report(payload)
         elif (
             expected[evidence_id]
             in {"certificate", "report", "receipt", "manifest", "attestation"}

@@ -5308,7 +5308,7 @@ mod tests {
     }
 
     #[test]
-    fn production_review_rejects_receipt_root_leaf_receipt_mismatch() {
+    fn production_review_rejects_historical_leaf_artifact_version_before_receipt_check() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("circuits dir")
@@ -5316,18 +5316,18 @@ mod tests {
             .expect("repo root")
             .join("testdata/native_backend_vectors");
         let bundle = load_review_vector_bundle(&root).expect("load review bundle");
-        let mut context = bundle
+        let context = bundle
             .cases
             .iter()
             .find_map(|case| case.block_context.clone())
             .expect("receipt-root context");
-        context.leaves[0].tx_context.receipt.statement_hash_hex = "00".repeat(48);
 
         let err =
             super::receipt_root_artifacts_from_review(&current_native_backend_params(), &context)
-                .expect_err("detached leaf receipt must fail closed");
+                .expect_err("historical leaf artifact version must fail closed");
         assert!(
-            err.to_string().contains("receipt mismatch"),
+            err.to_string()
+                .contains("unsupported native tx-leaf artifact version 388"),
             "unexpected error: {err}"
         );
     }

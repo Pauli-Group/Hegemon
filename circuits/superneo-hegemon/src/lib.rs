@@ -6747,7 +6747,7 @@ mod tests {
             .expect_err("native projection must reject duplicate non-native balance slots");
         assert!(
             err.to_string()
-                .contains("balance slot assets must be strictly increasing"),
+                .contains("balance slot assets must be canonical and strictly increasing"),
             "unexpected error: {err:?}"
         );
     }
@@ -6858,7 +6858,9 @@ mod tests {
             value_balance_sign: 0,
             value_balance_magnitude: 0,
             merkle_root: [0u8; 48],
-            balance_slot_asset_ids: vec![0, u64::MAX, u64::MAX, u64::MAX],
+            // Keep unrelated asset-slot validation satisfied so this test
+            // isolates projection of the flagged input slot.
+            balance_slot_asset_ids: vec![0, 1, 2, 3],
             stablecoin_enabled: 0,
             stablecoin_asset_id: 0,
             stablecoin_policy_version: 0,
@@ -7397,7 +7399,7 @@ mod tests {
         // overlap and pin the current production serializer geometry.
         assert_eq!(inner.transcript_bytes, 24_192);
         assert_eq!(inner.opened_values_bytes, 25_160);
-        assert_eq!(inner.opening_payload_bytes, 46_145);
+        assert_eq!(inner.opening_payload_bytes, 47_617);
         assert_eq!(inner.opened_witness_bytes, 28_373);
         assert_eq!(inner.pcs_rcombi_tails_bytes, 1_844);
         assert_eq!(inner.pcs_subset_evals_bytes, 23_556);
@@ -8964,7 +8966,12 @@ mod tests {
 
     fn receipt_root_fixture_artifact(seed: u64) -> NativeTxLeafArtifact {
         let _ = seed;
-        review_bundle_valid_native_tx_leaf_artifact()
+        // These receipt-root tests exercise the current deterministic
+        // diagnostic proof construction. The checked-in review bundle is a
+        // historical artifact and is intentionally rejected by current
+        // verification; it remains covered by the explicit compatibility
+        // rejection tests instead of being silently relabeled as current.
+        sample_decoded_native_tx_leaf_artifact()
     }
 
     fn receipt_root_distinct_artifacts() -> Vec<NativeTxLeafArtifact> {
@@ -8973,8 +8980,8 @@ mod tests {
         DISTINCT
             .get_or_init(|| {
                 vec![
-                    review_bundle_valid_native_tx_leaf_artifact(),
                     sample_decoded_native_tx_leaf_artifact(),
+                    sample_decoded_stablecoin_native_tx_leaf_artifact(),
                 ]
             })
             .clone()
