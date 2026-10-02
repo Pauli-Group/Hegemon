@@ -1823,6 +1823,7 @@ impl NativeNode {
             native_storage_poisoned: AtomicBool::new(false),
             work_template_build_lock: Mutex::new(()),
             work_template_cache: Mutex::new(None),
+            bitcoin_asic_jobs: Mutex::new(BitcoinAsicJobCache::default()),
             pending_action_group_commit: NativePendingActionGroupCommit::default(),
             pending_proof_admissions_in_flight: Arc::new(Mutex::new(BTreeSet::new())),
             rejected_pending_actions: Mutex::new(RejectedPendingActionCache::default()),
@@ -1908,7 +1909,7 @@ impl NativeNode {
         unreachable!("bounded native test reopen loop always returns")
     }
 
-    fn ensure_native_storage_healthy(&self) -> Result<()> {
+    pub(crate) fn ensure_native_storage_healthy(&self) -> Result<()> {
         if self.native_storage_poisoned.load(Ordering::Acquire) {
             return Err(anyhow!(
                 "native storage is fail-stop poisoned after a durability uncertainty; restart the node to reload canonical state"
@@ -4996,8 +4997,22 @@ impl NativeNode {
     }
 
     pub(crate) fn cached_native_work_template(&self, require_fresh: bool) -> Option<NativeWork> {
+        self.cached_native_work_template_entry(require_fresh, false)
+            .map(|entry| entry.work)
+    }
+
+    fn cached_native_work_template_entry(
+        &self,
+        require_fresh: bool,
+        require_current_pending: bool,
+    ) -> Option<NativeWorkTemplateCacheEntry> {
         let entry = self.work_template_cache.lock().clone()?;
         if require_fresh && entry.built_at.elapsed() >= NATIVE_WORK_TEMPLATE_REFRESH_INTERVAL {
+            return None;
+        }
+        if require_current_pending
+            && entry.pending_generation != self.pending_action_generation.load(Ordering::Acquire)
+        {
             return None;
         }
         let state = self.state.read();
@@ -5015,29 +5030,38 @@ impl NativeNode {
         if !prepared_mining_actions_match_state(&state, actions) {
             return None;
         }
-        Some(entry.work)
+        Some(entry)
     }
 
     pub(crate) fn prepare_work(&self) -> Result<NativeWork> {
+        self.prepare_work_internal(false).map(|(work, _)| work)
+    }
+
+    pub(crate) fn prepare_asic_work(&self) -> Result<(NativeWork, u64)> {
+        self.prepare_work_internal(true)
+    }
+
+    fn prepare_work_internal(&self, require_current_pending: bool) -> Result<(NativeWork, u64)> {
         self.ensure_native_storage_healthy()?;
-        if let Some(work) = self.cached_native_work_template(true) {
-            return Ok(work);
+        if let Some(entry) = self.cached_native_work_template_entry(true, require_current_pending) {
+            return Ok((entry.work, entry.pending_generation));
         }
-        let stale_but_valid = self.cached_native_work_template(false);
+        let stale_but_valid =
+            self.cached_native_work_template_entry(false, require_current_pending);
         // One miner refreshes an expired but still-valid template. Siblings
         // continue hashing that template rather than idling for proof/DA work.
         // If no valid template exists, wait for the single builder.
         let _build_guard = match self.work_template_build_lock.try_lock() {
             Some(guard) => guard,
             None => {
-                if let Some(work) = stale_but_valid {
-                    return Ok(work);
+                if let Some(entry) = stale_but_valid {
+                    return Ok((entry.work, entry.pending_generation));
                 }
                 self.work_template_build_lock.lock()
             }
         };
-        if let Some(work) = self.cached_native_work_template(true) {
-            return Ok(work);
+        if let Some(entry) = self.cached_native_work_template_entry(true, require_current_pending) {
+            return Ok((entry.work, entry.pending_generation));
         }
         let _template_permit = Arc::clone(&self.work_template_proof_semaphore)
             .try_acquire_owned()
@@ -5046,18 +5070,27 @@ impl NativeNode {
             .try_acquire_owned()
             .map_err(|_| anyhow!("native proof verifier at capacity; retry work preparation"))?;
         self.quarantine_inactive_pending_actions()?;
+        let pending_generation = self.pending_action_generation.load(Ordering::Acquire);
         #[cfg(test)]
         self.work_template_build_invocations
             .fetch_add(1, Ordering::Relaxed);
         let (work, cacheable) =
             self.prepare_work_inner(true, false, MAX_NATIVE_WORK_TEMPLATE_SNAPSHOT_RETRIES)?;
+        if require_current_pending
+            && self.pending_action_generation.load(Ordering::Acquire) != pending_generation
+        {
+            return Err(anyhow!(
+                "ASIC work pending-action state changed during preparation; retry"
+            ));
+        }
         if cacheable {
             *self.work_template_cache.lock() = Some(NativeWorkTemplateCacheEntry {
                 work: work.clone(),
                 built_at: Instant::now(),
+                pending_generation,
             });
         }
-        Ok(work)
+        Ok((work, pending_generation))
     }
 
     fn individually_invalid_smallwood_actions(
@@ -5401,7 +5434,14 @@ impl NativeNode {
         })
         .map_err(native_work_template_admission_error)?;
         let cumulative_work = cumulative_work.map_err(native_work_template_admission_error)?;
-        let template_timestamp_ms = current_time_ms();
+        // ASIC nTime is a 32-bit Unix second. Keep the committed native
+        // timestamp exactly representable by the advertised 80-byte header.
+        let template_timestamp_ms = current_time_ms().div_ceil(1_000).saturating_mul(1_000).max(
+            best.timestamp_ms
+                .div_euclid(1_000)
+                .saturating_add(1)
+                .saturating_mul(1_000),
+        );
         let v8_actions = pending_actions
             .iter()
             .filter(|action| is_poseidon2_v8_action(action))
@@ -7734,7 +7774,7 @@ impl NativeNode {
         let anchor_timestamp_ms = self
             .pow_retarget_anchor_from_parent(parent, new_height, &[])?
             .map(|anchor| anchor.timestamp_ms);
-        consensus::pow::expected_pow_bits_from_schedule(
+        native_asic_expected_pow_bits_from_schedule(
             self.config.pow_bits,
             parent.pow_bits,
             parent.height,
@@ -7742,7 +7782,6 @@ impl NativeNode {
             parent.timestamp_ms,
             anchor_timestamp_ms,
         )
-        .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))
     }
 
     pub(crate) fn expected_canonical_child_pow_bits(
@@ -7788,7 +7827,7 @@ impl NativeNode {
         } else {
             None
         };
-        consensus::pow::expected_pow_bits_from_schedule(
+        native_asic_expected_pow_bits_from_schedule(
             self.config.pow_bits,
             parent.pow_bits,
             parent.height,
@@ -7796,7 +7835,6 @@ impl NativeNode {
             parent.timestamp_ms,
             anchor_timestamp_ms,
         )
-        .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))
     }
 
     pub(crate) fn expected_sync_batch_child_pow_bits(
@@ -7821,7 +7859,7 @@ impl NativeNode {
         let anchor_timestamp_ms = self
             .pow_retarget_anchor_from_parent(parent, new_height, validated_batch_prefix)?
             .map(|anchor| anchor.timestamp_ms);
-        consensus::pow::expected_pow_bits_from_schedule(
+        native_asic_expected_pow_bits_from_schedule(
             self.config.pow_bits,
             parent.pow_bits,
             parent.height,
@@ -7829,7 +7867,6 @@ impl NativeNode {
             parent.timestamp_ms,
             anchor_timestamp_ms,
         )
-        .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))
     }
 
     #[cfg(test)]
@@ -8000,7 +8037,7 @@ impl NativeNode {
         } else {
             None
         };
-        consensus::pow::expected_pow_bits_from_schedule(
+        native_asic_expected_pow_bits_from_schedule(
             self.config.pow_bits,
             parent.pow_bits,
             parent.height,
@@ -8008,7 +8045,6 @@ impl NativeNode {
             parent.timestamp_ms,
             anchor_timestamp_ms,
         )
-        .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))
     }
 
     fn replay_stored_block_into_state(

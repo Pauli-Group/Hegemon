@@ -1176,6 +1176,40 @@ To have something specific in mind:
 
 We do not need signatures inside the shielded circuit. They remain available for authenticated protocol/network envelopes and separately selected identity-bearing consensus profiles, but not for active native V2 block authority.
 
+#### 1.4.1 Bitcoin ASIC work and native block authority
+
+The Bitcoin-ASIC rules profile preserves canonical V2 metadata but changes its
+PoW envelope and fresh genesis. Compute BLAKE3 over the unchanged 713-byte
+canonical metadata (excluding nonce). Construct the mining-only coinbase as
+`bitcoin80_coinbase_prefix(prehash) || nonce[4..32] || BITCOIN80_COINBASE_SUFFIX`.
+Its double-SHA256 digest is the raw Merkle-root field of the 80-byte work header:
+fixed version `0x20000000` little-endian, reversed native parent hash, raw mining
+root, checked `timestamp_ms / 1000` as little-endian u32, compact bits little-endian,
+then `nonce[0..4]`. Reverse the raw double-SHA256 header digest before comparing
+with the native big-endian target. Out-of-range Bitcoin seconds reject; native
+templates use whole-second timestamps. The canonical prehash still binds the
+full timestamp and every original block commitment.
+
+ASIC nBits must be positive and canonical, with maximum `0x207fffff`. Normalize
+the legacy unsigned retarget result by re-encoding its target with Bitcoin's
+sign-bit rule and applying that cap. Use the same normalization for prepared
+work, block import, sync and restart; reject invalid genesis configurations and
+noncanonical work targets. The legacy codec and generated schedule vectors are
+not altered or presented as formal proofs of the new wrapper.
+
+`hegemon_poolWork`/`hegemon_compactJob` and solution submission are unsafe RPCs,
+not anonymous public work services. Jobs retain exact prepared actions and reject
+stale parent, invalidated prepared contents, expiry, malformed fields and insufficient
+work. Pending-action generation refreshes newly issued templates but does not
+invalidate an older, still-valid same-parent block snapshot. The local Stratum
+adapter reconstructs the same bytes independently and
+forwards only network-target solutions. Difficulty-1 share accounting never changes
+network consensus. `scripts/test_bitcoin_asic_stratum.py` exercises real TCP protocol
+traffic; `scripts/test_bitcoin_asic_live.py --node-bin ABSOLUTE_BINARY` tests two
+disposable nodes, independent work solving, sync and restart. Hardware validation
+requires an actual unmodified miner. See [the mining operator guide](docs/mining/BITCOIN_ASIC_MINING.md)
+for fixed-field limitations and a coordinated reset preserving old testnet data.
+
 #### 1.5 Network identity seeds
 
 PQ network identities are derived from a 32-byte secret seed that must be generated from OS entropy and persisted on disk with restrictive permissions (mode 0600). The node loads this seed from `HEGEMON_PQ_IDENTITY_SEED` (hex) when provided, otherwise it reads `HEGEMON_PQ_IDENTITY_SEED_PATH` or defaults to `<base-path>/pq-identity.seed`. The seed is never derived from public peer IDs; peer IDs are computed from the public keys that result from this secret seed. This keeps PQ transport identity keys unpredictable while keeping peer identity stable across restarts.

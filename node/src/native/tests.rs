@@ -9955,6 +9955,7 @@ fn prepared_work_action_removal_invalidates_cache_without_current_pool_substitut
     *node.work_template_cache.lock() = Some(NativeWorkTemplateCacheEntry {
         work: work.clone(),
         built_at: Instant::now(),
+        pending_generation: node.pending_action_generation.load(Ordering::Acquire),
     });
 
     let substitute = pending_action_group_test_transfer(&node, 0xa3);
@@ -9988,7 +9989,9 @@ fn prepared_work_action_removal_invalidates_cache_without_current_pool_substitut
     let rebuilt = node
         .prepare_work()
         .expect("rebuild after included-action removal");
-    assert_ne!(rebuilt.pre_hash, work.pre_hash);
+    // Both valid templates contain the same coinbase-only statement. With
+    // ASIC whole-second timestamps they can legitimately have the same hash;
+    // assert the actual rebuilt snapshot, not incidental wall-clock drift.
     assert!(rebuilt
         .prepared_actions
         .as_ref()
@@ -11628,6 +11631,10 @@ fn rpc_policy_gates_unsafe_methods() {
     let methods = native_rpc_methods(RpcMethodPolicy::Safe);
     assert!(!methods.contains(&"da_submitCiphertexts"));
     assert!(!methods.contains(&"hegemon_startMining"));
+    assert!(!methods.contains(&"hegemon_poolWork"));
+    assert!(!methods.contains(&"hegemon_compactJob"));
+    assert!(!methods.contains(&"hegemon_submitPoolShare"));
+    assert!(!methods.contains(&"hegemon_submitCompactSolution"));
     assert!(!methods.contains(&"hegemon_submitAction"));
     assert!(!methods.contains(&"hegemon_peerGraph"));
     assert!(!methods.contains(&"hegemon_peerList"));
@@ -11635,6 +11642,8 @@ fn rpc_policy_gates_unsafe_methods() {
     assert!(!methods.contains(&"system_peers"));
     let unsafe_methods = native_rpc_methods(RpcMethodPolicy::Unsafe);
     assert!(unsafe_methods.contains(&"hegemon_submitAction"));
+    assert!(unsafe_methods.contains(&"hegemon_poolWork"));
+    assert!(unsafe_methods.contains(&"hegemon_submitPoolShare"));
     assert!(unsafe_methods.contains(&"hegemon_peerGraph"));
     assert!(unsafe_methods.contains(&"hegemon_exportBridgeWitness"));
 }
@@ -11874,14 +11883,16 @@ async fn scalar_and_latest_header_rpcs_do_not_clone_or_decode_tip_action_body() 
     node.reset_block_meta_load_counters();
     let _ = health_handler(State(node.clone())).await;
     let _ = root_handler(State(node.clone())).await;
-    for method in [
-        "hegemon_poolWork",
-        "hegemon_compactJob",
-        "hegemon_poolStatus",
-        "hegemon_consensusStatus",
-    ] {
+    for method in ["hegemon_poolStatus", "hegemon_consensusStatus"] {
         dispatch_rpc_method(&node, method, Value::Array(Vec::new()))
             .unwrap_or_else(|err| panic!("{method} failed: {err}"));
+    }
+    // Work creation now owns a real block template, so it is an unsafe,
+    // potentially heavyweight operation rather than a scalar placeholder.
+    for method in ["hegemon_poolWork", "hegemon_compactJob"] {
+        let err = dispatch_rpc_method(&node, method, Value::Array(Vec::new()))
+            .expect_err("safe RPC must reject mining-template construction");
+        assert!(err.to_string().contains("unsafe RPC method"));
     }
     let latest_header = chain_get_header(&node, Value::Array(Vec::new()))
         .expect("latest header must remain available");

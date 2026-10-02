@@ -293,6 +293,32 @@ The dedicated Lean V8 refinement surface is deliberately narrower than activatio
 
 The operator `hegemon-node` binary is native. It starts a fresh native chain, persists native block and shielded-state metadata in `sled`, mines PoW development blocks, syncs blocks and self-contained user pending actions over the Hegemon PQ service, and serves the current wallet/app/script JSON-RPC method names over HTTP. Peer action relay is deliberately limited to user-submitted actions that can pass the same durable mempool validation as local RPC submission. Local coinbase rewards remain miner-local block-template material; recursive candidate submissions are retired and are never selected for new blocks.
 
+The Bitcoin-ASIC follow-up selects a distinct native rules hash and fresh genesis
+domain, `hegemon-native-genesis-bitcoin80-v1`; databases from the former V2 era
+reject before mutation. The complete 713-byte canonical V2 metadata still binds
+the transaction, state, DA, reward and history commitments through its BLAKE3
+prehash. That prehash and a 28-byte extra nonce enter a serialized mining-only
+coinbase transaction whose SHA256d digest is the Merkle root of an ordinary
+80-byte Bitcoin-shaped header. The final four-byte nonce is at offset 76;
+the reversed raw SHA256d digest is compared with the existing big-endian target.
+Legacy-rule light-client hashing remains unchanged. This changes PoW authority,
+not transaction proof bytes, issuance rules or actual reward actions.
+
+The ASIC era uses positive, canonical Bitcoin compact targets, capped at
+`0x207fffff`. Its native schedule normalizes the historical unsigned retarget
+result before every template/import/sync/replay comparison. Historical target
+codecs and schedule vectors remain unchanged; they do not certify the new
+normalization wrapper.
+
+CPU miners and external solutions use the same consensus helper. Unsafe mining
+RPCs retain exact prepared block contents in at most 64 jobs for 120 seconds,
+bind them to the parent and pending-action generation, and recompute submitted
+work before normal import. A bounded authenticated Stratum V1 adapter supplies
+24-byte extranonce1 plus four-byte extranonce2; version and time rolling are
+disabled. This is software support for stock Bitcoin work, not measured ASIC
+throughput or a hardware acceptance claim. The operator flow and coordinated
+testnet-reset boundary are in [Bitcoin ASIC mining](docs/mining/BITCOIN_ASIC_MINING.md).
+
 Native P2P uses authenticated TCP sessions plus bounded address coordination; configured seeds are bootstrap points, not permanent routing hubs. On connection, peers request and share capped dialable-address lists. A node bound to an unspecified interface may register `0.0.0.0:PORT` or `[::]:PORT` as a port hint: the receiver supplies only the transport-observed source IP and never reuses the inbound connection's ephemeral source port. Explicit self-registration addresses must use that same observed IP, preventing a peer from registering an unrelated third-party host. Learned endpoints pass admission before they are persisted or propagated: the learned pool retains at most 1,024 endpoints globally and four ports per IP. One-off dials rotate across that admitted pool with endpoint and shared-IP exponential retry backoff, one in-flight attempt per IP, bounded concurrency, and connect/handshake timeouts. A successful outbound admission clears stale retry history while the session is active; an inbound source port does not clear outbound retry state, and when a one-off session disconnects its endpoint and IP enter cooldown again so connect-then-close peers cannot rotate immediately through alternate ports. Startup applies learned admission in peer-store recency order, then reconnect selection admits at most one cached endpoint per IP and gives an approved seed precedence over stale cached ports on that IP; explicit imported peers and configured seed endpoints remain endpoint-addressed so legitimate same-host deployments continue to work. Long-lived nodes periodically query a rotating subset of their peers so nodes that joined later can enter the address cache. Automatic router port mapping is not enabled by the native launcher; accepting inbound peers still requires a public listener, firewall/NAT forwarding, or an explicitly configured caller of the network traversal API. Outbound-only nodes retain redundant routes through the approved seeds and learned public peers, but the current protocol is not a DHT and has no relay data plane.
 
 The compatibility contract is JSON-RPC, not legacy storage layout or third-party chain dashboard behavior. Walletd, Electron, smoke scripts, and mining scripts should keep using `hegemon_*`, `da_*`, `archive_*`, `block_*`, plus the narrow compatibility `chain_*`, `system_*`, `state_*`, and `author_pendingExtrinsics` calls. Native state starts from a fresh genesis; no legacy database migration is part of the design. The 0.10 native binary is launched by profile and environment, not by the deleted 0.9/Substrate JSON chain-spec files. Public testnet migration to 0.10 is therefore a planned genesis restart with a versioned release artifact under `config/testnet/`, while private devnets use `--dev` plus their own base path.

@@ -31,7 +31,8 @@ use consensus_light_client::{
     RiscZeroBridgeReceiptV1, TrustedCheckpointV2, TrustedCheckpointV3,
     HEGEMON_BRIDGE_LONG_RANGE_MIN_SAMPLE_COUNT_V1, HEGEMON_BRIDGE_LONG_RANGE_MIN_TIP_WORK_V1,
     HEGEMON_CHAIN_ID_V1, HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
-    HEGEMON_LIGHT_CLIENT_RULES_HASH_V1, HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1,
+    HEGEMON_LIGHT_CLIENT_RULES_HASH_V1, HEGEMON_LIGHT_CLIENT_RULES_HASH_V2,
+    HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1,
     HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V2, HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
 };
 use crypto::hash384::{
@@ -3920,6 +3921,20 @@ pub(crate) struct NativeDaEncodingCache {
 pub(crate) struct NativeWorkTemplateCacheEntry {
     work: NativeWork,
     built_at: Instant,
+    pending_generation: u64,
+}
+
+#[derive(Default)]
+pub(crate) struct BitcoinAsicJobCache {
+    jobs: BTreeMap<String, BitcoinAsicJob>,
+    order: VecDeque<String>,
+}
+
+#[derive(Clone)]
+pub(crate) struct BitcoinAsicJob {
+    work: NativeWork,
+    created_at: Instant,
+    pending_generation: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4085,6 +4100,7 @@ pub struct NativeNode {
     native_storage_poisoned: AtomicBool,
     work_template_build_lock: Mutex<()>,
     work_template_cache: Mutex<Option<NativeWorkTemplateCacheEntry>>,
+    bitcoin_asic_jobs: Mutex<BitcoinAsicJobCache>,
     pending_action_group_commit: NativePendingActionGroupCommit,
     pending_proof_admissions_in_flight: Arc<Mutex<BTreeSet<ActionSemanticId48>>>,
     rejected_pending_actions: Mutex<RejectedPendingActionCache>,
@@ -4134,6 +4150,7 @@ pub struct NativeNode {
 }
 
 mod admission;
+mod asic_mining;
 mod block_flow;
 mod block_store_v3;
 mod canonical_membership;
@@ -4179,6 +4196,8 @@ pub(crate) use storage::*;
 pub(crate) use sync_chunks::*;
 pub(crate) use util::*;
 
+#[cfg(test)]
+mod bitcoin_asic_tests;
 #[cfg(test)]
 mod pending_action_canonicality_tests;
 #[cfg(test)]

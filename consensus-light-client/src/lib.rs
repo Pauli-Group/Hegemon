@@ -9,7 +9,14 @@ use alloc::vec::Vec;
 use codec::{Decode, Encode};
 use core::cmp::Ordering;
 
+mod bitcoin_pow;
 mod v3;
+pub use bitcoin_pow::{
+    bitcoin80_coinbase_prefix, bitcoin80_hash_header, bitcoin80_header, bitcoin80_validate_compact,
+    bitcoin80_work_hash, normalize_legacy_compact_for_bitcoin, BITCOIN80_COINBASE_DOMAIN,
+    BITCOIN80_COINBASE_SUFFIX, BITCOIN80_EXTRANONCE_LEN, BITCOIN80_HEADER_LEN,
+    BITCOIN80_POW_LIMIT_BITS, BITCOIN80_VERSION,
+};
 pub use v3::*;
 
 pub use protocol_kernel::bridge::{bridge_message_root, BridgeMessageV1, MessageHash, MessageRoot};
@@ -59,8 +66,17 @@ pub const HEGEMON_LIGHT_CLIENT_RULES_HASH_V2: Hash32 = [
     0xff, 0x26, 0xff, 0xc9, 0x9a, 0x4b, 0x7b, 0xc9, 0x1a, 0x9a, 0x6c, 0x84, 0x2b, 0x68, 0x73, 0xe7,
     0x8b, 0x1e, 0xe2, 0x80, 0xcd, 0xea, 0xfc, 0xbf, 0x30, 0x7d, 0x66, 0x0a, 0x35, 0x70, 0xbe, 0x39,
 ];
+/// Fresh-genesis rules profile for the 80-byte Bitcoin SHA256d ASIC envelope.
+/// It inherits the native V2 body/proof rules and changes the PoW preimage,
+/// nonce interpretation, and target byte order as stated here.
+pub const HEGEMON_LIGHT_CLIENT_RULES_BITCOIN_ASIC_PREIMAGE: &[u8] = b"hegemon.native.rules-bitcoin-asic-v1\nbase-rules-hash=ff26ffc99a4b7bc91a9a6c842b6873e78b1ee280cdeafcbf307d660a3570be39\npow-prehash=blake3(v2-canonical-header-without-nonce:713bytes)\npow-coinbase=bitcoin-tx-v1:inputcount1,coinbase-prevout,scriptSig=PUSHDATA1(hegemon.bitcoin-asic.pow-v1\\0||prehash32||extranonce28),sequenceffffffff,outputcount1,value0,scriptPubKey=OP_RETURN,locktime0\npow-merkle=sha256d(coinbase)\npow-header=version20000000le||reverse(parent-hash32)||merkle32||floor(timestamp-ms/1000)u32le||powbitsu32le||nonce32u32le\npow-workhash=reverse(sha256d(pow-header))\npow-target=big-endian-hash-leq-positive-canonical-bitcoin-compact-target\npow-limit-bits=0x207fffff\npow-zero-target=rejected;retarget-underflow=min-one\npow-retarget=legacy-unsigned-target;normalize-positive-canonical;floor-precision;clamp-above-limit;only-exponent33-leading-nonzero-overflow-clamps\npow-nonce-mapping=nonce[0..4]:header-nonce,nonce[4..28]:extranonce1,nonce[28..32]:extranonce2\nfresh-genesis=required";
+pub const HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC: Hash32 = [
+    0xa0, 0x8f, 0xc9, 0xec, 0x38, 0x3e, 0xec, 0x2b, 0xff, 0x55, 0x4c, 0x64, 0x08, 0x5b, 0xed, 0x80,
+    0x91, 0x60, 0x24, 0x1b, 0x89, 0xce, 0xe8, 0x4c, 0xf2, 0xc8, 0xf2, 0x71, 0x70, 0xa7, 0xe4, 0x1f,
+];
 /// The only rules hash accepted by active native consensus paths.
-pub const HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE: Hash32 = HEGEMON_LIGHT_CLIENT_RULES_HASH_V2;
+pub const HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE: Hash32 =
+    HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC;
 pub const HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1: Hash32 = [
     0x3b, 0x55, 0x06, 0x43, 0xbe, 0x84, 0xfd, 0x32, 0x4d, 0xe9, 0xe3, 0xac, 0xcb, 0xf8, 0x0a, 0xb0,
     0x15, 0x61, 0x33, 0x91, 0x35, 0x8a, 0xfc, 0xc6, 0xb8, 0x62, 0x0e, 0x58, 0x18, 0x8b, 0xcb, 0x57,
@@ -89,6 +105,7 @@ pub enum LightClientError {
     TimestampDidNotAdvance,
     TimestampNotAfterMedian,
     TimestampTooFarInFuture,
+    TimestampOutOfRange,
     PowBitsMismatch,
     CumulativeWorkMismatch,
     CumulativeWorkOverflow,
@@ -445,7 +462,18 @@ impl PowHeaderV2 {
     }
 
     pub fn pow_hash(&self) -> Hash32 {
-        pow_hash_from_pre_hash(&self.pre_hash(), self.nonce)
+        if self.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC {
+            bitcoin80_work_hash(
+                &self.pre_hash(),
+                &self.parent_hash,
+                self.timestamp_ms,
+                self.pow_bits,
+                self.nonce,
+            )
+            .unwrap_or([0xff; 32])
+        } else {
+            pow_hash_from_pre_hash(&self.pre_hash(), self.nonce)
+        }
     }
 
     pub fn checkpoint(&self) -> TrustedCheckpointV2 {
@@ -1410,10 +1438,19 @@ pub fn verify_pow_header_v2_with_expected_bits(
     if header.timestamp_ms <= parent.timestamp_ms {
         return Err(LightClientError::TimestampDidNotAdvance);
     }
+    if header.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC
+        && u32::try_from(header.timestamp_ms / 1_000).is_err()
+    {
+        return Err(LightClientError::TimestampOutOfRange);
+    }
     if header.pow_bits != expected_pow_bits {
         return Err(LightClientError::PowBitsMismatch);
     }
-    let target = compact_to_target(header.pow_bits)?;
+    let target = if header.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC {
+        bitcoin80_validate_compact(header.pow_bits)?
+    } else {
+        compact_to_target(header.pow_bits)?
+    };
     let block_work = block_work_from_target(&target);
     verify_cumulative_work_with_block_work(
         &parent.cumulative_work,
@@ -3329,7 +3366,7 @@ mod tests {
     }
 
     #[test]
-    fn active_rules_hash_v2_matches_canonical_preimage() {
+    fn rules_hashes_match_canonical_preimages() {
         assert_eq!(
             HEGEMON_LIGHT_CLIENT_RULES_HASH_V2,
             hash32(HEGEMON_LIGHT_CLIENT_RULES_V2_PREIMAGE)
@@ -3340,6 +3377,14 @@ mod tests {
         );
         assert_eq!(
             HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
+            HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC
+        );
+        assert_eq!(
+            HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC,
+            hash32(HEGEMON_LIGHT_CLIENT_RULES_BITCOIN_ASIC_PREIMAGE)
+        );
+        assert_ne!(
+            HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC,
             HEGEMON_LIGHT_CLIENT_RULES_HASH_V2
         );
     }
