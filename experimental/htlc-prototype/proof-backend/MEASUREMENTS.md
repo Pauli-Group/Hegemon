@@ -124,3 +124,50 @@ env CARGO_TARGET_DIR=/private/tmp/hegemon-htlc-smallwood-target-20261002 CARGO_B
 The binding test passed one test in 0.04 seconds after an optimized rebuild of 1 minute 2 seconds. Facade compilation still inherits 81 native warnings, with no warnings-denied facade lint claim. From the integrated parent standalone crate, all eleven locked offline tests passed in 1.37 seconds; clippy with warnings denied passed in 0.33 seconds. Formatting checks passed for both standalone crates. The exclusive heavy lane was released immediately after actual proofs and fresh-process verification; no geometry rerun or production proof build was performed.
 
 Fresh-process receipt fields retained here from its stdout: `accepted=true`, `preimage_or_assignment_loaded=false`, `production_authorized=false`, `proof_bytes=311618`, `verify_seconds=0.146205750`, the proof SHA-512 above and the current source closure above. It loaded only the public statement and self-contained proof. This current-source roundtrip confirms the real SHA knowledge component still works after integration; it does not remove the size failure, full-HTLC integration obligations or security/release exclusions documented above.
+
+## Final clean-source receipt (2026-10-02, 09:44–09:46 UTC)
+
+The coordinator requested one final hygiene edit at checkout HEAD `e471ada3c5adb8f9a88c99227008ddddb56ed096`: remove exactly the extra EOF blank line from `experimental/htlc-prototype/Cargo.toml` and `proof-backend/Cargo.toml`, preserving a final newline and all manifest semantics. No engine, relation, build-generator or other runtime source changed. These manifests enter the source binding, so the final source was rebuilt and received one fresh honest/unchecked-invalid proof pair and separate public-only verification. Earlier source-pinned receipts remain preserved above.
+
+Final public-only evidence directory: `/private/tmp/hegemon-htlc-native-proof-main-clean-20261002-r1`.
+
+| Check | Final clean-source result |
+| --- | --- |
+| Actual honest proof bytes | 311,682 |
+| Unchanged production cap | 164,113; exceeded by 147,569 bytes |
+| Honest proving, two worker threads | 7.938981792 seconds |
+| Same-process verification | 0.149195791 seconds; accepted |
+| Fresh-process public-only verification | 0.147421625 seconds; accepted |
+| Actual unchecked invalid-witness engine path | 8.018003750 seconds; generated proof rejected |
+| Digest/context/version/domain/proof-byte/trailing-byte negatives | all rejected |
+| Wrong-secret preflight | rejected |
+| Final source closure SHA-256 | `749a3d82caca43978fc98b5ed3e6e352ac895732622d0e660d67e7e4a5189c04` |
+| Maximum resident set size | 1,565,294,592 bytes (`/usr/bin/time -l`) |
+| Peak memory footprint | 1,563,887,080 bytes (same command) |
+| Honest-plus-negative command | 16.87 seconds real; 30.92 user; 0.54 system; zero swaps |
+
+The claimed SHA component, K64 geometry, profile, toolchain and zero private-input/auxiliary-opening counts are unchanged. The longer proving time uses two worker threads rather than the preceding run's four. This is not a proof-size optimization or security upgrade. All 133 retained inventory members matched the final checkout bytes with `shasum -a 256 -c`, exit zero. The binding integration test passed one test in 0.04 seconds after an optimized rebuild of one minute; the unchanged native facade still emits 81 existing warnings. Parent logic tests were not repeated for manifest whitespace alone. Both standalone formatting checks and the baseline-wide `git diff 561095f6 --check` passed, including after the documentation append.
+
+Final proof SHA-512:
+
+`97a9e9c076d8fc26bfc454eb1bfc68b55df855d9e06ccaf1278c666512e4e8e5f27952830ffa82633fe0256cc867dfe4c53786b630e9bae879ef3625ff5d0503`
+
+Final retained file SHA-256 inventory:
+
+```text
+883bfacfab36188ba030f31188160d5a8bc0a7d059203b4039b2faa853b345fe  claim.smz1
+9ec1b75e44394beb0574ca123a521bc9ca409ef29560d278e42851cf7487df9e  invalid-witness.smz1
+d9f88d6821c1698ba793e67dde37884d376c181182f9fee1e68029610cb7e4f3  measurement.json
+5b877b4d6d5d3cec6bcbd2672ce0da032a075c74d86447ee804ddebcea43865a  source-closure.sha256
+18f58cae719fbd1e5d4eaa066d7f3602a5ec19c782ce961e36e5df9df1ac1d11  statement.json
+```
+
+Completed commands from the nested backend, all exit zero:
+
+```sh
+env CARGO_TARGET_DIR=/private/tmp/hegemon-htlc-smallwood-target-20261002 CARGO_BUILD_JOBS=1 cargo test --release --offline --locked --test binding
+/usr/bin/time -l env RAYON_NUM_THREADS=2 HEGEMON_SMALLWOOD_TRACE=1 /private/tmp/hegemon-htlc-smallwood-target-20261002/release/hegemon-isolated-htlc-smallwood --out /private/tmp/hegemon-htlc-native-proof-main-clean-20261002-r1 --exercise-invalid-engine
+/private/tmp/hegemon-htlc-smallwood-target-20261002/release/hegemon-isolated-htlc-smallwood --verify-artifact /private/tmp/hegemon-htlc-native-proof-main-clean-20261002-r1
+```
+
+Fresh-process stdout receipt: `accepted=true`, `preimage_or_assignment_loaded=false`, `production_authorized=false`, `proof_bytes=311682`, `verify_seconds=0.147421625`, with the final closure and proof hash above. No fresh secret or assignment was retained. The heavy lane was released immediately after this validation, with no additional prover or geometry run. This final component still exceeds the unchanged production cap and does not prove HTLC authorization, timeout, note/nullifier integration, RP05 compatibility or composed PQ128 security.
