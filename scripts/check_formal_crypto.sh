@@ -168,11 +168,12 @@ print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
 PY
 )"
   # Mathlib's pinned cache client is inherited by downstream Lake projects.
-  # Use only its high-trust master container and the already-validated lock;
-  # `get` fetches missing cache entries and reuses warm local cache contents.
+  # Use only the official upstream repo and its documented master,legacy chain;
+  # the legacy container supplies master-built artifacts predating the write cutover.
   # Hard transfer/decompression failures must not fall through into a build.
   cache_status=0
-  lake exe cache get --cache-from=master || cache_status=$?
+  lake exe cache get --repo=leanprover-community/mathlib4 \
+    --cache-from=master,legacy || cache_status=$?
   manifest_sha256_after="$(python3 - "$CRYPTO_ROOT/lake-manifest.json" <<'PY'
 import hashlib
 import pathlib
@@ -190,6 +191,33 @@ PY
       "$cache_status" >&2
     exit "$cache_status"
   fi
+  python3 - "$CRYPTO_ROOT/.lake/packages/mathlib" <<'PY'
+import pathlib
+import sys
+
+mathlib = pathlib.Path(sys.argv[1])
+source_root = mathlib / "Mathlib"
+olean_root = mathlib / ".lake/build/lib/lean/Mathlib"
+sources = sorted(source_root.rglob("*.lean"))
+if not sources:
+    raise SystemExit(f"Mathlib source tree is empty: {source_root}")
+missing = [
+    str(source.relative_to(source_root))
+    for source in sources
+    if not (olean_root / source.relative_to(source_root).with_suffix(".olean")).is_file()
+]
+root_source = mathlib / "Mathlib.lean"
+if root_source.is_file() and not (olean_root.parent / "Mathlib.olean").is_file():
+    missing.append(root_source.name)
+if missing:
+    sample = ", ".join(missing[:10])
+    raise SystemExit(
+        f"Mathlib cache incomplete: {len(missing)} of {len(sources)} modules lack "
+        f"compiled artifacts (for example: {sample}); refusing cold Mathlib build"
+    )
+compiled_count = len(sources) + int(root_source.is_file())
+print(f"Mathlib cache ready: all {compiled_count} pinned modules are compiled")
+PY
   lake build HegemonCrypto
   lake env lean --run HegemonCrypto/GenerateSmallWoodProofWireVectors.lean \
     > "$WORK_DIR/smallwood-proof-wire.json"
