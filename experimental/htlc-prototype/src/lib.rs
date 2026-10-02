@@ -6,4 +6,5 @@
 #![forbid(unsafe_code)]
 
 pub mod hashlock;
+pub mod lowering;
 pub mod relation;

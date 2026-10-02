@@ -17,6 +17,12 @@ A developer can construct a Boolean circuit for SHA-256 of exactly 32 bytes, eva
 - [x] (2026-10-02) Implement committed locked-note policy, exact spend intent, shared private-key nullifier and claim/refund reference admission.
 - [x] (2026-10-02) Coordinator authorized one compiler job with the separate target; nine isolated offline locked tests, clippy with warnings denied and formatting pass.
 - [x] (2026-10-02) Record exact evidence and exclusions in README and this plan; freeze source for independent review.
+- [x] (2026-10-02, second increment) Coordinator authorized a native proof feasibility milestone, with the unchanged native SmallWood core isolated by source inclusion. Inspect generic adapter/strict-SMZ1 APIs and exclude the public structural-identity API because it exposes witness values as public targets.
+- [x] (2026-10-02, second increment) Implement witness-independent degree-three lowering; two new standalone tests pass for packing 64/128/256/512, including copy/padding/public-digest/coherent-input/Booleanity negatives. Parent crate clippy passes.
+- [x] (2026-10-02, 08:20 UTC lane grant) Compile the nested source facade and pass the one public-only binding integration test. Resolve only a generated nested-module path; no native source changed.
+- [x] (2026-10-02, 08:31 UTC) Generate and verify a real native private hashlock component proof, retain exact bytes and source inventory, reject statement/domain/proof/trailing mutations and an actual unchecked invalid-witness engine proof. Fresh-process public-only readback accepts the same retained bytes.
+- [x] (2026-10-02) Record actual 311,938-byte proof, timings, closure identity, unchanged-cap failure and cheap K64/128/256/512 projections in proof-backend/MEASUREMENTS.md. Release heavy lane immediately after checks.
+- [ ] Obtain final focused review of the native proof adapter and measured artifact before broad security claims; ordinary component roundtrip results alone confer no security qualification.
 - [x] (2026-10-02) Independent scoped source review found no actionable defect in SHA wiring/equations, branch/nullifier semantics, authorization/context binding, or documented claim boundaries. The reviewer did not independently run the tests.
 
 ## Surprises & Discoveries
@@ -25,6 +31,10 @@ A developer can construct a Boolean circuit for SHA-256 of exactly 32 bytes, eva
 The existing `BoolWire`/`CandidateBoolConstraint` machinery is inside `circuits/transaction/src/full_blake2b448_relation.rs` and includes candidate-specific relations. Reusing it as a crate dependency would couple this experiment to the live transaction crate. The isolated crate therefore defines a small local Boolean intermediate representation: an ordered list of gates, each defining exactly one output bit. No top-level Cargo or existing source is modified.
 
 The fixed-width circuit has 55,210 defining-gate equations and 55,466 assignment wires. Exhaustive mutation is practical by rotating the same verifier's equation order to the changed wire; the acceptance relation remains identical and a successful pass still covers all gates. Another 215 mutations use ordinary public verification order. The final nine tests finish in 0.92 seconds. `/usr/bin/time -l` could not obtain macOS clock-rate statistics inside the sandbox (`sysctl kern.clockrate: Operation not permitted`); that wrapper returned failure after its cargo tests passed. The final plain cargo invocation returned exit zero. No measured peak-RSS claim is made.
+
+The nested facade's first compile exposed Rust's nested-module path resolution for the RNG mapping module. The build generator now changes only that declaration to an absolute original child path; original function bodies are unchanged. The optimized binding test then passed. The facade inherits 81 native unused/deprecated warnings; it is not credited with a warnings-denied lint pass. The isolated parent crate is lint clean.
+
+Actual K64 proof serialization was 311,938 bytes, versus the native size calculator's conservative 318,914-byte hint. It exceeds the unchanged 164,113-byte production inner cap by 147,825 bytes. K128/256/512 hints are also above the cap, with increasing evaluation-table memory; higher packing is not a simple size-fit fix. Projections are not proof measurements or production security/compatibility results. Read-only process inspection was unavailable during the initial run and completed after the fast proof had exited, so peak RSS remains unmeasured.
 
 ## Decision Log
 
@@ -39,12 +49,20 @@ Decision: Claims have no timeout expiry. Rationale: After refund maturity, claim
 
 Decision: Preserve the host reference boundary rather than imply all policy rules have constraints. Rationale: Only the SHA-256 preimage relation is represented by gates; the note/intent/nullifier commitments, balance/version/timelock and external auth/context checks remain host code. Date/Author: 2026-10-02, HTLC worker.
 
+Decision (second increment): Prove only the complete existential component relation `exists secret:[u8;32]. SHA256(secret)=public_digest`, with domain-separated public context binding. Rationale: The user requested meaningful further proof work, and the coordinator approved this smallest native milestone; it is not a claim that the full HTLC reference relation is proved. Date/Author: 2026-10-02, coordinator/HTLC worker.
+
+Decision (second increment): Source-include existing transaction modules under a nested standalone facade rather than change production visibility or copy a backend fork. Rationale: Generic native prove/verify entrypoints and the constraint-adapter trait are crate-local. The facade mechanically reconstructs the existing crate root with module paths pointing to unchanged originals, making crate-local seams accessible only inside the isolated crate. Build-time conservative source hashes and toolchain identity pin the evidence. Date/Author: 2026-10-02, coordinator/HTLC worker.
+
+Decision (second increment): First proof uses K64, degree three and the historical strict-SMZ1 SHA-512 profile (`rho5/open5/beta2/N2^20/q23/eta5`, zero proof-of-work, disjoint evaluation coset and 64-byte hiding tapes). Rationale: This is the unchanged native generic strict-ZK engine that accepts arbitrary row relations; RP05-specific profile guards would require changing production identity/geometry. No RP05 or composed PQ128 qualification is inherited. The other packing geometries are checked scalar alternatives, not substituted to fit the production cap. Date/Author: 2026-10-02, coordinator/HTLC worker.
+
 ## Outcomes & Retrospective
 
 
 The bounded implementation is complete: a fixed-shape 32-byte SHA-256 constraint checker and host HTLC claim/refund reference relation, with nine passing tests, lint/format acceptance and a 22 MiB separate build target. Tests compare 68 fixed/random SHA vectors, flip every assignment wire, reject every non-Boolean wire mutation, cover exact intent/policy/context/auth binding and demonstrate a shared-nullifier branch race. No tracked baseline file changed. Independent scoped source review found no actionable defects; this is not a production security audit or formal proof.
 
 The result cannot establish production proof cost, RP05 row/cap fit, ZK, signature security, live authenticated height, node lifecycle behavior or atomic-swap deployment. The commitment/nullifier hashes are experimental host constructions with no inherited production PQ128 or composed post-quantum security claim. An integration must supply actual cryptographic authorization and authenticated consensus state and constrain the whole reference relation, then generate fresh proofs and qualify the unchanged-byte lifecycle before release authority is considered.
+
+Second increment is complete as a bounded measured component milestone: `src/lowering.rs` materializes private canonical wires, Boolean row equations, degree-three gate batches and CSR (compressed sparse row) linear equality/pin constraints. At K64, lowering has 4,159 rows, 266,176 packed values, 1,730 nonlinear polynomials, 210,968 linear equations, 256 public digest pins and zero private-input pins. The nested facade produced a 311,938-byte native strict-SMZ1 proof in 4.519 seconds, verified it in 0.140 seconds, and separately reopened the same bytes with only public statement inputs in 0.151 seconds. Changed bindings/bytes and an actual coherent invalid-witness proof rejected. Retained evidence is public-only and source pinned; exact hashes and profile projections are in proof-backend/MEASUREMENTS.md. This is only the existential SHA component, not the host HTLC relation, production proof-size fit, RP05 compatibility or a new composed PQ128/security theorem.
 
 ## Context and Orientation
 
@@ -108,3 +126,5 @@ The directory contains Cargo.toml/Cargo.lock, src/lib.rs, src/hashlock.rs, src/r
 Revision note (2026-10-02): Initial plan reflects the approved smallest contract and deliberately isolates all future proof/production work.
 
 Revision note (2026-10-02): Completed implementation/validation and recorded actual Boolean IR counts, exhaustive mutation method, successful plain cargo results, small build size and the explicit host/external-oracle trust boundaries.
+
+Revision note (2026-10-02, second increment): Coordinator authorized native private-hashlock proof feasibility. Add a packed field lowering and nested original-source backend facade; retain the first prototype as the complete host reference relation and label the new claimed relation as only the existential SHA component. The coordinated lane completed binding compilation, honest and invalid-witness proofs and fresh-process readback, then was released. No production files, cap, profile or authority changed.

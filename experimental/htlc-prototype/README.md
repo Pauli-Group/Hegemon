@@ -2,6 +2,8 @@
 
 This standalone crate supplies an actually checked SHA-256 hashlock circuit for exactly 32-byte secrets and executable host reference semantics for a future shielded HTLC. It is isolated from the production workspace at baseline `47072042`; no live transaction, proof metadata, formal endpoint, configuration or node path is changed.
 
+A second completed increment adds witness-independent field lowering and the nested [`proof-backend`](proof-backend/README.md) native SmallWood source facade. A real private SHA-256 preimage-equality component proof, with public context binding, was generated and verified, including fresh-process readback and an unchecked invalid-witness engine test. Its measured 311,938 bytes exceed the unchanged 164,113-byte production cap. See [`proof-backend/MEASUREMENTS.md`](proof-backend/MEASUREMENTS.md) for exact evidence and exclusions.
+
 Run from this directory with cached dependencies:
 
 ```sh
@@ -36,7 +38,7 @@ Measured circuit counts:
 | Digest output pin equations | 256 |
 | Total Boolean IR constraints | 111,188 |
 
-These are counts of this explicit standalone IR. They are not RP05 rows, backend field constraints, proof bytes, proving time, or evidence that the HTLC fits any existing proof/carrier cap. No proof has been generated for this relation. The experimental SHA-256 commitment/nullifier constructions inherit no production PQ128 security claim; no composed post-quantum security bound has been established here.
+These are counts of this explicit standalone IR. They are not RP05 rows or evidence that the HTLC fits any existing proof/carrier cap. The nested component proof has its own measured lowering and byte counts; no proof of the complete HTLC reference relation has been generated. The experimental SHA-256 commitment/nullifier constructions inherit no production PQ128 security claim; no composed post-quantum security bound has been established here.
 
 ## HTLC reference semantics
 
@@ -56,7 +58,7 @@ A claim requires a 32-byte preimage, its valid SHA assignment matching the commi
 
 The complete HTLC reference relation remains host code. Only the 32-byte SHA-256 preimage equality has explicit gate constraints here. Note/intent/nullifier commitment hashes, version/balance/timelock/authorization/context rules are not compiled into a proof. The prototype passes private opening/preimage to a local checker and makes no zero-knowledge or deployed privacy claim.
 
-No live successor transaction relation, proof generation, Rust-to-Lean refinement, release qualification, activation, production feature switch, node lifecycle validation or Bitcoin connector is included. The independent unchanged-byte proof path through wallet/RPC, relay, mempool, mining, blocks, sync, restart, reorg and fresh nodes remains a future integration obligation. A future swap flow should make Hegemon the longer-refund leg: reveal the secret on Bitcoin, then consume it privately on Hegemon after proof integration. Time margins must use authenticated per-chain contexts and conservative elapsed-time assumptions; comparing raw block heights across chains is invalid. This prototype does not establish an atomic swap or make Bitcoin quantum secure.
+No live successor transaction relation, production transaction proof generation, Rust-to-Lean refinement, release qualification, activation, production feature switch, node lifecycle validation or Bitcoin connector is included. The independent unchanged-byte proof path through wallet/RPC, relay, mempool, mining, blocks, sync, restart, reorg and fresh nodes remains a future integration obligation. A future swap flow should make Hegemon the longer-refund leg: reveal the secret on Bitcoin, then consume it privately on Hegemon after proof integration. Time margins must use authenticated per-chain contexts and conservative elapsed-time assumptions; comparing raw block heights across chains is invalid. This prototype does not establish an atomic swap or make Bitcoin quantum secure.
 
 ## Checked evidence
 
@@ -64,4 +66,4 @@ Tests compare 68 fixed/reproducible random 32-byte vectors against sha2, includi
 
 Reference tests cover claim before/at/after timeout, refund maturity, wrong preimage/assignment, each committed note field, branch-specific key substitution, shared nullifier races, wrong authority/branch/receipt, recipient/nonce/asset/network/value/fee intent changes, parent hash/height changes, unauthenticated context, missing note, spent state, zero values and arithmetic overflow.
 
-Exact test and lint results are recorded in `EXECPLAN.md`. The final locked test run passed nine tests in 0.92 seconds; clippy passed with warnings denied and formatting passed. The separate build directory occupied 22 MiB after final tests/lint; no node or production build was started.
+Exact test and lint results are recorded in `EXECPLAN.md`. The original locked test run passed nine tests in 0.92 seconds; the second increment passed all eleven tests in 1.37 seconds, including four packing geometries and field-Booleanity negatives. Parent-crate clippy passed with warnings denied and formatting passed. The separate small build directory occupied 22 MiB; the isolated native facade release target occupied 306 MiB. No node or production build was started.

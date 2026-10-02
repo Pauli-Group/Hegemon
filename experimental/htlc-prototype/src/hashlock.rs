@@ -19,7 +19,7 @@ const K: [u32; 64] = [
 ];
 
 #[derive(Clone, Copy, Debug)]
-enum Op {
+pub enum BooleanGate {
     Constant(u8),
     Not(Wire),
     Xor(Wire, Wire),
@@ -27,6 +27,8 @@ enum Op {
     Parity(Wire, Wire, Wire),
     Majority(Wire, Wire, Wire),
 }
+
+type Op = BooleanGate;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConstraintError {
@@ -71,6 +73,17 @@ impl Default for Sha256Hashlock {
 }
 
 impl Sha256Hashlock {
+    /// Read-only fixed topology for independent proof-backend lowering.
+    /// Gate i defines canonical wire 256+i; inputs remain existential/private
+    /// when the lowering does not install the host checker's input pins.
+    pub fn gates(&self) -> &[BooleanGate] {
+        &self.gates
+    }
+
+    pub fn output_wires(&self) -> &[usize; 256] {
+        &self.outputs
+    }
+
     pub fn new() -> Self {
         let mut b = Builder {
             gates: Vec::new(),
