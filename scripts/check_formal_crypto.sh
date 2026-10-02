@@ -159,6 +159,37 @@ PY
 
 (
   cd "$CRYPTO_ROOT"
+  manifest_sha256_before="$(python3 - "$CRYPTO_ROOT/lake-manifest.json" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+)"
+  # Mathlib's pinned cache client is inherited by downstream Lake projects.
+  # Use only its high-trust master container and the already-validated lock;
+  # `get` fetches missing cache entries and reuses warm local cache contents.
+  # Hard transfer/decompression failures must not fall through into a build.
+  cache_status=0
+  lake exe cache get --cache-from=master || cache_status=$?
+  manifest_sha256_after="$(python3 - "$CRYPTO_ROOT/lake-manifest.json" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+)"
+  if [ "$manifest_sha256_before" != "$manifest_sha256_after" ]; then
+    printf 'Mathlib cache bootstrap changed the validated lake-manifest.json\n' >&2
+    exit 1
+  fi
+  if [ "$cache_status" -ne 0 ]; then
+    printf 'Mathlib precompiled cache fetch failed (exit %s); refusing HegemonCrypto build\n' \
+      "$cache_status" >&2
+    exit "$cache_status"
+  fi
   lake build HegemonCrypto
   lake env lean --run HegemonCrypto/GenerateSmallWoodProofWireVectors.lean \
     > "$WORK_DIR/smallwood-proof-wire.json"
