@@ -2730,9 +2730,9 @@ mod tests {
         assert!((288.79..288.80).contains(&report.interactive_aggregate.approximate_security_bits));
         assert_eq!(report.ideal_cms_qrom.security_bits_floor, 157);
         assert!((157.21..157.22).contains(&report.ideal_cms_qrom.approximate_security_bits));
-        assert_eq!(report.field_xof_requested_words, 102_545);
-        assert_eq!(report.field_xof_candidate_words, 102_584);
-        assert_eq!(report.field_xof_minimum_rejections, 40);
+        assert_eq!(report.field_xof_requested_words, 102_480);
+        assert_eq!(report.field_xof_candidate_words, 102_512);
+        assert_eq!(report.field_xof_minimum_rejections, 33);
         assert_eq!(report.field_xof_request_union, 1 << 25);
         assert_eq!(
             report.canonical_piop_opening_abort.numerator_decimal,
@@ -2740,7 +2740,10 @@ mod tests {
                 .pow(SMALLWOOD_LEVEL5_MAX_PIOP_NONCE_TRIALS)
                 .to_str_radix(10)
         );
-        assert_eq!(report.field_xof_abort_union.security_bits_floor, 748);
+        // The RP05 identity has fewer maximal identities and an aligned
+        // request, yielding 33 minimum rejected XOF words and this exact
+        // source-derived abort floor.
+        assert_eq!(report.field_xof_abort_union.security_bits_floor, 604);
         assert_eq!(report.canonical_piop_opening_abort.security_bits_floor, 869);
         assert_eq!(report.fixed_decs_sampler_abort.security_bits_floor, 488);
         assert_eq!(

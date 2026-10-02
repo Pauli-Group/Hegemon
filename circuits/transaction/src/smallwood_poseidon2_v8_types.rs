@@ -2223,7 +2223,7 @@ mod tests {
         first_limb_collision.witness.auth.policy_signer_tags[1] = [1, 90, 91, 92, 93, 94, 95];
         assert_eq!(
             first_limb_collision.validate(),
-            Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationOpening)
+            Err(SmallwoodPoseidon2V8SurfaceError::InvalidAuthorizationShape)
         );
     }
 

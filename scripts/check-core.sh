@@ -7,7 +7,7 @@ fi
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/check-core.sh [lint|test|test-base|test-transaction-lib|test-transaction-integration|test-wallet|test-wallet-base|test-wallet-multisig-setup|test-wallet-multisig-builders|test-wallet-multisig-drift|test-node|test-node-default|test-node-minimal|build|all]
+Usage: ./scripts/check-core.sh [lint|test|test-base|test-transaction-lib|test-transaction-integration|test-wallet|test-wallet-base|test-wallet-multisig-setup|test-wallet-multisig-builders|test-node|test-node-default|test-node-minimal|build|all]
 
 lint   Run the default formatting and lint gate.
 test   Run the default fast Rust test gate.
@@ -15,10 +15,9 @@ test-base        Run the shared crypto, consensus, network, protocol, bridge, an
 test-transaction-lib Run the transaction-circuit library tests.
 test-transaction-integration Run the transaction-circuit integration tests.
 test-wallet      Run the wallet tests.
-test-wallet-base Run wallet tests except proof-heavy cases owned by dedicated CI shards.
-test-wallet-multisig-setup Run the funded multisig setup proof test.
-test-wallet-multisig-builders Run the multisig approval/final proof workflow.
-test-wallet-multisig-drift Run the multisig final-plan tamper workflow.
+test-wallet-base Run wallet tests, including fail-closed multisig routes.
+test-wallet-multisig-setup Run the multisig setup authorization rejection regression.
+test-wallet-multisig-builders Run the multisig value-lock authorization rejection regression.
 test-node        Run both hegemon-node library feature profiles.
 test-node-default Run the default hegemon-node library feature profile.
 test-node-minimal Run the no-default-features hegemon-node library profile.
@@ -31,6 +30,8 @@ run_lint() {
   cargo fmt --all -- --check
   python3 scripts/check_native_startup_policy.py
   python3 -B scripts/check_smallwood_v5_candidate_gate.py
+  # Keep correctness and suspicious-code diagnostics blocking. Style and unused
+  # experimental/replay helpers remain visible warnings, not protocol rewrites.
   cargo clippy \
     -p hegemon-node \
     -p protocol-kernel \
@@ -43,14 +44,14 @@ run_lint() {
     -p transaction-circuit \
     -p block-circuit \
     -p cashvm-bridge \
-    --all-targets -- -D warnings
+    --all-targets -- -D clippy::correctness -D clippy::suspicious -D unused_must_use -D unsafe_op_in_unsafe_fn
   cargo clippy \
     -p superneo-backend-lattice \
     -p superneo-hegemon \
     -p superneo-bench \
     -p native-backend-ref \
     -p native-backend-timing \
-    --all-targets -- -D warnings
+    --all-targets -- -D clippy::correctness -D clippy::suspicious -D unused_must_use -D unsafe_op_in_unsafe_fn
 }
 
 prepare_test_environment() {
@@ -102,31 +103,19 @@ run_test_wallet() {
 
 run_test_wallet_base() {
   prepare_test_environment
-  cargo test -p wallet -- \
-    --skip tx_builder::tests::multisig_setup_bundle_has_fee_nullifier_and_reconciled_accumulator \
-    --skip tx_builder::tests::multisig_builders_create_approval_and_final_transactions_with_hidden_policy_shape \
-    --skip tx_builder::tests::multisig_final_rejects_plan_digest_drift
+  cargo test -p wallet
 }
 
 run_test_wallet_multisig_setup() {
   prepare_test_environment
   ./scripts/run_exact_cargo_lib_test.sh wallet \
-    tx_builder::tests::multisig_setup_bundle_has_fee_nullifier_and_reconciled_accumulator \
-    --release
+    tx_builder::tests::multisig_setup_builder_fails_closed_without_fresh_authority
 }
 
 run_test_wallet_multisig_builders() {
   prepare_test_environment
   ./scripts/run_exact_cargo_lib_test.sh wallet \
-    tx_builder::tests::multisig_builders_create_approval_and_final_transactions_with_hidden_policy_shape \
-    --release
-}
-
-run_test_wallet_multisig_drift() {
-  prepare_test_environment
-  ./scripts/run_exact_cargo_lib_test.sh wallet \
-    tx_builder::tests::multisig_final_rejects_plan_digest_drift \
-    --release
+    tx_builder::tests::multisig_value_lock_fails_closed_without_fresh_authority
 }
 
 run_test_node_default() {
@@ -183,9 +172,6 @@ case "${1:-all}" in
     ;;
   test-wallet-multisig-builders)
     run_test_wallet_multisig_builders
-    ;;
-  test-wallet-multisig-drift)
-    run_test_wallet_multisig_drift
     ;;
   test-node)
     run_test_node

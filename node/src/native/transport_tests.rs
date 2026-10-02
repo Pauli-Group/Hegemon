@@ -1,9 +1,5 @@
 use super::*;
 
-use std::sync::Mutex as StdMutex;
-
-static TRANSPORT_COUNTER_TEST_LOCK: StdMutex<()> = StdMutex::new(());
-
 fn sample_meta(seed: u8, action_bytes: Vec<Vec<u8>>) -> NativeBlockMeta {
     let mut hash = [0u8; 32];
     hash[0] = seed;
@@ -154,20 +150,17 @@ fn native_block_body_chunks_roundtrip_out_of_order_and_stay_well_below_frame_cap
 
 #[test]
 fn native_v3_body_locator_uses_exact_fixed_width_types_and_one_framed_hash() {
-    let _counter_guard = TRANSPORT_COUNTER_TEST_LOCK
-        .lock()
-        .expect("counter test lock");
     let meta = sample_meta_v3(0x31, vec![sample_non_proof_pending_action(0x31).encode()]);
-    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.store(0, Ordering::Relaxed);
-    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.store(0, Ordering::Relaxed);
+    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.set(0));
+    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.set(0));
     let (body, locator) =
         native_block_body_v3_bytes_and_locator(&meta).expect("encode typed V3 body locator");
     assert_eq!(
-        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.get()),
         1
     );
     assert_eq!(
-        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.get()),
         1
     );
     assert_eq!(
@@ -224,7 +217,7 @@ fn native_v3_body_locator_uses_exact_fixed_width_types_and_one_framed_hash() {
     assert_eq!(sealed_body.hash(), locator.body_hash);
     assert_eq!(sealed_body.bytes(), received_body.as_ref());
     assert_eq!(
-        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.get()),
         2,
         "V3 completion performs exactly one body hash after locator admission"
     );
@@ -234,7 +227,7 @@ fn native_v3_body_locator_uses_exact_fixed_width_types_and_one_framed_hash() {
         .last_mut()
         .expect("encoded V3 body is non-empty");
     *final_byte ^= 1;
-    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.store(0, Ordering::Relaxed);
+    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.set(0));
     assert!(decode_and_bind_native_block_body_v3_for_locator(
         &locator,
         meta.rules_hash,
@@ -244,7 +237,7 @@ fn native_v3_body_locator_uses_exact_fixed_width_types_and_one_framed_hash() {
     .to_string()
     .contains("BodyHash48 mismatch"));
     assert_eq!(
-        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.get()),
         1
     );
 
@@ -256,7 +249,7 @@ fn native_v3_body_locator_uses_exact_fixed_width_types_and_one_framed_hash() {
     trailing_locator.chunk_count =
         native_block_body_chunk_count(trailing_body.len()).expect("trailing V3 chunk count");
     trailing_locator.body_hash = native_block_body_hash_v3(&trailing_body);
-    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.store(0, Ordering::Relaxed);
+    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.set(0));
     assert!(decode_and_bind_native_block_body_v3_for_locator(
         &trailing_locator,
         meta.rules_hash,
@@ -266,13 +259,13 @@ fn native_v3_body_locator_uses_exact_fixed_width_types_and_one_framed_hash() {
     .to_string()
     .contains("structural length mismatch"));
     assert_eq!(
-        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.get()),
         1,
         "self-consistent trailing bodies must fail only after one authenticated hash"
     );
 
-    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.store(0, Ordering::Relaxed);
-    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.store(0, Ordering::Relaxed);
+    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.set(0));
+    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.set(0));
     let mut wrong_rules = locator.clone();
     wrong_rules.rules_hash = RulesHash48::new([0xff; 48]);
     assert!(decode_and_bind_native_block_body_v3_for_locator(
@@ -292,12 +285,12 @@ fn native_v3_body_locator_uses_exact_fixed_width_types_and_one_framed_hash() {
     )
     .is_err());
     assert_eq!(
-        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.get()),
         0,
         "mismatched or oversized V3 locators must reject before hashing"
     );
     assert_eq!(
-        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.get()),
         0,
         "mismatched or oversized V3 locators must reject before body allocation"
     );
@@ -305,9 +298,6 @@ fn native_v3_body_locator_uses_exact_fixed_width_types_and_one_framed_hash() {
 
 #[test]
 fn native_sync_wire_tags_admit_exact_carrier_and_reject_record_fallback_before_allocation() {
-    let _counter_guard = TRANSPORT_COUNTER_TEST_LOCK
-        .lock()
-        .expect("counter test lock");
     let (interim_body, interim_locator) =
         native_block_body_bytes_and_locator(&sample_meta(0x32, Vec::new()))
             .expect("interim locator fixture");
@@ -347,8 +337,8 @@ fn native_sync_wire_tags_admit_exact_carrier_and_reject_record_fallback_before_a
             "postcard native sync tag mapping drifted"
         );
     }
-    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.store(0, Ordering::Relaxed);
-    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.store(0, Ordering::Relaxed);
+    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.set(0));
+    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.set(0));
     let (_temp, node) = transport_test_node("v3-wire-tag-prefilter-test");
     let reassembler = NativeBlockBodyReassembler::default();
     let sync_before = node.sync_status_fields();
@@ -404,11 +394,11 @@ fn native_sync_wire_tags_admit_exact_carrier_and_reject_record_fallback_before_a
     assert_eq!(node.sync_status_fields(), sync_before);
     assert!(node.mining_sync_gate_allows_work());
     assert_eq!(
-        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.get()),
         0
     );
     assert_eq!(
-        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.get()),
         0
     );
 }
@@ -662,9 +652,6 @@ fn native_block_body_transport_rotates_withholders_and_aborts_range_suffix() {
 
 #[test]
 fn native_block_body_64_mib_action_boundary_serializes_hashes_and_reassembles_linearly() {
-    let _counter_guard = TRANSPORT_COUNTER_TEST_LOCK
-        .lock()
-        .expect("counter test lock");
     let action_bytes = (0..32)
         .map(|index| vec![u8::try_from(index).expect("byte"); 2 * 1024 * 1024])
         .collect::<Vec<_>>();
@@ -673,8 +660,8 @@ fn native_block_body_64_mib_action_boundary_serializes_hashes_and_reassembles_li
         MAX_NATIVE_BLOCK_ACTION_BYTES
     );
     let meta = sample_meta(70, action_bytes);
-    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.store(0, Ordering::Relaxed);
-    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.store(0, Ordering::Relaxed);
+    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.set(0));
+    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.set(0));
     let (body, locator) = native_block_body_bytes_and_locator(&meta).expect("64 MiB body");
     assert!(body.len() > MAX_NATIVE_BLOCK_ACTION_BYTES);
     assert!(body.len() <= MAX_NATIVE_BLOCK_META_BYTES);
@@ -696,12 +683,12 @@ fn native_block_body_64_mib_action_boundary_serializes_hashes_and_reassembles_li
             .or(completed);
     }
     assert_eq!(
-        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.get()),
         1,
         "offered body is serialized once"
     );
     assert_eq!(
-        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.get()),
         1,
         "offered body is hashed once before chunk slicing"
     );
@@ -716,9 +703,6 @@ fn native_block_body_64_mib_action_boundary_serializes_hashes_and_reassembles_li
 
 #[test]
 fn large_announce_and_multiblock_sync_use_small_locator_messages() {
-    let _counter_guard = TRANSPORT_COUNTER_TEST_LOCK
-        .lock()
-        .expect("counter test lock");
     let large = sample_meta(
         80,
         vec![vec![0x80; MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES + 1]],
@@ -737,8 +721,8 @@ fn large_announce_and_multiblock_sync_use_small_locator_messages() {
     let mut next = sample_meta(81, Vec::new());
     next.parent_hash = large.hash;
     next.height = large.height + 1;
-    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.store(0, Ordering::Relaxed);
-    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.store(0, Ordering::Relaxed);
+    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.set(0));
+    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.set(0));
     let response =
         native_sync_response_message(100, vec![large, next]).expect("multi-block locator response");
     let NativeSyncMessage::ResponseLocators { blocks, .. } = &response else {
@@ -747,11 +731,11 @@ fn large_announce_and_multiblock_sync_use_small_locator_messages() {
     assert_eq!(blocks.len(), 2);
     assert_eq!(blocks[1].parent_hash, blocks[0].block_hash);
     assert_eq!(
-        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.get()),
         2
     );
     assert_eq!(
-        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.get()),
         2
     );
     let response_payload = encode_sync_message(&response).expect("response payload");
@@ -1114,9 +1098,6 @@ fn non_proof_relay_queue_enforces_per_peer_global_item_and_byte_caps() {
 
 #[test]
 fn peer_action_route_prefix_rejects_unauthorized_proof_floods_before_full_scale_decode() {
-    let _counter_guard = TRANSPORT_COUNTER_TEST_LOCK
-        .lock()
-        .expect("counter test lock");
     let mut inline = sample_non_proof_pending_action(0xce);
     inline.family_id = FAMILY_SHIELDED_POOL;
     inline.action_id = ACTION_SHIELDED_TRANSFER_INLINE;
@@ -1143,7 +1124,7 @@ fn peer_action_route_prefix_rejects_unauthorized_proof_floods_before_full_scale_
         &inline.action_id.to_le_bytes()
     );
 
-    NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS.store(0, Ordering::Relaxed);
+    NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS.with(|count| count.set(0));
     for truncated_len in 0..NATIVE_PENDING_ACTION_V3_FIXED_PREFIX_BYTES {
         assert!(decode_native_peer_pending_action_v3(&inline_wire[..truncated_len], 1).is_err());
     }
@@ -1161,7 +1142,7 @@ fn peer_action_route_prefix_rejects_unauthorized_proof_floods_before_full_scale_
     unknown.tx_hash = pending_action_hash(&unknown);
     assert!(decode_native_peer_pending_action_v3(&unknown.encode(), 1).is_err());
     assert_eq!(
-        NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS.with(|count| count.get()),
         0,
         "truncated, inactive, and unknown peer actions must reject before any length-bearing SCALE decode"
     );
@@ -1170,7 +1151,7 @@ fn peer_action_route_prefix_rejects_unauthorized_proof_floods_before_full_scale_
         .expect_err("decoder-compatible V4 inline action has no fresh authority");
     assert!(err.to_string().contains("fresh proof authority"), "{err}");
     assert_eq!(
-        NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS.with(|count| count.get()),
         0,
         "fresh proof authority must reject before length-bearing SCALE decode"
     );
@@ -1194,7 +1175,7 @@ fn peer_action_route_prefix_rejects_unauthorized_proof_floods_before_full_scale_
         .expect_err("legacy grammar must not bypass absent fresh proof authority");
     assert!(err.to_string().contains("fresh proof authority"), "{err}");
     assert_eq!(
-        NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS.with(|count| count.get()),
         0
     );
 
@@ -1219,7 +1200,7 @@ fn peer_action_route_prefix_rejects_unauthorized_proof_floods_before_full_scale_
         .to_string()
         .contains("unsupported native V3 action route"));
     assert_eq!(
-        NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS.with(|count| count.get()),
         0,
         "legacy V1 must not reach active full decode under the fixed V3 offsets"
     );
@@ -1381,9 +1362,6 @@ async fn inactive_peer_relays_spawn_no_group_or_proof_worker() {
 
 #[test]
 fn known_locator_same_hash_different_body_is_rejected_before_sync_credit_or_cache_trust() {
-    let _counter_guard = TRANSPORT_COUNTER_TEST_LOCK
-        .lock()
-        .expect("counter test lock");
     let (_temp, node) = transport_test_node("known-body-locator-binding-test");
     let local_best = node.best_meta();
     let mut known = sample_meta(0x92, vec![vec![0x11; 1024]]);
@@ -1404,20 +1382,20 @@ fn known_locator_same_hash_different_body_is_rejected_before_sync_credit_or_cach
     assert!(admit_known_native_block_locator(&node, [0x92; 32], &known));
     assert!(node.mining_sync_gate_allows_work());
 
-    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.store(0, Ordering::Relaxed);
-    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.store(0, Ordering::Relaxed);
+    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.set(0));
+    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.set(0));
     let error = validate_known_native_block_body_locator(&known, &cached_conflicting_locator)
         .expect_err("same block hash with different canonical body must be rejected");
     assert!(error
         .to_string()
         .contains("conflicts with exact stored canonical body"));
     assert_eq!(
-        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.get()),
         1,
         "known-body validation must rebuild the exact stored body instead of trusting the cache"
     );
     assert_eq!(
-        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.get()),
         1
     );
     assert!(node.mining_sync_gate_allows_work());
@@ -1428,13 +1406,10 @@ fn known_locator_same_hash_different_body_is_rejected_before_sync_credit_or_cach
 
 #[test]
 fn outbound_body_cache_encodes_once_and_over_budget_rejection_encodes_zero_times() {
-    let _counter_guard = TRANSPORT_COUNTER_TEST_LOCK
-        .lock()
-        .expect("counter test lock");
     let (_temp, node) = transport_test_node("body-send-cache-test");
     let best = node.best_meta();
-    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.store(0, Ordering::Relaxed);
-    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.store(0, Ordering::Relaxed);
+    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.set(0));
+    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.set(0));
     node.block_body_send_cache
         .lock()
         .load_or_encode(&node, best.hash)
@@ -1444,11 +1419,11 @@ fn outbound_body_cache_encodes_once_and_over_budget_rejection_encodes_zero_times
         .load_or_encode(&node, best.hash)
         .expect("cached outbound body encoding");
     assert_eq!(
-        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.get()),
         1
     );
     assert_eq!(
-        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.get()),
         1
     );
 
@@ -1460,53 +1435,40 @@ fn outbound_body_cache_encodes_once_and_over_budget_rejection_encodes_zero_times
         .expect("first maximum-body reservation");
     assert!(first.commit_actual(MAX_NATIVE_BLOCK_META_BYTES));
     drop(first);
-    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.store(0, Ordering::Relaxed);
-    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.store(0, Ordering::Relaxed);
+    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.set(0));
+    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.set(0));
     assert!(
         limiter.try_acquire_and_reserve(peer, now).is_none(),
         "second maximum-body request is rejected before materialization"
     );
     assert_eq!(
-        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.get()),
         0
     );
     assert_eq!(
-        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.get()),
         0
     );
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn repeated_best_announce_reuses_cached_payload_without_body_reencoding() {
-    let _counter_guard = TRANSPORT_COUNTER_TEST_LOCK
-        .lock()
-        .expect("counter test lock");
     let (_temp, node) = transport_test_node("best-announce-cache-test");
     let mut cache = NativeBestAnnounceCache::default();
-    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.store(0, Ordering::Relaxed);
-    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.store(0, Ordering::Relaxed);
+    node.reset_full_block_body_load_invocations();
     let first = native_best_announce_payload(&node, &mut cache)
         .await
         .expect("first best announce");
+    assert_eq!(node.full_block_body_load_invocations(), 1);
     let second = native_best_announce_payload(&node, &mut cache)
         .await
         .expect("cached best announce");
     assert_eq!(first, second);
-    assert_eq!(
-        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.load(Ordering::Relaxed),
-        1
-    );
-    assert_eq!(
-        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.load(Ordering::Relaxed),
-        1
-    );
+    assert_eq!(node.full_block_body_load_invocations(), 1);
 }
 
 #[test]
 fn scalar_best_tip_access_never_clones_or_encodes_a_maximum_body() {
-    let _counter_guard = TRANSPORT_COUNTER_TEST_LOCK
-        .lock()
-        .expect("counter test lock");
     let (_temp, node) = transport_test_node("scalar-best-tip-test");
 
     node.reset_best_meta_clone_invocations();
@@ -1515,8 +1477,8 @@ fn scalar_best_tip_access_never_clones_or_encodes_a_maximum_body() {
 
     node.state.write().best.action_bytes = vec![vec![0x5c; MAX_NATIVE_BLOCK_META_BYTES]];
     node.reset_best_meta_clone_invocations();
-    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.store(0, Ordering::Relaxed);
-    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.store(0, Ordering::Relaxed);
+    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.set(0));
+    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.set(0));
     let expected = node.best_tip();
     let expected_fork_choice = node.best_fork_choice_tip();
     for _ in 0..256 {
@@ -1546,11 +1508,11 @@ fn scalar_best_tip_access_never_clones_or_encodes_a_maximum_body() {
         "scalar access must not deep-clone the maximum-size action body"
     );
     assert_eq!(
-        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.get()),
         0
     );
     assert_eq!(
-        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.load(Ordering::Relaxed),
+        NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.get()),
         0
     );
 }

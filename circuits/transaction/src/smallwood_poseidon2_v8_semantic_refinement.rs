@@ -448,13 +448,23 @@ mod tests {
     }
 
     #[test]
-    fn rp05_typed_replay_stays_fail_closed_until_identity_regeneration() {
+    fn rp05_typed_replay_matches_regenerated_identity_without_production_authority() {
         let statement = SmallwoodPoseidon2V8PublicStatement::default();
         let witness = SmallwoodPoseidon2V8Witness::default();
+        let receipt = audit_smallwood_poseidon2_v8_typed_lowering(&statement, &witness)
+            .expect("RP05 identity has been regenerated for the current source");
         assert_eq!(
-            audit_smallwood_poseidon2_v8_typed_lowering(&statement, &witness),
-            Err(SmallwoodPoseidon2V8SemanticRefinementError::ProgramIdentityRegenerationRequired)
+            receipt.program_sha512,
+            SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512
         );
+        assert_eq!(
+            receipt.program_transcript_bytes,
+            SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES
+        );
+        assert!(receipt.typed_witness_roundtrip_exact);
+        assert!(receipt.canonical_typed_relowering_enforced);
+        assert!(!receipt.universal_accepted_witness_soundness_proved);
+        assert!(!receipt.production_authority);
     }
 
     #[test]
@@ -473,14 +483,14 @@ mod tests {
     fn inactive_ciphertexts_are_bound_separately_from_private_relation_words() {
         let statement = SmallwoodPoseidon2V8PublicStatement::default();
         let witness = SmallwoodPoseidon2V8Witness::default();
-        assert_eq!(
-            audit_smallwood_poseidon2_v8_typed_lowering_with_inline_ciphertexts(
-                &statement,
-                &witness,
-                &SmallwoodPoseidon2V8InlineCiphertexts::default(),
-            ),
-            Err(SmallwoodPoseidon2V8SemanticRefinementError::ProgramIdentityRegenerationRequired)
-        );
+        let receipt = audit_smallwood_poseidon2_v8_typed_lowering_with_inline_ciphertexts(
+            &statement,
+            &witness,
+            &SmallwoodPoseidon2V8InlineCiphertexts::default(),
+        )
+        .expect("RP05 identity has been regenerated for the current source");
+        assert!(receipt.inline_ciphertexts_bound);
+        assert!(!receipt.production_authority);
     }
 
     #[test]
@@ -492,10 +502,7 @@ mod tests {
             "/../../testdata/formal_core_vectors/poseidon2_v8_semantic_adequacy.json"
         )))
         .unwrap();
-        assert_eq!(
-            vector["schema"],
-            LEGACY_LEAN_SEMANTIC_REFINEMENT_SCHEMA_V1
-        );
+        assert_eq!(vector["schema"], LEGACY_LEAN_SEMANTIC_REFINEMENT_SCHEMA_V1);
         assert_eq!(
             vector["semantic_target"],
             LEGACY_LEAN_EXACT_SEMANTIC_TARGET_V1
@@ -521,7 +528,10 @@ mod tests {
         );
         assert_eq!(vector["typed_lowering_replay_available"], true);
         assert_eq!(vector["relowering_compared_packed_words"], 43_904);
-        assert_eq!(vector["concrete_rust_to_lean_universal_refinement_proved"], false);
+        assert_eq!(
+            vector["concrete_rust_to_lean_universal_refinement_proved"],
+            false
+        );
         assert_eq!(
             vector["poseidon2_primitive_specification"],
             SMALLWOOD_POSEIDON2_V8_POSEIDON_PRIMITIVE_SPECIFICATION
@@ -744,9 +754,15 @@ mod tests {
             json_u64_array(&vector["ciphertext_blake2b_kat_commitment_words"]),
             commitment_words
         );
-        assert_eq!(vector["exact_primitive_interpretation_refinement_proved"], false);
+        assert_eq!(
+            vector["exact_primitive_interpretation_refinement_proved"],
+            false
+        );
         assert_eq!(vector["verified_rust_semantics_extraction_absent"], true);
-        assert_eq!(vector["in_lean_rfc7693_blake2b384_implementation_absent"], true);
+        assert_eq!(
+            vector["in_lean_rfc7693_blake2b384_implementation_absent"],
+            true
+        );
         assert_eq!(vector["universal_accepted_witness_soundness_proved"], false);
         assert_eq!(vector["production_authority"], false);
         assert_eq!(vector["public_words"], 120);
@@ -761,7 +777,10 @@ mod tests {
             SMALLWOOD_POSEIDON2_V8_UNIVERSAL_ACCEPTED_WITNESS_SOUNDNESS_PROVED,
             false
         );
-        assert_eq!(SMALLWOOD_POSEIDON2_V8_SEMANTIC_REFINEMENT_PRODUCTION_AUTHORITY, false);
+        assert_eq!(
+            SMALLWOOD_POSEIDON2_V8_SEMANTIC_REFINEMENT_PRODUCTION_AUTHORITY,
+            false
+        );
     }
 
     #[test]

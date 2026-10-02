@@ -3486,18 +3486,18 @@ mod tests {
             note
         };
         assert_eq!(expected_two_coinbase_note.leaf_count(), 2);
-        // RP04 derives the authorization key from all five secret limbs.
+        // RP05 derives the authorization key from all five secret limbs.
         // Keep the resulting note-tree root pinned, not the RP03 four-limb KAT.
         assert_eq!(
             expected_two_coinbase_note.root().limbs(),
             [
-                15_430_034_871_923_271_930,
-                17_576_742_908_877_972_258,
-                12_506_225_086_224_837_088,
-                11_597_511_017_858_084_175,
-                10_206_488_750_658_202_426,
-                6_672_713_816_608_648_388,
-                2_547_705_533_888_361_775,
+                3_496_020_133_485_408_353,
+                6_323_288_766_055_009_434,
+                1_653_801_494_447_388_160,
+                7_619_428_438_967_260_413,
+                7_182_046_660_320_870_797,
+                6_119_682_970_708_401_865,
+                4_756_272_899_888_538_475,
             ]
         );
         let expected_canonical_note = {

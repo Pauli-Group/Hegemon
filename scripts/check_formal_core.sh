@@ -1059,10 +1059,13 @@ run_formal_core check-blueprint "$ROOT/config/formal-security-blueprint.json" --
 printf '\n[11/14] Verifying independent bridge vectors\n'
 run_formal_core verify-bridge-vectors "$ROOT/testdata/formal_core_vectors/bridge_messages.json"
 
-printf '\n[12/14] Verifying native backend reference vectors\n'
-cargo run --quiet -p native-backend-ref -- verify-vectors "$ROOT/testdata/native_backend_vectors"
+printf '\n[12/14] Checking native backend reference and historical rejection regressions\n'
+# The retained bundle names retired parameters. Do not treat it as a current
+# RP05 proof package: test its fail-closed rejection and current codec/hash
+# correspondence. Strict tag-release package attestation remains separate.
+cargo test --locked -p native-backend-ref --lib
 
-printf '\n[13/14] Checking native backend release posture\n'
+printf '\n[13/14] Checking historical native backend review posture (not RP05 authority)\n'
 bash "$ROOT/scripts/check_native_backend_release_posture.sh" \
   --package "$ROOT/audits/native-backend-128b/native-backend-128b-review-package.tar.gz"
 

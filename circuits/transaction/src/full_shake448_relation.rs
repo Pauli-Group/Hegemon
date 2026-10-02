@@ -31,12 +31,11 @@ use thiserror::Error;
 use crate::full_shake448_statement::{
     decode_v6_statement, encode_v6_ciphertext_hash_frame, encode_v6_semantic_frame,
     encode_v6_statement, project_v6_statement, Digest448, FullShake448Statement,
-    FullShake448StatementError, SignedMagnitude, V6ActivationBinding,
-    GOLDILOCKS_MODULUS, KEY_OUTPUT_ORDER_TAG, ROLE_ACCUMULATOR, ROLE_BALANCE_TAG, ROLE_INTENT,
-    ROLE_MERKLE_NODE, ROLE_NOTE_COMMITMENT, ROLE_NULLIFIER, ROLE_POLICY, ROLE_SPEND_KEYS,
-    ROLE_VALUE_LOCK, V6_BALANCE_SLOTS, V6_CANONICAL_CIPHERTEXT_BYTES, V6_DIGEST_BYTES,
-    V6_DOMAIN_SET, V6_MAX_INPUTS, V6_MAX_NOTE_VALUE, V6_MAX_OUTPUTS, V6_PROOF_PROFILE,
-    V6_STATEMENT_BYTES, V6_STATEMENT_LIMBS,
+    FullShake448StatementError, SignedMagnitude, V6ActivationBinding, GOLDILOCKS_MODULUS,
+    KEY_OUTPUT_ORDER_TAG, ROLE_ACCUMULATOR, ROLE_BALANCE_TAG, ROLE_INTENT, ROLE_MERKLE_NODE,
+    ROLE_NOTE_COMMITMENT, ROLE_NULLIFIER, ROLE_POLICY, ROLE_SPEND_KEYS, ROLE_VALUE_LOCK,
+    V6_BALANCE_SLOTS, V6_CANONICAL_CIPHERTEXT_BYTES, V6_DIGEST_BYTES, V6_DOMAIN_SET, V6_MAX_INPUTS,
+    V6_MAX_NOTE_VALUE, V6_MAX_OUTPUTS, V6_PROOF_PROFILE, V6_STATEMENT_BYTES, V6_STATEMENT_LIMBS,
 };
 use crate::smallwood_shake256_full_relation::{
     fixed_authorization_mux_relation, shake256_relation, verify_constraint_system,
@@ -5692,7 +5691,6 @@ impl ValidatedFullShake448Relation {
         // rejected uniform oracle.  The machine-readable missing list prevents
         // the adapter from mistaking that oracle for a conventional mixed
         // successor relation.
-        drop(builder);
         let mut executable_family_coverage = BTreeMap::new();
         for constraint in &non_hash_constraints {
             *executable_family_coverage

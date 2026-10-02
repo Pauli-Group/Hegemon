@@ -624,7 +624,6 @@ impl SmallwoodBlake2b384SourceProjectionIr {
                     &witness.stablecoin.attestation_commitment,
                 ),
             ] {
-                let source = source;
                 for (word, value) in canonical_words(bytes, "stablecoin field")?
                     .iter()
                     .copied()

@@ -51,6 +51,14 @@ PROFILE_MARKER_FIELDS = {
 PROFILE_MARKER = "HEGEMON_PRODUCTION_CRYPTO_PROFILE:" + ":".join(
     f"{key}={value}" for key, value in PROFILE_MARKER_FIELDS.items()
 )
+# This exact fail-closed refusal is expected for the compact development profile.
+# It is a review result only: it never establishes production authority.
+UNAPPROVED_PROFILE_REFUSAL = (
+    "constraint system violated: SmallWood parameter bound passes, but production "
+    "relation/security integration is not authorized: the exact conventional-hash "
+    "relation, complete zero knowledge, composed PQ/QROM bound, and compiled-verifier "
+    "refinement are incomplete"
+)
 PROFILE_MARKER_PATTERN = re.compile(
     rb"HEGEMON_PRODUCTION_CRYPTO_PROFILE:"
     rb"CIRCUIT=(?P<CIRCUIT>[0-9]+):"
@@ -203,13 +211,40 @@ def validate_profile(profile: object, label: str) -> dict:
     return profile
 
 
-def run_profile(binary: Path, binary_name: str) -> dict:
+def run_profile(
+    binary: Path, binary_name: str, *, allow_unapproved_profile: bool = False
+) -> dict | None:
     args = [str(binary)]
     if binary_name == "wallet":
         args.append("print-crypto-profile")
     else:
         args.append("--print-crypto-profile")
-    completed = subprocess.run(args, check=True, capture_output=True, text=True)
+    completed = subprocess.run(args, check=False, capture_output=True, text=True)
+    if completed.returncode != 0:
+        stderr = completed.stderr.rstrip("\n")
+        known_refusal = stderr in (
+            UNAPPROVED_PROFILE_REFUSAL,
+            f"Error: {UNAPPROVED_PROFILE_REFUSAL}",
+        )
+        if (
+            allow_unapproved_profile
+            and completed.returncode == 1
+            and known_refusal
+            and completed.stdout == ""
+            and completed.stderr.count("\n") <= 1
+        ):
+            return None
+        if known_refusal:
+            fail(
+                f"{binary_name}: production profile refused; production relation/"
+                "security integration is not authorized"
+            )
+        fail(
+            f"{binary_name}: profile command failed with exit status "
+            f"{completed.returncode}: {completed.stderr.strip() or completed.stdout.strip()}"
+        )
+    if completed.stderr:
+        fail(f"{binary_name}: profile command wrote unexpected stderr")
     lines = [line for line in completed.stdout.splitlines() if line.strip()]
     if len(lines) != 1:
         fail(f"{binary_name}: expected exactly one profile JSON line, got {len(lines)}")
@@ -228,6 +263,14 @@ def main() -> None:
         action="store_true",
         help="reject cross-target marker-only inspection",
     )
+    parser.add_argument(
+        "--allow-unapproved-profile",
+        action="store_true",
+        help=(
+            "review binaries when every native profile command returns only the "
+            "exact known fail-closed production-authorization refusal"
+        ),
+    )
     args = parser.parse_args()
     root = args.root.resolve()
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
@@ -237,6 +280,7 @@ def main() -> None:
         fail("release manifest lacks target_triple or artifacts")
 
     profiles: list[dict] = []
+    unapproved_refusals = 0
     for artifact in artifacts:
         if not isinstance(artifact, dict):
             fail("release manifest artifact must be an object")
@@ -247,17 +291,43 @@ def main() -> None:
         binary = (root / relative).resolve()
         validate_binary_profile_markers(binary, binary_name)
         if target == rustc_host():
-            profiles.append(run_profile(binary, binary_name))
+            profile = run_profile(
+                binary,
+                binary_name,
+                allow_unapproved_profile=args.allow_unapproved_profile,
+            )
+            if profile is None:
+                unapproved_refusals += 1
+            else:
+                profiles.append(profile)
+
+    if unapproved_refusals and profiles:
+        fail("release binaries disagree on production profile authorization state")
 
     if profiles and any(profile != profiles[0] for profile in profiles[1:]):
         fail("release binaries disagree on the compiled production cryptographic profile")
-    mode = "executed" if profiles else "static-cross-target"
-    if args.require_executed and mode != "executed":
+    if unapproved_refusals:
+        mode = "review-unapproved-profile"
+        production_authority = False
+    else:
+        mode = "executed" if profiles else "static-cross-target"
+        production_authority = bool(profiles)
+    if args.require_executed and not profiles and not unapproved_refusals:
         fail(
             "release cryptographic profile attestation must execute target binaries "
             f"natively (manifest target {target}, runner host {rustc_host()})"
         )
-    print(json.dumps({"passed": True, "mode": mode, "target_triple": target}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "passed": True,
+                "mode": mode,
+                "target_triple": target,
+                "production_authority": production_authority,
+            },
+            sort_keys=True,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -32310,7 +32310,10 @@ fn transfer_action_rejects_sidecar_repartitioned_tx_leaf_binding_alias() {
     // directly to ensure an activated sidecar route cannot accept this alias.
     let err = validate_transfer_action_payload(&action)
         .expect_err("repartitioned sidecar proof must fail payload admission");
-    assert!(err.to_string().contains("proof binding hash mismatch"), "{err}");
+    assert!(
+        err.to_string().contains("proof binding hash mismatch"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -39715,8 +39718,17 @@ fn protocol_v8_artifact_codec_matches_private_pending_action_v3_exactly() {
     );
     assert_eq!(
         SMALLWOOD_POSEIDON2_V8_HGV8RP04_ARTIFACT_RELATION_DIGEST,
+        transaction_circuit::smallwood_poseidon2_v8_program::smallwood_poseidon2_v8_program_digest_from_bytes(
+            include_bytes!("../../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp04.bin"),
+        ),
+        "retained RP04 artifact relation digest must remain pinned to its program bytes"
+    );
+    assert_eq!(
         transaction_circuit::smallwood_poseidon2_v8_program::SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST,
-        "current RP04 artifact relation digest must remain source-pinned"
+        transaction_circuit::smallwood_poseidon2_v8_program::smallwood_poseidon2_v8_program_digest_from_bytes(
+            include_bytes!("../../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp05.bin"),
+        ),
+        "current RP05 relation digest must be pinned to its current program bytes"
     );
     assert_ne!(
         SMALLWOOD_POSEIDON2_V8_ARTIFACT_RELATION_DIGEST,

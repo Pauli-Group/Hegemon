@@ -156,8 +156,8 @@ pub const fn smallwood_poseidon2_v8_hash_call_final_witness_index(
 pub fn smallwood_poseidon2_v8_hash_dummy_zero_witness_indices() -> Vec<usize> {
     let mut indices =
         Vec::with_capacity(SMALLWOOD_POSEIDON2_V8_HASH_DUMMY_ZERO_LINEAR_CONSTRAINT_COUNT);
-    for call in
-        SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT..SMALLWOOD_POSEIDON2_V8_HASH_PADDED_CALL_COUNT
+    for call in (0..SMALLWOOD_POSEIDON2_V8_HASH_PADDED_CALL_COUNT)
+        .skip(SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT)
     {
         for state_lane in 0..POSEIDON2_WIDTH16_WIDTH {
             indices.push(smallwood_poseidon2_v8_hash_call_initial_witness_index(
@@ -256,8 +256,8 @@ pub fn build_smallwood_poseidon2_v8_hash_rows(
     for (call, initial_state) in initial_states.iter().copied().enumerate() {
         write_call_rows(&mut rows, call, initial_state);
     }
-    for call in
-        SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT..SMALLWOOD_POSEIDON2_V8_HASH_PADDED_CALL_COUNT
+    for call in (0..SMALLWOOD_POSEIDON2_V8_HASH_PADDED_CALL_COUNT)
+        .skip(SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT)
     {
         write_call_rows(&mut rows, call, [0u64; POSEIDON2_WIDTH16_WIDTH]);
     }
@@ -409,8 +409,8 @@ pub fn verify_smallwood_poseidon2_v8_hash_rows(
             }
         }
     }
-    for call in
-        SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT..SMALLWOOD_POSEIDON2_V8_HASH_PADDED_CALL_COUNT
+    for call in (0..SMALLWOOD_POSEIDON2_V8_HASH_PADDED_CALL_COUNT)
+        .skip(SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT)
     {
         let group = smallwood_poseidon2_v8_hash_call_group(call);
         let lane = smallwood_poseidon2_v8_hash_call_lane(call);
@@ -671,8 +671,8 @@ mod tests {
     #[test]
     fn reclaimed_last_lane_is_live_and_fully_constrained() {
         let material = build_smallwood_poseidon2_v8_hash_rows(&initial_states()).unwrap();
-        for call in
-            SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT..SMALLWOOD_POSEIDON2_V8_HASH_PADDED_CALL_COUNT
+        for call in (0..SMALLWOOD_POSEIDON2_V8_HASH_PADDED_CALL_COUNT)
+            .skip(SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT)
         {
             let group = smallwood_poseidon2_v8_hash_call_group(call);
             let lane = smallwood_poseidon2_v8_hash_call_lane(call);
@@ -738,8 +738,7 @@ mod tests {
             SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_INSTANCES,
         };
         use crate::smallwood_poseidon2_v8_semantics::{
-            SmallwoodPoseidon2V8ConstraintAdapter, SMALLWOOD_POSEIDON2_V8_CALL_ROLE_TABLE,
-            SMALLWOOD_POSEIDON2_V8_HASH_ROW_START,
+            SmallwoodPoseidon2V8ConstraintAdapter, SMALLWOOD_POSEIDON2_V8_HASH_ROW_START,
         };
         use crate::smallwood_poseidon2_v8_types::SmallwoodPoseidon2V8PublicStatement;
 
@@ -767,57 +766,80 @@ mod tests {
             "hegemon.smallwood.poseidon2-v8.stablecoin-relation.v3"
         );
         assert_eq!(vectors.compiler_coverage, "source_executable_program_bound");
+        assert_eq!(vectors.program_transcript_bytes, 843_715);
+        assert_eq!(
+            vectors.program_sha512,
+            "580ee045ad26fe3f385185717107b7d669ef024a710f0525530d7c600b3dcecdc96963a01f327166dea78e9b93edb2097efb62adb101c6ce0518f6e7169848e6"
+        );
+        assert_eq!(vectors.nonlinear_expression_nodes, 8_130);
+        assert_eq!(vectors.nonlinear_roots, 773);
+        assert_eq!(vectors.csr_expression_nodes, 564);
+        assert_eq!(vectors.csr_attempts, 20_602);
+        assert_eq!(vectors.packed_nonlinear_lanes, 64);
         assert!(vectors.compiler_complete);
         assert!(vectors.source_executable_program_refinement_available);
         assert!(!vectors.compiled_machine_refinement_available);
         assert!(!vectors.full_relation_receipt_available);
-        assert_eq!(
-            vectors.program_transcript_bytes,
-            SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES
-        );
-        assert_eq!(
-            vectors.program_sha512,
-            hex::encode(SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512)
-        );
-        assert_eq!(
-            vectors.relation_id_48,
-            hex::encode(SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST)
-        );
-        assert_eq!(
-            vectors.nonlinear_expression_nodes,
-            SMALLWOOD_POSEIDON2_V8_NONLINEAR_EXPRESSION_NODES
-        );
-        assert_eq!(
-            vectors.nonlinear_roots,
-            SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINTS
-        );
-        assert_eq!(
-            vectors.csr_expression_nodes,
-            SMALLWOOD_POSEIDON2_V8_CSR_EXPRESSION_NODES
-        );
-        assert_eq!(
-            vectors.csr_attempts,
-            SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_INSTANCES
-        );
-        assert_eq!(
-            vectors.packed_nonlinear_lanes,
-            SMALLWOOD_POSEIDON2_V8_HASH_PACKING_FACTOR
-        );
         assert!(lean_v8_geometry_matches_source(&vectors.geometry));
 
+        // The RP04 Lean hash-kernel receipt above remains a historical KAT.
+        // Current RP05 identity is pinned by its separate source-bound
+        // relation-program transcript, not by copying successor values into
+        // the old Lean receipt.
+        let rp05: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp05_transcript.json"
+        )))
+        .unwrap();
         assert_eq!(
-            vectors.call_roles.len(),
-            SMALLWOOD_POSEIDON2_V8_CALL_ROLE_TABLE.len()
+            rp05["schema"],
+            "hegemon.poseidon2-v8.relation-program-transcript-v2"
         );
-        for (lean, rust) in vectors
-            .call_roles
-            .iter()
-            .zip(SMALLWOOD_POSEIDON2_V8_CALL_ROLE_TABLE)
-        {
-            assert_eq!(lean.name, rust.name);
-            assert_eq!(lean.start, rust.start);
-            assert_eq!(lean.end, rust.end);
+        assert_eq!(
+            rp05["transcript_bytes"].as_u64(),
+            Some(SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES as u64)
+        );
+        assert_eq!(
+            rp05["final_program_sha512"].as_str(),
+            Some(hex::encode(SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512).as_str())
+        );
+        assert_eq!(
+            rp05["final_relation_id_48"].as_str(),
+            Some(hex::encode(SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST).as_str())
+        );
+        let fixed_geometry = &rp05["fixed_geometry"];
+        assert_eq!(
+            fixed_geometry["live_hash_calls"].as_u64(),
+            Some(SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT as u64)
+        );
+        assert_eq!(
+            fixed_geometry["padded_hash_calls"].as_u64(),
+            Some(SMALLWOOD_POSEIDON2_V8_HASH_PADDED_CALL_COUNT as u64)
+        );
+        assert_eq!(
+            fixed_geometry["nonlinear_expression_nodes"].as_u64(),
+            Some(SMALLWOOD_POSEIDON2_V8_NONLINEAR_EXPRESSION_NODES as u64)
+        );
+        assert_eq!(
+            fixed_geometry["nonlinear_expression_roots"].as_u64(),
+            Some(SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINTS as u64)
+        );
+        assert_eq!(
+            fixed_geometry["csr_expression_nodes"].as_u64(),
+            Some(SMALLWOOD_POSEIDON2_V8_CSR_EXPRESSION_NODES as u64)
+        );
+        assert_eq!(
+            fixed_geometry["linear_compiler_family_instances"].as_u64(),
+            Some(SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_INSTANCES as u64)
+        );
+
+        let mut historical_role_end = 0;
+        for role in &vectors.call_roles {
+            assert_eq!(role.start, historical_role_end);
+            assert!(role.end > role.start);
+            historical_role_end = role.end;
         }
+        assert_eq!(historical_role_end, 128);
 
         let relation_hash_offset =
             SMALLWOOD_POSEIDON2_V8_HASH_ROW_START * SMALLWOOD_POSEIDON2_V8_HASH_PACKING_FACTOR;
@@ -876,5 +898,30 @@ mod tests {
         let adapter =
             SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(&statement).unwrap();
         assert!(adapter.compiler_complete());
+        assert_eq!(
+            adapter.relation_digest(),
+            &SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST
+        );
+        let refinement = adapter.source_program_refinement();
+        assert_eq!(
+            refinement.relation_digest,
+            SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST
+        );
+        assert_eq!(
+            refinement.nonlinear_expression_nodes,
+            SMALLWOOD_POSEIDON2_V8_NONLINEAR_EXPRESSION_NODES
+        );
+        assert_eq!(
+            refinement.nonlinear_roots,
+            SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINTS
+        );
+        assert_eq!(
+            refinement.csr_expression_nodes,
+            SMALLWOOD_POSEIDON2_V8_CSR_EXPRESSION_NODES
+        );
+        assert_eq!(
+            refinement.csr_attempts,
+            SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_INSTANCES
+        );
     }
 }

@@ -983,9 +983,9 @@ mod tests {
             RETAINED_V8_INLINE_CIPHERTEXT_SHA512
         );
         assert_eq!(sha512_hex(&spend.statement.to_public_bytes()),
-            "4d7d28543e8a795ede947da241226543d7d14bd79a2e67e3de3e23ef005496502e1efc674527531433b1d479a53ea464936bbf5108cf1a789ad09a2ebcd94a80");
+            "ba8ae0df3d68e8637f87b64180d5747761edd39924b706d33792cea3333da2916520c62fdc3bf46c6e919ebfbbd50ae079c4357069543fec29fbe287f8b08a70");
         assert_eq!(sha512_hex(&spend.witness.to_witness_bytes()),
-            "14215237086f0c130bfb70f6025bdf1a54f34d2c37afe93a60f5b7346b66d000736fafcf6df545b55970697786045025b92a70b1389811937925e75f0f65ecd6");
+            "9624b502dbce634b171c6c214bb29c23455a3ba6d3f83b3df93e47f0d177a7be04dece7285bd37c9cf4304f8a3ef8380bef2ab5362d80de45913d9946f96984b");
         assert_eq!(sha512_hex(&spend.inline_ciphertexts.to_inline_ciphertext_bytes()),
             "1101e122f9164f05ee7c27bf159eee0ad5985aa03924d4433633360848dc68d7a0ecb2b137cc3c62f8e2bdcca6a5dd394466960f7051b95a9dc196f3d4315077");
 

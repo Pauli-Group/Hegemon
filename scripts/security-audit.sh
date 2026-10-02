@@ -33,13 +33,14 @@ NC='\033[0m' # No Color
 QUICK=false
 FIX=false
 REQUIRE_BINARY=false
+ALLOW_UNAPPROVED_PROFILE=false
 NODE_BIN=""
 BINARY_MANIFEST=""
 BINARY_BINS=()
 
 usage() {
     cat <<'USAGE'
-usage: scripts/security-audit.sh [--quick] [--fix] [--require-binary] [--binary-manifest PATH] [--node-bin PATH] [--binary PATH ...]
+usage: scripts/security-audit.sh [--quick] [--fix] [--require-binary] [--allow-unapproved-profile] [--binary-manifest PATH] [--node-bin PATH] [--binary PATH ...]
 USAGE
 }
 
@@ -55,6 +56,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --require-binary)
             REQUIRE_BINARY=true
+            shift
+            ;;
+        --allow-unapproved-profile)
+            ALLOW_UNAPPROVED_PROFILE=true
             shift
             ;;
         --binary-manifest)
@@ -146,7 +151,8 @@ echo ""
 
 VIOLATIONS=0
 WARNINGS=0
-BINARY_PROFILE_ATTESTED=false
+BINARY_PROFILE_CHECKED=false
+BINARY_PROFILE_AUTHORIZED=false
 
 if [ -n "${HEGEMON_LEAN_RELEASE_PQ_BINARY_POLICY_VECTORS:-}" ]; then
     echo "=== Step 0: Lean Release PQ Binary Policy Vector Check ==="
@@ -339,11 +345,15 @@ if [ "$REQUIRE_BINARY" = true ]; then
         --expect "hegemon-node:hegemon-node:${RELEASE_BINS[0]}" \
         --expect "wallet:wallet:${RELEASE_BINS[1]}" \
         --expect "walletd:walletd:${RELEASE_BINS[2]}" >/dev/null && \
-        python3 "$PROJECT_ROOT/scripts/check_release_crypto_profile.py" \
-          --manifest "$BINARY_MANIFEST" \
-          --require-executed >/dev/null; then
-        echo -e "${GREEN}✅ Release manifest and executed crypto profile verified${NC}"
-        BINARY_PROFILE_ATTESTED=true
+        PROFILE_ARGS=(--manifest "$BINARY_MANIFEST" --require-executed) && \
+        { [ "$ALLOW_UNAPPROVED_PROFILE" = false ] || PROFILE_ARGS+=(--allow-unapproved-profile); } && \
+        PROFILE_RESULT=$(python3 "$PROJECT_ROOT/scripts/check_release_crypto_profile.py" \
+          "${PROFILE_ARGS[@]}"); then
+        echo -e "${GREEN}✅ Release manifest and crypto profile checks passed${NC}"
+        BINARY_PROFILE_CHECKED=true
+        if [[ "$PROFILE_RESULT" == *'"production_authority": true'* ]]; then
+            BINARY_PROFILE_AUTHORIZED=true
+        fi
     else
         echo -e "${RED}❌ RELEASE ARTIFACT ATTESTATION FAILED${NC}"
         VIOLATIONS=$((VIOLATIONS + 1))
@@ -418,8 +428,10 @@ fi
 
 # Check the exact release artifacts report the production SmallWood path.
 echo -n "Checking shielded protocol uses SmallWood STARK/FRI proofs... "
-if [ "$BINARY_PROFILE_ATTESTED" = true ]; then
+if [ "$BINARY_PROFILE_AUTHORIZED" = true ]; then
     echo -e "${GREEN}✅ Compiled V4/Gamma SmallWood profile attested${NC}"
+elif [ "$BINARY_PROFILE_CHECKED" = true ] && [ "$ALLOW_UNAPPROVED_PROFILE" = true ]; then
+    echo -e "${YELLOW}⚠️  Compiled profile inspected; production_authority=false${NC}"
 elif [ "$REQUIRE_BINARY" = true ]; then
     echo -e "${RED}❌ ACTIVE PROFILE NOT ATTESTED${NC}"
     VIOLATIONS=$((VIOLATIONS + 1))

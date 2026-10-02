@@ -70,6 +70,19 @@ def canonical_profile() -> dict:
     }
 
 
+def write_profile_command(binary: Path, *, stdout: str = "", stderr: str = "", status: int = 0) -> None:
+    script = (
+        "#!/bin/sh\n"
+        + (f"printf '%s\\n' '{stdout}'\n" if stdout else "")
+        + (f"printf '%s\\n' '{stderr}' >&2\n" if stderr else "")
+        + f"exit {status}\n"
+        + CANONICAL_MARKER
+        + "\n"
+    )
+    binary.write_text(script, encoding="utf-8")
+    binary.chmod(0o755)
+
+
 def main() -> None:
     if checker.PROFILE_MARKER != CANONICAL_MARKER:
         raise SystemExit("checker canonical marker is not the active 2/23/5 profile")
@@ -204,7 +217,11 @@ def main() -> None:
             stderr=subprocess.STDOUT,
             check=False,
         )
-        if static.returncode != 0 or '"mode": "static-cross-target"' not in static.stdout:
+        if (
+            static.returncode != 0
+            or '"mode": "static-cross-target"' not in static.stdout
+            or '"production_authority": false' not in static.stdout
+        ):
             raise SystemExit("static cross-target diagnostic mode unexpectedly failed")
 
         required = subprocess.run(
@@ -229,6 +246,147 @@ def main() -> None:
                 "required release attestation rejected for the wrong reason:\n"
                 + required.stdout
             )
+
+        native_manifest = temp / "native-manifest.json"
+        native_manifest.write_text(
+            json.dumps(
+                {
+                    "target_triple": checker.rustc_host(),
+                    "artifacts": [{"binary": "hegemon-node", "path": "hegemon-node"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        refusal = "Error: " + checker.UNAPPROVED_PROFILE_REFUSAL
+        write_profile_command(binary, stderr=refusal, status=1)
+        strict_refusal = subprocess.run(
+            [
+                sys.executable,
+                str(CHECKER),
+                "--manifest",
+                str(native_manifest),
+                "--root",
+                str(temp),
+                "--require-executed",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        if strict_refusal.returncode == 0 or "production profile refused" not in strict_refusal.stdout:
+            raise SystemExit("strict mode accepted the unapproved profile refusal")
+
+        reviewed_refusal = subprocess.run(
+            [
+                sys.executable,
+                str(CHECKER),
+                "--manifest",
+                str(native_manifest),
+                "--root",
+                str(temp),
+                "--require-executed",
+                "--allow-unapproved-profile",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        if (
+            reviewed_refusal.returncode != 0
+            or '"mode": "review-unapproved-profile"' not in reviewed_refusal.stdout
+            or '"production_authority": false' not in reviewed_refusal.stdout
+        ):
+            raise SystemExit(
+                "review mode did not report the exact fail-closed refusal without "
+                "production authority:\n" + reviewed_refusal.stdout
+            )
+
+        write_profile_command(
+            binary,
+            stdout='{"passed": true}',
+            stderr=refusal,
+            status=1,
+        )
+        refusal_with_output = subprocess.run(
+            [
+                sys.executable,
+                str(CHECKER),
+                "--manifest",
+                str(native_manifest),
+                "--root",
+                str(temp),
+                "--require-executed",
+                "--allow-unapproved-profile",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        if refusal_with_output.returncode == 0:
+            raise SystemExit("review mode accepted a refusal mixed with success JSON")
+
+        write_profile_command(binary, stderr=refusal, status=137)
+        refusal_with_crash_status = subprocess.run(
+            [
+                sys.executable,
+                str(CHECKER),
+                "--manifest",
+                str(native_manifest),
+                "--root",
+                str(temp),
+                "--require-executed",
+                "--allow-unapproved-profile",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        if refusal_with_crash_status.returncode == 0:
+            raise SystemExit("review mode accepted the refusal with exit status 137")
+
+        write_profile_command(binary, stderr="Error: unrelated runtime failure", status=1)
+        unexpected_failure = subprocess.run(
+            [
+                sys.executable,
+                str(CHECKER),
+                "--manifest",
+                str(native_manifest),
+                "--root",
+                str(temp),
+                "--require-executed",
+                "--allow-unapproved-profile",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        if unexpected_failure.returncode == 0 or "unrelated runtime failure" not in unexpected_failure.stdout:
+            raise SystemExit("review mode accepted an unexpected profile-command failure")
+
+        write_profile_command(binary, stdout="not-json")
+        malformed_profile = subprocess.run(
+            [
+                sys.executable,
+                str(CHECKER),
+                "--manifest",
+                str(native_manifest),
+                "--root",
+                str(temp),
+                "--require-executed",
+                "--allow-unapproved-profile",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        if malformed_profile.returncode == 0 or "invalid profile JSON" not in malformed_profile.stdout:
+            raise SystemExit("review mode accepted malformed profile output")
 
         stale_binary = temp / "stale-hegemon-node"
         stale_binary.write_text(STALE_MARKER + "\n", encoding="utf-8")

@@ -6461,15 +6461,14 @@ pub(crate) fn record_smallwood_sha512_queries_v1<T>(
 
 /// Return the number of raw queries recorded so far in the active overlay.
 /// Phase boundaries can use this to delimit calls without re-running code.
-pub(crate) fn smallwood_sha512_recorded_query_count_v1(
-) -> Result<usize, TransactionCircuitError> {
+pub(crate) fn smallwood_sha512_recorded_query_count_v1() -> Result<usize, TransactionCircuitError> {
     SMALLWOOD_SHA512_ORACLE_OVERLAY_V1.with(|slot| {
         let slot = slot.borrow();
-        slot.as_ref()
-            .map(|state| state.queries.len())
-            .ok_or(TransactionCircuitError::ConstraintViolation(
+        slot.as_ref().map(|state| state.queries.len()).ok_or(
+            TransactionCircuitError::ConstraintViolation(
                 "smallwood SHA-512 query count requested outside a recorder scope",
-            ))
+            ),
+        )
     })
 }
 
@@ -11383,9 +11382,7 @@ pub fn lvcs_recompute_rows(
     if coeffs_part1.len() != fullrank
         || coeffs_part1.iter().any(|row| row.len() != fullrank)
         || coeffs_part1_inv.len() != fullrank
-        || coeffs_part1_inv
-            .iter()
-            .any(|row| row.len() != fullrank)
+        || coeffs_part1_inv.iter().any(|row| row.len() != fullrank)
     {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood matrix inverse shape mismatch",
@@ -11401,9 +11398,8 @@ pub fn lvcs_recompute_rows(
         fullrank,
     );
     let is_identity = (0..fullrank).all(|row| {
-        (0..fullrank).all(|column| {
-            inverse_product[row][column] == if row == column { 1 } else { 0 }
-        })
+        (0..fullrank)
+            .all(|column| inverse_product[row][column] == if row == column { 1 } else { 0 })
     });
     if !is_identity {
         return Err(TransactionCircuitError::ConstraintViolation(
@@ -13921,11 +13917,14 @@ mod tests {
             Ok((first, second))
         })
         .expect("finish recorder scope");
-        let expected = concrete_smallwood_sha512_oracle_query_v1(
-            &SmallwoodSha512OracleKeyV1::new(backend, domain, &words, 0),
-        );
+        let expected = concrete_smallwood_sha512_oracle_query_v1(&SmallwoodSha512OracleKeyV1::new(
+            backend, domain, &words, 0,
+        ));
         assert_eq!(
-            recorded.result.as_ref().expect("recorder operation succeeds"),
+            recorded
+                .result
+                .as_ref()
+                .expect("recorder operation succeeds"),
             &(expected, expected)
         );
         assert_eq!(recorded.queries.len(), 2);
@@ -13935,13 +13934,14 @@ mod tests {
             .iter()
             .all(|query| query.programmed_kind.is_none() && query.output == expected));
 
-        let aborted = record_smallwood_sha512_queries_v1(
-            || -> Result<(), TransactionCircuitError> {
+        let aborted =
+            record_smallwood_sha512_queries_v1(|| -> Result<(), TransactionCircuitError> {
                 sha512_raw_domain_digest(backend, domain, &words, 1);
-                Err(TransactionCircuitError::ConstraintViolation("fixture abort"))
-            },
-        )
-        .expect("recorder must finalize after an ordinary operation error");
+                Err(TransactionCircuitError::ConstraintViolation(
+                    "fixture abort",
+                ))
+            })
+            .expect("recorder must finalize after an ordinary operation error");
         assert!(aborted.result.is_err());
         assert_eq!(aborted.queries.len(), 1);
         assert_eq!(aborted.queries[0].key.counter, 1);

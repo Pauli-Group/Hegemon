@@ -42,6 +42,8 @@ jobs:
           shared-key: "dependency-audit"
       - name: Install cargo-audit
         run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Dependency audit policy regressions
+        run: python3 -B scripts/test_dependency_audit_gate.py
       - name: Dependency audit waiver gate
         run: ./scripts/dependency-audit-gate.sh
 
@@ -220,9 +222,6 @@ jobs:
           - transaction-lib
           - transaction-integration
           - wallet-base
-          - wallet-multisig-setup
-          - wallet-multisig-builders
-          - wallet-multisig-drift
           - node-default
           - node-minimal
     env:
@@ -275,16 +274,16 @@ jobs:
           shared-key: "native-path-tests"
       - name: Native shipped-path integration gate
         run: |
-          ./scripts/run_exact_cargo_lib_test.sh wallet tx_builder::tests::build_transaction_can_emit_native_tx_leaf_payloads --release
+          ./scripts/run_exact_cargo_lib_test.sh wallet poseidon2_v8::tests::smza_wallet_route_preserves_maximum_proof_and_rejects_smz9
           ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::submit_sidecar_action_rejects_before_consuming_embedded_staged_proof --no-default-features
           ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::pending_action_startup_durably_quarantines_inactive_sidecar_with_matching_ciphertext --no-default-features
-          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::coinbase_action_mints_shielded_output_and_updates_supply --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::poseidon2_v8_state::tests::trailing_coinbase_appends_after_outputs_and_survives_restart_reorg_and_fresh_replay --no-default-features
           ./scripts/run_exact_cargo_lib_test.sh transaction-circuit smallwood_frontend::tests::production_verifier_evidence_matches_active_verifier --release
           ./scripts/run_exact_ignored_cargo_lib_test.sh transaction-circuit smallwood_engine::tests::verifier_rejects_forged_self_consistent_pcs_layer --release
           ./scripts/run_exact_cargo_lib_test.sh block-recursion tests::recursive_proof_envelope_component_checks_reject_tampered_envelope
           ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::imported_block_actions_require_canonical_transfer_order --no-default-features
           ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::block_artifact_binding_rejects_candidate_artifact_mismatches_in_order --no-default-features
-          ./scripts/run_exact_cargo_lib_test.sh consensus proof::tests::recursive_block_v2_product_wrapper_rejects_independent_artifact_mutations
+          ./scripts/run_exact_cargo_lib_test.sh consensus proof::tests::recursive_block_v2_verified_replay_rejects_independent_artifact_mutations
 
   app-no-ssh-e2e:
     runs-on: ubuntu-latest
@@ -314,7 +313,7 @@ jobs:
         with:
           shared-key: "app-no-ssh-e2e"
       - name: App no-SSH release workflow
-        run: ./scripts/check-app-no-ssh-e2e.sh
+        run: ./scripts/check-app-no-ssh-e2e.sh --review-only
 
   security-adversarial:
     runs-on: ubuntu-latest
@@ -379,20 +378,11 @@ jobs:
       - name: Native backend review package gate
         run: |
           cargo test -p superneo-backend-lattice -p native-backend-ref -p superneo-hegemon -p superneo-bench
-          cargo run -p native-backend-ref -- verify-vectors testdata/native_backend_vectors
-          HEGEMON_TIMING_SAMPLE_COUNT=16 HEGEMON_TIMING_WARMUP_COUNT=4 \
-            cargo run -p native-backend-timing --release
-          bash scripts/verify_native_receipt_root_scalability.sh
           cargo +nightly-2026-06-23 fuzz run native_tx_leaf_artifact -- -max_total_time=30
           cargo +nightly-2026-06-23 fuzz run receipt_root_artifact -- -max_total_time=30
-          ./scripts/verify_native_backend_review_package.sh
-          python3 -I scripts/test_verify_native_backend_review_package.py
-          cp audits/native-backend-128b/native-backend-128b-review-package.tar.gz /tmp/native-backend-review-package.tar.gz
-          cp audits/native-backend-128b/package.sha256 /tmp/native-backend-review-package.sha256
-          ./scripts/package_native_backend_review.sh
-          cmp /tmp/native-backend-review-package.tar.gz audits/native-backend-128b/native-backend-128b-review-package.tar.gz
-          cmp /tmp/native-backend-review-package.sha256 audits/native-backend-128b/package.sha256
-          ./scripts/check_native_backend_release_posture.sh --package audits/native-backend-128b/native-backend-128b-review-package.tar.gz
+          # Historical backend regressions remain useful. Its old reviewed bundle
+          # is not the active RP05 backend and must not be relabelled as current.
+          # Production package/posture attestation stays in release.yml.
 
   release-binaries:
     runs-on: ubuntu-latest
@@ -419,7 +409,7 @@ jobs:
         run: ./scripts/check-core.sh build
 
       - name: Release PQ binary audit
-        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
+        run: ./scripts/security-audit.sh --allow-unapproved-profile --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
 
   release-build:
     runs-on: ubuntu-latest

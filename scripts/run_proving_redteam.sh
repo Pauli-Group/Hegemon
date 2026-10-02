@@ -281,7 +281,7 @@ EOF
       cat <<'EOF'
 cargo_test_lib_filter consensus recursive_block_v1_direct_verifier_requires_semantic_replay_before_tx_count_mismatch -- --nocapture
 cargo_test_lib_filter consensus recursive_block_v2_direct_verifier_requires_semantic_replay_before_tx_count_mismatch -- --nocapture
-cargo_test_lib_exact consensus proof::tests::recursive_block_v2_product_wrapper_rejects_independent_artifact_mutations --nocapture
+cargo_test_lib_exact consensus proof::tests::recursive_block_v2_verified_replay_rejects_independent_artifact_mutations --nocapture
 cargo_test_filter block-recursion recursive_proof_envelope_component_checks_reject_tampered_envelope -- --nocapture
 cargo_test_filter hegemon-node block_artifact_binding_rejects_candidate_artifact_mismatches_in_order -- --nocapture
 EOF

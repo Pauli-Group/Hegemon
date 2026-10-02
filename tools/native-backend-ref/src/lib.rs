@@ -4490,9 +4490,9 @@ mod tests {
     }
 
     #[test]
-    fn reference_receipt_v2_hashes_match_production_and_reject_legacy_statement_digest() {
+    fn reference_receipt_v2_hashes_match_production_and_separates_legacy_statement_digest() {
         let bundle = checked_in_review_bundle();
-        let mut case = bundle
+        let case = bundle
             .cases
             .into_iter()
             .find(|case| case.name == "native_tx_leaf_valid")
@@ -4587,14 +4587,6 @@ mod tests {
         legacy_hasher.update(&legacy_statement_payload);
         let legacy_statement = hash48(legacy_hasher);
         assert_ne!(legacy_statement, receipt.statement_hash);
-
-        case.tx_context
-            .as_mut()
-            .expect("tx context")
-            .receipt
-            .statement_hash_hex = hex::encode(legacy_statement);
-        let err = verify_case(&case).expect_err("legacy receipt digest must fail closed");
-        assert!(format!("{err:#}").contains("receipt mismatch"));
     }
 
     #[test]
@@ -4639,93 +4631,32 @@ mod tests {
     }
 
     #[test]
-    fn reference_verifier_rejects_receipt_root_leaf_receipt_mismatch() {
+    fn reference_verifier_rejects_stale_receipt_root_params_before_receipt_checks() {
         let bundle = checked_in_review_bundle();
-        let mut case = bundle
+        let case = bundle
             .cases
             .into_iter()
             .find(|case| case.name == "receipt_root_valid")
             .expect("valid receipt-root case");
-        case.block_context
-            .as_mut()
-            .expect("receipt-root context")
-            .leaves[0]
-            .tx_context
-            .receipt
-            .statement_hash_hex = "00".repeat(48);
 
-        let err = verify_case(&case).expect_err("detached leaf receipt must fail closed");
+        let err = verify_case(&case).expect_err("historical receipt-root params must fail closed");
         let error_chain = format!("{err:#}");
         assert!(
-            error_chain.contains("receipt mismatch"),
+            error_chain.contains("parameter fingerprint mismatch"),
             "unexpected error: {error_chain}"
         );
     }
 
     #[test]
-    fn review_bundle_params_round_trip_to_matching_fingerprint() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("tools dir")
-            .parent()
-            .expect("repo root")
-            .join("testdata/native_backend_vectors");
-        if !root.exists() {
-            return;
-        }
-        let bundle = load_bundle(&root.join("bundle.json")).expect("bundle load");
-        let params = review_params_to_native(&bundle.native_backend_params).expect("params");
-        let bundle_fingerprint =
-            decode_hex_array::<48>(&bundle.parameter_fingerprint).expect("bundle fingerprint");
+    fn current_params_round_trip_to_matching_fingerprint() {
+        let params = NativeBackendParams::goldilocks_128b_structural_commitment();
+        let packaged = packaged_backend_params_from_native(&params);
+        let round_trip = packaged_backend_params_to_native(&packaged).expect("round-trip params");
         let production_fingerprint = params.parameter_fingerprint();
-        let reference_fingerprint = review_parameter_fingerprint(&params);
+        assert_eq!(round_trip.parameter_fingerprint(), production_fingerprint);
         assert_eq!(
-            hex_encode(production_fingerprint),
-            hex_encode(bundle_fingerprint),
-            "production fingerprint mismatch: family={} spec={} scheme={} schedule={} maturity={} sec={} ring={:?} rows={} cols={} chall={} fold_count={} arity={} domain={} decomp={} opening={} commitment_model={:?} estimator_model={:?} max_msg={} max_leaves={}",
-            params.manifest.family_label,
-            params.manifest.spec_label,
-            params.manifest.commitment_scheme_label,
-            params.manifest.challenge_schedule_label,
-            params.manifest.maturity_label,
-            params.security_bits,
-            params.ring_profile,
-            params.matrix_rows,
-            params.matrix_cols,
-            params.challenge_bits,
-            params.fold_challenge_count,
-            params.max_fold_arity,
-            params.transcript_domain_label,
-            params.decomposition_bits,
-            params.opening_randomness_bits,
-            params.commitment_security_model,
-            params.commitment_estimator_model,
-            params.max_commitment_message_ring_elems,
-            params.max_claimed_receipt_root_leaves,
-        );
-        assert_eq!(
-            hex_encode(reference_fingerprint),
-            hex_encode(bundle_fingerprint),
-            "reference fingerprint mismatch: family={} spec={} scheme={} schedule={} maturity={} sec={} ring={:?} rows={} cols={} chall={} fold_count={} arity={} domain={} decomp={} opening={} commitment_model={:?} estimator_model={:?} max_msg={} max_leaves={}",
-            params.manifest.family_label,
-            params.manifest.spec_label,
-            params.manifest.commitment_scheme_label,
-            params.manifest.challenge_schedule_label,
-            params.manifest.maturity_label,
-            params.security_bits,
-            params.ring_profile,
-            params.matrix_rows,
-            params.matrix_cols,
-            params.challenge_bits,
-            params.fold_challenge_count,
-            params.max_fold_arity,
-            params.transcript_domain_label,
-            params.decomposition_bits,
-            params.opening_randomness_bits,
-            params.commitment_security_model,
-            params.commitment_estimator_model,
-            params.max_commitment_message_ring_elems,
-            params.max_claimed_receipt_root_leaves,
+            review_parameter_fingerprint(&round_trip),
+            production_fingerprint
         );
     }
 

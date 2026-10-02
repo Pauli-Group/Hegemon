@@ -1012,6 +1012,8 @@ def require_binary_audit(
     wallet_bin: str,
     walletd_bin: str,
     manifest: str,
+    *,
+    allow_unapproved_profile: bool = False,
 ) -> int:
     arguments = (
         "--require-binary",
@@ -1024,6 +1026,8 @@ def require_binary_audit(
         "--binary",
         walletd_bin,
     )
+    if allow_unapproved_profile:
+        arguments = ("--allow-unapproved-profile", *arguments)
     return require_executable_command(
         name,
         steps,
@@ -1253,6 +1257,7 @@ def check_ci_workflow(path: Path) -> None:
         "app no-SSH E2E gate",
         app_steps,
         "scripts/check-app-no-ssh-e2e.sh",
+        exact_argument_vectors=(("--review-only",),),
     )
     require_executable_command(
         "app UI guard install", app_steps, "npm", ("ci", "--prefix", "hegemon-app")
@@ -1374,9 +1379,6 @@ def check_ci_workflow(path: Path) -> None:
         "transaction-lib",
         "transaction-integration",
         "wallet-base",
-        "wallet-multisig-setup",
-        "wallet-multisig-builders",
-        "wallet-multisig-drift",
         "node-default",
         "node-minimal",
     )
@@ -1465,6 +1467,7 @@ def check_ci_workflow(path: Path) -> None:
         "target/release/wallet",
         "target/release/walletd",
         "target/release/hegemon-release-artifacts.json",
+        allow_unapproved_profile=True,
     )
     require_step_order("release-binaries build/audit order", build_index, audit_index)
     print(f"ci workflow release-build gate passed: {path}")
@@ -1885,6 +1888,7 @@ def check_release_workflow(path: Path) -> None:
         "release app no-SSH gate",
         app_steps,
         "scripts/check-app-no-ssh-e2e.sh",
+        exact_argument_vectors=((),),
     )
     require_executable_command(
         "release app UI guard install", app_steps, "npm", ("ci", "--prefix", "hegemon-app")

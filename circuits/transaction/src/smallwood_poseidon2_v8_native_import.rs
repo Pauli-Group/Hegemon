@@ -286,8 +286,7 @@ fn envelope_from_attempt(
     let evidence = attempt
         .result
         .map_err(|error| NativeAcceptedRunImportError::Native(error.to_string()))?;
-    if evidence.binded_data.as_slice()
-        != input.smza_candidate_transcript_preamble_v1()?.as_bytes()
+    if evidence.binded_data.as_slice() != input.smza_candidate_transcript_preamble_v1()?.as_bytes()
         || evidence.proof_bytes.as_slice() != proof_bytes
         || !evidence.audit.canonical_decode_reencode_exact
         || !evidence.audit.verifier_trace_replay_exact

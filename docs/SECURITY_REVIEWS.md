@@ -215,7 +215,7 @@ That default gate requires `review_state = candidate_under_review`, `maturity_la
 - `HEGEMON_REDTEAM_MODE=full bash scripts/run_proving_redteam.sh` is the heavier release-hardening pass and adds fuzz/adversarial suites that are too expensive for every PR.
 - CI job `formal-core` runs `bash scripts/check_formal_core.sh`; release job `security-gates` runs the same gate before publishing binaries.
 - CI job `security-adversarial` (see `.github/workflows/ci.yml`) runs the `ci` red-team suite on every push/PR. Failures block merges until triaged via `runbooks/security_testing.md`.
-- CI job `dependency-audit` and release job `security-gates` run `./scripts/dependency-audit-gate.sh`; every cargo-audit finding must either be removed or listed in `config/dependency-audit-waivers.json` with expiry, package/version, reason, and tracking id.
+- CI job `dependency-audit` and release job `security-gates` run `./scripts/dependency-audit-gate.sh`; vulnerabilities, unsoundness findings, and yanked crates must be removed or covered by exact current waivers in `config/dependency-audit-waivers.json`. Unmaintained crates are visible nonblocking maintenance notices, and unknown warning kinds fail closed.
 
 ## 4. Finding log template
 

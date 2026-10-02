@@ -720,9 +720,7 @@ pub fn lvcs_recompute_rows(
     if coeffs_part1.len() != fullrank
         || coeffs_part1.iter().any(|row| row.len() != fullrank)
         || coeffs_part1_inv.len() != fullrank
-        || coeffs_part1_inv
-            .iter()
-            .any(|row| row.len() != fullrank)
+        || coeffs_part1_inv.iter().any(|row| row.len() != fullrank)
     {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood matrix inverse shape mismatch",
@@ -738,9 +736,8 @@ pub fn lvcs_recompute_rows(
         fullrank,
     );
     let is_identity = (0..fullrank).all(|row| {
-        (0..fullrank).all(|column| {
-            inverse_product[row][column] == if row == column { 1 } else { 0 }
-        })
+        (0..fullrank)
+            .all(|column| inverse_product[row][column] == if row == column { 1 } else { 0 })
     });
     if !is_identity {
         return Err(TransactionCircuitError::ConstraintViolation(

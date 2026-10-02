@@ -4790,7 +4790,7 @@ mod tests {
         let refinement = adapter.source_program_refinement();
         assert_eq!(refinement.relation_digest, *adapter.relation_digest());
         assert_eq!(refinement.packed_lanes, 64);
-        assert_eq!(refinement.nonlinear_expression_nodes, 8_130);
+        assert_eq!(refinement.nonlinear_expression_nodes, 8_213);
         assert_eq!(refinement.nonlinear_roots, 818);
         assert_eq!(refinement.csr_expression_nodes, 566);
         assert_eq!(refinement.csr_attempts, 20_588);

@@ -344,8 +344,8 @@ def main() -> None:
         policy.check_ci_workflow,
         replace_once(
             ci_workflow,
-            "          - wallet-multisig-drift\n",
-            "          # - wallet-multisig-drift\n",
+            "          - wallet-base\n",
+            "          # - wallet-base\n",
         ),
     )
     expect_workflow_rejected(

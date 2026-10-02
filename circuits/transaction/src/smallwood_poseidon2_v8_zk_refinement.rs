@@ -55,7 +55,7 @@ pub const SMALLWOOD_POSEIDON2_V8_SMZ9_EXECUTABLE_ZK_SEED: [u8; 64] = [0x93; 64];
 /// cryptographic or production-authority receipt.
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_EXECUTABLE_ZK_REPORT_BYTES: usize = 4_230;
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_EXECUTABLE_ZK_REPORT_SHA512_HEX: &str =
-    "53f50293f531a2246a2809c4acdbad5c4fde662e8f55cd70bc54a46c9654bad23c944fd3e18ef7b81e18abdd1d0bd30946730cc6845097b7c1fe30081fa2b1af";
+    "4ae8af96cdc7a653d8da0c9e4e268bcdd637c5e6a2f35c995f71a6b684b6e81d1a211704fc27924166e307d62b04885489c7dbd10f899fd2f1dc9d70c16e31d2";
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_ACCEPTED_PROOF_REFINEMENT_SCHEMA: &str =
     "hegemon.smallwood.poseidon2-v8.smz9.accepted-proof-refinement.v1";
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_LEAN_WIRE_MODEL: &str =
@@ -1405,8 +1405,7 @@ mod tests {
         assert_eq!(phases.trace_end, phases.core_start);
         assert_eq!(phases.core_end, Some(queries.len()));
         assert_eq!(
-            accepted.trace.recomputed_piop_digest,
-            accepted.trace.proof.h_piop,
+            accepted.trace.recomputed_piop_digest, accepted.trace.proof.h_piop,
             "accepted trace must retain the digest computed from its PIOP words"
         );
         let core =

@@ -1,8 +1,6 @@
 mod common;
 
-use common::{
-    PowBlockParams, assemble_pow_block, dummy_coinbase, make_validators,
-};
+use common::{PowBlockParams, assemble_pow_block, dummy_coinbase, make_validators};
 use consensus::CommitmentTreeState;
 use consensus::nullifier::NullifierSet;
 use consensus::pow::PowConsensus;

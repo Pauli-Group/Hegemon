@@ -164,13 +164,19 @@ pub(crate) const MAX_NATIVE_SYNC_RANGE_LOAD_RESERVED_BYTES: usize =
 const NATIVE_BLOCK_BODY_HASH_DOMAIN: &[u8] = b"hegemon-native-block-body-v3\0";
 
 #[cfg(test)]
-pub(crate) static NATIVE_BLOCK_BODY_HASH_INVOCATIONS: AtomicUsize = AtomicUsize::new(0);
+std::thread_local! {
+    // Deliberately thread-local: transport tests measure synchronous work on
+    // their own test thread and must not observe unrelated parallel tests.
+    pub(crate) static NATIVE_BLOCK_BODY_HASH_INVOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 #[cfg(test)]
-pub(crate) static NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS: AtomicUsize = AtomicUsize::new(0);
+std::thread_local! {
+    pub(crate) static NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 pub(crate) fn native_block_body_hash(bytes: &[u8]) -> [u8; 32] {
     #[cfg(test)]
-    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.fetch_add(1, Ordering::Relaxed);
+    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.set(count.get() + 1));
     let mut hasher = blake3::Hasher::new();
     hasher.update(NATIVE_BLOCK_BODY_HASH_DOMAIN);
     hasher.update(&(bytes.len() as u64).to_le_bytes());
@@ -200,7 +206,7 @@ pub(crate) fn native_block_body_bytes_and_locator(
     meta: &NativeBlockMeta,
 ) -> Result<(Vec<u8>, NativeBlockBodyLocator)> {
     #[cfg(test)]
-    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.fetch_add(1, Ordering::Relaxed);
+    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.set(count.get() + 1));
     let bytes = bincode::serialize(meta).context("encode canonical native block body")?;
     if bytes.len() > MAX_NATIVE_BLOCK_META_BYTES {
         return Err(anyhow!(
@@ -230,9 +236,9 @@ pub(crate) fn native_block_body_v3_bytes_and_locator(
 ) -> Result<(Arc<[u8]>, NativeBlockBodyLocatorV3)> {
     let encoded = encode_native_block_body_v3(meta)?;
     #[cfg(test)]
-    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.fetch_add(1, Ordering::Relaxed);
+    NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.set(count.get() + 1));
     #[cfg(test)]
-    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.fetch_add(1, Ordering::Relaxed);
+    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.set(count.get() + 1));
     let locator = NativeBlockBodyLocatorV3 {
         schema_version: NATIVE_BLOCK_BODY_SCHEMA_VERSION,
         chain_id: meta.chain_id,
@@ -524,7 +530,7 @@ pub(crate) fn decode_and_bind_native_block_body_v3_for_locator(
         ));
     }
     #[cfg(test)]
-    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.fetch_add(1, Ordering::Relaxed);
+    NATIVE_BLOCK_BODY_HASH_INVOCATIONS.with(|count| count.set(count.get() + 1));
     let (meta, encoded) = decode_and_bind_native_block_body_v3_exact(
         body,
         locator.body_hash,
@@ -2792,8 +2798,9 @@ pub(crate) const NATIVE_PENDING_ACTION_V3_CIRCUIT_OFFSET: usize = 48;
 pub(crate) const NATIVE_PENDING_ACTION_V3_CRYPTO_OFFSET: usize = 50;
 
 #[cfg(test)]
-pub(crate) static NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS: AtomicUsize =
-    AtomicUsize::new(0);
+std::thread_local! {
+    pub(crate) static NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// Read only the fixed SCALE prefix (ActionId48, version binding, family, and
 /// action ids) before the decoder can allocate any of PendingAction's vectors.
@@ -2838,7 +2845,7 @@ pub(crate) fn decode_native_peer_pending_action_v3(
 ) -> Result<PendingAction> {
     prefilter_native_peer_pending_action_route(action, action_height)?;
     #[cfg(test)]
-    NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS.fetch_add(1, Ordering::Relaxed);
+    NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS.with(|count| count.set(count.get() + 1));
     decode_pending_action_v3_exact(action, "native pending action relay")
 }
 

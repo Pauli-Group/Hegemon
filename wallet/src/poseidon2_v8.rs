@@ -843,14 +843,23 @@ mod tests {
         Poseidon2ProductionExpectedContext::new(17, [0x42; 48]).unwrap()
     }
 
-    fn active_zero_value_note() -> SmallwoodPoseidon2V8NoteOpening {
+    fn fixture_spend_key() -> [u64; 5] {
+        [1, 2, 3, 4, 5]
+    }
+
+    fn active_note(value: u64) -> SmallwoodPoseidon2V8NoteOpening {
+        let authorization = transaction_circuit::smallwood_poseidon2_v8_coinbase::
+            poseidon2_v8_single_key_authorization_digest(fixture_spend_key())
+            .expect("canonical fixture spend key");
         SmallwoodPoseidon2V8NoteOpening {
-            value: 0,
-            asset_id: 0,
-            recipient_key: [0; 4],
-            authorization_key: [0; 4],
-            rho: [0; 4],
-            randomness: [0; 4],
+            value,
+            asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
+            recipient_key: transaction_circuit::smallwood_poseidon2_v8_coinbase::
+                poseidon2_v8_recipient_key_words([0x23; 32])
+                .expect("canonical fixture recipient key"),
+            authorization_key: authorization[..4].try_into().unwrap(),
+            rho: [7, 8, 9, 10],
+            randomness: [authorization[4], authorization[5], authorization[6], 11],
         }
     }
 
@@ -861,7 +870,9 @@ mod tests {
     ) {
         let ciphertexts: [SmallwoodPoseidon2V8Ciphertext; 2] = [[0x41; 2_147], [0x42; 2_147]];
         let mut statement = SmallwoodPoseidon2V8PublicStatement::default();
+        statement.input_flags[0] = true;
         statement.output_flags = [true, true];
+        statement.nullifiers[0] = [1, 2, 3, 4, 5, 6, 7];
         statement.commitments = [[1; 7], [2; 7]];
         statement.ciphertext_commitments = [
             smallwood_poseidon2_v8_ciphertext_commitment(&ciphertexts[0]),
@@ -870,10 +881,21 @@ mod tests {
 
         let output = |_slot: usize| SmallwoodPoseidon2V8OutputWitness {
             active: true,
-            note: active_zero_value_note(),
+            note: active_note(1),
             balance_slot_selectors: [true, false, false, false],
         };
         let witness = SmallwoodPoseidon2V8Witness {
+            inputs: [
+                SmallwoodPoseidon2V8InputWitness {
+                    active: true,
+                    spend_key: fixture_spend_key(),
+                    note: active_note(2),
+                    position: 0,
+                    siblings: [[0; 7]; 32],
+                    balance_slot_selectors: [true, false, false, false],
+                },
+                SmallwoodPoseidon2V8InputWitness::ZERO,
+            ],
             outputs: [output(0), output(1)],
             ..Default::default()
         };
@@ -890,6 +912,7 @@ mod tests {
     ) {
         let mut statement = SmallwoodPoseidon2V8PublicStatement::default();
         statement.input_flags[0] = true;
+        statement.fee = 2;
         statement.nullifiers[0] = [
             0x0102_0304_0506_0708,
             0x1112_1314_1516_1718,
@@ -903,8 +926,8 @@ mod tests {
             inputs: [
                 SmallwoodPoseidon2V8InputWitness {
                     active: true,
-                    spend_key: [1, 2, 3, 4, 5],
-                    note: active_zero_value_note(),
+                    spend_key: fixture_spend_key(),
+                    note: active_note(2),
                     position: 0,
                     siblings: [[0; 7]; 32],
                     balance_slot_selectors: [true, false, false, false],
@@ -941,7 +964,7 @@ mod tests {
         assert_eq!(prepared.proof_bytes(), engine.proof_bytes.as_slice());
         assert_eq!(engine.prove_calls.get(), 1);
         assert_eq!(engine.verify_calls.get(), 1);
-        assert!(prepared.derived_new_nullifiers.is_empty());
+        assert_eq!(prepared.derived_new_nullifiers.len(), 1);
         assert!(core::mem::size_of_val(&prepared) < prepared.native_leaf.len());
     }
 
