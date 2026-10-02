@@ -2194,6 +2194,7 @@ fn retained_carrier_wallet_generated_artifact(
     let evidence = serde_json::json!({
         "route": "prepare_poseidon2_v8_smza_wallet_self_spend_request_for_retained_test",
         "parent_pid": std::process::id(), "started_unix_seconds": started_unix_seconds,
+        "prover_system": std::env::consts::OS, "prover_machine": std::env::consts::ARCH,
         "elapsed_seconds": started.elapsed().as_secs_f64(), "wallet_parent_height": tip.height,
         "wallet_parent_block_hash": hex::encode(tip.block_hash), "public_fixture_seed": true,
         "output_diversifiers": [9, 9], "wallet_outputs_and_prover_entropy": "OsRng",
@@ -2598,6 +2599,9 @@ fn retained_carrier_episode(
         )?
     };
     let remote_source_identity = source.remote.as_ref().map(|remote| remote.identity.clone());
+    if crosshost_source != remote_source_identity.is_some() {
+        return Err("socket episode SOURCE host differs from the requested topology".into());
+    }
     if source.ready["height"] != 0 || source.ready["test_selected_locator_transport"] != true {
         return Err(
             "source did not start on empty genesis with test-selected locator transport".into(),
@@ -3258,16 +3262,67 @@ fn retained_carrier_run_socket_process_carriers(crosshost_source: bool) {
             false,
             crosshost_source,
         )?;
-        let wallet_proof_episode = if retained_carrier_smza_selected() && !crosshost_source {
-            Some(retained_carrier_episode(
+        let wallet_proof_episode = if retained_carrier_smza_selected() {
+            let episode = retained_carrier_episode(
                 &directory.join("fresh-wallet-proof"),
                 &manifest,
                 &manifest_sha512,
                 RETAINED_SMZ9_PRIMARY_ROLE,
                 &primary,
                 true,
-                false,
-            )?)
+                crosshost_source,
+            )?;
+            let generation = &episode["wallet_generation"];
+            if episode["episode_kind"] != "fresh-wallet-generated-proof"
+                || episode["crosshost_linux_source_darwin_relay_restart_fresh"] != crosshost_source
+                || episode["production_authority_denied"] != true
+                || generation["parent_pid"] != std::process::id()
+                || generation["prover_system"] != std::env::consts::OS
+                || generation["prover_machine"] != std::env::consts::ARCH
+                || generation["wallet_outputs_and_prover_entropy"] != "OsRng"
+                || generation["source_compiled_proved_and_locally_verified"] != true
+                || [
+                    "tested",
+                    "fresh_wallet_spend_material_built",
+                    "fresh_wallet_generated_proof",
+                    "restart_node_fresh_wallet_exact_equality",
+                    "fresh_node_fresh_wallet_exact_equality",
+                ]
+                .iter()
+                .any(|key| episode["wallet"][*key] != true)
+                || [
+                    "pending_action_sha512",
+                    "native_leaf_sha512",
+                    "proof_sha512",
+                ]
+                .iter()
+                .any(|key| generation["exact_selection"][*key] != episode[*key])
+            {
+                return Err(
+                    "fresh wallet episode lacks exact generation/carrier/replay evidence".into(),
+                );
+            }
+            if crosshost_source {
+                let identity = &episode["remote_source_identity"];
+                let executable_sha512 = std::env::var("HEGEMON_TEST_CROSSHOST_EXECUTABLE_SHA512")
+                    .map_err(|_| "missing explicit Linux executable SHA512")?;
+                let remote_pid = retained_carrier_remote_identity(
+                    identity,
+                    &executable_sha512,
+                    &manifest_sha512,
+                )?;
+                if generation["prover_system"] != "macos"
+                    || ["source_connected", "source_height_three", "source_final"]
+                        .iter()
+                        .any(|key| episode[*key]["pid"].as_u64() != Some(u64::from(remote_pid)))
+                    || episode["shutdown"]["source"]["remote_node"]["pid"] != identity["pid"]
+                {
+                    return Err("fresh wallet cross-host episode lacks Darwin prover/Linux SOURCE identity binding".into());
+                }
+            } else if !episode["remote_source_identity"].is_null() {
+                return Err("local fresh wallet episode unexpectedly used a remote SOURCE".into());
+            }
+            Some(episode)
         } else {
             None
         };
