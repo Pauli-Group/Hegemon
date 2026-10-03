@@ -162,6 +162,10 @@ pub(crate) fn is_unsafe_rpc_method(method: &str) -> bool {
         method,
         "hegemon_startMining"
             | "hegemon_stopMining"
+            | "hegemon_poolWork"
+            | "hegemon_compactJob"
+            | "hegemon_submitPoolShare"
+            | "hegemon_submitCompactSolution"
             | "hegemon_submitAction"
             | "hegemon_peerGraph"
             | "hegemon_peerList"

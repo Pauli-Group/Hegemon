@@ -107,7 +107,7 @@ pub(crate) fn mine_native_round_inner(
     let end = start.saturating_add(HASHES_PER_ROUND);
     for counter in start..end {
         let nonce = nonce_from_counter(counter);
-        let work_hash = native_pow_work_hash(&work.pre_hash, nonce);
+        let work_hash = native_pow_work_hash(work, nonce);
         *hashes = (*hashes).saturating_add(1);
         if native_seal_meets_target(&work_hash, work.pow_bits) {
             debug!(height = work.height, counter, "native PoW seal found");

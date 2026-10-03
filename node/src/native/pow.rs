@@ -340,6 +340,10 @@ pub(crate) fn verify_native_pow_meta(
     meta: &NativeBlockMeta,
     expected_pow_bits: u32,
 ) -> Result<()> {
+    if meta.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE {
+        consensus_light_client::bitcoin80_validate_compact(meta.pow_bits)
+            .map_err(|err| anyhow!("native Bitcoin80 PoW bits invalid: {err:?}"))?;
+    }
     if meta.hash != meta.work_hash {
         return Err(anyhow!("native block hash must equal work hash"));
     }
@@ -403,16 +407,50 @@ pub(crate) fn empty_extrinsics_root(pending_count: u32) -> [u8; 32] {
 
 pub(crate) fn nonce_from_counter(counter: u64) -> [u8; 32] {
     let mut nonce = [0u8; 32];
-    nonce[..8].copy_from_slice(&counter.to_le_bytes());
+    // Native nonce bytes [0..4] are Bitcoin's little-endian header nonce;
+    // carry into the coinbase extranonce after the 32-bit search space wraps.
+    nonce[..4].copy_from_slice(&(counter as u32).to_le_bytes());
+    nonce[4..8].copy_from_slice(&((counter >> 32) as u32).to_le_bytes());
     nonce
 }
 
-pub(crate) fn native_pow_work_hash(pre_hash: &[u8; 32], nonce: [u8; 32]) -> [u8; 32] {
-    pow_hash_from_pre_hash(pre_hash, nonce)
+pub(crate) fn native_pow_work_hash(work: &NativeWork, nonce: [u8; 32]) -> [u8; 32] {
+    consensus_light_client::bitcoin80_work_hash(
+        &work.pre_hash,
+        &work.parent_hash,
+        work.timestamp_ms,
+        work.pow_bits,
+        nonce,
+    )
+    .unwrap_or([0xff; 32])
 }
 
 pub(crate) fn native_seal_meets_target(work_hash: &[u8; 32], pow_bits: u32) -> bool {
     hash_meets_target(work_hash, pow_bits).unwrap_or(false)
+}
+
+/// The inherited retarget arithmetic emits unsigned compact mantissas. Native
+/// Bitcoin80 blocks use the Bitcoin positive compact codec at every boundary,
+/// including the first child after a retarget and all replay/sync paths.
+pub(crate) fn native_asic_expected_pow_bits_from_schedule(
+    genesis_pow_bits: u32,
+    parent_pow_bits: u32,
+    parent_height: u64,
+    new_height: u64,
+    parent_timestamp_ms: u64,
+    anchor_timestamp_ms: Option<u64>,
+) -> Result<u32> {
+    let legacy_bits = consensus::pow::expected_pow_bits_from_schedule(
+        genesis_pow_bits,
+        parent_pow_bits,
+        parent_height,
+        new_height,
+        parent_timestamp_ms,
+        anchor_timestamp_ms,
+    )
+    .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))?;
+    consensus_light_client::normalize_legacy_compact_for_bitcoin(legacy_bits)
+        .map_err(|err| anyhow!("native Bitcoin80 PoW bits normalization failed: {err:?}"))
 }
 
 pub(crate) fn native_expected_child_pow_bits_from_chain(
@@ -442,7 +480,7 @@ pub(crate) fn native_expected_child_pow_bits_from_chain(
     } else {
         None
     };
-    consensus::pow::expected_pow_bits_from_schedule(
+    native_asic_expected_pow_bits_from_schedule(
         genesis_pow_bits,
         parent.pow_bits,
         parent.height,
@@ -450,7 +488,6 @@ pub(crate) fn native_expected_child_pow_bits_from_chain(
         parent.timestamp_ms,
         anchor_timestamp_ms,
     )
-    .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))
 }
 
 pub(crate) fn native_expected_child_pow_bits_for_chain_index(

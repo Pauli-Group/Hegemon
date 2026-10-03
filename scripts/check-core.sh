@@ -78,6 +78,7 @@ run_test_base() {
   python3 -B scripts/test_check_smallwood_v5_candidate_gate.py
   python3 -B scripts/check_smallwood_v5_candidate_gate.py
   python3 -B -m unittest discover -s scripts/tests -p test_rp05_crosshost_supervisor.py
+  python3 -B scripts/test_bitcoin_asic_stratum.py
   CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}" cargo test --locked \
     --manifest-path experimental/htlc-prototype/Cargo.toml
 }
