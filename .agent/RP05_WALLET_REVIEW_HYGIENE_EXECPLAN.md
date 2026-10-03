@@ -33,6 +33,10 @@ Keep ordinary transaction relation and node admission unchanged. Reserve input n
 
 Implementation, independent source review, full wallet tests, both node test configurations, lint and actual governance tests are complete. Remaining acceptance is the final source-binding check, publication and exact-head CI. Baseline checks are not credited as verification of the new patch.
 
+Published implementation commit `a77f4043`; remote wallet/node jobs passed, but app E2E exposed a missed daemon integration: walletd acquired the same sibling lock before opening the newly locking WalletStore. Correct that duplicate ownership in walletd, preserve `StoreLocked` error semantics, add daemon startup/lock tests and run the actual app E2E before publishing the correction. PR #206 is stacked on #205 and needs fingerprint-only conflict resolution against its combined source; no ASIC behavior changes are part of this integration.
+
+The correction removes duplicate daemon lock ownership and adds an atomic non-overwriting `create_full_if_missing` wallet entry point. Full wallet tests passed again (180 library tests, 2 existing ignored), daemon tests passed (11), formatting and clippy passed. Actual `scripts/check-app-no-ssh-e2e.sh --review-only` passed with seed authoring, relay join/sync and both wallets synchronized to height 2. Funded transfers were outside that mode. Governance tests passed 14/14 again at 2026-10-03 04:35:47 UTC. Publish this correction, then require all CI checks on its exact head to pass.
+
 ## Context and Orientation
 
 `wallet/src/poseidon2_v8_sync.rs` maintains the seven-limb note mirror and selects two inputs. `wallet/src/poseidon2_v8.rs` builds, proves, verifies and submits them. `wallet/src/store.rs` serializes encrypted state and applies mirror changes transactionally. A reservation is a durable wallet-local claim on the exact inputs so another builder cannot select them; it is not a consensus nullifier or proof field. `node/src/native/mod.rs` declares the unused `canonical_membership`, `reorg_wal` and `block_store_v3` helpers. The active seven-limb node state and existing canonical reorg path remain unchanged.

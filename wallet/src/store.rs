@@ -104,10 +104,30 @@ impl WalletStore {
         Self::create_from_root(path, passphrase, root)
     }
 
+    /// Create a new full wallet without replacing a store that already exists.
+    /// The existence check is performed while holding the writer lock.
+    pub fn create_full_if_missing<P: AsRef<Path>>(
+        path: P,
+        passphrase: &str,
+    ) -> Result<Self, WalletError> {
+        let mut rng = OsRng;
+        let root = RootSecret::from_rng(&mut rng);
+        Self::create_from_root_inner(path, passphrase, root, true)
+    }
+
     pub fn create_from_root<P: AsRef<Path>>(
         path: P,
         passphrase: &str,
         root: RootSecret,
+    ) -> Result<Self, WalletError> {
+        Self::create_from_root_inner(path, passphrase, root, false)
+    }
+
+    fn create_from_root_inner<P: AsRef<Path>>(
+        path: P,
+        passphrase: &str,
+        root: RootSecret,
+        fail_if_exists: bool,
     ) -> Result<Self, WalletError> {
         let derived = root.derive();
         let ivk = IncomingViewingKey::from_keys(&derived);
@@ -138,7 +158,7 @@ impl WalletStore {
             poseidon2_v8: Poseidon2V8WalletState::default(),
             poseidon2_v8_reservations: Vec::new(),
         };
-        Self::create_with_state(path, passphrase, state)
+        Self::create_with_state(path, passphrase, state, fail_if_exists)
     }
 
     pub fn import_viewing_key<P: AsRef<Path>>(
@@ -171,15 +191,19 @@ impl WalletStore {
             poseidon2_v8: Poseidon2V8WalletState::default(),
             poseidon2_v8_reservations: Vec::new(),
         };
-        Self::create_with_state(path, passphrase, state)
+        Self::create_with_state(path, passphrase, state, false)
     }
 
     fn create_with_state<P: AsRef<Path>>(
         path: P,
         passphrase: &str,
         state: WalletState,
+        fail_if_exists: bool,
     ) -> Result<Self, WalletError> {
         let (path, file_lock) = lock_wallet_file(path.as_ref())?;
+        if fail_if_exists && path.exists() {
+            return Err(WalletError::StoreAlreadyExists);
+        }
         let mut salt = [0u8; SALT_LEN];
         OsRng.fill_bytes(&mut salt);
         let key = derive_key(passphrase, &salt)?;
@@ -3382,6 +3406,27 @@ mod tests {
         drop(writer);
         let reopened = WalletStore::open(&path, "passphrase").unwrap();
         reopened.next_address().unwrap();
+    }
+
+    #[test]
+    fn create_full_if_missing_preserves_existing_store_and_respects_writer_lock() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("wallet.dat");
+        let writer = WalletStore::create_full(&path, "passphrase").unwrap();
+        let before = fs::read(&path).unwrap();
+        assert!(matches!(
+            WalletStore::create_full_if_missing(&path, "passphrase"),
+            Err(WalletError::StoreBusy)
+        ));
+        drop(writer);
+
+        assert!(matches!(
+            WalletStore::create_full_if_missing(&path, "passphrase"),
+            Err(WalletError::StoreAlreadyExists)
+        ));
+        assert_eq!(fs::read(&path).unwrap(), before);
+        let reopened = WalletStore::open(&path, "passphrase").unwrap();
+        assert!(reopened.next_address().is_ok());
     }
 
     #[cfg(unix)]
