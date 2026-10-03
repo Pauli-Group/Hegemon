@@ -54,11 +54,15 @@ fn pow_bits_must_match_expected_target() {
         base_tree.clone(),
         HashVerifier,
     );
-    let mut params = base_pow_params(&miner, &nullifiers, &base_tree, vec![dummy_transaction(5)]);
+    // Exercise PoW admission independently of fresh transaction-proof authority.
+    let mut params = base_pow_params(&miner, &nullifiers, &base_tree, vec![]);
     params.pow_bits ^= 0x0100_0000;
     let (block, _, _) = assemble_pow_block(params).expect("assemble block");
     let err = consensus.apply_block(block).expect_err("invalid pow bits");
-    assert!(matches!(err, ConsensusError::Pow(_)));
+    assert!(
+        matches!(err, ConsensusError::Pow(_)),
+        "unexpected error: {err:?}"
+    );
 }
 
 #[test]
@@ -72,11 +76,15 @@ fn median_time_past_violation_rejected() {
         base_tree.clone(),
         HashVerifier,
     );
-    let mut params = base_pow_params(&miner, &nullifiers, &base_tree, vec![dummy_transaction(6)]);
+    // No transaction version is needed to test the timestamp rule.
+    let mut params = base_pow_params(&miner, &nullifiers, &base_tree, vec![]);
     params.timestamp_ms = 0; // equal to median, should fail
     let (block, _, _) = assemble_pow_block(params).expect("assemble block");
     let err = consensus.apply_block(block).expect_err("timestamp error");
-    assert!(matches!(err, ConsensusError::Timestamp));
+    assert!(
+        matches!(err, ConsensusError::Timestamp),
+        "unexpected error: {err:?}"
+    );
 }
 
 #[test]
@@ -90,11 +98,15 @@ fn subsidy_overshoot_is_enforced() {
         base_tree.clone(),
         HashVerifier,
     );
-    let mut params = base_pow_params(&miner, &nullifiers, &base_tree, vec![dummy_transaction(7)]);
+    // The coinbase alone exercises the subsidy limit without a decoder-only tx.
+    let mut params = base_pow_params(&miner, &nullifiers, &base_tree, vec![]);
     params.coinbase.minted += 1;
     let (block, _, _) = assemble_pow_block(params).expect("assemble block");
     let err = consensus.apply_block(block).expect_err("subsidy violation");
-    assert!(matches!(err, ConsensusError::Subsidy { .. }));
+    assert!(
+        matches!(err, ConsensusError::Subsidy { .. }),
+        "unexpected error: {err:?}"
+    );
 }
 
 #[test]

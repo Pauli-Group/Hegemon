@@ -22,14 +22,11 @@ def admissionRejectJson : Option AdmissionReject -> String
   | some AdmissionReject.receiptVerifierProfileMismatch =>
       "\"receipt_verifier_profile_mismatch\""
   | some AdmissionReject.artifactHashMismatch => "\"artifact_hash_mismatch\""
-  | some AdmissionReject.cacheReceiptMismatch => "\"cache_receipt_mismatch\""
-  | some AdmissionReject.cacheTransactionMismatch => "\"cache_transaction_mismatch\""
 
 def admissionOutcomeJson : AdmissionInput -> String
   | input =>
       match evaluateAdmission input with
       | Except.ok AdmissionOutcome.needsBackendVerification => "\"needs_backend_verification\""
-      | Except.ok AdmissionOutcome.cacheHit => "\"cache_hit\""
       | Except.error _ => "null"
 
 def nativeTxLeafAdmissionCaseJson (name : String) (input : AdmissionInput) : String :=
@@ -48,10 +45,6 @@ def nativeTxLeafAdmissionCaseJson (name : String) (input : AdmissionInput) : Str
     ++ boolJson input.hasExpectedArtifactHash ++ ",\n"
     ++ "      \"expected_artifact_hash_matches\": "
     ++ boolJson input.expectedArtifactHashMatches ++ ",\n"
-    ++ "      \"has_cache_entry\": " ++ boolJson input.hasCacheEntry ++ ",\n"
-    ++ "      \"cache_receipt_matches\": " ++ boolJson input.cacheReceiptMatches ++ ",\n"
-    ++ "      \"cache_transaction_matches\": "
-    ++ boolJson input.cacheTransactionMatches ++ ",\n"
     ++ "      \"expected_valid\": " ++ boolJson (rejection == none) ++ ",\n"
     ++ "      \"expected_rejection\": " ++ admissionRejectJson rejection ++ ",\n"
     ++ "      \"expected_outcome\": " ++ admissionOutcomeJson input ++ "\n"
@@ -59,33 +52,28 @@ def nativeTxLeafAdmissionCaseJson (name : String) (input : AdmissionInput) : Str
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"native_tx_leaf_admission_cases\": [\n"
-    ++ nativeTxLeafAdmissionCaseJson "valid-uncached-needs-backend" validUncached ++ ",\n"
-    ++ nativeTxLeafAdmissionCaseJson "valid-cache-hit" validCacheHit ++ ",\n"
+    ++ nativeTxLeafAdmissionCaseJson "valid-needs-backend" validAdmission ++ ",\n"
     ++ nativeTxLeafAdmissionCaseJson "missing-envelope-rejected"
-      { validUncached with hasEnvelope := false } ++ ",\n"
+      { validAdmission with hasEnvelope := false } ++ ",\n"
     ++ nativeTxLeafAdmissionCaseJson "wrong-artifact-kind-rejected"
-      { validUncached with envelopeKind := ArtifactKind.receiptRoot } ++ ",\n"
+      { validAdmission with envelopeKind := ArtifactKind.receiptRoot } ++ ",\n"
     ++ nativeTxLeafAdmissionCaseJson "envelope-profile-mismatch-rejected"
-      { validUncached with envelopeVerifierProfileMatches := false } ++ ",\n"
+      { validAdmission with envelopeVerifierProfileMatches := false } ++ ",\n"
     ++ nativeTxLeafAdmissionCaseJson "oversized-artifact-rejected"
-      { validUncached with artifactBytesLen := 513 } ++ ",\n"
+      { validAdmission with artifactBytesLen := 513 } ++ ",\n"
     ++ nativeTxLeafAdmissionCaseJson "receipt-profile-mismatch-rejected"
-      { validUncached with receiptVerifierProfileMatches := false } ++ ",\n"
+      { validAdmission with receiptVerifierProfileMatches := false } ++ ",\n"
     ++ nativeTxLeafAdmissionCaseJson "expected-hash-mismatch-rejected"
-      { validUncached with expectedArtifactHashMatches := false } ++ ",\n"
+      { validAdmission with expectedArtifactHashMatches := false } ++ ",\n"
     ++ nativeTxLeafAdmissionCaseJson "missing-expected-hash-skips-hash-check"
-      { validUncached with
+      { validAdmission with
         hasExpectedArtifactHash := false,
         expectedArtifactHashMatches := false
       } ++ ",\n"
-    ++ nativeTxLeafAdmissionCaseJson "cache-receipt-mismatch-rejected"
-      { validCacheHit with cacheReceiptMatches := false } ++ ",\n"
-    ++ nativeTxLeafAdmissionCaseJson "cache-transaction-mismatch-rejected"
-      { validCacheHit with cacheTransactionMatches := false } ++ ",\n"
     ++ nativeTxLeafAdmissionCaseJson "exact-size-limit-accepted"
-      { validUncached with artifactBytesLen := 512, maxArtifactBytes := 512 } ++ "\n"
+      { validAdmission with artifactBytesLen := 512, maxArtifactBytes := 512 } ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

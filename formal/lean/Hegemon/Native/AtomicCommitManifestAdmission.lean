@@ -6,6 +6,7 @@ inductive AtomicCommitKind where
   | minedBlockCommit
   | tipExtensionBatchCommit
   | canonicalReorgCommit
+  | canonicalSuffixReorgCommit
   | canonicalIndexRepair
   | noncanonicalBlockRecord
 deriving DecidableEq, Repr
@@ -25,6 +26,8 @@ inductive AtomicCommitManifestReject where
   | ciphertextIndexWriteMismatch
   | ciphertextArchiveWriteMismatch
   | stagedCiphertextRemovalMismatch
+  | poseidon2V8PlanCardinality
+  | poseidon2V8PlanApplicationMismatch
 deriving DecidableEq, Repr
 
 structure AtomicCommitManifestInput where
@@ -40,6 +43,8 @@ structure AtomicCommitManifestInput where
   sourceCiphertextIndexCount : Nat
   sourceCiphertextArchiveCount : Nat
   sourceStagedCiphertextRemovalCount : Nat
+  sourcePoseidon2V8PlanCount : Nat
+  poseidon2V8PlanApplicationCount : Nat
   blockRecordWrites : Nat
   heightIndexWrites : Nat
   bestPointerWrites : Nat
@@ -60,6 +65,7 @@ def expectedBlockRecordWrites (input : AtomicCommitManifestInput) : Nat :=
   | AtomicCommitKind.minedBlockCommit => 1
   | AtomicCommitKind.tipExtensionBatchCommit => input.chainBlockCount
   | AtomicCommitKind.canonicalReorgCommit => 0
+  | AtomicCommitKind.canonicalSuffixReorgCommit => 0
   | AtomicCommitKind.canonicalIndexRepair => 0
   | AtomicCommitKind.noncanonicalBlockRecord => input.chainBlockCount
 
@@ -68,6 +74,7 @@ def expectedHeightIndexWrites (input : AtomicCommitManifestInput) : Nat :=
   | AtomicCommitKind.minedBlockCommit => 1
   | AtomicCommitKind.tipExtensionBatchCommit => input.heightEntryCount
   | AtomicCommitKind.canonicalReorgCommit => input.heightEntryCount
+  | AtomicCommitKind.canonicalSuffixReorgCommit => input.heightEntryCount
   | AtomicCommitKind.canonicalIndexRepair => 0
   | AtomicCommitKind.noncanonicalBlockRecord => 0
 
@@ -76,6 +83,7 @@ def expectedBestPointerWrites (input : AtomicCommitManifestInput) : Nat :=
   | AtomicCommitKind.minedBlockCommit => 1
   | AtomicCommitKind.tipExtensionBatchCommit => 1
   | AtomicCommitKind.canonicalReorgCommit => 1
+  | AtomicCommitKind.canonicalSuffixReorgCommit => 1
   | AtomicCommitKind.canonicalIndexRepair => 0
   | AtomicCommitKind.noncanonicalBlockRecord => 0
 
@@ -84,6 +92,7 @@ def expectedCanonicalIndexCleared (input : AtomicCommitManifestInput) : Bool :=
   | AtomicCommitKind.minedBlockCommit => false
   | AtomicCommitKind.tipExtensionBatchCommit => false
   | AtomicCommitKind.canonicalReorgCommit => true
+  | AtomicCommitKind.canonicalSuffixReorgCommit => false
   | AtomicCommitKind.canonicalIndexRepair => true
   | AtomicCommitKind.noncanonicalBlockRecord => false
 
@@ -96,11 +105,13 @@ def expectedPendingActionRemovals (input : AtomicCommitManifestInput) : Nat :=
   match input.kind with
   | AtomicCommitKind.minedBlockCommit => input.actionCount
   | AtomicCommitKind.tipExtensionBatchCommit => input.actionCount
+  | AtomicCommitKind.canonicalSuffixReorgCommit => input.actionCount
   | _ => 0
 
 def expectedPendingActionWrites (input : AtomicCommitManifestInput) : Nat :=
   match input.kind with
   | AtomicCommitKind.canonicalReorgCommit => input.pendingEntryCount
+  | AtomicCommitKind.canonicalSuffixReorgCommit => input.pendingEntryCount
   | _ => 0
 
 def expectedCommitmentWrites (input : AtomicCommitManifestInput) : Nat :=
@@ -108,6 +119,7 @@ def expectedCommitmentWrites (input : AtomicCommitManifestInput) : Nat :=
   | AtomicCommitKind.minedBlockCommit => input.sourceCommitmentCount
   | AtomicCommitKind.tipExtensionBatchCommit => input.sourceCommitmentCount
   | AtomicCommitKind.canonicalReorgCommit => input.sourceCommitmentCount
+  | AtomicCommitKind.canonicalSuffixReorgCommit => input.sourceCommitmentCount
   | AtomicCommitKind.canonicalIndexRepair => input.sourceCommitmentCount
   | AtomicCommitKind.noncanonicalBlockRecord => 0
 
@@ -116,6 +128,7 @@ def expectedNullifierWrites (input : AtomicCommitManifestInput) : Nat :=
   | AtomicCommitKind.minedBlockCommit => input.sourceNullifierCount
   | AtomicCommitKind.tipExtensionBatchCommit => input.sourceNullifierCount
   | AtomicCommitKind.canonicalReorgCommit => input.sourceNullifierCount
+  | AtomicCommitKind.canonicalSuffixReorgCommit => input.sourceNullifierCount
   | AtomicCommitKind.canonicalIndexRepair => input.sourceNullifierCount
   | AtomicCommitKind.noncanonicalBlockRecord => 0
 
@@ -124,6 +137,7 @@ def expectedBridgeReplayWrites (input : AtomicCommitManifestInput) : Nat :=
   | AtomicCommitKind.minedBlockCommit => input.sourceBridgeReplayCount
   | AtomicCommitKind.tipExtensionBatchCommit => input.sourceBridgeReplayCount
   | AtomicCommitKind.canonicalReorgCommit => input.sourceBridgeReplayCount
+  | AtomicCommitKind.canonicalSuffixReorgCommit => input.sourceBridgeReplayCount
   | AtomicCommitKind.canonicalIndexRepair => input.sourceBridgeReplayCount
   | AtomicCommitKind.noncanonicalBlockRecord => 0
 
@@ -132,6 +146,7 @@ def expectedCiphertextIndexWrites (input : AtomicCommitManifestInput) : Nat :=
   | AtomicCommitKind.minedBlockCommit => input.sourceCiphertextIndexCount
   | AtomicCommitKind.tipExtensionBatchCommit => input.sourceCiphertextIndexCount
   | AtomicCommitKind.canonicalReorgCommit => input.sourceCiphertextIndexCount
+  | AtomicCommitKind.canonicalSuffixReorgCommit => input.sourceCiphertextIndexCount
   | AtomicCommitKind.canonicalIndexRepair => input.sourceCiphertextIndexCount
   | AtomicCommitKind.noncanonicalBlockRecord => 0
 
@@ -140,13 +155,19 @@ def expectedCiphertextArchiveWrites (input : AtomicCommitManifestInput) : Nat :=
   | AtomicCommitKind.minedBlockCommit => input.sourceCiphertextArchiveCount
   | AtomicCommitKind.tipExtensionBatchCommit => input.sourceCiphertextArchiveCount
   | AtomicCommitKind.canonicalReorgCommit => input.sourceCiphertextArchiveCount
+  | AtomicCommitKind.canonicalSuffixReorgCommit => input.sourceCiphertextArchiveCount
   | AtomicCommitKind.canonicalIndexRepair => input.sourceCiphertextArchiveCount
   | AtomicCommitKind.noncanonicalBlockRecord => 0
 
 def expectedStagedCiphertextRemovals (input : AtomicCommitManifestInput) : Nat :=
   match input.kind with
   | AtomicCommitKind.minedBlockCommit => input.sourceStagedCiphertextRemovalCount
-  | AtomicCommitKind.tipExtensionBatchCommit => input.sourceStagedCiphertextRemovalCount
+  | AtomicCommitKind.tipExtensionBatchCommit =>
+      input.sourceStagedCiphertextRemovalCount
+  | AtomicCommitKind.canonicalReorgCommit =>
+      input.sourceStagedCiphertextRemovalCount
+  | AtomicCommitKind.canonicalSuffixReorgCommit =>
+      input.sourceStagedCiphertextRemovalCount
   | _ => 0
 
 def minedPlanLengthMatches (input : AtomicCommitManifestInput) : Bool :=
@@ -201,6 +222,17 @@ def ciphertextArchiveWritesMatch (input : AtomicCommitManifestInput) : Bool :=
 def stagedCiphertextRemovalsMatch (input : AtomicCommitManifestInput) : Bool :=
   input.stagedCiphertextRemovals == expectedStagedCiphertextRemovals input
 
+def poseidon2V8PlanCardinalityMatches
+    (input : AtomicCommitManifestInput) : Bool :=
+  (input.sourcePoseidon2V8PlanCount == 0
+      || input.sourcePoseidon2V8PlanCount == 1)
+    && (input.poseidon2V8PlanApplicationCount == 0
+      || input.poseidon2V8PlanApplicationCount == 1)
+
+def poseidon2V8PlanApplicationMatches
+    (input : AtomicCommitManifestInput) : Bool :=
+  input.sourcePoseidon2V8PlanCount == input.poseidon2V8PlanApplicationCount
+
 def atomicCommitManifestPreconditions
     (input : AtomicCommitManifestInput) : Bool :=
   minedPlanLengthMatches input
@@ -217,6 +249,8 @@ def atomicCommitManifestPreconditions
     && ciphertextIndexWritesMatch input
     && ciphertextArchiveWritesMatch input
     && stagedCiphertextRemovalsMatch input
+    && poseidon2V8PlanCardinalityMatches input
+    && poseidon2V8PlanApplicationMatches input
 
 def firstAtomicCommitManifestRejection
     (input : AtomicCommitManifestInput) : AtomicCommitManifestReject :=
@@ -248,8 +282,10 @@ def firstAtomicCommitManifestRejection
     AtomicCommitManifestReject.ciphertextArchiveWriteMismatch
   else if stagedCiphertextRemovalsMatch input = false then
     AtomicCommitManifestReject.stagedCiphertextRemovalMismatch
+  else if poseidon2V8PlanCardinalityMatches input = false then
+    AtomicCommitManifestReject.poseidon2V8PlanCardinality
   else
-    AtomicCommitManifestReject.stagedCiphertextRemovalMismatch
+    AtomicCommitManifestReject.poseidon2V8PlanApplicationMismatch
 
 def evaluateAtomicCommitManifestRejection
     (input : AtomicCommitManifestInput) :
@@ -287,6 +323,8 @@ def validMinedBlockCommit : AtomicCommitManifestInput :=
     sourceCiphertextIndexCount := 3,
     sourceCiphertextArchiveCount := 3,
     sourceStagedCiphertextRemovalCount := 3,
+    sourcePoseidon2V8PlanCount := 0,
+    poseidon2V8PlanApplicationCount := 0,
     blockRecordWrites := 1,
     heightIndexWrites := 1,
     bestPointerWrites := 1,
@@ -316,6 +354,8 @@ def validCanonicalReorgCommit : AtomicCommitManifestInput :=
     sourceCiphertextIndexCount := 5,
     sourceCiphertextArchiveCount := 5,
     sourceStagedCiphertextRemovalCount := 0,
+    sourcePoseidon2V8PlanCount := 0,
+    poseidon2V8PlanApplicationCount := 0,
     blockRecordWrites := 0,
     heightIndexWrites := 4,
     bestPointerWrites := 1,
@@ -329,6 +369,21 @@ def validCanonicalReorgCommit : AtomicCommitManifestInput :=
     ciphertextIndexWrites := 5,
     ciphertextArchiveWrites := 5,
     stagedCiphertextRemovals := 0
+  }
+
+def validCanonicalSuffixReorgCommit : AtomicCommitManifestInput :=
+  {
+    validCanonicalReorgCommit with
+    kind := AtomicCommitKind.canonicalSuffixReorgCommit,
+    actionCount := 2,
+    sourceStagedCiphertextRemovalCount := 2,
+    sourcePoseidon2V8PlanCount := 1,
+    poseidon2V8PlanApplicationCount := 1,
+    blockRecordWrites := 0,
+    canonicalIndexCleared := false,
+    pendingTreeCleared := false,
+    pendingActionRemovals := 2,
+    stagedCiphertextRemovals := 2
   }
 
 def validTipExtensionBatchCommit : AtomicCommitManifestInput :=
@@ -398,6 +453,10 @@ theorem valid_canonical_reorg_commit_accepts :
     evaluateAtomicCommitManifestRejection validCanonicalReorgCommit = none := by
   rfl
 
+theorem valid_canonical_suffix_reorg_commit_accepts :
+    evaluateAtomicCommitManifestRejection validCanonicalSuffixReorgCommit = none := by
+  rfl
+
 theorem valid_canonical_index_repair_accepts :
     evaluateAtomicCommitManifestRejection validCanonicalIndexRepair = none := by
   rfl
@@ -443,6 +502,12 @@ theorem rejects_noncanonical_block_record_batch_write_count_mismatch :
 theorem rejects_canonical_reorg_block_record_write :
     evaluateAtomicCommitManifestRejection
       { validCanonicalReorgCommit with blockRecordWrites := 1 } =
+      some AtomicCommitManifestReject.blockRecordWritesMismatch := by
+  rfl
+
+theorem rejects_canonical_suffix_reorg_block_record_write :
+    evaluateAtomicCommitManifestRejection
+      { validCanonicalSuffixReorgCommit with blockRecordWrites := 1 } =
       some AtomicCommitManifestReject.blockRecordWritesMismatch := by
   rfl
 
@@ -522,6 +587,28 @@ theorem rejects_staged_ciphertext_removal_mismatch :
     evaluateAtomicCommitManifestRejection
       { validMinedBlockCommit with stagedCiphertextRemovals := 2 } =
       some AtomicCommitManifestReject.stagedCiphertextRemovalMismatch := by
+  rfl
+
+theorem rejects_poseidon2_v8_plan_cardinality :
+    evaluateAtomicCommitManifestRejection
+      { validCanonicalSuffixReorgCommit with
+        sourcePoseidon2V8PlanCount := 2,
+        poseidon2V8PlanApplicationCount := 2 } =
+      some AtomicCommitManifestReject.poseidon2V8PlanCardinality := by
+  rfl
+
+theorem rejects_missing_poseidon2_v8_plan_application :
+    evaluateAtomicCommitManifestRejection
+      { validCanonicalSuffixReorgCommit with
+        poseidon2V8PlanApplicationCount := 0 } =
+      some AtomicCommitManifestReject.poseidon2V8PlanApplicationMismatch := by
+  rfl
+
+theorem rejects_extra_poseidon2_v8_plan_application :
+    evaluateAtomicCommitManifestRejection
+      { validCanonicalSuffixReorgCommit with
+        sourcePoseidon2V8PlanCount := 0 } =
+      some AtomicCommitManifestReject.poseidon2V8PlanApplicationMismatch := by
   rfl
 
 end AtomicCommitManifestAdmission

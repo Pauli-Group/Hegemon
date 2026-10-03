@@ -1,0 +1,41 @@
+{
+  "changed_proof_rejected": true,
+  "changed_public_rejected": true,
+  "honest_roundtrip": true,
+  "log_inverse_rate": 2,
+  "merkle_hash": "SHAKE256-512",
+  "proof_bytes": 149360,
+  "proof_hash": "SHAKE256-512",
+  "release_qualified": false,
+  "schema": "hegemon.m4-strict-hash-integration.v1",
+  "semantic_hash": "SHAKE256-448",
+  "transcript_context_bound": false,
+  "measurement_status": "measured-pre-context-v1",
+  "measurement_scope": "legacy-pre-context-preamble",
+  "context_bound_proof_bytes_prediction": 149360,
+  "context_bound_proof_bytes_prediction_basis": "observe-only preamble adds zero proof-tape bytes; not rerun",
+  "measured_source_sha256": {
+    "Cargo.lock": "76edd1c6d1e6547aa7fc9121b03b0df3b8d86dfc7425d3b394fdad69c78fd620",
+    "Cargo.toml": "e0c39546ca04848f1e0224a1198fef178b05e9442592e7dbfe1419f3b1cfc9a8",
+    "src/bin/m4_strict_hash.rs": "929ef024fd7687a681b36211f07508d5702709fd1a1692713b998055934fc7a3",
+    "src/lib.rs": "c882827081cb8afbc39035d409408754702bc997a542eefdfb7d05455a83aec4"
+  },
+  "current_context_v2": {
+    "status": "compiled-and-unit-tested; proof bytes structurally predicted, not rerun",
+    "transcript_context_bound": true,
+    "challenge_field_id": "binius.b128-ghash.gf2.modulus-x128+x7+x2+x+1.lsb-polynomial-basis.serialization-u128-le.v1",
+    "relation_source_shake256_512": "11be12b8de113f28606210713fd36d0a15643d867295a1d89235afe957b4c6eb9b0e2f66b86f819b3ef17fbd727b67f9a801db9e42350ecbad9443841fa71713",
+    "source_sha256": {
+      "Cargo.lock": "76edd1c6d1e6547aa7fc9121b03b0df3b8d86dfc7425d3b394fdad69c78fd620",
+      "Cargo.toml": "e0c39546ca04848f1e0224a1198fef178b05e9442592e7dbfe1419f3b1cfc9a8",
+      "src/bin/m4_strict_hash.rs": "948743d08f0670721d2744d7e10fe335d89b0e2c214dd7acce726a46211167a0",
+      "src/lib.rs": "25a537936c99ee290941d056e132e5e855c926ec028f274b66e1c82296cb8a3c"
+    },
+    "unit_tests": "7 passed",
+    "clippy_warnings": 0,
+    "context_bound_roundtrip_measured": false
+  },
+  "strict_algebraic_profile": false,
+  "trailing_rejected": true,
+  "zero_knowledge": false
+}

@@ -1,0 +1,20 @@
+{
+  "schema": "hegemon.proof-autoresearch.candidate.v1",
+  "id": "codex-terminal-compact-selected-v1",
+  "parent_id": "codex-terminal-compact-multiproof-v1",
+  "hypothesis": "Retain the verified canonical terminal message and compact Merkle multiproofs, and omit each FRI leaf value already known as the preceding round claim. The verifier canonically reinserts every omitted claim at its Fiat-Shamir-derived offset, reconstructs and hashes the complete leaf, verifies the unchanged commitment root, and performs the unchanged equality and fold checks.",
+  "relation_claims": {
+    "full_v5_delta_pay1x2": true,
+    "geometry_proxy": false,
+    "standalone_proof": true,
+    "aggregation": false,
+    "sidecar_authority": false
+  },
+  "security_boundary": {
+    "strict_security_established": false,
+    "strict_profile_supported": false,
+    "prototype_bytes_are_not_a_strict_win": true
+  },
+  "candidate_patch": "/private/tmp/hegemon-proof-autoresearch-inbox/codex-terminal-compact-selected-v1.patch"
+}
+

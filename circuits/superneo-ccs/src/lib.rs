@@ -3,6 +3,7 @@ use std::fmt;
 use anyhow::{bail, ensure, Result};
 use blake3::Hasher;
 use hegemon_field::PrimeField64;
+use hegemon_hash384::{blake2b_384_domain_hash, domains::SUPERNEO_PROOF_ARTIFACT_V2};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -334,12 +335,10 @@ where
 }
 
 pub fn digest_statement(bytes: &[u8]) -> StatementDigest {
-    let mut hasher = Hasher::new();
-    hasher.update(b"hegemon.superneo.statement.v1");
-    hasher.update(bytes);
-    let mut out = [0u8; 48];
-    hasher.finalize_xof().fill(&mut out);
-    StatementDigest(out)
+    StatementDigest(blake2b_384_domain_hash(
+        SUPERNEO_PROOF_ARTIFACT_V2,
+        [b"ccs-statement".as_slice(), bytes],
+    ))
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {
@@ -354,7 +353,12 @@ fn hex_bytes(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use blake3::Hasher;
     use hegemon_field::Goldilocks;
+    use hegemon_hash384::{
+        blake2b_384_domain_hash,
+        domains::{SUPERNEO_PROOF_ARTIFACT_V2, TRANSACTION_PROOF_ARTIFACT_V2},
+    };
 
     use super::{
         digest_shape, digest_statement, ensure_assignment_matches_shape, Assignment, CcsShape,
@@ -401,6 +405,48 @@ mod tests {
         right.matrices[0].entries[0].col = 2;
         assert_ne!(digest_shape(&left), digest_shape(&right));
         assert_ne!(digest_statement(b"a"), digest_statement(b"b"));
+    }
+
+    #[test]
+    fn statement_digest_v2_kat_rejects_legacy_cross_domain_and_part_aliases() {
+        let input = b"superneo ccs statement v2 KAT";
+        let digest = digest_statement(input);
+        assert_eq!(
+            digest.to_hex(),
+            "ec638079b164164e07991f98757ce5043fc1c20857d80e70b021a08067e33e372e51674adf44e68fc38117f29fe5fe7d"
+        );
+
+        let mut legacy = Hasher::new();
+        legacy.update(b"hegemon.superneo.statement.v1");
+        legacy.update(input);
+        let mut legacy_digest = [0u8; 48];
+        legacy.finalize_xof().fill(&mut legacy_digest);
+        assert_ne!(digest.0, legacy_digest);
+        assert_ne!(
+            digest.0,
+            blake2b_384_domain_hash(
+                TRANSACTION_PROOF_ARTIFACT_V2,
+                [b"ccs-statement".as_slice(), input.as_slice()],
+            )
+        );
+        assert_ne!(
+            blake2b_384_domain_hash(
+                SUPERNEO_PROOF_ARTIFACT_V2,
+                [
+                    b"ccs-statement".as_slice(),
+                    b"a".as_slice(),
+                    b"bc".as_slice()
+                ],
+            ),
+            blake2b_384_domain_hash(
+                SUPERNEO_PROOF_ARTIFACT_V2,
+                [
+                    b"ccs-statement".as_slice(),
+                    b"ab".as_slice(),
+                    b"c".as_slice()
+                ],
+            )
+        );
     }
 
     #[test]

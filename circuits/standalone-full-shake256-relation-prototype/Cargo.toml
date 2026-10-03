@@ -1,0 +1,21 @@
+[package]
+name = "hegemon-standalone-full-shake256-relation-prototype"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Isolated semantic oracle for a prospective backend. It is not a workspace
+# member and cannot activate consensus rules.
+[workspace]
+resolver = "2"
+
+[dependencies]
+sha3 = { version = "0.10.9", default-features = false }
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false

@@ -3,7 +3,8 @@ use clap::{Parser, Subcommand};
 use hegemon_formal_core::{
     blueprint_review_digests_file, check_active_goal_progress_file, check_blueprint_file,
     check_claims_file, check_formal_inventory, check_system_model_gates_file,
-    mechanized_assumption_proposition_blake3, verify_bridge_vectors_file,
+    governance_policy_inputs_digest_file, mechanized_assumption_proposition_blake3,
+    verify_bridge_vectors_file,
 };
 use std::path::PathBuf;
 
@@ -29,6 +30,9 @@ enum Command {
         claims: PathBuf,
     },
     PrintBlueprintReviewDigests {
+        path: PathBuf,
+    },
+    PrintGovernancePolicyInputsDigest {
         path: PathBuf,
     },
     VerifyBridgeVectors {
@@ -60,6 +64,9 @@ fn main() -> Result<()> {
         Command::PrintBlueprintReviewDigests { path } => {
             serde_json::to_value(blueprint_review_digests_file(&path)?)?
         }
+        Command::PrintGovernancePolicyInputsDigest { path } => serde_json::json!({
+            "blake3": governance_policy_inputs_digest_file(&path)?,
+        }),
         Command::VerifyBridgeVectors { path } => {
             serde_json::to_value(verify_bridge_vectors_file(&path)?)?
         }

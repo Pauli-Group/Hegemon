@@ -1,0 +1,123 @@
+{
+  "artifact_schema": "hegemon.hvzk-whir-backend-adapter.source-pins.v1",
+  "plonky3_checkout_head": "5df89eeadae18d6935bb874f8a92808dcc200c9d",
+  "plonky3_files": [
+    {
+      "bytes": 3270,
+      "path": "commit/src/pcs/multilinear.rs",
+      "sha512": "b4f1a10983cd89726895fa201844f0650112327826283275e37065d7cbb7296cece3c784e3aea5e13a016c2b1db31ae0ff190491a360cd2d25d94f3c6be674a4"
+    },
+    {
+      "bytes": 17681,
+      "path": "challenger/src/hash_challenger.rs",
+      "sha512": "8a06b54a3fb85450b7d9a1c08df47094bd3741e358149ffd80fa23fcd4575c48a96de5a2f22c267ff06b02aa4996255216efe7e1e9c70524aaca42191ee52e94"
+    },
+    {
+      "bytes": 17895,
+      "path": "challenger/src/serializing_challenger.rs",
+      "sha512": "c8d1444d04d8b3ee2489aeb4da2adcf533735da0c31a5a345b65eb7a6c3876803b498db6347b44e6dab2b725975f7b28887e5607d43f35c8b515a690cc4f3113"
+    },
+    {
+      "bytes": 38156,
+      "path": "field/src/extension/binomial_extension.rs",
+      "sha512": "4e09114e9813f15ff373d4265b73b9ec76827ac6c305cea9e9c1c58caa7e903db5ee648897ec7d6f72c83aec898c50d81d4e2d02bc75761b449f561b8b650d77"
+    },
+    {
+      "bytes": 10153,
+      "path": "goldilocks/src/extension.rs",
+      "sha512": "73c837919bfd74aa0fe1241088209daf5d1efd980140265897bb7044450e5f9c35c7502be986b723d74e41e7a7e367b76291214132547f96a5e6e8ce05c7b55a"
+    },
+    {
+      "bytes": 34868,
+      "path": "merkle-tree/src/mmcs/mod.rs",
+      "sha512": "8dcc21535e4b1e5070fc5ff195affd1037b17c36c1f765da07e391a29f64a2078d5e08f0f77efb463582b141d142b9e5c8819be5a59f5ce44f473b643cd68511"
+    },
+    {
+      "bytes": 18765,
+      "path": "security/src/assumption.rs",
+      "sha512": "1b70a6fe2c875ba00f2b6fcf7a888099db3978877a98601ccd26ce6158f6943938b646814787bd6b1a20dc3cf3d88d0fe7262fdd0a15ad2422189990559334cf"
+    },
+    {
+      "bytes": 5732,
+      "path": "symmetric/src/compression.rs",
+      "sha512": "4cbf335fade196d4ed9cb7023175d632a17b6a88e5836ec7b6989dc7a7b6a958788de88023adbc6506fdce570fd11b27327659d6eb0a0d4a752e967b361f072f"
+    },
+    {
+      "bytes": 7228,
+      "path": "symmetric/src/serializing_hasher.rs",
+      "sha512": "04588246b92ebfc9fc687c4608d838208ffefb00664e752406ea1bd08bfd88d894b94fb06d0784402cdc15013c10e8deae77010b6c7e488665409688620cbdb1"
+    },
+    {
+      "bytes": 1771,
+      "path": "whir/Cargo.toml",
+      "sha512": "00a1077f09f730062d0670b7a14da35b67d69cc189ca996135d9a2e1b14bf3f50de2f3464a6c3ce4db818b2cc81a9071f1768b2ddb77de2328c57f0b74d0ddb7"
+    },
+    {
+      "bytes": 24275,
+      "path": "whir/src/fiat_shamir/domain_separator.rs",
+      "sha512": "edd05c8ab324836f5ae5a2aded02eca825278f5cb542b781a78f740bd3dec32a06e0053c3560c4ec0a8c8f5b77a5d559dc2fffffdce0ed582bdfb19855f2625b"
+    },
+    {
+      "bytes": 881,
+      "path": "whir/src/lib.rs",
+      "sha512": "d7349e05a7fa595b409f39ba7026385ca8bd0ba3776deeccfafe67f9f8bff032065197a16e4b813210db7094a1f331086bd52d8c346a8b5cde03a78d37c99027"
+    },
+    {
+      "bytes": 1798,
+      "path": "whir/src/parameters/mod.rs",
+      "sha512": "bc0c4ffad0d074062a50c2f9d1beb2a0ff154f6bfc810b14368800ae61d62182b7c85ca1db93106c568045d828a1256fa7c8f5f0a7a1924df112c12b657e328c"
+    },
+    {
+      "bytes": 55010,
+      "path": "whir/src/parameters/whir.rs",
+      "sha512": "74def80b39048f426f66e8f9867c10edb8e284c979992b3cba267bac60bb3dd7ec57cc3e8f6ba76a3eb4200d9c05d9930973fd07be45ad70d52e358349d4709c"
+    },
+    {
+      "bytes": 6446,
+      "path": "whir/src/pcs/zk/adapter.rs",
+      "sha512": "cbffc7b9330e857ed76562d9ea32be3d50b5a004102844f5325c456b7076276c9dba18e4ceac1c4275075a2ab2ca468bc363124f1c635dfbbbf943f7c2fd0e40"
+    },
+    {
+      "bytes": 15944,
+      "path": "whir/src/pcs/zk/config.rs",
+      "sha512": "b63c0b6b796d9c44e1a68e28e9935d72cc1710babc3e09febb1f59d1655e5807136294fc7b07ea7ef5f29ccf596aaa0cc31a82a3299b6782db2cffdd02e74832"
+    },
+    {
+      "bytes": 4716,
+      "path": "whir/src/pcs/zk/proof.rs",
+      "sha512": "d4010520d1963fec4ba82912fd887f2e62cb1797b9b9384cd27005b003e179bae0656ff35d497037db09c845fc0a0e954c2875f7b39b04104cf09f5ab04b4ccc"
+    },
+    {
+      "bytes": 23529,
+      "path": "whir/src/pcs/zk/prover/mod.rs",
+      "sha512": "c22572ddf232c01f1f78f8e897da803ff9124178377d87a3e178a167726383bf558c87e01491da6b573c3fed5b4ca4c71d06b664c31aa3f146a3726046609531"
+    },
+    {
+      "bytes": 17720,
+      "path": "whir/src/pcs/zk/verifier/mod.rs",
+      "sha512": "a0cbb208f6b38689258e5406a7e5f74dbf924807b52fbca163fa0e315a000b2482f0ef642e28bdac413b0f51d980844cff4ed72f0eb87fe15e22591d446be12f"
+    }
+  ],
+  "repository_files": [
+    {
+      "bytes": 4337,
+      "path": ".agent/hardening/hvzk-whir-odd-field-r1cs/certificate.json",
+      "sha512": "f6b2cdc6944a55c013d5d89644579ac8e10cb20cac7e74e5887b8230c735e3b8d4adea09a130fe35e8eb0327ba99ec8ac27e119b764c3995a15d2b16375e4bfd"
+    },
+    {
+      "bytes": 107386,
+      "path": ".agent/hardening/hvzk-whir-odd-field-r1cs/compiler.py",
+      "sha512": "62bd836c41fac8691e2ff97414c33d3bb955ae2b5cb833721e811e3e52b43c1793676a98178007fc3727bad825545cd8075d06b44c467d4d54b6a3cdf70226b5"
+    },
+    {
+      "bytes": 102003,
+      "path": ".agent/hardening/hvzk-whir-odd-field-r1cs/relation_manifest.json",
+      "sha512": "dae278e46a5d2ed2c58fae4443db8b73967f2b1190336520081a6f3791c04fad63d182cc61c0e1fb75f66bdb70e9ff40d4b1b975d9295fcf3a93bf189c76607e"
+    },
+    {
+      "bytes": 224827,
+      "path": "circuits/transaction/src/full_blake2b448_relation.rs",
+      "sha512": "905ffb7e3b8b2f28ba4600ef498acddba8d9125a859adb1cb10c97a0ec4ebd993858e88b91eda6465d49f05172a31a49057203457abf04717cf9efbe7fd195d9"
+    }
+  ]
+}

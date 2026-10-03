@@ -5,6 +5,13 @@ use super::*;
 use sha2::{Digest, Sha256};
 
 const NATIVE_SYNC_CHUNK_DIGEST_DOMAIN: &[u8] = b"hegemon-native-sync-block-record-v1\0";
+const NATIVE_SYNC_CHUNK_RECORD_V3_MAGIC: [u8; 4] = *b"NSV3";
+const NATIVE_SYNC_CHUNK_RECORD_V3_HEADER_BYTES: usize = NATIVE_SYNC_CHUNK_RECORD_V3_MAGIC.len()
+    + std::mem::size_of::<u32>()
+    + std::mem::size_of::<u64>();
+const MAX_NATIVE_SYNC_CHUNK_STORED_META_V3_BYTES: usize = 4 * 1024;
+pub(crate) const NATIVE_SYNC_CHUNK_RECORD_ENCODING_V3: u8 =
+    NATIVE_STORED_BLOCK_META_SCHEMA_V3 as u8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeSyncChunkFallbackAdmissionInput {
@@ -495,27 +502,88 @@ pub(crate) fn native_sync_chunk_record_digest(
     digest.finalize().into()
 }
 
-pub(crate) fn decode_native_sync_chunk_record_exact(
+/// Exact V3 fallback record: one bounded SCALE slim row followed by the
+/// separately hash-bound canonical SCALE action body. The fixed header is
+/// parsed before either field can allocate. Legacy/current full-metadata
+/// bincode records are deliberately not accepted here: adapting their
+/// 32-byte identities into V3's typed 48-byte identities would create a new,
+/// unauthorised consensus statement.
+pub(crate) fn decode_native_sync_chunk_record_v3_exact(
     record_encoding: u8,
     bytes: &[u8],
-) -> Result<NativeBlockMeta> {
-    match record_encoding {
-        NATIVE_SYNC_CHUNK_RECORD_ENCODING_LEGACY_V1 => {
-            bincode_deserialize_legacy_v1_native_block_meta_exact(
-                bytes,
-                "legacy V1 native sync chunk block metadata",
-            )
-        }
-        NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2 => {
-            bincode_deserialize_current_native_block_meta_exact(
-                bytes,
-                "current V2 native sync chunk block metadata",
-            )
-        }
-        _ => Err(anyhow!(
-            "unsupported native sync chunk record encoding {record_encoding}"
-        )),
+) -> Result<NativeBlockMetaV3> {
+    if record_encoding != NATIVE_SYNC_CHUNK_RECORD_ENCODING_V3 {
+        return Err(anyhow!(
+            "unsupported native V3 sync chunk record encoding {record_encoding}"
+        ));
     }
+    if bytes.len() < NATIVE_SYNC_CHUNK_RECORD_V3_HEADER_BYTES {
+        return Err(anyhow!("native V3 sync chunk record header is truncated"));
+    }
+    if bytes[..NATIVE_SYNC_CHUNK_RECORD_V3_MAGIC.len()] != NATIVE_SYNC_CHUNK_RECORD_V3_MAGIC {
+        return Err(anyhow!("native V3 sync chunk record magic mismatch"));
+    }
+    let stored_len_offset = NATIVE_SYNC_CHUNK_RECORD_V3_MAGIC.len();
+    let stored_len_end = stored_len_offset + std::mem::size_of::<u32>();
+    let action_len_end = stored_len_end + std::mem::size_of::<u64>();
+    let stored_len = u32::from_le_bytes(
+        bytes[stored_len_offset..stored_len_end]
+            .try_into()
+            .expect("fixed V3 stored-metadata length slice"),
+    ) as usize;
+    let action_len = usize::try_from(u64::from_le_bytes(
+        bytes[stored_len_end..action_len_end]
+            .try_into()
+            .expect("fixed V3 action-body length slice"),
+    ))
+    .map_err(|_| anyhow!("native V3 sync chunk action-body length exceeds usize"))?;
+    if stored_len == 0 || stored_len > MAX_NATIVE_SYNC_CHUNK_STORED_META_V3_BYTES {
+        return Err(anyhow!(
+            "native V3 sync chunk stored-metadata length out of bounds: {stored_len}"
+        ));
+    }
+    if action_len == 0 || action_len > MAX_NATIVE_ACTION_BODY_V3_BYTES {
+        return Err(anyhow!(
+            "native V3 sync chunk action-body length out of bounds: {action_len}"
+        ));
+    }
+    let expected_len = action_len_end
+        .checked_add(stored_len)
+        .and_then(|len| len.checked_add(action_len))
+        .ok_or_else(|| anyhow!("native V3 sync chunk record length overflow"))?;
+    if bytes.len() != expected_len {
+        return Err(anyhow!(
+            "native V3 sync chunk record length mismatch: expected {expected_len}, got {}",
+            bytes.len()
+        ));
+    }
+    let stored_end = action_len_end + stored_len;
+    let stored = decode_scale_exact::<StoredNativeBlockMetaV3>(
+        &bytes[action_len_end..stored_end],
+        "native V3 sync chunk stored metadata",
+    )?;
+    let meta = restore_native_block_meta_v3(&stored, &bytes[stored_end..])?;
+    verify_canonical_sync_block_body_v3(&meta)?;
+    Ok(meta)
+}
+
+fn verify_canonical_sync_block_body_v3(meta: &NativeBlockMetaV3) -> Result<()> {
+    if usize::try_from(meta.tx_count).ok() != Some(meta.action_bytes.len()) {
+        return Err(anyhow!(
+            "native V3 sync block action count does not match its canonical body"
+        ));
+    }
+    let action_root = native_action_root_v3_from_action_bytes(&meta.action_bytes)?;
+    if action_root != meta.extrinsics_root {
+        return Err(anyhow!(
+            "native V3 sync block canonical action root mismatch"
+        ));
+    }
+    // Re-encoding here is intentional: it proves that the restored split row
+    // and action body reproduce one canonical self-contained V3 body before
+    // any future V3 importer may accept it.
+    encode_native_block_body_v3(meta)?;
+    Ok(())
 }
 
 fn outbound_chunk_state(state: NativeOutboundSyncRequestState) -> NativeSyncChunkOutboundState {
@@ -533,10 +601,6 @@ fn outbound_chunk_state(state: NativeOutboundSyncRequestState) -> NativeSyncChun
 }
 
 impl NativeNode {
-    pub(crate) fn best_height(&self) -> u64 {
-        self.state.read().best.height
-    }
-
     pub(crate) fn best_height_and_hash(&self) -> (u64, [u8; 32]) {
         let state = self.state.read();
         (state.best.height, state.best.hash)
@@ -845,11 +909,7 @@ impl NativeNode {
         .map_err(|rejection| {
             anyhow!("native sync chunk preflight expiry: {}", rejection.label())
         })?;
-        let supported_encoding = matches!(
-            chunk.record_encoding,
-            NATIVE_SYNC_CHUNK_RECORD_ENCODING_LEGACY_V1
-                | NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2
-        );
+        let supported_encoding = chunk.record_encoding == NATIVE_SYNC_CHUNK_RECORD_ENCODING_V3;
         let session_matches = supported_encoding
             && session.expected_height == chunk.height
             && chunk.best_height >= chunk.height
@@ -1007,11 +1067,7 @@ impl NativeNode {
                 anyhow!("native sync chunk receive expiry: {}", rejection.label())
             })?;
 
-            let supported_encoding = matches!(
-                chunk.record_encoding,
-                NATIVE_SYNC_CHUNK_RECORD_ENCODING_LEGACY_V1
-                    | NATIVE_SYNC_CHUNK_RECORD_ENCODING_CURRENT_V2
-            );
+            let supported_encoding = chunk.record_encoding == NATIVE_SYNC_CHUNK_RECORD_ENCODING_V3;
             let session_matches = supported_encoding
                 && session.expected_height == chunk.height
                 && chunk.best_height >= chunk.height
@@ -1080,7 +1136,7 @@ impl NativeNode {
         };
 
         let (
-            peer_best_height,
+            _peer_best_height,
             completed_request,
             block_hash,
             record_encoding,
@@ -1118,67 +1174,37 @@ impl NativeNode {
         #[cfg(test)]
         self.sync_chunk_record_decode_count
             .fetch_add(1, Ordering::Relaxed);
-        let decoded = decode_native_sync_chunk_record_exact(record_encoding, &bytes);
-        // The exact decoder currently materializes a decoded record and a
-        // transient canonical re-encoding. Release the assembled raw bytes as
-        // soon as that check returns, before common import/reorg preparation.
+        let decoded = decode_native_sync_chunk_record_v3_exact(record_encoding, &bytes);
+        // Release the assembled record as soon as the split-row and canonical
+        // action body have reproduced one exact self-contained V3 body.
         drop(bytes);
-        let exact_decode_accepts = decoded.is_ok();
-        let height_matches = decoded
-            .as_ref()
-            .is_ok_and(|block| block.height == completed_request.range.from_height);
-        let hash_matches = decoded
-            .as_ref()
-            .is_ok_and(|block| block.hash == block_hash && block.work_hash == block_hash);
-        let request_prefix_matches = decoded.as_ref().is_ok_and(|block| {
-            native_sync_response_is_contiguous_request_prefix(
-                completed_request.range,
-                std::slice::from_ref(block),
-            )
-        });
-        let recovery_context_matches = decoded.as_ref().is_ok_and(|block| {
-            native_sync_response_matches_recovery_context(
-                completed_request.context.expected_parent_hash,
-                completed_request.context.target_tip,
-                std::slice::from_ref(block),
-            )
-        });
-        if let Err(rejection) = evaluate_native_sync_block_chunk_completion_admission(
-            NativeSyncBlockChunkCompletionAdmissionInput {
-                assembled_len,
-                total_len,
-                digest_matches,
-                exact_decode_accepts,
-                height_matches,
-                hash_matches,
-                request_prefix_matches,
-                recovery_context_matches,
-            },
-        ) {
+        let verified_v3_block = match decoded {
+            Ok(block) => block,
+            Err(err) => {
+                self.cooldown_native_sync_chunk_request(completed_request);
+                return Err(anyhow!(
+                    "native sync block chunk completion: {}: {err}",
+                    NativeSyncChunkAdmissionRejection::RecordDecodeRejected.label()
+                ));
+            }
+        };
+        if verified_v3_block.height != completed_request.range.from_height {
             self.cooldown_native_sync_chunk_request(completed_request);
             return Err(anyhow!(
                 "native sync block chunk completion: {}",
-                rejection.label()
+                NativeSyncChunkAdmissionRejection::RecordHeightMismatch.label()
             ));
         }
-        let block = decoded.expect("completion admission requires exact decoded block");
-        if !self.finish_native_sync_chunk_request(peer_id, completed_request) {
-            self.cooldown_native_sync_chunk_request(completed_request);
-            return Err(anyhow!(
-                "native sync chunk completion lost its authorized request"
-            ));
-        }
-        Ok(NativeSyncChunkReceiveProgress::Complete {
-            peer_best_height,
-            completed_request,
-            block: Box::new(block),
-            close_request: NativeSyncBlockChunkRequest {
-                height: completed_request.range.from_height,
-                block_hash: Some(block_hash),
-                record_digest: Some(record_digest),
-                offset: total_len,
-            },
-        })
+        // The active chain importer still consumes the interim 32-byte block
+        // metadata type. There is intentionally no conversion from the V3
+        // typed 48-byte identity or recovery context. The experimental exact
+        // locator/action-body transport remains the active oversized-block
+        // path until the atomic V3 block-state cutover.
+        let _ = (assembled_len, total_len, digest_matches, verified_v3_block);
+        self.cooldown_native_sync_chunk_request(completed_request);
+        Err(anyhow!(
+            "native V3 sync chunk record cannot enter the interim 32-byte block importer before the atomic V3 cutover"
+        ))
     }
 
     pub(crate) fn offer_native_sync_block_chunk(
@@ -1228,51 +1254,11 @@ impl NativeNode {
         #[cfg(test)]
         self.sync_chunk_record_load_count
             .fetch_add(1, Ordering::Relaxed);
-        let indexed_hash = self
-            .hash_by_height(offer.height)?
-            .ok_or_else(|| anyhow!("missing canonical native sync chunk height"))?;
-        if indexed_hash != offer.block_hash {
-            return Err(anyhow!("native sync chunk offer is no longer canonical"));
-        }
-        let record = self
-            .block_tree
-            .get(offer.block_hash.as_slice())?
-            .ok_or_else(|| anyhow!("missing canonical native sync chunk block record"))?;
-        if record.is_empty() || record.len() > MAX_NATIVE_BLOCK_META_BYTES {
-            return Err(anyhow!(
-                "native sync chunk block record length out of bounds: {}",
-                record.len()
-            ));
-        }
-        let (meta, record_encoding) = detect_bincode_native_block_meta_schema_exact(
-            record.as_ref(),
-            "native sync chunk canonical block record",
-        )?;
-        if meta.height != offer.height
-            || meta.hash != offer.block_hash
-            || meta.work_hash != offer.block_hash
-        {
-            return Err(anyhow!(
-                "native sync chunk record does not match its canonical offer"
-            ));
-        }
-        self.validate_canonical_sync_block_meta(&meta)?;
-        drop(meta);
-        if self.hash_by_height(offer.height)? != Some(offer.block_hash) {
-            return Err(anyhow!(
-                "native sync chunk canonical index changed during preparation"
-            ));
-        }
-        let total_len = u64::try_from(record.len())
-            .map_err(|_| anyhow!("native sync chunk record length overflow"))?;
-        let record_digest = native_sync_chunk_record_digest(
-            record_encoding,
+        Err(anyhow!(
+            "native metadata-record chunk fallback is unavailable for interim block {} at height {}; use the exact locator/action-body transport until the atomic V3 block-store cutover",
+            hex32(&offer.block_hash),
             offer.height,
-            offer.block_hash,
-            total_len,
-            record.as_ref(),
-        );
-        Ok((record_encoding, record_digest, record))
+        ))
     }
 
     pub(crate) fn native_sync_block_chunk_for_request(

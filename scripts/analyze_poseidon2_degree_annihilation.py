@@ -125,6 +125,15 @@ def cancellation_budget(alpha: int, initial_full_left: int) -> dict[str, int]:
     }
 
 
+def root_security_floor(cardinality: int, root_degree: int) -> int:
+    bits = max(0, (cardinality.bit_length() - 1) // root_degree)
+    while (1 << (root_degree * (bits + 1))) <= cardinality:
+        bits += 1
+    while (1 << (root_degree * bits)) > cardinality:
+        bits -= 1
+    return bits
+
+
 def build_report() -> dict[str, Any]:
     constants = parse_constants()
     source = POSEIDON2_CONSTANTS_RS.read_text()
@@ -142,6 +151,8 @@ def build_report() -> dict[str, Any]:
     digest_fields = rate
     digest_bits = digest_fields * field_bits
     digest_bytes = digest_fields * 8
+    digest_cardinality = modulus**digest_fields
+    quantum_collision_floor = root_security_floor(digest_cardinality, 3)
 
     if count_array_entries("INTERNAL_ROUND_CONSTANTS", source) != internal_rounds:
         raise ValueError("Poseidon2 internal-round constant count does not match constants.rs")
@@ -242,11 +253,14 @@ def build_report() -> dict[str, Any]:
             "digest_bytes": digest_bytes,
         },
         "security_budget": {
+            "digest_cardinality": str(digest_cardinality),
             "digest_bits_from_field_limbs": digest_bits,
             "classical_collision_bits": digest_bits / 2.0,
             "quantum_collision_bits_bht": digest_bits / 3.0,
             "classical_preimage_bits": digest_bits,
             "quantum_preimage_bits_grover": digest_bits / 2.0,
+            "exact_quantum_collision_exponent_ceiling_bits": quantum_collision_floor,
+            "strict_128_bit_quantum_collision_gate": digest_cardinality >= (1 << 384),
         },
         "degree_budget_model": {
             "description": (
@@ -262,7 +276,7 @@ def build_report() -> dict[str, Any]:
             "residual_cico2_check_bits": residual_cico2_bits,
         },
         "local_judgment": {
-            "status": "no_practical_break_found",
+            "status": "no_practical_reduced_round_break_found_but_strict_pq128_gate_fails",
             "summary": (
                 "The paper is a real review trigger, but its concrete reduced-round CICO-2 "
                 "attacks do not transfer to Hegemon's full 6-limb Poseidon2-384 digest. Under "
@@ -270,7 +284,10 @@ def build_report() -> dict[str, Any]:
                 "49; reducing one effective alpha factor requires 43 coefficient cancellations "
                 "before output constraints, far beyond the paper-style control budget. A "
                 "CICO-2-style solver also leaves four Hegemon output limbs unchecked, adding "
-                "about 256 bits of residual field constraints if handled by root filtering."
+                "about 256 bits of residual field constraints if handled by root filtering. "
+                "Separately, six Goldilocks output/capacity words have an exact generic "
+                "quantum-collision exponent ceiling of only 127 bits, so this no-break result cannot "
+                "authorize the strict 128-bit production claim."
             ),
             "not_a_proof": (
                 "This report is an engineering cryptanalysis note, not a formal lower bound. "
@@ -294,8 +311,10 @@ def check_report(report: dict[str, Any]) -> None:
         raise SystemExit("unexpected Hegemon Poseidon2 S-box degree")
     if params["total_full_rounds"] != 8 or params["internal_partial_rounds"] != 22:
         raise SystemExit("unexpected Hegemon Poseidon2 round count")
-    if report["security_budget"]["quantum_collision_bits_bht"] < 127.9:
-        raise SystemExit("digest quantum-collision budget fell below 128-bit target")
+    if report["security_budget"]["exact_quantum_collision_exponent_ceiling_bits"] != 127:
+        raise SystemExit("six-word digest quantum-collision exponent ceiling drifted")
+    if report["security_budget"]["strict_128_bit_quantum_collision_gate"]:
+        raise SystemExit("six-word digest unexpectedly passed the strict PQ128 gate")
 
     table = report["degree_budget_model"]["conservative_two_full_skip_annihilation_table"]
     first = table[1]

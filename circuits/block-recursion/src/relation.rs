@@ -728,6 +728,19 @@ fn digest_words_v1(digest: &Digest32) -> [u64; DIGEST_WORDS_V1] {
     out
 }
 
+fn legacy_digest32_v1<const N: usize>(
+    digest: &[u8; N],
+) -> Result<Digest32, TransactionCircuitError> {
+    if N < 32 || digest[32..].iter().any(|&byte| byte != 0) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "historical recursive proof digest is not canonically 32 bytes",
+        ));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest[..32]);
+    Ok(out)
+}
+
 fn nonce_words_v1(nonce: &[u8; 4]) -> [u64; 1] {
     [u32::from_le_bytes(*nonce) as u64]
 }
@@ -744,14 +757,16 @@ fn flatten_u32_words_v1(values: &[u32]) -> Vec<u64> {
     values.iter().map(|&value| value as u64).collect()
 }
 
-fn flatten_auth_path_words_v1(paths: &[Vec<Digest32>]) -> Vec<u64> {
+fn flatten_auth_path_words_v1<const N: usize>(
+    paths: &[Vec<[u8; N]>],
+) -> Result<Vec<u64>, TransactionCircuitError> {
     let mut out = Vec::new();
     for path in paths {
         for node in path {
-            out.extend_from_slice(&digest_words_v1(node));
+            out.extend_from_slice(&digest_words_v1(&legacy_digest32_v1(node)?));
         }
     }
-    out
+    Ok(out)
 }
 
 #[derive(Clone, Debug)]
@@ -1003,6 +1018,12 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
     ensure_row_polynomial_arithmetization(relation)?;
     let proof_trace = decode_smallwood_proof_trace_v1(&proof_bytes)?;
     validate_proof_shape(&cfg, &proof_trace)?;
+    let legacy_h_piop = legacy_digest32_v1(&proof_trace.h_piop)?;
+    for path in proof_trace.decs_auth_paths_v1() {
+        for node in path {
+            let _ = legacy_digest32_v1(node)?;
+        }
+    }
     let binding_words =
         smallwood_binding_words_v1(&recursive_binding_bytes_v1(&descriptor, &binding))?;
     let eval_points = xof_piop_opening_points(
@@ -1027,6 +1048,7 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
         proof_trace.pcs_rcombi_tails_v1(),
         SmallwoodTranscriptBackend::Poseidon2,
     );
+    let legacy_decs_trans_hash = legacy_digest32_v1(&decs_trans_hash)?;
     let (decs_leaf_indexes, decs_nonce) = xof_decs_opening(
         cfg.profile_v1().decs_nb_evals,
         cfg.profile_v1().decs_nb_opened_evals,
@@ -1054,6 +1076,7 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
         &proof_trace,
         SmallwoodTranscriptBackend::Poseidon2,
     )?;
+    let legacy_root_digest = legacy_digest32_v1(&root_digest)?;
     let pcs_transcript_words = decs_commitment_transcript(
         &cfg,
         &proof_trace.salt,
@@ -1090,7 +1113,7 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
     transcript_words.extend_from_slice(&pcs_transcript_words);
     transcript_words.extend_from_slice(&piop_input_words);
     transcript_words.extend_from_slice(&piop_transcript_words);
-    transcript_words.extend_from_slice(&digest_words_v1(&proof_trace.h_piop));
+    transcript_words.extend_from_slice(&digest_words_v1(&legacy_h_piop));
     transcript_words.push(accept as u64);
     let mut pcs_words = Vec::new();
     pcs_words.extend_from_slice(&flatten_matrix_words_v1(
@@ -1101,10 +1124,10 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
     pcs_words.extend_from_slice(&flatten_matrix_words_v1(proof_trace.pcs_subset_evals_v1()));
     pcs_words.extend_from_slice(&flatten_matrix_words_v1(&coeffs));
     pcs_words.extend_from_slice(&flatten_matrix_words_v1(&combi_heads));
-    pcs_words.extend_from_slice(&digest_words_v1(&decs_trans_hash));
+    pcs_words.extend_from_slice(&digest_words_v1(&legacy_decs_trans_hash));
     pcs_words.extend_from_slice(&pcs_transcript_words);
     let mut decs_words = Vec::new();
-    decs_words.extend_from_slice(&digest_words_v1(&decs_trans_hash));
+    decs_words.extend_from_slice(&digest_words_v1(&legacy_decs_trans_hash));
     decs_words.extend_from_slice(&flatten_u32_words_v1(&decs_leaf_indexes));
     decs_words.extend_from_slice(&nonce_words_v1(&decs_nonce));
     decs_words.extend_from_slice(&decs_eval_points);
@@ -1117,8 +1140,8 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
     merkle_words.extend_from_slice(&flatten_matrix_words_v1(&rows));
     merkle_words.extend_from_slice(&flatten_auth_path_words_v1(
         proof_trace.decs_auth_paths_v1(),
-    ));
-    merkle_words.extend_from_slice(&digest_words_v1(&root_digest));
+    )?);
+    merkle_words.extend_from_slice(&digest_words_v1(&legacy_root_digest));
 
     let components = RecomputedPreviousProofComponentsV1 {
         descriptor,
@@ -1133,7 +1156,7 @@ fn recompute_previous_proof_components_from_proof_bytes_v1(
         decs_leaf_indexes,
         decs_eval_points,
         rows,
-        root_digest,
+        root_digest: legacy_root_digest,
         pcs_transcript_words,
         piop_input_words,
         piop_gamma_prime,

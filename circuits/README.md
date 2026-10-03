@@ -1,25 +1,25 @@
 # `circuits/`: Transaction and Block Proving
 
-This directory contains the STARK-friendly circuits plus their benchmarking harness:
+This directory contains the STARK-friendly circuits and their checked production bindings:
 
 - `transaction/` – constraint system for individual shielded transactions.
-- `transaction-core/` – no_std shared constants, hashing, AIR, and verifier helpers.
-- `batch/` – batch transaction circuit for multiple transactions in one proof.
-- `block/` – aggregates multiple transaction proofs with ledger commitments.
-- `epoch/` – recursive proof aggregation for epoch-level commitments.
-- `settlement/` – settlement batch commitment circuit.
-- `bench/` – `circuits-bench` CLI that compiles both circuits, generates witnesses, and optionally verifies proofs.
+- `transaction-core/` – no_std shared constants and field/hash helpers.
+- `block/` – historical block-proof wrappers and statement helpers.
+- `block-recursion/` – historical recursive-block verification retained for chain replay.
 
 ## Quickstart
 
 ```bash
 cargo test -p transaction-circuit
 cargo test -p block-circuit
-cargo test -p settlement-circuit
-cargo run -p circuits-bench -- --smoke --prove
+cargo test -p transaction-circuit \
+  compressed_level5_radix2_roundtrip_benchmark \
+  --release -- --ignored --nocapture
 ```
 
-The bench binary accepts `--iterations <N>` to control workload size and `--no-prove` to skip verifier checks when profiling witness generation only.
+The ignored release benchmark constructs, proves, parses, and verifies both the
+64-lane production candidate and the 128-lane comparison candidate. Its output
+is the authoritative proof-size/prove-time/verify-time Pareto measurement.
 
 ## Doc Sync
 

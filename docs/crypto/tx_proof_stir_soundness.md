@@ -1,6 +1,8 @@
 # Transaction Proof STIR Spike And Release Gate
 
-This note records the exact Hegemon-specific STIR spike, the conservative release gate applied to it, and the measured outcome on the current transaction-proof surface.
+This archived note records the conservative release gate and measured outcome of
+the retired Hegemon STIR experiment. The experiment predates the SmallWood-only
+production path and is retained only as a negative parameter-study result.
 
 It is intentionally narrow. This is not a claim that Hegemon has a production STIR backend. It is the exact engineering note needed to answer one product question:
 
@@ -12,17 +14,10 @@ The answer from the current spike is no.
 
 The spike does not touch the transaction statement, witness generation path, or main prover/verifier release plumbing.
 
-The preserved Hegemon surfaces are:
-
-- [p3_air.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction-core/src/p3_air.rs)
-- [p3_prover.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/p3_prover.rs)
-- [proof.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/proof.rs)
-
-The spike is isolated in:
-
-- [main.rs](/Users/pldd/Projects/Reflexivity/Hegemon/spikes/stir-tx-pcs/src/main.rs)
-- [Cargo.toml](/Users/pldd/Projects/Reflexivity/Hegemon/spikes/stir-tx-pcs/Cargo.toml)
-- [tx_proof_stir_spike.json](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_stir_spike.json)
+The retained measurement artifact is
+[tx_proof_stir_spike.json](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_stir_spike.json).
+The obsolete authoring prototype and its retired transaction-AIR dependencies
+have been removed from the repository.
 
 ## Exact Hegemon-matched surface
 
@@ -42,11 +37,8 @@ The code-derived tx proof surface used for the STIR spike is:
 - starting rate: `2^-4`
 - security target: `128`
 
-Those values come from:
-
-- [p3_air.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction-core/src/p3_air.rs)
-- [p3_config.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction-core/src/p3_config.rs)
-- [lib.rs](/Users/pldd/Projects/Reflexivity/Hegemon/protocol/versioning/src/lib.rs)
+Those values are frozen in the retained measurement artifact and are not
+parameters of the current SmallWood production proof.
 
 ## Conservative release gate
 
@@ -57,10 +49,6 @@ The release gate used by the spike is therefore stricter than the prototype defa
 - `SoundnessType::Provable` only
 - `protocol_security_level >= 128`
 - every derived STIR `pow_bits` entry must be `0`
-
-This exact gate is encoded in:
-
-- [main.rs](/Users/pldd/Projects/Reflexivity/Hegemon/spikes/stir-tx-pcs/src/main.rs)
 
 Why this is conservative:
 
@@ -158,13 +146,6 @@ So the correct product decision is:
 - keep the current release tx FRI profile unchanged
 - treat STIR as a measured negative result for the current `2x` goal on this exact tx circuit
 
-## Reproduction
-
-From the repository root:
-
-```sh
-cargo run --manifest-path spikes/stir-tx-pcs/Cargo.toml --release -- --json > docs/crypto/tx_proof_stir_spike.json
-cargo test --manifest-path spikes/stir-tx-pcs/Cargo.toml
-```
-
-The spike is additive and does not modify the live transaction prover path.
+The retired experiment is not a supported reproduction target. Current proof
+measurements use the SmallWood 64/128 release benchmark documented in
+`tx_proof_smallwood_no_grinding_soundness.md`.

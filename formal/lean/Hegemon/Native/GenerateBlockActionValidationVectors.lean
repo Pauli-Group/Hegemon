@@ -15,6 +15,14 @@ def natListJson : List Nat -> String
   | [] => "[]"
   | head :: tail => "[" ++ toString head ++ natListTailJson tail ++ "]"
 
+def boolListTailJson : List Bool -> String
+  | [] => ""
+  | head :: tail => ", " ++ boolJson head ++ boolListTailJson tail
+
+def boolListJson : List Bool -> String
+  | [] => "[]"
+  | head :: tail => "[" ++ boolJson head ++ boolListTailJson tail ++ "]"
+
 def optionNatJson : Option Nat -> String
   | none => "null"
   | some value => toString value
@@ -93,6 +101,16 @@ def rejectionJson :
       "\"transfer_sidecar_ciphertext_size_missing\""
   | Except.error BlockActionReject.transferSidecarCiphertextSizeMismatch =>
       "\"transfer_sidecar_ciphertext_size_mismatch\""
+
+def coinbasePlacementRejectionJson :
+    Except CoinbasePlacementReject CoinbasePlacementSummary -> String
+  | Except.ok _ => "null"
+  | Except.error CoinbasePlacementReject.missingRequiredCoinbase =>
+      "\"missing_required_coinbase\""
+  | Except.error CoinbasePlacementReject.multipleCoinbase =>
+      "\"multiple_coinbase\""
+  | Except.error CoinbasePlacementReject.coinbaseNotFinal =>
+      "\"coinbase_not_final\""
 
 def scopeJson (scope : ScopeInput) : String :=
   "          \"scope\": {\n"
@@ -186,12 +204,36 @@ def caseJson
         BlockActionValidationSummary.lastTransferKey ++ "\n"
     ++ "    }"
 
+def coinbasePlacementCaseJson
+    (name : String)
+    (input : CoinbasePlacementInput) : String :=
+  let summary := coinbasePlacementSummary input
+  let result := evaluateCoinbasePlacementAdmission input
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"require_coinbase\": "
+      ++ boolJson input.requireCoinbase ++ ",\n"
+    ++ "      \"action_is_coinbase\": "
+      ++ boolListJson input.actionIsCoinbase ++ ",\n"
+    ++ "      \"expected_coinbase_count\": "
+      ++ toString summary.coinbaseCount ++ ",\n"
+    ++ "      \"expected_single_coinbase_is_final\": "
+      ++ boolJson summary.singleCoinbaseIsFinal ++ ",\n"
+    ++ "      \"expected_valid\": "
+      ++ boolJson
+        (match result with | Except.ok _ => true | Except.error _ => false)
+      ++ ",\n"
+    ++ "      \"expected_rejection\": "
+      ++ coinbasePlacementRejectionJson result ++ "\n"
+    ++ "    }"
+
 def actionCountMismatchValidation : BlockActionValidationInput :=
   { validMixedValidation with actionCountMatches := false }
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
+    ++ "  \"active_v2_coinbase_required\": false,\n"
     ++ "  \"block_action_validation_cases\": [\n"
     ++ caseJson "valid-mixed-validation" validMixedValidation ++ ",\n"
     ++ caseJson "nontransfer-between-transfers"
@@ -220,6 +262,22 @@ def vectorJson : String :=
       transferStateRejectValidation ++ ",\n"
     ++ caseJson "transfer-state-stablecoin-policy-rejected"
       transferStateStablecoinPolicyRejectValidation ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"coinbase_placement_cases\": [\n"
+    ++ coinbasePlacementCaseJson "optional-coinbase-omission-accepted"
+      { requireCoinbase := false, actionIsCoinbase := [false] } ++ ",\n"
+    ++ coinbasePlacementCaseJson "required-coinbase-omission-rejected"
+      { requireCoinbase := true, actionIsCoinbase := [false] } ++ ",\n"
+    ++ coinbasePlacementCaseJson "first-coinbase-rejected"
+      { requireCoinbase := false, actionIsCoinbase := [true, false] } ++ ",\n"
+    ++ coinbasePlacementCaseJson "middle-coinbase-rejected"
+      { requireCoinbase := false,
+        actionIsCoinbase := [false, true, false] } ++ ",\n"
+    ++ coinbasePlacementCaseJson "multiple-coinbase-rejected-before-placement"
+      { requireCoinbase := false,
+        actionIsCoinbase := [true, false, true] } ++ ",\n"
+    ++ coinbasePlacementCaseJson "single-final-coinbase-accepted"
+      { requireCoinbase := false, actionIsCoinbase := [false, true] } ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

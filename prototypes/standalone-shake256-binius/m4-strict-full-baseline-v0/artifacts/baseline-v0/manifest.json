@@ -1,0 +1,73 @@
+{
+  "artifact": {
+    "canonical_envelope_bytes": 1626396,
+    "canonical_envelope_sha256": "7ed7e55a361def842a237e2d2d85e765f80d811f21785a8f85d5eba17a39eb37",
+    "canonical_envelope_shake256_512": "50a387acaa3a0d6c5942181357543a75dce982b31ce831f89ef2c0d4db5e0be33e764d85555086092a31610412005a8aa04c128f2effd5985eaf57afb340915a",
+    "forgery_control_envelope_bytes": 1626396,
+    "forgery_control_envelope_sha256": "3a30883772a47e42d165c1e19c4e79cc076ace56a9dee23c4cecf35eb1a801da",
+    "per_repetition_proof_bytes": [
+      542080,
+      542080,
+      542080
+    ],
+    "statement_sha256": "e3b67fdc45f0a925bc693f9611be1790c25560d748b17d8d31cf0ea8be677eac"
+  },
+  "backend": {
+    "challenge_field_per_copy": "BinaryField128bGhash",
+    "coefficient_patch_sha256": "684ad2cde0d49fcb095fd542990dd3dcfa246d7a0378b7ec8f7377fcfa9d2c54",
+    "grouped_patch_sha256": "37dfdee589e476c09fe5c955bd46942cd5aa293a3177d7a43d07f14aeb8ef9df",
+    "hash_suite": "StrictShake256HashSuite",
+    "log_inverse_rate": 3,
+    "proof_hash": "SHAKE256-512",
+    "sequential_repetitions": 3,
+    "source_bundle_sha256": "f576545e9f606a5047d62487bef740908687be16f30756394c8a8e63d02b947e",
+    "upstream_revision": "3f96163049f680b2909f6545690bd929f1b48c44"
+  },
+  "gates": {
+    "each_repetition_transcript_finalized": true,
+    "exact_envelope_consumption": true,
+    "fresh_alternate_statement_proof_verified": true,
+    "fresh_alternate_statement_replay_rejected": true,
+    "honest_roundtrip": true,
+    "proof_mutations_rejected": true,
+    "statement_mutation_rejected": true,
+    "trailing_bytes_rejected": true,
+    "truncation_rejected": true
+  },
+  "relation": {
+    "and_constraints": 51449,
+    "keccak_f": 83,
+    "maximum_full_m4": true,
+    "numbered_chips": 0,
+    "private_words": 52374,
+    "public_words": 114,
+    "statement_bytes": 853
+  },
+  "schema": "hegemon.full-m4.strict-repeated-zk-baseline.v1",
+  "security": {
+    "complete_zk_basis": "pinned upstream ZK wrapper plus grouped precommit/private Phase-A relation; sequential composition uses independent fresh coins",
+    "composed_union_bound_bits": 143.96465318354095,
+    "domain_separated_sequential_repetition": true,
+    "fresh_os_randomness_per_repetition": true,
+    "grouped_precommit_private_relation_active": true,
+    "per_copy_classical_bits": 96.0,
+    "production_authorized": false,
+    "proof_hash_quantum_collision_bits": 170.66666666666666,
+    "qrom_square_root_protocol_bits": 144.0,
+    "remaining_release_gates": [
+      "independent review of the grouped joint simulator and QROM direct-product reduction",
+      "arbitrary-input Rust/M4 refinement certificate",
+      "production action and wallet parser integration",
+      "proof must satisfy the production 512-KiB envelope cap"
+    ],
+    "repeated_classical_bits": 288.0,
+    "semantic_hash_quantum_collision_bits": 149.33333333333334,
+    "stock_wrapper_without_grouped_repair": false
+  },
+  "status": "strict-baseline-not-production-authorized",
+  "timing_ms": {
+    "canonical_prove": 2856.486958,
+    "forgery_control_prove": 2799.48275,
+    "setup": 335.793209
+  }
+}

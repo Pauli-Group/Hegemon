@@ -10,6 +10,8 @@ use chacha20poly1305::{
     aead::{Aead, Payload},
     ChaCha20Poly1305, KeyInit,
 };
+use fs2::FileExt;
+use hegemon_hash384::ActionId48;
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use state_merkle::CommitmentTree;
@@ -27,10 +29,27 @@ use crate::multisig::{
     MultisigAccountPublic, MultisigAccountRecord,
 };
 use crate::notes::MemoPlaintext;
+use crate::poseidon2_v8_sync::{
+    Poseidon2V8CanonicalBlock, Poseidon2V8CanonicalTip, Poseidon2V8OwnedNoteView,
+    Poseidon2V8SpendContext, Poseidon2V8SyncDelta, Poseidon2V8WalletState,
+};
+use crate::submission::ProvisionalActionId48;
 use crate::tx_builder::PreparedMultisigFinalPlan;
 use crate::viewing::{FullViewingKey, IncomingViewingKey, OutgoingViewingKey, RecoveredNote};
 
-const FILE_VERSION: u32 = 9;
+#[path = "poseidon2_v8_reservations.rs"]
+mod poseidon2_v8_reservations;
+use poseidon2_v8_reservations::StoredPoseidon2V8Reservation;
+pub use poseidon2_v8_reservations::{
+    Poseidon2V8ReservationStatus, Poseidon2V8ReservationView, Poseidon2V8SpendReservation,
+};
+
+/// V12 appends durable V8 input reservations. V11 remains the exact
+/// pre-reservation positional bincode schema, including its V8 mirror.
+const FILE_VERSION: u32 = 12;
+const LEGACY_FILE_VERSION_V11: u32 = 11;
+const LEGACY_FILE_VERSION_V10: u32 = 10;
+const LEGACY_FILE_VERSION_V9: u32 = 9;
 const LEGACY_FILE_VERSION_V8: u32 = 8;
 const LEGACY_FILE_VERSION_V7: u32 = 7;
 const LEGACY_FILE_VERSION_V6: u32 = 6;
@@ -62,6 +81,9 @@ where
 #[derive(Debug)]
 pub struct WalletStore {
     path: PathBuf,
+    /// A stable sibling inode: wallet writes replace the encrypted file.
+    _file_lock: Option<fs::File>,
+    read_only: bool,
     key: [u8; KEY_LEN],
     salt: [u8; SALT_LEN],
     state: Mutex<WalletState>,
@@ -82,10 +104,30 @@ impl WalletStore {
         Self::create_from_root(path, passphrase, root)
     }
 
+    /// Create a new full wallet without replacing a store that already exists.
+    /// The existence check is performed while holding the writer lock.
+    pub fn create_full_if_missing<P: AsRef<Path>>(
+        path: P,
+        passphrase: &str,
+    ) -> Result<Self, WalletError> {
+        let mut rng = OsRng;
+        let root = RootSecret::from_rng(&mut rng);
+        Self::create_from_root_inner(path, passphrase, root, true)
+    }
+
     pub fn create_from_root<P: AsRef<Path>>(
         path: P,
         passphrase: &str,
         root: RootSecret,
+    ) -> Result<Self, WalletError> {
+        Self::create_from_root_inner(path, passphrase, root, false)
+    }
+
+    fn create_from_root_inner<P: AsRef<Path>>(
+        path: P,
+        passphrase: &str,
+        root: RootSecret,
+        fail_if_exists: bool,
     ) -> Result<Self, WalletError> {
         let derived = root.derive();
         let ivk = IncomingViewingKey::from_keys(&derived);
@@ -113,8 +155,10 @@ impl WalletStore {
             genesis_hash: None,
             multisig_accounts: Vec::new(),
             local_note_openings: Vec::new(),
+            poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
         };
-        Self::create_with_state(path, passphrase, state)
+        Self::create_with_state(path, passphrase, state, fail_if_exists)
     }
 
     pub fn import_viewing_key<P: AsRef<Path>>(
@@ -144,20 +188,29 @@ impl WalletStore {
             genesis_hash: None,
             multisig_accounts: Vec::new(),
             local_note_openings: Vec::new(),
+            poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
         };
-        Self::create_with_state(path, passphrase, state)
+        Self::create_with_state(path, passphrase, state, false)
     }
 
     fn create_with_state<P: AsRef<Path>>(
         path: P,
         passphrase: &str,
         state: WalletState,
+        fail_if_exists: bool,
     ) -> Result<Self, WalletError> {
+        let (path, file_lock) = lock_wallet_file(path.as_ref())?;
+        if fail_if_exists && path.exists() {
+            return Err(WalletError::StoreAlreadyExists);
+        }
         let mut salt = [0u8; SALT_LEN];
         OsRng.fill_bytes(&mut salt);
         let key = derive_key(passphrase, &salt)?;
         let store = WalletStore {
-            path: path.as_ref().to_path_buf(),
+            path,
+            _file_lock: Some(file_lock),
+            read_only: false,
             key,
             salt,
             state: Mutex::new(state),
@@ -168,7 +221,23 @@ impl WalletStore {
     }
 
     pub fn open<P: AsRef<Path>>(path: P, passphrase: &str) -> Result<Self, WalletError> {
-        let bytes = fs::read(path.as_ref())?;
+        Self::open_inner(path.as_ref(), passphrase, false)
+    }
+
+    /// Decrypt one coherent atomic disk snapshot while another process owns
+    /// the writer. This handle cannot mutate, migrate or recover reservations.
+    pub fn open_read_only<P: AsRef<Path>>(path: P, passphrase: &str) -> Result<Self, WalletError> {
+        Self::open_inner(path.as_ref(), passphrase, true)
+    }
+
+    fn open_inner(path: &Path, passphrase: &str, read_only: bool) -> Result<Self, WalletError> {
+        let (path, file_lock) = if read_only {
+            (path.to_path_buf(), None)
+        } else {
+            let (path, lock) = lock_wallet_file(path)?;
+            (path, Some(lock))
+        };
+        let bytes = fs::read(&path)?;
         let file: WalletFile = deserialize_exact(&bytes)?;
         let key = derive_key(passphrase, &file.salt)?;
         let cipher = ChaCha20Poly1305::new(&key.into());
@@ -181,8 +250,11 @@ impl WalletStore {
                 },
             )
             .map_err(|_| WalletError::DecryptionFailure)?;
-        let state: WalletState = match file.version {
+        let mut state: WalletState = match file.version {
             FILE_VERSION => deserialize_wallet_state(&plaintext)?,
+            LEGACY_FILE_VERSION_V11 => deserialize_wallet_state_v11(&plaintext)?,
+            LEGACY_FILE_VERSION_V10 => deserialize_wallet_state_v10(&plaintext)?,
+            LEGACY_FILE_VERSION_V9 => deserialize_wallet_state_v9(&plaintext)?,
             LEGACY_FILE_VERSION_V8 => deserialize_wallet_state_v8(&plaintext)?,
             LEGACY_FILE_VERSION_V7 => deserialize_wallet_state_v7(&plaintext)?,
             LEGACY_FILE_VERSION_V6 => deserialize_wallet_state_v6(&plaintext)?,
@@ -192,13 +264,30 @@ impl WalletStore {
                 )));
             }
         };
-        Ok(WalletStore {
-            path: path.as_ref().to_path_buf(),
+        // Exclusive file ownership proves no live builder can still submit
+        // these pre-RPC records. Submitted/uncertain records survive restart.
+        let abandoned_proving = state
+            .poseidon2_v8_reservations
+            .iter()
+            .any(|record| record.status == Poseidon2V8ReservationStatus::Proving);
+        if !read_only {
+            state
+                .poseidon2_v8_reservations
+                .retain(|record| record.status != Poseidon2V8ReservationStatus::Proving);
+        }
+        let store = WalletStore {
+            path,
+            _file_lock: file_lock,
+            read_only,
             key,
             salt: file.salt,
             state: Mutex::new(state),
             commitment_tree_cache: Mutex::new(None),
-        })
+        };
+        if !read_only && (abandoned_proving || file.version != FILE_VERSION) {
+            store.write_locked()?;
+        }
+        Ok(store)
     }
 
     pub fn mode(&self) -> Result<WalletMode, WalletError> {
@@ -334,19 +423,97 @@ impl WalletStore {
     /// Preserves keys and addresses. Use when chain has been reset.
     pub fn reset_sync_state(&self) -> Result<(), WalletError> {
         self.with_mut(|state| {
-            state.notes.clear();
-            state.pending.clear();
-            state.recent.clear();
-            state.commitments.clear();
-            state.commitment_sources.clear();
-            state.next_commitment_index = 0;
-            state.next_ciphertext_index = 0;
-            state.last_synced_height = 0;
-            state.last_synced_block_hash = None;
-            state.genesis_hash = None;
+            reset_legacy_sync_fields(state, true);
+            state.poseidon2_v8.clear();
             self.invalidate_commitment_tree_cache()?;
             Ok(())
         })
+    }
+
+    /// Reset only the historical 48-byte mirror while preserving the V8
+    /// canonical journal so a same-genesis reorg can detach exactly.
+    pub(crate) fn reset_legacy_sync_state_preserving_v8(&self) -> Result<(), WalletError> {
+        self.with_mut(|state| {
+            reset_legacy_sync_fields(state, false);
+            self.invalidate_commitment_tree_cache()?;
+            Ok(())
+        })
+    }
+
+    pub fn ensure_poseidon2_v8_genesis(&self, hash: [u8; 32]) -> Result<(), WalletError> {
+        self.with_poseidon2_v8_mut(|mirror, _| mirror.ensure_genesis(hash))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ensure_poseidon2_v8_genesis_for_test(
+        &self,
+        hash: [u8; 32],
+        stablecoin_root: crate::poseidon2_v8_sync::Poseidon2V8Digest,
+    ) -> Result<(), WalletError> {
+        self.with_poseidon2_v8_mut(|mirror, _| {
+            mirror.ensure_genesis_for_test(hash, stablecoin_root)
+        })
+    }
+
+    /// Initialize an explicit retained development mirror. This feature-gated
+    /// helper neither selects nor installs production proof authority.
+    #[cfg(any(test, feature = "poseidon2-v8-retained-test-support"))]
+    pub fn ensure_poseidon2_v8_genesis_for_retained_test(
+        &self,
+        context: crate::poseidon2_v8_sync::Poseidon2V8RetainedTestContext,
+    ) -> Result<(), WalletError> {
+        self.with_poseidon2_v8_mut(|mirror, _| mirror.ensure_genesis_for_retained_test(context))
+    }
+
+    pub fn poseidon2_v8_tip(&self) -> Result<Poseidon2V8CanonicalTip, WalletError> {
+        self.with_state(|state| state.poseidon2_v8.tip())
+    }
+
+    pub fn poseidon2_v8_canonical_hash(
+        &self,
+        height: u64,
+    ) -> Result<Option<[u8; 32]>, WalletError> {
+        self.with_state(|state| Ok(state.poseidon2_v8.canonical_hash(height)))
+    }
+
+    pub fn poseidon2_v8_owned_notes(&self) -> Result<Vec<Poseidon2V8OwnedNoteView>, WalletError> {
+        self.with_state(|state| state.poseidon2_v8.owned_notes())
+    }
+
+    pub fn poseidon2_v8_spend_context(&self) -> Result<Poseidon2V8SpendContext, WalletError> {
+        self.with_state(|state| {
+            state
+                .poseidon2_v8
+                .spend_context(&state.reserved_poseidon2_v8_nullifiers())
+        })
+    }
+
+    pub fn apply_poseidon2_v8_canonical_block(
+        &self,
+        block: &Poseidon2V8CanonicalBlock,
+    ) -> Result<Poseidon2V8SyncDelta, WalletError> {
+        self.with_poseidon2_v8_mut(|mirror, keys| mirror.apply_block(block, keys))
+    }
+
+    /// Mirror a retained test node's verified canonical actions using an
+    /// explicit, bounded development context. No production resolver changes.
+    #[cfg(any(test, feature = "poseidon2-v8-retained-test-support"))]
+    pub fn apply_poseidon2_v8_canonical_block_for_retained_test(
+        &self,
+        block: &Poseidon2V8CanonicalBlock,
+        context: crate::poseidon2_v8_sync::Poseidon2V8RetainedTestContext,
+    ) -> Result<Poseidon2V8SyncDelta, WalletError> {
+        self.with_poseidon2_v8_mut(|mirror, keys| {
+            mirror.apply_block_for_retained_test(block, keys, context)
+        })
+    }
+
+    pub fn rollback_poseidon2_v8_to(
+        &self,
+        height: u64,
+        block_hash: [u8; 32],
+    ) -> Result<(), WalletError> {
+        self.with_poseidon2_v8_mut(|mirror, _| mirror.rollback_to(height, block_hash))
     }
 
     /// Repair note positions by re-mapping commitments to indices.
@@ -822,7 +989,16 @@ impl WalletStore {
                 .iter()
                 .enumerate()
                 .filter(|(_, note)| {
-                    note.note.note.asset_id == asset_id && !note.spent && !note.pending_spend
+                    let commitment = transaction_circuit::hashing_pq::felts_to_bytes48(
+                        &note.note.note_data.commitment(),
+                    );
+                    let uses_private_auth = state.local_note_openings.iter().any(|opening| {
+                        opening.commitment == commitment && opening.uses_private_auth()
+                    });
+                    note.note.note.asset_id == asset_id
+                        && !note.spent
+                        && !note.pending_spend
+                        && !uses_private_auth
                 })
                 .map(|(idx, note)| SpendableNote {
                     index: idx,
@@ -1118,7 +1294,7 @@ impl WalletStore {
 
     pub fn find_outgoing_disclosure(
         &self,
-        tx_id: &[u8; 32],
+        tx_id: &ActionId48,
         output_index: u32,
     ) -> Result<Option<OutgoingDisclosureRecord>, WalletError> {
         self.with_state(|state| {
@@ -1132,7 +1308,33 @@ impl WalletStore {
 
     pub fn record_outgoing_disclosures(
         &self,
-        tx_id: [u8; 32],
+        tx_id: ActionId48,
+        genesis_hash: [u8; 32],
+        outputs: Vec<OutgoingDisclosureDraft>,
+    ) -> Result<(), WalletError> {
+        self.record_outgoing_disclosures_with_id(
+            WalletTransactionId::Canonical(tx_id),
+            genesis_hash,
+            outputs,
+        )
+    }
+
+    pub fn record_provisional_outgoing_disclosures(
+        &self,
+        tx_id: ProvisionalActionId48,
+        genesis_hash: [u8; 32],
+        outputs: Vec<OutgoingDisclosureDraft>,
+    ) -> Result<(), WalletError> {
+        self.record_outgoing_disclosures_with_id(
+            WalletTransactionId::Provisional(tx_id),
+            genesis_hash,
+            outputs,
+        )
+    }
+
+    fn record_outgoing_disclosures_with_id(
+        &self,
+        tx_id: WalletTransactionId,
         genesis_hash: [u8; 32],
         outputs: Vec<OutgoingDisclosureDraft>,
     ) -> Result<(), WalletError> {
@@ -1170,7 +1372,7 @@ impl WalletStore {
 
     pub fn purge_outgoing_disclosure(
         &self,
-        tx_id: &[u8; 32],
+        tx_id: &ActionId48,
         output_index: u32,
     ) -> Result<bool, WalletError> {
         self.with_mut(|state| {
@@ -1192,7 +1394,41 @@ impl WalletStore {
 
     pub fn record_pending_submission(
         &self,
-        tx_id: [u8; 32],
+        tx_id: ActionId48,
+        nullifiers: Vec<[u8; 48]>,
+        spent_note_indexes: Vec<usize>,
+        recipients: Vec<TransferRecipient>,
+        fee: u64,
+    ) -> Result<(), WalletError> {
+        self.record_pending_submission_with_id(
+            WalletTransactionId::Canonical(tx_id),
+            nullifiers,
+            spent_note_indexes,
+            recipients,
+            fee,
+        )
+    }
+
+    pub fn record_provisional_pending_submission(
+        &self,
+        tx_id: ProvisionalActionId48,
+        nullifiers: Vec<[u8; 48]>,
+        spent_note_indexes: Vec<usize>,
+        recipients: Vec<TransferRecipient>,
+        fee: u64,
+    ) -> Result<(), WalletError> {
+        self.record_pending_submission_with_id(
+            WalletTransactionId::Provisional(tx_id),
+            nullifiers,
+            spent_note_indexes,
+            recipients,
+            fee,
+        )
+    }
+
+    fn record_pending_submission_with_id(
+        &self,
+        tx_id: WalletTransactionId,
         nullifiers: Vec<[u8; 48]>,
         spent_note_indexes: Vec<usize>,
         recipients: Vec<TransferRecipient>,
@@ -1237,15 +1473,12 @@ impl WalletStore {
             let mut expired_indexes: Vec<usize> = Vec::new();
             let mut mined_indexes: Vec<usize> = Vec::new();
 
-            // Debug: print chain nullifiers
+            // Debug output contains counts only, never nullifiers/action ids.
             if std::env::var("WALLET_DEBUG_PENDING").is_ok() {
                 eprintln!(
-                    "[DEBUG refresh_pending] chain nullifiers ({}):",
+                    "[DEBUG refresh_pending] chain nullifier count={}",
                     nullifiers.len()
                 );
-                for nf in nullifiers.iter() {
-                    eprintln!("  chain: {}", hex::encode(nf));
-                }
             }
 
             for (i, tx) in state.pending.iter_mut().enumerate() {
@@ -1254,17 +1487,17 @@ impl WalletStore {
                     continue;
                 }
 
-                // Debug: print pending tx nullifiers
                 if std::env::var("WALLET_DEBUG_PENDING").is_ok() {
                     eprintln!(
-                        "[DEBUG refresh_pending] tx {} nullifiers ({}):",
-                        hex::encode(&tx.tx_id[..8]),
-                        tx.nullifiers.len()
+                        "{}",
+                        pending_debug_counts(
+                            tx.nullifiers.len(),
+                            tx.nullifiers
+                                .iter()
+                                .filter(|nf| nullifiers.contains(*nf))
+                                .count(),
+                        )
                     );
-                    for nf in &tx.nullifiers {
-                        let found = nullifiers.contains(nf);
-                        eprintln!("  pending: {} (found: {})", hex::encode(nf), found);
-                    }
                 }
 
                 // Check if transaction was mined (nullifiers on-chain)
@@ -1415,6 +1648,7 @@ impl WalletStore {
     where
         F: FnOnce(&mut WalletState) -> Result<T, WalletError>,
     {
+        self.ensure_writable()?;
         let mut state = self
             .state
             .lock()
@@ -1425,13 +1659,48 @@ impl WalletStore {
         Ok(result)
     }
 
+    fn with_poseidon2_v8_mut<F, T>(&self, func: F) -> Result<T, WalletError>
+    where
+        F: FnOnce(&mut Poseidon2V8WalletState, Option<&DerivedKeys>) -> Result<T, WalletError>,
+    {
+        self.ensure_writable()?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::InvalidState("wallet poisoned"))?;
+        let previous = state.poseidon2_v8.clone();
+        let result = {
+            let WalletState {
+                poseidon2_v8,
+                derived,
+                ..
+            } = &mut *state;
+            match func(poseidon2_v8, derived.as_ref()) {
+                Ok(result) => result,
+                Err(error) => {
+                    state.poseidon2_v8 = previous;
+                    return Err(error);
+                }
+            }
+        };
+        if let Err(error) = self.write_state(&state) {
+            state.poseidon2_v8 = previous;
+            return Err(error);
+        }
+        Ok(result)
+    }
+
     fn write_locked(&self) -> Result<(), WalletError> {
         let state = self
             .state
             .lock()
             .map_err(|_| WalletError::InvalidState("wallet poisoned"))?;
-        let plaintext = bincode::serialize(&*state)?;
-        drop(state);
+        self.write_state(&state)
+    }
+
+    fn write_state(&self, state: &WalletState) -> Result<(), WalletError> {
+        self.ensure_writable()?;
+        let plaintext = bincode::serialize(state)?;
         let cipher = ChaCha20Poly1305::new(&self.key.into());
         let mut nonce = [0u8; NONCE_LEN];
         OsRng.fill_bytes(&mut nonce);
@@ -1454,6 +1723,17 @@ impl WalletStore {
         write_private_file(&self.path, &bytes)?;
         Ok(())
     }
+
+    fn ensure_writable(&self) -> Result<(), WalletError> {
+        if self.read_only {
+            return Err(WalletError::InvalidState("wallet snapshot is read-only"));
+        }
+        Ok(())
+    }
+}
+
+fn pending_debug_counts(input_count: usize, canonical_matches: usize) -> String {
+    format!("[DEBUG refresh_pending] pending input_count={input_count} canonical_matches={canonical_matches}")
 }
 
 fn matching_local_note_opening<'a>(
@@ -1481,6 +1761,21 @@ fn ensure_commitment_source_len(state: &mut WalletState) {
         state
             .commitment_sources
             .resize(state.commitments.len(), NoteSource::Unknown);
+    }
+}
+
+fn reset_legacy_sync_fields(state: &mut WalletState, clear_genesis: bool) {
+    state.notes.clear();
+    state.pending.clear();
+    state.recent.clear();
+    state.commitments.clear();
+    state.commitment_sources.clear();
+    state.next_commitment_index = 0;
+    state.next_ciphertext_index = 0;
+    state.last_synced_height = 0;
+    state.last_synced_block_hash = None;
+    if clear_genesis {
+        state.genesis_hash = None;
     }
 }
 
@@ -1631,6 +1926,16 @@ pub fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), WalletError> 
         return Err(err.into());
     }
     set_private_file_permissions(path)?;
+    // The reservation must survive a process/OS restart before RPC can run:
+    // sync the rename's directory entry, not only the staged file contents.
+    #[cfg(unix)]
+    {
+        let parent = path
+            .parent()
+            .filter(|value| !value.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::File::open(parent)?.sync_all()?;
+    }
     Ok(())
 }
 
@@ -1701,15 +2006,85 @@ fn set_private_file_permissions(path: &Path) -> Result<(), WalletError> {
 }
 
 fn deserialize_wallet_state(bytes: &[u8]) -> Result<WalletState, WalletError> {
-    match deserialize_exact::<WalletState>(bytes) {
-        Ok(state) => Ok(state),
+    let state = deserialize_exact::<WalletState>(bytes).map_err(|err| match err {
+        WalletError::Serialization(message) => {
+            WalletError::Serialization(format!("failed to deserialize wallet state: {message}"))
+        }
+        other => other,
+    })?;
+    state.poseidon2_v8.validate()?;
+    state.validate_poseidon2_v8_reservations()?;
+    Ok(state)
+}
+
+fn deserialize_wallet_state_v11(bytes: &[u8]) -> Result<WalletState, WalletError> {
+    let state = WalletState::from(deserialize_exact::<WalletStateV11>(bytes)?);
+    state.poseidon2_v8.validate()?;
+    Ok(state)
+}
+
+fn lock_wallet_file(path: &Path) -> Result<(PathBuf, fs::File), WalletError> {
+    if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err(WalletError::InvalidArgument(
+            "writable wallet path cannot be a symbolic link",
+        ));
+    }
+    let parent = path
+        .parent()
+        .filter(|value| !value.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let parent = fs::canonicalize(parent)?;
+    let wallet_path = parent.join(
+        path.file_name()
+            .ok_or(WalletError::InvalidArgument("wallet file has no filename"))?,
+    );
+    let mut name = path
+        .file_name()
+        .ok_or(WalletError::InvalidArgument("wallet file has no filename"))?
+        .to_os_string();
+    name.push(".lock");
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let lock_path = parent.join(name);
+    let file = options.open(&lock_path)?;
+    set_private_file_permissions(&lock_path)?;
+    file.try_lock_exclusive().map_err(|error| {
+        if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() {
+            WalletError::StoreBusy
+        } else {
+            WalletError::from(error)
+        }
+    })?;
+    Ok((wallet_path, file))
+}
+
+fn deserialize_wallet_state_v10(bytes: &[u8]) -> Result<WalletState, WalletError> {
+    deserialize_exact::<WalletStateV10>(bytes)
+        .map(WalletState::from)
+        .map_err(|err| match err {
+            WalletError::Serialization(message) => WalletError::Serialization(format!(
+                "failed to deserialize legacy wallet state v10: {message}"
+            )),
+            other => other,
+        })
+}
+
+fn deserialize_wallet_state_v9(bytes: &[u8]) -> Result<WalletState, WalletError> {
+    match deserialize_exact::<WalletStateV9>(bytes) {
+        Ok(state) => WalletState::try_from(state),
         Err(current_err) => {
             if let Ok(state) = deserialize_exact::<WalletStateV9BeforeNoteSources>(bytes) {
-                return Ok(WalletState::from(state));
+                return WalletState::try_from(state);
             }
             Err(match current_err {
                 WalletError::Serialization(message) => WalletError::Serialization(format!(
-                    "failed to deserialize wallet state: {message}"
+                    "failed to deserialize legacy wallet state v9: {message}"
                 )),
                 other => other,
             })
@@ -1719,7 +2094,7 @@ fn deserialize_wallet_state(bytes: &[u8]) -> Result<WalletState, WalletError> {
 
 fn deserialize_wallet_state_v8(bytes: &[u8]) -> Result<WalletState, WalletError> {
     deserialize_exact::<WalletStateV8>(bytes)
-        .map(WalletState::from)
+        .and_then(WalletState::try_from)
         .map_err(|err| match err {
             WalletError::Serialization(message) => WalletError::Serialization(format!(
                 "failed to deserialize legacy wallet state v8: {message}"
@@ -1730,7 +2105,7 @@ fn deserialize_wallet_state_v8(bytes: &[u8]) -> Result<WalletState, WalletError>
 
 fn deserialize_wallet_state_v7(bytes: &[u8]) -> Result<WalletState, WalletError> {
     deserialize_exact::<WalletStateV7>(bytes)
-        .map(WalletState::from)
+        .and_then(WalletState::try_from)
         .map_err(|err| match err {
             WalletError::Serialization(message) => WalletError::Serialization(format!(
                 "failed to deserialize legacy wallet state v7: {message}"
@@ -1741,7 +2116,7 @@ fn deserialize_wallet_state_v7(bytes: &[u8]) -> Result<WalletState, WalletError>
 
 fn deserialize_wallet_state_v6(bytes: &[u8]) -> Result<WalletState, WalletError> {
     deserialize_exact::<WalletStateV6>(bytes)
-        .map(WalletState::from)
+        .and_then(WalletState::try_from)
         .map_err(|err| match err {
             WalletError::Serialization(message) => WalletError::Serialization(format!(
                 "failed to deserialize legacy wallet state v6: {message}"
@@ -1820,6 +2195,139 @@ struct WalletState {
     multisig_accounts: Vec<MultisigAccountRecord>,
     #[serde(default)]
     local_note_openings: Vec<LocalNoteOpeningRecord>,
+    poseidon2_v8: Poseidon2V8WalletState,
+    poseidon2_v8_reservations: Vec<StoredPoseidon2V8Reservation>,
+}
+
+/// Exact V11 payload. Do not append fields to this frozen bincode shape.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV11 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<PendingTransaction>,
+    recent: Vec<RecentTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    commitment_sources: Vec<NoteSource>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(with = "serde_option_bytes32")]
+    last_synced_block_hash: Option<[u8; 32]>,
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    #[serde(with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+    multisig_accounts: Vec<MultisigAccountRecord>,
+    local_note_openings: Vec<LocalNoteOpeningRecord>,
+    poseidon2_v8: Poseidon2V8WalletState,
+}
+
+impl From<WalletStateV11> for WalletState {
+    fn from(value: WalletStateV11) -> Self {
+        Self {
+            mode: value.mode,
+            tree_depth: value.tree_depth,
+            root_secret: value.root_secret,
+            derived: value.derived,
+            incoming: value.incoming,
+            full_viewing_key: value.full_viewing_key,
+            outgoing: value.outgoing,
+            next_address_index: value.next_address_index,
+            notes: value.notes,
+            pending: value.pending,
+            recent: value.recent,
+            commitments: value.commitments,
+            commitment_sources: value.commitment_sources,
+            next_commitment_index: value.next_commitment_index,
+            next_ciphertext_index: value.next_ciphertext_index,
+            last_synced_height: value.last_synced_height,
+            last_synced_block_hash: value.last_synced_block_hash,
+            outgoing_disclosures: value.outgoing_disclosures,
+            genesis_hash: value.genesis_hash,
+            multisig_accounts: value.multisig_accounts,
+            local_note_openings: value.local_note_openings,
+            poseidon2_v8: value.poseidon2_v8,
+            poseidon2_v8_reservations: Vec::new(),
+        }
+    }
+}
+
+/// Exact encrypted-wallet V10 payload, before the V8 seven-limb mirror was
+/// added. Keep this positional bincode shape frozen for migration.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV10 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<PendingTransaction>,
+    #[serde(default)]
+    recent: Vec<RecentTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    #[serde(default)]
+    commitment_sources: Vec<NoteSource>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default, with = "serde_option_bytes32")]
+    last_synced_block_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    multisig_accounts: Vec<MultisigAccountRecord>,
+    #[serde(default)]
+    local_note_openings: Vec<LocalNoteOpeningRecord>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV9 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<LegacyPendingTransaction32>,
+    #[serde(default)]
+    recent: Vec<LegacyRecentTransaction32>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    #[serde(default)]
+    commitment_sources: Vec<NoteSource>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default, with = "serde_option_bytes32")]
+    last_synced_block_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    outgoing_disclosures: Vec<LegacyOutgoingDisclosureRecord32>,
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    multisig_accounts: Vec<MultisigAccountRecord>,
+    #[serde(default)]
+    local_note_openings: Vec<LocalNoteOpeningRecord>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1834,9 +2342,9 @@ struct WalletStateV9BeforeNoteSources {
     outgoing: Option<OutgoingViewingKey>,
     next_address_index: u32,
     notes: Vec<TrackedNoteBeforeNoteSource>,
-    pending: Vec<PendingTransaction>,
+    pending: Vec<LegacyPendingTransaction32>,
     #[serde(default)]
-    recent: Vec<RecentTransaction>,
+    recent: Vec<LegacyRecentTransaction32>,
     #[serde(with = "serde_vec_bytes48")]
     commitments: Vec<Commitment>,
     next_commitment_index: u64,
@@ -1845,7 +2353,7 @@ struct WalletStateV9BeforeNoteSources {
     #[serde(default, with = "serde_option_bytes32")]
     last_synced_block_hash: Option<[u8; 32]>,
     #[serde(default)]
-    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    outgoing_disclosures: Vec<LegacyOutgoingDisclosureRecord32>,
     #[serde(default, with = "serde_option_bytes32")]
     genesis_hash: Option<[u8; 32]>,
     #[serde(default)]
@@ -1866,9 +2374,9 @@ struct WalletStateV8 {
     outgoing: Option<OutgoingViewingKey>,
     next_address_index: u32,
     notes: Vec<TrackedNoteBeforeNoteSource>,
-    pending: Vec<PendingTransaction>,
+    pending: Vec<LegacyPendingTransaction32>,
     #[serde(default)]
-    recent: Vec<RecentTransaction>,
+    recent: Vec<LegacyRecentTransaction32>,
     #[serde(with = "serde_vec_bytes48")]
     commitments: Vec<Commitment>,
     next_commitment_index: u64,
@@ -1877,7 +2385,7 @@ struct WalletStateV8 {
     #[serde(default, with = "serde_option_bytes32")]
     last_synced_block_hash: Option<[u8; 32]>,
     #[serde(default)]
-    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    outgoing_disclosures: Vec<LegacyOutgoingDisclosureRecord32>,
     #[serde(default, with = "serde_option_bytes32")]
     genesis_hash: Option<[u8; 32]>,
     #[serde(default)]
@@ -1945,9 +2453,9 @@ struct WalletStateV7 {
     outgoing: Option<OutgoingViewingKey>,
     next_address_index: u32,
     notes: Vec<TrackedNoteBeforeNoteSource>,
-    pending: Vec<PendingTransaction>,
+    pending: Vec<LegacyPendingTransaction32>,
     #[serde(default)]
-    recent: Vec<RecentTransaction>,
+    recent: Vec<LegacyRecentTransaction32>,
     #[serde(with = "serde_vec_bytes48")]
     commitments: Vec<Commitment>,
     next_commitment_index: u64,
@@ -1956,7 +2464,7 @@ struct WalletStateV7 {
     #[serde(default, with = "serde_option_bytes32")]
     last_synced_block_hash: Option<[u8; 32]>,
     #[serde(default)]
-    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    outgoing_disclosures: Vec<LegacyOutgoingDisclosureRecord32>,
     #[serde(default, with = "serde_option_bytes32")]
     genesis_hash: Option<[u8; 32]>,
     #[serde(default)]
@@ -1975,9 +2483,9 @@ struct WalletStateV6 {
     outgoing: Option<OutgoingViewingKey>,
     next_address_index: u32,
     notes: Vec<TrackedNoteBeforeNoteSource>,
-    pending: Vec<PendingTransaction>,
+    pending: Vec<LegacyPendingTransaction32>,
     #[serde(default)]
-    recent: Vec<RecentTransaction>,
+    recent: Vec<LegacyRecentTransaction32>,
     #[serde(with = "serde_vec_bytes48")]
     commitments: Vec<Commitment>,
     next_commitment_index: u64,
@@ -1986,13 +2494,27 @@ struct WalletStateV6 {
     #[serde(default, with = "serde_option_bytes32")]
     last_synced_block_hash: Option<[u8; 32]>,
     #[serde(default)]
-    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    outgoing_disclosures: Vec<LegacyOutgoingDisclosureRecord32>,
     #[serde(default, with = "serde_option_bytes32")]
     genesis_hash: Option<[u8; 32]>,
 }
 
-impl From<WalletStateV9BeforeNoteSources> for WalletState {
-    fn from(value: WalletStateV9BeforeNoteSources) -> Self {
+fn reject_unrecoverable_legacy_action_ids(
+    version: u32,
+    pending: usize,
+    recent: usize,
+    outgoing_disclosures: usize,
+) -> Result<(), WalletError> {
+    if pending == 0 && recent == 0 && outgoing_disclosures == 0 {
+        return Ok(());
+    }
+    Err(WalletError::Serialization(format!(
+        "legacy wallet v{version} contains {pending} pending, {recent} recent, and {outgoing_disclosures} disclosure records with 32-byte transaction ids; canonical 48-byte action ids cannot be recovered"
+    )))
+}
+
+impl From<WalletStateV10> for WalletState {
+    fn from(value: WalletStateV10) -> Self {
         Self {
             mode: value.mode,
             tree_depth: value.tree_depth,
@@ -2002,11 +2524,11 @@ impl From<WalletStateV9BeforeNoteSources> for WalletState {
             full_viewing_key: value.full_viewing_key,
             outgoing: value.outgoing,
             next_address_index: value.next_address_index,
-            notes: value.notes.into_iter().map(TrackedNote::from).collect(),
+            notes: value.notes,
             pending: value.pending,
             recent: value.recent,
             commitments: value.commitments,
-            commitment_sources: Vec::new(),
+            commitment_sources: value.commitment_sources,
             next_commitment_index: value.next_commitment_index,
             next_ciphertext_index: value.next_ciphertext_index,
             last_synced_height: value.last_synced_height,
@@ -2015,13 +2537,61 @@ impl From<WalletStateV9BeforeNoteSources> for WalletState {
             genesis_hash: value.genesis_hash,
             multisig_accounts: value.multisig_accounts,
             local_note_openings: value.local_note_openings,
+            poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
         }
     }
 }
 
-impl From<WalletStateV6> for WalletState {
-    fn from(value: WalletStateV6) -> Self {
-        Self {
+impl TryFrom<WalletStateV9> for WalletState {
+    type Error = WalletError;
+
+    fn try_from(value: WalletStateV9) -> Result<Self, Self::Error> {
+        reject_unrecoverable_legacy_action_ids(
+            LEGACY_FILE_VERSION_V9,
+            value.pending.len(),
+            value.recent.len(),
+            value.outgoing_disclosures.len(),
+        )?;
+        Ok(Self {
+            mode: value.mode,
+            tree_depth: value.tree_depth,
+            root_secret: value.root_secret,
+            derived: value.derived,
+            incoming: value.incoming,
+            full_viewing_key: value.full_viewing_key,
+            outgoing: value.outgoing,
+            next_address_index: value.next_address_index,
+            notes: value.notes,
+            pending: Vec::new(),
+            recent: Vec::new(),
+            commitments: value.commitments,
+            commitment_sources: value.commitment_sources,
+            next_commitment_index: value.next_commitment_index,
+            next_ciphertext_index: value.next_ciphertext_index,
+            last_synced_height: value.last_synced_height,
+            last_synced_block_hash: value.last_synced_block_hash,
+            outgoing_disclosures: Vec::new(),
+            genesis_hash: value.genesis_hash,
+            multisig_accounts: value.multisig_accounts,
+            local_note_openings: value.local_note_openings,
+            poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
+        })
+    }
+}
+
+impl TryFrom<WalletStateV9BeforeNoteSources> for WalletState {
+    type Error = WalletError;
+
+    fn try_from(value: WalletStateV9BeforeNoteSources) -> Result<Self, Self::Error> {
+        reject_unrecoverable_legacy_action_ids(
+            LEGACY_FILE_VERSION_V9,
+            value.pending.len(),
+            value.recent.len(),
+            value.outgoing_disclosures.len(),
+        )?;
+        Ok(Self {
             mode: value.mode,
             tree_depth: value.tree_depth,
             root_secret: value.root_secret,
@@ -2031,24 +2601,72 @@ impl From<WalletStateV6> for WalletState {
             outgoing: value.outgoing,
             next_address_index: value.next_address_index,
             notes: value.notes.into_iter().map(TrackedNote::from).collect(),
-            pending: value.pending,
-            recent: value.recent,
+            pending: Vec::new(),
+            recent: Vec::new(),
             commitments: value.commitments,
             commitment_sources: Vec::new(),
             next_commitment_index: value.next_commitment_index,
             next_ciphertext_index: value.next_ciphertext_index,
             last_synced_height: value.last_synced_height,
             last_synced_block_hash: value.last_synced_block_hash,
-            outgoing_disclosures: value.outgoing_disclosures,
+            outgoing_disclosures: Vec::new(),
             genesis_hash: value.genesis_hash,
-            multisig_accounts: Vec::new(),
-            local_note_openings: Vec::new(),
-        }
+            multisig_accounts: value.multisig_accounts,
+            local_note_openings: value.local_note_openings,
+            poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
+        })
     }
 }
 
-impl From<WalletStateV8> for WalletState {
-    fn from(value: WalletStateV8) -> Self {
+impl TryFrom<WalletStateV6> for WalletState {
+    type Error = WalletError;
+
+    fn try_from(value: WalletStateV6) -> Result<Self, Self::Error> {
+        reject_unrecoverable_legacy_action_ids(
+            LEGACY_FILE_VERSION_V6,
+            value.pending.len(),
+            value.recent.len(),
+            value.outgoing_disclosures.len(),
+        )?;
+        Ok(Self {
+            mode: value.mode,
+            tree_depth: value.tree_depth,
+            root_secret: value.root_secret,
+            derived: value.derived,
+            incoming: value.incoming,
+            full_viewing_key: value.full_viewing_key,
+            outgoing: value.outgoing,
+            next_address_index: value.next_address_index,
+            notes: value.notes.into_iter().map(TrackedNote::from).collect(),
+            pending: Vec::new(),
+            recent: Vec::new(),
+            commitments: value.commitments,
+            commitment_sources: Vec::new(),
+            next_commitment_index: value.next_commitment_index,
+            next_ciphertext_index: value.next_ciphertext_index,
+            last_synced_height: value.last_synced_height,
+            last_synced_block_hash: value.last_synced_block_hash,
+            outgoing_disclosures: Vec::new(),
+            genesis_hash: value.genesis_hash,
+            multisig_accounts: Vec::new(),
+            local_note_openings: Vec::new(),
+            poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
+        })
+    }
+}
+
+impl TryFrom<WalletStateV8> for WalletState {
+    type Error = WalletError;
+
+    fn try_from(value: WalletStateV8) -> Result<Self, Self::Error> {
+        reject_unrecoverable_legacy_action_ids(
+            LEGACY_FILE_VERSION_V8,
+            value.pending.len(),
+            value.recent.len(),
+            value.outgoing_disclosures.len(),
+        )?;
         let local_note_openings = value
             .local_note_openings
             .into_iter()
@@ -2061,7 +2679,7 @@ impl From<WalletStateV8> for WalletState {
                 created_at: opening.created_at,
             })
             .collect();
-        Self {
+        Ok(Self {
             mode: value.mode,
             tree_depth: value.tree_depth,
             root_secret: value.root_secret,
@@ -2071,25 +2689,35 @@ impl From<WalletStateV8> for WalletState {
             outgoing: value.outgoing,
             next_address_index: value.next_address_index,
             notes: value.notes.into_iter().map(TrackedNote::from).collect(),
-            pending: value.pending,
-            recent: value.recent,
+            pending: Vec::new(),
+            recent: Vec::new(),
             commitments: value.commitments,
             commitment_sources: Vec::new(),
             next_commitment_index: value.next_commitment_index,
             next_ciphertext_index: value.next_ciphertext_index,
             last_synced_height: value.last_synced_height,
             last_synced_block_hash: value.last_synced_block_hash,
-            outgoing_disclosures: value.outgoing_disclosures,
+            outgoing_disclosures: Vec::new(),
             genesis_hash: value.genesis_hash,
             multisig_accounts: Vec::new(),
             local_note_openings,
-        }
+            poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
+        })
     }
 }
 
-impl From<WalletStateV7> for WalletState {
-    fn from(value: WalletStateV7) -> Self {
-        Self {
+impl TryFrom<WalletStateV7> for WalletState {
+    type Error = WalletError;
+
+    fn try_from(value: WalletStateV7) -> Result<Self, Self::Error> {
+        reject_unrecoverable_legacy_action_ids(
+            LEGACY_FILE_VERSION_V7,
+            value.pending.len(),
+            value.recent.len(),
+            value.outgoing_disclosures.len(),
+        )?;
+        Ok(Self {
             mode: value.mode,
             tree_depth: value.tree_depth,
             root_secret: value.root_secret,
@@ -2099,19 +2727,21 @@ impl From<WalletStateV7> for WalletState {
             outgoing: value.outgoing,
             next_address_index: value.next_address_index,
             notes: value.notes.into_iter().map(TrackedNote::from).collect(),
-            pending: value.pending,
-            recent: value.recent,
+            pending: Vec::new(),
+            recent: Vec::new(),
             commitments: value.commitments,
             commitment_sources: Vec::new(),
             next_commitment_index: value.next_commitment_index,
             next_ciphertext_index: value.next_ciphertext_index,
             last_synced_height: value.last_synced_height,
             last_synced_block_hash: value.last_synced_block_hash,
-            outgoing_disclosures: value.outgoing_disclosures,
+            outgoing_disclosures: Vec::new(),
             genesis_hash: value.genesis_hash,
             multisig_accounts: Vec::new(),
             local_note_openings: Vec::new(),
-        }
+            poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
+        })
     }
 }
 
@@ -2167,9 +2797,127 @@ impl From<TrackedNote> for TrackedNoteBeforeNoteSource {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PendingTransaction {
+struct LegacyPendingTransaction32 {
     #[serde(with = "serde_bytes32")]
-    pub tx_id: [u8; 32],
+    tx_id: [u8; 32],
+    #[serde(with = "serde_vec_bytes48")]
+    nullifiers: Vec<[u8; 48]>,
+    spent_note_indexes: Vec<usize>,
+    submitted_at: u64,
+    status: PendingStatus,
+    #[serde(default)]
+    recipients: Vec<TransferRecipient>,
+    #[serde(default)]
+    fee: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct LegacyRecentTransaction32 {
+    #[serde(with = "serde_bytes32")]
+    tx_id: [u8; 32],
+    submitted_at: u64,
+    mined_height: u64,
+    #[serde(default)]
+    recipients: Vec<TransferRecipient>,
+    #[serde(default)]
+    fee: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct LegacyOutgoingDisclosureRecord32 {
+    #[serde(with = "serde_bytes32")]
+    tx_id: [u8; 32],
+    output_index: u32,
+    recipient_address: String,
+    note: NoteData,
+    #[serde(with = "serde_bytes48")]
+    commitment: [u8; 48],
+    #[serde(default)]
+    memo: Option<MemoPlaintext>,
+    #[serde(with = "serde_bytes32")]
+    genesis_hash: [u8; 32],
+    created_at: u64,
+}
+
+/// Wallet-local identity for a submission record.
+///
+/// A canonical id came from the node's exact 48-byte action response. A
+/// provisional id exists only when submission outcome is ambiguous. Keeping
+/// the variants distinct prevents a local placeholder from entering methods
+/// that require a consensus [`ActionId48`].
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum WalletTransactionId {
+    Canonical(#[serde(with = "serde_action_id48")] ActionId48),
+    Provisional(#[serde(with = "serde_provisional_action_id48")] ProvisionalActionId48),
+}
+
+impl WalletTransactionId {
+    pub const fn as_bytes(&self) -> &[u8; 48] {
+        match self {
+            Self::Canonical(value) => value.as_bytes(),
+            Self::Provisional(value) => value.as_bytes(),
+        }
+    }
+
+    pub const fn canonical(self) -> Option<ActionId48> {
+        match self {
+            Self::Canonical(value) => Some(value),
+            Self::Provisional(_) => None,
+        }
+    }
+
+    pub const fn is_provisional(self) -> bool {
+        matches!(self, Self::Provisional(_))
+    }
+
+    /// Render an external identifier without allowing a provisional value to
+    /// masquerade as canonical hexadecimal input.
+    pub fn external_id(self) -> String {
+        let encoded = hex::encode(self.as_bytes());
+        match self {
+            Self::Canonical(_) => encoded,
+            Self::Provisional(_) => format!("provisional:{encoded}"),
+        }
+    }
+
+    /// As [`Self::external_id`], retaining the walletd convention that
+    /// canonical identifiers carry an `0x` prefix.
+    pub fn external_id_with_0x(self) -> String {
+        let encoded = hex::encode(self.as_bytes());
+        match self {
+            Self::Canonical(_) => format!("0x{encoded}"),
+            Self::Provisional(_) => format!("provisional:0x{encoded}"),
+        }
+    }
+}
+
+impl PartialEq<ActionId48> for WalletTransactionId {
+    fn eq(&self, other: &ActionId48) -> bool {
+        matches!(self, Self::Canonical(value) if value == other)
+    }
+}
+
+impl PartialEq<WalletTransactionId> for ActionId48 {
+    fn eq(&self, other: &WalletTransactionId) -> bool {
+        other == self
+    }
+}
+
+impl PartialEq<ProvisionalActionId48> for WalletTransactionId {
+    fn eq(&self, other: &ProvisionalActionId48) -> bool {
+        matches!(self, Self::Provisional(value) if value == other)
+    }
+}
+
+impl PartialEq<WalletTransactionId> for ProvisionalActionId48 {
+    fn eq(&self, other: &WalletTransactionId) -> bool {
+        other == self
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PendingTransaction {
+    pub tx_id: WalletTransactionId,
     #[serde(with = "serde_vec_bytes48")]
     pub nullifiers: Vec<[u8; 48]>,
     pub spent_note_indexes: Vec<usize>,
@@ -2192,8 +2940,7 @@ impl PendingTransaction {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RecentTransaction {
-    #[serde(with = "serde_bytes32")]
-    pub tx_id: [u8; 32],
+    pub tx_id: WalletTransactionId,
     pub submitted_at: u64,
     pub mined_height: u64,
     #[serde(default)]
@@ -2235,8 +2982,7 @@ pub struct OutgoingDisclosureDraft {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OutgoingDisclosureRecord {
-    #[serde(with = "serde_bytes32")]
-    pub tx_id: [u8; 32],
+    pub tx_id: WalletTransactionId,
     pub output_index: u32,
     pub recipient_address: String,
     pub note: NoteData,
@@ -2433,6 +3179,48 @@ mod serde_bytes32 {
     }
 }
 
+mod serde_action_id48 {
+    use hegemon_hash384::ActionId48;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &ActionId48, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(value.as_bytes())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<ActionId48, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        ActionId48::try_from(bytes.as_slice()).map_err(serde::de::Error::custom)
+    }
+}
+
+mod serde_provisional_action_id48 {
+    use crate::submission::ProvisionalActionId48;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &ProvisionalActionId48, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(value.as_bytes())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<ProvisionalActionId48, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        let bytes = <[u8; 48]>::try_from(bytes.as_slice())
+            .map_err(|_| serde::de::Error::custom("invalid 48-byte provisional action id"))?;
+        Ok(ProvisionalActionId48::new(bytes))
+    }
+}
+
 mod serde_option_bytes32 {
     use serde::{Deserialize, Deserializer, Serializer};
 
@@ -2579,6 +3367,169 @@ mod tests {
     use tempfile::tempdir;
     use transaction_circuit::hashing_pq::{ciphertext_hash_bytes, felts_to_bytes48};
 
+    #[test]
+    fn v8_reservation_writer_lock_allows_read_only_snapshot_without_mutations() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("wallet.dat");
+        let writer = WalletStore::create_full(&path, "passphrase").unwrap();
+        writer.next_address().unwrap();
+        let before = fs::read(&path).unwrap();
+        assert!(matches!(
+            WalletStore::open(&path, "passphrase"),
+            Err(WalletError::StoreBusy)
+        ));
+        assert!(matches!(
+            WalletStore::create_full(&path, "passphrase"),
+            Err(WalletError::StoreBusy)
+        ));
+        let snapshot = WalletStore::open_read_only(&path, "passphrase").unwrap();
+        assert_eq!(
+            snapshot
+                .with_state(|state| Ok(state.next_address_index))
+                .unwrap(),
+            1
+        );
+        assert!(snapshot.next_address().is_err());
+        assert!(snapshot.reset_sync_state().is_err());
+        assert!(snapshot.reserve_poseidon2_v8_spend().is_err());
+        assert_eq!(
+            snapshot
+                .with_state(|state| Ok(state.next_address_index))
+                .unwrap(),
+            1
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert!(matches!(
+            WalletStore::open_read_only(&path, "wrong password"),
+            Err(WalletError::DecryptionFailure)
+        ));
+        drop(writer);
+        let reopened = WalletStore::open(&path, "passphrase").unwrap();
+        reopened.next_address().unwrap();
+    }
+
+    #[test]
+    fn create_full_if_missing_preserves_existing_store_and_respects_writer_lock() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("wallet.dat");
+        let writer = WalletStore::create_full(&path, "passphrase").unwrap();
+        let before = fs::read(&path).unwrap();
+        assert!(matches!(
+            WalletStore::create_full_if_missing(&path, "passphrase"),
+            Err(WalletError::StoreBusy)
+        ));
+        drop(writer);
+
+        assert!(matches!(
+            WalletStore::create_full_if_missing(&path, "passphrase"),
+            Err(WalletError::StoreAlreadyExists)
+        ));
+        assert_eq!(fs::read(&path).unwrap(), before);
+        let reopened = WalletStore::open(&path, "passphrase").unwrap();
+        assert!(reopened.next_address().is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v8_reservation_writer_rejects_final_component_symlink_alias() {
+        use std::os::unix::fs::symlink;
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("wallet.dat");
+        let writer = WalletStore::create_full(&path, "passphrase").unwrap();
+        let alias = directory.path().join("alias.dat");
+        symlink(&path, &alias).unwrap();
+        assert!(matches!(
+            WalletStore::open(&alias, "passphrase"),
+            Err(WalletError::InvalidArgument(_))
+        ));
+        assert!(fs::symlink_metadata(&alias)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let lock_permissions = fs::metadata(directory.path().join("wallet.dat.lock"))
+            .unwrap()
+            .permissions();
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(lock_permissions.mode() & 0o777, 0o600);
+        drop(writer);
+    }
+
+    #[test]
+    fn v8_reservation_v11_bincode_migration_preserves_mirror_and_key_bytes() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("wallet.dat");
+        let root = RootSecret::from_bytes([0x61; 32]);
+        let store = WalletStore::create_from_root(&path, "passphrase", root).unwrap();
+        store.next_address().unwrap();
+        store
+            .ensure_poseidon2_v8_genesis_for_test([0x41; 32], [1, 2, 3, 4, 5, 6, 7])
+            .unwrap();
+        let tip = store.poseidon2_v8_tip().unwrap();
+        let current = store
+            .with_state(|state| Ok(bincode::serialize(state)?))
+            .unwrap();
+        // V12's only appended field is an empty Vec's exact 8-byte length.
+        // Decoding as V11 also checks the frozen positional schema itself.
+        let legacy = deserialize_exact::<WalletStateV11>(&current[..current.len() - 8]).unwrap();
+        let plaintext = bincode::serialize(&legacy).unwrap();
+        assert!(deserialize_wallet_state(&plaintext).is_err());
+        let nonce = [0x22; NONCE_LEN];
+        let cipher = ChaCha20Poly1305::new(&store.key.into());
+        let ciphertext = cipher
+            .encrypt(
+                &nonce.into(),
+                Payload {
+                    msg: &plaintext,
+                    aad: &store.salt,
+                },
+            )
+            .unwrap();
+        let file = WalletFile {
+            version: LEGACY_FILE_VERSION_V11,
+            salt: store.salt,
+            nonce,
+            ciphertext,
+        };
+        write_private_file(&path, &bincode::serialize(&file).unwrap()).unwrap();
+        let old_file = fs::read(&path).unwrap();
+        let snapshot = WalletStore::open_read_only(&path, "passphrase").unwrap();
+        assert_eq!(snapshot.poseidon2_v8_tip().unwrap(), tip);
+        assert_eq!(fs::read(&path).unwrap(), old_file);
+        drop(snapshot);
+        drop(store);
+        let migrated = WalletStore::open(&path, "passphrase").unwrap();
+        assert_eq!(migrated.poseidon2_v8_tip().unwrap(), tip);
+        assert_eq!(migrated.signing_seed().unwrap(), [0x61; 32]);
+        assert_eq!(
+            migrated
+                .with_state(|state| Ok(state.next_address_index))
+                .unwrap(),
+            1
+        );
+        assert!(migrated.poseidon2_v8_reservations().unwrap().is_empty());
+        let file: WalletFile = deserialize_exact(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(file.version, FILE_VERSION);
+        let mut trailing = plaintext;
+        trailing.push(0xff);
+        assert!(deserialize_wallet_state_v11(&trailing).is_err());
+    }
+
+    #[test]
+    fn pending_debug_format_contains_only_counts() {
+        let line = pending_debug_counts(2, 1);
+        assert_eq!(
+            line,
+            "[DEBUG refresh_pending] pending input_count=2 canonical_matches=1"
+        );
+        for secret_link in [
+            hex::encode([0x41; 48]),
+            hex::encode([0x42; 48]),
+            hex::encode([0x43; 8]),
+        ] {
+            assert!(!line.contains(&secret_link));
+        }
+    }
+
     #[derive(Debug, PartialEq, Eq)]
     struct PublicCiphertextProjection {
         version: u8,
@@ -2663,14 +3614,14 @@ mod tests {
                         .cloned()
                         .map(TrackedNoteBeforeNoteSource::from)
                         .collect(),
-                    pending: state.pending.clone(),
-                    recent: state.recent.clone(),
+                    pending: Vec::new(),
+                    recent: Vec::new(),
                     commitments: state.commitments.clone(),
                     next_commitment_index: state.next_commitment_index,
                     next_ciphertext_index: state.next_ciphertext_index,
                     last_synced_height: state.last_synced_height,
                     last_synced_block_hash: state.last_synced_block_hash,
-                    outgoing_disclosures: state.outgoing_disclosures.clone(),
+                    outgoing_disclosures: Vec::new(),
                     genesis_hash: state.genesis_hash,
                 })
             })
@@ -2714,14 +3665,14 @@ mod tests {
                         .cloned()
                         .map(TrackedNoteBeforeNoteSource::from)
                         .collect(),
-                    pending: state.pending.clone(),
-                    recent: state.recent.clone(),
+                    pending: Vec::new(),
+                    recent: Vec::new(),
                     commitments: state.commitments.clone(),
                     next_commitment_index: state.next_commitment_index,
                     next_ciphertext_index: state.next_ciphertext_index,
                     last_synced_height: state.last_synced_height,
                     last_synced_block_hash: state.last_synced_block_hash,
-                    outgoing_disclosures: state.outgoing_disclosures.clone(),
+                    outgoing_disclosures: Vec::new(),
                     genesis_hash: state.genesis_hash,
                     multisig_accounts: state.multisig_accounts.clone(),
                     local_note_openings: state.local_note_openings.clone(),
@@ -2729,11 +3680,114 @@ mod tests {
             })
             .unwrap();
         let plaintext = bincode::serialize(&legacy).unwrap();
-        let migrated = deserialize_wallet_state(&plaintext).unwrap();
+        let migrated = deserialize_wallet_state_v9(&plaintext).unwrap();
         assert!(migrated.commitment_sources.is_empty());
         assert_eq!(migrated.notes.len(), 1);
         assert_eq!(migrated.notes[0].source, NoteSource::Unknown);
         assert_eq!(migrated.next_commitment_index, legacy.next_commitment_index);
+    }
+
+    #[test]
+    fn legacy_32_byte_transaction_ids_fail_closed_during_v9_migration() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let legacy = store
+            .with_state(|state| {
+                Ok(WalletStateV9 {
+                    mode: state.mode,
+                    tree_depth: state.tree_depth,
+                    root_secret: state.root_secret,
+                    derived: state.derived.clone(),
+                    incoming: state.incoming.clone(),
+                    full_viewing_key: state.full_viewing_key.clone(),
+                    outgoing: state.outgoing.clone(),
+                    next_address_index: state.next_address_index,
+                    notes: state.notes.clone(),
+                    pending: vec![LegacyPendingTransaction32 {
+                        tx_id: [0x5a; 32],
+                        nullifiers: vec![[0xa5; 48]],
+                        spent_note_indexes: Vec::new(),
+                        submitted_at: 1,
+                        status: PendingStatus::InMempool,
+                        recipients: Vec::new(),
+                        fee: 0,
+                    }],
+                    recent: Vec::new(),
+                    commitments: state.commitments.clone(),
+                    commitment_sources: state.commitment_sources.clone(),
+                    next_commitment_index: state.next_commitment_index,
+                    next_ciphertext_index: state.next_ciphertext_index,
+                    last_synced_height: state.last_synced_height,
+                    last_synced_block_hash: state.last_synced_block_hash,
+                    outgoing_disclosures: Vec::new(),
+                    genesis_hash: state.genesis_hash,
+                    multisig_accounts: state.multisig_accounts.clone(),
+                    local_note_openings: state.local_note_openings.clone(),
+                })
+            })
+            .unwrap();
+
+        let plaintext = bincode::serialize(&legacy).unwrap();
+        let error = deserialize_wallet_state_v9(&plaintext)
+            .expect_err("a 32-byte legacy id cannot become a canonical ActionId48");
+        assert!(error.to_string().contains("cannot be recovered"));
+    }
+
+    #[test]
+    fn action_id48_wallet_roundtrip_preserves_tail_bytes() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let mut action_id_bytes = [0x11; 48];
+        action_id_bytes[32..].copy_from_slice(&[0x7e; 16]);
+        let action_id = ActionId48::new(action_id_bytes);
+        store
+            .record_pending_submission(action_id, Vec::new(), Vec::new(), Vec::new(), 0)
+            .unwrap();
+        drop(store);
+
+        let reopened = WalletStore::open(&path, "passphrase").unwrap();
+        let pending = reopened.pending_transactions().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].tx_id, action_id);
+        assert_eq!(&pending[0].tx_id.as_bytes()[32..], &[0x7e; 16]);
+    }
+
+    #[test]
+    fn provisional_id_roundtrip_never_becomes_a_canonical_action_id() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let provisional = ProvisionalActionId48::new([0x5a; 48]);
+        let equal_bytes_canonical = ActionId48::new([0x5a; 48]);
+        store
+            .record_provisional_pending_submission(
+                provisional,
+                vec![[0xa5; 48]],
+                Vec::new(),
+                Vec::new(),
+                0,
+            )
+            .unwrap();
+
+        let pending = store.pending_transactions().unwrap();
+        assert_eq!(pending[0].tx_id, provisional);
+        assert_ne!(pending[0].tx_id, equal_bytes_canonical);
+        assert!(pending[0].tx_id.is_provisional());
+        assert_eq!(pending[0].tx_id.canonical(), None);
+        assert!(pending[0].tx_id.external_id().starts_with("provisional:"));
+        assert_eq!(
+            WalletTransactionId::Canonical(equal_bytes_canonical).external_id(),
+            hex::encode(equal_bytes_canonical.as_bytes())
+        );
+        drop(store);
+
+        let reopened = WalletStore::open(&path, "passphrase").unwrap();
+        let pending = reopened.pending_transactions().unwrap();
+        assert_eq!(pending[0].tx_id, provisional);
+        assert!(pending[0].tx_id.is_provisional());
+        assert_eq!(pending[0].tx_id.canonical(), None);
     }
 
     fn accumulator_ciphertext_fixture(
@@ -3084,6 +4138,8 @@ mod tests {
             genesis_hash: None,
             multisig_accounts: Vec::new(),
             local_note_openings: Vec::new(),
+            poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
         };
         let mut bytes = bincode::serialize(&state).unwrap();
         bytes.push(0xff);
@@ -3163,7 +4219,13 @@ mod tests {
 
         store.mark_notes_pending(&[idx0, idx1], true).unwrap();
         store
-            .record_pending_submission([1u8; 32], vec![[2u8; 48]], vec![idx0], vec![], 0)
+            .record_pending_submission(
+                ActionId48::new([1u8; 48]),
+                vec![[2u8; 48]],
+                vec![idx0],
+                vec![],
+                0,
+            )
             .unwrap();
 
         store.refresh_pending(1, &HashSet::new()).unwrap();
@@ -3202,7 +4264,7 @@ mod tests {
         store.mark_notes_pending(&[note_index], true).unwrap();
         store
             .record_pending_submission(
-                [9u8; 32],
+                ActionId48::new([9u8; 48]),
                 vec![nullifier],
                 vec![note_index],
                 vec![TransferRecipient {
@@ -3222,7 +4284,7 @@ mod tests {
         assert!(store.pending_transactions().unwrap().is_empty());
         let recent = store.recent_transactions().unwrap();
         assert_eq!(recent.len(), 1);
-        assert_eq!(recent[0].tx_id, [9u8; 32]);
+        assert_eq!(recent[0].tx_id, ActionId48::new([9u8; 48]));
         assert_eq!(recent[0].mined_height, 7);
         assert_eq!(recent[0].confirmations(9), 3);
     }
@@ -3281,7 +4343,7 @@ mod tests {
         store.mark_notes_pending(&[note_index], true).unwrap();
         store
             .record_pending_submission(
-                [0x55; 32],
+                ActionId48::new([0x55; 48]),
                 vec![nullifier],
                 vec![note_index],
                 vec![TransferRecipient {

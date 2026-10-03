@@ -9,10 +9,16 @@ pub(crate) async fn mining_loop(node: Arc<NativeNode>) {
             tokio::time::sleep(Duration::from_millis(250)).await;
             continue;
         }
-        let work = match node.prepare_work() {
-            Ok(work) => work,
-            Err(err) => {
+        let work_node = Arc::clone(&node);
+        let work = match tokio::task::spawn_blocking(move || work_node.prepare_work()).await {
+            Ok(Ok(work)) => work,
+            Ok(Err(err)) => {
                 warn!(error = %err, "failed to prepare native mining work");
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                continue;
+            }
+            Err(err) => {
+                warn!(error = %err, "native work preparation task failed");
                 tokio::time::sleep(Duration::from_millis(250)).await;
                 continue;
             }
@@ -34,8 +40,30 @@ pub(crate) async fn mining_loop(node: Arc<NativeNode>) {
                 let Some(seal) = result.seal else {
                     continue;
                 };
-                if let Err(err) = node.import_mined_block(&work, seal) {
-                    warn!(error = %err, "failed to import native mined block");
+                let import_permit = match Arc::clone(&node.block_import_semaphore)
+                    .acquire_owned()
+                    .await
+                {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        warn!("native block import semaphore closed");
+                        continue;
+                    }
+                };
+                let import_node = Arc::clone(&node);
+                let imported = tokio::task::spawn_blocking(move || {
+                    let _permit = import_permit;
+                    import_node.import_mined_block(&work, seal)
+                })
+                .await;
+                match imported {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(err)) => {
+                        warn!(error = %err, "failed to import native mined block");
+                    }
+                    Err(err) => {
+                        warn!(error = %err, "native mined block import worker failed");
+                    }
                 }
             }
             Err(err) => {

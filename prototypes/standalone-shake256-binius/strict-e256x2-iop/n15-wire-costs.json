@@ -1,0 +1,46 @@
+{
+  "schema": "hegemon.strict-e256x2.n15-wire-costs.v1",
+  "grammar_magic": "HGE2X2P1",
+  "context_utf8": "hegemon.maximum83.n15.e256x2.reference.v1",
+  "root_hex": "96b50f394bac8ec5efc034c2647766ad7652230f05e413044d5b860ce13210f83f0ed7419f62b617334264ed3d7e2e13a026fcdf6207dbdcfd417c4db6512c06",
+  "reference_table": {
+    "actual_merkle_root": true,
+    "symbol_count": 32768,
+    "symbol_generator": "low=u64(index); high=rotl64(low*0x9e3779b97f4a7c15,17); b128=low_le||high_le"
+  },
+  "log_table_size": 15,
+  "table_symbols": 32768,
+  "queries_per_stream": 264,
+  "query_count_is_security_claim": false,
+  "comparison_boundary": {
+    "rate_expanded_oracle": false,
+    "query_policy": "fixed-264-unique-indices-per-stream-not-rate-derived",
+    "leaf_group_symbols": 1,
+    "digest_bytes": 64,
+    "authentication_encoding": "full-path-per-distinct-leaf-without-internal-node-deduplication",
+    "not_the_strict_mixed_pcs_screen": true
+  },
+  "wire": {
+    "fixed_header_bytes": 16,
+    "root_bytes": 64,
+    "explicit_e256_terminal_claims": 2,
+    "e256_bytes_each": 32,
+    "b128_bytes_each": 16,
+    "authentication_node_bytes_each": 64,
+    "query_index_bytes": 0,
+    "path_mode": "one-full-path-per-distinct-opened-leaf-no-internal-node-deduplication"
+  },
+  "shared": {
+    "distinct_opened_symbols": 264,
+    "cross_stream_overlap": 264,
+    "authentication_nodes": 3960,
+    "proof_bytes": 257808
+  },
+  "independent": {
+    "distinct_opened_symbols": 525,
+    "cross_stream_overlap": 3,
+    "authentication_nodes": 7875,
+    "proof_bytes": 512544
+  },
+  "authority": "research-wire-model-only"
+}

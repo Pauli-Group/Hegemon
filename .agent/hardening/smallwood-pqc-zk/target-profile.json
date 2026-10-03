@@ -1,0 +1,90 @@
+{
+  "schema": "hegemon.smallwood.strict-profile.v1",
+  "profile_id": "hegemon.smallwood.v6.shake256-448.sha512.complete-zk.v1",
+  "protocol": {
+    "proof_system": "SmallWood-LPPC-PACS-PIOP-LVCS-DECS",
+    "challenge_field": {
+      "name": "Goldilocks",
+      "order": "18446744069414584321"
+    },
+    "transcript": {
+      "algorithm": "SHA-512",
+      "output_bits": 512,
+      "physical_fiat_shamir_rounds": 4
+    },
+    "parameters": {
+      "rho": 5,
+      "piop_openings": 5,
+      "beta": 2,
+      "opening_pow_bits": 0,
+      "decs_domain_size": 1048576,
+      "decs_openings": 23,
+      "decs_eta": 5,
+      "decs_pow_bits": 0,
+      "packing_factor": 64,
+      "piop_nonce_trials": 16,
+      "decs_candidate_count": 50,
+      "canonical_first_valid_piop_nonce": true,
+      "fixed_first_distinct_decs_sampler": true,
+      "decs_evaluation_domain": "radix2-disjoint-coset-v1",
+      "decs_leaf_index_bound": true,
+      "decs_leaf_tape_bytes": 64,
+      "independent_decs_leaf_tapes": true
+    }
+  },
+  "transaction_relation": {
+    "circuit_version": 6,
+    "crypto_suite": 5,
+    "family": 1,
+    "action": 8,
+    "backend": 2,
+    "profile": 2,
+    "domain_set": 1,
+    "statement_magic": "HGF6ST01",
+    "semantic_tag": "HEG-F6V1",
+    "envelope_magic": "SWV6",
+    "envelope_version": 1,
+    "statement_bytes": 893,
+    "limb_bytes": 7,
+    "public_limb_count": 128,
+    "intent_payload_bytes": 725,
+    "intent_frame_bytes": 744,
+    "semantic_hash_calls": 79,
+    "keccak_f1600_permutations": 124
+  },
+  "relation_hash": {
+    "algorithm": "SHAKE256",
+    "output_bits": 448
+  },
+  "security_accounting": {
+    "low_query_exponent": 64,
+    "low_target_bits": 128,
+    "work_query_exponent": 128,
+    "work_max_success": {
+      "numerator": "1",
+      "denominator": "2"
+    },
+    "relation_hash_targets": 79,
+    "relation_hash_collision_factor": 4,
+    "transcript_hash_worst_case_requests": 11574,
+    "transcript_hash_collision_factor": 4,
+    "cms_fiat_shamir_factor": 12,
+    "cms_transcript_collision_factor": 48,
+    "cms_oracle_bridge_factor": 2,
+    "global_history_union_multiplier": 1,
+    "per_proof_history_union_forbidden": true,
+    "opening_pow_bits": 0,
+    "decs_pow_bits": 0,
+    "piop_nonce_trials": 16,
+    "decs_candidate_count": 50
+  },
+  "geometry": {
+    "row_count": null,
+    "constraint_count": null,
+    "effective_constraint_degree": null,
+    "witness_polynomial_degree": null,
+    "consistency_discrepancy_degree": null,
+    "lvcs_column_count": null,
+    "base_game_arity_upper_bound": null
+  }
+}

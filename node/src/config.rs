@@ -5,7 +5,7 @@ use consensus::pow::DEFAULT_GENESIS_POW_BITS;
 use crypto::ml_dsa::MlDsaSecretKey;
 use crypto::traits::SigningKey;
 use network::{GossipRouter, NatTraversalConfig, RelayConfig};
-use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
+use protocol_versioning::{fresh_transaction_proof_capabilities, VersionBinding};
 use serde::{Deserialize, Serialize};
 use wallet::address::ShieldedAddress;
 use wallet::keys::RootSecret;
@@ -110,7 +110,10 @@ impl Default for NodeConfig {
             min_tx_fee_per_weight: 25,
             max_block_weight: 1_000_000,
             mempool_max_weight: 4_000_000,
-            supported_versions: vec![DEFAULT_VERSION_BINDING],
+            supported_versions: fresh_transaction_proof_capabilities()
+                .into_iter()
+                .map(|capability| capability.binding())
+                .collect(),
             p2p_addr: "0.0.0.0:9000".parse().expect("p2p socket"),
             seeds: vec![],
             imported_peers: vec![],

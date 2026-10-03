@@ -201,6 +201,18 @@ impl CommitmentTreeState {
         self.root_history.iter()
     }
 
+    /// Compact append frontier used by native canonical-state checkpoints.
+    /// The returned nodes are sufficient, together with the public root,
+    /// leaf count, and retained root history, to reconstruct this state
+    /// without replaying every historical commitment.
+    pub fn compact_frontier(&self) -> &[Commitment] {
+        &self.frontier
+    }
+
+    pub fn history_limit(&self) -> usize {
+        self.history_limit
+    }
+
     pub fn contains_root(&self, root: &Commitment) -> bool {
         self.root_history.iter().any(|value| value == root)
     }

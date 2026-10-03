@@ -728,8 +728,12 @@ theorem accepted_native_ledger_tree_replay_chain_ledger_from
                         by_cases treeOk :
                             treeTransitionAccepts treeInput = true
                         · simp [treeOk] at accepted
-                          simpa [nextLedgerTreeState] using
-                            ih accepted
+                          change
+                            validateNativeLedgerReplayChain
+                                (nextLedgerState initial.ledger block summary)
+                                (ledgerBlocksFromTreeReplay rest) =
+                              some final.ledger
+                          exact ih accepted
                         · simp [treeOk] at accepted
                       · simp [rootEq] at accepted
                 · simp [consumedEq] at accepted
@@ -814,7 +818,7 @@ theorem accepted_native_ledger_tree_replay_chain_integrity
           (ledgerBlocksFromTreeReplay blocks) = true
       ∧ final.ledger.spentNullifiers.Nodup
       ∧ final.ledger.consumedBridgeReplays.Nodup := by
-  simpa [initialNativeLedgerTreeState] using
+  simpa [initialNativeLedgerTreeState, initialNativeLedgerState] using
     accepted_native_ledger_tree_replay_chain_integrity_from
       (initial := initialNativeLedgerTreeState
         genesis

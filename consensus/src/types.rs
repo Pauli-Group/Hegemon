@@ -44,16 +44,47 @@ pub struct Transaction {
     pub ciphertext_hashes: Vec<[u8; 48]>,
 }
 
+/// Exact byte length of [`build_da_blob`] without materializing the blob.
+///
+/// Returns `None` if a count cannot be represented by the canonical u32 wire
+/// grammar or if host-size arithmetic overflows.
+pub fn checked_da_blob_len(transactions: &[Transaction]) -> Option<usize> {
+    u32::try_from(transactions.len()).ok()?;
+    transactions
+        .iter()
+        .try_fold(std::mem::size_of::<u32>(), |blob_len, transaction| {
+            u32::try_from(transaction.ciphertexts.len()).ok()?;
+            transaction.ciphertexts.iter().try_fold(
+                blob_len.checked_add(std::mem::size_of::<u32>())?,
+                |transaction_len, ciphertext| {
+                    u32::try_from(ciphertext.len()).ok()?;
+                    transaction_len
+                        .checked_add(std::mem::size_of::<u32>())?
+                        .checked_add(ciphertext.len())
+                },
+            )
+        })
+}
+
 pub fn build_da_blob(transactions: &[Transaction]) -> Vec<u8> {
-    let mut blob = Vec::new();
-    blob.extend_from_slice(&(transactions.len() as u32).to_le_bytes());
+    let exact_len = checked_da_blob_len(transactions)
+        .expect("DA blob counts must fit u32 and exact length must fit usize");
+    let transaction_count =
+        u32::try_from(transactions.len()).expect("DA transaction count checked before encoding");
+    let mut blob = Vec::with_capacity(exact_len);
+    blob.extend_from_slice(&transaction_count.to_le_bytes());
     for tx in transactions {
-        blob.extend_from_slice(&(tx.ciphertexts.len() as u32).to_le_bytes());
+        let ciphertext_count = u32::try_from(tx.ciphertexts.len())
+            .expect("DA ciphertext count checked before encoding");
+        blob.extend_from_slice(&ciphertext_count.to_le_bytes());
         for ciphertext in &tx.ciphertexts {
-            blob.extend_from_slice(&(ciphertext.len() as u32).to_le_bytes());
+            let ciphertext_len = u32::try_from(ciphertext.len())
+                .expect("DA ciphertext length checked before encoding");
+            blob.extend_from_slice(&ciphertext_len.to_le_bytes());
             blob.extend_from_slice(ciphertext);
         }
     }
+    debug_assert_eq!(blob.len(), exact_len);
     blob
 }
 
@@ -276,7 +307,7 @@ impl ArtifactRoute {
         Self::new(mode, proof_artifact_kind_from_mode(mode))
     }
 
-    pub const fn shipped_recursive_block_v2() -> Self {
+    pub const fn historical_recursive_block_v2() -> Self {
         Self::new(
             ProvenBatchMode::RecursiveBlock,
             ProofArtifactKind::RecursiveBlockV2,
@@ -298,7 +329,7 @@ impl ArtifactRoute {
         }
     }
 
-    pub fn is_shipped(self) -> bool {
+    pub fn is_historical_recursive(self) -> bool {
         self.mode == ProvenBatchMode::RecursiveBlock
             && self.kind == ProofArtifactKind::RecursiveBlockV2
     }
@@ -324,8 +355,8 @@ pub fn legacy_block_artifact_verifier_profile(kind: ProofArtifactKind) -> Verifi
     blake3_384(&material)
 }
 
-pub fn canonical_shipped_artifact_route() -> ArtifactRoute {
-    ArtifactRoute::shipped_recursive_block_v2()
+pub fn historical_recursive_artifact_route() -> ArtifactRoute {
+    ArtifactRoute::historical_recursive_block_v2()
 }
 
 pub fn canonical_experimental_artifact_route() -> ArtifactRoute {
@@ -428,15 +459,13 @@ impl ProvenBatch {
     }
 }
 
-/// Parent-agnostic proof object over an exact ordered transaction set.
+/// Historical parent-agnostic aggregate over an exact ordered transaction set.
 ///
-/// The current fresh-testnet implementation reuses the existing self-contained
-/// aggregation payload shape while the node and operator surfaces migrate to
-/// the new artifact-market naming.
+/// New blocks do not construct or carry this object. The alias remains so old
+/// recursive blocks can be decoded and verified without resetting the chain.
 pub type CandidateArtifact = ProvenBatch;
 
-/// Public metadata that lets builders discover and compare reusable candidate
-/// artifacts without downloading the full payload immediately.
+/// Historical candidate-announcement metadata retained for wire compatibility.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArtifactAnnouncement {
     pub artifact_hash: [u8; 32],
@@ -912,9 +941,9 @@ mod tests {
     }
 
     #[test]
-    fn canonical_artifact_routes_are_explicit() {
+    fn historical_and_experimental_artifact_routes_are_explicit() {
         assert_eq!(
-            canonical_shipped_artifact_route(),
+            historical_recursive_artifact_route(),
             ArtifactRoute::new(
                 ProvenBatchMode::RecursiveBlock,
                 ProofArtifactKind::RecursiveBlockV2
@@ -924,18 +953,18 @@ mod tests {
             canonical_experimental_artifact_route(),
             ArtifactRoute::new(ProvenBatchMode::ReceiptRoot, ProofArtifactKind::ReceiptRoot)
         );
-        assert!(canonical_shipped_artifact_route().is_shipped());
+        assert!(historical_recursive_artifact_route().is_historical_recursive());
         assert!(canonical_experimental_artifact_route().is_experimental());
     }
 
     #[test]
-    fn artifact_route_classification_distinguishes_legacy_and_shipped_paths() {
+    fn artifact_route_classification_distinguishes_historical_encodings() {
         let legacy_recursive = ArtifactRoute::new(
             ProvenBatchMode::RecursiveBlock,
             ProofArtifactKind::RecursiveBlockV1,
         );
         assert!(legacy_recursive.is_compatible_with_mode());
-        assert!(!legacy_recursive.is_shipped());
+        assert!(!legacy_recursive.is_historical_recursive());
         assert!(!legacy_recursive.is_experimental());
 
         let invalid_route = ArtifactRoute::new(

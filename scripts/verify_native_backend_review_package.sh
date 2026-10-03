@@ -33,6 +33,7 @@ python3 -I "$PACKAGE_HELPER" verify-package-layout \
   --package-root "$PACKAGE_ROOT"
 python3 -I "$PACKAGE_HELPER" verify-evidence-semantics \
   --root "$PACKAGE_ROOT"
+python3 -B "$SOURCE_ROOT/scripts/test_check_release_crypto_profile.py"
 SOURCE_TREE_SHA256="$(python3 -I "$PACKAGE_HELPER" source-digest --source "$SOURCE_ROOT")"
 
 required_files=(

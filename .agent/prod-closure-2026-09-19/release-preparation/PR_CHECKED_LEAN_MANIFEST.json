@@ -1,0 +1,2193 @@
+{
+  "checked_roots": [
+    "Mca38AffineBadLabelCount",
+    "Mca38NestedContentExceptions",
+    "Mca38NestedFactorCoverage",
+    "Mca38NestedFactorSeparability",
+    "Mca38NestedIndependentUnion",
+    "Mca38NestedInterpolationHeights",
+    "Mca38NestedRegularPartition",
+    "Mca38NestedRegularPoint",
+    "Mca38NonidenticalIncidenceCount",
+    "Mca38OriginFactorCoverage",
+    "Mca38PrimitiveFactorDegreeBudget",
+    "Mca38RbrActualMultiplicity",
+    "Mca38RbrGlobalMultiplicity",
+    "Mca38RbrPolynomialEndpoint",
+    "Mca38RoundByRoundInterpolation",
+    "Mca38RoundByRoundParameters",
+    "Mca38SeparateStageLedger",
+    "Mca38UniversalBadLineCount",
+    "Mca38UniversalMatrixEvent",
+    "Q38ChronologicalStateAlgebra",
+    "Q38CmsAdaptiveWholeViewApplication",
+    "Q38CmsAdaptiveWholeViewBound",
+    "Q38CmsControlledSwap",
+    "Q38CmsDependentContinuation",
+    "Q38CmsIndexedSwap",
+    "Q38CmsInitializedFullDomainAggregationInterface",
+    "Q38CmsInitializedFullDomainAssembly",
+    "Q38CmsInitializedFullDomainPerBasis",
+    "Q38CmsInitializedFullDomainSupportInterface",
+    "Q38CmsInitializedLeafOverlap",
+    "Q38CmsInitializedResampling",
+    "Q38CmsPhaseDecodeIsometry",
+    "Q38CmsSwapConjugation",
+    "Q38FreshSwapFiber",
+    "Q38FreshSwapIsometry",
+    "Q38MeasuredCmsNonleaf",
+    "Q38MeasuredCmsNonleafCore",
+    "Q38StateValuedCoinTransport",
+    "Q38WholeViewCmsSemantics",
+    "SmzaChallengeStageTargets",
+    "SmzaConditionedRoleOracleBound",
+    "SmzaFixedAdviceBadCell",
+    "SmzaFixedAdvicePrefix",
+    "SmzaInitializedStageRouting",
+    "SmzaJointRoleOracleExecution",
+    "SmzaPhysicalStageRecord",
+    "SmzaRawDatabaseRecords",
+    "SmzaRawRecordedPrefix",
+    "SmzaRawRecordedWrappers",
+    "SmzaRawStageGeometry",
+    "SmzaRawTraceDepth",
+    "SmzaRawWordReadback",
+    "SmzaRecordedTracePath",
+    "SmzaRoleDomainActiveEmbedding",
+    "SmzaRoleDomainConditionedRun",
+    "SmzaRoleDomainConditioning",
+    "SmzaRp04BalanceCore",
+    "SmzaRp04CalculatedExtraction",
+    "SmzaRp04ChronologicalAlgebra",
+    "SmzaRp04Degree",
+    "SmzaRp04FourRoleLedger",
+    "SmzaRp04McaLoss",
+    "SmzaRp04PackedAcceptance",
+    "SmzaRp04PrefixLabels",
+    "SmzaRp04PublicTargetReadback",
+    "SmzaRp04RawAcceptedOpeningChecks",
+    "SmzaRp04RawCollisionBound",
+    "SmzaRp04RawDecsReadback",
+    "SmzaRp04RawFppReadback",
+    "SmzaRp04RawHeadReadback",
+    "SmzaRp04RawPiopReadback",
+    "SmzaRp04RawRecordReconstruction",
+    "SmzaRp04RawRecordedMerkle",
+    "SmzaRp04RawRecordedTranscript",
+    "SmzaRp04RawRoleSamplingCore",
+    "SmzaRp04RawRootReadback",
+    "SmzaRp04RawVerifierChecks",
+    "SmzaRp04RecordedClaims",
+    "SmzaRp04RecordedTranscript",
+    "SmzaRp04RoleBadCells",
+    "SmzaRp04SameDatabaseVerifier",
+    "SmzaRp04SemanticLedger",
+    "SmzaRp04TracePrefixReadback",
+    "SmzaRp04TracePrefixes",
+    "SmzaSelectedStageSearch"
+  ],
+  "custom_sources": [
+    {
+      "module": "FiniteLedgerSupplyR8",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/supply-ledger/FiniteLedgerSupplyR8.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "c4e6681ebb89faa4829fce2d668cf73adb15677d10150823f104bad0e2ca61c1"
+    },
+    {
+      "module": "LifetimeIssuanceR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/issuance/LifetimeIssuanceR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "2922be16c37cabee9f95cec390d5e6aedf097cbe415a05fc72b2fa5ac8ccee60"
+    },
+    {
+      "module": "Mca38ActualBranchLabelCount",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38ActualBranchLabelCount.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38ActualBranchLabelCount.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "da75c4558504f29b188d393970d1cbc83081a222e05e2cdac0f376d053558e17"
+    },
+    {
+      "module": "Mca38ActualDerivativeDenominatorR2",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38ActualDerivativeDenominatorR2.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38ActualDerivativeDenominatorR2.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "f1d47e0258477fac1a8836a1d949f48352c96d45dbf12685ac947c2504f829c2"
+    },
+    {
+      "module": "Mca38ActualFullNumerator",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38ActualFullNumerator.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38ActualFullNumerator.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "27b2e4b147aa5cfdabe000f26ce65c185304dc45b6f033cae5a25c6a245dc4ec"
+    },
+    {
+      "module": "Mca38ActualMultiplicityR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/counting-interpolation/Mca38ActualMultiplicityR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "32d02ab2f4491e9232840ce0d990e5a09b6b4185ca189a0ecd83e97024b28f54"
+    },
+    {
+      "module": "Mca38ActualNonaffineBranchCount",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38ActualNonaffineBranchCount.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38ActualNonaffineBranchCount.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "68e7e2891cd75878a6a1a5498327fcf204e7641ba299fd64c3f0ee3ca79a0a82"
+    },
+    {
+      "module": "Mca38ActualOriginAssignment",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38ActualOriginAssignment.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38ActualOriginAssignment.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "bbacb602fec7e6dbc2d59268deb1e5fad4cfb5d192936ba148d7c30cd667dc74"
+    },
+    {
+      "module": "Mca38ActualPositionIncidenceCount",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38ActualPositionIncidenceCount.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38ActualPositionIncidenceCount.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "4a30633e13629bcd823317a06a130dff113bb27268e8e5d1045027d568734ee9"
+    },
+    {
+      "module": "Mca38ActualResidualNorm",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38ActualResidualNorm.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38ActualResidualNorm.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "f3f19f46d7f2d000fee5aa58c3031bf663f59ac08c7141541beb795ab614fc98"
+    },
+    {
+      "module": "Mca38ActualResidualSpecialization",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38ActualResidualSpecialization.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38ActualResidualSpecialization.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "bd20e89e0e4f971e8751cd2cdc5e1161a592d8c9127842f571d39f30f311a476"
+    },
+    {
+      "module": "Mca38ActualRootSource",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38ActualRootSource.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38ActualRootSource.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "89247362cf6d1f65b760d922480439e7d3410eaa4b4b7387816a4a490a942590"
+    },
+    {
+      "module": "Mca38ActualRootSourceHeight",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38ActualRootSourceHeight.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38ActualRootSourceHeight.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "4a543154e8d1cdd4e58a45ce0398705d0a4a86fa5787877ba49bfb347dfe19fa"
+    },
+    {
+      "module": "Mca38AffineBadLabelCount",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38AffineBadLabelCount.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38AffineBadLabelCount.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "8fbe7009bd459efd19a021ce48cb722fa1782243f6d0a663ceca84855376a3b9"
+    },
+    {
+      "module": "Mca38AlgebraicAffineDescentR2",
+      "path": ".agent/q38-counting-2026-09-19/branches/Mca38AlgebraicAffineDescentR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "a7f4bfd003f2038d5a849b0080acbdf8dffaaad108acaf8b05fd8f55d2834bdc"
+    },
+    {
+      "module": "Mca38BivariateHeightInterface",
+      "path": ".agent/q38-counting-2026-09-19/branches/Mca38BivariateHeightInterface.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38BivariateHeightInterface.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "9cba01185a9093fd6a9a6d803445bebf8d288892cf826e6dbbeecbdba43907a0"
+    },
+    {
+      "module": "Mca38ClearedIncidence",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38ClearedIncidence.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38ClearedIncidence.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "d0d1ae911218b45c2cf329352785ef6f4227d4dfc5ac90ddbff761eb8a20bf5f"
+    },
+    {
+      "module": "Mca38ClearedResidualAssembly",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38ClearedResidualAssembly.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38ClearedResidualAssembly.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "694bd3ade12f244920b5df8f0e63a56d4be0152399ba6ded433770835a05ec7a"
+    },
+    {
+      "module": "Mca38ConcreteExtensionR6",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/counting-field/Mca38ConcreteExtensionR6.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "b96b760ce686aa057c5b79aae2c006deaadb0ac9996da71b97388b883d452ae0"
+    },
+    {
+      "module": "Mca38EliminationDegree",
+      "path": ".agent/q38-counting-2026-09-18/Mca38EliminationDegree.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "96016403ac591f02b33449efb48ab22038e8b6cf7c38aa76221bf25cd2810919"
+    },
+    {
+      "module": "Mca38ExtensionCharacteristic",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/counting-field/Mca38ExtensionCharacteristic.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "fc7907d946796aeda7c4c6da8894afd15c938d2bd03cdbbe1589dfeffbf429a4"
+    },
+    {
+      "module": "Mca38FiniteFactorLocalization",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38FiniteFactorLocalization.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "19cbd8ed502f4dad5ddc058fec3800a1a179d91f4285351d2378266d2c1832e9"
+    },
+    {
+      "module": "Mca38FiniteHeightInduction",
+      "path": ".agent/q38-counting-2026-09-18/Mca38FiniteHeightInduction.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "a5e775d077169227fbf0bba37bd1dd24b40f9d409577566e003a6c1360406b7e"
+    },
+    {
+      "module": "Mca38FiniteHenselR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/counting-interpolation/Mca38FiniteHenselR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "ba19ea2a010ba428d34bbf20a9c40b471ba56b3f130ba2f995d2e701e75aa866"
+    },
+    {
+      "module": "Mca38FinitePartitionR4",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-checklist-closure-2026-09-14/controls/smza-counting-close.ZRkaMmex/Mca38FinitePartitionR4.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "7dc06d4acfabebde6f624efba43704b1759423187f6ea1eb24bb2a145ef8f382"
+    },
+    {
+      "module": "Mca38FullNumeratorEndpoint",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38FullNumeratorEndpoint.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38FullNumeratorEndpoint.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "acc43ffb0c565bb3c97e0d89a644412e4fc80a081c97750d5429546dfb65945a"
+    },
+    {
+      "module": "Mca38GenericIncidenceDescent",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38GenericIncidenceDescent.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38GenericIncidenceDescent.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "7ae879b66aeda3fc3e8430511c971385b6befd4c513215c79031297d052bedae"
+    },
+    {
+      "module": "Mca38GlobalIncidenceAssembly",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38GlobalIncidenceAssembly.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38GlobalIncidenceAssembly.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "374c3e3f284500cade795670cc607e39176d5c4623f14c0eb23eab03cdc46ca1"
+    },
+    {
+      "module": "Mca38GsInterpolationR3",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/counting-interpolation/Mca38GsInterpolationR3.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "a87221aeaca535f843aa115f14ec8c9d23f5c70e086772f2bf3a680a15010152"
+    },
+    {
+      "module": "Mca38HasseCoefficientR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/counting-interpolation/Mca38HasseCoefficientR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "6f1d126a81bca7656807fe6ae67722f139d4e9c2b8583a697f04b40d20a1e34a"
+    },
+    {
+      "module": "Mca38HenselActualRecurrenceR3",
+      "path": ".agent/q38-counting-2026-09-18/factor/Mca38HenselActualRecurrenceR3.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "90ba3ba1f11e982d9a4c3a2b68b1df45f8a77f5dcdb18d0906b4a041c2f664d8"
+    },
+    {
+      "module": "Mca38HenselCompositionR3",
+      "path": ".agent/q38-counting-2026-09-18/factor/Mca38HenselCompositionR3.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "d9ae0c676dfd2ad0af09ae1e857e75018e286a14dd700df4d5da46420ddb701b"
+    },
+    {
+      "module": "Mca38HenselHeightR3",
+      "path": ".agent/q38-counting-2026-09-18/factor/Mca38HenselHeightR3.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "e73b542858488f2e5c672991be2a2fd47570fc6c0ff11b74104a76c23923eb7c"
+    },
+    {
+      "module": "Mca38HenselPolynomialHeight",
+      "path": ".agent/q38-counting-2026-09-18/factor/Mca38HenselPolynomialHeight.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "c606972664b7944ad3d6ad68d098f4ea5356e5e34bc1ef98e0bb1aba4b207e5b"
+    },
+    {
+      "module": "Mca38HenselRootShift",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38HenselRootShift.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38HenselRootShift.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "b5f04abd725d250184212f124cb56350f07fc6b18d0a60c6567ce9a445d0738b"
+    },
+    {
+      "module": "Mca38HenselTransferR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/counting-interpolation/Mca38HenselTransferR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "3da5e4482124f81f75483dfd84c8701dfc7caacccb2698ce7edcc2851a23a547"
+    },
+    {
+      "module": "Mca38IncidenceColumnCount",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38IncidenceColumnCount.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38IncidenceColumnCount.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "60b77d5ec02df07996ed3c5c975259227df75555949fbc74c6514014fb11d016"
+    },
+    {
+      "module": "Mca38LocalMultiplicityR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/counting-interpolation/Mca38LocalMultiplicityR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "4061299ac4203d5b874b291914ab6a54015c1371609cb1e05c5d379930b291f0"
+    },
+    {
+      "module": "Mca38LocalizedNewtonStart",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38LocalizedNewtonStart.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "cbdce7016de2eb05126a8fd7634fcaec9e09ba68f22185114f575165d718780e"
+    },
+    {
+      "module": "Mca38LocalizedNewtonTruncation",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38LocalizedNewtonTruncation.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38LocalizedNewtonTruncation.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "cc1cffa3050aeb68c8e85d7b9099b25061bdb225f972e9e4521aa9b68079ffd2"
+    },
+    {
+      "module": "Mca38LocalizedResidualCount",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38LocalizedResidualCount.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38LocalizedResidualCount.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "906e818575e26d60ca2abbbeaf2d6017f430c7f71e15d2c4d4ea0921f6292a67"
+    },
+    {
+      "module": "Mca38LocalizedResponseTracking",
+      "path": ".agent/q38-counting-2026-09-19/branches/Mca38LocalizedResponseTracking.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38LocalizedResponseTracking.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "340215c7d58b59f276040126fa5ef98c368ed4d9eb449940fff9a86059a5b74a"
+    },
+    {
+      "module": "Mca38LocalizedSourceSpecialization",
+      "path": ".agent/q38-counting-2026-09-19/branches/Mca38LocalizedSourceSpecialization.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38LocalizedSourceSpecialization.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "7bd81b729b07b1d7d4c39e95d7266e56a30c715a67ef662d85f6faa951493465"
+    },
+    {
+      "module": "Mca38NestedContentExceptions",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NestedContentExceptions.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NestedContentExceptions.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "b54775209998ce3ffd4c5efcf35de1a79cc727ccc4708e780f536e472b267c0c"
+    },
+    {
+      "module": "Mca38NestedFactorCoverage",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NestedFactorCoverage.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NestedFactorCoverage.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "5420f6e2a0d831442d28b19101d730b22b5f82df9f77ccec05607b3aa0ede146"
+    },
+    {
+      "module": "Mca38NestedFactorSeparability",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NestedFactorSeparability.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NestedFactorSeparability.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "cd0f3b9433c3132814de86dfc5f304b2b8e67cc341d4aa53efa965ec4eed1bab"
+    },
+    {
+      "module": "Mca38NestedIndependentUnion",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NestedIndependentUnion.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NestedIndependentUnion.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "8f599eb24f25e3b07a076fc34e765843f1c934a66803461dd2bf701100397a46"
+    },
+    {
+      "module": "Mca38NestedInterpolationHeights",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NestedInterpolationHeights.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NestedInterpolationHeights.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "55795c919edfd138b513e61d8906d6d1fbea590f19aaec65944d868252cbc090"
+    },
+    {
+      "module": "Mca38NestedRegularPartition",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NestedRegularPartition.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NestedRegularPartition.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "57ca159aa016edc372b5b08f9b0e19e53ba5bfca215b9c138087aa8b0b0417ce"
+    },
+    {
+      "module": "Mca38NestedRegularPoint",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NestedRegularPoint.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NestedRegularPoint.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "2d80af8216204b2aaefcb425abafe8663efa697a5bc34e9089c82d55911061a5"
+    },
+    {
+      "module": "Mca38NestedTranslation",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NestedTranslation.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NestedTranslation.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "286549e02f94200f854e1d6276deb12a91aad0dfaacd9e09307538d8629682a7"
+    },
+    {
+      "module": "Mca38NonidenticalIncidenceCount",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38NonidenticalIncidenceCount.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38NonidenticalIncidenceCount.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "ad4c1794d6eb33a5de3f0b94c93dc76dc167d56b73e2cb926b64a06b92f52b29"
+    },
+    {
+      "module": "Mca38OriginFactorCoverage",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38OriginFactorCoverage.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38OriginFactorCoverage.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "ed4f9b4ec76a9ea71847f1456304e3c51acda75aaf182e5a3ced5b5efff8ab08"
+    },
+    {
+      "module": "Mca38PrimitiveFactorDegreeBudget",
+      "path": ".agent/q38-counting-2026-09-19/branches/Mca38PrimitiveFactorDegreeBudget.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38PrimitiveFactorDegreeBudget.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "bc8bd75b2199ba9fc9038019003dcdf0dd791cf593b5438c70cad7850c747f8a"
+    },
+    {
+      "module": "Mca38RbrActualMultiplicity",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38RbrActualMultiplicity.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38RbrActualMultiplicity.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "f6741f2f6ca41a3d2c309a881e023c316f944842287f0003af3a036f4d096c4b"
+    },
+    {
+      "module": "Mca38RbrGlobalMultiplicity",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38RbrGlobalMultiplicity.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38RbrGlobalMultiplicity.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "97b9fc1c16c16610308f63751df4099e8489ff95a9989f3f3d253b79a6bef14a"
+    },
+    {
+      "module": "Mca38RbrPolynomialEndpoint",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38RbrPolynomialEndpoint.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38RbrPolynomialEndpoint.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "0a821020ef54ad06760b99aab1e991b1d674c418ef34e2d2b118f47b37416101"
+    },
+    {
+      "module": "Mca38RoundByRoundInterpolation",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38RoundByRoundInterpolation.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38RoundByRoundInterpolation.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "6dc4b134f9fceaf19547b8dee4b7d8dc4edf3a447d49eff37eddbba3b77e95e4"
+    },
+    {
+      "module": "Mca38RoundByRoundParameters",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38RoundByRoundParameters.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38RoundByRoundParameters.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "2621a5be47ec53fe9d7696b82f7c7588e749abb29a62e8f5ec1fff2b766f6693"
+    },
+    {
+      "module": "Mca38ScalarDescentR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-checklist-closure-2026-09-14/controls/smza-scalar-descent.F169kAps/Mca38ScalarDescentR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "9a22e4a9afcb51b4b24eb580dc32c6e8adfc01c2b2bec5ec7c47a6312af3fac1"
+    },
+    {
+      "module": "Mca38SeparateStageLedger",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38SeparateStageLedger.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38SeparateStageLedger.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "4e33528386104fb0e0f9374748f73f08d88fe3bf3cccb08d01560829c772fe0c"
+    },
+    {
+      "module": "Mca38SharedNumeratorBidegree",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38SharedNumeratorBidegree.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "893048f86c42e5d5dbcefe67ba6712d82c9e1412d080a23641fbd975416f7b03"
+    },
+    {
+      "module": "Mca38SimpleFactorStartR2",
+      "path": ".agent/q38-counting-2026-09-18/factor/Mca38SimpleFactorStartR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "d733bd5844e37752532c421ec8e3f85553a7909ca677b0133f46586ad097e0dc"
+    },
+    {
+      "module": "Mca38SpecializationDegreeR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/counting-interpolation/Mca38SpecializationDegreeR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "1f89e2b525b5310ccb3e295599df57d82fba2ffce21b8e088a34ce75a1d9722a"
+    },
+    {
+      "module": "Mca38TaylorCoefficientHeight",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38TaylorCoefficientHeight.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38TaylorCoefficientHeight.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "4c980cf992f715005d7ddd22af03f904549fca0bc024f067d7905aeca30b224a"
+    },
+    {
+      "module": "Mca38TranslatedRegularOrigin",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38TranslatedRegularOrigin.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38TranslatedRegularOrigin.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "ea48881949aaa1ba39404fbc76dd1cd65f24eab103c589fa0e6f7096fb45d4fc"
+    },
+    {
+      "module": "Mca38UniformSpecialization",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38UniformSpecialization.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38UniformSpecialization.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "9e8590d2c1d8fd247d7f9e4d947719c06aeeafc4cf57950b02582c8760da2412"
+    },
+    {
+      "module": "Mca38UnitHenselHeight",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38UnitHenselHeight.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "48885e58caad3bd4fc689347a114473dcad3934ab9c5295e1e85937f84e3af2b"
+    },
+    {
+      "module": "Mca38UniversalBadLineCount",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38UniversalBadLineCount.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38UniversalBadLineCount.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "adbbdff2141c0d68399810a810a72a28f7fbd68ed4e4e5cdc6ea45d95956d765"
+    },
+    {
+      "module": "Mca38UniversalMatrixEvent",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38UniversalMatrixEvent.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38UniversalMatrixEvent.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "5baf2da4badca31a6df5befdb36a292a884f575f8e217a391760cadea0ef0622"
+    },
+    {
+      "module": "Mca38VectorTransportR3",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-checklist-progress-2026-09-14/controls/smza-vector-transport.6DtsGXGv/Mca38VectorTransportR3.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "254a898c45607415505a6b1ee5c40bf18016b4d6120ca1b43d9a7be6f54593d1"
+    },
+    {
+      "module": "Mca38WeightedBranchUnions",
+      "path": ".agent/q38-counting-2026-09-19/factor/Mca38WeightedBranchUnions.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Mca38WeightedBranchUnions.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "a6c7e34475449f99248e6e788e88d7ba0cb3a902ca8476d00a5ea380fc78524d"
+    },
+    {
+      "module": "Q38ChronologicalStateAlgebra",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38ChronologicalStateAlgebra.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38ChronologicalStateAlgebra.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "79b08c6e1a7e7f816db6dc44b1abb26cef282bd132e167802cac8f4da137d713"
+    },
+    {
+      "module": "Q38CmsAdaptiveWholeViewApplication",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsAdaptiveWholeViewApplication.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsAdaptiveWholeViewApplication.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "c33d84d14f7baf200aa0ea336dfce42189c70ccb16823e0d8f048e42fd194d74"
+    },
+    {
+      "module": "Q38CmsAdaptiveWholeViewBound",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsAdaptiveWholeViewBound.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsAdaptiveWholeViewBound.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "6ffa124dc770750b2f9be2474abdf496bd58275e2de215da1c2ae47c462e3257"
+    },
+    {
+      "module": "Q38CmsControlledSwap",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsControlledSwap.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsControlledSwap.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "213bc7730c7fad99f3d4878eadacff9dc9e7c9f2233de72b110a277fc984f14c"
+    },
+    {
+      "module": "Q38CmsDependentContinuation",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsDependentContinuation.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsDependentContinuation.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "e09fa332cd3bb32bd5f394e2c1a869d7e1692d324a0224acc8026808387481ec"
+    },
+    {
+      "module": "Q38CmsIndexedSwap",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsIndexedSwap.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsIndexedSwap.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "098f2c5d809d62e5c0cce4aa98310b5de37a7044ba9be02628c05bb65311d8ab"
+    },
+    {
+      "module": "Q38CmsInitializedFullDomainAggregationInterface",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsInitializedFullDomainAggregationInterface.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsInitializedFullDomainAggregationInterface.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "d0d6de5d0d40dc61690fa675e2fe0ba44a028882f4fc6add7516be979de44345"
+    },
+    {
+      "module": "Q38CmsInitializedFullDomainAggregationProbe",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsInitializedFullDomainAggregationProbe.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsInitializedFullDomainAggregationProbe.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "346dcb859e6330ec88aa45fa3b86e68c01ebb236b3ca402c8325342dd644949d"
+    },
+    {
+      "module": "Q38CmsInitializedFullDomainAssembly",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsInitializedFullDomainAssembly.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsInitializedFullDomainAssembly.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "beec5d880d93c6077fbc0d3d520097404ca7ee8d89316b74fd5aef32d4f5cdc6"
+    },
+    {
+      "module": "Q38CmsInitializedFullDomainImportProbe",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsInitializedFullDomainImportProbe.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsInitializedFullDomainImportProbe.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "a9057ddb730251f530d89eed51f6602bd48fa8ff4f4373fc0de0e7016b719587"
+    },
+    {
+      "module": "Q38CmsInitializedFullDomainPerBasis",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsInitializedFullDomainPerBasis.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsInitializedFullDomainPerBasis.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "ecc11657f98772e2d2881705ef3fef83fad3a966236ccfceae63b661fbba6ccf"
+    },
+    {
+      "module": "Q38CmsInitializedFullDomainSupportInterface",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsInitializedFullDomainSupportInterface.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsInitializedFullDomainSupportInterface.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "7d9643a41b3a5f5b41dec1720f7c2ccd1adc2913c734a5a61d632be1be783834"
+    },
+    {
+      "module": "Q38CmsInitializedLeafOverlap",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsInitializedLeafOverlap.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsInitializedLeafOverlap.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "0180b49bc6647e730e3b81e527940731eef80942caa3a9ccd8797dbbd86a066d"
+    },
+    {
+      "module": "Q38CmsInitializedResampling",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsInitializedResampling.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsInitializedResampling.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "2ccb2bf8c97165f00d26ec1e57d2b4d855ad4b76c1db3f14e590dd8121493965"
+    },
+    {
+      "module": "Q38CmsPhaseDecodeIsometry",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsPhaseDecodeIsometry.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsPhaseDecodeIsometry.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "9a6e9f730b0e3b458fbea8e9eea7c23f6d08ffdc435256b64c5b50b13540ab49"
+    },
+    {
+      "module": "Q38CmsResamplingCoordinates",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsResamplingCoordinates.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsResamplingCoordinates.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "0da675775b44b2a3891f4c2aa33093555664b9b2d6c8c3da20e97e348b70e4f4"
+    },
+    {
+      "module": "Q38CmsSwapConjugation",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38CmsSwapConjugation.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38CmsSwapConjugation.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "dc74d9951523945cb638698d1d993dcfe4f532781d82924736bc11da0bc687b0"
+    },
+    {
+      "module": "Q38CompleteAlgebraR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/privacy-algebra/Q38CompleteAlgebraR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "e7acc22faac283a53595a5c0edc18b529b70ee6c5ef69aa63b9fa6f8e7b9b786"
+    },
+    {
+      "module": "Q38ControlledFreshSwapCore",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38ControlledFreshSwapCore.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38ControlledFreshSwapCore.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "bcb4ef6d6e9d4a0e581e6cf3c6b44dfb39d2846b1da86a9d566f893d27ebc970"
+    },
+    {
+      "module": "Q38DecoderEventR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smz9-q38-soundness.LvokDs/Q38DecoderEventR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "a2de479297e70b584c7a2fd3f3409e98611f1611c8834e8a7d8e4693d9a73b6a"
+    },
+    {
+      "module": "Q38FieldAllocation",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smz9-q38-collection.0EJpVRpz/Q38FieldAllocation.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "37f6c9d5dabb7c127f7aff05591b8f70a1ef999fe899fdb7c62fde4b977c1ec9"
+    },
+    {
+      "module": "Q38FreshSwapFiber",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38FreshSwapFiber.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38FreshSwapFiber.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "ef9348b9646b47a0cd3fb1dc7239e503a767fe974b36a6e60769cbfba8864d3c"
+    },
+    {
+      "module": "Q38FreshSwapIsometry",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38FreshSwapIsometry.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38FreshSwapIsometry.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "0cd63271cc81dee63e0167ff4b30810c4bb25a74e0323f5cf189fe6f542ac7e3"
+    },
+    {
+      "module": "Q38JointSimulatorR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/privacy-algebra/Q38JointSimulatorR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "890eee7a3802693044ad075fb6303899129bd33b6b9bb4e97567bb6c351a151f"
+    },
+    {
+      "module": "Q38LeafFrameHybridR4",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/privacy-algebra/Q38LeafFrameHybridR4.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "0311f3ba2d5cd0c7e6b82d14fe179c130dca0f21b4f28072b0cf8d816840dc43"
+    },
+    {
+      "module": "Q38MaskFeedback",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/privacy-algebra/Q38MaskFeedback.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "2c44cba370f89734d17e437ceceaceda8ce7af47c1976d39ec81ed7bf675e5bc"
+    },
+    {
+      "module": "Q38MeasuredCmsNonleaf",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38MeasuredCmsNonleaf.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38MeasuredCmsNonleaf.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "89de467311ff2477cd8c1cd1751cc7f19712069250f543e4b61c09653c68d5ee"
+    },
+    {
+      "module": "Q38MeasuredCmsNonleafCore",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38MeasuredCmsNonleafCore.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38MeasuredCmsNonleafCore.8e0a9c2d9a303343-adac1cde.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "8e0a9c2d9a3033438f1429ece0eedd6f02ed45b8518b2fe750929f07fdc1b755"
+    },
+    {
+      "module": "Q38RemainingAlgebra",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/privacy-algebra/Q38RemainingAlgebra.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "d239d17cabc9140e02c0d49df411a8422ed8ab63ad65ea63cf48d8ee59ebced9"
+    },
+    {
+      "module": "Q38StateValuedCoinTransport",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38StateValuedCoinTransport.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38StateValuedCoinTransport.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "2dd277dd86cb89d8344ed925bc7dcd8cb2b6f0b63dab39700e7ed91e44d2f084"
+    },
+    {
+      "module": "Q38TailRankR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/privacy-algebra/Q38TailRankR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "78d4ac0b7da4ccc0caf6fe5b9ce753b0d8fa8d6f823e62f2f3527a3a0816fa8b"
+    },
+    {
+      "module": "Q38WholeViewCmsSemantics",
+      "path": ".agent/prod-closure-2026-09-19/privacy/Q38WholeViewCmsSemantics.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/Q38WholeViewCmsSemantics.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "4204fa7002e436abf3d1a645cce250eb7f8aacbe5ebe67b0e39b330cf3d7f513"
+    },
+    {
+      "module": "SmallWoodV8SmzaOnlineParserR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-parser-resume.Xmj8bJCn/SmallWoodV8SmzaOnlineParserR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "ffd9c57e66389e13e1167bf2f3dd5a6e188c7d98cc78efebae7f85c2f80d9dca"
+    },
+    {
+      "module": "SmallWoodV8SmzaOracleParserR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-parser-resume.Xmj8bJCn/SmallWoodV8SmzaOracleParserR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "11013322aaf669ae42adcd074dbe6b09e140a2565c5a9c42a557f247a2db675e"
+    },
+    {
+      "module": "SmzaChallengeStageTargets",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaChallengeStageTargets.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaChallengeStageTargets.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "24b2474f5b8d5ff2117e640a2f39f8454bcb4aa535b879ab9ff32e0e1f5bc5a7"
+    },
+    {
+      "module": "SmzaCoherentRecord",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-soundness-resume.LWbKdJ/SmzaCoherentRecord.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "d6d8d07c42d8198fde52f06d365d610a6225cc8ee4ac0379278f23c66a100efd"
+    },
+    {
+      "module": "SmzaConditionedRoleOracleBound",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaConditionedRoleOracleBound.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaConditionedRoleOracleBound.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "04b060ce8dc4474380ed63d60326203cdb59c2109f95ea89dbb1fb067428b022"
+    },
+    {
+      "module": "SmzaControlledCmsR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-soundness-resume.LWbKdJ/SmzaControlledCmsR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "afd14c23914981db9b67f1609e7a62d5c9325febea7cc70235cebc1a4d1a63f6"
+    },
+    {
+      "module": "SmzaDynamicDatabaseSoundness",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaDynamicDatabaseSoundness.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaDynamicDatabaseSoundness.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "df279cb017c7169744a8967e4992649c56db2cb64d8703c101471505dadb1b31"
+    },
+    {
+      "module": "SmzaDynamicOracleExecution",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaDynamicOracleExecution.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaDynamicOracleExecution.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "b04fa367008526db8d87699115660ad2778f80c09e978edcc98c57293f69001c"
+    },
+    {
+      "module": "SmzaDynamicStageLabels",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaDynamicStageLabels.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaDynamicStageLabels.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "a912e01e03c0b0cb8defe40674925577f184511863816007034461e46ccc2207"
+    },
+    {
+      "module": "SmzaFixedAdviceBadCell",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaFixedAdviceBadCell.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaFixedAdviceBadCell.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "a438897859f7dc49bfd6891190b5bc4d4c7dfb1b71aa38fefb62ccf7ce656252"
+    },
+    {
+      "module": "SmzaFixedAdvicePrefix",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaFixedAdvicePrefix.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaFixedAdvicePrefix.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "0316e03ab40f67431f602cf9e63bf4ddb6a1105f3a736313d22c0883e61a7405"
+    },
+    {
+      "module": "SmzaInitializedStageRouting",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaInitializedStageRouting.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaInitializedStageRouting.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "3df29c2ab4dd29dbf874c1e8714f313e62c4ac274cbacba5e6ab081f60d57a34"
+    },
+    {
+      "module": "SmzaJointRoleOracleExecution",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaJointRoleOracleExecution.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaJointRoleOracleExecution.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "59c377986ddf49ef61aed95ae80624928f427b6b78dd3c651b073c8298564832"
+    },
+    {
+      "module": "SmzaOnlineAssemblyR6",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-soundness-resume.LWbKdJ/SmzaOnlineAssemblyR6.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "cedf16a4ed611a5807e5b0ac76ea7019c6ccd803b31fc3e31fc37f28dab275fb"
+    },
+    {
+      "module": "SmzaPhysicalStageRecord",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaPhysicalStageRecord.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaPhysicalStageRecord.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "a520d256e08bba968986cd1e3fabdf17113c7823510ccd84a7c12c8d622d39d1"
+    },
+    {
+      "module": "SmzaPiopGoodOutcomeR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/extraction-core/SmzaPiopGoodOutcomeR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "031d8d05fb08dd42dd0debf911be40df95948ce82e571885f1f0a44cf411d545"
+    },
+    {
+      "module": "SmzaPrefixTransportR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-soundness-resume.LWbKdJ/SmzaPrefixTransportR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "b7a7904449906aeb640c829f5e50d2cb6b0fc211005bf7b0012ea8e679099fc0"
+    },
+    {
+      "module": "SmzaQ38LvcsOpening",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/extraction-core/SmzaQ38LvcsOpening.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "37320688b5f683a889f75f60bb725fa0723a1586c185cae869db52bfc7329bd5"
+    },
+    {
+      "module": "SmzaQ38McaSourceBindingR2",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/extraction-core/SmzaQ38McaSourceBindingR2.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "a83cc0ba46726ee4eba2000eb1ee697fe2296f3bc5a54957bf4db87b25f29776"
+    },
+    {
+      "module": "SmzaQ38OpeningFieldReadbackR3",
+      "path": ".agent/prod-closure-2026-09-18/extraction/SmzaQ38OpeningFieldReadbackR3.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "aa7d65d3d8fe63e85866579ae5f305bb0c3a8f98d236cfbe70e4da0178e4e95d"
+    },
+    {
+      "module": "SmzaQ38OracleExtraction",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/extraction-core/SmzaQ38OracleExtraction.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "d17ae95de171ea6c0086ad43df82e1262a3013710bcd965f5453c5da714c40a4"
+    },
+    {
+      "module": "SmzaQ38Recovery",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/extraction-core/SmzaQ38Recovery.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "3344f9976afd53090623eed591862c4698eea4c03eea60e791bab1a968ec3d9e"
+    },
+    {
+      "module": "SmzaRawDatabaseRecords",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRawDatabaseRecords.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRawDatabaseRecords.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "0bd5fb534c1608f4ae4d34efee9d041c2fd683621eb1d6dd39c3ac5de2a59b14"
+    },
+    {
+      "module": "SmzaRawRecordedPrefix",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRawRecordedPrefix.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRawRecordedPrefix.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "ba287b845a0976b6e582f55732a3a48bfde87865601cd1049b00a9e5d2d494ff"
+    },
+    {
+      "module": "SmzaRawRecordedWrappers",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRawRecordedWrappers.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRawRecordedWrappers.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "bf63dac4c9e67a37d64570803f955dbc90bea2f91f941f430e3599e5356c6503"
+    },
+    {
+      "module": "SmzaRawStageGeometry",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRawStageGeometry.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRawStageGeometry.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "1fa0d442d975f0d4e875202b836826e422ddc508c0c08dec2f7d70f457b724ba"
+    },
+    {
+      "module": "SmzaRawTraceDepth",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRawTraceDepth.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRawTraceDepth.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "c65a00a1e260f5c817daa53f967103df81b1ee20e2deae05f431dd46ad5ff8bf"
+    },
+    {
+      "module": "SmzaRawWordReadback",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRawWordReadback.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRawWordReadback.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "a86d80d7dccdc25a6904640abe842b843f7a46854f765de5c20016c89a9d7e33"
+    },
+    {
+      "module": "SmzaRecordSplitR3",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-soundness-resume.LWbKdJ/SmzaRecordSplitR3.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "6dcfd636eeb0325898bfb722ef019ed4fd6bf4c132e243fa0bf47d9ea28d0076"
+    },
+    {
+      "module": "SmzaRecordSupportR5",
+      "path": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-soundness-resume.LWbKdJ/SmzaRecordSupportR5.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "b27f3d2ea8e1b128e93691cc00c0629e1431af925de3d28da07222579cd0feee"
+    },
+    {
+      "module": "SmzaRecordedTracePath",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRecordedTracePath.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRecordedTracePath.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "7f332d861c24f3f353555cdc21b30c556dafdb23741cc90d5dd86b9c59606262"
+    },
+    {
+      "module": "SmzaRoleDomainActiveEmbedding",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRoleDomainActiveEmbedding.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRoleDomainActiveEmbedding.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "18e355d4f2a2c2b71adcad9f58152a645e3de70904584b37bd241412a1911337"
+    },
+    {
+      "module": "SmzaRoleDomainConditionedRun",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRoleDomainConditionedRun.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRoleDomainConditionedRun.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "034a2e3feee400cf9296a1716bb5a17977b8a9f20e26f863ae34ddeab840edd9"
+    },
+    {
+      "module": "SmzaRoleDomainConditioning",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRoleDomainConditioning.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRoleDomainConditioning.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "96bee51ff274eacf65f037ee498c1cdc861dfedc414dfc52da9fb13ee2ec2934"
+    },
+    {
+      "module": "SmzaRp04ActualProgram",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ActualProgram.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ActualProgram.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "e05e24f5fc3ccad0fa2d6ff7c34fb3fb228cef3b6f1921596f7a2ef44842904f"
+    },
+    {
+      "module": "SmzaRp04BalanceCore",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04BalanceCore.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04BalanceCore.1dcfdf355aa8cc81-5f22cb3f.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "1dcfdf355aa8cc8178537e006d84a7170ffd8c6a4da5c18873a7c8a19a896219"
+    },
+    {
+      "module": "SmzaRp04CalculatedExtraction",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04CalculatedExtraction.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04CalculatedExtraction.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "308019bdb04b96275c4ccc94fe398615cd3210dd9216a392987b2b605b9e3d84"
+    },
+    {
+      "module": "SmzaRp04ChronologicalAlgebra",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ChronologicalAlgebra.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ChronologicalAlgebra.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "fa4060a704b6f7d0a831c0d662767be59d67eacc09633c89db4e43f88c896caa"
+    },
+    {
+      "module": "SmzaRp04Components",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04Components.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04Components.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "5cb107c57eb09f2f806def20d863b2d149bef8f3d694419a117d918ef3f52027"
+    },
+    {
+      "module": "SmzaRp04ComponentsPart00",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ComponentsPart00.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ComponentsPart00.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "601b538da4a5de9cce481c828e5c4565bb639e4339160a72e3a0e58e63159016"
+    },
+    {
+      "module": "SmzaRp04ComponentsPart01",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ComponentsPart01.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ComponentsPart01.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "768073ff06661a172464e05d8da336d32f512aa84f1337fcdf8bb22bac08a4e5"
+    },
+    {
+      "module": "SmzaRp04ComponentsPart02",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ComponentsPart02.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ComponentsPart02.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "a0b6da792472a1ff7ef13116e88a774f8eb662da5eaccf9897e6a1c753ac79b9"
+    },
+    {
+      "module": "SmzaRp04ComponentsPart03",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ComponentsPart03.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ComponentsPart03.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "2564be5dccc53787f3bb96d7fed6817b8b846d076f046b7d55c615f34e0b22b6"
+    },
+    {
+      "module": "SmzaRp04ComponentsPart04",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ComponentsPart04.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ComponentsPart04.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "d4042c1315746a0897f8d8f4894feb8b530827c640715bdea506ae20d88d31a2"
+    },
+    {
+      "module": "SmzaRp04ComponentsPart05",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ComponentsPart05.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ComponentsPart05.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "1a19977b57157cb382439878cdb20395ec9258e5ff0b141b3115669a0ce2d5f4"
+    },
+    {
+      "module": "SmzaRp04DecodedPolynomialSource",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04DecodedPolynomialSource.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04DecodedPolynomialSource.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "02294912950c9539c1d943036225019b22121fb2d02f8b9b929e0b576c13ae57"
+    },
+    {
+      "module": "SmzaRp04Degree",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04Degree.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04Degree.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "7229dfb727a5f8994aac4c9747349744785aa3ebef78f1bf5976cad5be6b083e"
+    },
+    {
+      "module": "SmzaRp04DegreeData",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04DegreeData.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04DegreeData.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "5142e900a868288d216caf7ad16d84ba7eda6121fb49bbe9e3c392446fb44d43"
+    },
+    {
+      "module": "SmzaRp04DegreePart00",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04DegreePart00.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04DegreePart00.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "0c5a49227f1a695e2966c3d08d31dd5ca99e06b2f1d40fc2c8136e0d2a48ea39"
+    },
+    {
+      "module": "SmzaRp04DegreePart01",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04DegreePart01.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04DegreePart01.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "bc28689ecf54c28f067ee42d847975d6b8372c8c4cff00852fdd9cc317edeaa2"
+    },
+    {
+      "module": "SmzaRp04DegreePart02",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04DegreePart02.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04DegreePart02.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "497ecb6239da406cebfb113dd8702429dcb63298e6181cf8ac77be52aba64a4a"
+    },
+    {
+      "module": "SmzaRp04DegreePart03",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04DegreePart03.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04DegreePart03.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "615d4f25acd179ef61e51c374e8d3fee94834ace760712e5ccf9c099a7089b51"
+    },
+    {
+      "module": "SmzaRp04DegreePart04",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04DegreePart04.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04DegreePart04.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "59e6b538cf302cb258f0673a74e68f568f657cf1d63aa05b9eaf88ed45bf76a3"
+    },
+    {
+      "module": "SmzaRp04DegreePart05",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04DegreePart05.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04DegreePart05.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "faed034064f40baab4626151f694a42ed000f09ef183e2cdeec507135986a1b1"
+    },
+    {
+      "module": "SmzaRp04FourRoleLedger",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04FourRoleLedger.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04FourRoleLedger.de44386ef8cf0a1b-06aa1d62.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "de44386ef8cf0a1b6d5de56a32a526a97edb43c0cd86d2812c23271fe033b5fd"
+    },
+    {
+      "module": "SmzaRp04McaLoss",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04McaLoss.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04McaLoss.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "825f9c4dd3de6eef98350aaf7da0666680dde1aa140009c6c84ed3faeb1ea169"
+    },
+    {
+      "module": "SmzaRp04McaRoleCells",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04McaRoleCells.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04McaRoleCells.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "0a78422c108b5f65b7a9797a1b7e8bfb6b0cd544b77b77f0174e534b3f2b98a8"
+    },
+    {
+      "module": "SmzaRp04NonlinearTransport",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04NonlinearTransport.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04NonlinearTransport.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "94225eb013530fed335a38183f70e3129c9e731af12c00159af7895375667f52"
+    },
+    {
+      "module": "SmzaRp04PackedAcceptance",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedAcceptance.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedAcceptance.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "1d82f2617d317bcc7e424dd7eec73481e91fa70eb2e0fce5b3ba395cd761749e"
+    },
+    {
+      "module": "SmzaRp04PackedAcceptanceChecks",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedAcceptanceChecks.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedAcceptanceChecks.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "96a7e4ea847064a734cfb05d42572068665dce22337c24f690145e53e1660616"
+    },
+    {
+      "module": "SmzaRp04PackedAcceptanceData",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedAcceptanceData.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedAcceptanceData.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "a6bd060b6392dee9be376cb827e45bc65d20bca6440d1eab306390aa5db98b31"
+    },
+    {
+      "module": "SmzaRp04PackedCanonicalPart00",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCanonicalPart00.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCanonicalPart00.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "f47f1f287f7106d53d9311a43ccb3f6b75021a353176f201dce90d2e6fcdf928"
+    },
+    {
+      "module": "SmzaRp04PackedCanonicalPart01",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCanonicalPart01.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCanonicalPart01.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "49712a839603e447d4678e63886b2d226b07129e11a051823b7b82945c3cabfb"
+    },
+    {
+      "module": "SmzaRp04PackedCanonicalPart02",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCanonicalPart02.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCanonicalPart02.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "dc92170482dba2d27fae9e6b8c7e64c6643f5c38f42daa943671c849e109f3fb"
+    },
+    {
+      "module": "SmzaRp04PackedCanonicalPart03",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCanonicalPart03.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCanonicalPart03.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "d9e9aa062e83c1e76edb74ad2c0c3e5aeaa86caf733ed87d4c103fa1699dd21f"
+    },
+    {
+      "module": "SmzaRp04PackedCanonicalPart04",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCanonicalPart04.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCanonicalPart04.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "a58a26a7ae06315b028b94a618c7d73f4122ffc96fd9c9ec6d9cf09dc2de8015"
+    },
+    {
+      "module": "SmzaRp04PackedCanonicalPart05",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCanonicalPart05.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCanonicalPart05.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "f050259b27694ed2e3cb76be175c8fbe0fd5d70a5cd009e5f8e63f5402c28eea"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart00",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart00.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart00.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "0b9ace0f88887d439e540b02f17302332d34a4377fc2128258c7f663389b74df"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart01",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart01.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart01.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "adbb991c55c83b87734d351b48cacabb385a47cea956b22d607dee053445a6b0"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart02",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart02.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart02.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "ee1dc258bf529433e539a60140076a8a30bfe147f37e88e0dd316d53f668cdf9"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart03",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart03.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart03.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "f459e9a025d87235c77141f16876b68fd93f2f4083ab2cf1393c77ef86ce7fae"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart04",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart04.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart04.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "386f0033e74694466f6363bbddf618a7e6b5ab5b1362260fef94c72403e101c4"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart05",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart05.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart05.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "dc5882c328ea7c0d0b579c4f9588aad377d15731a51480f90887261c1d5ab45b"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart06",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart06.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart06.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "4c4de11a335a441579741c4e6275998dde520b74ef4918b76bdbf53f2902f521"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart07",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart07.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart07.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "95536c76cdba165b04c755f7e07013804342f893629f8878976d468da23830fa"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart08",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart08.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart08.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "10e6d7389677343b06a2f0697f6e74f9f3b101b86cf83395ae351aef30a33a6e"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart09",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart09.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart09.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "34d5bebc14846a1d8c3effd023d72351d4494af04d02766ac1fbe57c419aa275"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart10",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart10.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart10.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "4dd9f9875c7fa486a935ca8f5780f99357228ef51b9c898754da11ba6e97d075"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart11",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart11.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart11.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "8f776283d163e1c19959c21290b48fcbe844bca369977986fe7e6ba905764e62"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart12",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart12.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart12.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "e33bbad3c6df7aecaaf15f692d26b45d12a1cec3511dbe28e91d662e50c9d0f8"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart13",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart13.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart13.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "b20f1e260c20f1d32ad2a17fc14bd4b4e71dd7af2a4b946103bae328ca345482"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart14",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart14.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart14.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "009b332aa97e30fbd2d32db310b224b5e23dcea3bc44a79817856b865f09b45b"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart15",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart15.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart15.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "5cb347b8dfbeaea1253a1dbe4796773de6ad393d324d22ba4130603632194a73"
+    },
+    {
+      "module": "SmzaRp04PackedCoordinatesPart16",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PackedCoordinatesPart16.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PackedCoordinatesPart16.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "9f253008617df73533604766e6c91cecc57e51ed8d842c5a5a4a80435d84d272"
+    },
+    {
+      "module": "SmzaRp04Payload",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04Payload.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04Payload.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "765571606993eb27c61f8e66399df6d165a37f16a03b125514e27a866e33aae2"
+    },
+    {
+      "module": "SmzaRp04PrefixLabels",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PrefixLabels.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PrefixLabels.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "7f9f7fd3e41a1c4283fe852aee6e318665b4554901be353e1c0671c834b61575"
+    },
+    {
+      "module": "SmzaRp04ProgramPiop",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ProgramPiop.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ProgramPiop.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "e0c1ae64faea81a4d6f8f1e8ce6b7c75db8dc05c6eed793ddea7954ffdb30999"
+    },
+    {
+      "module": "SmzaRp04PublicContext",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PublicContext.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PublicContext.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "051d866e2da34895637ac24936f5c4d22cf538f984d480730dd3363a4091dd86"
+    },
+    {
+      "module": "SmzaRp04PublicTargetReadback",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04PublicTargetReadback.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04PublicTargetReadback.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "653df257d3ad6918e450c3ed18508a59f2c003fc8f8336ab72c382a27c238272"
+    },
+    {
+      "module": "SmzaRp04RawAcceptedOpeningChecks",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RawAcceptedOpeningChecks.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RawAcceptedOpeningChecks.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "8c6c79bfca05d99d3190877775d1b36624da537d9b96b572a1df2369fc2e0b4c"
+    },
+    {
+      "module": "SmzaRp04RawCollisionBound",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RawCollisionBound.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RawCollisionBound.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "d58910898c537839c6d8a72b7cb0b6e76b51f3f8b72ea68af065884dd62b02fe"
+    },
+    {
+      "module": "SmzaRp04RawDecsReadback",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RawDecsReadback.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RawDecsReadback.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "20d8290220feb7565bce704170a13501ab461585e52ab6de7c0fd55bdaca10bd"
+    },
+    {
+      "module": "SmzaRp04RawFppReadback",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RawFppReadback.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RawFppReadback.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "039136a3a9e2485b01b155f0ee26155576a6faa52f6a4a7637d0450925e80624"
+    },
+    {
+      "module": "SmzaRp04RawHeadReadback",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RawHeadReadback.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RawHeadReadback.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "f2f918b2c21be4f3a078fe79dba241252e27de92aaa23586cc07c19705f9abe7"
+    },
+    {
+      "module": "SmzaRp04RawPiopReadback",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RawPiopReadback.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RawPiopReadback.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "10cb2501c57f208eb1339e99793cf11f362431c38b9e5780be846ccc45ec1b46"
+    },
+    {
+      "module": "SmzaRp04RawRecordReconstruction",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RawRecordReconstruction.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RawRecordReconstruction.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "b7d790222a3468538d2e8935ed41bdac88c1911b74e9dc0d93e780d43459dcc2"
+    },
+    {
+      "module": "SmzaRp04RawRecordedMerkle",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RawRecordedMerkle.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RawRecordedMerkle.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "c411dfda8af380da8734cb7cc461d707d85a75114d3b72d396114cd32016ca76"
+    },
+    {
+      "module": "SmzaRp04RawRecordedTranscript",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RawRecordedTranscript.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RawRecordedTranscript.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "3bb7fdaa21d5172ad232fe9560d0d2278af343d27b07c35ce3eacfbb123e6ed5"
+    },
+    {
+      "module": "SmzaRp04RawRoleSamplingCore",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RawRoleSamplingCore.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RawRoleSamplingCore.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "4cc20cf9a0045112487c2d57ee27e504edd03ac466af1e1303371610eefbdc2c"
+    },
+    {
+      "module": "SmzaRp04RawRootReadback",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RawRootReadback.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RawRootReadback.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "7019688e238fafa4b9f822a11c71a9185754f6fc0a8f866657ba193b66db528c"
+    },
+    {
+      "module": "SmzaRp04RawVerifierChecks",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RawVerifierChecks.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RawVerifierChecks.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "623cb45a935e24e2d272625826782ef55b3336261b88411c7a8cfae888f1238a"
+    },
+    {
+      "module": "SmzaRp04RecordedClaims",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RecordedClaims.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RecordedClaims.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "7fdc225271a8f32c41784d4575d90e393d7c1bc1141c614a3f8080d0efb0274b"
+    },
+    {
+      "module": "SmzaRp04RecordedTranscript",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RecordedTranscript.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RecordedTranscript.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "58036182e825d4d4b7441d68e5714a56a733fdab6658eeceec61cd49c19b1185"
+    },
+    {
+      "module": "SmzaRp04RestoredTranscriptChecks",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RestoredTranscriptChecks.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RestoredTranscriptChecks.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "286c79f9f5817cd999228956b88e9e9f8162dc286f0a6fd5388ea030b66eea8f"
+    },
+    {
+      "module": "SmzaRp04RoleBadCells",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04RoleBadCells.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04RoleBadCells.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "561d74526f07921de1f11f2a9801d8cc869dc6fe117a2ccd8cfcc5a90e9884cb"
+    },
+    {
+      "module": "SmzaRp04SameDatabaseVerifier",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04SameDatabaseVerifier.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04SameDatabaseVerifier.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "c0ddcc42d09764be19521329863e8317321835ba65ada132dd60436d2fbd31f9"
+    },
+    {
+      "module": "SmzaRp04ScalarCheckTransport",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04ScalarCheckTransport.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04ScalarCheckTransport.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "65f4277d8df03e1138178a40d67b4ac86b5b8304e43285ee03a94adc5eb795fd"
+    },
+    {
+      "module": "SmzaRp04SemanticLedger",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04SemanticLedger.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04SemanticLedger.b0ec45183b2364da-b49d8c4a.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "b0ec45183b2364da38c1279cc7dfdacb41507396967cf39bd56b18a473766f5b"
+    },
+    {
+      "module": "SmzaRp04SourceAcceptance",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04SourceAcceptance.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04SourceAcceptance.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "9b835417674588d13589ddcffeabe0ed158e6393df1e04c0794fadca6e445e6d"
+    },
+    {
+      "module": "SmzaRp04TracePrefixReadback",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04TracePrefixReadback.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04TracePrefixReadback.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "f68ae3a3b2f84c850caec29f5a4e27aa4efbcf6e4e3c8b9c7302253c7eb9486c"
+    },
+    {
+      "module": "SmzaRp04TracePrefixes",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaRp04TracePrefixes.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaRp04TracePrefixes.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "84d1f711f4058663b6018e88b9c47e3a76263d8f41ef9d170c341638846bd744"
+    },
+    {
+      "module": "SmzaSelectedStageSearch",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaSelectedStageSearch.lean",
+      "receipt_pins": [
+        ".agent/prod-closure-2026-09-19/compile-receipts/SmzaSelectedStageSearch.pass.checked-closure.receipt.json"
+      ],
+      "receipt_verified": true,
+      "sha256": "3c52f3d2d10cf33afbb4e7c4f3663f6ad0410e0cc8fd23f3cc5fa7c240f087b9"
+    },
+    {
+      "module": "SmzaStageControlledSplit",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaStageControlledSplit.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "51458e094addd9fbee28b210a5f7ef37743e736d465353ff5e4dc9580bff6a19"
+    },
+    {
+      "module": "SmzaStageGlobalSplit",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaStageGlobalSplit.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "8cdb879303945f14b33fa37c2b37676775c2809c8849c6cdbde4bae9448fa585"
+    },
+    {
+      "module": "SmzaStageVectorInstability",
+      "path": ".agent/prod-closure-2026-09-19/extraction/SmzaStageVectorInstability.lean",
+      "receipt_pins": [],
+      "receipt_verified": false,
+      "sha256": "9ee9c6db998ea8865a0a1716eaa30c37162fff331cc515e16d70cbbb02deedff"
+    }
+  ],
+  "entry_modules": [
+    "Mca38AffineBadLabelCount",
+    "Mca38NestedContentExceptions",
+    "Mca38NestedFactorCoverage",
+    "Mca38NestedFactorSeparability",
+    "Mca38NestedIndependentUnion",
+    "Mca38NestedInterpolationHeights",
+    "Mca38NestedRegularPartition",
+    "Mca38NestedRegularPoint",
+    "Mca38NonidenticalIncidenceCount",
+    "Mca38OriginFactorCoverage",
+    "Mca38PrimitiveFactorDegreeBudget",
+    "Mca38RbrActualMultiplicity",
+    "Mca38RbrGlobalMultiplicity",
+    "Mca38RbrPolynomialEndpoint",
+    "Mca38RoundByRoundInterpolation",
+    "Mca38RoundByRoundParameters",
+    "Mca38SeparateStageLedger",
+    "Mca38UniversalBadLineCount",
+    "Mca38UniversalMatrixEvent",
+    "Q38ChronologicalStateAlgebra",
+    "Q38CmsAdaptiveWholeViewApplication",
+    "Q38CmsAdaptiveWholeViewBound",
+    "Q38CmsControlledSwap",
+    "Q38CmsDependentContinuation",
+    "Q38CmsIndexedSwap",
+    "Q38CmsInitializedFullDomainAggregationInterface",
+    "Q38CmsInitializedFullDomainAssembly",
+    "Q38CmsInitializedFullDomainPerBasis",
+    "Q38CmsInitializedFullDomainSupportInterface",
+    "Q38CmsInitializedLeafOverlap",
+    "Q38CmsInitializedResampling",
+    "Q38CmsPhaseDecodeIsometry",
+    "Q38CmsSwapConjugation",
+    "Q38FreshSwapFiber",
+    "Q38FreshSwapIsometry",
+    "Q38MeasuredCmsNonleaf",
+    "Q38MeasuredCmsNonleafCore",
+    "Q38StateValuedCoinTransport",
+    "Q38WholeViewCmsSemantics",
+    "SmzaChallengeStageTargets",
+    "SmzaConditionedRoleOracleBound",
+    "SmzaFixedAdviceBadCell",
+    "SmzaFixedAdvicePrefix",
+    "SmzaInitializedStageRouting",
+    "SmzaJointRoleOracleExecution",
+    "SmzaPhysicalStageRecord",
+    "SmzaRawDatabaseRecords",
+    "SmzaRawRecordedPrefix",
+    "SmzaRawRecordedWrappers",
+    "SmzaRawStageGeometry",
+    "SmzaRawTraceDepth",
+    "SmzaRawWordReadback",
+    "SmzaRecordedTracePath",
+    "SmzaRoleDomainActiveEmbedding",
+    "SmzaRoleDomainConditionedRun",
+    "SmzaRoleDomainConditioning",
+    "SmzaRp04BalanceCore",
+    "SmzaRp04CalculatedExtraction",
+    "SmzaRp04ChronologicalAlgebra",
+    "SmzaRp04Degree",
+    "SmzaRp04FourRoleLedger",
+    "SmzaRp04McaLoss",
+    "SmzaRp04PackedAcceptance",
+    "SmzaRp04PrefixLabels",
+    "SmzaRp04PublicTargetReadback",
+    "SmzaRp04RawAcceptedOpeningChecks",
+    "SmzaRp04RawCollisionBound",
+    "SmzaRp04RawDecsReadback",
+    "SmzaRp04RawFppReadback",
+    "SmzaRp04RawHeadReadback",
+    "SmzaRp04RawPiopReadback",
+    "SmzaRp04RawRecordReconstruction",
+    "SmzaRp04RawRecordedMerkle",
+    "SmzaRp04RawRecordedTranscript",
+    "SmzaRp04RawRoleSamplingCore",
+    "SmzaRp04RawRootReadback",
+    "SmzaRp04RawVerifierChecks",
+    "SmzaRp04RecordedClaims",
+    "SmzaRp04RecordedTranscript",
+    "SmzaRp04RoleBadCells",
+    "SmzaRp04SameDatabaseVerifier",
+    "SmzaRp04SemanticLedger",
+    "SmzaRp04TracePrefixReadback",
+    "SmzaRp04TracePrefixes",
+    "SmzaSelectedStageSearch"
+  ],
+  "evidence_notes": [
+    "Default roots are only modules with retained PASS receipts whose preflight and postflight source digest matches the current file.",
+    "Recursive dependencies are included even when they lack a PASS receipt.",
+    "Tracked formal/lean, HegemonCrypto, and Mathlib sources are external roots; cached .olean files do not establish fresh source verification."
+  ],
+  "excluded_unchecked_sources": [
+    "GeneratePoseidon2V8RelationProgramHgv8rp04Vectors",
+    "Mca38ActualDerivativeDenominator",
+    "Mca38ActualDerivativeDenominatorR2",
+    "Mca38ActualFiniteResidual",
+    "Mca38ActualFullNumerator",
+    "Mca38ActualNonaffineBranchCount",
+    "Mca38ActualNonzeroBranchCount",
+    "Mca38ActualOriginAssignment",
+    "Mca38ActualPositionIncidenceCount",
+    "Mca38ActualResidualNorm",
+    "Mca38ActualResidualSpecialization",
+    "Mca38ActualRootSource",
+    "Mca38ActualRootSourceHeight",
+    "Mca38AlgebraicAffineDescent",
+    "Mca38AlgebraicAffineDescentR2",
+    "Mca38BaseFieldRegularPoint",
+    "Mca38BivariateHeightInterface",
+    "Mca38BranchAudit",
+    "Mca38ClearedIncidence",
+    "Mca38ClearedResidualAssembly",
+    "Mca38CommonRegularPoint",
+    "Mca38FiniteFactorLocalization",
+    "Mca38FiniteHeightInduction",
+    "Mca38FiniteHenselLedgerArithmetic",
+    "Mca38FiniteHenselR2",
+    "Mca38FullNumeratorEndpoint",
+    "Mca38HenselActualRecurrenceR3",
+    "Mca38HenselCompositionR3",
+    "Mca38HenselHeightR3",
+    "Mca38HenselPolynomialHeight",
+    "Mca38HenselRootShift",
+    "Mca38HenselTransferR2",
+    "Mca38LocalizedNewtonStart",
+    "Mca38LocalizedNewtonTruncation",
+    "Mca38LocalizedResidualCount",
+    "Mca38LocalizedResponseTracking",
+    "Mca38LocalizedSourceSpecialization",
+    "Mca38NestedTranslation",
+    "Mca38NewtonBranchDichotomy",
+    "Mca38NewtonBranchDichotomyR2",
+    "Mca38SharedNumeratorBidegree",
+    "Mca38SimpleFactorStartR2",
+    "Mca38SmallDegreeSeparable",
+    "Mca38TaylorCoefficientHeight",
+    "Mca38TranslatedRegularOrigin",
+    "Mca38TrivariateFactorCoverage",
+    "Mca38UniformSpecialization",
+    "Mca38UnitHenselHeight",
+    "Mca38WeightedBranchUnions",
+    "Poseidon2V8RelationProgramHgv8rp04",
+    "Q38AdaptiveOpening",
+    "Q38AdaptiveOpeningAudit",
+    "Q38AdaptiveResamplingObservation",
+    "Q38AdaptiveResamplingSupport",
+    "Q38ChronologicalStateAlgebra",
+    "Q38CmsInitializedResampling",
+    "Q38CmsResamplingCoordinates",
+    "Q38ControlledFreshSwap",
+    "Q38ControlledFreshSwapCore",
+    "Q38FreshLabelResampling",
+    "Q38FreshLabelResamplingAudit",
+    "Q38LeafFrameHybridR4",
+    "Q38MeasuredCmsNonleaf",
+    "Q38OpenedTapeConditioningR5",
+    "Q38RetainedOpenedOverlay",
+    "Q38SelectionCompiler",
+    "Q38SelectionFeedback",
+    "SmzaAcceptedRp04Security",
+    "SmzaPiopGoodOutcomeR2",
+    "SmzaQ38LvcsOpening",
+    "SmzaQ38McaSourceBindingR2",
+    "SmzaQ38OpeningFieldReadbackR3",
+    "SmzaQ38OracleExtraction",
+    "SmzaQ38Recovery",
+    "SmzaRp04ActualProgram",
+    "SmzaRp04CalculatedExtraction",
+    "SmzaRp04Components",
+    "SmzaRp04DecodedPolynomialSource",
+    "SmzaRp04Degree",
+    "SmzaRp04ExtractionAudit",
+    "SmzaRp04NonlinearAudit",
+    "SmzaRp04NonlinearTransport",
+    "SmzaRp04PackedAcceptance",
+    "SmzaRp04PackedAudit",
+    "SmzaRp04ProgramPiop",
+    "SmzaRp04PublicContext",
+    "SmzaRp04RestoredTranscriptChecks",
+    "SmzaRp04ScalarCheckTransport",
+    "SmzaRp04SourceAcceptance"
+  ],
+  "external_modules": [
+    "Mathlib.",
+    "Batteries.",
+    "Std.",
+    "Lean.",
+    "Plausible.",
+    "Cli.",
+    "Qq.",
+    "Aesop.",
+    "Hegemon.",
+    "HegemonCrypto."
+  ],
+  "external_roots": [
+    "formal/lean",
+    "formal/crypto/HegemonCrypto",
+    "formal/crypto/.lake/packages/mathlib",
+    "formal/crypto/.lake/packages/batteries",
+    "formal/crypto/.lake/packages/Qq",
+    "formal/crypto/.lake/packages/aesop"
+  ],
+  "missing_custom_imports": [],
+  "purpose": "Portable source/import closure for PASS-receipt-matched RP04/q38 Lean roots and their recursive custom dependencies. Hashes pin source bytes only; they do not claim fresh Lean verification.",
+  "resolved_aliases": {
+    "Hegemon.Transaction.Balance": "formal/lean/Hegemon/Transaction/Balance.lean",
+    "Hegemon.Transaction.Poseidon2V8SemanticSpecification": "formal/lean/Hegemon/Transaction/Poseidon2V8SemanticSpecification.lean",
+    "Q38FieldAllocation": ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smz9-q38-collection.0EJpVRpz/Q38FieldAllocation.lean"
+  },
+  "schema": "smza-checked-lean-manifest-v1",
+  "source_roots": [
+    ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/counting-field",
+    ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/counting-interpolation",
+    ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/extraction-core",
+    ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/issuance",
+    ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/privacy-algebra",
+    ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/supply-ledger",
+    ".agent/artifacts/smallwood-poseidon2-v8-smza/production-checklist-closure-2026-09-14/controls/smza-counting-close.ZRkaMmex",
+    ".agent/artifacts/smallwood-poseidon2-v8-smza/production-checklist-closure-2026-09-14/controls/smza-scalar-descent.F169kAps",
+    ".agent/artifacts/smallwood-poseidon2-v8-smza/production-checklist-progress-2026-09-14/controls/smza-vector-transport.6DtsGXGv",
+    ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smz9-q38-collection.0EJpVRpz",
+    ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smz9-q38-soundness.LvokDs",
+    ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-parser-resume.Xmj8bJCn",
+    ".agent/artifacts/smallwood-poseidon2-v8-smza/production-resume-2026-09-13/formal/smza-soundness-resume.LWbKdJ",
+    ".agent/prod-closure-2026-09-18/extraction",
+    ".agent/prod-closure-2026-09-19/extraction",
+    ".agent/prod-closure-2026-09-19/privacy",
+    ".agent/q38-counting-2026-09-18",
+    ".agent/q38-counting-2026-09-18/factor",
+    ".agent/q38-counting-2026-09-19/branches",
+    ".agent/q38-counting-2026-09-19/factor"
+  ]
+}

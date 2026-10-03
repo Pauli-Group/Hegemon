@@ -1,0 +1,27 @@
+[package]
+name = "hegemon-strict-mixed-field-prototype"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Isolated research crate. It is intentionally not a member of the production
+# Hegemon workspace and cannot be reached by consensus admission.
+[workspace]
+resolver = "2"
+
+[dependencies]
+
+[profile.dev]
+opt-level = 1
+debug = 0
+incremental = false
+
+[profile.test]
+opt-level = 1
+debug = 0
+incremental = false
+
+[profile.release]
+lto = "thin"
+debug = 0
+incremental = false

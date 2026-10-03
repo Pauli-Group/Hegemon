@@ -1,7 +1,4 @@
-#[path = "retired_aggregation.rs"]
-mod aggregation;
 pub mod backend_interface;
-mod batch_proof;
 pub mod bft;
 pub mod commitment_tree;
 pub mod error;
@@ -17,18 +14,6 @@ pub mod types;
 pub mod validator;
 pub mod version_policy;
 
-pub use aggregation::{
-    AggregationCacheWarmup, AggregationVerifyMetrics, aggregation_proof_uncompressed_len,
-    decode_aggregation_proof_bytes, encode_aggregation_proof_bytes, verify_aggregation_proof,
-    verify_aggregation_proof_with_metrics, warm_aggregation_cache,
-    warm_aggregation_cache_from_proof_bytes,
-};
-pub use batch_proof::{
-    FLAT_BATCH_PROOF_FORMAT_ID_V5, FLAT_BATCH_PROOF_KIND_P3_BATCH_STARK,
-    FLAT_BATCH_PROOF_KIND_TX_PROOF_MANIFEST, FLAT_BATCH_PROOF_SCHEMA_V2, FlatBatchProofPayloadV2,
-    decode_flat_batch_proof_bytes, encode_flat_batch_proof_bytes,
-    encode_flat_batch_proof_bytes_with_kind,
-};
 pub use bft::{BftConsensus, ConsensusUpdate};
 pub use commitment_tree::{
     COMMITMENT_TREE_DEPTH, CommitmentTreeError, CommitmentTreeState, DEFAULT_ROOT_HISTORY_LIMIT,

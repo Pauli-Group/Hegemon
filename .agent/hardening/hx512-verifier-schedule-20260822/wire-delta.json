@@ -1,0 +1,53 @@
+{
+  "schema": "hegemon.hx512.verifier-schedule-wire-delta.v1",
+  "date": "2026-08-22",
+  "status": "source_only_not_production_authority",
+  "profile_security_authorized": false,
+  "security_blocker": "The cited epsilon-1 bound C(N,d+2)/|F|^eta caps at one for q48/s6; the engine's bare |F|^-eta replacement is not theorem-backed.",
+  "digest_bytes": 64,
+  "canonical_fresh_prefix": [
+    {
+      "field": "raw_decs_root",
+      "offset": 0,
+      "bytes": 64,
+      "role": "event_0_message_input"
+    },
+    {
+      "field": "h3_piop_input_digest",
+      "offset": 64,
+      "bytes": 64,
+      "role": "deferred_event_2_output"
+    },
+    {
+      "field": "h5_piop_transcript_digest_existing_h_piop",
+      "offset": 128,
+      "bytes": 64,
+      "role": "deferred_event_4_output"
+    }
+  ],
+  "prefix_bytes": 192,
+  "prior_fresh_prefix_bytes": 64,
+  "additional_inner_bytes": 128,
+  "outer_wire_equation": "80 + identity_header_bytes + inner_proof_bytes",
+  "outer_fixed_overhead_bytes_excluding_identity": 80,
+  "additional_outer_wire_bytes": 128,
+  "hx512_outer_framing_overhead_change_bytes": 0,
+  "scope_note": "The +128 outer delta is exact for Hx512ProofWire's fixed-width length framing. Any later transport envelope must be measured separately.",
+  "alternative_early_h3_reconstruction": {
+    "missing_decs_low_coefficients": "eta * q",
+    "eta": 5,
+    "q": 48,
+    "u64_words": 240,
+    "bytes": 1920,
+    "h3_claim_bytes": 64,
+    "h3_claim_savings_bytes": 1856
+  },
+  "not_serialized": [
+    "h1_derived_from_raw_decs_root",
+    "h2_sampler_terminal_chain",
+    "h4_sampler_terminal_chain",
+    "h6_sampler_terminal_chain",
+    "h7_derived_before_event_7",
+    "h8_terminal_chain"
+  ]
+}

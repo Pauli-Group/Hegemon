@@ -1,0 +1,33 @@
+{
+  "schema": "codex-security-hardening.v1",
+  "scope": "retained M4 Boolean relation and BaseFold committed/opened proof topology",
+  "decision": "DISQUALIFIED_CURRENT_M4_RAW_OPENING_TOPOLOGY",
+  "candidate_eligible": false,
+  "highest_priority_finding": {
+    "id": "M4-CZK-001",
+    "severity": "critical",
+    "title": "Opened BaseFold leaf reveals a raw witness-codeword coordinate",
+    "counterexample": "empty public statement; private b in {0,1}; b*b=b; conditional total variation is 1",
+    "repair_class": "replace PCS/IOP topology"
+  },
+  "preferred_future_direction": "odd-field Boolean/R1CS compiler plus full Hiding-WHIR, or a new characteristic-two HVZK/RBR theorem",
+  "hiding_whir_drop_in": false,
+  "cfw26_r1cs_characteristic_not_two": true,
+  "e384_conditionally_sufficient_at_q318": true,
+  "e512_structurally_required": false,
+  "maximum_shape_projection_plus_direct_floor_bytes": {
+    "e384": 1579520,
+    "e512_mixed_degree_four": 1804384,
+    "e512_all_scalar_counterfactual": 1924096
+  },
+  "authority": {
+    "complete_zero_knowledge": false,
+    "whole_view_simulator_implemented": false,
+    "exact_indistinguishability_theorem": false,
+    "m4_rbr_special_soundness": false,
+    "qrom_composed": false,
+    "strict_pq128": false,
+    "production_authorized": false
+  }
+}
+

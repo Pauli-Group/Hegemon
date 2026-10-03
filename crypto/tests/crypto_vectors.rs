@@ -1,10 +1,9 @@
-use hex::encode;
+use hex::{decode, encode};
 use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 use synthetic_crypto::hashes::{
-    blake3_256, commit_note, commit_note_with, derive_nullifier, derive_prf_key, poseidon_hash,
-    sha256, sha3_256, CommitmentHash, FieldElement,
+    commit_note, derive_nullifier, poseidon_hash, sha256, sha3_256, FieldElement,
 };
 use synthetic_crypto::ml_dsa::{MlDsaSecretKey, ML_DSA_PUBLIC_KEY_LEN, ML_DSA_SIGNATURE_LEN};
 use synthetic_crypto::ml_kem::{
@@ -25,12 +24,9 @@ struct CryptoVectors {
     ml_kem_ct: String,
     ml_kem_ss: String,
     commitment: String,
-    commitment_sha3: String,
-    prf: String,
     nullifier: String,
     sha: String,
     sha3: String,
-    blake: String,
     poseidon: String,
 }
 
@@ -123,17 +119,15 @@ fn hash_commitment_and_prf_vectors() {
     let vectors = load_vectors();
     let message = b"note message";
     let randomness = [0x42u8; 32];
-    let spend_key = b"spend secret key";
     let rho = b"rho value";
     let note_position = 42u64;
 
     let commitment = commit_note(message, &randomness);
-    let commitment_sha3 = commit_note_with(message, &randomness, CommitmentHash::Sha3);
-    let prf_key = derive_prf_key(spend_key);
+    let prf_key =
+        decode("9747ad55b8a9ed4d53935ee169b7b8c84e2165c150f313004ecdb3853c67873b").unwrap();
     let nullifier = derive_nullifier(&prf_key, note_position, rho);
     let sha = sha256(message);
     let sha3 = sha3_256(message);
-    let blake = blake3_256(message);
 
     let field_inputs = [
         FieldElement::from_bytes(message),
@@ -142,28 +136,20 @@ fn hash_commitment_and_prf_vectors() {
     let poseidon = poseidon_hash(&field_inputs);
 
     let commitment_hex = encode(commitment);
-    let prf_hex = encode(prf_key);
     let nullifier_hex = encode(nullifier);
     let sha_hex = encode(sha);
     let sha3_hex = encode(sha3);
-    let blake_hex = encode(blake);
     let poseidon_hex = encode(poseidon.to_bytes());
 
-    println!("commitment_blake3: {commitment_hex}");
-    println!("commitment_sha3: {}", encode(commitment_sha3));
-    println!("prf: {prf_hex}");
+    println!("commitment_blake2b384_v2: {commitment_hex}");
     println!("nullifier: {nullifier_hex}");
     println!("sha256: {sha_hex}");
     println!("sha3: {sha3_hex}");
-    println!("blake3: {blake_hex}");
     println!("poseidon: {poseidon_hex}");
 
     assert_eq!(commitment_hex, vectors.commitment);
-    assert_eq!(encode(commitment_sha3), vectors.commitment_sha3);
-    assert_eq!(prf_hex, vectors.prf);
     assert_eq!(nullifier_hex, vectors.nullifier);
     assert_eq!(sha_hex, vectors.sha);
     assert_eq!(sha3_hex, vectors.sha3);
-    assert_eq!(blake_hex, vectors.blake);
     assert_eq!(poseidon_hex, vectors.poseidon);
 }

@@ -1,0 +1,49 @@
+{
+  "accounting_window_blocks": 4096,
+  "accounting_window_proofs": 2097152,
+  "cases": [
+    {
+      "accepted": true,
+      "after": 0,
+      "before": 0,
+      "block_proofs": 0,
+      "error": null,
+      "name": "empty_block_does_not_reset"
+    },
+    {
+      "accepted": true,
+      "after": 512,
+      "before": 0,
+      "block_proofs": 512,
+      "error": null,
+      "name": "exact_block_cap"
+    },
+    {
+      "accepted": false,
+      "after": null,
+      "before": 0,
+      "block_proofs": 513,
+      "error": "SmallWood V8 block proof count exceeds the conditional cap: 513 > 512",
+      "name": "block_cap_plus_one"
+    },
+    {
+      "accepted": true,
+      "after": 621730874,
+      "before": 621730362,
+      "block_proofs": 512,
+      "error": null,
+      "name": "exact_conditional_lifetime_limit"
+    },
+    {
+      "accepted": false,
+      "after": null,
+      "before": 621730874,
+      "block_proofs": 1,
+      "error": "SmallWood V8 conditional lifetime limit exceeded: 621730874 + 1 > 621730874",
+      "name": "conditional_lifetime_limit_plus_one"
+    }
+  ],
+  "conditional_max_total_proofs_at_128_bits": 621730874,
+  "max_proofs_per_block": 512,
+  "schema": "hegemon.native.smallwood-v8-proof-lifetime-accounting.v1"
+}

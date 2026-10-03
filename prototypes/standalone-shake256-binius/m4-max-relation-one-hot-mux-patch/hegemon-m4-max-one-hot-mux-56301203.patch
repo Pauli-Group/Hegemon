@@ -1,0 +1,105 @@
+diff --git a/prototypes/standalone-shake256-binius/m4-full-production-prototype/src/lib.rs b/prototypes/standalone-shake256-binius/m4-full-production-prototype/src/lib.rs
+index 124c9b9e..89caaab3 100644
+--- a/prototypes/standalone-shake256-binius/m4-full-production-prototype/src/lib.rs
++++ b/prototypes/standalone-shake256-binius/m4-full-production-prototype/src/lib.rs
+@@ -233,10 +233,10 @@ impl ModeSelectors {
+     }
+ 
+     fn non_single(&self, builder: &CircuitBuilder) -> Wire {
+-        or_msb(
+-            builder,
+-            &[self.init, self.approval, self.lock, self.final_spend],
+-        )
++        // `auth.mode.range` rejects every value outside 0..=4, and `single`
++        // is exactly the equality test against zero.  On every accepted row,
++        // its complement is therefore the union of the other four modes.
++        builder.bnot(self.single)
+     }
+ }
+ 
+@@ -1406,27 +1406,29 @@ fn constrain_hashes(builder: &CircuitBuilder, wires: &FullM4Wires, modes: &ModeS
+         &wires.auth.current.policy_root,
+         &wires.auth.current.intent,
+     );
+-    let slot_a: [Wire; DIGEST_WORDS * 2] = mux_shake256_words(
++    let current_a = or_msb(builder, &[modes.approval, modes.final_spend]);
++    let slot_a: [Wire; DIGEST_WORDS * 2] = mux_one_hot_shake256_words(
+         builder,
++        &dummy,
+         &[
+-            (modes.single, &dummy),
+-            (modes.init, &init_accumulator),
+-            (modes.approval, &current_accumulator),
++            // Put the shortest frame first.  Its zero suffix then remains the
++            // default on words it does not occupy, so identical-arm selects
++            // fold before either longer frame is considered.
+             (modes.lock, &value_lock),
+-            (modes.final_spend, &current_accumulator),
++            (modes.init, &init_accumulator),
++            (current_a, &current_accumulator),
+         ],
+         2,
+         DIGEST_WORDS * 2,
+     )
+     .try_into()
+     .unwrap();
+-    let inactive_b = or_msb(builder, &[modes.single, modes.init, modes.lock]);
+-    let slot_b: [Wire; DIGEST_WORDS * 2] = mux_shake256_words(
++    let slot_b: [Wire; DIGEST_WORDS * 2] = mux_one_hot_shake256_words(
+         builder,
++        &dummy,
+         &[
+-            (inactive_b, &dummy),
+-            (modes.approval, &next_accumulator),
+             (modes.final_spend, &value_lock),
++            (modes.approval, &next_accumulator),
+         ],
+         2,
+         DIGEST_WORDS * 2,
+@@ -1848,16 +1850,20 @@ fn shake256_words(
+     state[..output_words].to_vec()
+ }
+ 
+-/// Select already padded absorption blocks before entering the shared Keccak
+-/// pipeline. Every candidate must require the same number of permutations.
+-fn mux_shake256_words(
++/// Select already padded absorption blocks from a default and mutually
++/// exclusive overrides before entering the shared Keccak pipeline. Every
++/// frame must require the same number of permutations. The accepted relation
++/// must make at most one override condition true; a false set selects the
++/// default.
++fn mux_one_hot_shake256_words(
+     builder: &CircuitBuilder,
+-    candidates: &[(Wire, &PackedFrame)],
++    default: &PackedFrame,
++    overrides: &[(Wire, &PackedFrame)],
+     permutations: usize,
+     output_words: usize,
+ ) -> Vec<Wire> {
+-    assert!(!candidates.is_empty());
+-    let padded: Vec<Vec<Wire>> = candidates
++    let default = padded_absorption(builder, default, permutations);
++    let padded: Vec<Vec<Wire>> = overrides
+         .iter()
+         .map(|(_, frame)| padded_absorption(builder, frame, permutations))
+         .collect();
+@@ -1866,13 +1872,12 @@ fn mux_shake256_words(
+     for block in 0..permutations {
+         for word in 0..SHAKE256_RATE_WORDS {
+             let absolute = block * SHAKE256_RATE_WORDS + word;
+-            let selected =
+-                candidates
+-                    .iter()
+-                    .enumerate()
+-                    .fold(zero, |acc, (index, (condition, _))| {
+-                        builder.select(*condition, padded[index][absolute], acc)
+-                    });
++            let selected = overrides.iter().enumerate().fold(
++                default[absolute],
++                |acc, (index, (condition, _))| {
++                    builder.select(*condition, padded[index][absolute], acc)
++                },
++            );
+             state[word] = builder.bxor(state[word], selected);
+         }
+         keccak_f1600(builder, &mut state);

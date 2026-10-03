@@ -13,8 +13,10 @@ pub mod hashing;
 pub mod hashing_pq;
 pub mod poseidon2;
 pub mod poseidon2_constants;
+pub mod poseidon2_width16;
 pub mod poseidon_constants;
 pub mod range;
+pub mod stablecoin_poseidon2_v8;
 pub mod types;
 pub mod verifier_inputs;
 

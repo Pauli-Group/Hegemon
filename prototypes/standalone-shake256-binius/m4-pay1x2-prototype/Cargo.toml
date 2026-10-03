@@ -1,0 +1,37 @@
+[package]
+name = "hegemon-standalone-shake256-m4-pay1x2-prototype"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# This is an isolated prototype. It is not reachable from Hegemon consensus.
+[workspace]
+resolver = "2"
+
+[dependencies]
+binius-circuits = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-core = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-frontend = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-hash = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-m4-prover = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-m4-verifier = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-prover = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-transcript = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-verifier = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+hegemon-standalone-shake256-prototype = { path = "../../../circuits/standalone-shake256-prototype" }
+serde_json = "1.0.140"
+
+[profile.dev]
+opt-level = 1
+debug = 0
+incremental = false
+
+[profile.test]
+opt-level = 1
+debug = 0
+incremental = false
+
+[profile.release]
+lto = "thin"
+debug = 0
+incremental = false

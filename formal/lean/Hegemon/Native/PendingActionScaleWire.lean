@@ -149,13 +149,13 @@ def pendingActionEncodedLen
     (nullifierCount commitmentCount ciphertextHashCount ciphertextSizeCount
       publicArgsCompactPrefixBytes publicArgsBytes
       candidateArtifactPayloadBytes : Nat) : Nat :=
-  32 + 4 + 2 + 2 + 48
+  48 + 4 + 2 + 2 + 48
     + (1 + 48 * nullifierCount)
     + (1 + 48 * commitmentCount)
     + (1 + 48 * ciphertextHashCount)
     + (1 + 4 * ciphertextSizeCount)
     + (publicArgsCompactPrefixBytes + publicArgsBytes)
-    + 8 + 1 + candidateArtifactPayloadBytes + 8
+    + 8 + 1 + candidateArtifactPayloadBytes
 
 def pendingActionNoCandidateEncodedLen
     (nullifierCount commitmentCount ciphertextHashCount ciphertextSizeCount
@@ -170,14 +170,14 @@ def pendingActionNoCandidateEncodedLen
     0
 
 def fixedFieldWidthsOk (input : PendingActionScaleWireInput) : Bool :=
-  input.txHashBytes == 32
+  input.txHashBytes == 48
     && input.bindingBytes == 4
     && input.familyIdBytes == 2
     && input.actionIdBytes == 2
     && input.anchorBytes == 48
     && input.feeBytes == 8
     && input.candidateOptionTagBytes == 1
-    && input.receivedMsBytes == 8
+    && input.receivedMsBytes == 0
 
 def vectorElementWidthsOk (input : PendingActionScaleWireInput) : Bool :=
   input.nullifierElementBytes == 48
@@ -400,7 +400,7 @@ theorem accepted_pending_action_scale_wire_exact_decode
 
 def validEmptyNoCandidate : PendingActionScaleWireInput :=
   {
-    txHashBytes := 32,
+    txHashBytes := 48,
     bindingBytes := 4,
     familyIdBytes := 2,
     actionIdBytes := 2,
@@ -443,7 +443,7 @@ def validEmptyNoCandidate : PendingActionScaleWireInput :=
     candidateArtifactRecursiveBlockOptionTagBytes := 0,
     candidateArtifactRecursiveBlockPresent := false,
     candidateArtifactRecursiveProofBytes := 0,
-    receivedMsBytes := 8,
+    receivedMsBytes := 0,
     totalBytes := pendingActionNoCandidateEncodedLen 0 0 0 0 0,
     consumedAllBytes := true,
     canonicalReencodeMatches := true

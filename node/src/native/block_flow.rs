@@ -2,6 +2,30 @@
 
 use super::*;
 
+pub(crate) fn evaluate_native_da_metadata_admission(
+    input: NativeDaMetadataAdmissionInput,
+) -> Result<(), NativeDaMetadataAdmissionRejection> {
+    if !input.da_root_matches {
+        Err(NativeDaMetadataAdmissionRejection::DaRoot)
+    } else if !input.da_chunk_size_matches {
+        Err(NativeDaMetadataAdmissionRejection::DaChunkSize)
+    } else if !input.da_sample_count_matches {
+        Err(NativeDaMetadataAdmissionRejection::DaSampleCount)
+    } else if !input.da_blob_len_matches {
+        Err(NativeDaMetadataAdmissionRejection::DaBlobLen)
+    } else if !input.da_chunk_count_matches {
+        Err(NativeDaMetadataAdmissionRejection::DaChunkCount)
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) fn native_da_metadata_admission_error(
+    rejection: NativeDaMetadataAdmissionRejection,
+) -> anyhow::Error {
+    anyhow!("native block DA metadata mismatch: {}", rejection.label())
+}
+
 pub(crate) fn evaluate_native_block_commitment_admission(
     input: NativeBlockCommitmentAdmissionInput,
 ) -> Result<(), NativeBlockCommitmentAdmissionRejection> {
@@ -44,7 +68,8 @@ pub(crate) fn expected_atomic_block_record_writes(
         NativeAtomicCommitKind::MinedBlockCommit => 1,
         NativeAtomicCommitKind::TipExtensionBatchCommit => input.chain_block_count,
         NativeAtomicCommitKind::CanonicalReorgCommit
-        | NativeAtomicCommitKind::CanonicalIndexRepair => 0,
+        | NativeAtomicCommitKind::CanonicalSuffixReorgCommit => 0,
+        NativeAtomicCommitKind::CanonicalIndexRepair => 0,
         NativeAtomicCommitKind::NoncanonicalBlockRecord => input.chain_block_count,
     }
 }
@@ -54,8 +79,9 @@ pub(crate) fn expected_atomic_height_index_writes(
 ) -> usize {
     match input.kind {
         NativeAtomicCommitKind::MinedBlockCommit => 1,
-        NativeAtomicCommitKind::TipExtensionBatchCommit => input.height_entry_count,
-        NativeAtomicCommitKind::CanonicalReorgCommit => input.height_entry_count,
+        NativeAtomicCommitKind::TipExtensionBatchCommit
+        | NativeAtomicCommitKind::CanonicalReorgCommit
+        | NativeAtomicCommitKind::CanonicalSuffixReorgCommit => input.height_entry_count,
         NativeAtomicCommitKind::CanonicalIndexRepair
         | NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
     }
@@ -67,7 +93,8 @@ pub(crate) fn expected_atomic_best_pointer_writes(
     match input.kind {
         NativeAtomicCommitKind::MinedBlockCommit
         | NativeAtomicCommitKind::TipExtensionBatchCommit
-        | NativeAtomicCommitKind::CanonicalReorgCommit => 1,
+        | NativeAtomicCommitKind::CanonicalReorgCommit
+        | NativeAtomicCommitKind::CanonicalSuffixReorgCommit => 1,
         NativeAtomicCommitKind::CanonicalIndexRepair
         | NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
     }
@@ -76,16 +103,14 @@ pub(crate) fn expected_atomic_best_pointer_writes(
 pub(crate) fn expected_atomic_canonical_index_cleared(
     input: NativeAtomicCommitManifestAdmissionInput,
 ) -> bool {
-    matches!(
-        input.kind,
-        NativeAtomicCommitKind::CanonicalReorgCommit | NativeAtomicCommitKind::CanonicalIndexRepair
-    )
+    input.kind == NativeAtomicCommitKind::CanonicalReorgCommit
+        || input.kind == NativeAtomicCommitKind::CanonicalIndexRepair
 }
 
 pub(crate) fn expected_atomic_pending_tree_cleared(
     input: NativeAtomicCommitManifestAdmissionInput,
 ) -> bool {
-    matches!(input.kind, NativeAtomicCommitKind::CanonicalReorgCommit)
+    input.kind == NativeAtomicCommitKind::CanonicalReorgCommit
 }
 
 pub(crate) fn expected_atomic_pending_action_removals(
@@ -94,6 +119,7 @@ pub(crate) fn expected_atomic_pending_action_removals(
     match input.kind {
         NativeAtomicCommitKind::MinedBlockCommit
         | NativeAtomicCommitKind::TipExtensionBatchCommit => input.action_count,
+        NativeAtomicCommitKind::CanonicalSuffixReorgCommit => input.action_count,
         _ => 0,
     }
 }
@@ -102,7 +128,8 @@ pub(crate) fn expected_atomic_pending_action_writes(
     input: NativeAtomicCommitManifestAdmissionInput,
 ) -> usize {
     match input.kind {
-        NativeAtomicCommitKind::CanonicalReorgCommit => input.pending_entry_count,
+        NativeAtomicCommitKind::CanonicalReorgCommit
+        | NativeAtomicCommitKind::CanonicalSuffixReorgCommit => input.pending_entry_count,
         _ => 0,
     }
 }
@@ -114,6 +141,7 @@ pub(crate) fn expected_atomic_commitment_writes(
         NativeAtomicCommitKind::MinedBlockCommit
         | NativeAtomicCommitKind::TipExtensionBatchCommit
         | NativeAtomicCommitKind::CanonicalReorgCommit
+        | NativeAtomicCommitKind::CanonicalSuffixReorgCommit
         | NativeAtomicCommitKind::CanonicalIndexRepair => input.source_commitment_count,
         NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
     }
@@ -126,6 +154,7 @@ pub(crate) fn expected_atomic_nullifier_writes(
         NativeAtomicCommitKind::MinedBlockCommit
         | NativeAtomicCommitKind::TipExtensionBatchCommit
         | NativeAtomicCommitKind::CanonicalReorgCommit
+        | NativeAtomicCommitKind::CanonicalSuffixReorgCommit
         | NativeAtomicCommitKind::CanonicalIndexRepair => input.source_nullifier_count,
         NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
     }
@@ -138,6 +167,7 @@ pub(crate) fn expected_atomic_bridge_replay_writes(
         NativeAtomicCommitKind::MinedBlockCommit
         | NativeAtomicCommitKind::TipExtensionBatchCommit
         | NativeAtomicCommitKind::CanonicalReorgCommit
+        | NativeAtomicCommitKind::CanonicalSuffixReorgCommit
         | NativeAtomicCommitKind::CanonicalIndexRepair => input.source_bridge_replay_count,
         NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
     }
@@ -150,6 +180,7 @@ pub(crate) fn expected_atomic_ciphertext_index_writes(
         NativeAtomicCommitKind::MinedBlockCommit
         | NativeAtomicCommitKind::TipExtensionBatchCommit
         | NativeAtomicCommitKind::CanonicalReorgCommit
+        | NativeAtomicCommitKind::CanonicalSuffixReorgCommit
         | NativeAtomicCommitKind::CanonicalIndexRepair => input.source_ciphertext_index_count,
         NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
     }
@@ -162,6 +193,7 @@ pub(crate) fn expected_atomic_ciphertext_archive_writes(
         NativeAtomicCommitKind::MinedBlockCommit
         | NativeAtomicCommitKind::TipExtensionBatchCommit
         | NativeAtomicCommitKind::CanonicalReorgCommit
+        | NativeAtomicCommitKind::CanonicalSuffixReorgCommit
         | NativeAtomicCommitKind::CanonicalIndexRepair => input.source_ciphertext_archive_count,
         NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
     }
@@ -173,51 +205,78 @@ pub(crate) fn expected_atomic_staged_ciphertext_removals(
     match input.kind {
         NativeAtomicCommitKind::MinedBlockCommit
         | NativeAtomicCommitKind::TipExtensionBatchCommit
-        | NativeAtomicCommitKind::CanonicalReorgCommit => {
+        | NativeAtomicCommitKind::CanonicalReorgCommit
+        | NativeAtomicCommitKind::CanonicalSuffixReorgCommit => {
             input.source_staged_ciphertext_removal_count
         }
         _ => 0,
     }
 }
 
+/// Validate the shared-canonical and historical-index manifest described by
+/// [`NativeAtomicCommitManifestAdmissionInput`]. Poseidon2 V8 plan rows are
+/// intentionally outside this count model and require their independent typed
+/// plan CAS plus readback in the enclosing tuple transaction.
 pub(crate) fn evaluate_native_atomic_commit_manifest_admission(
     input: NativeAtomicCommitManifestAdmissionInput,
-) -> Result<(), NativeAtomicCommitManifestAdmissionRejection> {
+) -> ::core::result::Result<(), NativeAtomicCommitManifestAdmissionRejection> {
     if matches!(
         input.kind,
         NativeAtomicCommitKind::MinedBlockCommit | NativeAtomicCommitKind::TipExtensionBatchCommit
     ) && input.action_count != input.planned_action_count
     {
-        Err(NativeAtomicCommitManifestAdmissionRejection::MinedPlanLength)
+        ::core::result::Result::Err(NativeAtomicCommitManifestAdmissionRejection::MinedPlanLength)
     } else if input.block_record_writes != expected_atomic_block_record_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::BlockRecordWrites)
+        ::core::result::Result::Err(NativeAtomicCommitManifestAdmissionRejection::BlockRecordWrites)
     } else if input.height_index_writes != expected_atomic_height_index_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::HeightIndexWrites)
+        ::core::result::Result::Err(NativeAtomicCommitManifestAdmissionRejection::HeightIndexWrites)
     } else if input.best_pointer_writes != expected_atomic_best_pointer_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::BestPointerWrites)
+        ::core::result::Result::Err(NativeAtomicCommitManifestAdmissionRejection::BestPointerWrites)
     } else if input.canonical_index_cleared != expected_atomic_canonical_index_cleared(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::CanonicalIndexClear)
+        ::core::result::Result::Err(
+            NativeAtomicCommitManifestAdmissionRejection::CanonicalIndexClear,
+        )
     } else if input.pending_tree_cleared != expected_atomic_pending_tree_cleared(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::PendingTreeClear)
+        ::core::result::Result::Err(NativeAtomicCommitManifestAdmissionRejection::PendingTreeClear)
     } else if input.pending_action_removals != expected_atomic_pending_action_removals(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::PendingActionRemoval)
+        ::core::result::Result::Err(
+            NativeAtomicCommitManifestAdmissionRejection::PendingActionRemoval,
+        )
     } else if input.pending_action_writes != expected_atomic_pending_action_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::PendingActionWrite)
+        ::core::result::Result::Err(
+            NativeAtomicCommitManifestAdmissionRejection::PendingActionWrite,
+        )
     } else if input.commitment_writes != expected_atomic_commitment_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::CommitmentWrite)
+        ::core::result::Result::Err(NativeAtomicCommitManifestAdmissionRejection::CommitmentWrite)
     } else if input.nullifier_writes != expected_atomic_nullifier_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::NullifierWrite)
+        ::core::result::Result::Err(NativeAtomicCommitManifestAdmissionRejection::NullifierWrite)
     } else if input.bridge_replay_writes != expected_atomic_bridge_replay_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::BridgeReplayWrite)
+        ::core::result::Result::Err(NativeAtomicCommitManifestAdmissionRejection::BridgeReplayWrite)
     } else if input.ciphertext_index_writes != expected_atomic_ciphertext_index_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::CiphertextIndexWrite)
+        ::core::result::Result::Err(
+            NativeAtomicCommitManifestAdmissionRejection::CiphertextIndexWrite,
+        )
     } else if input.ciphertext_archive_writes != expected_atomic_ciphertext_archive_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::CiphertextArchiveWrite)
+        ::core::result::Result::Err(
+            NativeAtomicCommitManifestAdmissionRejection::CiphertextArchiveWrite,
+        )
     } else if input.staged_ciphertext_removals != expected_atomic_staged_ciphertext_removals(input)
     {
-        Err(NativeAtomicCommitManifestAdmissionRejection::StagedCiphertextRemoval)
+        ::core::result::Result::Err(
+            NativeAtomicCommitManifestAdmissionRejection::StagedCiphertextRemoval,
+        )
+    } else if input.source_poseidon2_v8_plan_count > 1
+        || input.poseidon2_v8_plan_application_count > 1
+    {
+        ::core::result::Result::Err(
+            NativeAtomicCommitManifestAdmissionRejection::Poseidon2V8PlanCardinality,
+        )
+    } else if input.source_poseidon2_v8_plan_count != input.poseidon2_v8_plan_application_count {
+        ::core::result::Result::Err(
+            NativeAtomicCommitManifestAdmissionRejection::Poseidon2V8PlanApplication,
+        )
     } else {
-        Ok(())
+        ::core::result::Result::Ok(())
     }
 }
 
@@ -231,6 +290,7 @@ pub(crate) fn native_atomic_commit_manifest_admission_error(
 pub(crate) fn native_mined_block_commit_manifest(
     actions: &[PendingAction],
     planned: &[NativePlannedActionEffect],
+    poseidon2_v8_plan: Option<&poseidon2_v8_state::Poseidon2V8CanonicalPlan>,
 ) -> NativeAtomicCommitManifestAdmissionInput {
     let commitment_count = actions
         .iter()
@@ -242,6 +302,7 @@ pub(crate) fn native_mined_block_commit_manifest(
         .sum::<usize>();
     let ciphertext_hash_count = actions
         .iter()
+        .filter(|action| owns_legacy_ciphertext_da_rows(action))
         .map(|action| action.ciphertext_hashes.len())
         .sum::<usize>();
     let materialized_ciphertext_count = planned
@@ -252,6 +313,7 @@ pub(crate) fn native_mined_block_commit_manifest(
         .iter()
         .filter(|effect| effect.replay_key.is_some())
         .count();
+    let poseidon2_v8_plan_count = usize::from(poseidon2_v8_plan.is_some());
     NativeAtomicCommitManifestAdmissionInput {
         kind: NativeAtomicCommitKind::MinedBlockCommit,
         action_count: actions.len(),
@@ -265,6 +327,7 @@ pub(crate) fn native_mined_block_commit_manifest(
         source_ciphertext_index_count: ciphertext_hash_count,
         source_ciphertext_archive_count: materialized_ciphertext_count,
         source_staged_ciphertext_removal_count: ciphertext_hash_count,
+        source_poseidon2_v8_plan_count: poseidon2_v8_plan_count,
         block_record_writes: 1,
         height_index_writes: 1,
         best_pointer_writes: 1,
@@ -278,51 +341,16 @@ pub(crate) fn native_mined_block_commit_manifest(
         ciphertext_index_writes: ciphertext_hash_count,
         ciphertext_archive_writes: materialized_ciphertext_count,
         staged_ciphertext_removals: ciphertext_hash_count,
-    }
-}
-
-pub(crate) fn native_tip_extension_batch_commit_manifest(
-    canonical_index_plan: &NativeCanonicalIndexPlan,
-    block_entries: &[([u8; 32], Vec<u8>)],
-    height_entries: &[(u64, [u8; 32])],
-    pending_action_removal_count: usize,
-    staged_ciphertext_removal_count: usize,
-    action_count: usize,
-    planned_action_count: usize,
-) -> NativeAtomicCommitManifestAdmissionInput {
-    NativeAtomicCommitManifestAdmissionInput {
-        kind: NativeAtomicCommitKind::TipExtensionBatchCommit,
-        action_count,
-        planned_action_count,
-        chain_block_count: block_entries.len(),
-        height_entry_count: height_entries.len(),
-        pending_entry_count: 0,
-        source_commitment_count: canonical_index_plan.commitment_entries.len(),
-        source_nullifier_count: canonical_index_plan.nullifier_entries.len(),
-        source_bridge_replay_count: canonical_index_plan.bridge_replay_entries.len(),
-        source_ciphertext_index_count: canonical_index_plan.ciphertext_index_entries.len(),
-        source_ciphertext_archive_count: canonical_index_plan.ciphertext_archive_entries.len(),
-        source_staged_ciphertext_removal_count: staged_ciphertext_removal_count,
-        block_record_writes: block_entries.len(),
-        height_index_writes: height_entries.len(),
-        best_pointer_writes: 1,
-        canonical_index_cleared: false,
-        pending_tree_cleared: false,
-        pending_action_removals: pending_action_removal_count,
-        pending_action_writes: 0,
-        commitment_writes: canonical_index_plan.commitment_entries.len(),
-        nullifier_writes: canonical_index_plan.nullifier_entries.len(),
-        bridge_replay_writes: canonical_index_plan.bridge_replay_entries.len(),
-        ciphertext_index_writes: canonical_index_plan.ciphertext_index_entries.len(),
-        ciphertext_archive_writes: canonical_index_plan.ciphertext_archive_entries.len(),
-        staged_ciphertext_removals: staged_ciphertext_removal_count,
+        // Deliberately outside the admitted {0,1} domain. Only the shared-sled
+        // transaction helper may replace this with an observed application count.
+        poseidon2_v8_plan_application_count: UNOBSERVED_POSEIDON2_V8_PLAN_APPLICATION_COUNT,
     }
 }
 
 pub(crate) fn native_reorg_commit_manifest(
     canonical_index_plan: &NativeCanonicalIndexPlan,
     height_entries: &[(u64, [u8; 32])],
-    pending_entries: &[([u8; 32], Vec<u8>)],
+    pending_entries: &[(ActionId48, Vec<u8>)],
     staged_ciphertext_removal_count: usize,
 ) -> NativeAtomicCommitManifestAdmissionInput {
     NativeAtomicCommitManifestAdmissionInput {
@@ -338,6 +366,7 @@ pub(crate) fn native_reorg_commit_manifest(
         source_ciphertext_index_count: canonical_index_plan.ciphertext_index_entries.len(),
         source_ciphertext_archive_count: canonical_index_plan.ciphertext_archive_entries.len(),
         source_staged_ciphertext_removal_count: staged_ciphertext_removal_count,
+        source_poseidon2_v8_plan_count: 0,
         block_record_writes: 0,
         height_index_writes: height_entries.len(),
         best_pointer_writes: 1,
@@ -351,6 +380,7 @@ pub(crate) fn native_reorg_commit_manifest(
         ciphertext_index_writes: canonical_index_plan.ciphertext_index_entries.len(),
         ciphertext_archive_writes: canonical_index_plan.ciphertext_archive_entries.len(),
         staged_ciphertext_removals: staged_ciphertext_removal_count,
+        poseidon2_v8_plan_application_count: 0,
     }
 }
 
@@ -370,6 +400,7 @@ pub(crate) fn native_canonical_index_repair_manifest(
         source_ciphertext_index_count: canonical_index_plan.ciphertext_index_entries.len(),
         source_ciphertext_archive_count: canonical_index_plan.ciphertext_archive_entries.len(),
         source_staged_ciphertext_removal_count: 0,
+        source_poseidon2_v8_plan_count: 0,
         block_record_writes: 0,
         height_index_writes: 0,
         best_pointer_writes: 0,
@@ -383,6 +414,7 @@ pub(crate) fn native_canonical_index_repair_manifest(
         ciphertext_index_writes: canonical_index_plan.ciphertext_index_entries.len(),
         ciphertext_archive_writes: canonical_index_plan.ciphertext_archive_entries.len(),
         staged_ciphertext_removals: 0,
+        poseidon2_v8_plan_application_count: 0,
     }
 }
 
@@ -402,6 +434,7 @@ pub(crate) fn native_noncanonical_block_record_batch_manifest(
         source_ciphertext_index_count: 0,
         source_ciphertext_archive_count: 0,
         source_staged_ciphertext_removal_count: 0,
+        source_poseidon2_v8_plan_count: 0,
         block_record_writes: block_record_count,
         height_index_writes: 0,
         best_pointer_writes: 0,
@@ -415,6 +448,7 @@ pub(crate) fn native_noncanonical_block_record_batch_manifest(
         ciphertext_index_writes: 0,
         ciphertext_archive_writes: 0,
         staged_ciphertext_removals: 0,
+        poseidon2_v8_plan_application_count: 0,
     }
 }
 
@@ -554,7 +588,7 @@ pub(crate) fn native_canonical_reorg_chain_admission_input(
         if meta.chain_id != HEGEMON_CHAIN_ID_V1 {
             canonical_chain_ids_match = false;
         }
-        if meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_V1 {
+        if meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE {
             canonical_rules_hashes_match = false;
         }
         if meta.hash != meta.work_hash {
@@ -865,6 +899,18 @@ pub(crate) fn validate_block_actions_locked(
     state: &NativeState,
     actions: &[PendingAction],
 ) -> Result<()> {
+    let poseidon2_v8_count = actions
+        .iter()
+        .filter(|action| is_poseidon2_v8_proof_authority_action(action))
+        .count();
+    if poseidon2_v8_count > MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK {
+        return Err(anyhow!(
+            "native block carries {poseidon2_v8_count} Poseidon2 V8 proof-authority actions; source-owned limit is {MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK}"
+        ));
+    }
+    for action in actions {
+        ensure_native_v3_active_action_route(action, true)?;
+    }
     let mut validation_state = evaluate_native_block_action_validation_start(
         true,
         block_action_hashes_match(actions),
@@ -935,12 +981,14 @@ pub(crate) fn validate_block_actions_locked(
                 }
                 NativeActionScopeAdmissionRoute::Transfer => {
                     validate_transfer_action_payload(action)?;
-                    transfer_key = action_order_key(action);
-                    transfer_state_input = native_transfer_state_admission_input_for_block(
-                        state,
-                        &mut nullifier_state,
-                        action,
-                    );
+                    if is_legacy_shielded_transfer_action(action) {
+                        transfer_key = action_order_key(action);
+                        transfer_state_input = native_transfer_state_admission_input_for_block(
+                            state,
+                            &mut nullifier_state,
+                            action,
+                        );
+                    }
                 }
             }
         }
@@ -950,6 +998,7 @@ pub(crate) fn validate_block_actions_locked(
             NativeBlockActionValidationStep {
                 scope_input,
                 payload_valid: payload_error.is_none(),
+                enforce_legacy_transfer_order: is_legacy_shielded_transfer_action(action),
                 transfer_key,
                 transfer_state_input,
                 bridge_replay_key,
@@ -1224,7 +1273,16 @@ pub(crate) fn apply_planned_actions_to_memory(
     next_commitment_tree
         .extend(planned_commitments)
         .map_err(|err| anyhow!("append native commitment batch failed: {err}"))?;
+    let mut next_nullifier_accumulator = state.nullifier_accumulator.clone();
+    next_nullifier_accumulator
+        .append_all(
+            actions
+                .iter()
+                .flat_map(|action| action.nullifiers.iter().copied()),
+        )
+        .map_err(|err| anyhow!("append native nullifier accumulator failed: {err}"))?;
     state.commitment_tree = next_commitment_tree;
+    state.nullifier_accumulator = next_nullifier_accumulator;
 
     for (action, effect) in actions.iter().zip(planned.iter()) {
         for nullifier in &action.nullifiers {
@@ -1234,77 +1292,18 @@ pub(crate) fn apply_planned_actions_to_memory(
             state.consumed_bridge_messages.insert(replay_key);
         }
         clear_staged_ciphertext_markers(state, action);
-        state.pending_actions.remove(&action.tx_hash);
+        remove_pending_action_from_state(state, &action.tx_hash);
     }
     Ok(())
 }
 
 pub(crate) fn clear_staged_ciphertext_markers(state: &mut NativeState, action: &PendingAction) {
+    if !owns_legacy_ciphertext_da_rows(action) {
+        return;
+    }
     for hash in &action.ciphertext_hashes {
         state.staged_ciphertexts.remove(&hex48(hash));
     }
-}
-
-pub(crate) fn append_native_block_commit_index_entries(
-    context: &'static str,
-    actions: &[PendingAction],
-    planned: &[NativePlannedActionEffect],
-    commitment_entries: &mut Vec<(u64, [u8; 48])>,
-    ciphertext_archive_entries: &mut Vec<(u64, Vec<u8>)>,
-    nullifier_entries: &mut Vec<[u8; 48]>,
-    bridge_replay_entries: &mut Vec<[u8; 48]>,
-    ciphertext_index_entries: &mut Vec<([u8; 48], Vec<u8>)>,
-    pending_action_removals: &mut Vec<[u8; 32]>,
-    staged_ciphertext_removals: &mut Vec<[u8; 48]>,
-) -> Result<()> {
-    for (action, effect) in actions.iter().zip(planned.iter()) {
-        if action.ciphertext_hashes.len() != action.ciphertext_sizes.len() {
-            return Err(anyhow!(
-                "{context} ciphertext metadata count mismatch: hashes={} sizes={}",
-                action.ciphertext_hashes.len(),
-                action.ciphertext_sizes.len()
-            ));
-        }
-
-        for (offset, commitment) in action.commitments.iter().enumerate() {
-            let offset = u64::try_from(offset)
-                .map_err(|_| anyhow!("{context} commitment offset overflow"))?;
-            let index = effect
-                .commitment_start
-                .checked_add(offset)
-                .ok_or_else(|| anyhow!("{context} commitment index overflow"))?;
-            commitment_entries.push((index, *commitment));
-        }
-        for (offset, bytes) in effect.ciphertexts.iter().enumerate() {
-            let offset = u64::try_from(offset)
-                .map_err(|_| anyhow!("{context} ciphertext offset overflow"))?;
-            let index = effect
-                .commitment_start
-                .checked_add(offset)
-                .ok_or_else(|| anyhow!("{context} ciphertext index overflow"))?;
-            ciphertext_archive_entries.push((index, bytes.clone()));
-        }
-
-        nullifier_entries.extend(action.nullifiers.iter().copied());
-        if let Some(replay_key) = effect.replay_key {
-            bridge_replay_entries.push(replay_key);
-        }
-
-        for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
-            let size = action.ciphertext_sizes[idx];
-            let idx = u64::try_from(idx)
-                .map_err(|_| anyhow!("{context} ciphertext row offset overflow"))?;
-            let mut value = Vec::with_capacity(32 + 4 + 8);
-            value.extend_from_slice(&action.tx_hash);
-            value.extend_from_slice(&size.to_le_bytes());
-            value.extend_from_slice(&idx.to_le_bytes());
-            ciphertext_index_entries.push((*hash, value));
-        }
-
-        pending_action_removals.push(action.tx_hash);
-        staged_ciphertext_removals.extend(action.ciphertext_hashes.iter().copied());
-    }
-    Ok(())
 }
 
 pub(crate) fn plan_canonical_index_rebuild(
@@ -1428,24 +1427,28 @@ pub(crate) fn plan_canonical_index_rebuild_from_loader(
                 plan.ciphertext_archive_entries.push((index, bytes));
             }
             for nullifier in &action.nullifiers {
-                plan.nullifier_entries.push(*nullifier);
+                let index = u64::try_from(plan.nullifier_entries.len())
+                    .map_err(|_| anyhow!("nullifier rebuild index overflow"))?;
+                plan.nullifier_entries.push((index, *nullifier));
             }
             if let Some(replay_key) = effect.replay_key {
                 plan.bridge_replay_entries.push(replay_key);
             }
-            for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
-                let idx_u64 =
-                    u64::try_from(idx).map_err(|_| anyhow!("ciphertext index offset overflow"))?;
-                let size = action
-                    .ciphertext_sizes
-                    .get(idx)
-                    .copied()
-                    .unwrap_or_default();
-                let mut value = Vec::with_capacity(32 + 4 + 8);
-                value.extend_from_slice(&action.tx_hash);
-                value.extend_from_slice(&size.to_le_bytes());
-                value.extend_from_slice(&idx_u64.to_le_bytes());
-                plan.ciphertext_index_entries.push((*hash, value));
+            if owns_legacy_ciphertext_da_rows(&action) {
+                for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
+                    let idx_u64 = u64::try_from(idx)
+                        .map_err(|_| anyhow!("ciphertext index offset overflow"))?;
+                    let size = action
+                        .ciphertext_sizes
+                        .get(idx)
+                        .copied()
+                        .unwrap_or_default();
+                    let mut value = Vec::with_capacity(48 + 4 + 8);
+                    value.extend_from_slice(action.tx_hash.as_bytes());
+                    value.extend_from_slice(&size.to_le_bytes());
+                    value.extend_from_slice(&idx_u64.to_le_bytes());
+                    plan.ciphertext_index_entries.push((*hash, value));
+                }
             }
         }
         leaf_cursor = stream.next_leaf_count;
@@ -1650,26 +1653,32 @@ pub(crate) fn plan_pending_action_effects(
     plan_materialized_action_effects(da_ciphertext_tree, state, actions)
 }
 
-#[cfg(test)]
-pub(crate) fn action_hashes_from_chain(chain: &[NativeBlockMeta]) -> Result<BTreeSet<[u8; 32]>> {
+pub(crate) fn action_identity_hashes_from_chain(
+    chain: &[NativeBlockMeta],
+) -> Result<(BTreeSet<ActionId48>, BTreeSet<ActionSemanticId48>)> {
     let mut hashes = BTreeSet::new();
+    let mut semantic_hashes = BTreeSet::new();
     for meta in chain.iter().skip(1) {
         for action in decode_block_actions(meta)? {
             hashes.insert(action.tx_hash);
+            semantic_hashes.insert(pending_action_semantic_hash(&action));
         }
     }
-    Ok(hashes)
+    Ok((hashes, semantic_hashes))
 }
 
 #[cfg(test)]
 pub(crate) fn orphaned_actions(
     old_chain: &[NativeBlockMeta],
-    new_action_hashes: &BTreeSet<[u8; 32]>,
+    new_action_hashes: &BTreeSet<ActionId48>,
+    new_action_semantic_hashes: &BTreeSet<ActionSemanticId48>,
 ) -> Result<Vec<PendingAction>> {
     let mut actions = Vec::new();
     for meta in old_chain.iter().skip(1) {
         for action in decode_block_actions(meta)? {
-            if !new_action_hashes.contains(&action.tx_hash) {
+            if !new_action_hashes.contains(&action.tx_hash)
+                && !new_action_semantic_hashes.contains(&pending_action_semantic_hash(&action))
+            {
                 actions.push(action);
             }
         }
@@ -1679,51 +1688,133 @@ pub(crate) fn orphaned_actions(
 
 pub(crate) fn revalidate_reorg_pending_actions(
     canonical_state: &NativeState,
-    existing_pending: BTreeMap<[u8; 32], PendingAction>,
+    existing_pending: BTreeMap<ActionId48, PendingAction>,
     orphaned_actions: Vec<PendingAction>,
-) -> BTreeMap<[u8; 32], PendingAction> {
-    revalidate_pending_actions(canonical_state, existing_pending, orphaned_actions, "reorg")
+) -> BTreeMap<ActionId48, PendingAction> {
+    revalidate_pending_actions_with_limits(
+        canonical_state,
+        existing_pending,
+        orphaned_actions,
+        "reorg",
+        true,
+        MAX_NATIVE_MEMPOOL_ACTIONS,
+        MAX_NATIVE_MEMPOOL_ACTION_BYTES,
+    )
 }
 
 pub(crate) fn revalidate_pending_actions_after_state_advance(
     canonical_state: &NativeState,
-    existing_pending: BTreeMap<[u8; 32], PendingAction>,
-) -> BTreeMap<[u8; 32], PendingAction> {
-    revalidate_pending_actions(
+    existing_pending: BTreeMap<ActionId48, PendingAction>,
+) -> BTreeMap<ActionId48, PendingAction> {
+    revalidate_pending_actions_with_limits(
         canonical_state,
         existing_pending,
         Vec::new(),
         "state_advance",
+        false,
+        MAX_NATIVE_MEMPOOL_ACTIONS,
+        MAX_NATIVE_MEMPOOL_ACTION_BYTES,
     )
 }
 
-pub(crate) fn revalidate_pending_actions(
+#[cfg(test)]
+pub(crate) fn revalidate_reorg_pending_actions_with_limits(
     canonical_state: &NativeState,
-    existing_pending: BTreeMap<[u8; 32], PendingAction>,
+    existing_pending: BTreeMap<ActionId48, PendingAction>,
+    orphaned_actions: Vec<PendingAction>,
+    max_pending_actions: usize,
+    max_pending_action_bytes: usize,
+) -> BTreeMap<ActionId48, PendingAction> {
+    revalidate_pending_actions_with_limits(
+        canonical_state,
+        existing_pending,
+        orphaned_actions,
+        "reorg_test",
+        true,
+        max_pending_actions,
+        max_pending_action_bytes,
+    )
+}
+
+fn revalidate_pending_actions_with_limits(
+    canonical_state: &NativeState,
+    existing_pending: BTreeMap<ActionId48, PendingAction>,
     orphaned_actions: Vec<PendingAction>,
     context: &'static str,
-) -> BTreeMap<[u8; 32], PendingAction> {
+    _drop_orphaned_coinbase_actions: bool,
+    max_pending_actions: usize,
+    max_pending_action_bytes: usize,
+) -> BTreeMap<ActionId48, PendingAction> {
     let mut staged_state = NativeState {
         best: canonical_state.best.clone(),
         header_mmr_peaks: canonical_state.header_mmr_peaks.clone(),
         pending_actions: BTreeMap::new(),
+        pending_action_semantic_index: BTreeMap::new(),
+        pending_action_order_index: BTreeSet::new(),
+        pending_nullifiers: BTreeSet::new(),
+        pending_bridge_replay_keys: PersistentKeySet48::new(),
+        pending_mempool_bytes: 0,
         commitment_tree: canonical_state.commitment_tree.clone(),
         nullifiers: canonical_state.nullifiers.clone(),
+        nullifier_accumulator: canonical_state.nullifier_accumulator.clone(),
         consumed_bridge_messages: canonical_state.consumed_bridge_messages.clone(),
         stablecoin_policy_authorizations: canonical_state.stablecoin_policy_authorizations.clone(),
         staged_ciphertexts: canonical_state.staged_ciphertexts.clone(),
         staged_proofs: canonical_state.staged_proofs.clone(),
     };
 
-    for (hash, action) in existing_pending {
-        stage_revalidated_pending_action(&mut staged_state, hash, action, "existing", context);
+    let (existing_revalidatable, existing_tip_bound): (Vec<_>, Vec<_>) = existing_pending
+        .into_iter()
+        .partition(|(_, action)| !is_coinbase_action(action) && !is_poseidon2_v8_action(action));
+    let existing_tip_bound_hashes = existing_tip_bound
+        .iter()
+        .map(|(hash, _)| *hash)
+        .collect::<BTreeSet<_>>();
+    for (hash, action) in &existing_tip_bound {
+        debug!(
+            tx_hash = %hex48(hash.as_bytes()),
+            context,
+            route = if is_poseidon2_v8_action(action) { "poseidon2_v8" } else { "coinbase" },
+            "dropping tip-bound action before pending-action revalidation"
+        );
+    }
+
+    for (hash, action) in existing_revalidatable {
+        stage_revalidated_pending_action(
+            &mut staged_state,
+            hash,
+            action,
+            "existing",
+            context,
+            max_pending_actions,
+            max_pending_action_bytes,
+        );
     }
     for action in orphaned_actions {
         let hash = action.tx_hash;
-        if staged_state.pending_actions.contains_key(&hash) {
+        if staged_state.pending_actions.contains_key(&hash)
+            || existing_tip_bound_hashes.contains(&hash)
+        {
             continue;
         }
-        stage_revalidated_pending_action(&mut staged_state, hash, action, "orphaned", context);
+        if is_coinbase_action(&action) || is_poseidon2_v8_action(&action) {
+            debug!(
+                tx_hash = %hex48(hash.as_bytes()),
+                context,
+                route = if is_poseidon2_v8_action(&action) { "poseidon2_v8" } else { "coinbase" },
+                "dropping orphaned tip-bound action before reorg mempool budgeting"
+            );
+            continue;
+        }
+        stage_revalidated_pending_action(
+            &mut staged_state,
+            hash,
+            action,
+            "orphaned",
+            context,
+            max_pending_actions,
+            max_pending_action_bytes,
+        );
     }
     prune_candidate_artifacts_when_transfers_pending(&mut staged_state, context);
     prune_unselected_candidate_artifacts_from_pending(&mut staged_state, context);
@@ -1731,7 +1822,7 @@ pub(crate) fn revalidate_pending_actions(
     staged_state.pending_actions
 }
 
-pub(crate) fn pending_candidate_artifact_hashes(staged_state: &NativeState) -> Vec<[u8; 32]> {
+pub(crate) fn pending_candidate_artifact_hashes(staged_state: &NativeState) -> Vec<ActionId48> {
     staged_state
         .pending_actions
         .iter()
@@ -1753,11 +1844,11 @@ pub(crate) fn prune_candidate_artifacts_when_transfers_pending(
     let dropped = pending_candidate_artifact_hashes(staged_state);
     for hash in dropped {
         debug!(
-            tx_hash = %hex32(&hash),
+            tx_hash = %hex48(hash.as_bytes()),
             context,
             "dropping candidate artifact while shielded transfers are pending"
         );
-        staged_state.pending_actions.remove(&hash);
+        remove_pending_action_from_state(staged_state, &hash);
     }
 }
 
@@ -1788,11 +1879,11 @@ pub(crate) fn prune_unselected_candidate_artifacts_from_pending(
         .collect::<Vec<_>>();
     for hash in dropped {
         debug!(
-            tx_hash = %hex32(&hash),
+            tx_hash = %hex48(hash.as_bytes()),
             context,
             "dropping unselected candidate artifact during mempool revalidation"
         );
-        staged_state.pending_actions.remove(&hash);
+        remove_pending_action_from_state(staged_state, &hash);
     }
 }
 
@@ -1807,24 +1898,26 @@ pub(crate) fn prune_auto_coinbase_actions_from_pending(
         .collect::<Vec<_>>();
     for hash in dropped {
         debug!(
-            tx_hash = %hex32(&hash),
+            tx_hash = %hex48(hash.as_bytes()),
             context,
             "dropping persisted coinbase action during auto-coinbase mempool revalidation"
         );
-        staged_state.pending_actions.remove(&hash);
+        remove_pending_action_from_state(staged_state, &hash);
     }
 }
 
 pub(crate) fn stage_revalidated_pending_action(
     staged_state: &mut NativeState,
-    hash: [u8; 32],
+    hash: ActionId48,
     action: PendingAction,
     source: &'static str,
     context: &'static str,
+    max_pending_actions: usize,
+    max_pending_action_bytes: usize,
 ) {
-    if staged_state.pending_actions.len() >= MAX_NATIVE_MEMPOOL_ACTIONS {
+    if staged_state.pending_actions.len() >= max_pending_actions {
         debug!(
-            tx_hash = %hex32(&hash),
+            tx_hash = %hex48(hash.as_bytes()),
             source,
             context,
             "dropping pending action over mempool action cap during revalidation"
@@ -1833,7 +1926,7 @@ pub(crate) fn stage_revalidated_pending_action(
     }
     if let Err(err) = validate_pending_action_against_mempool_state(staged_state, &action) {
         debug!(
-            tx_hash = %hex32(&hash),
+            tx_hash = %hex48(hash.as_bytes()),
             source,
             context,
             error = %err,
@@ -1841,13 +1934,11 @@ pub(crate) fn stage_revalidated_pending_action(
         );
         return;
     }
-    if let Err(err) = validate_mempool_byte_budget(
-        &staged_state.pending_actions,
-        &action,
-        MAX_NATIVE_MEMPOOL_ACTION_BYTES,
-    ) {
+    if let Err(err) =
+        validate_mempool_byte_budget_for_state(staged_state, &action, max_pending_action_bytes)
+    {
         debug!(
-            tx_hash = %hex32(&hash),
+            tx_hash = %hex48(hash.as_bytes()),
             source,
             context,
             error = %err,
@@ -1855,14 +1946,43 @@ pub(crate) fn stage_revalidated_pending_action(
         );
         return;
     }
-    staged_state.pending_actions.insert(hash, action);
+    if let Err(err) = insert_pending_action_into_state(staged_state, action) {
+        debug!(
+            tx_hash = %hex48(hash.as_bytes()),
+            source,
+            context,
+            error = %err,
+            "dropping duplicate semantic pending action during mempool revalidation"
+        );
+    }
 }
 
 pub(crate) fn validate_coinbase_accounting(actions: &[PendingAction], height: u64) -> Result<()> {
+    validate_coinbase_route_at_height(actions, height)?;
     evaluate_native_coinbase_accounting_admission(native_coinbase_accounting_admission_input(
         actions, height,
     ))
     .map_err(native_coinbase_accounting_admission_error)
+}
+
+pub(crate) fn validate_coinbase_route_at_height(
+    actions: &[PendingAction],
+    _height: u64,
+) -> Result<()> {
+    for action in actions.iter().filter(|action| is_coinbase_action(action)) {
+        if is_legacy_coinbase_action(action)
+            && protocol_versioning::tx_proof_backend_for_version(action.binding.into()).is_none()
+        {
+            return Err(anyhow!("legacy coinbase binding is not decoder-compatible"));
+        }
+        if is_poseidon2_v8_coinbase_action(action)
+            && action.binding
+                != protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING.into()
+        {
+            return Err(anyhow!("Poseidon2 V8 coinbase binding mismatch"));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2032,25 +2152,20 @@ pub(crate) fn native_coinbase_accounting_admission_error(
 }
 
 pub(crate) fn coinbase_action_amount(action: &PendingAction) -> Result<u64> {
-    let args: MintCoinbaseArgs = decode_scale_exact(&action.public_args, "coinbase action args")?;
-    Ok(args.reward_bundle.miner_note.amount)
-}
-
-pub(crate) fn native_candidate_artifact_coupling_admission_input(
-    transfer_count: usize,
-    candidate_artifacts: &[&CandidateArtifact],
-) -> NativeCandidateArtifactCouplingAdmissionInput {
-    NativeCandidateArtifactCouplingAdmissionInput {
-        transfer_count,
-        candidate_artifact_count: candidate_artifacts.len(),
-        candidate_tx_count_matches: candidate_artifacts
-            .first()
-            .filter(|_| candidate_artifacts.len() == 1)
-            .and_then(|artifact| usize::try_from(artifact.tx_count).ok())
-            == Some(transfer_count),
+    if is_legacy_coinbase_action(action) {
+        let args: MintCoinbaseArgs =
+            decode_scale_exact(&action.public_args, "coinbase action args")?;
+        return Ok(args.reward_bundle.miner_note.amount);
     }
+    if is_poseidon2_v8_coinbase_action(action) {
+        let args: MintPoseidon2V8CoinbaseArgs =
+            decode_scale_exact(&action.public_args, "Poseidon2 V8 coinbase action args")?;
+        return Ok(args.miner_note.opening.value);
+    }
+    Err(anyhow!("not a coinbase action"))
 }
 
+#[cfg(test)]
 pub(crate) fn evaluate_native_candidate_artifact_coupling_admission(
     input: NativeCandidateArtifactCouplingAdmissionInput,
 ) -> Result<(), NativeCandidateArtifactCouplingAdmissionRejection> {
@@ -2069,24 +2184,6 @@ pub(crate) fn evaluate_native_candidate_artifact_coupling_admission(
     }
 }
 
-pub(crate) fn native_candidate_artifact_coupling_admission_error(
-    rejection: NativeCandidateArtifactCouplingAdmissionRejection,
-) -> anyhow::Error {
-    match rejection {
-        NativeCandidateArtifactCouplingAdmissionRejection::CandidateWithoutTransfers => {
-            anyhow!("candidate artifact action requires shielded transfer actions")
-        }
-        NativeCandidateArtifactCouplingAdmissionRejection::MissingOrMultipleCandidateArtifact => {
-            anyhow!(
-                "non-empty shielded block requires exactly one matching recursive candidate artifact"
-            )
-        }
-        NativeCandidateArtifactCouplingAdmissionRejection::CandidateTxCountMismatch => {
-            anyhow!("candidate artifact tx_count mismatch")
-        }
-    }
-}
-
 pub(crate) fn evaluate_native_tx_leaf_action_binding_admission(
     input: NativeTxLeafActionBindingAdmissionInput,
 ) -> Result<(), NativeTxLeafActionBindingAdmissionRejection> {
@@ -2102,6 +2199,8 @@ pub(crate) fn evaluate_native_tx_leaf_action_binding_admission(
         Err(NativeTxLeafActionBindingAdmissionRejection::OutputCount)
     } else if !input.version_matches {
         Err(NativeTxLeafActionBindingAdmissionRejection::Version)
+    } else if !input.merkle_root_matches_anchor {
+        Err(NativeTxLeafActionBindingAdmissionRejection::MerkleRootMismatch)
     } else if !input.fee_matches {
         Err(NativeTxLeafActionBindingAdmissionRejection::Fee)
     } else if !input.stablecoin_payload_matches {
@@ -2144,6 +2243,9 @@ pub(crate) fn native_tx_leaf_action_binding_admission_error(
         }
         NativeTxLeafActionBindingAdmissionRejection::Version => {
             anyhow!("native tx-leaf version mismatch")
+        }
+        NativeTxLeafActionBindingAdmissionRejection::MerkleRootMismatch => {
+            anyhow!("native tx-leaf merkle root/action anchor mismatch")
         }
         NativeTxLeafActionBindingAdmissionRejection::Fee => {
             anyhow!("native tx-leaf fee mismatch")
@@ -2287,6 +2389,7 @@ pub(crate) fn native_tx_leaf_action_binding_admission_input(
             && output_count == Some(decoded.tx.commitments.len())
             && output_count == Some(decoded.tx.ciphertext_hashes.len()),
         version_matches: decoded.tx.version == action.binding.into(),
+        merkle_root_matches_anchor: decoded.stark_public_inputs.merkle_root == action.anchor,
         fee_matches: decoded.stark_public_inputs.fee == action.fee,
         stablecoin_payload_matches,
         balance_tag_matches: tx.balance_tag == decoded.tx.balance_tag,
@@ -2337,39 +2440,372 @@ pub(crate) fn native_candidate_artifact_binding_admission_error(
     }
 }
 
+/// Enforce the active authoring binding at the next native height. Historical
+/// block-replay authorizations are deliberately excluded from mempool and
+/// mining authoring.
+pub(crate) fn validate_native_action_authoring_version_policy(
+    best_height: u64,
+    binding: KernelVersionBinding,
+    family_id: u16,
+    action_id: u16,
+) -> Result<u64> {
+    let action_height = best_height
+        .checked_add(1)
+        .ok_or_else(|| anyhow!("native action version policy height overflow"))?;
+    validate_native_action_version_at_height(action_height, binding, family_id, action_id)?;
+    Ok(action_height)
+}
+
+pub(crate) fn validate_native_action_version_at_height(
+    action_height: u64,
+    binding: KernelVersionBinding,
+    family_id: u16,
+    action_id: u16,
+) -> Result<()> {
+    #[cfg(test)]
+    if outbound_bridge_test_authority_allows(family_id, action_id) {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if poseidon2_v8_verifier::poseidon2_v8_test_binding_authorizes_route(
+        action_height,
+        binding,
+        family_id,
+        action_id,
+    ) {
+        return Ok(());
+    }
+    let proof_class =
+        native_action_proof_authority_class(family_id, action_id).ok_or_else(|| {
+            anyhow!(
+                "native action route family={} action={} has no fresh proof authority class",
+                family_id,
+                action_id
+            )
+        })?;
+    let decision = kernel_manifest().proof_authority_decision(
+        protocol_versioning::ProofAuthorityOperation::Authoring,
+        protocol_versioning::HEGEMON_PROOF_NETWORK_ID,
+        action_height,
+        binding,
+        family_id,
+        action_id,
+        proof_class,
+        None,
+    );
+    if !matches!(
+        decision,
+        protocol_versioning::ProofAuthorityDecision::Fresh(_)
+    ) {
+        return Err(anyhow!(
+            "native fresh proof authority rejected network={} height={} circuit={} crypto={} family={} action={}",
+            protocol_versioning::HEGEMON_PROOF_NETWORK_ID,
+            action_height,
+            binding.circuit,
+            binding.crypto,
+            family_id,
+            action_id
+        ));
+    }
+    if binding == protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING.into() {
+        let production =
+            poseidon2_v8_verifier::Poseidon2V8ProductionBinding::require_source_at(action_height)
+                .map_err(|error| anyhow!("native V8 action authority rejected: {error}"))?;
+        debug_assert!(production.active_at(action_height));
+    }
+    Ok(())
+}
+
+fn native_action_proof_authority_class(
+    family_id: u16,
+    action_id: u16,
+) -> Option<protocol_versioning::ProofAuthorityClass> {
+    if family_id != FAMILY_SHIELDED_POOL {
+        return None;
+    }
+    match action_id {
+        ACTION_SHIELDED_TRANSFER_INLINE
+        | ACTION_SHIELDED_TRANSFER_SIDECAR
+        | ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE => {
+            Some(protocol_versioning::ProofAuthorityClass::Transaction)
+        }
+        ACTION_SUBMIT_CANDIDATE_ARTIFACT => {
+            Some(protocol_versioning::ProofAuthorityClass::RecursiveBlock)
+        }
+        ACTION_MINT_COINBASE | ACTION_MINT_POSEIDON2_V8_COINBASE => {
+            Some(protocol_versioning::ProofAuthorityClass::MintSource)
+        }
+        _ => None,
+    }
+}
+
+/// Enforce the release-owned proof/version policy before any transaction or
+/// recursive proof bytes reach their decoders and cryptographic verifiers.
+/// Every native block-import path converges on this gate.
+pub(crate) fn validate_native_block_proof_policy(
+    best_height: u64,
+    block_height: u64,
+    actions: &[PendingAction],
+) -> Result<()> {
+    let manifest = kernel_manifest();
+    validate_native_block_proof_policy_against_manifest(
+        best_height,
+        block_height,
+        actions,
+        &manifest,
+    )
+}
+
+pub(crate) fn evaluate_native_coinbase_placement_admission(
+    input: NativeCoinbasePlacementAdmissionInput,
+) -> Result<(), NativeCoinbasePlacementAdmissionRejection> {
+    if input.coinbase_count == 0 && input.require_coinbase {
+        Err(NativeCoinbasePlacementAdmissionRejection::MissingRequiredCoinbase)
+    } else if input.coinbase_count > 1 {
+        Err(NativeCoinbasePlacementAdmissionRejection::MultipleCoinbase)
+    } else if input.coinbase_count == 1 && !input.single_coinbase_is_final {
+        Err(NativeCoinbasePlacementAdmissionRejection::CoinbaseNotFinal)
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) fn native_coinbase_placement_admission_input(
+    actions: &[PendingAction],
+    require_coinbase: bool,
+) -> NativeCoinbasePlacementAdmissionInput {
+    let coinbase_count = actions
+        .iter()
+        .filter(|action| is_coinbase_action(action))
+        .count();
+    NativeCoinbasePlacementAdmissionInput {
+        coinbase_count,
+        require_coinbase,
+        single_coinbase_is_final: coinbase_count == 1
+            && actions.last().is_some_and(is_coinbase_action),
+    }
+}
+
+pub(crate) fn validate_native_coinbase_placement(
+    actions: &[PendingAction],
+    require_coinbase: bool,
+) -> Result<()> {
+    evaluate_native_coinbase_placement_admission(native_coinbase_placement_admission_input(
+        actions,
+        require_coinbase,
+    ))
+    .map_err(|rejection| {
+        anyhow!(
+            "native coinbase placement admission failed: {}",
+            rejection.label()
+        )
+    })
+}
+
+fn validate_native_block_proof_policy_against_manifest(
+    best_height: u64,
+    block_height: u64,
+    actions: &[PendingAction],
+    manifest: &protocol_kernel::manifest::KernelManifest,
+) -> Result<()> {
+    let expected_height = evaluate_native_recursive_artifact_context_admission(
+        NativeRecursiveArtifactContextAdmissionInput { best_height },
+    )
+    .map_err(native_recursive_artifact_context_admission_error)?;
+    if block_height != expected_height {
+        return Err(anyhow!(
+            "native block proof policy height mismatch: expected {expected_height}, got {block_height}"
+        ));
+    }
+
+    let poseidon2_v8_count = actions
+        .iter()
+        .filter(|action| is_poseidon2_v8_proof_authority_action(action))
+        .count();
+    if poseidon2_v8_count > MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK {
+        return Err(anyhow!(
+            "native block carries {poseidon2_v8_count} Poseidon2 V8 proof-authority actions; source-owned limit is {MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK}"
+        ));
+    }
+
+    // This is deliberately ahead of action payload/proof/DA decoding: the
+    // active author emits coinbase last, and peers must reject noncanonical
+    // placement without spending cryptographic work.
+    validate_native_coinbase_placement(actions, NATIVE_V2_COINBASE_REQUIRED)?;
+    validate_coinbase_route_at_height(actions, block_height)?;
+
+    for action in actions {
+        ensure_native_v3_active_action_route(action, true)?;
+        #[cfg(test)]
+        if outbound_bridge_test_authority_allows(action.family_id, action.action_id) {
+            // The thread-local regression seam bypasses only the absent outer
+            // proof-authority class. Canonical decoding, bridge payload,
+            // resource, replay, root, PoW, and persistence checks still run.
+            continue;
+        }
+        let proof_class = native_action_proof_authority_class(action.family_id, action.action_id)
+            .ok_or_else(|| {
+            anyhow!(
+                "native block route family={} action={} has no proof authority class",
+                action.family_id,
+                action.action_id
+            )
+        })?;
+        let decision = manifest.proof_authority_decision(
+            protocol_versioning::ProofAuthorityOperation::BlockAcceptance,
+            protocol_versioning::HEGEMON_PROOF_NETWORK_ID,
+            block_height,
+            action.binding,
+            action.family_id,
+            action.action_id,
+            proof_class,
+            None,
+        );
+        #[cfg(test)]
+        let test_binding_authorized =
+            poseidon2_v8_verifier::poseidon2_v8_test_binding_authorizes_route(
+                block_height,
+                action.binding,
+                action.family_id,
+                action.action_id,
+            );
+        #[cfg(not(test))]
+        let test_binding_authorized = false;
+        if !decision.is_authorized() && !test_binding_authorized {
+            return Err(anyhow!(
+                "native block proof authority rejected network={} height={} circuit={} crypto={} family={} action={}",
+                protocol_versioning::HEGEMON_PROOF_NETWORK_ID,
+                block_height,
+                action.binding.circuit,
+                action.binding.crypto,
+                action.family_id,
+                action.action_id
+            ));
+        }
+        if action.candidate_artifact.is_some()
+            && proof_class != protocol_versioning::ProofAuthorityClass::RecursiveBlock
+        {
+            let recursive_decision = manifest.proof_authority_decision(
+                protocol_versioning::ProofAuthorityOperation::BlockAcceptance,
+                protocol_versioning::HEGEMON_PROOF_NETWORK_ID,
+                block_height,
+                action.binding,
+                action.family_id,
+                action.action_id,
+                protocol_versioning::ProofAuthorityClass::RecursiveBlock,
+                None,
+            );
+            if !recursive_decision.is_authorized() {
+                return Err(anyhow!(
+                    "historical recursive proof authority rejected at height {block_height}"
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub(crate) fn verify_native_block_artifacts_locked(
     node: &NativeNode,
     state: &NativeState,
     actions: &[PendingAction],
     meta: &NativeBlockMeta,
 ) -> Result<()> {
+    let manifest = kernel_manifest();
+    verify_native_block_artifacts_against_manifest_locked(
+        node, state, actions, meta, &manifest, true,
+    )
+}
+
+/// Historical replay validates the legacy proof/artifact stream here and
+/// validates the complete V8 chain separately against a scratch typed store.
+/// This avoids consulting or mutating an already-advanced durable V8 tip while
+/// the legacy replay cursor is still near genesis.
+pub(crate) fn verify_native_legacy_block_artifacts_locked(
+    node: &NativeNode,
+    state: &NativeState,
+    actions: &[PendingAction],
+    meta: &NativeBlockMeta,
+) -> Result<()> {
+    let manifest = kernel_manifest();
+    verify_native_block_artifacts_against_manifest_locked(
+        node, state, actions, meta, &manifest, false,
+    )
+}
+
+fn verify_native_block_artifacts_against_manifest_locked(
+    node: &NativeNode,
+    state: &NativeState,
+    actions: &[PendingAction],
+    meta: &NativeBlockMeta,
+    manifest: &protocol_kernel::manifest::KernelManifest,
+    verify_poseidon2_v8: bool,
+) -> Result<()> {
+    validate_native_block_proof_policy_against_manifest(
+        state.best.height,
+        meta.height,
+        actions,
+        manifest,
+    )?;
+
+    // The fresh seven-limb lane is verified independently from the historical
+    // `consensus::Transaction`/NativeTxLeaf verifier.  Planning is read-only
+    // here; canonical import applies the same verified rows in the main sled
+    // transaction.
+    if verify_poseidon2_v8 {
+        node.verify_poseidon2_v8_block_against_stored_parent(&state.best, meta, actions)?;
+    }
+
     let transfer_count = actions
         .iter()
-        .filter(|action| is_shielded_transfer_action(action))
+        .filter(|action| is_legacy_shielded_transfer_action(action))
+        .count();
+    let candidate_action_count = actions
+        .iter()
+        .filter(|action| is_candidate_artifact_action(action))
         .count();
     let candidate_artifacts = actions
         .iter()
         .filter(|action| is_candidate_artifact_action(action))
         .filter_map(|action| action.candidate_artifact.as_ref())
         .collect::<Vec<_>>();
-    let coupling_input =
-        native_candidate_artifact_coupling_admission_input(transfer_count, &candidate_artifacts);
-    if let Err(rejection) = evaluate_native_candidate_artifact_coupling_admission(coupling_input) {
-        return Err(native_candidate_artifact_coupling_admission_error(
-            rejection,
+    if candidate_action_count != candidate_artifacts.len() {
+        return Err(anyhow!("candidate artifact action is missing its payload"));
+    }
+    if candidate_artifacts.len() > 1 {
+        return Err(anyhow!(
+            "block contains more than one historical recursive candidate artifact"
         ));
     }
     if transfer_count == 0 {
-        return Ok(());
+        let da_params = native_da_params_for_transactions(&[])?;
+        let da_encoding = consensus::encode_da_blob(&[], da_params)
+            .map_err(|err| anyhow!("native empty-block DA encoding failed: {err}"))?;
+        let da_chunk_count = u32::try_from(da_encoding.chunks().len())
+            .map_err(|_| anyhow!("native empty-block DA chunk count exceeds u32"))?;
+        evaluate_native_da_metadata_admission(NativeDaMetadataAdmissionInput {
+            da_root_matches: meta.da_root == da_encoding.root(),
+            da_chunk_size_matches: meta.da_chunk_size == da_params.chunk_size,
+            da_sample_count_matches: meta.da_sample_count == da_params.sample_count,
+            da_blob_len_matches: meta.da_blob_len == da_encoding.data_len(),
+            da_chunk_count_matches: meta.da_chunk_count == da_chunk_count,
+        })
+        .map_err(native_da_metadata_admission_error)?;
+        return if candidate_artifacts.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "empty block must not carry a historical recursive candidate artifact"
+            ))
+        };
     }
 
-    let [artifact] = candidate_artifacts.as_slice() else {
-        return Err(anyhow!(
-            "non-empty shielded block requires exactly one matching recursive candidate artifact"
-        ));
-    };
-    if artifact.tx_count as usize != transfer_count {
-        return Err(anyhow!("candidate artifact tx_count mismatch"));
+    let historical_artifact = candidate_artifacts.first().copied();
+    if let Some(artifact) = historical_artifact {
+        if artifact.tx_count as usize != transfer_count {
+            return Err(anyhow!("candidate artifact tx_count mismatch"));
+        }
     }
 
     let materialized = materialize_native_action_payloads_from_state(
@@ -2381,7 +2817,7 @@ pub(crate) fn verify_native_block_artifacts_locked(
     let transfers = actions
         .iter()
         .zip(materialized.iter())
-        .filter(|(action, _)| is_shielded_transfer_action(action))
+        .filter(|(action, _)| is_legacy_shielded_transfer_action(action))
         .collect::<Vec<_>>();
     let transfer_actions = transfers
         .iter()
@@ -2395,58 +2831,33 @@ pub(crate) fn verify_native_block_artifacts_locked(
         artifacts.push(artifact);
     }
 
-    let da_params = native_da_params();
+    let da_params = native_da_params_for_transactions(&transactions)?;
     let da_encoding = consensus::encode_da_blob(&transactions, da_params)
         .map_err(|err| anyhow!("native block DA encoding failed: {err}"))?;
     let computed_da_root = da_encoding.root();
     let computed_da_chunk_count = u32::try_from(da_encoding.chunks().len())
         .map_err(|_| anyhow!("native block DA chunk count exceeds u32"))?;
-    if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
-        NativeCandidateArtifactBindingAdmissionInput {
-            da_root_matches: computed_da_root == artifact.da_root,
-            da_chunk_count_matches: computed_da_chunk_count == artifact.da_chunk_count,
-            tx_statements_commitment_matches: true,
-            recursive_state_root_matches: true,
-        },
-    ) {
-        return Err(native_candidate_artifact_binding_admission_error(rejection));
-    }
-
-    let claims = consensus::proof::tx_validity_claims_from_tx_artifacts(&transactions, &artifacts)
-        .map_err(|err| anyhow!("native tx artifact verification failed: {err}"))?;
-    let tx_statements_commitment = consensus::proof::claim_statement_commitment(&claims)
-        .map_err(|err| anyhow!("native tx statement commitment failed: {err}"))?;
-    if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
-        NativeCandidateArtifactBindingAdmissionInput {
-            da_root_matches: true,
-            da_chunk_count_matches: true,
-            tx_statements_commitment_matches: tx_statements_commitment
-                == artifact.tx_statements_commitment,
-            recursive_state_root_matches: true,
-        },
-    ) {
-        return Err(native_candidate_artifact_binding_admission_error(rejection));
-    }
+    evaluate_native_da_metadata_admission(NativeDaMetadataAdmissionInput {
+        da_root_matches: meta.da_root == computed_da_root,
+        da_chunk_size_matches: meta.da_chunk_size == da_params.chunk_size,
+        da_sample_count_matches: meta.da_sample_count == da_params.sample_count,
+        da_blob_len_matches: meta.da_blob_len == da_encoding.data_len(),
+        da_chunk_count_matches: meta.da_chunk_count == computed_da_chunk_count,
+    })
+    .map_err(native_da_metadata_admission_error)?;
 
     let expected_tree = preview_commitment_tree(&state.commitment_tree, &transfer_actions)?;
-    let mut expected_nullifiers = state.nullifiers.clone();
-    for action in &transfer_actions {
-        for nullifier in &action.nullifiers {
-            expected_nullifiers.insert(*nullifier);
-        }
-    }
-    let expected_nullifier_root = nullifier_root_from_set(&expected_nullifiers);
+    let mut expected_nullifier_accumulator = state.nullifier_accumulator.clone();
+    expected_nullifier_accumulator
+        .append_all(
+            transfer_actions
+                .iter()
+                .flat_map(|action| action.nullifiers.iter().copied()),
+        )
+        .map_err(|err| anyhow!("append artifact nullifier accumulator failed: {err}"))?;
+    let expected_nullifier_root = expected_nullifier_accumulator.root();
     let expected_kernel_root =
         consensus::types::kernel_root_from_shielded_root(&expected_tree.root());
-    let height = evaluate_native_recursive_artifact_context_admission(
-        NativeRecursiveArtifactContextAdmissionInput {
-            best_height: state.best.height,
-        },
-    )
-    .map_err(native_recursive_artifact_context_admission_error)?;
-    if height != meta.height {
-        return Err(anyhow!("native recursive block height mismatch"));
-    }
     let header = consensus::BlockHeader {
         version: 1,
         height: meta.height,
@@ -2468,17 +2879,65 @@ pub(crate) fn verify_native_block_artifacts_locked(
         signature_bitmap: None,
         pow: None,
     };
-    let block_artifact = consensus_block_artifact_from_candidate(artifact)?;
-    let proven_batch = consensus_proven_batch_from_candidate(artifact)?;
-    let block = consensus::types::Block {
-        header,
-        transactions,
-        coinbase: None,
-        proven_batch: Some(proven_batch),
-        block_artifact: Some(block_artifact),
-        tx_validity_claims: Some(claims),
-        tx_statements_commitment: Some(tx_statements_commitment),
-        proof_verification_mode: consensus::types::ProofVerificationMode::SelfContainedAggregation,
+    let (block, verification_label) = if let Some(artifact) = historical_artifact {
+        if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
+            NativeCandidateArtifactBindingAdmissionInput {
+                da_root_matches: computed_da_root == artifact.da_root,
+                da_chunk_count_matches: computed_da_chunk_count == artifact.da_chunk_count,
+                tx_statements_commitment_matches: true,
+                recursive_state_root_matches: true,
+            },
+        ) {
+            return Err(native_candidate_artifact_binding_admission_error(rejection));
+        }
+
+        let claims =
+            consensus::proof::tx_validity_claims_from_tx_artifacts(&transactions, &artifacts)
+                .map_err(|err| anyhow!("historical native tx verification failed: {err}"))?;
+        let tx_statements_commitment = consensus::proof::claim_statement_commitment(&claims)
+            .map_err(|err| anyhow!("historical tx statement commitment failed: {err}"))?;
+        if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
+            NativeCandidateArtifactBindingAdmissionInput {
+                da_root_matches: true,
+                da_chunk_count_matches: true,
+                tx_statements_commitment_matches: tx_statements_commitment
+                    == artifact.tx_statements_commitment,
+                recursive_state_root_matches: true,
+            },
+        ) {
+            return Err(native_candidate_artifact_binding_admission_error(rejection));
+        }
+
+        let block_artifact = consensus_block_artifact_from_candidate(artifact)?;
+        let proven_batch = consensus_proven_batch_from_candidate(artifact)?;
+        (
+            consensus::types::Block {
+                header,
+                transactions,
+                coinbase: None,
+                proven_batch: Some(proven_batch),
+                block_artifact: Some(block_artifact),
+                tx_validity_claims: Some(claims),
+                tx_statements_commitment: Some(tx_statements_commitment),
+                proof_verification_mode:
+                    consensus::types::ProofVerificationMode::SelfContainedAggregation,
+            },
+            "historical recursive block",
+        )
+    } else {
+        (
+            consensus::types::Block {
+                header,
+                transactions,
+                coinbase: None,
+                proven_batch: None,
+                block_artifact: None,
+                tx_validity_claims: None,
+                tx_statements_commitment: None,
+                proof_verification_mode: consensus::types::ProofVerificationMode::InlineRequired,
+            },
+            "independent SmallWood transaction proof block",
+        )
     };
     let backend_inputs =
         consensus::proof_interface::BlockBackendInputs::from_tx_validity_artifacts(artifacts);
@@ -2490,18 +2949,24 @@ pub(crate) fn verify_native_block_artifacts_locked(
             Some(&backend_inputs),
             &state.commitment_tree,
         )
-        .map_err(|err| anyhow!("native recursive block verification failed: {err}"))?;
-    if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
-        NativeCandidateArtifactBindingAdmissionInput {
-            da_root_matches: true,
-            da_chunk_count_matches: true,
-            tx_statements_commitment_matches: true,
-            recursive_state_root_matches: verified_tree.root() == expected_tree.root(),
-        },
-    ) {
-        return Err(native_candidate_artifact_binding_admission_error(rejection));
+        .map_err(|err| anyhow!("native {verification_label} verification failed: {err}"))?;
+    if verified_tree.root() != expected_tree.root() {
+        return Err(anyhow!("native {verification_label} state root mismatch"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn verify_native_block_artifacts_with_manifest_locked(
+    node: &NativeNode,
+    state: &NativeState,
+    actions: &[PendingAction],
+    meta: &NativeBlockMeta,
+    manifest: &protocol_kernel::manifest::KernelManifest,
+) -> Result<()> {
+    verify_native_block_artifacts_against_manifest_locked(
+        node, state, actions, meta, manifest, true,
+    )
 }
 
 pub(crate) fn consensus_tx_and_artifact_from_action(
@@ -2528,8 +2993,29 @@ pub(crate) fn consensus_tx_and_artifact_from_action(
     Ok((tx, artifact))
 }
 
+pub(crate) fn native_consensus_transactions_from_actions(
+    node: &NativeNode,
+    state: &NativeState,
+    actions: &[PendingAction],
+) -> Result<Vec<Transaction>> {
+    let materialized = materialize_native_action_payloads_from_state(
+        &node.da_ciphertext_tree,
+        Some(&node.ciphertext_archive_tree),
+        state,
+        actions,
+    )?;
+    actions
+        .iter()
+        .zip(materialized.iter())
+        .filter(|(action, _)| is_legacy_shielded_transfer_action(action))
+        .map(|(action, payload)| {
+            consensus_tx_and_artifact_from_action(action, payload).map(|(tx, _)| tx)
+        })
+        .collect()
+}
+
 pub(crate) fn transfer_proof_from_action(action: &PendingAction) -> Result<Vec<u8>> {
-    if !is_shielded_transfer_action(action) {
+    if !is_legacy_shielded_transfer_action(action) {
         return Err(anyhow!("action is not a shielded transfer"));
     }
     match action.action_id {
@@ -2662,19 +3148,52 @@ pub(crate) fn empty_commitment_block_proof() -> consensus::backend_interface::Co
     }
 }
 
+#[cfg(test)]
 pub(crate) fn native_da_params() -> DaParams {
+    max_native_da_params()
+}
+
+pub(crate) fn max_native_da_params() -> DaParams {
     DaParams {
-        chunk_size: DEFAULT_DA_CHUNK_SIZE,
+        chunk_size: MAX_NATIVE_DA_CHUNK_SIZE,
         sample_count: DEFAULT_DA_SAMPLE_COUNT,
     }
 }
 
-pub(crate) fn action_root_transcript_preimage(action_hashes: &[[u8; 32]]) -> Vec<u8> {
+pub(crate) fn native_da_params_for_blob_len(blob_len: usize) -> Result<DaParams> {
+    for chunk_size in NATIVE_DA_CHUNK_SIZE_TIERS {
+        let params = DaParams {
+            chunk_size,
+            sample_count: DEFAULT_DA_SAMPLE_COUNT,
+        };
+        let capacity = state_da::max_da_blob_bytes(params)
+            .map_err(|err| anyhow!("derive native DA tier capacity failed: {err}"))?;
+        if blob_len <= capacity {
+            return Ok(params);
+        }
+    }
+    let max_capacity = state_da::max_da_blob_bytes(max_native_da_params())
+        .map_err(|err| anyhow!("derive maximum native DA capacity failed: {err}"))?;
+    Err(anyhow!(
+        "native DA blob length {blob_len} exceeds maximum adaptive capacity {max_capacity}"
+    ))
+}
+
+pub(crate) fn native_da_blob_len_for_transactions(transactions: &[Transaction]) -> Result<usize> {
+    consensus::types::checked_da_blob_len(transactions)
+        .ok_or_else(|| anyhow!("native DA canonical blob length/count overflow"))
+}
+
+pub(crate) fn native_da_params_for_transactions(transactions: &[Transaction]) -> Result<DaParams> {
+    native_da_params_for_blob_len(native_da_blob_len_for_transactions(transactions)?)
+}
+
+pub(crate) fn action_root_transcript_preimage(action_hashes: &[ActionId48]) -> Vec<u8> {
     let action_count =
         u32::try_from(action_hashes.len()).expect("native action count exceeds u32::MAX");
     let hash_bytes = action_hashes
         .len()
-        .checked_mul(32)
+        .checked_mul(48)
         .expect("native action-root preimage length overflow");
     let capacity = b"hegemon-native-extrinsics-v1"
         .len()
@@ -2685,13 +3204,71 @@ pub(crate) fn action_root_transcript_preimage(action_hashes: &[[u8; 32]]) -> Vec
     preimage.extend_from_slice(b"hegemon-native-extrinsics-v1");
     preimage.extend_from_slice(&action_count.to_le_bytes());
     for action_hash in action_hashes {
-        preimage.extend_from_slice(action_hash);
+        preimage.extend_from_slice(action_hash.as_bytes());
     }
     preimage
 }
 
+/// Canonical V3 action-root payload.  The domain is applied exactly once by
+/// the hash384 frame below; unlike the retired V1 transcript, the payload does
+/// not embed a second textual domain prefix.
+pub(crate) fn native_action_root_payload_v3(action_ids: &[ActionId48]) -> Result<Vec<u8>> {
+    let action_count = u32::try_from(action_ids.len())
+        .map_err(|_| anyhow!("native V3 action count exceeds u32"))?;
+    let id_bytes = action_ids
+        .len()
+        .checked_mul(48)
+        .ok_or_else(|| anyhow!("native V3 action-root payload length overflow"))?;
+    let mut payload = Vec::with_capacity(
+        4usize
+            .checked_add(id_bytes)
+            .ok_or_else(|| anyhow!("native V3 action-root payload length overflow"))?,
+    );
+    payload.extend_from_slice(&action_count.to_le_bytes());
+    for action_id in action_ids {
+        payload.extend_from_slice(action_id.as_bytes());
+    }
+    Ok(payload)
+}
+
+pub(crate) fn native_action_root_v3(action_ids: &[ActionId48]) -> Result<ActionRoot48> {
+    let payload = native_action_root_payload_v3(action_ids)?;
+    Ok(ActionRoot48::new(crypto::hash384::blake2b_384_domain_hash(
+        crypto::hash384::domains::ACTION_ROOT_V3,
+        [payload.as_slice()],
+    )))
+}
+
+/// Recompute the typed V3 root from exact self-contained wire action bodies.
+/// Embedded ids are validated before they can influence the root.
+pub(crate) fn native_action_root_v3_from_action_bytes(
+    action_bytes: &[Vec<u8>],
+) -> Result<ActionRoot48> {
+    let declared_count = u32::try_from(action_bytes.len())
+        .map_err(|_| anyhow!("native V3 action count exceeds u32"))?;
+    validate_block_action_byte_budget(
+        declared_count,
+        action_bytes.len(),
+        action_bytes.iter().map(Vec::len),
+    )?;
+    let mut action_ids = Vec::with_capacity(action_bytes.len());
+    let mut unique = BTreeSet::new();
+    for raw in action_bytes {
+        let action = decode_pending_action_v3_exact(raw, "native V3 block action")?;
+        if action.encode() != *raw {
+            return Err(anyhow!("native V3 block action is not canonical SCALE"));
+        }
+        let (action_id, _) = validate_pending_action_identity(&action)?;
+        if !unique.insert(action_id) {
+            return Err(anyhow!("duplicate native V3 block action id"));
+        }
+        action_ids.push(action_id);
+    }
+    native_action_root_v3(&action_ids)
+}
+
 pub(crate) fn actions_extrinsics_root(actions: &[PendingAction]) -> [u8; 32] {
-    let action_hashes: Vec<[u8; 32]> = actions.iter().map(|action| action.tx_hash).collect();
+    let action_hashes: Vec<ActionId48> = actions.iter().map(|action| action.tx_hash).collect();
     let mut hasher = blake3::Hasher::new();
     hasher.update(&action_root_transcript_preimage(&action_hashes));
     *hasher.finalize().as_bytes()
@@ -2722,14 +3299,6 @@ pub(crate) fn verify_canonical_sync_block_body(meta: &NativeBlockMeta) -> Result
     verify_decoded_action_root(&actions, meta, "canonical native sync block action root")
 }
 
-pub(crate) fn nullifier_root_from_set(nullifiers: &BTreeSet<[u8; 48]>) -> [u8; 48] {
-    let mut bytes = Vec::with_capacity(nullifiers.len() * 48);
-    for nullifier in nullifiers {
-        bytes.extend_from_slice(nullifier);
-    }
-    crypto::hashes::blake3_384(&bytes)
-}
-
 pub(crate) fn preview_pending_roots(
     da_ciphertext_tree: &sled::Tree,
     state: &NativeState,
@@ -2744,25 +3313,6 @@ pub(crate) fn preview_pending_roots_with_archive(
     state: &NativeState,
     actions: &[PendingAction],
 ) -> Result<([u8; 48], [u8; 48], [u8; 32], u32)> {
-    let transfer_count = actions
-        .iter()
-        .filter(|action| is_shielded_transfer_action(action))
-        .count();
-    if transfer_count > 0 {
-        let has_matching_recursive_artifact = actions.iter().any(|action| {
-            is_candidate_artifact_action(action)
-                && action
-                    .candidate_artifact
-                    .as_ref()
-                    .is_some_and(|artifact| artifact.tx_count as usize == transfer_count)
-        });
-        if !has_matching_recursive_artifact {
-            return Err(anyhow!(
-                "non-empty shielded block requires same-block recursive candidate artifact"
-            ));
-        }
-    }
-
     let planned = plan_materialized_action_effects_with_archive(
         da_ciphertext_tree,
         ciphertext_archive_tree,
@@ -2782,7 +3332,7 @@ pub(crate) fn preview_pending_roots_with_archive(
         &planned,
     )?;
     let mut tree = state.commitment_tree.clone();
-    let mut nullifiers = state.nullifiers.clone();
+    let mut nullifier_accumulator = state.nullifier_accumulator.clone();
     for (action, effect) in actions.iter().zip(planned.iter()) {
         for (offset, commitment) in action.commitments.iter().enumerate() {
             let offset =
@@ -2805,12 +3355,14 @@ pub(crate) fn preview_pending_roots_with_archive(
                 .ok_or_else(|| anyhow!("preview commitment leaf overflow"))?;
         }
         for nullifier in &action.nullifiers {
-            nullifiers.insert(*nullifier);
+            nullifier_accumulator
+                .append(*nullifier)
+                .map_err(|err| anyhow!("preview nullifier accumulator append failed: {err}"))?;
         }
     }
     Ok((
         tree.root(),
-        nullifier_root_from_set(&nullifiers),
+        nullifier_accumulator.root(),
         actions_extrinsics_root(actions),
         u32::try_from(actions.len()).unwrap_or(u32::MAX),
     ))

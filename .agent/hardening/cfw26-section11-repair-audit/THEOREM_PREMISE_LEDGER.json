@@ -1,0 +1,159 @@
+{
+  "schema": "hegemon.cfw26-section11-repair-audit.theorem-premise-ledger.v1",
+  "subject": "CFW26 Theorem 11.3 and candidate repairs of Construction 11.4",
+  "overall_status": "not inherited; no complete-ZK, QROM, PQ128, or production authority",
+  "branches": {
+    "printed-coefficient-1-identity": {
+      "source_status": "literal printed combination",
+      "well_typed": false,
+      "honest_completeness": false,
+      "reason": "Definition 5.2 cannot consume the Step-9 pair state; discarding the scalar produces residual sum_M (1-z_M) S_M."
+    },
+    "candidate-coefficient-1-times-identity": {
+      "source_status": "independent candidate repair, not author-selected",
+      "well_typed": true,
+      "honest_completeness": true,
+      "value_slice_perfect_hiding": true,
+      "local_lemma_status": "proved by direct algebra in AUDIT.md and differentially checked",
+      "full_theorem_status": "unproved"
+    },
+    "coefficient-2-scaled-times-identity": {
+      "source_status": "independent coherent repair family, not author-selected",
+      "well_typed": true,
+      "honest_completeness": true,
+      "value_slice_perfect_hiding_in_odd_characteristic": true,
+      "required_source_changes": [
+        "Construction 11.4 Step 3",
+        "Construction 11.4 Step 8 defining line",
+        "Construction 11.4 Step 9 inner linear form or scalar state"
+      ],
+      "full_theorem_status": "unproved"
+    }
+  },
+  "premises": [
+    {
+      "id": "finite-field",
+      "paper_requirement": "F is a finite field",
+      "local_status": "partially checked",
+      "evidence": "Dependency-free experiments use prime fields F_5, F_7, F_11, and F_13; the local algebraic lemma is field-generic.",
+      "closes_theorem": false
+    },
+    {
+      "id": "square-power-of-two-shape",
+      "paper_requirement": "ell=n0 and ell is a power of two",
+      "local_status": "checked for the experiment model",
+      "evidence": "Random campaigns use ell in {2,4}; shape validation and Boolean-row MLE recovery are tested.",
+      "closes_theorem": false
+    },
+    {
+      "id": "valid-r1cs",
+      "paper_requirement": "the honest witness satisfies every R1CS row",
+      "local_status": "checked",
+      "evidence": "Every random matrix triple has a planted witness and exact row-residual checks; invalid-witness mutations reject.",
+      "closes_theorem": false
+    },
+    {
+      "id": "inner-mask-endpoints",
+      "paper_requirement": "each inner mask evaluates to zero at 0 and 1",
+      "local_status": "checked and used in a direct lemma",
+      "evidence": "The sampler enforces both equations; all Boolean masked constraints remain zero; endpoint mutations separate.",
+      "closes_theorem": false
+    },
+    {
+      "id": "inner-message-length",
+      "paper_requirement": "ell_in_zk is at least 4 for HVZK",
+      "local_status": "checked only for the value slice at length 4",
+      "evidence": "Exact enumeration proves the interior evaluation map uniform for the retained small fields.",
+      "closes_theorem": false
+    },
+    {
+      "id": "outer-message-length",
+      "paper_requirement": "ell_out_zk is at least 2 times ell_in_zk",
+      "local_status": "not modeled",
+      "evidence": null,
+      "closes_theorem": false
+    },
+    {
+      "id": "odd-characteristic",
+      "paper_requirement": "characteristic of F is not 2",
+      "local_status": "checked for retained prime fields",
+      "evidence": "Coefficient two is invertible in every retained campaign field; a characteristic-two negative control collapses its value distribution. The candidate coefficient-one value lemma itself does not need inversion of two, but the paper's outer proof still invokes odd characteristic.",
+      "closes_theorem": false
+    },
+    {
+      "id": "zk-encodings",
+      "paper_requirement": "C, C_out_zk, and C_in_zk have t-query zero-knowledge encodings with error zeta",
+      "local_status": "not implemented or proved",
+      "evidence": null,
+      "closes_theorem": false
+    },
+    {
+      "id": "outer-transcript-affine-image",
+      "paper_requirement": "uniform outer masks induce the claimed uniform affine transcript distribution",
+      "local_status": "not modeled or proved",
+      "evidence": "The executable distribution check covers only (v_A,v_B,v_C,mu).",
+      "closes_theorem": false
+    },
+    {
+      "id": "adaptive-oracle-hybrids",
+      "paper_requirement": "all queried main, inner, and outer encodings admit the claimed simulators and hybrid bound",
+      "local_status": "not modeled or proved",
+      "evidence": null,
+      "closes_theorem": false
+    },
+    {
+      "id": "zero-evader",
+      "paper_requirement": "a three-coordinate zero-evader with error epsilon_zero",
+      "local_status": "diagnostic map only",
+      "evidence": "Experiments use (1,rho,rho^2); no zero-evader error theorem is claimed.",
+      "closes_theorem": false
+    },
+    {
+      "id": "rbr-knowledge-soundness",
+      "paper_requirement": "the stated relaxed-relation round-by-round extractor and error vector",
+      "local_status": "not implemented or proved",
+      "evidence": null,
+      "closes_theorem": false
+    },
+    {
+      "id": "full-hvzk",
+      "paper_requirement": "the whole distinguisher view is simulated within (4 log ell + 5) zeta",
+      "local_status": "not proved",
+      "evidence": "Only the value-claim public slice is enumerated; that slice being perfect does not imply whole-view HVZK.",
+      "closes_theorem": false
+    },
+    {
+      "id": "fiat-shamir-qrom",
+      "paper_requirement": "none in Theorem 11.3; required by Hegemon composition",
+      "local_status": "absent",
+      "evidence": null,
+      "closes_theorem": false
+    },
+    {
+      "id": "pq128-composition",
+      "paper_requirement": "outside this reduction; required by Hegemon",
+      "local_status": "absent",
+      "evidence": null,
+      "closes_theorem": false
+    },
+    {
+      "id": "production-refinement",
+      "paper_requirement": "outside this reduction; required by Hegemon",
+      "local_status": "absent",
+      "evidence": null,
+      "closes_theorem": false
+    }
+  ],
+  "admission": {
+    "paper_specification_unambiguous": false,
+    "author_erratum_pinned": false,
+    "candidate_repair_authoritative": false,
+    "candidate_local_completeness_lemma": true,
+    "full_independent_theorem_proof": false,
+    "theorem_11_3_inherited": false,
+    "complete_zero_knowledge": false,
+    "qrom_security": false,
+    "pq128_composition": false,
+    "production_authorized": false
+  }
+}

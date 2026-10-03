@@ -1,0 +1,363 @@
+{
+  "authority": {
+    "complete_zero_knowledge": false,
+    "exact_indistinguishability_theorem": false,
+    "exact_m4_rbr_special_soundness": false,
+    "fiat_shamir_qrom_composed": false,
+    "hiding_whir_instantiated_for_m4": false,
+    "pcs_extraction_theorem": false,
+    "pcs_hiding_theorem": false,
+    "production_authorized": false,
+    "strict_pq128": false,
+    "whole_view_simulator_implemented": false
+  },
+  "counterexample": {
+    "commitment_programming_does_not_help": true,
+    "constant_nonzero_codeword_case_total_variation": "1",
+    "current_conditional_total_variation": "1",
+    "current_leaf": "(RS(message)[x], RS(mask)[x], 512-bit tape, SHA-512 root/path)",
+    "masked_share_plus_open_mask_total_variation": "1",
+    "one_differing_depth20_coordinate_hit_probability": {
+      "denominator": "1048576",
+      "numerator": "319",
+      "sha256": "52137737e9f31cb5801e1d5e5a3c3c52b80e675fa511ab44fffa4950dabfeb6e"
+    },
+    "relation": "empty public input; private Boolean b; tautological constraint b*b=b",
+    "single_masked_share_total_variation": "0",
+    "valid_witnesses": [
+      0,
+      1
+    ],
+    "whole_simulator_consequence": "one public-only distribution cannot be close to both real views; by triangle inequality at least one distance is at least 1/2"
+  },
+  "decision": {
+    "candidate_eligible": false,
+    "reason_codes": [
+      "OPENED_MESSAGE_CODEWORD_COORDINATE",
+      "PUBLIC_ONLY_WHOLE_VIEW_SIMULATOR_IMPOSSIBLE_FOR_GENERIC_M4_RELATIONS",
+      "CURRENT_M4_COMPOSITE_IS_TRANSPARENT",
+      "RAW_TERMINAL_VECTOR_SERIALIZED",
+      "LOCAL_MASK_RANK_NOT_WHOLE_VIEW_ZK",
+      "PCS_HIDING_AND_SIMULATABLE_OPENING_THEOREM_ABSENT",
+      "M4_RBR_SPECIAL_SOUNDNESS_ABSENT",
+      "M4_BCS_CMS_QROM_INSTANTIATION_ABSENT",
+      "HIDING_WHIR_THEOREM_NOT_INSTANTIATED_FOR_M4_BINARY_ADDITIVE_STACK"
+    ],
+    "status": "DISQUALIFIED_CURRENT_M4_RAW_OPENING_TOPOLOGY"
+  },
+  "hiding_whir": {
+    "cfw26_r1cs_characteristic_not_two": true,
+    "conventional_hash_requirement": "instantiate commitments and the challenger with SHA-512/SHAKE256-512, canonical domain separation, and an exact QROM BCS/CMS proof; Poseidon-family benchmark profiles are evidence only and are ineligible here",
+    "exact_m4_total_delta_bytes": null,
+    "merged_implementation": "https://github.com/Plonky3/Plonky3/pull/1767",
+    "next_theorem_valid_routes": [
+      "compile the retained Boolean relation to R1CS over an odd two-adic field and adopt the full Hiding-WHIR stack",
+      "prove and implement a new characteristic-two constrained-code/HVZK theorem for the B128 additive M4 relation"
+    ],
+    "paper": "https://eprint.iacr.org/2026/391",
+    "paper_scope": "interactive HVZK IOPP for constrained interleaved linear codes with round-by-round knowledge soundness and a straightline extractor",
+    "plonky3_interface": "HidingWhirPcs implements MultilinearPcs",
+    "privacy_topology": [
+      "append t random field coefficients before Reed-Solomon encoding",
+      "open randomized evaluations rather than separable message and mask evaluations",
+      "use fresh encoded masks in each reduction round",
+      "privatize out-of-domain samples with a full-rank random block",
+      "finish through a masked base case instead of exposing the terminal object"
+    ],
+    "published_plonky3_size_numbers_are_not_m4_bytes": true,
+    "r1cs_boundary": "the hiding PCS itself is not an R1CS-only API, but CFW26's ready-made full-ZK R1CS clause assumes characteristic different from two; B128 is therefore outside that application theorem. The exact M4 committed relation and every non-PCS transcript message still need a theorem-preserving adapter or a new reduction",
+    "r1cs_required_by_pcs": false,
+    "status": "VIABLE_REPLACEMENT_DIRECTION_NOT_DROP_IN_M4_REPAIR",
+    "theorem_gates_before_qualification": [
+      "prove the randomized additive-code encoder's t-query perfect/statistical privacy, or change fields/stacks",
+      "instantiate private zero-evader, HVZK sumcheck, code switch, and masked base case for the exact M4 relation",
+      "implement a public-only simulator covering all 17 canonical M4 proof-view classes",
+      "prove exact round-by-round or special soundness and straightline extraction after the adapter",
+      "compose the interactive theorems through the exact conventional-hash Fiat-Shamir transcript in the QROM",
+      "freeze and machine-check the resulting serializer and maximum-shape byte ledger"
+    ],
+    "why_existing_binary_additive_stack_is_not_covered": [
+      "Plonky3's committer and configuration require TwoAdicField multiplicative DFT domains",
+      "GF(2^m)^* has odd order 2^m-1, so a binary field has no non-trivial radix-2 multiplicative subgroup",
+      "retained M4 uses Binius additive Gao-Mateer domains and a different folding/transcript relation",
+      "CFW26's full-ZK R1CS clause excludes characteristic two, hence excludes B128",
+      "the merged path is a parallel protocol because its carried relation differs from plain WHIR",
+      "no exact M4-to-HVZK-WHIR relation, serializer, or public-only whole-view simulator is present"
+    ]
+  },
+  "maximum_shape_bytes": {
+    "claim_ceiling": "fixed-synthetic-schedule serializer projection plus direct-payload floor only",
+    "e384_mixed": {
+      "all_scalar": 0,
+      "degree": 3,
+      "digest_and_tape_bytes": 865152,
+      "direct_mask_floor_bytes": 30816,
+      "explicit_field_messages": 984,
+      "fold_values": 11912,
+      "frontier_nodes": 11400,
+      "input_value_bytes": 39968,
+      "input_values": 2498,
+      "opened_leaf_tapes": 2110,
+      "over_512k_cap_bytes": 1024416,
+      "projection_plus_direct_floor_bytes": 1579520,
+      "query_count": 319,
+      "raw_projection_bytes": 1548704,
+      "roots": 8,
+      "terminal_values": 512,
+      "wide_value_bytes": 643584,
+      "wide_values": 13408
+    },
+    "e512_all_scalar_counterfactual": {
+      "all_scalar": 1,
+      "degree": 4,
+      "degree_one_direct_mask_floor_bytes": 40960,
+      "digest_and_tape_bytes": 865152,
+      "explicit_field_messages": 984,
+      "fold_values": 11912,
+      "frontier_nodes": 11400,
+      "input_value_bytes": 159872,
+      "input_values": 2498,
+      "opened_leaf_tapes": 2110,
+      "over_512k_cap_bytes": 1358848,
+      "projection_plus_direct_floor_bytes": 1924096,
+      "query_count": 319,
+      "raw_projection_bytes": 1883136,
+      "roots": 8,
+      "terminal_values": 512,
+      "topology_changes_m4_packing": true,
+      "wide_value_bytes": 858112,
+      "wide_values": 13408
+    },
+    "e512_mixed_degree_four": {
+      "all_scalar": 0,
+      "combined_delta_vs_e384_bytes": 224864,
+      "degree": 4,
+      "digest_and_tape_bytes": 865152,
+      "direct_floor_delta_vs_e384_bytes": 10336,
+      "direct_mask_floor_bytes": 41152,
+      "explicit_field_messages": 984,
+      "fold_values": 11912,
+      "frontier_nodes": 11400,
+      "input_value_bytes": 39968,
+      "input_values": 2498,
+      "opened_leaf_tapes": 2110,
+      "over_512k_cap_bytes": 1238944,
+      "projection_plus_direct_floor_bytes": 1804384,
+      "query_count": 319,
+      "raw_delta_vs_e384_bytes": 214528,
+      "raw_projection_bytes": 1763232,
+      "roots": 8,
+      "terminal_values": 512,
+      "wide_value_bytes": 858112,
+      "wide_values": 13408
+    }
+  },
+  "minimal_viable_topology_change": {
+    "commitment": "commit a randomized codeword or linear secret sharing whose opened shares are witness-independent; never commit/open `(RS(message),RS(mask))` as separable lanes",
+    "e384_q319_direct_payload_floor_bytes": 30816,
+    "e512_q319_direct_payload_floor_bytes": 41152,
+    "exact_total_pcs_delta_bytes": null,
+    "opening": "open only masked shares plus index-bound 512-bit tapes and authentication data; never open a mask share that algebraically recovers the witness share",
+    "randomness": "at least q independent B128 padding coefficients per data column and d independent B128 mask columns for a degree-d extension, plus one fresh 512-bit tape per opened leaf",
+    "relation": "prove mask consistency, low degree/proximity, and the original M4 relation inside a new hiding PCS/IOP without exposing an unmasking value",
+    "why_total_is_unknown": "the required PCS changes codeword dimension/tree schedules and no source-local whole-view simulator or canonical serializer exists"
+  },
+  "one_level_bytes": {
+    "claim_ceiling": "same-schedule serializer arithmetic plus direct-payload floor; not complete ZK",
+    "e384_mixed": {
+      "38": {
+        "all_scalar": 0,
+        "baseline_non_zk_bytes": 144496,
+        "baseline_plus_direct_floor_bytes": 148336,
+        "degree": 3,
+        "direct_mask_floor_bytes": 3840,
+        "encoded_oracle_bytes": 68719476736,
+        "query_count": 38
+      },
+      "61": {
+        "all_scalar": 0,
+        "baseline_non_zk_bytes": 168688,
+        "baseline_plus_direct_floor_bytes": 174736,
+        "degree": 3,
+        "direct_mask_floor_bytes": 6048,
+        "encoded_oracle_bytes": 536870912,
+        "query_count": 61
+      }
+    },
+    "e512_all_scalar_counterfactual": {
+      "38": {
+        "all_scalar": 1,
+        "baseline_non_zk_bytes": 279616,
+        "baseline_plus_direct_floor_bytes": 284608,
+        "degree": 4,
+        "direct_mask_floor_bytes": 4992,
+        "encoded_oracle_bytes": 274877906944,
+        "query_count": 38
+      },
+      "61": {
+        "all_scalar": 1,
+        "baseline_non_zk_bytes": 374464,
+        "baseline_plus_direct_floor_bytes": 382400,
+        "degree": 4,
+        "direct_mask_floor_bytes": 7936,
+        "encoded_oracle_bytes": 2147483648,
+        "query_count": 61
+      }
+    },
+    "e512_mixed_degree_four": {
+      "38": {
+        "all_scalar": 0,
+        "baseline_non_zk_bytes": 162880,
+        "baseline_plus_direct_floor_bytes": 168064,
+        "combined_delta_vs_e384_bytes": 19728,
+        "degree": 4,
+        "direct_mask_floor_bytes": 5184,
+        "encoded_oracle_bytes": 68719476736,
+        "query_count": 38
+      },
+      "61": {
+        "all_scalar": 0,
+        "baseline_non_zk_bytes": 187072,
+        "baseline_plus_direct_floor_bytes": 195200,
+        "combined_delta_vs_e384_bytes": 20464,
+        "degree": 4,
+        "direct_mask_floor_bytes": 8128,
+        "encoded_oracle_bytes": 536870912,
+        "query_count": 61
+      }
+    }
+  },
+  "qrom": {
+    "cms_bound_at_strict_union": {
+      "denominator": "19701003098197239606139520050071806902539869635232723333974146702122860885748605305707133127442457820403313995153408",
+      "numerator": "32566525097995179962879339533693474083732183187211408636540167359994596950017",
+      "sha256": "9b79df3c42d05e4be97952fa3dbc7f2f7920d701eaf87575b08d7235381b2924"
+    },
+    "cms_first_term_fraction_of_2^-128": "9/16",
+    "distinct_query_epsilon": "(589824)_q/(1048576)_q",
+    "e384_conditionally_sufficient": true,
+    "e512_structurally_required": false,
+    "formula": "12*t^2*epsilon + 48*t^3/2^512 + 2*k^2/2^512",
+    "k_ceiling_assumption": 18446744073709551616,
+    "model": "conditional ideal CMS envelope; not an M4 theorem",
+    "production_blocker": "the exact M4 interactive epsilon union, RBR/special soundness, whole-view HVZK, and BCS/CMS applicability are unproved",
+    "production_qualifying_q": null,
+    "q317_epsilon": {
+      "denominator": "1164712286168619950698828584551782735002421704648534566805108391717470389009835915124334734676851909043295024398140542106477515831598693066899132790934677830176377334009757295211546373370313326624257086536043247806541624856257325856083419212325688497120818140636253594615554034287522380628640733063202238653867972854249234958813175434084612820262377810727171763586414324659654170600722165155620418106804159564574671248561414583496845313560686875429016145431545168778606547067427515952306671562360044610431989930780194458019734803216227659086240052575606643859365978650624041484261025566833585720264102120510768777555692661405271027639611501643194893668132517497526182309174995895814589045989912475948805407265460758849381444291695510628367339053226832219807472076480210667553671304190801706750687879880048924333849466077115035808021271211832526157421547836909374323159800291834521261374141220664658777739934861850540910203413490130913524021822843315559996492671895782627500197176555521860357316226716666185668896662736311486940745222492296339892860400",
+      "numerator": "69011363460436549645857667393374009567182575518089107029725743318097223300322045350290261911939529448243236442266158233952040971228373129141149823432775249864492277248550810917935279851008143055799289699690064025988775150192815081711426673576008987390449570054405478243169740659065553879532583470350601698813403468328779342612545473363980278273734779897646181179016956042797591651390781182071635222169902931229566347520121250779987836536459766462962694256881102979943130698784791600039815670560512849205751473341919042674601761907411963843255255765496714944752398271494331588029090618095279045098887462855143838414086819041535445568008214145054560167525872631471506701244241899094503014584586730695936976229450367835149878416319051764086325600980050332932251751791003597955097423568124146887019081715262381539090944094825025071116564824086938305196633551201741952423955904955226394243238267954553369969741936092774496901803861799197476876736800751774115837732817194218839",
+      "sha256": "864a1204fc6f6193d5e2b6d0cc75cfa2344a9b115babac792655ba6822bb94c5"
+    },
+    "q318_epsilon": {
+      "denominator": "7310899020280427430536547025231540227610201040078851475835665374810561631814740039235449129566599433064762868147128182802359366874944996380925856528696972740017120525579246542042876585645456751220461732186743466481661779222727234398635622395768346696427375468773763813401832673222777983205977881437720452030329265606122447836470302199749114672786945517934457160031922715888649228860733030681829364456409709586835211427219999340609698033220431517067934344873809024423313295942242517632628977396934000019681600795507280612989875359788261016084328810017082903505240247989967108396706457483014417566097769010446095616717082835640886240493841395814334347554867812331971846354691449238028175441678680611530651541405297183297567325818972720214261787237104825843731502224066282360234394776405662313274067822007067098043573098566051079766949519396672766690135055772280142626474066431845289957645484442112063147873571127835845293346826477551744190284981987491770097984501489827552818737677239010717462873955100513647443664351995827203527057761584144125507484730800",
+      "numerator": "243608873290248916599285125341710971604317955364923085136362477642045148599418850229422523526477462194284584343538899054026142615724099151141388077619072091148905681939888879591612413288193158014341747742486171100410568098591112816613520982393846288201088351461451558459259067704812918987195297508119593746481395439545471400751460145906466598229428556246237768432926638957613651866086378696404212364764748307067951909146970767566217302713166392504681131756234780685013982927236683483620788122785127234710987627517213587365128508124267692032011233895513005610396120046909035517750090556895171640952753602187708255999838793010290035391974959856339392818429189205753733538505325204847324482746802214684848617042482622702968259733946079331085254766808063063568221158341671604908476747756731505742071603621072938646496318446155784758076124429658794847194921286636438881123287267439764347252387195371765829166183589941576139790968198548859323360326234735186249731463232728816557619",
+      "sha256": "edefa41a913196ff1d1d8a995dd4fe8c2ba457ee9ff1a25128424f59cf0ba1af"
+    },
+    "query_only_minimum_q": 313,
+    "strict_component_bits": 264,
+    "strict_component_count": 12,
+    "strict_component_minimum_q": 318,
+    "strict_union_epsilon": {
+      "denominator": "7410693711188236507108543040556026102609279018600996098525285376506440296955904",
+      "numerator": "3",
+      "sha256": "9482eec5e529210c8ccfef9352c89f2a9b3ac8ab0301ef34b36db05ca0db4687"
+    },
+    "t": 18446744073709551616,
+    "twelve_equal_components_minimum_q": 317
+  },
+  "rank_checks": {
+    "e384": {
+      "current_conditional_total_variation": "1",
+      "current_constant_shift_rank": 1,
+      "current_joined_rank": 3,
+      "current_rank_gate": false,
+      "degree_over_b128": 3,
+      "field": "E384=B128[Y]/(Y^3+Y+1)",
+      "fold_challenge_basis_bits": 2,
+      "fold_rounds": 2,
+      "full_local_affine_total_variation": "0",
+      "full_mask_joined_rank": 3,
+      "full_mask_rank": 3,
+      "lane_weights_basis_bits": [
+        5,
+        6,
+        6,
+        4
+      ],
+      "one_missing_mask_coordinate_total_variation": "1",
+      "outer_rank_after_extension_translation": 3,
+      "required_independent_b128_mask_columns": 3,
+      "same_public_witness_images_basis_bits": [
+        3,
+        6,
+        4
+      ],
+      "two_b128_outer_dummy_rank": 2,
+      "two_b128_outer_dummy_total_variation": "1",
+      "warning": "local rank closure is necessary, never a whole-proof simulator theorem",
+      "witness_image_rank": 3
+    },
+    "e512": {
+      "current_conditional_total_variation": "1",
+      "current_constant_shift_rank": 1,
+      "current_joined_rank": 4,
+      "current_rank_gate": false,
+      "degree_over_b128": 4,
+      "field": "E512 degree-four executable analogue",
+      "fold_challenge_basis_bits": 2,
+      "fold_rounds": 3,
+      "full_local_affine_total_variation": "0",
+      "full_mask_joined_rank": 4,
+      "full_mask_rank": 4,
+      "lane_weights_basis_bits": [
+        15,
+        10,
+        10,
+        12,
+        10,
+        12,
+        12,
+        8
+      ],
+      "one_missing_mask_coordinate_total_variation": "1",
+      "outer_rank_after_extension_translation": 3,
+      "required_independent_b128_mask_columns": 4,
+      "same_public_witness_images_basis_bits": [
+        5,
+        10,
+        12,
+        10,
+        12,
+        12,
+        8
+      ],
+      "two_b128_outer_dummy_rank": 2,
+      "two_b128_outer_dummy_total_variation": "1",
+      "warning": "local rank closure is necessary, never a whole-proof simulator theorem",
+      "witness_image_rank": 4
+    }
+  },
+  "schema": "hegemon.m4-complete-zk-transform-disqualification.v1",
+  "source_contract": {
+    "inferred": [
+      "an opened interleaved leaf exposes RS(message)[x] separately from RS(mask)[x]",
+      "Merkle tapes and programmable roots authenticate but do not mask an opened scalar"
+    ],
+    "observed": [
+      "encode_masked concatenates message || mask with log_batch_size=1",
+      "send_openings writes every scalar of the selected leaf",
+      "send_committed_vector writes the entire terminal vector",
+      "ProverM4 uses create_channel_without_zk_from_transcript",
+      "WholeProofViewSimulator consumes only SimulatorPublicInput and has no implementation"
+    ],
+    "pinned_binius_revision": "3f961630"
+  },
+  "unproved_assumptions": [
+    "full-view HVZK simulator for the exact M4 interactive proof and all 17 serialized view classes",
+    "adaptive hiding and position binding of the randomized codeword commitment under SHA-512/SHAKE256-512",
+    "knowledge extraction and low-degree/proximity soundness for the exact distinct-query schedule",
+    "nonlinear mask consistency without revealing any unmasking share",
+    "round-by-round or special soundness of the exact compiled M4 IOP, including chip-call binding",
+    "BCS/CMS QROM transfer for that exact IOP with the stated t and k budgets",
+    "QROM-programmable conventional-hash idealization, canonical retry/abort refinement, and exact parser refinement"
+  ]
+}

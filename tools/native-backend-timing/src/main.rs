@@ -1,7 +1,7 @@
-use anyhow::Result;
+use anyhow::{ensure, Context, Result};
 use hegemon_field::Goldilocks;
 use serde::Serialize;
-use std::{hint::black_box, time::Instant};
+use std::{env, hint::black_box, time::Instant};
 use superneo_backend_lattice::NativeBackendParams;
 use superneo_hegemon::{build_native_tx_leaf_artifact_bytes_with_params, native_backend_params};
 use transaction_circuit::constants::NATIVE_ASSET_ID;
@@ -14,6 +14,7 @@ struct TimingReport {
     family_label: String,
     spec_label: String,
     sample_count: usize,
+    warmup_count: usize,
     class_a_mean_ns: f64,
     class_b_mean_ns: f64,
     class_a_median_ns: f64,
@@ -29,12 +30,24 @@ struct TimingReport {
     note: String,
 }
 
-const SAMPLE_COUNT: usize = 64;
-const WARMUP_COUNT: usize = 8;
+const FULL_SAMPLE_COUNT: usize = 64;
+const FULL_WARMUP_COUNT: usize = 8;
+const MIN_SAMPLE_COUNT: usize = 16;
+const MIN_WARMUP_COUNT: usize = 4;
 
 fn main() -> Result<()> {
+    let sample_count = configured_count(
+        "HEGEMON_TIMING_SAMPLE_COUNT",
+        FULL_SAMPLE_COUNT,
+        MIN_SAMPLE_COUNT,
+    )?;
+    let warmup_count = configured_count(
+        "HEGEMON_TIMING_WARMUP_COUNT",
+        FULL_WARMUP_COUNT,
+        MIN_WARMUP_COUNT,
+    )?;
     let params = native_backend_params();
-    let (class_a, class_b) = measure_classes()?;
+    let (class_a, class_b) = measure_classes(sample_count, warmup_count)?;
     let class_a_mean = mean(&class_a);
     let class_b_mean = mean(&class_b);
     let class_a_median = median(&class_a);
@@ -48,6 +61,7 @@ fn main() -> Result<()> {
         family_label: params.manifest.family_label.to_owned(),
         spec_label: params.manifest.spec_label.to_owned(),
         sample_count: class_a.len(),
+        warmup_count,
         class_a_mean_ns: class_a_mean,
         class_b_mean_ns: class_b_mean,
         class_a_median_ns: class_a_median,
@@ -71,12 +85,28 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn measure_classes() -> Result<(Vec<f64>, Vec<f64>)> {
+fn configured_count(name: &str, default: usize, minimum: usize) -> Result<usize> {
+    let value = match env::var(name) {
+        Ok(value) => value,
+        Err(env::VarError::NotPresent) => return Ok(default),
+        Err(error) => return Err(error).with_context(|| format!("read {name}")),
+    };
+    let count = value
+        .parse::<usize>()
+        .with_context(|| format!("parse {name}={value:?} as a positive integer"))?;
+    ensure!(
+        count >= minimum,
+        "{name} must be at least {minimum}, got {count}"
+    );
+    Ok(count)
+}
+
+fn measure_classes(sample_count: usize, warmup_count: usize) -> Result<(Vec<f64>, Vec<f64>)> {
     let params = native_backend_params();
-    let mut class_a = Vec::with_capacity(SAMPLE_COUNT);
-    let mut class_b = Vec::with_capacity(SAMPLE_COUNT);
-    for idx in 0..(SAMPLE_COUNT + WARMUP_COUNT) {
-        let logical_idx = idx.saturating_sub(WARMUP_COUNT);
+    let mut class_a = Vec::with_capacity(sample_count);
+    let mut class_b = Vec::with_capacity(sample_count);
+    for idx in 0..(sample_count + warmup_count) {
+        let logical_idx = idx.saturating_sub(warmup_count);
         let witness_a = sample_witness(logical_idx as u64 + 1, 0x11);
         let witness_b = sample_witness(logical_idx as u64 + 1, 0xe1);
         let (first_is_a, first_witness, second_witness) = if idx % 2 == 0 {
@@ -86,7 +116,7 @@ fn measure_classes() -> Result<(Vec<f64>, Vec<f64>)> {
         };
         let first_elapsed = measure_once(&params, &first_witness)?;
         let second_elapsed = measure_once(&params, &second_witness)?;
-        if idx < WARMUP_COUNT {
+        if idx < warmup_count {
             continue;
         }
         if first_is_a {

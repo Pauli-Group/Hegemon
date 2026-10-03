@@ -1,7 +1,6 @@
 use crate::backend_interface::{
     CanonicalTxValidityReceipt, NativeTxLeafRecord, TransactionProof,
-    build_native_tx_leaf_receipt_root_artifact_bytes, build_receipt_root_artifact_bytes,
-    build_verified_tx_proof_receipt_root_artifact_bytes, decode_native_tx_leaf_artifact_bytes,
+    decode_native_tx_leaf_artifact_bytes,
     experimental_native_receipt_root_params_fingerprint as backend_native_receipt_root_params_fingerprint,
     experimental_native_receipt_root_verifier_profile_digest as backend_native_receipt_root_profile,
     experimental_native_tx_leaf_verifier_profile_digest as backend_native_tx_leaf_profile,
@@ -19,12 +18,6 @@ use crate::types::{
     TxValidityReceipt, VerifierProfileDigest, VersionCommitment, compute_fee_commitment,
     compute_proof_commitment,
 };
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ExperimentalReceiptRootArtifact {
-    pub artifact_bytes: Vec<u8>,
-    pub metadata: ReceiptRootMetadata,
-}
 
 pub fn experimental_receipt_root_verifier_profile() -> VerifierProfileDigest {
     backend_receipt_root_profile()
@@ -44,80 +37,6 @@ pub fn experimental_native_receipt_root_verifier_profile() -> VerifierProfileDig
 
 pub fn experimental_native_receipt_root_params_fingerprint() -> [u8; 48] {
     backend_native_receipt_root_params_fingerprint()
-}
-
-pub fn build_experimental_receipt_root_artifact(
-    receipts: &[TxValidityReceipt],
-) -> Result<ExperimentalReceiptRootArtifact, ProofError> {
-    let canonical = canonical_receipts_from_tx_receipts(receipts);
-    let built = build_receipt_root_artifact_bytes(&canonical)
-        .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
-    Ok(ExperimentalReceiptRootArtifact {
-        artifact_bytes: built.artifact_bytes,
-        metadata: ReceiptRootMetadata {
-            params_fingerprint: built.metadata.params_fingerprint,
-            relation_id: built.metadata.relation_id,
-            shape_digest: built.metadata.shape_digest,
-            leaf_count: built.metadata.leaf_count,
-            fold_count: built.metadata.fold_count,
-        },
-    })
-}
-
-pub fn build_experimental_receipt_root_artifact_from_proofs(
-    proofs: &[TransactionProof],
-) -> Result<ExperimentalReceiptRootArtifact, ProofError> {
-    let built = build_verified_tx_proof_receipt_root_artifact_bytes(proofs)
-        .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
-    Ok(ExperimentalReceiptRootArtifact {
-        artifact_bytes: built.artifact_bytes,
-        metadata: ReceiptRootMetadata {
-            params_fingerprint: built.metadata.params_fingerprint,
-            relation_id: built.metadata.relation_id,
-            shape_digest: built.metadata.shape_digest,
-            leaf_count: built.metadata.leaf_count,
-            fold_count: built.metadata.fold_count,
-        },
-    })
-}
-
-pub fn build_experimental_native_receipt_root_artifact(
-    tx_artifacts: &[TxValidityArtifact],
-) -> Result<ExperimentalReceiptRootArtifact, ProofError> {
-    let native_artifacts = tx_artifacts
-        .iter()
-        .map(|artifact| {
-            let envelope = artifact
-                .proof
-                .as_ref()
-                .ok_or(ProofError::MissingTransactionProofs)?;
-            if envelope.kind != ProofArtifactKind::TxLeaf
-                || envelope.verifier_profile != experimental_native_tx_leaf_verifier_profile()
-            {
-                return Err(ProofError::UnsupportedProofArtifact(
-                    "native receipt-root requires native tx-leaf artifacts".to_string(),
-                ));
-            }
-            decode_native_tx_leaf_artifact_bytes(&envelope.artifact_bytes).map_err(|err| {
-                ProofError::TransactionProofVerification {
-                    index: 0,
-                    message: format!("failed to decode native tx-leaf artifact: {err}"),
-                }
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let built = build_native_tx_leaf_receipt_root_artifact_bytes(&native_artifacts)
-        .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
-    Ok(ExperimentalReceiptRootArtifact {
-        artifact_bytes: built.artifact_bytes,
-        metadata: ReceiptRootMetadata {
-            params_fingerprint: built.metadata.params_fingerprint,
-            relation_id: built.metadata.relation_id,
-            shape_digest: built.metadata.shape_digest,
-            leaf_count: built.metadata.leaf_count,
-            fold_count: built.metadata.fold_count,
-        },
-    })
 }
 
 pub fn verify_experimental_receipt_root_artifact(

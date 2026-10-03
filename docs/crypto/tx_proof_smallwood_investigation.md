@@ -1,4 +1,11 @@
-# Transaction Proof SmallWood Investigation
+# Archived Transaction Proof SmallWood Investigation
+
+This is the pre-implementation investigation that led to the current
+SmallWood-only V4/Gamma backend. Its retired AIR/Plonky3 source paths and shape
+prototype have been removed; current release facts live in
+[tx_proof_smallwood_no_grinding_soundness.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/tx_proof_smallwood_no_grinding_soundness.md).
+Statements below about the "current" AIR describe that historical baseline,
+not the shipped proof path.
 
 This note answers one narrow product question:
 
@@ -36,11 +43,10 @@ At the construction level, the paper builds:
 
 The key point is that the proving frontend is not AIR/FRI/STARK-shaped. It is PACS / LPPC-shaped.
 
-That matters for Hegemon because the current transaction proof is AIR-based, not PACS-based:
-
-- [p3_air.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction-core/src/p3_air.rs)
-- [p3_prover.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/p3_prover.rs)
-- [proof.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/proof.rs)
+That mattered because the transaction proof at the time was AIR-based, not
+PACS-based. The retired AIR/prover files have since been removed; the surviving
+wrapper and active SmallWood dispatch live in
+[proof.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction/src/proof.rs).
 
 So SmallWood is not a PCS swap inside the current tx prover. It is a different proof system with a different frontend.
 
@@ -134,10 +140,8 @@ From the current AIR code:
 - witness-side base trace width is `104`
 - full main trace width including schedule columns is `146`
 
-Those values come from:
-
-- [p3_air.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction-core/src/p3_air.rs)
-- [range.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction-core/src/range.rs)
+Those values came from the retired AIR source and the surviving historical
+[range.rs](/Users/pldd/Projects/Reflexivity/Hegemon/circuits/transaction-core/src/range.rs).
 
 That implies:
 

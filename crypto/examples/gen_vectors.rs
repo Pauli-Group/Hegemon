@@ -5,8 +5,7 @@
 
 use hex::encode;
 use synthetic_crypto::hashes::{
-    blake3_256, commit_note, commit_note_with, derive_nullifier, derive_prf_key, poseidon_hash,
-    sha256, sha3_256, CommitmentHash, FieldElement,
+    commit_note, derive_nullifier, poseidon_hash, sha256, sha3_256, FieldElement,
 };
 use synthetic_crypto::ml_dsa::MlDsaSecretKey;
 use synthetic_crypto::ml_kem::MlKemKeyPair;
@@ -52,17 +51,15 @@ fn main() {
     // Hash vectors - EXACT same inputs as crypto_vectors.rs hash_commitment_and_prf_vectors test
     let message = b"note message";
     let randomness = [0x42u8; 32];
-    let spend_key = b"spend secret key";
     let rho = b"rho value";
     let note_position = 42u64;
 
     let commitment = commit_note(message, &randomness);
-    let commitment_sha3 = commit_note_with(message, &randomness, CommitmentHash::Sha3);
-    let prf_key = derive_prf_key(spend_key);
+    let prf_key =
+        hex::decode("9747ad55b8a9ed4d53935ee169b7b8c84e2165c150f313004ecdb3853c67873b").unwrap();
     let nullifier = derive_nullifier(&prf_key, note_position, rho);
     let sha = sha256(message);
     let sha3 = sha3_256(message);
-    let blake = blake3_256(message);
 
     let field_inputs = [
         FieldElement::from_bytes(message),
@@ -71,12 +68,9 @@ fn main() {
     let poseidon = poseidon_hash(&field_inputs);
 
     println!("  \"commitment\": \"{}\",", encode(commitment));
-    println!("  \"commitment_sha3\": \"{}\",", encode(commitment_sha3));
-    println!("  \"prf\": \"{}\",", encode(prf_key));
     println!("  \"nullifier\": \"{}\",", encode(nullifier));
     println!("  \"sha\": \"{}\",", encode(sha));
     println!("  \"sha3\": \"{}\",", encode(sha3));
-    println!("  \"blake\": \"{}\",", encode(blake));
     println!("  \"poseidon\": \"{}\"", encode(poseidon.to_bytes()));
 
     println!("}}");

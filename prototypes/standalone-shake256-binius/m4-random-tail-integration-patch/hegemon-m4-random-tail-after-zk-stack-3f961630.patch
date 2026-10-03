@@ -1,0 +1,382 @@
+diff --git a/crates/m4-prover/Cargo.toml b/crates/m4-prover/Cargo.toml
+--- a/crates/m4-prover/Cargo.toml
++++ b/crates/m4-prover/Cargo.toml
+@@ -28,7 +28,7 @@ bytemuck.workspace = true
+ digest.workspace = true
+ # Enabled by the `test-circuits` feature only.
+ k256 = { workspace = true, features = ["arithmetic"], optional = true }
+-rand = { workspace = true, optional = true }
++rand.workspace = true
+ thiserror.workspace = true
+ tracing.workspace = true
+ 
+@@ -48,7 +48,7 @@ tracing-subscriber = { workspace = true }
+ default = []
+ rayon = ["binius-utils/rayon"]
+ # Circuits over primitives, shared by this crate's proving benchmarks and timing tests.
+-test-circuits = ["dep:binius-circuits", "dep:k256", "dep:rand"]
++test-circuits = ["dep:binius-circuits", "dep:k256"]
+ 
+ [[bench]]
+ name = "keccak_witness_gen"
+diff --git a/crates/m4-prover/src/composite.rs b/crates/m4-prover/src/composite.rs
+--- a/crates/m4-prover/src/composite.rs
++++ b/crates/m4-prover/src/composite.rs
+@@ -16,14 +16,44 @@ use binius_iop_prover::{basefold::compiler::BaseFoldProverCompiler, channel::IOP
+ use binius_ip_prover::channel::WordIPProverChannel;
+ use binius_m4_verifier::{IOPVerifierM4, VerifierM4};
+ use binius_math::ntt::{NeighborsLastMultiThread, domain_context::GaoMateerPreExpanded};
+-use binius_prover::{Error, protocols::shift::build_key_collection};
++use binius_prover::{Error, RandomTraceTailGeometry, protocols::shift::build_key_collection};
+ use binius_transcript::{ProverTranscript, fiat_shamir::Challenger};
+ use binius_utils::SerializeBytes;
+ use binius_verifier::config::B128;
+ use digest::Output;
++use rand::CryptoRng;
+ 
+ use crate::prove::{IOPProver, ProverNtt};
+ 
++/// The only committed-message tier admitted by the maximum-relation random-tail seam.
++pub const RANDOM_TAIL_LOG_TRACE_SYMBOLS: usize = 15;
++
++/// Fail-closed admission errors for the one-main n15 random-tail path.
++#[derive(Debug, thiserror::Error)]
++pub enum RandomTraceTailError {
++	/// The constraint system contains numbered M4 chips.
++	#[error("random-tail proving requires one main circuit and no numbered chips; found {0}")]
++	NumberedChips(usize),
++	/// The witness unexpectedly contains numbered-chip tables.
++	#[error("random-tail proving requires no numbered-chip witness tables; found {0}")]
++	WitnessTables(usize),
++	/// IntMul would introduce another witness-dependent oracle relation.
++	#[error("random-tail proving rejects IntMul constraints; found {0}")]
++	IntMulConstraints(usize),
++	/// The compiler contains other committed oracles.
++	#[error("random-tail proving requires exactly one oracle; found {0}")]
++	OracleCount(usize),
++	/// The sole oracle is not the fixed n15 trace tier.
++	#[error("random-tail proving requires log trace {expected}; found {actual}")]
++	WrongTraceTier { expected: usize, actual: usize },
++	/// A separately masked oracle is outside this construction's proof contract.
++	#[error("random-tail proving requires the sole oracle spec to be unmasked")]
++	AlreadyMaskedOracle,
++	/// The admitted prover failed after consuming the transcript.
++	#[error(transparent)]
++	Prove(#[from] Error),
++}
++
+ /// IOP prover for a composite M4 system.
+ ///
+ /// It mirrors [`IOPVerifierM4`] sub-system for sub-system: the Binius64 prover for the main chip,
+@@ -214,6 +244,86 @@ where
+ 
+ 		Ok(())
+ 	}
++
++	/// Proves the one-main n15 system with fresh randomness in every whole unused B128 tail symbol.
++	///
++	/// All structural admission checks happen before the transcript is touched. The verifier is
++	/// unchanged: it derives the same n15 oracle dimension from the constraint system. This method
++	/// returns the exact active prefix chosen by the compiled circuit, but it does not establish
++	/// zero knowledge; the complete adaptive PCS observation matrix still requires a separate
++	/// export/audit interface.
++	pub fn prove_main_with_random_trace_tail<Challenger_>(
++		&self,
++		witness: &WitnessM4,
++		rng: impl CryptoRng,
++		transcript: &mut ProverTranscript<Challenger_>,
++	) -> Result<RandomTraceTailGeometry, RandomTraceTailError>
++	where
++		Challenger_: Challenger,
++	{
++		let expected_geometry = self.random_trace_tail_geometry(witness)?;
++
++		let alloc = &self.pool;
++		let mut channel = self
++			.basefold_compiler
++			.create_channel_without_zk_from_transcript::<H, Challenger_, _, _>(transcript, alloc);
++		let geometry = self
++			.iop_prover
++			.main
++			.prove_with_random_trace_tail::<_, P, _>(&witness.main, rng, &mut channel, &alloc)?;
++		debug_assert_eq!(geometry, expected_geometry);
++
++		let _scope = tracing::debug_span!("PCS opening").entered();
++		channel.finish();
++
++		Ok(geometry)
++	}
++
++	/// Exports the exact compiled active-prefix and tail counts without proving.
++	///
++	/// This performs the same fail-closed structural admission as
++	/// [`Self::prove_main_with_random_trace_tail`] but consumes neither transcript bytes nor prover
++	/// randomness.
++	pub fn random_trace_tail_geometry(
++		&self,
++		witness: &WitnessM4,
++	) -> Result<RandomTraceTailGeometry, RandomTraceTailError> {
++		if !self.iop_prover.chips.is_empty() {
++			return Err(RandomTraceTailError::NumberedChips(self.iop_prover.chips.len()));
++		}
++		if !witness.tables.is_empty() {
++			return Err(RandomTraceTailError::WitnessTables(witness.tables.len()));
++		}
++
++		let main = &self.iop_prover.main;
++		let n_intmul = main.constraint_system().n_imul_constraints();
++		if n_intmul != 0 {
++			return Err(RandomTraceTailError::IntMulConstraints(n_intmul));
++		}
++
++		let specs = self.basefold_compiler.oracle_specs();
++		if specs.len() != 1 {
++			return Err(RandomTraceTailError::OracleCount(specs.len()));
++		}
++		let spec = specs[0];
++		if spec.log_msg_len != RANDOM_TAIL_LOG_TRACE_SYMBOLS {
++			return Err(RandomTraceTailError::WrongTraceTier {
++				expected: RANDOM_TAIL_LOG_TRACE_SYMBOLS,
++				actual: spec.log_msg_len,
++			});
++		}
++		if main.log_witness_elems() != spec.log_msg_len {
++			return Err(RandomTraceTailError::WrongTraceTier {
++				expected: spec.log_msg_len,
++				actual: main.log_witness_elems(),
++			});
++		}
++		if spec.is_zk {
++			return Err(RandomTraceTailError::AlreadyMaskedOracle);
++		}
++
++		Ok(main.random_trace_tail_geometry(&witness.main)?)
++	}
+ }
+ 
+ #[cfg(test)]
+diff --git a/crates/m4-prover/src/lib.rs b/crates/m4-prover/src/lib.rs
+--- a/crates/m4-prover/src/lib.rs
++++ b/crates/m4-prover/src/lib.rs
+@@ -17,7 +17,7 @@ mod test_utils;
+ mod value_table;
+ mod witness;
+ 
+-pub use composite::{IOPProverM4, ProverM4};
++pub use composite::{IOPProverM4, ProverM4, RANDOM_TAIL_LOG_TRACE_SYMBOLS, RandomTraceTailError};
+ pub use prove::{IOPProver, Prover};
+ pub use value_table::{commit_layout, pack_table};
+ pub use witness::OperandColumns;
+diff --git a/crates/prover/src/protocols/shift/segment_words.rs b/crates/prover/src/protocols/shift/segment_words.rs
+--- a/crates/prover/src/protocols/shift/segment_words.rs
++++ b/crates/prover/src/protocols/shift/segment_words.rs
+@@ -6,13 +6,15 @@ use binius_core::word::Word;
+ /// The value vector's two committed segments, each at the width the protocol addresses it at.
+ ///
+ /// A circuit declares fewer values than the reductions address: the public segment is padded to a
+-/// power of two and the hidden segment to at least that width. Both phases of the shift reduction
+-/// read the segments at those padded widths, so [`prove()`](super::prove::prove) fills them once
+-/// and hands the pair down rather than having each phase re-derive the split.
++/// power of two and the hidden segment to at least that width. In the ordinary prover those tails
++/// are zero. A narrowly admitted hiding construction may instead put randomness in the hidden
++/// tail; phase 1 zips words with the shorter declared key range, and phase 2 pairs that trace with
++/// a monster polynomial whose tail is zero. Both phases must receive the same segment contents as
++/// the later committed trace.
+ #[derive(Clone, Copy)]
+ pub struct SegmentWords<'a> {
+ 	/// The constants and inout values, zero-filled to the public segment width.
+ 	pub public: &'a [Word],
+-	/// The private values, zero-filled to the hidden segment width.
++	/// The private values followed by the hidden tail used by the committed trace.
+ 	pub hidden: &'a [Word],
+ }
+diff --git a/crates/prover/src/prove.rs b/crates/prover/src/prove.rs
+--- a/crates/prover/src/prove.rs
++++ b/crates/prover/src/prove.rs
+@@ -30,6 +30,7 @@ use binius_verifier::{
+ 	protocols::{binmul::BinMulOutput, bitand::AndCheckOutput, intmul::IntMulOutput, zero},
+ };
+ use digest::Output;
++use rand::{CryptoRng, Rng};
+ 
+ use super::error::Error;
+ use crate::{
+@@ -83,6 +84,11 @@ impl IOPProver {
+ 		&self.key_collection
+ 	}
+ 
++	/// Returns the fixed base-2 logarithm of the committed B128 trace length.
++	pub const fn log_witness_elems(&self) -> usize {
++		self.log_witness_elems
++	}
++
+ 	/// Proves using an IOP channel interface.
+ 	///
+ 	/// This is the core proving logic, independent of the specific IOP compilation strategy.
+@@ -93,6 +99,122 @@ impl IOPProver {
+ 		channel: &mut Channel,
+ 		alloc: &A,
+ 	) -> Result<(), Error>
++	where
++		A: Allocator,
++		P: PackedField<Scalar = B128>,
++		Channel: IOPProverChannel<P, A> + WordIPProverChannel<B128, Word = Word>,
++	{
++		self.prove_with_trace_words::<A, P, Channel>(witness, witness.non_public(), channel, alloc)
++	}
++
++	/// Proves with fresh random B128 symbols in the otherwise zero trace tail.
++	///
++	/// The same padded word buffer is used by the shift reduction and the committed trace. This is
++	/// load-bearing: randomizing only [`pack_witness`] would make the shift's witness evaluation
++	/// disagree with the later ring-switch opening. The circuit's active [`ValueVec`] remains
++	/// unchanged, so operation columns and reference constraint evaluation still contain only
++	/// declared values.
++	///
++	/// This is a low-level mechanism, not a zero-knowledge claim. Its caller must prove that every
++	/// relation selector is zero on the tail and must audit the complete adaptive set of clear
++	/// linear observations made by its PCS.
++	pub fn prove_with_random_trace_tail<A, P, Channel>(
++		&self,
++		witness: &ValueVec,
++		mut rng: impl CryptoRng,
++		channel: &mut Channel,
++		alloc: &A,
++	) -> Result<RandomTraceTailGeometry, Error>
++	where
++		A: Allocator,
++		P: PackedField<Scalar = B128>,
++		Channel: IOPProverChannel<P, A> + WordIPProverChannel<B128, Word = Word>,
++	{
++		let geometry = self.random_trace_tail_geometry(witness)?;
++		let RandomTraceTailGeometry {
++			total_symbols,
++			active_symbols,
++			..
++		} = geometry;
++
++		// Preserve the complete active prefix. An odd final word owns the low half of its B128
++		// symbol; its high half remains the canonical zero rather than being mistaken for a whole
++		// unused symbol.
++		let mut trace_words = Vec::with_capacity(total_symbols << LOG_WORDS_PER_ELEM);
++		trace_words.extend_from_slice(witness.non_public());
++		if trace_words.len() % (1 << LOG_WORDS_PER_ELEM) != 0 {
++			trace_words.push(Word::ZERO);
++		}
++		for _ in active_symbols..total_symbols {
++			let value = rng.random::<u128>();
++			trace_words.push(Word(value as u64));
++			trace_words.push(Word((value >> 64) as u64));
++		}
++		debug_assert_eq!(trace_words.len(), total_symbols << LOG_WORDS_PER_ELEM);
++
++		self.prove_with_trace_words::<A, P, Channel>(witness, &trace_words, channel, alloc)?;
++		Ok(geometry)
++	}
++
++	/// Computes the exact compiled random-tail geometry without touching a transcript or RNG.
++	pub fn random_trace_tail_geometry(
++		&self,
++		witness: &ValueVec,
++	) -> Result<RandomTraceTailGeometry, Error> {
++		if witness.non_public().len() != self.constraint_system.n_private {
++			return Err(Error::ArgumentError {
++				arg: "witness".to_string(),
++				msg: "random-tail proving requires the exact declared private-word count"
++					.to_string(),
++			});
++		}
++		if self.key_collection.hidden.n_words() != self.constraint_system.n_private {
++			return Err(Error::ArgumentError {
++				arg: "key collection".to_string(),
++				msg: "hidden key range must stop exactly at the declared private-word prefix"
++					.to_string(),
++			});
++		}
++		let trace_log_words = self.log_witness_elems + LOG_WORDS_PER_ELEM;
++		if self.key_collection.log_witness_words() != trace_log_words {
++			return Err(Error::ArgumentError {
++				arg: "random trace tail".to_string(),
++				msg: format!(
++					"the shift reduction spans {} word variables, but the full trace tail needs {trace_log_words}",
++					self.key_collection.log_witness_words()
++				),
++			});
++		}
++
++		let total_symbols = 1usize << self.log_witness_elems;
++		let active_words = witness.non_public().len();
++		let active_symbols = active_words.div_ceil(1 << LOG_WORDS_PER_ELEM);
++		if active_symbols >= total_symbols {
++			return Err(Error::ArgumentError {
++				arg: "random trace tail".to_string(),
++				msg: "the committed trace has no whole unused B128 symbol".to_string(),
++			});
++		}
++
++		Ok(RandomTraceTailGeometry {
++			log_trace_symbols: self.log_witness_elems,
++			total_symbols,
++			active_words,
++			active_symbols,
++			random_tail_symbols: total_symbols - active_symbols,
++		})
++	}
++
++	/// Shared prover body. `trace_words` is exactly the word polynomial committed and folded by
++	/// the shift reduction; `witness` remains the declared circuit assignment used by every
++	/// operation column.
++	fn prove_with_trace_words<A, P, Channel>(
++		&self,
++		witness: &ValueVec,
++		trace_words: &[Word],
++		channel: &mut Channel,
++		alloc: &A,
++	) -> Result<(), Error>
+ 	where
+ 		A: Allocator,
+ 		P: PackedField<Scalar = B128>,
+@@ -105,8 +227,7 @@ impl IOPProver {
+ 		// Only the non-public words are committed as the trace oracle; the public segment is a
+ 		// verifier-known polynomial.
+ 		let setup_guard = tracing::debug_span!("Prepare witness").entered();
+-		let witness_packed =
+-			pack_witness::<P, _>(alloc, self.log_witness_elems, witness.non_public())?;
++		let witness_packed = pack_witness::<P, _>(alloc, self.log_witness_elems, trace_words)?;
+ 		drop(setup_guard);
+ 
+ 		// Observe the inout words, which includes them in Fiat-Shamir. The constants are fixed by
+@@ -293,7 +414,7 @@ impl IOPProver {
+ 		} = prove_shift_reduction::<_, P, _, _>(
+ 			&self.key_collection,
+ 			witness.public(),
+-			witness.non_public(),
++			trace_words,
+ 			OperatorClaims {
+ 				zero: zero_claim,
+ 				bitand: bitand_claim,
+@@ -364,6 +485,24 @@ impl IOPProver {
+ 	}
+ }
+ 
++/// Exact runtime geometry of one random-tail trace commitment.
++///
++/// `active_symbols` includes a partially occupied final B128 symbol. Randomness starts only at the
++/// next whole symbol, so `random_tail_symbols` never overwrites an active word.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct RandomTraceTailGeometry {
++	/// Base-2 logarithm of `total_symbols`.
++	pub log_trace_symbols: usize,
++	/// Deterministic B128 message length expected by the verifier.
++	pub total_symbols: usize,
++	/// Exact declared private-word prefix.
++	pub active_words: usize,
++	/// Exact occupied B128 prefix, rounded up from `active_words / 2`.
++	pub active_symbols: usize,
++	/// Number of fresh uniform B128 symbols after the active prefix.
++	pub random_tail_symbols: usize,
++}
++
+ /// Warns once per process if the CPU supports carryless multiply but this build does not use it.
+ ///
+ /// The GHASH field arithmetic is selected at compile time, so a default-target x86_64 build runs

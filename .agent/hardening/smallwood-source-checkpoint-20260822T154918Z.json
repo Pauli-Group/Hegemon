@@ -1,0 +1,29 @@
+{
+  "schema": "hegemon.smallwood_source_checkpoint.v1",
+  "created_at_utc": "2026-08-22T15:49:18Z",
+  "authority_thread": "01a02839-84a2-79f2-baa3-ffa6f60ae61b",
+  "superseded_writer_thread": "01a01112-0722-74f0-8df3-43a10aa72b90",
+  "superseded_writers_stopped": true,
+  "live_cargo_rustc_rustfmt_processes": 0,
+  "disk_available_kib": 31517596,
+  "git_diff_check_passed": true,
+  "claim_boundary": "Forensic source checkpoint only. This is not a proof artifact, security certificate, full-relation certificate, or production authorization.",
+  "files": [
+    {"path":"circuits/transaction/src/lib.rs","bytes":11454,"sha512":"af3bcd2641d6414bdd00687311f2bad2951b14ae63b44152e83c3ed6583f91aee10a1c4a1825e6134521424e49d877759da1ea42f5f5e75383adb44dc4a66303"},
+    {"path":"circuits/transaction/src/full_blake2b448_relation.rs","bytes":224784,"sha512":"93fc32ebf9dbf36235caaedae41c93fe2868720a4938af9e9238914783c569eacd6aee7bc982a50c82267711657e20b2a90d76e66e0e4ee9595662aa0c05bb51"},
+    {"path":"circuits/transaction/src/full_shake448_relation.rs","bytes":219282,"sha512":"ccd7af1baf9907c901be17d6bbdc4b7f56f7712b4f45b346d109ae3058757bbd2df7bf16be698e1fb2e37d140a43c5810e51867e3e04f089fd457190792d8d88"},
+    {"path":"circuits/transaction/src/smallwood_blake2b384.rs","bytes":65053,"sha512":"066f51dfbf430d6882dc86af077f0386db21d284b5956908e6d2f4578a6006b18d50c0657564bc1ea96202960841876c4bbd09988c8a02a2540f3006fcf8a185"},
+    {"path":"circuits/transaction/src/smallwood_blake2b384_semantics.rs","bytes":68840,"sha512":"883e0f1efdfbf3088eb85ad05ba46b1215bead6f93a01b33ce8f33a5c7074b53cdc041adaa31c500fcbc34569c1d0f68ab6ad2ce3967a8eb903e8875fe422eb9"},
+    {"path":"circuits/transaction/src/smallwood_blake2b384_lowering.rs","bytes":46731,"sha512":"b9edb491e66cd7641a2a423c72dcc7001578a4f4df8ba0244d7c0c2102c9c8772dadb6061a9ccf81e86c6e1d839717fb1102aa4488e0ec78c901355f5c4ce501"},
+    {"path":"circuits/transaction/src/smallwood_mixed_hash_adapter.rs","bytes":52778,"sha512":"aad0f0b130c6f8b4a52e4daf55fe16ebd48fab7833bb7dd0b7a8a65ef1db6da8eb4bd2720528eb753e6095b045e569c920205b89196d2ed8189dfebc218d4f1f"},
+    {"path":"circuits/transaction/src/smallwood_engine.rs","bytes":382482,"sha512":"1fb5828249a45eef281c41e171e48f35f7fceaed88a5c9247b504de6a120e9f5336a3d247c4f0a7e980d5e6cbb28417ff796d0157ba747f1bee6a1300dc3ab6a"},
+    {"path":"circuits/transaction/src/smallwood_v6_transcript.rs","bytes":67326,"sha512":"d9e2ee3c53dd7d5121406c15bfaadd911e8ea72a9670a8df64d9233d06fc0624f0e5f72a4b8643b4a95ff4b9377aae650e61184f44e5e455ea4970c077e5867f"},
+    {"path":"circuits/transaction/src/smallwood_v6_adapter.rs","bytes":59546,"sha512":"1ef77a9a38697147c5606f08326d02c6092392209a85e155830fdcd563e9b5b1c99a93c6481edd8a0c9dd8b5e61f0182d4aeb42f1d449e8f4369bee451523da8"},
+    {"path":"circuits/transaction/src/smallwood_frontend.rs","bytes":545564,"sha512":"3aef0828338a74839b5839e149f5eab10692805c4baff9c6c1fda465687967c7b6206070f04f2e8501112b64909dc6de94df28b898ad55dd016a9cdccbf12540"},
+    {"path":"circuits/transaction/src/proof.rs","bytes":139661,"sha512":"13908b06af1fec52cc2c1d384e83f2436d9fd8dc53cf4e19e1acc129b92d1fcf80d96c5a05f5670535c1c474046665ce8fb0ef82b57f730fcd13a9d78b8d89f9"},
+    {"path":"protocol/shielded-pool/src/smallwood_v5_transport.rs","bytes":21957,"sha512":"fc227306fd597d5d3822a4b992b5ebfa6b6f192230c339b867b66247a776973e4e3a204bf2f23987583ffdbefd6c57e0a7504420ad559c2a7e38d0509b91e596"},
+    {"path":"protocol/shielded-pool/src/inactive_smallwood_v7.rs","bytes":48177,"sha512":"243df4b839a7043ae8170d604ee9bf8a74d52c0b966de28b9f516037003862bfbec1e4f37dd918fdfa98596eead03b646b1bc980ce060c0f474dffe75f2e32d8"},
+    {"path":"node/src/native/inactive_smallwood_v7.rs","bytes":39139,"sha512":"dda800df7ffd30bf916b2eb135b31aa8f3bfe1d67cc8bc7445a8946a5f17240655f0ae75434a54a8a520c659dc01d4aabdf2e381a18872374a27daecca2f9220"},
+    {"path":"wallet/src/inactive_smallwood_v7.rs","bytes":8662,"sha512":"19d4afbea3ac624196cb3226d7958c3a9b039b5a1421ec572d6dec696d5fb14d298028baa7d83f60b18db00d0bf9405306524b57c5c49aa87a8c23dd090c28ae"}
+  ]
+}

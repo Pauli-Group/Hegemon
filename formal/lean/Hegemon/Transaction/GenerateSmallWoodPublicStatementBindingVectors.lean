@@ -12,30 +12,34 @@ def boolJson (value : Bool) : String :=
 def natListJson (values : List Nat) : String :=
   "[" ++ String.intercalate ", " (values.map toString) ++ "]"
 
-def sampleP3PublicValues : List Nat :=
-  (List.range p3PublicInputBaseLength).map fun value => value + 11
+def sampleVerifierPublicValues : List Nat :=
+  (List.range verifierPublicInputBaseLength).map fun value => value + 11
 
-def stablecoinP3PublicValues : List Nat :=
-  (List.range p3PublicInputBaseLength).map fun value => value + 101
+def stablecoinVerifierPublicValues : List Nat :=
+  (List.range verifierPublicInputBaseLength).map fun value => value + 101
 
 def publicStatementCaseJson
     (name : String)
-    (p3PublicValues statementValues : List Nat)
+    (verifierPublicValues statementValues : List Nat)
     (circuitVersion cryptoSuite : Nat) : String :=
   let expectedStatementValues :=
-    smallwoodPublicStatementValues p3PublicValues circuitVersion cryptoSuite
+    smallwoodPublicStatementValues verifierPublicValues circuitVersion cryptoSuite
+  let expectedStatementBytes :=
+    smallwoodPublicStatementBytes expectedStatementValues
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
-    ++ "      \"p3_public_values\": " ++ natListJson p3PublicValues ++ ",\n"
+    ++ "      \"verifier_public_values\": " ++ natListJson verifierPublicValues ++ ",\n"
     ++ "      \"statement_values\": " ++ natListJson statementValues ++ ",\n"
     ++ "      \"circuit_version\": " ++ toString circuitVersion ++ ",\n"
     ++ "      \"crypto_suite\": " ++ toString cryptoSuite ++ ",\n"
     ++ "      \"expected_statement_values\": "
     ++ natListJson expectedStatementValues ++ ",\n"
+    ++ "      \"expected_statement_bytes_hex\": \""
+    ++ hexBytes expectedStatementBytes ++ "\",\n"
     ++ "      \"expected_valid\": "
     ++ boolJson
       (validSmallwoodPublicStatementValues
-        p3PublicValues
+        verifierPublicValues
         statementValues
         circuitVersion
         cryptoSuite)
@@ -44,21 +48,21 @@ def publicStatementCaseJson
 
 def activeStatementValues : List Nat :=
   smallwoodPublicStatementValues
-    sampleP3PublicValues
+    sampleVerifierPublicValues
     activeCircuitVersion
     activeCryptoSuite
 
 def stablecoinStatementValues : List Nat :=
   smallwoodPublicStatementValues
-    stablecoinP3PublicValues
+    stablecoinVerifierPublicValues
     activeCircuitVersion
     activeCryptoSuite
 
 def vectorJson : String :=
   "{\n"
     ++ "  \"schema_version\": 1,\n"
-    ++ "  \"p3_public_input_base_length\": "
-    ++ toString p3PublicInputBaseLength ++ ",\n"
+    ++ "  \"verifier_public_input_base_length\": "
+    ++ toString verifierPublicInputBaseLength ++ ",\n"
     ++ "  \"smallwood_public_statement_value_count\": "
     ++ toString smallwoodPublicStatementValueCount ++ ",\n"
     ++ "  \"active_circuit_version\": "
@@ -68,31 +72,31 @@ def vectorJson : String :=
     ++ "  \"smallwood_public_statement_binding_cases\": [\n"
     ++ publicStatementCaseJson
       "active-append-version-binding"
-      sampleP3PublicValues
+      sampleVerifierPublicValues
       activeStatementValues
       activeCircuitVersion
       activeCryptoSuite ++ ",\n"
     ++ publicStatementCaseJson
       "stablecoin-shaped-append-version-binding"
-      stablecoinP3PublicValues
+      stablecoinVerifierPublicValues
       stablecoinStatementValues
       activeCircuitVersion
       activeCryptoSuite ++ ",\n"
     ++ publicStatementCaseJson
-      "truncated-p3-public-vector-rejected"
-      (sampleP3PublicValues.take (p3PublicInputBaseLength - 1))
+      "truncated-verifier-public-vector-rejected"
+      (sampleVerifierPublicValues.take (verifierPublicInputBaseLength - 1))
       activeStatementValues
       activeCircuitVersion
       activeCryptoSuite ++ ",\n"
     ++ publicStatementCaseJson
       "extended-public-statement-rejected"
-      sampleP3PublicValues
+      sampleVerifierPublicValues
       (activeStatementValues ++ [999])
       activeCircuitVersion
       activeCryptoSuite ++ ",\n"
     ++ publicStatementCaseJson
       "version-suffix-mismatch-rejected"
-      sampleP3PublicValues
+      sampleVerifierPublicValues
       activeStatementValues
       (activeCircuitVersion + 1)
       activeCryptoSuite ++ "\n"

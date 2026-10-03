@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 blake3 = { version = "1", default-features = false }
 codec = { workspace = true }
+hegemon-hash384 = { path = "../crypto/hash384", features = ["codec"] }
 protocol-kernel = { path = "../protocol/kernel", default-features = false }
 sha2 = { version = "0.10", default-features = false }
 

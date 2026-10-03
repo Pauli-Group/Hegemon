@@ -1,0 +1,70 @@
+{
+  "backend_schema": "hegemon.standalone-shake256.backend-measurement.v1",
+  "capacity": {
+    "actions_per_64mib_block": 271,
+    "block_bytes": 67108864,
+    "block_fixed_bytes": 2525,
+    "non_proof_action_bytes": 4967
+  },
+  "disk": {
+    "free_bytes_after_cleanup": 33934475264,
+    "free_bytes_at_backend_exit": 33934475264,
+    "free_bytes_before": 33934524416,
+    "minimum_reserve_bytes": 17179869184
+  },
+  "limits": {
+    "artifact_hard_cap_bytes": 1048576,
+    "post_quantum_bits_min": 128,
+    "proof_target_bytes": 524288,
+    "target_met": true
+  },
+  "measurement": {
+    "backend_command_wall_ms": 731.021999999939,
+    "canonical_proof_bytes": 242336,
+    "envelope_bytes": 242348,
+    "peak_rss_bytes": 258686976,
+    "peak_rss_source": "rusage_children",
+    "prove_ms": 59.660708,
+    "shake256_permutations": 1,
+    "verify_ms": 4.373708
+  },
+  "policy": {
+    "accepted": true,
+    "failures": [],
+    "mode": "prototype_only",
+    "prototype_override_used": true,
+    "strict_security_failures": [
+      "security profile status is 'unsupported', not 'supported'",
+      "security profile is not Hegemon release-qualified",
+      "proof hash is not SHAKE256-512",
+      "challenge field is not GF(2^384)",
+      "FRI classical target is below 264 bits",
+      "composed QROM accounting is incomplete",
+      "composed post-quantum security is below 128 bits",
+      "zero knowledge is not established for the measured relation"
+    ]
+  },
+  "profile": "pay1x2",
+  "schema": "hegemon.standalone-shake256.benchmark-report.v1",
+  "security_profile": {
+    "challenge_field": "GF(2^128) BinaryField128bGhash (target: GF(2^384))",
+    "composed_pq_bits": null,
+    "fri_classical_bits": 96,
+    "limitation": "Upstream fixes 96 query-security bits, SHA-256 proof hashing, and GF(2^128); the Hegemon-specific end-to-end ZK and composed strict-PQ128 arguments are not complete.",
+    "proof_hash": "SHA-256 StdHashSuite (target: SHAKE256-512)",
+    "qrom_accounting_complete": false,
+    "release_qualified": false,
+    "semantic_hash": "SHAKE256-448",
+    "status": "unsupported",
+    "upstream_protocol_claims_zero_knowledge": true,
+    "zero_knowledge": false
+  },
+  "verification": {
+    "canonical_roundtrip": true,
+    "changed_proof_rejected": true,
+    "changed_public_output_rejected": true,
+    "mutation_rejected": true,
+    "trailing_proof_rejected": true,
+    "valid": true
+  }
+}
