@@ -8,8 +8,8 @@
       "command": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
       "status": "passed",
       "exit_code": 0,
-      "executed_at": "2026-10-03T04:26:59Z",
-      "policy_inputs_blake3": "4b8a17c9c8a493205a8eb3b2de7a1dc3f3bab1d46fb824fc0f665f08e42721d2",
+      "executed_at": "2026-10-03T04:45:39Z",
+      "policy_inputs_blake3": "f4f4984451c098735368ca6d714f76e6507a0eee73c9e4fb6bb5882837308298",
       "report": {
         "passed": true,
         "test_filter": "governance_",
@@ -72,7 +72,7 @@
         "reviewer": "Codex (internal CI hygiene review)",
         "reviewed_at": "2026-10-02",
         "notes": "Pending independent review. Internal source review on 2026-10-02: unmaintained findings remain visible as nonblocking maintenance notices; vulnerabilities, unsoundness, and yanked findings still block unless covered by exact current waivers; unknown warning kinds and malformed warning shapes fail closed; unused waivers still reject. The focused gate regression suite passes. This is not an independent review or assurance of advisory database completeness.",
-        "content_blake3": "3e02d30379a6bb18171835fea63bc3524179d802d6686d39052e87d0c01f97a1"
+        "content_blake3": "0fb28b11f26a0587269981f1d08243a7f6876c9dc0647d6a87e14f1329b76fc1"
       },
       "falsification_cases": [
         {
@@ -1659,7 +1659,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a research privacy-game boundary with explicit cryptographic, proof-system, wallet metadata, timing/batching, and network metadata assumptions plus production wallet randomness/bookkeeping/address-metadata regressions, PQ connection/relay metadata projection regression, and native mineable candidate-selection conformance. The secret-resampling and open-assumption package theorems strengthen deterministic unlinkability coverage, the seed-hardened PQ residual certificate removes KEM seed-source misuse from the residual by consuming the accepted KEM transcript/KDF certificate, and the materialized-sidecar PQ certificate carries those residuals through the accepted sidecar publication witness. This node still does not claim to mechanize ML-KEM, AEAD, RNG, global miner fairness, or simulator-based zero-knowledge security. The wallet ciphertext archive publication gate is now Lean/vector checked for contiguous indices and leaf-count bounds.",
-        "content_blake3": "a59b4e49a7d6e000aa97dba582f35e426771fe86aa90cdc0c43bd6276683a849"
+        "content_blake3": "b2ad1a0905706e5ba38f647af173852360addfeea0bf65de9d2063c5f023b841"
       },
       "falsification_cases": [
         {
@@ -15228,7 +15228,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-18",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a classification ratchet and roadmap. It does not discharge parser/native/proof/bridge residuals; it names them as mechanized work and prevents them from being hidden under broad cryptographic or infrastructure assumptions.",
-        "content_blake3": "b2dfaec6b0f265ba6a6857ae614fa5c2294ab3106a0d7c114ace03be7bc805b6"
+        "content_blake3": "5feb62dd187f158f565aa508f5e156cc759efd362acd639131a49049f830ad07"
       },
       "falsification_cases": [
         {
@@ -15285,7 +15285,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-18",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a release-blocking system-model evidence gate. It does not prove external environmental honesty; it fails closed if required monitoring categories or evidence are removed.",
-        "content_blake3": "0936b22fd6586e1a0c1d61594aee37bfb13723c36875d924ac8dd09da9377e98"
+        "content_blake3": "333b91e4834045983b750a56d03778a67598bff90791a3442c0117698461a59d"
       },
       "falsification_cases": [
         {
@@ -15385,7 +15385,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-13",
         "notes": "Pending final headless branch-diff review. Internal review rejected the first caller-populated row certificate and replaced it with an executable exact production-row decision before the conditional production-family reduction was credited; no production no-counterfeit closure was recorded.",
-        "content_blake3": "07ca7b91b44d2b7600d878c6bd739f14513cb04700ce94ed25778d7619ee60e2"
+        "content_blake3": "ebb543b6a207bddc577020599539760b07431ad7155dd0754c61df4eb7219345"
       },
       "falsification_cases": [
         {

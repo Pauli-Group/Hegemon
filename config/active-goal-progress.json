@@ -54,7 +54,7 @@
       "command": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
       "status": "passed",
       "exit_code": 0,
-      "executed_at": "2026-10-03T04:26:59Z",
+      "executed_at": "2026-10-03T04:45:39Z",
       "policy_inputs_blake3": "8c88f97c4f465e536c5972b1551a98fb80d11f1969b07bdeccbfad45acb7ee10",
       "report": {
         "passed": true,

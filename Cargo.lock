@@ -4276,7 +4276,6 @@ dependencies = [
  "anyhow",
  "bincode",
  "chrono",
- "fs2",
  "hex",
  "serde",
  "serde_json",

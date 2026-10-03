@@ -1,12 +1,10 @@
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, ErrorKind, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{TimeZone, Utc};
-use fs2::FileExt;
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
@@ -332,11 +330,6 @@ struct ConsolidationPlanSummary {
     blocks_needed: u64,
 }
 
-struct StoreLock {
-    _file: File,
-    _path: PathBuf,
-}
-
 #[derive(Deserialize)]
 struct SyncParams {
     ws_url: String,
@@ -651,8 +644,7 @@ fn main() -> Result<()> {
         anyhow::bail!(err.message);
     }
 
-    let (store, _store_lock) =
-        open_store(&store_path, &passphrase, mode).map_err(|err| anyhow!(err.message))?;
+    let store = open_store(&store_path, &passphrase, mode).map_err(|err| anyhow!(err.message))?;
     let store = Arc::new(store);
     let runtime = RuntimeBuilder::new_multi_thread()
         .enable_all()
@@ -757,13 +749,8 @@ fn parse_args() -> Result<(String, WalletdMode)> {
     Ok((store_path, mode))
 }
 
-fn open_store(
-    store_path: &str,
-    passphrase: &str,
-    mode: WalletdMode,
-) -> WalletdResult<(WalletStore, StoreLock)> {
+fn open_store(store_path: &str, passphrase: &str, mode: WalletdMode) -> WalletdResult<WalletStore> {
     let store_path = Path::new(store_path);
-    let lock = acquire_store_lock(store_path)?;
     let exists = store_path.exists();
     let store = match mode {
         WalletdMode::Open => {
@@ -774,6 +761,10 @@ fn open_store(
                 ));
             }
             WalletStore::open(store_path, passphrase).map_err(|err| match err {
+                WalletError::StoreBusy => WalletdError::new(
+                    WalletdErrorCode::StoreLocked,
+                    "wallet store is already open in another process",
+                ),
                 WalletError::DecryptionFailure => WalletdError::new(
                     WalletdErrorCode::InternalError,
                     "failed to open wallet store: wrong passphrase (or wallet file is corrupted)",
@@ -796,43 +787,22 @@ fn open_store(
                 ),
             })?
         }
-        WalletdMode::Create => {
-            if exists {
-                return Err(WalletdError::new(
+        WalletdMode::Create => WalletStore::create_full_if_missing(store_path, passphrase)
+            .map_err(|err| match err {
+                WalletError::StoreBusy => WalletdError::new(
+                    WalletdErrorCode::StoreLocked,
+                    "wallet store is already open in another process",
+                ),
+                WalletError::StoreAlreadyExists => WalletdError::new(
                     WalletdErrorCode::WalletAlreadyExists,
                     "wallet store already exists",
-                ));
-            }
-            WalletStore::create_full(store_path, passphrase)
-                .context("failed to create wallet store")
-                .map_err(WalletdError::internal)?
-        }
+                ),
+                other => {
+                    WalletdError::internal(anyhow!(other).context("failed to create wallet store"))
+                }
+            })?,
     };
-    Ok((store, lock))
-}
-
-fn acquire_store_lock(store_path: &Path) -> WalletdResult<StoreLock> {
-    let lock_path = PathBuf::from(format!("{}.lock", store_path.display()));
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock_path)
-        .map_err(WalletdError::internal)?;
-    if let Err(err) = file.try_lock_exclusive() {
-        if err.kind() == io::ErrorKind::WouldBlock {
-            return Err(WalletdError::new(
-                WalletdErrorCode::StoreLocked,
-                "wallet store is already open in another process",
-            ));
-        }
-        return Err(WalletdError::internal(err));
-    }
-    Ok(StoreLock {
-        _file: file,
-        _path: lock_path,
-    })
+    Ok(store)
 }
 
 fn handle_request(
@@ -3092,6 +3062,7 @@ fn memo_to_disclosed_string(memo: &Option<MemoPlaintext>) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -3114,6 +3085,84 @@ mod tests {
             walletd_submission_failure_policy(&bad_proof),
             WalletdSubmissionFailurePolicy::UnlockSpentNotes
         );
+    }
+
+    #[test]
+    fn walletd_store_create_open_and_existing_error_semantics() {
+        let path = temp_store_path("store-create-open");
+        let path_string = path.to_string_lossy().into_owned();
+
+        let created = open_store(&path_string, "passphrase", WalletdMode::Create).unwrap();
+        assert!(path.exists());
+        drop(created);
+        let bytes_before_duplicate_create = std::fs::read(&path).unwrap();
+        assert!(matches!(
+            open_store(&path_string, "passphrase", WalletdMode::Create),
+            Err(WalletdError {
+                code: WalletdErrorCode::WalletAlreadyExists,
+                ..
+            })
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes_before_duplicate_create);
+
+        let opened = open_store(&path_string, "passphrase", WalletdMode::Open).unwrap();
+        drop(opened);
+        assert!(matches!(
+            open_store(&path_string, "wrong passphrase", WalletdMode::Open),
+            Err(WalletdError {
+                code: WalletdErrorCode::InternalError,
+                ..
+            })
+        ));
+
+        let missing = temp_store_path("store-missing");
+        assert!(matches!(
+            open_store(&missing.to_string_lossy(), "passphrase", WalletdMode::Open),
+            Err(WalletdError {
+                code: WalletdErrorCode::WalletNotFound,
+                ..
+            })
+        ));
+        remove_store_files(&path);
+    }
+
+    #[test]
+    fn walletd_store_contention_maps_to_store_locked_and_allows_read_only_snapshot() {
+        let path = temp_store_path("store-contention");
+        let path_string = path.to_string_lossy().into_owned();
+        let writer = open_store(&path_string, "passphrase", WalletdMode::Create).unwrap();
+        writer.next_address().unwrap();
+        let bytes_before_snapshot = std::fs::read(&path).unwrap();
+
+        for mode in [WalletdMode::Open, WalletdMode::Create] {
+            assert!(matches!(
+                open_store(&path_string, "passphrase", mode),
+                Err(WalletdError {
+                    code: WalletdErrorCode::StoreLocked,
+                    ..
+                })
+            ));
+        }
+
+        let snapshot = WalletStore::open_read_only(&path, "passphrase").unwrap();
+        assert!(snapshot.next_address().is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes_before_snapshot);
+        drop(snapshot);
+        drop(writer);
+        remove_store_files(&path);
+    }
+
+    fn temp_store_path(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("walletd-{label}-{nanos}.dat"))
+    }
+
+    fn remove_store_files(path: &Path) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(format!("{}.lock", path.display()));
     }
 
     #[test]
