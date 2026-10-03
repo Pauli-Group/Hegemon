@@ -578,10 +578,11 @@ pub fn build_poseidon2_v8_two_coinbase_self_spend<R: RngCore + CryptoRng + ?Size
     })
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Poseidon2V8WalletSpend {
+#[derive(Debug)]
+pub struct Poseidon2V8WalletSpend<'a> {
     pub tip: crate::poseidon2_v8_sync::Poseidon2V8CanonicalTip,
     pub material: Poseidon2V8SpendMaterial,
+    pub(crate) reservation: crate::store::Poseidon2V8SpendReservation<'a>,
 }
 
 /// Build the production V8 self-spend exclusively from durable wallet notes
@@ -590,12 +591,15 @@ pub struct Poseidon2V8WalletSpend {
 /// The caller chooses only destination diversifiers. Input openings,
 /// positions, paths, nullifiers, and the anchor are selected from the
 /// encrypted wallet store.
-pub fn build_poseidon2_v8_wallet_self_spend<R: RngCore + CryptoRng + ?Sized>(
-    store: &crate::store::WalletStore,
+/// The returned non-cloneable spend holds a durable input reservation until
+/// dropped or handed to submission. Concurrent builders cannot reuse it.
+pub fn build_poseidon2_v8_wallet_self_spend<'a, R: RngCore + CryptoRng + ?Sized>(
+    store: &'a crate::store::WalletStore,
     output_address_indices: [u32; 2],
     rng: &mut R,
-) -> Result<Poseidon2V8WalletSpend, WalletError> {
-    let context = store.poseidon2_v8_spend_context()?;
+) -> Result<Poseidon2V8WalletSpend<'a>, WalletError> {
+    let reservation = store.reserve_poseidon2_v8_spend()?;
+    let context = reservation.context();
     if context.tip.height >= FIELD_MODULUS_U64
         || context.notes[0].position == context.notes[1].position
         || context
@@ -729,6 +733,7 @@ pub fn build_poseidon2_v8_wallet_self_spend<R: RngCore + CryptoRng + ?Sized>(
             witness,
             inline_ciphertexts,
         },
+        reservation,
     })
 }
 

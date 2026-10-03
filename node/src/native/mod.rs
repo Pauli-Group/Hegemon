@@ -4135,8 +4135,12 @@ pub struct NativeNode {
 
 mod admission;
 mod block_flow;
+// Experimental V3 storage helpers remain available through their unit tests.
+#[cfg(test)]
 mod block_store_v3;
+#[cfg(test)]
 mod canonical_membership;
+#[cfg(test)]
 mod fork_retention;
 pub mod hx512_lifecycle;
 mod inactive_smallwood_v7;
@@ -4147,6 +4151,7 @@ mod poseidon2_v8_pending;
 pub(crate) mod poseidon2_v8_state;
 pub(crate) mod poseidon2_v8_verifier;
 mod pow;
+#[cfg(test)]
 mod reorg_wal;
 mod rpc;
 mod service;
@@ -4157,6 +4162,7 @@ mod util;
 
 pub(crate) use admission::*;
 pub(crate) use block_flow::*;
+#[cfg(test)]
 pub(crate) use canonical_membership::*;
 pub(crate) use mining::*;
 pub(crate) use node_impl::NativePendingProofAdmissionGuard;

@@ -2471,6 +2471,7 @@ fn retained_carrier_wallet_receive(
             ));
         }
     }
+    drop(spend);
     drop(store);
     let reopened = wallet::WalletStore::open(path, RETAINED_CARRIER_WALLET_PASSPHRASE)
         .map_err(|e| e.to_string())?;

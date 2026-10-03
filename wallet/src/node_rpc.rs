@@ -4,6 +4,21 @@
 //! node. It implements the wallet-specific JSON-RPC methods defined in the
 //! `hegemon_*`, `da_*`, `archive_*`, and compatibility namespaces.
 //!
+//! # Trust boundary
+//!
+//! Wallet synchronization expects a local full node or a trusted operator's full
+//! node to validate consensus, chain selection, transaction proofs, and state.
+//! Hash/body consistency within responses from that same RPC does not establish
+//! independent chain validity or generic untrusted-RPC/light-client security.
+//! Untrusted-RPC support would require authenticated headers and chain selection
+//! plus all relevant proof, consensus, and state-transition checks; adding a
+//! STARK verifier call alone is insufficient.
+//!
+//! The low-level V8 submission helpers are transport-only: they check source
+//! authority, framing, context, and byte bounds and preserve the supplied proof.
+//! The high-level V8 builder proves and verifies locally before calling them;
+//! the node independently verifies submitted proofs before admission.
+//!
 //! # RPC transports
 //!
 //! One-shot wallet operations support HTTP and WebSocket JSON-RPC. Streaming
@@ -463,6 +478,8 @@ fn decode_ciphertext_entries(
 ///
 /// This client connects to a Hegemon node over HTTP or WebSocket and provides
 /// methods to interact with the wallet-specific RPC endpoints.
+/// Sync callers trust a local or trusted operator full node for chain validity;
+/// this client does not implement independent header or consensus validation.
 pub struct NodeRpcClient {
     /// The underlying JSON-RPC client
     client: Arc<RwLock<RpcTransport>>,
@@ -932,6 +949,9 @@ impl NodeRpcClient {
     /// allocation, reassembles chunks strictly in order, checks the exact
     /// action-body hash, decodes canonical SCALE, recomputes every ActionId48
     /// and the ordered 32-byte header root, then rechecks height canonicality.
+    /// These bindings check consistency of data supplied by the same trusted
+    /// full-node RPC. They do not authenticate headers, establish chain selection,
+    /// or independently validate transaction proofs and consensus state.
     pub async fn canonical_block_actions(
         &self,
         height: u64,
@@ -1572,9 +1592,21 @@ impl NodeRpcClient {
     /// wallet does not synthesize or accept a zero relation digest. V8's
     /// seven-limb nullifiers live only in the proof-public HGV8 statement;
     /// the incompatible legacy 48-byte outer-nullifier list is always empty.
+    /// This is a transport-only helper, not a local cryptographic verifier.
+    /// The high-level V8 builder verifies its generated proof before calling
+    /// this helper; the node independently verifies the unchanged submitted leaf.
     pub async fn submit_poseidon2_production_native_leaf(
         &self,
         native_leaf: &[u8],
+    ) -> Result<ActionId48, WalletError> {
+        self.submit_poseidon2_production_native_leaf_reserved(native_leaf, || Ok(()))
+            .await
+    }
+
+    pub(crate) async fn submit_poseidon2_production_native_leaf_reserved(
+        &self,
+        native_leaf: &[u8],
+        before_submit: impl FnOnce() -> Result<(), WalletError>,
     ) -> Result<ActionId48, WalletError> {
         use protocol_shielded_pool::poseidon2_production_transport::{
             encode_poseidon2_production_smza_envelope,
@@ -1614,11 +1646,15 @@ impl NodeRpcClient {
                 "invalid SmallWood Poseidon2 V8/SMZ9 native leaf: {error}"
             ))
         })?;
-        self.submit_poseidon2_production_envelope(&envelope).await
+        self.submit_poseidon2_production_envelope_reserved(&envelope, before_submit)
+            .await
     }
 
     /// Construct the source-authorized leaf around exact ciphertexts and one
     /// unchanged proof, then submit the canonical V8 wrapper.
+    /// This helper checks transport framing and bindings without proving or
+    /// cryptographically verifying the supplied proof. Local prove/verify belongs
+    /// to the high-level V8 builder, and the node independently verifies admission.
     pub async fn submit_poseidon2_production_transaction(
         &self,
         public_statement: &[u64; POSEIDON2_PRODUCTION_PUBLIC_STATEMENT_WORDS],
@@ -1679,9 +1715,21 @@ impl NodeRpcClient {
 
     /// Submit one prebuilt source-authorized envelope without changing its
     /// native leaf or nested proof bytes.
+    /// This transport-only helper does not run the local proof verifier. The
+    /// high-level V8 builder verifies before submission; node admission separately
+    /// verifies the same proof bytes under its consensus and state context.
     pub async fn submit_poseidon2_production_envelope(
         &self,
         envelope_bytes: &[u8],
+    ) -> Result<ActionId48, WalletError> {
+        self.submit_poseidon2_production_envelope_reserved(envelope_bytes, || Ok(()))
+            .await
+    }
+
+    async fn submit_poseidon2_production_envelope_reserved(
+        &self,
+        envelope_bytes: &[u8],
+        before_submit: impl FnOnce() -> Result<(), WalletError>,
     ) -> Result<ActionId48, WalletError> {
         let authority = self
             .fresh_submission_authority(
@@ -1703,6 +1751,9 @@ impl NodeRpcClient {
             }
         };
         let client = self.client.read().await;
+        // No await occurs between this durable reservation marker and polling
+        // the mutating RPC. All local/authority failures precede the marker.
+        before_submit()?;
         let response: SubmitActionResponse = client
             .request("hegemon_submitAction", rpc_params![request])
             .await
