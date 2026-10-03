@@ -4,6 +4,16 @@
 //! using the Hegemon WebSocket RPC client. It replaces the blocking sync engine
 //! for use with async runtimes.
 //!
+//! # Trust boundary
+//!
+//! Wallet state mirrors a local full node or a trusted operator's full node.
+//! The node is trusted for consensus, chain selection, transaction-proof
+//! verification, and state validity. Wallet hash/body/root consistency checks
+//! compare data returned by that RPC; they do not independently establish chain
+//! validity or provide generic untrusted-RPC/light-client security. Such support
+//! would require authenticated headers and chain selection plus all relevant
+//! proof, consensus, and state-transition checks, beyond a STARK verifier call.
+//!
 //! # Features
 //!
 //! - Real-time sync via block subscriptions
@@ -49,6 +59,8 @@ pub const WALLET_SYNC_MAX_SNAPSHOT_GAP: u64 = 1_048_576;
 ///
 /// This engine syncs wallet state with a Hegemon node using WebSocket RPC.
 /// It supports both one-shot synchronization and continuous sync via subscriptions.
+/// The client must represent a local or trusted operator full node; this engine
+/// mirrors its validated chain rather than independently validating consensus.
 pub struct AsyncWalletSyncEngine {
     /// RPC client for node communication
     client: Arc<NodeRpcClient>,
@@ -92,6 +104,9 @@ impl AsyncWalletSyncEngine {
     ///
     /// Fetches all new commitments, ciphertexts, and nullifiers from the node
     /// and updates the wallet store.
+    /// Consensus and proof validity are entrusted to the local or trusted
+    /// operator full node. RPC-data consistency checks are not independent
+    /// chain validation.
     pub async fn sync_once(&self) -> Result<SyncOutcome, WalletError> {
         for attempt in 0..=1 {
             let mut outcome = SyncOutcome::default();
@@ -408,6 +423,9 @@ impl AsyncWalletSyncEngine {
         Err(WalletError::InvalidState("sync failed after reset"))
     }
 
+    /// Mirror the trusted full node's V8 chain, including detach/attach recovery.
+    /// Body/hash bindings and local replay consistency do not authenticate the
+    /// RPC's chain choice or independently verify consensus and transaction proofs.
     async fn sync_poseidon2_v8(
         &self,
         genesis_hash: [u8; 32],
@@ -489,6 +507,8 @@ impl AsyncWalletSyncEngine {
     ///
     /// Subscribes to new block headers and syncs after each new block.
     /// This runs indefinitely until the subscription fails or is cancelled.
+    /// Notifications and chain validity retain the trusted-full-node boundary
+    /// of [`Self::sync_once`].
     ///
     /// # Arguments
     ///
@@ -525,9 +545,11 @@ impl AsyncWalletSyncEngine {
         Ok(())
     }
 
-    /// Run continuous sync with finalized blocks only
+    /// Run continuous sync triggered by node-reported finalized heads.
     ///
-    /// Only syncs when blocks are finalized, providing stronger consistency.
+    /// Each notification triggers [`Self::sync_once`], which reads the node's
+    /// latest state. The notification is not an independent finality proof;
+    /// consensus and proof validation remain entrusted to the full node.
     pub async fn run_continuous_finalized<F>(&self, mut on_sync: F) -> Result<(), WalletError>
     where
         F: FnMut(SyncOutcome),
@@ -717,7 +739,8 @@ impl SharedSyncEngine {
         }
     }
 
-    /// Perform a single synchronization pass
+    /// Perform a single synchronization pass against a local or trusted operator
+    /// full node, with the trust boundary of [`AsyncWalletSyncEngine::sync_once`].
     pub async fn sync_once(&self) -> Result<SyncOutcome, WalletError> {
         let engine = self.inner.write().await;
         engine.sync_once().await

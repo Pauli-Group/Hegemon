@@ -462,12 +462,19 @@ impl Poseidon2V8WalletState {
             .collect()
     }
 
-    pub(crate) fn spend_context(&self) -> Result<Poseidon2V8SpendContext, WalletError> {
+    pub(crate) fn has_canonical_nullifier(&self, value: Poseidon2V8Digest) -> bool {
+        self.nullifiers.iter().any(|entry| entry.value == value)
+    }
+
+    pub(crate) fn spend_context(
+        &self,
+        reserved: &std::collections::HashSet<Poseidon2V8Digest>,
+    ) -> Result<Poseidon2V8SpendContext, WalletError> {
         let tip = self.tip()?;
         let notes = self
             .owned_notes
             .iter()
-            .filter(|note| note.spent_by.is_none())
+            .filter(|note| note.spent_by.is_none() && !reserved.contains(&note.nullifier))
             .map(|note| {
                 let path = note_path_from_levels(&self.tree_levels, note.position)?;
                 stored_note_view(note, path, tip.anchor)
@@ -1587,6 +1594,8 @@ mod tests {
     const SOURCE_DIVERSIFIER: u32 = 9;
     const TEST_STABLECOIN_ROOT: Poseidon2V8Digest = [1, 2, 3, 4, 5, 6, 7];
 
+    include!("poseidon2_v8_reservation_tests.rs");
+
     fn retained_test_context(route: WalletProofRoute) -> Poseidon2V8RetainedTestContext {
         let expected = Poseidon2ProductionExpectedContext::new(
             protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NETWORK_ID,
@@ -1961,6 +1970,7 @@ mod tests {
             assert_eq!(store.poseidon2_v8_tip().unwrap(), before_tip);
             assert_eq!(store.poseidon2_v8_owned_notes().unwrap(), before_notes);
         }
+        drop(spend);
         drop(store);
         let reopened = WalletStore::open(&path, PASSPHRASE).unwrap();
         assert_eq!(reopened.poseidon2_v8_tip().unwrap(), before_tip);
@@ -2210,6 +2220,7 @@ mod tests {
             .iter()
             .all(|note| note.anchor == spent_tip.anchor));
 
+        drop(spend);
         drop(store);
         let reopened = WalletStore::open(&path, PASSPHRASE).unwrap();
         assert_eq!(reopened.poseidon2_v8_tip().unwrap(), spent_tip);

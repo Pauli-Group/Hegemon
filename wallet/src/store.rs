@@ -10,6 +10,7 @@ use chacha20poly1305::{
     aead::{Aead, Payload},
     ChaCha20Poly1305, KeyInit,
 };
+use fs2::FileExt;
 use hegemon_hash384::ActionId48;
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -36,9 +37,17 @@ use crate::submission::ProvisionalActionId48;
 use crate::tx_builder::PreparedMultisigFinalPlan;
 use crate::viewing::{FullViewingKey, IncomingViewingKey, OutgoingViewingKey, RecoveredNote};
 
-/// V11 adds the separately typed, reorg-aware seven-limb Poseidon2 V8 wallet
-/// mirror. V10 remains the exact pre-mirror schema.
-const FILE_VERSION: u32 = 11;
+#[path = "poseidon2_v8_reservations.rs"]
+mod poseidon2_v8_reservations;
+use poseidon2_v8_reservations::StoredPoseidon2V8Reservation;
+pub use poseidon2_v8_reservations::{
+    Poseidon2V8ReservationStatus, Poseidon2V8ReservationView, Poseidon2V8SpendReservation,
+};
+
+/// V12 appends durable V8 input reservations. V11 remains the exact
+/// pre-reservation positional bincode schema, including its V8 mirror.
+const FILE_VERSION: u32 = 12;
+const LEGACY_FILE_VERSION_V11: u32 = 11;
 const LEGACY_FILE_VERSION_V10: u32 = 10;
 const LEGACY_FILE_VERSION_V9: u32 = 9;
 const LEGACY_FILE_VERSION_V8: u32 = 8;
@@ -72,6 +81,9 @@ where
 #[derive(Debug)]
 pub struct WalletStore {
     path: PathBuf,
+    /// A stable sibling inode: wallet writes replace the encrypted file.
+    _file_lock: Option<fs::File>,
+    read_only: bool,
     key: [u8; KEY_LEN],
     salt: [u8; SALT_LEN],
     state: Mutex<WalletState>,
@@ -124,6 +136,7 @@ impl WalletStore {
             multisig_accounts: Vec::new(),
             local_note_openings: Vec::new(),
             poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
         };
         Self::create_with_state(path, passphrase, state)
     }
@@ -156,6 +169,7 @@ impl WalletStore {
             multisig_accounts: Vec::new(),
             local_note_openings: Vec::new(),
             poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
         };
         Self::create_with_state(path, passphrase, state)
     }
@@ -165,11 +179,14 @@ impl WalletStore {
         passphrase: &str,
         state: WalletState,
     ) -> Result<Self, WalletError> {
+        let (path, file_lock) = lock_wallet_file(path.as_ref())?;
         let mut salt = [0u8; SALT_LEN];
         OsRng.fill_bytes(&mut salt);
         let key = derive_key(passphrase, &salt)?;
         let store = WalletStore {
-            path: path.as_ref().to_path_buf(),
+            path,
+            _file_lock: Some(file_lock),
+            read_only: false,
             key,
             salt,
             state: Mutex::new(state),
@@ -180,7 +197,23 @@ impl WalletStore {
     }
 
     pub fn open<P: AsRef<Path>>(path: P, passphrase: &str) -> Result<Self, WalletError> {
-        let bytes = fs::read(path.as_ref())?;
+        Self::open_inner(path.as_ref(), passphrase, false)
+    }
+
+    /// Decrypt one coherent atomic disk snapshot while another process owns
+    /// the writer. This handle cannot mutate, migrate or recover reservations.
+    pub fn open_read_only<P: AsRef<Path>>(path: P, passphrase: &str) -> Result<Self, WalletError> {
+        Self::open_inner(path.as_ref(), passphrase, true)
+    }
+
+    fn open_inner(path: &Path, passphrase: &str, read_only: bool) -> Result<Self, WalletError> {
+        let (path, file_lock) = if read_only {
+            (path.to_path_buf(), None)
+        } else {
+            let (path, lock) = lock_wallet_file(path)?;
+            (path, Some(lock))
+        };
+        let bytes = fs::read(&path)?;
         let file: WalletFile = deserialize_exact(&bytes)?;
         let key = derive_key(passphrase, &file.salt)?;
         let cipher = ChaCha20Poly1305::new(&key.into());
@@ -193,8 +226,9 @@ impl WalletStore {
                 },
             )
             .map_err(|_| WalletError::DecryptionFailure)?;
-        let state: WalletState = match file.version {
+        let mut state: WalletState = match file.version {
             FILE_VERSION => deserialize_wallet_state(&plaintext)?,
+            LEGACY_FILE_VERSION_V11 => deserialize_wallet_state_v11(&plaintext)?,
             LEGACY_FILE_VERSION_V10 => deserialize_wallet_state_v10(&plaintext)?,
             LEGACY_FILE_VERSION_V9 => deserialize_wallet_state_v9(&plaintext)?,
             LEGACY_FILE_VERSION_V8 => deserialize_wallet_state_v8(&plaintext)?,
@@ -206,13 +240,30 @@ impl WalletStore {
                 )));
             }
         };
-        Ok(WalletStore {
-            path: path.as_ref().to_path_buf(),
+        // Exclusive file ownership proves no live builder can still submit
+        // these pre-RPC records. Submitted/uncertain records survive restart.
+        let abandoned_proving = state
+            .poseidon2_v8_reservations
+            .iter()
+            .any(|record| record.status == Poseidon2V8ReservationStatus::Proving);
+        if !read_only {
+            state
+                .poseidon2_v8_reservations
+                .retain(|record| record.status != Poseidon2V8ReservationStatus::Proving);
+        }
+        let store = WalletStore {
+            path,
+            _file_lock: file_lock,
+            read_only,
             key,
             salt: file.salt,
             state: Mutex::new(state),
             commitment_tree_cache: Mutex::new(None),
-        })
+        };
+        if !read_only && (abandoned_proving || file.version != FILE_VERSION) {
+            store.write_locked()?;
+        }
+        Ok(store)
     }
 
     pub fn mode(&self) -> Result<WalletMode, WalletError> {
@@ -406,7 +457,11 @@ impl WalletStore {
     }
 
     pub fn poseidon2_v8_spend_context(&self) -> Result<Poseidon2V8SpendContext, WalletError> {
-        self.with_state(|state| state.poseidon2_v8.spend_context())
+        self.with_state(|state| {
+            state
+                .poseidon2_v8
+                .spend_context(&state.reserved_poseidon2_v8_nullifiers())
+        })
     }
 
     pub fn apply_poseidon2_v8_canonical_block(
@@ -1394,15 +1449,12 @@ impl WalletStore {
             let mut expired_indexes: Vec<usize> = Vec::new();
             let mut mined_indexes: Vec<usize> = Vec::new();
 
-            // Debug: print chain nullifiers
+            // Debug output contains counts only, never nullifiers/action ids.
             if std::env::var("WALLET_DEBUG_PENDING").is_ok() {
                 eprintln!(
-                    "[DEBUG refresh_pending] chain nullifiers ({}):",
+                    "[DEBUG refresh_pending] chain nullifier count={}",
                     nullifiers.len()
                 );
-                for nf in nullifiers.iter() {
-                    eprintln!("  chain: {}", hex::encode(nf));
-                }
             }
 
             for (i, tx) in state.pending.iter_mut().enumerate() {
@@ -1411,17 +1463,17 @@ impl WalletStore {
                     continue;
                 }
 
-                // Debug: print pending tx nullifiers
                 if std::env::var("WALLET_DEBUG_PENDING").is_ok() {
                     eprintln!(
-                        "[DEBUG refresh_pending] tx {} nullifiers ({}):",
-                        hex::encode(&tx.tx_id.as_bytes()[..8]),
-                        tx.nullifiers.len()
+                        "{}",
+                        pending_debug_counts(
+                            tx.nullifiers.len(),
+                            tx.nullifiers
+                                .iter()
+                                .filter(|nf| nullifiers.contains(*nf))
+                                .count(),
+                        )
                     );
-                    for nf in &tx.nullifiers {
-                        let found = nullifiers.contains(nf);
-                        eprintln!("  pending: {} (found: {})", hex::encode(nf), found);
-                    }
                 }
 
                 // Check if transaction was mined (nullifiers on-chain)
@@ -1572,6 +1624,7 @@ impl WalletStore {
     where
         F: FnOnce(&mut WalletState) -> Result<T, WalletError>,
     {
+        self.ensure_writable()?;
         let mut state = self
             .state
             .lock()
@@ -1586,6 +1639,7 @@ impl WalletStore {
     where
         F: FnOnce(&mut Poseidon2V8WalletState, Option<&DerivedKeys>) -> Result<T, WalletError>,
     {
+        self.ensure_writable()?;
         let mut state = self
             .state
             .lock()
@@ -1621,6 +1675,7 @@ impl WalletStore {
     }
 
     fn write_state(&self, state: &WalletState) -> Result<(), WalletError> {
+        self.ensure_writable()?;
         let plaintext = bincode::serialize(state)?;
         let cipher = ChaCha20Poly1305::new(&self.key.into());
         let mut nonce = [0u8; NONCE_LEN];
@@ -1644,6 +1699,17 @@ impl WalletStore {
         write_private_file(&self.path, &bytes)?;
         Ok(())
     }
+
+    fn ensure_writable(&self) -> Result<(), WalletError> {
+        if self.read_only {
+            return Err(WalletError::InvalidState("wallet snapshot is read-only"));
+        }
+        Ok(())
+    }
+}
+
+fn pending_debug_counts(input_count: usize, canonical_matches: usize) -> String {
+    format!("[DEBUG refresh_pending] pending input_count={input_count} canonical_matches={canonical_matches}")
 }
 
 fn matching_local_note_opening<'a>(
@@ -1836,6 +1902,16 @@ pub fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), WalletError> 
         return Err(err.into());
     }
     set_private_file_permissions(path)?;
+    // The reservation must survive a process/OS restart before RPC can run:
+    // sync the rename's directory entry, not only the staged file contents.
+    #[cfg(unix)]
+    {
+        let parent = path
+            .parent()
+            .filter(|value| !value.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::File::open(parent)?.sync_all()?;
+    }
     Ok(())
 }
 
@@ -1913,7 +1989,55 @@ fn deserialize_wallet_state(bytes: &[u8]) -> Result<WalletState, WalletError> {
         other => other,
     })?;
     state.poseidon2_v8.validate()?;
+    state.validate_poseidon2_v8_reservations()?;
     Ok(state)
+}
+
+fn deserialize_wallet_state_v11(bytes: &[u8]) -> Result<WalletState, WalletError> {
+    let state = WalletState::from(deserialize_exact::<WalletStateV11>(bytes)?);
+    state.poseidon2_v8.validate()?;
+    Ok(state)
+}
+
+fn lock_wallet_file(path: &Path) -> Result<(PathBuf, fs::File), WalletError> {
+    if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err(WalletError::InvalidArgument(
+            "writable wallet path cannot be a symbolic link",
+        ));
+    }
+    let parent = path
+        .parent()
+        .filter(|value| !value.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let parent = fs::canonicalize(parent)?;
+    let wallet_path = parent.join(
+        path.file_name()
+            .ok_or(WalletError::InvalidArgument("wallet file has no filename"))?,
+    );
+    let mut name = path
+        .file_name()
+        .ok_or(WalletError::InvalidArgument("wallet file has no filename"))?
+        .to_os_string();
+    name.push(".lock");
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let lock_path = parent.join(name);
+    let file = options.open(&lock_path)?;
+    set_private_file_permissions(&lock_path)?;
+    file.try_lock_exclusive().map_err(|error| {
+        if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() {
+            WalletError::StoreBusy
+        } else {
+            WalletError::from(error)
+        }
+    })?;
+    Ok((wallet_path, file))
 }
 
 fn deserialize_wallet_state_v10(bytes: &[u8]) -> Result<WalletState, WalletError> {
@@ -2048,6 +2172,68 @@ struct WalletState {
     #[serde(default)]
     local_note_openings: Vec<LocalNoteOpeningRecord>,
     poseidon2_v8: Poseidon2V8WalletState,
+    poseidon2_v8_reservations: Vec<StoredPoseidon2V8Reservation>,
+}
+
+/// Exact V11 payload. Do not append fields to this frozen bincode shape.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV11 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<PendingTransaction>,
+    recent: Vec<RecentTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    commitment_sources: Vec<NoteSource>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(with = "serde_option_bytes32")]
+    last_synced_block_hash: Option<[u8; 32]>,
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    #[serde(with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+    multisig_accounts: Vec<MultisigAccountRecord>,
+    local_note_openings: Vec<LocalNoteOpeningRecord>,
+    poseidon2_v8: Poseidon2V8WalletState,
+}
+
+impl From<WalletStateV11> for WalletState {
+    fn from(value: WalletStateV11) -> Self {
+        Self {
+            mode: value.mode,
+            tree_depth: value.tree_depth,
+            root_secret: value.root_secret,
+            derived: value.derived,
+            incoming: value.incoming,
+            full_viewing_key: value.full_viewing_key,
+            outgoing: value.outgoing,
+            next_address_index: value.next_address_index,
+            notes: value.notes,
+            pending: value.pending,
+            recent: value.recent,
+            commitments: value.commitments,
+            commitment_sources: value.commitment_sources,
+            next_commitment_index: value.next_commitment_index,
+            next_ciphertext_index: value.next_ciphertext_index,
+            last_synced_height: value.last_synced_height,
+            last_synced_block_hash: value.last_synced_block_hash,
+            outgoing_disclosures: value.outgoing_disclosures,
+            genesis_hash: value.genesis_hash,
+            multisig_accounts: value.multisig_accounts,
+            local_note_openings: value.local_note_openings,
+            poseidon2_v8: value.poseidon2_v8,
+            poseidon2_v8_reservations: Vec::new(),
+        }
+    }
 }
 
 /// Exact encrypted-wallet V10 payload, before the V8 seven-limb mirror was
@@ -2328,6 +2514,7 @@ impl From<WalletStateV10> for WalletState {
             multisig_accounts: value.multisig_accounts,
             local_note_openings: value.local_note_openings,
             poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
         }
     }
 }
@@ -2365,6 +2552,7 @@ impl TryFrom<WalletStateV9> for WalletState {
             multisig_accounts: value.multisig_accounts,
             local_note_openings: value.local_note_openings,
             poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
         })
     }
 }
@@ -2402,6 +2590,7 @@ impl TryFrom<WalletStateV9BeforeNoteSources> for WalletState {
             multisig_accounts: value.multisig_accounts,
             local_note_openings: value.local_note_openings,
             poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
         })
     }
 }
@@ -2439,6 +2628,7 @@ impl TryFrom<WalletStateV6> for WalletState {
             multisig_accounts: Vec::new(),
             local_note_openings: Vec::new(),
             poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
         })
     }
 }
@@ -2488,6 +2678,7 @@ impl TryFrom<WalletStateV8> for WalletState {
             multisig_accounts: Vec::new(),
             local_note_openings,
             poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
         })
     }
 }
@@ -2525,6 +2716,7 @@ impl TryFrom<WalletStateV7> for WalletState {
             multisig_accounts: Vec::new(),
             local_note_openings: Vec::new(),
             poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
         })
     }
 }
@@ -3151,6 +3343,148 @@ mod tests {
     use tempfile::tempdir;
     use transaction_circuit::hashing_pq::{ciphertext_hash_bytes, felts_to_bytes48};
 
+    #[test]
+    fn v8_reservation_writer_lock_allows_read_only_snapshot_without_mutations() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("wallet.dat");
+        let writer = WalletStore::create_full(&path, "passphrase").unwrap();
+        writer.next_address().unwrap();
+        let before = fs::read(&path).unwrap();
+        assert!(matches!(
+            WalletStore::open(&path, "passphrase"),
+            Err(WalletError::StoreBusy)
+        ));
+        assert!(matches!(
+            WalletStore::create_full(&path, "passphrase"),
+            Err(WalletError::StoreBusy)
+        ));
+        let snapshot = WalletStore::open_read_only(&path, "passphrase").unwrap();
+        assert_eq!(
+            snapshot
+                .with_state(|state| Ok(state.next_address_index))
+                .unwrap(),
+            1
+        );
+        assert!(snapshot.next_address().is_err());
+        assert!(snapshot.reset_sync_state().is_err());
+        assert!(snapshot.reserve_poseidon2_v8_spend().is_err());
+        assert_eq!(
+            snapshot
+                .with_state(|state| Ok(state.next_address_index))
+                .unwrap(),
+            1
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert!(matches!(
+            WalletStore::open_read_only(&path, "wrong password"),
+            Err(WalletError::DecryptionFailure)
+        ));
+        drop(writer);
+        let reopened = WalletStore::open(&path, "passphrase").unwrap();
+        reopened.next_address().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v8_reservation_writer_rejects_final_component_symlink_alias() {
+        use std::os::unix::fs::symlink;
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("wallet.dat");
+        let writer = WalletStore::create_full(&path, "passphrase").unwrap();
+        let alias = directory.path().join("alias.dat");
+        symlink(&path, &alias).unwrap();
+        assert!(matches!(
+            WalletStore::open(&alias, "passphrase"),
+            Err(WalletError::InvalidArgument(_))
+        ));
+        assert!(fs::symlink_metadata(&alias)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let lock_permissions = fs::metadata(directory.path().join("wallet.dat.lock"))
+            .unwrap()
+            .permissions();
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(lock_permissions.mode() & 0o777, 0o600);
+        drop(writer);
+    }
+
+    #[test]
+    fn v8_reservation_v11_bincode_migration_preserves_mirror_and_key_bytes() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("wallet.dat");
+        let root = RootSecret::from_bytes([0x61; 32]);
+        let store = WalletStore::create_from_root(&path, "passphrase", root).unwrap();
+        store.next_address().unwrap();
+        store
+            .ensure_poseidon2_v8_genesis_for_test([0x41; 32], [1, 2, 3, 4, 5, 6, 7])
+            .unwrap();
+        let tip = store.poseidon2_v8_tip().unwrap();
+        let current = store
+            .with_state(|state| Ok(bincode::serialize(state)?))
+            .unwrap();
+        // V12's only appended field is an empty Vec's exact 8-byte length.
+        // Decoding as V11 also checks the frozen positional schema itself.
+        let legacy = deserialize_exact::<WalletStateV11>(&current[..current.len() - 8]).unwrap();
+        let plaintext = bincode::serialize(&legacy).unwrap();
+        assert!(deserialize_wallet_state(&plaintext).is_err());
+        let nonce = [0x22; NONCE_LEN];
+        let cipher = ChaCha20Poly1305::new(&store.key.into());
+        let ciphertext = cipher
+            .encrypt(
+                &nonce.into(),
+                Payload {
+                    msg: &plaintext,
+                    aad: &store.salt,
+                },
+            )
+            .unwrap();
+        let file = WalletFile {
+            version: LEGACY_FILE_VERSION_V11,
+            salt: store.salt,
+            nonce,
+            ciphertext,
+        };
+        write_private_file(&path, &bincode::serialize(&file).unwrap()).unwrap();
+        let old_file = fs::read(&path).unwrap();
+        let snapshot = WalletStore::open_read_only(&path, "passphrase").unwrap();
+        assert_eq!(snapshot.poseidon2_v8_tip().unwrap(), tip);
+        assert_eq!(fs::read(&path).unwrap(), old_file);
+        drop(snapshot);
+        drop(store);
+        let migrated = WalletStore::open(&path, "passphrase").unwrap();
+        assert_eq!(migrated.poseidon2_v8_tip().unwrap(), tip);
+        assert_eq!(migrated.signing_seed().unwrap(), [0x61; 32]);
+        assert_eq!(
+            migrated
+                .with_state(|state| Ok(state.next_address_index))
+                .unwrap(),
+            1
+        );
+        assert!(migrated.poseidon2_v8_reservations().unwrap().is_empty());
+        let file: WalletFile = deserialize_exact(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(file.version, FILE_VERSION);
+        let mut trailing = plaintext;
+        trailing.push(0xff);
+        assert!(deserialize_wallet_state_v11(&trailing).is_err());
+    }
+
+    #[test]
+    fn pending_debug_format_contains_only_counts() {
+        let line = pending_debug_counts(2, 1);
+        assert_eq!(
+            line,
+            "[DEBUG refresh_pending] pending input_count=2 canonical_matches=1"
+        );
+        for secret_link in [
+            hex::encode([0x41; 48]),
+            hex::encode([0x42; 48]),
+            hex::encode([0x43; 8]),
+        ] {
+            assert!(!line.contains(&secret_link));
+        }
+    }
+
     #[derive(Debug, PartialEq, Eq)]
     struct PublicCiphertextProjection {
         version: u8,
@@ -3760,6 +4094,7 @@ mod tests {
             multisig_accounts: Vec::new(),
             local_note_openings: Vec::new(),
             poseidon2_v8: Poseidon2V8WalletState::default(),
+            poseidon2_v8_reservations: Vec::new(),
         };
         let mut bytes = bincode::serialize(&state).unwrap();
         bytes.push(0xff);

@@ -15,6 +15,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 codec = { workspace = true }
 futures = "0.3"
+fs2 = "0.4"
 bs58 = "0.5"
 hex = "0.4"
 jsonrpsee-core = { version = "0.24", default-features = false, features = ["client"], optional = true }

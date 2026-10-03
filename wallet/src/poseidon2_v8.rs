@@ -542,8 +542,12 @@ impl NodeRpcClient {
                 "SmallWood Poseidon2 V8 authority height changed before proving",
             ));
         }
-        self.prove_verify_and_submit_poseidon2_v8_material_at(authority, spend.material)
-            .await
+        self.prove_verify_and_submit_poseidon2_v8_material_at(
+            authority,
+            spend.material,
+            spend.reservation,
+        )
+        .await
     }
 
     /// Prove one already wallet-constructed V8 relation tuple. This private
@@ -552,6 +556,7 @@ impl NodeRpcClient {
         &self,
         authority: FreshTransactionProofAuthority,
         material: crate::poseidon2_v8_coinbase::Poseidon2V8SpendMaterial,
+        reservation: crate::store::Poseidon2V8SpendReservation<'_>,
     ) -> Result<ActionId48, WalletError> {
         let crate::poseidon2_v8_coinbase::Poseidon2V8SpendMaterial {
             statement,
@@ -607,8 +612,13 @@ impl NodeRpcClient {
         debug_assert_eq!(prepared.proof_bytes().len(), prepared.proof_len);
         debug_assert!(prepared.inline_args_bytes <= route.max_inline_args_bytes());
         debug_assert!(prepared.derived_new_nullifiers.len() <= 2);
-        self.submit_poseidon2_production_native_leaf(&prepared.native_leaf)
-            .await
+        let tx_id = self
+            .submit_poseidon2_production_native_leaf_reserved(&prepared.native_leaf, || {
+                reservation.begin_submission()
+            })
+            .await?;
+        reservation.mark_submitted(tx_id)?;
+        Ok(tx_id)
     }
 }
 

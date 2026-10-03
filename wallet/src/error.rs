@@ -34,6 +34,9 @@ pub enum WalletError {
     #[error("wallet is watch-only")]
     WatchOnly,
 
+    #[error("wallet store is already open for writing")]
+    StoreBusy,
+
     #[error("invalid wallet state: {0}")]
     InvalidState(&'static str),
 

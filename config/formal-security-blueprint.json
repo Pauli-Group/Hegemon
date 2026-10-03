@@ -8,8 +8,8 @@
       "command": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
       "status": "passed",
       "exit_code": 0,
-      "executed_at": "2026-10-02T22:40:14Z",
-      "policy_inputs_blake3": "ef7192832069c06010f730d53adbfcfc19c1dcfaea973c6a6f6c28682bb6f928",
+      "executed_at": "2026-10-03T04:26:59Z",
+      "policy_inputs_blake3": "4b8a17c9c8a493205a8eb3b2de7a1dc3f3bab1d46fb824fc0f665f08e42721d2",
       "report": {
         "passed": true,
         "test_filter": "governance_",
@@ -72,7 +72,7 @@
         "reviewer": "Codex (internal CI hygiene review)",
         "reviewed_at": "2026-10-02",
         "notes": "Pending independent review. Internal source review on 2026-10-02: unmaintained findings remain visible as nonblocking maintenance notices; vulnerabilities, unsoundness, and yanked findings still block unless covered by exact current waivers; unknown warning kinds and malformed warning shapes fail closed; unused waivers still reject. The focused gate regression suite passes. This is not an independent review or assurance of advisory database completeness.",
-        "content_blake3": "8c5abc4b8eeae98db797f035b2078907d0984ad76d6724cd7fe67895359ace16"
+        "content_blake3": "3e02d30379a6bb18171835fea63bc3524179d802d6686d39052e87d0c01f97a1"
       },
       "falsification_cases": [
         {
@@ -134,7 +134,7 @@
         "reviewer": "Codex (internal CI hygiene review)",
         "reviewed_at": "2026-10-02",
         "notes": "Pending independent review. Internal source review on 2026-10-02: PR-only profile inspection accepts only the exact fail-closed unapproved-profile refusal and reports production_authority=false; tag release remains strict, and the historical native-backend posture does not authorize RP05. Focused profile and policy regressions pass. This is not an independent review, live binary attestation, or production authorization.",
-        "content_blake3": "4eb612a08ed6e22623554e47ec10fe02d4cf41d90845ad27942b5e067dd962d6"
+        "content_blake3": "8771421edb3468da2db9d2bbfe2b2971811381fc620d6b9e56834e8eff6d6a9d"
       },
       "falsification_cases": [
         {
@@ -190,7 +190,7 @@
         "reviewer": "Codex (internal CI hygiene review)",
         "reviewed_at": "2026-10-02",
         "notes": "Pending independent review. Internal source review on 2026-10-02: CI policy negative tests pin the dependency waiver gate, the PR-only unapproved-profile review flag, the zero-funds app review mode, and release-build dependencies; release workflow calls remain strict. CI no longer labels the historical native-backend package as current RP05 authority; tag release retains its package/posture checks. This does not establish live remote ruleset enforcement, runner integrity, production authority, or independent review.",
-        "content_blake3": "8879374ccb3e76a9d375da8a96b4f76704a13c8480cb541fd98564fc055162b1"
+        "content_blake3": "4f87a1a5b15fdd3d6d1ba62711e02bfce4ad3823d84ee9dcb49225046d7db4d6"
       },
       "falsification_cases": [
         {
@@ -276,7 +276,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-18",
         "notes": "Pending independent review. Previous internal assessment: Accepted as the final closure/accounting certificate for internal theorem coverage plus explicit external assumptions. It is not an unconditional proof of cryptographic primitive hardness or remote infrastructure behavior.",
-        "content_blake3": "ce083182af3ae97a24550fcd82f8e7b35c80489bcb6381cf0ebe151989e3237e"
+        "content_blake3": "d57a8dd8e66fb0d406b0fb26350859c772706fa827d670c7adb86f4b6afb9b18"
       },
       "falsification_cases": [
         {
@@ -513,7 +513,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
         "notes": "Pending independent review. Previous internal assessment: Accepted as Lean theorem evidence plus generated Rust conformance vectors for note-commitment preimage ordering and field encoding, and as production hardening for asset ids that would alias padding or reduce modulo the Goldilocks field.",
-        "content_blake3": "8f0c64a01bb47b0ffb09023f89e417b5e8c2745e18ab9567701ddaa6fcfa418c"
+        "content_blake3": "5082a26fb9fc3b64c6a0478cb405ed6d7ed03d868a1712b506f77e15c5ce0e41"
       },
       "falsification_cases": [
         {
@@ -958,7 +958,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-11",
         "notes": "Pending independent review. Generated table and semantic-program gates establish bounded exact-map conformance and internal production-family implications, but accepted-proof extraction and deployed AIR/row implementation-equivalence remain open while knowledge-soundness, canonical-semantic-refinement, and Poseidon2 constraint-digest-refinement evidence are premises. The executable Poseidon2 mirror and known-answer vectors do not discharge pair-local collision resistance.",
-        "content_blake3": "bbb8a02bbf711cfbdada6e58fd50d21a50c81b092d31d87d9b369a640ae79bb8"
+        "content_blake3": "9bb1bb7c6ec7688e3cc61a03a4c9da80ebdef954e9147f166daefb50efe7d897"
       },
       "falsification_cases": [
         {
@@ -1057,7 +1057,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-11",
         "notes": "Pending final headless review. Internal review replaced a caller-populated row certificate with an executable exact-map decision, but accepted-proof extraction still requires `DeployedSmallWoodKnowledgeSoundnessEvidence`; canonical-semantic refinement, Poseidon2 output binding, universal Rust/AIR equivalence, primitive hash security, and proof-system soundness remain explicit.",
-        "content_blake3": "e9210e2d1c18c657673f249f25124eeda9217763c96dbf104611aee396be20e5"
+        "content_blake3": "7a89be9aeb84ae4220bc966ddfb94772d19d9b5f786dee18c6b7f583761e8b15"
       },
       "falsification_cases": [
         {
@@ -1156,7 +1156,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a non-production canonical verifier-boundary refinement. It packages the deployed relation, accepted-transaction, transcript, native tx-leaf, and split spend/balance proof-boundary facts for future AIR/refinement proof work, but does not certify deployed STARK, SmallWood, or native verifier soundness.",
-        "content_blake3": "da80ed003f43c1b1bebf37401d870b0d5a0ceae02db9777aad7cd063711b2172"
+        "content_blake3": "051ea20d53d2e3d77da6a0eec28185e2bd01fcf21ecd4b6416618d47675f1ff0"
       },
       "falsification_cases": [
         {
@@ -1254,7 +1254,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a non-production transaction and accepted-transaction-chain asset-isolation boundary with a production-bound public stablecoin exception payload surface, explicit live-policy authorization predicate, wallet-side storage-backed policy/oracle/attestation payload-construction regression, native import-time protocol-manifest policy/oracle/attestation/lifecycle/freshness/bounds admission, and a theorem bridge from accepted native authorization to the live-policy predicate for exactly matching production/public payloads. It does not certify replayed dynamic stablecoin policy state or bridge mint authorization.",
-        "content_blake3": "5a709fd4487b8763f8656c96b2d101dcd4b7134dc62348ae6203d24d913339d0"
+        "content_blake3": "cfac80b9743f77f120b9639a4e63b32ddcc21ecff40625df7172b373b402120e"
       },
       "falsification_cases": [
         {
@@ -1439,7 +1439,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
         "notes": "Pending independent review. Previous internal assessment: Accepted as Lean theorem evidence plus generated Rust conformance vectors for wallet note-ciphertext parser grammar, active-version admission, chain-to-DA parser-equivalence fixtures, decrypt-admission vectors, plaintext-to-commitment witness binding, native tx-leaf commitment consistency, and an independent chain/DA parser mutation-oracle corpus. Privacy, concrete hash/commitment implementation equivalence, KEM/AEAD security, and complete wallet/native equivalence remain outside this node.",
-        "content_blake3": "a68dbc2ab2241565bd41c15b04ca69123e860e571cac19b584614197133a0bff"
+        "content_blake3": "bf99b652b03b75edae9d61ea66cb12666c4d2eb370e18dd945509f9c917baba3"
       },
       "falsification_cases": [
         {
@@ -1557,7 +1557,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a non-production leakage-boundary model. It defines the observer projection used by future privacy games, composes native tx-leaf output-slot binding into that surface, and now proves combined private-witness/prover-randomness/local action/address/wallet-bookkeeping/network metadata exclusion for observer, public metadata, batch/timing, and valid-chain-surface projections. It does not prove cryptographic zero-knowledge or ciphertext confidentiality. The wallet ciphertext archive publication gate is now Lean/vector checked for contiguous indices and leaf-count bounds.",
-        "content_blake3": "303f834229472d42fb2917d63f338bf977523aa31000b6fbec52baa076a279c5"
+        "content_blake3": "d8afeee91ab44c342138e57abc3c553566d69514bd0adb450148bcb2fe586230"
       },
       "falsification_cases": [
         {
@@ -1659,7 +1659,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a research privacy-game boundary with explicit cryptographic, proof-system, wallet metadata, timing/batching, and network metadata assumptions plus production wallet randomness/bookkeeping/address-metadata regressions, PQ connection/relay metadata projection regression, and native mineable candidate-selection conformance. The secret-resampling and open-assumption package theorems strengthen deterministic unlinkability coverage, the seed-hardened PQ residual certificate removes KEM seed-source misuse from the residual by consuming the accepted KEM transcript/KDF certificate, and the materialized-sidecar PQ certificate carries those residuals through the accepted sidecar publication witness. This node still does not claim to mechanize ML-KEM, AEAD, RNG, global miner fairness, or simulator-based zero-knowledge security. The wallet ciphertext archive publication gate is now Lean/vector checked for contiguous indices and leaf-count bounds.",
-        "content_blake3": "9ffe80c0668726414303c982577a1d07a041b2f53b80427a5a7cb93934b42f06"
+        "content_blake3": "a59b4e49a7d6e000aa97dba582f35e426771fe86aa90cdc0c43bd6276683a849"
       },
       "falsification_cases": [
         {
@@ -1758,7 +1758,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for protocol-shielded-pool nullifier stage/import behavior, with focused independent protocol transition and consensus sorted-unique commitment oracles.",
-        "content_blake3": "6844342c1b522f54c31d71c4fc3345b9a7291304a40d8414f900a5b67a480cdd"
+        "content_blake3": "ebcacbc778551f3f443b7b90c1db5b2ac669289744d82128e7b40f12785c6b92"
       },
       "falsification_cases": [
         {
@@ -1881,7 +1881,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves deterministic two-tip ordering, selected-tip source/facts, and no-lower-work selection only. It does not prove PoW admission arithmetic, SHA-256 header-hash implementation equivalence, every network partition, timestamp edge case, fork-choice convergence/liveness, or long-range adversarial mining schedule.",
       "target_review": {
-        "content_blake3": "0ae9eb178318a4cb4f2db526ae8659e06759ed1459fa4c6aa372cb897563aa13",
+        "content_blake3": "937c0ce297a88ef48aaa69abaf49e47f48f5580212cde1adc1163463972e75c2",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for the deterministic fork-choice ordering helper, with the TLA+ finality model retained as bounded abstraction evidence.",
         "reviewed_at": "2026-06-06",
         "reviewer": "formal-core-operator",
@@ -4049,7 +4049,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for consensus and native supply accounting behavior. Scope is executable accounting only.",
-        "content_blake3": "01ea18ae10a515029af8310457de44dd93b9d0dffea3d23be2bf056fcce7f762"
+        "content_blake3": "879e007d38b89f279287fe7112a953db413af2d01f90897f5f276de8a407ddb5"
       },
       "falsification_cases": [
         {
@@ -4117,7 +4117,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-09",
         "notes": "Pending independent review. Previous internal assessment: Accepted as Lean theorem evidence plus generated Rust conformance vectors for the executable block-subsidy schedule. Scope is the schedule helper, not the economics of the schedule.",
-        "content_blake3": "a43924ddd49cfd3ece30a988e79177e6423b9e5936c8b6033e7ed4dc1e2da990"
+        "content_blake3": "d47887da86413ddbef2e724afb3f80d79b2d33e561b67c746242d2b456112ccb"
       },
       "falsification_cases": [
         {
@@ -4479,7 +4479,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks native coinbase accounting admission only. It does not prove encrypted coinbase note construction, coinbase ciphertext hash binding, transfer proof soundness, monetary policy economics beyond the current subsidy helper, full action payload validation, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "67d074a27ae703b4192a0756eecf9302b887b89de0fa923c7077a9d937401589",
+        "content_blake3": "1ccf488bdf9e85b0a5154bdf7f5dbe7bb6c3f69f1c79f49cfa22977a78a867ef",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native coinbase accounting admission. Scope is block reward admission policy, not encrypted note construction or monetary economics.",
         "reviewed_at": "2026-06-07",
         "reviewer": "formal-core-operator",
@@ -4575,7 +4575,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for decoded native coinbase reward-note payload admission. Scope is payload/public metadata binding after route/scope admission.",
-        "content_blake3": "f1f661ff164c789a4ad88c72271295cd45d37196aebccff200d9be3e6981997a"
+        "content_blake3": "12efbb97eb11b83d38db4fc04fe2073eae18b3d6c9457de55c06aafd81767688"
       },
       "falsification_cases": [
         {
@@ -4799,7 +4799,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native mempool and staged-proof byte-budget admission. Scope is resource-budget arithmetic, not RPC exposure safety or sidecar availability.",
-        "content_blake3": "f8b0433b7b5ab715b8d7d2846730b958a1fe23928e0d25d1989e55a3b0467ec0"
+        "content_blake3": "5eaab672b0ba45eb20b0f03d0e733e98154ed3ff805e405a4f22006a79933c68"
       },
       "falsification_cases": [
         {
@@ -5074,7 +5074,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native JSON-RPC admission. Scope is exposed RPC policy/range/cap gating, not RPC authentication or full handler semantics.",
-        "content_blake3": "22a6b5bd0f934d0e133e315f516e90a95ea890c2ac128c9c1ffeba9bf148b1e2"
+        "content_blake3": "ee36c1adc7deb1c168bfe8bc7f436ee6ecd0836f9beadc5669ce52ec45684aa2"
       },
       "falsification_cases": [
         {
@@ -5882,7 +5882,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node covers active native sync admission, exact locator/action-body large-block transport, response import/recovery, and the pre-allocation rejection of incompatible stored-record tags. It does not authorize the conditional SyncBlockChunk metadata-record protocol, infer validity from AnnounceTip, prove arbitrary postcard/bincode parser correctness, prove hash collision resistance, prove complete fork discovery or network liveness, bound allocator behavior, prove sled or filesystem durability, or prove complete native-node equivalence. Cross-file carrier-to-import wiring remains source review plus focused runtime evidence where the same-file binding checker cannot express it.",
       "target_review": {
-        "content_blake3": "297493665031800b0f3ed1008c01cacf61adb4cdc67c03347fdf8d64e284e45a",
+        "content_blake3": "1e9aa9d23090136e696ab45af33ab04793dd5092e6081981ec10ce29520f74ae",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus schema-v2 Rust conformance vectors for native sync response range, raw sync request/empty-response/pending-action ingress bytes, missing-block request range, zero-cap fail-closed behavior, saturating u64 edges, inbound response block-count rejection, bounded-request item-count facts for accepted outbound response ranges, served block_range publication facts, imported/stored-noncanonical/missing-parent/error outcome accounting, and progress-aware retry control. Missing-parent, all-known, and stored-side-branch no-progress cases block direct continuation; generated cases require either a changed well-formed recovery range or explicit deferred backoff, and production filters unchanged candidates before queueing. Additional implementation bindings and regressions require overwide block_range serving to remain capped before response publication, non-genesis canonical sync rows to decode action bodies and verify decoded action roots before publication, the final peer-visible range to pass the served-count/height/previous-parent/parent/verification table, local submit staging to precede pending-action broadcast, and peer-relay staging to precede rebroadcast. Scope is representative raw-byte ingress, semantic sync admission and retry control, peer relay staging gates, and canonical row materialization after decode, not full postcard parser correctness, full block validity, complete fork discovery, allocator behavior, transaction propagation liveness, or network liveness. Current transport authority is the exact locator/action-body carrier at tags 4 through 7; stored-record tags 8 and 9 reject before postcard allocation, AnnounceTip tag 10 is non-authoritative, and SyncBlockChunkAdmission is conditional inactive evidence only.",
         "reviewed_at": "2026-06-08",
         "reviewer": "formal-core-operator",
@@ -6033,7 +6033,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-08",
         "notes": "Pending independent review. Internal assessment: real Lean theorem evidence plus generated Rust conformance vectors for native block-template action admission and unconditional candidate retirement. Scope is the cheap local selection gate before mining work, not transaction-proof soundness or global miner fairness.",
-        "content_blake3": "45e984b2c8eeba810ab89083563b83ab97b95ce0070cc1d2961d64bb101227ba"
+        "content_blake3": "75c1f2ee37ddf47fa5b6abc6f0ab61ad54747ac0b4fcb9d6ce9428446d127340"
       },
       "falsification_cases": [
         {
@@ -6181,7 +6181,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-09",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native local mined-work freshness admission. Scope excludes work-template construction, pending-action replay, body commitment replay, supply accounting, and PoW threshold verification.",
-        "content_blake3": "83ddf2764f9789e348150933cbcad602ea3627e8c356302c3872691fcccb0642"
+        "content_blake3": "561d2aecb97163024f696342016c38d772e2da8fd869db5203fc8afa580d2684"
       },
       "falsification_cases": [
         {
@@ -6539,7 +6539,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks the explicit storage durability decision table and supported operation labels, and statically binds the direct mutation paths to the typed database barrier before publication or success. It records only lexical order plus focused-test evidence for grouped pending-action batch error propagation, and records graceful-shutdown flush-failure propagation as open. Empty fast paths perform no mutation and require no flush. The node does not prove sled implementation correctness, crash consistency, operating-system fsync semantics, disk firmware honesty, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "93f14bbcaedb0cc460c9bb6a117dd9f1f217ba0789385645a98f0493c47afe7b",
+        "content_blake3": "b4161c309a968d3dc7804ed82bf1140ea07ec75027c158f3e570d44ebf7178e9",
         "notes": "Pending independent review. Previous internal assessment: Accepted as Lean theorem evidence plus generated Rust conformance vectors for the explicit native storage durability barrier. Scope is the admission table and production wiring around supported storage-operation labels, sled transaction/write success, plus explicit database flush; it does not prove sled or operating-system crash semantics.",
         "reviewed_at": "2026-06-12",
         "reviewer": "formal-core-operator",
@@ -6841,7 +6841,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks the native atomic commit manifest table, including `CanonicalSuffixReorgCommit` with zero block-record writes over exact durable pre-stored suffix rows, the distinct `TipExtensionBatchCommit` chain-count write rule, and the exact zero-or-one equality between a source-present typed Poseidon2 V8 plan and the count produced after its transaction-local application. It source-binds the exact synchronous mined and canonical-suffix methods on the unique selected-library `NativeNode` to that helper and pins the selected runtime source bodies by ordered parsed-AST digest. The count claim does not enumerate the typed plan's exact rows, prove compiler/name-resolution equivalence, or prove the absence of arbitrary indirect post-helper row mutation; exact typed rows remain the plan/apply/readback contract. It also does not prove the source verifier or plan constructor, the suffix algorithm, operator/service reachability from the selected binary, deployed artifact identity, sled transaction implementation correctness, filesystem durability, OS fsync semantics, disk firmware behavior, row byte serialization correctness beyond existing codec gates, raw action replay equivalence, or complete native-node equivalence. The historical whole-index reorg source contains the transaction-local helper before shared-tree removal, but its closure-local call and older method signature are not accepted by the static binding checker; checker-level call binding, result propagation, and dominance for that path remain an explicit residual supported by focused rollback and restart tests.",
       "target_review": {
-        "content_blake3": "57514d0ebecf331e117d6db8e9e21a5ceae87e2c7e0910128b53a95ca63d1bc3",
+        "content_blake3": "3adf8225be754d9d7749ff5dd826cbe1ac5514b26f7aed270cac2da971560eb8",
         "notes": "Pending independent review. The Lean table and generated vectors include the active canonical-suffix kind with exact durable pre-storage and zero canonical-transaction block-record writes, the separate tip-extension chain-count rule, and exact zero-or-one Poseidon2 V8 source/application count equality. Rust derives the actual count only after the raw typed apply inside the shared transaction. Exact typed-plan rows remain source-verified by the separate plan contract and are not enumerated by this manifest theorem.",
         "reviewed_at": "2026-06-12",
         "reviewer": "formal-core-operator",
@@ -6996,7 +6996,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks native mining work-template admission only. It does not prove pending-action preview correctness, action validity, header preimage hash security, PoW seal search or liveness, import-time body replay, supply accounting, storage durability, fork-choice convergence, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "30c756797a2ea107c16bfeae32026414e5547fa2259b22cbd2fff7428e8dcdf9",
+        "content_blake3": "84a3f0996b352f4d0121826cc50b4a95538780f1334241e279ac5f083f2897ec",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native mining work-template admission. Scope excludes pending-action preview, body replay, supply accounting, PoW seal liveness, and full native-node equivalence.",
         "reviewed_at": "2026-06-09",
         "reviewer": "formal-core-operator",
@@ -7071,7 +7071,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-09",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native recursive artifact context admission. Scope excludes tx-leaf proof soundness, recursive proof cryptographic soundness, body replay, and full native-node equivalence.",
-        "content_blake3": "da8e536a4a7d5af6c3e9984949343fb9cdf8b2c798e55421279ac5617bd5b352"
+        "content_blake3": "78714cd59641b6733e67a0c24bdc62d1efe0270ea523ce727d9a887b3b8d896b"
       },
       "falsification_cases": [
         {
@@ -7434,7 +7434,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native DA sidecar upload admission. Persisted staged ciphertext reload is tracked separately by native.staged-ciphertext-reload. Scope is upload admission policy, not parser correctness, RPC exposure safety, or sidecar availability.",
-        "content_blake3": "88b371a6c2df44101f9b9cb44f5bdeedf09eb189c50733e98c35af5729a8a3dc"
+        "content_blake3": "3b4396d0f891878fee9c9dfeef8ab30658221f71fd349c6f250f1937f41a6150"
       },
       "falsification_cases": [
         {
@@ -7616,7 +7616,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and checks pre-heavy decision-table composition and active locator/action-body bounds. It does not activate the conditional stored-record chunk protocol, bound every allocator or transient decode peak, prove arbitrary parser internals, establish cryptographic soundness, prove persistence durability, or prove complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "2bb922598a37d275a6ea953fe4f08bb30f2fe8fa0c82aabf600c67221fe17790",
+        "content_blake3": "1130f1e347fa29444170d15a745ba6215a9d0c96d40cf86c4450a94c2835f8b8",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a Lean composition over existing theorem-backed admission surfaces, now including strict action-request projection facts, transfer payload, candidate artifact, tx-leaf artifact parser/resource bounds, receipt-root schedule/resource facts, and pending/block action parser resource caps. The block-action cap slice is backed by a production pre-decode helper and Rust regression; tx-leaf and receipt-root resource projections are backed by generated superneo-hegemon vectors. Active oversized-block resource authority is BlockBodyChunkTransportAdmission over the exact locator/action-body carrier. SyncBlockChunkAdmission remains conditional and inactive because tags 8 and 9 reject before postcard allocation.",
         "reviewed_at": "2026-06-15",
         "reviewer": "formal-core-operator",
@@ -7946,7 +7946,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks native pending-action startup key/hash reload behavior. Blueprint bindings and regressions additionally require startup to reject persisted arrival-time-only semantic duplicates and semantically re-admit loaded pending actions against the loaded canonical state, bridge replay set, staged ciphertext metadata, staged proof cache, and mempool resource budgets before NativeState publication; they also require canonical reorg pending resurrection to revalidate the final pending set before atomic reorg persistence or in-memory publication. It does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash or pending_action_semantic_hash derivation/security or implementation equivalence, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "b6c1357f8b023f74efe28c36e79e6001f952c9f1c78cb208985ebfc9b197c686",
+        "content_blake3": "81f3a68f3a6b92f3fe5f2fc4e013af154b1fb0f145a9f5921dd7ee5b426a8b16",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native pending-action startup key/hash reload. Semantic startup re-admission and canonical reorg pending resurrection are covered by Rust implementation bindings and focused regressions; sled atomicity, filesystem durability, SCALE decode equivalence, and pending_action_hash cryptographic security remain outside Lean.",
         "reviewed_at": "2026-06-11",
         "reviewer": "formal-core-operator",
@@ -8030,7 +8030,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-10",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for per-entry native staged ciphertext startup reload. Scope is the deterministic admission/drop table over observed persisted entries; sled atomicity, filesystem durability, and ciphertext-hash cryptographic security remain outside Lean.",
-        "content_blake3": "e659e54caef1e43f8fefab0110748a45b457c77080808c293ae44bbdee7a69a4"
+        "content_blake3": "ce6b44b1310a50dc5de9a151e2b86c9f1267d92b07938872f643aa471644785e"
       },
       "falsification_cases": [
         {
@@ -8137,7 +8137,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-11",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for per-entry native staged proof startup reload. Scope is the deterministic admission/drop table over observed persisted proof-cache entries, including native tx-leaf public-field binding-hash equality with the persisted key; sled atomicity, filesystem durability, full proof byte parser correctness, cryptographic binding-hash security, and native tx-leaf proof soundness remain outside Lean.",
-        "content_blake3": "ec962cf7e4f9560b13a17f13d2e36a56ab8fe2c1c348514290ee86790acb6e24"
+        "content_blake3": "8e4e0a305e7997c922a3bf32a262c7a70d32ac0d642c69edbbc6bb8966aac617"
       },
       "falsification_cases": [
         {
@@ -8227,7 +8227,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Internal assessment: real Lean theorem evidence plus generated Rust conformance vectors for historical candidate-artifact decoding, explicit custom proof-kind rejection, bounded resource projection, and representative raw SCALE wire exact-decode conformance. Active candidate submission and template selection are retired.",
-        "content_blake3": "a62444968213022e0e143d62d1e90a00fe96111b50cd394693961965dcec5a98"
+        "content_blake3": "2dc325295618535fc671eb242f8fd4efbf13d612881dbe7da26047f7b18bb717"
       },
       "falsification_cases": [
         {
@@ -8299,7 +8299,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Retained research evidence for the retired recursive candidate format. No active production caller remains.",
-        "content_blake3": "735950b14a007ea70e1b137e02df422957ae7b2fe0a0b2c3d0a8ffb23807b8f5"
+        "content_blake3": "a07a9238700b88e3bece90cdaca747c88d2461c4bebe3894cec5968e9fab57c0"
       },
       "falsification_cases": [
         {
@@ -8569,7 +8569,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks deterministic native block-artifact/action equality gates, including action-fee equality, stablecoin public payload equality, active-count agreement, tx balance-tag projection, receipt statement/public-input/proof digest agreement, backend/profile agreement, and payload-hash agreement. The blueprint/regression gate requires native block-artifact verification before mined commit/publication, announced side-branch persistence or reorg, and canonical replay memory application, and requires sidecar ciphertext bytes used for artifact tx construction to pass the same canonical materialization checks used by replay planning. It does not prove SCALE decoder correctness, ciphertext hash derivation/security, DA-root hash security/equivalence, tx statement commitment hash security/equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, candidate selection fairness, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "10305887473e5139d6c0b9cd13ea624293c8f6c834e80311b266d06355526e3b",
+        "content_blake3": "93fd56c7a10d61e123cb17d3f9bded75133e8d266c920ddd40804ab4ef660b46",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for deterministic block-artifact/action equality gates. Scope is binding admission after decoding and computed production predicates, not recursive proof cryptographic soundness.",
         "reviewed_at": "2026-06-07",
         "reviewer": "formal-core-operator",
@@ -8620,7 +8620,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a research-only cross-boundary composition. It narrows the native tx-leaf/action to canonical statement/proof facts assumption-free and to the accepted-transaction relation under deployed verifier soundness; it does not certify the backend proof system.",
-        "content_blake3": "d17f858a07e8108243880b02f95f8ff7df77086bccd18162b1218e1fbc751be5"
+        "content_blake3": "e54cafe6c86d66ae733ddbc93b6de568e0679a98c976c4e406f0f6dd264cf3d9"
       },
       "falsification_cases": [
         {
@@ -8709,7 +8709,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for the native transfer-key ordering predicate, accepted-transfer preimage construction, and public non-transfer semantic-hash preimage construction. Scope is ordering and local-arrival-insensitive preimage construction, not hash security, fairness policy, or full payload validation.",
-        "content_blake3": "82fb5ec4ac400c6f60087987f7115f73fe8b05981f8865d34a69c7a449ac7f36"
+        "content_blake3": "721640508bbcceeb4d6d499be3d6831bea908192d5ffe54bcb2b2771d6dbf9d4"
       },
       "falsification_cases": [
         {
@@ -8789,7 +8789,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native block action hash/count admission. Scope is the cheap admission table before action semantic validation.",
-        "content_blake3": "eef075badb5562631dc15e377feface80f54c0f784beb021483336038c863ed1"
+        "content_blake3": "9c34252288c535114f45ec9c904e0b6d00b7a2f01499bb6b46853aea7a8531df"
       },
       "falsification_cases": [
         {
@@ -8940,7 +8940,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks native action-root preimage bytes only. It does not prove BLAKE3 collision resistance, pending_action_hash derivation, SCALE encoding implementation equivalence, full block action payload validation, transfer-key ordering, tx leaf proof soundness, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "8a0f7c929dbbd92e648536c5438c10546cf8b4bedd70b9874b911c58047e0c62",
+        "content_blake3": "0925672d8ed093a1d19f10c2485bb7b9ab1d974b6f01090e33e5d6988fccccca",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for the native block action-root transcript grammar before hashing. Scope excludes BLAKE3 security and full action semantics.",
         "reviewed_at": "2026-06-09",
         "reviewer": "formal-core-operator",
@@ -9275,7 +9275,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks the pure native action-state effect planner called before pending root preview, memory replay, sled-backed import, and canonical index rebuild mutation. Canonical-state and bridge replay reload binding are covered by separate Lean-gated startup admission nodes. It does not prove BLAKE3 action/hash security, SCALE decoding correctness, bridge receipt soundness, tx leaf proof soundness, commitment-tree hash security, storage atomicity under I/O failure, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "f8a7e20917a81a7134970dc1312e07bf975e4a47ed78f92ac359c77e2aad21fe",
+        "content_blake3": "05471a98d0d96bd69f6eb5297484841b3682d9634114ca10bdf1ad70e97cceb3",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native action state-effect planning before root derivation or mutation. Canonical-state and bridge replay reload binding are separate Lean-gated startup admission nodes. Scope excludes storage atomicity under I/O failure and full action semantics.",
         "reviewed_at": "2026-06-10",
         "reviewer": "formal-core-operator",
@@ -9410,7 +9410,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks native announced-block pre-PoW admission only. Blueprint bindings additionally require propagation of native metadata projection, whose miner-identity and PoW checks are modeled by separate claims. It does not prove PoW hash-threshold validity, light-client header verification, body commitment replay, action payload validation, fork-choice, sync liveness, wall-clock correctness, storage atomicity under I/O failure, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "5987cd4512be7f3c9c301804685cb404cd77d0c09141b26f3834eaf89acdd87d",
+        "content_blake3": "414b12528f303a95b369918a4e58ea10b88a9a48731584db3472057e79c49fd0",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native announced-block pre-PoW admission. Scope excludes PoW cryptographic/hash-threshold verification and body commitment replay.",
         "reviewed_at": "2026-06-11",
         "reviewer": "formal-core-operator",
@@ -9545,7 +9545,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks the deterministic native canonical block-index startup reload admission and missing-genesis-marker repair table. Rust type and call bindings establish reuse of one `ValidatedCanonicalChainSnapshot` by bridge replay validation, header-MMR reconstruction, and replay/index repair, but Lean does not prove those consumers' complete algorithms here; their own claims and regressions remain necessary. It does not prove sled atomicity, filesystem durability, bincode implementation correctness, hash collision resistance, MMR hash correctness, full historical replay correctness, state-root reload equivalence, consumed bridge replay equivalence, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "c387c2b9a9900c684ae65dca3fcbbfefc0d787dfe79ad0021e9bbb02394eaad1",
+        "content_blake3": "cc3d6af628e417c5d00d5d3a6d02e22702d427387371152be731284d968bc500",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native canonical block-index startup reload. Scope is the deterministic admission and repair table over observed persisted metadata; sled atomicity and filesystem durability remain outside Lean.",
         "reviewed_at": "2026-06-11",
         "reviewer": "formal-core-operator",
@@ -9621,7 +9621,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-11",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native canonical commitment/nullifier startup reload. Scope is the deterministic admission table over observed persisted state; sled atomicity, filesystem durability, and hash security remain outside Lean.",
-        "content_blake3": "b96fdea9ce3baa400988787aaa518aacecf0d3e1149128b46adefcaa34eba884"
+        "content_blake3": "c53132576ab9e5c71e928ca086744c8be612f5ed2e027889e0af36e20553e57b"
       },
       "falsification_cases": [
         {
@@ -9712,7 +9712,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-11",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native inbound bridge replay startup reload. Scope is the deterministic admission table over observed persisted replay state and replay-derived canonical history; sled atomicity, filesystem durability, action decoding correctness, and replay-key hash security remain outside Lean.",
-        "content_blake3": "224eab879e2cfe89f90b71a5825b1080c0b7309fc49f7c9f447733e29f0bfa39"
+        "content_blake3": "03cf000757eb0fbe31092c4cb0053753ba8f387c2e39dad53325dbbbe03aaa99"
       },
       "falsification_cases": [
         {
@@ -10772,7 +10772,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks strict native codec admission, current-only native metadata decode with explicit retired-format rejection, concrete PendingAction SCALE wire conformance for no-candidate actions plus recursive-block and bounded receipt-root CandidateArtifact::Some lanes, concrete MintCoinbaseArgs SCALE wire conformance, concrete ShieldedTransferInlineArgs SCALE route-payload conformance for bounded empty, one-output, and stablecoin-some inline lanes, concrete ShieldedTransferSidecarArgs SCALE route-payload conformance for bounded empty, one-output, and stablecoin-some sidecar lanes, concrete OutboundBridgeArgsV1 SCALE route-payload conformance, concrete InboundBridgeArgsV1 SCALE route-payload conformance, concrete BridgeVerifierRegistrationV1 SCALE route-payload conformance, an independent native metadata bincode mutation-oracle corpus, a bounded codec-canonical publication certificate over accepted route-wire witnesses, and theorem-level production-binding projections for route exact decode/full consumption/canonical re-encode plus pre-heavy ordering. It does not prove postcard, parity-scale-codec, or bincode parser implementation correctness for all arbitrary bytes, arbitrary custom CandidateArtifact payload grammars, arbitrary stablecoin policy semantics beyond these wire fixtures, BLAKE3 collision resistance, sync networking liveness, full action payload validation, tx leaf proof soundness, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "cf32efadaf3770be6603cf7e9a6086580e2d11059ebe6cbcc9debd97f0284eb3",
+        "content_blake3": "97f962ac718a2ac9391fc93c93efbf2bfbfe4cc50ccd91a1316b720fed9a29dc",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for strict native codec admission at sync, metadata current-only with explicit legacy rejection, block-action decode boundaries, concrete PendingAction wire lanes, concrete MintCoinbaseArgs route bytes, concrete ShieldedTransferInlineArgs route bytes, concrete ShieldedTransferSidecarArgs route bytes, concrete OutboundBridgeArgsV1 route bytes, concrete InboundBridgeArgsV1 route bytes, and concrete BridgeVerifierRegistrationV1 route bytes. The codec-canonical publication boundary now packages accepted exact decode and canonical publication facts on one witness, and the bounded codec gate ties concrete PendingAction, MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs, OutboundBridgeArgsV1, InboundBridgeArgsV1, and BridgeVerifierRegistrationV1 wire witnesses to that review surface. The new production-binding projections expose route-wire exact decode, full consumption, canonical re-encode, current-format acceptance and legacy-rejection ordering, and pre-heavy ordering before expensive work. Scope is exact parser consumption and count/source selection, not parser implementation correctness. Native sync codec authority now distinguishes active exact-carrier tags 4 through 7, fail-closed stored-record tags 8 and 9 before postcard allocation, and non-authoritative AnnounceTip tag 10. Retained old-layout Lean vectors are conditional evidence only.",
         "reviewed_at": "2026-06-07",
         "reviewer": "formal-core-operator",
@@ -10890,7 +10890,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-12",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a bounded conformance/vector-and-wiring hardening slice for the native RPC action projection boundary. This does not prove complete SCALE parser implementation correctness or the later block replay semantics.",
-        "content_blake3": "3a8d3826d54bb40fb0ecea7eba5efcbd9ae0d2d1ef82f4464cd3897803256f1f"
+        "content_blake3": "34a6dd78f85cc08e6d395b6bfa10cb13eca01401e569a4ce223dead8c9377d6c"
       },
       "falsification_cases": [
         {
@@ -11019,7 +11019,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native action route/scope admission. Scope is the cheap route and public metadata-shape table before deep action payload validation.",
-        "content_blake3": "ee6e303330d82b7bc774db0210411ea92b80485b159585699ce45859f4448d17"
+        "content_blake3": "2154aae6ea35b611efb03288ec777508f2a35deb28f04f175df653de88520c90"
       },
       "falsification_cases": [
         {
@@ -11393,7 +11393,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for decoded bridge action payload admission and raw BridgeMintPayloadV1 exact-decode-to-policy conformance. Scope is cheap pre-receipt payload admission and verified-receipt mint-payload handoff; external receipt verification remains separate and RISC Zero remains disabled/fail-closed in the release native node.",
-        "content_blake3": "bc28b84e0b5b5787c5a7efb78fcaaed72382ef90434a297d3741676bf4d801b5"
+        "content_blake3": "b31d3750c43ebc5cee29bcf559ed35bd1e53bf7e6b5fde76c5494c1e29de93f7"
       },
       "falsification_cases": [
         {
@@ -11511,7 +11511,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-14",
         "notes": "Pending independent review. Previous internal assessment: Accepted as Lean theorem evidence plus generated Rust conformance vectors for deterministic post-verifier bridge receipt output admission. Scope is the decoded output gate, not receipt cryptographic soundness.",
-        "content_blake3": "fbd517115a1da03b0253f41d1d957fa92cb0c3c4ba569a9b834ab410f5e51165"
+        "content_blake3": "7616e277c0558930c3a5832aa27617685102abe10aece3cbdb3b83a3a6366277"
       },
       "falsification_cases": [
         {
@@ -11591,7 +11591,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-11",
         "notes": "Pending independent review. Previous internal assessment: Accepted as Lean theorem evidence plus generated Rust conformance vectors for bounded latest-message bridge witness backscan selection. Scope is deterministic scan selection/rejection before the resolved block's export-admission gate.",
-        "content_blake3": "c4577768fc3a9d2f35fd4abcbd75f7bd3b52e5874bb30a09f57b44c1f83cb8a9"
+        "content_blake3": "e4114328801979180de0bbb10c04f772836fade7313d97de7cf7c433344d7c3f"
       },
       "falsification_cases": [
         {
@@ -11691,7 +11691,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-11",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native outbound bridge witness export admission. Scope is the deterministic native export gate and confirmation-count output before cryptographic MMR/FlyClient/light-client soundness assumptions.",
-        "content_blake3": "d26fdcd31d455cff4c552e70ed6bba1e25041beabf18775a0a64909063a1c61f"
+        "content_blake3": "bf85033f833d6b19e7c834be557de8e6c481dfcf8b3c197b2cd5e733c22d6db4"
       },
       "falsification_cases": [
         {
@@ -11850,7 +11850,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-17",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for decoded transfer payload admission and inline ciphertext bounded-resource projection. Scope is the decoded payload/resource table after the existing submit-action public_args cap and exact SCALE decode, before nullifier replay, anchor-state, and tx-leaf proof verification.",
-        "content_blake3": "12d6ee1aeea0a183b2a7ced4eee957ebac30e8881755ebda99a534959f86b44f"
+        "content_blake3": "4ecb517f0f25260a707b59b45b200978f5ac8a0e32ba3764866a09a6cd518b39"
       },
       "falsification_cases": [
         {
@@ -11983,7 +11983,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native transfer state admission. Scope is the cheap post-payload transfer state table before tx-leaf proof and recursive artifact verification.",
-        "content_blake3": "f2580d35d27d869c2224500e9f44cb922461ab4c9ffe4c62a45779271522c793"
+        "content_blake3": "de32336ee5ef1e25589fa0a30e4aee48ba96b3563417f4bef0b2c99abd9da6c2"
       },
       "falsification_cases": [
         {
@@ -12248,7 +12248,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks decoded native block-action validation composition only. A separate production binding and regression require arrival-time-insensitive semantic duplicate rejection before transfer/replay state mutation. It does not prove SCALE decoder correctness, BLAKE3 pending_action_hash or pending_action_semantic_hash security or implementation equivalence, BLAKE2 transfer-key derivation, bridge payload-hash security, ciphertext hash derivation/security, bridge receipt soundness, native tx-leaf proof soundness, recursive proof soundness, storage atomicity or durability, PoW threshold validity, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "db0cb3b25933f0a7e2184c5d94a23844c883e084145da5e3aeb7a6a340c01416",
+        "content_blake3": "2bf85db48e0563e2f0eb192b904c85961ecc51d58d921fe4de1a524402ee65f0",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a decoded block-action validation composition boundary over production-derived route, payload, replay, order, and transfer-state predicates. It narrows the gap between raw decoded actions and block replay/accounting but is not a complete native-node equivalence proof.",
         "reviewed_at": "2026-06-11",
         "reviewer": "formal-core-operator",
@@ -12296,7 +12296,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a Lean composition theorem that names the decoded-action-validation to replay-publication boundary. The stronger shared-actions entry point derives row/count agreement from accepted wire replay projection, and the generated conformance gate binds the production helper composition and rejection order. Production construction from arbitrary raw bytes remains explicit until deeper native-node parser refinement is mechanized.",
-        "content_blake3": "073985eaa0843011bd5a6ca496e6aa35e310c91865381070589e7b923b3f7bc8"
+        "content_blake3": "780360ffdef0a5bc9610eef3530237cac9587a0f25d9c62a0b853d3cb59e8a47"
       },
       "falsification_cases": [
         {
@@ -12358,7 +12358,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a theorem-level sync/raw-batch publication composition. The stronger entry point derives decoded-row/raw-replay agreement from accepted wire replay projection, while arbitrary-byte parser internals and production construction of that projection remain residual implementation-equivalence work.",
-        "content_blake3": "e9b3ee07fee476c5ecf41eaa7ceae1d3ff6fb5f71bb7a7aa67463f764815d0ec"
+        "content_blake3": "ac71b7dc7fe5ad7445eef1db39e25f259fb0f3c3177ee23527bfb5ce226ca759"
       },
       "falsification_cases": [
         {
@@ -12475,7 +12475,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native derived block commitment admission. Scope is equality of already-derived roots, counts, header history, and checked supply digest.",
-        "content_blake3": "d75f5c027f0b4e9d47d326c684b421c4ab3c0ae2d0b3e3bd3e89dc0381443005"
+        "content_blake3": "40e79564b570ba2f45c0dc740d17bf423b496917b24ee37ac11597d81dd8027f"
       },
       "falsification_cases": [
         {
@@ -12783,7 +12783,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks ordered action-stream planning over already-decoded action summaries. The blueprint/regression gate requires compact/hash-projection canonical stored reorg to finish semantic rebuild planning, exact-check and durability-flush the full winning suffix as pre-stored rows, and then execute `CanonicalSuffixReorgCommit` with zero block-record writes before in-memory publication. The separate `TipExtensionBatchCommit` fast path retains chain-count block writes. Startup canonical-index repair must plan before its atomic sled repair commit. Nonwinning announced side-branch block-record reload is covered separately by the native block replay-refinement implementation-binding gate. It does not prove SCALE decode equivalence, pending_action_hash security, nullifier derivation, inbound replay-key derivation, bridge receipt soundness, commitment-tree hash security, sled transaction implementation correctness, filesystem/fsync durability, full action payload validity, tx proof soundness, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "37804a62bd7f7d6c1ee418c02b8bf1a289aeafb25a6ad885625e338093844fc5",
+        "content_blake3": "5f2f9818db91d7525a35e723d845e3106b5cbc2f9dd0ab56a90951a3cebd14fa",
         "notes": "Pending independent review. Previous internal assessment: Accepted as Lean theorem evidence plus generated Rust conformance vectors for ordered native action-stream planning. It narrows the multi-action replay gap; scope excludes raw action decoding, cryptographic derivations, storage durability, and full native-node equivalence.",
         "reviewed_at": "2026-06-11",
         "reviewer": "formal-core-operator",
@@ -12870,7 +12870,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks planned-start application over already-decoded action commitment counts and planned starts. It hardens release behavior by replacing debug-only planned-start assertions with propagated errors and by making in-memory commitment application fail closed before live-state mutation when the whole batch cannot append. It does not prove SCALE decode equivalence, full PendingAction field projection, ciphertext materialization row values beyond the separate wire-replay projection gate, tx-leaf proof/artifact binding, commitment-tree hash security, sled transaction correctness, filesystem durability, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "cb0a783c7944d01c224e0847ae06119421d3733874769ab77c53dd9be237173a",
+        "content_blake3": "3b1d3bcd95af5d6b90ae688a0689ebbb41af449b9f7b6d1a84de28cd8429d0b9",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a narrow Lean/vector/release-regression implementation-equivalence slice for applying action-stream planned starts. The production memory-apply path now also has a near-full-tree atomicity regression proving commitment batch overflow rejects before live tree/nullifier/pending mutation. Row-value projection is covered separately by native.action-wire-replay-projection-admission; full raw SCALE grammar and complete native-node equivalence remain out of scope.",
         "reviewed_at": "2026-06-12",
         "reviewer": "formal-core-operator",
@@ -12951,7 +12951,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks decoded action wire-to-replay projection for ciphertext row hashes/sizes and inbound bridge replay-key equality before replay rows are derived. It does not prove SCALE decode equivalence, complete raw PendingAction field projection, BLAKE3 ciphertext-hash security or implementation equivalence, bridge replay-key hash security/equivalence, bridge receipt soundness, tx-leaf proof/artifact binding, sled transaction correctness, filesystem durability, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "f0bbb85e580ba87049f22a0fe0720f90e51984f97443bbcf087b8a5569fed8d3",
+        "content_blake3": "b2a7941ef8fdce01a53a7e77801c97ece66566e1487e8a1ed7cb78a0c23ef229",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a Lean/vector/release-regression implementation-equivalence slice for decoded action wire-to-replay row projection. Scope excludes raw SCALE grammar, hash-function security, bridge receipt soundness, and complete native-node equivalence.",
         "reviewed_at": "2026-06-12",
         "reviewer": "formal-core-operator",
@@ -13007,7 +13007,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a Lean composition slice over already production-bound DA, sidecar, artifact, semantic, wire projection, projected replay, and raw-decoded projected replay predicates. Scope excludes arbitrary raw byte parser equivalence, DA availability, hash security, recursive proof soundness, and complete native-node equivalence.",
-        "content_blake3": "1de3aee81afded2b6244cdf7c6a43a774e26fc02697fe66983b1c1ed1304062c"
+        "content_blake3": "6a2abfb3688a4d2f26c7c24375868aa59816695d8abf5816ef5b1bead0db6e04"
       },
       "falsification_cases": [
         {
@@ -13073,7 +13073,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a Lean composition slice over already production-bound raw ingress, sidecar reload, transfer-state, DA binding, and projected replay predicates. Scope excludes full parser byte refinement, DA availability, hash security, proof soundness, and complete native-node equivalence.",
-        "content_blake3": "e3fe1a303e700a392c6cfb64e012c5d28bbab5ce7d057c9b26803b42dfddb2a8"
+        "content_blake3": "7ebd5bd995f2733f73bc01a76b67bbdc76d689a822b592f7fa43aa17cc986008"
       },
       "falsification_cases": [
         {
@@ -13144,7 +13144,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean composition over already production-bound raw-ingress sidecar replay, pending-action byte publication, canonical publication, and native tx-leaf/canonical statement artifact predicates. Scope excludes arbitrary-byte parser internals, cryptographic soundness, DA availability, proof soundness, and complete native-node refinement.",
-        "content_blake3": "ca95bc8a4b458ef11a36c021006c2d120cf4e5dfa2c59c27a179c1c1d6653e2d"
+        "content_blake3": "78c96e5015787bcf8a32e9852a7b5d82c0f1c24a56801bedbd544db22403bb12"
       },
       "falsification_cases": [
         {
@@ -13205,7 +13205,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean composition that names the pending-action parser/publication replay-row binding, validated-row boundary, and ordered field-row projection surface. Scope keeps arbitrary raw parser internals explicit.",
-        "content_blake3": "0fea0b654bff3e59c260380532c01452a2b5e606308c5530ec561b2e1455037c"
+        "content_blake3": "1a9b08cd5590cd00e1ecd90cdad5b020c10262fdd991228905f7fa68ae6a94bd"
       },
       "falsification_cases": [
         {
@@ -13281,7 +13281,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean parser-shape/projection composition over the existing tx-leaf artifact parser, tx-leaf canonical surface, pending-action publication, raw-ingress publication, and explicit deployed verifier boundary predicates. Scope keeps the full parser-to-canonical vector projection, proof soundness, hash security, and complete native-node refinement explicit.",
-        "content_blake3": "667cc8c630e0372cbeda264f8d957bacd54e16e4644be8e087156be131a5e6f9"
+        "content_blake3": "e878ae1c940349787b3982683175dc1cd7dca3594e58e4f6329f1680bd72e769"
       },
       "falsification_cases": [
         {
@@ -13364,7 +13364,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean composition over raw-ingress pending-action publication and existing transfer no-theft/input-slot authorization boundary predicates. Scope keeps deployed-verifier soundness explicit and excludes arbitrary-byte parser internals, cryptographic soundness, wallet custody, and complete native-node refinement.",
-        "content_blake3": "e61ae842c9fcd1d141da84135e8804f054c5e4e45cddce2106a57413350d5f55"
+        "content_blake3": "652326fa27feecb860ef64c017ceab5d232bbc40feb8f2317cd87d01218c1b20"
       },
       "falsification_cases": [
         {
@@ -13445,7 +13445,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean composition over raw-ingress pending-action publication and existing bridge mint/replay safety predicates. The production review certificate co-witnesses abstract mint/replay policy acceptance with inbound receipt admission, native backend review preconditions, explicit external PQ receipt verifier soundness, authorized asset delta, final canonical replay membership, and final duplicate rejection. The release-disabled theorem family proves the current release RISC Zero verifier cannot feed accepted receipt-mint policy publication when the policy receipt bit reflects that gate. Scope excludes arbitrary-byte parser internals, external receipt soundness, cryptographic soundness, DA availability, and complete native-node refinement.",
-        "content_blake3": "e4359acaa43e1ff52fd388092497c06ece4921cd4938c871d87a6bfc468fe3b0"
+        "content_blake3": "c994d91965a7031c9106e94c83c2a3e6b4f7a89905e3b851db25f91bc1b07f0a"
       },
       "falsification_cases": [
         {
@@ -13861,7 +13861,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks the composed replay/accounting helper now called by native mined-block import, announced-block import, explicit-chain canonical branch replay, and each stored-block replay used by canonical sync tip-extension batches over ordered decoded action summaries, materialized inline/sidecar ciphertext counts, checked native supply advancement, and block commitment predicates. The direct stored-block binding checks replay refinement before legacy artifact verification and memory application; outer sync loop-to-transaction/publication composition remains conditional integration evidence because the static checker cannot establish dominance across that loop. The blueprint/regression gate also requires a connected nonwinning sync suffix to propagate compact/hash-projection ancestry plus suffix streaming replay before selective missing-record Batch persistence, binds nonwinning announced side-branch persistence through a named block-record helper, checks reload without canonical-height replacement, and covers a combined disabled-inbound sidecar/nullifier/bridge-replay reorg candidate failing closed before publication. It does not prove SCALE decoder correctness, sled Batch or transaction implementation correctness or atomicity, filesystem/fsync durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full raw-action native-node replay equivalence, replay correctness outside the production-bound helpers, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, positive inbound bridge mint publication while the release path is disabled, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "f6e7fdbf4e9bdfb2d598815dc74bf6990b5864005d2bcf1269072c11a5fdf59b",
+        "content_blake3": "fafb9b1c9aca25bf82fc758bad75057a1973a4c2d30a543708ab6b96df6d3b50",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a compositional Lean refinement boundary over existing production-derived predicates. It narrows the gap toward end-to-end no-counterfeiting but is not a complete native-node equivalence proof.",
         "reviewed_at": "2026-06-11",
         "reviewer": "formal-core-operator",
@@ -13948,7 +13948,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for protocol-kernel bridge encoding and replay helper behavior. Native persisted replay reload canonical binding is separately covered by native.bridge-replay-reload.",
-        "content_blake3": "abfe1fdc3287e3805659adf0213bd6bcf073878145240cb4788cf945f6ea76c3"
+        "content_blake3": "91263b82b99dd608193925ce1f78b37da7891f1f9ceb370c7eb478748ad09134"
       },
       "falsification_cases": [
         {
@@ -14309,7 +14309,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a fail-closed residual-risk node; it is not production-eligible bridge receipt acceptance.",
-        "content_blake3": "a3eb5cb7ed40575d10af0d9e21c32bcf6a59726843728355196c4e06a669e73b"
+        "content_blake3": "4badc5c933cf166518eff565e6186d2324fc386185bc62ba09f54b90274a072b"
       },
       "falsification_cases": [
         {
@@ -14452,7 +14452,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a non-production implementation-equivalence refinement across existing Lean action-stream, action-plan, tree-transition, accepted-ledger replay, and raw projection kernels. It now includes a raw-decoded ledger/tree replay lift, a Lean-vector-checked production append-transition certificate gate, a focused state-merkle independent append/path oracle, and an accepted raw-ingress append-publication surface whose append-summary indexes are derived from the executable action-plan row-start model and tied to canonical commitment-row indexes. It does not yet claim complete commitment-tree integrity.",
-        "content_blake3": "d023e95099175c4ab9b92a30a535b0b9cf2669261e26c9a80dc0daf64409e9d2"
+        "content_blake3": "70bbc72ec5eabbec6b424c454c370fced6c65b8ad27a1c394cd95972b5701062"
       },
       "falsification_cases": [
         {
@@ -14584,7 +14584,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean projection surface over existing raw-ingress pending-action tx-leaf publication facts. Parser, hash, statement-hash, and native tx-leaf proof-system soundness remain explicit assumptions.",
-        "content_blake3": "c108eacd5340a2a80768967e9125c30c27887239f1b7fbb1a8e0b7be0078618d"
+        "content_blake3": "f8016da22adf89dbb68fe98fecd7292a5edc257dc934b9a4a639f331b184171f"
       },
       "falsification_cases": [
         {
@@ -14636,7 +14636,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean composition over raw-ingress sidecar and canonical publication predicates. DA availability, parser internals, hash security/equivalence, storage durability, proof soundness, and complete native-node equivalence remain explicit assumptions.",
-        "content_blake3": "b24e657587c4407f9fff65b1dc3dcea86daf90c6729fa495d36c0379cf5341ca"
+        "content_blake3": "d2f892c4e024d2198deacd3a817d2ffbba41933b78f103efd76f67bfa1ed6e6f"
       },
       "falsification_cases": [
         {
@@ -14703,7 +14703,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost top-level review surface over existing accepted parser/publication/projection predicates plus ordered field-row projection evidence, exact commitment/replay/ciphertext content binders, the accepted-block admission-safety certificate, and the canonical admission-safety certificate with explicit residuals. Parser internals, projection assumptions, hash security, proof soundness, DA availability, and complete native-node refinement remain explicit.",
-        "content_blake3": "95a7c7b7474ac4fd4e04d8dc4da28145ceb87423a6d2939fbf4f188bc1985c17"
+        "content_blake3": "43486c3383ff6567b1081d90c7057ccf6c56b9dad5af3d080dee1978a111d238"
       },
       "falsification_cases": [
         {
@@ -14838,7 +14838,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean review surface over raw-ingress full-byte publication, production decoded/validated/materialized/wire projection facts, and tx-leaf ciphertext binding facts. The production replay path now also materializes committed sidecar ciphertexts from the canonical archive after staged DA cleanup while rechecking hash and size. The successor materialized consensus DA-blob refinement specializes row-to-Transaction::new and DA-blob equivalence into concrete relations for the transfer sidecar path; DA availability, DA-root hash/security, proof soundness, and complete native-node refinement remain explicit assumptions.",
-        "content_blake3": "928ddfbe1bf48be8311bd5f1c4f22cc8a84b201cd738c6359f90fb0bf4e642ad"
+        "content_blake3": "dbe4166effda501c449deb099b20100ac0e3b822df30d8f61457216c66fea385"
       },
       "falsification_cases": [
         {
@@ -14911,7 +14911,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean refinement plus targeted Rust conformance test over the materialized sidecar transfer-to-consensus DA path. The concrete Transaction::new-to-DA-blob relation is proved for the production-shaped payload list, the projection variant derives the transfer-filtered transaction row package from the raw-ingress production projection facts, and the transfer-filtered bridge-replay separation theorem keeps projected bridge replay rows out of the consensus DA blob even in bridge-first mixed ordering. The integrated certificate ties that concrete DA package to SmallWood no-theft/conservation, native stablecoin policy authorization, accepted-block admission safety, and the open-assumption sidecar ciphertext privacy boundary on one materialized publication witness. The end-to-end theorem records all remaining residuals explicitly instead of hiding them in the publication certificate. DA availability, DA-root hash/security, proof soundness, parser internals, storage durability, and complete native-node refinement remain explicit.",
-        "content_blake3": "ef9e7613b15391b559069c4d17ab7d63457e110a3bb185e8154a1a1399eda45d"
+        "content_blake3": "19e75eab11d94a7ab9b884d46e27e668e5cba9c042ad29494929c0662617bc2f"
       },
       "falsification_cases": [
         {
@@ -14993,7 +14993,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean review surface over materialized DA publication, transfer no-theft/input-slot authorization, per-asset authorized-delta, public stablecoin-exception facts, the stablecoin mint exception payload surface, explicit live-policy authorization predicate carrying, and output-slot statement/proof artifact facts. Deployed verifier soundness, DA availability/hash security, production live stablecoin policy validity, materialized-row-to-Transaction::new equivalence, and complete native-node refinement remain explicit assumptions.",
-        "content_blake3": "88239c90df2972a40ea94221987f81d2a4175ae3ce7b1d1a485c808a23795176"
+        "content_blake3": "fa25356d5e33272d8bb84b00d1f9dbfa62f38e3651e900100c9a4008c8983674"
       },
       "falsification_cases": [
         {
@@ -15049,7 +15049,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean composition plus generated production conformance vectors over existing mined-work, block-commitment, and atomic mined-commit manifest gates. It strengthens the review surface but keeps PoW cryptographic threshold validity, replay/body equivalence, storage durability, and complete native-node refinement explicit.",
-        "content_blake3": "0ac6fbb6906f4b31e6cce9933d59296caa43ef6e729352e0bce4fdd6eecf0b36"
+        "content_blake3": "6c06ee1fa615ea7969cde6e5959b5c98ff1598c2e74d2fe997ef00f049328adb"
       },
       "falsification_cases": [
         {
@@ -15228,7 +15228,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-18",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a classification ratchet and roadmap. It does not discharge parser/native/proof/bridge residuals; it names them as mechanized work and prevents them from being hidden under broad cryptographic or infrastructure assumptions.",
-        "content_blake3": "4b4a59e629fe7a45775d1178aee616b4da6cdebb2a6ba14181e710b1bb9065f3"
+        "content_blake3": "b2dfaec6b0f265ba6a6857ae614fa5c2294ab3106a0d7c114ace03be7bc805b6"
       },
       "falsification_cases": [
         {
@@ -15285,7 +15285,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-18",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a release-blocking system-model evidence gate. It does not prove external environmental honesty; it fails closed if required monitoring categories or evidence are removed.",
-        "content_blake3": "5c9e45295af52c98d20a318c5d0232c2fb9dcdd078f51cdda6f578fa3f1c1d3f"
+        "content_blake3": "0936b22fd6586e1a0c1d61594aee37bfb13723c36875d924ac8dd09da9377e98"
       },
       "falsification_cases": [
         {
@@ -15385,7 +15385,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-13",
         "notes": "Pending final headless branch-diff review. Internal review rejected the first caller-populated row certificate and replaced it with an executable exact production-row decision before the conditional production-family reduction was credited; no production no-counterfeit closure was recorded.",
-        "content_blake3": "4e222ad30003873235db3c8c440ee5eeb2e0afa39a040a0f29bc29166ddc9b43"
+        "content_blake3": "07ca7b91b44d2b7600d878c6bd739f14513cb04700ce94ed25778d7619ee60e2"
       },
       "falsification_cases": [
         {

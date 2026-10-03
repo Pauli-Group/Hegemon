@@ -555,6 +555,15 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
     let mut metadata_map: BTreeMap<u64, String> = BTreeMap::new();
     // Sync first unless --no-sync is specified
     if !args.no_sync {
+        let store = match WalletStore::open(&args.store, &passphrase) {
+            Ok(store) => store,
+            Err(wallet::WalletError::StoreBusy) => {
+                let snapshot = WalletStore::open_read_only(&args.store, &passphrase)?;
+                println!("Wallet is open in another process; showing its persisted snapshot without additional sync.");
+                return show_status(&snapshot, None);
+            }
+            Err(error) => return Err(error.into()),
+        };
         let runtime = RuntimeBuilder::new_multi_thread()
             .enable_all()
             .build()
@@ -568,7 +577,6 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
                     .map_err(|e| anyhow!("Failed to connect: {}", e))?,
             );
 
-            let store = WalletStore::open(&args.store, &passphrase)?;
             let store_arc = Arc::new(store);
             let engine = AsyncWalletSyncEngine::new(client.clone(), store_arc.clone());
             engine
@@ -591,7 +599,7 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
     }
 
     // Re-open to get synced state
-    let store = WalletStore::open(&args.store, &passphrase)?;
+    let store = WalletStore::open_read_only(&args.store, &passphrase)?;
     let metadata = if metadata_map.is_empty() {
         None
     } else {
