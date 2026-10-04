@@ -828,11 +828,13 @@ pub(crate) fn load_best_or_genesis(
         if best.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE {
             let profile = if best.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_V1 {
                 "legacy V1"
+            } else if best.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_V2 {
+                "native V2"
             } else {
                 "unknown"
             };
             return Err(anyhow!(
-                "stored native database uses {profile} consensus rules; adaptive-DA V2 requires a fresh genesis and a new base path (stored rules_hash={}, active rules_hash={})",
+                "stored native database uses {profile} consensus rules; Bitcoin80 ASIC PoW requires a fresh genesis and a new base path (stored rules_hash={}, active rules_hash={})",
                 hex32(&best.rules_hash),
                 hex32(&HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE),
             ));
@@ -841,7 +843,7 @@ pub(crate) fn load_best_or_genesis(
     }
 
     // A missing best pointer is not proof of a fresh database.  Refuse to
-    // bootstrap V2 over partial/legacy canonical rows; doing so would mutate
+    // bootstrap the ASIC rules over partial/legacy canonical rows; doing so would mutate
     // evidence before startup validation can diagnose the required reset.
     let mut nonempty_tree = (!db.is_empty()).then_some("__sled__default".to_string());
     if nonempty_tree.is_none() {
@@ -862,7 +864,7 @@ pub(crate) fn load_best_or_genesis(
         || !block_tree.is_empty()
     {
         return Err(anyhow!(
-            "stored native database has canonical rows but no best pointer; V2 fresh genesis requires every persistent tree to be empty and a new base path (nonempty tree: {})",
+            "stored native database has canonical rows but no best pointer; Bitcoin80 fresh genesis requires every persistent tree to be empty and a new base path (nonempty tree: {})",
             nonempty_tree.as_deref().unwrap_or("core canonical tree")
         ));
     }
@@ -963,6 +965,8 @@ pub(crate) fn append_header_mmr_peak_state(
 }
 
 pub(crate) fn genesis_meta(pow_bits: u32) -> Result<NativeBlockMeta> {
+    consensus_light_client::bitcoin80_validate_compact(pow_bits)
+        .map_err(|err| anyhow!("native Bitcoin80 genesis PoW bits invalid: {err:?}"))?;
     let state_root = CommitmentTreeState::default().root();
     let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
     let nullifier_root = NullifierAccumulator::new().root();
@@ -977,7 +981,7 @@ pub(crate) fn genesis_meta(pow_bits: u32) -> Result<NativeBlockMeta> {
     let da_chunk_count = u32::try_from(da_encoding.chunks().len())
         .map_err(|_| anyhow!("native genesis DA chunk count exceeds u32"))?;
     let hash = hash32_with_parts(&[
-        b"hegemon-native-genesis-v2",
+        b"hegemon-native-genesis-bitcoin80-v1",
         &HEGEMON_CHAIN_ID_V1,
         &HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
         &state_root,

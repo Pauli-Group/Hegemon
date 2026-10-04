@@ -191,44 +191,11 @@ pub(crate) fn dispatch_rpc_method(
         "hegemon_submitTransaction" => {
             Ok(node.submit_transaction(first_param(&params).cloned().unwrap_or(params)))
         }
-        "hegemon_poolWork" => Ok(json!({
-            "available": false,
-            "height": null,
-            "pre_hash": null,
-            "parent_hash": null,
-            "network_difficulty": node.best_pow_bits(),
-            "share_difficulty": null,
-            "reason": "native pool RPC is not enabled in milestone 1",
-        })),
-        "hegemon_compactJob" => Ok(json!({
-            "available": false,
-            "job_id": null,
-            "height": null,
-            "pre_hash": null,
-            "parent_hash": null,
-            "network_bits": node.best_pow_bits(),
-            "share_bits": null,
-            "reason": "native compact-job RPC is not enabled in milestone 1",
-        })),
-        "hegemon_submitPoolShare" | "hegemon_submitCompactSolution" => Ok(json!({
-            "accepted": false,
-            "block_candidate": false,
-            "network_target_met": false,
-            "error": "native pool submissions are not enabled in milestone 1",
-            "accepted_shares": 0u64,
-            "rejected_shares": 1u64,
-            "worker_accepted_shares": 0u64,
-            "worker_rejected_shares": 1u64,
-        })),
-        "hegemon_poolStatus" => Ok(json!({
-            "available": false,
-            "network_difficulty": node.best_pow_bits(),
-            "share_difficulty": null,
-            "accepted_shares": 0u64,
-            "rejected_shares": 0u64,
-            "worker_count": 0usize,
-            "workers": [],
-        })),
+        "hegemon_poolWork" | "hegemon_compactJob" => node.bitcoin_asic_work(),
+        "hegemon_submitPoolShare" | "hegemon_submitCompactSolution" => {
+            node.bitcoin_asic_submit(first_param(&params).cloned().unwrap_or(params))
+        }
+        "hegemon_poolStatus" => Ok(node.bitcoin_asic_status()),
         "da_getParams" => Ok(json!({
             "chunk_size_tiers": NATIVE_DA_CHUNK_SIZE_TIERS,
             "min_chunk_size": MIN_NATIVE_DA_CHUNK_SIZE,
