@@ -105,7 +105,7 @@ pub struct SmallwoodRecursiveProofEnvelopeV1 {
     pub proof_bytes: Vec<u8>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct SmallwoodRecursiveVerifierTraceV1 {
     pub descriptor: SmallwoodRecursiveVerifierDescriptorV1,
     pub binded_data: Vec<u8>,
@@ -1048,6 +1048,7 @@ mod tests {
         .unwrap();
 
         trace.validate_sections_v1().unwrap();
+        let digest_words = trace.trace.proof.h_piop.len() / std::mem::size_of::<u64>();
 
         let transcript_len = trace.flatten_transcript_section_words_v1().len();
         let expected_transcript_len = trace.trace.binding_words.len()
@@ -1061,7 +1062,7 @@ mod tests {
             + trace.trace.pcs_transcript_words.len()
             + trace.trace.piop_input_words.len()
             + trace.trace.piop_transcript_words.len()
-            + 4
+            + digest_words
             + 1;
         assert_eq!(transcript_len, expected_transcript_len);
 
@@ -1104,12 +1105,12 @@ mod tests {
                 .iter()
                 .map(Vec::len)
                 .sum::<usize>()
-            + 4
+            + digest_words
             + trace.trace.pcs_transcript_words.len();
         assert_eq!(pcs_len, expected_pcs_len);
 
         let decs_len = trace.flatten_decs_section_words_v1().len();
-        let expected_decs_len = 4
+        let expected_decs_len = digest_words
             + trace.trace.pcs_trace.decs_leaf_indexes.len()
             + 1
             + trace.trace.pcs_trace.decs_eval_points.len()
@@ -1122,6 +1123,12 @@ mod tests {
             + trace
                 .trace
                 .decs_high_coeffs_v1()
+                .iter()
+                .map(Vec::len)
+                .sum::<usize>()
+            + trace
+                .trace
+                .decs_gamma_all_v1()
                 .iter()
                 .map(Vec::len)
                 .sum::<usize>()
@@ -1140,9 +1147,9 @@ mod tests {
                 .trace
                 .merkle_auth_paths_v1()
                 .iter()
-                .map(|path| path.len() * 4)
+                .map(|path| path.len() * digest_words)
                 .sum::<usize>()
-            + 4;
+            + digest_words;
         assert_eq!(merkle_len, expected_merkle_len);
     }
 

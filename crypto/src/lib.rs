@@ -12,3 +12,4 @@ pub mod slh_dsa;
 pub mod traits;
 
 pub use error::CryptoError;
+pub use hegemon_hash384 as hash384;

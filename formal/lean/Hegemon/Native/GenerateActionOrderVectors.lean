@@ -37,22 +37,22 @@ def actionSubmitCandidateArtifact : Nat := 5
 def actionMintCoinbase : Nat := 6
 
 def semanticHashA : SemanticHash :=
-  patternedBytes 32 0x21
+  patternedBytes 48 0x21
 
 def semanticHashB : SemanticHash :=
-  patternedBytes 32 0x61
+  patternedBytes 48 0x61
 
 def semanticHashC : SemanticHash :=
-  patternedBytes 32 0xa1
+  patternedBytes 48 0xa1
 
 def rawTxHashA : RawTxHash :=
-  patternedBytes 32 0x31
+  patternedBytes 48 0x31
 
 def rawTxHashB : RawTxHash :=
-  patternedBytes 32 0x71
+  patternedBytes 48 0x71
 
 def rawTxHashC : RawTxHash :=
-  patternedBytes 32 0xb1
+  patternedBytes 48 0xb1
 
 def inlineArrivalZero : TransferOrderPreimageInput :=
   { bindingHash := bindingHashA
@@ -175,7 +175,7 @@ def nonTransferPreimageCaseJson
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 3,\n"
+    ++ "  \"schema_version\": 4,\n"
     ++ "  \"action_order_cases\": [\n"
     ++ actionOrderCaseJson "empty-block-is-canonical" [] ++ ",\n"
     ++ actionOrderCaseJson "single-transfer-is-canonical" [transfer midKey] ++ ",\n"
@@ -191,8 +191,8 @@ def vectorJson : String :=
     ++ transferPreimageCaseJson "inline-transfer-arrival-max" "inline" inlineArrivalMax 0 ++ ",\n"
     ++ transferPreimageCaseJson "sidecar-transfer-arrival-high" "sidecar" sidecarArrivalHigh 1 ++ ",\n"
     ++ transferPreimageCaseJson "inline-transfer-two-nullifiers" "inline" twoNullifierTransfer 88 ++ ",\n"
-    ++ transferPreimageCaseJson "binding-hash-drift-changes-preimage" "inline" bindingDriftTransfer 17 ++ ",\n"
-    ++ transferPreimageCaseJson "nullifier-drift-changes-preimage" "sidecar" nullifierDriftTransfer 17 ++ "\n"
+    ++ transferPreimageCaseJson "binding-hash-drift-changes-preimage" "inline" bindingDriftTransfer 18 ++ ",\n"
+    ++ transferPreimageCaseJson "nullifier-drift-changes-preimage" "sidecar" nullifierDriftTransfer 19 ++ "\n"
     ++ "  ],\n"
     ++ "  \"non_transfer_order_preimage_cases\": [\n"
     ++ nonTransferPreimageCaseJson "bridge-outbound-arrival-zero" "bridge_outbound" bridgeOutboundArrivalZero 42 rawTxHashB ++ ",\n"

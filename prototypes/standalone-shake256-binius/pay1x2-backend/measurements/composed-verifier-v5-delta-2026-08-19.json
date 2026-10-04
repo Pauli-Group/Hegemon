@@ -1,0 +1,95 @@
+{
+  "schema": "hegemon.standalone-shake256.composed-verifier-report.v1",
+  "status": "prototype_only",
+  "source_sha256": {
+    "Cargo.toml": "5a16d82ab9b4092356a5a255f31e108639e21524beb368c76977be7b48230804",
+    "Cargo.lock": "f580927ac4ef7222569b883f6d001382791bb2d1db8461fd73044680ac6eb1f5",
+    "src/lib.rs": "a8fcd0193698f37bea4a297750f66bc9f862f132bbabaf58107f2893a6315d5d",
+    "src/main.rs": "873dc3ea57c6517da262a4032194a6d0a66357bcce930d881425596d70039366"
+  },
+  "routes": {
+    "statement": {
+      "magic": "HGS2",
+      "version": 2,
+      "circuit": 5,
+      "crypto_suite": 4,
+      "backend": 1,
+      "profile": 1,
+      "bytes": 478
+    },
+    "action": {
+      "kernel": "V5/Delta",
+      "family": 1,
+      "action": 7,
+      "balance_slot_asset_ids": [0, 18446744073709551615, 18446744073709551615, 18446744073709551615]
+    },
+    "envelope": {
+      "magic": "HGSP",
+      "version": 1,
+      "backend": "Binius64IronSpartan",
+      "profile": "Pay1x2",
+      "header_bytes": 12
+    }
+  },
+  "real_rate3_proof": {
+    "canonical_proof_bytes": 380496,
+    "envelope_bytes": 380508,
+    "compiled_constraints": 1883192,
+    "padded_constraints": 2097152,
+    "prove_ms": 2040.313709,
+    "composed_verify_ms": 172.167167,
+    "peak_rss_bytes": 5524226048
+  },
+  "fresh_forgery_negative_control": {
+    "ciphertext_hash": {
+      "fresh_raw_proof_accepted": true,
+      "original_action_composed_rejected": true
+    },
+    "network_binding": {
+      "fresh_raw_proof_accepted": true,
+      "original_action_composed_rejected": true
+    },
+    "balance_tag": {
+      "fresh_raw_proof_accepted": true,
+      "original_action_composed_rejected": true
+    },
+    "three_forged_proofs_ms": 6852.684625
+  },
+  "pre_proof_rejection": {
+    "envelope_classes": [
+      "magic",
+      "version",
+      "backend",
+      "profile",
+      "declared_length_too_long",
+      "declared_length_too_short",
+      "trailing_bytes"
+    ],
+    "action_classes": [
+      "kernel_binding",
+      "family_route",
+      "action_route",
+      "ciphertext_count",
+      "ciphertext_size_count",
+      "ciphertext_size",
+      "nullifier_count",
+      "commitment_count",
+      "balance_slot_count",
+      "native_balance_slots",
+      "value_balance",
+      "stablecoin",
+      "candidate_artifact",
+      "network_binding",
+      "binding_digest"
+    ],
+    "all_rejected": true,
+    "proof_verifier_calls": 0
+  },
+  "claim_boundary": {
+    "consensus_active": false,
+    "release_qualified": false,
+    "composed_pq128_complete": false,
+    "end_to_end_zero_knowledge_established": false,
+    "exact_wallet_ciphertext_parser_bound": false
+  }
+}

@@ -46,7 +46,7 @@ def truncatedBlock : AcceptedCanonicalBlock :=
 
 def daMismatchBlock : AcceptedCanonicalBlock :=
   { validVectorBlock with
-    provenBatch := { validVectorBlock.provenBatch with daRoot := 0 } }
+    identityProjection := { validVectorBlock.identityProjection with daRoot := 0 } }
 
 def headerParentMismatchBlock : AcceptedCanonicalBlock :=
   { validVectorBlock with
@@ -126,9 +126,9 @@ def claimScopeCaseJson (name : String) (circuitVersion cryptoSuite : Nat) : Stri
 
 def claimScopeCasesJson : String :=
   String.intercalate ",\n"
-    [ claimScopeCaseJson "active_v3_beta" 3 2,
-      claimScopeCaseJson "legacy_v2_beta" 2 2,
-      claimScopeCaseJson "wrong_crypto_suite" 3 3 ]
+    [ claimScopeCaseJson "active_v4_gamma" 4 3,
+      claimScopeCaseJson "legacy_v3_beta" 3 2,
+      claimScopeCaseJson "wrong_crypto_suite" 4 2 ]
 
 def vectorJson : String :=
   "{\n"
@@ -145,14 +145,20 @@ def vectorJson : String :=
     ++ Hegemon.hexBytes vectorCiphertextHashA ++ "\"],"
     ++ "\"statement_hash\":3,\"proof_digest\":4,"
     ++ "\"public_inputs_digest\":5,\"verifier_profile\":6,\"anchor_root\":7,"
-    ++ "\"fee\":3,\"binding_circuit_version\":3,"
-    ++ "\"transaction_circuit_version\":3,\"transaction_crypto_suite\":2,"
+    ++ "\"fee\":3,\"binding_circuit_version\":"
+    ++ toString activeSmallWoodCircuitVersion ++ ","
+    ++ "\"transaction_circuit_version\":"
+    ++ toString activeSmallWoodCircuitVersion ++ ",\"transaction_crypto_suite\":"
+    ++ toString activeSmallWoodCryptoSuite ++ ","
     ++ "\"transaction\":{\"nullifier_tags\":[1],\"commitment_tags\":[2],"
-    ++ "\"balance_tag\":3,\"circuit_version\":3,\"crypto_suite\":2,"
+    ++ "\"balance_tag\":3,\"circuit_version\":"
+    ++ toString activeSmallWoodCircuitVersion ++ ",\"crypto_suite\":"
+    ++ toString activeSmallWoodCryptoSuite ++ ","
     ++ "\"da_payload\":[[8,9]]},"
     ++ "\"claim\":{\"statement_hash_tag\":3,\"proof_digest_tag\":4,"
     ++ "\"public_inputs_digest_tag\":5,\"verifier_profile_tag\":6,"
-    ++ "\"anchor_tag\":7,\"fee\":3,\"circuit_version\":3}},\n"
+    ++ "\"anchor_tag\":7,\"fee\":3,\"circuit_version\":"
+    ++ toString activeSmallWoodCircuitVersion ++ "}},\n"
     ++ "    {\"expected_tx_id_hex\":\"" ++ Hegemon.hexBytes vectorTxIdB ++ "\","
     ++ "\"expected_transaction_hash_preimage_hex\":\""
     ++ Hegemon.hexBytes (transactionHashPreimage vectorTxB) ++ "\","
@@ -160,14 +166,20 @@ def vectorJson : String :=
     ++ Hegemon.hexBytes vectorCiphertextHashB ++ "\"],"
     ++ "\"statement_hash\":10,\"proof_digest\":13,"
     ++ "\"public_inputs_digest\":14,\"verifier_profile\":6,\"anchor_root\":15,"
-    ++ "\"fee\":5,\"binding_circuit_version\":3,"
-    ++ "\"transaction_circuit_version\":3,\"transaction_crypto_suite\":2,"
+    ++ "\"fee\":5,\"binding_circuit_version\":"
+    ++ toString activeSmallWoodCircuitVersion ++ ","
+    ++ "\"transaction_circuit_version\":"
+    ++ toString activeSmallWoodCircuitVersion ++ ",\"transaction_crypto_suite\":"
+    ++ toString activeSmallWoodCryptoSuite ++ ","
     ++ "\"transaction\":{\"nullifier_tags\":[6],\"commitment_tags\":[7],"
-    ++ "\"balance_tag\":8,\"circuit_version\":3,\"crypto_suite\":2,"
+    ++ "\"balance_tag\":8,\"circuit_version\":"
+    ++ toString activeSmallWoodCircuitVersion ++ ",\"crypto_suite\":"
+    ++ toString activeSmallWoodCryptoSuite ++ ","
     ++ "\"da_payload\":[[16]]},"
     ++ "\"claim\":{\"statement_hash_tag\":10,\"proof_digest_tag\":13,"
     ++ "\"public_inputs_digest_tag\":14,\"verifier_profile_tag\":6,"
-    ++ "\"anchor_tag\":15,\"fee\":5,\"circuit_version\":3}}\n"
+    ++ "\"anchor_tag\":15,\"fee\":5,\"circuit_version\":"
+    ++ toString activeSmallWoodCircuitVersion ++ "}}\n"
     ++ "  ],\n"
     ++ "  \"canonical_actions\": ["
     ++ "{\"kind\":\"transfer\",\"transaction_index\":0,\"action_bytes\":[1]},"

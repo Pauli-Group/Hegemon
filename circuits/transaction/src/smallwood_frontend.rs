@@ -2,17 +2,21 @@ use blake3::Hasher;
 use protocol_versioning::{
     tx_proof_backend_for_version, TxProofBackend, VersionBinding,
     LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING, SMALLWOOD_CANDIDATE_VERSION_BINDING,
+    SMALLWOOD_V3_VERSION_BINDING,
 };
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use transaction_core::{
     constants::{
-        MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG, POSEIDON2_RATE, POSEIDON2_STEPS,
-        POSEIDON2_WIDTH,
+        MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG, POSEIDON2_RATE, POSEIDON2_WIDTH,
     },
-    poseidon2::poseidon2_step,
     range::{decompose_bounded_value, RANGE_LIMB_BITS, RANGE_LIMB_COUNT},
     TransactionVerifierInputs,
+};
+use transaction_core::{
+    constants::{POSEIDON2_EXTERNAL_ROUNDS, POSEIDON2_INTERNAL_ROUNDS, POSEIDON2_STEPS},
+    poseidon2::poseidon2_step,
+    poseidon2_constants::{EXTERNAL_ROUND_CONSTANTS, INTERNAL_ROUND_CONSTANTS},
 };
 
 use crate::{
@@ -31,16 +35,20 @@ use crate::{
     },
     public_inputs::TransactionPublicInputs,
     smallwood_engine::{
-        projected_candidate_proof_bytes_with_profile as projected_smallwood_backend_proof_bytes_with_profile_statement,
+        profile_smallwood_verifier_with_profile_v1,
+        projected_candidate_proof_bytes_with_profile_backend_and_domain as projected_smallwood_backend_proof_bytes_with_profile_backend_and_domain_statement,
         prove_candidate_with_profile as prove_smallwood_backend_statement_with_profile,
-        report_smallwood_backend_opening_surface_with_profile_v1,
+        report_smallwood_backend_opening_surface_with_profile_and_domain_v1,
         report_smallwood_no_grinding_soundness_v1, report_smallwood_proof_size_v1,
         smallwood_no_grinding_profile_for_arithmetization,
         verify_candidate_with_profile as verify_smallwood_backend_statement_with_profile,
         SmallwoodArithmetization, SmallwoodBackendOpeningSurfaceReportV1,
         SmallwoodLvcsPlannerGeometryKindV1, SmallwoodLvcsPlannerProjectionReportV1,
         SmallwoodNoGrindingProfileV1, SmallwoodNoGrindingSoundnessReportV1,
-        SmallwoodProofSizeReportV1, ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+        SmallwoodProofSizeReportV1, SmallwoodTranscriptBackend, SmallwoodTranscriptCallTraceV1,
+        SmallwoodVerifierOperationProfileV1, SmallwoodVerifierStageOperationProfileV1,
+        SmallwoodVerifierTraceV1, ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+        STRICT_ZK_SMZ1_SMALLWOOD_NO_GRINDING_PROFILE,
     },
     smallwood_native::{test_candidate_witness, test_candidate_witness_with_auxiliary},
     smallwood_production_constraint_contract_generated::{
@@ -52,6 +60,9 @@ use crate::{
     },
     witness::TransactionWitness,
 };
+
+#[cfg(test)]
+use crate::smallwood_engine::projected_candidate_proof_bytes_with_profile as projected_smallwood_backend_proof_bytes_with_profile_statement;
 
 const SMALLWOOD_PUBLIC_STATEMENT_DOMAIN: &[u8] = b"hegemon.tx.smallwood-public-statement.v1";
 const SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN: &[u8] = b"hegemon.tx.smallwood-binding-transcript.v1";
@@ -94,6 +105,21 @@ const SMALLWOOD_PUBLIC_VALUE_RANGE_VALUE_COUNT: usize = 3;
 const SMALLWOOD_VALUE_RANGE_VALUE_COUNT: usize =
     MAX_INPUTS + MAX_OUTPUTS + SMALLWOOD_PUBLIC_VALUE_RANGE_VALUE_COUNT;
 const SMALLWOOD_VALUE_RANGE_ROWS: usize = SMALLWOOD_VALUE_RANGE_VALUE_COUNT * RANGE_LIMB_COUNT;
+const SMALLWOOD_DENSE_RANGE_ORDINARY_DIGITS: usize = 30;
+
+const fn smallwood_dense_range_rows(packing_factor: usize) -> usize {
+    (SMALLWOOD_VALUE_RANGE_VALUE_COUNT * SMALLWOOD_DENSE_RANGE_ORDINARY_DIGITS)
+        .div_ceil(packing_factor)
+        + 1
+}
+
+const SMALLWOOD_COMPRESSED_POSEIDON_SBOX_ROWS: usize =
+    (POSEIDON2_EXTERNAL_ROUNDS * 2 * POSEIDON2_WIDTH) + POSEIDON2_INTERNAL_ROUNDS;
+const SMALLWOOD_COMPRESSED_POSEIDON_ROWS_PER_GROUP: usize =
+    POSEIDON2_WIDTH + SMALLWOOD_COMPRESSED_POSEIDON_SBOX_ROWS + POSEIDON2_WIDTH;
+const SMALLWOOD_LEVEL5_RAW_WITNESS_ROWS: usize = 241;
+const SMALLWOOD_LEVEL5_RELATION_ROWS: usize = 699;
+const SMALLWOOD_LEVEL5_EFFECTIVE_CONSTRAINT_DEGREE: usize = 8;
 pub const SMALLWOOD_SIGNER_TAG_WORDS: usize = 5;
 pub const SMALLWOOD_MULTISIG_MAX_SIGNERS: usize = 6;
 const SMALLWOOD_MULTISIG_PAIR_COUNT: usize =
@@ -612,7 +638,40 @@ fn inline_binding_row_count(layout: SmallwoodBridgeRowLayout, packing_factor: us
 
 #[inline]
 fn bridge_inline_binding_rows_start(layout: SmallwoodBridgeRowLayout) -> usize {
+    SMALLWOOD_PUBLIC_ROWS + layout.secret_witness_rows() + layout.dense_value_range_rows
+}
+
+#[inline]
+fn bridge_dense_range_rows_start(layout: SmallwoodBridgeRowLayout) -> usize {
     SMALLWOOD_PUBLIC_ROWS + layout.secret_witness_rows()
+}
+
+#[inline]
+fn bridge_dense_range_digit_position(
+    layout: SmallwoodBridgeRowLayout,
+    value: usize,
+    digit: usize,
+    packing_factor: usize,
+) -> (usize, usize) {
+    debug_assert!(layout.has_dense_value_ranges());
+    let slot = value * SMALLWOOD_DENSE_RANGE_ORDINARY_DIGITS + digit;
+    (
+        bridge_dense_range_rows_start(layout) + slot / packing_factor,
+        slot % packing_factor,
+    )
+}
+
+#[inline]
+fn bridge_dense_range_top_position(
+    layout: SmallwoodBridgeRowLayout,
+    value: usize,
+    packing_factor: usize,
+) -> (usize, usize) {
+    debug_assert!(layout.has_dense_value_ranges());
+    (
+        bridge_dense_range_rows_start(layout) + layout.dense_value_range_rows - 1,
+        value % packing_factor,
+    )
 }
 
 #[inline]
@@ -641,6 +700,7 @@ fn bridge_inline_policy_binding_row(
 fn bridge_poseidon_rows_start(layout: SmallwoodBridgeRowLayout, packing_factor: usize) -> usize {
     SMALLWOOD_PUBLIC_ROWS
         + layout.secret_witness_rows()
+        + layout.dense_value_range_rows
         + inline_binding_row_count(layout, packing_factor)
         + SMALLWOOD_LANE_SELECTOR_ROWS
 }
@@ -654,9 +714,22 @@ fn bridge_poseidon_row(
     limb: usize,
 ) -> usize {
     let group = permutation / packing_factor;
-    bridge_poseidon_rows_start(layout, packing_factor)
-        + (group * layout.poseidon_rows_per_permutation() + step_row) * POSEIDON2_WIDTH
-        + limb
+    let group_start = bridge_poseidon_rows_start(layout, packing_factor)
+        + group * layout.poseidon_rows_per_group();
+    match layout.poseidon_layout {
+        SmallwoodPoseidonLayout::GroupedRowsV1
+        | SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1 => {
+            group_start + step_row * POSEIDON2_WIDTH + limb
+        }
+        SmallwoodPoseidonLayout::SboxWiresLevel5 => {
+            if step_row == 0 {
+                group_start + limb
+            } else {
+                debug_assert_eq!(step_row, layout.poseidon_last_row());
+                group_start + POSEIDON2_WIDTH + SMALLWOOD_COMPRESSED_POSEIDON_SBOX_ROWS + limb
+            }
+        }
+    }
 }
 
 #[inline]
@@ -699,6 +772,23 @@ pub struct SmallwoodCandidateProof {
     pub auxiliary_witness_words: Vec<u64>,
 }
 
+/// Evidence recomputed by the exact active production parser and verifier.
+///
+/// This value records an accepted V4/Gamma execution; it is not an
+/// independently trusted certificate. Consumers must replay the verifier or
+/// prove refinement from these fields before treating it as authority.
+#[derive(Clone, Debug)]
+pub struct SmallwoodProductionVerifierEvidenceV1 {
+    pub version: VersionBinding,
+    pub constraint_map: SmallwoodProductionConstraintMap,
+    pub transcript_binding: Vec<u8>,
+    pub ark_proof: Vec<u8>,
+    pub verifier_trace: SmallwoodVerifierTraceV1,
+    pub verifier_operation_profile: SmallwoodVerifierOperationProfileV1,
+    pub verifier_stage_operation_profiles: Vec<SmallwoodVerifierStageOperationProfileV1>,
+    pub transcript_calls: Vec<SmallwoodTranscriptCallTraceV1>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct LegacySmallwoodCandidateProof {
     #[serde(default = "default_smallwood_candidate_arithmetization")]
@@ -716,6 +806,7 @@ pub enum SmallwoodPublicBindingMode {
 pub enum SmallwoodPoseidonLayout {
     GroupedRowsV1,
     GroupedRowsSkipInitialMdsV1,
+    SboxWiresLevel5,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -808,6 +899,24 @@ impl SmallwoodFrontendShape {
             poseidon_layout: SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1,
         }
     }
+
+    pub const fn direct_packed64_compressed_level5() -> Self {
+        Self {
+            lppc_packing_factor: SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            public_binding_mode: SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            merkle_aggregation_mode: SmallwoodMerkleAggregationMode::CommittedInlinePoseidonV2,
+            poseidon_layout: SmallwoodPoseidonLayout::SboxWiresLevel5,
+        }
+    }
+
+    pub const fn direct_packed128_compressed_level5() -> Self {
+        Self {
+            lppc_packing_factor: SMALLWOOD_BRIDGE_PACKING_FACTOR * 2,
+            public_binding_mode: SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            merkle_aggregation_mode: SmallwoodMerkleAggregationMode::CommittedInlinePoseidonV2,
+            poseidon_layout: SmallwoodPoseidonLayout::SboxWiresLevel5,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -816,6 +925,7 @@ struct SmallwoodBridgeRowLayout {
     output_secret_rows: usize,
     stable_binding_rows: usize,
     value_range_rows: usize,
+    dense_value_range_rows: usize,
     merkle_aggregation_mode: SmallwoodMerkleAggregationMode,
     poseidon_layout: SmallwoodPoseidonLayout,
 }
@@ -834,6 +944,7 @@ impl SmallwoodBridgeRowLayout {
                     + SMALLWOOD_OUTPUT_AUTH_KEY_ROWS,
                 stable_binding_rows: 1 + (SMALLWOOD_WORDS_PER_48_BYTES * 3),
                 value_range_rows: 0,
+                dense_value_range_rows: 0,
                 merkle_aggregation_mode: SmallwoodMerkleAggregationMode::WitnessRowsV1,
                 poseidon_layout: shape.poseidon_layout,
             },
@@ -845,6 +956,7 @@ impl SmallwoodBridgeRowLayout {
                 output_secret_rows: 1 + 1 + SMALLWOOD_OUTPUT_AUTH_KEY_ROWS,
                 stable_binding_rows: 0,
                 value_range_rows: 0,
+                dense_value_range_rows: 0,
                 merkle_aggregation_mode: SmallwoodMerkleAggregationMode::WitnessRowsV1,
                 poseidon_layout: shape.poseidon_layout,
             },
@@ -860,10 +972,24 @@ impl SmallwoodBridgeRowLayout {
                     + SMALLWOOD_OUTPUT_AUTH_KEY_ROWS,
                 stable_binding_rows: 0,
                 value_range_rows: if matches!(
-                    mode,
-                    SmallwoodMerkleAggregationMode::CommittedInlinePoseidonV2
+                    (mode, shape.poseidon_layout),
+                    (
+                        SmallwoodMerkleAggregationMode::CommittedInlinePoseidonV2,
+                        SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1
+                    )
                 ) {
                     SMALLWOOD_VALUE_RANGE_ROWS
+                } else {
+                    0
+                },
+                dense_value_range_rows: if matches!(
+                    (mode, shape.poseidon_layout),
+                    (
+                        SmallwoodMerkleAggregationMode::CommittedInlinePoseidonV2,
+                        SmallwoodPoseidonLayout::SboxWiresLevel5
+                    )
+                ) {
+                    smallwood_dense_range_rows(shape.lppc_packing_factor)
                 } else {
                     0
                 },
@@ -882,10 +1008,24 @@ impl SmallwoodBridgeRowLayout {
                     + SMALLWOOD_OUTPUT_AUTH_KEY_ROWS,
                 stable_binding_rows: 1 + (SMALLWOOD_WORDS_PER_48_BYTES * 3),
                 value_range_rows: if matches!(
-                    mode,
-                    SmallwoodMerkleAggregationMode::CommittedInlinePoseidonV2
+                    (mode, shape.poseidon_layout),
+                    (
+                        SmallwoodMerkleAggregationMode::CommittedInlinePoseidonV2,
+                        SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1
+                    )
                 ) {
                     SMALLWOOD_VALUE_RANGE_ROWS
+                } else {
+                    0
+                },
+                dense_value_range_rows: if matches!(
+                    (mode, shape.poseidon_layout),
+                    (
+                        SmallwoodMerkleAggregationMode::CommittedInlinePoseidonV2,
+                        SmallwoodPoseidonLayout::SboxWiresLevel5
+                    )
+                ) {
+                    smallwood_dense_range_rows(shape.lppc_packing_factor)
                 } else {
                     0
                 },
@@ -923,6 +1063,31 @@ impl SmallwoodBridgeRowLayout {
             SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1 => {
                 SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1
             }
+            SmallwoodPoseidonLayout::SboxWiresLevel5 => 2,
+        }
+    }
+
+    const fn poseidon_rows_per_group(self) -> usize {
+        match self.poseidon_layout {
+            SmallwoodPoseidonLayout::GroupedRowsV1
+            | SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1 => {
+                self.poseidon_rows_per_permutation() * POSEIDON2_WIDTH
+            }
+            SmallwoodPoseidonLayout::SboxWiresLevel5 => {
+                SMALLWOOD_COMPRESSED_POSEIDON_ROWS_PER_GROUP
+            }
+        }
+    }
+
+    const fn poseidon_trace_scalar_rows_per_permutation(self) -> usize {
+        match self.poseidon_layout {
+            SmallwoodPoseidonLayout::GroupedRowsV1
+            | SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1 => {
+                self.poseidon_rows_per_permutation()
+            }
+            SmallwoodPoseidonLayout::SboxWiresLevel5 => {
+                SMALLWOOD_COMPRESSED_POSEIDON_ROWS_PER_GROUP
+            }
         }
     }
 
@@ -940,7 +1105,12 @@ impl SmallwoodBridgeRowLayout {
                     logical_row + 1
                 }
             }
+            SmallwoodPoseidonLayout::SboxWiresLevel5 => logical_row,
         }
+    }
+
+    const fn has_dense_value_ranges(self) -> bool {
+        self.dense_value_range_rows > 0
     }
 
     const fn input_current_offset(self) -> Option<usize> {
@@ -1283,6 +1453,16 @@ fn hash_smallwood_production_constraint_table(
         SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 => 7,
         SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => 8,
         SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => 9,
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5 => 10,
+        SmallwoodArithmetization::DirectPacked128CompressedLevel5 => 11,
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3 => 12,
+        SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2 => 13,
+        SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate => 14,
+        // SMZ1 changes the proof domain/wire, not the 699-row relation table.
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => 10,
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8 => 16,
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => 17,
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => 18,
     };
     hasher.update(&[arithmetization_id]);
     for value in [
@@ -1344,6 +1524,15 @@ fn hash_smallwood_production_runtime_structure(map: &SmallwoodProductionConstrai
         SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 => 7,
         SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => 8,
         SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => 9,
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5 => 10,
+        SmallwoodArithmetization::DirectPacked128CompressedLevel5 => 11,
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3 => 12,
+        SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2 => 13,
+        SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate => 14,
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => 10,
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8 => 16,
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => 17,
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => 18,
     };
     hasher.update(&[arithmetization_id]);
     for value in [
@@ -1390,6 +1579,94 @@ fn hash_smallwood_production_runtime_structure(map: &SmallwoodProductionConstrai
     *hasher.finalize().as_bytes()
 }
 
+fn hash_smallwood_production_runtime_surface_parts(
+    arithmetization: SmallwoodArithmetization,
+    public_value_count: usize,
+    raw_witness_len: usize,
+    lppc_row_count: usize,
+    lppc_packing_factor: usize,
+    effective_constraint_degree: usize,
+    auxiliary_witness_limb_count: usize,
+    linear_term_offsets: &[u32],
+    linear_term_indices: &[u32],
+    linear_term_coefficients: &[u64],
+) -> [u8; 32] {
+    let mut hasher = Hasher::new();
+    hasher.update(b"hegemon.smallwood-production-runtime-surface.v1");
+    let arithmetization_id = match arithmetization {
+        SmallwoodArithmetization::Bridge64V1 => 0u8,
+        SmallwoodArithmetization::DirectPacked64V1 => 1,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1 => 2,
+        SmallwoodArithmetization::DirectPacked128CompactBindingsV1 => 3,
+        SmallwoodArithmetization::DirectPacked16CompactBindingsV1 => 4,
+        SmallwoodArithmetization::DirectPacked32CompactBindingsV1 => 5,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => 6,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 => 7,
+        SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => 8,
+        SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => 9,
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5 => 10,
+        SmallwoodArithmetization::DirectPacked128CompressedLevel5 => 11,
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3 => 12,
+        SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2 => 13,
+        SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate => 14,
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => 10,
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8 => 16,
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => 17,
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => 18,
+    };
+    hasher.update(&[arithmetization_id]);
+    for value in [
+        public_value_count,
+        raw_witness_len,
+        lppc_row_count,
+        lppc_packing_factor,
+        effective_constraint_degree,
+        linear_term_offsets.len().saturating_sub(1),
+        linear_term_indices.len(),
+        auxiliary_witness_limb_count,
+    ] {
+        hasher.update(&(value as u64).to_le_bytes());
+    }
+    let public_field_ranges = smallwood_production_public_field_ranges();
+    hasher.update(&(public_field_ranges.len() as u64).to_le_bytes());
+    for range in public_field_ranges {
+        hasher.update(&(range.name.len() as u64).to_le_bytes());
+        hasher.update(range.name.as_bytes());
+        hasher.update(&(range.start as u64).to_le_bytes());
+        hasher.update(&(range.end as u64).to_le_bytes());
+    }
+    hasher.update(&(linear_term_offsets.len() as u64).to_le_bytes());
+    for value in linear_term_offsets {
+        hasher.update(&value.to_le_bytes());
+    }
+    hasher.update(&(linear_term_indices.len() as u64).to_le_bytes());
+    for value in linear_term_indices {
+        hasher.update(&value.to_le_bytes());
+    }
+    hasher.update(&(linear_term_coefficients.len() as u64).to_le_bytes());
+    for value in linear_term_coefficients {
+        hasher.update(&value.to_le_bytes());
+    }
+    *hasher.finalize().as_bytes()
+}
+
+fn hash_smallwood_production_runtime_surface_from_map(
+    map: &SmallwoodProductionConstraintMap,
+) -> [u8; 32] {
+    hash_smallwood_production_runtime_surface_parts(
+        map.arithmetization,
+        map.public_value_count,
+        map.raw_witness_len,
+        map.lppc_row_count,
+        map.lppc_packing_factor,
+        map.effective_constraint_degree,
+        map.auxiliary_witness_limb_count,
+        &map.linear_term_offsets,
+        &map.linear_term_indices,
+        &map.linear_term_coefficients,
+    )
+}
+
 fn hash_smallwood_production_normalized_targets(
     map: &SmallwoodProductionConstraintMap,
     target_bindings: &[(u32, u16)],
@@ -1430,17 +1707,17 @@ fn hash_smallwood_production_normalized_targets(
     Ok(*hasher.finalize().as_bytes())
 }
 
-fn smallwood_production_runtime_contract(
-    map: &SmallwoodProductionConstraintMap,
+fn smallwood_production_runtime_contract_for_public_values(
+    public_values: &[u64],
 ) -> Result<&'static SmallwoodProductionRuntimeContract, TransactionCircuitError> {
-    if map.public_values.len() != SMALLWOOD_BASE_PUBLIC_VALUE_COUNT
-        || map.public_values[..4].iter().any(|value| *value > 1)
+    if public_values.len() != SMALLWOOD_BASE_PUBLIC_VALUE_COUNT
+        || public_values[..4].iter().any(|value| *value > 1)
     {
         return Err(TransactionCircuitError::ConstraintViolation(
             "SmallWood production runtime contract requires four canonical activity flags",
         ));
     }
-    let activity_mask = map.public_values[..4]
+    let activity_mask = public_values[..4]
         .iter()
         .enumerate()
         .fold(0u8, |mask, (index, value)| mask | ((*value as u8) << index));
@@ -1453,6 +1730,12 @@ fn smallwood_production_runtime_contract(
     Ok(contract)
 }
 
+fn smallwood_production_runtime_contract(
+    map: &SmallwoodProductionConstraintMap,
+) -> Result<&'static SmallwoodProductionRuntimeContract, TransactionCircuitError> {
+    smallwood_production_runtime_contract_for_public_values(&map.public_values)
+}
+
 fn ensure_smallwood_production_runtime_contract(
     map: &SmallwoodProductionConstraintMap,
 ) -> Result<(), TransactionCircuitError> {
@@ -1461,6 +1744,12 @@ fn ensure_smallwood_production_runtime_contract(
     if structure_digest != contract.structure_digest {
         return Err(TransactionCircuitError::ConstraintViolation(
             "SmallWood production constraint structure violates the compiled runtime contract",
+        ));
+    }
+    let surface_structure_digest = hash_smallwood_production_runtime_surface_from_map(map);
+    if surface_structure_digest != contract.surface_structure_digest {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SmallWood production verifier surface violates the compiled runtime contract",
         ));
     }
     let normalized_targets_digest =
@@ -1477,9 +1766,10 @@ fn ensure_smallwood_production_runtime_contract(
 pub fn smallwood_production_runtime_contract_digests_for_generation(
     map: &SmallwoodProductionConstraintMap,
     target_bindings: &[(u32, u16)],
-) -> Result<([u8; 32], [u8; 32]), TransactionCircuitError> {
+) -> Result<([u8; 32], [u8; 32], [u8; 32]), TransactionCircuitError> {
     Ok((
         hash_smallwood_production_runtime_structure(map),
+        hash_smallwood_production_runtime_surface_from_map(map),
         hash_smallwood_production_normalized_targets(map, target_bindings)?,
     ))
 }
@@ -1489,13 +1779,77 @@ fn ensure_smallwood_production_surface_runtime_contract(
     public_statement: &SmallwoodPublicStatement,
     linear_constraints: &SmallwoodLinearConstraints,
 ) -> Result<(), TransactionCircuitError> {
-    let surface = SmallwoodCandidateProfileSurface {
-        public_statement: public_statement.clone(),
-        linear_constraints: linear_constraints.clone(),
+    ensure_production_smallwood_arithmetization(arithmetization)?;
+    if public_statement.public_values.len() != SMALLWOOD_BASE_PUBLIC_VALUE_COUNT
+        || public_statement.public_value_count as usize != SMALLWOOD_BASE_PUBLIC_VALUE_COUNT
+        || public_statement.raw_witness_len as usize != SMALLWOOD_LEVEL5_RAW_WITNESS_ROWS
+        || public_statement.lppc_row_count as usize != SMALLWOOD_LEVEL5_RELATION_ROWS
+        || public_statement.lppc_packing_factor as usize != SMALLWOOD_BRIDGE_PACKING_FACTOR
+        || public_statement.effective_constraint_degree as usize
+            != SMALLWOOD_LEVEL5_EFFECTIVE_CONSTRAINT_DEGREE
+        || linear_constraints.term_offsets.len() != linear_constraints.targets.len() + 1
+        || linear_constraints.term_indices.len() != linear_constraints.term_coefficients.len()
+        || linear_constraints
+            .term_offsets
+            .last()
+            .copied()
+            .map(|value| value as usize)
+            != Some(linear_constraints.term_indices.len())
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SmallWood production verifier surface has non-canonical geometry",
+        ));
+    }
+    let contract =
+        smallwood_production_runtime_contract_for_public_values(&public_statement.public_values)?;
+    let surface_structure_digest = hash_smallwood_production_runtime_surface_parts(
+        arithmetization,
+        public_statement.public_value_count as usize,
+        public_statement.raw_witness_len as usize,
+        public_statement.lppc_row_count as usize,
+        public_statement.lppc_packing_factor as usize,
+        public_statement.effective_constraint_degree as usize,
+        0,
+        &linear_constraints.term_offsets,
+        &linear_constraints.term_indices,
+        &linear_constraints.term_coefficients,
+    );
+    if surface_structure_digest != contract.surface_structure_digest {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SmallWood production verifier surface violates the compiled runtime contract",
+        ));
+    }
+    let map = SmallwoodProductionConstraintMap {
+        arithmetization,
+        public_field_ranges: Vec::new(),
+        public_values: public_statement.public_values.clone(),
+        public_value_count: public_statement.public_values.len(),
+        raw_witness_len: public_statement.raw_witness_len as usize,
+        lppc_row_count: public_statement.lppc_row_count as usize,
+        lppc_packing_factor: public_statement.lppc_packing_factor as usize,
+        effective_constraint_degree: public_statement.effective_constraint_degree as usize,
+        linear_constraint_count: linear_constraints.targets.len(),
+        linear_term_count: linear_constraints.term_indices.len(),
         auxiliary_witness_limb_count: 0,
+        linear_term_offsets: Vec::new(),
+        linear_term_indices: Vec::new(),
+        linear_term_coefficients: Vec::new(),
+        linear_targets: linear_constraints.targets.clone(),
+        nonlinear_constraint_count: 0,
+        nonlinear_expression_count: 0,
+        nonlinear_expressions: Vec::new(),
+        nonlinear_constraint_roots: Vec::new(),
+        nonlinear_program_digest: [0; 32],
+        exact_table_digest: [0; 32],
     };
-    let map = smallwood_production_constraint_map_from_surface(arithmetization, &surface)?;
-    ensure_smallwood_production_runtime_contract(&map)
+    let normalized_targets_digest =
+        hash_smallwood_production_normalized_targets(&map, contract.target_bindings)?;
+    if normalized_targets_digest != contract.normalized_targets_digest {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SmallWood production constraint targets violate the compiled runtime contract",
+        ));
+    }
+    Ok(())
 }
 
 pub fn smallwood_production_constraint_map(
@@ -1555,8 +1909,7 @@ fn smallwood_production_constraint_map_for_public_values_unchecked(
         ));
     }
     let arithmetization = default_smallwood_candidate_arithmetization();
-    let shape =
-        SmallwoodFrontendShape::direct_packed64_committed_bindings_inline_merkle_skip_initial_mds_v2();
+    let shape = SmallwoodFrontendShape::direct_packed64_compressed_level5();
     let public_statement = build_packed_smallwood_bridge_public_statement_from_values_with_shape(
         public_values.to_vec(),
         shape,
@@ -1610,11 +1963,16 @@ pub fn active_smallwood_production_profile_attestation(
     let profile = smallwood_no_grinding_profile_for_arithmetization(map.arithmetization);
     let soundness =
         report_smallwood_no_grinding_soundness_v1(&statement, map.public_value_count, profile)?;
-    if !soundness.meets_128_bit_floor {
+    if !soundness.meets_260_bit_floor {
         return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-            "active SmallWood production profile falls below 128 bits: {:.6}",
+            "active SmallWood production profile falls below the 260-bit interactive floor required by the 128-bit CMS/QROM work-factor bound: {:.6}",
             soundness.security_floor_bits
         )));
+    }
+    if !smallwood_poseidon_relation_is_production_authorized(map.arithmetization) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SmallWood parameter bound passes, but production relation/security integration is not authorized: the exact conventional-hash relation, complete zero knowledge, composed PQ/QROM bound, and compiled-verifier refinement are incomplete",
+        ));
     }
     Ok(SmallwoodProductionProfileAttestation {
         arithmetization: map.arithmetization,
@@ -1701,18 +2059,161 @@ struct ExactSmallwoodCandidateProofArtifacts {
     proof_bytes: Vec<u8>,
 }
 
+/// Reserved production identifier for the exact RFC 7693 BLAKE2b-384
+/// Boolean/bit relation. The semantics module now exposes a non-authorizing
+/// aggregate lowering, but this production profile remains unsupported until
+/// its secret-input refinement, verifier-owned shape, and release gates close.
+pub const SMALLWOOD_BLAKE2B384_BOOLEAN_RELATION_PROFILE_V3: &[u8] =
+    b"hegemon.smallwood.blake2b384-boolean-relation.v3.unsupported";
+
+/// Every currently admitted transaction relation remains legacy/research-only
+/// after the BLAKE2b-384 V3 architecture pivot. The aggregate BLAKE2b
+/// compiler is deliberately not an admission decision.
+pub const fn smallwood_poseidon_relation_is_production_authorized(
+    _arithmetization: SmallwoodArithmetization,
+) -> bool {
+    false
+}
+
+pub const fn smallwood_blake2b384_boolean_relation_is_compiled() -> bool {
+    // This is the production/admission marker. The executable, non-authorizing
+    // aggregate compiler lives in `smallwood_blake2b384_semantics`; keeping
+    // this false prevents an internal lowering from becoming a shipped proof
+    // profile before its secret-input and verifier refinement are closed.
+    false
+}
+
+/// The repaired compact testnet profile keeps the existing transaction
+/// relation and changes only the leaking DECS opening domain and leaf wire.
+/// Appending a distinct arithmetization tag prevents old SMW2 proofs from being
+/// interpreted under the repaired SMZ1 verifier rules.
 fn default_smallwood_candidate_arithmetization() -> SmallwoodArithmetization {
-    SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+    SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1
+}
+
+pub const fn smallwood_strict_zk_smz1_testnet_relation_is_authorized(
+    arithmetization: SmallwoodArithmetization,
+) -> bool {
+    matches!(
+        arithmetization,
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1
+    )
+}
+
+fn is_compressed_level5_arithmetization(arithmetization: SmallwoodArithmetization) -> bool {
+    matches!(
+        arithmetization,
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5
+            | SmallwoodArithmetization::DirectPacked128CompressedLevel5
+            | SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3
+            | SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2
+            | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1
+            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
+            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza
+    )
+}
+
+fn transcript_backend_for_arithmetization(
+    arithmetization: SmallwoodArithmetization,
+) -> SmallwoodTranscriptBackend {
+    if arithmetization == SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2 {
+        SmallwoodTranscriptBackend::Sha512V6
+    } else if arithmetization == SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8 {
+        SmallwoodTranscriptBackend::Sha512Poseidon2V8
+    } else if arithmetization == SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 {
+        SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9
+    } else if arithmetization == SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza {
+        SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
+    } else if arithmetization
+        == SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3
+    {
+        SmallwoodTranscriptBackend::FullSha512First48CommitmentV3
+    } else if is_compressed_level5_arithmetization(arithmetization) {
+        SmallwoodTranscriptBackend::Sha512Level5
+    } else {
+        SmallwoodTranscriptBackend::Blake3
+    }
+}
+
+fn evaluation_domain_for_arithmetization(
+    arithmetization: SmallwoodArithmetization,
+) -> crate::smallwood_engine::SmallwoodDecsEvaluationDomain {
+    if matches!(
+        arithmetization,
+        SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2
+            | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1
+            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
+            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza
+    ) {
+        crate::smallwood_engine::SmallwoodDecsEvaluationDomain::Radix2DisjointCoset
+    } else if is_compressed_level5_arithmetization(arithmetization) {
+        crate::smallwood_engine::SmallwoodDecsEvaluationDomain::Radix2Subgroup
+    } else {
+        crate::smallwood_engine::SmallwoodDecsEvaluationDomain::Consecutive
+    }
+}
+
+fn report_opening_surface_for_arithmetization(
+    arithmetization: SmallwoodArithmetization,
+    statement: &(dyn crate::smallwood_semantics::SmallwoodConstraintAdapter + Sync),
+    transcript_binding: &[u8],
+    proof: &[u8],
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<SmallwoodBackendOpeningSurfaceReportV1, TransactionCircuitError> {
+    report_smallwood_backend_opening_surface_with_profile_and_domain_v1(
+        statement,
+        transcript_binding,
+        proof,
+        profile,
+        transcript_backend_for_arithmetization(arithmetization),
+        evaluation_domain_for_arithmetization(arithmetization),
+    )
+}
+
+fn prove_statement_for_arithmetization(
+    arithmetization: SmallwoodArithmetization,
+    statement: &(dyn crate::smallwood_semantics::SmallwoodConstraintAdapter + Sync),
+    witness: &[u64],
+    transcript_binding: &[u8],
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    crate::smallwood_engine::prove_statement_with_transcript_backend_profile_and_domain(
+        statement,
+        witness,
+        transcript_binding,
+        profile,
+        transcript_backend_for_arithmetization(arithmetization),
+        evaluation_domain_for_arithmetization(arithmetization),
+    )
+}
+
+fn verify_statement_for_arithmetization(
+    arithmetization: SmallwoodArithmetization,
+    statement: &(dyn crate::smallwood_semantics::SmallwoodConstraintAdapter + Sync),
+    transcript_binding: &[u8],
+    proof: &[u8],
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<(), TransactionCircuitError> {
+    crate::smallwood_engine::verify_statement_with_transcript_backend_profile_and_domain(
+        statement,
+        transcript_binding,
+        proof,
+        profile,
+        transcript_backend_for_arithmetization(arithmetization),
+        evaluation_domain_for_arithmetization(arithmetization),
+    )
 }
 
 fn ensure_production_smallwood_arithmetization(
     arithmetization: SmallwoodArithmetization,
 ) -> Result<(), TransactionCircuitError> {
-    if arithmetization == default_smallwood_candidate_arithmetization() {
+    if smallwood_strict_zk_smz1_testnet_relation_is_authorized(arithmetization) {
         Ok(())
     } else {
         Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-            "SmallWood arithmetization {arithmetization:?} is not accepted by the production verifier"
+            "SmallWood arithmetization {arithmetization:?} is not the repaired compact SMZ1 testnet profile"
         )))
     }
 }
@@ -1724,8 +2225,12 @@ fn ensure_verifiable_smallwood_arithmetization(
     let accepted = match version {
         LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING => arithmetization
             == SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        SMALLWOOD_V3_VERSION_BINDING => {
+            arithmetization
+                == SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        }
         SMALLWOOD_CANDIDATE_VERSION_BINDING => {
-            arithmetization == default_smallwood_candidate_arithmetization()
+            smallwood_strict_zk_smz1_testnet_relation_is_authorized(arithmetization)
         }
         _ => false,
     };
@@ -1744,14 +2249,50 @@ fn ensure_production_smallwood_soundness_floor(
     profile: SmallwoodNoGrindingProfileV1,
 ) -> Result<(), TransactionCircuitError> {
     let report = report_smallwood_no_grinding_soundness_v1(statement, public_value_count, profile)?;
-    if report.meets_128_bit_floor {
+    let level5 = is_compressed_level5_arithmetization(statement.arithmetization());
+    let meets_required_floor = if level5 {
+        report.meets_260_bit_floor
+    } else {
+        report.meets_128_bit_floor
+    };
+    if meets_required_floor {
         Ok(())
     } else {
+        let required_bits = if level5 { 260 } else { 128 };
         Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-            "SmallWood production profile falls below the 128-bit no-grinding floor: {:.6} bits",
-            report.security_floor_bits
+            "SmallWood production profile falls below the {required_bits}-bit no-grinding floor (rows={}, cols={}, aggregate={:.3}, decs_batch={:.3}, piop={:.3}, opening={:.3}, decs_opening={:.3})",
+            report.n_rows,
+            report.n_cols,
+            report.security_floor_bits,
+            report.epsilon1_floor_bits,
+            report.epsilon2_floor_bits,
+            report.epsilon3_floor_bits,
+            report.epsilon4_floor_bits,
         )))
     }
+}
+
+fn ensure_active_smallwood_testnet_profile(
+    statement: &(dyn crate::smallwood_semantics::SmallwoodConstraintAdapter + Sync),
+    public_value_count: usize,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<(), TransactionCircuitError> {
+    if statement.arithmetization()
+        == SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1
+    {
+        if profile != STRICT_ZK_SMZ1_SMALLWOOD_NO_GRINDING_PROFILE {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "repaired compact SMZ1 testnet proof uses a non-canonical profile",
+            ));
+        }
+        // Materialize the report so malformed geometry still fails here.
+        // Production attestation is a separate gate: a passing interactive
+        // parameter bound cannot authorize an incomplete relation, ZK proof,
+        // QROM composition, or verifier refinement.
+        let _ = report_smallwood_no_grinding_soundness_v1(statement, public_value_count, profile)?;
+        return Ok(());
+    }
+    ensure_production_smallwood_soundness_floor(statement, public_value_count, profile)
 }
 
 fn smallwood_effective_constraint_degree_for_arithmetization(
@@ -1853,7 +2394,7 @@ pub fn prove_smallwood_candidate_with_arithmetization_and_auth(
     ensure_production_smallwood_arithmetization(arithmetization)?;
     if witness.version != SMALLWOOD_CANDIDATE_VERSION_BINDING {
         return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-            "SmallWood V3 is the only production proving version, got {:?}",
+            "the active Level-5 SmallWood binding is the only production proving version, got {:?}",
             witness.version
         )));
     }
@@ -1957,7 +2498,12 @@ pub fn prove_smallwood_candidate_with_arithmetization_and_auth(
         }
         SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
         | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
-        | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => {
+        | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked128CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3
+        | SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => {
             let material =
                 build_compact_aux_merkle_material_from_context(&context, witness, arithmetization)?;
             if smallwood_witness_self_check_enabled() {
@@ -1988,12 +2534,13 @@ pub fn prove_smallwood_candidate_with_arithmetization_and_auth(
                 &material.auxiliary_witness_words,
                 material.auxiliary_witness_words.len(),
             );
-            ensure_production_smallwood_soundness_floor(
+            ensure_active_smallwood_testnet_profile(
                 &packed_statement,
                 material.public_statement.public_values.len(),
                 profile,
             )?;
-            let ark_proof = prove_smallwood_backend_statement_with_profile(
+            let ark_proof = prove_statement_for_arithmetization(
+                arithmetization,
                 &packed_statement,
                 &material.packed_expanded_witness,
                 &material.transcript_binding,
@@ -2059,6 +2606,14 @@ pub fn prove_smallwood_candidate_with_arithmetization_and_auth(
                 stark_public_inputs: Some(context.serialized_public_inputs.clone()),
             })
         }
+        SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
+            Err(TransactionCircuitError::ConstraintViolation(
+                "fresh proof relation requires its dedicated adapter entrypoint",
+            ))
+        }
     }
 }
 
@@ -2116,7 +2671,12 @@ pub fn projected_smallwood_candidate_proof_bytes_for_arithmetization_with_profil
         }
         SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
         | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
-        | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => {
+        | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked128CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3
+        | SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => {
             let material =
                 build_compact_aux_merkle_material_from_context(&context, witness, arithmetization)?;
             let ark_proof_bytes =
@@ -2145,6 +2705,14 @@ pub fn projected_smallwood_candidate_proof_bytes_for_arithmetization_with_profil
                     profile,
                 )?;
             projected_wrapped_smallwood_candidate_proof_bytes(arithmetization, ark_proof_bytes, 0)
+        }
+        SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
+            Err(TransactionCircuitError::ConstraintViolation(
+                "fresh proof sizing requires its dedicated relation adapter",
+            ))
         }
     }
 }
@@ -2177,7 +2745,12 @@ pub fn build_smallwood_candidate_profile_surface_for_arithmetization(
         }
         SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
         | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
-        | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => {
+        | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked128CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3
+        | SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => {
             let material =
                 build_compact_aux_merkle_material_from_context(&context, witness, arithmetization)?;
             (
@@ -2194,6 +2767,14 @@ pub fn build_smallwood_candidate_profile_surface_for_arithmetization(
             let material =
                 build_compact_binding_material_from_context(&context, witness, arithmetization)?;
             (material.public_statement, material.linear_constraints, 0)
+        }
+        SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "fresh relation surfaces are supplied by their dedicated adapter",
+            ));
         }
     };
     Ok(SmallwoodCandidateProfileSurface {
@@ -2295,12 +2876,12 @@ pub fn exact_smallwood_candidate_backend_opening_surface_report_from_witness(
                 &material.linear_constraints.term_coefficients,
                 &material.linear_constraints.targets,
             );
-            report_smallwood_backend_opening_surface_with_profile_v1(
+            report_opening_surface_for_arithmetization(
+                arithmetization,
                 &packed_statement,
                 &material.transcript_binding,
                 &exact.ark_proof,
                 profile,
-                crate::smallwood_engine::SmallwoodTranscriptBackend::Blake3,
             )?
         }
         SmallwoodArithmetization::DirectPacked64V1 => {
@@ -2317,17 +2898,22 @@ pub fn exact_smallwood_candidate_backend_opening_surface_report_from_witness(
                 &material.linear_constraints.term_coefficients,
                 &material.linear_constraints.targets,
             );
-            report_smallwood_backend_opening_surface_with_profile_v1(
+            report_opening_surface_for_arithmetization(
+                arithmetization,
                 &packed_statement,
                 &material.transcript_binding,
                 &exact.ark_proof,
                 profile,
-                crate::smallwood_engine::SmallwoodTranscriptBackend::Blake3,
             )?
         }
         SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
         | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
-        | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => {
+        | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked128CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3
+        | SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => {
             let material =
                 build_compact_aux_merkle_material_from_context(&context, witness, arithmetization)?;
             if arithmetization == default_smallwood_candidate_arithmetization() {
@@ -2350,12 +2936,12 @@ pub fn exact_smallwood_candidate_backend_opening_surface_report_from_witness(
                 &material.auxiliary_witness_words,
                 material.auxiliary_witness_words.len(),
             );
-            report_smallwood_backend_opening_surface_with_profile_v1(
+            report_opening_surface_for_arithmetization(
+                arithmetization,
                 &packed_statement,
                 &material.transcript_binding,
                 &exact.ark_proof,
                 profile,
-                crate::smallwood_engine::SmallwoodTranscriptBackend::Blake3,
             )?
         }
         SmallwoodArithmetization::DirectPacked64CompactBindingsV1
@@ -2376,13 +2962,21 @@ pub fn exact_smallwood_candidate_backend_opening_surface_report_from_witness(
                 &material.linear_constraints.term_coefficients,
                 &material.linear_constraints.targets,
             );
-            report_smallwood_backend_opening_surface_with_profile_v1(
+            report_opening_surface_for_arithmetization(
+                arithmetization,
                 &packed_statement,
                 &material.transcript_binding,
                 &exact.ark_proof,
                 profile,
-                crate::smallwood_engine::SmallwoodTranscriptBackend::Blake3,
             )?
+        }
+        SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "fresh opening reports require their dedicated relation adapter",
+            ));
         }
     };
     Ok(SmallwoodCandidateBackendOpeningSurfaceReport {
@@ -2435,7 +3029,12 @@ pub fn project_smallwood_candidate_lvcs_planner_report_from_witness(
         }
         SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
         | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
-        | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => {
+        | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked128CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3
+        | SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => {
             let material =
                 build_compact_aux_merkle_material_from_context(&context, witness, arithmetization)?;
             if arithmetization == default_smallwood_candidate_arithmetization() {
@@ -2502,6 +3101,14 @@ pub fn project_smallwood_candidate_lvcs_planner_report_from_witness(
                 material.public_statement.public_values.len(),
                 0,
             )?
+        }
+        SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "fresh relation planning requires its dedicated adapter",
+            ));
         }
     };
     Ok(SmallwoodCandidateLvcsPlannerProjectionReport {
@@ -2593,13 +3200,15 @@ fn exact_smallwood_candidate_proof_artifacts_from_context_with_profile(
                 &material.linear_constraints.term_coefficients,
                 &material.linear_constraints.targets,
             );
-            let proof = prove_smallwood_backend_statement_with_profile(
+            let proof = prove_statement_for_arithmetization(
+                arithmetization,
                 &packed_statement,
                 &material.packed_expanded_witness,
                 &material.transcript_binding,
                 profile,
             )?;
-            verify_smallwood_backend_statement_with_profile(
+            verify_statement_for_arithmetization(
+                arithmetization,
                 &packed_statement,
                 &material.transcript_binding,
                 &proof,
@@ -2609,7 +3218,12 @@ fn exact_smallwood_candidate_proof_artifacts_from_context_with_profile(
         }
         SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
         | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
-        | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => {
+        | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked128CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3
+        | SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => {
             let material =
                 build_compact_aux_merkle_material_from_context(&context, witness, arithmetization)?;
             if arithmetization == default_smallwood_candidate_arithmetization() {
@@ -2632,13 +3246,15 @@ fn exact_smallwood_candidate_proof_artifacts_from_context_with_profile(
                 &material.auxiliary_witness_words,
                 material.auxiliary_witness_words.len(),
             );
-            let proof = prove_smallwood_backend_statement_with_profile(
+            let proof = prove_statement_for_arithmetization(
+                arithmetization,
                 &packed_statement,
                 &material.packed_expanded_witness,
                 &material.transcript_binding,
                 profile,
             )?;
-            verify_smallwood_backend_statement_with_profile(
+            verify_statement_for_arithmetization(
+                arithmetization,
                 &packed_statement,
                 &material.transcript_binding,
                 &proof,
@@ -2678,6 +3294,14 @@ fn exact_smallwood_candidate_proof_artifacts_from_context_with_profile(
             )?;
             proof
         }
+        SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "fresh relation proving requires its dedicated adapter",
+            ));
+        }
     };
     let proof_bytes = encode_smallwood_candidate_proof(arithmetization, ark_proof.clone(), &[])?;
     Ok(ExactSmallwoodCandidateProofArtifacts {
@@ -2705,18 +3329,24 @@ pub fn verify_smallwood_candidate_proof_bytes(
     }
     ensure_verifiable_smallwood_arithmetization(version, candidate.arithmetization)?;
     let profile = smallwood_no_grinding_profile_for_arithmetization(candidate.arithmetization);
-    let (shape, auxiliary_witness_limb_count) = if version
-        == LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING
-    {
-        (
+    let (shape, auxiliary_witness_limb_count) = match version {
+        LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING => (
             SmallwoodFrontendShape::direct_packed64_compact_bindings_inline_merkle_skip_initial_mds_v1(),
             MAX_INPUTS * MERKLE_TREE_DEPTH * 3,
-        )
-    } else {
-        (
+        ),
+        SMALLWOOD_V3_VERSION_BINDING => (
             SmallwoodFrontendShape::direct_packed64_committed_bindings_inline_merkle_skip_initial_mds_v2(),
             0,
-        )
+        ),
+        SMALLWOOD_CANDIDATE_VERSION_BINDING => (
+            SmallwoodFrontendShape::direct_packed64_compressed_level5(),
+            0,
+        ),
+        _ => {
+            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "SmallWood proof version {version:?} has no verifier relation"
+            )));
+        }
     };
     let public_statement =
         build_packed_smallwood_bridge_public_statement_with_shape(pub_inputs, version, shape)?;
@@ -2750,19 +3380,117 @@ pub fn verify_smallwood_candidate_proof_bytes(
         auxiliary_witness_limb_count,
     );
     if version == SMALLWOOD_CANDIDATE_VERSION_BINDING {
-        ensure_production_smallwood_soundness_floor(
+        ensure_active_smallwood_testnet_profile(
             &packed_statement,
             public_statement.public_values.len(),
             profile,
         )?;
     }
-    verify_smallwood_backend_statement_with_profile(
+    verify_statement_for_arithmetization(
+        candidate.arithmetization,
         &packed_statement,
         &smallwood_transcript_binding(&public_statement, version, candidate.arithmetization)?,
         &candidate.ark_proof,
         profile,
     )?;
     Ok(())
+}
+
+pub fn smallwood_production_verifier_evidence_v1(
+    proof_bytes: &[u8],
+    pub_inputs: &transaction_core::TransactionVerifierInputs,
+    version: VersionBinding,
+) -> Result<SmallwoodProductionVerifierEvidenceV1, TransactionCircuitError> {
+    if version != SMALLWOOD_CANDIDATE_VERSION_BINDING {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SmallWood production verifier evidence requires the active production version",
+        ));
+    }
+    pub_inputs.validate().map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "invalid SmallWood public inputs: {err}"
+        ))
+    })?;
+    let candidate = decode_smallwood_candidate_proof_for_version(proof_bytes, version)?;
+    if candidate.ark_proof.is_empty() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood candidate PCS/ARK proof bytes must not be empty",
+        ));
+    }
+    ensure_production_smallwood_arithmetization(candidate.arithmetization)?;
+
+    let constraint_map =
+        smallwood_production_constraint_map_for_verifier_inputs(pub_inputs, version)?;
+    if constraint_map.arithmetization != candidate.arithmetization {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SmallWood proof arithmetization does not match the production constraint map",
+        ));
+    }
+    let statement = PackedStatement::new_with_auxiliary(
+        constraint_map.arithmetization,
+        &constraint_map.public_values,
+        constraint_map.lppc_row_count,
+        constraint_map.lppc_packing_factor,
+        constraint_map.effective_constraint_degree,
+        &constraint_map.linear_term_offsets,
+        &constraint_map.linear_term_indices,
+        &constraint_map.linear_term_coefficients,
+        &constraint_map.linear_targets,
+        &[],
+        constraint_map.auxiliary_witness_limb_count,
+    );
+    let profile = smallwood_no_grinding_profile_for_arithmetization(constraint_map.arithmetization);
+    ensure_active_smallwood_testnet_profile(
+        &statement,
+        constraint_map.public_value_count,
+        profile,
+    )?;
+    let public_statement = build_packed_smallwood_bridge_public_statement_with_shape(
+        pub_inputs,
+        version,
+        SmallwoodFrontendShape::direct_packed64_compressed_level5(),
+    )?;
+    let transcript_binding =
+        smallwood_transcript_binding(&public_statement, version, candidate.arithmetization)?;
+
+    verify_statement_for_arithmetization(
+        candidate.arithmetization,
+        &statement,
+        &transcript_binding,
+        &candidate.ark_proof,
+        profile,
+    )?;
+    let transcript_backend = transcript_backend_for_arithmetization(candidate.arithmetization);
+    let (
+        verifier_trace,
+        verifier_operation_profile,
+        verifier_stage_operation_profiles,
+        transcript_calls,
+    ) = profile_smallwood_verifier_with_profile_v1(
+        &statement,
+        &transcript_binding,
+        &candidate.ark_proof,
+        profile,
+        transcript_backend,
+        evaluation_domain_for_arithmetization(candidate.arithmetization),
+    )?;
+    verifier_trace.validate_sections_v1()?;
+    if !verifier_trace.accept {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SmallWood production verifier trace rejected",
+        ));
+    }
+
+    Ok(SmallwoodProductionVerifierEvidenceV1 {
+        version,
+        constraint_map,
+        transcript_binding,
+        ark_proof: candidate.ark_proof,
+        verifier_trace,
+        verifier_operation_profile,
+        verifier_stage_operation_profiles,
+        transcript_calls,
+    })
 }
 
 fn admit_smallwood_transaction_proof_wrapper(
@@ -2840,7 +3568,7 @@ fn smallwood_verifier_profile_binding_parameters(
         .unwrap_or_else(|| {
             SmallwoodBridgeRowLayout::for_shape(SmallwoodFrontendShape::bridge64_v1())
         })
-        .poseidon_rows_per_permutation();
+        .poseidon_trace_scalar_rows_per_permutation();
     SmallwoodVerifierProfileBindingParameters {
         effective_constraint_degree: smallwood_effective_constraint_degree_for_arithmetization(
             arithmetization,
@@ -2891,8 +3619,83 @@ fn smallwood_candidate_verifier_profile_material_with_parameters(
         SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => {
             b"candidate-smallwood-direct-packed-64-committed-inline-merkle-bindings-v2".as_slice()
         }
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5 => {
+            b"candidate-smallwood-direct-packed-64-compressed-level5".as_slice()
+        }
+        SmallwoodArithmetization::DirectPacked128CompressedLevel5 => {
+            b"candidate-smallwood-direct-packed-128-compressed-level5".as_slice()
+        }
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3 => {
+            b"candidate-smallwood-direct-packed-64-compressed-level5-full-sha512-first48-commitment-v3"
+                .as_slice()
+        }
+        SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2 => {
+            b"candidate-smallwood-direct-packed-64-v6-sha512-smz2-unavailable".as_slice()
+        }
+        SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate => {
+            b"candidate-smallwood-radix4-packed-1024-hx512-inactive".as_slice()
+        }
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => {
+            b"candidate-smallwood-direct-packed-64-compressed-level5-strict-zk-smz1".as_slice()
+        }
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8 => {
+            b"candidate-smallwood-poseidon2-width16-v8-sha512-smz8".as_slice()
+        }
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => {
+            b"candidate-smallwood-poseidon2-width16-v8-sha512-smz9".as_slice()
+        }
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
+            b"candidate-smallwood-poseidon2-width16-v8-sha512-smza".as_slice()
+        }
     });
-    material.extend_from_slice(b"hegemon.blake3-field-xof.v1");
+    material.extend_from_slice(
+        match transcript_backend_for_arithmetization(arithmetization) {
+            SmallwoodTranscriptBackend::Blake3 => b"hegemon.blake3-field-xof.v1".as_slice(),
+            SmallwoodTranscriptBackend::Poseidon2 => {
+                b"hegemon.poseidon2-field-sponge.v1".as_slice()
+            }
+            SmallwoodTranscriptBackend::Sha512Level5 => {
+                b"hegemon.sha512-level5-field-xof.v1".as_slice()
+            }
+            SmallwoodTranscriptBackend::Sha512V6 => {
+                b"hegemon.sha512-v6-field-xof.unavailable".as_slice()
+            }
+            SmallwoodTranscriptBackend::FullSha512First48CommitmentV3 => {
+                b"hegemon.full-sha512-first48-commitment-field-xof.v3".as_slice()
+            }
+            SmallwoodTranscriptBackend::Hx512Candidate => {
+                b"hegemon.hx512-eight-stage-transcript.inactive".as_slice()
+            }
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8 => {
+                b"hegemon.smallwood.poseidon2-v8.sha512.profile.v1".as_slice()
+            }
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9 => {
+                b"hegemon.smallwood.poseidon2-v8.smz9.sha512.profile.v1".as_slice()
+            }
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza => {
+                b"hegemon.smallwood.poseidon2-v8.smza.sha512.profile.v1".as_slice()
+            }
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 => {
+                b"hegemon.smallwood.poseidon2-v8.smc7.sha512-448.profile.v1".as_slice()
+            }
+            SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Q20Smc8 => {
+                b"hegemon.smallwood.poseidon2-v8.smc8.sha512-448.profile.v1".as_slice()
+            }
+        },
+    );
+    material.extend_from_slice(
+        match evaluation_domain_for_arithmetization(arithmetization) {
+            crate::smallwood_engine::SmallwoodDecsEvaluationDomain::Consecutive => {
+                b"hegemon.decs-domain.consecutive.v1".as_slice()
+            }
+            crate::smallwood_engine::SmallwoodDecsEvaluationDomain::Radix2Subgroup => {
+                b"hegemon.decs-domain.radix2-subgroup.v1".as_slice()
+            }
+            crate::smallwood_engine::SmallwoodDecsEvaluationDomain::Radix2DisjointCoset => {
+                b"hegemon.decs-domain.radix2-disjoint-coset.v1".as_slice()
+            }
+        },
+    );
     material.extend_from_slice(&version.circuit.to_le_bytes());
     material.extend_from_slice(&version.crypto.to_le_bytes());
     material.extend_from_slice(&(arithmetization as u64).to_le_bytes());
@@ -2985,7 +3788,8 @@ fn ensure_supported_smallwood_frontend_shape(
     }
     match shape.poseidon_layout {
         SmallwoodPoseidonLayout::GroupedRowsV1
-        | SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1 => {}
+        | SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1
+        | SmallwoodPoseidonLayout::SboxWiresLevel5 => {}
     }
     Ok(())
 }
@@ -3016,6 +3820,15 @@ fn compact_binding_shape_for_arithmetization(
                 SmallwoodFrontendShape::direct_packed64_committed_bindings_inline_merkle_skip_initial_mds_v2(),
             )
         }
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3
+        | SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => {
+            Some(SmallwoodFrontendShape::direct_packed64_compressed_level5())
+        }
+        SmallwoodArithmetization::DirectPacked128CompressedLevel5 => {
+            Some(SmallwoodFrontendShape::direct_packed128_compressed_level5())
+        }
         SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
             Some(
                 SmallwoodFrontendShape::direct_packed128_compact_bindings_inline_merkle_skip_initial_mds_v1(),
@@ -3024,7 +3837,12 @@ fn compact_binding_shape_for_arithmetization(
         SmallwoodArithmetization::DirectPacked128CompactBindingsV1 => {
             Some(SmallwoodFrontendShape::direct_packed128_compact_bindings_v1())
         }
-        SmallwoodArithmetization::Bridge64V1 | SmallwoodArithmetization::DirectPacked64V1 => None,
+        SmallwoodArithmetization::Bridge64V1
+        | SmallwoodArithmetization::DirectPacked64V1
+        | SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
+        | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => None,
     }
 }
 
@@ -3065,6 +3883,29 @@ fn direct_packed_arithmetization_for_shape(
         ) =>
         {
             SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1
+        }
+        (
+            SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            SmallwoodMerkleAggregationMode::CommittedInlinePoseidonV2,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+        ) if matches!(
+            shape.poseidon_layout,
+            SmallwoodPoseidonLayout::SboxWiresLevel5
+        ) =>
+        {
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5
+        }
+        (
+            SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            SmallwoodMerkleAggregationMode::CommittedInlinePoseidonV2,
+            packing_factor,
+        ) if packing_factor == SMALLWOOD_BRIDGE_PACKING_FACTOR * 2
+            && matches!(
+                shape.poseidon_layout,
+                SmallwoodPoseidonLayout::SboxWiresLevel5
+            ) =>
+        {
+            SmallwoodArithmetization::DirectPacked128CompressedLevel5
         }
         (
             SmallwoodPublicBindingMode::CompactPublicBindingsV1,
@@ -3205,7 +4046,12 @@ fn build_compact_aux_merkle_material_from_context(
                 );
             words
         }
-        SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => {
+        SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked128CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3
+        | SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1 => {
             material.linear_constraints =
                 build_packed_bridge_linear_constraints_with_inline_bindings(
                     &material.public_statement,
@@ -3249,7 +4095,7 @@ enum SmallwoodCandidateWrapperKind {
 fn smallwood_candidate_wrapper_kind_for_version(
     version: VersionBinding,
 ) -> Result<SmallwoodCandidateWrapperKind, TransactionCircuitError> {
-    if version == SMALLWOOD_CANDIDATE_VERSION_BINDING {
+    if version == SMALLWOOD_CANDIDATE_VERSION_BINDING || version == SMALLWOOD_V3_VERSION_BINDING {
         Ok(SmallwoodCandidateWrapperKind::Current)
     } else if version == LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING {
         Ok(SmallwoodCandidateWrapperKind::Legacy)
@@ -3487,6 +4333,12 @@ fn build_packed_smallwood_frontend_material_from_context_with_shape(
         shape,
         &context.auth,
     )?;
+    let dense_range_rows = build_dense_value_range_rows(
+        witness,
+        &context.public_values,
+        layout,
+        shape.lppc_packing_factor,
+    )?;
     let inline_binding_rows = build_inline_binding_rows(
         witness,
         &context.public_values,
@@ -3497,6 +4349,7 @@ fn build_packed_smallwood_frontend_material_from_context_with_shape(
     )?;
     let packed_expanded_witness = packed_bridge_witness_rows(
         &semantic_secret_rows,
+        &dense_range_rows,
         &inline_binding_rows,
         &context.bridge_poseidon_rows,
         layout,
@@ -3510,7 +4363,8 @@ fn build_packed_smallwood_frontend_material_from_context_with_shape(
         lppc_row_count: row_count as u32,
         poseidon_permutation_count: context.bridge_poseidon_rows.len() as u32,
         poseidon_state_row_count: (context.bridge_poseidon_rows.len()
-            * layout.poseidon_rows_per_permutation()) as u32,
+            * layout.poseidon_trace_scalar_rows_per_permutation())
+            as u32,
         expanded_witness_len: packed_expanded_witness.len() as u32,
         lppc_packing_factor: shape.lppc_packing_factor as u16,
         effective_constraint_degree: smallwood_effective_constraint_degree_for_arithmetization(
@@ -3548,6 +4402,12 @@ fn build_packed_smallwood_bridge_material_from_context(
         shape,
         &context.auth,
     )?;
+    let dense_range_rows = build_dense_value_range_rows(
+        witness,
+        &context.public_values,
+        layout,
+        shape.lppc_packing_factor,
+    )?;
     let inline_binding_rows = build_inline_binding_rows(
         witness,
         &context.public_values,
@@ -3558,6 +4418,7 @@ fn build_packed_smallwood_bridge_material_from_context(
     )?;
     let packed_witness_rows = packed_bridge_witness_rows(
         &semantic_secret_rows,
+        &dense_range_rows,
         &inline_binding_rows,
         &context.bridge_poseidon_rows,
         layout,
@@ -3571,7 +4432,8 @@ fn build_packed_smallwood_bridge_material_from_context(
         lppc_row_count: row_count as u32,
         poseidon_permutation_count: context.bridge_poseidon_rows.len() as u32,
         poseidon_state_row_count: (context.bridge_poseidon_rows.len()
-            * layout.poseidon_rows_per_permutation()) as u32,
+            * layout.poseidon_trace_scalar_rows_per_permutation())
+            as u32,
         expanded_witness_len: packed_witness_rows.len() as u32,
         lppc_packing_factor: shape.lppc_packing_factor as u16,
         effective_constraint_degree: smallwood_effective_constraint_degree_for_arithmetization(
@@ -3722,6 +4584,25 @@ pub fn smallwood_public_statement_values(
         .collect()
 }
 
+/// Canonical bincode bytes hashed by the active production transcript.
+///
+/// Keeping this helper on the same constructor used by verification makes the
+/// Lean/Rust conformance vectors check the actual statement geometry and serde
+/// field order instead of a hand-built test fixture.
+pub fn smallwood_production_public_statement_bytes_from_values(
+    public_values: &[u64],
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    let statement = build_packed_smallwood_bridge_public_statement_from_values_with_shape(
+        public_values.to_vec(),
+        SmallwoodFrontendShape::direct_packed64_compressed_level5(),
+    )?;
+    bincode::serialize(&statement).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to serialize production SmallWood public statement: {err}"
+        ))
+    })
+}
+
 #[allow(dead_code)]
 fn build_packed_smallwood_bridge_public_statement(
     public_inputs: &TransactionVerifierInputs,
@@ -3766,9 +4647,10 @@ fn build_packed_smallwood_bridge_public_statement_from_values_with_shape(
     );
     let lppc_row_count = SMALLWOOD_PUBLIC_ROWS
         + layout.secret_witness_rows()
+        + layout.dense_value_range_rows
         + inline_binding_row_count(layout, shape.lppc_packing_factor)
         + SMALLWOOD_LANE_SELECTOR_ROWS
-        + (poseidon_group_count * layout.poseidon_rows_per_permutation() * POSEIDON2_WIDTH);
+        + (poseidon_group_count * layout.poseidon_rows_per_group());
     Ok(SmallwoodPublicStatement {
         public_values,
         public_value_count: SMALLWOOD_BASE_PUBLIC_VALUE_COUNT as u32,
@@ -3776,7 +4658,8 @@ fn build_packed_smallwood_bridge_public_statement_from_values_with_shape(
         lppc_row_count: lppc_row_count as u32,
         poseidon_permutation_count: poseidon_permutation_count as u32,
         poseidon_state_row_count: (poseidon_permutation_count
-            * layout.poseidon_rows_per_permutation()) as u32,
+            * layout.poseidon_trace_scalar_rows_per_permutation())
+            as u32,
         expanded_witness_len: (lppc_row_count * shape.lppc_packing_factor) as u32,
         lppc_packing_factor: shape.lppc_packing_factor as u16,
         effective_constraint_degree: smallwood_effective_constraint_degree_for_arithmetization(
@@ -5145,6 +6028,103 @@ fn build_packed_bridge_linear_constraints_with_inline_bindings(
             );
         }
     }
+    if layout.has_dense_value_ranges() {
+        let mut push_dense_reconstruction =
+            |value_row: Option<usize>, value_index: usize, public_target: Option<u64>| {
+                let mut terms = Vec::with_capacity(SMALLWOOD_DENSE_RANGE_ORDINARY_DIGITS + 2);
+                let public_reconstruction = value_row.is_none();
+                if let Some(value_row) = value_row {
+                    terms.push((value_row, 0, 1));
+                }
+                let mut coefficient = 1u64;
+                for digit in 0..SMALLWOOD_DENSE_RANGE_ORDINARY_DIGITS {
+                    let (row, lane) = bridge_dense_range_digit_position(
+                        layout,
+                        value_index,
+                        digit,
+                        packing_factor,
+                    );
+                    terms.push((
+                        row,
+                        lane,
+                        if public_reconstruction {
+                            coefficient
+                        } else {
+                            neg_coeff(coefficient)
+                        },
+                    ));
+                    coefficient = coefficient
+                        .checked_mul(4)
+                        .expect("dense range coefficient fits u64");
+                }
+                let (top_row, top_lane) =
+                    bridge_dense_range_top_position(layout, value_index, packing_factor);
+                terms.push((
+                    top_row,
+                    top_lane,
+                    if public_reconstruction {
+                        coefficient
+                    } else {
+                        neg_coeff(coefficient)
+                    },
+                ));
+                push_bridge_constraint(
+                    &mut constraints,
+                    packing_factor,
+                    &terms,
+                    public_target.unwrap_or(0),
+                );
+            };
+        for input in 0..MAX_INPUTS {
+            push_dense_reconstruction(Some(bridge_row_input_value(layout, input)), input, None);
+        }
+        for output in 0..MAX_OUTPUTS {
+            push_dense_reconstruction(
+                Some(bridge_output_base(layout, output)),
+                MAX_INPUTS + output,
+                None,
+            );
+        }
+        for (public_value, public_index) in
+            [PUB_FEE, PUB_VALUE_BALANCE_MAG, PUB_STABLE_ISSUANCE_MAG]
+                .into_iter()
+                .enumerate()
+        {
+            push_dense_reconstruction(
+                None,
+                MAX_INPUTS + MAX_OUTPUTS + public_value,
+                Some(statement.public_values[public_index]),
+            );
+        }
+
+        let ordinary_slots =
+            SMALLWOOD_VALUE_RANGE_VALUE_COUNT * SMALLWOOD_DENSE_RANGE_ORDINARY_DIGITS;
+        let ordinary_rows = layout.dense_value_range_rows - 1;
+        for slot in ordinary_slots..ordinary_rows * packing_factor {
+            push_bridge_constraint(
+                &mut constraints,
+                packing_factor,
+                &[(
+                    bridge_dense_range_rows_start(layout) + slot / packing_factor,
+                    slot % packing_factor,
+                    1,
+                )],
+                0,
+            );
+        }
+        for lane in SMALLWOOD_VALUE_RANGE_VALUE_COUNT..packing_factor {
+            push_bridge_constraint(
+                &mut constraints,
+                packing_factor,
+                &[(
+                    bridge_dense_range_rows_start(layout) + layout.dense_value_range_rows - 1,
+                    lane,
+                    1,
+                )],
+                0,
+            );
+        }
+    }
 
     constraints
 }
@@ -6264,6 +7244,86 @@ fn build_inline_binding_rows(
     Ok(rows)
 }
 
+fn build_dense_value_range_rows(
+    witness: &TransactionWitness,
+    public_values: &[u64],
+    layout: SmallwoodBridgeRowLayout,
+    packing_factor: usize,
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    if !layout.has_dense_value_ranges() {
+        return Ok(Vec::new());
+    }
+    let (inputs, _) = padded_inputs(&witness.inputs);
+    let (outputs, _) = padded_outputs(&witness.outputs);
+    let values = inputs
+        .iter()
+        .map(|input| input.note.value)
+        .chain(outputs.iter().map(|output| output.note.value))
+        .chain([
+            public_values[PUB_FEE],
+            public_values[PUB_VALUE_BALANCE_MAG],
+            public_values[PUB_STABLE_ISSUANCE_MAG],
+        ])
+        .collect::<Vec<_>>();
+    debug_assert_eq!(values.len(), SMALLWOOD_VALUE_RANGE_VALUE_COUNT);
+
+    let mut rows = vec![0u64; layout.dense_value_range_rows * packing_factor];
+    for (value_index, value) in values.into_iter().enumerate() {
+        if value >= (1u64 << 61) {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "compressed SmallWood value exceeds the 61-bit range",
+            ));
+        }
+        for digit in 0..SMALLWOOD_DENSE_RANGE_ORDINARY_DIGITS {
+            let slot = value_index * SMALLWOOD_DENSE_RANGE_ORDINARY_DIGITS + digit;
+            rows[slot] = (value >> (2 * digit)) & 3;
+        }
+        let top_row = layout.dense_value_range_rows - 1;
+        rows[top_row * packing_factor + value_index] = (value >> 60) & 1;
+    }
+    Ok(rows)
+}
+
+fn compressed_poseidon_wire_rows(
+    trace: &[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION],
+) -> Vec<u64> {
+    let mut rows = Vec::with_capacity(SMALLWOOD_COMPRESSED_POSEIDON_ROWS_PER_GROUP);
+    rows.extend_from_slice(&trace[0]);
+
+    for (round, round_constants) in EXTERNAL_ROUND_CONSTANTS[0]
+        .iter()
+        .enumerate()
+        .take(POSEIDON2_EXTERNAL_ROUNDS)
+    {
+        let step = 1 + round;
+        for (limb, round_constant) in round_constants.iter().copied().enumerate() {
+            rows.push(add_mod_u64(trace[step][limb], round_constant));
+        }
+    }
+    for (round, round_constant) in INTERNAL_ROUND_CONSTANTS
+        .iter()
+        .copied()
+        .enumerate()
+        .take(POSEIDON2_INTERNAL_ROUNDS)
+    {
+        let step = 1 + POSEIDON2_EXTERNAL_ROUNDS + round;
+        rows.push(add_mod_u64(trace[step][0], round_constant));
+    }
+    for (round, round_constants) in EXTERNAL_ROUND_CONSTANTS[1]
+        .iter()
+        .enumerate()
+        .take(POSEIDON2_EXTERNAL_ROUNDS)
+    {
+        let step = 1 + POSEIDON2_EXTERNAL_ROUNDS + POSEIDON2_INTERNAL_ROUNDS + round;
+        for (limb, round_constant) in round_constants.iter().copied().enumerate() {
+            rows.push(add_mod_u64(trace[step][limb], round_constant));
+        }
+    }
+    rows.extend_from_slice(&trace[POSEIDON2_STEPS]);
+    debug_assert_eq!(rows.len(), SMALLWOOD_COMPRESSED_POSEIDON_ROWS_PER_GROUP);
+    rows
+}
+
 fn expanded_witness_words(
     public_values: &[u64],
     raw_witness: &[u64],
@@ -6286,6 +7346,7 @@ fn expanded_witness_words(
 
 fn packed_bridge_witness_rows(
     secret_rows: &[u64],
+    dense_range_rows: &[u64],
     inline_binding_rows: &[u64],
     poseidon_rows: &[[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]],
     layout: SmallwoodBridgeRowLayout,
@@ -6297,26 +7358,53 @@ fn packed_bridge_witness_rows(
         smallwood_bridge_poseidon_group_count(poseidon_rows.len(), packing_factor);
     let mut rows = Vec::with_capacity(
         (secret_rows.len()
+            + dense_range_rows.len() / packing_factor
             + inline_binding_rows.len() / packing_factor
-            + (poseidon_group_count * layout.poseidon_rows_per_permutation() * POSEIDON2_WIDTH))
+            + (poseidon_group_count * layout.poseidon_rows_per_group()))
             * packing_factor,
     );
 
     for value in secret_rows {
         rows.extend(std::iter::repeat_n(*value, packing_factor));
     }
+    rows.extend_from_slice(dense_range_rows);
     rows.extend_from_slice(inline_binding_rows);
-    for group in 0..poseidon_group_count {
-        for logical_row in 0..layout.poseidon_rows_per_permutation() {
-            let step = layout.poseidon_trace_row(logical_row);
-            for limb in 0..POSEIDON2_WIDTH {
-                for lane in 0..packing_factor {
-                    let value = poseidon_rows
-                        .get(group * packing_factor + lane)
-                        .map(|permutation| permutation[step][limb])
-                        .unwrap_or(dummy_rows[step][limb]);
-                    rows.push(value);
+    match layout.poseidon_layout {
+        SmallwoodPoseidonLayout::GroupedRowsV1
+        | SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1 => {
+            for group in 0..poseidon_group_count {
+                for logical_row in 0..layout.poseidon_rows_per_permutation() {
+                    let step = layout.poseidon_trace_row(logical_row);
+                    for limb in 0..POSEIDON2_WIDTH {
+                        for lane in 0..packing_factor {
+                            let value = poseidon_rows
+                                .get(group * packing_factor + lane)
+                                .map(|permutation| permutation[step][limb])
+                                .unwrap_or(dummy_rows[step][limb]);
+                            rows.push(value);
+                        }
+                    }
                 }
+            }
+        }
+        SmallwoodPoseidonLayout::SboxWiresLevel5 => {
+            let dummy_compressed = compressed_poseidon_wire_rows(&dummy_rows);
+            for group in 0..poseidon_group_count {
+                let compressed_lanes = (0..packing_factor)
+                    .map(|lane| {
+                        poseidon_rows
+                            .get(group * packing_factor + lane)
+                            .map(compressed_poseidon_wire_rows)
+                            .unwrap_or_else(|| dummy_compressed.clone())
+                    })
+                    .collect::<Vec<_>>();
+                rows.extend((0..SMALLWOOD_COMPRESSED_POSEIDON_ROWS_PER_GROUP).flat_map(
+                    |packed_row| {
+                        compressed_lanes
+                            .iter()
+                            .map(move |lane_rows| lane_rows[packed_row])
+                    },
+                ));
             }
         }
     }
@@ -6385,7 +7473,9 @@ pub(crate) fn encode_smallwood_candidate_proof(
             "smallwood candidate proof wrapper must not carry auxiliary witness words",
         ));
     }
-    if arithmetization != default_smallwood_candidate_arithmetization() {
+    if arithmetization
+        == SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+    {
         return bincode::serialize(&LegacySmallwoodCandidateProof {
             arithmetization,
             ark_proof,
@@ -6444,6 +7534,9 @@ fn projected_smallwood_backend_proof_bytes_with_profile_from_material(
     auxiliary_witness_limb_count: usize,
     profile: SmallwoodNoGrindingProfileV1,
 ) -> Result<usize, TransactionCircuitError> {
+    // This is a size-only adapter. Preserve the auxiliary shape so metadata
+    // validation counts the same variables as the material being projected.
+    let auxiliary_shape_words = vec![0; auxiliary_witness_limb_count];
     let packed_statement = crate::smallwood_semantics::PackedStatement::new_with_auxiliary(
         arithmetization,
         &statement.public_values,
@@ -6454,10 +7547,15 @@ fn projected_smallwood_backend_proof_bytes_with_profile_from_material(
         &linear_constraints.term_indices,
         &linear_constraints.term_coefficients,
         &linear_constraints.targets,
-        &[],
+        &auxiliary_shape_words,
         auxiliary_witness_limb_count,
     );
-    projected_smallwood_backend_proof_bytes_with_profile_statement(&packed_statement, profile)
+    projected_smallwood_backend_proof_bytes_with_profile_backend_and_domain_statement(
+        &packed_statement,
+        profile,
+        transcript_backend_for_arithmetization(arithmetization),
+        evaluation_domain_for_arithmetization(arithmetization),
+    )
 }
 
 fn smallwood_candidate_soundness_report_from_material(
@@ -6467,6 +7565,8 @@ fn smallwood_candidate_soundness_report_from_material(
     auxiliary_witness_limb_count: usize,
     profile: SmallwoodNoGrindingProfileV1,
 ) -> Result<SmallwoodNoGrindingSoundnessReportV1, TransactionCircuitError> {
+    // The report needs the auxiliary variable count, not secret limb values.
+    let auxiliary_shape_words = vec![0; auxiliary_witness_limb_count];
     let packed_statement = crate::smallwood_semantics::PackedStatement::new_with_auxiliary(
         arithmetization,
         &statement.public_values,
@@ -6477,7 +7577,7 @@ fn smallwood_candidate_soundness_report_from_material(
         &linear_constraints.term_indices,
         &linear_constraints.term_coefficients,
         &linear_constraints.targets,
-        &[],
+        &auxiliary_shape_words,
         auxiliary_witness_limb_count,
     );
     report_smallwood_no_grinding_soundness_v1(
@@ -6634,6 +7734,70 @@ mod tests {
     use crate::public_inputs::StablecoinPolicyBinding;
     use protocol_versioning::{VersionBinding, SMALLWOOD_CANDIDATE_VERSION_BINDING};
 
+    #[test]
+    fn active_production_admission_cannot_select_any_compiled_poseidon_relation() {
+        let compiled_poseidon_relations = [
+            SmallwoodArithmetization::Bridge64V1,
+            SmallwoodArithmetization::DirectPacked64V1,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+            SmallwoodArithmetization::DirectPacked128CompactBindingsV1,
+            SmallwoodArithmetization::DirectPacked16CompactBindingsV1,
+            SmallwoodArithmetization::DirectPacked32CompactBindingsV1,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+            SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1,
+            SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5,
+            SmallwoodArithmetization::DirectPacked128CompressedLevel5,
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3,
+            SmallwoodArithmetization::DirectPacked64CompressedV6Sha512Smz2,
+        ];
+
+        assert!(!smallwood_blake2b384_boolean_relation_is_compiled());
+        assert_eq!(
+            SMALLWOOD_BLAKE2B384_BOOLEAN_RELATION_PROFILE_V3,
+            b"hegemon.smallwood.blake2b384-boolean-relation.v3.unsupported"
+        );
+        for arithmetization in compiled_poseidon_relations {
+            assert!(!smallwood_poseidon_relation_is_production_authorized(
+                arithmetization
+            ));
+            assert!(ensure_production_smallwood_arithmetization(arithmetization).is_err());
+            assert!(ensure_verifiable_smallwood_arithmetization(
+                SMALLWOOD_CANDIDATE_VERSION_BINDING,
+                arithmetization,
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn repaired_testnet_profile_selects_only_strict_zk_smz1() {
+        let repaired = SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1;
+        assert_eq!(default_smallwood_candidate_arithmetization(), repaired);
+        assert!(smallwood_strict_zk_smz1_testnet_relation_is_authorized(
+            repaired
+        ));
+        assert_eq!(
+            evaluation_domain_for_arithmetization(repaired),
+            crate::smallwood_engine::SmallwoodDecsEvaluationDomain::Radix2DisjointCoset
+        );
+        assert_eq!(
+            transcript_backend_for_arithmetization(repaired),
+            SmallwoodTranscriptBackend::Sha512Level5
+        );
+        assert!(ensure_production_smallwood_arithmetization(repaired).is_ok());
+        assert!(ensure_verifiable_smallwood_arithmetization(
+            SMALLWOOD_CANDIDATE_VERSION_BINDING,
+            repaired,
+        )
+        .is_ok());
+        assert!(ensure_production_smallwood_arithmetization(
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5
+        )
+        .is_err());
+    }
+
     #[derive(Debug, serde::Deserialize)]
     struct LeanSmallwoodSpendAuthorizationVectors {
         schema_version: u32,
@@ -6689,8 +7853,36 @@ mod tests {
         smallwood_binding_transcript_domain_hex: String,
         smallwood_public_statement_domain_hex: String,
         smallwood_field_xof_domain_hex: String,
+        active_no_grinding_soundness: LeanActiveNoGrindingSoundness,
         smallwood_transcript_binding_cases: Vec<LeanSmallwoodTranscriptBindingCase>,
         active_profile_single_field_mutations: Vec<LeanSmallwoodProfileMutationCase>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanActiveNoGrindingSoundness {
+        field_order: u64,
+        row_count: usize,
+        packing_factor: usize,
+        public_value_count: usize,
+        constraint_degree: usize,
+        rho: usize,
+        opened_evaluations: usize,
+        beta: usize,
+        decs_evaluations: usize,
+        decs_opened_evaluations: usize,
+        decs_eta: usize,
+        polynomial_count: usize,
+        constraint_polynomial_degree: usize,
+        lvcs_row_count: usize,
+        lvcs_column_count: usize,
+        decs_polynomial_degree: usize,
+        decs_binding_subset_size: usize,
+        epsilon_1_supports_256_bits: bool,
+        epsilon_2_supports_256_bits: bool,
+        epsilon_3_supports_256_bits: bool,
+        epsilon_4_supports_256_bits: bool,
+        aggregate_error_supports_256_bit_work_factor: bool,
+        aggregate_error_supports_260_bit_work_factor: bool,
     }
 
     #[derive(Debug, serde::Deserialize)]
@@ -6796,12 +7988,22 @@ mod tests {
     struct LeanSmallwoodProductionConstraintRefinementVectors {
         schema_version: u32,
         arithmetization: String,
+        poseidon2_note_commitment_domain_tag: u64,
+        poseidon2_note_commitment_cases: Vec<LeanPoseidon2NoteCommitmentCase>,
         constraint_families: Vec<String>,
         canonical_statement_projection: LeanSmallwoodCanonicalStatementProjection,
         evaluator_probe: LeanSmallwoodProductionEvaluatorProbe,
         nonlinear_constraint_families: Vec<LeanSmallwoodNonlinearConstraintFamily>,
         fixtures: Vec<LeanSmallwoodProductionConstraintFixture>,
         mutation_cases: Vec<LeanSmallwoodProductionConstraintMutationCase>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPoseidon2NoteCommitmentCase {
+        name: String,
+        preimage_words: [u64; 18],
+        digest_limbs: [u64; 6],
     }
 
     #[derive(Debug, serde::Deserialize)]
@@ -6952,6 +8154,8 @@ mod tests {
             9 => {
                 SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
             }
+            10 => SmallwoodArithmetization::DirectPacked64CompressedLevel5,
+            11 => SmallwoodArithmetization::DirectPacked128CompressedLevel5,
             _ => panic!("unsupported Lean SmallWood arithmetization tag {value}"),
         }
     }
@@ -7867,10 +9071,9 @@ mod tests {
                 auxiliary_witness_words: vec![9, 10],
             })
             .expect("encode current SmallWood wrapper fixture"),
-            "legacy_nonempty" => encode_smallwood_candidate_proof(
+            "legacy_nonempty" => encode_legacy_smallwood_candidate_proof_for_test(
                 SmallwoodArithmetization::Bridge64V1,
                 vec![1, 2, 3, 4],
-                &[],
             )
             .expect("encode legacy SmallWood wrapper fixture"),
             "current_empty_ark" => bincode::serialize(&SmallwoodCandidateProof {
@@ -7879,10 +9082,9 @@ mod tests {
                 auxiliary_witness_words: Vec::new(),
             })
             .expect("encode empty current SmallWood wrapper fixture"),
-            "legacy_empty_ark" => encode_smallwood_candidate_proof(
+            "legacy_empty_ark" => encode_legacy_smallwood_candidate_proof_for_test(
                 SmallwoodArithmetization::Bridge64V1,
                 Vec::new(),
-                &[],
             )
             .expect("encode empty legacy SmallWood wrapper fixture"),
             "malformed" => vec![0xff, 0x00, 0x01],
@@ -8364,11 +9566,79 @@ mod tests {
     #[test]
     fn lean_generated_smallwood_production_constraint_maps_match_every_production_row() {
         let vectors = load_smallwood_production_constraint_refinement_vectors();
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
+        assert_eq!(vectors.arithmetization, "DirectPacked64CompressedLevel5");
         assert_eq!(
-            vectors.arithmetization,
-            "DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2"
+            vectors.poseidon2_note_commitment_domain_tag,
+            NOTE_DOMAIN_TAG
         );
+        assert!(
+            !vectors.poseidon2_note_commitment_cases.is_empty(),
+            "Lean Poseidon2 note-commitment cases must not be empty"
+        );
+        fn words4_to_bytes32(words: &[u64]) -> [u8; 32] {
+            assert_eq!(words.len(), 4);
+            let mut bytes = [0u8; 32];
+            for (index, word) in words.iter().enumerate() {
+                bytes[index * 8..(index + 1) * 8].copy_from_slice(&word.to_be_bytes());
+            }
+            bytes
+        }
+        let mut poseidon_case_names = std::collections::BTreeSet::new();
+        for case in &vectors.poseidon2_note_commitment_cases {
+            assert!(poseidon_case_names.insert(case.name.clone()));
+            let preimage = &case.preimage_words;
+            let recipient = words4_to_bytes32(&preimage[2..6]);
+            let rho = words4_to_bytes32(&preimage[6..10]);
+            let randomness = words4_to_bytes32(&preimage[10..14]);
+            let authorization_key = words4_to_bytes32(&preimage[14..18]);
+            let production_preimage = note_commitment_inputs(
+                preimage[0],
+                preimage[1],
+                &recipient,
+                &rho,
+                &randomness,
+                &authorization_key,
+            );
+            assert_eq!(
+                production_preimage
+                    .iter()
+                    .map(|felt| felt.as_canonical_u64())
+                    .collect::<Vec<_>>(),
+                preimage,
+                "{}: deployed note-commitment preimage drifted from Lean",
+                case.name
+            );
+            let production_digest = crate::hashing_pq::note_commitment(
+                preimage[0],
+                preimage[1],
+                &recipient,
+                &authorization_key,
+                &rho,
+                &randomness,
+            );
+            assert_eq!(
+                production_digest.map(|felt| felt.as_canonical_u64()),
+                case.digest_limbs,
+                "{}: deployed Poseidon2 note-commitment digest drifted from Lean",
+                case.name
+            );
+            let (trace_digest, permutations) = trace_sponge_hash(
+                vectors.poseidon2_note_commitment_domain_tag,
+                &production_preimage,
+            );
+            assert_eq!(
+                trace_digest, production_digest,
+                "{}: exact constraint-trace sponge diverged from deployed note commitment",
+                case.name
+            );
+            assert_eq!(
+                permutations.len(),
+                3,
+                "{}: 18-word note commitment must execute exactly three permutations",
+                case.name
+            );
+        }
         fn felt_array6(values: &[u64]) -> [Felt; 6] {
             assert_eq!(values.len(), 6);
             core::array::from_fn(|index| Felt::from_u64(values[index]))
@@ -8379,6 +9649,12 @@ mod tests {
         }
 
         let projection = &vectors.canonical_statement_projection;
+        let projection_version =
+            VersionBinding::new(projection.circuit_version, projection.crypto_suite);
+        assert_eq!(
+            projection_version, SMALLWOOD_CANDIDATE_VERSION_BINDING,
+            "Lean canonical statement projection must bind the active SmallWood version"
+        );
         assert_eq!(projection.balance_slot_assets.len(), BALANCE_SLOTS);
         let projection_inputs = TransactionVerifierInputs {
             input_flags: projection
@@ -8414,12 +9690,10 @@ mod tests {
                 &projection.stablecoin_attestation_commitment,
             ),
         };
-        let projected_values = smallwood_public_statement_values(
-            &projection_inputs,
-            VersionBinding::new(projection.circuit_version, projection.crypto_suite),
-        )
-        .into_iter()
-        .collect::<Vec<_>>();
+        let projected_values =
+            smallwood_public_statement_values(&projection_inputs, projection_version)
+                .into_iter()
+                .collect::<Vec<_>>();
         assert_eq!(projected_values, projection.expected_public_values);
         assert_eq!(projected_values.len(), SMALLWOOD_BASE_PUBLIC_VALUE_COUNT);
         assert_eq!(
@@ -8461,15 +9735,20 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
         );
+        assert_eq!(vectors.fixtures.len(), 2);
+        let active_fixture = vectors
+            .fixtures
+            .iter()
+            .find(|fixture| fixture.name == "active")
+            .expect("active production constraint fixture");
         assert_eq!(
             vectors
                 .nonlinear_constraint_families
                 .iter()
                 .map(|family| family.count)
                 .sum::<usize>(),
-            1722
+            active_fixture.nonlinear_constraint_count
         );
-        assert_eq!(vectors.fixtures.len(), 2);
 
         for fixture in &vectors.fixtures {
             let mut witness = match fixture.name.as_str() {
@@ -8558,8 +9837,7 @@ mod tests {
 
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
-        let arithmetization =
-            SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2;
+        let arithmetization = SmallwoodArithmetization::DirectPacked64CompressedLevel5;
         let surface = build_smallwood_candidate_profile_surface_for_arithmetization(
             &witness,
             arithmetization,
@@ -8649,7 +9927,7 @@ mod tests {
             matches[0]
         };
         let layout = SmallwoodBridgeRowLayout::for_shape(
-            SmallwoodFrontendShape::direct_packed64_committed_bindings_inline_merkle_skip_initial_mds_v2(),
+            SmallwoodFrontendShape::direct_packed64_compressed_level5(),
         );
         let packing_factor = surface.public_statement.lppc_packing_factor as usize;
         let neg_one = (transaction_core::constants::FIELD_MODULUS as u64) - 1;
@@ -8691,17 +9969,20 @@ mod tests {
             packing_factor,
         )];
         let mut reconstruction_coefficients = vec![1];
-        for limb in 0..RANGE_LIMB_COUNT {
-            reconstruction_indices.push(packed_bridge_index(
-                bridge_input_value_range_limb_row(layout, 0, limb),
-                0,
-                packing_factor,
-            ));
-            reconstruction_coefficients.push(
-                (transaction_core::constants::FIELD_MODULUS as u64)
-                    - (1u64 << (limb * RANGE_LIMB_BITS)),
-            );
+        let mut coefficient = 1u64;
+        for digit in 0..SMALLWOOD_DENSE_RANGE_ORDINARY_DIGITS {
+            let (row, lane) = bridge_dense_range_digit_position(layout, 0, digit, packing_factor);
+            reconstruction_indices.push(packed_bridge_index(row, lane, packing_factor));
+            reconstruction_coefficients
+                .push((transaction_core::constants::FIELD_MODULUS as u64) - coefficient);
+            coefficient = coefficient
+                .checked_mul(4)
+                .expect("dense range coefficient fits u64");
         }
+        let (top_row, top_lane) = bridge_dense_range_top_position(layout, 0, packing_factor);
+        reconstruction_indices.push(packed_bridge_index(top_row, top_lane, packing_factor));
+        reconstruction_coefficients
+            .push((transaction_core::constants::FIELD_MODULUS as u64) - coefficient);
         let monetary_reconstruction_binding =
             find_constraint(&reconstruction_indices, &reconstruction_coefficients, 0);
         let expected_mutations = [
@@ -8814,8 +10095,7 @@ mod tests {
 
     #[test]
     fn smallwood_active_profile_is_no_grinding_and_pow_bits_are_transcript_bound() {
-        let arithmetization =
-            SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2;
+        let arithmetization = default_smallwood_candidate_arithmetization();
         let active_parameters = smallwood_verifier_profile_binding_parameters(arithmetization);
         assert_eq!(active_parameters.profile.opening_pow_bits, 0);
         assert_eq!(active_parameters.profile.decs_pow_bits, 0);
@@ -8856,9 +10136,40 @@ mod tests {
     }
 
     #[test]
-    fn lean_generated_smallwood_transcript_binding_vectors_match_production() {
+    fn lean_generated_legacy_level5_transcript_binding_vectors_match_runtime_codec() {
         let vectors = load_smallwood_transcript_binding_vectors();
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
+        let exact = &vectors.active_no_grinding_soundness;
+        assert_eq!(exact.field_order, 0xffff_ffff_0000_0001);
+        assert_eq!(exact.packing_factor, 64);
+        assert_eq!(exact.constraint_degree, 8);
+        assert_eq!(exact.rho, ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.rho);
+        assert_eq!(
+            exact.opened_evaluations,
+            ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.nb_opened_evals
+        );
+        assert_eq!(exact.beta, ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.beta);
+        assert_eq!(
+            exact.decs_evaluations,
+            ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_evals
+        );
+        assert_eq!(
+            exact.decs_opened_evaluations,
+            ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_opened_evals
+        );
+        assert_eq!(
+            exact.decs_eta,
+            ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_eta
+        );
+        assert!(
+            exact.epsilon_1_supports_256_bits
+                && exact.epsilon_2_supports_256_bits
+                && exact.epsilon_3_supports_256_bits
+                && exact.epsilon_4_supports_256_bits
+                && exact.aggregate_error_supports_256_bit_work_factor
+                && exact.aggregate_error_supports_260_bit_work_factor,
+            "Lean must prove every active no-grinding term at 256 bits and the aggregate at the 260-bit interactive floor"
+        );
         assert_eq!(
             decode_hex_bytes(&vectors.smallwood_binding_transcript_domain_hex),
             SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN
@@ -8869,7 +10180,7 @@ mod tests {
         );
         assert_eq!(
             decode_hex_bytes(&vectors.smallwood_field_xof_domain_hex),
-            b"hegemon.blake3-field-xof.v1"
+            b"hegemon.sha512-level5-field-xof.v1"
         );
         assert!(
             !vectors.smallwood_transcript_binding_cases.is_empty(),
@@ -8970,10 +10281,11 @@ mod tests {
                 as u64,
             SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
                 as u64,
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5 as u64,
         ]);
         assert_eq!(
             covered_arithmetization_tags, expected_arithmetization_tags,
-            "Lean SmallWood transcript vectors must cover every production-recognized arithmetization tag"
+            "Lean legacy SmallWood transcript vectors must cover their complete frozen tag set"
         );
 
         let active_binding = active_binding.expect("active transcript vector missing");
@@ -8982,9 +10294,13 @@ mod tests {
             statement_mutation_binding.expect("statement mutation transcript vector missing"),
             "statement byte mutation must alter the transcript binding"
         );
+        // These Lean vectors model the original compressed Level-5 profile,
+        // not the later SMZ1 testnet successor selected by the frontend default.
+        let vector_active_arithmetization =
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5;
         let active_profile = smallwood_candidate_verifier_profile_material(
             SMALLWOOD_CANDIDATE_VERSION_BINDING,
-            default_smallwood_candidate_arithmetization(),
+            vector_active_arithmetization,
         );
         let expected_mutation_names = std::collections::BTreeSet::from([
             "circuit-version",
@@ -9005,13 +10321,12 @@ mod tests {
             "poseidon-rows-per-permutation",
         ]);
         let mut observed_mutation_names = std::collections::BTreeSet::new();
-        let active_parameters = smallwood_verifier_profile_binding_parameters(
-            default_smallwood_candidate_arithmetization(),
-        );
+        let active_parameters =
+            smallwood_verifier_profile_binding_parameters(vector_active_arithmetization);
         let active_field_values = [
             SMALLWOOD_CANDIDATE_VERSION_BINDING.circuit as u64,
             SMALLWOOD_CANDIDATE_VERSION_BINDING.crypto as u64,
-            default_smallwood_candidate_arithmetization() as u64,
+            vector_active_arithmetization as u64,
             active_parameters.effective_constraint_degree,
             active_parameters.profile.rho as u64,
             active_parameters.profile.nb_opened_evals as u64,
@@ -9127,12 +10442,12 @@ mod tests {
                     crypto: SMALLWOOD_CANDIDATE_VERSION_BINDING.crypto + 1,
                     ..SMALLWOOD_CANDIDATE_VERSION_BINDING
                 },
-                default_smallwood_candidate_arithmetization(),
+                vector_active_arithmetization,
             ),
             "crypto-suite mutation must alter verifier profile material"
         );
         for tag in expected_arithmetization_tags {
-            if tag == default_smallwood_candidate_arithmetization() as u64 {
+            if tag == vector_active_arithmetization as u64 {
                 continue;
             }
             let arithmetization = smallwood_arithmetization_from_vector(tag);
@@ -9158,12 +10473,105 @@ mod tests {
 
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
-        let arithmetization = default_smallwood_candidate_arithmetization();
+        let arithmetization = vector_active_arithmetization;
         let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
             &witness,
-            SmallwoodFrontendShape::direct_packed64_committed_bindings_inline_merkle_skip_initial_mds_v2(),
+            SmallwoodFrontendShape::direct_packed64_compressed_level5(),
         )
         .unwrap();
+        let report = report_smallwood_no_grinding_soundness_v1(
+            &PackedStatement::new_with_auxiliary(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+                &[],
+                0,
+            ),
+            material.public_statement.public_value_count as usize,
+            ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+        )
+        .expect("report active exact SmallWood soundness");
+        let term_checks = crate::smallwood_engine::smallwood_no_grinding_exact_256_bit_term_checks(
+            &PackedStatement::new_with_auxiliary(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+                &[],
+                0,
+            ),
+            material.public_statement.public_value_count as usize,
+            ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+        )
+        .expect("check active exact SmallWood soundness terms");
+        let aggregate_check =
+            crate::smallwood_engine::smallwood_no_grinding_exact_256_bit_aggregate_check(
+                &PackedStatement::new_with_auxiliary(
+                    arithmetization,
+                    &material.public_statement.public_values,
+                    material.public_statement.lppc_row_count as usize,
+                    material.public_statement.lppc_packing_factor as usize,
+                    material.public_statement.effective_constraint_degree as usize,
+                    &material.linear_constraints.term_offsets,
+                    &material.linear_constraints.term_indices,
+                    &material.linear_constraints.term_coefficients,
+                    &material.linear_constraints.targets,
+                    &[],
+                    0,
+                ),
+                material.public_statement.public_value_count as usize,
+                ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+            )
+            .expect("check aggregate active exact SmallWood soundness");
+        assert_eq!(
+            material.public_statement.lppc_row_count as usize,
+            exact.row_count
+        );
+        assert_eq!(
+            material.public_statement.public_value_count as usize,
+            exact.public_value_count
+        );
+        assert_eq!(report.n_pcs, exact.polynomial_count);
+        assert_eq!(report.d_q, exact.constraint_polynomial_degree);
+        assert_eq!(report.n_rows, exact.lvcs_row_count);
+        assert_eq!(report.n_cols, exact.lvcs_column_count);
+        assert_eq!(
+            report.n_cols + ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_opened_evals - 1,
+            exact.decs_polynomial_degree
+        );
+        assert_eq!(
+            exact.decs_polynomial_degree + 2,
+            exact.decs_binding_subset_size
+        );
+        assert_eq!(
+            term_checks,
+            [
+                exact.epsilon_1_supports_256_bits,
+                exact.epsilon_2_supports_256_bits,
+                exact.epsilon_3_supports_256_bits,
+                exact.epsilon_4_supports_256_bits,
+            ]
+        );
+        assert_eq!(report.meets_256_bit_floor, aggregate_check);
+        assert_eq!(
+            aggregate_check,
+            exact.aggregate_error_supports_256_bit_work_factor
+        );
+        assert!(
+            report.meets_260_bit_floor && exact.aggregate_error_supports_260_bit_work_factor,
+            "Rust and Lean must agree on the corrected 260-bit aggregate bound"
+        );
         let serialized_statement = bincode::serialize(&material.public_statement)
             .expect("serialize SmallWood public statement");
         assert_eq!(
@@ -9744,7 +11152,7 @@ mod tests {
         .unwrap();
         assert!(inline.auxiliary_witness_words.is_empty());
         let layout = SmallwoodBridgeRowLayout::for_shape(
-            SmallwoodFrontendShape::direct_packed64_committed_bindings_inline_merkle_skip_initial_mds_v2(),
+            SmallwoodFrontendShape::direct_packed64_compressed_level5(),
         );
         let packing_factor = inline.public_statement.lppc_packing_factor as usize;
         let (inputs, _) = padded_inputs(&witness.inputs);
@@ -9799,8 +11207,7 @@ mod tests {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let context = build_smallwood_witness_context(&witness).unwrap();
-        let shape =
-            SmallwoodFrontendShape::direct_packed64_committed_bindings_inline_merkle_skip_initial_mds_v2();
+        let shape = SmallwoodFrontendShape::direct_packed64_compressed_level5();
         let material = build_compact_aux_merkle_material_from_context(
             &context,
             &witness,
@@ -9941,8 +11348,7 @@ mod tests {
     ) {
         let context = build_smallwood_witness_context(witness).unwrap();
         let arithmetization = default_smallwood_candidate_arithmetization();
-        let shape =
-            SmallwoodFrontendShape::direct_packed64_committed_bindings_inline_merkle_skip_initial_mds_v2();
+        let shape = SmallwoodFrontendShape::direct_packed64_compressed_level5();
         let material =
             build_compact_aux_merkle_material_from_context(&context, witness, arithmetization)
                 .unwrap();
@@ -9957,16 +11363,16 @@ mod tests {
         let (_shape, layout, material) = inline_merkle_material_for_test(&witness);
         let packing_factor = material.public_statement.lppc_packing_factor as usize;
         let mut mutated_rows = material.packed_expanded_witness.clone();
-        let low_row = bridge_input_value_range_limb_row(layout, 0, 0);
-        let next_row = bridge_input_value_range_limb_row(layout, 0, 1);
         let modulus = transaction_core::constants::FIELD_MODULUS as u64;
 
-        for lane in 0..packing_factor {
-            mutated_rows[low_row * packing_factor + lane] =
-                (mutated_rows[low_row * packing_factor + lane] + 8) % modulus;
-            mutated_rows[next_row * packing_factor + lane] =
-                (mutated_rows[next_row * packing_factor + lane] + modulus - 1) % modulus;
-        }
+        let (low_row, low_lane) = bridge_dense_range_digit_position(layout, 0, 0, packing_factor);
+        let (next_row, next_lane) = bridge_dense_range_digit_position(layout, 0, 1, packing_factor);
+        mutated_rows[low_row * packing_factor + low_lane] =
+            add_mod_u64(mutated_rows[low_row * packing_factor + low_lane], 4);
+        mutated_rows[next_row * packing_factor + next_lane] = add_mod_u64(
+            mutated_rows[next_row * packing_factor + next_lane],
+            modulus - 1,
+        );
 
         assert_inline_merkle_relation_rejects(
             "modularly equivalent out-of-range input value limbs",
@@ -9977,14 +11383,17 @@ mod tests {
         );
 
         let mut mutated_public_rows = material.packed_expanded_witness.clone();
-        let low_row = bridge_public_value_range_limb_row(layout, 0, 0);
-        let next_row = bridge_public_value_range_limb_row(layout, 0, 1);
-        for lane in 0..packing_factor {
-            mutated_public_rows[low_row * packing_factor + lane] =
-                (mutated_public_rows[low_row * packing_factor + lane] + 8) % modulus;
-            mutated_public_rows[next_row * packing_factor + lane] =
-                (mutated_public_rows[next_row * packing_factor + lane] + modulus - 1) % modulus;
-        }
+        let public_fee_value = MAX_INPUTS + MAX_OUTPUTS;
+        let (low_row, low_lane) =
+            bridge_dense_range_digit_position(layout, public_fee_value, 0, packing_factor);
+        let (next_row, next_lane) =
+            bridge_dense_range_digit_position(layout, public_fee_value, 1, packing_factor);
+        mutated_public_rows[low_row * packing_factor + low_lane] =
+            add_mod_u64(mutated_public_rows[low_row * packing_factor + low_lane], 4);
+        mutated_public_rows[next_row * packing_factor + next_lane] = add_mod_u64(
+            mutated_public_rows[next_row * packing_factor + next_lane],
+            modulus - 1,
+        );
         assert_inline_merkle_relation_rejects(
             "modularly equivalent out-of-range public fee limbs",
             &material.public_statement,
@@ -10361,8 +11770,7 @@ mod tests {
             default_smallwood_candidate_arithmetization(),
         )
         .unwrap();
-        let shape =
-            SmallwoodFrontendShape::direct_packed64_committed_bindings_inline_merkle_skip_initial_mds_v2();
+        let shape = SmallwoodFrontendShape::direct_packed64_compressed_level5();
         let mut statement = material.public_statement.clone();
         statement.public_values[public_index] ^= 1;
         let auxiliary_witness_words = Vec::new();
@@ -10633,6 +12041,749 @@ mod tests {
     }
 
     #[test]
+    fn production_verifier_evidence_matches_active_verifier() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let proof = prove_smallwood_candidate(&witness).unwrap();
+        let (candidate, _) = decode_smallwood_candidate_proof_with_kind(&proof.stark_proof)
+            .expect("decode repaired production wrapper");
+        assert_eq!(&candidate.ark_proof[..4], b"SMZ1");
+        eprintln!(
+            "repaired SmallWood proof bytes: wrapped={} inner={}",
+            proof.stark_proof.len(),
+            candidate.ark_proof.len()
+        );
+        let verifier_inputs = crate::proof::transaction_verifier_inputs(&proof).unwrap();
+        let evidence = smallwood_production_verifier_evidence_v1(
+            &proof.stark_proof,
+            &verifier_inputs,
+            witness.version,
+        )
+        .unwrap();
+        assert!(evidence.verifier_trace.accept);
+        assert_eq!(
+            evidence.constraint_map.public_values,
+            smallwood_public_statement_values(&verifier_inputs, witness.version)
+        );
+        assert_eq!(
+            evidence.verifier_trace.profile.nb_opened_evals,
+            evidence
+                .verifier_trace
+                .proof
+                .opened_witness_row_scalars
+                .len()
+        );
+        assert_eq!(
+            evidence.verifier_trace.profile,
+            smallwood_no_grinding_profile_for_arithmetization(
+                default_smallwood_candidate_arithmetization()
+            )
+        );
+        assert_eq!(
+            transcript_backend_for_arithmetization(evidence.constraint_map.arithmetization),
+            SmallwoodTranscriptBackend::Sha512Level5
+        );
+        assert_eq!(
+            evidence.transcript_calls.len() as u64,
+            evidence.verifier_operation_profile.transcript_calls
+        );
+        let transcript_sha512_calls = evidence
+            .transcript_calls
+            .iter()
+            .map(|call| call.raw_digest_calls)
+            .sum::<u64>();
+        assert!(transcript_sha512_calls > 0);
+        assert!(transcript_sha512_calls <= evidence.verifier_operation_profile.sha512_digest_calls);
+        assert!(!evidence.verifier_stage_operation_profiles.is_empty());
+        verify_smallwood_candidate_proof_bytes(
+            &proof.stark_proof,
+            &verifier_inputs,
+            witness.version,
+        )
+        .unwrap();
+
+        if let Ok(path) = std::env::var("HEGEMON_SMALLWOOD_ARTIFACT_OUT") {
+            let path = std::path::PathBuf::from(path);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).expect("create SmallWood artifact directory");
+            }
+            std::fs::write(&path, &proof.stark_proof).expect("retain SmallWood proof artifact");
+            let retained = std::fs::read(&path).expect("read retained SmallWood proof artifact");
+            assert_eq!(retained, proof.stark_proof);
+            verify_smallwood_candidate_proof_bytes(&retained, &verifier_inputs, witness.version)
+                .expect("retained SmallWood proof must verify byte-for-byte");
+        }
+    }
+
+    #[test]
+    #[ignore = "full production SmallWood proof generation is a verifier throughput benchmark"]
+    fn smallwood_candidate_warm_verifier_throughput() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let proof = prove_smallwood_candidate(&witness).unwrap();
+        let verifier_inputs = crate::proof::transaction_verifier_inputs(&proof).unwrap();
+
+        let cold_started = std::time::Instant::now();
+        verify_smallwood_candidate_proof_bytes(
+            &proof.stark_proof,
+            &verifier_inputs,
+            witness.version,
+        )
+        .unwrap();
+        let cold = cold_started.elapsed();
+
+        let repetitions = 16u32;
+        let warm_started = std::time::Instant::now();
+        for _ in 0..repetitions {
+            verify_smallwood_candidate_proof_bytes(
+                &proof.stark_proof,
+                &verifier_inputs,
+                witness.version,
+            )
+            .unwrap();
+        }
+        let warm = warm_started.elapsed();
+        eprintln!(
+            "smallwood verifier throughput: proof_bytes={} cold_micros={} \
+             warm_total_micros={} warm_average_micros={} proofs_per_second={:.2}",
+            proof.stark_proof.len(),
+            cold.as_micros(),
+            warm.as_micros(),
+            warm.as_micros() / u128::from(repetitions),
+            f64::from(repetitions) / warm.as_secs_f64(),
+        );
+    }
+
+    #[test]
+    #[ignore = "retired broad parameter search; active 64/128-lane frontier is benchmarked separately"]
+    fn wide_margin_parameter_search_finds_256_bit_interactive_candidate() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let arithmetization = default_smallwood_candidate_arithmetization();
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let material =
+            build_compact_aux_merkle_material_from_context(&context, &witness, arithmetization)
+                .unwrap();
+        let statement = PackedStatement::new_with_auxiliary(
+            arithmetization,
+            &material.public_statement.public_values,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            material.public_statement.effective_constraint_degree as usize,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+            &material.auxiliary_witness_words,
+            material.auxiliary_witness_words.len(),
+        );
+        let mut candidates = Vec::new();
+        for rho in 3..=6 {
+            for opened in 3..=7 {
+                for beta in 1..=8 {
+                    for eta in 3..=7 {
+                        for domain in [16_384, 32_768, 65_536, 131_072] {
+                            for queries in 20..=72 {
+                                let profile = SmallwoodNoGrindingProfileV1 {
+                                    rho,
+                                    nb_opened_evals: opened,
+                                    beta,
+                                    opening_pow_bits: 0,
+                                    decs_nb_evals: domain,
+                                    decs_nb_opened_evals: queries,
+                                    decs_eta: eta,
+                                    decs_pow_bits: 0,
+                                };
+                                let Ok(soundness) = report_smallwood_no_grinding_soundness_v1(
+                                    &statement,
+                                    material.public_statement.public_values.len(),
+                                    profile,
+                                ) else {
+                                    continue;
+                                };
+                                if !soundness.meets_256_bit_floor {
+                                    continue;
+                                }
+                                let Ok(bytes) =
+                                    projected_smallwood_backend_proof_bytes_with_profile_statement(
+                                        &statement, profile,
+                                    )
+                                else {
+                                    continue;
+                                };
+                                candidates.push((bytes, soundness.security_floor_bits, profile));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        candidates.sort_by_key(|candidate| candidate.0);
+        let best = candidates
+            .first()
+            .expect("a 256-bit classical SmallWood profile must exist");
+        eprintln!(
+            "wide-margin SmallWood frontier best: projected_bytes={} floor_bits={:.6} profile={:?}",
+            best.0, best.1, best.2
+        );
+        for (rank, candidate) in candidates.iter().take(10).enumerate() {
+            eprintln!(
+                "wide-margin SmallWood frontier rank={} projected_bytes={} floor_bits={:.6} profile={:?}",
+                rank + 1,
+                candidate.0,
+                candidate.1,
+                candidate.2
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "retired grouped-row parameter search; active compressed frontier is benchmarked separately"]
+    fn wide_margin_committed_relation_geometry_search() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let arithmetization =
+            SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2;
+        let mut candidates = Vec::new();
+
+        for packing_factor in [16usize, 32, 64, 128] {
+            let shape = SmallwoodFrontendShape {
+                lppc_packing_factor: packing_factor,
+                public_binding_mode: SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+                merkle_aggregation_mode: SmallwoodMerkleAggregationMode::CommittedInlinePoseidonV2,
+                poseidon_layout: SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1,
+            };
+            let material = build_packed_smallwood_frontend_material_from_context_with_shape(
+                &context,
+                &witness,
+                shape,
+                arithmetization,
+            )
+            .unwrap();
+            let statement = PackedStatement::new_with_auxiliary(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+                &[],
+                0,
+            );
+
+            for rho in 3..=6 {
+                for opened in 3..=7 {
+                    for beta in 1..=8 {
+                        for eta in 3..=7 {
+                            for domain in [
+                                32_768, 65_536, 131_072, 262_144, 524_288, 1_048_576, 2_097_152,
+                                4_194_304, 8_388_608,
+                            ] {
+                                for queries in 12..=72 {
+                                    let profile = SmallwoodNoGrindingProfileV1 {
+                                        rho,
+                                        nb_opened_evals: opened,
+                                        beta,
+                                        opening_pow_bits: 0,
+                                        decs_nb_evals: domain,
+                                        decs_nb_opened_evals: queries,
+                                        decs_eta: eta,
+                                        decs_pow_bits: 0,
+                                    };
+                                    let Ok(soundness) = report_smallwood_no_grinding_soundness_v1(
+                                        &statement,
+                                        material.public_statement.public_values.len(),
+                                        profile,
+                                    ) else {
+                                        continue;
+                                    };
+                                    if !soundness.meets_256_bit_floor {
+                                        continue;
+                                    }
+                                    let Ok(bytes) =
+                                        projected_smallwood_backend_proof_bytes_with_profile_statement(
+                                            &statement, profile,
+                                        )
+                                    else {
+                                        continue;
+                                    };
+                                    candidates.push((
+                                        bytes,
+                                        packing_factor,
+                                        material.public_statement.lppc_row_count,
+                                        soundness.security_floor_bits,
+                                        profile,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        candidates.sort_by_key(|candidate| candidate.0);
+        let best = candidates
+            .first()
+            .expect("a committed 256-bit interactive profile must exist");
+        eprintln!(
+            "committed relation frontier best: projected_bytes={} packing={} rows={} floor_bits={:.6} profile={:?}",
+            best.0, best.1, best.2, best.3, best.4
+        );
+        for (rank, candidate) in candidates.iter().take(20).enumerate() {
+            eprintln!(
+                "committed relation frontier rank={} projected_bytes={} packing={} rows={} floor_bits={:.6} profile={:?}",
+                rank + 1,
+                candidate.0,
+                candidate.1,
+                candidate.2,
+                candidate.3,
+                candidate.4
+            );
+        }
+    }
+
+    #[test]
+    fn compressed_level5_relation_has_checked_699_by_890_geometry() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let arithmetization = SmallwoodArithmetization::DirectPacked64CompressedLevel5;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let material =
+            build_compact_aux_merkle_material_from_context(&context, &witness, arithmetization)
+                .unwrap();
+        assert_eq!(material.public_statement.lppc_row_count, 699);
+        assert_eq!(material.public_statement.lppc_packing_factor, 64);
+        assert!(material.auxiliary_witness_words.is_empty());
+
+        let statement = PackedStatement::new_with_auxiliary(
+            arithmetization,
+            &material.public_statement.public_values,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            material.public_statement.effective_constraint_degree as usize,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+            &[],
+            0,
+        );
+        assert_eq!(statement.constraint_count(), 890);
+        test_candidate_witness_with_auxiliary(
+            arithmetization,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            material.public_statement.effective_constraint_degree,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+            &[],
+        )
+        .unwrap();
+
+        let rejects = |rows: &[u64]| {
+            test_candidate_witness_with_auxiliary(
+                arithmetization,
+                &material.public_statement.public_values,
+                rows,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+                &[],
+            )
+            .is_err()
+        };
+        let layout = SmallwoodBridgeRowLayout::for_shape(
+            SmallwoodFrontendShape::direct_packed64_compressed_level5(),
+        );
+        let mut mutated = material.packed_expanded_witness.clone();
+        let (digit_row, digit_lane) = bridge_dense_range_digit_position(layout, 0, 0, 64);
+        mutated[digit_row * 64 + digit_lane] ^= 1;
+        assert!(rejects(&mutated), "mutated dense range digit must reject");
+
+        let mut mutated = material.packed_expanded_witness.clone();
+        let first_sbox_wire_row = bridge_poseidon_rows_start(layout, 64) + POSEIDON2_WIDTH;
+        mutated[first_sbox_wire_row * 64] = add_mod_u64(mutated[first_sbox_wire_row * 64], 1);
+        assert!(rejects(&mutated), "mutated Poseidon S-box wire must reject");
+
+        let mut mutated = material.packed_expanded_witness.clone();
+        let final_boundary_row = bridge_poseidon_row(64, layout, 0, layout.poseidon_last_row(), 0);
+        mutated[final_boundary_row * 64] = add_mod_u64(mutated[final_boundary_row * 64], 1);
+        assert!(
+            rejects(&mutated),
+            "mutated Poseidon final boundary must reject"
+        );
+    }
+
+    #[test]
+    fn compressed_level5_rejects_single_key_spend_of_value_lock_auth_key() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        witness.inputs[0].note.pk_auth =
+            smallwood_value_lock_auth_key_bytes(&bytes48(41), &bytes48(42)).unwrap();
+        rebuild_two_input_tree(&mut witness);
+
+        let arithmetization = SmallwoodArithmetization::DirectPacked64CompressedLevel5;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let material =
+            build_compact_aux_merkle_material_from_context(&context, &witness, arithmetization)
+                .unwrap();
+        let err = test_candidate_witness_with_auxiliary(
+            arithmetization,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            material.public_statement.effective_constraint_degree,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+            &material.auxiliary_witness_words,
+        )
+        .expect_err("single-key authorization must not satisfy a value-lock note");
+        assert!(err.to_string().contains("smallwood"));
+    }
+
+    #[test]
+    fn compressed_level5_128_lane_relation_is_satisfied() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let arithmetization = SmallwoodArithmetization::DirectPacked128CompressedLevel5;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let material =
+            build_compact_aux_merkle_material_from_context(&context, &witness, arithmetization)
+                .unwrap();
+        let packing = material.public_statement.lppc_packing_factor as usize;
+        let modulus = transaction_core::constants::FIELD_MODULUS;
+
+        for constraint in 0..material.linear_constraints.targets.len() {
+            let start = material.linear_constraints.term_offsets[constraint] as usize;
+            let end = material.linear_constraints.term_offsets[constraint + 1] as usize;
+            let mut actual = 0u64;
+            for term in start..end {
+                let index = material.linear_constraints.term_indices[term] as usize;
+                let coefficient = material.linear_constraints.term_coefficients[term];
+                actual = ((u128::from(actual)
+                    + u128::from(material.packed_expanded_witness[index])
+                        * u128::from(coefficient))
+                    % modulus) as u64;
+            }
+            let expected = material.linear_constraints.targets[constraint];
+            assert_eq!(
+                actual,
+                expected,
+                "128-lane linear constraint {constraint} failed: terms={:?}",
+                (start..end)
+                    .map(|term| {
+                        let index = material.linear_constraints.term_indices[term] as usize;
+                        (
+                            index / packing,
+                            index % packing,
+                            material.packed_expanded_witness[index],
+                            material.linear_constraints.term_coefficients[term],
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        test_candidate_witness_with_auxiliary(
+            arithmetization,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            packing,
+            material.public_statement.effective_constraint_degree,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+            &material.auxiliary_witness_words,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    #[ignore = "full production-relation proof generation is a security and throughput benchmark"]
+    fn wide_margin_radix2_production_relation_roundtrip_benchmark() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let arithmetization =
+            SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2;
+        let profile = SmallwoodNoGrindingProfileV1 {
+            rho: 5,
+            nb_opened_evals: 5,
+            beta: 2,
+            opening_pow_bits: 0,
+            decs_nb_evals: 1_048_576,
+            decs_nb_opened_evals: 25,
+            decs_eta: 5,
+            decs_pow_bits: 0,
+        };
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let material =
+            build_compact_aux_merkle_material_from_context(&context, &witness, arithmetization)
+                .unwrap();
+        let statement = PackedStatement::new_with_auxiliary(
+            arithmetization,
+            &material.public_statement.public_values,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            material.public_statement.effective_constraint_degree as usize,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+            &material.auxiliary_witness_words,
+            material.auxiliary_witness_words.len(),
+        );
+        let soundness = report_smallwood_no_grinding_soundness_v1(
+            &statement,
+            material.public_statement.public_values.len(),
+            profile,
+        )
+        .unwrap();
+        assert!(soundness.meets_256_bit_floor);
+
+        let proving_started = std::time::Instant::now();
+        let ark_proof =
+            crate::smallwood_engine::prove_statement_with_transcript_backend_profile_and_domain(
+                &statement,
+                &material.packed_expanded_witness,
+                &material.transcript_binding,
+                profile,
+                SmallwoodTranscriptBackend::Sha512Level5,
+                crate::smallwood_engine::SmallwoodDecsEvaluationDomain::Radix2Subgroup,
+            )
+            .unwrap();
+        let proving_elapsed = proving_started.elapsed();
+
+        let verification_started = std::time::Instant::now();
+        crate::smallwood_engine::verify_statement_with_transcript_backend_profile_and_domain(
+            &statement,
+            &material.transcript_binding,
+            &ark_proof,
+            profile,
+            SmallwoodTranscriptBackend::Sha512Level5,
+            crate::smallwood_engine::SmallwoodDecsEvaluationDomain::Radix2Subgroup,
+        )
+        .unwrap();
+        let verification_elapsed = verification_started.elapsed();
+        let wrapped =
+            encode_smallwood_candidate_proof(arithmetization, ark_proof.clone(), &[]).unwrap();
+        let size = report_smallwood_proof_size_v1(&ark_proof).unwrap();
+
+        eprintln!(
+            "wide-margin radix2 production relation: total_bytes={} ark_bytes={} \
+             proving_millis={} verification_micros={} floor_bits={:.6} profile={:?} \
+             size={:?}",
+            wrapped.len(),
+            ark_proof.len(),
+            proving_elapsed.as_millis(),
+            verification_elapsed.as_micros(),
+            soundness.security_floor_bits,
+            profile,
+            size,
+        );
+    }
+
+    #[test]
+    fn compressed_level5_packing_frontier_projection() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let mut best = Vec::new();
+
+        for arithmetization in [
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5,
+            SmallwoodArithmetization::DirectPacked128CompressedLevel5,
+        ] {
+            let surface = build_smallwood_candidate_profile_surface_for_arithmetization(
+                &witness,
+                arithmetization,
+            )
+            .unwrap();
+            let mut candidates = Vec::new();
+            for beta in 5..=9 {
+                for domain in [524_288, 1_048_576, 2_097_152] {
+                    for queries in 17..=24 {
+                        for eta in 28..=40 {
+                            let profile = SmallwoodNoGrindingProfileV1 {
+                                rho: 5,
+                                nb_opened_evals: 5,
+                                beta,
+                                opening_pow_bits: 0,
+                                decs_nb_evals: domain,
+                                decs_nb_opened_evals: queries,
+                                decs_eta: eta,
+                                decs_pow_bits: 0,
+                            };
+                            let Ok(report) = analyze_smallwood_candidate_profile_surface(
+                                &surface,
+                                arithmetization,
+                                profile,
+                            ) else {
+                                continue;
+                            };
+                            if report.soundness.meets_260_bit_floor {
+                                candidates.push(report);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            candidates.sort_by_key(|candidate| candidate.projected_total_bytes);
+            let winner = candidates
+                .first()
+                .expect("compressed packing frontier must contain a 260-bit candidate");
+            eprintln!(
+                "compressed packing frontier arithmetization={:?} rows={} packing={} \
+                 projected_bytes={} floor_bits={:.6} profile={:?}",
+                arithmetization,
+                surface.public_statement.lppc_row_count,
+                surface.public_statement.lppc_packing_factor,
+                winner.projected_total_bytes,
+                winner.soundness.security_floor_bits,
+                winner.profile,
+            );
+            best.push((
+                arithmetization,
+                winner.projected_total_bytes,
+                winner.profile,
+            ));
+        }
+
+        assert_eq!(best.len(), 2);
+    }
+
+    #[test]
+    #[ignore = "compressed Level-5-width proof generation is a security and throughput benchmark"]
+    fn compressed_level5_radix2_roundtrip_benchmark() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let candidates = [(
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5,
+            SmallwoodNoGrindingProfileV1 {
+                rho: 5,
+                nb_opened_evals: 5,
+                beta: 2,
+                opening_pow_bits: 0,
+                decs_nb_evals: 1_048_576,
+                decs_nb_opened_evals: 23,
+                decs_eta: 5,
+                decs_pow_bits: 0,
+            },
+        )];
+
+        for (arithmetization, profile) in candidates {
+            let material =
+                build_compact_aux_merkle_material_from_context(&context, &witness, arithmetization)
+                    .unwrap();
+            test_candidate_witness_with_auxiliary(
+                arithmetization,
+                &material.public_statement.public_values,
+                &material.packed_expanded_witness,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+                &material.auxiliary_witness_words,
+            )
+            .unwrap();
+            let statement = PackedStatement::new_with_auxiliary(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+                &[],
+                0,
+            );
+            let soundness = report_smallwood_no_grinding_soundness_v1(
+                &statement,
+                material.public_statement.public_values.len(),
+                profile,
+            )
+            .unwrap();
+            assert!(soundness.meets_260_bit_floor);
+
+            let proving_started = std::time::Instant::now();
+            let ark_proof =
+                crate::smallwood_engine::prove_statement_with_transcript_backend_profile_and_domain(
+                    &statement,
+                    &material.packed_expanded_witness,
+                    &material.transcript_binding,
+                    profile,
+                    SmallwoodTranscriptBackend::Sha512Level5,
+                    crate::smallwood_engine::SmallwoodDecsEvaluationDomain::Radix2Subgroup,
+                )
+                .unwrap();
+            let proving_elapsed = proving_started.elapsed();
+
+            let verification_started = std::time::Instant::now();
+            crate::smallwood_engine::verify_statement_with_transcript_backend_profile_and_domain(
+                &statement,
+                &material.transcript_binding,
+                &ark_proof,
+                profile,
+                SmallwoodTranscriptBackend::Sha512Level5,
+                crate::smallwood_engine::SmallwoodDecsEvaluationDomain::Radix2Subgroup,
+            )
+            .unwrap();
+            let verification_elapsed = verification_started.elapsed();
+            let wrapped =
+                encode_smallwood_candidate_proof(arithmetization, ark_proof.clone(), &[]).unwrap();
+            let size = report_smallwood_proof_size_v1(&ark_proof).unwrap();
+            let opening_surface = report_opening_surface_for_arithmetization(
+                arithmetization,
+                &statement,
+                &material.transcript_binding,
+                &ark_proof,
+                profile,
+            )
+            .unwrap();
+
+            eprintln!(
+                "compressed Level-5-width radix2 relation: arithmetization={:?} rows={} packing={} \
+                 total_bytes={} ark_bytes={} proving_millis={} verification_micros={} \
+                 floor_bits={:.6} profile={:?} size={:?} opening_surface={:?}",
+                arithmetization,
+                material.public_statement.lppc_row_count,
+                material.public_statement.lppc_packing_factor,
+                wrapped.len(),
+                ark_proof.len(),
+                proving_elapsed.as_millis(),
+                verification_elapsed.as_micros(),
+                soundness.security_floor_bits,
+                profile,
+                size,
+                opening_surface,
+            );
+        }
+    }
+
+    #[test]
     fn smallwood_version_arithmetization_pairs_are_fail_closed() {
         assert_eq!(
             smallwood_no_grinding_profile_for_arithmetization(
@@ -10648,8 +12799,25 @@ mod tests {
             .decs_nb_opened_evals,
             24
         );
+        assert_eq!(
+            smallwood_no_grinding_profile_for_arithmetization(
+                SmallwoodArithmetization::DirectPacked64CompressedLevel5,
+            )
+            .decs_nb_opened_evals,
+            23
+        );
         assert!(ensure_verifiable_smallwood_arithmetization(
             SMALLWOOD_CANDIDATE_VERSION_BINDING,
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5StrictZkSmz1,
+        )
+        .is_ok());
+        assert!(ensure_verifiable_smallwood_arithmetization(
+            SMALLWOOD_CANDIDATE_VERSION_BINDING,
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5,
+        )
+        .is_err());
+        assert!(ensure_verifiable_smallwood_arithmetization(
+            SMALLWOOD_V3_VERSION_BINDING,
             SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
         )
         .is_ok());
@@ -10666,6 +12834,11 @@ mod tests {
         assert!(ensure_verifiable_smallwood_arithmetization(
             protocol_versioning::LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING,
             SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
+        )
+        .is_err());
+        assert!(ensure_verifiable_smallwood_arithmetization(
+            SMALLWOOD_V3_VERSION_BINDING,
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5,
         )
         .is_err());
     }
@@ -10684,7 +12857,7 @@ mod tests {
         let reconstructed = build_packed_smallwood_bridge_public_statement_with_shape(
             &context.verifier_inputs,
             witness.version,
-            SmallwoodFrontendShape::direct_packed64_committed_bindings_inline_merkle_skip_initial_mds_v2(),
+            SmallwoodFrontendShape::direct_packed64_compressed_level5(),
         )
         .unwrap();
 
@@ -10692,7 +12865,7 @@ mod tests {
     }
 
     #[test]
-    fn production_smallwood_profile_guard_enforces_strict_128_bit_floor() {
+    fn compact_smz1_testnet_profile_passes_parameter_bound_but_not_production_gate() {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let context = build_smallwood_witness_context(&witness).unwrap();
@@ -10714,24 +12887,35 @@ mod tests {
             material.auxiliary_witness_words.len(),
         );
         let active_profile = smallwood_no_grinding_profile_for_arithmetization(arithmetization);
+        ensure_active_smallwood_testnet_profile(
+            &statement,
+            material.public_statement.public_values.len(),
+            active_profile,
+        )
+        .expect("canonical compact SMZ1 testnet profile must be accepted");
+
         ensure_production_smallwood_soundness_floor(
             &statement,
             material.public_statement.public_values.len(),
             active_profile,
         )
-        .expect("active production profile must meet the strict 128-bit floor");
+        .expect("compact SMZ1 actual parameters must pass the 260-bit interactive bound");
+
+        let err = active_smallwood_production_profile_attestation()
+            .expect_err("passing parameters must not authorize incomplete production security");
+        assert!(err
+            .to_string()
+            .contains("production relation/security integration is not authorized"));
 
         let mut weak_profile = active_profile;
         weak_profile.rho = 2;
-        let err = ensure_production_smallwood_soundness_floor(
+        let err = ensure_active_smallwood_testnet_profile(
             &statement,
             material.public_statement.public_values.len(),
             weak_profile,
         )
-        .expect_err("sub-128-bit production profile must fail closed");
-        assert!(err
-            .to_string()
-            .contains("falls below the 128-bit no-grinding floor"));
+        .expect_err("non-canonical SMZ1 testnet profile must fail closed");
+        assert!(err.to_string().contains("non-canonical profile"));
     }
 
     #[test]
@@ -10785,18 +12969,45 @@ mod tests {
     }
 
     #[test]
-    fn production_smallwood_v3_encoder_uses_current_wrapper() {
+    fn production_smallwood_v4_encoder_uses_current_wrapper() {
         let bytes = encode_smallwood_candidate_proof(
             default_smallwood_candidate_arithmetization(),
             vec![1, 2, 3, 4],
             &[],
         )
-        .expect("encode production V3 wrapper");
+        .expect("encode production V4 wrapper");
         let (candidate, kind) = decode_smallwood_candidate_proof_with_kind(&bytes)
-            .expect("decode production V3 wrapper");
+            .expect("decode production V4 wrapper");
         assert_eq!(kind, SmallwoodCandidateWrapperKind::Current);
         assert_eq!(candidate.ark_proof, vec![1, 2, 3, 4]);
         assert!(candidate.auxiliary_witness_words.is_empty());
+    }
+
+    #[test]
+    fn poseidon2_v8_wrapper_has_an_appended_discriminant_and_remains_fail_closed() {
+        let inner = b"SMZ8-fixture".to_vec();
+        let bytes = encode_smallwood_candidate_proof(
+            SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8,
+            inner.clone(),
+            &[],
+        )
+        .expect("encode fresh V8 wrapper");
+        assert_eq!(&bytes[..4], &16u32.to_le_bytes());
+        assert_eq!(bytes.len(), inner.len() + 20);
+        let (candidate, kind) = decode_smallwood_candidate_proof_with_kind(&bytes)
+            .expect("decode fresh V8 wrapper without reinterpreting historical bytes");
+        assert_eq!(kind, SmallwoodCandidateWrapperKind::Current);
+        assert_eq!(candidate.arithmetization as u32, 16);
+        assert_eq!(candidate.ark_proof, inner);
+        assert!(ensure_production_smallwood_arithmetization(
+            SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8,
+        )
+        .is_err());
+        assert!(ensure_verifiable_smallwood_arithmetization(
+            SMALLWOOD_CANDIDATE_VERSION_BINDING,
+            SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8,
+        )
+        .is_err());
     }
 
     #[test]
@@ -10806,17 +13017,17 @@ mod tests {
             .expect("build verifier inputs")
             .verifier_inputs;
 
-        let legacy_wrapped_v3 = encode_legacy_smallwood_candidate_proof_for_test(
+        let legacy_wrapped_v4 = encode_legacy_smallwood_candidate_proof_for_test(
             default_smallwood_candidate_arithmetization(),
             vec![1, 2, 3, 4],
         )
-        .expect("encode legacy-wrapped V3 proof");
+        .expect("encode legacy-wrapped V4 proof");
         let err = verify_smallwood_candidate_proof_bytes(
-            &legacy_wrapped_v3,
+            &legacy_wrapped_v4,
             &verifier_inputs,
             SMALLWOOD_CANDIDATE_VERSION_BINDING,
         )
-        .expect_err("V3 must reject the legacy wrapper before backend verification");
+        .expect_err("V4 must reject the legacy wrapper before backend verification");
         assert!(err.to_string().contains("requires the current wrapper"));
 
         let current_wrapped_v2 = bincode::serialize(&SmallwoodCandidateProof {
@@ -10885,7 +13096,7 @@ mod tests {
         .expect_err("non-production SmallWood arithmetization must reject before proving");
         assert!(err
             .to_string()
-            .contains("not accepted by the production verifier"));
+            .contains("not the repaired compact SMZ1 testnet profile"));
     }
 
     #[test]
@@ -10961,25 +13172,23 @@ mod tests {
         .expect("honest production material must satisfy the relation");
 
         let layout = SmallwoodBridgeRowLayout::for_shape(
-            SmallwoodFrontendShape::direct_packed64_committed_bindings_inline_merkle_skip_initial_mds_v2(),
+            SmallwoodFrontendShape::direct_packed64_compressed_level5(),
         );
         let packing = material.public_statement.lppc_packing_factor as usize;
         let permutation = bridge_input_nullifier_permutation(0);
         let group = permutation / packing;
         let lane = packed_bridge_permutation_lane(permutation, packing);
         let transition_step = layout.poseidon_rows_per_permutation() - 2;
-        let terminal_row = transition_step + 1;
+        let terminal_row = layout.poseidon_last_row();
         let packed_index = |step_row: usize, limb: usize| {
             bridge_poseidon_row(packing, layout, permutation, step_row, limb) * packing + lane
         };
 
         let mut expected = [Felt::ZERO; POSEIDON2_WIDTH];
         for (limb, slot) in expected.iter_mut().enumerate() {
-            *slot = Felt::from_u64(
-                material.packed_expanded_witness[packed_index(transition_step, limb)],
-            );
+            *slot =
+                Felt::from_u64(material.packed_expanded_witness[packed_index(terminal_row, limb)]);
         }
-        poseidon2_step(&mut expected, layout.poseidon_trace_row(transition_step));
 
         let mut challenge_input = Vec::with_capacity(SMALLWOOD_BASE_PUBLIC_VALUE_COUNT + 4);
         challenge_input.extend_from_slice(&[

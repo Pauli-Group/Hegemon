@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hegemon.invalid/schema/m4-zk-joint-simulator-rank-certificate-v1.json",
+  "title": "Hegemon M4 joint-simulator rank certificate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "subject",
+    "source_checks",
+    "inventory",
+    "rank_audit",
+    "residual_assumptions",
+    "claims",
+    "decision"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "subject": {
+      "type": "object",
+      "required": ["name", "pinned_revision", "patch_sha256", "m4_keccak_permutations", "m4_relation"]
+    },
+    "source_checks": {
+      "type": "object",
+      "required": ["all_passed", "pinned_checkout_present", "checks", "patch_sha256", "m4_source_sha256"]
+    },
+    "inventory": {
+      "type": "object",
+      "required": ["protocol_class_complete", "exact_multiplicities_complete", "items"]
+    },
+    "rank_audit": {
+      "type": "object",
+      "required": [
+        "criterion",
+        "field",
+        "scenarios",
+        "current_patch_clear_rank_closed",
+        "conditional_grouped_relation_clear_rank_closed",
+        "conditional_rank_one_repair_clear_rank_closed",
+        "grouped_relation_feasibility",
+        "all_expectations_met"
+      ]
+    },
+    "residual_assumptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "status", "statement"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "enum": ["OPEN", "DISCHARGED"] },
+          "statement": { "type": "string" }
+        }
+      }
+    },
+    "claims": {
+      "type": "object",
+      "required": [
+        "compiled_full_m4",
+        "joint_simulator_proved",
+        "basefold_joint_simulator_proved",
+        "outer_spartan_simulator_proved",
+        "qrom_composed",
+        "strict_pq128",
+        "complete_zk"
+      ]
+    },
+    "decision": {
+      "type": "object",
+      "required": ["status", "frontier_eligible", "reason_codes", "conditional_repair"]
+    }
+  }
+}

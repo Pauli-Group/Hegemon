@@ -211,11 +211,11 @@ structure CodecCanonicalPublicationMetadataNonMalleabilityFacts
     exactDecodeAccepts metadataDecode.currentExact = true ->
       evaluateNativeMetadataDecode metadataDecode =
         Except.ok NativeMetadataDecodeSource.current
-  legacyMetadataRequiresCurrentRejection :
+  legacyMetadataIdentifiedAndRejected :
     exactDecodeAccepts metadataDecode.currentExact = false ->
       exactDecodeAccepts metadataDecode.legacyExact = true ->
         evaluateNativeMetadataDecode metadataDecode =
-          Except.ok NativeMetadataDecodeSource.legacy
+          Except.error NativeMetadataDecodeReject.legacyForbidden
   metadataBothExactDecodersRejectedFailClosed :
     exactDecodeAccepts metadataDecode.currentExact = false ->
       exactDecodeAccepts metadataDecode.legacyExact = false ->
@@ -603,8 +603,8 @@ theorem accepted_pending_action_codec_canonical_publication_with_metadata_non_ma
     metadataAcceptsIff := metadataFacts.acceptsIff,
     currentMetadataExactDecodePrecedesLegacy :=
       metadataFacts.currentExactPrecedesLegacy,
-    legacyMetadataRequiresCurrentRejection :=
-      metadataFacts.legacyRequiresCurrentRejected,
+    legacyMetadataIdentifiedAndRejected :=
+      metadataFacts.legacyIsIdentifiedAndRejected,
     metadataBothExactDecodersRejectedFailClosed :=
       metadataFacts.bothRejectedFailClosed,
     pendingExactDecodeBeforePublication :=
@@ -703,11 +703,11 @@ structure BoundedCanonicalCodecGateCertificate
     exactDecodeAccepts metadataDecode.currentExact = true ->
       evaluateNativeMetadataDecode metadataDecode =
         Except.ok NativeMetadataDecodeSource.current
-  metadataLegacyFallbackOnlyAfterCurrentRejected :
+  metadataLegacyIdentifiedAndRejected :
     exactDecodeAccepts metadataDecode.currentExact = false ->
       exactDecodeAccepts metadataDecode.legacyExact = true ->
         evaluateNativeMetadataDecode metadataDecode =
-          Except.ok NativeMetadataDecodeSource.legacy
+          Except.error NativeMetadataDecodeReject.legacyForbidden
   metadataBothDecodersRejectFailClosed :
     exactDecodeAccepts metadataDecode.currentExact = false ->
       exactDecodeAccepts metadataDecode.legacyExact = false ->
@@ -891,8 +891,8 @@ theorem accepted_bounded_canonical_codec_gate_certificate
       metadataOrdering := metadataPublication.metadataDecodeFacts
       metadataCurrentFirst :=
         metadataPublication.currentMetadataExactDecodePrecedesLegacy
-      metadataLegacyFallbackOnlyAfterCurrentRejected :=
-        metadataPublication.legacyMetadataRequiresCurrentRejection
+      metadataLegacyIdentifiedAndRejected :=
+        metadataPublication.legacyMetadataIdentifiedAndRejected
       metadataBothDecodersRejectFailClosed :=
         metadataPublication.metadataBothExactDecodersRejectedFailClosed
       pendingPublicationUsesConcreteWireDecode := ?_
@@ -1030,11 +1030,11 @@ structure BoundedCanonicalCodecProductionBindingFacts
     exactDecodeAccepts metadataDecode.currentExact = true ->
       evaluateNativeMetadataDecode metadataDecode =
         Except.ok NativeMetadataDecodeSource.current
-  metadataLegacyFallbackOnlyAfterCurrentRejected :
+  metadataLegacyIdentifiedAndRejected :
     exactDecodeAccepts metadataDecode.currentExact = false ->
       exactDecodeAccepts metadataDecode.legacyExact = true ->
         evaluateNativeMetadataDecode metadataDecode =
-          Except.ok NativeMetadataDecodeSource.legacy
+          Except.error NativeMetadataDecodeReject.legacyForbidden
   metadataBothDecodersRejectFailClosed :
     exactDecodeAccepts metadataDecode.currentExact = false ->
       exactDecodeAccepts metadataDecode.legacyExact = false ->
@@ -1174,8 +1174,8 @@ theorem bounded_canonical_codec_gate_certificate_exposes_production_binding
     bridgeVerifierRegistrationWireCanonicalReencode :=
       (certificate.bridgeVerifierRegistrationWireFacts).canonicalReencodeMatches,
     metadataCurrentBeforeLegacy := certificate.metadataCurrentFirst,
-    metadataLegacyFallbackOnlyAfterCurrentRejected :=
-      certificate.metadataLegacyFallbackOnlyAfterCurrentRejected,
+    metadataLegacyIdentifiedAndRejected :=
+      certificate.metadataLegacyIdentifiedAndRejected,
     metadataBothDecodersRejectFailClosed :=
       certificate.metadataBothDecodersRejectFailClosed
   }

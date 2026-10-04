@@ -2,25 +2,25 @@ use crate::types::VerifierProfileDigest;
 
 pub use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 pub use block_recursion::{
-    BlockLeafRecordV1, BlockRecursiveProverInputV1, BlockRecursiveProverInputV2,
-    BlockSemanticInputsV1, RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
+    BlockLeafRecordV1, BlockSemanticInputsV1, RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
     RECURSIVE_BLOCK_ARTIFACT_VERSION_V2, RecursiveBlockArtifactV1, RecursiveBlockArtifactV2,
     deserialize_recursive_block_artifact_v1, deserialize_recursive_block_artifact_v2,
-    prove_block_recursive_v1, prove_block_recursive_v2, public_replay_v1, public_replay_v2,
+    public_replay_v1, public_replay_v2,
     recursive_block_artifact_verifier_profile_v1 as recursive_block_profile_v1_raw,
     recursive_block_artifact_verifier_profile_v2 as recursive_block_profile_v2_raw,
-    serialize_recursive_block_artifact_v1, serialize_recursive_block_artifact_v2,
     verify_block_recursive_v1, verify_block_recursive_v2,
 };
+#[cfg(test)]
+pub use block_recursion::{
+    BlockRecursiveProverInputV1, BlockRecursiveProverInputV2, prove_block_recursive_v1,
+    prove_block_recursive_v2, serialize_recursive_block_artifact_v1,
+    serialize_recursive_block_artifact_v2,
+};
 pub use superneo_hegemon::{
-    CanonicalTxValidityReceipt, NativeReceiptRootBuildCacheStats, NativeTxLeafArtifact,
-    NativeTxLeafRecord, TxLeafPublicTx, build_native_tx_leaf_artifact_bytes,
-    build_native_tx_leaf_receipt_root_artifact_bytes, build_receipt_root_artifact_bytes,
-    build_tx_leaf_artifact_bytes, build_verified_tx_proof_receipt_root_artifact_bytes,
+    CanonicalTxValidityReceipt, NativeTxLeafArtifact, NativeTxLeafRecord, TxLeafPublicTx,
     decode_native_tx_leaf_artifact_bytes, encode_native_tx_leaf_artifact_bytes,
     max_native_receipt_root_artifact_bytes, max_native_tx_leaf_artifact_bytes,
-    native_backend_params, native_receipt_root_build_cache_stats,
-    native_receipt_root_mini_root_size, native_tx_leaf_record_from_artifact,
+    native_backend_params, native_receipt_root_mini_root_size, native_tx_leaf_record_from_artifact,
     verify_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_receipt_root_artifact_bytes,
     verify_native_tx_leaf_receipt_root_artifact_from_records_with_params,
     verify_receipt_root_artifact_bytes, verify_tx_leaf_artifact_bytes,

@@ -1,0 +1,96 @@
+{
+  "schema": "hegemon.m4-zk-pay1x2-measurement.v1",
+  "measured_at": "2026-08-21",
+  "relation": "pay1x2-core",
+  "upstream_revision": "3f96163049f680b2909f6545690bd929f1b48c44",
+  "test_seed": "0x484547454d4f4e5a",
+  "coin_source": {
+    "mode": "explicit-deterministic-test-seed",
+    "test_only": true
+  },
+  "admission": {
+    "status": "rejected",
+    "frontier_eligible": false,
+    "reason": "the appended blinding subspace has annihilating multilinear evaluation points and does not establish complete zero knowledge"
+  },
+  "selected": {
+    "log_inverse_rate": 3,
+    "proof_bytes": 317312,
+    "proof_sha256": "fb3d59006ebc8dad14851d5418d78e06be6690cd84be1d6cadf125b8e5ce4b64",
+    "former_artifact_path": "/private/tmp/hegemon-m4-zk-blinded-r3.proof",
+    "artifact_retained": false,
+    "artifact_disposition": "deleted after size and digest were recorded to recover disk space",
+    "setup_ms": 282.72733300000004,
+    "prove_ms": 354.249291,
+    "verify_ms": 195.755584
+  },
+  "rate_sweep": [
+    {
+      "log_inverse_rate": 1,
+      "proof_bytes": 440288,
+      "proof_sha256": "a0f33ee424546b61f6f064df75eeb4db8e11e76ec5989682adf6c1893c77d526"
+    },
+    {
+      "log_inverse_rate": 2,
+      "proof_bytes": 334016,
+      "proof_sha256": "8dbe7b0785e308a413e3584cf4ad30b16aebbf2e9acf2b14b84ed3093da7e9ea"
+    },
+    {
+      "log_inverse_rate": 3,
+      "proof_bytes": 317312,
+      "proof_sha256": "fb3d59006ebc8dad14851d5418d78e06be6690cd84be1d6cadf125b8e5ce4b64"
+    },
+    {
+      "log_inverse_rate": 4,
+      "proof_bytes": 325888,
+      "proof_sha256": "78d660c92ae3d8e855ecdec18ee93fe29d77ee287b619ecd17c491810897a62c"
+    },
+    {
+      "log_inverse_rate": 5,
+      "proof_bytes": 343712,
+      "proof_sha256": "52c5c007c2a5470db4548b5ac085d97858e7abf6681a68236e959831c8bc2296"
+    },
+    {
+      "log_inverse_rate": 6,
+      "proof_bytes": 367264,
+      "proof_sha256": "3120425ececabd4f0e06ef37740b3705fbe5484bb1f4f315cd5e451023eb0349"
+    }
+  ],
+  "transform": {
+    "trace_mask_only": false,
+    "trace_oracle_masked": true,
+    "private_inner_messages_one_time_padded": true,
+    "inner_verifier_symbolically_constrained": true,
+    "outer_spartan_proof": true,
+    "inner_statistical_blinding_words": 384,
+    "inner_satisfiable_blinding_constraints": 128,
+    "blinding_stays_in_original_private_tier": true,
+    "blinding_stays_in_original_and_tier": true
+  },
+  "gates": {
+    "honest_roundtrip": true,
+    "all_sampled_public_mutations_rejected": true,
+    "changed_proof_rejected": true,
+    "trailing_proof_rejected": true,
+    "no_literal_private_16_byte_block": true,
+    "deterministic_replay_matches": true,
+    "fresh_rng_compared": true,
+    "fresh_rng_changes_proof": true,
+    "fresh_rng_preserves_length": true,
+    "malformed_blinding_rejected": true
+  },
+  "security_status": {
+    "upstream_wrapper_mode": "zk",
+    "complete_zero_knowledge_established": false,
+    "local_simulator_theorem_complete": false,
+    "local_formal_zk_complete": false,
+    "strict_pq128": false,
+    "production_authorized": false,
+    "limitations": [
+      "executable leakage controls are not a complete zero-knowledge simulator proof",
+      "the appended-row mask has annihilating evaluation points and fails the complete-ZK gate",
+      "the pinned stack uses a 96-bit query budget, SHA-256, and GF(2^128)",
+      "the compact transparent terminal-target and padding-fiber wire is not used"
+    ]
+  }
+}

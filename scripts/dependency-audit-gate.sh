@@ -10,9 +10,11 @@ usage() {
   cat <<'EOF'
 Usage: scripts/dependency-audit-gate.sh [--policy path] [--audit-json path] [--offline]
 
-Runs cargo audit and fails on every unwaived advisory or yanked crate. Waivers
-must name the advisory id, package, version, reason, owner, review date,
-remediation plan, tracking id, and expiry.
+Runs cargo audit. Vulnerabilities and blocking warnings fail unless covered by
+an exact, current waiver; yanked crates are blocking warnings. Unmaintained
+crates are printed as nonblocking maintenance notices. Unknown warning kinds
+fail closed. Waivers must name the advisory id, package, version, reason,
+owner, review date, remediation plan, tracking id, and expiry.
 EOF
 }
 
@@ -127,8 +129,12 @@ def title(item):
     advisory = item.get("advisory") or {}
     return advisory.get("title") or advisory.get("url") or ""
 
+vulnerabilities = audit.get("vulnerabilities")
+if not isinstance(vulnerabilities, dict) or not isinstance(vulnerabilities.get("list"), list):
+    raise SystemExit("cargo audit vulnerabilities.list must be a list")
+
 findings = []
-for item in audit.get("vulnerabilities", {}).get("list", []):
+for item in vulnerabilities["list"]:
     findings.append({
         "kind": "vulnerability",
         "id": advisory_id("vulnerability", item),
@@ -137,17 +143,29 @@ for item in audit.get("vulnerabilities", {}).get("list", []):
         "title": title(item),
     })
 
-for kind, items in (audit.get("warnings") or {}).items():
+warnings = audit.get("warnings", {})
+if not isinstance(warnings, dict):
+    raise SystemExit("cargo audit warnings must be an object")
+
+KNOWN_WARNING_KINDS = {"unmaintained", "unsound", "yanked"}
+maintenance_notices = []
+for kind, items in warnings.items():
+    if kind not in KNOWN_WARNING_KINDS:
+        raise SystemExit(f"unknown cargo audit warning kind; failing closed: {kind}")
     if not isinstance(items, list):
-        continue
+        raise SystemExit(f"cargo audit warning list for {kind} must be a list")
     for item in items:
-        findings.append({
+        finding = {
             "kind": kind,
             "id": advisory_id(kind, item),
             "package": package_name(item),
             "version": package_version(item),
             "title": title(item),
-        })
+        }
+        if kind == "unmaintained":
+            maintenance_notices.append(finding)
+        else:
+            findings.append(finding)
 
 validated_waivers = []
 for index, waiver in enumerate(waivers):
@@ -217,9 +235,19 @@ unused = [
 ]
 
 print(
-    f"dependency audit findings: {len(findings)} total, "
-    f"{len(waived)} waived, {len(unwaived)} unwaived, {len(unused)} unused waivers"
+    f"dependency audit: {len(findings)} blocking findings, "
+    f"{len(waived)} waived, {len(unwaived)} unwaived, "
+    f"{len(maintenance_notices)} nonblocking maintenance notices, "
+    f"{len(unused)} unused waivers"
 )
+for notice in maintenance_notices:
+    detail = (
+        f"maintenance notice (nonblocking) {notice['id']} "
+        f"{notice['package']} {notice['version']}"
+    )
+    if notice["title"]:
+        detail += f": {notice['title']}"
+    print(detail)
 for finding, waiver in waived:
     print(
         f"waived {finding['kind']} {finding['id']} "
@@ -228,7 +256,7 @@ for finding, waiver in waived:
     )
 
 if unwaived:
-    print("unwaived dependency advisories:")
+    print("unwaived dependency audit blockers:")
     for finding in unwaived:
         detail = f" - {finding['kind']} {finding['id']} {finding['package']} {finding['version']}"
         if finding["title"]:

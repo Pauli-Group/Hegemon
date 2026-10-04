@@ -1,0 +1,67 @@
+{
+  "schema": "hegemon.hx512_inline_transport_checkpoint.v2",
+  "date": "2026-08-22",
+  "files": [
+    {
+      "path": "protocol/shielded-pool/src/hx512_inline_transport.rs",
+      "sha512": "27ccf8b1a56ad8512e2ca35fe1fd0d3c5741e9d1aa5f60c915ab4a53d9d088896c51dac1690b672d1eea46950c8e5eb7b8fd246a24798ab55f21cb96b3e652f2"
+    },
+    {
+      "path": "protocol/shielded-pool/src/lib.rs",
+      "sha512": "069265d8f8e8c9cebfb12b826d0b224415d1bb1dc85fa49c584ba64539c87bd2dc2d6c48f2b7f863391b068d708358eb926f3d47382197ccf1b6c5f1060176c2"
+    }
+  ],
+  "wire": {
+    "identity_bytes": 186,
+    "activity_mask_offset": 186,
+    "statement_bytes": 983,
+    "proof_length_bytes": 4,
+    "ciphertext_bytes_per_active_output": 2147,
+    "exact_formula": "987 + proof_len + 2147 * active_output_count",
+    "wire_arithmetic_proof_ceiling": 4294962014,
+    "implementation_proof_ceiling": 4194304,
+    "implementation_max_action_bytes": 4199585,
+    "production_cap_allocated": false
+  },
+  "retained_red_team_counterfeit": {
+    "mask": 12,
+    "proof_length": 29,
+    "action_length": 5310,
+    "mutation": "flip byte 987, the first proof byte; statement, length, and ciphertexts unchanged",
+    "accepted_by_superseded_sha512": "243a9d1f4595169442ffac82eeb6daa83dda893467a9956a6d6399fffdd89e721e7ced375e1aab2a40d7bf33fef5097346a6b1c85d000da7c991640e74bf74d9",
+    "canonical_action_sha512": "e64fc8a4492823cf42d6d4793d58a3c2eb527862e4076db63c381482088d1b9eaa392783453dabc95d38c33b0084caa8b138d9fb5d6b7f6675531b7e4af7185c",
+    "mutated_action_sha512": "47bab0b73489dcbf229268ac8036fad02a9717399fe11597be7dd46eaa67a425dc808843b13f533639a8d01d7e6db5878ebeb5acd4c3f7a5881e46c030e5e88e",
+    "repaired_result": "ProofRejected"
+  },
+  "independent_checks": {
+    "focused_transport_tests": {
+      "passed": 13,
+      "failed": 0
+    },
+    "shielded_pool_library_tests": {
+      "passed": 38,
+      "failed": 0
+    },
+    "no_default_features_check": true,
+    "git_diff_check": true
+  },
+  "claim_boundary": {
+    "identity_allocated": false,
+    "proof_cap_allocated": false,
+    "allocation_free_prefix_preflight": true,
+    "mandatory_statement_validator": true,
+    "mandatory_ciphertext_validator": true,
+    "mandatory_proof_verifier": true,
+    "generic_hook_is_consensus_authority": false,
+    "cheap_part_shape_checks_precede_hooks": true,
+    "infallible_clone_available": false,
+    "fallible_try_clone_available": true,
+    "canonical_bytes_retained": true,
+    "sidecar_validity": false,
+    "aggregate_validity": false,
+    "receipt_validity": false,
+    "cache_validity": false,
+    "node_route_integrated": false,
+    "production_authorized": false
+  }
+}

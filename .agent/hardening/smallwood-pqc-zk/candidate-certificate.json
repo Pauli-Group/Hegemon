@@ -1,0 +1,81 @@
+{
+  "schema": "hegemon.smallwood.strict-certificate.v1",
+  "profile_id": "hegemon.smallwood.v6.shake256-448.sha512.complete-zk.v1",
+  "evidence": {
+    "proof_system_implemented": {
+      "status": "partial"
+    },
+    "compiled_prover_distribution_refinement": {
+      "status": "missing"
+    },
+    "protocol_transcript_inventory": {
+      "status": "partial"
+    },
+    "witness_polynomial_simulator": {
+      "status": "assumption"
+    },
+    "piop_mask_simulator": {
+      "status": "assumption"
+    },
+    "decs_domain_and_leaf_hiding": {
+      "status": "missing"
+    },
+    "joint_pcs_lvcs_decs_merkle_simulator": {
+      "status": "missing"
+    },
+    "abort_conditioned_simulator": {
+      "status": "missing"
+    },
+    "qrom_zk_reduction": {
+      "status": "missing"
+    },
+    "qrom_zk_independent_review": {
+      "status": "missing"
+    },
+    "rng_refinement": {
+      "status": "partial"
+    },
+    "zk_quantitative_bound": {
+      "status": "missing"
+    },
+    "relation_geometry": {
+      "status": "missing"
+    },
+    "interactive_rbr_extraction": {
+      "status": "partial"
+    },
+    "pcs_binding_extraction": {
+      "status": "partial"
+    },
+    "compiled_verifier_refinement": {
+      "status": "partial"
+    },
+    "sha512_standard_to_ideal_qrom": {
+      "status": "assumption"
+    },
+    "proof_of_knowledge_extractor": {
+      "status": "partial"
+    },
+    "global_multi_target_composition": {
+      "status": "missing"
+    },
+    "canonical_relation_refinement": {
+      "status": "partial"
+    },
+    "relation_hash_security": {
+      "status": "missing"
+    },
+    "proof_transcript_hash_security": {
+      "status": "assumption"
+    },
+    "wire_and_parser_refinement": {
+      "status": "partial"
+    },
+    "end_to_end_same_bytes": {
+      "status": "partial"
+    },
+    "independent_composed_security_review": {
+      "status": "missing"
+    }
+  }
+}

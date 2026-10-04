@@ -14,7 +14,9 @@ import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
+import { parseExecutionMode } from './app-no-ssh-e2e-mode.mjs';
 
+const EXECUTION_MODE = parseExecutionMode(process.argv.slice(2));
 const ROOT_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const NODE_BIN = process.env.HEGEMON_NODE_BIN ?? path.join(ROOT_DIR, 'target/release/hegemon-node');
 const WALLETD_BIN = process.env.HEGEMON_WALLETD_BIN ?? path.join(ROOT_DIR, 'target/release/walletd');
@@ -730,6 +732,7 @@ async function restartRelayAndResync({
 async function main() {
   ensureExecutable(NODE_BIN, 'hegemon-node');
   ensureExecutable(WALLETD_BIN, 'walletd');
+  log(`using ${EXECUTION_MODE === 'review-only' ? 'REVIEW-ONLY' : 'strict funded-flow'} mode`);
   log('using native --dev profile; no legacy JSON chain spec or --chain flag');
 
   const seedRpcPort = await freePort();
@@ -794,6 +797,71 @@ async function main() {
   await waitSameBlock(seedRpcPort, relayRpcPort, startHeight);
   log(`relay joined seed and synced at height ${startHeight}`);
 
+  if (EXECUTION_MODE === 'review-only') {
+    const minerSyncOutcome = await miner.request('sync.once', {
+      ws_url: walletRpcUrl(relayRpcPort),
+      force_rescan: false
+    });
+    const recipientSyncOutcome = await recipient.request('sync.once', {
+      ws_url: walletRpcUrl(relayRpcPort),
+      force_rescan: false
+    });
+    const minerSync = await miner.request('status.get');
+    const recipientSync = await recipient.request('status.get');
+    const minerSyncedHeight = Number(minerSync.lastSyncedHeight ?? 0);
+    const recipientSyncedHeight = Number(recipientSync.lastSyncedHeight ?? 0);
+    const relayHeight = await height(relayRpcPort);
+    if (minerSyncedHeight < startHeight || recipientSyncedHeight < startHeight) {
+      fail(
+        `review-only wallet sync did not reach the common chain height: miner=${minerSyncedHeight} recipient=${recipientSyncedHeight} common=${startHeight}`
+      );
+    }
+    if (minerSyncedHeight > relayHeight || recipientSyncedHeight > relayHeight) {
+      fail(
+        `review-only wallet sync is ahead of the relay: miner=${minerSyncedHeight} recipient=${recipientSyncedHeight} relay=${relayHeight}`
+      );
+    }
+    const minerBalance = balanceOf(minerSync);
+    const recipientBalance = balanceOf(recipientSync);
+    if (minerBalance !== 0 || recipientBalance !== 0) {
+      fail(
+        `review-only wallets unexpectedly recovered spendable value: miner=${minerBalance} recipient=${recipientBalance}`
+      );
+    }
+    if (Number(minerSyncOutcome.recovered ?? -1) !== 0 || Number(recipientSyncOutcome.recovered ?? -1) !== 0) {
+      fail(
+        `review-only wallets unexpectedly recovered notes: miner=${minerSyncOutcome.recovered} recipient=${recipientSyncOutcome.recovered}`
+      );
+    }
+    log(
+      `REVIEW-ONLY PASS: seed authoring and relay sync verified; fresh wallets synced through ${Math.min(minerSyncedHeight, recipientSyncedHeight)} with zero recovered balance; funded transfers were not exercised`
+    );
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          mode: 'REVIEW-ONLY',
+          fundedTransactionsExercised: false,
+          binaryProvenance: BINARY_PROVENANCE,
+          durationSeconds: Math.round((Date.now() - startedAt) / 1000),
+          runDir,
+          seedRpcPort,
+          relayRpcPort,
+          commonHeight: startHeight,
+          seedHeight: await height(seedRpcPort),
+          relayHeight,
+          minerWalletHeight: minerSyncedHeight,
+          recipientWalletHeight: recipientSyncedHeight,
+          minerSpendable: minerBalance,
+          recipientSpendable: recipientBalance
+        },
+        null,
+        2
+      )
+    );
+    return;
+  }
+
   const fundedStatus = await waitWalletBalanceAtLeast(miner, relayRpcPort, 1, 'miner coinbase');
   log(`miner recovered spendable balance ${balanceOf(fundedStatus)} units through relay RPC`);
 
@@ -842,6 +910,8 @@ async function main() {
 
   const summary = {
     ok: true,
+    mode: 'STRICT-FUNDED-FLOW',
+    fundedTransactionsExercised: true,
     binaryProvenance: BINARY_PROVENANCE,
     durationSeconds: Math.round((Date.now() - startedAt) / 1000),
     runDir,

@@ -1,0 +1,336 @@
+{
+  "bcs_statistical_zk": {
+    "direct_theorem_strict_128": false,
+    "e384_committed_units_floor": 4096,
+    "e384_min_byte_aligned_lambda": 576,
+    "e384_min_integer_lambda": 569,
+    "e512_committed_units_floor": 2048,
+    "e512_min_byte_aligned_lambda": 568,
+    "e512_min_integer_lambda": 565,
+    "lambda512_e384_committed_units_bound_bits": 114,
+    "lambda512_e512_committed_units_bound_bits": 115,
+    "source_expression": "p*2^(-lambda/4+2)",
+    "theorem_boundary": "BCS Lemma 3.4 and Lemma 7.5 direct statistical bound; this is a theorem-bound diagnostic, not an actual-leak lower bound"
+  },
+  "capabilities": {
+    "cms_modified_bcs_instantiated": false,
+    "cms_rbr_knowledge": false,
+    "cms_rbr_soundness": false,
+    "complete_zk": false,
+    "composed_strict_gt_128": false,
+    "concrete_sha512_qro": false,
+    "exact_m4_iop": false,
+    "generalized_special_soundness": false,
+    "production_authorized": false,
+    "retained_source_closure": false
+  },
+  "claim_boundary": "Exact rational local-policy source screens and theorem-premise audit only; no selected q, exact M4 IOP, complete ZK, concrete SHA-512 QRO bridge, composed bound, proof artifact, or production authority",
+  "conditional_source_screens": {
+    "E384": {
+      "codeword_rows": 4096,
+      "data_columns": 32,
+      "encoded_oracle_bytes": 2097152,
+      "envelope_bits_approx": "128.506637186235",
+      "equal_source_error_union_terms": 1,
+      "exact_factored_terms": {
+        "algebraic_reduction": {
+          "denominator_power_of_two": 384,
+          "numerator": 20490
+        },
+        "ideal_ro_collision_path": {
+          "coefficient": 48,
+          "denominator_power_of_two": 512,
+          "t": 18446744073709551616,
+          "t_power": 3
+        },
+        "lifted_source": {
+          "coefficient": 12,
+          "equal_source_error_union_terms": 1,
+          "t": 18446744073709551616,
+          "t_power": 2
+        },
+        "local_k_cap_bridge": {
+          "K": 4096,
+          "K_power": 2,
+          "coefficient": 2,
+          "denominator_power_of_two": 512
+        },
+        "proximity_query": {
+          "base_denominator": 8192,
+          "base_numerator": 2047,
+          "exponent": 130
+        }
+      },
+      "exact_fraction_comparison_verified": true,
+      "extension_degree_over_b128": 3,
+      "field_bits": 384,
+      "field_bytes": 48,
+      "field_name": "E384",
+      "fold_variables": 5,
+      "frontier_sha512_nodes": 646,
+      "log_inv_rate": 1,
+      "message_rows": 2048,
+      "proof_bytes": 206992,
+      "query_count": 130,
+      "source_screen_only": true,
+      "strict_comparison": "conditional_total < 2^-128",
+      "zero_knowledge_cost_included": false
+    },
+    "E512": {
+      "codeword_rows": 2048,
+      "data_columns": 64,
+      "encoded_oracle_bytes": 2097152,
+      "envelope_bits_approx": "128.598281632386",
+      "equal_source_error_union_terms": 1,
+      "exact_factored_terms": {
+        "algebraic_reduction": {
+          "denominator_power_of_two": 512,
+          "numerator": 12300
+        },
+        "ideal_ro_collision_path": {
+          "coefficient": 48,
+          "denominator_power_of_two": 512,
+          "t": 18446744073709551616,
+          "t_power": 3
+        },
+        "lifted_source": {
+          "coefficient": 12,
+          "equal_source_error_union_terms": 1,
+          "t": 18446744073709551616,
+          "t_power": 2
+        },
+        "local_k_cap_bridge": {
+          "K": 2048,
+          "K_power": 2,
+          "coefficient": 2,
+          "denominator_power_of_two": 512
+        },
+        "proximity_query": {
+          "base_denominator": 4096,
+          "base_numerator": 1023,
+          "exponent": 130
+        }
+      },
+      "exact_fraction_comparison_verified": true,
+      "extension_degree_over_b128": 4,
+      "field_bits": 512,
+      "field_bytes": 64,
+      "field_name": "E512",
+      "fold_variables": 6,
+      "frontier_sha512_nodes": 516,
+      "log_inv_rate": 1,
+      "message_rows": 1024,
+      "proof_bytes": 232768,
+      "query_count": 130,
+      "source_screen_only": true,
+      "strict_comparison": "conditional_total < 2^-128",
+      "zero_knowledge_cost_included": false
+    }
+  },
+  "equal_source_error_union_sensitivity": {
+    "E384": [
+      {
+        "envelope_bits_approx": "128.506637186235",
+        "equal_source_error_union_terms": 1,
+        "proof_bytes": 206992,
+        "query_count": 130
+      },
+      {
+        "envelope_bits_approx": "129.507341799212",
+        "equal_source_error_union_terms": 2,
+        "proof_bytes": 207696,
+        "query_count": 131
+      },
+      {
+        "envelope_bits_approx": "129.508046412189",
+        "equal_source_error_union_terms": 8,
+        "proof_bytes": 208400,
+        "query_count": 132
+      },
+      {
+        "envelope_bits_approx": "128.508046412189",
+        "equal_source_error_union_terms": 16,
+        "proof_bytes": 208400,
+        "query_count": 132
+      },
+      {
+        "envelope_bits_approx": "128.508751025165",
+        "equal_source_error_union_terms": 64,
+        "proof_bytes": 209104,
+        "query_count": 133
+      }
+    ],
+    "E512": [
+      {
+        "envelope_bits_approx": "128.598281632386",
+        "equal_source_error_union_terms": 1,
+        "proof_bytes": 232768,
+        "query_count": 130
+      },
+      {
+        "envelope_bits_approx": "129.599691202641",
+        "equal_source_error_union_terms": 2,
+        "proof_bytes": 233920,
+        "query_count": 131
+      },
+      {
+        "envelope_bits_approx": "129.601100772895",
+        "equal_source_error_union_terms": 8,
+        "proof_bytes": 235072,
+        "query_count": 132
+      },
+      {
+        "envelope_bits_approx": "128.601100772895",
+        "equal_source_error_union_terms": 16,
+        "proof_bytes": 235072,
+        "query_count": 132
+      },
+      {
+        "envelope_bits_approx": "128.602510343150",
+        "equal_source_error_union_terms": 64,
+        "proof_bytes": 236224,
+        "query_count": 133
+      }
+    ]
+  },
+  "field_integration": {
+    "E384": {
+      "additional_bytes_per_extension_element_vs_E384": 0,
+      "extension_degree_over_B128": 3,
+      "live_extension_field_trait_compatible": false,
+      "live_scalar_implemented": true,
+      "reason": "live ExtensionField degree is 2^LOG_DEGREE, so degree three is not representable"
+    },
+    "E512": {
+      "additional_bytes_per_extension_element_vs_E384": 16,
+      "extension_degree_over_B128": 4,
+      "live_extension_field_trait_shape_compatible": true,
+      "live_scalar_implemented": false,
+      "reason": "degree four fits the trait shape but needs a fixed irreducible polynomial, bases, arithmetic, serialization, KATs, and channel integration"
+    },
+    "mixed_B128_commitment_E512_challenge_channel_implemented": false
+  },
+  "full_composed_ledger": {
+    "overall_total": null,
+    "strict_pq_bits": null,
+    "terms": [
+      {
+        "authority": "conditional source screen only",
+        "id": "proximity_query_source_screen",
+        "value": "((M-R-1)/(2M))^q"
+      },
+      {
+        "authority": "conditional source screen only",
+        "id": "algebraic_reduction_source_screen",
+        "value": "p*(M+2)/2^field_bits"
+      },
+      {
+        "authority": "exact local-policy corollary only",
+        "id": "cms_ideal_ro_collision_path",
+        "value": "3/2^316"
+      },
+      {
+        "authority": "not the exact CMS base-game arity a",
+        "id": "cms_local_k_cap_bridge",
+        "value": "2*M^2/2^512"
+      },
+      {
+        "authority": "missing",
+        "id": "proved_exact_m4_iop_source_error",
+        "value": null
+      },
+      {
+        "authority": "missing",
+        "id": "proved_generalized_special_soundness_or_cms_rbr",
+        "value": null
+      },
+      {
+        "authority": "missing",
+        "id": "exact_cms_modified_bcs_transcript",
+        "value": null
+      },
+      {
+        "authority": "missing hidden O(q log ell) constant",
+        "id": "exact_augmented_t_overhead",
+        "value": null
+      },
+      {
+        "authority": "missing ideal-to-concrete reduction",
+        "id": "concrete_sha512_qro_bridge",
+        "value": null
+      },
+      {
+        "authority": "missing",
+        "id": "complete_zk_bound",
+        "value": null
+      },
+      {
+        "authority": "missing",
+        "id": "commitment_and_semantic_hash_union",
+        "value": null
+      },
+      {
+        "authority": "missing",
+        "id": "grinding_and_retry_union",
+        "value": null
+      },
+      {
+        "authority": "missing",
+        "id": "multi_proof_action_consensus_union",
+        "value": null
+      },
+      {
+        "authority": "missing",
+        "id": "parser_verifier_refinement_union",
+        "value": null
+      }
+    ]
+  },
+  "generated_at_utc": "2026-08-22",
+  "hvzk_whir_conditional_lane": {
+    "cms_knowledge_applicable": null,
+    "cms_soundness_shape_applicable": "conditional",
+    "cms_zk_shape_applicable": "conditional",
+    "exact_epsilon": null,
+    "exact_profile": null,
+    "implementation_evidence": "Plonky3 PR 1767 merged HidingWhirPcs; this is not Hegemon integration or refinement evidence",
+    "m4_relation_lowering": null,
+    "paper": "ePrint 2026/391, Theorem 10.2 and Definition 3.7",
+    "rbr_notion_matches_cms_definition_8_5": false,
+    "reason_knowledge_is_null": "BCFW25 Appendix C proves prior CMS-style RBR knowledge implies the relaxed witness-propagating notion, not the converse",
+    "selected": false
+  },
+  "local_policy_envelope": {
+    "K_screen_choice": "codeword_rows_M",
+    "cms_base_game_arity_a_exact": null,
+    "exact_local_policy_corollary": true,
+    "external_adversary_queries_supported": null,
+    "formula": "12*t^2*epsilon + 48*t^3/2^512 + 2*K^2/2^512",
+    "lambda_bits": 512,
+    "strict_target_denominator_power": 128,
+    "t_augmented": 18446744073709551616,
+    "verbatim_primary_theorem": false
+  },
+  "production_profile": null,
+  "schema": "hegemon.strict-qrom-profile-selection.v1",
+  "selected_query_count": null,
+  "source_binding": {
+    "live_mutable_dependency": true,
+    "mutable_unpinned_paths": [
+      "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs",
+      "circuits/transaction/src/full_blake2b448_relation.rs",
+      "prototypes/standalone-shake256-binius/strict-mixed-field/src/complete_zk.rs",
+      "prototypes/standalone-shake256-binius/binius64"
+    ],
+    "pinned_sha512": {
+      ".agent/hardening/binius-pq128-proof-size/salted-bcs-zk-audit/README.md": "bc82cedb303ee955be406729c5826b0bad16980c39af6f733f4c6a4488354bf4743cc3c2f397f8cd3164862d8eba777f371675002cb2861f4bf9ba943da20a62",
+      ".agent/hardening/ligerito-e384-core/ligerito_e384_core.py": "54faaaddef4d366da5ad24cd363ea237796da29204f680b7f946337e94d972c028cffd290eb78896b3cb8b8a7ea0e25bebe15ec0434e7fff0392168403296a6f",
+      ".agent/hardening/ligerito-e384-core/source_screen.json": "a260e6c77f6562399c76ed1deb67d1e4b87d423e837c44d01b4e3805d3248974551cae99eca6b81e655ee04ce82e90ba4fb41a7b87394f7791073c44a88b9631",
+      "formal/crypto/HegemonCrypto/CmsLifting.lean": "7eedfceefadd9988fcd43fcf3bf7e67a2bd3ee845d9d7ec53e099d3575268b86bb2c9eac1acfa2f2f3af89e71d54342eb9846c0c76d0217c2b95c70dcb93aeb3",
+      "formal/crypto/HegemonCrypto/CmsLocalOperator.lean": "3521d39fff4c17d182125d15c8a3abde7948d350eeb2b81ccfa653ec82608a4b08ff47ec081c8af9fffb2f838494c49bdac90745509392eff389f219bf50d761",
+      "formal/crypto/HegemonCrypto/CmsOracleDatabaseBridge.lean": "763ef176d43cf5ce35f2783d5e18924c4cf96ca1ac97c0944ff6b77ab5b16621b0afee6dea46b8e5dfa0a7aa01ebdce51fd6ee05cb4ceed7e539d85ce6250ab6",
+      "formal/crypto/HegemonCrypto/SmallWoodBcsQrom.lean": "841f52540846815cfcf91be2ea8063432c8d2525dfd510cd88990957e38cecccc6f3a9df2170959f5b803124421767b2f06ddd56bbca56e5c4432f38d3f5b442"
+    },
+    "retained_source_closure": false
+  }
+}

@@ -796,7 +796,6 @@ mod tests {
     };
     use crypto::ml_dsa::MlDsaSecretKey;
     use crypto::traits::SigningKey as _;
-    use protocol_versioning::DEFAULT_VERSION_BINDING;
     use serde::Deserialize;
     use std::collections::BTreeSet;
     use std::sync::{
@@ -908,7 +907,9 @@ mod tests {
             height: 1,
             parent_hash: GENESIS_HASH,
             timestamp_ms: 1_000,
-            transactions: vec![dummy_pow_transaction(17)],
+            // Proof authority is deliberately empty in this release. Keep the
+            // fixture proof-free so this test isolates supply-vs-PoW ordering.
+            transactions: Vec::new(),
             miner: &miner,
             base_nullifiers: &base_nullifiers,
             base_commitment_tree: &base_tree,
@@ -961,7 +962,9 @@ mod tests {
             height: 1,
             parent_hash: GENESIS_HASH,
             timestamp_ms: 1_000,
-            transactions: vec![dummy_pow_transaction(29)],
+            // Proof authority is deliberately empty in this release. Keep the
+            // fixture proof-free so this test isolates supply underflow.
+            transactions: Vec::new(),
             miner: &miner,
             base_nullifiers: &base_nullifiers,
             base_commitment_tree: &base_tree,
@@ -993,16 +996,6 @@ mod tests {
         let secret = MlDsaSecretKey::generate_deterministic(seed);
         let public = secret.verify_key();
         TestMiner { secret, public }
-    }
-
-    fn dummy_pow_transaction(seed: u8) -> Transaction {
-        Transaction::new(
-            vec![[seed; 48]],
-            vec![[seed.wrapping_add(1); 48]],
-            [seed.wrapping_add(2); 48],
-            DEFAULT_VERSION_BINDING,
-            Vec::new(),
-        )
     }
 
     fn assemble_signed_pow_block(params: TestPowBlockParams<'_>) -> ConsensusBlock {

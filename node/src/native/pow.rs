@@ -29,29 +29,6 @@ pub(crate) fn evaluate_native_mined_work_admission(
     }
 }
 
-pub(crate) fn evaluate_native_miner_identity_admission(
-    input: NativeMinerIdentityAdmissionInput,
-) -> Result<(), NativeMinerIdentityAdmissionRejection> {
-    if input.height == 0 {
-        return Ok(());
-    }
-    if input.public_key_len != ML_DSA_PUBLIC_KEY_LEN {
-        Err(NativeMinerIdentityAdmissionRejection::InvalidMinerPublicKeyLength)
-    } else if !input.public_key_bytes_parse {
-        Err(NativeMinerIdentityAdmissionRejection::InvalidMinerPublicKeyBytes)
-    } else if !input.miner_commitment_matches {
-        Err(NativeMinerIdentityAdmissionRejection::MinerCommitmentMismatch)
-    } else if input.signature_len != ML_DSA_SIGNATURE_LEN {
-        Err(NativeMinerIdentityAdmissionRejection::InvalidMinerSignatureLength)
-    } else if !input.signature_bytes_parse {
-        Err(NativeMinerIdentityAdmissionRejection::InvalidMinerSignatureBytes)
-    } else if !input.signature_verifies {
-        Err(NativeMinerIdentityAdmissionRejection::NativeMinerSignatureVerificationFailed)
-    } else {
-        Ok(())
-    }
-}
-
 pub(crate) fn native_work_template_next_height(best_height: u64) -> Option<u64> {
     best_height.checked_add(1)
 }
@@ -211,6 +188,7 @@ pub(crate) fn native_pow_header_from_parts(
     state_root: &[u8; 48],
     kernel_root: &[u8; 48],
     nullifier_root: &[u8; 48],
+    da_root: &[u8; 48],
     extrinsics_root: &[u8; 32],
     message_root: &[u8; 48],
     message_count: u32,
@@ -218,10 +196,10 @@ pub(crate) fn native_pow_header_from_parts(
     header_mmr_len: u64,
     supply_digest: u128,
     tx_count: u32,
-) -> PowHeaderV1 {
-    PowHeaderV1 {
+) -> PowHeaderV2 {
+    PowHeaderV2 {
         chain_id: HEGEMON_CHAIN_ID_V1,
-        rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+        rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
         height,
         timestamp_ms,
         parent_hash,
@@ -229,7 +207,7 @@ pub(crate) fn native_pow_header_from_parts(
         kernel_root: *kernel_root,
         nullifier_root: *nullifier_root,
         proof_commitment: NATIVE_EMPTY_DIGEST48,
-        da_root: NATIVE_EMPTY_DIGEST48,
+        da_root: *da_root,
         action_root: *extrinsics_root,
         tx_statements_commitment: NATIVE_EMPTY_DIGEST48,
         version_commitment: NATIVE_EMPTY_DIGEST48,
@@ -246,8 +224,8 @@ pub(crate) fn native_pow_header_from_parts(
     }
 }
 
-pub(crate) fn pow_header_from_meta(meta: &NativeBlockMeta) -> PowHeaderV1 {
-    PowHeaderV1 {
+pub(crate) fn pow_header_from_meta(meta: &NativeBlockMeta) -> PowHeaderV2 {
+    PowHeaderV2 {
         chain_id: meta.chain_id,
         rules_hash: meta.rules_hash,
         height: meta.height,
@@ -257,7 +235,7 @@ pub(crate) fn pow_header_from_meta(meta: &NativeBlockMeta) -> PowHeaderV1 {
         kernel_root: meta.kernel_root,
         nullifier_root: meta.nullifier_root,
         proof_commitment: NATIVE_EMPTY_DIGEST48,
-        da_root: NATIVE_EMPTY_DIGEST48,
+        da_root: meta.da_root,
         action_root: meta.extrinsics_root,
         tx_statements_commitment: NATIVE_EMPTY_DIGEST48,
         version_commitment: NATIVE_EMPTY_DIGEST48,
@@ -274,8 +252,77 @@ pub(crate) fn pow_header_from_meta(meta: &NativeBlockMeta) -> PowHeaderV1 {
     }
 }
 
-pub(crate) fn checkpoint_from_meta(meta: &NativeBlockMeta) -> TrustedCheckpointV1 {
-    TrustedCheckpointV1 {
+/// Exact V3 header projection. Every typed commitment is carried by the full
+/// metadata rather than substituted with a local default, so reconstructing
+/// the PoW preimage from the network body is deterministic.
+pub(crate) fn pow_header_v3_from_meta(meta: &NativeBlockMetaV3) -> PowHeaderV3 {
+    PowHeaderV3 {
+        chain_id: meta.chain_id,
+        rules_hash: meta.rules_hash,
+        height: meta.height,
+        timestamp_ms: meta.timestamp_ms,
+        parent_id: meta.parent_hash,
+        state_root: meta.state_root,
+        kernel_root: meta.kernel_root,
+        nullifier_root: meta.nullifier_root,
+        proof_commitment: meta.proof_commitment,
+        da_root: meta.da_root,
+        action_root: meta.extrinsics_root,
+        tx_statements_commitment: meta.tx_statements_commitment,
+        version_commitment: meta.version_commitment,
+        fee_commitment: meta.fee_commitment,
+        supply_digest: meta.supply_digest,
+        tx_count: meta.tx_count,
+        message_root: meta.message_root,
+        message_count: meta.message_count,
+        header_mmr_root: meta.header_mmr_root,
+        header_mmr_len: meta.header_mmr_len,
+        pow_bits: meta.pow_bits,
+        nonce: meta.nonce,
+        cumulative_work: meta.cumulative_work,
+    }
+}
+
+pub(crate) fn checkpoint_v3_from_meta(meta: &NativeBlockMetaV3) -> TrustedCheckpointV3 {
+    TrustedCheckpointV3 {
+        chain_id: meta.chain_id,
+        rules_hash: meta.rules_hash,
+        height: meta.height,
+        header_id: meta.hash,
+        timestamp_ms: meta.timestamp_ms,
+        pow_bits: meta.pow_bits,
+        cumulative_work: meta.cumulative_work,
+        header_mmr_root: meta.header_mmr_root,
+        header_mmr_len: meta.header_mmr_len,
+    }
+}
+
+pub(crate) fn verify_native_pow_meta_v3(
+    parent: &NativeBlockMetaV3,
+    meta: &NativeBlockMetaV3,
+    expected_pow_bits: u32,
+) -> Result<()> {
+    let header = pow_header_v3_from_meta(meta);
+    if header.work_hash() != meta.work_hash {
+        return Err(anyhow!("native V3 block work-hash projection mismatch"));
+    }
+    if header.block_id() != meta.hash {
+        return Err(anyhow!("native V3 block-id projection mismatch"));
+    }
+    let admitted_id = consensus_light_client::verify_pow_header_v3_with_expected_bits(
+        &checkpoint_v3_from_meta(parent),
+        &header,
+        expected_pow_bits,
+    )
+    .map_err(|error| anyhow!("native V3 PoW admission failed: {error:?}"))?;
+    if admitted_id != meta.hash {
+        return Err(anyhow!("native V3 admitted block-id mismatch"));
+    }
+    Ok(())
+}
+
+pub(crate) fn checkpoint_from_meta(meta: &NativeBlockMeta) -> TrustedCheckpointV2 {
+    TrustedCheckpointV2 {
         chain_id: meta.chain_id,
         rules_hash: meta.rules_hash,
         height: meta.height,
@@ -288,77 +335,11 @@ pub(crate) fn checkpoint_from_meta(meta: &NativeBlockMeta) -> TrustedCheckpointV
     }
 }
 
-pub(crate) fn native_miner_commitment(public_key_bytes: &[u8]) -> [u8; 48] {
-    crypto::hashes::blake3_384(public_key_bytes)
-}
-
-pub(crate) fn native_miner_signature_message(meta: &NativeBlockMeta) -> Vec<u8> {
-    let header_bytes = pow_header_from_meta(meta).canonical_bytes();
-    let mut bytes = Vec::with_capacity(
-        b"hegemon.native.miner-signature-v1".len()
-            + header_bytes.len()
-            + meta.nonce.len()
-            + meta.work_hash.len(),
-    );
-    bytes.extend_from_slice(b"hegemon.native.miner-signature-v1");
-    bytes.extend_from_slice(&header_bytes);
-    bytes.extend_from_slice(&meta.nonce);
-    bytes.extend_from_slice(&meta.work_hash);
-    bytes
-}
-
-pub(crate) fn sign_native_block_meta(meta: &mut NativeBlockMeta, identity: &NativeMinerIdentity) {
-    let signature_message = native_miner_signature_message(meta);
-    let signature = identity.secret_key.sign(&signature_message);
-    let public_key = identity.public_key.to_bytes();
-    meta.miner_commitment = native_miner_commitment(&public_key);
-    meta.miner_public_key = public_key;
-    meta.miner_signature = signature.as_bytes().to_vec();
-}
-
-pub(crate) fn native_miner_identity_admission_input(
-    meta: &NativeBlockMeta,
-) -> NativeMinerIdentityAdmissionInput {
-    let public_key = MlDsaPublicKey::from_bytes(&meta.miner_public_key);
-    let signature = MlDsaSignature::from_bytes(&meta.miner_signature);
-    let public_key_bytes_parse = public_key.is_ok();
-    let signature_bytes_parse = signature.is_ok();
-    let miner_commitment_matches =
-        native_miner_commitment(&meta.miner_public_key) == meta.miner_commitment;
-    let signature_verifies = match (public_key, signature) {
-        (Ok(public_key), Ok(signature)) => public_key
-            .verify(&native_miner_signature_message(meta), &signature)
-            .is_ok(),
-        _ => false,
-    };
-    NativeMinerIdentityAdmissionInput {
-        height: meta.height,
-        public_key_len: meta.miner_public_key.len(),
-        signature_len: meta.miner_signature.len(),
-        public_key_bytes_parse,
-        miner_commitment_matches,
-        signature_bytes_parse,
-        signature_verifies,
-    }
-}
-
-pub(crate) fn verify_native_miner_identity(meta: &NativeBlockMeta) -> Result<()> {
-    evaluate_native_miner_identity_admission(native_miner_identity_admission_input(meta)).map_err(
-        |rejection| {
-            anyhow!(
-                "native miner identity admission failed: {}",
-                rejection.label()
-            )
-        },
-    )
-}
-
 pub(crate) fn verify_native_pow_meta(
     parent: &NativeBlockMeta,
     meta: &NativeBlockMeta,
     expected_pow_bits: u32,
 ) -> Result<()> {
-    verify_native_miner_identity(meta)?;
     if meta.hash != meta.work_hash {
         return Err(anyhow!("native block hash must equal work hash"));
     }
@@ -371,7 +352,7 @@ pub(crate) fn verify_native_pow_meta(
         ));
     }
     let header = pow_header_from_meta(meta);
-    let work_hash = verify_pow_header_with_expected_bits(
+    let work_hash = verify_pow_header_v2_with_expected_bits(
         &checkpoint_from_meta(parent),
         &header,
         expected_pow_bits,
@@ -389,7 +370,6 @@ pub(crate) fn verify_native_block_meta_projection(
     expected_pow_bits: Option<u32>,
 ) -> Result<()> {
     if meta.height == 0 {
-        verify_native_miner_identity(meta)?;
         return Ok(());
     }
     let parent = parent.ok_or_else(|| {
@@ -487,6 +467,41 @@ pub(crate) fn native_expected_child_pow_bits_for_chain_index(
 pub(crate) fn native_meta_better_than(
     candidate: &NativeBlockMeta,
     current: &NativeBlockMeta,
+) -> bool {
+    native_meta_better_than_tip(
+        candidate,
+        NativeForkChoiceTip {
+            height: current.height,
+            hash: current.hash,
+            cumulative_work: current.cumulative_work,
+        },
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeForkChoiceTip {
+    pub(crate) height: u64,
+    pub(crate) hash: [u8; 32],
+    pub(crate) cumulative_work: [u8; 48],
+}
+
+pub(crate) fn native_meta_better_than_tip(
+    candidate: &NativeBlockMeta,
+    current: NativeForkChoiceTip,
+) -> bool {
+    native_fork_choice_tip_better_than(
+        NativeForkChoiceTip {
+            height: candidate.height,
+            hash: candidate.hash,
+            cumulative_work: candidate.cumulative_work,
+        },
+        current,
+    )
+}
+
+pub(crate) fn native_fork_choice_tip_better_than(
+    candidate: NativeForkChoiceTip,
+    current: NativeForkChoiceTip,
 ) -> bool {
     consensus::fork_choice::fork_choice_prefers_candidate(
         compare_work(&candidate.cumulative_work, &current.cumulative_work),

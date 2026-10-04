@@ -1,4 +1,5 @@
 import Hegemon.Transaction.SmallWoodProductionConstraintRefinement
+import Hegemon.Transaction.SmallWoodTranscriptBinding
 
 open Hegemon.Transaction.SmallWoodProductionConstraintRefinement
 
@@ -14,6 +15,44 @@ def natMatrixJson (values : List (List Nat)) : String :=
 
 def stringArrayJson (values : List String) : String :=
   "[" ++ String.intercalate "," (values.map fun value => "\"" ++ value ++ "\"") ++ "]"
+
+def natFromWords4 (words : List Nat) : Nat :=
+  words.foldl (fun value word => value * 2 ^ 64 + word) 0
+
+def sequentialPoseidon2Opening : ProductionNoteOpening :=
+  { value := 1
+    assetId := 2
+    recipientKey := natFromWords4 [3, 4, 5, 6]
+    rho := natFromWords4 [7, 8, 9, 10]
+    noteRandomness := natFromWords4 [11, 12, 13, 14]
+    authorizationPublicKey := natFromWords4 [15, 16, 17, 18] }
+
+def fieldBoundaryPoseidon2Opening : ProductionNoteOpening :=
+  let boundary := goldilocksModulus - 1
+  let packed := natFromWords4 [boundary, boundary, boundary, boundary]
+  { value := boundary
+    assetId := boundary
+    recipientKey := packed
+    rho := packed
+    noteRandomness := packed
+    authorizationPublicKey := packed }
+
+def poseidon2NoteCommitmentCaseJson
+    (name : String)
+    (opening : ProductionNoteOpening) : String :=
+  let preimage := productionNotePreimage opening
+  let digest := productionPoseidon2Sponge
+    Hegemon.Transaction.Poseidon2NoteCommitment.noteDomainTag preimage
+  "    {\"name\":\"" ++ name ++ "\",\"preimage_words\":"
+    ++ natArrayJson preimage ++ ",\"digest_limbs\":" ++ natArrayJson digest ++ "}"
+
+def poseidon2NoteCommitmentCasesJson : String :=
+  "  \"poseidon2_note_commitment_cases\": [\n"
+    ++ poseidon2NoteCommitmentCaseJson "zero" zeroProductionNoteOpening ++ ",\n"
+    ++ poseidon2NoteCommitmentCaseJson "sequential-words" sequentialPoseidon2Opening ++ ",\n"
+    ++ poseidon2NoteCommitmentCaseJson "field-modulus-minus-one"
+      fieldBoundaryPoseidon2Opening ++ "\n"
+    ++ "  ],\n"
 
 def productionConstraintFamilyName : ProductionConstraintFamily -> String
   | .mapIdentity => "map_identity"
@@ -97,8 +136,9 @@ def artifactMutationCaseJson
 def productionProjectionStatementFields :
     Hegemon.Transaction.StatementHash.StatementFields :=
   { Hegemon.Transaction.StatementHash.validFields with
-    circuitVersion := 3
-    cryptoSuite := 2 }
+    circuitVersion :=
+      Hegemon.Transaction.SmallWoodTranscriptBinding.activeCircuitVersion
+    cryptoSuite := Hegemon.Transaction.SmallWoodTranscriptBinding.activeCryptoSuite }
 
 def canonicalStatementProjectionJson : String :=
   let bound := Hegemon.Transaction.PublicInputBinding.validBoundPublicInputs
@@ -176,8 +216,11 @@ def evaluatorProbeJson : String :=
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
-    ++ "  \"arithmetization\": \"DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2\",\n"
+    ++ "  \"schema_version\": 2,\n"
+    ++ "  \"arithmetization\": \"DirectPacked64CompressedLevel5\",\n"
+    ++ "  \"poseidon2_note_commitment_domain_tag\": "
+    ++ toString Hegemon.Transaction.Poseidon2NoteCommitment.noteDomainTag ++ ",\n"
+    ++ poseidon2NoteCommitmentCasesJson
     ++ "  \"constraint_families\": "
     ++ stringArrayJson (productionConstraintFamilies.map productionConstraintFamilyName) ++ ",\n"
     ++ canonicalStatementProjectionJson

@@ -1,0 +1,929 @@
+{
+  "schema": "hegemon.hx448c02.scalar-m4-source-parity.v1",
+  "generated_utc_date": "2026-08-22",
+  "claim_level": "source-only exact refinement map",
+  "authority": {
+    "winner": null,
+    "winner_selected": false,
+    "identity_frozen": false,
+    "aggregate_relation_artifact_verified": false,
+    "compiled_geometry_verified": false,
+    "executed_scalar_m4_parity": false,
+    "complete_zero_knowledge": false,
+    "composed_qrom_pq128": false,
+    "strict_stablecoin_pq_margin": false,
+    "production_authorized": false
+  },
+  "source_pins": {
+    "Cargo.lock": {
+      "bytes": 112076,
+      "sha256": "79aa984666e4054d9e880c3a29a036a7720eb35fd6af44314a150171e3271f1e",
+      "sha512": "424c2523638b73162620b0e74cd641d2a9ada0f127d6518a834c598e73df4f15e110213d161a82a9736d3b54691ff9d74733e83aa27cf5e2bdd1abcff8d51abe"
+    },
+    "circuits/standalone-full-shake256-relation-prototype/Cargo.toml": {
+      "bytes": 435,
+      "sha256": "274e8500c5fe6e27fdda2b4b7834de74eb1b3f00c3f327f95671562a446af4b6",
+      "sha512": "d2e54dc8877d22a4f51dbcaf7105cfe2b6bfb47b5e663cf7e30d555f8948c01ee44e4a2b0dfdd83a393cf6d710db2fb8e93334a96e644458a052761f5bcc0580"
+    },
+    "circuits/standalone-full-shake256-relation-prototype/src/lib.rs": {
+      "bytes": 105418,
+      "sha256": "e251d0d6ade5948cb603de8d50d7a2f655d87dfb15378b327efce7297a74c3f2",
+      "sha512": "035226ac5e8016d702553f11c317b8bd3dcfa0df2f75e52351d28906ff589a6ad2bd2c62dd554288b7350b5b0d805ac85f8d3e635c9d867c242f5a8e6be81f3f"
+    },
+    "circuits/transaction/Cargo.toml": {
+      "bytes": 1081,
+      "sha256": "80298a2e10389fe8ee24f290bf1c14782d2497bc35826e686b79d841cfb461b5",
+      "sha512": "8415476edebd5c2378f7c2e222a48e01f02ca1bfe78ef6bff3e647c8b33aeb2bd650c4f8ddb0059e54bf6ea94f50f0f82888ee84cb5dea7a5768d7acc1a4d00e"
+    },
+    "circuits/transaction/src/full_blake2b448_relation.rs": {
+      "bytes": 214541,
+      "sha256": "c1a995a20bc2053376bb1043d2a9b7d4c19e4efc7d3c2485c49e4c9e159a8072",
+      "sha512": "b029ebec35c9d001d245b843a7ae918a2578ec961f7b0bd6097eb28950644ab2c2a9d9bfc58d87db39ad225b940347eaaaf3f678c3462663d07c3b5c59f0ceab"
+    },
+    "circuits/transaction/src/full_shake448_relation.rs": {
+      "bytes": 218464,
+      "sha256": "e6cb714d35765fff99357a05977ed9acc37fecf79b75d926fbd6cb85753938b6",
+      "sha512": "2fb40eb09c2dd69b08c0da9aa549e23485a7c6dc58c95c560c9715893beacab1509b6896af49a1c977a1bd6b4b5f86ee464f1c2ac42314210b704834a8f85495"
+    },
+    "circuits/transaction/src/full_shake448_statement.rs": {
+      "bytes": 56774,
+      "sha256": "bf03ce1848b1d3258bd33b54c1291148e73dcffe9e59882385f65e7af992a613",
+      "sha512": "5e60025d5591f9b73602f44ad4d1e8f353ed0ef66453535ef432b803b729e06604fc442727cff04060854041544ff3eb8d2f0fff5ddf5eb3f45705431bc14d40"
+    },
+    "circuits/transaction/src/smallwood_blake2b384.rs": {
+      "bytes": 54318,
+      "sha256": "dd8d6b98b4b869e6856fab1a159e18987e34f065418c2d9fa31ccb6263afaba5",
+      "sha512": "086c64850246c4d64f0b896bca0eac5b9f316bc7f59ba27f6ac6e80c5a82585d9300394a1974327d20781bd9716f69c7f12370555eaf380af4619dabec69bf05"
+    },
+    "circuits/transaction/src/smallwood_shake256_full_relation.rs": {
+      "bytes": 117720,
+      "sha256": "ed83d49127cc62d34d6fbefb96014f1c3674dc0fbae81d2d20250a6da489263d",
+      "sha512": "54eb5733b64a365aac03c88d81abae7372b155b2c6487da72248f4101e5491dfa636622b6aa43d48e0c16ce591f23026ad7949b06636d26b077781a26a1fbba5"
+    },
+    "crypto/hash384/src/lib.rs": {
+      "bytes": 37030,
+      "sha256": "968547e96c1e3f3b94b2b7c6883c3068f089b4dbcd86104673af51c60f506094",
+      "sha512": "6f99739c857bda2d7e59a50bd5979146eb8a196cdf9c4fdc83eb1c02fa6622728272132bb273ffb900a04be87983d2d9118bdbc408d3a5b58e169748252bc517"
+    },
+    "node/src/native/admission.rs": {
+      "bytes": 175396,
+      "sha256": "461c3ccc9a216bf1f887c093e499d580ecd7b21a893c572a8125b470b914a25d",
+      "sha512": "bdc9d91740c5300e7b3dfa958cc8ae92bb229d5d3fc54c4fcda2a7226adeba559304234a0aea4903e6f903612e4eec5303726b77dc317c1ae187e4a978084027"
+    },
+    "protocol/kernel/Cargo.toml": {
+      "bytes": 796,
+      "sha256": "09657eb825346933a9e6011901cd286fa522e2566dd5d1d8f70744752e2a4a4f",
+      "sha512": "6d3627faff8b1660907c467efaa6cb22eb92f9cc891d82c0e450c4507ee2098030f8a73e5e12e804750076ca053f9c6a370f67b0f28996d4e9630dacede61fe8"
+    },
+    "protocol/kernel/src/manifest.rs": {
+      "bytes": 14804,
+      "sha256": "9e9bc937b16901939f264371f2c8dcb5dc40b5e36c9950fbcb64fd672261be5d",
+      "sha512": "faaa32b686b5456eaed0b6ed7474f36d30dd9d53d4cb58d7c65ed14bee918e83e4ae8f7d93e6975e8b74226aba2c96413df969929842cf2a254d999ae7937336"
+    },
+    "protocol/shielded-pool/src/types.rs": {
+      "bytes": 11188,
+      "sha256": "479836a9a905b5596ce3711faf90afa939477c30a90a1978615895af0865382f",
+      "sha512": "4890895836dd0bb3a6d7e4a79d89aae9f931a44cf16d16545e29aa8ffa84fb10ab9c3001299de27e7a8ec923ad936ff883f368d07a586fe840d4b1370eb90c48"
+    },
+    "prototypes/standalone-shake256-binius/binius64/crates/circuits/src/keccak/permutation.rs": {
+      "bytes": 7858,
+      "sha256": "e4d2ca3da3e2bc2dc6971ed9d21ee5e8e058f319fa8479938a062b900cd00c92",
+      "sha512": "f66961414c919e76c44b1011afca3ac4f09b392c4c314bf0fd0b600922432c3fb55d619ff231224efa61816de2ff4876ec3e2aec3f5d53cf867da1df295f7890"
+    },
+    "prototypes/standalone-shake256-binius/binius64/crates/core/src/constraint_system/m4.rs": {
+      "bytes": 23146,
+      "sha256": "f7a5c02aafe6717d91fceedc08d17c64c680a801a43189b4b998c60f46c1bc79",
+      "sha512": "6fcfdd809ac5dcdb0646d80aa81392fce151b4745f73b9adf2e15d131fda2e9adc5b04535968cd153e10ce5f5716c5ff8b0de12fefc34f23aa8c887deaf98a88"
+    },
+    "prototypes/standalone-shake256-binius/binius64/crates/core/src/constraint_system/shift.rs": {
+      "bytes": 51661,
+      "sha256": "5847fa28be9aa16e0a4fe7a5250d60e74bb5cb3e0074b5b240b470eaf8d536ca",
+      "sha512": "6a09693230524055e7a5e1c8db3d39cad59a4bfbf67175632f470d636e5091d8c0769fd28893b4f4e3c64409203e5f1acd5d1c5694ba36e4d3098f0dcb012fbf"
+    },
+    "prototypes/standalone-shake256-binius/binius64/crates/frontend/src/builder/mod.rs": {
+      "bytes": 58865,
+      "sha256": "8170a7cdeabd42dc123e6507939cdd06dc8928382a49a7ce98b4592454499dff",
+      "sha512": "92c1c3255c13cd599b58e49dd40d577460f50a6d8e822da999d57afcf0aa537dd1e10fa45c52d59557d8de3b248d1f3590ecdbe3fe3e2933a1fcd6f859339b62"
+    },
+    "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/Cargo.toml": {
+      "bytes": 2110,
+      "sha256": "6cf6df39fabe088eeec5e377346b2969a97eda75f8d908aaab1f609176015cff",
+      "sha512": "ed97f160573e6b65fd2140dd315c8fa21f4f6cae1de6b4f672e8ed853bfe5385d48fa69b8567de4f6043383b649fb1d8296d6d270f2ac13e9da0c7c94ad970ca"
+    },
+    "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/EXECPLAN.md": {
+      "bytes": 6664,
+      "sha256": "34a28a650c2a359e730571ccc5f37cfbe4e414ef62fec76345908e666803fd14",
+      "sha512": "d253c53a4d2d412f9e288070fa75f1109859dca5a003e30721c99a8faaa2c609427fc6e69bb9020f560aec0b36f8c177e53348a29c3b3419162c1dbf75f35d13"
+    },
+    "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/README.md": {
+      "bytes": 9382,
+      "sha256": "e4d2f2febf7a9a0877b70b03bc834c76efc864d1e442e3291b7be7f483d0ba2a",
+      "sha512": "2a5236db015b120887ba4d1e326ddfee151082438bacbdd5d54b044fb6e9534c5714c443946f343dcdbac4fe213b5da269b6d675f50d1251a075cfd817530edb"
+    },
+    "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/check_source.py": {
+      "bytes": 15439,
+      "sha256": "5150d858b325da18ad07286aeb74b16ef76fc09e3468b268be9a22ca4f5abed6",
+      "sha512": "29aa5e390f86a3f2d8c31d7d393d24acd4b9115dcd5d324911a4f761d11a5042636c5f96f8d8fc893db4bb56885ab2385bfa864b33669f32790509c7b2fe3ce3"
+    },
+    "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/lib.rs": {
+      "bytes": 99613,
+      "sha256": "1853e7243dcaa0a8670663f21b0e028aabe6053cccf9f43ee5b1258ca30dba4a",
+      "sha512": "05ff6dc75e382f12e4e1893546e4ee018a5696d0ea3081981fc9e11fe59a62d1a0aeb58381b049747573b0cc756790827e0384bf8e39c031bc5a7b49fd00c9a1"
+    },
+    "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/main.rs": {
+      "bytes": 3475,
+      "sha256": "3a32ee73f08d212ea34cd36a4c2dcdf2f9198e6d8da7a28eb577d4e61427a9a0",
+      "sha512": "f0d890bf52064c5b8f3647f8bb52ce4f4ba29a6ecb9a56b14e3ac9ba2a24cb69a34454307b04e854973f605a36d12506cc86c5db6b2b293410faab459a0b594d"
+    },
+    "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs": {
+      "bytes": 180101,
+      "sha256": "cf7face1fd6fba31617544b270e9adb46ab572622af093151c68210d67643a13",
+      "sha512": "1cf8ca5c3b5202cadc8bfe2b075a0a844f31f69ba4ebc646dde672cca94dc72c50c22c856ce3763939d0005f7c90968b5ac56385174d36cfeb99d46ad6495a14"
+    },
+    "prototypes/standalone-shake256-binius/strict-mixed-field/Cargo.toml": {
+      "bytes": 476,
+      "sha256": "1b86369326d45e719442a94945b5c41d0a99316340a79367c46d176a37e03b4f",
+      "sha512": "ae61ac4a15ca8f267120fcaceff20ee6a8a01af8b771984198f16854a46567d9f4f458716e40ccf32ab7ae19670d891382ab458f8f1fa3966259c37a54f3a9c2"
+    },
+    "prototypes/standalone-shake256-binius/strict-mixed-field/src/lib.rs": {
+      "bytes": 75639,
+      "sha256": "2d6155efdd034cfd6f4d0512a04af2801a15673dac828bf00045c7cc40665cd9",
+      "sha512": "6ba4d382f8c66f441dd1d9d9b5f90cf461139b5ede56f682f0307a46f509b9c85023e0613a809ec68d82b627725360973538260094103125012327eba074bc49"
+    }
+  },
+  "source_manifest": {
+    "domain": "hegemon.hx448c02.scalar-m4-parity.sources.v1",
+    "framed_sha512": "49b8e6ccb5bc99d910c9d9a82737a16ac2cce29130051fd636e5601612d7fd9977a76a25c45979acf7b5d733e6704f020363a594b22437cf82f770e9f31a3c4c",
+    "files": 27,
+    "scope": "selected scalar, M4, native-admission, codec, primitive, manifest, and source-checker bytes",
+    "compiled_build_closure_complete": false
+  },
+  "binius_dependency": {
+    "revision": "3f96163049f680b2909f6545690bd929f1b48c44",
+    "files": 688,
+    "tree_sha512": "1aead2b02df1b30bc217ae4d0337ccf9ab7fa1e42dabcc8f0c0a91aef6059eb7fe55fef123583a9af2e2d769566618f2c5e734b2afce0b0d006c695de8cab052",
+    "logical_root_kind": "symlink",
+    "retained_self_contained": false
+  },
+  "source_anchors": {
+    "circuits/transaction/src/full_blake2b448_relation.rs": [
+      "pub const CANDIDATE_STATEMENT_BYTES: usize = 869;",
+      "pub const CANDIDATE_STATEMENT_MAGIC: [u8; 8] = *b\"HX448C02\";",
+      "pub const RETIRED_DIAGNOSTIC_STATEMENT_MAGIC: [u8; 8] = *b\"HX448C01\";",
+      "pub const LIVE_STABLECOIN_BINDING_BYTES: usize = 48;",
+      "pub struct StablecoinProtocolManifestView",
+      "for entry in &view.manifest.stablecoin_policies",
+      "pub const PHYSICAL_HASH_CALLS: usize = 83;",
+      "pub const POLICY_CALL: usize = 74;",
+      "pub const FULL_BLAKE2B448_STRICT_STABLECOIN_PQ_MARGIN: bool = false;"
+    ],
+    "node/src/native/admission.rs": [
+      "pub(crate) fn native_stablecoin_policy_binding_authorized_by_entries(",
+      "let plausible_candidate = u64::from(entry.asset_id) == binding.asset_id",
+      "pub(crate) fn native_stablecoin_policy_binding_authorized_by_protocol_manifest("
+    ],
+    "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs": [
+      "pub const LIVE_STABLECOIN_BINDING_WORDS: usize =",
+      "pub const WINNER: Option<SecretHashProfile> = None;",
+      "pub const PRODUCTION_AUTHORIZED: bool = false;",
+      "pub const ACTIVE_STABLECOIN_LIFECYCLE_CONSTRAINTS_COMPILED: bool = false;",
+      "pub const STRICT_STABLECOIN_PQ_MARGIN: bool = false;",
+      "fn constrain_candidate_stablecoin(builder: &CircuitBuilder, statement: &DecodedPublic)",
+      "fn constrain_candidate_hashes(",
+      "scalar_vs_m4_all_83_calls_all_modes_all_masks_and_mutations",
+      "scalar_and_m4_reject_all_47_invalid_mask_mode_pairs_per_profile"
+    ],
+    "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/check_source.py": [
+      "canonical_binius_tree_digest",
+      "CANDIDATE_STATEMENT_BYTES: usize = 869",
+      "live stablecoin KAT drift"
+    ]
+  },
+  "forbidden_source_anchors": [
+    {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "fragment": "M4MXST00"},
+    {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "fragment": "M4MIXC00"},
+    {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "fragment": "pub const STRICT_STABLECOIN_PQ_MARGIN: bool = true;"},
+    {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "fragment": "pub const CANDIDATE_STATEMENT_BYTES: usize = 893;"},
+    {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "fragment": "pub const FULL_BLAKE2B448_PRODUCTION_AUTHORIZED: bool = true;"}
+  ],
+  "codec": {
+    "magic_ascii": "HX448C02",
+    "retired_magic_ascii": "HX448C01",
+    "grammar": 2,
+    "bytes": 869,
+    "fields": [
+      {"name": "magic", "offset": 0, "bytes": 8, "class": "diagnostic-identity"},
+      {"name": "grammar", "offset": 8, "bytes": 2, "class": "u16be"},
+      {"name": "input_flags", "offset": 10, "bytes": 2, "class": "booleans"},
+      {"name": "output_flags", "offset": 12, "bytes": 2, "class": "booleans"},
+      {"name": "anchor", "offset": 14, "bytes": 56, "class": "pq-digest-448"},
+      {"name": "nullifiers", "offset": 70, "bytes": 112, "class": "pq-digest-448"},
+      {"name": "commitments", "offset": 182, "bytes": 112, "class": "pq-digest-448"},
+      {"name": "ciphertext_hashes", "offset": 294, "bytes": 112, "class": "pq-digest-448"},
+      {"name": "ciphertext_sizes", "offset": 406, "bytes": 8, "class": "two-u32be"},
+      {"name": "balance_asset_ids", "offset": 414, "bytes": 32, "class": "four-u64be"},
+      {"name": "fee", "offset": 446, "bytes": 8, "class": "u64be"},
+      {"name": "value_balance_sign", "offset": 454, "bytes": 1, "class": "boolean"},
+      {"name": "value_balance_magnitude", "offset": 455, "bytes": 8, "class": "u64be"},
+      {"name": "stable_enabled", "offset": 463, "bytes": 1, "class": "boolean"},
+      {"name": "stable_asset", "offset": 464, "bytes": 8, "class": "u64be"},
+      {"name": "stable_version", "offset": 472, "bytes": 4, "class": "u32be"},
+      {"name": "stable_issuance_sign", "offset": 476, "bytes": 1, "class": "boolean"},
+      {"name": "stable_issuance_magnitude", "offset": 477, "bytes": 8, "class": "u64be"},
+      {"name": "stable_policy_hash", "offset": 485, "bytes": 48, "class": "live-authority-384"},
+      {"name": "stable_oracle_commitment", "offset": 533, "bytes": 48, "class": "live-authority-384"},
+      {"name": "stable_attestation_commitment", "offset": 581, "bytes": 48, "class": "live-authority-384"},
+      {"name": "balance_tag", "offset": 629, "bytes": 56, "class": "pq-digest-448"},
+      {"name": "activation_circuit_version", "offset": 685, "bytes": 2, "class": "u16be"},
+      {"name": "activation_crypto_suite", "offset": 687, "bytes": 2, "class": "u16be"},
+      {"name": "activation_family_id", "offset": 689, "bytes": 2, "class": "u16be"},
+      {"name": "activation_action_id", "offset": 691, "bytes": 2, "class": "u16be"},
+      {"name": "activation_network_id", "offset": 693, "bytes": 4, "class": "u32be"},
+      {"name": "activation_backend_id", "offset": 697, "bytes": 1, "class": "u8"},
+      {"name": "activation_proof_profile", "offset": 698, "bytes": 1, "class": "u8"},
+      {"name": "activation_domain_set", "offset": 699, "bytes": 2, "class": "u16be"},
+      {"name": "activation_chain_id", "offset": 701, "bytes": 56, "class": "pq-digest-448"},
+      {"name": "activation_genesis_id", "offset": 757, "bytes": 56, "class": "pq-digest-448"},
+      {"name": "activation_rules_hash", "offset": 813, "bytes": 56, "class": "pq-digest-448"}
+    ],
+    "scalar_projection": {"limb_bytes": 7, "limbs": 125, "final_payload_bytes": 1, "final_zero_high_bytes": 7},
+    "m4_projection": {"word_bytes": 8, "words": 109, "final_payload_bytes": 5, "final_zero_high_bytes": 3, "final_zero_mask_hex": "0xffffff0000000000"},
+    "stablecoin_words_per_digest": 6,
+    "stablecoin_total_words": 18,
+    "intent_projection": {"statement_slices": [[0, 14], [182, 869]], "payload_bytes": 701, "frame_bytes": 720}
+  },
+  "private_transport": {
+    "base_words": 671,
+    "base_bytes": 5368,
+    "ciphertext_semantic_bytes_per_output": 2147,
+    "ciphertext_words_per_output": 269,
+    "ciphertext_padding_zero_bytes_per_output": 5,
+    "total_words": 1209,
+    "total_bytes": 9672
+  },
+  "profiles": [
+    {
+      "name": "blake2b448-mixed",
+      "profile_id": 1,
+      "secret_algorithm_id": 0,
+      "secret_calls": 15,
+      "collision_calls": 68,
+      "total_cores": 133,
+      "raw_and_constraints": 79128,
+      "source_static_linear_constraints": 265963,
+      "source_static_bmul_constraints": 452,
+      "program_sha512": "1c06088ac039f7cb4cf5e42285bd092ceda8e51cdbb879a2e9d9bdba920c9f2f8b55d8c6f16a3fba9bbb63b309dfcbfa002a400c64bd55909a0ae10104a67b42"
+    },
+    {
+      "name": "sha3-512-split-control",
+      "profile_id": 2,
+      "secret_algorithm_id": 1,
+      "secret_calls": 15,
+      "collision_calls": 68,
+      "total_cores": 151,
+      "raw_and_constraints": 90600,
+      "source_static_linear_constraints": 327437,
+      "source_static_bmul_constraints": 444,
+      "program_sha512": "cb4b55418696ec8f90fed166aaa8d7902f6a5aabe1e091a263558d82a6c44cc0dcdb51f456c7a13c6c231850d357819b867f7d95e55d78ef4a4aa59a7b2a6339"
+    }
+  ],
+  "role_registry": [
+    {"role": "nt.b4481", "algorithm_class": "secret", "purpose_id": 0, "calls": 4, "maximum_frame_bytes": 232, "cores": {"blake2b448-mixed": 2, "sha3-512-split-control": 4}},
+    {"role": "nf.b4481", "algorithm_class": "secret", "purpose_id": 1, "calls": 2, "maximum_frame_bytes": 135, "cores": {"blake2b448-mixed": 2, "sha3-512-split-control": 2}},
+    {"role": "mk.s4481", "algorithm_class": "collision", "purpose_id": 2, "calls": 64, "maximum_frame_bytes": 133, "cores": {"fixed": 1}},
+    {"role": "sk.b44a1", "algorithm_class": "secret", "purpose_id": 1, "calls": 2, "maximum_frame_bytes": 77, "cores": {"blake2b448-mixed": 1, "sha3-512-split-control": 2}},
+    {"role": "sk.b44b1", "algorithm_class": "secret", "purpose_id": 1, "calls": 2, "maximum_frame_bytes": 77, "cores": {"blake2b448-mixed": 1, "sha3-512-split-control": 2}},
+    {"role": "pl.b4481", "algorithm_class": "secret", "purpose_id": 0, "calls": 1, "maximum_frame_bytes": 385, "cores": {"blake2b448-mixed": 4, "sha3-512-split-control": 6}},
+    {"role": "au.b44a1", "algorithm_class": "secret", "purpose_id": 1, "calls": 2, "maximum_frame_bytes": 181, "cores": {"blake2b448-mixed": 2, "sha3-512-split-control": 3}},
+    {"role": "au.b44b1", "algorithm_class": "secret", "purpose_id": 1, "calls": 2, "maximum_frame_bytes": 181, "cores": {"blake2b448-mixed": 2, "sha3-512-split-control": 3}},
+    {"role": "in.s4481", "algorithm_class": "collision", "purpose_id": 2, "calls": 1, "maximum_frame_bytes": 720, "cores": {"fixed": 6}},
+    {"role": "bl.s4481", "algorithm_class": "collision", "purpose_id": 2, "calls": 1, "maximum_frame_bytes": 100, "cores": {"fixed": 1}},
+    {"role": "ct.s4481", "algorithm_class": "collision", "purpose_id": 2, "calls": 2, "maximum_frame_bytes": 2182, "cores": {"fixed": 17}}
+  ],
+  "call_families": [
+    {"id": "note_inputs", "start": 0, "count": 2, "kind_tag": 0, "coordinate_rule": "relative", "role": "nt.b4481", "algorithm_class": "secret", "purpose_id": 0, "frame": {"type": "exact", "bytes": 232}, "maximum_frame_bytes": 232, "cores": {"blake2b448-mixed": 2, "sha3-512-split-control": 4}, "binding": {"tag": 0}},
+    {"id": "note_outputs", "start": 2, "count": 2, "kind_tag": 1, "coordinate_rule": "relative", "role": "nt.b4481", "algorithm_class": "secret", "purpose_id": 0, "frame": {"type": "exact", "bytes": 232}, "maximum_frame_bytes": 232, "cores": {"blake2b448-mixed": 2, "sha3-512-split-control": 4}, "binding": {"tag": 2, "index_rule": "relative"}},
+    {"id": "nullifier", "start": 4, "count": 2, "kind_tag": 2, "coordinate_rule": "relative", "role": "nf.b4481", "algorithm_class": "secret", "purpose_id": 1, "frame": {"type": "exact", "bytes": 135}, "maximum_frame_bytes": 135, "cores": {"blake2b448-mixed": 2, "sha3-512-split-control": 2}, "binding": {"tag": 1, "index_rule": "relative"}},
+    {"id": "merkle", "start": 6, "count": 64, "kind_tag": 3, "coordinate_rule": "merkle", "role": "mk.s4481", "algorithm_class": "collision", "purpose_id": 2, "frame": {"type": "exact", "bytes": 133}, "maximum_frame_bytes": 133, "cores": {"fixed": 1}, "binding": {"tag": 0}},
+    {"id": "spend_a", "start": 70, "count": 2, "kind_tag": 4, "coordinate_rule": "spend_a", "role": "sk.b44a1", "algorithm_class": "secret", "purpose_id": 1, "frame": {"type": "exact", "bytes": 77}, "maximum_frame_bytes": 77, "cores": {"blake2b448-mixed": 1, "sha3-512-split-control": 2}, "binding": {"tag": 0}},
+    {"id": "spend_b", "start": 72, "count": 2, "kind_tag": 4, "coordinate_rule": "spend_b", "role": "sk.b44b1", "algorithm_class": "secret", "purpose_id": 1, "frame": {"type": "exact", "bytes": 77}, "maximum_frame_bytes": 77, "cores": {"blake2b448-mixed": 1, "sha3-512-split-control": 2}, "binding": {"tag": 0}},
+    {"id": "private_auth_policy", "start": 74, "count": 1, "kind_tag": 5, "coordinate_rule": "none", "role": "pl.b4481", "algorithm_class": "secret", "purpose_id": 0, "frame": {"type": "exact", "bytes": 385}, "maximum_frame_bytes": 385, "cores": {"blake2b448-mixed": 4, "sha3-512-split-control": 6}, "binding": {"tag": 0}},
+    {"id": "authorization_a_slot0", "start": 75, "count": 1, "kind_tag": 6, "coordinate_rule": "explicit", "coordinates": [0, 0], "role": "au.b44a1", "algorithm_class": "secret", "purpose_id": 1, "frame": {"type": "authorization-mux", "arm_bytes": [136, 181, 181, 143, 181]}, "maximum_frame_bytes": 181, "cores": {"blake2b448-mixed": 2, "sha3-512-split-control": 3}, "binding": {"tag": 0}},
+    {"id": "authorization_a_slot1", "start": 76, "count": 1, "kind_tag": 6, "coordinate_rule": "explicit", "coordinates": [1, 0], "role": "au.b44a1", "algorithm_class": "secret", "purpose_id": 1, "frame": {"type": "authorization-mux", "arm_bytes": [136, 136, 181, 136, 143]}, "maximum_frame_bytes": 181, "cores": {"blake2b448-mixed": 2, "sha3-512-split-control": 3}, "binding": {"tag": 0}},
+    {"id": "authorization_b_slot0", "start": 77, "count": 1, "kind_tag": 6, "coordinate_rule": "explicit", "coordinates": [0, 1], "role": "au.b44b1", "algorithm_class": "secret", "purpose_id": 1, "frame": {"type": "authorization-mux", "arm_bytes": [136, 181, 181, 143, 181]}, "maximum_frame_bytes": 181, "cores": {"blake2b448-mixed": 2, "sha3-512-split-control": 3}, "binding": {"tag": 0}},
+    {"id": "authorization_b_slot1", "start": 78, "count": 1, "kind_tag": 6, "coordinate_rule": "explicit", "coordinates": [1, 1], "role": "au.b44b1", "algorithm_class": "secret", "purpose_id": 1, "frame": {"type": "authorization-mux", "arm_bytes": [136, 136, 181, 136, 143]}, "maximum_frame_bytes": 181, "cores": {"blake2b448-mixed": 2, "sha3-512-split-control": 3}, "binding": {"tag": 0}},
+    {"id": "intent", "start": 79, "count": 1, "kind_tag": 7, "coordinate_rule": "none", "role": "in.s4481", "algorithm_class": "collision", "purpose_id": 2, "frame": {"type": "exact", "bytes": 720}, "maximum_frame_bytes": 720, "cores": {"fixed": 6}, "binding": {"tag": 0}},
+    {"id": "balance", "start": 80, "count": 1, "kind_tag": 8, "coordinate_rule": "none", "role": "bl.s4481", "algorithm_class": "collision", "purpose_id": 2, "frame": {"type": "exact", "bytes": 100}, "maximum_frame_bytes": 100, "cores": {"fixed": 1}, "binding": {"tag": 3}},
+    {"id": "ciphertext", "start": 81, "count": 2, "kind_tag": 9, "coordinate_rule": "relative", "role": "ct.s4481", "algorithm_class": "collision", "purpose_id": 2, "frame": {"type": "exact", "bytes": 2182}, "maximum_frame_bytes": 2182, "cores": {"fixed": 17}, "binding": {"tag": 2, "index_rule": "relative"}}
+  ],
+  "frame_layouts": {
+    "common_prefix": {
+      "candidate_profile_tag_bytes": 8,
+      "role_tag_bytes": 8,
+      "field_count_bytes": 1,
+      "field_length_bytes_per_field": 2,
+      "field_lengths_endianness": "big"
+    },
+    "layouts": [
+      {"id": "note", "frame_bytes": 232, "fields": [
+        {"name": "kind", "bytes": 1, "accounting_class": "private"},
+        {"name": "value_u64be", "bytes": 8, "accounting_class": "private"},
+        {"name": "asset_u64be", "bytes": 8, "accounting_class": "private"},
+        {"name": "pk_recipient", "bytes": 32, "accounting_class": "private"},
+        {"name": "rho", "bytes": 48, "accounting_class": "private"},
+        {"name": "randomness", "bytes": 48, "accounting_class": "private"},
+        {"name": "pk_auth", "bytes": 56, "accounting_class": "private"}
+      ]},
+      {"id": "nullifier", "frame_bytes": 135, "fields": [
+        {"name": "resolved_nullifier_key", "bytes": 56, "accounting_class": "internal_digest"},
+        {"name": "position_u64be", "bytes": 8, "accounting_class": "private"},
+        {"name": "rho", "bytes": 48, "accounting_class": "private"}
+      ]},
+      {"id": "merkle", "frame_bytes": 133, "fields": [
+        {"name": "left", "bytes": 56, "accounting_class": "directional-current-or-sibling", "ordering": "current-when-position-bit-zero-otherwise-sibling"},
+        {"name": "right", "bytes": 56, "accounting_class": "directional-current-or-sibling", "ordering": "sibling-when-position-bit-zero-otherwise-current"}
+      ], "accounting_payload_totals": {"private": 56, "internal_digest": 56}},
+      {"id": "spend", "frame_bytes": 77, "fields": [
+        {"name": "lane_tag", "bytes": 8, "accounting_class": "constant"},
+        {"name": "spend_key", "bytes": 48, "accounting_class": "private"}
+      ]},
+      {"id": "private-auth-policy", "frame_bytes": 385, "fields": [
+        {"name": "threshold_u64be", "bytes": 8, "accounting_class": "private"},
+        {"name": "signer_count_u64be", "bytes": 8, "accounting_class": "private"},
+        {"name": "signer_tag_0", "bytes": 56, "accounting_class": "private"},
+        {"name": "signer_tag_1", "bytes": 56, "accounting_class": "private"},
+        {"name": "signer_tag_2", "bytes": 56, "accounting_class": "private"},
+        {"name": "signer_tag_3", "bytes": 56, "accounting_class": "private"},
+        {"name": "signer_tag_4", "bytes": 56, "accounting_class": "private"},
+        {"name": "signer_tag_5", "bytes": 56, "accounting_class": "private"}
+      ]},
+      {"id": "intent", "frame_bytes": 720, "fields": [
+        {"name": "statement_intent_projection", "bytes": 701, "accounting_class": "statement", "source_ranges": [[0, 14], [182, 869]]}
+      ]},
+      {"id": "balance", "frame_bytes": 100, "fields": [
+        {"name": "fee", "bytes": 8, "accounting_class": "statement", "source_ranges": [[446, 454]]},
+        {"name": "value_balance_sign", "bytes": 1, "accounting_class": "statement", "source_ranges": [[454, 455]]},
+        {"name": "value_balance_magnitude", "bytes": 8, "accounting_class": "statement", "source_ranges": [[455, 463]]},
+        {"name": "balance_assets", "bytes": 32, "accounting_class": "statement", "source_ranges": [[414, 446]]},
+        {"name": "stable_enabled", "bytes": 1, "accounting_class": "statement", "source_ranges": [[463, 464]]},
+        {"name": "stable_asset", "bytes": 8, "accounting_class": "statement", "source_ranges": [[464, 472]]},
+        {"name": "stable_issuance_sign", "bytes": 1, "accounting_class": "statement", "source_ranges": [[476, 477]]},
+        {"name": "stable_issuance_magnitude", "bytes": 8, "accounting_class": "statement", "source_ranges": [[477, 485]]}
+      ]},
+      {"id": "ciphertext", "frame_bytes": 2182, "fields": [
+        {"name": "proof_profile", "bytes": 1, "accounting_class": "constant", "scalar_source": "typed activation constant", "m4_source": "statement[698..699] constrained equal to activation"},
+        {"name": "domain_set_u16be", "bytes": 2, "accounting_class": "constant", "scalar_source": "typed activation constant", "m4_source": "statement[699..701] constrained equal to activation"},
+        {"name": "output_slot", "bytes": 1, "accounting_class": "constant"},
+        {"name": "fixed_length_u32be", "bytes": 4, "accounting_class": "constant"},
+        {"name": "canonical_ciphertext", "bytes": 2147, "accounting_class": "private"}
+      ]},
+      {"id": "authorization-dummy-arm", "frame_bytes": 136, "fields": [
+        {"name": "slot-lane-zero-padded-dummy", "bytes": 117, "accounting_class": "constant"}
+      ]},
+      {"id": "authorization-accumulator-arm", "frame_bytes": 181, "fields": [
+        {"name": "lane_tag", "bytes": 8, "accounting_class": "constant"},
+        {"name": "policy_root", "bytes": 56, "accounting_class": "private"},
+        {"name": "intent_digest", "bytes": 56, "accounting_class": "private"},
+        {"name": "threshold_u64be", "bytes": 8, "accounting_class": "private"},
+        {"name": "signer_count_u64be", "bytes": 8, "accounting_class": "private"},
+        {"name": "approval_count_u64be", "bytes": 8, "accounting_class": "private"},
+        {"name": "approved_slots", "bytes": 6, "accounting_class": "private"}
+      ]},
+      {"id": "authorization-value-lock-arm", "frame_bytes": 143, "fields": [
+        {"name": "lane_tag", "bytes": 8, "accounting_class": "constant"},
+        {"name": "policy_root", "bytes": 56, "accounting_class": "private"},
+        {"name": "intent_digest", "bytes": 56, "accounting_class": "private"}
+      ]}
+    ]
+  },
+  "frames": [
+    {"id": "note", "bytes": 232, "static_nodes": 4, "constant": 31, "statement": 0, "private": 201, "internal_digest": 0},
+    {"id": "nullifier", "bytes": 135, "static_nodes": 2, "constant": 23, "statement": 0, "private": 56, "internal_digest": 56},
+    {"id": "merkle", "bytes": 133, "static_nodes": 64, "constant": 21, "statement": 0, "private": 56, "internal_digest": 56},
+    {"id": "spend", "bytes": 77, "static_nodes": 4, "constant": 29, "statement": 0, "private": 48, "internal_digest": 0},
+    {"id": "private-auth-policy", "bytes": 385, "static_nodes": 1, "constant": 33, "statement": 0, "private": 352, "internal_digest": 0},
+    {"id": "intent", "bytes": 720, "static_nodes": 1, "constant": 19, "statement": 701, "private": 0, "internal_digest": 0},
+    {"id": "balance", "bytes": 100, "static_nodes": 1, "constant": 33, "statement": 67, "private": 0, "internal_digest": 0},
+    {"id": "ciphertext", "bytes": 2182, "static_nodes": 2, "constant": 35, "statement": 0, "private": 2147, "internal_digest": 0},
+    {"id": "authorization-dummy-arm", "bytes": 136, "static_nodes": 8, "constant": 136, "statement": 0, "private": 0, "internal_digest": 0},
+    {"id": "authorization-accumulator-arm", "bytes": 181, "static_nodes": 8, "constant": 39, "statement": 0, "private": 142, "internal_digest": 0},
+    {"id": "authorization-value-lock-arm", "bytes": 143, "static_nodes": 4, "constant": 31, "statement": 0, "private": 112, "internal_digest": 0}
+  ],
+  "frame_graph_totals": {
+    "ordinary_frame_nodes": 79,
+    "authorization_arm_frame_nodes": 20,
+    "static_frame_nodes": 99,
+    "constant_bytes": 3309,
+    "statement_bytes": 768,
+    "private_bytes": 10922,
+    "internal_digest_bytes": 3696,
+    "static_frame_bytes": 18695,
+    "static_frame_bits": 149560
+  },
+  "hash_graph": {
+    "physical_calls": 83,
+    "output_bytes": 4648,
+    "output_bits": 37184,
+    "merkle_hash_to_hash_edges": 64,
+    "terminal_merkle_to_anchor_edges": 2,
+    "public_digest_edges": 7,
+    "public_digest_breakdown": {"nullifiers": 2, "commitments": 2, "balance_tag": 1, "ciphertext_hashes": 2}
+  },
+  "stablecoin_boundary": {
+    "statement_authority_bytes": 48,
+    "m4_words_per_authority": 6,
+    "policy_tuple_scale_bytes": 61,
+    "policy_tuple_component_bytes": [4, 4, 8, 16, 16, 8, 4, 1],
+    "domain": "hegemon.kernel.stablecoin-policy.v2",
+    "no_padding_or_truncation": true,
+    "diagnostic_compatibility_evidence": true,
+    "manifest_view": "whole ProtocolManifest snapshot",
+    "candidate_selection": "existential over entries plausible by asset_id OR kernel policy_hash",
+    "current_height_external": true,
+    "manifest_view_consensus_authenticated": false,
+    "lifecycle_constraints_compiled": false,
+    "strict_stablecoin_pq_margin": false,
+    "production_authorized": false,
+    "generic_quantum_collision_bits": 128,
+    "required_production_migration": "fresh wider bindings rederived from authoritative policy/oracle/attestation preimages",
+    "kat": {
+      "tuple_hex": "e903000001000000010000000000000060e3160000000000000000000000000000ca9a3b000000000000000000000000ffffffffffffffff0100000000",
+      "framed_preimage_bytes": 140,
+      "policy_hash_hex": "4e36d2e5728b9b3a1eb473aac318800434bf3947817410a281d04e8ea6b68ed133bc48c3570db5c3935126aa76be2100"
+    }
+  },
+  "semantic_mappings": [
+    {
+      "id": "codec-byte-authority",
+      "edges": [
+        "fresh-magic-is-HX448C02",
+        "grammar-is-u16be-two",
+        "field-layout-contiguously-covers-869-bytes",
+        "scalar-packs-consecutive-seven-byte-little-endian-limbs",
+        "scalar-final-limb-high-seven-bytes-zero",
+        "m4-packs-consecutive-eight-byte-little-endian-words",
+        "m4-final-word-high-24-bits-zero",
+        "activation-bytes-equal-expected-binding",
+        "activity-and-stable-enable-bytes-are-boolean",
+        "signed-magnitude-sign-bytes-are-boolean"
+      ],
+      "edge_count": 10,
+      "enforcement": "source-projection",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["pub fn candidate_statement_bytes(", "pub fn candidate_statement_limbs(", "pub fn decode_candidate_statement_bytes("]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "anchors": ["fn decode_candidate_public(", "fn constrain_candidate_transport(", "statement.trailing_word_padding"]},
+      "executed": false
+    },
+    {
+      "id": "stablecoin-direct-48-byte-fields",
+      "edges": [
+        "policy-hash-is-exact-48-byte-statement-slice-and-six-m4-words",
+        "oracle-commitment-is-exact-48-byte-statement-slice-and-six-m4-words",
+        "attestation-commitment-is-exact-48-byte-statement-slice-and-six-m4-words",
+        "disabled-policy-hash-is-zero",
+        "disabled-oracle-commitment-is-zero",
+        "disabled-attestation-commitment-is-zero",
+        "no-48-to-56-padding-or-56-to-48-truncation"
+      ],
+      "edge_count": 7,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["pub struct StablecoinStatementBinding384", "pub const LIVE_STABLECOIN_BINDING_BYTES: usize = 48;", "disabled binding must be uniquely zero"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "anchors": ["candidate_public_words_at::<LIVE_STABLECOIN_BINDING_WORDS>", "stable.disabled.{name}", "ACTIVE_STABLECOIN_MANIFEST_ADAPTER_INTEGRATED: bool = true"]},
+      "executed": false
+    },
+    {
+      "id": "stablecoin-live-manifest-external-admission",
+      "edges": [
+        "whole-protocol-manifest-snapshot-retained",
+        "current-height-retained",
+        "disabled-authority-accepts-without-view",
+        "enabled-authority-requires-view",
+        "candidate-plausible-by-asset-id",
+        "candidate-plausible-by-kernel-policy-hash",
+        "authorization-is-existential-over-all-plausible-candidates",
+        "no-plausible-candidate-is-policy-missing",
+        "policy-identity-recomputed-from-exact-61-byte-scale-tuple",
+        "independent-policy-hash-equals-kernel-policy-hash",
+        "entry-is-active",
+        "current-height-at-or-after-enabled-height",
+        "retirement-height-is-exclusive",
+        "entry-asset-equals-binding-asset",
+        "entry-policy-hash-equals-binding-policy-hash",
+        "entry-version-equals-binding-version",
+        "entry-oracle-equals-binding-oracle",
+        "entry-attestation-equals-binding-attestation",
+        "attestation-is-not-disputed",
+        "oracle-submission-is-not-in-future",
+        "oracle-age-is-within-max-age",
+        "issuance-is-nonzero",
+        "issuance-absolute-value-is-within-entry-limit-and-u64",
+        "external-manifest-and-height-lack-consensus-state-authentication-edge"
+      ],
+      "edge_count": 24,
+      "enforcement": "external-admission",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["pub struct StablecoinProtocolManifestView", "pub fn live_stablecoin_policy_tuple_scale_bytes(", "pub fn validate_stablecoin_protocol_manifest_view(", "for entry in &view.manifest.stablecoin_policies"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "anchors": ["ACTIVE_STABLECOIN_LIFECYCLE_CONSTRAINTS_COMPILED: bool = false", "STRICT_STABLECOIN_PQ_MARGIN: bool = false"]},
+      "native": {"path": "node/src/native/admission.rs", "anchors": ["pub(crate) fn native_stablecoin_policy_binding_authorized_by_entries(", "let plausible_candidate =", "native_stablecoin_policy_authorization_input_for_entry("]},
+      "executed": false
+    },
+    {
+      "id": "activity-and-nonempty-shape",
+      "edges": [
+        "input-witness-activity-equals-two-public-input-flags",
+        "output-witness-activity-equals-two-public-output-flags",
+        "at-least-one-input-or-output-is-active"
+      ],
+      "edge_count": 3,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["pub fn validate_full_blake2b448_pre_hash_semantics(", "activity flags", "all-empty activity mask"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "anchors": ["ActivityFlagsMismatch", "shape.action_nonempty"]},
+      "executed": false
+    },
+    {
+      "id": "inactive-input-zero-padding",
+      "edges": [
+        "inactive-input-private-transport-words-are-zero",
+        "inactive-input-public-nullifier-is-zero"
+      ],
+      "edge_count": 2,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["fn input_inactive_payload_is_zero(", "role: \"input\""]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "anchors": ["input[{index}].inactive", "nullifier[{index}].inactive"]},
+      "executed": false
+    },
+    {
+      "id": "inactive-output-and-ciphertext-zero-padding",
+      "edges": [
+        "inactive-output-note-and-selector-private-words-are-zero",
+        "inactive-output-public-commitment-is-zero",
+        "inactive-output-public-ciphertext-hash-is-zero"
+      ],
+      "edge_count": 3,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["fn output_inactive_payload_is_zero(", "role: \"output\""]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "anchors": ["output[{index}].inactive", "commitment[{index}].inactive", "ciphertext[{index}].inactive"]},
+      "executed": false
+    },
+    {
+      "id": "note-ranges-and-asset-selectors",
+      "edges": [
+        "active-note-value-is-at-most-61-bits",
+        "active-note-asset-is-canonical-goldilocks",
+        "each-balance-selector-is-boolean",
+        "active-note-has-exactly-one-selected-slot",
+        "selected-slot-asset-equals-note-asset",
+        "padding-slot-cannot-be-selected"
+      ],
+      "edge_count": 6,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["fn validate_note(", "fn selected_slot("]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/lib.rs", "anchors": ["fn constrain_note_and_selectors(", "{name}.selected_asset"]},
+      "executed": false
+    },
+    {
+      "id": "asset-slot-canonical-order",
+      "edges": [
+        "slot-zero-is-native-asset-zero",
+        "nonpadding-slots-are-canonical-goldilocks-elements",
+        "nonpadding-slots-are-nonzero",
+        "nonpadding-slots-are-strictly-increasing",
+        "padding-is-a-terminal-suffix",
+        "reserved-reduced-padding-alias-is-forbidden"
+      ],
+      "edge_count": 6,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["fn validate_slots(", "RESERVED_REDUCED_PADDING_ASSET_ID"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/lib.rs", "anchors": ["fn constrain_slots(", "assets[{slot}].padding_suffix"]},
+      "executed": false
+    },
+    {
+      "id": "nullifier-uniqueness-and-public-admission",
+      "edges": [
+        "two-active-public-nullifiers-are-distinct",
+        "active-public-nullifier-is-nonzero",
+        "active-public-output-commitment-is-nonzero",
+        "no-extra-nonzero-predicate-for-input-commitment-or-ciphertext-hash"
+      ],
+      "edge_count": 4,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["pub fn validate_composed_admission_preconditions(", "duplicate active nullifiers", "No analogous live predicate exists"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "anchors": ["nullifiers.distinct", "input[{index}].nullifier_nonzero", "output[{index}].commitment_nonzero"]},
+      "executed": false
+    },
+    {
+      "id": "authorization-shapes-and-five-mode-one-hot",
+      "edges": [
+        "private-mode-is-in-range-zero-through-four",
+        "five-mode-selectors-are-one-hot",
+        "single-mode-allows-every-nonempty-mask",
+        "init-and-lock-require-an-input-and-output-zero",
+        "approval-requires-both-inputs-and-output-zero",
+        "final-requires-both-inputs"
+      ],
+      "edge_count": 6,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["fn validate_authorization_activity_shape(", "PrivateAuthMode::ApprovalStep", "PrivateAuthMode::FinalThresholdSpend"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "anchors": ["auth.mode.range", "fn assert_one_hot_modes(", "auth.init_or_lock.input_nonempty"]},
+      "executed": false
+    },
+    {
+      "id": "accumulator-policy-structure",
+      "edges": [
+        "signer-count-is-one-through-six",
+        "threshold-is-one-through-signer-count",
+        "approval-count-does-not-exceed-signer-count",
+        "approved-slot-popcount-equals-approval-count",
+        "active-signer-tags-are-pairwise-distinct",
+        "inactive-signer-tags-are-zero",
+        "inactive-approved-slots-are-false",
+        "policy-root-equals-private-call-74-digest",
+        "final-current-intent-equals-call-79-digest"
+      ],
+      "edge_count": 9,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["fn validate_accumulator(", "opening.policy_root != expected_policy_root", "duplicate signer tag"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/lib.rs", "anchors": ["fn constrain_policy_structure(", "fn constrain_policy_approval_state(", "auth.final.intent"]},
+      "executed": false
+    },
+    {
+      "id": "single-key-transition",
+      "edges": [
+        "single-current-next-and-signer-auxiliary-state-zero",
+        "single-active-inputs-ordinary",
+        "single-active-outputs-ordinary",
+        "single-has-no-output-zero-authorization-key"
+      ],
+      "edge_count": 4,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["PrivateAuthMode::SingleKey =>", "single-key auxiliary witness must be zero", "single-key outputs must be ordinary"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/lib.rs", "anchors": ["auth.single.aux", "auth.single.input[{index}].ordinary", "auth.single.output[{index}].ordinary"]},
+      "executed": false
+    },
+    {
+      "id": "accumulator-init-transition",
+      "edges": [
+        "init-current-state-zero",
+        "init-active-inputs-ordinary",
+        "init-output-zero-is-accumulator",
+        "init-optional-output-one-is-ordinary",
+        "init-output-zero-is-zero-value-native-asset",
+        "init-next-accumulator-metadata-valid",
+        "init-next-approval-count-and-bits-zero"
+      ],
+      "edge_count": 7,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["PrivateAuthMode::AccumulatorInit =>", "init current state must be zero", "init approvals must be zero"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/lib.rs", "anchors": ["auth.init.current_zero", "auth.init.output0.accumulator", "auth.init.next.approval_count"]},
+      "executed": false
+    },
+    {
+      "id": "approval-transition",
+      "edges": [
+        "approval-input-zero-is-accumulator",
+        "approval-input-one-is-ordinary",
+        "approval-output-zero-is-accumulator",
+        "approval-optional-output-one-is-ordinary",
+        "approval-input-zero-is-zero-value-native-asset",
+        "approval-output-zero-is-zero-value-native-asset",
+        "approval-input-zero-spend-key-zero",
+        "approval-current-and-next-accumulators-valid",
+        "approval-current-next-policy-intent-threshold-signer-count-equal",
+        "approval-count-increments-by-one-without-overflow",
+        "approval-signer-matches-exactly-one-active-unapproved-tag",
+        "approval-bits-preserve-old-set-and-change-exactly-one-slot"
+      ],
+      "edge_count": 12,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["PrivateAuthMode::ApprovalStep =>", "approval transition metadata", "approval signer membership", "approval slot transition"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/lib.rs", "anchors": ["auth.approval.metadata", "auth.approval.increment", "auth.approval.exactly_one_changed_slot"]},
+      "executed": false
+    },
+    {
+      "id": "value-lock-transition",
+      "edges": [
+        "lock-next-state-zero",
+        "lock-active-inputs-ordinary",
+        "lock-output-zero-is-value-lock",
+        "lock-optional-output-one-is-ordinary",
+        "lock-current-accumulator-valid",
+        "lock-current-approval-count-and-bits-zero"
+      ],
+      "edge_count": 6,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["PrivateAuthMode::ValueLockCreation =>", "value-lock next state must be zero", "value-lock approvals must be zero"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/lib.rs", "anchors": ["auth.lock.output0.value_lock", "auth.lock.next_zero", "auth.lock.current.approval_count"]},
+      "executed": false
+    },
+    {
+      "id": "final-threshold-transition",
+      "edges": [
+        "final-next-state-zero",
+        "final-input-zero-is-value-lock",
+        "final-input-one-is-accumulator",
+        "final-active-outputs-ordinary",
+        "final-both-input-spend-keys-zero",
+        "final-input-one-is-zero-value-native-asset",
+        "final-current-accumulator-valid-and-intent-bound",
+        "final-approval-count-meets-threshold"
+      ],
+      "edge_count": 8,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["PrivateAuthMode::FinalThresholdSpend =>", "final spend keys must be zero", "threshold not reached"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/lib.rs", "anchors": ["auth.final.input0.value_lock", "auth.final.next_zero", "auth.final.threshold_reached"]},
+      "executed": false
+    },
+    {
+      "id": "authorization-digest-resolution",
+      "edges": [
+        "single-input0-auth-is-spend-a-call70",
+        "single-input0-nullifier-key-is-spend-b-call72",
+        "single-input1-auth-is-spend-a-call71",
+        "single-input1-nullifier-key-is-spend-b-call73",
+        "single-output0-auth-is-absent",
+        "init-inputs-resolve-to-spend-calls70-through73",
+        "init-output0-auth-is-call75",
+        "approval-input0-auth-is-call75",
+        "approval-input0-nullifier-key-is-call77",
+        "approval-input1-auth-is-call71",
+        "approval-input1-nullifier-key-is-call73",
+        "approval-output0-auth-is-call76",
+        "lock-inputs-resolve-to-spend-calls70-through73",
+        "lock-output0-auth-is-call75",
+        "final-input0-auth-is-call76",
+        "final-input0-nullifier-key-is-call78",
+        "final-input1-auth-is-call75",
+        "final-input1-nullifier-key-is-call77",
+        "final-output0-auth-is-absent",
+        "input0-note-auth-equals-resolved-auth-when-active",
+        "input1-note-auth-equals-resolved-auth-when-active",
+        "output0-note-auth-equals-resolved-auth-when-present",
+        "nullifier-call4-consumes-resolved-input0-nullifier-key",
+        "nullifier-call5-consumes-resolved-input1-nullifier-key",
+        "unselected-authorization-arms-cannot-affect-selected-prehash-frame"
+      ],
+      "edge_count": 25,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["fn resolve_authorization(", "input_auth_keys:", "input_nullifier_keys:", "output0_auth_key:"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "anchors": ["fn constrain_candidate_hashes(", "authorization_mux_hash(", "let mut resolved_auth = spend_auth;", "let mut resolved_nf = spend_nf;"]},
+      "executed": false
+    },
+    {
+      "id": "signed-magnitude-and-fee-ranges",
+      "edges": [
+        "fee-is-at-most-61-bits",
+        "value-balance-magnitude-is-at-most-61-bits",
+        "value-balance-forbids-negative-zero",
+        "stable-issuance-magnitude-is-at-most-61-bits",
+        "stable-issuance-forbids-negative-zero"
+      ],
+      "edge_count": 5,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["fn signed_i128(", "statement.fee > V6_MAX_NOTE_VALUE"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "anchors": ["value_balance.no_negative_zero", "stable.issuance.no_negative_zero", "assert_61_bit(builder, \"fee\""]},
+      "executed": false
+    },
+    {
+      "id": "native-and-multi-asset-balance",
+      "edges": [
+        "active-input-note-values-contribute-to-selected-slot",
+        "active-output-note-values-contribute-to-selected-slot",
+        "input-and-output-slot-sums-forbid-u64-overflow",
+        "native-output-plus-fee-forbids-overflow",
+        "native-nonnegative-value-balance-equation",
+        "native-negative-value-balance-equation",
+        "padding-slot-input-and-output-sums-zero",
+        "ordinary-nonnative-slot-inputs-equal-outputs"
+      ],
+      "edge_count": 8,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["fn validate_native_balance(", "FullBlake2b448RelationError::Balance"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "anchors": ["fn constrain_candidate_balance(", "balance.native.nonnegative_equation", "balance.native.negative_equation", "padding_inputs"]},
+      "executed": false
+    },
+    {
+      "id": "stablecoin-issuance-balance",
+      "edges": [
+        "enabled-stable-asset-identifies-exactly-its-slotted-balance-lane",
+        "negative-issuance-selects-mint-equation",
+        "nonnegative-issuance-selects-burn-equation",
+        "mint-addition-forbids-overflow",
+        "burn-addition-forbids-overflow",
+        "nonstable-lanes-remain-ordinary-conservation"
+      ],
+      "edge_count": 6,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["stablecoin_authority", "issuance_delta", "FullBlake2b448RelationError::Balance"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "anchors": ["balance[{slot}].mint_no_overflow", "balance[{slot}].burn_no_overflow", "balance[{slot}].ordinary"]},
+      "executed": false
+    },
+    {
+      "id": "ciphertext-size-and-padding",
+      "edges": [
+        "active-output-ciphertext-size-is-2147",
+        "inactive-output-ciphertext-size-is-zero",
+        "each-269th-ciphertext-word-high-40-bits-zero",
+        "inactive-output-all-269-ciphertext-words-zero"
+      ],
+      "edge_count": 4,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["V6_CANONICAL_CIPHERTEXT_BYTES", "fn output_inactive_payload_is_zero(", "ciphertext size"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "anchors": ["ciphertext.trailing_padding", "ciphertext_size.active", "inactive_ciphertext"]},
+      "executed": false
+    },
+    {
+      "id": "merkle-position-orientation-and-anchor",
+      "edges": [
+        "active-input-position-high-32-bits-zero",
+        "merkle-level-zero-current-is-input-note-digest",
+        "position-bit-selects-current-sibling-left-right-order",
+        "each-level-output-is-next-level-current-digest",
+        "level-31-output-equals-public-anchor-when-input-active"
+      ],
+      "edge_count": 5,
+      "enforcement": "aggregate-m4",
+      "scalar": {"path": "circuits/transaction/src/full_blake2b448_relation.rs", "anchors": ["fn merkle_frame(", "input.position >> MERKLE_DEPTH", "certificate.statement_bytes"]},
+      "m4": {"path": "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs", "anchors": ["position.high32", "HashInvocationKind::Merkle", "input[{index}].anchor"]},
+      "executed": false
+    }
+  ],
+  "semantic_mapping_totals": {
+    "mapping_groups": 22,
+    "source_edges": 170,
+    "aggregate-m4_edges": 136,
+    "external-admission_edges": 24,
+    "source-projection_edges": 10
+  },
+  "missing_executed_graph": {
+    "compiled_constraint_systems_required": 2,
+    "compiled_constraint_systems_executed": 0,
+    "accepted_shape_witnesses_required": 66,
+    "accepted_shape_witnesses_executed": 0,
+    "rejected_shape_witnesses_required": 94,
+    "rejected_shape_witnesses_executed": 0,
+    "per_call_frame_digest_comparisons_required": 5478,
+    "per_call_frame_digest_comparisons_executed": 0,
+    "authorization_arm_frame_comparisons_required": 1320,
+    "authorization_arm_frame_comparisons_executed": 0,
+    "unique_static_frame_comparisons_required": 6534,
+    "unique_static_frame_comparisons_executed": 0,
+    "static_frame_byte_mappings_required": 1233870,
+    "static_frame_byte_mappings_executed": 0,
+    "hash_output_byte_mappings_required": 306768,
+    "hash_output_byte_mappings_executed": 0,
+    "merkle_hash_chain_edges_required": 4224,
+    "merkle_hash_chain_edges_executed": 0,
+    "terminal_anchor_edges_required": 132,
+    "terminal_anchor_edges_executed": 0,
+    "public_digest_edges_required": 462,
+    "public_digest_edges_executed": 0,
+    "selected_frame_mutations_required": 5478,
+    "selected_frame_mutations_executed": 0,
+    "primitive_core_executions_required": 9372,
+    "primitive_core_executions_executed": 0,
+    "stablecoin_cases_required": 34,
+    "stablecoin_cases_executed": 0,
+    "stablecoin_direct_word_mappings_required": 36,
+    "stablecoin_direct_word_mappings_executed": 0,
+    "positive_semantic_class_profile_cases_required": 22,
+    "positive_semantic_class_profile_cases_executed": 0,
+    "semantic_negative_class_profile_cases_required": 136,
+    "semantic_negative_class_profile_cases_executed": 0,
+    "semantic_edge_profile_mappings_required": 340,
+    "semantic_edge_profile_mappings_executed": 0,
+    "mutation_classes_required": 50,
+    "mutation_classes_executed": 0,
+    "codec_byte_mutations_required": 869,
+    "codec_byte_mutations_executed": 0
+  },
+  "rust_source_digest": {
+    "domain": "hegemon.m4-mixed-candidate.source.v2",
+    "ordered_files": [
+      "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/mixed_candidate.rs",
+      "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/src/lib.rs",
+      "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/Cargo.toml",
+      "prototypes/standalone-shake256-binius/strict-mixed-field/src/lib.rs",
+      "circuits/transaction/src/full_blake2b448_relation.rs",
+      "circuits/transaction/src/full_shake448_relation.rs",
+      "circuits/transaction/src/full_shake448_statement.rs",
+      "protocol/kernel/src/manifest.rs",
+      "crypto/hash384/src/lib.rs",
+      "prototypes/standalone-shake256-binius/binius64/crates/frontend/src/builder/mod.rs",
+      "prototypes/standalone-shake256-binius/binius64/crates/circuits/src/keccak/permutation.rs",
+      "prototypes/standalone-shake256-binius/binius64/crates/core/src/constraint_system/m4.rs",
+      "prototypes/standalone-shake256-binius/binius64/crates/core/src/constraint_system/shift.rs"
+    ],
+    "sha512": "d6b5d6e265b427b89a32223d34957119e1710087b5c2f80069f98ce312f6866bad7227a20ea53b13605c78e706178b494d335f744e570fcc1300dd3a76c36ab6"
+  },
+  "diagnostic_activation": {
+    "circuit_version": 17537,
+    "crypto_suite": 17538,
+    "family_id": 17539,
+    "action_id": 17540,
+    "network_id": 16909060,
+    "backend_id": 69,
+    "proof_profile": 70,
+    "domain_set": 17543,
+    "chain_id": "1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+    "genesis_id": "2222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222",
+    "rules_hash": "3333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333"
+  }
+}

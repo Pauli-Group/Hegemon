@@ -1,0 +1,31 @@
+{
+  "schema": "hegemon.smallwood.security-trust-root.v1",
+  "profile_id": "hegemon.smallwood.v6.shake256-448.sha512.complete-zk.v1",
+  "accepted_receipts": {
+    "proof_system_implemented": [],
+    "compiled_prover_distribution_refinement": [],
+    "protocol_transcript_inventory": [],
+    "witness_polynomial_simulator": [],
+    "piop_mask_simulator": [],
+    "decs_domain_and_leaf_hiding": [],
+    "joint_pcs_lvcs_decs_merkle_simulator": [],
+    "abort_conditioned_simulator": [],
+    "qrom_zk_reduction": [],
+    "qrom_zk_independent_review": [],
+    "rng_refinement": [],
+    "zk_quantitative_bound": [],
+    "relation_geometry": [],
+    "interactive_rbr_extraction": [],
+    "pcs_binding_extraction": [],
+    "compiled_verifier_refinement": [],
+    "sha512_standard_to_ideal_qrom": [],
+    "proof_of_knowledge_extractor": [],
+    "global_multi_target_composition": [],
+    "canonical_relation_refinement": [],
+    "relation_hash_security": [],
+    "proof_transcript_hash_security": [],
+    "wire_and_parser_refinement": [],
+    "end_to_end_same_bytes": [],
+    "independent_composed_security_review": []
+  }
+}

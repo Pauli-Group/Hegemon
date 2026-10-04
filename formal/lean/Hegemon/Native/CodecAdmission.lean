@@ -251,6 +251,7 @@ inductive NativeMetadataDecodeSource where
 deriving DecidableEq, Repr
 
 inductive NativeMetadataDecodeReject where
+  | legacyForbidden
   | currentAndLegacyRejected
 deriving DecidableEq, Repr
 
@@ -265,7 +266,7 @@ def evaluateNativeMetadataDecode
   if exactDecodeAccepts input.currentExact then
     Except.ok NativeMetadataDecodeSource.current
   else if exactDecodeAccepts input.legacyExact then
-    Except.ok NativeMetadataDecodeSource.legacy
+    Except.error NativeMetadataDecodeReject.legacyForbidden
   else
     Except.error NativeMetadataDecodeReject.currentAndLegacyRejected
 
@@ -285,7 +286,6 @@ def nativeMetadataDecodeSource
 def nativeMetadataDecodePreconditions
     (input : NativeMetadataDecodeInput) : Bool :=
   exactDecodeAccepts input.currentExact
-    || exactDecodeAccepts input.legacyExact
 
 theorem native_metadata_decode_accepts_iff_preconditions
     (input : NativeMetadataDecodeInput) :
@@ -294,9 +294,10 @@ theorem native_metadata_decode_accepts_iff_preconditions
   unfold nativeMetadataDecodeAccepts
     nativeMetadataDecodePreconditions
     evaluateNativeMetadataDecode
-  cases hCurrent : exactDecodeAccepts input.currentExact <;>
-    cases hLegacy : exactDecodeAccepts input.legacyExact <;>
-    simp
+  cases hCurrent : exactDecodeAccepts input.currentExact
+  · cases hLegacy : exactDecodeAccepts input.legacyExact <;>
+      simp
+  · simp
 
 theorem native_metadata_current_exact_decode_precedes_legacy
     {input : NativeMetadataDecodeInput}
@@ -306,12 +307,12 @@ theorem native_metadata_current_exact_decode_precedes_legacy
   unfold evaluateNativeMetadataDecode
   simp [currentAccepted]
 
-theorem native_metadata_legacy_decode_requires_current_rejection
+theorem native_metadata_legacy_decode_is_identified_and_rejected
     {input : NativeMetadataDecodeInput}
     (currentRejected : exactDecodeAccepts input.currentExact = false)
     (legacyAccepted : exactDecodeAccepts input.legacyExact = true) :
     evaluateNativeMetadataDecode input =
-      Except.ok NativeMetadataDecodeSource.legacy := by
+      Except.error NativeMetadataDecodeReject.legacyForbidden := by
   unfold evaluateNativeMetadataDecode
   simp [currentRejected, legacyAccepted]
 
@@ -333,11 +334,11 @@ structure NativeMetadataDecodeFacts
     exactDecodeAccepts input.currentExact = true ->
       evaluateNativeMetadataDecode input =
         Except.ok NativeMetadataDecodeSource.current
-  legacyRequiresCurrentRejected :
+  legacyIsIdentifiedAndRejected :
     exactDecodeAccepts input.currentExact = false ->
       exactDecodeAccepts input.legacyExact = true ->
         evaluateNativeMetadataDecode input =
-          Except.ok NativeMetadataDecodeSource.legacy
+          Except.error NativeMetadataDecodeReject.legacyForbidden
   bothRejectedFailClosed :
     exactDecodeAccepts input.currentExact = false ->
       exactDecodeAccepts input.legacyExact = false ->
@@ -353,9 +354,9 @@ theorem native_metadata_decode_facts
       fun currentAccepted =>
         native_metadata_current_exact_decode_precedes_legacy
           currentAccepted
-    legacyRequiresCurrentRejected :=
+    legacyIsIdentifiedAndRejected :=
       fun currentRejected legacyAccepted =>
-        native_metadata_legacy_decode_requires_current_rejection
+        native_metadata_legacy_decode_is_identified_and_rejected
           currentRejected
           legacyAccepted
     bothRejectedFailClosed :=
@@ -370,8 +371,6 @@ inductive NativeMetadataBincodeBudgetReject where
   | actionCountOverLimit
   | actionPayloadOverLimit
   | actionPayloadBytesOverLimit
-  | minerPublicKeyOverLimit
-  | minerSignatureOverLimit
 deriving DecidableEq, Repr
 
 structure NativeMetadataBincodeBudgetInput where
@@ -383,10 +382,6 @@ structure NativeMetadataBincodeBudgetInput where
   maxActionPayloadBytes : Nat
   actionPayloadBytesTotal : Nat
   maxActionPayloadBytesTotal : Nat
-  minerPublicKeyBytes : Nat
-  maxMinerPublicKeyBytes : Nat
-  minerSignatureBytes : Nat
-  maxMinerSignatureBytes : Nat
 deriving DecidableEq, Repr
 
 def evaluateNativeMetadataBincodeBudgetRejection
@@ -400,10 +395,6 @@ def evaluateNativeMetadataBincodeBudgetRejection
     some NativeMetadataBincodeBudgetReject.actionPayloadOverLimit
   else if input.actionPayloadBytesTotal > input.maxActionPayloadBytesTotal then
     some NativeMetadataBincodeBudgetReject.actionPayloadBytesOverLimit
-  else if input.minerPublicKeyBytes > input.maxMinerPublicKeyBytes then
-    some NativeMetadataBincodeBudgetReject.minerPublicKeyOverLimit
-  else if input.minerSignatureBytes > input.maxMinerSignatureBytes then
-    some NativeMetadataBincodeBudgetReject.minerSignatureOverLimit
   else
     none
 
@@ -421,10 +412,6 @@ structure AcceptedNativeMetadataBincodeBudgetFacts
     ¬ input.largestActionPayloadBytes > input.maxActionPayloadBytes
   actionPayloadBytesTotalNotOverLimit :
     ¬ input.actionPayloadBytesTotal > input.maxActionPayloadBytesTotal
-  minerPublicKeyNotOverLimit :
-    ¬ input.minerPublicKeyBytes > input.maxMinerPublicKeyBytes
-  minerSignatureNotOverLimit :
-    ¬ input.minerSignatureBytes > input.maxMinerSignatureBytes
 
 theorem native_metadata_bincode_budget_acceptance_excludes_overruns
     {input : NativeMetadataBincodeBudgetInput}
@@ -444,24 +431,14 @@ theorem native_metadata_bincode_budget_acceptance_excludes_overruns
       · simp [hActionPayload] at accepted
         by_cases hActionPayloadTotal :
             input.actionPayloadBytesTotal > input.maxActionPayloadBytesTotal
-        · simp [hActionPayloadTotal] at accepted
-        · simp [hActionPayloadTotal] at accepted
-          by_cases hMinerPublicKey :
-              input.minerPublicKeyBytes > input.maxMinerPublicKeyBytes
-          · simp [hMinerPublicKey] at accepted
-          · simp [hMinerPublicKey] at accepted
-            by_cases hMinerSignature :
-                input.minerSignatureBytes > input.maxMinerSignatureBytes
-            · exfalso
-              exact (Nat.not_lt_of_ge accepted) hMinerSignature
-            · exact {
-                metadataBytesNotOverLimit := hMetadata,
-                actionCountNotOverLimit := hActionCount,
-                largestActionPayloadNotOverLimit := hActionPayload,
-                actionPayloadBytesTotalNotOverLimit := hActionPayloadTotal,
-                minerPublicKeyNotOverLimit := hMinerPublicKey,
-                minerSignatureNotOverLimit := hMinerSignature
-              }
+        · exfalso
+          exact (Nat.not_lt_of_ge accepted) hActionPayloadTotal
+        · exact {
+            metadataBytesNotOverLimit := hMetadata,
+            actionCountNotOverLimit := hActionCount,
+            largestActionPayloadNotOverLimit := hActionPayload,
+            actionPayloadBytesTotalNotOverLimit := hActionPayloadTotal
+          }
 
 structure CanonicalDecodeNonMalleabilityFacts
     (syncInput : SyncDecodeInput)
@@ -621,23 +598,16 @@ def productionMaxNativeMetadataBytes : Nat := 68477440
 def productionMaxNativeBlockActions : Nat := 10000
 def productionMaxNativeBlockActionPayloadBytes : Nat := 2113536
 def productionMaxNativeBlockActionBytes : Nat := 67108864
-def productionMaxMlDsaPublicKeyBytes : Nat := 1952
-def productionMaxMlDsaSignatureBytes : Nat := 3309
-
 def validNativeMetadataBincodeBudget : NativeMetadataBincodeBudgetInput :=
   {
-    metadataBytes := 668,
+    metadataBytes := 672,
     maxMetadataBytes := productionMaxNativeMetadataBytes,
     actionCount := 0,
     maxActionCount := productionMaxNativeBlockActions,
     largestActionPayloadBytes := 0,
     maxActionPayloadBytes := productionMaxNativeBlockActionPayloadBytes,
     actionPayloadBytesTotal := 0,
-    maxActionPayloadBytesTotal := productionMaxNativeBlockActionBytes,
-    minerPublicKeyBytes := 0,
-    maxMinerPublicKeyBytes := productionMaxMlDsaPublicKeyBytes,
-    minerSignatureBytes := 0,
-    maxMinerSignatureBytes := productionMaxMlDsaSignatureBytes
+    maxActionPayloadBytesTotal := productionMaxNativeBlockActionBytes
   }
 
 theorem valid_sync_accepts :
@@ -701,9 +671,9 @@ theorem valid_native_metadata_current_selects_current :
       Except.ok NativeMetadataDecodeSource.current := by
   rfl
 
-theorem valid_native_metadata_legacy_selects_legacy :
+theorem valid_native_metadata_legacy_is_rejected :
     evaluateNativeMetadataDecode validNativeMetadataLegacy =
-      Except.ok NativeMetadataDecodeSource.legacy := by
+      Except.error NativeMetadataDecodeReject.legacyForbidden := by
   rfl
 
 theorem trailing_native_metadata_current_rejects :
@@ -751,20 +721,6 @@ theorem native_metadata_bincode_budget_rejects_action_payload_total_overrun :
         largestActionPayloadBytes := productionMaxNativeBlockActionPayloadBytes,
         actionPayloadBytesTotal := productionMaxNativeBlockActionBytes + 1 } =
       some NativeMetadataBincodeBudgetReject.actionPayloadBytesOverLimit := by
-  native_decide
-
-theorem native_metadata_bincode_budget_rejects_miner_public_key_overrun :
-    evaluateNativeMetadataBincodeBudgetRejection
-      { validNativeMetadataBincodeBudget with
-        minerPublicKeyBytes := productionMaxMlDsaPublicKeyBytes + 1 } =
-      some NativeMetadataBincodeBudgetReject.minerPublicKeyOverLimit := by
-  native_decide
-
-theorem native_metadata_bincode_budget_rejects_miner_signature_overrun :
-    evaluateNativeMetadataBincodeBudgetRejection
-      { validNativeMetadataBincodeBudget with
-        minerSignatureBytes := productionMaxMlDsaSignatureBytes + 1 } =
-      some NativeMetadataBincodeBudgetReject.minerSignatureOverLimit := by
   native_decide
 
 end CodecAdmission

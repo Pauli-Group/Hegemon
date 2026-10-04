@@ -1,0 +1,14 @@
+{
+  "schema": "hegemon.proof-autoresearch.candidate.v1",
+  "id": "codex-terminal-message-v1",
+  "parent_id": "luna-precommit-cocommit-v2",
+  "hypothesis": "Starting from the measured co-committed Pay1x2 frontier, serialize and commit the canonical inverse-NTT terminal message instead of its redundant rate-expanded codeword, deterministically re-encode it in the verifier under the identical Gao-Mateer domain, and re-optimize the FRI fold schedule without changing the relation, query count, commitments, terminal checks, or composed-verifier gates.",
+  "relation_claims": {
+    "full_v5_delta_pay1x2": true,
+    "geometry_proxy": false,
+    "standalone_proof": true,
+    "aggregation": false,
+    "sidecar_authority": false
+  },
+  "candidate_patch": "prototypes/standalone-shake256-binius/terminal-message-patch/codex-terminal-message-v1.patch"
+}

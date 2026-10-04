@@ -555,6 +555,29 @@ pub(crate) fn native_action_wire_replay_projection_step(
     action: &PendingAction,
     effect: &NativePlannedActionEffect,
 ) -> Result<NativeActionWireReplayProjectionStep> {
+    if is_poseidon2_v8_action(action) || is_poseidon2_v8_coinbase_action(action) {
+        // V8 transaction and coinbase ciphertexts are carried in their exact
+        // action payloads and deliberately absent from the historical 48-byte
+        // ciphertext archive/state stream. This projection is therefore an
+        // exact zero-row effect after route-local payload validation.
+        if is_poseidon2_v8_action(action) {
+            super::poseidon2_v8_verifier::preflight_poseidon2_v8_selected_action_args(
+                &action.public_args,
+            )
+            .map_err(|error| anyhow!("decode V8 wire replay projection failed: {error}"))?;
+        } else {
+            admitted_poseidon2_v8_coinbase_commitment(action)?;
+        }
+        return Ok(NativeActionWireReplayProjectionStep {
+            ciphertext_hash_count: 0,
+            ciphertext_size_count: 0,
+            planned_ciphertext_count: effect.ciphertexts.len(),
+            ciphertext_hashes_match: effect.ciphertexts.is_empty(),
+            ciphertext_sizes_match: effect.ciphertexts.is_empty(),
+            planned_replay_present: effect.replay_key.is_some(),
+            replay_key_matches: effect.replay_key.is_none(),
+        });
+    }
     let ciphertext_counts_match = action.ciphertext_hashes.len() == action.ciphertext_sizes.len()
         && action.ciphertext_hashes.len() == effect.ciphertexts.len();
     let ciphertext_hashes_match = ciphertext_counts_match
@@ -609,11 +632,30 @@ pub(crate) fn mempool_transfer_nullifier_admission_state(
     state: &NativeState,
     action: &PendingAction,
 ) -> NativeTransferNullifierAdmissionState {
-    let mut nullifier_state = shielded_nullifier_state_for_mempool(state);
-    mempool_transfer_nullifier_admission_state_from_nullifiers(
-        &mut nullifier_state,
-        &action.nullifiers,
-    )
+    if !pending_action_derived_indexes_are_structurally_current(state) {
+        let mut nullifier_state = shielded_nullifier_state_for_mempool(state);
+        return mempool_transfer_nullifier_admission_state_from_nullifiers(
+            &mut nullifier_state,
+            &action.nullifiers,
+        );
+    }
+
+    let mut action_seen = BTreeSet::new();
+    for nullifier in &action.nullifiers {
+        if *nullifier == [0u8; 48] {
+            return NativeTransferNullifierAdmissionState::Zero;
+        }
+        if state.nullifiers.contains(nullifier) {
+            return NativeTransferNullifierAdmissionState::AlreadySpent;
+        }
+        if !action_seen.insert(*nullifier) {
+            return NativeTransferNullifierAdmissionState::Duplicate;
+        }
+        if state.pending_nullifiers.contains(nullifier) {
+            return NativeTransferNullifierAdmissionState::AlreadyPending;
+        }
+    }
+    NativeTransferNullifierAdmissionState::Valid
 }
 
 pub(crate) fn mempool_transfer_nullifier_admission_state_from_nullifiers(
@@ -1059,6 +1101,27 @@ pub(crate) fn validate_transfer_action_payload(action: &PendingAction) -> Result
     if !is_shielded_transfer_action(action) {
         return Err(anyhow!("action is not a shielded transfer"));
     }
+    // V8 has a fresh seven-limb state grammar.  Its outer legacy anchor,
+    // nullifier, and commitment fields must remain empty; contextual decode,
+    // proof verification, and typed state replay are performed by the V8
+    // connector at the actual candidate/block height.  Never let this route
+    // fall through to the historical 48-byte transfer checks below.
+    if is_poseidon2_v8_action(action) {
+        if action.anchor != [0u8; 48]
+            || !action.nullifiers.is_empty()
+            || !action.commitments.is_empty()
+            || action.candidate_artifact.is_some()
+        {
+            return Err(anyhow!(
+                "Poseidon2 V8 action must not carry legacy 48-byte anchor, nullifier, commitment, or artifact state"
+            ));
+        }
+        super::poseidon2_v8_verifier::preflight_poseidon2_v8_selected_action_args(
+            &action.public_args,
+        )
+        .map_err(|error| anyhow!("Poseidon2 V8 action framing rejected: {error}"))?;
+        return Ok(());
+    }
     if action.nullifiers.is_empty() {
         return Err(anyhow!(
             "shielded transfer must include at least one nullifier"
@@ -1176,6 +1239,7 @@ pub(crate) fn validate_transfer_action_payload(action: &PendingAction) -> Result
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn validate_candidate_artifact(artifact: &CandidateArtifact) -> Result<()> {
     let input = native_candidate_artifact_admission_input(true, true, true, Some(artifact));
     evaluate_native_candidate_artifact_admission(input)
@@ -1452,10 +1516,10 @@ pub(crate) fn native_candidate_artifact_admission_error(
             anyhow!("candidate artifact must declare DA chunks")
         }
         NativeCandidateArtifactAdmissionRejection::WrongProofMode => {
-            anyhow!("native cutover requires recursive block artifacts")
+            anyhow!("historical candidate artifact requires recursive block mode")
         }
         NativeCandidateArtifactAdmissionRejection::WrongProofKind => {
-            anyhow!("native candidate artifact must use the shipped recursive_block_v2 route")
+            anyhow!("historical candidate artifact must use recursive_block_v2")
         }
         NativeCandidateArtifactAdmissionRejection::VerifierProfileMismatch => {
             anyhow!("native candidate artifact recursive_block_v2 verifier profile mismatch")
@@ -1585,6 +1649,10 @@ pub(crate) fn validate_coinbase_action_payload(action: &PendingAction) -> Result
     if !is_coinbase_action(action) {
         return Err(anyhow!("not a coinbase action"));
     }
+    if is_poseidon2_v8_coinbase_action(action) {
+        admitted_poseidon2_v8_coinbase_commitment(action)?;
+        return Ok(());
+    }
     if !action.nullifiers.is_empty()
         || action.commitments.len() != 1
         || action.ciphertext_hashes.len() != 1
@@ -1622,43 +1690,487 @@ pub(crate) fn validate_coinbase_action_payload(action: &PendingAction) -> Result
         .map_err(|rejection| native_coinbase_action_payload_admission_error(input, rejection))
 }
 
-pub(crate) fn pending_action_hash(action: &PendingAction) -> [u8; 32] {
-    let mut canonical = action.clone();
-    canonical.tx_hash = [0u8; 32];
-    let encoded = canonical.encode();
-    hash32_with_parts(&[b"hegemon-native-action-v1", &encoded])
+pub(crate) fn admitted_poseidon2_v8_coinbase_commitment(
+    action: &PendingAction,
+) -> Result<poseidon2_v8_state::Poseidon2V8Commitment> {
+    if !is_poseidon2_v8_coinbase_action(action) {
+        return Err(anyhow!("not a Poseidon2 V8 coinbase action"));
+    }
+    if action.binding != protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING.into()
+        || !action.nullifiers.is_empty()
+        || !action.commitments.is_empty()
+        || action.ciphertext_hashes.len() != 1
+        || action.ciphertext_sizes.len() != 1
+        || action.fee != 0
+        || action.anchor != [0u8; 48]
+        || action.candidate_artifact.is_some()
+    {
+        return Err(anyhow!(
+            "Poseidon2 V8 coinbase action has a noncanonical outer state surface"
+        ));
+    }
+    if action.public_args.len() != POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES {
+        return Err(anyhow!(
+            "Poseidon2 V8 coinbase args must be exactly {} bytes",
+            POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES
+        ));
+    }
+    let args: MintPoseidon2V8CoinbaseArgs =
+        decode_scale_exact(&action.public_args, "Poseidon2 V8 coinbase action args")?;
+    let opening = args.miner_note.opening;
+    if opening.value == 0
+        || u128::from(opening.value) > transaction_core::constants::MAX_IN_CIRCUIT_VALUE
+    {
+        return Err(anyhow!(
+            "Poseidon2 V8 coinbase value must be nonzero and within the relation range"
+        ));
+    }
+    if opening.asset_id != transaction_core::constants::NATIVE_ASSET_ID {
+        return Err(anyhow!("Poseidon2 V8 coinbase asset must be native HGN"));
+    }
+    let opening_words = opening.note_hash_words();
+    if opening_words
+        .iter()
+        .any(|word| *word >= transaction_core::constants::FIELD_MODULUS_U64)
+    {
+        return Err(anyhow!(
+            "Poseidon2 V8 coinbase opening contains a noncanonical field word"
+        ));
+    }
+    if opening.recipient_key == [0; 4] || opening.authorization_key == [0; 4] {
+        return Err(anyhow!(
+            "Poseidon2 V8 coinbase recipient and authorization keys must be nonzero"
+        ));
+    }
+    let relation_opening =
+        transaction_circuit::smallwood_poseidon2_v8_types::SmallwoodPoseidon2V8NoteOpening {
+            value: opening.value,
+            asset_id: opening.asset_id,
+            recipient_key: opening.recipient_key,
+            authorization_key: opening.authorization_key,
+            rho: opening.rho,
+            randomness: opening.randomness,
+        };
+    let expected_commitment =
+        transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_note_commitment(
+            relation_opening,
+        )
+        .map_err(|error| anyhow!("Poseidon2 V8 coinbase note hash rejected: {error:?}"))?;
+    if args.miner_note.commitment != expected_commitment || expected_commitment == [0; 7] {
+        return Err(anyhow!("Poseidon2 V8 coinbase commitment mismatch"));
+    }
+
+    let encrypted = &args.miner_note.encrypted_note;
+    let (raw_len, metadata) = coinbase_ciphertext_metadata(encrypted);
+    if raw_len != POSEIDON2_V8_COINBASE_RAW_CIPHERTEXT_BYTES {
+        return Err(anyhow!(
+            "Poseidon2 V8 coinbase ciphertext must be exactly {} bytes",
+            POSEIDON2_V8_COINBASE_RAW_CIPHERTEXT_BYTES
+        ));
+    }
+    let chain_bytes = encrypted.encode();
+    let parsed = NoteCiphertext::from_chain_bytes(&chain_bytes)
+        .map_err(|error| anyhow!("Poseidon2 V8 coinbase ciphertext rejected: {error}"))?;
+    if parsed.version != wallet::address::POSEIDON2_V8_ADDRESS_VERSION
+        || parsed.crypto_suite != protocol_versioning::CRYPTO_SUITE_ETA
+    {
+        return Err(anyhow!(
+            "Poseidon2 V8 coinbase ciphertext must use address-v5/Eta"
+        ));
+    }
+    let canonical_raw = parsed
+        .to_da_bytes()
+        .map_err(|error| anyhow!("serialize Poseidon2 V8 coinbase ciphertext: {error}"))?;
+    let mut supplied_raw = Vec::with_capacity(raw_len);
+    supplied_raw.extend_from_slice(&encrypted.ciphertext);
+    supplied_raw.extend_from_slice(&encrypted.kem_ciphertext);
+    if canonical_raw != supplied_raw {
+        return Err(anyhow!("Poseidon2 V8 coinbase ciphertext is not canonical"));
+    }
+    let Some((ciphertext_hash, ciphertext_size)) = metadata else {
+        return Err(anyhow!("Poseidon2 V8 coinbase ciphertext metadata missing"));
+    };
+    if action.ciphertext_hashes[0] != ciphertext_hash
+        || action.ciphertext_sizes[0] != ciphertext_size
+        || ciphertext_size as usize != POSEIDON2_V8_COINBASE_RAW_CIPHERTEXT_BYTES
+    {
+        return Err(anyhow!(
+            "Poseidon2 V8 coinbase ciphertext hash/size binding mismatch"
+        ));
+    }
+    poseidon2_v8_state::Poseidon2V8Commitment::new(expected_commitment)
+        .map_err(|error| anyhow!("Poseidon2 V8 coinbase commitment rejected: {error}"))
 }
 
-pub(crate) fn pending_action_semantic_hash(action: &PendingAction) -> [u8; 32] {
-    let mut canonical = action.clone();
-    canonical.tx_hash = [0u8; 32];
-    canonical.received_ms = 0;
-    let encoded = canonical.encode();
-    hash32_with_parts(&[b"hegemon-native-action-semantic-v1", &encoded])
+pub(crate) fn validate_active_pending_action_canonicality(action: &PendingAction) -> Result<()> {
+    let _ = action;
+    // Active V3 has no arrival-time field. Canonicality is structural rather
+    // than a value gate; timestamp-bearing grammars are identified below and
+    // never upgraded into active actions.
+    Ok(())
+}
+
+pub(crate) fn decode_pending_action_v3_exact(
+    bytes: &[u8],
+    context: &'static str,
+) -> Result<PendingAction> {
+    match decode_scale_exact::<PendingAction>(bytes, context) {
+        Ok(action) => Ok(action),
+        Err(active_error) => {
+            if decode_scale_exact::<LegacyPendingActionV2>(bytes, "legacy native V2 action").is_ok()
+            {
+                return Err(anyhow!(
+                    "{context} uses retired native V2 action grammar with consensus received_ms; fresh V3 action required"
+                ));
+            }
+            if decode_scale_exact::<LegacyPendingActionV1>(bytes, "legacy native V1 action").is_ok()
+            {
+                return Err(anyhow!(
+                    "{context} uses retired 32-byte native V1 action grammar; fresh V3 action required"
+                ));
+            }
+            Err(active_error)
+        }
+    }
+}
+
+#[derive(Encode)]
+struct PendingActionIdentityBodyV3<'a> {
+    binding: &'a KernelVersionBinding,
+    family_id: u16,
+    action_id: u16,
+    anchor: &'a [u8; 48],
+    nullifiers: &'a Vec<[u8; 48]>,
+    commitments: &'a Vec<[u8; 48]>,
+    ciphertext_hashes: &'a Vec<[u8; 48]>,
+    ciphertext_sizes: &'a Vec<u32>,
+    public_args: &'a Vec<u8>,
+    fee: u64,
+    candidate_artifact: &'a Option<CandidateArtifact>,
+}
+
+fn pending_action_identity_body_v3(action: &PendingAction) -> Vec<u8> {
+    PendingActionIdentityBodyV3 {
+        binding: &action.binding,
+        family_id: action.family_id,
+        action_id: action.action_id,
+        anchor: &action.anchor,
+        nullifiers: &action.nullifiers,
+        commitments: &action.commitments,
+        ciphertext_hashes: &action.ciphertext_hashes,
+        ciphertext_sizes: &action.ciphertext_sizes,
+        public_args: &action.public_args,
+        fee: action.fee,
+        candidate_artifact: &action.candidate_artifact,
+    }
+    .encode()
+}
+
+pub(crate) fn pending_action_semantic_id_from_action_id(
+    action_id: ActionId48,
+) -> ActionSemanticId48 {
+    ActionSemanticId48::new(crypto::hash384::blake2b_384_domain_hash(
+        crypto::hash384::domains::ACTION_SEMANTIC_ID_V3,
+        [action_id.as_bytes().as_slice()],
+    ))
+}
+
+pub(crate) fn pending_action_identity_hashes(
+    action: &PendingAction,
+) -> (ActionId48, ActionSemanticId48) {
+    let action_id = ActionId48::new(crypto::hash384::blake2b_384_domain_hash(
+        crypto::hash384::domains::ACTION_ID_V3,
+        [pending_action_identity_body_v3(action).as_slice()],
+    ));
+    let semantic_id = pending_action_semantic_id_from_action_id(action_id);
+    (action_id, semantic_id)
+}
+
+/// Recompute an untrusted action's canonical body identity once, reject a
+/// forged embedded id before it can reach negative-cache, single-flight,
+/// fairness, or proof-verifier accounting, and return the trusted typed ids.
+pub(crate) fn validate_pending_action_identity(
+    action: &PendingAction,
+) -> Result<(ActionId48, ActionSemanticId48)> {
+    let (expected_action_id, semantic_id) = pending_action_identity_hashes(action);
+    if action.tx_hash != expected_action_id {
+        return Err(anyhow!("native pending action hash binding mismatch"));
+    }
+    Ok((expected_action_id, semantic_id))
+}
+
+pub(crate) fn pending_action_hash(action: &PendingAction) -> ActionId48 {
+    pending_action_identity_hashes(action).0
+}
+
+pub(crate) fn pending_action_semantic_hash(action: &PendingAction) -> ActionSemanticId48 {
+    // Trusted-state fast path only.  Untrusted decoded RPC/peer/block input
+    // must first pass `validate_pending_action_identity` and use its returned
+    // semantic id, rather than deriving an admission key from attacker-chosen
+    // embedded bytes.
+    pending_action_semantic_id_from_action_id(action.tx_hash)
+}
+
+#[cfg(test)]
+pub(crate) fn pending_action_semantic_index(
+    actions: &BTreeMap<ActionId48, PendingAction>,
+) -> Result<BTreeMap<ActionSemanticId48, ActionId48>> {
+    let mut index = BTreeMap::new();
+    for (tx_hash, action) in actions {
+        let semantic_hash = pending_action_semantic_hash(action);
+        if let Some(existing) = index.insert(semantic_hash, *tx_hash) {
+            return Err(anyhow!(
+                "duplicate semantic pending actions {} and {}",
+                hex48(existing.as_bytes()),
+                hex48(tx_hash.as_bytes())
+            ));
+        }
+    }
+    Ok(index)
+}
+
+fn pending_action_derived_indexes(
+    actions: &BTreeMap<ActionId48, PendingAction>,
+) -> Result<(
+    BTreeMap<ActionSemanticId48, ActionId48>,
+    BTreeSet<([u8; 32], ActionId48)>,
+    BTreeSet<[u8; 48]>,
+    PersistentKeySet48,
+    usize,
+)> {
+    let mut semantic_index = BTreeMap::new();
+    let mut order_index = BTreeSet::new();
+    let mut pending_nullifiers = BTreeSet::new();
+    let mut pending_bridge_replay_keys = PersistentKeySet48::new();
+    let mut pending_bytes = 0usize;
+    for (tx_hash, action) in actions {
+        validate_active_pending_action_canonicality(action)?;
+        let semantic_hash = pending_action_semantic_hash(action);
+        if let Some(existing) = semantic_index.insert(semantic_hash, *tx_hash) {
+            return Err(anyhow!(
+                "duplicate semantic pending actions {} and {}",
+                hex48(existing.as_bytes()),
+                hex48(tx_hash.as_bytes())
+            ));
+        }
+        order_index.insert((action_order_key(action), *tx_hash));
+        if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
+            if !pending_bridge_replay_keys.insert(replay_key) {
+                return Err(anyhow!("duplicate inbound bridge message already pending"));
+            }
+        }
+        pending_bytes = pending_bytes
+            .checked_add(pending_action_mempool_bytes(action))
+            .ok_or_else(|| anyhow!("native pending-action byte total overflow"))?;
+        for nullifier in &action.nullifiers {
+            if !pending_nullifiers.insert(*nullifier) {
+                return Err(anyhow!("duplicate nullifier across native pending actions"));
+            }
+        }
+    }
+    Ok((
+        semantic_index,
+        order_index,
+        pending_nullifiers,
+        pending_bridge_replay_keys,
+        pending_bytes,
+    ))
+}
+
+fn pending_action_derived_indexes_are_structurally_current(state: &NativeState) -> bool {
+    state.pending_action_semantic_index.len() == state.pending_actions.len()
+        && state.pending_action_order_index.len() == state.pending_actions.len()
+        && state
+            .pending_action_order_index
+            .iter()
+            .all(|(_, tx_hash)| state.pending_actions.contains_key(tx_hash))
+        && if state.pending_actions.is_empty() {
+            state.pending_mempool_bytes == 0 && state.pending_nullifiers.is_empty()
+        } else {
+            state.pending_mempool_bytes != 0
+        }
+}
+
+fn rebuild_pending_action_derived_indexes(state: &mut NativeState) -> Result<()> {
+    let (
+        semantic_index,
+        order_index,
+        pending_nullifiers,
+        pending_bridge_replay_keys,
+        pending_mempool_bytes,
+    ) = pending_action_derived_indexes(&state.pending_actions)?;
+    state.pending_action_semantic_index = semantic_index;
+    state.pending_action_order_index = order_index;
+    state.pending_nullifiers = pending_nullifiers;
+    state.pending_bridge_replay_keys = pending_bridge_replay_keys;
+    state.pending_mempool_bytes = pending_mempool_bytes;
+    Ok(())
 }
 
 pub(crate) fn pending_action_semantic_duplicate_exists(
-    actions: &BTreeMap<[u8; 32], PendingAction>,
-    candidate: &PendingAction,
+    state: &NativeState,
+    candidate_semantic_hash: &ActionSemanticId48,
 ) -> bool {
-    let candidate_hash = pending_action_semantic_hash(candidate);
-    actions
-        .values()
-        .any(|action| pending_action_semantic_hash(action) == candidate_hash)
+    // Production mutations keep both maps in lockstep.  The fail-safe scan is
+    // retained for defensive recovery and for low-level tests that construct a
+    // NativeState directly; an inconsistent index must never admit a duplicate.
+    if pending_action_derived_indexes_are_structurally_current(state) {
+        state
+            .pending_action_semantic_index
+            .contains_key(candidate_semantic_hash)
+    } else {
+        state
+            .pending_actions
+            .values()
+            .any(|action| pending_action_semantic_hash(action) == *candidate_semantic_hash)
+    }
+}
+
+pub(crate) fn insert_pending_action_into_state(
+    state: &mut NativeState,
+    action: PendingAction,
+) -> Result<Option<PendingAction>> {
+    validate_active_pending_action_canonicality(&action)?;
+    if !pending_action_derived_indexes_are_structurally_current(state) {
+        rebuild_pending_action_derived_indexes(state)?;
+    }
+    let tx_hash = action.tx_hash;
+    let semantic_hash = pending_action_semantic_hash(&action);
+    let order_key = action_order_key(&action);
+    let replay_key = bridge_inbound_replay_key_from_action(&action)?;
+    if let Some(existing_tx_hash) = state.pending_action_semantic_index.get(&semantic_hash) {
+        if *existing_tx_hash != tx_hash {
+            return Err(anyhow!(
+                "duplicate semantic pending actions {} and {}",
+                hex48(existing_tx_hash.as_bytes()),
+                hex48(tx_hash.as_bytes())
+            ));
+        }
+    }
+    let replaced = state.pending_actions.get(&tx_hash).cloned();
+    if let Some(replay_key) = replay_key {
+        let replacement_owns_key = replaced
+            .as_ref()
+            .and_then(|old| bridge_inbound_replay_key_from_action(old).ok().flatten())
+            == Some(replay_key);
+        if state.pending_bridge_replay_keys.contains(&replay_key) && !replacement_owns_key {
+            return Err(anyhow!("duplicate inbound bridge message already pending"));
+        }
+    }
+    let mut action_nullifiers = BTreeSet::new();
+    for nullifier in &action.nullifiers {
+        if !action_nullifiers.insert(*nullifier) {
+            return Err(anyhow!("duplicate nullifier within native pending action"));
+        }
+        if state.pending_nullifiers.contains(nullifier)
+            && !replaced
+                .as_ref()
+                .is_some_and(|old| old.nullifiers.contains(nullifier))
+        {
+            return Err(anyhow!("duplicate nullifier across native pending actions"));
+        }
+    }
+    let replaced_bytes = replaced
+        .as_ref()
+        .map(pending_action_mempool_bytes)
+        .unwrap_or(0);
+    let pending_without_replaced = state
+        .pending_mempool_bytes
+        .checked_sub(replaced_bytes)
+        .ok_or_else(|| anyhow!("native pending-action byte index underflow"))?;
+    let next_pending_bytes = pending_without_replaced
+        .checked_add(pending_action_mempool_bytes(&action))
+        .ok_or_else(|| anyhow!("native pending-action byte total overflow"))?;
+
+    if let Some(replaced) = &replaced {
+        state
+            .pending_action_semantic_index
+            .remove(&pending_action_semantic_hash(replaced));
+        state
+            .pending_action_order_index
+            .remove(&(action_order_key(replaced), replaced.tx_hash));
+        for nullifier in &replaced.nullifiers {
+            state.pending_nullifiers.remove(nullifier);
+        }
+        if let Some(old_replay_key) = bridge_inbound_replay_key_from_action(replaced)? {
+            state.pending_bridge_replay_keys.remove(&old_replay_key);
+        }
+    }
+    state.pending_actions.insert(tx_hash, action);
+    state
+        .pending_action_semantic_index
+        .insert(semantic_hash, tx_hash);
+    state
+        .pending_action_order_index
+        .insert((order_key, tx_hash));
+    state.pending_nullifiers.extend(action_nullifiers);
+    if let Some(replay_key) = replay_key {
+        debug_assert!(state.pending_bridge_replay_keys.insert(replay_key));
+    }
+    state.pending_mempool_bytes = next_pending_bytes;
+    Ok(replaced)
+}
+
+pub(crate) fn remove_pending_action_from_state(
+    state: &mut NativeState,
+    tx_hash: &ActionId48,
+) -> Option<PendingAction> {
+    if !pending_action_derived_indexes_are_structurally_current(state) {
+        rebuild_pending_action_derived_indexes(state)
+            .expect("manually assembled native pending state must have unique derived indexes");
+    }
+    let removed = state.pending_actions.remove(tx_hash);
+    if let Some(action) = &removed {
+        state
+            .pending_action_semantic_index
+            .remove(&pending_action_semantic_hash(action));
+        state
+            .pending_action_order_index
+            .remove(&(action_order_key(action), action.tx_hash));
+        for nullifier in &action.nullifiers {
+            state.pending_nullifiers.remove(nullifier);
+        }
+        if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)
+            .expect("indexed pending bridge action must remain exactly decodable")
+        {
+            state.pending_bridge_replay_keys.remove(&replay_key);
+        }
+        state.pending_mempool_bytes = state
+            .pending_mempool_bytes
+            .checked_sub(pending_action_mempool_bytes(action))
+            .expect("native pending-action byte index must match removed action");
+    }
+    removed
+}
+
+pub(crate) fn replace_pending_actions_in_state(
+    state: &mut NativeState,
+    actions: BTreeMap<ActionId48, PendingAction>,
+) -> Result<()> {
+    let (index, order_index, pending_nullifiers, pending_bridge_replay_keys, pending_mempool_bytes) =
+        pending_action_derived_indexes(&actions)?;
+    state.pending_actions = actions;
+    state.pending_action_semantic_index = index;
+    state.pending_action_order_index = order_index;
+    state.pending_nullifiers = pending_nullifiers;
+    state.pending_bridge_replay_keys = pending_bridge_replay_keys;
+    state.pending_mempool_bytes = pending_mempool_bytes;
+    Ok(())
 }
 
 pub(crate) fn pending_action_mempool_bytes(action: &PendingAction) -> usize {
     action.encoded_size()
 }
 
-pub(crate) fn pending_mempool_bytes(actions: &BTreeMap<[u8; 32], PendingAction>) -> usize {
+pub(crate) fn pending_mempool_bytes(actions: &BTreeMap<ActionId48, PendingAction>) -> usize {
     actions.values().fold(0usize, |acc, action| {
         acc.saturating_add(pending_action_mempool_bytes(action))
     })
 }
 
+#[cfg(test)]
 pub(crate) fn validate_mempool_byte_budget(
-    actions: &BTreeMap<[u8; 32], PendingAction>,
+    actions: &BTreeMap<ActionId48, PendingAction>,
     candidate: &PendingAction,
     max_bytes: usize,
 ) -> Result<()> {
@@ -1676,6 +2188,35 @@ pub(crate) fn validate_mempool_byte_budget(
         )
     })?;
     Ok(())
+}
+
+pub(crate) fn validate_mempool_byte_budget_for_state(
+    state: &NativeState,
+    candidate: &PendingAction,
+    max_bytes: usize,
+) -> Result<()> {
+    let pending_bytes = if pending_action_derived_indexes_are_structurally_current(state) {
+        state.pending_mempool_bytes
+    } else {
+        // Defensive/test fallback for manually assembled state. Production
+        // mutations keep every derived index in one helper transaction.
+        pending_mempool_bytes(&state.pending_actions)
+    };
+    let input = NativeMempoolByteBudgetAdmissionInput {
+        pending_bytes,
+        candidate_bytes: pending_action_mempool_bytes(candidate),
+        max_bytes,
+    };
+    evaluate_native_mempool_byte_budget_admission(input)
+        .map(|_| ())
+        .map_err(|rejection| {
+            native_resource_budget_admission_error(
+                input.pending_bytes,
+                input.candidate_bytes,
+                input.max_bytes,
+                rejection,
+            )
+        })
 }
 
 pub(crate) fn staged_proof_bytes(proofs: &BTreeMap<String, Vec<u8>>) -> usize {
@@ -2384,43 +2925,50 @@ pub(crate) fn native_sidecar_upload_admission_error(
     }
 }
 
-pub(crate) fn ordered_pending_actions(state: &NativeState) -> Vec<PendingAction> {
-    let mut actions = state.pending_actions.values().cloned().collect::<Vec<_>>();
-    actions.sort_by_key(action_order_key);
+pub(crate) fn ordered_pending_action_refs_with_fallback_key<'a, F>(
+    state: &'a NativeState,
+    mut fallback_key: F,
+) -> Vec<&'a PendingAction>
+where
+    F: FnMut(&PendingAction) -> [u8; 32],
+{
+    if pending_action_derived_indexes_are_structurally_current(state) {
+        return state
+            .pending_action_order_index
+            .iter()
+            .filter_map(|(_, tx_hash)| state.pending_actions.get(tx_hash))
+            .collect();
+    }
+
+    // Defensive/test fallback for manually assembled state. Computing a
+    // transfer order key decodes its large canonical public arguments, so
+    // cache each key once instead of repeating that work O(n log n) times.
+    let mut actions = state.pending_actions.values().collect::<Vec<_>>();
+    actions.sort_by_cached_key(|action| fallback_key(action));
     actions
 }
 
+#[cfg(test)]
+pub(crate) fn ordered_pending_actions(state: &NativeState) -> Vec<PendingAction> {
+    ordered_pending_action_refs_with_fallback_key(state, action_order_key)
+        .into_iter()
+        .cloned()
+        .collect()
+}
+
 pub(crate) fn select_mineable_actions(state: &NativeState) -> Vec<PendingAction> {
-    let actions = ordered_pending_actions(state);
-    let transfer_count = actions
-        .iter()
-        .filter(|action| is_shielded_transfer_action(action))
-        .filter(|action| {
-            let input = native_mineable_action_admission_input(state, action, None);
-            evaluate_native_mineable_action_admission(input).is_ok()
-        })
-        .count();
-    let selected_candidate_hash = if transfer_count == 0 {
-        None
-    } else {
-        actions
-            .iter()
-            .find(|action| {
-                is_candidate_artifact_action(action)
-                    && action
-                        .candidate_artifact
-                        .as_ref()
-                        .is_some_and(|artifact| artifact.tx_count as usize == transfer_count)
-            })
-            .map(|action| action.tx_hash)
-    };
-    actions
+    ordered_pending_action_refs_with_fallback_key(state, action_order_key)
         .into_iter()
         .filter(|action| {
-            let input =
-                native_mineable_action_admission_input(state, action, selected_candidate_hash);
+            if ensure_native_v3_active_action_route(action, false).is_err() {
+                return false;
+            }
+            let input = native_mineable_action_admission_input(state, action);
             evaluate_native_mineable_action_admission(input).is_ok()
         })
+        // Clone only actions that survive the active route/state policy. The
+        // old path deep-cloned every proof body before filtering.
+        .cloned()
         .collect()
 }
 
@@ -2435,18 +2983,20 @@ pub(crate) fn prepared_mining_actions_match_state(
             state
                 .pending_actions
                 .get(&action.tx_hash)
-                .is_some_and(|pending| pending.encode() == action.encode())
+                // Admission/startup bind the map key and `tx_hash` to the
+                // canonical action encoding.  Presence under the exact digest
+                // is therefore the same collision-resistance assumption as
+                // the block action root, without allocating/copying proof
+                // bodies on every cached mining-work hit.
+                .is_some_and(|pending| pending.tx_hash == action.tx_hash)
         })
 }
 
 pub(crate) fn native_mineable_action_admission_input(
     state: &NativeState,
     action: &PendingAction,
-    selected_candidate_hash: Option<[u8; 32]>,
 ) -> NativeMineableActionAdmissionInput {
     let candidate_artifact_route = is_candidate_artifact_action(action);
-    let candidate_artifact_selected =
-        selected_candidate_hash.is_some_and(|hash| hash == action.tx_hash);
     let sidecar_transfer_route = action.family_id == FAMILY_SHIELDED_POOL
         && action.action_id == ACTION_SHIELDED_TRANSFER_SIDECAR;
     let (
@@ -2460,7 +3010,7 @@ pub(crate) fn native_mineable_action_admission_input(
     };
     NativeMineableActionAdmissionInput {
         candidate_artifact_route,
-        candidate_artifact_selected,
+        candidate_artifact_selected: false,
         sidecar_transfer_route,
         sidecar_ciphertexts_available,
         sidecar_ciphertext_sizes_present,
@@ -2472,11 +3022,7 @@ pub(crate) fn evaluate_native_mineable_action_admission(
     input: NativeMineableActionAdmissionInput,
 ) -> Result<(), NativeMineableActionAdmissionRejection> {
     if input.candidate_artifact_route {
-        if input.candidate_artifact_selected {
-            Ok(())
-        } else {
-            Err(NativeMineableActionAdmissionRejection::UnselectedCandidateArtifact)
-        }
+        Err(NativeMineableActionAdmissionRejection::RetiredCandidateArtifact)
     } else if input.sidecar_transfer_route {
         if !input.sidecar_ciphertexts_available {
             Err(NativeMineableActionAdmissionRejection::SidecarCiphertextMissing)
@@ -2495,6 +3041,15 @@ pub(crate) fn evaluate_native_mineable_action_admission(
 pub(crate) fn is_transfer_action(action_id: u16) -> bool {
     matches!(
         action_id,
+        ACTION_SHIELDED_TRANSFER_INLINE
+            | ACTION_SHIELDED_TRANSFER_SIDECAR
+            | ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
+    )
+}
+
+pub(crate) const fn is_legacy_transfer_action_id(action_id: u16) -> bool {
+    matches!(
+        action_id,
         ACTION_SHIELDED_TRANSFER_INLINE | ACTION_SHIELDED_TRANSFER_SIDECAR
     )
 }
@@ -2503,8 +3058,209 @@ pub(crate) fn is_shielded_transfer_action(action: &PendingAction) -> bool {
     action.family_id == FAMILY_SHIELDED_POOL && is_transfer_action(action.action_id)
 }
 
-pub(crate) fn is_coinbase_action(action: &PendingAction) -> bool {
+pub(crate) fn is_legacy_shielded_transfer_action(action: &PendingAction) -> bool {
+    action.family_id == FAMILY_SHIELDED_POOL && is_legacy_transfer_action_id(action.action_id)
+}
+
+/// Returns whether this action owns rows in the historical 48-byte ciphertext
+/// DA index and staged-sidecar cache.
+///
+/// Poseidon2 V8 carries its exact ciphertexts inside the HGV8 native leaf. Its
+/// public 48-byte ciphertext commitments are proof inputs, not keys into the
+/// legacy sidecar/index namespace. Coinbase remains part of the historical DA
+/// path and must keep its existing index/archive semantics.
+pub(crate) fn owns_legacy_ciphertext_da_rows(action: &PendingAction) -> bool {
+    is_legacy_shielded_transfer_action(action) || is_legacy_coinbase_action(action)
+}
+
+pub(crate) fn is_poseidon2_v8_action(action: &PendingAction) -> bool {
+    action.family_id == FAMILY_SHIELDED_POOL
+        && action.action_id == ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
+}
+
+pub(crate) fn is_inactive_native_sidecar_transfer(action: &PendingAction) -> bool {
+    action.family_id == FAMILY_SHIELDED_POOL && action.action_id == ACTION_SHIELDED_TRANSFER_SIDECAR
+}
+
+// The PR203 bounded-memory sync regressions need valid, multi-megabyte action
+// bodies. Production bridge routes remain closed until a PQ128 source-chain
+// authority exists, so tests opt in on their own thread instead of weakening
+// the shared route gate.
+#[cfg(test)]
+std::thread_local! {
+    static OUTBOUND_BRIDGE_TEST_AUTHORITY_DEPTH: std::cell::Cell<u32> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) struct OutboundBridgeTestAuthorityGuard;
+
+#[cfg(test)]
+impl Drop for OutboundBridgeTestAuthorityGuard {
+    fn drop(&mut self) {
+        OUTBOUND_BRIDGE_TEST_AUTHORITY_DEPTH.with(|depth| {
+            depth.set(
+                depth
+                    .get()
+                    .checked_sub(1)
+                    .expect("outbound bridge test authority guard underflow"),
+            );
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn install_outbound_bridge_test_authority() -> OutboundBridgeTestAuthorityGuard {
+    OUTBOUND_BRIDGE_TEST_AUTHORITY_DEPTH.with(|depth| {
+        depth.set(
+            depth
+                .get()
+                .checked_add(1)
+                .expect("outbound bridge test authority nesting overflow"),
+        );
+    });
+    OutboundBridgeTestAuthorityGuard
+}
+
+#[cfg(test)]
+pub(crate) fn outbound_bridge_test_authority_allows(family_id: u16, action_id: u16) -> bool {
+    family_id == FAMILY_BRIDGE
+        && action_id == ACTION_BRIDGE_OUTBOUND
+        && OUTBOUND_BRIDGE_TEST_AUTHORITY_DEPTH.with(|depth| depth.get() != 0)
+}
+
+/// Preserve deep validation coverage for the checked-in historical SmallWood
+/// fixtures without making a retired proof grammar reachable in production.
+/// The active V4/Gamma route is deliberately excluded, and both the action
+/// payload and embedded artifact must decode exactly and agree on V2/V3.
+#[cfg(test)]
+fn is_exact_historical_inline_transfer_fixture(action: &PendingAction) -> bool {
+    if action.family_id != FAMILY_SHIELDED_POOL
+        || action.action_id != ACTION_SHIELDED_TRANSFER_INLINE
+    {
+        return false;
+    }
+    let Ok(args) = decode_scale_exact::<ShieldedTransferInlineArgs>(
+        &action.public_args,
+        "historical inline transfer fixture",
+    ) else {
+        return false;
+    };
+    consensus::backend_interface::decode_native_tx_leaf_artifact_bytes(&args.proof).is_ok_and(
+        |artifact| {
+            let version_matches = artifact.tx.version.circuit == action.binding.circuit
+                && artifact.tx.version.crypto == action.binding.crypto;
+            let active_profile =
+                consensus::backend_interface::transaction_verifier_profile_digest_for_version(
+                    artifact.tx.version,
+                );
+            version_matches && artifact.receipt.verifier_profile != active_profile
+        },
+    )
+}
+
+pub(crate) fn ensure_native_v3_active_action_route(
+    action: &PendingAction,
+    allow_internal_coinbase: bool,
+) -> Result<()> {
+    validate_active_pending_action_canonicality(action)?;
+    #[cfg(test)]
+    if is_exact_historical_inline_transfer_fixture(action) {
+        return Ok(());
+    }
+    ensure_native_v3_active_action_route_ids(
+        action.family_id,
+        action.action_id,
+        allow_internal_coinbase,
+    )?;
+    Ok(())
+}
+
+/// Reject retired action routes using only the fixed request discriminator.
+/// RPC and peer ingress call this before decoding attacker-controlled payloads
+/// or reserving proof/fairness capacity; the full-action wrapper above remains
+/// the convergence gate for persisted and block actions.
+pub(crate) fn ensure_native_v3_active_action_route_ids(
+    family_id: u16,
+    action_id: u16,
+    allow_internal_coinbase: bool,
+) -> Result<()> {
+    #[cfg(test)]
+    if outbound_bridge_test_authority_allows(family_id, action_id) {
+        return Ok(());
+    }
+    if family_id == FAMILY_SHIELDED_POOL && action_id == ACTION_SHIELDED_TRANSFER_SIDECAR {
+        return Err(anyhow!(
+            "shielded sidecar transfer route is decode-compatible but inactive under native V3; submit the canonical inline transfer so peers can reconstruct the block"
+        ));
+    }
+    if family_id == FAMILY_SHIELDED_POOL && action_id == ACTION_SUBMIT_CANDIDATE_ARTIFACT {
+        return Err(anyhow!(
+            "candidate artifact route is decode-compatible but inactive under native V3"
+        ));
+    }
+    if family_id == FAMILY_SHIELDED_POOL && action_id == SMALLWOOD_V5_TRANSPORT_ACTION_ID {
+        return Err(anyhow!(
+            "SmallWood V5 conventional-hash inline envelope is decode-compatible but inactive under native V3 until the BLAKE2b relation, complete-ZK/PQ128 certificates, formal/refinement evidence, and exact byte artifact manifest are authorized"
+        ));
+    }
+    if family_id == FAMILY_SHIELDED_POOL
+        && action_id == ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
+    {
+        // Route recognition is structural only. The exact network, height,
+        // binding, family, action, and class are authorized by the shared
+        // protocol-versioning decision before payload/proof admission.
+        return Ok(());
+    }
+    if family_id == FAMILY_BRIDGE {
+        return Err(anyhow!(
+            "bridge action routes are decode-compatible but inactive under native V3 pending a PQ128 source-chain authority"
+        ));
+    }
+    if family_id == FAMILY_SHIELDED_POOL && action_id == ACTION_MINT_COINBASE {
+        if allow_internal_coinbase {
+            return Ok(());
+        }
+        return Err(anyhow!(
+            "coinbase actions are internal mining outputs and cannot enter the native V3 mempool"
+        ));
+    }
+    if family_id == FAMILY_SHIELDED_POOL && action_id == ACTION_MINT_POSEIDON2_V8_COINBASE {
+        if !allow_internal_coinbase {
+            return Err(anyhow!(
+                "Poseidon2 V8 coinbase actions are miner-local outputs and cannot enter RPC, peer relay, or the mempool"
+            ));
+        }
+        // Internal-route recognition does not authorize minting. The shared
+        // proof-authority decision remains the sole capability gate.
+        return Ok(());
+    }
+    if family_id == FAMILY_SHIELDED_POOL && action_id == ACTION_SHIELDED_TRANSFER_INLINE {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "unsupported native V3 action route family={family_id} action={action_id}"
+    ))
+}
+
+pub(crate) fn is_legacy_coinbase_action(action: &PendingAction) -> bool {
     action.family_id == FAMILY_SHIELDED_POOL && action.action_id == ACTION_MINT_COINBASE
+}
+
+pub(crate) fn is_poseidon2_v8_coinbase_action(action: &PendingAction) -> bool {
+    action.family_id == FAMILY_SHIELDED_POOL
+        && action.action_id == ACTION_MINT_POSEIDON2_V8_COINBASE
+}
+
+/// Every action charged to the V8 release security budget. The mint source has
+/// no transaction proof bytes, but it is part of the same source-authorized
+/// block route and therefore consumes one of the 512 action slots.
+pub(crate) fn is_poseidon2_v8_proof_authority_action(action: &PendingAction) -> bool {
+    is_poseidon2_v8_action(action) || is_poseidon2_v8_coinbase_action(action)
+}
+
+pub(crate) fn is_coinbase_action(action: &PendingAction) -> bool {
+    is_legacy_coinbase_action(action) || is_poseidon2_v8_coinbase_action(action)
 }
 
 pub(crate) fn wallet_commitment_source_label(action: &PendingAction) -> &'static str {
@@ -2522,14 +3278,10 @@ pub(crate) fn is_candidate_artifact_action(action: &PendingAction) -> bool {
 }
 
 pub(crate) fn pending_action_peer_relayable(action: &PendingAction) -> bool {
-    !is_coinbase_action(action) && !is_candidate_artifact_action(action)
-}
-
-pub(crate) fn stage_relayed_pending_action(
-    node: &NativeNode,
-    pending: PendingAction,
-) -> Result<Option<PendingAction>> {
-    node.stage_relayed_pending_action(pending)
+    !is_coinbase_action(action)
+        && !is_candidate_artifact_action(action)
+        && !is_inactive_native_sidecar_transfer(action)
+        && action.family_id != FAMILY_BRIDGE
 }
 
 pub(crate) fn action_order_key_preimage(action: &PendingAction) -> Vec<u8> {
@@ -2564,7 +3316,7 @@ pub(crate) fn action_order_key_preimage(action: &PendingAction) -> Vec<u8> {
         preimage.extend_from_slice(nullifier);
     }
     if preimage.is_empty() {
-        preimage.extend_from_slice(&action.tx_hash);
+        preimage.extend_from_slice(action.tx_hash.as_bytes());
     }
     preimage
 }
@@ -2572,14 +3324,14 @@ pub(crate) fn action_order_key_preimage(action: &PendingAction) -> Vec<u8> {
 pub(crate) fn non_transfer_action_order_key_preimage(
     family_id: u16,
     action_id: u16,
-    semantic_hash: [u8; 32],
+    semantic_hash: ActionSemanticId48,
     nullifiers: &[[u8; 48]],
 ) -> Vec<u8> {
-    let mut preimage = Vec::with_capacity(12 + 2 + 2 + 32 + 48 * nullifiers.len());
+    let mut preimage = Vec::with_capacity(12 + 2 + 2 + 48 + 48 * nullifiers.len());
     preimage.extend_from_slice(b"non-transfer");
     preimage.extend_from_slice(&family_id.to_le_bytes());
     preimage.extend_from_slice(&action_id.to_le_bytes());
-    preimage.extend_from_slice(&semantic_hash);
+    preimage.extend_from_slice(semantic_hash.as_bytes());
     for nullifier in nullifiers {
         preimage.extend_from_slice(nullifier);
     }
@@ -3013,7 +3765,7 @@ pub(crate) fn native_bridge_verifier_registration_policy_input(
         descriptor_matches_release: registration.is_some_and(|registration| {
             registration.source_chain_id == HEGEMON_CHAIN_ID_V1
                 && registration.verifier_program_hash == HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1
-                && registration.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_V1
+                && registration.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE
         }),
         activation_height_reached: registration
             .is_some_and(|registration| registration.enabled_at_height == 0),
@@ -3441,7 +4193,7 @@ pub(crate) fn verify_inbound_bridge_receipt(
     let output = verify_risc0_bridge_receipt(&receipt, HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1)?;
     let admission_input = NativeInboundBridgeReceiptAdmissionInput {
         source_chain_matches: output.source_chain_id == args.source_chain_id,
-        rules_hash_matches: output.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+        rules_hash_matches: output.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
         message_nonce_matches: output.message_nonce == args.source_message_nonce,
         message_hash_matches: output.message_hash == args.message.message_hash(),
         checkpoint_height: output.checkpoint_height,
@@ -3487,7 +4239,7 @@ pub(crate) fn enforce_verified_inbound_bridge_mint_replay_policy(
         receipt_envelope_present: !args.proof_receipt.is_empty(),
         receipt_verified: true,
         receipt_payload_matches: output.source_chain_id == args.source_chain_id
-            && output.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_V1
+            && output.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE
             && output.message_nonce == args.source_message_nonce
             && output.message_hash == args.message.message_hash(),
         replay_state,
@@ -3549,10 +4301,27 @@ pub(crate) fn bridge_inbound_replay_key_from_action(
     )))
 }
 
-pub(crate) fn inbound_replay_state_for_mempool(state: &NativeState) -> Result<InboundReplayState> {
+pub(crate) fn inbound_replay_state_for_mempool_with_projection<F>(
+    state: &NativeState,
+    mut replay_key_from_action: F,
+) -> Result<InboundReplayState>
+where
+    F: FnMut(&PendingAction) -> Result<Option<[u8; 48]>>,
+{
+    if pending_action_derived_indexes_are_structurally_current(state) {
+        return Ok(InboundReplayState::new(
+            state.consumed_bridge_messages.clone(),
+            state.pending_bridge_replay_keys.clone(),
+        ));
+    }
+
+    // Defensive/test fallback for a manually assembled pending map. The
+    // production mutation API maintains `pending_bridge_replay_keys` exactly,
+    // so normal admission clones two persistent roots and performs O(log n)
+    // exact membership rather than rescanning/decoding the whole mempool.
     let mut pending = BTreeSet::new();
     for action in state.pending_actions.values() {
-        if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
+        if let Some(replay_key) = replay_key_from_action(action)? {
             if !pending.insert(replay_key) {
                 return Err(anyhow!("duplicate inbound bridge message already pending"));
             }
@@ -3562,6 +4331,10 @@ pub(crate) fn inbound_replay_state_for_mempool(state: &NativeState) -> Result<In
         state.consumed_bridge_messages.clone(),
         pending,
     ))
+}
+
+pub(crate) fn inbound_replay_state_for_mempool(state: &NativeState) -> Result<InboundReplayState> {
+    inbound_replay_state_for_mempool_with_projection(state, bridge_inbound_replay_key_from_action)
 }
 
 pub(crate) fn shielded_nullifier_state_for_mempool(state: &NativeState) -> NullifierState {
@@ -3615,7 +4388,7 @@ pub(crate) fn decode_block_actions(meta: &NativeBlockMeta) -> Result<Vec<Pending
     .map_err(native_action_hash_admission_error)?;
     let mut actions = Vec::with_capacity(meta.action_bytes.len());
     for bytes in &meta.action_bytes {
-        let action = decode_scale_exact::<PendingAction>(bytes, "native block action")?;
+        let action = decode_pending_action_v3_exact(bytes, "native block action")?;
         if action.encode().as_slice() != bytes.as_slice() {
             return Err(anyhow!(
                 "native block action has noncanonical SCALE encoding"
@@ -3722,6 +4495,15 @@ pub(crate) fn candidate_artifact_action_scope_valid(action: &PendingAction) -> b
 }
 
 pub(crate) fn coinbase_action_scope_valid(action: &PendingAction) -> bool {
+    if is_poseidon2_v8_coinbase_action(action) {
+        return action.nullifiers.is_empty()
+            && action.commitments.is_empty()
+            && action.ciphertext_hashes.len() == 1
+            && action.ciphertext_sizes.len() == 1
+            && action.fee == 0
+            && action.anchor == [0u8; 48]
+            && action.candidate_artifact.is_none();
+    }
     action.nullifiers.is_empty()
         && action.commitments.len() == 1
         && action.ciphertext_hashes.len() == 1
@@ -3732,6 +4514,18 @@ pub(crate) fn coinbase_action_scope_valid(action: &PendingAction) -> bool {
 }
 
 pub(crate) fn transfer_action_scope_valid(action: &PendingAction) -> bool {
+    if is_poseidon2_v8_action(action) {
+        return action.anchor == [0u8; 48]
+            && action.nullifiers.is_empty()
+            && action.commitments.is_empty()
+            && action.candidate_artifact.is_none()
+            && action.ciphertext_hashes.len() <= 2
+            && action.ciphertext_hashes.len() == action.ciphertext_sizes.len()
+            && action.ciphertext_sizes.iter().all(|size| {
+                *size as usize
+                    == protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_CIPHERTEXT_BYTES
+            });
+    }
     !action.nullifiers.is_empty()
         && action.nullifiers.len() <= transaction_core::constants::MAX_INPUTS
         && !action.commitments.is_empty()
@@ -3928,7 +4722,7 @@ pub(crate) fn evaluate_native_block_action_validation_start(
     action_count_matches: bool,
     action_hashes_match: bool,
     action_hashes_unique: bool,
-    consumed_bridge_messages: BTreeSet<[u8; 48]>,
+    consumed_bridge_messages: impl Into<PersistentKeySet48>,
 ) -> Result<NativeBlockActionValidationState, NativeBlockActionValidationRejection> {
     evaluate_native_action_hash_admission(NativeActionHashAdmissionInput {
         action_count_matches,
@@ -3968,15 +4762,17 @@ pub(crate) fn evaluate_native_block_action_validation_step(
             }
         }
         NativeActionScopeAdmissionRoute::Transfer => {
-            if !transfer_key_extends_canonical_order(
-                state.previous_transfer_key.as_ref(),
-                &step.transfer_key,
-            ) {
-                return Err(NativeBlockActionValidationRejection::TransferOrderInvalid);
+            if step.enforce_legacy_transfer_order {
+                if !transfer_key_extends_canonical_order(
+                    state.previous_transfer_key.as_ref(),
+                    &step.transfer_key,
+                ) {
+                    return Err(NativeBlockActionValidationRejection::TransferOrderInvalid);
+                }
+                state.previous_transfer_key = Some(step.transfer_key);
+                evaluate_native_transfer_state_admission(step.transfer_state_input)
+                    .map_err(native_block_action_validation_transfer_rejection)?;
             }
-            state.previous_transfer_key = Some(step.transfer_key);
-            evaluate_native_transfer_state_admission(step.transfer_state_input)
-                .map_err(native_block_action_validation_transfer_rejection)?;
         }
         NativeActionScopeAdmissionRoute::CandidateArtifact
         | NativeActionScopeAdmissionRoute::Coinbase => {}

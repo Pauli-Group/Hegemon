@@ -477,6 +477,7 @@ theorem accepted_materialized_sidecar_da_blob_publication
       _inputCount,
       _outputCount,
       _version,
+      _merkleRootAnchor,
       _fee,
       _stablecoinPayload,
       _balanceTag,

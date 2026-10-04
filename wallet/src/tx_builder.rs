@@ -25,6 +25,7 @@ use crate::multisig::{
 #[cfg(feature = "rpc-client")]
 use crate::node_rpc::NodeRpcClient;
 use crate::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
+use crate::prover::FreshTransactionProofAuthority;
 use crate::rpc::TransactionBundle;
 use crate::store::{
     LocalMultisigAccumulatorOpening, LocalMultisigValueLockOpening, OutgoingDisclosureDraft,
@@ -79,19 +80,35 @@ struct SubmissionProofMaterial {
     value_balance: i128,
 }
 
+fn fresh_inline_proof_authority(
+    store: &WalletStore,
+) -> Result<FreshTransactionProofAuthority, WalletError> {
+    FreshTransactionProofAuthority::from_wallet_store(
+        store,
+        protocol_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+    )
+}
+
 fn submission_proof_material_from_witness(
     witness: &TransactionWitness,
+    authority: &FreshTransactionProofAuthority,
 ) -> Result<SubmissionProofMaterial, WalletError> {
     submission_proof_material_from_witness_with_auth(
         witness,
         &SmallwoodPrivateAuthWitness::default(),
+        authority,
     )
 }
 
 fn submission_proof_material_from_witness_with_auth(
     witness: &TransactionWitness,
     auth: &SmallwoodPrivateAuthWitness,
+    authority: &FreshTransactionProofAuthority,
 ) -> Result<SubmissionProofMaterial, WalletError> {
+    authority.ensure_route(
+        protocol_shielded_pool::family::ACTION_SHIELDED_TRANSFER_INLINE,
+        witness.version,
+    )?;
     witness
         .validate()
         .map_err(|err| WalletError::InvalidArgument(Box::leak(err.to_string().into_boxed_str())))?;
@@ -324,6 +341,7 @@ pub fn build_transaction_with_binding(
         .iter()
         .map(|ct| ct.to_da_bytes().map(|bytes| ciphertext_hash_bytes(&bytes)))
         .collect::<Result<Vec<_>, _>>()?;
+    let authority = fresh_inline_proof_authority(store)?;
     let witness = TransactionWitness {
         inputs,
         outputs,
@@ -333,10 +351,10 @@ pub fn build_transaction_with_binding(
         fee,
         value_balance: 0,
         stablecoin: stablecoin.clone(),
-        version: TransactionWitness::default_version_binding(),
+        version: authority.binding(),
     };
 
-    let submission = submission_proof_material_from_witness(&witness)?;
+    let submission = submission_proof_material_from_witness(&witness, &authority)?;
 
     // Compute binding hash commitment (domain-separated Blake2-256 of public inputs)
     let binding_hash = compute_binding_hash(
@@ -432,6 +450,7 @@ pub fn build_multisig_initial_accumulator_transaction(
     )?;
     let ciphertext_hashes = ciphertext_hashes(&ciphertexts)?;
     let tree = store.commitment_tree()?;
+    let authority = fresh_inline_proof_authority(store)?;
     let witness = TransactionWitness {
         inputs: vec![checked_input_witness(store, &tree, &funding_note)?],
         outputs,
@@ -441,11 +460,12 @@ pub fn build_multisig_initial_accumulator_transaction(
         fee,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
-        version: TransactionWitness::default_version_binding(),
+        version: authority.binding(),
     };
     let built = built_transaction_from_witness(
         &witness,
         &SmallwoodPrivateAuthWitness::default(),
+        &authority,
         &ciphertexts,
         vec![funding_note.index],
         outgoing_disclosures,
@@ -552,6 +572,7 @@ pub fn build_multisig_approval_transaction(
         checked_input_witness(store, &tree, &signer_note)?,
     ];
     let ciphertext_hashes = ciphertext_hashes(&ciphertexts)?;
+    let authority = fresh_inline_proof_authority(store)?;
     let witness = TransactionWitness {
         inputs,
         outputs,
@@ -561,7 +582,7 @@ pub fn build_multisig_approval_transaction(
         fee,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
-        version: TransactionWitness::default_version_binding(),
+        version: authority.binding(),
     };
     let auth = SmallwoodPrivateAuthWitness {
         mode: SmallwoodPrivateAuthMode::ApprovalStep,
@@ -572,6 +593,7 @@ pub fn build_multisig_approval_transaction(
     let built = built_transaction_from_witness(
         &witness,
         &auth,
+        &authority,
         &ciphertexts,
         vec![current_note.index, signer_note.index],
         outgoing_disclosures,
@@ -677,6 +699,7 @@ fn prepare_multisig_final_plan_for_note(
     let dummy_acc_note = dummy_accumulator_input(&dummy_accumulator)?;
     let mut value_input = value_note.recovered.to_input_witness(value_note.position);
     value_input.merkle_path = Default::default();
+    let authority = fresh_inline_proof_authority(store)?;
     let witness = TransactionWitness {
         inputs: vec![value_input, dummy_acc_note],
         outputs: outputs.clone(),
@@ -690,7 +713,7 @@ fn prepare_multisig_final_plan_for_note(
         fee,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
-        version: TransactionWitness::default_version_binding(),
+        version: authority.binding(),
     };
     let auth = SmallwoodPrivateAuthWitness {
         mode: SmallwoodPrivateAuthMode::FinalThresholdSpend,
@@ -842,6 +865,7 @@ pub fn build_multisig_value_lock_transaction(
     let ciphertexts = vec![locked_ciphertext];
     let ciphertext_hashes = ciphertext_hashes(&ciphertexts)?;
     let tree = store.commitment_tree()?;
+    let authority = fresh_inline_proof_authority(store)?;
     let witness = TransactionWitness {
         inputs: vec![checked_input_witness(store, &tree, &source_note)?],
         outputs: vec![locked_output],
@@ -851,11 +875,12 @@ pub fn build_multisig_value_lock_transaction(
         fee: lock_fee,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
-        version: TransactionWitness::default_version_binding(),
+        version: authority.binding(),
     };
     let built = built_transaction_from_witness(
         &witness,
         &SmallwoodPrivateAuthWitness::default(),
+        &authority,
         &ciphertexts,
         vec![source_note.index],
         Vec::new(),
@@ -944,6 +969,7 @@ pub fn build_multisig_final_transaction_from_plan(
         checked_input_witness(store, &tree, &value_note)?,
         checked_input_witness(store, &tree, &accumulator_note)?,
     ];
+    let authority = fresh_inline_proof_authority(store)?;
     let witness = TransactionWitness {
         inputs,
         outputs: plan.outputs.clone(),
@@ -953,7 +979,7 @@ pub fn build_multisig_final_transaction_from_plan(
         fee: plan.fee,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
-        version: TransactionWitness::default_version_binding(),
+        version: authority.binding(),
     };
     let auth = SmallwoodPrivateAuthWitness {
         mode: SmallwoodPrivateAuthMode::FinalThresholdSpend,
@@ -971,6 +997,7 @@ pub fn build_multisig_final_transaction_from_plan(
     built_transaction_from_witness(
         &witness,
         &auth,
+        &authority,
         &plan.ciphertexts,
         vec![value_note.index, accumulator_note.index],
         plan.outgoing_disclosures.clone(),
@@ -1104,6 +1131,7 @@ pub fn build_stablecoin_burn(
         .iter()
         .map(|ct| ct.to_da_bytes().map(|bytes| ciphertext_hash_bytes(&bytes)))
         .collect::<Result<Vec<_>, _>>()?;
+    let authority = fresh_inline_proof_authority(store)?;
     let witness = TransactionWitness {
         inputs,
         outputs,
@@ -1113,10 +1141,10 @@ pub fn build_stablecoin_burn(
         fee,
         value_balance: 0,
         stablecoin: stablecoin.clone(),
-        version: TransactionWitness::default_version_binding(),
+        version: authority.binding(),
     };
 
-    let submission = submission_proof_material_from_witness(&witness)?;
+    let submission = submission_proof_material_from_witness(&witness, &authority)?;
 
     let binding_hash = compute_binding_hash(
         &submission.anchor,
@@ -1281,6 +1309,7 @@ pub fn build_consolidation_transaction(
     }
 
     let ciphertext_hashes = vec![ciphertext_hash_bytes(&ciphertext.to_da_bytes()?)];
+    let authority = fresh_inline_proof_authority(store)?;
     let witness = TransactionWitness {
         inputs,
         outputs: vec![output],
@@ -1290,10 +1319,10 @@ pub fn build_consolidation_transaction(
         fee,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
-        version: TransactionWitness::default_version_binding(),
+        version: authority.binding(),
     };
 
-    let submission = submission_proof_material_from_witness(&witness)?;
+    let submission = submission_proof_material_from_witness(&witness, &authority)?;
 
     let binding_hash = compute_binding_hash(
         &submission.anchor,
@@ -1371,11 +1400,12 @@ fn to_chain_stablecoin_binding(
 fn built_transaction_from_witness(
     witness: &TransactionWitness,
     auth: &SmallwoodPrivateAuthWitness,
+    authority: &FreshTransactionProofAuthority,
     ciphertexts: &[NoteCiphertext],
     spent_note_indexes: Vec<usize>,
     outgoing_disclosures: Vec<OutgoingDisclosureDraft>,
 ) -> Result<BuiltTransaction, WalletError> {
-    let submission = submission_proof_material_from_witness_with_auth(witness, auth)?;
+    let submission = submission_proof_material_from_witness_with_auth(witness, auth, authority)?;
     let binding_hash = compute_binding_hash(
         &submission.anchor,
         &submission.nullifiers,
@@ -2055,9 +2085,6 @@ fn build_output(
 mod tests {
     use rand::{rngs::StdRng, SeedableRng};
     use serde::Deserialize;
-    use superneo_hegemon::{
-        decode_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_artifact_bytes,
-    };
     use tempfile::{tempdir, TempDir};
 
     use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
@@ -2187,30 +2214,6 @@ mod tests {
             .unwrap()
     }
 
-    fn apply_built_outputs(store: &WalletStore, built: &BuiltTransaction) {
-        let start = store.next_commitment_index().unwrap();
-        let entries: Vec<_> = built
-            .bundle
-            .commitments
-            .iter()
-            .enumerate()
-            .map(|(idx, commitment)| (start + idx as u64, *commitment))
-            .collect();
-        store.append_commitments(&entries).unwrap();
-        let ciphertexts = built.bundle.decode_notes().unwrap();
-        let fvk = store.full_viewing_key().unwrap().unwrap();
-        let recovered = ciphertexts
-            .iter()
-            .map(|ciphertext| Some(fvk.decrypt_note(ciphertext).unwrap()))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            store
-                .apply_ciphertext_batch(store.next_ciphertext_index().unwrap(), recovered)
-                .unwrap(),
-            ciphertexts.len()
-        );
-    }
-
     #[test]
     fn multisig_setup_requires_spendable_native_funding_note() {
         let dir = tempdir().unwrap();
@@ -2272,7 +2275,7 @@ mod tests {
     }
 
     #[test]
-    fn multisig_setup_bundle_has_fee_nullifier_and_reconciled_accumulator() {
+    fn multisig_setup_builder_fails_closed_without_fresh_authority() {
         let dir = tempdir().unwrap();
         let sender_path = dir.path().join("sender.wallet");
         let sender = WalletStore::create_full(&sender_path, "passphrase").unwrap();
@@ -2282,35 +2285,20 @@ mod tests {
         let notes = sender.spendable_notes(NATIVE_ASSET_ID).unwrap();
         let funding_commitment = felts_to_bytes48(&notes[0].recovered.note_data.commitment());
 
-        let setup = build_multisig_initial_accumulator_transaction(
+        let error = build_multisig_initial_accumulator_transaction(
             &sender,
             &record,
             [5u8; 48],
             funding_commitment,
             4,
         )
-        .unwrap();
-        assert_eq!(setup.bundle.fee, 4);
-        assert_eq!(setup.spent_note_indexes.len(), 1);
-        assert!(setup
-            .bundle
-            .nullifiers
-            .iter()
-            .any(|nullifier| nullifier.iter().any(|byte| *byte != 0)));
-        apply_built_outputs(&sender, &setup);
-
-        let accumulator_commitment = setup.bundle.commitments[0];
-        let local = sender
-            .local_note_opening_by_commitment(&accumulator_commitment)
-            .unwrap()
-            .unwrap();
-        assert_eq!(local.commitment, accumulator_commitment);
-        assert_eq!(
-            felts_to_bytes48(&local.note.note_data.commitment()),
-            accumulator_commitment
-        );
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("no fresh transaction proof authority"));
+        assert_eq!(sender.spendable_notes(NATIVE_ASSET_ID).unwrap().len(), 1);
         assert!(sender
-            .spendable_note_by_commitment(&accumulator_commitment)
+            .spendable_note_by_commitment(&funding_commitment)
             .unwrap()
             .is_some());
     }
@@ -2393,7 +2381,7 @@ mod tests {
     }
 
     #[test]
-    fn multisig_builders_create_approval_and_final_transactions_with_hidden_policy_shape() {
+    fn multisig_value_lock_fails_closed_without_fresh_authority() {
         let dir = tempdir().unwrap();
         let sender_path = dir.path().join("sender.wallet");
         let recipient_path = dir.path().join("recipient.wallet");
@@ -2404,26 +2392,15 @@ mod tests {
         seed_recovered_note(&sender, NATIVE_ASSET_ID, 25, 1, &mut rng);
         seed_recovered_note(&sender, NATIVE_ASSET_ID, 60, 2, &mut rng);
         let notes = sender.spendable_notes(NATIVE_ASSET_ID).unwrap();
-        let setup_funding_commitment = felts_to_bytes48(&notes[0].recovered.note_data.commitment());
-        let signer_note_commitment = felts_to_bytes48(&notes[1].recovered.note_data.commitment());
         let value_note_commitment = felts_to_bytes48(&notes[2].recovered.note_data.commitment());
-
-        let local_signer = sender.local_multisig_signer_tag().unwrap();
-        let other_signer = crate::multisig::signer_tag_from_spend_key(&[77u8; 32]);
-        let public = sender
-            .create_multisig_account(1, vec![local_signer, other_signer])
-            .unwrap();
-        let record = sender
-            .multisig_account_record(&public.account_id)
-            .unwrap()
-            .unwrap();
+        let record = test_multisig_record(&sender);
         let recipient = Recipient {
             address: recipient_store.primary_address().unwrap(),
             value: 40,
             asset_id: NATIVE_ASSET_ID,
             memo: MemoPlaintext::new(b"private multisig final".to_vec()),
         };
-        let err = prepare_multisig_final_plan(
+        let plan_error = prepare_multisig_final_plan(
             &sender,
             &record,
             value_note_commitment,
@@ -2436,205 +2413,27 @@ mod tests {
             0,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("not locked"));
-
-        let value_lock = build_multisig_value_lock_transaction(
-            &sender,
-            &record,
-            value_note_commitment,
-            &[recipient],
-            0,
-            2,
-        )
-        .unwrap();
-        assert_eq!(value_lock.transaction.spent_note_indexes.len(), 1);
-        apply_built_outputs(&sender, &value_lock.transaction);
-        let final_plan = value_lock.final_plan.clone();
-        let locked_value_note_commitment = value_lock.locked_value_note_commitment;
-        assert_eq!(
-            final_plan.value_note_commitment,
-            locked_value_note_commitment
-        );
-        let locked_local = sender
-            .local_note_opening_by_commitment(&locked_value_note_commitment)
-            .unwrap()
-            .unwrap();
-        let locked_meta = locked_local.multisig_value_lock.as_ref().unwrap();
-        assert_eq!(locked_meta.intent_digest, final_plan.intent_digest);
-        assert!(locked_meta.final_plan_bytes.is_some());
-        sender
-            .mark_notes_pending(&value_lock.transaction.spent_note_indexes, true)
-            .unwrap();
-        let bypass_recipient = Recipient {
-            address: recipient_store.primary_address().unwrap(),
-            value: 50,
-            asset_id: NATIVE_ASSET_ID,
-            memo: MemoPlaintext::default(),
-        };
-        let bypass_err = build_transaction(&sender, &[bypass_recipient], 0).unwrap_err();
-        assert!(bypass_err
+        assert!(plan_error
             .to_string()
-            .contains("native tx-leaf artifact generation failed"));
+            .contains("no fresh transaction proof authority"));
 
-        let reloaded_final_plan = prepare_multisig_final_plan(
-            &sender,
-            &record,
-            locked_value_note_commitment,
-            &[Recipient {
-                address: recipient_store.primary_address().unwrap(),
-                value: 40,
-                asset_id: NATIVE_ASSET_ID,
-                memo: MemoPlaintext::new(b"private multisig final".to_vec()),
-            }],
-            0,
-        )
-        .unwrap();
-        assert_eq!(reloaded_final_plan.intent_digest, final_plan.intent_digest);
-
-        let setup = build_multisig_initial_accumulator_transaction(
-            &sender,
-            &record,
-            final_plan.intent_digest,
-            setup_funding_commitment,
-            3,
-        )
-        .unwrap();
-        assert_eq!(setup.spent_note_indexes.len(), 1);
-        assert_eq!(setup.bundle.fee, 3);
-        assert!(setup
-            .bundle
-            .nullifiers
-            .iter()
-            .any(|nullifier| nullifier.iter().any(|byte| *byte != 0)));
-        apply_built_outputs(&sender, &setup);
-        let initial_accumulator_commitment = setup.bundle.commitments[0];
-        let initial_tracked = sender
-            .spendable_note_by_commitment(&initial_accumulator_commitment)
-            .unwrap()
-            .unwrap();
-        assert_eq!(initial_tracked.recovered.note_data.pk_auth, {
-            let local = sender
-                .local_note_opening_by_commitment(&initial_accumulator_commitment)
-                .unwrap()
-                .unwrap();
-            local.note.note_data.pk_auth
-        });
-
-        let approval = build_multisig_approval_transaction(
-            &sender,
-            &record,
-            initial_accumulator_commitment,
-            signer_note_commitment,
-            0,
-        )
-        .unwrap();
-        assert_eq!(approval.spent_note_indexes.len(), 2);
-        apply_built_outputs(&sender, &approval);
-        let threshold_accumulator_commitment = approval.bundle.commitments[0];
-        let threshold_local = sender
-            .local_note_opening_by_commitment(&threshold_accumulator_commitment)
-            .unwrap()
-            .unwrap();
-        let threshold_meta = threshold_local.multisig_accumulator.unwrap();
-        assert_eq!(threshold_meta.intent_digest, final_plan.intent_digest);
-        assert_eq!(threshold_meta.approval_count, 1);
-        let local_slot = record
-            .policy_signer_tags
-            .iter()
-            .position(|tag| *tag == local_signer)
-            .unwrap();
-        let mut expected_slots = [0u64; SMALLWOOD_MULTISIG_MAX_SIGNERS];
-        expected_slots[local_slot] = 1;
-        assert_eq!(threshold_meta.approved_slots, expected_slots);
-
-        let final_tx = build_multisig_final_transaction_from_plan(
-            &sender,
-            &record,
-            &final_plan,
-            threshold_accumulator_commitment,
-        )
-        .unwrap();
-        assert_eq!(final_tx.spent_note_indexes.len(), 2);
-        assert_eq!(final_tx.bundle.commitments.len(), final_plan.outputs.len());
-        let public_json = serde_json::to_string(&final_tx.bundle).unwrap();
-        assert!(!public_json.contains("policy_signer_tags"));
-        assert!(!public_json.contains("policy_root"));
-        assert!(!public_json.contains("approval_count"));
-        assert!(!public_json.contains("approved_slots"));
-
-        decode_native_tx_leaf_artifact_bytes(&approval.bundle.proof_bytes).unwrap();
-        decode_native_tx_leaf_artifact_bytes(&final_tx.bundle.proof_bytes).unwrap();
-    }
-
-    #[test]
-    fn multisig_final_rejects_plan_digest_drift() {
-        let dir = tempdir().unwrap();
-        let sender_path = dir.path().join("sender.wallet");
-        let recipient_path = dir.path().join("recipient.wallet");
-        let sender = WalletStore::create_full(&sender_path, "passphrase").unwrap();
-        let recipient_store = WalletStore::create_full(&recipient_path, "passphrase").unwrap();
-        let mut rng = StdRng::seed_from_u64(911);
-        seed_recovered_note(&sender, NATIVE_ASSET_ID, 12, 0, &mut rng);
-        seed_recovered_note(&sender, NATIVE_ASSET_ID, 25, 1, &mut rng);
-        seed_recovered_note(&sender, NATIVE_ASSET_ID, 60, 2, &mut rng);
-        let notes = sender.spendable_notes(NATIVE_ASSET_ID).unwrap();
-        let setup_funding_commitment = felts_to_bytes48(&notes[0].recovered.note_data.commitment());
-        let signer_note_commitment = felts_to_bytes48(&notes[1].recovered.note_data.commitment());
-        let value_note_commitment = felts_to_bytes48(&notes[2].recovered.note_data.commitment());
-        let local_signer = sender.local_multisig_signer_tag().unwrap();
-        let other_signer = crate::multisig::signer_tag_from_spend_key(&[78u8; 32]);
-        let public = sender
-            .create_multisig_account(1, vec![local_signer, other_signer])
-            .unwrap();
-        let record = sender
-            .multisig_account_record(&public.account_id)
-            .unwrap()
-            .unwrap();
-        let recipient = Recipient {
-            address: recipient_store.primary_address().unwrap(),
-            value: 40,
-            asset_id: NATIVE_ASSET_ID,
-            memo: MemoPlaintext::default(),
-        };
-        let value_lock = build_multisig_value_lock_transaction(
+        let lock_error = build_multisig_value_lock_transaction(
             &sender,
             &record,
             value_note_commitment,
             &[recipient],
             0,
             2,
-        )
-        .unwrap();
-        apply_built_outputs(&sender, &value_lock.transaction);
-        let mut final_plan = value_lock.final_plan.clone();
-        let setup = build_multisig_initial_accumulator_transaction(
-            &sender,
-            &record,
-            final_plan.intent_digest,
-            setup_funding_commitment,
-            3,
-        )
-        .unwrap();
-        apply_built_outputs(&sender, &setup);
-        let approval = build_multisig_approval_transaction(
-            &sender,
-            &record,
-            setup.bundle.commitments[0],
-            signer_note_commitment,
-            0,
-        )
-        .unwrap();
-        apply_built_outputs(&sender, &approval);
-        final_plan.intent_digest[0] ^= 1;
-
-        let err = build_multisig_final_transaction_from_plan(
-            &sender,
-            &record,
-            &final_plan,
-            approval.bundle.commitments[0],
         )
         .unwrap_err();
-        assert!(err.to_string().contains("digest does not match"));
+        assert!(lock_error
+            .to_string()
+            .contains("no fresh transaction proof authority"));
+        assert_eq!(sender.spendable_notes(NATIVE_ASSET_ID).unwrap().len(), 3);
+        assert!(sender
+            .spendable_note_by_commitment(&value_note_commitment)
+            .unwrap()
+            .is_some());
     }
 
     fn split_recipient_values(total: u64, count: usize) -> Vec<u64> {
@@ -2932,88 +2731,20 @@ mod tests {
     }
 
     #[test]
-    fn build_transaction_can_emit_native_tx_leaf_payloads() {
-        let (sender, recipient_store, _) = seeded_sender_and_recipient(777);
-        let recipient_fvk = recipient_store.full_viewing_key().unwrap().unwrap();
-
+    fn fresh_transaction_builder_rejects_direct_artifact_bypass_before_proving() {
+        let (sender, recipient_store, _) = seeded_sender_and_recipient(776);
         let recipient = Recipient {
             address: recipient_store.primary_address().unwrap(),
             value: 160_000_000,
-            asset_id: 0,
-            memo: MemoPlaintext::new(b"native tx leaf".to_vec()),
+            asset_id: NATIVE_ASSET_ID,
+            memo: MemoPlaintext::new(b"authority bypass regression".to_vec()),
         };
-        let built = build_transaction(&sender, &[recipient], 0).unwrap();
-        assert_eq!(built.bundle.commitments.len(), 1);
-        assert_eq!(built.outgoing_disclosures.len(), 1);
-        assert_eq!(
-            built.outgoing_disclosures[0].commitment,
-            built.bundle.commitments[0]
-        );
 
-        let decoded_notes = built.bundle.decode_notes().unwrap();
-        assert_eq!(decoded_notes.len(), 1);
-        let recovered = recipient_fvk.decrypt_note(&decoded_notes[0]).unwrap();
-        let recovered_commitment = felts_to_bytes48(&recovered.note_data.commitment());
-        assert_eq!(recovered_commitment, built.bundle.commitments[0]);
-        assert_eq!(
-            felts_to_bytes48(&built.outgoing_disclosures[0].note.commitment()),
-            recovered_commitment
-        );
-
-        let decoded = decode_native_tx_leaf_artifact_bytes(&built.bundle.proof_bytes)
-            .expect("native tx-leaf payload should decode");
-        assert_eq!(decoded.tx.commitments, built.bundle.commitments);
-        let decoded_ciphertext_hashes = decoded_notes
-            .iter()
-            .map(|note| {
-                note.to_da_bytes()
-                    .map(|bytes| ciphertext_hash_bytes(&bytes))
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .expect("decoded notes should serialize to DA bytes");
-        assert_eq!(decoded.tx.ciphertext_hashes.len(), decoded_notes.len());
-        assert_eq!(decoded.tx.ciphertext_hashes, decoded_ciphertext_hashes);
-        let artifact_balance_slot_asset_ids: [u64; 4] = decoded
-            .stark_public_inputs
-            .balance_slot_asset_ids
-            .clone()
-            .try_into()
-            .expect("artifact balance slot count");
-        assert_eq!(decoded.stark_public_inputs.merkle_root, built.bundle.anchor);
-        assert_eq!(decoded.tx.nullifiers, built.bundle.nullifiers);
-        assert_eq!(decoded.tx.commitments, built.bundle.commitments);
-        assert_eq!(decoded.tx.ciphertext_hashes, decoded_ciphertext_hashes);
-        assert_eq!(
-            artifact_balance_slot_asset_ids,
-            built.bundle.balance_slot_asset_ids
-        );
-        assert_eq!(decoded.stark_public_inputs.fee, built.bundle.fee);
-        let artifact_binding_inputs = ShieldedTransferInputs {
-            anchor: decoded.stark_public_inputs.merkle_root,
-            nullifiers: decoded.tx.nullifiers.clone(),
-            commitments: decoded.tx.commitments.clone(),
-            ciphertext_hashes: decoded.tx.ciphertext_hashes.clone(),
-            balance_slot_asset_ids: artifact_balance_slot_asset_ids,
-            fee: decoded.stark_public_inputs.fee,
-            value_balance: 0,
-            stablecoin: None,
-        };
-        assert_eq!(
-            StarkVerifier::compute_binding_hash(&artifact_binding_inputs).data,
-            built.bundle.binding_hash,
-            "wallet action binding hash must match the native tx-leaf artifact binding"
-        );
-        verify_native_tx_leaf_artifact_bytes(
-            &decoded.tx,
-            &decoded.receipt,
-            &built.bundle.proof_bytes,
-        )
-        .expect("native tx-leaf payload should verify");
-        assert_eq!(
-            decoded.receipt.verifier_profile,
-            superneo_hegemon::experimental_native_tx_leaf_verifier_profile()
-        );
-        assert_eq!(built.bundle.nullifiers.len(), built.nullifiers.len());
+        let error = build_transaction(&sender, &[recipient], 0)
+            .expect_err("direct tx-builder artifact construction must fail closed");
+        assert!(error
+            .to_string()
+            .contains("no fresh transaction proof authority"));
     }
 
     #[test]

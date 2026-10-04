@@ -28,7 +28,7 @@ use wallet::{
     transfer_recipients_from_specs,
     tx_builder::Recipient,
     viewing::{IncomingViewingKey, OutgoingViewingKey},
-    RecipientSpec, WalletError,
+    ActionId48, RecipientSpec, WalletError,
 };
 
 #[derive(Parser)]
@@ -555,6 +555,15 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
     let mut metadata_map: BTreeMap<u64, String> = BTreeMap::new();
     // Sync first unless --no-sync is specified
     if !args.no_sync {
+        let store = match WalletStore::open(&args.store, &passphrase) {
+            Ok(store) => store,
+            Err(wallet::WalletError::StoreBusy) => {
+                let snapshot = WalletStore::open_read_only(&args.store, &passphrase)?;
+                println!("Wallet is open in another process; showing its persisted snapshot without additional sync.");
+                return show_status(&snapshot, None);
+            }
+            Err(error) => return Err(error.into()),
+        };
         let runtime = RuntimeBuilder::new_multi_thread()
             .enable_all()
             .build()
@@ -568,7 +577,6 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
                     .map_err(|e| anyhow!("Failed to connect: {}", e))?,
             );
 
-            let store = WalletStore::open(&args.store, &passphrase)?;
             let store_arc = Arc::new(store);
             let engine = AsyncWalletSyncEngine::new(client.clone(), store_arc.clone());
             engine
@@ -591,7 +599,7 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
     }
 
     // Re-open to get synced state
-    let store = WalletStore::open(&args.store, &passphrase)?;
+    let store = WalletStore::open_read_only(&args.store, &passphrase)?;
     let metadata = if metadata_map.is_empty() {
         None
     } else {
@@ -722,7 +730,7 @@ fn show_status(store: &WalletStore, metadata: Option<&BTreeMap<u64, String>>) ->
 
             println!(
                 "  {} status={} {}={}",
-                hex::encode(tx.tx_id),
+                tx.tx_id.external_id(),
                 status,
                 confirmations_label,
                 confirmations
@@ -1023,7 +1031,7 @@ fn cmd_payment_proof_purge(args: PaymentProofPurgeArgs) -> Result<()> {
         .tx
         .as_deref()
         .ok_or_else(|| anyhow!("--tx is required unless --all is set"))?;
-    let tx_id = parse_hex_32(tx)?;
+    let tx_id = ActionId48::new(parse_hex_48(tx)?);
     let output = args
         .output
         .ok_or_else(|| anyhow!("--output is required unless --all is set"))?;
@@ -1313,7 +1321,7 @@ async fn submit_bundle_with_fallback(
     bundle: &wallet::TransactionBundle,
     use_da_sidecar: bool,
     mut use_proof_sidecar: bool,
-) -> Result<[u8; 32], WalletError> {
+) -> Result<ActionId48, WalletError> {
     if use_da_sidecar {
         match client
             .submit_shielded_transfer_unsigned_sidecar_with_proof_mode(
@@ -1573,7 +1581,7 @@ fn cmd_node_send(args: NodeSendArgs) -> Result<()> {
                         args.fee,
                     )?;
                     println!("✓ Transaction submitted successfully!");
-                    println!("  TX Hash: 0x{}", hex::encode(tx_hash));
+                    println!("  TX Hash: 0x{}", hex::encode(tx_hash.as_bytes()));
                     return Ok(());
                 }
                 Err(WalletError::Rpc(msg))
@@ -1630,7 +1638,7 @@ fn cmd_node_send(args: NodeSendArgs) -> Result<()> {
                 Err(e) => {
                     if is_ambiguous_submission_error(&e) {
                         let provisional_tx_id = provisional_pending_tx_id(&built.bundle);
-                        store_arc.record_pending_submission(
+                        store_arc.record_provisional_pending_submission(
                             provisional_tx_id,
                             built.nullifiers.clone(),
                             built.spent_note_indexes.clone(),
@@ -1756,13 +1764,13 @@ fn cmd_stablecoin_mint(args: StablecoinMintArgs) -> Result<()> {
                     args.fee,
                 )?;
                 println!("✓ Mint submitted successfully!");
-                println!("  TX Hash: 0x{}", hex::encode(tx_hash));
+                println!("  TX Hash: 0x{}", hex::encode(tx_hash.as_bytes()));
                 Ok(())
             }
             Err(e) => {
                 if is_ambiguous_submission_error(&e) {
                     let provisional_tx_id = provisional_pending_tx_id(&built.bundle);
-                    store_arc.record_pending_submission(
+                    store_arc.record_provisional_pending_submission(
                         provisional_tx_id,
                         built.nullifiers.clone(),
                         built.spent_note_indexes.clone(),
@@ -1867,13 +1875,13 @@ fn cmd_stablecoin_burn(args: StablecoinBurnArgs) -> Result<()> {
                     args.fee,
                 )?;
                 println!("✓ Burn submitted successfully!");
-                println!("  TX Hash: 0x{}", hex::encode(tx_hash));
+                println!("  TX Hash: 0x{}", hex::encode(tx_hash.as_bytes()));
                 Ok(())
             }
             Err(e) => {
                 if is_ambiguous_submission_error(&e) {
                     let provisional_tx_id = provisional_pending_tx_id(&built.bundle);
-                    store_arc.record_pending_submission(
+                    store_arc.record_provisional_pending_submission(
                         provisional_tx_id,
                         built.nullifiers.clone(),
                         built.spent_note_indexes.clone(),

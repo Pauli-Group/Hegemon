@@ -9,6 +9,7 @@ inductive TxLeafActionBindingReject where
   | inputCountMismatch
   | outputCountMismatch
   | versionMismatch
+  | merkleRootMismatch
   | feeMismatch
   | stablecoinPayloadMismatch
   | balanceTagMismatch
@@ -26,6 +27,7 @@ structure TxLeafActionBindingInput where
   inputCountMatches : Bool
   outputCountMatches : Bool
   versionMatches : Bool
+  merkleRootMatchesAnchor : Bool
   feeMatches : Bool
   stablecoinPayloadMatches : Bool
   balanceTagMatches : Bool
@@ -51,6 +53,8 @@ def evaluateTxLeafActionBinding
     Except.error TxLeafActionBindingReject.outputCountMismatch
   else if !input.versionMatches then
     Except.error TxLeafActionBindingReject.versionMismatch
+  else if !input.merkleRootMatchesAnchor then
+    Except.error TxLeafActionBindingReject.merkleRootMismatch
   else if !input.feeMatches then
     Except.error TxLeafActionBindingReject.feeMismatch
   else if !input.stablecoinPayloadMatches then
@@ -91,6 +95,7 @@ def txLeafActionBindingPreconditions
     && input.inputCountMatches
     && input.outputCountMatches
     && input.versionMatches
+    && input.merkleRootMatchesAnchor
     && input.feeMatches
     && input.stablecoinPayloadMatches
     && input.balanceTagMatches
@@ -119,22 +124,25 @@ theorem tx_leaf_action_accepts_iff_preconditions
           · simp [h4]
             by_cases h5 : input.versionMatches
             · simp [h5]
-              by_cases h6 : input.feeMatches
+              by_cases h6 : input.merkleRootMatchesAnchor
               · simp [h6]
-                by_cases h7 : input.stablecoinPayloadMatches
+                by_cases h7 : input.feeMatches
                 · simp [h7]
-                  by_cases h8 : input.balanceTagMatches
+                  by_cases h8 : input.stablecoinPayloadMatches
                   · simp [h8]
-                    by_cases h9 : input.receiptStatementHashMatches
+                    by_cases h9 : input.balanceTagMatches
                     · simp [h9]
-                      by_cases h10 : input.publicInputsDigestMatches
+                      by_cases h10 : input.receiptStatementHashMatches
                       · simp [h10]
-                        by_cases h11 : input.proofDigestMatches
+                        by_cases h11 : input.publicInputsDigestMatches
                         · simp [h11]
-                          by_cases h12 : input.proofBackendMatches
+                          by_cases h12 : input.proofDigestMatches
                           · simp [h12]
-                            by_cases h13 : input.ciphertextPayloadHashesMatch
+                            by_cases h13 : input.proofBackendMatches
                             · simp [h13]
+                              by_cases h14 : input.ciphertextPayloadHashesMatch
+                              · simp [h14]
+                              · simp [h14]
                             · simp [h13]
                           · simp [h12]
                         · simp [h11]
@@ -158,6 +166,7 @@ def validTxLeafActionBinding : TxLeafActionBindingInput :=
     inputCountMatches := true,
     outputCountMatches := true,
     versionMatches := true,
+    merkleRootMatchesAnchor := true,
     feeMatches := true,
     stablecoinPayloadMatches := true,
     balanceTagMatches := true,
@@ -206,6 +215,12 @@ theorem tx_leaf_version_mismatch_rejects :
     evaluateTxLeafActionBinding
         { validTxLeafActionBinding with versionMatches := false } =
       Except.error TxLeafActionBindingReject.versionMismatch := by
+  rfl
+
+theorem tx_leaf_merkle_root_mismatch_rejects :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with merkleRootMatchesAnchor := false } =
+      Except.error TxLeafActionBindingReject.merkleRootMismatch := by
   rfl
 
 theorem tx_ciphertext_payload_hash_mismatch_rejects :
@@ -307,6 +322,24 @@ theorem tx_leaf_version_precedes_payload_hashes :
           stablecoinPayloadMatches := false,
           ciphertextPayloadHashesMatch := false } =
       Except.error TxLeafActionBindingReject.versionMismatch := by
+  rfl
+
+theorem tx_leaf_version_precedes_merkle_root :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with
+          versionMatches := false,
+          merkleRootMatchesAnchor := false,
+          feeMatches := false } =
+      Except.error TxLeafActionBindingReject.versionMismatch := by
+  rfl
+
+theorem tx_leaf_merkle_root_precedes_fee :
+    evaluateTxLeafActionBinding
+        { validTxLeafActionBinding with
+          merkleRootMatchesAnchor := false,
+          feeMatches := false,
+          stablecoinPayloadMatches := false } =
+      Except.error TxLeafActionBindingReject.merkleRootMismatch := by
   rfl
 
 theorem tx_leaf_fee_precedes_stablecoin_payload :

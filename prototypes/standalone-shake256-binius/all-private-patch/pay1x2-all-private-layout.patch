@@ -1,0 +1,105 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 438be2b5..61c78c73 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -24,6 +24,14 @@ rand = { version = "0.10.1", default-features = false, features = ["std", "std_r
+ serde_json = "1.0.140"
+ standalone-proof-envelope-prototype = { path = "../../../circuits/standalone-proof-envelope-prototype" }
+ 
++[patch."https://github.com/binius-zk/binius64.git"]
++binius-field = { path = "../binius64/crates/field" }
++binius-hash = { path = "../binius64/crates/hash" }
++binius-spartan-frontend = { path = "../binius64/crates/spartan-frontend" }
++binius-spartan-prover = { path = "../binius64/crates/spartan-prover" }
++binius-spartan-verifier = { path = "../binius64/crates/spartan-verifier" }
++binius-transcript = { path = "../binius64/crates/transcript" }
++
+ [profile.dev]
+ opt-level = 1
+ debug = 0
+diff --git a/src/lib.rs b/src/lib.rs
+index 61db7983..3edef5d0 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -90,17 +90,17 @@ pub struct Pay1x2Wires<W: Copy> {
+ 
+ fn allocate_note(builder: &mut ConstraintBuilder<B128>) -> NoteWires<ConstraintWire> {
+     NoteWires {
+-        value: allocate_precommit(builder, U64_BITS),
+-        asset_id: allocate_precommit(builder, U64_BITS),
+-        pk_recipient: allocate_precommit(builder, RECIPIENT_BITS),
+-        rho: allocate_precommit(builder, RHO_BITS),
+-        randomness: allocate_precommit(builder, RANDOMNESS_BITS),
+-        pk_auth: allocate_precommit(builder, DIGEST_BITS),
++        value: allocate_private(builder, U64_BITS),
++        asset_id: allocate_private(builder, U64_BITS),
++        pk_recipient: allocate_private(builder, RECIPIENT_BITS),
++        rho: allocate_private(builder, RHO_BITS),
++        randomness: allocate_private(builder, RANDOMNESS_BITS),
++        pk_auth: allocate_private(builder, DIGEST_BITS),
+     }
+ }
+ 
+-fn allocate_precommit(builder: &mut ConstraintBuilder<B128>, count: usize) -> Vec<ConstraintWire> {
+-    (0..count).map(|_| builder.alloc_precommit()).collect()
++fn allocate_private(builder: &mut ConstraintBuilder<B128>, count: usize) -> Vec<ConstraintWire> {
++    (0..count).map(|_| builder.alloc_private()).collect()
+ }
+ 
+ fn allocate_public(builder: &mut ConstraintBuilder<B128>, count: usize) -> Vec<ConstraintWire> {
+@@ -110,11 +110,11 @@ fn allocate_public(builder: &mut ConstraintBuilder<B128>, count: usize) -> Vec<C
+ /// Allocate the exact 2,448-byte witness and 478-byte HGS2 public statement.
+ pub fn allocate_pay1x2_wires(builder: &mut ConstraintBuilder<B128>) -> Pay1x2Wires<ConstraintWire> {
+     Pay1x2Wires {
+-        spend_key: allocate_precommit(builder, SPEND_KEY_BITS),
++        spend_key: allocate_private(builder, SPEND_KEY_BITS),
+         input_note: allocate_note(builder),
+-        position: allocate_precommit(builder, U64_BITS),
++        position: allocate_private(builder, U64_BITS),
+         siblings: (0..MERKLE_DEPTH)
+-            .map(|_| allocate_precommit(builder, DIGEST_BITS))
++            .map(|_| allocate_private(builder, DIGEST_BITS))
+             .collect(),
+         output_notes: [allocate_note(builder), allocate_note(builder)],
+         statement: StatementWires {
+diff --git a/src/main.rs b/src/main.rs
+index 23e1f983..82058958 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -465,7 +465,7 @@ fn placeholder_bits(
+ ) -> Vec<PublicWire<B128>> {
+     wires
+         .iter()
+-        .map(|&wire| generator.placeholder_precommit(wire))
++        .map(|&wire| generator.placeholder_private(wire))
+         .collect()
+ }
+ 
+@@ -489,7 +489,7 @@ fn write_witness_bits(
+     wires
+         .iter()
+         .zip(field_bits(bytes, wires.len()))
+-        .map(|(&wire, value)| generator.write_precommit(wire, value))
++        .map(|(&wire, value)| generator.write_private(wire, value))
+         .collect()
+ }
+ 
+@@ -1237,6 +1237,10 @@ fn execute(options: Options) -> Value {
+     let compiled_private_wires = constraint_system.n_private();
+     let compiled_precommit_wires = constraint_system.n_precommit();
+     let compiled_public_wires = constraint_system.n_public();
++    assert_eq!(
++        compiled_precommit_wires, 0,
++        "all fixed-relation witness sources must share the private oracle"
++    );
+ 
+     let rate_context = RateContext {
+         constraint_system: &constraint_system,
+@@ -1308,6 +1312,7 @@ fn execute(options: Options) -> Value {
+             "canonical_statement_bound_in_fiat_shamir": true
+         },
+         "constraint_system": {
++            "witness_input_commitment": "private_oracle",
+             "compiled_constraints": compiled_constraints,
+             "expected_compiled_constraints": EXPECTED_COMPILED_CONSTRAINT_ROWS,
+             "compiled_precommit_wires": compiled_precommit_wires,

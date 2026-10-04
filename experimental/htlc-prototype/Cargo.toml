@@ -1,0 +1,20 @@
+[package]
+name = "hegemon-isolated-htlc-prototype"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Deliberately not a member/dependency of Hegemon's production workspace.
+[workspace]
+resolver = "2"
+
+[dependencies]
+sha2 = { version = "=0.10.9", default-features = false }
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false

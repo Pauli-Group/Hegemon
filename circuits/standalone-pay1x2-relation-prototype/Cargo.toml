@@ -1,0 +1,22 @@
+[package]
+name = "hegemon-standalone-pay1x2-relation-prototype"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Keep this prototype outside the production workspace. Building it cannot
+# activate a consensus rule or pull the experimental semantics into the node.
+[workspace]
+resolver = "2"
+
+[dependencies]
+hegemon-standalone-shake256-prototype = { path = "../standalone-shake256-prototype" }
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false
+

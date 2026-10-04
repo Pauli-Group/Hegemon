@@ -1,0 +1,699 @@
+diff --git a/crates/iop-prover/src/basefold/channel.rs b/crates/iop-prover/src/basefold/channel.rs
+index 79c20207..96ea2348 100644
+--- a/crates/iop-prover/src/basefold/channel.rs
++++ b/crates/iop-prover/src/basefold/channel.rs
+@@ -40,7 +40,7 @@ use crate::{
+ };
+ 
+ /// Oracle handle returned by [`BaseFoldProverChannel::send_oracle`].
+-#[derive(Debug, Clone, Copy)]
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub struct BaseFoldOracle {
+ 	index: usize,
+ }
+diff --git a/crates/iop-prover/src/channel/mod.rs b/crates/iop-prover/src/channel/mod.rs
+index 51f94ec3..5952ad54 100644
+--- a/crates/iop-prover/src/channel/mod.rs
++++ b/crates/iop-prover/src/channel/mod.rs
+@@ -40,6 +40,23 @@ pub trait IOPProverChannel<P: PackedField, A: Allocator>: IPProverChannel<P::Sca
+ 	/// * `buffer.log_len()` must match the expected length from the next oracle spec.
+ 	fn send_oracle(&mut self, buffer: FieldSlice<P>) -> Self::Oracle;
+ 
++	/// Commits an oracle whose sole supported opening is an equality-tensor evaluation that may
++	/// be protected by a fresh constant mask.
++	///
++	/// A wrapping channel may commit `buffer + k * 1` for a fresh pre-challenge scalar `k`, then
++	/// replace the eventual evaluation claim `s` by `s + k`. This is valid because an equality
++	/// tensor sums to one over the Boolean hypercube. The default implementation preserves the
++	/// ordinary commitment and is used by channels that do not implement this masking transform.
++	///
++	/// # Preconditions
++	///
++	/// * Every precondition of [`Self::send_oracle`] holds.
++	/// * The caller must open this handle exactly once through
++	///   [`Self::prove_oracle_evaluation_relation`], and must not queue any other relation on it.
++	fn send_evaluation_masked_oracle(&mut self, buffer: FieldSlice<P>) -> Self::Oracle {
++		self.send_oracle(buffer)
++	}
++
+ 	/// Generates an opening proof for one oracle linear relation.
+ 	///
+ 	/// The relation asserts that `<oracle_poly, transparent> = claim`. An oracle may carry any
+@@ -60,6 +77,27 @@ pub trait IOPProverChannel<P: PackedField, A: Allocator>: IPProverChannel<P::Sca
+ 		claim: P::Scalar,
+ 	);
+ 
++	/// Generates an opening proof for an oracle multilinear-evaluation relation.
++	///
++	/// This is the narrower form of [`Self::prove_oracle_relation`] where `transparent` is an
++	/// equality-indicator tensor and therefore its values sum to one over the Boolean hypercube.
++	/// Channels that mask an entire committed oracle by a fresh constant may override this method
++	/// and shift `claim` by that constant without an annihilating evaluation point. The default
++	/// implementation preserves the ordinary channel behavior.
++	///
++	/// # Preconditions
++	///
++	/// * Every precondition of [`Self::prove_oracle_relation`] holds.
++	/// * `transparent.iter_scalars().sum() == P::Scalar::ONE`.
++	fn prove_oracle_evaluation_relation(
++		&mut self,
++		oracle: Self::Oracle,
++		transparent: FieldVec<P, A>,
++		claim: P::Scalar,
++	) {
++		self.prove_oracle_relation(oracle, transparent, claim);
++	}
++
+ 	/// Gives ownership of the oracle buffer to the channel.
+ 	///
+ 	/// The [`Self::send_oracle`] method takes a borrowed reference to an oracle buffer and returns
+diff --git a/crates/iop/src/channel/mod.rs b/crates/iop/src/channel/mod.rs
+index a8e29b8e..3df4ea3f 100644
+--- a/crates/iop/src/channel/mod.rs
++++ b/crates/iop/src/channel/mod.rs
+@@ -100,6 +100,26 @@ pub trait IOPVerifierChannel<F: Field>: IPVerifierChannel<F, Elem: 'static> {
+ 		is_witness_dependent: bool,
+ 	) -> Result<Self::Oracle, Error>;
+ 
++	/// Receives an oracle whose sole supported opening is an equality-tensor evaluation that may
++	/// be protected by a fresh constant mask.
++	///
++	/// A wrapping channel may interpret this as a commitment to `oracle + k * 1`, where `k` is a
++	/// fresh pre-challenge scalar hidden in an outer proof. The matching evaluation claim is then
++	/// shifted by `k`. The default implementation preserves the ordinary oracle behavior.
++	///
++	/// # Preconditions
++	///
++	/// * Every precondition of [`Self::recv_oracle`] holds.
++	/// * The caller must open this handle exactly once through
++	///   [`Self::verify_oracle_evaluation_relation`], and must not queue any other relation on it.
++	fn recv_evaluation_masked_oracle(
++		&mut self,
++		log_msg_len: usize,
++		is_witness_dependent: bool,
++	) -> Result<Self::Oracle, Error> {
++		self.recv_oracle(log_msg_len, is_witness_dependent)
++	}
++
+ 	/// Queues one oracle linear relation to be opened.
+ 	///
+ 	/// Implementations may either verify the relation immediately, or queue it and defer the
+@@ -115,4 +135,20 @@ pub trait IOPVerifierChannel<F: Field>: IPVerifierChannel<F, Elem: 'static> {
+ 		transparent: TransparentEvalFn<Self::Elem>,
+ 		claim: Self::Elem,
+ 	) -> Result<(), Error>;
++
++	/// Queues one oracle multilinear-evaluation relation to be opened.
++	///
++	/// This is the narrower form of [`Self::verify_oracle_relation`] where `transparent` evaluates
++	/// an equality-indicator tensor, whose Boolean-hypercube values sum to one. A channel may use
++	/// this explicit contract to apply a fresh constant mask to the full committed oracle and to
++	/// shift the evaluation claim by the same mask. The default implementation preserves ordinary
++	/// channel behavior.
++	fn verify_oracle_evaluation_relation(
++		&mut self,
++		oracle: Self::Oracle,
++		transparent: TransparentEvalFn<Self::Elem>,
++		claim: Self::Elem,
++	) -> Result<(), Error> {
++		self.verify_oracle_relation(oracle, transparent, claim)
++	}
+ }
+diff --git a/crates/prover/src/prove.rs b/crates/prover/src/prove.rs
+index 540d9b8c..b915e9b2 100644
+--- a/crates/prover/src/prove.rs
++++ b/crates/prover/src/prove.rs
+@@ -117,7 +117,7 @@ impl IOPProver {
+ 		let witness_commit_guard = tracing::info_span!("Commit witness").entered();
+ 
+ 		// Commit witness via channel
+-		let trace_oracle = channel.send_oracle(witness_packed.to_ref());
++		let trace_oracle = channel.send_evaluation_masked_oracle(witness_packed.to_ref());
+ 
+ 		drop(witness_commit_guard);
+ 
+@@ -337,7 +337,7 @@ impl IOPProver {
+ 
+ 		// Prove oracle relations via channel (runs BaseFold internally). The intmul pushforward
+ 		// relation, when the IntMul reduction ran, was already queued inside phase 5.
+-		channel.prove_oracle_relation(trace_oracle.clone(), rs_eq_ind, sumcheck_claim);
++		channel.prove_oracle_evaluation_relation(trace_oracle.clone(), rs_eq_ind, sumcheck_claim);
+ 		channel.finalize_oracle(trace_oracle, witness_packed);
+ 
+ 		drop(pcs_guard);
+diff --git a/crates/spartan-prover/src/wrapper/replay_channel.rs b/crates/spartan-prover/src/wrapper/replay_channel.rs
+index 69bed8c1..5706b35f 100644
+--- a/crates/spartan-prover/src/wrapper/replay_channel.rs
++++ b/crates/spartan-prover/src/wrapper/replay_channel.rs
+@@ -42,6 +42,10 @@ pub struct ReplayChannel<F: Field> {
+ 	precommit_alloc: WireAllocator,
+ 	keys: VecIntoIter<F>,
+ 	events: VecIntoIter<F>,
++	n_oracles: usize,
++	evaluation_mask_key: Option<CircuitElem<F, WitnessGenerator<F>>>,
++	evaluation_mask_active: bool,
++	evaluation_mask_relation_verified: bool,
+ }
+ 
+ impl<F: Field> ReplayChannel<F> {
+@@ -59,6 +63,10 @@ impl<F: Field> ReplayChannel<F> {
+ 			precommit_alloc: WireAllocator::new(WireKind::Precommit),
+ 			keys: keys.into_iter(),
+ 			events: events.into_iter(),
++			n_oracles: 0,
++			evaluation_mask_key: None,
++			evaluation_mask_active: false,
++			evaluation_mask_relation_verified: false,
+ 		}
+ 	}
+ 
+@@ -95,6 +103,10 @@ impl<F: Field> ReplayChannel<F> {
+ 
+ 	/// Consumes the channel and builds the outer witness.
+ 	pub fn finish(self) -> Result<Witness<F>, WitnessError> {
++		assert!(
++			!self.evaluation_mask_active || self.evaluation_mask_relation_verified,
++			"evaluation-masked oracle must have exactly one verified relation"
++		);
+ 		Rc::try_unwrap(self.witness_gen)
+ 			.expect("CircuitElem values should only hold Weak references")
+ 			.into_inner()
+@@ -188,6 +200,24 @@ impl<F: Field> IOPVerifierChannel<F> for ReplayChannel<F> {
+ 		_log_msg_len: usize,
+ 		_is_witness_dependent: bool,
+ 	) -> Result<Self::Oracle, binius_iop::channel::Error> {
++		assert!(
++			!self.evaluation_mask_active,
++			"no ordinary oracle may follow the evaluation-masked trace oracle"
++		);
++		self.n_oracles += 1;
++		Ok(())
++	}
++
++	fn recv_evaluation_masked_oracle(
++		&mut self,
++		_log_msg_len: usize,
++		_is_witness_dependent: bool,
++	) -> Result<Self::Oracle, binius_iop::channel::Error> {
++		assert_eq!(self.n_oracles, 0, "evaluation-masked trace oracle must be first");
++		assert!(!self.evaluation_mask_active, "only one evaluation-masked oracle is supported");
++		self.n_oracles = 1;
++		self.evaluation_mask_active = true;
++		self.evaluation_mask_key = Some(self.next_precommit_elem());
+ 		Ok(())
+ 	}
+ 
+@@ -197,6 +227,10 @@ impl<F: Field> IOPVerifierChannel<F> for ReplayChannel<F> {
+ 		_transparent: TransparentEvalFn<Self::Elem>,
+ 		claim: Self::Elem,
+ 	) -> Result<(), binius_iop::channel::Error> {
++		assert!(
++			!self.evaluation_mask_active,
++			"evaluation-masked oracle accepts only its single equality-tensor relation"
++		);
+ 		// For each oracle opening, the prover sends the decrypted evaluation. The outer verifier
+ 		// checks in the circuit equality of this value with the expected expression over encrypted
+ 		// values.
+@@ -204,6 +238,27 @@ impl<F: Field> IOPVerifierChannel<F> for ReplayChannel<F> {
+ 		self.assert_zero(claim - decrypted_claim)?;
+ 		Ok(())
+ 	}
++
++	fn verify_oracle_evaluation_relation(
++		&mut self,
++		_oracle: Self::Oracle,
++		_transparent: TransparentEvalFn<Self::Elem>,
++		claim: Self::Elem,
++	) -> Result<(), binius_iop::channel::Error> {
++		assert!(self.evaluation_mask_active, "no evaluation-masked oracle was received");
++		assert!(
++			!self.evaluation_mask_relation_verified,
++			"evaluation-masked relation verified twice"
++		);
++		let key = self
++			.evaluation_mask_key
++			.take()
++			.expect("evaluation mask key must be allocated with the oracle");
++		let masked_claim = self.next_inout_elem();
++		self.assert_zero(masked_claim - claim - key)?;
++		self.evaluation_mask_relation_verified = true;
++		Ok(())
++	}
+ }
+ 
+ #[cfg(test)]
+diff --git a/crates/spartan-prover/src/wrapper/zk_wrapped_prover_channel.rs b/crates/spartan-prover/src/wrapper/zk_wrapped_prover_channel.rs
+index e0db8b26..b4c725c6 100644
+--- a/crates/spartan-prover/src/wrapper/zk_wrapped_prover_channel.rs
++++ b/crates/spartan-prover/src/wrapper/zk_wrapped_prover_channel.rs
+@@ -29,6 +29,15 @@ use rand::CryptoRng;
+ 
+ use crate::{Error, IOPProver, pack_and_blind_witness, wrapper::ReplayChannel};
+ 
++/// State for the one inner trace oracle whose equality evaluation is protected by a constant
++/// one-time mask. The mask is part of the already committed outer precommit segment, so it is
++/// fixed before the inner verifier samples the evaluation point.
++struct EvaluationMaskState<F> {
++	oracle: BaseFoldOracle,
++	key: F,
++	relation_queued: bool,
++}
++
+ /// A prover channel that wraps a [`BaseFoldProverChannel`] and an outer Spartan IOP prover.
+ ///
+ /// This channel records all channel values. On
+@@ -57,6 +66,9 @@ where
+ 	keys: Vec<P::Scalar>,
+ 	next_key_idx: usize,
+ 	interaction: Vec<P::Scalar>,
++	/// The sole inner oracle committed as `pi + key * 1`. This wrapper deliberately supports
++	/// exactly one equality-tensor relation on that oracle; any other relation fails closed.
++	evaluation_mask: Option<EvaluationMaskState<P::Scalar>>,
+ 	/// Handle to the outer precommit oracle committed at construction time. The buffer
+ 	/// (`precommit_packed`) is purely random — it is the one-time-pad encryption key for the
+ 	/// outer encrypted transcript (to be wired up in a follow-up; for now the outer circuit has
+@@ -138,6 +150,7 @@ where
+ 			keys,
+ 			next_key_idx: 0,
+ 			interaction: Vec::new(),
++			evaluation_mask: None,
+ 			precommit_oracle,
+ 			precommit_packed,
+ 			n_outer_suffix_oracles: suffix_len,
+@@ -182,6 +195,15 @@ where
+ 		key
+ 	}
+ 
++	fn shift_buffer(&self, buffer: FieldSlice<P>, key: F) -> FieldVec<P, A> {
++		let mut shifted = FieldVec::<P, A>::clone_from_slice(self.alloc, buffer);
++		for index in 0..shifted.len() {
++			let value = shifted.get(index);
++			shifted.set(index, value + key);
++		}
++		shifted
++	}
++
+ 	/// Consumes the channel and runs the outer proof.
+ 	///
+ 	/// This should be called after the inner proof has been run through this channel.
+@@ -193,6 +215,10 @@ where
+ 	where
+ 		ReplayFn: FnOnce(&mut ReplayChannel<F>),
+ 	{
++		assert!(
++			self.evaluation_mask.is_none(),
++			"evaluation-masked oracle must be opened and finalized before wrapper finish"
++		);
+ 		let Self {
+ 			mut inner_channel,
+ 			outer_prover,
+@@ -311,6 +337,10 @@ where
+ 	}
+ 
+ 	fn send_oracle(&mut self, buffer: FieldSlice<P>) -> Self::Oracle {
++		assert!(
++			self.evaluation_mask.is_none(),
++			"no ordinary inner oracle may follow the evaluation-masked trace oracle"
++		);
+ 		assert!(
+ 			!self.remaining_oracle_specs().is_empty(),
+ 			"send_oracle called but no inner oracle specs remaining"
+@@ -318,12 +348,40 @@ where
+ 		self.inner_channel.send_oracle(buffer)
+ 	}
+ 
++	fn send_evaluation_masked_oracle(&mut self, buffer: FieldSlice<P>) -> Self::Oracle {
++		assert!(
++			self.evaluation_mask.is_none(),
++			"only one evaluation-masked inner oracle is supported"
++		);
++		assert_eq!(
++			self.remaining_oracle_specs().len(),
++			1,
++			"evaluation masking supports exactly one inner oracle"
++		);
++
++		let key = self.next_key();
++		let shifted = self.shift_buffer(buffer, key);
++		let oracle = self.inner_channel.send_oracle(shifted.to_ref());
++		self.evaluation_mask = Some(EvaluationMaskState {
++			oracle,
++			key,
++			relation_queued: false,
++		});
++		oracle
++	}
++
+ 	fn prove_oracle_relation(
+ 		&mut self,
+ 		oracle: Self::Oracle,
+ 		transparent: FieldVec<P, A>,
+ 		claim: P::Scalar,
+ 	) {
++		assert!(
++			self.evaluation_mask
++				.as_ref()
++				.is_none_or(|state| state.oracle != oracle),
++			"evaluation-masked oracle accepts only its single equality-tensor relation"
++		);
+ 		// For each oracle opening, the prover sends the decrypted evaluation. The outer verifier
+ 		// checks in the circuit equality of this value with the expected expression over encrypted
+ 		// values.
+@@ -334,7 +392,55 @@ where
+ 			.prove_oracle_relation(oracle, transparent, claim)
+ 	}
+ 
++	fn prove_oracle_evaluation_relation(
++		&mut self,
++		oracle: Self::Oracle,
++		transparent: FieldVec<P, A>,
++		claim: P::Scalar,
++	) {
++		let transparent_sum = transparent
++			.iter_scalars()
++			.fold(F::ZERO, |sum, value| sum + value);
++		assert_eq!(
++			transparent_sum,
++			F::ONE,
++			"evaluation-masked relation requires a tensor whose hypercube sum is one"
++		);
++
++		let state = self
++			.evaluation_mask
++			.as_mut()
++			.expect("evaluation-masked relation requires a masked oracle commitment");
++		assert_eq!(state.oracle, oracle, "evaluation-masked oracle handle mismatch");
++		assert!(!state.relation_queued, "evaluation-masked relation queued twice");
++
++		let masked_claim = claim + state.key;
++		state.relation_queued = true;
++		self.inner_channel.send_one(masked_claim);
++		self.interaction.push(masked_claim);
++		self.inner_channel
++			.prove_oracle_relation(oracle, transparent, masked_claim);
++	}
++
+ 	fn finalize_oracle(&mut self, oracle: Self::Oracle, buffer: FieldVec<P, A>) {
+-		self.inner_channel.finalize_oracle(oracle, buffer)
++		if self
++			.evaluation_mask
++			.as_ref()
++			.is_some_and(|state| state.oracle == oracle)
++		{
++			let state = self
++				.evaluation_mask
++				.take()
++				.expect("evaluation mask checked above");
++			assert!(state.relation_queued, "evaluation-masked oracle finalized unopened");
++			let shifted = self.shift_buffer(buffer.to_ref(), state.key);
++			self.inner_channel.finalize_oracle(oracle, shifted);
++		} else {
++			assert!(
++				self.evaluation_mask.is_none(),
++				"unexpected oracle finalized while evaluation-masked oracle is pending"
++			);
++			self.inner_channel.finalize_oracle(oracle, buffer);
++		}
+ 	}
+ }
+diff --git a/crates/spartan-verifier/src/wrapper/builder_channel.rs b/crates/spartan-verifier/src/wrapper/builder_channel.rs
+index f3bef3a2..99c95b7c 100644
+--- a/crates/spartan-verifier/src/wrapper/builder_channel.rs
++++ b/crates/spartan-verifier/src/wrapper/builder_channel.rs
+@@ -29,6 +29,10 @@ use super::circuit_elem::CircuitElem;
+ ///    constraints
+ pub struct IronSpartanBuilderChannel<F: Field> {
+ 	builder: Rc<RefCell<ConstraintBuilder<F>>>,
++	n_oracles: usize,
++	evaluation_mask_key: Option<CircuitElem<F, ConstraintBuilder<F>>>,
++	evaluation_mask_active: bool,
++	evaluation_mask_relation_verified: bool,
+ }
+ 
+ impl<F: Field> Default for IronSpartanBuilderChannel<F> {
+@@ -42,6 +46,10 @@ impl<F: Field> IronSpartanBuilderChannel<F> {
+ 	pub fn new() -> Self {
+ 		Self {
+ 			builder: Rc::new(RefCell::new(ConstraintBuilder::new())),
++			n_oracles: 0,
++			evaluation_mask_key: None,
++			evaluation_mask_active: false,
++			evaluation_mask_relation_verified: false,
+ 		}
+ 	}
+ 
+@@ -60,6 +68,10 @@ impl<F: Field> IronSpartanBuilderChannel<F> {
+ 	/// This must be called after all `CircuitElem` values derived from this channel have been
+ 	/// dropped, as it requires sole ownership of the builder via `Rc::try_unwrap`.
+ 	pub fn finish(self) -> ConstraintBuilder<F> {
++		assert!(
++			!self.evaluation_mask_active || self.evaluation_mask_relation_verified,
++			"evaluation-masked oracle must have exactly one verified relation"
++		);
+ 		Rc::try_unwrap(self.builder)
+ 			.expect("CircuitElem values should only hold Weak references")
+ 			.into_inner()
+@@ -160,6 +172,24 @@ impl<F: Field> IOPVerifierChannel<F> for IronSpartanBuilderChannel<F> {
+ 		_log_msg_len: usize,
+ 		_is_witness_dependent: bool,
+ 	) -> Result<Self::Oracle, binius_iop::channel::Error> {
++		assert!(
++			!self.evaluation_mask_active,
++			"no ordinary oracle may follow the evaluation-masked trace oracle"
++		);
++		self.n_oracles += 1;
++		Ok(())
++	}
++
++	fn recv_evaluation_masked_oracle(
++		&mut self,
++		_log_msg_len: usize,
++		_is_witness_dependent: bool,
++	) -> Result<Self::Oracle, binius_iop::channel::Error> {
++		assert_eq!(self.n_oracles, 0, "evaluation-masked trace oracle must be first");
++		assert!(!self.evaluation_mask_active, "only one evaluation-masked oracle is supported");
++		self.n_oracles = 1;
++		self.evaluation_mask_active = true;
++		self.evaluation_mask_key = Some(self.alloc_precommit_elem());
+ 		Ok(())
+ 	}
+ 
+@@ -169,6 +199,10 @@ impl<F: Field> IOPVerifierChannel<F> for IronSpartanBuilderChannel<F> {
+ 		_transparent: TransparentEvalFn<Self::Elem>,
+ 		claim: Self::Elem,
+ 	) -> Result<(), binius_iop::channel::Error> {
++		assert!(
++			!self.evaluation_mask_active,
++			"evaluation-masked oracle accepts only its single equality-tensor relation"
++		);
+ 		// For each oracle opening, the prover sends the decrypted evaluation. The outer verifier
+ 		// checks in the circuit equality of this value with the expected expression over encrypted
+ 		// values.
+@@ -176,4 +210,25 @@ impl<F: Field> IOPVerifierChannel<F> for IronSpartanBuilderChannel<F> {
+ 		self.assert_zero(claim - decrypted_claim)?;
+ 		Ok(())
+ 	}
++
++	fn verify_oracle_evaluation_relation(
++		&mut self,
++		_oracle: Self::Oracle,
++		_transparent: TransparentEvalFn<Self::Elem>,
++		claim: Self::Elem,
++	) -> Result<(), binius_iop::channel::Error> {
++		assert!(self.evaluation_mask_active, "no evaluation-masked oracle was received");
++		assert!(
++			!self.evaluation_mask_relation_verified,
++			"evaluation-masked relation verified twice"
++		);
++		let key = self
++			.evaluation_mask_key
++			.take()
++			.expect("evaluation mask key must be allocated with the oracle");
++		let masked_claim = self.alloc_inout_elem();
++		self.assert_zero(masked_claim - claim - key)?;
++		self.evaluation_mask_relation_verified = true;
++		Ok(())
++	}
+ }
+diff --git a/crates/spartan-verifier/src/wrapper/zk_wrapped_channel.rs b/crates/spartan-verifier/src/wrapper/zk_wrapped_channel.rs
+index 989b1c17..c01d6f3f 100644
+--- a/crates/spartan-verifier/src/wrapper/zk_wrapped_channel.rs
++++ b/crates/spartan-verifier/src/wrapper/zk_wrapped_channel.rs
+@@ -60,6 +60,12 @@ where
+ 	/// wire ids align with the outer layout.
+ 	inout_alloc: WireAllocator,
+ 	precommit_alloc: WireAllocator,
++	/// The one inner trace oracle committed as `pi + key * 1`, plus the hidden key represented by
++	/// the first matching outer-precommit wire.
++	evaluation_mask_oracle: Option<BaseFoldOracle>,
++	evaluation_mask_key: Option<CircuitElem<F, InstanceGenerator<F>>>,
++	evaluation_mask_relation_verified: bool,
++	n_inner_oracles: usize,
+ 	/// Number of outer oracles still to be received on `inner_channel` after inner verification
+ 	/// completes (i.e. the outer verifier's non-precommit oracles — private and mask).
+ 	n_outer_suffix_oracles: usize,
+@@ -123,6 +129,10 @@ where
+ 			instance_gen: Rc::new(RefCell::new(InstanceGenerator::new(outer_layout))),
+ 			inout_alloc: WireAllocator::new(WireKind::InOut),
+ 			precommit_alloc: WireAllocator::new(WireKind::Precommit),
++			evaluation_mask_oracle: None,
++			evaluation_mask_key: None,
++			evaluation_mask_relation_verified: false,
++			n_inner_oracles: 0,
+ 			n_outer_suffix_oracles: suffix_len,
+ 		})
+ 	}
+@@ -160,6 +170,10 @@ where
+ 	/// Reads the outer public-input vector `[constants | inout | derived]` from the
+ 	/// [`InstanceGenerator`] and runs [`IOPVerifier::verify`] against the inner channel.
+ 	pub fn finish(self) -> Result<(), Error> {
++		assert!(
++			self.evaluation_mask_oracle.is_none() || self.evaluation_mask_relation_verified,
++			"evaluation-masked oracle must have exactly one verified relation"
++		);
+ 		// The instance generator produced every public value (inout + alive-derived) as the inner
+ 		// verifier ran, so the public segment is already final here — read it by borrow. We must
+ 		// NOT consume the generator: the oracle relations queued onto `inner_channel` carry
+@@ -288,12 +302,44 @@ where
+ 		log_msg_len: usize,
+ 		is_witness_dependent: bool,
+ 	) -> Result<Self::Oracle, binius_iop::channel::Error> {
++		assert!(
++			self.evaluation_mask_oracle.is_none(),
++			"no ordinary inner oracle may follow the evaluation-masked trace oracle"
++		);
+ 		assert!(
+ 			!self.remaining_oracle_specs().is_empty(),
+ 			"recv_oracle called but no remaining inner oracle specs"
+ 		);
+-		self.inner_channel
+-			.recv_oracle(log_msg_len, is_witness_dependent)
++		let oracle = self
++			.inner_channel
++			.recv_oracle(log_msg_len, is_witness_dependent)?;
++		self.n_inner_oracles += 1;
++		Ok(oracle)
++	}
++
++	fn recv_evaluation_masked_oracle(
++		&mut self,
++		log_msg_len: usize,
++		is_witness_dependent: bool,
++	) -> Result<Self::Oracle, binius_iop::channel::Error> {
++		assert_eq!(self.n_inner_oracles, 0, "evaluation-masked trace oracle must be first");
++		assert!(
++			self.evaluation_mask_oracle.is_none(),
++			"only one evaluation-masked inner oracle is supported"
++		);
++		assert_eq!(
++			self.remaining_oracle_specs().len(),
++			1,
++			"evaluation masking supports exactly one inner oracle"
++		);
++		let oracle = self
++			.inner_channel
++			.recv_oracle(log_msg_len, is_witness_dependent)?;
++		let key = self.alloc_precommit_elem();
++		self.n_inner_oracles = 1;
++		self.evaluation_mask_oracle = Some(oracle);
++		self.evaluation_mask_key = Some(key);
++		Ok(oracle)
+ 	}
+ 
+ 	fn verify_oracle_relation(
+@@ -302,6 +348,11 @@ where
+ 		transparent: TransparentEvalFn<Self::Elem>,
+ 		claim: Self::Elem,
+ 	) -> Result<(), binius_iop::channel::Error> {
++		assert!(
++			self.evaluation_mask_oracle
++				.is_none_or(|masked| masked != oracle),
++			"evaluation-masked oracle accepts only its single equality-tensor relation"
++		);
+ 		// For each oracle opening, the prover sends the decrypted evaluation. Allocate it as an
+ 		// inout wire (written into the public segment) and attest `claim == decrypted_claim`,
+ 		// exactly as the symbolic `IronSpartanBuilderChannel` does. The assertion is a no-op on
+@@ -339,4 +390,45 @@ where
+ 		self.inner_channel
+ 			.verify_oracle_relation(oracle, Box::new(eval_fn), decrypted_value)
+ 	}
++
++	fn verify_oracle_evaluation_relation(
++		&mut self,
++		oracle: Self::Oracle,
++		transparent: TransparentEvalFn<Self::Elem>,
++		claim: Self::Elem,
++	) -> Result<(), binius_iop::channel::Error> {
++		assert_eq!(
++			self.evaluation_mask_oracle,
++			Some(oracle),
++			"evaluation-masked oracle handle mismatch"
++		);
++		assert!(
++			!self.evaluation_mask_relation_verified,
++			"evaluation-masked relation verified twice"
++		);
++		let key = self
++			.evaluation_mask_key
++			.take()
++			.expect("evaluation mask key must be allocated with the oracle");
++		let masked_value = self.inner_channel.recv_one()?;
++		let masked_claim = self.alloc_inout_elem(masked_value);
++		self.assert_zero(masked_claim - claim - key)?;
++		self.evaluation_mask_relation_verified = true;
++
++		let eval_fn = move |vals: &[F]| {
++			let wrapped_vals = vals
++				.iter()
++				.map(|val| CircuitElem::Constant(*val))
++				.collect::<Vec<_>>();
++
++			match transparent(&wrapped_vals) {
++				CircuitElem::Constant(val) => val,
++				CircuitElem::Wire { wire, .. } => wire.value().expect(
++					"precondition: the transparent polynomial evaluation must depend only on known values (constants or sampled challenges)",
++				),
++			}
++		};
++		self.inner_channel
++			.verify_oracle_relation(oracle, Box::new(eval_fn), masked_value)
++	}
+ }
+diff --git a/crates/verifier/src/verify.rs b/crates/verifier/src/verify.rs
+index 89a15e04..6482687d 100644
+--- a/crates/verifier/src/verify.rs
++++ b/crates/verifier/src/verify.rs
+@@ -174,7 +174,7 @@ impl IOPVerifier {
+ 
+ 		// Receive the trace oracle commitment via channel. The trace is the witness, so it is
+ 		// witness-dependent (masked in a ZK proof).
+-		let trace_oracle = channel.recv_oracle(self.log_witness_elems(), true)?;
++		let trace_oracle = channel.recv_evaluation_masked_oracle(self.log_witness_elems(), true)?;
+ 
+ 		// Reduce every constraint to one claim on the committed trace.
+ 		let reduction = reduce_constraints(
+@@ -210,7 +210,7 @@ impl IOPVerifier {
+ 		// Verify oracle relations (runs BaseFold internally and verifies the product check). The
+ 		// intmul pushforward relation, when the IntMul reduction ran, was already queued inside
+ 		// phase 5.
+-		channel.verify_oracle_relation(trace_oracle, transparent, sumcheck_claim)?;
++		channel.verify_oracle_evaluation_relation(trace_oracle, transparent, sumcheck_claim)?;
+ 
+ 		drop(pcs_guard);
+ 
+diff --git a/crates/verifier/src/zk_config.rs b/crates/verifier/src/zk_config.rs
+index 063ee45b..724fecab 100644
+--- a/crates/verifier/src/zk_config.rs
++++ b/crates/verifier/src/zk_config.rs
+@@ -75,6 +75,11 @@ where
+ 		let log_public_words = constraint_system.log_public_words(InoutSegment::Public);
+ 
+ 		let inner_iop_verifier = IOPVerifier::new(constraint_system, log_public_words);
++		assert_eq!(
++			inner_iop_verifier.oracle_specs(true).len(),
++			1,
++			"the constant evaluation-mask transform supports exactly one inner trace oracle"
++		);
+ 
+ 		// Symbolically execute the inner verifier to build the outer constraint system.
+ 		let dummy_inout_words =

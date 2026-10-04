@@ -1,0 +1,379 @@
+import SmzaRp04DegreeData
+
+namespace HegemonCrypto.SmallWood.SmzaRp04PackedAcceptanceData
+open Hegemon.Transaction.Poseidon2V8RelationProgram
+open HegemonCrypto.SmallWood.SmzaRp04Components
+open HegemonCrypto.SmallWood.SmzaRp04Degree
+open HegemonCrypto.SmallWood.V8Smz9ProgramCanonicality
+
+noncomputable section
+set_option maxRecDepth 200000
+set_option maxHeartbeats 800000
+
+local instance (allow : Bool) (node : Nat) (expression : FieldExpression) :
+    Decidable (expression.CanonicalAt allow node) := by
+  cases expression <;> unfold FieldExpression.CanonicalAt <;> infer_instance
+
+def expressionPredicate (allow : Bool) (node : Nat)
+    (expression : FieldExpression) : Bool :=
+  decide (expression.CanonicalAt allow node)
+
+def attemptCoordinatesPredicate (entry : CsrExecutableAttempt) : Bool :=
+  entry.terms.all (fun term => decide (term.1 < 43904 ∧ term.2 < 564)) &&
+    decide (entry.targetRoot < 564)
+
+def nonlinearChunks00 : List (List FieldExpression) :=
+[
+  exactNonlinearExpressionsChunk0000, exactNonlinearExpressionsChunk0001, exactNonlinearExpressionsChunk0002, exactNonlinearExpressionsChunk0003,
+  exactNonlinearExpressionsChunk0004, exactNonlinearExpressionsChunk0005, exactNonlinearExpressionsChunk0006, exactNonlinearExpressionsChunk0007,
+  exactNonlinearExpressionsChunk0008, exactNonlinearExpressionsChunk0009, exactNonlinearExpressionsChunk0010, exactNonlinearExpressionsChunk0011,
+  exactNonlinearExpressionsChunk0012, exactNonlinearExpressionsChunk0013, exactNonlinearExpressionsChunk0014, exactNonlinearExpressionsChunk0015,
+  exactNonlinearExpressionsChunk0016, exactNonlinearExpressionsChunk0017, exactNonlinearExpressionsChunk0018, exactNonlinearExpressionsChunk0019,
+  exactNonlinearExpressionsChunk0020, exactNonlinearExpressionsChunk0021, exactNonlinearExpressionsChunk0022, exactNonlinearExpressionsChunk0023,
+  exactNonlinearExpressionsChunk0024, exactNonlinearExpressionsChunk0025, exactNonlinearExpressionsChunk0026, exactNonlinearExpressionsChunk0027,
+  exactNonlinearExpressionsChunk0028, exactNonlinearExpressionsChunk0029, exactNonlinearExpressionsChunk0030, exactNonlinearExpressionsChunk0031,
+  exactNonlinearExpressionsChunk0032, exactNonlinearExpressionsChunk0033, exactNonlinearExpressionsChunk0034, exactNonlinearExpressionsChunk0035,
+  exactNonlinearExpressionsChunk0036, exactNonlinearExpressionsChunk0037, exactNonlinearExpressionsChunk0038, exactNonlinearExpressionsChunk0039,
+  exactNonlinearExpressionsChunk0040, exactNonlinearExpressionsChunk0041, exactNonlinearExpressionsChunk0042
+]
+
+def nonlinearChunks01 : List (List FieldExpression) :=
+[
+  exactNonlinearExpressionsChunk0043, exactNonlinearExpressionsChunk0044, exactNonlinearExpressionsChunk0045, exactNonlinearExpressionsChunk0046,
+  exactNonlinearExpressionsChunk0047, exactNonlinearExpressionsChunk0048, exactNonlinearExpressionsChunk0049, exactNonlinearExpressionsChunk0050,
+  exactNonlinearExpressionsChunk0051, exactNonlinearExpressionsChunk0052, exactNonlinearExpressionsChunk0053, exactNonlinearExpressionsChunk0054,
+  exactNonlinearExpressionsChunk0055, exactNonlinearExpressionsChunk0056, exactNonlinearExpressionsChunk0057, exactNonlinearExpressionsChunk0058,
+  exactNonlinearExpressionsChunk0059, exactNonlinearExpressionsChunk0060, exactNonlinearExpressionsChunk0061, exactNonlinearExpressionsChunk0062,
+  exactNonlinearExpressionsChunk0063, exactNonlinearExpressionsChunk0064, exactNonlinearExpressionsChunk0065, exactNonlinearExpressionsChunk0066,
+  exactNonlinearExpressionsChunk0067, exactNonlinearExpressionsChunk0068, exactNonlinearExpressionsChunk0069, exactNonlinearExpressionsChunk0070,
+  exactNonlinearExpressionsChunk0071, exactNonlinearExpressionsChunk0072, exactNonlinearExpressionsChunk0073, exactNonlinearExpressionsChunk0074,
+  exactNonlinearExpressionsChunk0075, exactNonlinearExpressionsChunk0076, exactNonlinearExpressionsChunk0077, exactNonlinearExpressionsChunk0078,
+  exactNonlinearExpressionsChunk0079, exactNonlinearExpressionsChunk0080, exactNonlinearExpressionsChunk0081, exactNonlinearExpressionsChunk0082,
+  exactNonlinearExpressionsChunk0083, exactNonlinearExpressionsChunk0084, exactNonlinearExpressionsChunk0085
+]
+
+def nonlinearChunks02 : List (List FieldExpression) :=
+[
+  exactNonlinearExpressionsChunk0086, exactNonlinearExpressionsChunk0087, exactNonlinearExpressionsChunk0088, exactNonlinearExpressionsChunk0089,
+  exactNonlinearExpressionsChunk0090, exactNonlinearExpressionsChunk0091, exactNonlinearExpressionsChunk0092, exactNonlinearExpressionsChunk0093,
+  exactNonlinearExpressionsChunk0094, exactNonlinearExpressionsChunk0095, exactNonlinearExpressionsChunk0096, exactNonlinearExpressionsChunk0097,
+  exactNonlinearExpressionsChunk0098, exactNonlinearExpressionsChunk0099, exactNonlinearExpressionsChunk0100, exactNonlinearExpressionsChunk0101,
+  exactNonlinearExpressionsChunk0102, exactNonlinearExpressionsChunk0103, exactNonlinearExpressionsChunk0104, exactNonlinearExpressionsChunk0105,
+  exactNonlinearExpressionsChunk0106, exactNonlinearExpressionsChunk0107, exactNonlinearExpressionsChunk0108, exactNonlinearExpressionsChunk0109,
+  exactNonlinearExpressionsChunk0110, exactNonlinearExpressionsChunk0111, exactNonlinearExpressionsChunk0112, exactNonlinearExpressionsChunk0113,
+  exactNonlinearExpressionsChunk0114, exactNonlinearExpressionsChunk0115, exactNonlinearExpressionsChunk0116, exactNonlinearExpressionsChunk0117,
+  exactNonlinearExpressionsChunk0118, exactNonlinearExpressionsChunk0119, exactNonlinearExpressionsChunk0120, exactNonlinearExpressionsChunk0121,
+  exactNonlinearExpressionsChunk0122, exactNonlinearExpressionsChunk0123, exactNonlinearExpressionsChunk0124, exactNonlinearExpressionsChunk0125,
+  exactNonlinearExpressionsChunk0126, exactNonlinearExpressionsChunk0127, exactNonlinearExpressionsChunk0128
+]
+
+def nonlinearChunks03 : List (List FieldExpression) :=
+[
+  exactNonlinearExpressionsChunk0129, exactNonlinearExpressionsChunk0130, exactNonlinearExpressionsChunk0131, exactNonlinearExpressionsChunk0132,
+  exactNonlinearExpressionsChunk0133, exactNonlinearExpressionsChunk0134, exactNonlinearExpressionsChunk0135, exactNonlinearExpressionsChunk0136,
+  exactNonlinearExpressionsChunk0137, exactNonlinearExpressionsChunk0138, exactNonlinearExpressionsChunk0139, exactNonlinearExpressionsChunk0140,
+  exactNonlinearExpressionsChunk0141, exactNonlinearExpressionsChunk0142, exactNonlinearExpressionsChunk0143, exactNonlinearExpressionsChunk0144,
+  exactNonlinearExpressionsChunk0145, exactNonlinearExpressionsChunk0146, exactNonlinearExpressionsChunk0147, exactNonlinearExpressionsChunk0148,
+  exactNonlinearExpressionsChunk0149, exactNonlinearExpressionsChunk0150, exactNonlinearExpressionsChunk0151, exactNonlinearExpressionsChunk0152,
+  exactNonlinearExpressionsChunk0153, exactNonlinearExpressionsChunk0154, exactNonlinearExpressionsChunk0155, exactNonlinearExpressionsChunk0156,
+  exactNonlinearExpressionsChunk0157, exactNonlinearExpressionsChunk0158, exactNonlinearExpressionsChunk0159, exactNonlinearExpressionsChunk0160,
+  exactNonlinearExpressionsChunk0161, exactNonlinearExpressionsChunk0162, exactNonlinearExpressionsChunk0163, exactNonlinearExpressionsChunk0164,
+  exactNonlinearExpressionsChunk0165, exactNonlinearExpressionsChunk0166, exactNonlinearExpressionsChunk0167, exactNonlinearExpressionsChunk0168,
+  exactNonlinearExpressionsChunk0169, exactNonlinearExpressionsChunk0170, exactNonlinearExpressionsChunk0171
+]
+
+def nonlinearChunks04 : List (List FieldExpression) :=
+[
+  exactNonlinearExpressionsChunk0172, exactNonlinearExpressionsChunk0173, exactNonlinearExpressionsChunk0174, exactNonlinearExpressionsChunk0175,
+  exactNonlinearExpressionsChunk0176, exactNonlinearExpressionsChunk0177, exactNonlinearExpressionsChunk0178, exactNonlinearExpressionsChunk0179,
+  exactNonlinearExpressionsChunk0180, exactNonlinearExpressionsChunk0181, exactNonlinearExpressionsChunk0182, exactNonlinearExpressionsChunk0183,
+  exactNonlinearExpressionsChunk0184, exactNonlinearExpressionsChunk0185, exactNonlinearExpressionsChunk0186, exactNonlinearExpressionsChunk0187,
+  exactNonlinearExpressionsChunk0188, exactNonlinearExpressionsChunk0189, exactNonlinearExpressionsChunk0190, exactNonlinearExpressionsChunk0191,
+  exactNonlinearExpressionsChunk0192, exactNonlinearExpressionsChunk0193, exactNonlinearExpressionsChunk0194, exactNonlinearExpressionsChunk0195,
+  exactNonlinearExpressionsChunk0196, exactNonlinearExpressionsChunk0197, exactNonlinearExpressionsChunk0198, exactNonlinearExpressionsChunk0199,
+  exactNonlinearExpressionsChunk0200, exactNonlinearExpressionsChunk0201, exactNonlinearExpressionsChunk0202, exactNonlinearExpressionsChunk0203,
+  exactNonlinearExpressionsChunk0204, exactNonlinearExpressionsChunk0205, exactNonlinearExpressionsChunk0206, exactNonlinearExpressionsChunk0207,
+  exactNonlinearExpressionsChunk0208, exactNonlinearExpressionsChunk0209, exactNonlinearExpressionsChunk0210, exactNonlinearExpressionsChunk0211,
+  exactNonlinearExpressionsChunk0212, exactNonlinearExpressionsChunk0213, exactNonlinearExpressionsChunk0214
+]
+
+def nonlinearChunks05 : List (List FieldExpression) :=
+[
+  exactNonlinearExpressionsChunk0215, exactNonlinearExpressionsChunk0216, exactNonlinearExpressionsChunk0217, exactNonlinearExpressionsChunk0218,
+  exactNonlinearExpressionsChunk0219, exactNonlinearExpressionsChunk0220, exactNonlinearExpressionsChunk0221, exactNonlinearExpressionsChunk0222,
+  exactNonlinearExpressionsChunk0223, exactNonlinearExpressionsChunk0224, exactNonlinearExpressionsChunk0225, exactNonlinearExpressionsChunk0226,
+  exactNonlinearExpressionsChunk0227, exactNonlinearExpressionsChunk0228, exactNonlinearExpressionsChunk0229, exactNonlinearExpressionsChunk0230,
+  exactNonlinearExpressionsChunk0231, exactNonlinearExpressionsChunk0232, exactNonlinearExpressionsChunk0233, exactNonlinearExpressionsChunk0234,
+  exactNonlinearExpressionsChunk0235, exactNonlinearExpressionsChunk0236, exactNonlinearExpressionsChunk0237, exactNonlinearExpressionsChunk0238,
+  exactNonlinearExpressionsChunk0239, exactNonlinearExpressionsChunk0240, exactNonlinearExpressionsChunk0241, exactNonlinearExpressionsChunk0242,
+  exactNonlinearExpressionsChunk0243, exactNonlinearExpressionsChunk0244, exactNonlinearExpressionsChunk0245, exactNonlinearExpressionsChunk0246,
+  exactNonlinearExpressionsChunk0247, exactNonlinearExpressionsChunk0248, exactNonlinearExpressionsChunk0249, exactNonlinearExpressionsChunk0250,
+  exactNonlinearExpressionsChunk0251, exactNonlinearExpressionsChunk0252, exactNonlinearExpressionsChunk0253, exactNonlinearExpressionsChunk0254
+]
+
+def nonlinearChunks : List (List FieldExpression) :=
+  nonlinearChunks00 ++ nonlinearChunks01 ++ nonlinearChunks02 ++ nonlinearChunks03 ++ nonlinearChunks04 ++ nonlinearChunks05
+
+def csrExpressionChunks : List (List FieldExpression) :=
+[
+  exactCsrExpressionsChunk0000, exactCsrExpressionsChunk0001, exactCsrExpressionsChunk0002, exactCsrExpressionsChunk0003,
+  exactCsrExpressionsChunk0004, exactCsrExpressionsChunk0005, exactCsrExpressionsChunk0006, exactCsrExpressionsChunk0007,
+  exactCsrExpressionsChunk0008, exactCsrExpressionsChunk0009, exactCsrExpressionsChunk0010, exactCsrExpressionsChunk0011,
+  exactCsrExpressionsChunk0012, exactCsrExpressionsChunk0013, exactCsrExpressionsChunk0014, exactCsrExpressionsChunk0015,
+  exactCsrExpressionsChunk0016, exactCsrExpressionsChunk0017
+]
+
+def csrAttemptChunks00 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0000, exactCsrAttemptsChunk0001, exactCsrAttemptsChunk0002, exactCsrAttemptsChunk0003,
+  exactCsrAttemptsChunk0004, exactCsrAttemptsChunk0005, exactCsrAttemptsChunk0006, exactCsrAttemptsChunk0007,
+  exactCsrAttemptsChunk0008, exactCsrAttemptsChunk0009, exactCsrAttemptsChunk0010, exactCsrAttemptsChunk0011,
+  exactCsrAttemptsChunk0012, exactCsrAttemptsChunk0013, exactCsrAttemptsChunk0014, exactCsrAttemptsChunk0015,
+  exactCsrAttemptsChunk0016, exactCsrAttemptsChunk0017, exactCsrAttemptsChunk0018, exactCsrAttemptsChunk0019,
+  exactCsrAttemptsChunk0020, exactCsrAttemptsChunk0021, exactCsrAttemptsChunk0022, exactCsrAttemptsChunk0023,
+  exactCsrAttemptsChunk0024, exactCsrAttemptsChunk0025, exactCsrAttemptsChunk0026, exactCsrAttemptsChunk0027,
+  exactCsrAttemptsChunk0028, exactCsrAttemptsChunk0029, exactCsrAttemptsChunk0030, exactCsrAttemptsChunk0031,
+  exactCsrAttemptsChunk0032, exactCsrAttemptsChunk0033, exactCsrAttemptsChunk0034, exactCsrAttemptsChunk0035,
+  exactCsrAttemptsChunk0036, exactCsrAttemptsChunk0037, exactCsrAttemptsChunk0038, exactCsrAttemptsChunk0039
+]
+
+def csrAttemptChunks01 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0040, exactCsrAttemptsChunk0041, exactCsrAttemptsChunk0042, exactCsrAttemptsChunk0043,
+  exactCsrAttemptsChunk0044, exactCsrAttemptsChunk0045, exactCsrAttemptsChunk0046, exactCsrAttemptsChunk0047,
+  exactCsrAttemptsChunk0048, exactCsrAttemptsChunk0049, exactCsrAttemptsChunk0050, exactCsrAttemptsChunk0051,
+  exactCsrAttemptsChunk0052, exactCsrAttemptsChunk0053, exactCsrAttemptsChunk0054, exactCsrAttemptsChunk0055,
+  exactCsrAttemptsChunk0056, exactCsrAttemptsChunk0057, exactCsrAttemptsChunk0058, exactCsrAttemptsChunk0059,
+  exactCsrAttemptsChunk0060, exactCsrAttemptsChunk0061, exactCsrAttemptsChunk0062, exactCsrAttemptsChunk0063,
+  exactCsrAttemptsChunk0064, exactCsrAttemptsChunk0065, exactCsrAttemptsChunk0066, exactCsrAttemptsChunk0067,
+  exactCsrAttemptsChunk0068, exactCsrAttemptsChunk0069, exactCsrAttemptsChunk0070, exactCsrAttemptsChunk0071,
+  exactCsrAttemptsChunk0072, exactCsrAttemptsChunk0073, exactCsrAttemptsChunk0074, exactCsrAttemptsChunk0075,
+  exactCsrAttemptsChunk0076, exactCsrAttemptsChunk0077, exactCsrAttemptsChunk0078, exactCsrAttemptsChunk0079
+]
+
+def csrAttemptChunks02 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0080, exactCsrAttemptsChunk0081, exactCsrAttemptsChunk0082, exactCsrAttemptsChunk0083,
+  exactCsrAttemptsChunk0084, exactCsrAttemptsChunk0085, exactCsrAttemptsChunk0086, exactCsrAttemptsChunk0087,
+  exactCsrAttemptsChunk0088, exactCsrAttemptsChunk0089, exactCsrAttemptsChunk0090, exactCsrAttemptsChunk0091,
+  exactCsrAttemptsChunk0092, exactCsrAttemptsChunk0093, exactCsrAttemptsChunk0094, exactCsrAttemptsChunk0095,
+  exactCsrAttemptsChunk0096, exactCsrAttemptsChunk0097, exactCsrAttemptsChunk0098, exactCsrAttemptsChunk0099,
+  exactCsrAttemptsChunk0100, exactCsrAttemptsChunk0101, exactCsrAttemptsChunk0102, exactCsrAttemptsChunk0103,
+  exactCsrAttemptsChunk0104, exactCsrAttemptsChunk0105, exactCsrAttemptsChunk0106, exactCsrAttemptsChunk0107,
+  exactCsrAttemptsChunk0108, exactCsrAttemptsChunk0109, exactCsrAttemptsChunk0110, exactCsrAttemptsChunk0111,
+  exactCsrAttemptsChunk0112, exactCsrAttemptsChunk0113, exactCsrAttemptsChunk0114, exactCsrAttemptsChunk0115,
+  exactCsrAttemptsChunk0116, exactCsrAttemptsChunk0117, exactCsrAttemptsChunk0118, exactCsrAttemptsChunk0119
+]
+
+def csrAttemptChunks03 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0120, exactCsrAttemptsChunk0121, exactCsrAttemptsChunk0122, exactCsrAttemptsChunk0123,
+  exactCsrAttemptsChunk0124, exactCsrAttemptsChunk0125, exactCsrAttemptsChunk0126, exactCsrAttemptsChunk0127,
+  exactCsrAttemptsChunk0128, exactCsrAttemptsChunk0129, exactCsrAttemptsChunk0130, exactCsrAttemptsChunk0131,
+  exactCsrAttemptsChunk0132, exactCsrAttemptsChunk0133, exactCsrAttemptsChunk0134, exactCsrAttemptsChunk0135,
+  exactCsrAttemptsChunk0136, exactCsrAttemptsChunk0137, exactCsrAttemptsChunk0138, exactCsrAttemptsChunk0139,
+  exactCsrAttemptsChunk0140, exactCsrAttemptsChunk0141, exactCsrAttemptsChunk0142, exactCsrAttemptsChunk0143,
+  exactCsrAttemptsChunk0144, exactCsrAttemptsChunk0145, exactCsrAttemptsChunk0146, exactCsrAttemptsChunk0147,
+  exactCsrAttemptsChunk0148, exactCsrAttemptsChunk0149, exactCsrAttemptsChunk0150, exactCsrAttemptsChunk0151,
+  exactCsrAttemptsChunk0152, exactCsrAttemptsChunk0153, exactCsrAttemptsChunk0154, exactCsrAttemptsChunk0155,
+  exactCsrAttemptsChunk0156, exactCsrAttemptsChunk0157, exactCsrAttemptsChunk0158, exactCsrAttemptsChunk0159
+]
+
+def csrAttemptChunks04 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0160, exactCsrAttemptsChunk0161, exactCsrAttemptsChunk0162, exactCsrAttemptsChunk0163,
+  exactCsrAttemptsChunk0164, exactCsrAttemptsChunk0165, exactCsrAttemptsChunk0166, exactCsrAttemptsChunk0167,
+  exactCsrAttemptsChunk0168, exactCsrAttemptsChunk0169, exactCsrAttemptsChunk0170, exactCsrAttemptsChunk0171,
+  exactCsrAttemptsChunk0172, exactCsrAttemptsChunk0173, exactCsrAttemptsChunk0174, exactCsrAttemptsChunk0175,
+  exactCsrAttemptsChunk0176, exactCsrAttemptsChunk0177, exactCsrAttemptsChunk0178, exactCsrAttemptsChunk0179,
+  exactCsrAttemptsChunk0180, exactCsrAttemptsChunk0181, exactCsrAttemptsChunk0182, exactCsrAttemptsChunk0183,
+  exactCsrAttemptsChunk0184, exactCsrAttemptsChunk0185, exactCsrAttemptsChunk0186, exactCsrAttemptsChunk0187,
+  exactCsrAttemptsChunk0188, exactCsrAttemptsChunk0189, exactCsrAttemptsChunk0190, exactCsrAttemptsChunk0191,
+  exactCsrAttemptsChunk0192, exactCsrAttemptsChunk0193, exactCsrAttemptsChunk0194, exactCsrAttemptsChunk0195,
+  exactCsrAttemptsChunk0196, exactCsrAttemptsChunk0197, exactCsrAttemptsChunk0198, exactCsrAttemptsChunk0199
+]
+
+def csrAttemptChunks05 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0200, exactCsrAttemptsChunk0201, exactCsrAttemptsChunk0202, exactCsrAttemptsChunk0203,
+  exactCsrAttemptsChunk0204, exactCsrAttemptsChunk0205, exactCsrAttemptsChunk0206, exactCsrAttemptsChunk0207,
+  exactCsrAttemptsChunk0208, exactCsrAttemptsChunk0209, exactCsrAttemptsChunk0210, exactCsrAttemptsChunk0211,
+  exactCsrAttemptsChunk0212, exactCsrAttemptsChunk0213, exactCsrAttemptsChunk0214, exactCsrAttemptsChunk0215,
+  exactCsrAttemptsChunk0216, exactCsrAttemptsChunk0217, exactCsrAttemptsChunk0218, exactCsrAttemptsChunk0219,
+  exactCsrAttemptsChunk0220, exactCsrAttemptsChunk0221, exactCsrAttemptsChunk0222, exactCsrAttemptsChunk0223,
+  exactCsrAttemptsChunk0224, exactCsrAttemptsChunk0225, exactCsrAttemptsChunk0226, exactCsrAttemptsChunk0227,
+  exactCsrAttemptsChunk0228, exactCsrAttemptsChunk0229, exactCsrAttemptsChunk0230, exactCsrAttemptsChunk0231,
+  exactCsrAttemptsChunk0232, exactCsrAttemptsChunk0233, exactCsrAttemptsChunk0234, exactCsrAttemptsChunk0235,
+  exactCsrAttemptsChunk0236, exactCsrAttemptsChunk0237, exactCsrAttemptsChunk0238, exactCsrAttemptsChunk0239
+]
+
+def csrAttemptChunks06 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0240, exactCsrAttemptsChunk0241, exactCsrAttemptsChunk0242, exactCsrAttemptsChunk0243,
+  exactCsrAttemptsChunk0244, exactCsrAttemptsChunk0245, exactCsrAttemptsChunk0246, exactCsrAttemptsChunk0247,
+  exactCsrAttemptsChunk0248, exactCsrAttemptsChunk0249, exactCsrAttemptsChunk0250, exactCsrAttemptsChunk0251,
+  exactCsrAttemptsChunk0252, exactCsrAttemptsChunk0253, exactCsrAttemptsChunk0254, exactCsrAttemptsChunk0255,
+  exactCsrAttemptsChunk0256, exactCsrAttemptsChunk0257, exactCsrAttemptsChunk0258, exactCsrAttemptsChunk0259,
+  exactCsrAttemptsChunk0260, exactCsrAttemptsChunk0261, exactCsrAttemptsChunk0262, exactCsrAttemptsChunk0263,
+  exactCsrAttemptsChunk0264, exactCsrAttemptsChunk0265, exactCsrAttemptsChunk0266, exactCsrAttemptsChunk0267,
+  exactCsrAttemptsChunk0268, exactCsrAttemptsChunk0269, exactCsrAttemptsChunk0270, exactCsrAttemptsChunk0271,
+  exactCsrAttemptsChunk0272, exactCsrAttemptsChunk0273, exactCsrAttemptsChunk0274, exactCsrAttemptsChunk0275,
+  exactCsrAttemptsChunk0276, exactCsrAttemptsChunk0277, exactCsrAttemptsChunk0278, exactCsrAttemptsChunk0279
+]
+
+def csrAttemptChunks07 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0280, exactCsrAttemptsChunk0281, exactCsrAttemptsChunk0282, exactCsrAttemptsChunk0283,
+  exactCsrAttemptsChunk0284, exactCsrAttemptsChunk0285, exactCsrAttemptsChunk0286, exactCsrAttemptsChunk0287,
+  exactCsrAttemptsChunk0288, exactCsrAttemptsChunk0289, exactCsrAttemptsChunk0290, exactCsrAttemptsChunk0291,
+  exactCsrAttemptsChunk0292, exactCsrAttemptsChunk0293, exactCsrAttemptsChunk0294, exactCsrAttemptsChunk0295,
+  exactCsrAttemptsChunk0296, exactCsrAttemptsChunk0297, exactCsrAttemptsChunk0298, exactCsrAttemptsChunk0299,
+  exactCsrAttemptsChunk0300, exactCsrAttemptsChunk0301, exactCsrAttemptsChunk0302, exactCsrAttemptsChunk0303,
+  exactCsrAttemptsChunk0304, exactCsrAttemptsChunk0305, exactCsrAttemptsChunk0306, exactCsrAttemptsChunk0307,
+  exactCsrAttemptsChunk0308, exactCsrAttemptsChunk0309, exactCsrAttemptsChunk0310, exactCsrAttemptsChunk0311,
+  exactCsrAttemptsChunk0312, exactCsrAttemptsChunk0313, exactCsrAttemptsChunk0314, exactCsrAttemptsChunk0315,
+  exactCsrAttemptsChunk0316, exactCsrAttemptsChunk0317, exactCsrAttemptsChunk0318, exactCsrAttemptsChunk0319
+]
+
+def csrAttemptChunks08 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0320, exactCsrAttemptsChunk0321, exactCsrAttemptsChunk0322, exactCsrAttemptsChunk0323,
+  exactCsrAttemptsChunk0324, exactCsrAttemptsChunk0325, exactCsrAttemptsChunk0326, exactCsrAttemptsChunk0327,
+  exactCsrAttemptsChunk0328, exactCsrAttemptsChunk0329, exactCsrAttemptsChunk0330, exactCsrAttemptsChunk0331,
+  exactCsrAttemptsChunk0332, exactCsrAttemptsChunk0333, exactCsrAttemptsChunk0334, exactCsrAttemptsChunk0335,
+  exactCsrAttemptsChunk0336, exactCsrAttemptsChunk0337, exactCsrAttemptsChunk0338, exactCsrAttemptsChunk0339,
+  exactCsrAttemptsChunk0340, exactCsrAttemptsChunk0341, exactCsrAttemptsChunk0342, exactCsrAttemptsChunk0343,
+  exactCsrAttemptsChunk0344, exactCsrAttemptsChunk0345, exactCsrAttemptsChunk0346, exactCsrAttemptsChunk0347,
+  exactCsrAttemptsChunk0348, exactCsrAttemptsChunk0349, exactCsrAttemptsChunk0350, exactCsrAttemptsChunk0351,
+  exactCsrAttemptsChunk0352, exactCsrAttemptsChunk0353, exactCsrAttemptsChunk0354, exactCsrAttemptsChunk0355,
+  exactCsrAttemptsChunk0356, exactCsrAttemptsChunk0357, exactCsrAttemptsChunk0358, exactCsrAttemptsChunk0359
+]
+
+def csrAttemptChunks09 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0360, exactCsrAttemptsChunk0361, exactCsrAttemptsChunk0362, exactCsrAttemptsChunk0363,
+  exactCsrAttemptsChunk0364, exactCsrAttemptsChunk0365, exactCsrAttemptsChunk0366, exactCsrAttemptsChunk0367,
+  exactCsrAttemptsChunk0368, exactCsrAttemptsChunk0369, exactCsrAttemptsChunk0370, exactCsrAttemptsChunk0371,
+  exactCsrAttemptsChunk0372, exactCsrAttemptsChunk0373, exactCsrAttemptsChunk0374, exactCsrAttemptsChunk0375,
+  exactCsrAttemptsChunk0376, exactCsrAttemptsChunk0377, exactCsrAttemptsChunk0378, exactCsrAttemptsChunk0379,
+  exactCsrAttemptsChunk0380, exactCsrAttemptsChunk0381, exactCsrAttemptsChunk0382, exactCsrAttemptsChunk0383,
+  exactCsrAttemptsChunk0384, exactCsrAttemptsChunk0385, exactCsrAttemptsChunk0386, exactCsrAttemptsChunk0387,
+  exactCsrAttemptsChunk0388, exactCsrAttemptsChunk0389, exactCsrAttemptsChunk0390, exactCsrAttemptsChunk0391,
+  exactCsrAttemptsChunk0392, exactCsrAttemptsChunk0393, exactCsrAttemptsChunk0394, exactCsrAttemptsChunk0395,
+  exactCsrAttemptsChunk0396, exactCsrAttemptsChunk0397, exactCsrAttemptsChunk0398, exactCsrAttemptsChunk0399
+]
+
+def csrAttemptChunks10 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0400, exactCsrAttemptsChunk0401, exactCsrAttemptsChunk0402, exactCsrAttemptsChunk0403,
+  exactCsrAttemptsChunk0404, exactCsrAttemptsChunk0405, exactCsrAttemptsChunk0406, exactCsrAttemptsChunk0407,
+  exactCsrAttemptsChunk0408, exactCsrAttemptsChunk0409, exactCsrAttemptsChunk0410, exactCsrAttemptsChunk0411,
+  exactCsrAttemptsChunk0412, exactCsrAttemptsChunk0413, exactCsrAttemptsChunk0414, exactCsrAttemptsChunk0415,
+  exactCsrAttemptsChunk0416, exactCsrAttemptsChunk0417, exactCsrAttemptsChunk0418, exactCsrAttemptsChunk0419,
+  exactCsrAttemptsChunk0420, exactCsrAttemptsChunk0421, exactCsrAttemptsChunk0422, exactCsrAttemptsChunk0423,
+  exactCsrAttemptsChunk0424, exactCsrAttemptsChunk0425, exactCsrAttemptsChunk0426, exactCsrAttemptsChunk0427,
+  exactCsrAttemptsChunk0428, exactCsrAttemptsChunk0429, exactCsrAttemptsChunk0430, exactCsrAttemptsChunk0431,
+  exactCsrAttemptsChunk0432, exactCsrAttemptsChunk0433, exactCsrAttemptsChunk0434, exactCsrAttemptsChunk0435,
+  exactCsrAttemptsChunk0436, exactCsrAttemptsChunk0437, exactCsrAttemptsChunk0438, exactCsrAttemptsChunk0439
+]
+
+def csrAttemptChunks11 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0440, exactCsrAttemptsChunk0441, exactCsrAttemptsChunk0442, exactCsrAttemptsChunk0443,
+  exactCsrAttemptsChunk0444, exactCsrAttemptsChunk0445, exactCsrAttemptsChunk0446, exactCsrAttemptsChunk0447,
+  exactCsrAttemptsChunk0448, exactCsrAttemptsChunk0449, exactCsrAttemptsChunk0450, exactCsrAttemptsChunk0451,
+  exactCsrAttemptsChunk0452, exactCsrAttemptsChunk0453, exactCsrAttemptsChunk0454, exactCsrAttemptsChunk0455,
+  exactCsrAttemptsChunk0456, exactCsrAttemptsChunk0457, exactCsrAttemptsChunk0458, exactCsrAttemptsChunk0459,
+  exactCsrAttemptsChunk0460, exactCsrAttemptsChunk0461, exactCsrAttemptsChunk0462, exactCsrAttemptsChunk0463,
+  exactCsrAttemptsChunk0464, exactCsrAttemptsChunk0465, exactCsrAttemptsChunk0466, exactCsrAttemptsChunk0467,
+  exactCsrAttemptsChunk0468, exactCsrAttemptsChunk0469, exactCsrAttemptsChunk0470, exactCsrAttemptsChunk0471,
+  exactCsrAttemptsChunk0472, exactCsrAttemptsChunk0473, exactCsrAttemptsChunk0474, exactCsrAttemptsChunk0475,
+  exactCsrAttemptsChunk0476, exactCsrAttemptsChunk0477, exactCsrAttemptsChunk0478, exactCsrAttemptsChunk0479
+]
+
+def csrAttemptChunks12 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0480, exactCsrAttemptsChunk0481, exactCsrAttemptsChunk0482, exactCsrAttemptsChunk0483,
+  exactCsrAttemptsChunk0484, exactCsrAttemptsChunk0485, exactCsrAttemptsChunk0486, exactCsrAttemptsChunk0487,
+  exactCsrAttemptsChunk0488, exactCsrAttemptsChunk0489, exactCsrAttemptsChunk0490, exactCsrAttemptsChunk0491,
+  exactCsrAttemptsChunk0492, exactCsrAttemptsChunk0493, exactCsrAttemptsChunk0494, exactCsrAttemptsChunk0495,
+  exactCsrAttemptsChunk0496, exactCsrAttemptsChunk0497, exactCsrAttemptsChunk0498, exactCsrAttemptsChunk0499,
+  exactCsrAttemptsChunk0500, exactCsrAttemptsChunk0501, exactCsrAttemptsChunk0502, exactCsrAttemptsChunk0503,
+  exactCsrAttemptsChunk0504, exactCsrAttemptsChunk0505, exactCsrAttemptsChunk0506, exactCsrAttemptsChunk0507,
+  exactCsrAttemptsChunk0508, exactCsrAttemptsChunk0509, exactCsrAttemptsChunk0510, exactCsrAttemptsChunk0511,
+  exactCsrAttemptsChunk0512, exactCsrAttemptsChunk0513, exactCsrAttemptsChunk0514, exactCsrAttemptsChunk0515,
+  exactCsrAttemptsChunk0516, exactCsrAttemptsChunk0517, exactCsrAttemptsChunk0518, exactCsrAttemptsChunk0519
+]
+
+def csrAttemptChunks13 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0520, exactCsrAttemptsChunk0521, exactCsrAttemptsChunk0522, exactCsrAttemptsChunk0523,
+  exactCsrAttemptsChunk0524, exactCsrAttemptsChunk0525, exactCsrAttemptsChunk0526, exactCsrAttemptsChunk0527,
+  exactCsrAttemptsChunk0528, exactCsrAttemptsChunk0529, exactCsrAttemptsChunk0530, exactCsrAttemptsChunk0531,
+  exactCsrAttemptsChunk0532, exactCsrAttemptsChunk0533, exactCsrAttemptsChunk0534, exactCsrAttemptsChunk0535,
+  exactCsrAttemptsChunk0536, exactCsrAttemptsChunk0537, exactCsrAttemptsChunk0538, exactCsrAttemptsChunk0539,
+  exactCsrAttemptsChunk0540, exactCsrAttemptsChunk0541, exactCsrAttemptsChunk0542, exactCsrAttemptsChunk0543,
+  exactCsrAttemptsChunk0544, exactCsrAttemptsChunk0545, exactCsrAttemptsChunk0546, exactCsrAttemptsChunk0547,
+  exactCsrAttemptsChunk0548, exactCsrAttemptsChunk0549, exactCsrAttemptsChunk0550, exactCsrAttemptsChunk0551,
+  exactCsrAttemptsChunk0552, exactCsrAttemptsChunk0553, exactCsrAttemptsChunk0554, exactCsrAttemptsChunk0555,
+  exactCsrAttemptsChunk0556, exactCsrAttemptsChunk0557, exactCsrAttemptsChunk0558, exactCsrAttemptsChunk0559
+]
+
+def csrAttemptChunks14 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0560, exactCsrAttemptsChunk0561, exactCsrAttemptsChunk0562, exactCsrAttemptsChunk0563,
+  exactCsrAttemptsChunk0564, exactCsrAttemptsChunk0565, exactCsrAttemptsChunk0566, exactCsrAttemptsChunk0567,
+  exactCsrAttemptsChunk0568, exactCsrAttemptsChunk0569, exactCsrAttemptsChunk0570, exactCsrAttemptsChunk0571,
+  exactCsrAttemptsChunk0572, exactCsrAttemptsChunk0573, exactCsrAttemptsChunk0574, exactCsrAttemptsChunk0575,
+  exactCsrAttemptsChunk0576, exactCsrAttemptsChunk0577, exactCsrAttemptsChunk0578, exactCsrAttemptsChunk0579,
+  exactCsrAttemptsChunk0580, exactCsrAttemptsChunk0581, exactCsrAttemptsChunk0582, exactCsrAttemptsChunk0583,
+  exactCsrAttemptsChunk0584, exactCsrAttemptsChunk0585, exactCsrAttemptsChunk0586, exactCsrAttemptsChunk0587,
+  exactCsrAttemptsChunk0588, exactCsrAttemptsChunk0589, exactCsrAttemptsChunk0590, exactCsrAttemptsChunk0591,
+  exactCsrAttemptsChunk0592, exactCsrAttemptsChunk0593, exactCsrAttemptsChunk0594, exactCsrAttemptsChunk0595,
+  exactCsrAttemptsChunk0596, exactCsrAttemptsChunk0597, exactCsrAttemptsChunk0598, exactCsrAttemptsChunk0599
+]
+
+def csrAttemptChunks15 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0600, exactCsrAttemptsChunk0601, exactCsrAttemptsChunk0602, exactCsrAttemptsChunk0603,
+  exactCsrAttemptsChunk0604, exactCsrAttemptsChunk0605, exactCsrAttemptsChunk0606, exactCsrAttemptsChunk0607,
+  exactCsrAttemptsChunk0608, exactCsrAttemptsChunk0609, exactCsrAttemptsChunk0610, exactCsrAttemptsChunk0611,
+  exactCsrAttemptsChunk0612, exactCsrAttemptsChunk0613, exactCsrAttemptsChunk0614, exactCsrAttemptsChunk0615,
+  exactCsrAttemptsChunk0616, exactCsrAttemptsChunk0617, exactCsrAttemptsChunk0618, exactCsrAttemptsChunk0619,
+  exactCsrAttemptsChunk0620, exactCsrAttemptsChunk0621, exactCsrAttemptsChunk0622, exactCsrAttemptsChunk0623,
+  exactCsrAttemptsChunk0624, exactCsrAttemptsChunk0625, exactCsrAttemptsChunk0626, exactCsrAttemptsChunk0627,
+  exactCsrAttemptsChunk0628, exactCsrAttemptsChunk0629, exactCsrAttemptsChunk0630, exactCsrAttemptsChunk0631,
+  exactCsrAttemptsChunk0632, exactCsrAttemptsChunk0633, exactCsrAttemptsChunk0634, exactCsrAttemptsChunk0635,
+  exactCsrAttemptsChunk0636, exactCsrAttemptsChunk0637, exactCsrAttemptsChunk0638, exactCsrAttemptsChunk0639
+]
+
+def csrAttemptChunks16 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0640, exactCsrAttemptsChunk0641, exactCsrAttemptsChunk0642, exactCsrAttemptsChunk0643
+]
+
+def csrAttemptChunks : List (List CsrExecutableAttempt) :=
+  csrAttemptChunks00 ++ csrAttemptChunks01 ++ csrAttemptChunks02 ++ csrAttemptChunks03 ++ csrAttemptChunks04 ++ csrAttemptChunks05 ++ csrAttemptChunks06 ++ csrAttemptChunks07 ++ csrAttemptChunks08 ++ csrAttemptChunks09 ++ csrAttemptChunks10 ++ csrAttemptChunks11 ++ csrAttemptChunks12 ++ csrAttemptChunks13 ++ csrAttemptChunks14 ++ csrAttemptChunks15 ++ csrAttemptChunks16
+
+def csrAttemptPrefixChunks0602 : List (List CsrExecutableAttempt) :=
+  csrAttemptChunks00 ++ csrAttemptChunks01 ++ csrAttemptChunks02 ++ csrAttemptChunks03 ++ csrAttemptChunks04 ++ csrAttemptChunks05 ++ csrAttemptChunks06 ++ csrAttemptChunks07 ++ csrAttemptChunks08 ++ csrAttemptChunks09 ++ csrAttemptChunks10 ++ csrAttemptChunks11 ++ csrAttemptChunks12 ++ csrAttemptChunks13 ++ csrAttemptChunks14 ++ [
+    exactCsrAttemptsChunk0600, exactCsrAttemptsChunk0601
+]
+
+def csrAttemptSuffixChunks0603 : List (List CsrExecutableAttempt) :=
+[
+  exactCsrAttemptsChunk0603, exactCsrAttemptsChunk0604, exactCsrAttemptsChunk0605, exactCsrAttemptsChunk0606,
+  exactCsrAttemptsChunk0607, exactCsrAttemptsChunk0608, exactCsrAttemptsChunk0609, exactCsrAttemptsChunk0610,
+  exactCsrAttemptsChunk0611, exactCsrAttemptsChunk0612, exactCsrAttemptsChunk0613, exactCsrAttemptsChunk0614,
+  exactCsrAttemptsChunk0615, exactCsrAttemptsChunk0616, exactCsrAttemptsChunk0617, exactCsrAttemptsChunk0618,
+  exactCsrAttemptsChunk0619, exactCsrAttemptsChunk0620, exactCsrAttemptsChunk0621, exactCsrAttemptsChunk0622,
+  exactCsrAttemptsChunk0623, exactCsrAttemptsChunk0624, exactCsrAttemptsChunk0625, exactCsrAttemptsChunk0626,
+  exactCsrAttemptsChunk0627, exactCsrAttemptsChunk0628, exactCsrAttemptsChunk0629, exactCsrAttemptsChunk0630,
+  exactCsrAttemptsChunk0631, exactCsrAttemptsChunk0632, exactCsrAttemptsChunk0633, exactCsrAttemptsChunk0634,
+  exactCsrAttemptsChunk0635, exactCsrAttemptsChunk0636, exactCsrAttemptsChunk0637, exactCsrAttemptsChunk0638,
+  exactCsrAttemptsChunk0639, exactCsrAttemptsChunk0640, exactCsrAttemptsChunk0641, exactCsrAttemptsChunk0642,
+  exactCsrAttemptsChunk0643
+]
+
+end
+end HegemonCrypto.SmallWood.SmzaRp04PackedAcceptanceData

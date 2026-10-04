@@ -1,0 +1,388 @@
+diff --git a/prototypes/standalone-shake256-binius/m4-full-production-prototype/src/lib.rs b/prototypes/standalone-shake256-binius/m4-full-production-prototype/src/lib.rs
+--- a/prototypes/standalone-shake256-binius/m4-full-production-prototype/src/lib.rs
++++ b/prototypes/standalone-shake256-binius/m4-full-production-prototype/src/lib.rs
+@@ -167,14 +167,12 @@ struct AuthWords {
+ 
+ #[derive(Clone, Debug)]
+ struct DecodedPublic {
+-    pub bytes: [Wire; PUBLIC_BYTES],
+     pub input_flags: [Wire; MAX_INPUTS],
+     pub output_flags: [Wire; MAX_OUTPUTS],
+     pub anchor: [Wire; DIGEST_WORDS],
+     pub nullifiers: [[Wire; DIGEST_WORDS]; MAX_INPUTS],
+     pub commitments: [[Wire; DIGEST_WORDS]; MAX_OUTPUTS],
+     pub ciphertext_hashes: [[Wire; DIGEST_WORDS]; MAX_OUTPUTS],
+-    pub asset_be_bytes: [[Wire; 8]; BALANCE_SLOTS],
+     pub assets: [Wire; BALANCE_SLOTS],
+     pub fee: Wire,
+     pub value_balance_sign: Wire,
+@@ -218,6 +216,12 @@ struct ModeSelectors {
+     final_spend: Wire,
+ }
+ 
++#[derive(Clone, Debug)]
++struct BalanceNote {
++    value: Wire,
++    selectors: [Wire; BALANCE_SLOTS],
++}
++
+ impl ModeSelectors {
+     fn all(&self) -> [Wire; 5] {
+         [
+@@ -342,74 +346,48 @@ fn map_private(
+ }
+ 
+ fn decode_public(builder: &CircuitBuilder, public: &[Wire; STATEMENT_WORDS]) -> DecodedPublic {
+-    let bytes =
+-        array::from_fn(|offset| builder.extract_byte(public[offset / 8], (offset % 8) as u32));
+-    let input_flags = [bytes[10], bytes[11]];
+-    let output_flags = [bytes[12], bytes[13]];
+-    let anchor = pack_digest(builder, &bytes[OFFSET_ANCHOR..OFFSET_ANCHOR + DIGEST_BYTES]);
++    let input_flags = [
++        public_byte(builder, public, OFFSET_FLAGS),
++        public_byte(builder, public, OFFSET_FLAGS + 1),
++    ];
++    let output_flags = [
++        public_byte(builder, public, OFFSET_FLAGS + 2),
++        public_byte(builder, public, OFFSET_FLAGS + 3),
++    ];
++    let anchor = public_words_at(builder, public, OFFSET_ANCHOR);
+     let nullifiers = array::from_fn(|index| {
+         let start = OFFSET_NULLIFIERS + index * DIGEST_BYTES;
+-        pack_digest(builder, &bytes[start..start + DIGEST_BYTES])
++        public_words_at(builder, public, start)
+     });
+     let commitments = array::from_fn(|index| {
+         let start = OFFSET_COMMITMENTS + index * DIGEST_BYTES;
+-        pack_digest(builder, &bytes[start..start + DIGEST_BYTES])
++        public_words_at(builder, public, start)
+     });
+     let ciphertext_hashes = array::from_fn(|index| {
+         let start = OFFSET_CIPHERTEXT_HASHES + index * DIGEST_BYTES;
+-        pack_digest(builder, &bytes[start..start + DIGEST_BYTES])
+-    });
+-    let asset_be_bytes = array::from_fn(|slot| {
+-        let start = OFFSET_ASSETS + slot * 8;
+-        bytes[start..start + 8].try_into().unwrap()
++        public_words_at(builder, public, start)
+     });
+-    let assets = array::from_fn(|slot| decode_be(builder, &asset_be_bytes[slot]));
++    let assets = array::from_fn(|slot| public_be_u64(builder, public, OFFSET_ASSETS + slot * 8));
+     DecodedPublic {
+-        bytes,
+         input_flags,
+         output_flags,
+         anchor,
+         nullifiers,
+         commitments,
+         ciphertext_hashes,
+-        asset_be_bytes,
+         assets,
+-        fee: decode_be(builder, &bytes[OFFSET_FEE..OFFSET_FEE + 8]),
+-        value_balance_sign: bytes[OFFSET_VALUE_BALANCE_SIGN],
+-        value_balance_magnitude: decode_be(
+-            builder,
+-            &bytes[OFFSET_VALUE_BALANCE_MAGNITUDE..OFFSET_VALUE_BALANCE_MAGNITUDE + 8],
+-        ),
+-        stable_enabled: bytes[OFFSET_STABLE_ENABLED],
+-        stable_asset: decode_be(
+-            builder,
+-            &bytes[OFFSET_STABLE_ASSET..OFFSET_STABLE_ASSET + 8],
+-        ),
+-        stable_version: decode_be(
+-            builder,
+-            &bytes[OFFSET_STABLE_VERSION..OFFSET_STABLE_VERSION + 4],
+-        ),
+-        stable_issuance_sign: bytes[OFFSET_STABLE_ISSUANCE_SIGN],
+-        stable_issuance_magnitude: decode_be(
+-            builder,
+-            &bytes[OFFSET_STABLE_ISSUANCE_MAGNITUDE..OFFSET_STABLE_ISSUANCE_MAGNITUDE + 8],
+-        ),
+-        stable_policy: pack_digest(
+-            builder,
+-            &bytes[OFFSET_STABLE_POLICY..OFFSET_STABLE_POLICY + DIGEST_BYTES],
+-        ),
+-        stable_oracle: pack_digest(
+-            builder,
+-            &bytes[OFFSET_STABLE_ORACLE..OFFSET_STABLE_ORACLE + DIGEST_BYTES],
+-        ),
+-        stable_attestation: pack_digest(
+-            builder,
+-            &bytes[OFFSET_STABLE_ATTESTATION..OFFSET_STABLE_ATTESTATION + DIGEST_BYTES],
+-        ),
+-        balance_tag: pack_digest(
+-            builder,
+-            &bytes[OFFSET_BALANCE_TAG..OFFSET_BALANCE_TAG + DIGEST_BYTES],
+-        ),
++        fee: public_be_u64(builder, public, OFFSET_FEE),
++        value_balance_sign: public_byte(builder, public, OFFSET_VALUE_BALANCE_SIGN),
++        value_balance_magnitude: public_be_u64(builder, public, OFFSET_VALUE_BALANCE_MAGNITUDE),
++        stable_enabled: public_byte(builder, public, OFFSET_STABLE_ENABLED),
++        stable_asset: public_be_u64(builder, public, OFFSET_STABLE_ASSET),
++        stable_version: public_be_u32(builder, public, OFFSET_STABLE_VERSION),
++        stable_issuance_sign: public_byte(builder, public, OFFSET_STABLE_ISSUANCE_SIGN),
++        stable_issuance_magnitude: public_be_u64(builder, public, OFFSET_STABLE_ISSUANCE_MAGNITUDE),
++        stable_policy: public_words_at(builder, public, OFFSET_STABLE_POLICY),
++        stable_oracle: public_words_at(builder, public, OFFSET_STABLE_ORACLE),
++        stable_attestation: public_words_at(builder, public, OFFSET_STABLE_ATTESTATION),
++        balance_tag: public_words_at(builder, public, OFFSET_BALANCE_TAG),
+     }
+ }
+ 
+@@ -427,22 +405,25 @@ fn constrain_transport(
+         ),
+     );
+-    assert_bytes_const(
++    assert_public_bytes_const(
+         builder,
+         "statement.magic",
+-        &statement.bytes[0..8],
++        &wires.public[..STATEMENT_WORDS].try_into().unwrap(),
++        0,
+         &STATEMENT_MAGIC,
+     );
+-    assert_bytes_const(
++    assert_public_bytes_const(
+         builder,
+         "statement.grammar_version",
+-        &statement.bytes[8..10],
++        &wires.public[..STATEMENT_WORDS].try_into().unwrap(),
++        8,
+         &STATEMENT_GRAMMAR_VERSION.to_be_bytes(),
+     );
+     let activation = activation_bytes(expected_activation);
+-    assert_bytes_const(
++    assert_public_bytes_const(
+         builder,
+         "statement.activation",
+-        &statement.bytes[OFFSET_ACTIVATION..PUBLIC_BYTES],
++        &wires.public[..STATEMENT_WORDS].try_into().unwrap(),
++        OFFSET_ACTIVATION,
+         &activation,
+     );
+ 
+@@ -478,7 +459,7 @@ fn constrain_non_hash(builder: &CircuitBuilder, wires: &FullM4Wires) -> ModeSele
+     constrain_slots(builder, statement);
+     constrain_stablecoin(builder, statement);
+ 
+-    for index in 0..MAX_INPUTS {
++    let balance_inputs: [BalanceNote; MAX_INPUTS] = array::from_fn(|index| {
+         let inactive = builder.bnot(low_bool_msb(builder, statement.input_flags[index]));
+         assert_words_zero_cond(
+             builder,
+@@ -486,7 +467,7 @@ fn constrain_non_hash(builder: &CircuitBuilder, wires: &FullM4Wires) -> ModeSele
+             &wires.private[index * INPUT_WORDS..(index + 1) * INPUT_WORDS],
+             inactive,
+         );
+-        constrain_note_and_selectors(
++        let balance_note = constrain_note_and_selectors(
+             builder,
+             &format!("input[{index}]"),
+             &wires.inputs[index].note,
+@@ -505,8 +486,9 @@ fn constrain_non_hash(builder: &CircuitBuilder, wires: &FullM4Wires) -> ModeSele
+             &statement.nullifiers[index],
+             inactive_public,
+         );
+-    }
+-    for index in 0..MAX_OUTPUTS {
++        balance_note
++    });
++    let balance_outputs: [BalanceNote; MAX_OUTPUTS] = array::from_fn(|index| {
+         let inactive = builder.bnot(low_bool_msb(builder, statement.output_flags[index]));
+         let start = 522 + index * OUTPUT_WORDS;
+         assert_words_zero_cond(
+@@ -516,7 +498,7 @@ fn constrain_non_hash(builder: &CircuitBuilder, wires: &FullM4Wires) -> ModeSele
+             &wires.private[start..start + OUTPUT_WORDS],
+             inactive,
+         );
+-        constrain_note_and_selectors(
++        let balance_note = constrain_note_and_selectors(
+             builder,
+             &format!("output[{index}]"),
+             &wires.outputs[index].note,
+@@ -543,7 +525,8 @@ fn constrain_non_hash(builder: &CircuitBuilder, wires: &FullM4Wires) -> ModeSele
+             &statement.ciphertext_hashes[index],
+             active,
+         );
+-    }
++        balance_note
++    });
+     let both_inputs = and_msb(
+         builder,
+         low_bool_msb(builder, statement.input_flags[0]),
+@@ -571,7 +554,7 @@ fn constrain_non_hash(builder: &CircuitBuilder, wires: &FullM4Wires) -> ModeSele
+         final_spend: builder.icmp_eq(mode, builder.add_constant_64(4)),
+     };
+     constrain_auth_non_hash(builder, wires, &modes);
+-    constrain_balance(builder, wires);
++    constrain_balance(builder, wires, &balance_inputs, &balance_outputs);
+     modes
+ }
+ 
+@@ -734,7 +717,7 @@ fn constrain_note_and_selectors(
+     selectors_be: &[Wire; BALANCE_SLOTS],
+     active_low: Wire,
+     assets: &[Wire; BALANCE_SLOTS],
+-) {
++) -> BalanceNote {
+     let zero = builder.add_constant_64(0);
+     let one = builder.add_constant_64(1);
+     let active = low_bool_msb(builder, active_low);
+@@ -786,6 +769,7 @@ fn constrain_note_and_selectors(
+         asset,
+         active,
+     );
++    BalanceNote { value, selectors }
+ }
+ 
+ fn constrain_auth_non_hash(builder: &CircuitBuilder, wires: &FullM4Wires, modes: &ModeSelectors) {
+@@ -1267,7 +1251,12 @@ fn constrain_zero_native_note(
+     );
+ }
+ 
+-fn constrain_balance(builder: &CircuitBuilder, wires: &FullM4Wires) {
++fn constrain_balance(
++    builder: &CircuitBuilder,
++    wires: &FullM4Wires,
++    balance_inputs: &[BalanceNote; MAX_INPUTS],
++    balance_outputs: &[BalanceNote; MAX_OUTPUTS],
++) {
+     let statement = &wires.statement;
+     let zero = builder.add_constant_64(0);
+     let enabled = low_bool_msb(builder, statement.stable_enabled);
+@@ -1278,8 +1267,8 @@ fn constrain_balance(builder: &CircuitBuilder, wires: &FullM4Wires) {
+         let mut inputs = zero;
+         let mut outputs = zero;
+         for index in 0..MAX_INPUTS {
+-            let selector = swap_bytes(builder, wires.inputs[index].selectors_be[slot]);
+-            let value = swap_bytes(builder, wires.inputs[index].note.value_be);
++            let selector = balance_inputs[index].selectors[slot];
++            let value = balance_inputs[index].value;
+             let contribution = builder.select(low_bool_msb(builder, selector), value, zero);
+             let (sum, carry) = builder.iadd(inputs, contribution);
+             builder.assert_false(format!("balance[{slot}].input_overflow[{index}]"), carry);
+@@ -1287,8 +1276,8 @@ fn constrain_balance(builder: &CircuitBuilder, wires: &FullM4Wires) {
+             inputs = sum;
+         }
+         for index in 0..MAX_OUTPUTS {
+-            let selector = swap_bytes(builder, wires.outputs[index].selectors_be[slot]);
+-            let value = swap_bytes(builder, wires.outputs[index].note.value_be);
++            let selector = balance_outputs[index].selectors[slot];
++            let value = balance_outputs[index].value;
+             let contribution = builder.select(low_bool_msb(builder, selector), value, zero);
+             let (sum, carry) = builder.iadd(outputs, contribution);
+             builder.assert_false(format!("balance[{slot}].output_overflow[{index}]"), carry);
+@@ -1540,15 +1529,14 @@ fn constrain_hashes(builder: &CircuitBuilder, wires: &FullM4Wires, modes: &ModeS
+         let mut current = note_commitments[index];
+         for (level, sibling) in wires.inputs[index].siblings.iter().enumerate() {
+             let direction_msb = builder.shl(position, 63 - level as u32);
+             let mask = builder.sar(direction_msb, 63);
+-            let left: [Wire; DIGEST_WORDS] = array::from_fn(|word| {
+-                let delta = builder.band(mask, builder.bxor(current[word], sibling[word]));
+-                builder.bxor(current[word], delta)
+-            });
+-            let right: [Wire; DIGEST_WORDS] = array::from_fn(|word| {
+-                let delta = builder.band(mask, builder.bxor(current[word], sibling[word]));
+-                builder.bxor(sibling[word], delta)
++            let delta: [Wire; DIGEST_WORDS] = array::from_fn(|word| {
++                builder.band(mask, builder.bxor(current[word], sibling[word]))
+             });
++            let left: [Wire; DIGEST_WORDS] =
++                array::from_fn(|word| builder.bxor(current[word], delta[word]));
++            let right: [Wire; DIGEST_WORDS] =
++                array::from_fn(|word| builder.bxor(sibling[word], delta[word]));
+             let frame = semantic_frame(
+                 builder,
+                 ROLE_MERKLE,
+@@ -2044,13 +2032,83 @@ fn activation_bytes(activation: &ActivationBinding) -> [u8; PUBLIC_BYTES - OFFSE
+     bytes.try_into().unwrap()
+ }
+ 
+-fn assert_bytes_const(builder: &CircuitBuilder, name: &str, actual: &[Wire], expected: &[u8]) {
+-    assert_eq!(actual.len(), expected.len());
+-    for (index, (&wire, &byte)) in actual.iter().zip(expected).enumerate() {
+-        builder.assert_eq(
+-            format!("{name}[{index}]"),
+-            wire,
+-            builder.add_constant_64(u64::from(byte)),
+-        );
++fn public_le_word(
++    builder: &CircuitBuilder,
++    public: &[Wire; STATEMENT_WORDS],
++    byte_offset: usize,
++) -> Wire {
++    assert!(byte_offset + 8 <= PUBLIC_BYTES);
++    let word = byte_offset / 8;
++    let shift = (byte_offset % 8) * 8;
++    if shift == 0 {
++        return public[word];
++    }
++    builder.bxor(
++        builder.shr(public[word], shift as u32),
++        builder.shl(public[word + 1], (64 - shift) as u32),
++    )
++}
++
++fn public_words_at<const N: usize>(
++    builder: &CircuitBuilder,
++    public: &[Wire; STATEMENT_WORDS],
++    byte_offset: usize,
++) -> [Wire; N] {
++    array::from_fn(|word| public_le_word(builder, public, byte_offset + word * 8))
++}
++
++fn public_byte(
++    builder: &CircuitBuilder,
++    public: &[Wire; STATEMENT_WORDS],
++    byte_offset: usize,
++) -> Wire {
++    builder.extract_byte(public[byte_offset / 8], (byte_offset % 8) as u32)
++}
++
++fn public_be_u64(
++    builder: &CircuitBuilder,
++    public: &[Wire; STATEMENT_WORDS],
++    byte_offset: usize,
++) -> Wire {
++    swap_bytes(builder, public_le_word(builder, public, byte_offset))
++}
++
++fn public_be_u32(
++    builder: &CircuitBuilder,
++    public: &[Wire; STATEMENT_WORDS],
++    byte_offset: usize,
++) -> Wire {
++    assert_eq!(byte_offset % 8, 0);
++    builder.shr(swap_bytes(builder, public[byte_offset / 8]), 32)
++}
++
++fn assert_public_bytes_const(
++    builder: &CircuitBuilder,
++    name: &str,
++    public: &[Wire; STATEMENT_WORDS],
++    byte_offset: usize,
++    expected: &[u8],
++) {
++    assert!(byte_offset + expected.len() <= PUBLIC_BYTES);
++    let mut consumed = 0;
++    while consumed < expected.len() {
++        let absolute = byte_offset + consumed;
++        let word = absolute / 8;
++        let within = absolute % 8;
++        let take = (8 - within).min(expected.len() - consumed);
++        let mut expected_word = [0u8; 8];
++        expected_word[within..within + take].copy_from_slice(&expected[consumed..consumed + take]);
++        let mask = low_byte_mask(take) << (within * 8);
++        let actual = if mask == u64::MAX {
++            public[word]
++        } else {
++            builder.band(public[word], builder.add_constant_64(mask))
++        };
++        builder.assert_eq(
++            format!("{name}.word[{word}]"),
++            actual,
++            builder.add_constant_64(u64::from_le_bytes(expected_word)),
++        );
++        consumed += take;
+     }
+ }

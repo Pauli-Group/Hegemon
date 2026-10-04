@@ -1,0 +1,39 @@
+flowchart TD
+    B["B = SHA-512(statement + context + salt64 + identity + cap + profile)"]
+    R["proof prefix: raw_root64"]
+    C3["proof prefix: claimed h3"]
+    C5["proof prefix: existing h5 / h_piop"]
+
+    B --> E0
+    R --> E0["event 0: SHA-512 exact root message -> h1"]
+    E0 --> E1["event 1: SHAKE field samples eta * LVCS_rows -> h2"]
+    E1 --> E2["event 2: accept h3 claim; save B,event=2,prior=h2"]
+    C3 --> E2
+    E2 --> E3["event 3: SHAKE rho * max constraints -> h4"]
+    E3 --> E4["event 4: accept h5 claim; save B,event=4,prior=h4"]
+    C5 --> E4
+    E4 --> E5["event 5: SHAKE s=6 opening points -> h6"]
+
+    E5 --> HEADS["reconstruct combination heads from row scalars + partial evals"]
+    HEADS --> M7["M7 = BE_words(h5) || each head || matching tail"]
+    M7 --> E6["event 6: SHA-512 exact M7 -> h7"]
+    E6 --> E7["event 7: SHAKE q=48 sorted distinct indexes -> h8"]
+
+    E7 --> ROOT2["reconstruct authenticated root"]
+    R --> ROOTCMP{"root2 == raw_root?"}
+    ROOT2 --> ROOTCMP
+    ROOTCMP -->|no| REJECT["reject / poisoned"]
+    ROOTCMP -->|yes| M3["restore 5 DECS polynomials; encode exact M3"]
+    M3 --> H3CMP{"SHA-512(saved event-2 snapshot, M3) == h3?"}
+    C3 --> H3CMP
+    H3CMP -->|no| REJECT
+    H3CMP -->|yes| M5["restore PIOP polynomials; encode exact M5"]
+    M5 --> H5CMP{"SHA-512(saved event-4 snapshot, M5) == h5?"}
+    C5 --> H5CMP
+    H5CMP -->|no| REJECT
+    H5CMP -->|yes| FINISH["finish: return existing h8; no ninth event"]
+
+    classDef claim fill:#fff4cc,stroke:#7a5b00;
+    classDef reject fill:#ffd9d9,stroke:#8a0000;
+    class R,C3,C5 claim;
+    class REJECT reject;

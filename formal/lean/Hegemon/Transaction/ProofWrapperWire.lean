@@ -104,8 +104,8 @@ def maxOutputs : Nat := 2
 def balanceSlots : Nat := 4
 def paddingAssetId : Nat := 18446744073709551615
 def paddingFieldId : Nat := 4294967294
-def smallwoodCircuitVersion : Nat := 3
-def smallwoodCryptoSuite : Nat := 2
+def smallwoodCircuitVersion : Nat := 4
+def smallwoodCryptoSuite : Nat := 3
 -- Bincode encodes the second Rust enum variant as index one. Variant zero is
 -- retained only as a rejected tombstone for historical bytes.
 def smallwoodBackendVariant : Nat := 1

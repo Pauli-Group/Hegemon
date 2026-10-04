@@ -58,8 +58,6 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Bridge/GenerateCheckpointOutputVectors.lean
   lake env lean Hegemon/Bridge/GenerateLongRangeVectors.lean
   lake env lean Hegemon/Bridge/GenerateVectors.lean
-  lake env lean Hegemon/Consensus/AggregationV5.lean
-  lake env lean Hegemon/Consensus/GenerateAggregationV5Vectors.lean
   lake env lean Hegemon/Consensus/CommitmentTreeAppend.lean
   lake env lean Hegemon/Consensus/GenerateCommitmentTreeAppendVectors.lean
   lake env lean Hegemon/Consensus/DaRoot.lean
@@ -169,8 +167,6 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/CommitmentTreeMembershipRefinement.lean
   lake env lean Hegemon/Native/MineableActionAdmission.lean
   lake env lean Hegemon/Native/GenerateMineableActionAdmissionVectors.lean
-  lake env lean Hegemon/Native/MinerIdentity.lean
-  lake env lean Hegemon/Native/GenerateMinerIdentityVectors.lean
   lake env lean Hegemon/Native/MinedWorkAdmission.lean
   lake env lean Hegemon/Native/GenerateMinedWorkAdmissionVectors.lean
   lake env lean Hegemon/Native/MinedBlockCommitPublication.lean
@@ -279,6 +275,15 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Transaction/GenerateSmallWoodPublicStatementBindingVectors.lean
   lake env lean Hegemon/Transaction/SmallWoodVerifierStatementProjection.lean
   lake env lean Hegemon/Transaction/GenerateSmallWoodVerifierStatementProjectionVectors.lean
+  lake env lean Hegemon/Transaction/Poseidon2Width16Kernel.lean
+  lake env lean Hegemon/Transaction/Poseidon2V8RelationProgram.lean
+  lake env lean Hegemon/Transaction/Poseidon2V8ConstraintRefinement.lean
+  lake env lean Hegemon/Transaction/Poseidon2V8SemanticSpecification.lean
+  lake env lean Hegemon/Transaction/Poseidon2V8DecoderRefinement.lean
+  lake env lean Hegemon/Transaction/Poseidon2V8SemanticAdequacy.lean
+  lake env lean Hegemon/Transaction/GeneratePoseidon2V8SemanticAdequacyVectors.lean
+  lake env lean Hegemon/Transaction/GeneratePoseidon2V8ConstraintRefinementVectors.lean
+  lake env lean Hegemon/Transaction/GeneratePoseidon2V8RelationProgramVectors.lean
   lake env lean Hegemon/Transaction/SmallWoodProductionConstraintRefinement.lean
   lake env lean Hegemon/Transaction/GenerateSmallWoodProductionConstraintRefinementVectors.lean
   lake env lean Hegemon/Transaction/SmallWoodRecursiveEnvelopeWire.lean

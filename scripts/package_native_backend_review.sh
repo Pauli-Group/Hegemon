@@ -40,6 +40,7 @@ git -C "$ROOT" archive --format=tar HEAD | tar -xf - -C "$STAGE/source"
 rm -f \
   "$STAGE/source/audits/native-backend-128b/native-backend-128b-review-package.tar.gz" \
   "$STAGE/source/audits/native-backend-128b/package.sha256"
+python3 -B "$STAGE/source/scripts/test_check_release_crypto_profile.py"
 SOURCE_TREE_SHA256="$(python3 -I "$PACKAGE_HELPER" source-digest --source "$STAGE/source")"
 
 python3 -I - "$ROOT" "$STAGE/code_fingerprint.json" "$SOURCE_TREE_SHA256" <<'PY'

@@ -14,8 +14,36 @@ permissions:
   contents: read
 
 jobs:
+  transaction-proof-authorization:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install retained-artifact verifier build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: "1.91.1"
+
+      - name: Transaction-proof successor authorization release gate
+        run: /usr/bin/python3 -I -B scripts/check_transaction_proof_successor_authorization.py config/transaction-proof-successor-selection.json --require-authorized --verify-retained-artifacts
+
+      - name: Release workflow policy regression
+        run: /usr/bin/python3 -I -B scripts/test_check_ci_release_gate_policy.py
+
+      - name: Historical SmallWood authorization regression
+        run: /usr/bin/python3 -I -B scripts/test_check_smallwood_production_authorization.py
+
+      - name: Transaction-proof successor authorization regression
+        run: /usr/bin/python3 -I -B scripts/test_check_transaction_proof_successor_authorization.py
+
   security-gates:
     runs-on: ubuntu-latest
+    needs: transaction-proof-authorization
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -46,6 +74,32 @@ jobs:
 
       - name: Formal-core release gate
         run: bash scripts/check_formal_core.sh
+
+      - name: Formal-crypto isolation release gate
+        run: bash scripts/check_formal_crypto.sh --isolation-only
+
+      - name: Complete formal cryptography release gate
+        env:
+          HEGEMON_FORMAL_CRYPTO_MIN_FREE_GIB: '8'
+        run: bash scripts/check_formal_crypto.sh full
+
+      - name: Production parser/verifier refinement regression
+        run: ./scripts/run_exact_cargo_lib_test.sh transaction-circuit smallwood_engine::tests::lean_generated_smallwood_proof_wire_vectors_match_production_parser
+
+      - name: SMZ8 parser/verifier refinement regression
+        run: ./scripts/run_exact_cargo_lib_test.sh transaction-circuit smallwood_engine::tests::lean_generated_smz8_proof_wire_vectors_match_production_parser
+      - name: SMZ9 parser/verifier refinement regression
+        run: ./scripts/run_exact_cargo_lib_test.sh transaction-circuit smallwood_engine::tests::lean_generated_smz9_proof_wire_vectors_match_production_parser
+      - name: V8 PendingAction private-codec conformance regression
+        run: ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::protocol_v8_artifact_codec_matches_private_pending_action_v3_exactly
+
+      - name: SmallWood V5 strict security gate regression
+        run: python3 .agent/hardening/smallwood-pqc-zk/test_strict_profile.py
+
+      - name: SmallWood V5 candidate manifest gate
+        env:
+          HEGEMON_SMALLWOOD_V5_TRUST_ROOT_SHA256: ${{ vars.HEGEMON_SMALLWOOD_V5_TRUST_ROOT_SHA256 }}
+        run: python3 scripts/check_smallwood_v5_candidate_gate.py
 
       - name: Native backend review package verification
         run: ./scripts/verify_native_backend_review_package.sh
@@ -165,7 +219,7 @@ jobs:
           path: release/
 
   build-macos-arm:
-    runs-on: macos-14  # Apple Silicon runner
+    runs-on: macos-14
     needs:
       - security-gates
       - app-no-ssh-e2e
@@ -258,7 +312,7 @@ jobs:
           path: artifacts
       
       - name: Verify and assemble manifest-bound release assets
-        run: python3 scripts/release_artifact_manifest.py assemble --bundle-manifest artifacts/linux-binary/hegemon-release-assets-linux-x86_64.json --bundle-manifest artifacts/macos-intel-binary/hegemon-release-assets-macos-x86_64.json --bundle-manifest artifacts/macos-arm-binary/hegemon-release-assets-macos-arm64.json --bundle-manifest artifacts/windows-binary/hegemon-release-assets-windows-x86_64.json --output-dir release-assets
+        run: /usr/bin/python3 -I -B scripts/release_artifact_manifest.py assemble --bundle-manifest artifacts/linux-binary/hegemon-release-assets-linux-x86_64.json --bundle-manifest artifacts/macos-intel-binary/hegemon-release-assets-macos-x86_64.json --bundle-manifest artifacts/macos-arm-binary/hegemon-release-assets-macos-arm64.json --bundle-manifest artifacts/windows-binary/hegemon-release-assets-windows-x86_64.json --output-dir release-assets
       
       - name: Create Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65

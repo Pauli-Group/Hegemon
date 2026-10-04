@@ -90,7 +90,7 @@ def caseJson (name : String) (case : SyncRawIngressCase) : String :=
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 2,\n"
+    ++ "  \"schema_version\": 3,\n"
     ++ "  \"sync_raw_ingress_cases\": [\n"
     ++ caseJson "valid-raw-sync-request-capped-range" validRawRequest ++ ",\n"
     ++ caseJson "raw-sync-request-trailing-rejected" trailingRawRequest ++ ",\n"
@@ -100,9 +100,9 @@ def vectorJson : String :=
       unknownVariantRawMessage ++ ",\n"
     ++ caseJson "raw-sync-empty-pending-action-rejected"
       emptyPendingActionRelay ++ ",\n"
-    ++ caseJson "valid-raw-sync-block-chunk-request"
+    ++ caseJson "raw-sync-block-chunk-request-fail-closed"
       validRawBlockChunkRequest ++ ",\n"
-    ++ caseJson "valid-raw-sync-block-chunk" validRawBlockChunk ++ ",\n"
+    ++ caseJson "raw-sync-block-chunk-fail-closed" validRawBlockChunk ++ ",\n"
     ++ caseJson "valid-raw-sync-tip-announcement"
       validRawTipAnnouncement ++ ",\n"
     ++ caseJson "raw-sync-truncated-block-chunk-request-rejected"

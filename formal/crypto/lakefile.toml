@@ -1,0 +1,30 @@
+name = "hegemon_crypto"
+defaultTargets = ["HegemonCrypto"]
+
+[leanOptions]
+autoImplicit = false
+warningAsError = true
+
+[[require]]
+name = "hegemon_formal"
+path = "../lean"
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "905b95818eb32af7874a58b427f50c1711a5e96c"
+
+[[lean_lib]]
+name = "HegemonCrypto"
+
+[[lean_exe]]
+name = "gen_smallwood_proof_wire_vectors"
+root = "HegemonCrypto.GenerateSmallWoodProofWireVectors"
+
+[[lean_exe]]
+name = "gen_smallwood_smz8_proof_wire_vectors"
+root = "HegemonCrypto.GenerateSmallWoodSmz8ProofWireVectors"
+
+[[lean_exe]]
+name = "gen_smallwood_smz9_proof_wire_vectors"
+root = "HegemonCrypto.GenerateSmallWoodSmz9ProofWireVectors"

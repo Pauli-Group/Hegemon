@@ -665,7 +665,8 @@ theorem validated_transfer_payload_active_input_no_theft_full_binding_from_spend
     ⟨payloadBindingHash, proofBindingHash, payloadFee⟩
   rcases txLeafFacts with
     ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
-      hOutputCount, hVersion, hFee, hStablecoinPayload, hBalanceTag,
+      hOutputCount, hVersion, hMerkleRootAnchor, hFee,
+      hStablecoinPayload, hBalanceTag,
       hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
       hProofBackend, hCiphertextPayloadHashes⟩
   exact
@@ -697,6 +698,7 @@ theorem validated_transfer_payload_active_input_no_theft_full_binding_from_spend
             hInputCount,
             hOutputCount,
             hVersion,
+            hMerkleRootAnchor,
             hFee,
             hStablecoinPayload,
             hBalanceTag,
@@ -821,7 +823,8 @@ theorem validated_transfer_payload_input_slot_authorization_full_binding_from_sp
     ⟨payloadBindingHash, proofBindingHash, payloadFee⟩
   rcases txLeafFacts with
     ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
-      hOutputCount, hVersion, hFee, hStablecoinPayload, hBalanceTag,
+      hOutputCount, hVersion, hMerkleRootAnchor, hFee,
+      hStablecoinPayload, hBalanceTag,
       hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
       hProofBackend, hCiphertextPayloadHashes⟩
   exact
@@ -853,6 +856,7 @@ theorem validated_transfer_payload_input_slot_authorization_full_binding_from_sp
             hInputCount,
             hOutputCount,
             hVersion,
+            hMerkleRootAnchor,
             hFee,
             hStablecoinPayload,
             hBalanceTag,
@@ -958,7 +962,8 @@ theorem validated_transfer_payload_active_input_no_theft_full_binding_from_spend
     ⟨payloadBindingHash, proofBindingHash, payloadFee⟩
   rcases txLeafFacts with
     ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
-      hOutputCount, hVersion, hFee, hStablecoinPayload, hBalanceTag,
+      hOutputCount, hVersion, hMerkleRootAnchor, hFee,
+      hStablecoinPayload, hBalanceTag,
       hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
       hProofBackend, hCiphertextPayloadHashes⟩
   exact
@@ -990,6 +995,7 @@ theorem validated_transfer_payload_active_input_no_theft_full_binding_from_spend
             hInputCount,
             hOutputCount,
             hVersion,
+            hMerkleRootAnchor,
             hFee,
             hStablecoinPayload,
             hBalanceTag,
@@ -1086,7 +1092,8 @@ theorem validated_transfer_payload_input_slot_authorization_full_binding_from_sp
     ⟨payloadBindingHash, proofBindingHash, payloadFee⟩
   rcases txLeafFacts with
     ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
-      hOutputCount, hVersion, hFee, hStablecoinPayload, hBalanceTag,
+      hOutputCount, hVersion, hMerkleRootAnchor, hFee,
+      hStablecoinPayload, hBalanceTag,
       hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
       hProofBackend, hCiphertextPayloadHashes⟩
   exact
@@ -1118,6 +1125,7 @@ theorem validated_transfer_payload_input_slot_authorization_full_binding_from_sp
             hInputCount,
             hOutputCount,
             hVersion,
+            hMerkleRootAnchor,
             hFee,
             hStablecoinPayload,
             hBalanceTag,

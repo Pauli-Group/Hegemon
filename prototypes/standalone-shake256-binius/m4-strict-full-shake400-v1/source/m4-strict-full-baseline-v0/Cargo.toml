@@ -1,0 +1,60 @@
+[package]
+name = "hegemon-m4-strict-full-baseline-shake400"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+resolver = "2"
+
+[dependencies]
+binius-circuits = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-core = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-field = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-frontend = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-hash = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-prover = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-transcript = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-utils = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+binius-verifier = { git = "https://github.com/binius-zk/binius64.git", rev = "3f96163049f680b2909f6545690bd929f1b48c44" }
+digest = "0.11.3"
+hegemon-binius-strict-hash-profile = { path = "../strict-hash-profile" }
+hegemon-m4-full-production-prototype = { path = "../m4-full-production-prototype", features = ["strict-baseline-material"] }
+hegemon-standalone-full-shake256-relation-prototype = { path = "../../../circuits/standalone-full-shake256-relation-prototype" }
+rand = "0.10.2"
+serde_json = "1.0.140"
+sha2 = "0.10.9"
+sha3 = "0.10.9"
+
+[patch."https://github.com/binius-zk/binius64.git"]
+binius-circuits = { path = "../binius64/crates/circuits" }
+binius-compute = { path = "../binius64/crates/compute" }
+binius-core = { path = "../binius64/crates/core" }
+binius-field = { path = "../binius64/crates/field" }
+binius-frontend = { path = "../binius64/crates/frontend" }
+binius-hash = { path = "../binius64/crates/hash" }
+binius-iop = { path = "../binius64/crates/iop" }
+binius-iop-prover = { path = "../binius64/crates/iop-prover" }
+binius-ip = { path = "../binius64/crates/ip" }
+binius-ip-prover = { path = "../binius64/crates/ip-prover" }
+binius-m4-prover = { path = "../binius64/crates/m4-prover" }
+binius-m4-verifier = { path = "../binius64/crates/m4-verifier" }
+binius-math = { path = "../binius64/crates/math" }
+binius-prover = { path = "../binius64/crates/prover" }
+binius-recursion = { path = "../binius64/crates/recursion" }
+binius-spartan-frontend = { path = "../binius64/crates/spartan-frontend" }
+binius-spartan-prover = { path = "../binius64/crates/spartan-prover" }
+binius-spartan-verifier = { path = "../binius64/crates/spartan-verifier" }
+binius-transcript = { path = "../binius64/crates/transcript" }
+binius-utils = { path = "../binius64/crates/utils" }
+binius-verifier = { path = "../binius64/crates/verifier" }
+
+[profile.dev]
+opt-level = 1
+debug = 0
+incremental = false
+
+[profile.release]
+lto = "thin"
+debug = 0
+incremental = false

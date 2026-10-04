@@ -1,0 +1,83 @@
+{
+  "artifact_schema": "hegemon.hx512b01.binary-r1cs.negative-mutations.v1",
+  "verdict": "NO_EXECUTABLE_CHARACTERISTIC_TWO_SPARSE_R1CS",
+  "cases": [
+    {
+      "name": "executable_sparse_r1cs_fabricated",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "expanded_matrix_fabricated",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "pre_correction_counts_promoted_to_final",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "policy_master_1024_row_gap_omitted",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "policy_master_width_reduced_from_64_bytes",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "policy_master_entropy_claim_fabricated",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "context_snapshot_substituted_for_manifest_root",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "context_height_endianness_changed",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "policy_version_zero_rejected",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "legacy_48_byte_authority_reinterpreted",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "public_zero_padding_omitted",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "private_index_remap_omitted",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "binary_field_fabricated",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "extension_degree_fabricated",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "domain_disjointness_fabricated",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "proof_bytes_fabricated",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "security_bits_fabricated",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "native_parent_authentication_fabricated",
+      "expected": "reject_or_remain_fail_closed"
+    },
+    {
+      "name": "production_authority_fabricated",
+      "expected": "reject_or_remain_fail_closed"
+    }
+  ],
+  "retained_mutations": 19
+}

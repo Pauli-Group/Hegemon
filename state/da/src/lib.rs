@@ -4,7 +4,7 @@
 //! over those chunks, and verifies chunk proofs.
 
 use codec::{Decode, Encode};
-use crypto::hashes::blake3_384;
+use hegemon_hash384::{blake2b_384_domain_hash, domains};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use reed_solomon_erasure::galois_8::ReedSolomon;
@@ -13,10 +13,11 @@ use thiserror::Error;
 
 pub type DaRoot = [u8; 48];
 
-const LEAF_DOMAIN: &[u8] = b"da-leaf";
-const NODE_DOMAIN: &[u8] = b"da-node";
+const LEGACY_LEAF_DOMAIN_V1: &[u8] = b"da-leaf";
+const LEGACY_NODE_DOMAIN_V1: &[u8] = b"da-node";
 const MIN_SAMPLE_COUNT: u32 = 1;
-const MAX_SHARDS: usize = 255;
+pub const MAX_DA_SHARDS: usize = 255;
+const MAX_SHARDS: usize = MAX_DA_SHARDS;
 pub const MAX_DA_CHUNK_SIZE: u32 = 256 * 1024;
 pub const MAX_DA_TOTAL_SHARD_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_DA_CHUNK_MERKLE_PATH_LEN: usize = 8;
@@ -304,18 +305,18 @@ pub fn verify_da_chunk(root: DaRoot, proof: &DaChunkProof) -> Result<(), DaError
         });
     }
     if proof.merkle_path.is_empty() {
-        if hash_leaf(proof.chunk.index, &proof.chunk.data) == root {
+        if da_chunk_leaf_hash_v3(proof.chunk.index, &proof.chunk.data) == root {
             return Ok(());
         }
         return Err(DaError::MerkleProof);
     }
-    let mut hash = hash_leaf(proof.chunk.index, &proof.chunk.data);
+    let mut hash = da_chunk_leaf_hash_v3(proof.chunk.index, &proof.chunk.data);
     let mut idx = proof.chunk.index as usize;
     for sibling in &proof.merkle_path {
         hash = if idx.is_multiple_of(2) {
-            hash_node(&hash, sibling)
+            da_chunk_node_hash_v3(&hash, sibling)
         } else {
-            hash_node(sibling, &hash)
+            da_chunk_node_hash_v3(sibling, &hash)
         };
         idx /= 2;
     }
@@ -327,6 +328,12 @@ pub fn verify_da_chunk(root: DaRoot, proof: &DaChunkProof) -> Result<(), DaError
 }
 
 pub fn verify_da_multi_chunk(root: DaRoot, proof: &DaMultiChunkProof) -> Result<(), DaError> {
+    if !da_page_merkle_path_len_is_admissible(proof.page_merkle_path.len()) {
+        return Err(DaError::ProofPathTooLong {
+            path_len: proof.page_merkle_path.len(),
+            max: MAX_DA_PAGE_MERKLE_PATH_LEN,
+        });
+    }
     verify_da_chunk(proof.page_root, &proof.page_proof)?;
     verify_page_root(
         root,
@@ -404,6 +411,10 @@ fn max_page_len(params: DaParams) -> Result<usize, DaError> {
         .ok_or(DaError::ShardCountOverflow)
 }
 
+pub fn max_da_blob_bytes(params: DaParams) -> Result<usize, DaError> {
+    max_page_len(params)
+}
+
 fn max_data_shards() -> usize {
     let mut data_shards = MAX_SHARDS;
     while data_shards > 0 {
@@ -434,10 +445,10 @@ fn parity_shards_for_data(data_shards: usize) -> usize {
 fn build_merkle_levels(chunks: &[DaChunk]) -> Vec<Vec<DaRoot>> {
     let mut leaves: Vec<DaRoot> = chunks
         .iter()
-        .map(|chunk| hash_leaf(chunk.index, &chunk.data))
+        .map(|chunk| da_chunk_leaf_hash_v3(chunk.index, &chunk.data))
         .collect();
     if leaves.is_empty() {
-        leaves.push(hash_leaf(0, &[]));
+        leaves.push(da_chunk_leaf_hash_v3(0, &[]));
     }
     let mut levels = vec![leaves];
     while levels.last().map(|level| level.len()).unwrap_or(0) > 1 {
@@ -451,7 +462,7 @@ fn build_merkle_levels(chunks: &[DaChunk]) -> Vec<Vec<DaRoot>> {
             } else {
                 prev[idx]
             };
-            next.push(hash_node(&left, &right));
+            next.push(da_chunk_node_hash_v3(&left, &right));
             idx += 2;
         }
         levels.push(next);
@@ -463,10 +474,10 @@ fn build_page_root_levels(page_roots: &[DaRoot]) -> Vec<Vec<DaRoot>> {
     let mut leaves: Vec<DaRoot> = page_roots
         .iter()
         .enumerate()
-        .map(|(idx, root)| hash_leaf(idx as u32, root))
+        .map(|(idx, root)| da_page_leaf_hash_v3(idx as u32, root))
         .collect();
     if leaves.is_empty() {
-        leaves.push(hash_leaf(0, &[]));
+        leaves.push(da_page_leaf_hash_v3(0, &[0u8; 48]));
     }
     let mut levels = vec![leaves];
     while levels.last().map(|level| level.len()).unwrap_or(0) > 1 {
@@ -480,7 +491,7 @@ fn build_page_root_levels(page_roots: &[DaRoot]) -> Vec<Vec<DaRoot>> {
             } else {
                 prev[idx]
             };
-            next.push(hash_node(&left, &right));
+            next.push(da_page_node_hash_v3(&left, &right));
             idx += 2;
         }
         levels.push(next);
@@ -501,18 +512,18 @@ fn verify_page_root(
         });
     }
     if merkle_path.is_empty() {
-        if hash_leaf(page_index, &page_root) == root {
+        if da_page_leaf_hash_v3(page_index, &page_root) == root {
             return Ok(());
         }
         return Err(DaError::MerkleProof);
     }
-    let mut hash = hash_leaf(page_index, &page_root);
+    let mut hash = da_page_leaf_hash_v3(page_index, &page_root);
     let mut idx = page_index as usize;
     for sibling in merkle_path {
         hash = if idx.is_multiple_of(2) {
-            hash_node(&hash, sibling)
+            da_page_node_hash_v3(&hash, sibling)
         } else {
-            hash_node(sibling, &hash)
+            da_page_node_hash_v3(sibling, &hash)
         };
         idx /= 2;
     }
@@ -523,34 +534,60 @@ fn verify_page_root(
     }
 }
 
-fn hash_leaf(index: u32, data: &[u8]) -> DaRoot {
-    let input = da_leaf_preimage(index, data);
-    blake3_384(&input)
+pub fn da_chunk_leaf_hash_v3(index: u32, data: &[u8]) -> DaRoot {
+    let index = index.to_le_bytes();
+    blake2b_384_domain_hash(domains::DA_CHUNK_LEAF_V3, [index.as_slice(), data])
 }
 
-fn hash_node(left: &DaRoot, right: &DaRoot) -> DaRoot {
-    let input = da_node_preimage(left, right);
-    blake3_384(&input)
+pub fn da_chunk_node_hash_v3(left: &DaRoot, right: &DaRoot) -> DaRoot {
+    blake2b_384_domain_hash(
+        domains::DA_CHUNK_NODE_V3,
+        [left.as_slice(), right.as_slice()],
+    )
 }
 
+pub fn da_page_leaf_hash_v3(index: u32, page_root: &DaRoot) -> DaRoot {
+    let index = index.to_le_bytes();
+    blake2b_384_domain_hash(
+        domains::DA_PAGE_LEAF_V3,
+        [index.as_slice(), page_root.as_slice()],
+    )
+}
+
+pub fn da_page_node_hash_v3(left: &DaRoot, right: &DaRoot) -> DaRoot {
+    blake2b_384_domain_hash(
+        domains::DA_PAGE_NODE_V3,
+        [left.as_slice(), right.as_slice()],
+    )
+}
+
+/// Legacy V1 BLAKE3 preimage retained temporarily for bounded vector detection.
+/// V3 production hashing never calls this function.
+#[deprecated(note = "legacy V1 vector only; use da_chunk_leaf_hash_v3")]
 pub fn da_leaf_preimage(index: u32, data: &[u8]) -> Vec<u8> {
-    let mut input = Vec::with_capacity(LEAF_DOMAIN.len() + 4 + data.len());
-    input.extend_from_slice(LEAF_DOMAIN);
+    let mut input = Vec::with_capacity(LEGACY_LEAF_DOMAIN_V1.len() + 4 + data.len());
+    input.extend_from_slice(LEGACY_LEAF_DOMAIN_V1);
     input.extend_from_slice(&index.to_le_bytes());
     input.extend_from_slice(data);
     input
 }
 
+/// Legacy V1 BLAKE3 preimage retained temporarily for bounded vector detection.
+/// V3 production hashing never calls this function.
+#[deprecated(note = "legacy V1 vector only; use da_chunk_node_hash_v3")]
 pub fn da_node_preimage(left: &DaRoot, right: &DaRoot) -> [u8; 48 * 2 + 7] {
     let mut input = [0u8; 48 * 2 + 7];
-    input[..NODE_DOMAIN.len()].copy_from_slice(NODE_DOMAIN);
-    let mut offset = NODE_DOMAIN.len();
+    input[..LEGACY_NODE_DOMAIN_V1.len()].copy_from_slice(LEGACY_NODE_DOMAIN_V1);
+    let mut offset = LEGACY_NODE_DOMAIN_V1.len();
     input[offset..offset + 48].copy_from_slice(left);
     offset += 48;
     input[offset..offset + 48].copy_from_slice(right);
     input
 }
 
+/// Legacy V1 BLAKE3 preimage retained temporarily for bounded vector detection.
+/// V3 production hashing never calls this function.
+#[deprecated(note = "legacy V1 vector only; use da_chunk_node_hash_v3")]
 pub fn da_merkle_step_preimage(index: u32, current: &DaRoot, sibling: &DaRoot) -> [u8; 48 * 2 + 7] {
     if (index as usize).is_multiple_of(2) {
         da_node_preimage(current, sibling)
@@ -615,6 +652,7 @@ pub fn generate_node_secret() -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use blake2::{digest::consts::U48, Blake2b, Digest};
     use rand::RngCore;
 
     fn deterministic_blob(len: usize, domain: u8) -> Vec<u8> {
@@ -629,25 +667,47 @@ mod tests {
             .collect()
     }
 
-    fn oracle_da_leaf(index: u32, data: &[u8]) -> DaRoot {
-        let mut input = Vec::with_capacity(b"da-leaf".len() + 4 + data.len());
-        input.extend_from_slice(b"da-leaf");
-        input.extend_from_slice(&index.to_le_bytes());
-        input.extend_from_slice(data);
-        crypto::hashes::blake3_384(&input)
+    fn reference_domain_hash(domain: &[u8], parts: &[&[u8]]) -> DaRoot {
+        let mut hasher = Blake2b::<U48>::new();
+        hasher.update(hegemon_hash384::BLAKE2B_384_FRAME_V1);
+        hasher.update((domain.len() as u64).to_le_bytes());
+        hasher.update(domain);
+        for part in parts {
+            hasher.update((part.len() as u64).to_le_bytes());
+            hasher.update(part);
+        }
+        hasher.finalize().into()
     }
 
-    fn oracle_da_node(left: &DaRoot, right: &DaRoot) -> DaRoot {
-        let mut input = Vec::with_capacity(b"da-node".len() + 48 + 48);
-        input.extend_from_slice(b"da-node");
-        input.extend_from_slice(left);
-        input.extend_from_slice(right);
-        crypto::hashes::blake3_384(&input)
+    fn oracle_chunk_leaf(index: u32, data: &[u8]) -> DaRoot {
+        reference_domain_hash(
+            domains::DA_CHUNK_LEAF_V3,
+            &[index.to_le_bytes().as_slice(), data],
+        )
     }
 
-    fn oracle_levels_from_leaves(mut leaves: Vec<DaRoot>) -> Vec<Vec<DaRoot>> {
+    fn oracle_chunk_node(left: &DaRoot, right: &DaRoot) -> DaRoot {
+        reference_domain_hash(domains::DA_CHUNK_NODE_V3, &[left, right])
+    }
+
+    fn oracle_page_leaf(index: u32, page_root: &DaRoot) -> DaRoot {
+        reference_domain_hash(
+            domains::DA_PAGE_LEAF_V3,
+            &[index.to_le_bytes().as_slice(), page_root],
+        )
+    }
+
+    fn oracle_page_node(left: &DaRoot, right: &DaRoot) -> DaRoot {
+        reference_domain_hash(domains::DA_PAGE_NODE_V3, &[left, right])
+    }
+
+    fn oracle_levels_from_leaves(
+        mut leaves: Vec<DaRoot>,
+        empty_leaf: DaRoot,
+        node_hash: fn(&DaRoot, &DaRoot) -> DaRoot,
+    ) -> Vec<Vec<DaRoot>> {
         if leaves.is_empty() {
-            leaves.push(oracle_da_leaf(0, &[]));
+            leaves.push(empty_leaf);
         }
         let mut levels = vec![leaves];
         while levels.last().expect("oracle level exists").len() > 1 {
@@ -656,7 +716,7 @@ mod tests {
             for pair in prev.chunks(2) {
                 let left = pair[0];
                 let right = if pair.len() == 2 { pair[1] } else { pair[0] };
-                next.push(oracle_da_node(&left, &right));
+                next.push(node_hash(&left, &right));
             }
             levels.push(next);
         }
@@ -667,8 +727,10 @@ mod tests {
         oracle_levels_from_leaves(
             chunks
                 .iter()
-                .map(|chunk| oracle_da_leaf(chunk.index, &chunk.data))
+                .map(|chunk| oracle_chunk_leaf(chunk.index, &chunk.data))
                 .collect(),
+            oracle_chunk_leaf(0, &[]),
+            oracle_chunk_node,
         )
     }
 
@@ -677,8 +739,10 @@ mod tests {
             page_roots
                 .iter()
                 .enumerate()
-                .map(|(index, page_root)| oracle_da_leaf(index as u32, page_root))
+                .map(|(index, page_root)| oracle_page_leaf(index as u32, page_root))
                 .collect(),
+            oracle_page_leaf(0, &[0u8; 48]),
+            oracle_page_node,
         )
     }
 
@@ -705,14 +769,14 @@ mod tests {
         path
     }
 
-    fn oracle_replay_leaf_path(index: u32, data: &[u8], path: &[DaRoot]) -> DaRoot {
-        let mut hash = oracle_da_leaf(index, data);
+    fn oracle_replay_chunk_path(index: u32, data: &[u8], path: &[DaRoot]) -> DaRoot {
+        let mut hash = oracle_chunk_leaf(index, data);
         let mut node_index = index as usize;
         for sibling in path {
             hash = if node_index % 2 == 0 {
-                oracle_da_node(&hash, sibling)
+                oracle_chunk_node(&hash, sibling)
             } else {
-                oracle_da_node(sibling, &hash)
+                oracle_chunk_node(sibling, &hash)
             };
             node_index /= 2;
         }
@@ -720,11 +784,21 @@ mod tests {
     }
 
     fn oracle_replay_chunk(proof: &DaChunkProof) -> DaRoot {
-        oracle_replay_leaf_path(proof.chunk.index, &proof.chunk.data, &proof.merkle_path)
+        oracle_replay_chunk_path(proof.chunk.index, &proof.chunk.data, &proof.merkle_path)
     }
 
     fn oracle_replay_page_root(proof: &DaMultiChunkProof) -> DaRoot {
-        oracle_replay_leaf_path(proof.page_index, &proof.page_root, &proof.page_merkle_path)
+        let mut hash = oracle_page_leaf(proof.page_index, &proof.page_root);
+        let mut node_index = proof.page_index as usize;
+        for sibling in &proof.page_merkle_path {
+            hash = if node_index % 2 == 0 {
+                oracle_page_node(&hash, sibling)
+            } else {
+                oracle_page_node(sibling, &hash)
+            };
+            node_index /= 2;
+        }
+        hash
     }
 
     fn selected_chunk_indices(chunk_count: usize) -> Vec<u32> {
@@ -845,6 +919,91 @@ mod tests {
             verify_da_multi_chunk(root, proof).is_err(),
             "{label}: production verifier accepted mutated multipage proof"
         );
+    }
+
+    #[test]
+    fn reed_solomon_parity_and_reconstruction_match_consensus_vector() {
+        let params = DaParams {
+            chunk_size: 4,
+            sample_count: 1,
+        };
+        let encoding = encode_da_blob(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], params)
+            .expect("encode deterministic Reed-Solomon vector");
+        let actual_chunks = encoding
+            .chunks()
+            .iter()
+            .map(|chunk| chunk.data.clone())
+            .collect::<Vec<_>>();
+        let expected_chunks = vec![
+            vec![0, 1, 2, 3],
+            vec![4, 5, 6, 7],
+            vec![8, 9, 0, 0],
+            vec![12, 13, 4, 4],
+            vec![16, 17, 46, 41],
+        ];
+        assert_eq!(actual_chunks, expected_chunks);
+
+        let mut reconstructed = expected_chunks
+            .iter()
+            .cloned()
+            .map(Some)
+            .collect::<Vec<_>>();
+        reconstructed[1] = None;
+        reconstructed[4] = None;
+        ReedSolomon::new(
+            encoding.data_shards() as usize,
+            encoding.parity_shards() as usize,
+        )
+        .expect("construct Reed-Solomon decoder")
+        .reconstruct(&mut reconstructed)
+        .expect("reconstruct one data and one parity shard");
+
+        assert_eq!(
+            reconstructed
+                .into_iter()
+                .map(Option::unwrap)
+                .collect::<Vec<_>>(),
+            expected_chunks
+        );
+    }
+
+    #[test]
+    fn da_v3_domains_match_independent_kats_and_do_not_cross_levels() {
+        let index = 7u32;
+        let left = [0x11u8; 48];
+        let right = [0x22u8; 48];
+
+        let chunk_leaf = da_chunk_leaf_hash_v3(index, b"abc");
+        assert_eq!(
+            hex::encode(chunk_leaf),
+            "1d01e2b6565a1c7f383fe87644448d99390c444926b43412bb2bc6bd04d7c347c9d30503cf5df343c24e770008049f69"
+        );
+        assert_eq!(chunk_leaf, oracle_chunk_leaf(index, b"abc"));
+        assert_eq!(
+            hex::encode(da_chunk_node_hash_v3(&left, &right)),
+            "1d4720dd8daa2cd68178c07349a970ff91f5af0e458b47f4d5b57002a06e4ac9435aa31434959f8903cd8fe5f760f52a"
+        );
+        assert_eq!(
+            hex::encode(da_page_leaf_hash_v3(index, &left)),
+            "6c78001edc74dbb946bf3b0d728a505ad4b3e0f65c73e2e09c5421e7508e54ec808e7b5b800b12ddd855fda069af24d2"
+        );
+        assert_eq!(
+            hex::encode(da_page_node_hash_v3(&left, &right)),
+            "f71faaed72345ab255bac87cf6196ba4a5dd5dc3ead9ca78405a90884980c58fa47fefe4d789dba0171da3a81ab97a56"
+        );
+
+        assert_ne!(
+            da_chunk_leaf_hash_v3(index, &left),
+            da_page_leaf_hash_v3(index, &left),
+            "chunk leaves must not substitute for page leaves"
+        );
+        assert_ne!(
+            da_chunk_node_hash_v3(&left, &right),
+            da_page_node_hash_v3(&left, &right),
+            "chunk nodes must not substitute for page nodes"
+        );
+        assert_ne!(chunk_leaf, da_chunk_leaf_hash_v3(index + 1, b"abc"));
+        assert_ne!(chunk_leaf, da_chunk_leaf_hash_v3(index, b"abd"));
     }
 
     #[test]

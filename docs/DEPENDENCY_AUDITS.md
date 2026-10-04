@@ -1,41 +1,37 @@
 # Dependency Audit Log
 
-This log tracks `cargo audit` runs for the workspace. CI and release builds now
-run `./scripts/dependency-audit-gate.sh`, which fails on every unwaived
-vulnerability, warning, or yanked crate. Waivers live in
+This log tracks `cargo audit` runs for the workspace. CI and release builds run
+`./scripts/dependency-audit-gate.sh`. Vulnerabilities, unsoundness findings,
+and yanked crates block unless covered by a valid exact waiver. Unmaintained
+crates are printed as nonblocking maintenance notices and do not need expiring
+waivers. Unknown warning kinds fail closed. Waivers live in
 `config/dependency-audit-waivers.json` and must include a reason, tracking id,
-owner, review date, remediation plan, package/version, kind, and expiry. A
-waiver must also match a current `cargo audit` finding; stale waivers are
-release-gate failures and must be removed when the underlying finding
-disappears.
+owner, review date, remediation plan, package/version, kind, and expiry. Each
+waiver must match a current blocking finding; stale waivers fail the gate and
+must be removed when the underlying finding disappears.
 
-The waiver decision table is represented in Lean by
-`formal/lean/Hegemon/Release/DependencyAuditPolicy.lean`. The formal-core gate
-checks Lean-generated vectors against the dependency audit policy helper, while
-`cargo audit` remains the source of actual advisory findings. The CI release-gate
-policy also requires the checked-in `dependency-audit` workflow job to invoke
-`./scripts/dependency-audit-gate.sh`; a job that merely exists but skips the
-explicit waiver gate is not accepted release posture.
+The exact-waiver decision table is represented in Lean by
+`formal/lean/Hegemon/Release/DependencyAuditPolicy.lean`; operational warning
+classification happens in the shell gate before only blocking findings enter
+that waiver policy. The formal-core gate checks Lean-generated vectors against
+the waiver helper, while `cargo audit` remains the source of actual advisory
+findings. The CI release-gate policy also requires the checked-in
+`dependency-audit` workflow job to invoke `./scripts/dependency-audit-gate.sh`.
 
-The Lean policy now exposes an explicit current reviewed waiver witness for every
-accepted finding and exposes exact live-finding equality for every accepted
-waiver. The generated-vector checker requires missing tracking, missing id,
-version mismatch, unused-waiver, and multi-finding exact-waiver cases to remain
-covered, and the production gate rejects expired waivers, future review dates,
-missing metadata, unwaived findings, and stale waivers that no longer match live
-`cargo audit` output.
+The Lean policy exposes an explicit current reviewed waiver witness for every
+accepted blocker and exact live-finding equality for every accepted waiver. The
+generated-vector checker keeps missing tracking, missing id, version mismatch,
+unused-waiver, and multi-finding exact-waiver cases covered. The executable gate
+also rejects expired waivers, future review dates, missing metadata, unknown
+warning kinds, and blockers without exact live waivers.
 
 ## Current explicit waiver register
 
-Source of truth: `config/dependency-audit-waivers.json`. Current release waivers
-as of 2026-06-18:
+Source of truth: `config/dependency-audit-waivers.json`. No blocking findings
+currently have explicit waivers:
 
-| ID | Package | Version | Kind | Expires | Tracking | Owner | Reviewed | Release rationale / remediation |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| RUSTSEC-2025-0141 | bincode | 1.3.3 | unmaintained | 2026-08-31 | DEP-2026-0002 | release-engineering | 2026-06-18 | Remaining uses are consensus/proof artifact compatibility surfaces after network trust-boundary encoding moved to bounded HNW1/postcard; replace with versioned canonical codecs before expiry. |
-| RUSTSEC-2025-0057 | fxhash | 0.2.1 | unmaintained | 2026-08-31 | DEP-2026-0004 | release-engineering | 2026-06-18 | Transitive through sled; Hegemon does not use it as a cryptographic hash; remove by replacing or upgrading node storage dependencies. |
-| RUSTSEC-2024-0384 | instant | 0.1.13 | unmaintained | 2026-08-31 | DEP-2026-0005 | release-engineering | 2026-06-18 | Transitive through parking_lot 0.11 via sled/reed-solomon-erasure; remove by lifting dependencies to parking_lot 0.12+ paths. |
-| RUSTSEC-2024-0436 | paste | 1.0.15 | unmaintained | 2026-08-31 | DEP-2026-0006 | release-engineering | 2026-06-18 | Transitive macro dependency through arkworks and RISC0; not a runtime trust-boundary parser; remove with upstream dependency lifts. |
+There are no current entries. Unmaintained advisories are handled as visible
+maintenance notices instead of expiring waivers.
 
 Run:
 
@@ -159,3 +155,26 @@ Summary:
     waived unsound RUSTSEC-2026-0097 rand 0.8.5 until 2026-08-31 (DEP-2026-0009)
     waived unsound RUSTSEC-2026-0097 rand 0.9.2 until 2026-08-31 (DEP-2026-0009)
     waived yanked yanked:keccak:0.1.5 keccak 0.1.5 until 2026-08-31 (DEP-2026-0008)
+
+## 2026-08-24
+
+Command: `./scripts/dependency-audit-gate.sh --offline`
+
+Exit status: 0
+
+Summary:
+
+    dependency audit findings: 4 total, 4 waived, 0 unwaived, 0 unused waivers
+    waived unmaintained RUSTSEC-2025-0141 bincode 1.3.3 until 2026-08-31 (DEP-2026-0002)
+    waived unmaintained RUSTSEC-2025-0057 fxhash 0.2.1 until 2026-08-31 (DEP-2026-0004)
+    waived unmaintained RUSTSEC-2024-0384 instant 0.1.13 until 2026-08-31 (DEP-2026-0005)
+    waived unmaintained RUSTSEC-2024-0436 paste 1.0.15 until 2026-08-31 (DEP-2026-0006)
+
+The release dependency graph was remediated rather than adding waivers:
+`h2` moved from 0.4.15 to 0.4.16 for RUSTSEC-2026-0258, the standalone
+formal-core checker moved from `anyhow` 1.0.102 to 1.0.103 for
+RUSTSEC-2026-0190, and Hegemon's source-pinned `reed-solomon-erasure` 6.0.0
+copy moved its decode-matrix cache from `lru` 0.7.8 to 0.18.2 for
+RUSTSEC-2026-0253. The erasure-code patch preserves the upstream MIT source
+apart from the dependency/API adaptation and is guarded by an exact parity and
+reconstruction vector in `state-da`.

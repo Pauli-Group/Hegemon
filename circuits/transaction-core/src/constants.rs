@@ -49,7 +49,7 @@ pub const POSEIDON_WIDTH: usize = 3;
 /// Full-round-only schedule with NUMS constants; must be < cycle length (power of 2).
 pub const POSEIDON_ROUNDS: usize = 63;
 
-/// Poseidon2 permutation width used by the Plonky3 in-circuit sponge.
+/// Poseidon2 permutation width used by the deployed transaction sponge.
 pub const POSEIDON2_WIDTH: usize = 12;
 /// Poseidon2 rate (number of elements absorbed/squeezed per permutation).
 pub const POSEIDON2_RATE: usize = 6;

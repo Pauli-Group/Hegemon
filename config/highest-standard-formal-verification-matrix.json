@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "branch": "codex/deployed-smallwood-no-counterfeit-closure",
-  "baseline_commit": "8be2a170fa66e19fa27ed8f16bf0b6ed2f2053e2",
-  "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
-  "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap. The active-goal release ledger separately binds the complete Lean source tree and authenticates the fixed closure theorem set through aggregate elaboration and axiom audit.",
-  "overall_completion_percent": 100.0,
+  "branch": "codex/smallwood-pq128-experiment",
+  "baseline_commit": "86a6469f466763cb0df055284bb4abadf51b99da",
+  "goal": "Audit the conditional SmallWood V4/Gamma proof chain from modeled verifier acceptance through exact production rows and accepted-block supply while the production consensus manifest authorizes active V4/Gamma only, with no V2/V3 or recursive historical ranges, and formal security/release authority remains false; keep knowledge-soundness evidence construction, canonical-semantic refinement, Poseidon2 constraint-to-digest refinement, finite-QROM/deployed-hash composition, and concrete 128-bit production authority explicitly open.",
+  "completion_method": "Formal-surface coverage is the weighted average of property completion percentages. Mechanized-assumption closure independently counts only tracks whose claimed obligation is proved without leaving that obligation as a premise. Overall completion is the minimum of formal-surface coverage and mechanized-assumption closure, so conditional production bridges cannot be hidden behind a 100% surface inventory. The active-goal ledger binds the complete Lean source tree and authenticates the fixed open/closed track policy through aggregate elaboration and axiom audit.",
+  "overall_completion_percent": 50.0,
   "formal_surface_coverage_percent": 100.0,
   "mechanized_assumption_closure": {
-    "measurement_method": "Equal-count inventory of explicit mechanized security tracks, authenticated against the formal-core checker's fixed track and closed-theorem policy. A closed track requires the exact pinned Lean theorem identities for the stated narrow obligation, coverage by the formal security claims ledger, a matching complete-Lean-source digest in the active-goal ledger, and successful aggregate Hegemon elaboration plus axiom audit; merely naming an assumption or a theorem-like source declaration does not close it. This score is independent from formal surface coverage and does not assign credit for external primitive or system-model assumptions that remain open.",
+    "measurement_method": "Equal-count inventory of explicit mechanized security tracks, authenticated against the formal-core checker's fixed track and closed-theorem policy. A closed track requires the exact pinned Lean theorem identities for the stated narrow obligation, coverage by the formal security claims ledger, a matching complete-Lean-source digest in the active-goal ledger, and successful aggregate Hegemon elaboration plus axiom audit. A theorem that takes the claimed production refinement, knowledge soundness, digest refinement, or collision boundary as a premise leaves that track open; merely naming an assumption or theorem-like declaration does not close it.",
     "total_tracks": 20,
-    "closed_tracks": 13,
-    "closure_percent": 65.0,
+    "closed_tracks": 10,
+    "closure_percent": 50.0,
     "tracks": [
       {
         "id": "transaction.smallwood-semantic-implication",
@@ -52,7 +52,7 @@
         "remaining_work": []
       },
       {
-        "id": "transaction.recursive-cross-object-identity-refinement",
+        "id": "transaction.independent-cross-object-identity-refinement",
         "status": "closed",
         "evidence_paths": [
           "formal/lean/Hegemon/Consensus/AcceptedSmallWoodBlockComposition.lean",
@@ -61,13 +61,13 @@
           "scripts/check_formal_core.sh"
         ],
         "lean_theorems": [
-          "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_recursive_cross_object_identity_refines_one_canonical_block"
+          "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_independent_cross_object_identity_refines_one_canonical_block"
         ],
         "remaining_work": []
       },
       {
         "id": "consensus.accepted-chain-supply-composition",
-        "status": "closed",
+        "status": "open",
         "evidence_paths": [
           "formal/lean/Hegemon/Consensus/AcceptedSmallWoodBlockComposition.lean",
           "formal/lean/Hegemon/Consensus/GenerateAcceptedSmallWoodBlockCompositionVectors.lean",
@@ -75,11 +75,10 @@
           "node/src/native/tests.rs",
           "scripts/check_formal_core.sh"
         ],
-        "lean_theorems": [
-          "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.consensus_accepted_chain_supply_composition",
-          "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_deployed_smallwood_block_yields_no_counterfeit_critical_path"
-        ],
-        "remaining_work": []
+        "lean_theorems": [],
+        "remaining_work": [
+          "This track remains open and receives no mechanized-closure credit: the modeled supply-composition theorem is checked, but production no-counterfeit closure is assumption-bound. Construct `DeployedSmallWoodBlockKnowledgeSoundnessEvidence`, `DeployedSmallWoodBlockCanonicalSemanticRefinementEvidence` (including `ProductionSmallWoodCanonicalSemanticRefinementAssumption`), and `DeployedSmallWoodBlockPoseidon2OutputSecurityAssumptions` (including `ProductionPoseidon2ConstraintDigestRefinementAssumption` and pair-local no collision) from the shipped accepted-block path before closing this track."
+        ]
       },
       {
         "id": "native.raw-ingress-canonical-publication",
@@ -184,7 +183,7 @@
       },
       {
         "id": "transaction.accepted-proof-exact-constraint-extraction",
-        "status": "closed",
+        "status": "open",
         "evidence_paths": [
           "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintModel.lean",
           "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintTableGenerated.lean",
@@ -193,18 +192,14 @@
           "circuits/transaction/src/smallwood_frontend.rs",
           "scripts/check_formal_core.sh"
         ],
-        "lean_theorems": [
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_exact_semantic_constraints",
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_counterfeit_critical_linear_bindings_are_map_bound",
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_hash_linear_bindings_are_map_bound",
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_input_hash_linear_bindings_are_map_bound",
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_monetary_reconstruction_bindings_are_map_bound"
-        ],
-        "remaining_work": []
+        "lean_theorems": [],
+        "remaining_work": [
+          "This track remains open and receives no mechanized-closure credit. Construct `DeployedSmallWoodKnowledgeSoundnessEvidence` from shipped Rust verifier acceptance; the current accepted-proof extraction theorem consumes that evidence and therefore leaves the deployed extraction obligation assumption-bound."
+        ]
       },
       {
         "id": "transaction.smallwood-air-row-implementation-equivalence",
-        "status": "closed",
+        "status": "open",
         "evidence_paths": [
           "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintModel.lean",
           "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintTableGenerated.lean",
@@ -213,13 +208,10 @@
           "circuits/transaction/src/smallwood_frontend.rs",
           "scripts/check_formal_core.sh"
         ],
-        "lean_theorems": [
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_smallwood_air_rows_are_implementation_equivalent",
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_concrete_output_yields_accepted_hash_image",
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_input_hash_required_linear_binding_executes",
-          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_monetary_reconstruction_required_linear_binding_executes"
-        ],
-        "remaining_work": []
+        "lean_theorems": [],
+        "remaining_work": [
+          "This track remains open and receives no mechanized-closure credit. Prove the shipped Rust constraint builder and verifier refine the exact Lean map for arbitrary accepted inputs, discharge `ProductionSmallWoodCanonicalSemanticRefinementAssumption`, and prove `ProductionPoseidon2ConstraintDigestRefinementAssumption`; exact table vectors and internal production-family implications leave universal AIR/row implementation equivalence assumption-bound."
+        ]
       },
       {
         "id": "native.complete-parser-node-refinement",
@@ -290,7 +282,7 @@
   "last_full_formal_core": {
     "date": "2026-06-19T08:43:23Z",
     "commit": "50710d33",
-    "status": "passed locally on the working tree based on 50710d33 after adding the active-goal progress gate; every matrix property remains closed under the checked internal theorem/production-binding method, and the active-goal percentage is recomputed from the checked theorem matrix while primitive crypto, proof-system, bridge, storage, scanner, live-release, and global-privacy dependencies remain explicit external assumptions rather than hidden missing work",
+    "status": "historical formal-core run on 50710d33; it predates the fail-closed mechanized-assumption-closure inventory and therefore does not establish current production closure. The current matrix reports 100% formal-surface coverage, 50% mechanized-assumption closure, and 50% overall completion.",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 121,
     "named_lean_theorems": 2557,
@@ -326,7 +318,7 @@
       "restarted hegemon-node.service from the rebuilt binary; after startup replay RPC health reported syncing=false, peers=0, shouldHavePeers=false",
       "live RPC health reported syncing=false, peers=0, shouldHavePeers=false",
       "20-second live mining sample after restart advanced height from 18987 to 18991",
-      "bash scripts/test-node.sh wallet-send passed, including native::tests::submit_action_stages_and_imports_shielded_transfer",
+      "bash scripts/test-node.sh wallet-send passed, including native::tests::prepare_work_keeps_sidecar_transfer_with_matching_staged_ciphertext",
       "live da_submitCiphertexts with an unknown request field rejected with JSON-RPC -32602 decode da ciphertext upload request",
       "live da_submitProofs with an unknown proof-item field rejected with JSON-RPC -32602 decode da proof upload request",
       "final live RPC sanity check reported height 19001 and syncing=false",
@@ -338,7 +330,7 @@
     "known_limitations": [
       "The live dev node intentionally had zero external peers during validation, so live sync health was checked as syncing=false with peers=0; peer catch-up/restart reload was exercised on disposable two-node dev instances.",
       "The service environment logged HEGEMON_SEEDS= for this isolated native-devnet-host branch-test node; shared mining and testnet operators must use the approved common seed list and NTP/chrony to avoid partitions, forks, and future-skew timestamp rejection.",
-      "Primitive hash/crypto assumptions, proof-system soundness assumptions, external bridge proof soundness, advisory database/scanner completeness, DA retention, storage hardware semantics, and complete native-node equivalence remain explicit external assumptions in the 100% certificate."
+      "Primitive hash/crypto assumptions, proof-system soundness assumptions, canonical-semantic and Poseidon2 refinement assumptions, external bridge proof soundness, advisory database/scanner completeness, DA retention, storage hardware semantics, and complete native-node equivalence remain open. The 100% figure is formal-surface inventory coverage; mechanized-assumption closure and overall completion are 50%."
     ]
   },
   "last_coordinator_audit": {
@@ -357,7 +349,7 @@
   "last_theorem_slice": {
     "name": "highest_standard_completion_certificate_100",
     "date": "2026-06-18T00:00:00-06:00",
-    "summary": "Added the top-level Lean completion certificate tying the internal critical theorem bundle, explicit external-assumption bundle, and production release gate into one no-sorry closure surface. Completion is 100% under the matrix method: every internal critical theorem target is proved/production-bound or carried as an explicit external assumption field; the certificate does not claim unconditional primitive cryptographic security, external bridge soundness, live GitHub enforcement, storage hardware durability, or complete native-node equivalence without those assumptions.",
+    "summary": "The historical Lean certificate ties an internal theorem bundle, explicit assumption bundle, and release-gate predicate into one no-sorry term, but theorem parameters do not discharge the obligations they represent. Under the current fail-closed method, formal-surface inventory coverage is 100%, mechanized-assumption closure is 50%, and overall completion is 50%. Production no-counterfeit closure remains conditional on shipped-verifier knowledge-soundness evidence, canonical-semantic refinement, Poseidon2 constraint-to-digest refinement and accepted-output no-collision, plus the other named external boundaries.",
     "lean_theorems": [
       "Hegemon.Release.HighestStandardCompletionCertificate.accepted_internal_bundle_and_release_gate_yield_highest_standard_completion_certificate",
       "Hegemon.Release.HighestStandardCompletionCertificate.completion_certificate_exposes_critical_chain_security_and_residuals",
@@ -368,7 +360,9 @@
       "Hegemon.Network.FrameResourceAdmission.pq_transcript_magic_distinct_from_handshake"
     ],
     "weighted_completion_percent": 100.0,
-    "push_gate_delta_from_99_5945": 0.4055
+    "overall_completion_percent": 50.0,
+    "formal_surface_coverage_percent": 100.0,
+    "mechanized_assumption_closure_percent": 50.0
   },
   "last_production_binding_slice": {
     "date": "2026-06-17",
@@ -608,7 +602,7 @@
         "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean `accepted_materialized_transfer_end_to_end_boundary_exposes_highest_standard_core_review` projects the end-to-end boundary into one review certificate carrying replayed supply, accepted ledger/tree replay, commitment-root publication, final nullifier/bridge replay uniqueness, active-input no-theft, total input authorization, SmallWood verifier export, authorized asset delta/stablecoin exception, concrete consensus DA-blob refinement, tx-leaf statement/ciphertext gates, sidecar materialization, privacy boundary, and admission safety",
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean `accepted_materialized_transfer_no_theft_from_smallwood_residuals_yields_implementation_equivalence_certificate` packages materialized publication, active-input no-theft, total input-slot authorization, SmallWood export, and explicit implementation residuals",
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean production residual certificate carries canonical no-theft boundary facts, all input/output slot facts, and verifier/proof residual assumptions",
-        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean models tx-leaf input projection from concrete input flags plus compact public nullifiers into padded public-input slots before statement hashing and P3 public-input reconstruction.",
+        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean models tx-leaf input projection from concrete input flags plus compact public nullifiers into padded public-input slots before statement hashing and canonical verifier-field reconstruction.",
         "circuits/superneo-hegemon/src/lib.rs now uses the vector-checked tx-leaf input projection helper in native tx-leaf statement hash/public-input reconstruction paths.",
         "MaterializedConsensusDaBlobRefinement highest-standard core review projection theorems expose ledger-integrity and statement/DA/privacy/admission bundles as directly reusable proof facts.",
         "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean binds this internal theorem surface into the final completion certificate with explicit external-assumption fields and the production release gate."
@@ -617,7 +611,7 @@
       "performance_constraint": "Proof-side theorem only; production should continue verifying the same proof/artifact bytes.",
       "explicit_external_assumptions": [
         "Discharge the split spend-only deployed verifier soundness assumption with mechanized deployed verifier/AIR soundness and Rust verifier refinement.",
-        "Prove that the complete circuit/AIR constraints imply the full spend-authorization relation, beyond the now-production-bound SmallWood active auth-link, input row-boundary, output row-boundary, and composed verifier-envelope slices."
+        "Prove that the complete shipped circuit/AIR and Rust verifier refine the full spend-authorization relation. The current SmallWood auth-link, input/output row boundaries, and composed verifier envelope are modeled and vector-checked slices whose production closure remains assumption-bound."
       ],
       "remaining_work": []
     },
@@ -695,7 +689,7 @@
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean now exposes native and per-asset authorized-delta facts directly from packaged canonical deployed-verifier boundary facts",
         "formal/lean/Hegemon/Transaction/SmallWoodBalanceBoundary.lean proves concrete public native-delta, selected-stablecoin-delta, disabled-stablecoin-zero, non-selected non-native zero, and signed-magnitude canonicality facts for the SmallWood balance/public-field verifier-surface target",
         "formal/lean/Hegemon/Transaction/AirBalanceBoundary.lean models the deployed P3 final-row public balance equations for native value-balance authorization, selected stablecoin issuance authorization, non-selected non-native zero, disabled stablecoin metadata/slot zeroing, and selector asset binding",
-        "formal/lean/Hegemon/Transaction/GenerateAirBalanceBoundaryVectors.lean emits default and stablecoin P3 final-row surfaces plus native-delta, selected-delta, selector-asset, disabled-metadata, nonselected-delta, and boolean rejection cases checked against production P3 trace/public-input extraction by lean_generated_air_balance_boundary_vectors_match_production",
+        "formal/lean/Hegemon/Transaction/AirBalanceBoundary.lean retains the abstract default/stablecoin balance-row consequences used by downstream compatibility theorems; production V4 conformance is supplied by the exact SmallWood constraint-map generator and public-balance/stablecoin mutation rejection tests",
         "native-devnet-host at 247638ff passed lake exe gen_air_balance_boundary_vectors plus cargo test -p transaction-circuit lean_generated_air_balance_boundary_vectors_match_production --lib -- --nocapture",
         "p3_air_balance_public_field_mutations_rejected builds a valid stablecoin P3 proof and requires verifier-facing value-balance and stablecoin issuance public-field mutations to fail verification",
         "packed SmallWood inline-Merkle public balance/stablecoin mutation gates reject tampered public fields even when auxiliary Merkle rows are recomputed from the tampered public values",
@@ -806,8 +800,7 @@
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean composes accepted native tx-leaf/action equality facts with the canonical verifier surface before deriving the accepted transaction relation",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean composes accepted native tx-leaf/action equality facts with the packaged proof-system boundary facts",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now binds native active input, total input-slot, and output commitment/ciphertext slots to the canonical statement and proof-binding vectors",
-        "transaction, consensus, SuperNeo, aggregation V5, and block commitment shared-helper gates",
-        "consensus/src/aggregation/v5.rs now checks the aggregation V5 HGA0/zstd envelope plus exact-postcard payload path against an independent marker/version/length/zstd/postcard/header oracle over raw pass-through, compressed, malformed, trailing, truncated, length-mismatched, zstd-garbage, and mutated valid payloads before heavy proof verification.",
+        "transaction, consensus, native backend, and block commitment shared-helper gates",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages native receipt statement-hash, public-input digest, proof digest/backend, ciphertext-payload binding, and canonical root/fee/balance-slot/stablecoin identity bindings with the deployed verifier boundary",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now assumption-free projects accepted native tx-leaf/action binding plus canonical statement surface into statement preimage success/length, proof binding-message success, public-input binding validity, wrapper preconditions/surface, and native receipt/public-input/proof/backend/ciphertext-payload equality gates",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now assumption-free packages accepted native tx-leaf/action binding plus the canonical statement surface into public-shape validity, core statement binding, full vector/input/output binding, value-balance binding, stablecoin payload binding, tx-leaf preconditions, full tx-leaf equality facts, and native digest/backend gates",
@@ -824,7 +817,7 @@
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now projects materialized transfer publication records to selected output-slot statement/proof artifact facts",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now directly projects accepted tx-leaf/action stablecoin payload equality from the production-bound admission table",
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean proves binding-hash-v3 vector partition length tags distinguish repartitioning the same digest bytes between nullifier and commitment vectors; generated vectors and protocol-shielded-pool Rust tests bind that transcript shape to production.",
-        "formal/lean/Hegemon/Transaction/SmallWoodPublicStatementBinding.lean proves SmallWood public statement values are exactly the 76-field P3 public-input vector plus circuit-version and crypto-suite suffix, with exact length/no-extension and transcript-surface feed facts",
+        "formal/lean/Hegemon/Transaction/SmallWoodPublicStatementBinding.lean proves SmallWood public statement values are exactly the 76-field canonical verifier vector plus circuit-version and crypto-suite suffix, with exact length/no-extension and transcript-surface feed facts",
         "circuits/transaction/tests/smallwood_public_statement_binding.rs checks Lean-generated vector cases plus normal and stablecoin production SmallWood candidate profile surfaces against `smallwood_public_statement_values`",
         "raw-ingress and materialized transfer publication certificates now carry `SmallWoodPublicStatementVerifierExportFacts` through the same native tx-leaf statement surface used by production publication, preserving statement/proof-binding rows while deriving no-theft, conservation, and stablecoin exception consequences",
         "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean end-to-end boundary carries tx-leaf statement artifact facts, native statement/proof digest/backend equality gates, and ciphertext vector publication through the accepted materialized witness",
@@ -896,9 +889,9 @@
         "native transfer, raw-ingress, and materialized publication no-theft/input-slot theorems now consume the split spend-only verifier soundness assumption directly, proving those implementation-equivalence targets do not depend on balance/public-field soundness",
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean now pairs parsed tx-leaf artifact/projection facts with `NativeTxLeafCanonicalArtifactBoundaryFacts`, including canonical deployed verifier boundary facts, native equality gates, spend/balance exposure, and authorized asset-delta facts under the explicit full deployed verifier soundness assumption",
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean now pairs raw-ingress parsed tx-leaf publication with full deployed verifier boundary facts and spend-only deployed verifier boundary facts, keeping the future verifier/AIR/refinement target on the same raw-ingress accepted publication surface",
-        "formal/lean/Hegemon/Transaction/PublicInputBinding.lean now proves successful public/serialized binding exposes P3 public-input field facts for merkle root, fee, signed value balance, input/output flags, balance-slot assets, and stablecoin payload fields",
+        "formal/lean/Hegemon/Transaction/PublicInputBinding.lean now proves successful public/serialized binding exposes canonical verifier-field facts for merkle root, fee, signed value balance, input/output flags, balance-slot assets, and stablecoin payload fields",
         "formal/lean/Hegemon/Transaction/StatementHash.lean now proves the `tx-proof-digest-v1` preimage binds the backend wire id and exact proof bytes, and generated vectors are checked against circuits/transaction/src/proof.rs transaction_proof_digest_preimage_from_parts.",
-        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean and ProofSystemBoundary.lean now lift those P3 public-input field facts through the canonical deployed verifier surface",
+        "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean and ProofSystemBoundary.lean now lift those canonical verifier-field facts through the deployed verifier surface",
         "formal/lean/Hegemon/Consensus/RecursiveBlockV2VerifierSurface.lean proves recursive_block_v2 pre-proof verifier-surface acceptance is exactly public tuple equality, fixed proof field width, supported tx count, derived header equality, canonical proof-prefix decoding, zero padding, projection success, projected-width admission, and explicit crypto-boundary acceptance",
         "circuits/block-recursion/src/tree_v2.rs verify_block_recursive_v2 now calls verify_block_recursive_v2_surface before verify_tree_child_v2, with Lean-generated vectors checked against the production helper",
         "formal/lean/Hegemon/Transaction/SmallWoodBalanceBoundary.lean narrows the split balance/public-field deployed-verifier soundness target to concrete SmallWood public balance/stablecoin boundary facts",
@@ -906,17 +899,17 @@
         "SmallWood spend row-boundary gates now reject Merkle sibling/root drift and active nullifier position drift, narrowing the deployed Merkle-membership proof target inside the inline-Merkle verifier surface",
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean now derives the parser-to-canonical projection assumption package from parser bytes, explicit count evidence, canonical statement facts, and accepted native binding gates",
         "circuits/transaction/src/smallwood_frontend.rs now enforces inactive public-nullifier zero constraints and active nullifier-rho linkage inside the deployed inline-Merkle SmallWood verifier surface",
-        "formal/lean/Hegemon/Transaction/AirBalanceBoundary.lean narrows the balance/public-field deployed-verifier target to concrete P3 final-row AIR equations for value-balance, stablecoin issuance, selector asset binding, disabled metadata, and non-selected slot zeroing",
-        "formal/lean/Hegemon/Transaction/GenerateAirBalanceBoundaryVectors.lean and the production gate lean_generated_air_balance_boundary_vectors_match_production bind those AIR final-row equations to real P3 trace/public-input extraction for default and stablecoin witnesses plus representative rejection surfaces",
+        "formal/lean/Hegemon/Transaction/AirBalanceBoundary.lean packages the balance/public-field consequences for value-balance, stablecoin issuance, selector asset binding, disabled metadata, and non-selected slot zeroing",
+        "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintRefinement.lean and the generated exact-map gate check production-family balance equations against the V4 generated map for bounded default and stablecoin witnesses; canonical balance semantics and universal Rust refinement remain assumption-bound",
         "native-devnet-host at 247638ff passed the generated AIR balance vector gate against the VPS checkout",
-        "circuits/transaction/src/p3_prover.rs p3_air_balance_public_field_mutations_rejected proves the production P3 verifier rejects verifier-facing value-balance and stablecoin issuance public-field drift for a valid stablecoin proof",
+        "circuits/transaction/src/smallwood_frontend.rs packed_smallwood_inline_merkle_rejects_public_balance_mutation and packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation prove the production SmallWood constraint surface rejects verifier-facing balance and stablecoin public-field drift",
         "formal/lean/Hegemon/Transaction/SmallWoodTranscriptBinding.lean models the SmallWood transcript/profile byte boundary and proves the transcript starts with the domain, includes verifier profile material, uses the active 23-DECS-opening profile only for the shipped inline-Merkle arithmetization, uses the legacy 25-opening profile for the legacy family, distinguishes every production-recognized arithmetization tag, includes serialized statement bytes, and pads to eight-byte alignment",
         "formal/lean/Hegemon/Transaction/GenerateSmallWoodTranscriptBindingVectors.lean emits transcript/profile vectors checked by circuits/transaction/src/smallwood_frontend.rs so production transcript binding includes domain, profile material, every deployed/legacy arithmetization label/profile split, serialized statement bytes, and padding exactly as modeled",
         "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean proves accepted wrapper metadata projection cannot alter the bound statement/public-input projection or add public nullifier, ciphertext, or asset rows outside the statement boundary; generated vectors are checked by transaction-circuit production wrapper admission tests.",
-        "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean proves exact/canonical current-vs-legacy SmallWood candidate wrapper selection, current-first precedence, legacy fallback only after current rejection, and empty inner ARK proof rejection; generated vectors are checked against circuits/transaction/src/smallwood_frontend.rs before profile routing.",
+        "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean proves exact/canonical current-vs-legacy SmallWood candidate decoder selection, current-first precedence, explicit legacy rejection after current decode failure, and empty inner ARK proof rejection; generated vectors are checked before profile routing, but the production manifest's historical and recursive ranges remain empty and these decoder facts grant no V2/V3 authority.",
         "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean proves accepted provided TxValidityClaims exactly match verified backend artifact receipts and statement bindings; generated vectors are checked against consensus/src/proof.rs before aggregation or recursive block paths trust provided claims.",
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean now defines `CanonicalProofSystemNoTheftBoundaryFacts` and proves split deployed soundness assumptions imply the packaged no-theft/public-conservation boundary plus live-policy-authorized stablecoin exception surface",
-        "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean now composes accepted SmallWood candidate wrapper admission, transcript/profile binding, active auth-link, input/output row boundaries, SmallWood balance facts, P3 AIR final-row facts, canonical deployed-verifier facts, and `CanonicalProofSystemNoTheftBoundaryFacts` into one verifier-surface envelope",
+        "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean now composes accepted SmallWood candidate wrapper admission, transcript/profile binding, active auth-link, input/output row boundaries, modeled balance-row facts, canonical deployed-verifier facts, and `CanonicalProofSystemNoTheftBoundaryFacts` into one verifier-surface envelope",
         "formal/lean/Hegemon/Transaction/SmallWoodPublicStatementBinding.lean and its generated-vector Rust gate narrow the SmallWood verifier implementation-equivalence target by binding the public statement vector used before transcript/profile and backend verification",
         "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean now exports `accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_verifier_export`, joining accepted public-statement binding and statement-byte equality with the SmallWood verifier envelope while carrying no-theft, public conservation, and non-native stablecoin exception consequences",
         "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean, RawIngressTransferNoTheftPublication.lean, and MaterializedTransferNoTheftPublication.lean now consume the exported canonical spend-boundary facts from the SmallWood verifier surface at native publication boundaries, narrowing the remaining proof-system residual to the explicit SmallWood/AIR soundness assumptions rather than a separate downstream publication assumption",
@@ -1124,10 +1117,7 @@
       "remaining_work": []
     },
     {
-      "id": "codec.canonical-encoding-non-malleability",
-      "weight": 5,
       "completion_percent": 100.0,
-      "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
       "current_evidence": [
         "native codec admission Lean gate",
         "proof-wrapper admission gate",
@@ -1180,37 +1170,44 @@
         "formal/lean/Hegemon/Network/FrameResourceAdmission.lean proves frame decode acceptance iff size, marker, postcard decode, and no-trailing-byte preconditions, plus encode marker/body bounds; network/src/wire.rs and pq-noise/src/codec.rs consume generated vectors.",
         "network/src/wire.rs and pq-noise/src/codec.rs now include arbitrary-byte mutation-oracle corpora that compare production frame decode acceptance to independent marker, bound, postcard success, and full-consumption oracle semantics across malformed, marker-prefixed, oversized, truncated, trailing-byte, and mutated-valid frames; scripts/check_formal_core.sh runs both gates.",
         "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean and lean_generated_smallwood_candidate_wrapper_admission_vectors_match_production bind current and legacy SmallWood candidate proof wrappers to exact/canonical decode, no trailing bytes, and nonempty inner proof bytes before verifier profile routing.",
-        "formal/lean/Hegemon/Native/CodecAdmission.lean now proves current-first/legacy-fallback native metadata decode facts, and schema-v2 generated vectors check current metadata selection, legacy fallback only after current rejection, and trailing-byte rejection for both formats against production bincode_deserialize_native_block_meta_exact.",
+        "formal/lean/Hegemon/Native/CodecAdmission.lean now proves current-only native metadata decode with explicit retired-format rejection facts, and schema-v4 generated vectors check current metadata selection, explicit legacy rejection after current decode failure, and trailing-byte rejection for both formats against production bincode_deserialize_native_block_meta_exact.",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean ciphertext path-family content theorem lifts canonical ciphertext index/archive projections through accepted exact-decode row-equivalence packages, keeping parser internals as the remaining residual",
         "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean sync_path_accepts_implies_preheavy_bounds now carries sync exact-decode/no-trailing-byte facts with response range/count/resource caps before sync import work",
         "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean `accepted_pending_action_codec_canonical_publication_non_malleability_facts` ties exact pending-action decode, block-action exactness, sync non-malleability, canonical publication, and malformed rejection precedence to the same accepted publication certificate",
         "formal/lean/Hegemon/Native/PreHeavyCodecCanonicalPublication.lean `accepted_preheavy_codec_canonical_publication_certificate` composes exact/canonical pending-action and block-action publication with the pre-heavy DoS/resource certificate on one accepted sync/import publication surface",
-        "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean `accepted_pending_action_codec_canonical_publication_with_metadata_non_malleability_facts` carries native metadata current-first/legacy-fallback exact-decode facts with the pending/block-action canonical publication certificate",
-        "formal/lean/Hegemon/Native/CodecAdmission.lean proves `native_metadata_bincode_budget_acceptance_excludes_overruns` and generated schema-v3 codec vectors bind native metadata bincode budget cases to node/src/native/mod.rs, which pre-scans current/legacy metadata bytes and rejects oversized action counts, action payload lengths, aggregate action bytes, miner public keys, and miner signatures before allocation-heavy bincode work while preserving signed current and legacy exact decode",
+        "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean `accepted_pending_action_codec_canonical_publication_with_metadata_non_malleability_facts` carries native metadata current-only with explicit legacy rejection exact-decode facts with the pending/block-action canonical publication certificate",
+        "formal/lean/Hegemon/Native/CodecAdmission.lean proves `native_metadata_bincode_budget_acceptance_excludes_overruns` and generated schema-v4 codec vectors bind native metadata bincode budget cases to node/src/native/mod.rs, which pre-scans metadata bytes and rejects oversized action counts, action payload lengths, and aggregate action bytes before allocation-heavy bincode work while accepting only exact current identity-free metadata and explicitly rejecting recognized retired encodings",
         "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean `accepted_bounded_canonical_codec_gate_certificate` ties concrete PendingAction, MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs, OutboundBridgeArgsV1, InboundBridgeArgsV1, and BridgeVerifierRegistrationV1 SCALE wire facts, PendingAction exact-decode adapter equality, metadata ordering, and canonical publication facts into one bounded codec gate",
         "formal/lean/Hegemon/Native/PreHeavyCodecCanonicalPublication.lean `accepted_preheavy_bounded_codec_canonical_publication_certificate` composes pre-heavy resource bounds, concrete PendingAction, MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs, OutboundBridgeArgsV1, InboundBridgeArgsV1, and BridgeVerifierRegistrationV1 SCALE witnesses, metadata ordering, PendingAction exact-decode adapter equality, and canonical publication",
         "formal/lean/Hegemon/Native/BridgeMintPayloadRawAdmission.lean separately binds raw BridgeMintPayloadV1 SCALE exact decode, full consumption, canonical re-encoding, payload-hash binding, receipt-message binding, and decoded mint-payload policy facts for the future positive bridge mint handoff",
-        "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean `bounded_canonical_codec_gate_certificate_exposes_production_binding` and `accepted_bounded_canonical_codec_gate_binds_production_wires` project the bounded gate into exact route-wire decode, full consumption, canonical re-encode, block-action declared/decoded/published row equality, and metadata current-before-legacy facts on one production review surface",
+        "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean `bounded_canonical_codec_gate_certificate_exposes_production_binding` and `accepted_bounded_canonical_codec_gate_binds_production_wires` project the bounded gate into exact route-wire decode, full consumption, canonical re-encode, block-action declared/decoded/published row equality, and current-format acceptance and legacy-rejection facts on one production review surface",
         "formal/lean/Hegemon/Native/PreHeavyCodecCanonicalPublication.lean `preheavy_bounded_codec_canonical_publication_certificate_exposes_production_order` and `accepted_preheavy_bounded_codec_canonical_publication_binds_production_order` carry that route-wire production binding through the pre-heavy resource/DoS certificate before expensive semantic/proof work",
         "formal/lean/Hegemon/Native/SidecarUploadRawJsonProjection.lean models representative raw da_submitCiphertexts/da_submitProofs JSON request bytes for valid ciphertext upload, malformed JSON, unknown fields, missing/non-array upload fields, too-many arrays, invalid ciphertext/proof bytes, missing/invalid proof metadata, and empty proof bytes, with generated vectors checked against production serde_json, strict deny-unknown-field request decoding, byte parsing, and sidecar admission order",
         "Wallet ciphertext archive publication rejects malformed public archive index shape through a checked Lean/Rust admission table.",
         "formal/lean/Hegemon/Transaction/ProofWrapperWire.lean models canonical, trailing, invalid-backend, truncated, malformed, and raw-to-admission top-level-nullifier-drift outer TransactionProof bincode fixtures checked against production exact decoder, canonical reserialization, and decoded admission.",
         "circuits/transaction/src/proof.rs `transaction_proof_wrapper_exact_decode_matches_bincode_oracle_on_mutation_corpus` compares production exact wrapper decode to bincode deserialize, full-consumption, and canonical-reencode oracle semantics across malformed, truncated, trailing-byte, inserted-byte, pseudo-random, and mutated-valid wrappers.",
         "pre-heavy staged-proof upload vectors are generated from the proved PreHeavyWorkResourceBoundSurface predicate and included in formal-core, not a duplicate model.",
-        "formal/lean/Hegemon/Native/SyncRawIngress.lean schema-v2 vectors pin exact native sync bytes for ordinals 1 Request, 2 Response, 3 PendingAction, 4 RequestBlockChunk, 5 BlockChunk, and 6 AnnounceTip plus representative unknown ordinal 7 and malformed/trailing appended-variant rejection. Production native_sync_message_variant_ordinals_are_append_only pins ordinal 0 Announce and the full 0-through-6 table; native_sync_legacy_variant_bytes_remain_frozen_across_append_only_extensions independently compares complete legacy/current bytes for ordinals 0 through 3 and checks legacy rejection of appended ordinals 4 through 6.",
-        "formal/lean/Hegemon/Native/SyncBlockChunkAdmission.lean and generated vectors bind Boolean digestMatches/exactDecodeAccepts completion admission plus decoded height/hash/request/recovery-context equality. Concrete legacy-v1/current-v2 dispatch and domain-separated tag/height/hash/total/raw-byte digest construction are production native_sync_chunk_record_digest/decode_native_sync_chunk_record_exact implementation-equivalence obligations; native_sync_chunk_digest_domain_and_record_schema_are_independently_pinned supplies an independent literal preimage oracle and tag-directed exact-decode regression before existing authorized Response handoff.",
-        "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean binds this internal theorem surface into the final completion certificate with explicit external-assumption fields and the production release gate."
+        "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean binds this internal theorem surface into the final completion certificate with explicit external-assumption fields and the production release gate.",
+        "formal/lean/Hegemon/Native/CodecAdmission.lean now proves current-first/legacy-fallback native metadata decode facts, and schema-v2 generated vectors check current metadata selection, legacy fallback only after current rejection, and trailing-byte rejection for both formats against production bincode_deserialize_native_block_meta_exact.",
+        "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean `accepted_pending_action_codec_canonical_publication_with_metadata_non_malleability_facts` carries native metadata current-first/legacy-fallback exact-decode facts with the pending/block-action canonical publication certificate",
+        "formal/lean/Hegemon/Native/CodecAdmission.lean proves `native_metadata_bincode_budget_acceptance_excludes_overruns` and generated schema-v3 codec vectors bind native metadata bincode budget cases to node/src/native/mod.rs, which pre-scans current/legacy metadata bytes and rejects oversized action counts, action payload lengths, aggregate action bytes, miner public keys, and miner signatures before allocation-heavy bincode work while preserving signed current and legacy exact decode",
+        "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean `bounded_canonical_codec_gate_certificate_exposes_production_binding` and `accepted_bounded_canonical_codec_gate_binds_production_wires` project the bounded gate into exact route-wire decode, full consumption, canonical re-encode, block-action declared/decoded/published row equality, and metadata current-before-legacy facts on one production review surface",
+        "Production codec tests pin the complete serializer map: legacy ordinals 0 through 3, exact-carrier ordinals 4 AnnounceLocator, 5 ResponseLocators, 6 BlockBodyRequest, and 7 BlockBodyChunk, fail-closed stored-record ordinals 8 RequestBlockChunk and 9 BlockChunk, and bounded non-authoritative ordinal 10 AnnounceTip. The independent raw tag prefilter test rejects ordinals 8 and 9 before postcard allocation.",
+        "formal/lean/Hegemon/Native/BlockBodyChunkTransportAdmission.lean and generated vectors bind the active exact locator and action-body carrier to schema, chain, rules, total length, derived chunk count, exact chunk length, body hash, exact decode, and locator equality before authorized import. SyncRawIngress and SyncBlockChunkAdmission retain the incompatible metadata-record layout only as conditional evidence and do not authorize production decode."
       ],
-      "missing_work": [],
-      "performance_constraint": "Canonical decode checks should remain linear and bounded before allocation-heavy work.",
       "explicit_external_assumptions": [
         "Complete arbitrary-byte parser-internal equivalence for every consensus object beyond accepted exact-decode/full-byte publication predicates, native tx-leaf/receipt-root parser-oracle coverage, and the concrete PendingAction, MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs, OutboundBridgeArgsV1, InboundBridgeArgsV1, BridgeVerifierRegistrationV1, and BridgeMintPayloadV1 SCALE vector grammars.",
         "Extend the CandidateArtifact PendingAction SCALE wire model beyond the shipped recursive-block and bounded receipt-root product lanes to arbitrary custom payloads if those paths are re-enabled.",
         "Extend the accepted-predicate parser/wire/production projection composition beyond the bounded route-wire gate into parser-internal implementation equivalence for every remaining consensus byte object.",
         "Move remaining bincode/trust-boundary encodings to bounded canonical codecs or prove exact wrappers.",
-        "The chunk wire vectors are representative postcard bytes and the completion model treats exact advertised decode and digest equality as production-bound predicates; it does not prove arbitrary postcard/bincode parser internals or digest collision resistance."
+        "The active exact-carrier vectors are representative boundary evidence, not a proof of arbitrary postcard/SCALE parser internals or body-hash collision resistance. The retained SyncRawIngress and SyncBlockChunkAdmission vectors describe an inactive metadata-record layout and confer no production authority."
       ],
-      "remaining_work": []
+      "id": "codec.canonical-encoding-non-malleability",
+      "missing_work": [],
+      "performance_constraint": "Canonical decode checks should remain linear and bounded before allocation-heavy work.",
+      "remaining_work": [],
+      "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
+      "weight": 5
     },
     {
       "id": "node.replay-reorg-startup-refinement",
@@ -1222,7 +1219,7 @@
         "canonical-state/block-index/bridge-replay reload gates",
         "atomic commit manifest and storage durability gates",
         "node/src/native connected nonwinning sync suffix import fully replays the candidate suffix before one count-parameterized noncanonical manifest, one sled Batch, and a durability barrier before successful return",
-        "node/src/native canonical sync tip-extension import replays each block on carried candidate state before one TipExtensionBatchCommit manifest-gated transaction and a durability flush before canonical state publication",
+        "node/src/native canonical sync tip-extension import replays each block on carried candidate state before one `TipExtensionBatchCommit` manifest with `block_record_writes = chain_block_count`, then crosses the durability barrier before canonical state publication",
         "implementation bindings in config/formal-security-blueprint.json",
         "formal/lean/Hegemon/Native/AcceptedChain.lean ledger-state chain lift for supply, leaf cursor, nullifiers, and bridge replay",
         "formal/lean/Hegemon/Native/AcceptedChain.lean ledger-state startup/replay equivalence theorem",
@@ -1275,10 +1272,10 @@
         "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean binds this internal theorem surface into the final completion certificate with explicit external-assumption fields and the production release gate.",
         "formal/lean/Hegemon/Native/SyncResponseImport.lean proves inbound sync response import control flow facts: count-before-sort/import, sorted-height projection, bounded attempted/imported/stored-noncanonical counts, distinct row and post-classification error/missing-parent stops, fully consumed zero-canonical-progress detection including equal-height fork-recovery escalation, impossible or inconsistent post-classification outcome rejection, and changed-range-or-backoff recovery requirements.",
         "node/src/native/mod.rs native_sync_loop response handling routes through admit_and_sort_native_sync_response_blocks before NativeSyncResponseImportProgress and import_announced_block; schema-v3 Lean-generated vectors check sorted heights, outcome accounting, stop semantics, over-limit rejection, all-known post-classification missing-ancestor/corruption classification, direct continuation, and useful recovery filtering against production helpers.",
-        "node/src/native/service.rs source-binds an authorized, digest-bound, exactly decoded completed chunk to process_authorized_native_sync_response as a one-block Response, reusing the existing response admission/import/reorg/no-progress path rather than adding a consensus or persistence bypass; the exact oversized runtime regression drives the completed one-block vector through this async common handler and confirms canonical progress. AnnounceTip is an unverified target hint admitted only for a nonzero higher target or an equal-height hash different from the local canonical tip; lower targets and the exact local tip reject. It may conservatively close the mining sync gate and plan a request, but cannot open or resolve the gate or count as verified import or canonical progress.",
+        "node/src/native/service.rs routes the active exact locator and action-body carrier through bounded body reassembly, body-hash binding, exact decode, and the existing authorized response import/reorg/no-progress path. Stored-metadata-record tags 8 and 9 reject before postcard allocation and never reach this handoff. AnnounceTip tag 10 is only an unverified request-planning hint: it may conservatively close the mining sync gate, but cannot open or resolve the gate or count as verified import or canonical progress.",
         "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean and GenerateMinedBlockCommitPublicationVectors.lean now bind the composed mined publication rejection order to production helper calls: mined-work, block commitment, mined manifest kind, then manifest shape",
-        "formal/lean/Hegemon/Native/CanonicalReorgPersistenceAdmission.lean proves supplied-record classification and exact canonical-reorg persistence plan/count/order predicates: absent is missing, exact stored is known-exact, mismatch rejects, accepted missing rows are selectively prestored and durability-flushed, and the canonical transaction writes zero block records.",
-        "node/src/native/admission.rs, service.rs, and node_impl.rs implement the cross-file classifier, compact/hash-projection ancestry and suffix streaming, selective missing-record prestorage, stored reorg, durable-head verification, and publication path; exact mixed-known/missing/mismatch, reopen, and crash-window regressions supply finite execution evidence rather than a Rust refinement proof.",
+        "formal/lean/Hegemon/Native/CanonicalReorgPersistenceAdmission.lean proves supplied-record classification and exact canonical-reorg persistence plan/count/order predicates: absent is missing, exact stored is known-exact, mismatch rejects, missing rows are independently and durably prestored before canonical adoption, and `CanonicalSuffixReorgCommit.block_record_writes = 0`.",
+        "node/src/native/admission.rs, service.rs, and node_impl.rs implement the cross-file classifier, compact/hash-projection ancestry and suffix streaming, separate selective missing-record prestorage and durability, then a `CanonicalSuffixReorgCommit` that consumes/compares exact prestored rows and never writes block records; exact mixed-known/missing/mismatch, reopen, and crash-window regressions supply finite execution evidence rather than a Rust refinement proof.",
         "Deep large-action regressions cover nonwinning suffix persistence and all-known winning stored reorg without reconstructing a full NativeBlockMeta Vec."
       ],
       "missing_work": [],
@@ -1287,7 +1284,9 @@
         "Positive inbound bridge replay publication remains disabled until a PQ-clean verifier replaces the experimental offline envelope; the combined disabled-inbound restart/reorg fail-closed case is now gated.",
         "Prove parser-internal implementation equivalence for arbitrary raw PendingAction bytes instead of relying on accepted exact-decode predicates plus Rust conformance gates.",
         "Native sync replay/manifest/durability wiring does not prove sled batch or transaction atomicity, operating-system fsync semantics, hash-key uniqueness, arbitrary raw block-replay soundness, or convergence for every deep fork.",
-        "CanonicalReorgPersistenceAdmission proves the storage-plan/count/order predicate only. Cross-file Rust refinement, sled Batch/transaction atomicity, operating-system fsync semantics, allocator/RSS bounds, and arbitrary completion peak memory remain external or runtime-tested."
+        "CanonicalReorgPersistenceAdmission proves the storage-plan/count/order predicate only. Cross-file Rust refinement, sled Batch/transaction atomicity, operating-system fsync semantics, allocator/RSS bounds, and arbitrary completion peak memory remain external or runtime-tested.",
+        "Grouped pending-action flush-before-memory ordering is lexically bound, but the static checker does not prove outer loop-to-completion propagation to every waiter; focused atomicity/restart tests are conditional integration evidence. Graceful shutdown currently logs rather than propagates a flush failure.",
+        "The historical whole-index canonical reorg calls the typed-plan application and manifest helper lexically before shared-tree removal inside its transaction, but the dedicated static source gate proves transaction-result propagation and dominance only for the active canonical-suffix and mined signatures; rollback and restart tests provide conditional evidence for the older path."
       ],
       "remaining_work": []
     },
@@ -1295,9 +1294,9 @@
       "id": "consensus.admission-safety",
       "weight": 4,
       "completion_percent": 100.0,
-      "top_level_theorem_target": "No block enters the accepted chain unless version, PoW, timestamp, retarget, miner identity, proof policy, supply, action root, DA root, and artifact checks pass in required order.",
+      "top_level_theorem_target": "No block enters the accepted chain unless version, PoW, timestamp, retarget, proof policy, supply, action root, DA root, artifact checks, and any miner-identity check required by the selected consensus profile pass in required order; active native V2 is identity-free.",
       "current_evidence": [
-        "PoW, header, version-policy, miner-identity, proof-policy, mined-work, announced-block, block-commitment, and work-template gates",
+        "PoW, header, version-policy, generic consensus miner-identity, proof-policy, mined-work, announced-block, block-commitment, active-native retired-identity rejection, and work-template gates",
         "consensus statement-anchor admission gate rejects binding-count mismatch, unknown parent-history anchors, and same-block-created anchors before expensive proof paths",
         "implementation order and dominance constraints in blueprint",
         "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean composes accepted decoded block-action validation, accepted wire replay projection, and accepted block replay/accounting into a publication surface exposing action-hash preconditions, validated row consumption, replay-row agreement, bridge replay-count agreement, canonical replay trace, commitment preconditions, expected/claimed supply equality, and state-root agreement",
@@ -1530,10 +1529,7 @@
       "remaining_work": []
     },
     {
-      "id": "resource.dos-bounds",
-      "weight": 2,
       "completion_percent": 100.0,
-      "top_level_theorem_target": "Every consensus-facing parser, RPC admission path, proof artifact, and sidecar enforces bounded size and bounded pre-verification work before allocation-heavy or proof-heavy work.",
       "current_evidence": [
         "resource-budget admission gate",
         "RPC admission gate",
@@ -1560,15 +1556,12 @@
         "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean proves inline transfer ciphertext resources project route payload bytes, proof-plus-ciphertext decoded bytes, ciphertext count, max ciphertext bytes, aggregate ciphertext bytes, and work units into reusable bounded-request caps; node/src/native/mod.rs calls validate_inline_transfer_ciphertext_resource before per-ciphertext hash/materialization at submit-action construction and decoded transfer validation.",
         "formal/lean/Hegemon/Native/BridgeActionResourceAdmission.lean proves bridge action public_args, outbound payload, inbound proof-receipt, inbound message-payload, aggregate dynamic-byte, item-count, and payload-work caps through the reusable bounded-request table; formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean composes those bridge resource facts into the pre-heavy verification-path bounds; node/src/native/mod.rs now rejects oversized inbound proof receipts and bridge message payloads before payload-hash binding, nested receipt decode, or receipt verification, and formal-core checks Lean-generated bridge action resource vectors plus focused regressions.",
         "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean sync_path_accepts_implies_preheavy_bounds composes sync exact decode, response range caps, response count caps, bounded-request resource facts, and item-count equality before sync import work",
-        "formal/lean/Hegemon/Native/SyncBlockChunkAdmission.lean proves accepted retained raw assembly is within the advertised total, the total is within the record cap, and accepted chunks expose reusable bounded-request facts and exact full-cap non-final/final-remainder lengths before append or exact decode, preventing adversarial fragmentation and fixing retained segment count from the bounded total and chunk cap; generated vectors bind fallback, capacity, expiry, canonical chunk shape, completion, serve authorization, close, compact tip, and outbound-state tables to production helpers.",
-        "The syncBlockChunk family is a raw pre-heavy ingress bound only: final exact decode may transiently own the raw record, decoded NativeBlockMeta, canonical re-encoding, the current frame, and allocator overhead. Production worker/global session caps constrain that transient peak; the Lean retained-byte theorem does not claim total completion peak is at most total_len.",
-        "consensus/src/aggregation/v5.rs `aggregation_v5_envelope_decode_matches_zstd_postcard_oracle_on_mutation_corpus` covers the recursive aggregation HGA0/zstd envelope and exact-postcard V5 payload parser boundary before representative child proof decoding or STARK batch verification.",
         "formal/lean/Hegemon/Consensus/RecursiveBlockAdmission.lean proves `recursive_block_artifact_accepts_implies_bounded_request_facts`, deriving reusable raw/decoded/item/aggregate/work bounds for accepted recursive_block_v1/v2 artifact bytes from the existing production pre-decode byte cap",
         "consensus/src/proof.rs derives the legacy recursive_block_v1 pre-decode cap from the fixed serializer width and rejects oversized/trailing V1 artifacts before deserialization; the independent V1 oracle checks that ordering.",
         "circuits/block-recursion/src/tree_v2.rs `recursive_block_v2_raw_fixed_width_oracle_matches_parser_boundaries` checks recursive_block_v2 fixed-width bytes, boundary mutations, unsupported tx_count, public/header mismatch, canonical proof-prefix handling, and pre-proof surface rejection order before child proof verification.",
         "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean accepted_preheavy_work_dos_bound_certificate packages RPC/sidecar resources, sync bounds, action-request, transfer, bridge, candidate artifact, recursive block artifact, tx-leaf artifact, and receipt-root schedule/resource bounds into one reviewable pre-heavy-work certificate",
-        "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean now carries accepted tx-leaf artifact and sync-block-chunk bounded-request resource facts through the top-level pre-heavy DoS certificate, and `accepted_preheavy_dos_certificate_covers_all_public_input_cost_classes` exposes 23 production public-input cost families from that certificate",
-        "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean `accepted_preheavy_dos_certificate_covers_all_public_input_cost_classes` now proves the 23-family coverage count by kernel reduction instead of `native_decide`; direct `#print axioms` reports no axiom dependencies for the exported theorem",
+        "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean now carries accepted tx-leaf artifact bounded-request resource facts through the top-level pre-heavy DoS certificate, and `accepted_preheavy_dos_certificate_covers_all_public_input_cost_classes` exposes 22 production public-input cost families from that certificate",
+        "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean `accepted_preheavy_dos_certificate_covers_all_public_input_cost_classes` now proves the 22-family coverage count by kernel reduction instead of `native_decide`; direct `#print axioms` reports no axiom dependencies for the exported theorem",
         "formal/lean/Hegemon/Native/GenerateTxLeafArtifactVectors.lean emits tx-leaf resource requests checked by circuits/superneo-hegemon/src/lib.rs against production decoded artifact bytes, item counts, proof bytes, aggregate bytes, and work units",
         "circuits/superneo-hegemon/src/lib.rs `native_tx_leaf_artifact_parser_matches_raw_byte_oracle_regression` checks over-cap tx-leaf serialized/public/commitment counts and oversized declared STARK proof length reject at parse/canonical-admission time before proof verification.",
         "formal/lean/Hegemon/Native/ReceiptRoot.lean proves `accepted_receipt_root_resource_exposes_bounds`, and PreHeavyWorkResourceBoundSurface carries accepted receipt-root raw/decoded/item/max-item/aggregate/work bounded-request resource facts before receipt-root folding",
@@ -1580,21 +1573,32 @@
         "formal-security blueprint sidecar-upload order now permits staged proof byte-budget admission before tx-leaf proof decoding/binding-hash recomputation, preserving cheap DoS bounds before heavy work while decoded/capacity admission still dominate staging.",
         "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean models staged-proof upload pre-heavy ordering and generated vectors check da_submitProofs rejects staged proof byte-budget overflow before tx-leaf artifact binding decode or proof hashing.",
         "PreHeavyWorkResourceBoundSurface now proves generic staged-proof upload ordering: metadata rejection precedes budget work, staged proof byte-budget rejection precedes decoded proof binding/hash work, and decoded rejection happens only after metadata and budget acceptance",
+        "da_submitCiphertexts parses and prepares individually bounded values before prepared_ciphertexts.push, then checks staged-ciphertext capacity under the persistence epoch before projected insertion, persistence, durability, and publication. da_submitProofs checks metadata, projected staged-proof bytes, capacity, and decoded binding before prepared_proofs.push, then rechecks bytes and capacity under the persistence epoch before projected insertion, persistence, durability, and publication.",
         "formal/lean/Hegemon/Network/QueueResourceAdmission.lean `accepted_network_pre_heavy_resource_admission_exposes_facts` and companion rejection theorems prove bad frames fail before queue reservation, queue rejection rolls back byte accounting after frame acceptance, accepted queue charges stay within frame bounds, and pre-heavy admission ties frame, queue, and peer-store bounds together.",
         "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean binds this internal theorem surface into the final completion certificate with explicit external-assumption fields and the production release gate.",
+        "formal/lean/Hegemon/Native/SyncResponseImport.lean and generated vectors bind inbound sync response-count admission to the production admission/sort helper before any import-progress or block-import work is attempted.",
+        "formal/lean/Hegemon/Native/BlockBodyChunkTransportAdmission.lean proves active exact-carrier schema, chain, rules, total-length and derived-chunk-count checks precede reservation, accepted chunks have the exact derived length, and completion checks the bound body hash before exact decode; generated vectors bind those rules to production transport helpers.",
+        "formal/lean/Hegemon/Native/SyncBlockChunkAdmission.lean remains conditional analysis of an incompatible stored-metadata-record fallback. Production rejects its tags 8 and 9 before postcard allocation, so its retained-byte and bounded-request theorems supply no active ingress coverage or authorization.",
+        "consensus/src/aggregation/v5.rs `aggregation_v5_envelope_decode_matches_zstd_postcard_oracle_on_mutation_corpus` covers the recursive aggregation HGA0/zstd envelope and exact-postcard V5 payload parser boundary before representative child proof decoding or STARK batch verification.",
+        "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean carries 22 active production public-input cost families plus a 23rd conditional syncBlockChunk family; the conditional family describes disabled tags 8 and 9 and is not active coverage.",
+        "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean `accepted_preheavy_dos_certificate_covers_all_public_input_cost_classes` proves the 23-family internal model count by kernel reduction instead of `native_decide`; direct `#print axioms` reports no axiom dependencies, but production authority for oversized blocks comes separately from BlockBodyChunkTransportAdmission.",
         "formal/lean/Hegemon/Native/SyncResponseImport.lean and schema-v3 generated vectors bind inbound sync response-count admission to the production admission/sort helper before any import-progress or block-import work is attempted; bind missing-parent/all-known/stored-side-branch no-progress outcomes to changed-range or deferred-backoff recovery rather than immediate same-range retry; and distinguish post-classification missing stored ancestors from terminal corruption after an all-known trace.",
         "node/src/native compact/hash-projection streaming regressions cover deep large-action nonwinning suffix persistence and all-known winning stored reorg without full NativeBlockMeta-chain reconstruction; this is finite runtime evidence, not a theorem bounding allocator RSS or every decode peak."
       ],
+      "explicit_external_assumptions": [
+        "Add benchmark-backed per-family cost budgets beyond the current 22 active production families and separately integrate BlockBodyChunkTransportAdmission into the aggregate resource certificate; do not count the conditional 23rd syncBlockChunk family as active coverage.",
+        "BlockBodyChunkTransportAdmission bounds the active exact action-body carrier decision table but does not prove allocator release or total process peak memory. The conditional SyncBlockChunkAdmission theorem must not be counted as active production coverage.",
+        "Benchmark any new runtime check on native-devnet-host or local release builds.",
+        "Bind the remaining consensus-facing parser families beyond native block actions, inbound sync response counts, outbound sync response ranges, candidate-artifact resource projection, inline transfer ciphertext resource projection, bridge action receipt/payload resource projection, recursive_block_v1/v2 parser-oracle coverage, native tx-leaf/receipt-root parser-oracle coverage, and network queue byte caps to deeper parser-internal proofs or benchmark-backed cost budgets.",
+        "Full parser implementation proofs, RPC authentication/deployment exposure, OS/network scheduling DoS, and complete native-node refinement remain explicit residuals.",
+        "Closure-contained local/relay budget propagation, grouped per-candidate loop-to-transaction ordering, cross-loop sidecar persistence, and grouped durability loop-to-completion are supported by lexical bindings plus focused atomicity/restart tests; the static checker does not prove their control-flow dominance or every waiting-completion error path. Graceful shutdown logs rather than propagates a flush failure."
+      ],
+      "id": "resource.dos-bounds",
       "missing_work": [],
       "performance_constraint": "The property itself enforces little-to-no performance cost by putting cheap caps before expensive work.",
       "remaining_work": [],
-      "explicit_external_assumptions": [
-        "Add benchmark-backed per-family cost budgets beyond the current explicit 23-family public-input coverage certificate.",
-        "The syncBlockChunk theorem bounds retained raw assembly, not the raw-plus-decoded-plus-canonical-reencode/current-frame/allocator completion peak; retain production worker/global session caps and benchmark the transient decode peak.",
-        "Benchmark any new runtime check on native-devnet-host or local release builds.",
-        "Bind the remaining consensus-facing parser families beyond native block actions, inbound sync response counts, outbound sync response ranges, candidate-artifact resource projection, inline transfer ciphertext resource projection, bridge action receipt/payload resource projection, recursive_block_v1/v2 parser-oracle coverage, native tx-leaf/receipt-root parser-oracle coverage, and network queue byte caps to deeper parser-internal proofs or benchmark-backed cost budgets.",
-        "Full parser implementation proofs, RPC authentication/deployment exposure, OS/network scheduling DoS, and complete native-node refinement remain explicit residuals."
-      ]
+      "top_level_theorem_target": "Every consensus-facing parser, RPC admission path, proof artifact, and sidecar enforces bounded size and bounded pre-verification work before allocation-heavy or proof-heavy work.",
+      "weight": 2
     },
     {
       "id": "release.dependency-posture",
@@ -1606,6 +1610,8 @@
         ".github/workflows/release.yml security-gates and per-platform hegemon-node/wallet/walletd binary audits",
         "formal/lean/Hegemon/Release/CiReleaseGate.lean",
         "scripts/check_ci_release_gate_policy.py",
+        "scripts/check_smallwood_production_authorization.py tag-only fail-closed authority gate",
+        "scripts/test_check_smallwood_production_authorization.py positive/negative authority fixtures",
         "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean",
         "formal/lean/Hegemon/Release/PqBinaryPolicy.lean",
         "native backend review-policy and release-posture gates",
@@ -1631,6 +1637,7 @@
         "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean current-review and fail-closed theorems expose waiver identity, tracking, owner, remediation, review date, expiry, exact finding match, malformed waiver rejection, unwaived finding rejection, and unused waiver rejection",
         "formal/lean/Hegemon/Release/CiReleaseGate.lean `accepted_ci_release_gate_binds_dependency_audit_to_release_build` binds dependency audit and waiver gate presence to release-build security dependency facts",
         "formal/lean/Hegemon/Release/ReleasePostureCertificate.lean production release-gate theorems expose current review policy and dependency-audit/CI release binding directly from the production certificate",
+        ".github/workflows/release.yml runs `python3 scripts/check_smallwood_production_authorization.py config/formal-security-claims.json` before tag release jobs; the current conditional claim intentionally rejects because production authorization is false and concrete security bits are null",
         "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean binds this internal theorem surface into the final completion certificate with explicit external-assumption fields and the production release gate."
       ],
       "missing_work": [],
@@ -1640,13 +1647,14 @@
         "Add binary scanner completeness review and external accepted-artifact provenance evidence.",
         "Move any remaining advisory drift that is outside cargo-audit visibility into mandatory CI evidence.",
         "Prove or externally attest live GitHub enforcement of the checked ruleset export on the protected remote repository.",
+        "Do not authorize a SmallWood production tag until the underlying proof/refinement, QROM/hash-loss composition, review, and operational obligations justify every authority field and at least 128 concrete post-quantum security bits; the syntactic release lock does not prove those facts.",
         "Scanner-pattern completeness, live GitHub branch-protection enforcement, advisory database completeness, upstream dependency-review quality, and remediation-plan sufficiency remain external release assumptions."
       ]
     }
   ],
   "last_codec_metadata_decode_slice": {
-    "date": "2026-06-17",
-    "summary": "Added Lean theorem and generated-vector coverage for native metadata current-first/legacy-fallback bincode exact decode and bound it to production helper behavior. Added a formal-core policy ratchet that caps broad full-claim theorem-indexed order constraints at the current 129 constraints / 2412 theorem refs, forcing future per-gate theorem references to get narrower rather than broader.",
+    "date": "2026-08-23",
+    "summary": "Added Lean theorem and generated-vector coverage for native metadata current-only bincode exact decode with explicit legacy rejection and bound it to production helper behavior. Added a formal-core policy ratchet that caps broad full-claim theorem-indexed order constraints at the current 129 constraints / 2412 theorem refs, forcing future per-gate theorem references to get narrower rather than broader.",
     "lean_modules": [
       "formal/lean/Hegemon/Native/CodecAdmission.lean",
       "formal/lean/Hegemon/Native/GenerateCodecAdmissionVectors.lean"
@@ -1654,18 +1662,18 @@
     "top_level_theorems": [
       "Hegemon.Native.CodecAdmission.native_metadata_decode_accepts_iff_preconditions",
       "Hegemon.Native.CodecAdmission.native_metadata_current_exact_decode_precedes_legacy",
-      "Hegemon.Native.CodecAdmission.native_metadata_legacy_decode_requires_current_rejection",
+      "Hegemon.Native.CodecAdmission.native_metadata_legacy_decode_is_identified_and_rejected",
       "Hegemon.Native.CodecAdmission.native_metadata_decode_rejects_when_current_and_legacy_reject",
       "Hegemon.Native.CodecAdmission.native_metadata_decode_facts"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.CodecAdmission passed locally; lake exe gen_codec_admission_vectors emitted schema-v2 JSON with native_metadata_decode_cases.",
-      "targeted_rust": "HEGEMON_LEAN_CODEC_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_codec_admission_vectors_match_production --lib --no-default-features -- --nocapture passed locally.",
-      "checker_ratchet": "cargo test --manifest-path scripts/hegemon_formal_core/Cargo.toml blueprint_policy_rejects_full_claim_order -- --nocapture passed locally; blueprint budget set to 129 full-claim order constraints and 2412 theorem refs.",
-      "full_formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-17T12:39:17Z with 118 claims, 1950 named Lean theorem declarations, 887 axiom-free declarations, zero temporary axiom dependencies, 144/144 theorem-indexed order constraints, 130/130 theorem-indexed dominance constraints, and full-claim theorem-list budgets of 129 constraints / 2412 theorem refs."
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.CodecAdmission Hegemon.Native.CodecCanonicalPublicationBoundary Hegemon.Native.PreHeavyCodecCanonicalPublication passed locally; lake exe gen_codec_admission_vectors emitted schema-v4 JSON with explicit legacy_forbidden cases.",
+      "targeted_rust": "The schema-v4 generated-vector conformance test, native_metadata_ tests, native_block_meta_ tests, legacy unsigned rejection test, and signed-V1/interim-identity-V2 rejection test passed locally with --no-default-features.",
+      "claims_gate": "cargo run --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed locally with 122 claims, 2658 named Lean theorems, and zero tombstones.",
+      "full_formal_core": "Not claimed by this focused codec-consistency repair; the complete formal-core command remains a separate release gate."
     },
     "known_limitations": [
-      "This proves fallback source selection around exact decode predicates and generated fixtures. It does not prove bincode implementation correctness for all arbitrary bytes, sled durability, disk integrity, hash security, or complete native-node equivalence."
+      "This proves current-format acceptance and explicit legacy rejection around exact decode predicates and generated fixtures. It does not prove bincode implementation correctness for all arbitrary bytes, sled durability, disk integrity, hash security, or complete native-node equivalence."
     ]
   },
   "last_residual_assumption_closure_slice": {
@@ -1869,103 +1877,31 @@
       "Canonical reorg storage planning is covered separately by CanonicalReorgPersistenceAdmission; runtime tests, not SyncResponseImport, cover compact/hash streaming, selective prestorage, reopen, and crash-window behavior."
     ]
   },
-  "last_sync_block_chunk_admission_slice": {
-    "date": "2026-08-30",
-    "summary": "Added a bounded one-block native-sync fallback without changing consensus or response-import semantics. SyncBlockChunkAdmission proves matching-empty-response fallback authorization; receive/serve capacity; first Offered request authorization only for a matching offer/height, block_hash absent-or-equal to the offered hash, absent digest, and exact offset zero before record load; subsequent exact tuple/next-offset authorization, offset-equals-total close, and no_matching_offer rejection; legal InFlight/ChunkFallback/Absent/Cooldown transitions plus invalid_outbound_transition rejection; 30-second idle and 120-second hard expiry; compact-tip planning admission for a nonzero higher target or an equal-height competing hash while rejecting lower targets and the exact local tip; exact full-cap non-final chunks, an exact final remainder, total-record, contiguous-offset, checked-end, retained segment-count, and retained raw-assembly bounds; and completion length plus Boolean digest/exact-decode/height/hash/request/recovery-context admission. Nonzero Offered offsets, including u64::MAX, reject before storage load and cannot close a record whose length is not yet known. Production row admission runs after postcard allocation but before receive-session mutation, retained assembly append, and later completion flattening; undersized non-final chunks reject as chunk_length_mismatch, preventing adversarial segment fragmentation. A digest mismatch returns after flattening and comparison but before exact decode, canonical re-encoding, or completion admission; only digest-accepted completions exact-decode and call completion admission before authorized handoff/import; capacity, expiry, serve, close, and outbound-state helpers guard their corresponding mutations or server work. The initial postcard wire decode has already allocated the inbound chunk Vec under the 16 MiB network-frame cap and is not bounded by SyncBlockChunkAdmission. Concrete domain-separated legacy-v1/current-v2 tag/height/hash/total/raw-byte digest construction and exact tag-directed decoder dispatch are separate production implementation-equivalence/regression obligations. AnnounceTip remains an unverified target hint that may conservatively close the mining sync gate and plan a request, but cannot open or resolve the gate or count as verified import or canonical progress. Active service source converts a completed authorized block to a one-block vector and calls process_authorized_native_sync_response, reusing existing import, fork-choice, replay, persistence, durability, and retry behavior; the exact oversized runtime regression drives the completed one-block vector through that async common handler and confirms canonical progress.",
-    "lean_modules": [
-      "formal/lean/Hegemon/Native/SyncBlockChunkAdmission.lean",
-      "formal/lean/Hegemon/Native/GenerateSyncBlockChunkAdmissionVectors.lean"
-    ],
-    "top_level_theorems": [
-      "Hegemon.Native.SyncBlockChunkAdmission.accepted_chunk_retained_bytes_within_total",
-      "Hegemon.Native.SyncBlockChunkAdmission.accepted_chunk_total_within_cap",
-      "Hegemon.Native.SyncBlockChunkAdmission.accepted_chunk_has_canonical_length",
-      "Hegemon.Native.SyncBlockChunkAdmission.accepted_nonfinal_chunk_fills_cap",
-      "Hegemon.Native.SyncBlockChunkAdmission.accepted_final_chunk_matches_remainder",
-      "Hegemon.Native.SyncBlockChunkAdmission.accepted_chunk_exposes_bounded_request_facts",
-      "Hegemon.Native.SyncBlockChunkAdmission.valid_fallback_accepts",
-      "Hegemon.Native.SyncBlockChunkAdmission.fallback_without_matching_request_rejects",
-      "Hegemon.Native.SyncBlockChunkAdmission.session_capacity_exact_limit_rejects",
-      "Hegemon.Native.SyncBlockChunkAdmission.matching_offer_exact_next_offset_serves",
-      "Hegemon.Native.SyncBlockChunkAdmission.serve_request_without_matching_offer_rejects",
-      "Hegemon.Native.SyncBlockChunkAdmission.serve_request_tuple_mismatch_rejects",
-      "Hegemon.Native.SyncBlockChunkAdmission.serve_request_wrong_next_offset_rejects",
-      "Hegemon.Native.SyncBlockChunkAdmission.serve_request_total_offset_closes",
-      "Hegemon.Native.SyncBlockChunkAdmission.matching_offer_initial_request_accepts",
-      "Hegemon.Native.SyncBlockChunkAdmission.offer_request_without_matching_offer_rejects",
-      "Hegemon.Native.SyncBlockChunkAdmission.offer_request_tuple_mismatch_rejects",
-      "Hegemon.Native.SyncBlockChunkAdmission.offer_request_nonzero_offset_rejects_before_record_load",
-      "Hegemon.Native.SyncBlockChunkAdmission.offer_request_u64_max_offset_rejects_before_record_load",
-      "Hegemon.Native.SyncBlockChunkAdmission.admitted_empty_response_enters_chunk_fallback",
-      "Hegemon.Native.SyncBlockChunkAdmission.completed_chunk_fallback_removes_request",
-      "Hegemon.Native.SyncBlockChunkAdmission.aborted_chunk_fallback_enters_cooldown",
-      "Hegemon.Native.SyncBlockChunkAdmission.duplicate_empty_response_transition_rejects",
-      "Hegemon.Native.SyncBlockChunkAdmission.chunk_session_idle_exact_limit_expires",
-      "Hegemon.Native.SyncBlockChunkAdmission.chunk_session_lifetime_exact_limit_expires",
-      "Hegemon.Native.SyncBlockChunkAdmission.valid_tip_announcement_accepts",
-      "Hegemon.Native.SyncBlockChunkAdmission.tip_announcement_not_ahead_rejects",
-      "Hegemon.Native.SyncBlockChunkAdmission.tip_announcement_equal_local_hash_rejects",
-      "Hegemon.Native.SyncBlockChunkAdmission.tip_announcement_equal_local_hash_precedes_zero_hash",
-      "Hegemon.Native.SyncBlockChunkAdmission.tip_announcement_equal_competing_hash_accepts",
-      "Hegemon.Native.SyncBlockChunkAdmission.tip_announcement_zero_hash_rejects",
-      "Hegemon.Native.SyncBlockChunkAdmission.valid_chunk_accepts",
-      "Hegemon.Native.SyncBlockChunkAdmission.valid_nonfinal_full_chunk_accepts",
-      "Hegemon.Native.SyncBlockChunkAdmission.valid_final_remainder_chunk_accepts",
-      "Hegemon.Native.SyncBlockChunkAdmission.oversized_chunk_rejects",
-      "Hegemon.Native.SyncBlockChunkAdmission.undersized_nonfinal_chunk_rejects",
-      "Hegemon.Native.SyncBlockChunkAdmission.offset_mismatch_rejects",
-      "Hegemon.Native.SyncBlockChunkAdmission.chunk_end_overflow_rejects",
-      "Hegemon.Native.SyncBlockChunkAdmission.valid_completion_accepts",
-      "Hegemon.Native.SyncBlockChunkAdmission.completion_digest_mismatch_rejects",
-      "Hegemon.Native.SyncBlockChunkAdmission.completion_decode_rejects_after_digest_accepts",
-      "Hegemon.Native.SyncBlockChunkAdmission.completion_context_mismatch_rejects"
-    ],
-    "formal_core_gate": {
-      "command": "HEGEMON_LEAN_SYNC_BLOCK_CHUNK_ADMISSION_VECTORS=<generated-json> scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::lean_generated_sync_block_chunk_admission_vectors_match_production --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::oversized_valid_native_block_advances_through_bounded_chunk_fallback --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::chunk_preflight_rejects_unsolicited_malformed_and_expired_sessions_without_growth --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::chunk_completion_reserve_failure_cools_down_authorized_request --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::native_sync_chunk_digest_domain_and_record_schema_are_independently_pinned --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::announce_tip_is_unverified_request_planning_evidence_and_never_opens_gate --no-default-features",
-      "wrapper": "bash scripts/check_formal_core.sh generates gen_sync_block_chunk_admission_vectors and uses the exact cargo-lib runner for pure-helper conformance, oversized equal-height async common-handler progress, preflight-without-growth and digest-before-decode ordering, reserve-failure cooldown, independent digest/schema, and AnnounceTip provenance regressions."
-    },
-    "validation": {
-      "status": "Targeted gates passed: focused Lean SyncBlockChunkAdmission/module/generator build; generated schema-v4 vector JSON validation including first Offered request, equal-height compact-tip, canonical full/final chunk, and undersized-fragment rejection cases; exact pure-helper conformance; oversized five-plus-chunk equal-height async common-handler progress; unsolicited/malformed/expired/undersized-fragment preflight without retained growth and digest-before-decode ordering; completed-record reserve-failure cooldown; independent digest-domain and record-schema oracle; and AnnounceTip unverified-provenance/mining-gate behavior. Full formal-core remains a separate final gate."
-    },
-    "known_limitations": [
-      "The retained-byte and bounded-request theorems bound raw pre-heavy assembly only. Final decode may transiently own the raw record, decoded NativeBlockMeta, canonical re-encoding, the current frame, and allocator overhead; production worker/global session caps constrain that peak, and the theorem does not claim completion peak is at most total_len.",
-      "Append-only ordinals preserve legacy message bytes but do not provide protocol capability negotiation. Legacy peers may reject ordinal 6 AnnounceTip, so seamless mixed-version oversized-tip and chunk interoperability is not claimed.",
-      "Digest collision resistance, arbitrary postcard/bincode parser implementation correctness, allocator release behavior, peer honesty, network liveness, and complete native-node equivalence remain external. Consensus and durable import semantics are intentionally reused from the existing authorized Response path rather than reproved or changed here."
-    ]
-  },
   "last_sync_raw_ingress_slice": {
     "date": "2026-08-30",
-    "summary": "Extended the native SyncRawIngress byte-vector gate for the append-only chunk transport. Lean owns representative raw `HNW1`/postcard bytes for ordinal 1 Request, ordinal 2 empty Response, ordinal 3 PendingAction, ordinal 4 RequestBlockChunk, ordinal 5 BlockChunk, and ordinal 6 AnnounceTip plus unknown ordinal 7 and truncated/trailing new-variant rejection. Ordinal 0 Announce and the full 0-through-6 append-only table are pinned separately by production native_sync_message_variant_ordinals_are_append_only. The production raw gate feeds the Lean-owned bytes through decode_sync_message, checks canonical valid encodings against encode_sync_message, and routes each decoded kind only to its existing semantic or bounded chunk admission path.",
+    "summary": "Reconciled native sync wire authority to the shipped exact carrier. Legacy ordinals 0 through 3 remain frozen; AnnounceLocator, ResponseLocators, BlockBodyRequest, and BlockBodyChunk are active at ordinals 4 through 7; incompatible stored-metadata-record RequestBlockChunk and BlockChunk are assigned ordinals 8 and 9 but reject in the raw tag prefilter before postcard allocation; and ordinal 10 AnnounceTip is a bounded non-authoritative request-planning hint. BlockBodyChunkTransportAdmission is the active large-block model. SyncRawIngress retains the superseded metadata-record byte layout only as conditional evidence and supplies no production authority.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/SyncRawIngress.lean",
-      "formal/lean/Hegemon/Native/GenerateSyncRawIngressVectors.lean"
+      "formal/lean/Hegemon/Native/BlockBodyChunkTransportAdmission.lean",
+      "formal/lean/Hegemon/Native/GenerateBlockBodyChunkTransportAdmissionVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.SyncRawIngress.sync_raw_ingress_case_matches_expected",
-      "Hegemon.Native.SyncRawIngress.valid_raw_sync_request_accepts",
-      "Hegemon.Native.SyncRawIngress.raw_sync_request_range_caps_to_limit",
-      "Hegemon.Native.SyncRawIngress.raw_sync_request_trailing_rejects",
-      "Hegemon.Native.SyncRawIngress.raw_sync_missing_marker_rejects",
-      "Hegemon.Native.SyncRawIngress.raw_sync_unknown_variant_rejects",
-      "Hegemon.Native.SyncRawIngress.valid_raw_sync_block_chunk_request_accepts",
-      "Hegemon.Native.SyncRawIngress.valid_raw_sync_block_chunk_accepts",
-      "Hegemon.Native.SyncRawIngress.valid_raw_sync_tip_announcement_accepts",
-      "Hegemon.Native.SyncRawIngress.raw_sync_truncated_block_chunk_request_rejects",
-      "Hegemon.Native.SyncRawIngress.raw_sync_trailing_block_chunk_rejects",
-      "Hegemon.Native.SyncRawIngress.raw_sync_trailing_tip_announcement_rejects",
-      "Hegemon.Native.SyncRawIngress.valid_raw_empty_sync_response_accepts",
-      "Hegemon.Native.SyncRawIngress.raw_empty_sync_response_never_requests_more"
+      "Hegemon.Native.BlockBodyChunkTransportAdmission.exact_chunk_count_boundaries",
+      "Hegemon.Native.BlockBodyChunkTransportAdmission.final_chunk_uses_exact_remainder",
+      "Hegemon.Native.BlockBodyChunkTransportAdmission.locator_precedence_is_schema_chain_rules_length_count",
+      "Hegemon.Native.BlockBodyChunkTransportAdmission.chunk_precedence_checks_count_before_index_and_length",
+      "Hegemon.Native.BlockBodyChunkTransportAdmission.completion_hash_precedes_decode",
+      "Hegemon.Native.BlockBodyChunkTransportAdmission.sample_hash_preimage_binds_domain_length_and_body"
     ],
     "formal_core_gate": {
-      "command": "scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::native_sync_message_variant_ordinals_are_append_only --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::native_sync_legacy_variant_bytes_remain_frozen_across_append_only_extensions --no-default-features && HEGEMON_LEAN_SYNC_RAW_INGRESS_VECTORS=<generated-json> scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::lean_generated_sync_raw_ingress_vectors_match_production --no-default-features",
-      "wrapper": "bash scripts/check_formal_core.sh generates gen_sync_raw_ingress_vectors, checks the production append-only 0-through-6 ordinal regression, checks complete legacy/current byte equality for ordinals 0 through 3 and legacy rejection of appended ordinals 4 through 6, and runs the Lean-owned ordinal-1-through-6 raw-byte conformance test between sync admission and sync-response import gates."
+      "command": "scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::native_sync_message_variant_ordinals_are_append_only --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::transport_tests::native_sync_wire_tags_admit_exact_carrier_and_reject_record_fallback_before_allocation --no-default-features && HEGEMON_LEAN_BLOCK_BODY_CHUNK_TRANSPORT_ADMISSION_VECTORS=<generated-json> scripts/run_exact_cargo_lib_test.sh hegemon-node native::transport_tests::lean_generated_block_body_chunk_transport_admission_vectors_match_production --no-default-features",
+      "wrapper": "bash scripts/check_formal_core.sh checks the complete 0 through 10 serializer map, encoded active-carrier tags 4 through 7, raw prefilter decisions including rejection of 8 and 9, and Lean-generated exact locator/action-body transport conformance."
     },
     "validation": {
-      "status": "Targeted gates passed with the exact cargo-lib runner: focused Lean SyncRawIngress/module/generator build; generated schema-v2 vector JSON validation and production conformance; the production 0-through-6 ordinal table; complete legacy/current byte equality and current-decoder acceptance for ordinals 0 through 3; and legacy-decoder rejection of appended ordinals 4 through 6. Full formal-core remains a separate final gate."
+      "status": "The repaired exact 0 through 10 serializer-map regression, active-carrier/pre-allocation-rejection transport test, and Lean-generated BlockBodyChunkTransportAdmission conformance test pass in the merged worktree. The full post-merge formal-core run remains separate; no stale SyncRawIngress result is credited."
     },
     "known_limitations": [
-      "This is representative mechanized raw-byte refinement for the native sync message boundary, not a full Lean proof of postcard parser correctness over arbitrary bytes.",
-      "Peer honesty, network liveness, block validity beyond the existing sync publication gates, storage durability, and complete native-node equivalence remain explicit separate assumptions or refinement tracks."
+      "The active model proves the exact transport decision table and hash-before-decode order, not arbitrary postcard/SCALE parser correctness, allocator behavior, or hash collision resistance.",
+      "The retained SyncRawIngress module describes a superseded metadata-record layout and cannot authorize production decode. Peer honesty, network liveness, complete block validity, storage durability, and complete native-node equivalence remain separate assumptions or refinement tracks."
     ]
   },
   "last_smallwood_verifier_statement_projection_slice": {
@@ -2084,10 +2020,12 @@
   },
   "last_canonical_reorg_persistence_admission_slice": {
     "date": "2026-08-30",
-    "summary": "Added schema-v1 CanonicalReorgPersistenceAdmission without changing consensus or response-import semantics. The classifier maps absent records to missing, exact stored records to known-exact, and stored metadata mismatch to terminal rejection. Accepted persistence plans require exact known/missing partition counts, connected exact-known rows, a fully validated suffix, selective noncanonical writes for every supplied missing row, durability-flush evidence, durable replacement equality, and zero canonical-transaction block-record writes. Structural-count checks precede validation/storage checks, and validation precedes durability checks. Cross-file production execution remains source-review plus exact runtime-regression evidence.",
+    "summary": "Canonical reorg persistence has two explicit phases. The classifier maps absent records to missing, exact stored records to known-exact, and stored metadata mismatch to terminal rejection; every missing winning-suffix row is selectively prestored and durability-flushed before adoption. `CanonicalSuffixReorgCommit` then consumes exact durable pre-stored rows and requires `block_record_writes = 0`. This is distinct from the ordinary `TipExtensionBatchCommit` fast path, which requires `block_record_writes = chain_block_count`. Structural-count checks precede validation/storage checks, and validation precedes durability checks. Cross-file production execution remains source-review plus exact runtime-regression evidence.",
     "lean_modules": [
       "formal/lean/Hegemon/Native/CanonicalReorgPersistenceAdmission.lean",
-      "formal/lean/Hegemon/Native/GenerateCanonicalReorgPersistenceAdmissionVectors.lean"
+    "formal/lean/Hegemon/Native/GenerateCanonicalReorgPersistenceAdmissionVectors.lean",
+    "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
+    "formal/lean/Hegemon/Native/GenerateAtomicCommitManifestAdmissionVectors.lean"
     ],
     "top_level_theorems": [
       "Hegemon.Native.CanonicalReorgPersistenceAdmission.accepts_iff_canonical_reorg_persistence_preconditions",
@@ -2097,22 +2035,90 @@
       "Hegemon.Native.CanonicalReorgPersistenceAdmission.accepted_known_status_requires_exact_stored_record",
       "Hegemon.Native.CanonicalReorgPersistenceAdmission.structural_counts_precede_validation_and_storage",
       "Hegemon.Native.CanonicalReorgPersistenceAdmission.validation_precedes_storage_durability",
-      "Hegemon.Native.CanonicalReorgPersistenceAdmission.accepted_persistence_has_exact_prestorage_and_zero_canonical_record_writes"
+    "Hegemon.Native.CanonicalReorgPersistenceAdmission.accepted_persistence_has_exact_prestorage_and_zero_canonical_record_writes",
+    "Hegemon.Native.AtomicCommitManifestAdmission.valid_tip_extension_batch_commit_accepts",
+    "Hegemon.Native.AtomicCommitManifestAdmission.rejects_tip_extension_batch_block_record_write_mismatch",
+    "Hegemon.Native.AtomicCommitManifestAdmission.valid_canonical_suffix_reorg_commit_accepts",
+    "Hegemon.Native.AtomicCommitManifestAdmission.rejects_canonical_suffix_reorg_block_record_write"
     ],
     "formal_core_gate": {
-      "command": "HEGEMON_LEAN_CANONICAL_REORG_PERSISTENCE_ADMISSION_VECTORS=<generated-json> scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::lean_generated_canonical_reorg_persistence_admission_vectors_match_production --no-default-features",
-      "wrapper": "bash scripts/check_formal_core.sh generates schema-v1 vectors and invokes the exact cargo-lib conformance test."
+    "command": "HEGEMON_LEAN_CANONICAL_REORG_PERSISTENCE_ADMISSION_VECTORS=<generated-json> scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::lean_generated_canonical_reorg_persistence_admission_vectors_match_production --no-default-features && HEGEMON_LEAN_ATOMIC_COMMIT_MANIFEST_ADMISSION_VECTORS=<generated-json> scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::lean_generated_atomic_commit_manifest_admission_vectors_match_production --no-default-features",
+    "wrapper": "bash scripts/check_formal_core.sh generates both vector families and invokes their exact cargo-lib conformance tests."
     },
     "runtime_gates": {
       "command": "scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::mixed_known_missing_known_winning_response_persists_connector_and_advances_once --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::mixed_known_missing_mismatched_known_descendant_is_terminal_without_writes --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::nonwinning_sync_streams_deep_large_action_ancestry_before_suffix_persistence --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::all_known_deep_large_action_winning_sync_streams_stored_reorg_and_reopens --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::canonical_reorg_prestores_only_unknown_suffix_and_reopens --no-default-features && scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::canonical_reorg_prestore_crash_window_is_noncanonical_and_retryable --no-default-features",
       "wrapper": "scripts/check_native_node_memory_sync_recovery.sh runs these exact regressions."
     },
     "validation": {
-      "status": "Focused Lean module/generator, schema-v1 vector conformance, and exact mixed known/missing/mismatch, deep compact-streaming, selective-prestorage reopen, and crash-window retry regressions passed. Full formal-core remains a separate final gate."
+    "status": "The repaired atomic-manifest adapter now covers generated `tip_extension_batch_commit`; both the current atomic-manifest and canonical-reorg-persistence Lean-generated vector conformance tests pass in the merged worktree. The exact runtime regression suite and full formal-core run remain separate final gates."
     },
     "known_limitations": [
       "The formal relation proves production-derived storage-plan/count/order predicates, not sled Batch or transaction atomicity, stable-media durability, cross-file Rust refinement, hash collision resistance, allocator/RSS bounds, or arbitrary completion peak memory.",
-      "KnownMismatch-before-write, compact/hash streaming, selective prestorage and flush, zero-block-write canonical transaction, durable-head verification, publication, reopen, and crash-window retry are finite source/runtime evidence."
+    "KnownMismatch-before-write, compact/hash streaming, separate selective prestorage and flush, `CanonicalSuffixReorgCommit.block_record_writes = 0`, `TipExtensionBatchCommit.block_record_writes = chain_block_count`, durable-head verification, publication, reopen, and crash-window retry are finite source/runtime evidence."
+    ]
+  },
+  "last_sync_block_chunk_admission_slice": {
+    "date": "2026-08-30",
+    "summary": "Conditional and inactive only. SyncBlockChunkAdmission models an incompatible stored-metadata-record fallback, including retained-byte, canonical chunk-shape, session, completion, and compact-tip predicates. Production assigns its RequestBlockChunk and BlockChunk forms to tags 8 and 9 and rejects them in prefilter_native_sync_wire_tag before postcard allocation, so none of these theorems authorize production ingress, decode, completion, or import. Active large-block transport uses the exact locator and action-body carrier at tags 4 through 7 under BlockBodyChunkTransportAdmission; AnnounceTip tag 10 remains non-authoritative.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Native/SyncBlockChunkAdmission.lean",
+      "formal/lean/Hegemon/Native/GenerateSyncBlockChunkAdmissionVectors.lean"
+    ],
+    "top_level_theorems": [
+      "Hegemon.Native.SyncBlockChunkAdmission.accepted_chunk_retained_bytes_within_total",
+      "Hegemon.Native.SyncBlockChunkAdmission.accepted_chunk_total_within_cap",
+      "Hegemon.Native.SyncBlockChunkAdmission.accepted_chunk_has_canonical_length",
+      "Hegemon.Native.SyncBlockChunkAdmission.accepted_nonfinal_chunk_fills_cap",
+      "Hegemon.Native.SyncBlockChunkAdmission.accepted_final_chunk_matches_remainder",
+      "Hegemon.Native.SyncBlockChunkAdmission.accepted_chunk_exposes_bounded_request_facts",
+      "Hegemon.Native.SyncBlockChunkAdmission.valid_fallback_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.fallback_without_matching_request_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.session_capacity_exact_limit_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.matching_offer_exact_next_offset_serves",
+      "Hegemon.Native.SyncBlockChunkAdmission.serve_request_without_matching_offer_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.serve_request_tuple_mismatch_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.serve_request_wrong_next_offset_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.serve_request_total_offset_closes",
+      "Hegemon.Native.SyncBlockChunkAdmission.matching_offer_initial_request_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.offer_request_without_matching_offer_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.offer_request_tuple_mismatch_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.offer_request_nonzero_offset_rejects_before_record_load",
+      "Hegemon.Native.SyncBlockChunkAdmission.offer_request_u64_max_offset_rejects_before_record_load",
+      "Hegemon.Native.SyncBlockChunkAdmission.admitted_empty_response_enters_chunk_fallback",
+      "Hegemon.Native.SyncBlockChunkAdmission.completed_chunk_fallback_removes_request",
+      "Hegemon.Native.SyncBlockChunkAdmission.aborted_chunk_fallback_enters_cooldown",
+      "Hegemon.Native.SyncBlockChunkAdmission.duplicate_empty_response_transition_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.chunk_session_idle_exact_limit_expires",
+      "Hegemon.Native.SyncBlockChunkAdmission.chunk_session_lifetime_exact_limit_expires",
+      "Hegemon.Native.SyncBlockChunkAdmission.valid_tip_announcement_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.tip_announcement_not_ahead_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.tip_announcement_equal_local_hash_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.tip_announcement_equal_local_hash_precedes_zero_hash",
+      "Hegemon.Native.SyncBlockChunkAdmission.tip_announcement_equal_competing_hash_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.tip_announcement_zero_hash_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.valid_chunk_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.valid_nonfinal_full_chunk_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.valid_final_remainder_chunk_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.oversized_chunk_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.undersized_nonfinal_chunk_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.offset_mismatch_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.chunk_end_overflow_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.valid_completion_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.completion_digest_mismatch_rejects",
+      "Hegemon.Native.SyncBlockChunkAdmission.completion_decode_rejects_after_digest_accepts",
+      "Hegemon.Native.SyncBlockChunkAdmission.completion_context_mismatch_rejects"
+    ],
+    "formal_core_gate": {
+      "command": "(cd formal/lean && lake build Hegemon.Native.SyncBlockChunkAdmission Hegemon.Native.GenerateSyncBlockChunkAdmissionVectors) && scripts/run_exact_cargo_lib_test.sh hegemon-node native::transport_tests::native_sync_wire_tags_admit_exact_carrier_and_reject_record_fallback_before_allocation --no-default-features",
+      "wrapper": "bash scripts/check_formal_core.sh may retain the conditional Lean module, but production authority requires the raw pre-allocation rejection gate for tags 8 and 9 and the separate active BlockBodyChunkTransportAdmission conformance gate."
+    },
+    "validation": {
+      "status": "The module remains conditional evidence only. Final post-merge execution must confirm tags 8 and 9 are unreachable before allocation and must not credit old metadata-record conformance or import regressions as production coverage."
+    },
+    "known_limitations": [
+      "The retained-byte and bounded-request theorems apply only to an inactive message family and do not bound active ingress or completion peak memory.",
+      "Append-only tags do not provide capability negotiation. Mixed-version large-block interoperability is claimed only for peers supporting the exact locator and action-body carrier at tags 4 through 7.",
+      "Digest collision resistance, arbitrary parser correctness, allocator behavior, peer honesty, network liveness, and complete native-node equivalence remain external."
     ]
   }
 }

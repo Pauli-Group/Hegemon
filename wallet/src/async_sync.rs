@@ -4,6 +4,16 @@
 //! using the Hegemon WebSocket RPC client. It replaces the blocking sync engine
 //! for use with async runtimes.
 //!
+//! # Trust boundary
+//!
+//! Wallet state mirrors a local full node or a trusted operator's full node.
+//! The node is trusted for consensus, chain selection, transaction-proof
+//! verification, and state validity. Wallet hash/body/root consistency checks
+//! compare data returned by that RPC; they do not independently establish chain
+//! validity or provide generic untrusted-RPC/light-client security. Such support
+//! would require authenticated headers and chain selection plus all relevant
+//! proof, consensus, and state-transition checks, beyond a STARK verifier call.
+//!
 //! # Features
 //!
 //! - Real-time sync via block subscriptions
@@ -49,6 +59,8 @@ pub const WALLET_SYNC_MAX_SNAPSHOT_GAP: u64 = 1_048_576;
 ///
 /// This engine syncs wallet state with a Hegemon node using WebSocket RPC.
 /// It supports both one-shot synchronization and continuous sync via subscriptions.
+/// The client must represent a local or trusted operator full node; this engine
+/// mirrors its validated chain rather than independently validating consensus.
 pub struct AsyncWalletSyncEngine {
     /// RPC client for node communication
     client: Arc<NodeRpcClient>,
@@ -92,6 +104,9 @@ impl AsyncWalletSyncEngine {
     ///
     /// Fetches all new commitments, ciphertexts, and nullifiers from the node
     /// and updates the wallet store.
+    /// Consensus and proof validity are entrusted to the local or trusted
+    /// operator full node. RPC-data consistency checks are not independent
+    /// chain validation.
     pub async fn sync_once(&self) -> Result<SyncOutcome, WalletError> {
         for attempt in 0..=1 {
             let mut outcome = SyncOutcome::default();
@@ -133,7 +148,7 @@ impl AsyncWalletSyncEngine {
                                     hex::encode(stored_hash),
                                     hex::encode(observed_hash),
                                 );
-                                self.store.reset_sync_state()?;
+                                self.store.reset_legacy_sync_state_preserving_v8()?;
                                 self.store.set_genesis_hash(metadata.genesis_hash)?;
                                 continue;
                             }
@@ -164,7 +179,7 @@ impl AsyncWalletSyncEngine {
                     "Wallet cursor ahead of chain ({} > {}); resetting wallet sync state...",
                     commitment_cursor, note_status.leaf_count
                 );
-                self.store.reset_sync_state()?;
+                self.store.reset_legacy_sync_state_preserving_v8()?;
                 self.store.set_genesis_hash(metadata.genesis_hash)?;
                 commitment_cursor = 0;
             }
@@ -193,7 +208,7 @@ impl AsyncWalletSyncEngine {
                         "Commitment sync incomplete (wallet_cursor={}, chain_leaf_count={}); resetting wallet sync state...",
                         commitment_cursor, note_status.leaf_count
                     );
-                    self.store.reset_sync_state()?;
+                    self.store.reset_legacy_sync_state_preserving_v8()?;
                     self.store.set_genesis_hash(metadata.genesis_hash)?;
                     continue;
                 }
@@ -209,7 +224,7 @@ impl AsyncWalletSyncEngine {
                         hex::encode(wallet_root),
                         hex::encode(chain_root),
                     );
-                    self.store.reset_sync_state()?;
+                    self.store.reset_legacy_sync_state_preserving_v8()?;
                     self.store.set_genesis_hash(metadata.genesis_hash)?;
                     continue;
                 }
@@ -225,7 +240,7 @@ impl AsyncWalletSyncEngine {
                     eprintln!(
                         "Wallet notes out of sync with commitments; resetting wallet sync state..."
                     );
-                    self.store.reset_sync_state()?;
+                    self.store.reset_legacy_sync_state_preserving_v8()?;
                     self.store.set_genesis_hash(metadata.genesis_hash)?;
                     continue;
                 } else {
@@ -238,7 +253,7 @@ impl AsyncWalletSyncEngine {
                     eprintln!(
                         "Wallet note witness data is internally inconsistent; resetting wallet sync state..."
                     );
-                    self.store.reset_sync_state()?;
+                    self.store.reset_legacy_sync_state_preserving_v8()?;
                     self.store.set_genesis_hash(metadata.genesis_hash)?;
                     continue;
                 }
@@ -278,7 +293,7 @@ impl AsyncWalletSyncEngine {
                     "Wallet ciphertext cursor ahead of chain ({} > {}); resetting wallet sync state...",
                     ciphertext_cursor, note_status.next_index
                 );
-                self.store.reset_sync_state()?;
+                self.store.reset_legacy_sync_state_preserving_v8()?;
                 self.store.set_genesis_hash(metadata.genesis_hash)?;
                 ciphertext_cursor = 0;
             }
@@ -392,6 +407,13 @@ impl AsyncWalletSyncEngine {
             let latest = self.client.latest_block().await?;
             self.store.refresh_pending(latest.height, &nullifier_set)?;
             let latest_hash = parse_hash_32(&latest.hash)?;
+            self.sync_poseidon2_v8(
+                metadata.genesis_hash,
+                latest.height,
+                latest_hash,
+                &mut outcome,
+            )
+            .await?;
             self.store.set_last_synced_block_hash(latest_hash)?;
             self.store.set_last_synced_height(latest.height)?;
 
@@ -401,10 +423,92 @@ impl AsyncWalletSyncEngine {
         Err(WalletError::InvalidState("sync failed after reset"))
     }
 
+    /// Mirror the trusted full node's V8 chain, including detach/attach recovery.
+    /// Body/hash bindings and local replay consistency do not authenticate the
+    /// RPC's chain choice or independently verify consensus and transaction proofs.
+    async fn sync_poseidon2_v8(
+        &self,
+        genesis_hash: [u8; 32],
+        target_height: u64,
+        target_hash: [u8; 32],
+        outcome: &mut SyncOutcome,
+    ) -> Result<(), WalletError> {
+        self.store.ensure_poseidon2_v8_genesis(genesis_hash)?;
+        let initial_tip = self.store.poseidon2_v8_tip()?;
+        let mut ancestor_height = initial_tip.height.min(target_height);
+        loop {
+            let wallet_hash = self
+                .store
+                .poseidon2_v8_canonical_hash(ancestor_height)?
+                .ok_or(WalletError::InvalidState(
+                    "V8 wallet journal height missing",
+                ))?;
+            if self.client.block_hash(ancestor_height).await? == Some(wallet_hash) {
+                break;
+            }
+            if ancestor_height == 0 {
+                return Err(WalletError::InvalidState(
+                    "V8 wallet mirror has no canonical common ancestor",
+                ));
+            }
+            ancestor_height -= 1;
+        }
+        if ancestor_height < initial_tip.height {
+            let ancestor_hash = self
+                .store
+                .poseidon2_v8_canonical_hash(ancestor_height)?
+                .ok_or(WalletError::InvalidState(
+                    "V8 rollback ancestor disappeared",
+                ))?;
+            self.store
+                .rollback_poseidon2_v8_to(ancestor_height, ancestor_hash)?;
+            outcome.poseidon2_v8_detached_blocks =
+                outcome.poseidon2_v8_detached_blocks.saturating_add(
+                    usize::try_from(initial_tip.height - ancestor_height).unwrap_or(usize::MAX),
+                );
+        }
+
+        let mut height = ancestor_height
+            .checked_add(1)
+            .ok_or(WalletError::InvalidState("V8 sync height overflow"))?;
+        while height <= target_height {
+            let block = self.client.canonical_block_actions(height).await?.ok_or(
+                WalletError::InvalidState("canonical V8 sync block is unavailable"),
+            )?;
+            let delta = self.store.apply_poseidon2_v8_canonical_block(&block)?;
+            outcome.poseidon2_v8_blocks = outcome.poseidon2_v8_blocks.saturating_add(1);
+            outcome.poseidon2_v8_commitments = outcome
+                .poseidon2_v8_commitments
+                .saturating_add(delta.commitments);
+            outcome.poseidon2_v8_ciphertexts = outcome
+                .poseidon2_v8_ciphertexts
+                .saturating_add(delta.ciphertexts);
+            outcome.poseidon2_v8_recovered = outcome
+                .poseidon2_v8_recovered
+                .saturating_add(delta.recovered);
+            outcome.poseidon2_v8_spent = outcome.poseidon2_v8_spent.saturating_add(delta.spent);
+            height = height
+                .checked_add(1)
+                .ok_or(WalletError::InvalidState("V8 sync height overflow"))?;
+        }
+        let tip = self.store.poseidon2_v8_tip()?;
+        if tip.height != target_height
+            || tip.block_hash != target_hash
+            || self.client.block_hash(target_height).await? != Some(target_hash)
+        {
+            return Err(WalletError::InvalidState(
+                "V8 wallet sync target changed before commit",
+            ));
+        }
+        Ok(())
+    }
+
     /// Run continuous synchronization with block subscriptions
     ///
     /// Subscribes to new block headers and syncs after each new block.
     /// This runs indefinitely until the subscription fails or is cancelled.
+    /// Notifications and chain validity retain the trusted-full-node boundary
+    /// of [`Self::sync_once`].
     ///
     /// # Arguments
     ///
@@ -441,9 +545,11 @@ impl AsyncWalletSyncEngine {
         Ok(())
     }
 
-    /// Run continuous sync with finalized blocks only
+    /// Run continuous sync triggered by node-reported finalized heads.
     ///
-    /// Only syncs when blocks are finalized, providing stronger consistency.
+    /// Each notification triggers [`Self::sync_once`], which reads the node's
+    /// latest state. The notification is not an independent finality proof;
+    /// consensus and proof validation remain entrusted to the full node.
     pub async fn run_continuous_finalized<F>(&self, mut on_sync: F) -> Result<(), WalletError>
     where
         F: FnMut(SyncOutcome),
@@ -633,9 +739,10 @@ impl SharedSyncEngine {
         }
     }
 
-    /// Perform a single synchronization pass
+    /// Perform a single synchronization pass against a local or trusted operator
+    /// full node, with the trust boundary of [`AsyncWalletSyncEngine::sync_once`].
     pub async fn sync_once(&self) -> Result<SyncOutcome, WalletError> {
-        let engine = self.inner.read().await;
+        let engine = self.inner.write().await;
         engine.sync_once().await
     }
 }

@@ -1,0 +1,76 @@
+{
+  "schema": "hegemon.m4-padding-fiber-terminal.v1",
+  "date": "2026-08-21",
+  "upstream_revision": "3f96163049f680b2909f6545690bd929f1b48c44",
+  "base_source_sha256": {
+    "Cargo.toml": "457d039e7f82baf28431bf119c0058d3a370921c90d587b87faac454855ef600",
+    "Cargo.lock": "abbeb105529b336aa0fa8d76eeee878ea49101b9e8bad7f752064b891d28101f",
+    "src/lib.rs": "e624746ba47e81cfd334f90d1c824feca67ca61b49906fad2d5d70b8db94ca2f",
+    "src/main.rs": "d9fbe79c09f7b6cb505a4d5b6459548ebd14019f53cbc266b26af26250ae5184"
+  },
+  "base_selected_wire_patch_sha256": "fa442ca4fd18fec239e874134c4cd41d82e2caafacfe987c9ea5867ededd45ee",
+  "main_public_elision_patch_sha256": "8607f483270187ff32d2802b5a4584dd208150b31ee8c333b8201b33d9ee0d9c",
+  "terminal_target_patch_sha256": "d0bfabb7bffcab6097af635913e662506afc73d2b354382158d9350b827fcee9",
+  "base_terminal_target_proof_bytes": 69456,
+  "padding_fiber_patch_sha256": "b64d4f5efb13156a5d854378e2805198a185e98ffd6e13ebc0a0c1ee461bd995",
+  "terminal_layout": {
+    "natural_message_values": 16384,
+    "active_values": 12486,
+    "fold_variables": 4,
+    "full_terminal_values": 1024,
+    "wire_terminal_values": 781,
+    "omitted_known_zero_values": 243,
+    "structural_terminal_saving_bytes": 3888
+  },
+  "rate_sweep": [
+    { "log_inverse_rate": 2, "proof_bytes": 70864, "sha256": "bc17db6591ad23d0aee95f5cfff58014ecd783067638d711b983f810cd348a91" },
+    { "log_inverse_rate": 3, "proof_bytes": 66304, "sha256": "54bdbeb7410b432393e6ef88325e9a8cd86c5d54a16fe772a51f498518e3cdb4" },
+    { "log_inverse_rate": 4, "proof_bytes": 65440, "sha256": "028f1fadc26e167768667487717508f481c2f1d70563e51088873757f43338ec" },
+    { "log_inverse_rate": 5, "proof_bytes": 66512, "sha256": "479426080bed26c82e864a15e0921cfeabd71d16c533c0032359073ea334c40a" },
+    { "log_inverse_rate": 6, "proof_bytes": 68208, "sha256": "fef69f731665c43342d047543ed58e44d98a73caee88a7da4976d2c62a02d769" }
+  ],
+  "selected": {
+    "log_inverse_rate": 4,
+    "proof_bytes": 65440,
+    "envelope_bytes": 65452,
+    "proof_sha256": "028f1fadc26e167768667487717508f481c2f1d70563e51088873757f43338ec",
+    "saved_from_previous_bytes": 4016,
+    "saved_from_previous_percent": 5.7820778622
+  },
+  "relation": {
+    "full_pay1x2": true,
+    "single_main": true,
+    "chips": 0,
+    "shake256_permutations": 40,
+    "private_witness_bytes": 2448,
+    "canonical_public_statement_bytes": 478,
+    "and_constraints": 24160,
+    "committed_tier": 32768
+  },
+  "verification": {
+    "honest_roundtrip": true,
+    "all_public_mutations_rejected": true,
+    "proof_mutation_rejected": true,
+    "trailing_bytes_rejected": true,
+    "padding_bijection": true,
+    "evaluation_invariance": true,
+    "canonical_zero_suffix": true,
+    "nonzero_omitted_coordinate_rejected": true,
+    "natural_layout_fallback": true,
+    "clippy_deny_warnings": true
+  },
+  "security": {
+    "transparent_not_zero_knowledge": true,
+    "upstream_query_bits": 96,
+    "commitment_hash": "SHA-256",
+    "challenge_field": "GF(2^128)",
+    "strict_pq128": false,
+    "production_authorized": false
+  },
+  "compatibility": {
+    "native_direct_verifier": true,
+    "recursive_compact_wire": false,
+    "recursive_paths_fail_closed": true,
+    "generic_exact_size_estimator": false
+  }
+}

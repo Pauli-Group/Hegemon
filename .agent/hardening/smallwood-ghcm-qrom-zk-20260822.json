@@ -1,0 +1,39 @@
+{
+  "schema": "hegemon.smallwood_ghcm_qrom_zk_checkpoint.v1",
+  "date": "2026-08-22",
+  "source": {
+    "path": "formal/crypto/HegemonCrypto/SmallWoodGhcmQromZk.lean",
+    "sha512": "50ccefb2f5b598104ff5702dfda5cec55cb7ad7f1a5aa90614f23c7b7aa51d7d3fb2baaf5659559b411312d48d30312f6fa9cfb5ec0331e3148963ece983fb7f"
+  },
+  "proved_exact_dyadics": {
+    "leaf_history": "3/2^172",
+    "chain_history": "3/2^158",
+    "heterogeneous_history": "49155/2^172",
+    "heterogeneous_bracket": "2^-157 < loss < 2^-156",
+    "h256_first_program": "3/2^97",
+    "h256_history": "3/2^33",
+    "homogeneous_576_sensitivity_only": "786435/2^190"
+  },
+  "external_obligations": {
+    "count": 25,
+    "exhaustive": true,
+    "duplicate_free": true,
+    "evidence_constructors": 0,
+    "retained_complete_evidence": false
+  },
+  "independent_checks": {
+    "targeted_lake_build_jobs": 792,
+    "targeted_lake_build_passed": true,
+    "forbidden_token_scan_passed": true,
+    "custom_axioms": [],
+    "standard_lean_axioms": ["propext", "Classical.choice", "Quot.sound"]
+  },
+  "claim_boundary": {
+    "arithmetic_mechanized": true,
+    "ghcm_proposition_instantiated": false,
+    "complete_zero_knowledge_proved": false,
+    "concrete_hash_qrom_bridge_proved": false,
+    "composed_pq128_proved": false,
+    "production_authorized": false
+  }
+}

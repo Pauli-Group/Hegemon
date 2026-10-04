@@ -7,7 +7,7 @@ namespace ActionRootTranscript
 def actionRootDomain : List Byte :=
   asciiBytes "hegemon-native-extrinsics-v1"
 
-def actionHashWidth : Nat := 32
+def actionHashWidth : Nat := 48
 
 def actionRootPreimage (actionHashes : List (List Byte)) : List Byte :=
   actionRootDomain
@@ -45,26 +45,30 @@ theorem one_action_root_preimage_length :
 theorem two_action_root_preimage_length :
     (actionRootPreimage [sampleHashA, sampleHashB]).length =
       actionRootDomain.length + 4 + actionHashWidth * 2 := by
+  set_option maxRecDepth 2000 in
   decide
 
 theorem action_root_count_is_little_endian :
     ((actionRootPreimage [sampleHashA, sampleHashB]).drop actionRootDomain.length).take 4 =
       u32le 2 := by
+  set_option maxRecDepth 2000 in
   decide
 
 theorem action_root_order_binds_hashes :
     actionRootPreimage [sampleHashA, sampleHashB] ≠
       actionRootPreimage [sampleHashB, sampleHashA] := by
+  set_option maxRecDepth 2000 in
   decide
 
 theorem action_root_hash_bytes_are_unmodified :
     (actionRootPreimage [sampleHashA]).drop (actionRootDomain.length + 4) =
       sampleHashA := by
+  set_option maxRecDepth 2000 in
   decide
 
 theorem max_hash_preimage_hex :
     hexBytes (actionRootPreimage [maxHash]) =
-      "0x686567656d6f6e2d6e61746976652d65787472696e736963732d763101000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" := by
+      "0x686567656d6f6e2d6e61746976652d65787472696e736963732d763101000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" := by
   set_option maxRecDepth 2000 in
   decide
 

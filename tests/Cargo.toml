@@ -26,8 +26,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_bytes = "0.11"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
-p3-field = { workspace = true }
-p3-goldilocks = { workspace = true }
 
 [features]
 default = []
@@ -49,11 +47,6 @@ path = "rpc_integration.rs"
 [[test]]
 name = "multinode_integration"
 path = "multinode_integration.rs"
-
-[[test]]
-name = "stark_soundness"
-path = "stark_soundness.rs"
-# STARK security parameter verification (Phase 15.1.2)
 
 [[test]]
 name = "pq_params_audit"

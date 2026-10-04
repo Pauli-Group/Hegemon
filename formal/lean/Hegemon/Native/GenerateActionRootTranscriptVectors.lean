@@ -20,7 +20,7 @@ def actionRootCaseJson (name : String) (actionHashes : List (List Byte)) : Strin
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"action_root_transcript_cases\": [\n"
     ++ actionRootCaseJson "empty-action-root" [] ++ ",\n"
     ++ actionRootCaseJson "single-action-hash" [sampleHashA] ++ ",\n"
