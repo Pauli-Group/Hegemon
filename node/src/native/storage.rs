@@ -637,6 +637,7 @@ pub(crate) fn validate_loaded_block_indexes(
     height_tree: &sled::Tree,
     block_tree: &sled::Tree,
     pow_bits: u32,
+    retarget_activation_height: Option<u64>,
 ) -> Result<ValidatedCanonicalChainSnapshot> {
     let expected_genesis = genesis_meta(pow_bits)?;
     let chain = load_chain_to_hash(block_tree, best.hash)?;
@@ -777,10 +778,11 @@ pub(crate) fn validate_loaded_block_indexes(
         let expected_pow_bits = if index == 0 {
             None
         } else {
-            Some(native_expected_child_pow_bits_for_chain_index(
+            Some(native_expected_child_pow_bits_for_chain_index_with_activation(
                 &chain,
                 index - 1,
                 pow_bits,
+                retarget_activation_height,
             )?)
         };
         verify_native_block_meta_projection(parent, meta, expected_pow_bits).with_context(

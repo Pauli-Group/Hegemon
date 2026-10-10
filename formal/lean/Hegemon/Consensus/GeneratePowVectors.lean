@@ -121,6 +121,29 @@ def powBitsScheduleCaseJson
     ++ "      \"expected_result\": \"" ++ scheduleResultLabel result ++ "\"\n"
     ++ "    }"
 
+def powBitsActivationCaseJson
+    (name : String)
+    (genesisBits parentBits parentHeight newHeight parentTimestamp : Nat)
+    (anchorTimestamp activationHeight : Option Nat) : String :=
+  let result :=
+    expectedPowBitsScheduleWithActivation
+      genesisBits parentBits parentHeight newHeight parentTimestamp anchorTimestamp activationHeight
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"activation_height\": " ++ optionNatJson activationHeight ++ ",\n"
+    ++ "      \"genesis_pow_bits\": " ++ toString genesisBits ++ ",\n"
+    ++ "      \"parent_pow_bits\": " ++ toString parentBits ++ ",\n"
+    ++ "      \"parent_height\": " ++ toString parentHeight ++ ",\n"
+    ++ "      \"new_height\": " ++ toString newHeight ++ ",\n"
+    ++ "      \"parent_timestamp_ms\": " ++ toString parentTimestamp ++ ",\n"
+    ++ "      \"anchor_timestamp_ms\": " ++ optionNatJson anchorTimestamp ++ ",\n"
+    ++ "      \"expected_anchor_steps\": "
+    ++ optionNatJson (retargetAnchorStepsWithActivation parentHeight newHeight activationHeight) ++ ",\n"
+    ++ "      \"expected_bits\": "
+    ++ optionNatJson (match result with | Except.ok bits => some bits | Except.error _ => none) ++ ",\n"
+    ++ "      \"expected_result\": \"" ++ scheduleResultLabel result ++ "\"\n"
+    ++ "    }"
+
 def easyPowBits : Nat := 545259519
 def maxPowHeightPredecessor : Nat := maxPowHeight - 1
 def invalidZeroMantissaBits : Nat := 536870912
@@ -179,6 +202,20 @@ def vectorJson : String :=
     ++ powBitsScheduleCaseJson "boundary-slow-timespan-reencodes-bits" 123 easyPowBits 19 (retargetWindow * 2) (retargetTimespanMs * 10) (some 0) ++ ",\n"
     ++ powBitsScheduleCaseJson "boundary-reversed-timestamp-saturates" 123 easyPowBits 19 (retargetWindow * 2) 100 (some 200) ++ ",\n"
     ++ powBitsScheduleCaseJson "boundary-invalid-previous-bits-rejected" 123 invalidShiftedZeroTargetBits 19 (retargetWindow * 2) retargetTimespanMs (some 0) ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"pow_bits_activation_cases\": [\n"
+    ++ powBitsActivationCaseJson "unscheduled-release-keeps-legacy-nine" 123 easyPowBits 39 40 540000 (some 0) none ++ ",\n"
+    ++ powBitsActivationCaseJson "before-activation-keeps-legacy-nine" 123 easyPowBits 29 30 540000 (some 0) (some 40) ++ ",\n"
+    ++ powBitsActivationCaseJson "at-activation-ten-intervals-keep-bits" 123 easyPowBits 39 40 600000 (some 0) (some 40) ++ ",\n"
+    ++ powBitsActivationCaseJson "after-activation-ten-intervals-keep-bits" 123 easyPowBits 49 50 600000 (some 0) (some 40) ++ ",\n"
+    ++ powBitsActivationCaseJson "activated-non-boundary-inherits-parent" 123 easyPowBits 40 41 600000 none (some 40) ++ ",\n"
+    ++ powBitsActivationCaseJson "activated-first-launch-boundary-skips" 123 easyPowBits 9 10 600000 none (some 0) ++ ",\n"
+    ++ powBitsActivationCaseJson "activated-genesis-uses-genesis-bits" 123 456 0 0 0 none (some 0) ++ ",\n"
+    ++ powBitsActivationCaseJson "activated-missing-history-rejected" 123 easyPowBits 39 40 600000 none (some 40) ++ ",\n"
+    ++ powBitsActivationCaseJson "activated-fast-ten-intervals-quarter-clamp" 123 easyPowBits 39 40 100000 (some 0) (some 40) ++ ",\n"
+    ++ powBitsActivationCaseJson "activated-slow-ten-intervals-four-x-clamp" 123 486810177 39 40 6000000 (some 0) (some 40) ++ ",\n"
+    ++ powBitsActivationCaseJson "activated-reversed-timestamps-saturate" 123 easyPowBits 39 40 100 (some 200) (some 40) ++ ",\n"
+    ++ powBitsActivationCaseJson "activated-invalid-parent-target-rejected" 123 invalidShiftedZeroTargetBits 39 40 600000 (some 0) (some 40) ++ "\n"
     ++ "  ],\n"
     ++ "  \"pow_admission_cases\": [\n"
     ++ powCaseJson "valid-boundary-hash-accepted" validInput ++ ",\n"

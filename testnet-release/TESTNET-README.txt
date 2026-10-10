@@ -1,8 +1,29 @@
-HEGEMON 0.10.1 — EXISTING PUBLIC TESTNET
+HEGEMON 0.10.2 — EXISTING PUBLIC TESTNET
 
-This maintenance release follows the b819911dbf testnet consensus and includes
-its sync pagination and mining-gate fixes. It joins the existing 0.10 testnet;
-it does not migrate to the newer Bitcoin80 consensus or reset the chain.
+This v0.10.2 candidate starts from the published v0.10.1 maintenance release
+and retains its sync pagination, mining-gate and wallet snapshot fixes. It joins
+the existing 0.10 testnet with the same genesis and compatible node/wallet data.
+
+RETARGET CORRECTION: PREPARED, ACTIVATION HEIGHT PENDING
+
+The correction uses ten elapsed block intervals for the existing 600,000 ms
+retarget denominator. Legacy validation measures nine elapsed intervals against
+that denominator. The retarget cadence (ten blocks), first retarget (height 20),
+60-second target, compact target encoding and 1/4x..4x timespan clamps are retained.
+
+The compiled consensus constant RETARGET_CORRECTION_ACTIVATION_HEIGHT is None.
+This candidate therefore continues to use legacy retarget validation at every
+height. There is no environment-variable or command-line activation override.
+An agreed activation height must be committed into the consensus constant and
+all binaries rebuilt before release. Historical blocks before activation keep
+their legacy rule; eligible retarget boundaries at/after activation use the
+corrected ten-interval rule. Every operator must use the same scheduled height.
+
+This candidate has not been published and the correction is not active. Final
+release preparation must select the activation height, rebuild, refresh the
+source-bound review archive and pass all release gates before tagging or
+publishing. Existing v0.10.1 users should continue with their published release
+until the coordinated v0.10.2 upgrade instructions are announced.
 
 Verified testnet genesis (full 32-byte hash):
 0x506fc2cd5ed367cc68d6d23a987fe6e4a7916fde02a249105ab91884a1e6fa59
@@ -75,7 +96,7 @@ This reads loopback RPC without opening another node. Responses identify:
   id 2: chain_getHeader — local tip; its number is hexadecimal
   id 3: chain_getBlockHash(0) — full genesis; must match the hash above
   id 4: hegemon_miningStatus — block_height, syncing, mining_sync_gate_open
-  id 5: system_version — verify the running node is the 0.10.1 release
+  id 5: system_version — verify the running node is the 0.10.2 release
 
 A queued broadcast, wallet balance, or locally found block does not prove
 canonical synchronization. Wait for connected peers and completed catch-up.

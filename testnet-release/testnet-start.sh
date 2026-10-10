@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Hegemon 0.10.1: the existing public testnet, not the newer Bitcoin80 chain.
+# Hegemon 0.10.2: the existing public testnet, not the newer Bitcoin80 chain.
 script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 expected_genesis="0x506fc2cd5ed367cc68d6d23a987fe6e4a7916fde02a249105ab91884a1e6fa59"
 data_dir="${HOME:?HOME must identify your user directory}/.hegemon-testnet"
@@ -12,7 +12,7 @@ status=0
 
 usage() {
   cat <<'EOF'
-Hegemon 0.10.1 public testnet launcher
+Hegemon 0.10.2 public testnet launcher
 Usage: bash testnet-start.sh [--mine] [--data-dir PATH] [--rpc-port PORT] [--port PORT]
        bash testnet-start.sh --status [--rpc-port PORT]
 Default: relay mode, persistent ~/.hegemon-testnet, loopback HTTP RPC on port 9944.
@@ -82,7 +82,7 @@ export HEGEMON_MINE="$mine"
 export HEGEMON_BOOTSTRAP_AUTHORING=0
 export NO_COLOR="${NO_COLOR:-1}"
 export RUST_LOG="${RUST_LOG:-hegemon_node=info,consensus=info,network=info}"
-printf 'Hegemon 0.10.1 testnet; mining=%s; data=%s; RPC=http://127.0.0.1:%s\n' "$mine" "$data_dir" "$rpc_port"
+printf 'Hegemon 0.10.2 testnet; mining=%s; data=%s; RPC=http://127.0.0.1:%s\n' "$mine" "$data_dir" "$rpc_port"
 printf 'Seeds: %s\nExpected genesis: %s\n' "$HEGEMON_SEEDS" "$expected_genesis"
 if [[ "$mine" == 1 ]]; then
   printf 'Mining requires synchronized system time and a verified canonical chain.\n'

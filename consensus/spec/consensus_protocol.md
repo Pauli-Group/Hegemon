@@ -9,7 +9,7 @@ while preserving the project’s STARK-based execution model and nullifier accou
 | Parameter | Value | Notes |
 |-----------|-------|-------|
 | Target block interval | 60 seconds | Used for difficulty retargeting and throughput sizing. |
-| Difficulty window (`RETARGET_WINDOW`) | 120 blocks | Canonical window for recalculating the PoW target. |
+| Difficulty window (`RETARGET_WINDOW`) | 10 blocks | Retarget at multiples of ten above height ten; first retarget is height 20. |
 | Max timestamp skew | +90 seconds | Reject blocks whose timestamp exceeds local time + 90 s. |
 | Median-time-past window | 11 blocks | Block timestamp must be strictly greater than the median of the past 11 headers. |
 | Target encoding | Compact `pow_bits` (Bitcoin-style) | 1-byte exponent + 3-byte mantissa; `target = mantissa × 256^(exponent−3)`. Mantissa MUST be non-zero and must fit within 3 bytes. |
@@ -45,8 +45,9 @@ Before propagating or extending a block, miners and full nodes MUST execute the 
    - Check that `timestamp` > median time past (11-window) and `timestamp ≤ local_clock + 90s`. The future-skew bound is enforced against wall-clock milliseconds and invalid blocks are rechecked when the clock advances.
    - Verify `pow_bits` encodes a target within the permitted global min/max and that `sha256d(header) ≤ target`. A zero mantissa is invalid and the seal MUST exist on every PoW header (including reorg candidates).
 2. **Difficulty retarget consistency**
-   - For blocks where `height mod RETARGET_WINDOW = 0`, recompute the expected target from the prior 120 blocks (see
-     [Difficulty Adjustment](#difficulty-adjustment)). Reject mismatches. For intermediate heights, the parent’s `pow_bits` must be reused verbatim; drift is not allowed.
+   - At eligible retarget boundaries (multiples of ten above height ten), recompute the expected target with the
+     height-selected timestamp anchor (see [Difficulty Adjustment](#difficulty-adjustment)). Reject mismatches.
+     All other heights, including height ten, inherit the parent's `pow_bits` verbatim; drift is not allowed.
 3. **STARK proof commitments**
    - Feed the block’s execution trace into the STARK verifier. Confirm that the commitment matches the supplied
      `proof_commitment` and that the proof enforces the state transition for every transaction in the block.
@@ -71,21 +72,45 @@ Any block that fails one of these steps is invalid and should be treated as an o
 
 ## Difficulty Adjustment
 
-Every 120 blocks the network retargets difficulty using the observed timestamps of the preceding window.
+The public testnet uses `RETARGET_WINDOW = 10` and a 60,000-ms target block interval. It retargets at
+heights `H > 10` where `H mod 10 = 0`; the first retarget is height 20. Other heights inherit their parent's
+`pow_bits` verbatim. The denominator remains `10 × 60,000 = 600,000 ms`.
 
-Let:
-- `W = 120` (window length)
-- `T_target = 60 s` (target interval)
-- `target_prev` = target at the start of the window
-- `t_actual = timestamp_last − timestamp_window_start`
+The timestamp anchor is selected by the compiled consensus constant
+`RETARGET_CORRECTION_ACTIVATION_HEIGHT: Option<u64>`:
 
-The provisional new target is `target_prov = target_prev × (t_actual / (W × T_target))`. Clamp this value to within `¼ × target_prev`
-and `4 × target_prev` to avoid extreme swings; implementations MUST treat the clamped span `adjusted_timespan = clamp(t_actual, ¼ × W × T_target, 4 × W × T_target)` as the only input to the retarget equation so reorgs cannot replay outlier timestamps. The final `pow_bits` equals `encode_compact(clamp(target_prov))`.
+- With `None`, or for a retarget height before the selected activation height, use the legacy span
+  `t_actual = timestamp[H-1] − timestamp[H-10]`, covering nine elapsed block intervals.
+- At eligible retarget boundaries at or after a selected activation height, use the corrected span
+  `t_actual = timestamp[H-1] − timestamp[H-11]`, covering ten elapsed block intervals.
 
-Nodes reuse the parent target for all intermediate heights so that headers between retarget boundaries share the exact same difficulty encoding.
+The v0.10.2 preparation sets this constant to `None`: the corrected rule is not active and legacy validation
+continues at every height. Operators must agree on the activation height before it is committed and binaries
+are rebuilt. Environment variables and command-line flags cannot alter this consensus schedule. The final
+source-bound review archive and release gates must be refreshed after selecting the height and before
+release tagging or publication.
 
-Implementations MUST track the window start timestamp so `t_actual` is deterministic even during reorgs. Because the target is
-a header field, honest nodes will reject any block whose encoded difficulty disagrees with the deterministic computation.
+For either rule, let `target_prev` be the decoded parent target. A reversed timestamp span saturates to zero;
+then compute:
+
+```text
+adjusted_timespan = clamp(t_actual, 150,000 ms, 2,400,000 ms)
+target_next = max(1, floor(target_prev × adjusted_timespan / 600,000 ms))
+pow_bits_next = encode_compact(target_next)
+```
+
+The timespan clamp limits each adjustment to 1/4x..4x before compact encoding. A zero decoded parent target
+is rejected. Missing anchor history or invalid parent compact bits are validation errors; clients must not
+substitute another anchor or fall back to the other rule.
+
+The legacy nine-interval span takes 540,000 ms at uniform 60-second intervals and therefore scales the target
+to 90% of its previous value. The correction measures 600,000 ms at those same intervals and preserves the
+target. This calibration check does not imply fixed block spacing under stochastic mining or changing hash power.
+
+Anchor selection follows the candidate block's own parent ancestry, including reorg and historical-sync paths.
+Mining work preparation and header validation must use the same height-selected rule. Historical blocks before
+activation retain their legacy target; corrected bits supplied before activation, or legacy bits after activation
+when they differ from the corrected result, are rejected.
 
 ## Timestamp and Orphan Handling
 

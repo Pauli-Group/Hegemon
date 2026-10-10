@@ -28,6 +28,18 @@ const GENESIS_HASH: [u8; 32] = [0u8; 32];
 // the one-minute protocol target after live blocks exist.
 pub const DEFAULT_GENESIS_POW_BITS: u32 = GENESIS_BITS;
 
+/// First child height using ten elapsed intervals for a ten-block retarget.
+/// None preserves the v0.10 testnet rules until a coordinated height is chosen.
+/// This is a compiled consensus rule, never a local CLI/environment setting.
+pub const RETARGET_CORRECTION_ACTIVATION_HEIGHT: Option<u64> = None;
+
+const _: () = {
+    if let Some(height) = RETARGET_CORRECTION_ACTIVATION_HEIGHT {
+        assert!(height > RETARGET_WINDOW);
+        assert!(height.is_multiple_of(RETARGET_WINDOW));
+    }
+};
+
 #[derive(Clone)]
 struct PowNode {
     height: u64,
@@ -220,6 +232,21 @@ fn validate_pow_block_versions(
 }
 
 pub fn pow_retarget_anchor_steps(parent_height: u64, new_height: u64) -> Option<u64> {
+    pow_retarget_anchor_steps_with_activation(
+        parent_height,
+        new_height,
+        RETARGET_CORRECTION_ACTIVATION_HEIGHT,
+    )
+}
+
+/// Select timing history by child height, including on side chains and replay.
+/// Explicit activation is for shared rule evaluation and regression fixtures;
+/// production callers use the compiled consensus constant above.
+pub fn pow_retarget_anchor_steps_with_activation(
+    parent_height: u64,
+    new_height: u64,
+    activation_height: Option<u64>,
+) -> Option<u64> {
     if new_height == 0 {
         return None;
     }
@@ -235,16 +262,35 @@ pub fn pow_retarget_anchor_steps(parent_height: u64, new_height: u64) -> Option<
     {
         return None;
     }
-    Some(RETARGET_WINDOW - 1)
+    Some(
+        if activation_height.is_some_and(|height| new_height >= height) {
+            RETARGET_WINDOW
+        } else {
+            RETARGET_WINDOW - 1
+        },
+    )
 }
 
 fn evaluate_pow_bits_schedule(
     input: PowBitsScheduleInput,
 ) -> Result<u32, PowBitsScheduleRejection> {
+    evaluate_pow_bits_schedule_with_activation(input, RETARGET_CORRECTION_ACTIVATION_HEIGHT)
+}
+
+fn evaluate_pow_bits_schedule_with_activation(
+    input: PowBitsScheduleInput,
+    activation_height: Option<u64>,
+) -> Result<u32, PowBitsScheduleRejection> {
     if input.new_height == 0 {
         return Ok(input.genesis_pow_bits);
     }
-    if pow_retarget_anchor_steps(input.parent_height, input.new_height).is_none() {
+    if pow_retarget_anchor_steps_with_activation(
+        input.parent_height,
+        input.new_height,
+        activation_height,
+    )
+    .is_none()
+    {
         return Ok(input.parent_pow_bits);
     }
     let anchor_timestamp_ms = input
@@ -267,14 +313,37 @@ pub fn expected_pow_bits_from_schedule(
     parent_timestamp_ms: u64,
     anchor_timestamp_ms: Option<u64>,
 ) -> Result<u32, ConsensusError> {
-    evaluate_pow_bits_schedule(PowBitsScheduleInput {
+    expected_pow_bits_from_schedule_with_activation(
         genesis_pow_bits,
         parent_pow_bits,
         parent_height,
         new_height,
         parent_timestamp_ms,
         anchor_timestamp_ms,
-    })
+        RETARGET_CORRECTION_ACTIVATION_HEIGHT,
+    )
+}
+
+pub fn expected_pow_bits_from_schedule_with_activation(
+    genesis_pow_bits: u32,
+    parent_pow_bits: u32,
+    parent_height: u64,
+    new_height: u64,
+    parent_timestamp_ms: u64,
+    anchor_timestamp_ms: Option<u64>,
+    activation_height: Option<u64>,
+) -> Result<u32, ConsensusError> {
+    evaluate_pow_bits_schedule_with_activation(
+        PowBitsScheduleInput {
+            genesis_pow_bits,
+            parent_pow_bits,
+            parent_height,
+            new_height,
+            parent_timestamp_ms,
+            anchor_timestamp_ms,
+        },
+        activation_height,
+    )
     .map_err(pow_bits_schedule_rejection_to_error)
 }
 
@@ -1145,6 +1214,7 @@ mod tests {
         retarget_cases: Vec<LeanRetargetCase>,
         retarget_bits_cases: Vec<LeanRetargetBitsCase>,
         pow_bits_schedule_cases: Vec<LeanPowBitsScheduleCase>,
+        pow_bits_activation_cases: Vec<LeanPowBitsActivationCase>,
         pow_admission_cases: Vec<LeanPowAdmissionCase>,
     }
 
@@ -1217,6 +1287,13 @@ mod tests {
         expected_anchor_steps: Option<String>,
         expected_bits: Option<String>,
         expected_result: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LeanPowBitsActivationCase {
+        activation_height: Option<String>,
+        #[serde(flatten)]
+        schedule: LeanPowBitsScheduleCase,
     }
 
     #[allow(dead_code)]
@@ -1337,7 +1414,15 @@ mod tests {
         }
         for case in &vectors.pow_bits_schedule_cases {
             assert!(names.insert(case.name.clone()));
-            verify_pow_bits_schedule_case(case);
+            verify_pow_bits_schedule_case(case, None);
+        }
+        assert!(!vectors.pow_bits_activation_cases.is_empty());
+        for case in &vectors.pow_bits_activation_cases {
+            assert!(names.insert(case.schedule.name.clone()));
+            verify_pow_bits_schedule_case(
+                &case.schedule,
+                case.activation_height.as_deref().map(parse_u64_decimal),
+            );
         }
         let mut checked_admission_cases = 0usize;
         for case in &vectors.pow_admission_cases {
@@ -1379,21 +1464,31 @@ mod tests {
         }
     }
 
-    fn verify_pow_bits_schedule_case(case: &LeanPowBitsScheduleCase) {
+    fn verify_pow_bits_schedule_case(
+        case: &LeanPowBitsScheduleCase,
+        activation_height: Option<u64>,
+    ) {
         assert_eq!(
-            pow_retarget_anchor_steps(case.parent_height, case.new_height),
+            pow_retarget_anchor_steps_with_activation(
+                case.parent_height,
+                case.new_height,
+                activation_height
+            ),
             case.expected_anchor_steps.as_deref().map(parse_u64_decimal),
             "{} retarget anchor-step decision drifted from Lean spec",
             case.name
         );
-        let result = evaluate_pow_bits_schedule(PowBitsScheduleInput {
-            genesis_pow_bits: case.genesis_pow_bits,
-            parent_pow_bits: case.parent_pow_bits,
-            parent_height: case.parent_height,
-            new_height: case.new_height,
-            parent_timestamp_ms: case.parent_timestamp_ms,
-            anchor_timestamp_ms: case.anchor_timestamp_ms.as_deref().map(parse_u64_decimal),
-        });
+        let result = evaluate_pow_bits_schedule_with_activation(
+            PowBitsScheduleInput {
+                genesis_pow_bits: case.genesis_pow_bits,
+                parent_pow_bits: case.parent_pow_bits,
+                parent_height: case.parent_height,
+                new_height: case.new_height,
+                parent_timestamp_ms: case.parent_timestamp_ms,
+                anchor_timestamp_ms: case.anchor_timestamp_ms.as_deref().map(parse_u64_decimal),
+            },
+            activation_height,
+        );
         match result {
             Ok(bits) => {
                 assert_eq!(
@@ -1619,3 +1714,6 @@ mod tests {
         out
     }
 }
+
+#[cfg(test)]
+mod retarget_activation_tests;

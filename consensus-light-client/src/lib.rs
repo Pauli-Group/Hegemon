@@ -2111,6 +2111,7 @@ mod tests {
         retarget_cases: Vec<serde_json::Value>,
         retarget_bits_cases: Vec<serde_json::Value>,
         pow_bits_schedule_cases: Vec<serde_json::Value>,
+        pow_bits_activation_cases: Vec<serde_json::Value>,
         pow_admission_cases: Vec<LeanPowAdmissionCase>,
     }
 
@@ -2405,6 +2406,10 @@ mod tests {
         assert!(
             !vectors.pow_bits_schedule_cases.is_empty(),
             "Lean pow_bits schedule cases must be present in the shared PoW vector file"
+        );
+        assert!(
+            !vectors.pow_bits_activation_cases.is_empty(),
+            "Lean activation schedule cases must be present in the shared PoW vector file"
         );
         assert!(
             !vectors.pow_admission_cases.is_empty(),

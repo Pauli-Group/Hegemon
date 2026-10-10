@@ -126,19 +126,34 @@ def retargetAnchorSteps (parentHeight newHeight : Nat) : Option Nat :=
         if nextHeight < retargetWindow then none else some (retargetWindow - 1)
     | none => some (retargetWindow - 1)
 
+/-- Height-gated correction of the legacy nine-interval timing sample.
+    Eligibility (including the first launch-boundary skip) remains unchanged.
+    `none` explicitly models the legacy rule, independent of release activation. -/
+def retargetAnchorStepsWithActivation
+    (parentHeight newHeight : Nat)
+    (activationHeight : Option Nat) : Option Nat :=
+  match retargetAnchorSteps parentHeight newHeight with
+  | none => none
+  | some legacySteps =>
+    match activationHeight with
+    | some activation =>
+      if activation <= newHeight then some retargetWindow else some legacySteps
+    | none => some legacySteps
+
 inductive PowBitsScheduleReject where
   | insufficientHistory
   | invalidCompactTarget
   deriving DecidableEq, Repr
 
-def expectedPowBitsSchedule
+def expectedPowBitsScheduleWithActivation
     (genesisBits parentBits parentHeight newHeight parentTimestamp : Nat)
-    (anchorTimestamp : Option Nat) :
+    (anchorTimestamp : Option Nat)
+    (activationHeight : Option Nat) :
     Except PowBitsScheduleReject Nat :=
   if newHeight = 0 then
     Except.ok genesisBits
   else
-    match retargetAnchorSteps parentHeight newHeight with
+    match retargetAnchorStepsWithActivation parentHeight newHeight activationHeight with
     | none => Except.ok parentBits
     | some _ =>
       match anchorTimestamp with
@@ -147,6 +162,13 @@ def expectedPowBitsSchedule
         match retargetBits parentBits (parentTimestamp - anchor) with
         | none => Except.error PowBitsScheduleReject.invalidCompactTarget
         | some bits => Except.ok bits
+
+/-- Explicit legacy schedule retained for historical vectors and theorem statements. -/
+def expectedPowBitsSchedule
+    (genesisBits parentBits parentHeight newHeight parentTimestamp : Nat)
+    (anchorTimestamp : Option Nat) : Except PowBitsScheduleReject Nat :=
+  expectedPowBitsScheduleWithActivation
+    genesisBits parentBits parentHeight newHeight parentTimestamp anchorTimestamp none
 
 inductive PowAdmissionReject where
   | heightMismatch
@@ -301,6 +323,85 @@ theorem expectedPowBitsSchedule_invalid_previous_bits_rejects :
 theorem expectedPowBitsSchedule_reversed_timestamp_saturates :
     expectedPowBitsSchedule 123 545259519 19 (retargetWindow * 2) 100 (some 200) =
       Except.ok 538968063 := by
+  rfl
+
+theorem retargetAnchorStepsWithActivation_none_preserves_legacy
+    (parentHeight newHeight : Nat) :
+    retargetAnchorStepsWithActivation parentHeight newHeight none =
+      retargetAnchorSteps parentHeight newHeight := by
+  unfold retargetAnchorStepsWithActivation
+  cases retargetAnchorSteps parentHeight newHeight <;> rfl
+
+theorem retargetAnchorStepsWithActivation_before_preserves_legacy
+    (parentHeight newHeight activation : Nat)
+    (before : newHeight < activation) :
+    retargetAnchorStepsWithActivation parentHeight newHeight (some activation) =
+      retargetAnchorSteps parentHeight newHeight := by
+  unfold retargetAnchorStepsWithActivation
+  have notActive : ¬ activation <= newHeight := Nat.not_le.mpr before
+  cases retargetAnchorSteps parentHeight newHeight <;> simp [notActive]
+
+theorem retargetAnchorStepsWithActivation_active_eligible_uses_ten
+    (parentHeight newHeight activation legacySteps : Nat)
+    (active : activation <= newHeight)
+    (eligible : retargetAnchorSteps parentHeight newHeight = some legacySteps) :
+    retargetAnchorStepsWithActivation parentHeight newHeight (some activation) =
+      some retargetWindow := by
+  simp [retargetAnchorStepsWithActivation, eligible, active]
+
+theorem retargetAnchorStepsWithActivation_before_uses_nine :
+    retargetAnchorStepsWithActivation 29 30 (some 40) = some 9 := by
+  decide
+
+theorem retargetAnchorStepsWithActivation_at_uses_ten :
+    retargetAnchorStepsWithActivation 39 40 (some 40) = some 10 := by
+  decide
+
+theorem retargetAnchorStepsWithActivation_after_uses_ten :
+    retargetAnchorStepsWithActivation 49 50 (some 40) = some 10 := by
+  decide
+
+theorem retargetAnchorStepsWithActivation_non_boundary_skips :
+    retargetAnchorStepsWithActivation 40 41 (some 40) = none := by
+  decide
+
+theorem retargetAnchorStepsWithActivation_first_boundary_skips :
+    retargetAnchorStepsWithActivation 9 10 (some 0) = none := by
+  decide
+
+theorem expectedPowBitsScheduleWithActivation_none_preserves_legacy
+    (genesisBits parentBits parentHeight newHeight parentTimestamp : Nat)
+    (anchorTimestamp : Option Nat) :
+    expectedPowBitsScheduleWithActivation
+      genesisBits parentBits parentHeight newHeight parentTimestamp anchorTimestamp none =
+      expectedPowBitsSchedule
+        genesisBits parentBits parentHeight newHeight parentTimestamp anchorTimestamp := by
+  rfl
+
+/-- Given the correctly selected ten-step ancestor timestamp, ten 60-second
+    intervals preserve compact bits. This does not prove ancestry selection. -/
+theorem expectedPowBitsScheduleWithActivation_ten_intervals_preserve_bits :
+    expectedPowBitsScheduleWithActivation
+      123 545259519 39 40 (10 * targetBlockIntervalMs) (some 0) (some 40) =
+      Except.ok 545259519 := by
+  rfl
+
+theorem expectedPowBitsScheduleWithActivation_missing_history_rejects :
+    expectedPowBitsScheduleWithActivation
+      123 545259519 39 40 retargetTimespanMs none (some 40) =
+      Except.error PowBitsScheduleReject.insufficientHistory := by
+  rfl
+
+theorem expectedPowBitsScheduleWithActivation_fast_window_keeps_clamp :
+    expectedPowBitsScheduleWithActivation
+      123 545259519 39 40 100000 (some 0) (some 40) =
+      Except.ok 538968063 := by
+  rfl
+
+theorem expectedPowBitsScheduleWithActivation_slow_window_keeps_clamp :
+    expectedPowBitsScheduleWithActivation
+      123 486810177 39 40 6000000 (some 0) (some 40) =
+      Except.ok 487622916 := by
   rfl
 
 theorem timestamp_rejects_parent_equal

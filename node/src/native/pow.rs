@@ -435,9 +435,22 @@ pub(crate) fn native_seal_meets_target(work_hash: &[u8; 32], pow_bits: u32) -> b
     hash_meets_target(work_hash, pow_bits).unwrap_or(false)
 }
 
+#[cfg(test)]
 pub(crate) fn native_expected_child_pow_bits_from_chain(
     chain_to_parent: &[NativeBlockMeta],
     genesis_pow_bits: u32,
+) -> Result<u32> {
+    native_expected_child_pow_bits_from_chain_with_activation(
+        chain_to_parent,
+        genesis_pow_bits,
+        consensus::pow::RETARGET_CORRECTION_ACTIVATION_HEIGHT,
+    )
+}
+
+pub(crate) fn native_expected_child_pow_bits_from_chain_with_activation(
+    chain_to_parent: &[NativeBlockMeta],
+    genesis_pow_bits: u32,
+    activation_height: Option<u64>,
 ) -> Result<u32> {
     let parent = chain_to_parent
         .last()
@@ -447,8 +460,11 @@ pub(crate) fn native_expected_child_pow_bits_from_chain(
         .checked_add(1)
         .ok_or_else(|| anyhow!("native PoW child height overflow"))?;
     let anchor_timestamp_ms = if let Some(anchor_steps) =
-        consensus::pow::pow_retarget_anchor_steps(parent.height, new_height)
-    {
+        consensus::pow::pow_retarget_anchor_steps_with_activation(
+            parent.height,
+            new_height,
+            activation_height,
+        ) {
         let anchor_steps = usize::try_from(anchor_steps)
             .map_err(|_| anyhow!("native PoW retarget anchor step overflow"))?;
         if anchor_steps >= chain_to_parent.len() {
@@ -462,26 +478,32 @@ pub(crate) fn native_expected_child_pow_bits_from_chain(
     } else {
         None
     };
-    consensus::pow::expected_pow_bits_from_schedule(
+    consensus::pow::expected_pow_bits_from_schedule_with_activation(
         genesis_pow_bits,
         parent.pow_bits,
         parent.height,
         new_height,
         parent.timestamp_ms,
         anchor_timestamp_ms,
+        activation_height,
     )
     .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))
 }
 
-pub(crate) fn native_expected_child_pow_bits_for_chain_index(
+pub(crate) fn native_expected_child_pow_bits_for_chain_index_with_activation(
     chain: &[NativeBlockMeta],
     parent_index: usize,
     genesis_pow_bits: u32,
+    activation_height: Option<u64>,
 ) -> Result<u32> {
     let parent_chain = chain
         .get(..=parent_index)
         .ok_or_else(|| anyhow!("native PoW schedule parent index out of range"))?;
-    native_expected_child_pow_bits_from_chain(parent_chain, genesis_pow_bits)
+    native_expected_child_pow_bits_from_chain_with_activation(
+        parent_chain,
+        genesis_pow_bits,
+        activation_height,
+    )
 }
 
 pub(crate) fn native_meta_better_than(

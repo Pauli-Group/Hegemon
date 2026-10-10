@@ -1434,7 +1434,7 @@ dependencies = [
 
 [[package]]
 name = "hegemon-node"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5011,7 +5011,7 @@ dependencies = [
 
 [[package]]
 name = "wallet"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "anyhow",
  "argon2",
@@ -5069,7 +5069,7 @@ dependencies = [
 
 [[package]]
 name = "walletd"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "anyhow",
  "bincode",

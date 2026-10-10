@@ -2849,6 +2849,7 @@ fn parse_block_hash_height_params() {
 fn submit_action_returns_exact_rejection_response() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let config = NativeConfig {
+        test_retarget_correction_activation_height: None,
         dev: true,
         tmp: false,
         base_path: tmp.path().to_path_buf(),
@@ -2884,6 +2885,7 @@ fn submit_action_stages_and_imports_shielded_transfer() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let test_pow_bits = 0x207f_ffff;
     let config = NativeConfig {
+        test_retarget_correction_activation_height: None,
         dev: true,
         tmp: false,
         base_path: tmp.path().to_path_buf(),
@@ -3336,6 +3338,7 @@ fn side_branch_with_more_work_reorganizes_canonical_chain() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let test_pow_bits = 0x207f_ffff;
     let config = NativeConfig {
+        test_retarget_correction_activation_height: None,
         dev: true,
         tmp: false,
         base_path: tmp.path().to_path_buf(),
@@ -6292,6 +6295,7 @@ fn coinbase_action_mints_shielded_output_and_updates_supply() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let test_pow_bits = 0x207f_ffff;
     let config = NativeConfig {
+        test_retarget_correction_activation_height: None,
         dev: true,
         tmp: false,
         base_path: tmp.path().to_path_buf(),
@@ -31774,7 +31778,7 @@ fn mined_child_with_actions_for_chain(
 
 fn test_config(path: &Path, pow_bits: u32, rpc_methods: &str, rpc_external: bool) -> NativeConfig {
     NativeConfig {
-        dev: true,
+        test_retarget_correction_activation_height: None,        dev: true,
         tmp: false,
         base_path: path.to_path_buf(),
         db_path: path.join("native-chain.sled"),
@@ -33088,3 +33092,5 @@ fn stage_test_coinbase(node: &NativeNode, amount: u64, commitment_hint: [u8; 48]
     }))
     .expect("stage test coinbase");
 }
+
+mod retarget_activation_tests;

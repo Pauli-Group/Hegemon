@@ -247,6 +247,8 @@ pub struct NativeConfig {
     pub bootstrap_mining_authoring: bool,
     pub miner_address: Option<String>,
     pub pow_bits: u32,
+    #[cfg(test)]
+    test_retarget_correction_activation_height: Option<Option<u64>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -326,6 +328,8 @@ impl NativeConfig {
             bootstrap_mining_authoring,
             miner_address,
             pow_bits,
+            #[cfg(test)]
+            test_retarget_correction_activation_height: None,
         })
     }
 
@@ -3232,6 +3236,9 @@ impl NativeMinerIdentity {
 
 pub struct NativeNode {
     config: NativeConfig,
+    // Only fixtures can override the compiled network rule.
+    #[cfg(test)]
+    retarget_correction_activation_height: RwLock<Option<u64>>,
     db: sled::Db,
     meta_tree: sled::Tree,
     height_tree: sled::Tree,

@@ -322,6 +322,10 @@ fn inspect_native_pow_metadata_bincode_exact(
 
 impl NativeNode {
     pub fn open(config: NativeConfig) -> Result<Arc<Self>> {
+        let retarget_activation_height = consensus::pow::RETARGET_CORRECTION_ACTIVATION_HEIGHT;
+        #[cfg(test)]
+        let retarget_activation_height = config.test_retarget_correction_activation_height
+            .unwrap_or(retarget_activation_height);
         let startup_started = Instant::now();
         info!(
             base_path = %config.base_path.display(),
@@ -358,6 +362,7 @@ impl NativeNode {
             &height_tree,
             &block_tree,
             config.pow_bits,
+            retarget_activation_height,
         )?;
         let pending_actions = load_pending_actions(&action_tree)?;
         let prune_persisted_coinbase_actions = config.miner_address.is_some();
@@ -392,6 +397,8 @@ impl NativeNode {
             || (config.seeds.is_empty() && config.permits_empty_seed_authoring());
         let node = Arc::new(Self {
             config,
+            #[cfg(test)]
+            retarget_correction_activation_height: RwLock::new(retarget_activation_height),
             db,
             meta_tree,
             height_tree,
@@ -3151,15 +3158,28 @@ impl NativeNode {
         Ok(parent)
     }
 
+    fn pow_retarget_activation_height(&self) -> Option<u64> {
+        #[cfg(test)]
+        {
+            *self.retarget_correction_activation_height.read()
+        }
+        #[cfg(not(test))]
+        {
+            consensus::pow::RETARGET_CORRECTION_ACTIVATION_HEIGHT
+        }
+    }
+
     fn pow_retarget_anchor_from_parent(
         &self,
         parent: &NativeBlockMeta,
         new_height: u64,
         validated_batch_prefix: &[NativeBlockMeta],
     ) -> Result<Option<NativePowMetaProjection>> {
-        let Some(anchor_steps) =
-            consensus::pow::pow_retarget_anchor_steps(parent.height, new_height)
-        else {
+        let Some(anchor_steps) = consensus::pow::pow_retarget_anchor_steps_with_activation(
+            parent.height,
+            new_height,
+            self.pow_retarget_activation_height(),
+        ) else {
             return Ok(None);
         };
 
@@ -3214,13 +3234,14 @@ impl NativeNode {
         let anchor_timestamp_ms = self
             .pow_retarget_anchor_from_parent(parent, new_height, &[])?
             .map(|anchor| anchor.timestamp_ms);
-        consensus::pow::expected_pow_bits_from_schedule(
+        consensus::pow::expected_pow_bits_from_schedule_with_activation(
             self.config.pow_bits,
             parent.pow_bits,
             parent.height,
             new_height,
             parent.timestamp_ms,
             anchor_timestamp_ms,
+            self.pow_retarget_activation_height(),
         )
         .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))
     }
@@ -3268,13 +3289,14 @@ impl NativeNode {
         } else {
             None
         };
-        consensus::pow::expected_pow_bits_from_schedule(
+        consensus::pow::expected_pow_bits_from_schedule_with_activation(
             self.config.pow_bits,
             parent.pow_bits,
             parent.height,
             new_height,
             parent.timestamp_ms,
             anchor_timestamp_ms,
+            self.pow_retarget_activation_height(),
         )
         .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))
     }
@@ -3301,13 +3323,14 @@ impl NativeNode {
         let anchor_timestamp_ms = self
             .pow_retarget_anchor_from_parent(parent, new_height, validated_batch_prefix)?
             .map(|anchor| anchor.timestamp_ms);
-        consensus::pow::expected_pow_bits_from_schedule(
+        consensus::pow::expected_pow_bits_from_schedule_with_activation(
             self.config.pow_bits,
             parent.pow_bits,
             parent.height,
             new_height,
             parent.timestamp_ms,
             anchor_timestamp_ms,
+            self.pow_retarget_activation_height(),
         )
         .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))
     }
@@ -3407,10 +3430,11 @@ impl NativeNode {
             .ok_or_else(|| anyhow!("empty native chain replay"))?;
         let mut state = Self::replay_state_from_genesis(genesis);
         for (index, meta) in chain.iter().enumerate().skip(1) {
-            let expected_pow_bits = native_expected_child_pow_bits_for_chain_index(
+            let expected_pow_bits = native_expected_child_pow_bits_for_chain_index_with_activation(
                 chain,
                 index - 1,
                 self.config.pow_bits,
+                self.pow_retarget_activation_height(),
             )?;
             self.replay_block_into_state(&mut state, meta.clone(), expected_pow_bits)?;
         }
@@ -3430,8 +3454,11 @@ impl NativeNode {
             .checked_add(1)
             .ok_or_else(|| anyhow!("native PoW child height overflow"))?;
         let anchor_timestamp_ms = if let Some(anchor_steps) =
-            consensus::pow::pow_retarget_anchor_steps(parent.height, new_height)
-        {
+            consensus::pow::pow_retarget_anchor_steps_with_activation(
+                parent.height,
+                new_height,
+                self.pow_retarget_activation_height(),
+            ) {
             let anchor_steps = usize::try_from(anchor_steps)
                 .map_err(|_| anyhow!("native PoW retarget anchor step overflow"))?;
             let anchor_index = parent_index.checked_sub(anchor_steps).ok_or_else(|| {
@@ -3449,13 +3476,14 @@ impl NativeNode {
         } else {
             None
         };
-        consensus::pow::expected_pow_bits_from_schedule(
+        consensus::pow::expected_pow_bits_from_schedule_with_activation(
             self.config.pow_bits,
             parent.pow_bits,
             parent.height,
             new_height,
             parent.timestamp_ms,
             anchor_timestamp_ms,
+            self.pow_retarget_activation_height(),
         )
         .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))
     }

@@ -1,4 +1,4 @@
-# Hegemon 0.10.1: the existing public testnet, not the newer Bitcoin80 chain.
+# Hegemon 0.10.2: the existing public testnet, not the newer Bitcoin80 chain.
 [CmdletBinding()]
 param(
     [switch]$Mine,
@@ -12,7 +12,7 @@ $ErrorActionPreference = 'Stop'
 $expectedGenesis = '0x506fc2cd5ed367cc68d6d23a987fe6e4a7916fde02a249105ab91884a1e6fa59'
 
 if ($Help) {
-    Write-Output 'Hegemon 0.10.1 public testnet launcher'
+    Write-Output 'Hegemon 0.10.2 public testnet launcher'
     Write-Output 'Usage: testnet-start.cmd [-Mine] [-DataDir PATH] [-RpcPort PORT] [-Port PORT]'
     Write-Output '       testnet-start.cmd -Status [-RpcPort PORT]'
     Write-Output 'Default: relay, persistent %USERPROFILE%\.hegemon-testnet, loopback HTTP RPC.'
@@ -62,7 +62,7 @@ try {
     $env:HEGEMON_BOOTSTRAP_AUTHORING = '0'
     if ([string]::IsNullOrEmpty($env:NO_COLOR)) { $env:NO_COLOR = '1' }
     if ([string]::IsNullOrEmpty($env:RUST_LOG)) { $env:RUST_LOG = 'hegemon_node=info,consensus=info,network=info' }
-    Write-Output "Hegemon 0.10.1 testnet; mining=$($env:HEGEMON_MINE); data=$DataDir; RPC=http://127.0.0.1:$RpcPort"
+    Write-Output "Hegemon 0.10.2 testnet; mining=$($env:HEGEMON_MINE); data=$DataDir; RPC=http://127.0.0.1:$RpcPort"
     Write-Output "Seeds: $($env:HEGEMON_SEEDS)"
     Write-Output "Expected genesis: $expectedGenesis"
     if ($Mine) { Write-Output 'Mining requires synchronized system time and a verified canonical chain.' }
