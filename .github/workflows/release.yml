@@ -41,6 +41,23 @@ jobs:
           printf '%s  %s\n' "$ELAN_INIT_SHA256" "$ELAN_INIT" | sha256sum -c -
           sh "$ELAN_INIT" -y --default-toolchain none
 
+      - name: Test maintenance download packaging and launchers
+        run: |
+          python3 scripts/test_release_artifact_manifest.py
+          python3 scripts/test_package_testnet_downloads.py
+          python3 scripts/test_testnet_launcher.py
+          bash -n testnet-release/testnet-start.sh
+
+      - name: Verify maintenance tag matches all shipped binary versions
+        run: |
+          python3 - "$GITHUB_REF_NAME" <<'PYVERSION'
+          import sys, tomllib
+          from pathlib import Path
+          versions = {tomllib.loads(Path(path).read_text())["package"]["version"] for path in ("node/Cargo.toml", "wallet/Cargo.toml", "walletd/Cargo.toml")}
+          if len(versions) != 1 or sys.argv[1] != "v" + next(iter(versions)):
+              raise SystemExit("release tag must match node, wallet and walletd package versions")
+          PYVERSION
+
       - name: Dependency audit waiver gate
         run: ./scripts/dependency-audit-gate.sh
 
@@ -221,6 +238,14 @@ jobs:
           toolchain: "1.91.1"
           components: rust-src
       
+      - name: Validate Windows testnet launcher syntax
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $pwd 'testnet-release/testnet-start.ps1'), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+
       - name: Build attested release artifacts
         shell: bash
         run: ./scripts/build_release_artifacts.sh
@@ -260,11 +285,15 @@ jobs:
       - name: Verify and assemble manifest-bound release assets
         run: python3 scripts/release_artifact_manifest.py assemble --bundle-manifest artifacts/linux-binary/hegemon-release-assets-linux-x86_64.json --bundle-manifest artifacts/macos-intel-binary/hegemon-release-assets-macos-x86_64.json --bundle-manifest artifacts/macos-arm-binary/hegemon-release-assets-macos-arm64.json --bundle-manifest artifacts/windows-binary/hegemon-release-assets-windows-x86_64.json --output-dir release-assets
       
+      - name: Package user testnet downloads from verified assets
+        run: python3 scripts/package_testnet_downloads.py --assets-dir release-assets --launchers-dir testnet-release --version "${GITHUB_REF_NAME#v}"
+
       - name: Create Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           draft: true
-          generate_release_notes: true
+          generate_release_notes: false
+          body_path: testnet-release/RELEASE-NOTES.md
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

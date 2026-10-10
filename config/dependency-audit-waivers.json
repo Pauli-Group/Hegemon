@@ -1,66 +1,66 @@
 {
   "schema": 1,
-  "generated_at_utc": "2026-08-31",
+  "generated_at_utc": "2026-10-10",
   "waivers": [
     {
       "id": "RUSTSEC-2025-0141",
       "package": "bincode",
       "version": "1.3.3",
       "kind": "unmaintained",
-      "expires": "2026-09-30",
+      "expires": "2026-10-24",
       "tracking": "DEP-2026-0002",
-      "reason": "Network trust-boundary encoding has been moved to the bounded HNW1/postcard codec. Remaining uses are consensus/proof artifact compatibility surfaces and must move behind versioned canonical codecs before this waiver expires.",
+      "reason": "Reviewed 2026-10-10 against RustSec database 7eebec69c352c7191b1f13eb95dd510eeca5d1de for the frozen public-testnet maintenance baseline b819911dbf. This is an unmaintained-package advisory with no patched version, not a disclosed parser vulnerability. Native P2P frames use bounded HNW1/postcard; bincode remains in persisted metadata, wallet files, and proof artifact decoding, including peer-supplied proof bytes. Replacing those encodings would change compatibility and exceeds this maintenance release. Accept only that existing maintenance risk through 2026-10-24; this is not a production-security acceptance or a claim that all bincode parsing is safe.",
       "owner": "release-engineering",
-      "reviewed_at": "2026-08-31",
-      "remediation": "Replace remaining consensus/proof bincode compatibility surfaces with versioned canonical codecs and remove bincode 1.3.3 before the waiver expires."
+      "reviewed_at": "2026-10-10",
+      "remediation": "DEP-2026-0002: by 2026-10-24, review versioned canonical codec migration for persisted metadata, wallet files, and proof artifacts with byte-format and adversarial decode compatibility evidence; remove bincode 1.3.3 or explicitly re-review the unresolved maintenance risk before further releases."
     },
     {
       "id": "RUSTSEC-2025-0057",
       "package": "fxhash",
       "version": "0.2.1",
       "kind": "unmaintained",
-      "expires": "2026-09-30",
+      "expires": "2026-10-24",
       "tracking": "DEP-2026-0004",
-      "reason": "Transitive through sled. Hegemon does not use fxhash as a cryptographic hash; remove by replacing or upgrading the node storage dependency.",
+      "reason": "Reviewed 2026-10-10 against RustSec database 7eebec69c352c7191b1f13eb95dd510eeca5d1de. The locked path is fxhash 0.2.1 -> sled 0.34.7 -> hegemon-node; sled uses it for internal collection hashing, not Hegemon cryptographic commitments or signatures. The advisory reports abandoned maintenance and no patched version, rather than a disclosed memory-safety flaw. A storage dependency replacement would expand the frozen testnet maintenance change. Accept the existing maintenance risk only through 2026-10-24; no collision-resistance or denial-of-service safety claim is made.",
       "owner": "release-engineering",
-      "reviewed_at": "2026-08-31",
-      "remediation": "Remove the fxhash 0.2.1 path by upgrading or replacing the sled-backed storage dependency before the waiver expires."
+      "reviewed_at": "2026-10-10",
+      "remediation": "DEP-2026-0004: by 2026-10-24, review a maintained sled/storage replacement or upstream-compatible hash migration with persistence and restart evidence, then remove fxhash 0.2.1; any further release retaining it needs a fresh review."
     },
     {
       "id": "RUSTSEC-2024-0384",
       "package": "instant",
       "version": "0.1.13",
       "kind": "unmaintained",
-      "expires": "2026-09-30",
+      "expires": "2026-10-24",
       "tracking": "DEP-2026-0005",
-      "reason": "Transitive through parking_lot 0.11 via sled/reed-solomon-erasure. Remove by lifting those dependencies to parking_lot 0.12+ paths.",
+      "reason": "Reviewed 2026-10-10 against RustSec database 7eebec69c352c7191b1f13eb95dd510eeca5d1de. The locked node path includes instant 0.1.13 -> parking_lot 0.11.2 -> sled 0.34.7; reed-solomon-erasure also retains the older parking_lot path. The advisory is unmaintained-package status with no patched version. The release targets native Linux/macOS/Windows, where instant uses its native clock implementation; this waiver does not authorize a WASM release. Retain the existing dependency only for this frozen testnet maintenance release through 2026-10-24.",
       "owner": "release-engineering",
-      "reviewed_at": "2026-08-31",
-      "remediation": "Lift the sled/reed-solomon-erasure dependency path to parking_lot 0.12+ or replace the transitive path before the waiver expires."
+      "reviewed_at": "2026-10-10",
+      "remediation": "DEP-2026-0005: by 2026-10-24, review upgrades or replacements for sled/reed-solomon-erasure that remove instant through maintained parking_lot or web-time paths, checking clock and locking behavior; further retention requires a fresh review."
     },
     {
       "id": "RUSTSEC-2024-0436",
       "package": "paste",
       "version": "1.0.15",
       "kind": "unmaintained",
-      "expires": "2026-09-30",
+      "expires": "2026-10-24",
       "tracking": "DEP-2026-0006",
-      "reason": "Transitive macro dependency through arkworks and RISC0. It is not a runtime trust-boundary parser; remove with upstream dependency lifts.",
+      "reason": "Reviewed 2026-10-10 against RustSec database 7eebec69c352c7191b1f13eb95dd510eeca5d1de. In this baseline the native lockfile path includes paste 1.0.15 -> netlink-packet-utils 0.5.2 -> netlink-packet-core 0.7.0 -> netdev 0.31.0 -> natpmp 0.5.0 -> network; workspace Plonky3 crates also retain paste. Paste is a compile-time token macro, and this advisory reports abandoned maintenance with no patched version. It does not itself execute as a runtime packet decoder. Keep the pinned macro dependency only through 2026-10-24 for the frozen testnet maintenance release, without accepting the security of the generated packet parsing or proof code.",
       "owner": "release-engineering",
-      "reviewed_at": "2026-08-31",
-      "remediation": "Remove paste 1.0.15 by lifting arkworks or RISC0 dependency paths once upstream releases clear the macro dependency."
+      "reviewed_at": "2026-10-10",
+      "remediation": "DEP-2026-0006: by 2026-10-24, review maintained netlink/netdev/natpmp dependency updates or a compatible pastey migration, separately address workspace proof dependency paths, and remove paste 1.0.15 with generated-code compatibility evidence; further retention requires a fresh review."
     },
     {
       "id": "RUSTSEC-2026-0253",
       "package": "lru",
       "version": "0.7.8",
       "kind": "unsound",
-      "expires": "2026-09-30",
+      "expires": "2026-10-24",
       "tracking": "DEP-2026-0007",
-      "reason": "Transitive through reed-solomon-erasure 6.0.0 in state-da. The active Hegemon path constructs ReedSolomon and calls encode; it does not call LruCache::pop, whose panic-safety flaw requires a panicking key destructor during pop.",
+      "reason": "Reviewed 2026-10-10 against RustSec database 7eebec69c352c7191b1f13eb95dd510eeca5d1de and the checksum-verified reed-solomon-erasure 6.0.0 crate. The only locked lru 0.7.8 consumer is reed-solomon-erasure in state-da. Hegemon constructs ReedSolomon and calls encode, never reconstruct; upstream cache use is confined to reconstruction via get/put, not LruCache::pop. Its key type is Vec<usize>, with no panicking custom key destructor. The reported use-after-free requires pop, a panicking key Drop, and continued cache use after caught unwinding; those preconditions are absent from this reviewed path. Retain only this fixed call/type graph through 2026-10-24; changes to reconstruction, cache keys, or lru use invalidate this waiver.",
       "owner": "release-engineering",
-      "reviewed_at": "2026-08-31",
-      "remediation": "Upgrade or replace reed-solomon-erasure so the production graph uses lru 0.18.2 or later, then remove this waiver."
+      "reviewed_at": "2026-10-10",
+      "remediation": "DEP-2026-0007: by 2026-10-24, review and test a reed-solomon-erasure upgrade or replacement whose dependency graph removes lru 0.7.8 or uses lru >=0.18.2, with unchanged DA encoding commitments and allocation limits; further retention needs a fresh path review."
     }
   ]
 }
