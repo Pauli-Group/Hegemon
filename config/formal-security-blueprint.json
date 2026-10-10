@@ -37,8 +37,8 @@
         "status": "needs_review",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
-        "notes": "Pending independent review. Previous internal assessment: The claim is deliberately operational: it proves review coverage for known dependency findings, not absence of future advisories. Internal maintenance binding refresh on 2026-10-10: the exact five existing dependency exceptions approved through 2026-10-24; no dependency safety claim or formal-scope change. Independent review remains pending.",
-        "content_blake3": "b86490d2e754deb2eaad66b55d75d93113e85bf03a42bded2cb70da7379646fd"
+        "notes": "Pending independent review. Previous internal assessment: The claim is deliberately operational: it proves review coverage for known dependency findings, not absence of future advisories. Internal maintenance binding refresh on 2026-10-10: the exact five existing dependency exceptions approved through 2026-10-24; no dependency safety claim or formal-scope change. Independent review remains pending. Internal checker-lock maintenance binding refresh on 2026-10-10: anyhow 1.0.103 matches the existing patched workspace pin and removes RUSTSEC-2026-0190 without a new waiver; formal scope unchanged. Independent review remains pending.",
+        "content_blake3": "5a0b5fc151d3a50819e60af2aaa29765e979e41164968a429554a0db47f8755c"
       },
       "falsification_cases": [
         {
