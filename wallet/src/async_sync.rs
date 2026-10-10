@@ -35,7 +35,7 @@ use futures::StreamExt;
 use tokio::sync::RwLock;
 
 use crate::error::WalletError;
-use crate::node_rpc::{CiphertextEntry, NodeRpcClient};
+use crate::node_rpc::{CiphertextEntry, CommitmentEntry, NodeRpcClient};
 use crate::notes::NoteCiphertext;
 use crate::store::WalletStore;
 use crate::sync::SyncOutcome;
@@ -171,10 +171,10 @@ impl AsyncWalletSyncEngine {
 
             // Sync commitments
             while commitment_cursor < note_status.leaf_count {
-                let entries = self
-                    .client
-                    .commitments(commitment_cursor, self.page_limit)
-                    .await?;
+                let limit =
+                    snapshot_page_limit(self.page_limit, commitment_cursor, note_status.leaf_count);
+                let mut entries = self.client.commitments(commitment_cursor, limit).await?;
+                cap_commitment_page_to_snapshot(&mut entries, note_status.leaf_count);
                 if entries.is_empty() {
                     break;
                 }
@@ -248,10 +248,10 @@ impl AsyncWalletSyncEngine {
             if self.store.commitment_sources_need_backfill()? && note_status.leaf_count > 0 {
                 let mut source_cursor = 0u64;
                 while source_cursor < note_status.leaf_count {
-                    let entries = self
-                        .client
-                        .commitments(source_cursor, self.page_limit)
-                        .await?;
+                    let limit =
+                        snapshot_page_limit(self.page_limit, source_cursor, note_status.leaf_count);
+                    let mut entries = self.client.commitments(source_cursor, limit).await?;
+                    cap_commitment_page_to_snapshot(&mut entries, note_status.leaf_count);
                     if entries.is_empty() {
                         break;
                     }
@@ -570,6 +570,19 @@ fn ciphertext_page_is_contiguous(
     }
 }
 
+// RPC pages reflect the node's current tip, which can advance after note_status.
+// Keep this pass inside the initial snapshot so its root remains comparable.
+fn snapshot_page_limit(page_limit: usize, cursor: u64, next_index: u64) -> usize {
+    page_limit.min(usize::try_from(next_index.saturating_sub(cursor)).unwrap_or(usize::MAX))
+}
+
+fn cap_commitment_page_to_snapshot(entries: &mut Vec<CommitmentEntry>, leaf_count: u64) {
+    let Some(end) = entries.iter().position(|entry| entry.index >= leaf_count) else {
+        return;
+    };
+    entries.truncate(end);
+}
+
 fn cap_ciphertext_page_to_snapshot(entries: &mut Vec<CiphertextEntry>, next_index: u64) {
     let Some(end) = entries.iter().position(|entry| entry.index >= next_index) else {
         return;
@@ -753,6 +766,228 @@ mod tests {
         assert_eq!(entries.len(), 2);
         require_ciphertext_page_contiguous(0, 2, &entries).expect("snapshot prefix is complete");
         assert!(ciphertext_page_is_contiguous(0, 2, &entries).expect("classification succeeds"));
+    }
+
+    #[test]
+    fn commitment_pages_stop_at_the_sync_snapshot() {
+        assert_eq!(snapshot_page_limit(256, 24_857, 24_881), 24);
+        let mut entries = vec![
+            CommitmentEntry {
+                index: 24_880,
+                value: [0; 48],
+                source: crate::store::NoteSource::Unknown,
+            },
+            CommitmentEntry {
+                index: 24_881,
+                value: [0; 48],
+                source: crate::store::NoteSource::Unknown,
+            },
+        ];
+        cap_commitment_page_to_snapshot(&mut entries, 24_881);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].index, 24_880);
+    }
+
+    #[tokio::test]
+    async fn sync_once_keeps_initial_snapshot_when_http_node_advances() {
+        use base64::Engine;
+        use serde_json::{json, Value};
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Mutex,
+        };
+        use std::time::Duration;
+
+        struct Fixture {
+            address: std::net::SocketAddr,
+            stop: Arc<AtomicBool>,
+            thread: Option<std::thread::JoinHandle<()>>,
+        }
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                self.stop.store(true, Ordering::Release);
+                let _ = TcpStream::connect(self.address);
+                if let Some(thread) = self.thread.take() {
+                    let _ = thread.join();
+                }
+            }
+        }
+
+        let commitments: Vec<[u8; 48]> = (1..=4)
+            .map(|i| {
+                let mut value = [0; 48];
+                value[0] = i;
+                value
+            })
+            .collect();
+        let mut tree =
+            state_merkle::CommitmentTree::new(WALLET_SYNC_EXPECTED_TREE_DEPTH as usize).unwrap();
+        let roots: Vec<String> = commitments
+            .iter()
+            .map(|value| {
+                tree.append(*value).unwrap();
+                format!("0x{}", hex::encode(tree.root()))
+            })
+            .collect();
+        let ciphertexts: Vec<String> = (0..4)
+            .map(|i| {
+                base64::engine::general_purpose::STANDARD
+                    .encode(sample_ciphertext_entry(i).ciphertext.to_da_bytes().unwrap())
+            })
+            .collect();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_server = stop.clone();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let observed_requests = requests.clone();
+        let thread = std::thread::spawn(move || {
+            let mut available = 3usize;
+            while !stop_server.load(Ordering::Acquire) {
+                let (mut stream, _) = listener.accept().unwrap();
+                if stop_server.load(Ordering::Acquire) {
+                    break;
+                }
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let request: Value = {
+                    let mut reader = BufReader::new(&mut stream);
+                    let mut content_length = 0;
+                    let mut line = String::new();
+                    loop {
+                        line.clear();
+                        assert!(reader.read_line(&mut line).unwrap() > 0);
+                        if line == "\r\n" {
+                            break;
+                        }
+                        if let Some(value) =
+                            line.to_ascii_lowercase().strip_prefix("content-length:")
+                        {
+                            content_length = value.trim().parse::<usize>().unwrap();
+                        }
+                    }
+                    let mut body = vec![0; content_length];
+                    reader.read_exact(&mut body).unwrap();
+                    serde_json::from_slice(&body).unwrap()
+                };
+                let method = request["method"].as_str().unwrap();
+                let block_hash = format!("0x{}", hex::encode([2u8; 32]));
+                let result = match method {
+                    "chain_getBlockHash" => {
+                        if request["params"][0].as_u64() == Some(0) {
+                            json!(format!("0x{}", hex::encode([1u8; 32])))
+                        } else {
+                            json!(block_hash)
+                        }
+                    }
+                    "chain_getHeader" => json!({"number": "0x4"}),
+                    "state_getRuntimeVersion" => json!({"specVersion": 1, "transactionVersion": 1}),
+                    "hegemon_walletNotes" => json!({
+                        "leaf_count": available, "depth": WALLET_SYNC_EXPECTED_TREE_DEPTH,
+                        "root": roots[available - 1], "next_index": available
+                    }),
+                    "hegemon_walletCommitments" => {
+                        // The node grows after the first note-status snapshot, before paging.
+                        available = 4;
+                        let start = request["params"][0]["start"].as_u64().unwrap() as usize;
+                        let limit = request["params"][0]["limit"].as_u64().unwrap() as usize;
+                        observed_requests.lock().unwrap().push((start, limit));
+                        let end = (start + limit).min(available);
+                        let entries: Vec<Value> = (start..end).map(|index| json!({
+                            "index": index, "value": format!("0x{}", hex::encode(commitments[index])),
+                            "source": "coinbase"
+                        })).collect();
+                        json!({"entries": entries, "total": available, "has_more": end < available})
+                    }
+                    "hegemon_walletCiphertexts" => {
+                        let start = request["params"][0]["start"].as_u64().unwrap() as usize;
+                        let limit = request["params"][0]["limit"].as_u64().unwrap() as usize;
+                        let end = (start + limit).min(available);
+                        let entries: Vec<Value> = (start..end)
+                            .map(|index| {
+                                json!({
+                                    "index": index, "ciphertext": ciphertexts[index]
+                                })
+                            })
+                            .collect();
+                        json!({"entries": entries, "total": available, "has_more": end < available})
+                    }
+                    "hegemon_walletNullifiers" => {
+                        json!({"nullifiers": [], "total": 0, "has_more": false})
+                    }
+                    "hegemon_latestBlock" => json!({
+                        "height": 4, "hash": block_hash, "state_root": roots[3],
+                        "nullifier_root": format!("0x{}", hex::encode([0u8; 48])), "supply_digest": 0
+                    }),
+                    other => panic!("unexpected RPC method {other}"),
+                };
+                let body = serde_json::to_vec(
+                    &json!({"jsonrpc": "2.0", "id": request["id"], "result": result}),
+                )
+                .unwrap();
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+                stream.write_all(&body).unwrap();
+            }
+        });
+        let _fixture = Fixture {
+            address,
+            stop,
+            thread: Some(thread),
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            WalletStore::create_from_root(
+                temp.path().join("wallet.store"),
+                "test-passphrase",
+                RootSecret::from_bytes([99; 32]),
+            )
+            .unwrap(),
+        );
+        let endpoint = format!("http://{address}");
+        let client = Arc::new(NodeRpcClient::connect(&endpoint).await.unwrap());
+        let engine = AsyncWalletSyncEngine::new(client, store.clone()).with_page_limit(2);
+
+        let first = engine
+            .sync_once()
+            .await
+            .expect("initial snapshot sync succeeds while node advances");
+        assert_eq!(first.commitments, 3);
+        assert_eq!(first.ciphertexts, 3);
+        assert_eq!(store.next_commitment_index().unwrap(), 3);
+        assert_eq!(store.next_ciphertext_index().unwrap(), 3);
+        assert_eq!(
+            format!("0x{}", hex::encode(store.commitment_tree().unwrap().root())),
+            roots_for_assertion(3)
+        );
+        let reopened =
+            WalletStore::open(temp.path().join("wallet.store"), "test-passphrase").unwrap();
+        assert_eq!(reopened.next_commitment_index().unwrap(), 3);
+        drop(reopened);
+
+        let second = engine
+            .sync_once()
+            .await
+            .expect("next scan picks up the new commitment");
+        assert_eq!(second.commitments, 1);
+        assert_eq!(second.ciphertexts, 1);
+        assert_eq!(store.next_commitment_index().unwrap(), 4);
+        assert_eq!(store.next_ciphertext_index().unwrap(), 4);
+        assert_eq!(*requests.lock().unwrap(), vec![(0, 2), (2, 1), (3, 1)]);
+
+        fn roots_for_assertion(count: usize) -> String {
+            let mut tree =
+                state_merkle::CommitmentTree::new(WALLET_SYNC_EXPECTED_TREE_DEPTH as usize)
+                    .unwrap();
+            for i in 1..=count {
+                let mut value = [0; 48];
+                value[0] = i as u8;
+                tree.append(value).unwrap();
+            }
+            format!("0x{}", hex::encode(tree.root()))
+        }
     }
 
     fn sample_note_status(

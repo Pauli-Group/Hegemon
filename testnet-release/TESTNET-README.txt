@@ -140,6 +140,10 @@ Windows PowerShell:
   .\wallet-windows-x86_64.exe node-sync --store "$env:USERPROFILE\.hegemon-wallet" --ws-url http://127.0.0.1:9944
   .\wallet-windows-x86_64.exe status --store "$env:USERPROFILE\.hegemon-wallet" --ws-url http://127.0.0.1:9944
 
+Wallet pages stay within the snapshot captured at the start of each scan;
+blocks arriving during the scan are picked up on the next pass. Allow a first
+scan to finish before interpreting its balance.
+
 The option is named --ws-url for compatibility; use the HTTP URL shown above.
 If you chose another RPC port, use that port in both commands. Connection
 refused means this endpoint is not listening in the same host/container;

@@ -1161,6 +1161,8 @@ All jobs operate on Ubuntu runners with Rust stable and the native build depende
 
 ## 7. Node, wallet, and UI operations
 
+The 0.10.1 maintenance wallet bounds commitment and source-backfill pages to the initial `hegemon_walletNotes` leaf count, matching the existing ciphertext snapshot boundary. Each final page requests only the remaining snapshot rows and discards later rows before store mutation. Ordinary chain growth is handled on the next pass; the commitment-root comparison, contiguous store append, genesis and historical-block checks remain in force. This prevents a moving RPC tip from being misclassified as an incomplete commitment scan and resetting cached wallet progress.
+
 Follow [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) whenever you need a reproducible demo:
 
 1. Launch the native `hegemon-node` binary with `HEGEMON_MINE=1` and `--dev` for development block times. The node exposes JSON-RPC on port 9944 and P2P on port 30333 by default. Run `make node` to build. Use `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"` when joining the shared public fresh testnet, keep every miner on the same approved seed list to avoid forks, and keep NTP/chrony enabled because future-skewed PoW timestamps are rejected.
