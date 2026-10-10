@@ -8,4 +8,6 @@ Download the **hegemon-testnet-0.10.1 ZIP for your platform**, verify its accomp
 
 The testnet genesis is `0x506fc2cd5ed367cc68d6d23a987fe6e4a7916fde02a249105ab91884a1e6fa59`. The OVH seed is `hegemon.pauli.group:30333`; the second documented seed is currently reserved for development and may refuse the testnet connection. Canonical catch-up still requires successful peers and a matching block hash at a shared height.
 
+The bare node executable now chooses the documented testnet seeds on a normal launch when HEGEMON_SEEDS is unset; explicit seed settings and isolated dev/tmp runs retain their existing behavior. The ZIP launcher is recommended for stable home-directory storage and status commands.
+
 The node, wallet and wallet daemon identify as 0.10.1. A narrow dependency update fixes RUSTSEC-2026-0285 in rustls. Existing node and wallet data are preserved; choose an existing node path explicitly when updating. This release is for the existing testnet and retains the baseline proof-backend review posture.

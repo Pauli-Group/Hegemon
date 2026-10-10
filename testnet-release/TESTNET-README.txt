@@ -12,7 +12,12 @@ START A RELAY FIRST
 Download the matching platform bundle, verify its published SHA-256 checksum,
 and extract it into one folder. Keep the node binary and launchers together.
 No installer, administrator account, wallet passphrase, or private key is needed.
-Do not double-click the bare node executable: its default seed list is empty.
+The bare node executable also selects the documented testnet seeds on a normal
+launch when HEGEMON_SEEDS is unset. The bundled launcher additionally provides
+stable home-directory storage, status queries and explicit mining guards.
+Bare execution retains its existing working-directory .hegemon/native storage;
+no existing data is moved or erased. Explicit seed settings, including an empty
+value, and isolated --dev/--tmp launches keep their existing behavior.
 
 Windows x86_64:
   Double-click testnet-start.cmd, or run it from PowerShell:
