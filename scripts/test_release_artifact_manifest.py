@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -79,6 +80,98 @@ def test_binary_output_modes() -> None:
             if directory_fd is not None:
                 os.close(directory_fd)
     print("release binary-mode and exact-byte output tests passed")
+
+
+def test_path_fd_identity() -> None:
+    original_lstat, original_fstat = os.lstat, os.fstat
+    data = b"\x7fELFrelease\nbytes\r\nwith\x1aEOF\x00"
+    with tempfile.TemporaryDirectory(prefix="release-path-fd-") as raw:
+        root = Path(raw)
+        source = root / "artifact"
+        source.write_bytes(data)
+        def metadata(value, **changes):
+            fields = {name: getattr(value, name) for name in (
+                "st_mode", "st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns"
+            )}
+            fields.update(st_file_attributes=getattr(value, "st_file_attributes", 0), st_birthtime_ns=100)
+            fields.update(changes)
+            return SimpleNamespace(**fields)
+        def by_path(path, *args, **kwargs):
+            value = original_lstat(path, *args, **kwargs)
+            return metadata(value, st_ctime_ns=100) if Path(path) == source else value
+        def by_fd(fd, **changes):
+            return metadata(original_fstat(fd), st_ctime_ns=200, **changes)
+        def open_source():
+            return manifest._open_regular_beneath(root, "artifact", "fixture")
+        with patch.object(manifest, "_descriptor_relative_io_available", return_value=False), patch.object(sys, "platform", "win32"), patch.object(os, "lstat", by_path):
+            with patch.object(os, "fstat", by_fd):
+                fd = open_source()
+                try:
+                    assert os.read(fd, len(data) + 1) == data
+                finally:
+                    os.close(fd)
+            # Every stable object/byte metadata field remains mandatory.
+            baseline_fd = os.open(source, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+            try:
+                baseline = by_fd(baseline_fd)
+            finally:
+                os.close(baseline_fd)
+            for field in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_birthtime_ns"):
+                with patch.object(os, "fstat", lambda fd, field=field: by_fd(fd, **{field: getattr(baseline, field) + 1})):
+                    expect_rejection(open_source, "changed while being opened")
+            legacy = SimpleNamespace(**{name: value for name, value in vars(baseline).items() if name != "st_birthtime_ns"})
+            assert manifest._path_fd_identity(legacy) == manifest._file_identity(legacy)
+            with patch.object(sys, "platform", "linux"), patch.object(os, "fstat", by_fd):
+                expect_rejection(open_source, "changed while being opened")
+            # Cross-API normalization must not hide a ChangeTime-only change
+            # between two observations of the same open descriptor.
+            calls = 0
+            def changing_fd(fd):
+                nonlocal calls
+                calls += 1
+                value = by_fd(fd)
+                if calls >= 3:
+                    value.st_ctime_ns += 1
+                return value
+            with patch.object(os, "fstat", changing_fd):
+                expect_rejection(lambda: manifest.inspect_artifact(root, "hegemon-node", "hegemon-node", source, "artifact", "x86_64-unknown-linux-gnu"), "changed while being inspected")
+            import package_testnet_downloads as downloads
+            calls = 0
+            with patch.object(downloads, "manifest", manifest), patch.object(os, "fstat", changing_fd):
+                expect_rejection(lambda: downloads.read_regular(root, source, "fixture"), "changed during read")
+            fd = os.open(source, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+            try:
+                calls = 0
+                def changing_copy_fd(value):
+                    nonlocal calls
+                    calls += 1
+                    result = by_fd(value)
+                    if calls >= 2:
+                        result.st_ctime_ns += 1
+                    return result
+                with patch.object(os, "fstat", changing_copy_fd):
+                    expect_rejection(lambda: manifest._copy_verified_fd_at(fd, manifest._DirectoryHandle(root, None), "copy", hashlib.sha256(data).hexdigest(), len(data)), "changed during packaging")
+            finally:
+                os.close(fd)
+    print("Windows path/fd timestamp compatibility and metadata mutation tests passed")
+
+
+def test_native_fallback_file_io() -> None:
+    data = b"release\nbytes\r\nwith\x1aWindows EOF\x00"
+    with tempfile.TemporaryDirectory(prefix="release-native-fallback-") as raw:
+        root = Path(raw)
+        source = root / "rewritten-file"
+        source.write_bytes(b"initial bytes")
+        source.write_bytes(data)
+        with patch.object(manifest, "_descriptor_relative_io_available", return_value=False):
+            fd = manifest._open_regular_beneath(root, source.name, "native fixture")
+            try:
+                assert manifest._read_fd(fd) == data
+                manifest._copy_verified_fd_at(fd, manifest._DirectoryHandle(root, None), "copied-file", hashlib.sha256(data).hexdigest(), len(data))
+            finally:
+                os.close(fd)
+        assert (root / "copied-file").read_bytes() == data
+    print("native rewritten-file fallback open/read/copy exact-byte test passed")
 
 
 def test_portable_source_modes() -> None:
@@ -193,7 +286,13 @@ def test_portable_source_modes() -> None:
 
 
 def main() -> None:
+    if sys.argv[1:] not in ([], ["--portable-file-io-only"]):
+        raise SystemExit("usage: test_release_artifact_manifest.py [--portable-file-io-only]")
     test_binary_output_modes()
+    test_path_fd_identity()
+    test_native_fallback_file_io()
+    if sys.argv[1:] == ["--portable-file-io-only"]:
+        return
     test_portable_source_modes()
     target_root = ROOT / "target"
     target_root.mkdir(exist_ok=True)

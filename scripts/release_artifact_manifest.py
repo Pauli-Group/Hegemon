@@ -80,6 +80,15 @@ def _file_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
     )
 
 
+def _path_fd_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
+    identity = _file_identity(value)
+    if sys.platform == "win32":
+        # Windows lstat reports creation time as ctime, while fstat can report
+        # ChangeTime. Birth time identifies the same object across both APIs.
+        return (*identity[:4], getattr(value, "st_birthtime_ns", value.st_ctime_ns))
+    return identity
+
+
 def _checked_fallback_path(
     base: Path,
     relative: str,
@@ -147,7 +156,7 @@ def _open_regular_beneath(base: Path, relative: str, label: str) -> int:
                 f"{label} is not a regular non-symlink file: {relative}"
             ) from exc
         actual = os.fstat(file_fd)
-        if not stat.S_ISREG(actual.st_mode) or _file_identity(actual) != _file_identity(expected):
+        if not stat.S_ISREG(actual.st_mode) or _path_fd_identity(actual) != _path_fd_identity(expected):
             os.close(file_fd)
             raise ManifestError(f"{label} changed while being opened: {relative}")
         # Re-check the lexical chain after opening. The file descriptor remains
