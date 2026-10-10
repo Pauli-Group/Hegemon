@@ -223,6 +223,10 @@ jobs:
       - security-gates
       - app-no-ssh-e2e
     steps:
+      - name: Preserve committed source line endings
+        shell: bash
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false

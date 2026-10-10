@@ -209,6 +209,8 @@ def _open_at(
     flags: int,
     mode: int = 0o777,
 ) -> int:
+    # The Windows CRT defaults to text mode; release bytes must never translate.
+    flags |= getattr(os, "O_BINARY", 0)
     if directory.fd is not None:
         return os.open(name, flags, mode, dir_fd=directory.fd)
     return os.open(directory.path / name, flags, mode)
@@ -253,29 +255,57 @@ def run_git(root: Path, *args: str) -> bytes:
 
 
 def source_tree_sha256(root: Path) -> str:
-    tracked = run_git(root, "ls-files", "-z").decode(
-        "utf-8", "surrogateescape"
-    ).split("\0")
+    # Git modes record portable executability/type; physical Windows permissions
+    # do not. Continue hashing the actual working files, including untracked
+    # source, so byte changes cannot be hidden behind unchanged Git objects.
+    tracked: dict[str, str] = {}
+    for record in run_git(root, "ls-files", "--stage", "-z").split(b"\0"):
+        if not record:
+            continue
+        metadata, raw_path = record.split(b"\t", 1)
+        mode, _object_id, stage = metadata.decode("ascii").split()
+        relative = raw_path.decode("utf-8", "surrogateescape")
+        if stage != "0" or relative in tracked:
+            raise ManifestError(f"source index has unresolved entries: {relative}")
+        if mode not in {"100644", "100755", "120000", "160000"}:
+            raise ManifestError(f"source index has unsupported mode: {relative} ({mode})")
+        tracked[relative] = mode
     untracked = run_git(
         root, "ls-files", "--others", "--exclude-standard", "-z"
     ).decode("utf-8", "surrogateescape").split("\0")
-    paths = sorted({path for path in (*tracked, *untracked) if path})
+    paths = sorted(set(tracked) | {path for path in untracked if path})
     digest = hashlib.sha256()
     for relative in paths:
         path = root / relative
+        index_mode = tracked.get(relative)
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError as exc:
+            raise ManifestError(f"source path is missing or unsupported: {relative}") from exc
+        is_symlink = stat.S_ISLNK(metadata.st_mode)
+        is_file = stat.S_ISREG(metadata.st_mode) and not _is_reparse_point(metadata)
+        is_directory = stat.S_ISDIR(metadata.st_mode) and not _is_reparse_point(metadata)
+        if index_mode is not None and not (
+            (index_mode in {"100644", "100755"} and is_file)
+            or (index_mode == "120000" and is_symlink)
+            or (index_mode == "160000" and is_directory)
+        ):
+            raise ManifestError(f"source index/file type mismatch: {relative} ({index_mode})")
         digest.update(relative.encode("utf-8", "surrogateescape"))
         digest.update(b"\0")
-        if path.is_symlink():
+        if is_symlink:
             digest.update(b"symlink\0")
             digest.update(os.readlink(path).encode("utf-8", "surrogateescape"))
-        elif path.is_file():
-            mode = stat.S_IMODE(path.stat().st_mode)
-            digest.update(f"file:{mode:o}:{path.stat().st_size}".encode("ascii"))
+        elif is_file:
+            # Untracked regular source has no Git execution mode; bind its bytes
+            # under one portable mode, while retaining its path and exact size.
+            mode = 0o755 if index_mode == "100755" else 0o644
+            digest.update(f"file:{mode:o}:{metadata.st_size}".encode("ascii"))
             digest.update(b"\0")
             with path.open("rb") as handle:
                 for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                     digest.update(chunk)
-        elif path.is_dir():
+        elif is_directory:
             try:
                 submodule_head = subprocess.check_output(
                     ["git", "-C", str(path), "rev-parse", "HEAD"],
@@ -317,6 +347,7 @@ def detect_native_format_fd(fd: int) -> str:
 
 def detect_native_format(path: Path) -> str:
     flags = os.O_RDONLY | (os.O_NOFOLLOW if hasattr(os, "O_NOFOLLOW") else 0)
+    flags |= getattr(os, "O_BINARY", 0)
     fd = os.open(path, flags)
     try:
         return detect_native_format_fd(fd)

@@ -334,9 +334,9 @@ if [ "$REQUIRE_BINARY" = true ]; then
         VIOLATIONS=$((VIOLATIONS + 1))
     elif python3 "$PROJECT_ROOT/scripts/release_artifact_manifest.py" verify \
         --manifest "$BINARY_MANIFEST" \
-        --expect "hegemon-node:hegemon-node:${RELEASE_BINS[0]}" \
-        --expect "wallet:wallet:${RELEASE_BINS[1]}" \
-        --expect "walletd:walletd:${RELEASE_BINS[2]}" >/dev/null && \
+        --expect "hegemon-node:hegemon-node:${RELEASE_BINS[0]#"$PROJECT_ROOT/"}" \
+        --expect "wallet:wallet:${RELEASE_BINS[1]#"$PROJECT_ROOT/"}" \
+        --expect "walletd:walletd:${RELEASE_BINS[2]#"$PROJECT_ROOT/"}" >/dev/null && \
         python3 "$PROJECT_ROOT/scripts/check_release_crypto_profile.py" \
           --manifest "$BINARY_MANIFEST" \
           --require-executed >/dev/null; then

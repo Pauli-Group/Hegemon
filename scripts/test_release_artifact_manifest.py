@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+from unittest.mock import patch
 
 
 sys.dont_write_bytecode = True
@@ -33,7 +36,165 @@ def host_triple() -> str:
     return next(line.removeprefix("host: ") for line in output.splitlines() if line.startswith("host: "))
 
 
+def test_binary_output_modes() -> None:
+    # Model O_BINARY on Unix too, so this regression runs in the Linux gate.
+    binary_flag = getattr(os, "O_BINARY", 1 << 29)
+    native_binary_flag = getattr(os, "O_BINARY", 0)
+    original_open = os.open
+    opened_flags = []
+    def checked_open(path, flags, mode=0o777, **kwargs):
+        opened_flags.append(flags)
+        assert flags & binary_flag, "release file opened without binary mode"
+        forwarded = (flags & ~binary_flag) | native_binary_flag
+        return original_open(path, forwarded, mode, **kwargs)
+
+    data = b"release\nbytes\r\nwith\x1aWindows EOF\x00"
+    with tempfile.TemporaryDirectory(prefix="release-binary-mode-") as raw:
+        root = Path(raw)
+        source = root / "source"
+        source.write_bytes(data)
+        source_fd = original_open(source, os.O_RDONLY | native_binary_flag)
+        directory_fd = None
+        if manifest._descriptor_relative_io_available():
+            directory_fd = original_open(root, manifest._directory_open_flags())
+        try:
+            # Both the descriptor-relative and Windows path fallback go through
+            # _open_at; check exact bytes for direct writes and audited copies.
+            handles = [manifest._DirectoryHandle(root, None)]
+            if directory_fd is not None:
+                handles.append(manifest._DirectoryHandle(root, directory_fd))
+            with patch.object(os, "O_BINARY", binary_flag, create=True), patch.object(os, "open", checked_open):
+                for index, handle in enumerate(handles):
+                    manifest._write_exclusive_at(handle, f"direct-{index}", data, 0o644)
+                    manifest._copy_verified_fd_at(source_fd, handle, f"copy-{index}", hashlib.sha256(data).hexdigest(), len(data))
+            for index in range(len(handles)):
+                assert (root / f"direct-{index}").read_bytes() == data
+                assert (root / f"copy-{index}").read_bytes() == data
+            assert len(opened_flags) == 2 * len(handles)
+            # The standalone format reader must not translate binary headers.
+            with patch.object(os, "O_BINARY", binary_flag, create=True), patch.object(os, "open", checked_open):
+                assert manifest.detect_native_format(source) == "unknown"
+        finally:
+            os.close(source_fd)
+            if directory_fd is not None:
+                os.close(directory_fd)
+    print("release binary-mode and exact-byte output tests passed")
+
+
+def test_portable_source_modes() -> None:
+    with tempfile.TemporaryDirectory(prefix="release-source-modes-") as raw:
+        root = Path(raw)
+        def git(*args: str) -> bytes:
+            return subprocess.check_output(
+                ["git", "-C", str(root), *args], stderr=subprocess.DEVNULL
+            )
+        git("init", "-q")
+        git("config", "user.name", "Release fixture")
+        git("config", "user.email", "release-fixture@example.invalid")
+        git("config", "core.autocrlf", "false")
+        (root / ".gitignore").write_text("target/\n")
+        (root / "Cargo.lock").write_bytes(b"version = 4\n")
+        script = root / "source.sh"
+        original_script = b"#!/bin/sh\nprintf fixture\n"
+        script.write_bytes(original_script)
+        script.chmod(0o755)
+        link = root / "source-link"
+        link.symlink_to("source.sh")
+        git("add", ".")
+        git("update-index", "--chmod=+x", "source.sh")
+        git("commit", "-qm", "fixture")
+        target = root / "target"
+        target.mkdir()
+        specs = []
+        for source, (package, binary) in zip(
+            (Path("/bin/echo"), Path("/bin/ls"), Path("/bin/cat")),
+            manifest.EXPECTED_ARTIFACTS, strict=True
+        ):
+            destination = target / binary
+            shutil.copyfile(source, destination)
+            destination.chmod(0o755)
+            specs.append(f"{package}:{binary}:{destination}")
+        manifest_path = target / "manifest.json"
+        payload = manifest.create_manifest(root, manifest_path, host_triple(), specs)
+        baseline = payload["source_tree_sha256"]
+
+        # Model Windows writable files, where .sh/Cargo.lock stat as 0666.
+        script.chmod(0o666)
+        (root / "Cargo.lock").chmod(0o666)
+        assert manifest.source_tree_sha256(root) == baseline
+        manifest.verify_manifest(root, manifest_path, specs)
+        script.write_bytes(original_script + b"# changed working bytes\n")
+        expect_rejection(
+            lambda: manifest.verify_manifest(root, manifest_path, specs),
+            "source_tree_sha256 does not match current source",
+        )
+        script.write_bytes(original_script)
+        git("update-index", "--chmod=-x", "source.sh")
+        assert manifest.source_tree_sha256(root) != baseline
+        expect_rejection(
+            lambda: manifest.verify_manifest(root, manifest_path, specs),
+            "source_index_tree does not match current source",
+        )
+        git("update-index", "--chmod=+x", "source.sh")
+
+        # An index regular file must not become a symlink with unchanged index.
+        script.unlink()
+        script.symlink_to("Cargo.lock")
+        expect_rejection(lambda: manifest.source_tree_sha256(root), "source index/file type mismatch")
+        script.unlink()
+        script.write_bytes(original_script)
+        link.unlink()
+        link.symlink_to("Cargo.lock")
+        expect_rejection(
+            lambda: manifest.verify_manifest(root, manifest_path, specs),
+            "source_tree_sha256 does not match current source",
+        )
+        link.unlink()
+        link.symlink_to("source.sh")
+
+        untracked = root / "extra-source.txt"
+        untracked.write_bytes(b"included untracked source\n")
+        payload = manifest.create_manifest(root, manifest_path, host_triple(), specs)
+        untracked.chmod(0o666)
+        assert manifest.source_tree_sha256(root) == payload["source_tree_sha256"]
+        manifest.verify_manifest(root, manifest_path, specs)
+        untracked.write_bytes(b"changed untracked bytes\n")
+        expect_rejection(
+            lambda: manifest.verify_manifest(root, manifest_path, specs),
+            "source_tree_sha256 does not match current source",
+        )
+
+        # A gitlink retains the actual checked-out submodule HEAD binding.
+        nested = root / "nested-source"
+        nested.mkdir()
+        def nested_git(*args: str) -> bytes:
+            return subprocess.check_output(
+                ["git", "-C", str(nested), *args], stderr=subprocess.DEVNULL
+            )
+        nested_git("init", "-q")
+        nested_git("config", "user.name", "Release fixture")
+        nested_git("config", "user.email", "release-fixture@example.invalid")
+        (nested / "source.txt").write_bytes(b"submodule one\n")
+        nested_git("add", ".")
+        nested_git("commit", "-qm", "one")
+        submodule_head = nested_git("rev-parse", "HEAD").decode().strip()
+        git("update-index", "--add", "--cacheinfo", f"160000,{submodule_head},nested-source")
+        manifest.create_manifest(root, manifest_path, host_triple(), specs)
+        manifest.verify_manifest(root, manifest_path, specs)
+        (nested / "source.txt").write_bytes(b"submodule two\n")
+        nested_git("add", ".")
+        nested_git("commit", "-qm", "two")
+        expect_rejection(
+            lambda: manifest.verify_manifest(root, manifest_path, specs),
+            "source_tree_sha256 does not match current source",
+        )
+
+    print("portable source mode, byte, Git mode, type and submodule tests passed")
+
+
 def main() -> None:
+    test_binary_output_modes()
+    test_portable_source_modes()
     target_root = ROOT / "target"
     target_root.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="release-manifest-test-", dir=target_root) as raw:

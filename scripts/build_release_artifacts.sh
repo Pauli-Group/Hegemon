@@ -69,15 +69,15 @@ WALLETD_BIN="$RELEASE_DIR/walletd$EXE_SUFFIX"
 python3 "$ROOT/scripts/release_artifact_manifest.py" create \
   --output "$MANIFEST" \
   --target-triple "$MANIFEST_TARGET" \
-  --artifact "hegemon-node:hegemon-node:$NODE_BIN" \
-  --artifact "wallet:wallet:$WALLET_BIN" \
-  --artifact "walletd:walletd:$WALLETD_BIN" \
+  --artifact "hegemon-node:hegemon-node:${NODE_BIN#"$ROOT/"}" \
+  --artifact "wallet:wallet:${WALLET_BIN#"$ROOT/"}" \
+  --artifact "walletd:walletd:${WALLETD_BIN#"$ROOT/"}" \
   >/dev/null
 python3 "$ROOT/scripts/release_artifact_manifest.py" verify \
   --manifest "$MANIFEST" \
-  --expect "hegemon-node:hegemon-node:$NODE_BIN" \
-  --expect "wallet:wallet:$WALLET_BIN" \
-  --expect "walletd:walletd:$WALLETD_BIN" \
+  --expect "hegemon-node:hegemon-node:${NODE_BIN#"$ROOT/"}" \
+  --expect "wallet:wallet:${WALLET_BIN#"$ROOT/"}" \
+  --expect "walletd:walletd:${WALLETD_BIN#"$ROOT/"}" \
   >/dev/null
 
 printf '%s\n' "$MANIFEST"
