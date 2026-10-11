@@ -3234,6 +3234,39 @@ impl NativeMinerIdentity {
     }
 }
 
+// Disposable labels derived from complete canonical blocks, never persisted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum NativeWalletCommitmentSource {
+    Unknown,
+    MiningReward,
+    Transfer,
+}
+
+impl NativeWalletCommitmentSource {
+    fn from_label(label: &'static str) -> Self {
+        match label {
+            "mining_reward" => Self::MiningReward,
+            "transfer" => Self::Transfer,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::MiningReward => "mining_reward",
+            Self::Transfer => "transfer",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Default)]
+struct NativeWalletCommitmentSourcePrefix {
+    labels: Vec<NativeWalletCommitmentSource>,
+    processed_block: Option<(u64, [u8; 32])>,
+}
+
 pub struct NativeNode {
     config: NativeConfig,
     // Only fixtures can override the compiled network rule.
@@ -3252,6 +3285,7 @@ pub struct NativeNode {
     da_ciphertext_tree: sled::Tree,
     da_proof_tree: sled::Tree,
     state: RwLock<NativeState>,
+    wallet_commitment_source_prefix: Mutex<NativeWalletCommitmentSourcePrefix>,
     start_instant: Instant,
     mining: AtomicBool,
     mining_threads: AtomicU32,

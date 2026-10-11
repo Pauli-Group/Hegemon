@@ -6940,6 +6940,408 @@ fn wallet_archive_rpcs_are_paginated_and_wallet_compatible() {
     assert!(footprint["blocks_entries"].as_u64().is_some());
 }
 
+// These fixtures exercise the stored SCALE/action-source RPC boundary directly.
+// Consensus append/reorg/reopen is exercised separately with real mined blocks.
+fn wallet_source_fixture_action(family: u16, action: u16, leaves: &[[u8; 48]]) -> PendingAction {
+    let mut pending = test_empty_action(family, action, 0);
+    pending.commitments = leaves.to_vec();
+    pending.tx_hash = pending_action_hash(&pending);
+    pending
+}
+
+fn publish_wallet_source_fixture(
+    node: &NativeNode,
+    tag: u8,
+    blocks: Vec<Vec<PendingAction>>,
+) -> Vec<NativeBlockMeta> {
+    let genesis_hash = node
+        .hash_by_height(0)
+        .expect("fixture genesis index")
+        .expect("fixture genesis");
+    let genesis = node
+        .header_by_hash(&genesis_hash)
+        .expect("genesis lookup")
+        .expect("genesis");
+    let mut state = node.state.write();
+    node.height_tree.clear().expect("clear fixture height rows");
+    node.height_tree
+        .insert(height_key(0), genesis.hash.as_slice())
+        .expect("fixture genesis row");
+    node.commitment_tree
+        .clear()
+        .expect("clear fixture commitments");
+    state.commitment_tree = CommitmentTreeState::default();
+    let mut chain = vec![genesis];
+    for (index, actions) in blocks.into_iter().enumerate() {
+        let height = u64::try_from(index + 1).expect("fixture height");
+        let mut meta = chain.last().expect("fixture parent").clone();
+        meta.parent_hash = meta.hash;
+        meta.hash = [tag; 32];
+        meta.hash[..8].copy_from_slice(&height.to_be_bytes());
+        meta.work_hash = meta.hash;
+        meta.height = height;
+        meta.tx_count = u32::try_from(actions.len()).expect("fixture action count");
+        meta.action_bytes = actions.iter().map(Encode::encode).collect();
+        for action in &actions {
+            for commitment in &action.commitments {
+                let leaf_index = state.commitment_tree.leaf_count();
+                state
+                    .commitment_tree
+                    .append(*commitment)
+                    .expect("fixture leaf");
+                node.commitment_tree
+                    .insert(height_key(leaf_index), commitment.as_slice())
+                    .expect("fixture archive leaf");
+            }
+        }
+        meta.state_root = state.commitment_tree.root();
+        persist_block_record(&node.block_tree, &meta).expect("fixture block record");
+        node.height_tree
+            .insert(height_key(height), meta.hash.as_slice())
+            .expect("fixture height row");
+        chain.push(meta);
+    }
+    state.best = chain.last().expect("fixture best").clone();
+    chain
+}
+
+#[test]
+fn wallet_commitment_source_prefix_pages_complete_blocks_and_reuse_ranges() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let unknown = wallet_source_fixture_action(999, 1, &[[1; 48]]);
+    let transfer = wallet_source_fixture_action(
+        FAMILY_SHIELDED_POOL,
+        ACTION_SHIELDED_TRANSFER_INLINE,
+        &[[2; 48], [3; 48]],
+    );
+    let reward = test_coinbase_action(1);
+    publish_wallet_source_fixture(
+        &node,
+        81,
+        vec![vec![], vec![unknown, transfer], vec![], vec![reward]],
+    );
+
+    node.reset_block_meta_load_counters();
+    let first = node
+        .wallet_commitments(json!({"start": 0, "limit": 1}))
+        .expect("first page");
+    assert_eq!(first["entries"][0]["source"], json!("unknown"));
+    assert_eq!(
+        node.block_meta_decode_count(),
+        2,
+        "scan only through the requested block"
+    );
+    assert_eq!(
+        node.wallet_commitment_source_prefix.lock().labels.len(),
+        3,
+        "finish outputs past the first page boundary"
+    );
+    let middle = node
+        .wallet_commitments(json!({"start": 1, "limit": 2}))
+        .expect("same-block tail page");
+    assert_eq!(middle["entries"][0]["source"], json!("transfer"));
+    assert_eq!(middle["entries"][1]["source"], json!("transfer"));
+    assert_eq!(
+        node.block_meta_decode_count(),
+        2,
+        "same-block tail must not rescan"
+    );
+    let last = node
+        .wallet_commitments(json!({"start": 3, "limit": 1}))
+        .expect("later page");
+    assert_eq!(last["entries"][0]["source"], json!("mining_reward"));
+    assert_eq!(node.block_meta_load_counters(), (4, 0));
+    assert_eq!(
+        node.block_meta_decode_count(),
+        4,
+        "each non-genesis block is decoded exactly once"
+    );
+    node.reset_block_meta_load_counters();
+    assert_eq!(
+        node.wallet_commitments(json!({"start": 0, "limit": 1}))
+            .expect("earlier page"),
+        first
+    );
+    assert_eq!(
+        node.wallet_commitments(json!({"start": 1, "limit": 2}))
+            .expect("repeated page"),
+        middle
+    );
+    assert_eq!(node.block_meta_load_counters(), (0, 0));
+    assert_eq!(node.block_meta_decode_count(), 0);
+}
+
+#[test]
+fn wallet_commitment_source_prefix_append_and_reopen_rebuild_exact_labels() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+    let expected = {
+        let node = NativeNode::open(config.clone()).expect("node");
+        mine_empty_native_block(&node);
+        stage_test_coinbase(&node, consensus::reward::block_subsidy(2), [61; 48]);
+        mine_empty_native_block(&node);
+        node.reset_block_meta_load_counters();
+        let first = node
+            .wallet_commitments(json!({"start": 0, "limit": 1}))
+            .expect("first reward");
+        assert_eq!(first["entries"][0]["source"], json!("mining_reward"));
+        assert_eq!(node.block_meta_decode_count(), 2);
+        mine_empty_native_block(&node);
+        stage_test_coinbase(&node, consensus::reward::block_subsidy(4), [62; 48]);
+        mine_empty_native_block(&node);
+        node.reset_block_meta_load_counters();
+        let tail = node
+            .wallet_commitments(json!({"start": 1, "limit": 1}))
+            .expect("appended reward");
+        assert_eq!(tail["entries"][0]["source"], json!("mining_reward"));
+        assert_eq!(
+            node.block_meta_decode_count(),
+            2,
+            "only the two newly appended blocks are decoded"
+        );
+        node.reset_block_meta_load_counters();
+        let page = node
+            .wallet_commitments(json!({"start": 0, "limit": 2}))
+            .expect("complete page");
+        assert_eq!(node.block_meta_decode_count(), 0);
+        page
+    };
+    let reopened = NativeNode::open(config).expect("reopen");
+    assert!(reopened
+        .wallet_commitment_source_prefix
+        .lock()
+        .labels
+        .is_empty());
+    reopened.reset_block_meta_load_counters();
+    assert_eq!(
+        reopened
+            .wallet_commitments(json!({"start": 0, "limit": 2}))
+            .expect("reopened page"),
+        expected
+    );
+    assert_eq!(
+        reopened.block_meta_decode_count(),
+        4,
+        "restart rebuilds the disposable prefix once"
+    );
+}
+
+#[test]
+fn wallet_commitment_source_prefix_same_height_replacement_and_truncation_reset() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let reward = test_coinbase_action(1);
+    publish_wallet_source_fixture(&node, 82, vec![vec![], vec![reward]]);
+    let first = node
+        .wallet_commitments(json!({"start": 0, "limit": 1}))
+        .expect("old reward");
+    assert_eq!(first["entries"][0]["source"], json!("mining_reward"));
+    publish_wallet_source_fixture(
+        &node,
+        83,
+        vec![
+            vec![],
+            vec![wallet_source_fixture_action(
+                FAMILY_SHIELDED_POOL,
+                ACTION_SHIELDED_TRANSFER_SIDECAR,
+                &[[4; 48]],
+            )],
+        ],
+    );
+    node.reset_block_meta_load_counters();
+    let replaced = node
+        .wallet_commitments(json!({"start": 0, "limit": 1}))
+        .expect("same-height replacement");
+    assert_eq!(replaced["entries"][0]["source"], json!("transfer"));
+    assert_eq!(replaced["entries"][0]["commitment"], json!(hex48(&[4; 48])));
+    assert_eq!(node.block_meta_decode_count(), 2);
+    publish_wallet_source_fixture(
+        &node,
+        84,
+        vec![vec![wallet_source_fixture_action(999, 2, &[[5; 48]])]],
+    );
+    node.reset_block_meta_load_counters();
+    let truncated = node
+        .wallet_commitments(json!({"start": 0, "limit": 1}))
+        .expect("shorter replacement");
+    assert_eq!(truncated["entries"][0]["source"], json!("unknown"));
+    assert_eq!(
+        truncated["entries"][0]["commitment"],
+        json!(hex48(&[5; 48]))
+    );
+    assert_eq!(node.block_meta_decode_count(), 1);
+}
+
+#[test]
+fn wallet_commitment_source_prefix_real_deep_reorg_replaces_smaller_leaf_prefix() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bits = 0x207f_ffff;
+    let node = NativeNode::open(test_config(tmp.path(), bits, "safe", false)).expect("node");
+    let genesis = node.best_meta();
+    for height in 1..=3 {
+        stage_test_coinbase(
+            &node,
+            consensus::reward::block_subsidy(height),
+            [height as u8 + 40; 48],
+        );
+        mine_empty_native_block(&node);
+    }
+    let old = node
+        .wallet_commitments(json!({"start": 0, "limit": 3}))
+        .expect("old prefix");
+    assert_eq!(old["total"], json!(3));
+    let mut side_chain = vec![genesis];
+    for round in 1..=3 {
+        let block = mined_empty_child_for_chain(&side_chain, bits, round);
+        persist_block_record(&node.block_tree, &block).expect("side block");
+        side_chain.push(block);
+    }
+    let reward = test_coinbase_action_with_seed(consensus::reward::block_subsidy(4), [99; 32]);
+    let commitment = reward.commitments[0];
+    let side_tip = mined_child_with_actions_for_chain(&side_chain, bits, 40, vec![reward]);
+    assert!(node
+        .import_announced_block(side_tip.clone())
+        .expect("deep reorg"));
+    node.reset_block_meta_load_counters();
+    let new = node
+        .wallet_commitments(json!({"start": 0, "limit": 3}))
+        .expect("new canonical prefix");
+    assert_eq!(new["total"], json!(1));
+    assert_eq!(new["entries"][0]["source"], json!("mining_reward"));
+    assert_eq!(new["entries"][0]["commitment"], json!(hex48(&commitment)));
+    assert_eq!(node.block_meta_decode_count(), 4);
+    assert_eq!(node.wallet_commitment_source_prefix.lock().labels.len(), 1);
+}
+
+#[test]
+fn wallet_commitment_source_prefix_failed_block_keeps_only_complete_prefix() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let first = wallet_source_fixture_action(999, 1, &[[6; 48]]);
+    let second = wallet_source_fixture_action(
+        FAMILY_SHIELDED_POOL,
+        ACTION_SHIELDED_TRANSFER_INLINE,
+        &[[7; 48]],
+    );
+    let chain = publish_wallet_source_fixture(&node, 85, vec![vec![first], vec![second]]);
+    node.wallet_commitments(json!({"start": 0, "limit": 1}))
+        .expect("complete first block");
+    let mut corrupt = chain[2].clone();
+    corrupt.action_bytes[0].push(0xff);
+    persist_block_record(&node.block_tree, &corrupt).expect("corrupt block fixture");
+    node.wallet_commitments(json!({"start": 1, "limit": 1}))
+        .expect_err("malformed production block rejects");
+    {
+        let prefix = node.wallet_commitment_source_prefix.lock();
+        assert_eq!(prefix.labels.len(), 1);
+        assert_eq!(prefix.processed_block, Some((1, chain[1].hash)));
+    }
+    persist_block_record(&node.block_tree, &chain[2]).expect("restore block");
+    let recovered = node
+        .wallet_commitments(json!({"start": 1, "limit": 1}))
+        .expect("retry restored block");
+    assert_eq!(recovered["entries"][0]["source"], json!("transfer"));
+}
+
+#[test]
+fn wallet_commitment_source_prefix_rejects_stale_snapshot_and_overcount() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    let chain = publish_wallet_source_fixture(
+        &node,
+        86,
+        vec![vec![wallet_source_fixture_action(
+            999,
+            1,
+            &[[8; 48], [9; 48]],
+        )]],
+    );
+    node.height_tree
+        .insert(height_key(1), [99; 32].as_slice())
+        .expect("stale best row");
+    let err = node
+        .wallet_commitments(json!({"start": 0, "limit": 1}))
+        .expect_err("stale snapshot rejects");
+    assert!(err.to_string().contains("snapshot best index mismatch"));
+    node.height_tree
+        .insert(height_key(1), chain[1].hash.as_slice())
+        .expect("restore best row");
+    {
+        let mut state = node.state.write();
+        state.commitment_tree = CommitmentTreeState::default();
+        state
+            .commitment_tree
+            .append([8; 48])
+            .expect("one leaf bound");
+    }
+    let err = node
+        .wallet_commitments(json!({"start": 0, "limit": 1}))
+        .expect_err("complete-block overcount rejects");
+    assert!(err
+        .to_string()
+        .contains("sources exceed canonical leaf count"));
+    let prefix = node.wallet_commitment_source_prefix.lock();
+    assert!(prefix.labels.is_empty());
+    assert_eq!(prefix.processed_block, None);
+}
+
+#[test]
+fn wallet_commitment_source_prefix_queued_append_cannot_mix_page_snapshot() {
+    use std::sync::mpsc;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+    stage_test_coinbase(&node, consensus::reward::block_subsidy(1), [91; 48]);
+    mine_empty_native_block(&node);
+    stage_test_coinbase(&node, consensus::reward::block_subsidy(2), [92; 48]);
+    let work = node.prepare_work().expect("append work");
+    let seal = mine_native_round(work.clone(), 0).expect("append seal");
+    let cache_guard = node.wallet_commitment_source_prefix.lock();
+    let (page_tx, page_rx) = mpsc::channel();
+    let reader = Arc::clone(&node);
+    let reader_thread = std::thread::spawn(move || {
+        page_tx
+            .send(reader.wallet_commitments(json!({"start": 0, "limit": 2})))
+            .expect("send page");
+    });
+    let started = Instant::now();
+    while node.state.try_write().is_some() {
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "reader never reached snapshot guard"
+        );
+        std::thread::yield_now();
+    }
+    let (write_tx, write_rx) = mpsc::channel();
+    let writer = Arc::clone(&node);
+    let writer_thread = std::thread::spawn(move || {
+        write_tx
+            .send(writer.import_mined_block(&work, seal))
+            .expect("send append");
+    });
+    // Ensure the writer has time to queue behind the retained state guard.
+    std::thread::sleep(Duration::from_millis(30));
+    assert!(write_rx.try_recv().is_err());
+    drop(cache_guard);
+    let page = page_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("page must not recursively deadlock behind writer")
+        .expect("snapshot page");
+    assert_eq!(page["total"], json!(1));
+    assert_eq!(page["entries"].as_array().expect("page entries").len(), 1);
+    write_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("writer completes after page")
+        .expect("append")
+        .expect("block");
+    reader_thread.join().expect("reader thread");
+    writer_thread.join().expect("writer thread");
+    let next = node
+        .wallet_commitments(json!({"start": 0, "limit": 2}))
+        .expect("next snapshot");
+    assert_eq!(next["total"], json!(2));
+}
+
 #[test]
 fn wallet_commitments_ignore_unrequested_malformed_commitment_key() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -31778,7 +32180,8 @@ fn mined_child_with_actions_for_chain(
 
 fn test_config(path: &Path, pow_bits: u32, rpc_methods: &str, rpc_external: bool) -> NativeConfig {
     NativeConfig {
-        test_retarget_correction_activation_height: None,        dev: true,
+        test_retarget_correction_activation_height: None,
+        dev: true,
         tmp: false,
         base_path: path.to_path_buf(),
         db_path: path.join("native-chain.sled"),

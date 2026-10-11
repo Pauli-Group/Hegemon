@@ -324,7 +324,8 @@ impl NativeNode {
     pub fn open(config: NativeConfig) -> Result<Arc<Self>> {
         let retarget_activation_height = consensus::pow::RETARGET_CORRECTION_ACTIVATION_HEIGHT;
         #[cfg(test)]
-        let retarget_activation_height = config.test_retarget_correction_activation_height
+        let retarget_activation_height = config
+            .test_retarget_correction_activation_height
             .unwrap_or(retarget_activation_height);
         let startup_started = Instant::now();
         info!(
@@ -412,6 +413,9 @@ impl NativeNode {
             da_ciphertext_tree,
             da_proof_tree,
             state: RwLock::new(startup_state),
+            wallet_commitment_source_prefix: Mutex::new(
+                NativeWalletCommitmentSourcePrefix::default(),
+            ),
             start_instant: Instant::now(),
             mining: AtomicBool::new(false),
             mining_threads: AtomicU32::new(0),
@@ -5260,9 +5264,13 @@ impl NativeNode {
     pub(crate) fn wallet_commitments(&self, params: Value) -> Result<Value> {
         let page = pagination_from_params(params)?;
         let mut entries = Vec::new();
-        let total = self.state.read().commitment_tree.leaf_count();
+        // Canonical writers hold the state write lock while replacing indexes and
+        // archives. Retain this single guard through response construction; the
+        // source helper must never recursively acquire state.
+        let state = self.state.read();
+        let total = state.commitment_tree.leaf_count();
         let end = wallet_page_end(page, total)?;
-        let sources = self.wallet_commitment_sources_for_range(page.start, end)?;
+        let sources = self.wallet_commitment_sources_for_range(page.start, end, &state)?;
         for index in page.start..end {
             let commitment = self.load_wallet_commitment_at(index)?;
             let commitment_hex = hex48(&commitment);
@@ -5313,36 +5321,113 @@ impl NativeNode {
         &self,
         start: u64,
         end: u64,
+        state: &NativeState,
     ) -> Result<BTreeMap<u64, &'static str>> {
         let mut sources = BTreeMap::new();
         if start >= end {
             return Ok(sources);
         }
 
-        let best_height = self.state.read().best.height;
-        let mut commitment_index = 0u64;
-        for height in 1..=best_height {
-            if commitment_index >= end {
+        let leaf_count = state.commitment_tree.leaf_count();
+        let leaf_bound = usize::try_from(leaf_count)
+            .context("native commitment source leaf count exceeds addressable memory")?;
+        let start = usize::try_from(start)
+            .context("native commitment source start exceeds addressable memory")?;
+        let end = usize::try_from(end)
+            .context("native commitment source end exceeds addressable memory")?;
+        if end > leaf_bound {
+            return Err(anyhow!("native commitment source range exceeds leaf count"));
+        }
+        // An interrupted canonical publication must not mix an old in-memory
+        // snapshot with newer height rows, even while the read guard is held.
+        if self.hash_by_height(state.best.height)? != Some(state.best.hash) {
+            return Err(anyhow!(
+                "native commitment source snapshot best index mismatch"
+            ));
+        }
+
+        // All callers retain state.read(); canonical writers take state.write().
+        // The only lock order is state -> derived source cache.
+        let mut prefix = self.wallet_commitment_source_prefix.lock();
+        let anchor_matches = match prefix.processed_block {
+            Some((height, hash)) if height <= state.best.height => {
+                self.hash_by_height(height)? == Some(hash)
+            }
+            Some(_) => false,
+            None => prefix.labels.is_empty(),
+        };
+        if !anchor_matches || prefix.labels.len() > leaf_bound {
+            *prefix = NativeWalletCommitmentSourcePrefix::default();
+        }
+
+        while prefix.labels.len() < end {
+            let height = match prefix.processed_block {
+                Some((height, _)) => height
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow!("native commitment source height overflow"))?,
+                None => 1,
+            };
+            if height > state.best.height {
                 break;
             }
             let meta = self.load_canonical_block_at_height_unverified(height)?;
+            let mut staged = Vec::new();
             for action in decode_block_actions(&meta)? {
-                let source = wallet_commitment_source_label(&action);
-                for _ in &action.commitments {
-                    if commitment_index >= start && commitment_index < end {
-                        sources.insert(commitment_index, source);
-                    }
-                    commitment_index = commitment_index
-                        .checked_add(1)
-                        .ok_or_else(|| anyhow!("native commitment source index overflow"))?;
-                    if commitment_index >= end {
-                        break;
-                    }
+                let next_len = prefix
+                    .labels
+                    .len()
+                    .checked_add(staged.len())
+                    .and_then(|len| len.checked_add(action.commitments.len()))
+                    .ok_or_else(|| anyhow!("native commitment source index overflow"))?;
+                if next_len > leaf_bound {
+                    return Err(anyhow!(
+                        "native commitment sources exceed canonical leaf count"
+                    ));
                 }
-                if commitment_index >= end {
-                    break;
-                }
+                staged
+                    .try_reserve_exact(action.commitments.len())
+                    .context("reserve native commitment source block labels")?;
+                staged.extend(std::iter::repeat_n(
+                    NativeWalletCommitmentSource::from_label(wallet_commitment_source_label(
+                        &action,
+                    )),
+                    action.commitments.len(),
+                ));
             }
+            // Publish an entire block, including outputs past this page's end,
+            // only after its decode and bounds checks succeed. Empty blocks also
+            // advance the anchor, so later requests never revisit them.
+            let required_len = prefix
+                .labels
+                .len()
+                .checked_add(staged.len())
+                .ok_or_else(|| anyhow!("native commitment source index overflow"))?;
+            if required_len > prefix.labels.capacity() {
+                // Amortize prefix growth without reserving beyond this canonical
+                // snapshot's leaf bound. Exact per-block growth would recopy the
+                // history on every small block and recreate quadratic work.
+                let target_capacity = prefix
+                    .labels
+                    .capacity()
+                    .checked_mul(2)
+                    .unwrap_or(leaf_bound)
+                    .max(required_len)
+                    .min(leaf_bound);
+                let additional = target_capacity
+                    .checked_sub(prefix.labels.len())
+                    .ok_or_else(|| anyhow!("native commitment source capacity underflow"))?;
+                prefix
+                    .labels
+                    .try_reserve_exact(additional)
+                    .context("reserve native commitment source prefix")?;
+            }
+            prefix.labels.extend(staged);
+            prefix.processed_block = Some((height, meta.hash));
+        }
+        for index in start..end.min(prefix.labels.len()) {
+            let index_u64 =
+                u64::try_from(index).context("native commitment source index exceeds u64")?;
+            sources.insert(index_u64, prefix.labels[index].as_str());
         }
         Ok(sources)
     }

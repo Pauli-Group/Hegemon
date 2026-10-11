@@ -14,6 +14,10 @@ Upgrade from v0.10.0 or v0.10.1 before activation while retaining your existing 
 
 This is a maintenance release for the existing public testnet only. It retains the v0.10.1 fixes and existing chain identity without introducing the newer development-network consensus.
 
+## First wallet synchronization
+
+Wallet commitment pages reuse a derived cache of canonical source labels instead of repeatedly decoding earlier block history from genesis. The cache checks its canonical block anchor before reuse, resets when a reorganization replaces that history, and rebuilds after restart. This changes RPC work only; commitment/ciphertext archives, encrypted wallet storage and consensus rules retain their existing formats and semantics. A first wallet scan still processes the chain history and can take longer than subsequent incremental scans.
+
 ## Testnet operation
 
 The node, wallet and wallet daemon identify as 0.10.2. Download the **hegemon-testnet-0.10.2 ZIP for your platform**, verify its accompanying SHA-256 checksum, and extract it. On Windows, run `testnet-start.cmd`; on Linux or macOS, run `bash testnet-start.sh`. The launcher supplies testnet seeds and persistent local data and starts with mining disabled. Read `TESTNET-README.txt` for chain comparison, existing data, wallet and optional mining instructions.

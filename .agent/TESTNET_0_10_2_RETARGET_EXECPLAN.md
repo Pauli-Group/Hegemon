@@ -4,18 +4,24 @@ This plan follows `.agent/PLANS.md` and is maintained as an executable record. T
 
 ## Purpose / Big Picture
 
-The existing testnet measures nine elapsed timestamp intervals against a ten-minute target. A perfectly regular sixty-second chain therefore raises difficulty unnecessarily. v0.10.2 corrects the sample to ten intervals beginning at the operator-selected testnet block 120,000. The user has authorized producing and publishing the maintenance release; upgrading hegemon-ovh remains deferred until a later authorization. Historical rules before activation are preserved.
+The existing testnet measures nine elapsed timestamp intervals against a ten-minute target. A perfectly regular sixty-second chain therefore raises difficulty unnecessarily. v0.10.2 corrects the sample to ten intervals beginning at the operator-selected testnet block 120,000. It also removes repeated history traversal during the first wallet scan, which matters for new users joining the existing roughly 117,000-block chain. The user has authorized producing and publishing the maintenance release; upgrading hegemon-ovh remains deferred until a later authorization. Historical rules before activation are preserved.
 
 ## Progress
 
-- [x] (2026-10-10) Created an isolated managed worktree and `codex/testnet-0.10.2` branch from v0.10.1.
-- [x] Added the compiled optional activation rule and shared height-aware schedule helpers.
-- [x] Bound native stored-history, sync, work, replay, and reorganization paths to the same rule.
-- [x] Added thirteen Lean theorems, twelve activation vectors, five native integration tests, and a public 145-adjustment historical fixture.
-- [x] Prepared v0.10.2 package versions, launcher text, and activation-pending release notes.
-- [x] Collected a fresh OVH tip and a seven-day UTC forecast without selecting an activation height.
-- [x] (2026-10-10) Completed scoped Rust tests, generated-vector conformance, source-binding validation, native release build, isolated two-node liveness and a bounded live relay check.
-- [x] (2026-10-10) Recorded evidence in `testnet-release/VALIDATION-0.10.2.md`; final preparation commit follows.
+- [x] (2026-10-10) Created isolated `codex/testnet-0.10.2` from published v0.10.1 (`89a61f3b341f37dc26d0fc5190ce4571336255e8`).
+- [x] Added and tested the shared ten-interval schedule across mining, import, sync, replay, restart and reorganization, with scoped Lean vectors and historical fixtures.
+- [x] Finalized compiled activation at 120,000 and required upgrade instructions; notified the mainnet planning thread to use the corrected rule directly for its own genesis.
+- [x] (2026-10-11) Initial seven-job release run `38099641878` and all 37 downloaded draft assets passed on `1b0d631818af1ec98aeea43a600cf89c60a1bf40`. Downloaded fresh sync passed 512, restart and a bounded wallet scan passed.
+- [x] The downloaded node opened a separate APFS COW clone of the existing chain, matched OVH at 116,968 and caught up to 116,974. The cold wallet scan exceeded the combined 900-second harness budget; original data remained unchanged and owned processes stopped cleanly.
+- [x] Implemented and independently reviewed the disposable canonical source-prefix cache. Seven cache regressions and three existing wallet archive regressions passed; optimized native build passed.
+- [x] Renewed only 79 computed source-binding digests. Blueprint and claim checks pass; all 123 external-review statuses and all approval metadata remain unchanged.
+- [x] Explorer live API/browser checks passed, including recent block details, public action metadata and commitment lookup. Historical backfill remains partial.
+- [ ] Complete local-candidate large-chain wallet performance check; final release artifact acceptance remains separate.
+- [ ] Commit revised source, regenerate the source-bound review archive from that clean commit and commit only the archive/hash afterward.
+- [ ] Revise the still-unpublished v0.10.2 tag with an exact old-ref lease, rerun all seven release jobs and download-verify the final 37 draft assets against the final source/run.
+- [ ] Complete final downloaded fresh/restart/wallet and full-chain wallet/persistence checks with safe errors and separate startup/scan budgets.
+- [ ] Publish v0.10.2 as latest and verify public metadata/downloads.
+- [ ] Apply the prepared two-HTML quickstart link update without restarting any service, then verify fresh explorer status/block/commitment responses and service PIDs.
 
 ## Surprises & Discoveries
 
@@ -33,7 +39,7 @@ The user selected activation block 120,000 and authorized tagging and publicatio
 
 ## Outcomes & Retrospective
 
-The staged correction passes scoped arithmetic, native lifecycle, historical replay, generated-vector and source-binding checks. A production binary built and passed local two-node liveness plus canonical compatibility beyond height512. See `testnet-release/VALIDATION-0.10.2.md` for exact scope and results. Final publication gates remain pending a chosen height. No live node or website was changed by this task.
+The correction passes scoped arithmetic, native lifecycle, historical replay, generated-vector and source-binding checks. The additional source-prefix cache passes seven native lifecycle/performance regressions and three preserved malformed-row regressions. A production binary built and passed local two-node liveness plus canonical compatibility beyond height512. See `testnet-release/VALIDATION-0.10.2.md` for exact scope and results. The activation height is fixed at 120,000. The first seven-job release pipeline and all 37 downloaded draft assets passed on commit `1b0d631818af1ec98aeea43a600cf89c60a1bf40`; that evidence is retained but does not establish acceptance of the later cache revision. Publication remains on hold for the final revised-source pipeline and actual downloaded full-wallet scan. No OVH node upgrade is authorized in this task.
 
 ## Context and Orientation
 
@@ -80,9 +86,16 @@ Revision 2026-10-10: completed five activation lifecycle tests including mined i
 
 Revision 2026-10-10: the user selected testnet activation 120,000, authorized v0.10.2 publication, requested direct mainnet correction in the mainnet planning thread, and deferred OVH upgrade. That thread received the explicit implementation instruction.
 
-- [x] Finalized activation source and operator upgrade instructions; four consensus and five native regressions plus generated conformance pass.
-- [x] Renewed the complete Lean source-tree fingerprint after the scoped retarget model review without changing independent review statuses.
-- [ ] Regenerate and validate the source-bound archive from clean final source.
-- [ ] Run all seven release jobs and verify the downloadable draft assets.
-- [ ] Publish v0.10.2 as latest, verify public metadata/downloads and report completion.
-- [ ] Verify the live block explorer; repair an evidenced explorer-specific malfunction within scope.
+## Cold-wallet RPC milestone
+
+The first full-chain check used the actual downloaded ARM64 binaries on an independent copy-on-write clone of the retained v0.10.1 database. Native startup took about six minutes and twenty-nine seconds, then the node caught up and matched the fresh OVH reference. A new unfunded wallet was still scanning when the overall fifteen-minute harness budget expired. This result is a harness timeout, not a captured released-client RPC error. Inspection nevertheless found a concrete avoidable cost: every 256-commitment RPC page starts source-label extraction at block one and decodes earlier history again. Later pages repeat the same work. Wallet store persistence also rewrites accumulated encrypted state per page, but changing that durability boundary is outside this narrow optimization.
+
+Add only a derived in-memory source-label prefix cache in `node/src/native/mod.rs` and `node/src/native/node_impl.rs`. The cache stores labels for an already scanned canonical prefix, the last fully processed block height/hash, and the next commitment index. A later page advances from that block rather than genesis. Before using a cached prefix, compare its processed-block hash to the current canonical height index and reset on truncation or replacement. Complete a block before advancing the anchor, support out-of-order and overlapping pages, and retain exact existing source labels. Cache state is disposable and rebuilt after restart. It must not change stored formats, consensus, archive validation, or the proof-review policy. Read the canonical state under consistent lock ordering while materializing each response.
+
+Acceptance is observable: a sequence of later pages must return the same commitments/source labels while decoding each canonical block at most once until append or reorg invalidation; a same-height or deep reorg must replace prior source labels; reopen must reconstruct labels correctly. Run those meaningful native regressions plus existing wallet RPC malformed-row/paging tests, source-bound checks and the entire release workflow. Then repeat the actual downloaded full-chain wallet scan with an independent database and a budget that separately allows cold node startup and complete wallet processing, retaining exact errors and safe progress counters rather than masking failures by only raising per-RPC timeouts.
+
+Decision 2026-10-11: fold this scoped RPC performance correction into the still-draft v0.10.2 because the user asked that the latest release work and explicitly requested live synchronization validation. Retain the original draft-run evidence. The unpublished version tag and its draft assets will be revised only after the new source passes local checks; final publication must bind every artifact to the new immutable commit. OVH node changes remain deferred.
+
+Revision 2026-10-11: recorded initial green release/artifact gates, actual full-chain node compatibility and the inconclusive cold-wallet cutoff; added the narrow derived-cache milestone and final artifact revalidation requirements.
+
+Revision 2026-10-11: cache implementation, independent review, ten scoped native tests, optimized build and current-source blueprint/claim checks passed. Consolidated progress in its required section; final source/archive/CI/artifact/runtime/publication gates remain explicit.

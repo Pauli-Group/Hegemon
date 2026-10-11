@@ -69,6 +69,11 @@ jobs:
           cargo test -p consensus --locked --lib retarget_activation
           cargo test -p hegemon-node --locked --no-default-features --lib retarget_activation
 
+      - name: Test canonical wallet source paging and invalidation
+        run: |
+          cargo test -p hegemon-node --locked --no-default-features --lib wallet_commitment_source_prefix
+          cargo test -p hegemon-node --locked --no-default-features --lib wallet_commitments
+
       - name: Native backend review package verification
         run: ./scripts/verify_native_backend_review_package.sh
 
