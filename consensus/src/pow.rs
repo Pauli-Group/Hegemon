@@ -29,9 +29,9 @@ const GENESIS_HASH: [u8; 32] = [0u8; 32];
 pub const DEFAULT_GENESIS_POW_BITS: u32 = GENESIS_BITS;
 
 /// First child height using ten elapsed intervals for a ten-block retarget.
-/// None preserves the v0.10 testnet rules until a coordinated height is chosen.
+/// The coordinated v0.10.2 testnet activation is child block 120,000.
 /// This is a compiled consensus rule, never a local CLI/environment setting.
-pub const RETARGET_CORRECTION_ACTIVATION_HEIGHT: Option<u64> = None;
+pub const RETARGET_CORRECTION_ACTIVATION_HEIGHT: Option<u64> = Some(120_000);
 
 const _: () = {
     if let Some(height) = RETARGET_CORRECTION_ACTIVATION_HEIGHT {

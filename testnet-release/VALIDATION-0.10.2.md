@@ -1,6 +1,6 @@
-# v0.10.2 correction preparation validation
+# v0.10.2 retarget correction validation
 
-Validated on 2026-10-10 UTC, based solely on v0.10.1 commit `89a61f3b341f37dc26d0fc5190ce4571336255e8`. The activation constant is `None`: this is an unpublished preparation, and its binary still validates the historical rule everywhere.
+Validated on 2026-10-10 UTC, based solely on v0.10.1 commit `89a61f3b341f37dc26d0fc5190ce4571336255e8`. The initial preparation used `None`; the finalized release source now compiles `Some(120_000)` as selected by the operator. The initial runtime checks below were performed before that final selection and are labeled accordingly.
 
 The changed retarget policy has thirteen scoped Lean theorems and twelve activation vectors, alongside thirty-seven preserved legacy vector cases. Rust consensus conformance passed against the generated file. The light-client conformance test also parsed and checked the shared vector file; the light client consumes supplied expected bits and does not independently derive timing history.
 
@@ -36,6 +36,8 @@ Compile `formal/lean/Hegemon/Consensus/PowRules.lean` and run `GeneratePowVector
 
 The locally built inactive native binary SHA-256 is `ec6176789227eff1445f887dad397c817e83acf7a25b5083d153c254892af476`. It is local validation evidence, not a published or manifest-attested cross-platform release artifact.
 
-## Remaining final-release work
+## Final activation and publication gates
 
-Choose and commit a future ten-block activation boundary, refresh the UTC forecast, rebuild the exact final source and binaries, regenerate the source-bound native-backend review archive, and run the full formal-core, dependency audit, native-backend review/posture, app/no-SSH, four-platform binary-manifest/audit and packaging gates. Final source/artifact gates and coordinated publication/deployment are deliberately pending the user's activation decision. Re-run activation lifecycle and conformance on the finalized rule. No live node, website, release, or testnet rule was changed by this preparation.
+The operator selected block 120,000 and authorized publication. Four consensus regressions pass on the finalized source, including a compiled-policy boundary check at heights 119,990, 119,999, 120,000, 120,001 and 120,010. All five native activation lifecycle regressions pass again, generated PoW conformance passes, and the finalized `make node` release build passes. The complete Lean source-tree fingerprint was renewed in both the active-goal ledger and its independent Rust-held policy after review of the two retarget-model/generator changes; no theorem proposition ratchet or independent-review approval was relaxed.
+
+The publication pipeline must pass the full formal-core, dependency audit, native-backend review/posture, app/no-SSH, four-platform binary-manifest/audit and packaging gates against the finalized committed source. The source-bound archive is regenerated after this source commit and committed separately. Publication remains conditional on those gates and downloaded-asset verification. Live OVH deployment is a separately deferred operator step.

@@ -64,6 +64,11 @@ jobs:
       - name: Formal-core release gate
         run: bash scripts/check_formal_core.sh
 
+      - name: Test compiled retarget activation and native lifecycle
+        run: |
+          cargo test -p consensus --locked --lib retarget_activation
+          cargo test -p hegemon-node --locked --no-default-features --lib retarget_activation
+
       - name: Native backend review package verification
         run: ./scripts/verify_native_backend_review_package.sh
 

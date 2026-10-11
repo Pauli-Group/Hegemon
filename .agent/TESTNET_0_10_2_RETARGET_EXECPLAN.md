@@ -4,7 +4,7 @@ This plan follows `.agent/PLANS.md` and is maintained as an executable record. T
 
 ## Purpose / Big Picture
 
-The existing testnet measures nine elapsed timestamp intervals against a ten-minute target. A perfectly regular sixty-second chain therefore raises difficulty unnecessarily. v0.10.2 prepares a height-selected correction that measures ten intervals. Operators must agree on a future activation block before final release. This preparation leaves that height unset, preserves all historical block rules, and neither publishes nor deploys the candidate.
+The existing testnet measures nine elapsed timestamp intervals against a ten-minute target. A perfectly regular sixty-second chain therefore raises difficulty unnecessarily. v0.10.2 corrects the sample to ten intervals beginning at the operator-selected testnet block 120,000. The user has authorized producing and publishing the maintenance release; upgrading hegemon-ovh remains deferred until a later authorization. Historical rules before activation are preserved.
 
 ## Progress
 
@@ -25,11 +25,11 @@ Formal legacy vectors must explicitly evaluate `None` rather than the compiled r
 
 ## Decision Log
 
-Use `consensus::pow::RETARGET_CORRECTION_ACTIVATION_HEIGHT: Option<u64> = None` as the single production rule. A selected value must be greater than ten and divisible by ten, enforced by a compile-time assertion. There is no CLI or environment override, preventing per-operator accidental partitions. Fixture overrides, including a startup configuration override for reopen tests, exist only in code compiled with `cfg(test)`.
+Use `consensus::pow::RETARGET_CORRECTION_ACTIVATION_HEIGHT: Option<u64> = Some(120_000)` as the single production rule. A selected value must be greater than ten and divisible by ten, enforced by a compile-time assertion. There is no CLI or environment override, preventing per-operator accidental partitions. Fixture overrides, including a startup configuration override for reopen tests, exist only in code compiled with `cfg(test)`.
 
 Keep the existing 600,000-ms denominator, 150,000..2,400,000-ms clamp, compact encoding, first launch-boundary skip, and inherited bits between retargets. At corrected child height H, compare timestamps at H−1 and H−11. Before activation, compare H−1 and H−10 exactly as v0.10.1 did.
 
-Prepare and validate a local candidate now. The user expressly deferred choosing activation; selecting the height, rebuilding the final artifacts, running publication gates, tagging, publishing, and deploying remain later work.
+The user selected activation block 120,000 and authorized tagging and publication after release gates. Finalize source, regenerate the source-bound review archive, run the seven-job release workflow and download-verify its draft artifacts before publishing as latest. OVH deployment remains later work.
 
 ## Outcomes & Retrospective
 
@@ -43,7 +43,7 @@ The staged correction passes scoped arithmetic, native lifecycle, historical rep
 
 ## Plan of Work
 
-Finish Rust conformance by parsing both legacy and new activation vectors. Run consensus regressions, then native activation fixtures and existing schedule/sync regressions. Build the unchanged-network candidate binary from this maintenance branch. Refresh only computed formal review-content digests and preserve every existing independent-review status. Record reproducible commands and source hashes before committing. Keep the final activation constant unset.
+Finish Rust conformance by parsing both legacy and new activation vectors. Run consensus regressions, then native activation fixtures and existing schedule/sync regressions. Build the unchanged-network candidate binary from this maintenance branch. Refresh only computed formal review-content digests and preserve every existing independent-review status. Record reproducible commands and source hashes before committing. Keep the final activation constant fixed at `Some(120_000)`.
 
 ## Concrete Steps
 
@@ -77,3 +77,12 @@ The legacy public helpers `pow_retarget_anchor_steps` and `expected_pow_bits_fro
 Revision 2026-10-10: initial preparation and validation plan, incorporating the user's request for a seven-day activation forecast while leaving activation undecided.
 
 Revision 2026-10-10: completed five activation lifecycle tests including mined import/restart, scoped conformance and source bindings, release build and disposable runtime checks; retained the full final-release gate list pending activation selection.
+
+Revision 2026-10-10: the user selected testnet activation 120,000, authorized v0.10.2 publication, requested direct mainnet correction in the mainnet planning thread, and deferred OVH upgrade. That thread received the explicit implementation instruction.
+
+- [x] Finalized activation source and operator upgrade instructions; four consensus and five native regressions plus generated conformance pass.
+- [x] Renewed the complete Lean source-tree fingerprint after the scoped retarget model review without changing independent review statuses.
+- [ ] Regenerate and validate the source-bound archive from clean final source.
+- [ ] Run all seven release jobs and verify the downloadable draft assets.
+- [ ] Publish v0.10.2 as latest, verify public metadata/downloads and report completion.
+- [ ] Verify the live block explorer; repair an evidenced explorer-specific malfunction within scope.

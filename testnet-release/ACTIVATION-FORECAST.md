@@ -1,10 +1,24 @@
-# v0.10.2 activation-height planning forecast
+# v0.10.2 activation schedule and planning forecast
+
+**The selected public-testnet activation height is block 120,000.** v0.10.2 compiles `RETARGET_CORRECTION_ACTIVATION_HEIGHT = Some(120_000)`. All public-testnet node operators and miners must upgrade before the chain reaches that height. Historical blocks below 120,000 retain legacy validation; eligible retarget boundaries beginning with 120,000 use ten elapsed intervals. The activation constant has no local environment or CLI override.
+
+Using the historical anchor below, reaching block 120,000 would take approximately:
+
+| Constant interval scenario | Estimated time of block 120,000 |
+|---|---|
+| 60 seconds per block | 2026-10-13 04:17 UTC |
+| Measured 72.88252 seconds per block | 2026-10-13 15:38 UTC |
+| 90 seconds per block | 2026-10-14 06:43 UTC |
+
+These estimates use the October 10 snapshot and are not a live countdown, statistical confidence interval or promised deadline. Additional hash power or other changes can move activation earlier than any listed scenario. Use the live chain height to schedule upgrades.
+
+## Historical planning snapshot
 
 Live testnet anchor: block **116,829**, block timestamp **2026-10-10 23:26:48 UTC**, read at **2026-10-10 23:27:46 UTC** from hegemon-ovh loopback RPC. Genesis matches the testnet: `0x506fc2cd5ed367cc68d6d23a987fe6e4a7916fde02a249105ab91884a1e6fa59`.
 
 Expected heights extrapolate the measured last-day mean of **72.88252 seconds per block** (1,184 intervals ending at block 116,813). All heights are rounded upward to a multiple of **10**, so they align with existing retarget boundaries.
 
-| Intended activation date (UTC) | Height at observed pace | Planning range, 90 to 60 s/block |
+| Original planning date (UTC) | Height at observed pace | Planning range, 90 to 60 s/block |
 |---|---:|---:|
 | 2026-10-11 00:00 | 116,860 | 116,860–116,870 |
 | 2026-10-11 12:00 | 117,450 | 117,340–117,590 |
@@ -23,4 +37,4 @@ Expected heights extrapolate the measured last-day mean of **72.88252 seconds pe
 
 Calculation: `ceil((116829 + seconds_since_anchor / seconds_per_block) / 10) * 10`.
 
-These are planning scenarios, not statistical confidence bounds or promised activation times. The scenarios assume a constant mean interval before activation; mining luck, added or removed hash power, retargeting, outages and reorgs can move the date. The fix affects pace only after its selected height. Refresh against the live height and trailing rate shortly before choosing a height, then allow adequate client-upgrade lead time. No activation height is chosen or compiled by this forecast.
+The original planning scenarios above assume a constant mean interval before activation. Mining luck, added or removed hash power, retargeting, outages and reorgs can move the date. The correction starts at the selected block height 120,000; it does not change earlier blocks. These calculations are retained as historical planning evidence. The release must bind the committed activation constant in its rebuilt binaries and source-bound review archive and pass its release gates before publication. No gate result or current live height is established by this forecast.

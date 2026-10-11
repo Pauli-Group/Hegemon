@@ -76,19 +76,22 @@ The public testnet uses `RETARGET_WINDOW = 10` and a 60,000-ms target block inte
 heights `H > 10` where `H mod 10 = 0`; the first retarget is height 20. Other heights inherit their parent's
 `pow_bits` verbatim. The denominator remains `10 × 60,000 = 600,000 ms`.
 
-The timestamp anchor is selected by the compiled consensus constant
-`RETARGET_CORRECTION_ACTIVATION_HEIGHT: Option<u64>`:
+The public-testnet v0.10.2 release compiles
+`RETARGET_CORRECTION_ACTIVATION_HEIGHT: Option<u64> = Some(120_000)`. At eligible retarget boundaries:
 
-- With `None`, or for a retarget height before the selected activation height, use the legacy span
+- For `H < 120,000`, use the legacy span
   `t_actual = timestamp[H-1] − timestamp[H-10]`, covering nine elapsed block intervals.
-- At eligible retarget boundaries at or after a selected activation height, use the corrected span
+- For `H >= 120,000`, use the corrected span
   `t_actual = timestamp[H-1] − timestamp[H-11]`, covering ten elapsed block intervals.
 
-The v0.10.2 preparation sets this constant to `None`: the corrected rule is not active and legacy validation
-continues at every height. Operators must agree on the activation height before it is committed and binaries
-are rebuilt. Environment variables and command-line flags cannot alter this consensus schedule. The final
-source-bound review archive and release gates must be refreshed after selecting the height and before
-release tagging or publication.
+Block 120,000 is the first corrected retarget. It uses the timestamps of blocks 119,999 and 119,989;
+the legacy rule would use blocks 119,999 and 119,990. Historical validation before the activation height
+retains the legacy calculation. Environment variables and command-line flags cannot alter this consensus
+schedule. All public-testnet nodes and miners must upgrade to v0.10.2 before block 120,000. Older nodes
+reject corrected blocks when their legacy expected bits differ and can follow an incompatible fork.
+
+This activation applies to the existing public v0.10 testnet. The source-bound review archive and release
+artifacts must bind the final committed activation constant, and all release gates must pass before publication.
 
 For either rule, let `target_prev` be the decoded parent target. A reversed timestamp span saturates to zero;
 then compute:

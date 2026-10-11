@@ -140,3 +140,36 @@ fn retarget_activation_preserves_all_145_sampled_testnet_adjustments() {
         );
     }
 }
+
+#[test]
+fn retarget_activation_compiled_testnet_policy_switches_at_120000() {
+    assert_eq!(RETARGET_CORRECTION_ACTIVATION_HEIGHT, Some(120_000));
+    for (height, expected_steps, elapsed_ms) in [
+        (119_990, Some(9), Some(540_000)),
+        (119_999, None, None),
+        (120_000, Some(10), Some(600_000)),
+        (120_001, None, None),
+        (120_010, Some(10), Some(600_000)),
+    ] {
+        assert_eq!(
+            pow_retarget_anchor_steps(height - 1, height),
+            expected_steps
+        );
+        let expected = schedule(height, elapsed_ms, Some(120_000)).unwrap();
+        assert_eq!(
+            expected_pow_bits_from_schedule(
+                GENESIS_BITS,
+                BITS,
+                height - 1,
+                height,
+                9_000_000,
+                elapsed_ms.map(|elapsed| 9_000_000 - elapsed),
+            )
+            .unwrap(),
+            expected,
+        );
+        if height >= 120_000 {
+            assert_eq!(expected, BITS);
+        }
+    }
+}

@@ -1,29 +1,32 @@
 HEGEMON 0.10.2 — EXISTING PUBLIC TESTNET
 
-This v0.10.2 candidate starts from the published v0.10.1 maintenance release
+This v0.10.2 maintenance release starts from the published v0.10.1 release
 and retains its sync pagination, mining-gate and wallet snapshot fixes. It joins
 the existing 0.10 testnet with the same genesis and compatible node/wallet data.
 
-RETARGET CORRECTION: PREPARED, ACTIVATION HEIGHT PENDING
+MANDATORY UPGRADE BEFORE TESTNET BLOCK 120,000
 
 The correction uses ten elapsed block intervals for the existing 600,000 ms
 retarget denominator. Legacy validation measures nine elapsed intervals against
 that denominator. The retarget cadence (ten blocks), first retarget (height 20),
 60-second target, compact target encoding and 1/4x..4x timespan clamps are retained.
 
-The compiled consensus constant RETARGET_CORRECTION_ACTIVATION_HEIGHT is None.
-This candidate therefore continues to use legacy retarget validation at every
-height. There is no environment-variable or command-line activation override.
-An agreed activation height must be committed into the consensus constant and
-all binaries rebuilt before release. Historical blocks before activation keep
-their legacy rule; eligible retarget boundaries at/after activation use the
-corrected ten-interval rule. Every operator must use the same scheduled height.
+All public-testnet node operators and miners must upgrade from v0.10.0 or
+v0.10.1 to v0.10.2 BEFORE the chain reaches block 120,000. Keep your existing
+node data directory and wallet store; no chain reset or new wallet is required.
 
-This candidate has not been published and the correction is not active. Final
-release preparation must select the activation height, rebuild, refresh the
-source-bound review archive and pass all release gates before tagging or
-publishing. Existing v0.10.1 users should continue with their published release
-until the coordinated v0.10.2 upgrade instructions are announced.
+The compiled consensus constant RETARGET_CORRECTION_ACTIVATION_HEIGHT is
+Some(120_000). Historical blocks below 120,000 keep the legacy rule. Block
+120,000 and later eligible retarget boundaries use the corrected ten-interval
+rule. Mining and validation use the same schedule. There is no environment-
+variable or command-line activation override.
+
+Older nodes do not implement the activation schedule and reject corrected
+blocks whenever the expected bits differ from their legacy calculation. Older
+miners can continue on an incompatible fork. Upgrade before the block height,
+not an estimated calendar date; changes in hash power can bring activation
+forward. This release is for the existing public testnet only and retains its
+current genesis and data formats.
 
 Verified testnet genesis (full 32-byte hash):
 0x506fc2cd5ed367cc68d6d23a987fe6e4a7916fde02a249105ab91884a1e6fa59
