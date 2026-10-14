@@ -277,6 +277,11 @@ jobs:
           toolchain: "1.91.1"
           components: rust-src
       
+      - name: Verify Windows raw-byte launcher hashing
+        shell: bash
+        run: |
+          python3 -B scripts/test_check_release_launcher_policy.py ReleaseLauncherPolicyTests.test_bounded_reader_preserves_crlf_and_ctrl_z_bytes ReleaseLauncherPolicyTests.test_crlf_helper_requires_its_raw_digest_not_normalized_lf
+
       - name: Verify Windows testnet launcher behavior
         shell: bash
         run: python3 -B scripts/test_windows_testnet_launcher.py

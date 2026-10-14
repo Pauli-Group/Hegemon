@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from check_release_launcher_policy import LauncherPolicyError, verify_source
+from check_release_launcher_policy import LauncherPolicyError, _read_bounded, verify_source
 
 
 def write_policy(root: Path, paths: tuple[str, ...] = ()) -> dict:
@@ -56,6 +56,43 @@ class ReleaseLauncherPolicyTests(unittest.TestCase):
         self.write("testnet-release/RELEASE-NOTES.md", "The old script used powershell -ep Bypass.\n")
         policy = write_policy(self.root, ("testnet-release/testnet-start.cmd", "testnet-release/README-WINDOWS.txt"))
         self.assertEqual(verify_source(self.root), policy)
+
+    def test_bounded_reader_preserves_crlf_and_ctrl_z_bytes(self) -> None:
+        content = b"@echo off\r\nrem before\x1arem after\r\n"
+        relative = "testnet-release/start.cmd"
+        self.write(relative, content)
+        self.assertEqual(_read_bounded(self.root, relative, len(content)), content)
+        self.assertEqual(_read_bounded(self.root, relative, len(content)),
+                         (self.root / relative).read_bytes())
+
+        # Exercise the Windows flag contract on every host. On POSIX remove
+        # the synthetic flag before the real open; Windows keeps its real flag.
+        native_binary = getattr(os, "O_BINARY", None)
+        binary_flag = native_binary if native_binary is not None else 0x8000
+        original_open = os.open
+
+        def open_binary(path, flags, *args, **kwargs):
+            self.assertTrue(flags & binary_flag, "raw-byte reader requires O_BINARY")
+            actual_flags = flags if native_binary is not None else flags & ~binary_flag
+            return original_open(path, actual_flags, *args, **kwargs)
+
+        with patch("check_release_launcher_policy.os.O_BINARY", binary_flag, create=True), \
+                patch("check_release_launcher_policy.os.open", side_effect=open_binary) as opened:
+            self.assertEqual(_read_bounded(self.root, relative, len(content)), content)
+            opened.assert_called_once()
+
+    def test_crlf_helper_requires_its_raw_digest_not_normalized_lf(self) -> None:
+        relative = "testnet-release/start.cmd"
+        content = b'@echo off\r\n"%~dp0hegemon-node.exe" --testnet %*\r\n'
+        self.write(relative, content)
+        policy = write_policy(self.root, (relative,))
+        self.assertEqual(verify_source(self.root), policy)
+        normalized = content.replace(b"\r\n", b"\n")
+        self.assertNotEqual(hashlib.sha256(content).hexdigest(),
+                            hashlib.sha256(normalized).hexdigest())
+        policy["launchers"][0]["sha256"] = hashlib.sha256(normalized).hexdigest()
+        self.write("config/release-launcher-policy.json", json.dumps(policy))
+        self.assert_rejected("digest differs")
 
     def test_original_bypass_is_rejected_even_with_approved_digest(self) -> None:
         self.write("testnet-release/testnet-start.cmd", 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0testnet-start.ps1" %*\n')

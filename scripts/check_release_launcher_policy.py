@@ -91,7 +91,12 @@ def _read_bounded(root: Path, relative: str, maximum: int) -> bytes:
         if not stat.S_ISREG(path.lstat().st_mode):
             _fail(f"release source must be a regular file: {relative}")
         nofollow = getattr(os, "O_NOFOLLOW", 0)
-        read_flags = os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0)
+        # Windows CRT text descriptors translate CRLF and stop at Ctrl-Z.
+        # Digests and size limits must apply to the exact committed bytes.
+        read_flags = (
+            os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_BINARY", 0)
+        )
         if nofollow and os.open in os.supports_dir_fd:
             directory_flags = os.O_RDONLY | os.O_DIRECTORY | nofollow
             descriptor = os.open(root, directory_flags)
