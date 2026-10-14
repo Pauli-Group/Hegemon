@@ -143,7 +143,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as repository-local workflow wiring plus checked ruleset-export evidence; live GitHub ruleset installation/enforcement remains an external administrative control. Internal maintenance binding refresh on 2026-10-10: maintenance download packaging, version and launcher checks, source provenance and Windows line endings in the release workflow and documentation; formal scope unchanged. Independent review remains pending. Internal Windows file-identity compatibility refresh on 2026-10-10: native file IO regression precedes release builds; Windows cross-path/handle comparison normalizes birth time while same-handle ctime mutation checks remain mandatory. Independent review remains pending.",
-        "content_blake3": "72f47278fd5de46bb4c580eb83cf194a10e0a165ea8f9aa9609693e011dfda9a"
+        "content_blake3": "90908f0b45706203b4376a1af81d5b5c8fb803430c96c437b77125be279d2729"
       },
       "falsification_cases": [
         {
