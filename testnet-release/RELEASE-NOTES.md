@@ -4,7 +4,7 @@ This maintenance release is based on the published v0.10.2 release and targets t
 
 ## Wallet RPC transport
 
-The native node serves HTTP JSON-RPC. One-shot wallet synchronization, status and send instructions use `http://127.0.0.1:9944`; the compatibility flag `--ws-url` and walletd field `ws_url` retain their existing names. Corrected operator runbooks and join skills no longer direct one-shot sync to the unsupported native WebSocket endpoint. Use your existing wallet store and allow a scan to complete before interpreting cached balances. A failed scan does not establish a zero on-chain balance.
+The native node serves HTTP JSON-RPC. One-shot wallet synchronization, status and send instructions use `http://127.0.0.1:9944`; the compatibility flag `--ws-url` and walletd field `ws_url` retain their existing names. Corrected operator runbooks and join skills no longer direct one-shot sync to the unsupported native WebSocket endpoint. Use your existing wallet store and allow a scan to complete before interpreting cached balances. A failed scan does not establish a zero on-chain balance. Desktop sync uses a shared two-hour session deadline, with cancellation retained, so a healthy first historical scan is not stopped by the previous short watchdogs. The reset option applies when the chain genesis changed; it does not force a same-chain scan from zero.
 
 ## Windows launcher without an execution-policy override
 
