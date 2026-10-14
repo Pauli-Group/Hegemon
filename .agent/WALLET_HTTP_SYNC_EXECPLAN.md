@@ -83,3 +83,12 @@ Revision 2026-10-14 01:31 UTC: complete and locally commit the implementation. C
 Revision 2026-10-14 01:45 UTC: profiling completed with fresh-scan success and incremental deadline. Attribute the measured no-RPC interval to tree hashing; do not present source-estimated write volume or stack-sample presence as measured physical IO or exact phase percentages. Root verifies the 923 fresh requests and CPU/wall measurements, and retains the false whole-run acceptance flag. User explicitly authorized cross-thread propagation; dispatch to both verified titles while preserving consensus versions and proof work.
 
 Revision 2026-10-14: verify acknowledgements from both named threads through bounded thread-status snapshots. Preserve mainnet single-writer ownership and its ongoing proof work; do not claim that acknowledgement alone is completed source integration. Final profiling worker confirms all own processes/listeners/watchers closed and actual encrypted store size 7,026,858 bytes.
+
+## Publication authorization and acceptance
+
+The user explicitly requested publication of v0.10.3. The coordinator will commit the final source and refreshed source-bound review package, push the maintenance branch and v0.10.3 tag, require every release job to pass, verify all downloaded assets against their manifests and reviewed helper bytes, execute a disposable downloaded-binary testnet relay/wallet/restart check, and publish the completed draft as latest. Existing dependency exceptions retain their approved October 24 expiry; no review statuses or proof posture may be promoted. Deployment of the OVH node is outside this publication step.
+
+- [ ] Refresh final source bindings and review archive without changing review status.
+- [ ] Run the complete remote release pipeline, including native Windows launcher fixtures.
+- [ ] Verify all four platform downloads and actual relay/wallet/restart behavior.
+- [ ] Publish v0.10.3 as latest and verify public release metadata.

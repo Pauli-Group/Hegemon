@@ -4,7 +4,7 @@ description: Join the Hegemon testnet using the native 0.10 launch profile, veri
 compatibility: Requires ./target/release/hegemon-node, network access to hegemon.pauli.group:30333, synchronized host time for mining, and ./target/release/walletd only when opening a wallet or exporting a mining address.
 metadata:
   repo: Reflexivity/Hegemon
-  version: "1.7"
+  version: "1.8"
 ---
 
 # Goal
@@ -28,7 +28,7 @@ Connect a Claude-assisted operator or end user to the public Hegemon 0.10 testne
    - macOS: `sudo systemsetup -getusingnetworktime`
    - Linux: `timedatectl status` or `chronyc tracking`
 3. Start a relay node first. This is the normal no-SSH join path for laptops and wallet users:
-   - `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333" \`
+   - `HEGEMON_SEEDS="hegemon.pauli.group:30333" \`
    - `HEGEMON_PQ_STRICT_COMPATIBILITY=1 \`
    - `./target/release/hegemon-node \`
    - `  --dev \`
@@ -47,7 +47,7 @@ Connect a Claude-assisted operator or end user to the public Hegemon 0.10 testne
    - `unset HEGEMON_WALLET_PASSPHRASE`
    - Restart the node with mining enabled:
    - `HEGEMON_MINE=1 \`
-   - `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333" \`
+   - `HEGEMON_SEEDS="hegemon.pauli.group:30333" \`
    - `HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \`
    - `HEGEMON_PQ_STRICT_COMPATIBILITY=1 \`
    - `./target/release/hegemon-node \`
@@ -76,8 +76,8 @@ Connect a Claude-assisted operator or end user to the public Hegemon 0.10 testne
    - Allow a first scan to finish before interpreting cached balances. Do not use `force_rescan` or replace the wallet as a transport workaround.
 
 # Notes
-- The approved public 0.10 bootstrap list is `hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333`. Do not substitute legacy hostnames or raw IPs; peers learn additional public endpoints through P2P discovery.
+- The approved public 0.10 testnet bootstrap list is `hegemon.pauli.group:30333`. `devnet.hegemonprotocol.com:30333` is reserved for devnet; do not add it to testnet seeds. Do not substitute legacy hostnames or raw IPs; peers learn additional public endpoints through P2P discovery.
 - Keep host clock sync enabled with NTP or chrony. PoW import rejects future-skewed timestamps.
-- If genesis differs, stop the node and wipe the base path before restarting with the matching release/profile.
+- If genesis differs, stop the node and preserve existing node data and wallet stores. Verify the intended network, release/profile and trusted genesis. If separate chain state is required, use a new base path and keep the original intact.
 - Do not enter a public node RPC address into the desktop app. Run a local relay node with the approved seed and let the desktop connect to localhost.
 - Do not provision `hegemon-prover` or `hegemon-prover-worker` for a normal testnet join. The live path uses local native tx-leaf verification plus same-block `recursive_block_v2` artifacts.
