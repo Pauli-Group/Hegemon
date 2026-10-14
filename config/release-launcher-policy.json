@@ -7,7 +7,7 @@
     },
     {
       "path": "testnet-release/testnet-start.cmd",
-      "sha256": "4d03f5fe56fc88cd817b3ad25b84979fdc3c403f0839085576f4c50be971e49f"
+      "sha256": "9387b80d254b020ff4a6535835e380f9bebf49ea9fc6efef4f2b442695ff73ae"
     },
     {
       "path": "testnet-release/testnet-start.sh",

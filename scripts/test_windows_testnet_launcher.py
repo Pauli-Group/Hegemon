@@ -59,6 +59,16 @@ class TestWindowsLauncherSource(unittest.TestCase):
         cls.source = LAUNCHER.read_text(encoding="utf-8")
         cls.lines = cls.source.splitlines()
 
+    def test_cmd_bytes_have_consistent_crlf_line_endings(self):
+        # CMD label scanning can fail on LF-only files even when the label is
+        # present. Package the exact CRLF bytes, without relying on checkout EOL.
+        raw = LAUNCHER.read_bytes()
+        self.assertGreater(raw.count(b"\r\n"), 0)
+        self.assertTrue(raw.endswith(b"\r\n"))
+        remaining = raw.replace(b"\r\n", b"")
+        self.assertNotIn(b"\n", remaining, "CMD launcher contains a lone LF")
+        self.assertNotIn(b"\r", remaining, "CMD launcher contains a lone CR")
+
     def test_native_launcher_has_no_script_policy_or_dynamic_evaluation(self):
         self.assertNotRegex(self.source.lower(), r"powershell|pwsh|executionpolicy|encodedcommand")
         self.assertIn("setlocal EnableExtensions DisableDelayedExpansion", self.source)

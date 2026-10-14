@@ -1,0 +1,2 @@
+# Release helper checksums cover these exact Windows-native CRLF bytes.
+/testnet-release/testnet-start.cmd -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
