@@ -191,17 +191,29 @@ exit /b 2
 
 :validate_port
 if not defined launcher_port_input exit /b 1
+rem Empty SET removes the variable. Stop before applying another substitution
+rem to an undefined value, which CMD can expand into literal substitution text.
 set "launcher_port_invalid=%launcher_port_input:0=%"
+if not defined launcher_port_invalid goto port_digits_validated
 set "launcher_port_invalid=%launcher_port_invalid:1=%"
+if not defined launcher_port_invalid goto port_digits_validated
 set "launcher_port_invalid=%launcher_port_invalid:2=%"
+if not defined launcher_port_invalid goto port_digits_validated
 set "launcher_port_invalid=%launcher_port_invalid:3=%"
+if not defined launcher_port_invalid goto port_digits_validated
 set "launcher_port_invalid=%launcher_port_invalid:4=%"
+if not defined launcher_port_invalid goto port_digits_validated
 set "launcher_port_invalid=%launcher_port_invalid:5=%"
+if not defined launcher_port_invalid goto port_digits_validated
 set "launcher_port_invalid=%launcher_port_invalid:6=%"
+if not defined launcher_port_invalid goto port_digits_validated
 set "launcher_port_invalid=%launcher_port_invalid:7=%"
+if not defined launcher_port_invalid goto port_digits_validated
 set "launcher_port_invalid=%launcher_port_invalid:8=%"
+if not defined launcher_port_invalid goto port_digits_validated
 set "launcher_port_invalid=%launcher_port_invalid:9=%"
 if defined launcher_port_invalid exit /b 1
+:port_digits_validated
 :trim_port_zeroes
 if not "%launcher_port_input:~0,1%"=="0" goto port_length_checked
 set "launcher_port_input=%launcher_port_input:~1%"

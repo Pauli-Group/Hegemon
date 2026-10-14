@@ -91,6 +91,13 @@ class TestWindowsLauncherSource(unittest.TestCase):
         self.assertIn('if not "%launcher_port_input:~5,1%"=="" exit /b 1', validator)
         self.assertIn("if %launcher_valid_port% GTR 65535 exit /b 1", validator)
         self.assertIn(":trim_port_zeroes", validator)
+        # Once all decimal digits are removed, no later expansion may read
+        # that now-undefined variable: CMD can turn it into literal "digit=".
+        for digit in "012345678":
+            source = "input" if digit == "0" else "invalid"
+            assignment = 'set "launcher_port_invalid=%launcher_port_' + source + ':' + digit + '=%"'
+            self.assertIn(assignment + "\nif not defined launcher_port_invalid goto port_digits_validated", validator)
+        self.assertLess(validator.index(":port_digits_validated\n"), arithmetic)
 
     def test_status_uses_fixed_curl_and_only_validated_loopback_url(self):
         self.assertIn('set "launcher_curl=%SystemRoot%\\System32\\curl.exe"', self.lines)
@@ -363,6 +370,26 @@ class TestWindowsTestnetLauncher(unittest.TestCase):
         call = self.read_node_call(self.run_launcher("-RpcPort", "00009948", "-Port", "000030338"))
         self.assertEqual(call["args"][call["args"].index("--rpc-port") + 1], "9948")
         self.assertEqual(call["args"][call["args"].index("--port") + 1], "30338")
+
+    def test_valid_ports_do_not_reexpand_an_empty_digit_residue(self):
+        # Values exhausted at every digit-removal stage, both range boundaries,
+        # and a digit-9 control. All-zero input is intentionally not a valid port.
+        values = (
+            ("1", "1"), ("11111", "11111"), ("22222", "22222"),
+            ("30333", "30333"), ("44444", "44444"), ("55555", "55555"),
+            ("60606", "60606"), ("7777", "7777"), ("8888", "8888"),
+            ("9944", "9944"), ("65535", "65535"),
+            ("00000001", "1"), ("000030333", "30333"), ("00000008", "8"),
+        )
+        for option, native_option in (("-RpcPort", "--rpc-port"), ("-Port", "--port")):
+            for raw, normalized in values:
+                with self.subTest(option=option, port=raw):
+                    call = self.read_node_call(self.run_launcher(option, raw))
+                    self.assert_safe_profile(call)
+                    self.assertEqual(call["args"][call["args"].index(native_option) + 1], normalized)
+            for raw in ("0", "00000000"):
+                with self.subTest(option=option, port=raw):
+                    self.assert_rejected(self.run_launcher(option, raw))
 
     def test_trailing_backslash_is_preserved_in_node_argv(self):
         directory = str(self.profile) + "\\"
