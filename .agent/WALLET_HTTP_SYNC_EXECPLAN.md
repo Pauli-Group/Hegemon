@@ -92,3 +92,5 @@ The user explicitly requested publication of v0.10.3. The coordinator will commi
 - [ ] Run the complete remote release pipeline, including native Windows launcher fixtures.
 - [ ] Verify all four platform downloads and actual relay/wallet/restart behavior.
 - [ ] Publish v0.10.3 as latest and verify public release metadata.
+
+Publication attempt 1: the dependency gate correctly rejected five new quinn-proto advisories before any draft/assets were produced. Update only quinn-proto 0.11.16 to patched 0.11.18, preserve the five existing approved exceptions, repeat the fresh dependency audit, renew computed source bindings and the archive, and retag the unpublished candidate for a complete new pipeline. Retain the failed run as evidence.

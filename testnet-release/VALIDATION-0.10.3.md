@@ -1,6 +1,6 @@
 # v0.10.3 maintenance preparation validation
 
-Prepared on 2026-10-14 UTC in the isolated `codex/testnet-0-10-3-wallet-launcher` branch, starting from published v0.10.2 (`ea3465c4bfb07d00501318772ea88863cb19fb37`). This is local source/build validation. No v0.10.3 release has been pushed, tagged, published or deployed by this work.
+Prepared on 2026-10-14 UTC in the isolated `codex/testnet-0-10-3-wallet-launcher` branch, starting from published v0.10.2 (`ea3465c4bfb07d00501318772ea88863cb19fb37`). This records the local source/build validation checkpoint before publication. The publication pipeline repair below records subsequent tagged execution; deployment is separate.
 
 ## Changes
 
@@ -44,3 +44,7 @@ Local evidence: `/private/tmp/hegemon-wallet-http-sync-investigation`, including
 ## Authorized cross-thread propagation
 
 The user requested propagation to `Plan the path to mainnet` and `Recursive proofs`. Both received the tested source commit, applicable HTTP/default/watchdog and no-policy-bypass fixes, validation results and measured scan report. Both acknowledged. Mainnet coordinates common source adoption; Recursive proofs records the operating constraints and verifies adoption without concurrent shared-file edits. Integration in those ongoing tasks is separate from this local testnet commit and is not asserted complete by acknowledgement alone.
+
+## Publication pipeline repair
+
+The first tagged pipeline (38499238263, source `99f3e422740c72f48159a5f330a9ec09b50e95df`) stopped at the dependency audit before producing a draft or platform artifacts. Five quinn-proto advisories published on October 12 affected locked version 0.11.16. The maintenance lockfile is updated to upstream patched 0.11.18; no new exception is added. The finalized source bindings and archive are regenerated before replacing the unpublished failed tag and rerunning all release gates. The earlier local-preparation results remain scoped to their recorded source.

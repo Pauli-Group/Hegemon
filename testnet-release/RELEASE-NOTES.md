@@ -12,6 +12,10 @@ The native node serves HTTP JSON-RPC. One-shot wallet synchronization, status an
 
 A reviewed launcher hash policy is checked at build, native-manifest, assembly and download-packaging boundaries. It rejects changed or unlisted helpers and execution-policy weakening in the bounded release producers. This is a release-helper policy gate, not a general shell-code or supply-chain security proof. Windows behavior must pass the Windows release job before publication; portable source tests do not substitute for that execution.
 
+## Dependency maintenance
+
+The release lockfile updates `quinn-proto` from 0.11.16 to the upstream patched 0.11.18 version for newly published denial-of-service advisories. No new dependency-audit exceptions are added.
+
 ## Retained difficulty correction
 
 v0.10.2 introduced the corrected ten-interval difficulty measurement at block 120,000. v0.10.3 retains exactly that schedule: historical blocks below 120,000 use legacy validation, and eligible retarget boundaries at and after activation use the corrected rule. Mining and validation share the same schedule, without a command-line or environment override. Nodes already on v0.10.2 share these consensus rules; v0.10.0/v0.10.1 do not implement the activation schedule and can diverge after activation.
