@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "launchers": [
+    {
+      "path": "testnet-release/TESTNET-README.txt",
+      "sha256": "58cfaa62c12b512d8f0ff3e2d1bd15ab93f2b24e2edb15e3a85bd91dd5973226"
+    },
+    {
+      "path": "testnet-release/testnet-start.cmd",
+      "sha256": "b58a7de094d268d45e3c75f6c4d08ccdcf0a96084d8310551dd38ffff28c3fd9"
+    },
+    {
+      "path": "testnet-release/testnet-start.sh",
+      "sha256": "c534baaa070a14fd68753bab65c370c474b978dcefed9741f0f5777cbdec5f13"
+    }
+  ]
+}

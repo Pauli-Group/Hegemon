@@ -58,6 +58,9 @@ run_test() {
   cargo test -p hegemon-node --lib
   cargo test -p hegemon-node --lib --no-default-features
   cargo test --test security_pipeline -- --nocapture
+  python3 -B scripts/check_release_launcher_policy.py >/dev/null
+  python3 -B scripts/test_check_release_launcher_policy.py
+  python3 -B scripts/test_release_launcher_boundaries.py
   python3 -B scripts/test_release_artifact_manifest.py
   python3 -B scripts/test_check_release_crypto_profile.py
 }

@@ -12,7 +12,7 @@ fi
 
 ./target/release/wallet node-sync \
   --store ~/.hegemon-wallet \
-  --ws-url ws://127.0.0.1:9944
+  --ws-url http://127.0.0.1:9944
 
 ./target/release/wallet status \
   --store ~/.hegemon-wallet

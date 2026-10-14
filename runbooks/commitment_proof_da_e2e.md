@@ -48,7 +48,7 @@ HEGEMON_MINER_ADDRESS=$(printf '%s\n{"id":1,"method":"status.get","params":{}}\n
 ```bash
 RPC_PORT=9944
 # If 9944 is already in use on your machine, pick another port (example: 9955)
-# and substitute it everywhere below (WS + HTTP URLs).
+# and substitute it everywhere below (HTTP RPC URLs).
 #
 #   RPC_PORT=9955
 #
@@ -66,8 +66,13 @@ Tip: for background runs, redirect logs to a file so you can capture the `DA enc
 
 ## 4. Sync the miner wallet
 
+Use the native node's HTTP endpoint. `ws_url` remains the compatibility field
+name for these one-shot walletd requests. The passphrases below are for disposable
+local test wallets only; for an existing wallet, read its passphrase privately
+and pass it through stdin instead of placing it in shell history.
+
 ```bash
-printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"ws://127.0.0.1:'"$RPC_PORT"'","force_rescan":true}}\n' "testwallet1" \
+printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"http://127.0.0.1:'"$RPC_PORT"'","force_rescan":true}}\n' "testwallet1" \
   | HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/walletd --store /tmp/hegemon-wallet-a --mode open
 ```
 
@@ -99,8 +104,8 @@ EOF
 ## 6. Send a shielded transfer
 
 ```bash
-REQ=$(jq -nc --arg ws "ws://127.0.0.1:'"$RPC_PORT"'" --argjson recipients "$(jq -c '.' /tmp/hegemon-recipients-e2e.json)" \
-  '{id:1,method:"tx.send",params:{ws_url:$ws,recipients:$recipients,fee:0,auto_consolidate:true}}')
+REQ=$(jq -nc --arg rpc "http://127.0.0.1:${RPC_PORT}" --argjson recipients "$(jq -c '.' /tmp/hegemon-recipients-e2e.json)" \
+  '{id:1,method:"tx.send",params:{ws_url:$rpc,recipients:$recipients,fee:0,auto_consolidate:true}}')
 printf '%s\n%s\n' "testwallet1" "$REQ" \
   | HEGEMON_WALLET_PROVER_FAST=1 HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/walletd --store /tmp/hegemon-wallet-a --mode open
 ```
@@ -168,7 +173,7 @@ curl -s -H "Content-Type: application/json" \
 ## 9. Verify recipient saw the note (optional)
 
 ```bash
-printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"ws://127.0.0.1:'"$RPC_PORT"'","force_rescan":true}}\n' "testwallet2" \
+printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"http://127.0.0.1:'"$RPC_PORT"'","force_rescan":true}}\n' "testwallet2" \
   | HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/walletd --store /tmp/hegemon-wallet-b --mode open
 ```
 

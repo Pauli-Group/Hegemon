@@ -1,6 +1,6 @@
 [package]
 name = "wallet"
-version = "0.10.2"
+version = "0.10.3"
 edition = "2021"
 
 [dependencies]
@@ -40,6 +40,7 @@ twox-hash = "1.6"
 zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]
+soketto = { version = "0.8.1", default-features = false }
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"

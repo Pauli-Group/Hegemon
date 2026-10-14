@@ -16,9 +16,20 @@ For fresh-testnet bring-up, if you are following [config/testnet-initialization.
 
 ## 2. Create or restore a wallet
 
-Create a new wallet store (walletd):
+Use your existing wallet store if you already have one. For the walletd examples below,
+read its passphrase privately in Bash; do not paste it into commands or export it:
+
 ```bash
-printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "your-secure-passphrase" \
+read -r -s -p "Wallet passphrase: " HEGEMON_WALLET_PASSPHRASE
+printf '\n' >&2
+```
+
+walletd reads the passphrase from the first stdin line. Run the following walletd
+commands in that same shell, and `unset HEGEMON_WALLET_PASSPHRASE` when finished.
+
+Create a new wallet store only if you do not already own one (walletd):
+```bash
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "$HEGEMON_WALLET_PASSPHRASE" \
   | ./target/release/walletd --store ~/.hegemon-wallet --mode create
 ```
 
@@ -27,7 +38,7 @@ printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "your-secure-passphras
 To initialize from an existing root secret or viewing key, use the wallet CLI:
 ```bash
 cargo build --release -p wallet
-./target/release/wallet init --store ~/.hegemon-wallet --passphrase "your-secure-passphrase" --root-hex <HEX>
+./target/release/wallet init --store ~/.hegemon-wallet --root-hex <HEX>
 # Or: --viewing-key /path/to/ivk.json
 ```
 
@@ -35,7 +46,7 @@ cargo build --release -p wallet
 
 View your wallet status to get your shielded address:
 ```bash
-printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "your-secure-passphrase" \
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "$HEGEMON_WALLET_PASSPHRASE" \
   | ./target/release/walletd --store ~/.hegemon-wallet --mode open \
   | jq '.result'
 ```
@@ -45,7 +56,7 @@ Output includes:
 
 Export the shielded address for mining:
 ```bash
-export HEGEMON_MINER_ADDRESS=$(printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "your-secure-passphrase" \
+export HEGEMON_MINER_ADDRESS=$(printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "$HEGEMON_WALLET_PASSPHRASE" \
   | ./target/release/walletd --store ~/.hegemon-wallet --mode open \
   | jq -r '.result.primaryAddress')
 ```
@@ -125,18 +136,26 @@ Use `hegemon_consensusStatus` and `hegemon_miningStatus` to confirm `syncing=fal
 
 ## 8. Check your shielded balance
 
-After mining some blocks, sync your wallet to detect received notes:
+After mining some blocks, sync your existing wallet to detect received notes. The
+native node serves HTTP JSON-RPC; `ws_url` is the historical request field name.
+Use `http://127.0.0.1:9944` for this one-shot sync, not `ws://`. A WebSocket
+handshake receiving HTTP 200 means the wrong transport was selected.
+
+Enter the passphrase with the hidden Bash prompt above if it is no longer set.
+Allow the scan to complete before interpreting the cached balance. Do not reset
+the wallet or force a rescan merely because transport failed:
 
 ```bash
-printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"ws://127.0.0.1:9944","force_rescan":false}}\n' "your-secure-passphrase" \
+printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"http://127.0.0.1:9944","force_rescan":false}}\n' "$HEGEMON_WALLET_PASSPHRASE" \
   | ./target/release/walletd --store ~/.hegemon-wallet --mode open
 ```
 
 Check your balance:
 ```bash
-printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "your-secure-passphrase" \
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "$HEGEMON_WALLET_PASSPHRASE" \
   | ./target/release/walletd --store ~/.hegemon-wallet --mode open \
   | jq '.result'
+unset HEGEMON_WALLET_PASSPHRASE
 ```
 
 Each mined block adds ~4.98 HEG to your shielded balance (subject to halving every ~4 years).

@@ -1434,7 +1434,7 @@ dependencies = [
 
 [[package]]
 name = "hegemon-node"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5011,7 +5011,7 @@ dependencies = [
 
 [[package]]
 name = "wallet"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "anyhow",
  "argon2",
@@ -5042,6 +5042,7 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "sha2 0.10.9",
+ "soketto",
  "state-merkle",
  "superneo-hegemon",
  "synthetic-crypto",
@@ -5069,7 +5070,7 @@ dependencies = [
 
 [[package]]
 name = "walletd"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "anyhow",
  "bincode",

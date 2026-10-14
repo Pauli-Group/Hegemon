@@ -134,6 +134,13 @@ def job_block(workflow: str, job_name: str) -> str:
     return match.group("body")
 
 
+
+def require_unconditional_job(workflow: str, job_name: str) -> None:
+    block = job_block(workflow, job_name)
+    if re.search(r"(?m)^    (?:if|continue-on-error):", block):
+        raise SystemExit(f"{job_name}: required regression job must be unconditional and fail closed")
+
+
 def require_contains(name: str, text: str, needle: str) -> None:
     if needle not in text:
         raise SystemExit(f"{name}: missing {needle!r}")
@@ -146,6 +153,7 @@ class WorkflowStep:
     uses: str | None
     run: str | None
     condition: str | None
+    continue_on_error: str | None = None
 
 
 def _yaml_scalar(value: str) -> str:
@@ -187,7 +195,7 @@ def workflow_steps(workflow: str, job_name: str) -> list[WorkflowStep]:
         fields: dict[str, str] = {}
         run_lines: list[str] | None = None
         for line_index, line in enumerate([f"        {first}", *step_lines[1:]]):
-            match = re.match(r"^        (name|uses|if|run):(?:\s*(.*))?$", line)
+            match = re.match(r"^        (name|uses|if|run|continue-on-error):(?:\s*(.*))?$", line)
             if match is None:
                 continue
             key = match.group(1)
@@ -211,6 +219,7 @@ def workflow_steps(workflow: str, job_name: str) -> list[WorkflowStep]:
                 uses=fields.get("uses"),
                 run=fields.get("run"),
                 condition=fields.get("if"),
+                continue_on_error=fields.get("continue-on-error"),
             )
         )
     if not steps:
@@ -309,7 +318,10 @@ def step_executes_command(
     executable: str,
     required_tokens: tuple[str, ...] = (),
 ) -> bool:
-    if step.run is None or step.condition is not None:
+    if step.run is None or step.condition is not None or (
+        step.continue_on_error is not None
+        and not _condition_is_disabled(step.continue_on_error)
+    ):
         return False
     expected = executable.removeprefix("./")
     logical = _logical_shell_lines(step.run)
@@ -323,6 +335,10 @@ def step_executes_command(
         command_index = 0
         if tokens[0] in {"bash", "sh", "python", "python3"}:
             command_index = 1
+            # Only the reviewed bytecode-suppression option is transparent.
+            # -c/-m/other interpreter modes cannot masquerade as script execution.
+            if tokens[0] in {"python", "python3"} and len(tokens) > 1 and tokens[1] == "-B":
+                command_index = 2
         if command_index >= len(tokens):
             continue
         command = tokens[command_index].removeprefix("./")
@@ -355,7 +371,10 @@ def require_executable_command(
 
 def require_action(name: str, steps: list[WorkflowStep], action: str) -> int:
     for step in steps:
-        if step.condition is not None or step.uses is None:
+        if step.condition is not None or step.uses is None or (
+            step.continue_on_error is not None
+            and not _condition_is_disabled(step.continue_on_error)
+        ):
             continue
         if step.uses.split("@", 1)[0] == action:
             return step.index
@@ -441,8 +460,44 @@ def require_asset_package(
     )
 
 
+
+WALLET_HTTP_REGRESSION_COMMANDS = (
+    ("cargo", "test", "--locked", "-p", "wallet", "--test", "node_rpc"),
+    ("cargo", "test", "--locked", "-p", "wallet", "--bin", "wallet", "rpc_argument_tests"),
+    ("cargo", "test", "--locked", "-p", "wallet", "--lib", "node_rpc::tests"),
+)
+APP_RPC_REGRESSION_COMMAND = (
+    "npm", "--prefix", "hegemon-app", "test", "--", "tests/connections.test.ts",
+    "tests/rpcEndpoint.test.ts", "tests/walletSync.test.ts", "tests/walletdProtocol.test.ts",
+)
+
+
+def require_exact_regression(name: str, steps: list[WorkflowStep], command: tuple[str, ...]) -> int:
+    for step in steps:
+        if not step_executes_command(step, command[0], command[1:]):
+            continue
+        lines = [line for line in _logical_shell_lines(step.run or "") if line != "set -euo pipefail"]
+        if len(lines) == 1 and _command_tokens(lines[0]) == list(command):
+            return step.index
+    raise SystemExit(f"{name}: exact executable regression command {command!r} missing")
+
+
+def require_wallet_http_regressions(name: str, steps: list[WorkflowStep]) -> None:
+    for command in WALLET_HTTP_REGRESSION_COMMANDS:
+        require_exact_regression(name, steps, command)
+
+
+def require_app_rpc_regressions(name: str, steps: list[WorkflowStep]) -> None:
+    install_index = require_executable_command(name, steps, "npm", ("ci", "--prefix", "hegemon-app"))
+    tests_index = require_exact_regression(name, steps, APP_RPC_REGRESSION_COMMAND)
+    workflow_index = require_executable_command(name, steps, "scripts/check-app-no-ssh-e2e.sh")
+    require_step_order(name + " install/regressions/workflow order", install_index, tests_index, workflow_index)
+
+
 def check_ci_workflow(path: Path) -> None:
     workflow = path.read_text(encoding="utf-8")
+    require_unconditional_job(workflow, "core-tests")
+    require_unconditional_job(workflow, "app-no-ssh-e2e")
     release_build = job_block(workflow, "release-build")
     dependency_audit = job_block(workflow, "dependency-audit")
     formal_core = job_block(workflow, "formal-core")
@@ -453,6 +508,8 @@ def check_ci_workflow(path: Path) -> None:
     dependency_steps = workflow_steps(workflow, "dependency-audit")
     app_steps = workflow_steps(workflow, "app-no-ssh-e2e")
     release_steps = workflow_steps(workflow, "release-build")
+    require_wallet_http_regressions("CI wallet HTTP/default regression gate", workflow_steps(workflow, "core-tests"))
+    require_app_rpc_regressions("CI app RPC/watchdog regression gate", app_steps)
     require_lean_installer_outside_worktree("formal-core Lean installer", formal_core)
     require_lean_installer_outside_worktree("core-tests Lean installer", core_tests)
     require_lean_installer_outside_worktree(
@@ -512,6 +569,8 @@ def check_ci_workflow(path: Path) -> None:
 
 def check_release_workflow(path: Path) -> None:
     workflow = path.read_text(encoding="utf-8")
+    require_unconditional_job(workflow, "security-gates")
+    require_unconditional_job(workflow, "app-no-ssh-e2e")
     if re.search(r"(?m)^permissions:\n\s+contents:\s+write\b", workflow):
         raise SystemExit("release workflow must not grant workflow-wide contents: write")
     if not re.search(r"(?m)^permissions:\n\s+contents:\s+read\b", workflow):
@@ -547,6 +606,15 @@ def check_release_workflow(path: Path) -> None:
             raise SystemExit("release workflow checkout must disable persist-credentials")
     security_steps = workflow_steps(workflow, "security-gates")
     app_steps = workflow_steps(workflow, "app-no-ssh-e2e")
+    require_wallet_http_regressions("release wallet HTTP/default regression gate", security_steps)
+    require_app_rpc_regressions("release app RPC/watchdog regression gate", app_steps)
+    for script in (
+        "scripts/check_release_launcher_policy.py",
+        "scripts/test_check_release_launcher_policy.py",
+        "scripts/test_release_launcher_boundaries.py",
+        "scripts/test_check_ci_release_gate_policy.py",
+    ):
+        require_executable_command("release launcher policy gate", security_steps, script)
     require_executable_command(
         "release security-gates", security_steps, "scripts/dependency-audit-gate.sh"
     )
@@ -605,6 +673,16 @@ def check_release_workflow(path: Path) -> None:
             steps,
             "scripts/build_release_artifacts.sh",
         )
+        if job_name == "build-windows":
+            runner = re.search(r"(?m)^    runs-on:\s*([^#\s]+)", block)
+            if runner is None or _yaml_scalar(runner.group(1)) != "windows-latest":
+                raise SystemExit("build-windows launcher tests must execute on native windows-latest")
+            if re.search(r"(?m)^    (?:if|continue-on-error):", block):
+                raise SystemExit("build-windows launcher gate must be unconditional and fail closed")
+            launcher_index = require_executable_command(
+                "build-windows launcher behavior", steps, "scripts/test_windows_testnet_launcher.py"
+            )
+            require_step_order("build-windows launcher-before-build order", launcher_index, build_index)
         if job_name == "build-macos-intel":
             manifest_path = "target/x86_64-apple-darwin/release/hegemon-release-artifacts.json"
             node_bin = "target/x86_64-apple-darwin/release/hegemon-node"
@@ -686,6 +764,11 @@ def check_release_workflow(path: Path) -> None:
     if intel_runner is None or _yaml_scalar(intel_runner.group(1)) != "macos-15-intel":
         raise SystemExit("build-macos-intel must execute on native macos-15-intel")
 
+    create_needs = re.search(r"(?m)^    needs:\s*\[([A-Za-z0-9_, -]+)\]\s*$", create_release)
+    if create_needs is None or "build-windows" not in {
+        value.strip() for value in create_needs.group(1).split(",")
+    }:
+        raise SystemExit("create-release must depend on the Windows launcher/build gate")
     create_steps = workflow_steps(workflow, "create-release")
     download_index = require_action(
         "create-release artifact download", create_steps, "actions/download-artifact"
@@ -708,6 +791,12 @@ def check_release_workflow(path: Path) -> None:
             "release-assets",
         ),
     )
+    downloads_index = require_executable_command(
+        "create-release verified testnet download packaging", create_steps,
+        "scripts/package_testnet_downloads.py",
+        ("--assets-dir", "release-assets", "--launchers-dir", "testnet-release",
+         "--version", "${GITHUB_REF_NAME#v}"),
+    )
     release_index = require_action(
         "create-release publication", create_steps, "softprops/action-gh-release"
     )
@@ -715,6 +804,7 @@ def check_release_workflow(path: Path) -> None:
         "create-release download/prepare/publish order",
         download_index,
         prepare_index,
+        downloads_index,
         release_index,
     )
     print(f"tag release workflow gate passed: {path}")

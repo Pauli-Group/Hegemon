@@ -39,13 +39,19 @@ class PackagingTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="hegemon-download-test-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.launchers = self.root / "release"
+        self.launchers = self.root / "testnet-release"
         self.launchers.mkdir()
         (self.root / "Cargo.lock").write_text("fixture lock\n")
-        for name in ("TESTNET-README.txt", "testnet-start.sh", "testnet-start.ps1", "testnet-start.cmd"):
+        for name in ("TESTNET-README.txt", "testnet-start.sh", "testnet-start.cmd"):
             (self.launchers / name).write_text(f"fixture {name}\n")
+        (self.root / "config").mkdir()
+        self.policy_path = self.root / "config/release-launcher-policy.json"
+        self.policy_path.write_text(json.dumps({"schema_version": 1, "launchers": [
+            {"path": path.relative_to(self.root).as_posix(), "sha256": downloads.digest(path.read_bytes())}
+            for path in sorted(self.launchers.iterdir())
+        ]}))
         git(self.root, "init", "--quiet")
-        git(self.root, "add", "Cargo.lock", "release")
+        git(self.root, "add", "Cargo.lock", "testnet-release", "config")
         git(self.root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "fixture")
         self.provenance = {
             "source_head": git(self.root, "rev-parse", "HEAD"),
@@ -122,6 +128,38 @@ class PackagingTests(unittest.TestCase):
         for entry in first_result["archives"]:
             self.assertEqual((self.assets / entry["name"]).read_bytes(), (second / entry["name"]).read_bytes())
 
+    def test_windows_download_excludes_powershell_helper(self):
+        result = self.package()
+        entry = next(item for item in result["archives"] if item["platform"] == "windows-x86_64")
+        with zipfile.ZipFile(self.assets / entry["name"]) as archive:
+            self.assertIn("testnet-start.cmd", archive.namelist())
+            self.assertNotIn("testnet-start.ps1", archive.namelist())
+        self.assertEqual([item["name"] for item in entry["launchers"]], ["TESTNET-README.txt", "testnet-start.cmd"])
+
+    def test_legacy_powershell_source_rejected_before_archive(self):
+        (self.launchers / "testnet-start.ps1").write_text("legacy source\n")
+        with self.assertRaisesRegex(manifest.ManifestError, "unsupported executable helper"):
+            self.package()
+        self.assert_no_archives()
+
+    def test_launcher_change_after_policy_preflight_rejected(self):
+        original = manifest.verify_launcher_policy
+        def change_after_check(root):
+            policy = original(root)
+            (self.launchers / "testnet-start.cmd").write_text("changed after preflight\n")
+            return policy
+        with patch.object(manifest, "verify_launcher_policy", side_effect=change_after_check):
+            with self.assertRaisesRegex(manifest.ManifestError, "differs from reviewed policy"):
+                self.package()
+        self.assert_no_archives()
+
+    def test_alternative_launcher_directory_rejected(self):
+        alternative = self.root / "release"
+        alternative.mkdir()
+        with self.assertRaisesRegex(manifest.ManifestError, "policy-bound"):
+            downloads.package_downloads(self.root, self.assets, alternative, "0.10.1")
+        self.assert_no_archives()
+
     def test_corrupt_binary_rejected_before_any_output(self):
         path = self.assets / "wallet-windows-x86_64.exe"
         path.write_bytes(path.read_bytes() + b"corrupted")
@@ -169,6 +207,12 @@ class PackagingTests(unittest.TestCase):
 
     def test_launcher_must_match_committed_source(self):
         (self.launchers / "testnet-start.sh").write_text("unreviewed launcher\n")
+        # Updating the digest alone must not bypass the existing HEAD binding.
+        policy = json.loads(self.policy_path.read_text())
+        for item in policy["launchers"]:
+            if item["path"].endswith("testnet-start.sh"):
+                item["sha256"] = downloads.digest((self.launchers / "testnet-start.sh").read_bytes())
+        self.policy_path.write_text(json.dumps(policy))
         with self.assertRaisesRegex(manifest.ManifestError, "differs from committed source"):
             self.package()
         self.assert_no_archives()

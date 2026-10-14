@@ -134,10 +134,9 @@ fn retarget_activation_preserves_reopened_history_and_agrees_with_work_status_an
     assert!(node.header_by_hash(&stale.hash).unwrap().is_none());
 
     let corrected = retarget_test_child(&chain, parent.pow_bits, 60_000, 20_030);
-    assert!(
-        node.import_announced_block(corrected.clone())
-            .expect("corrected boundary bits import")
-    );
+    assert!(node
+        .import_announced_block(corrected.clone())
+        .expect("corrected boundary bits import"));
     assert_eq!(node.best_meta().hash, corrected.hash);
     node.validate_canonical_sync_block_meta(&corrected)
         .expect("sync serving accepts the activated canonical block");
@@ -298,10 +297,9 @@ fn retarget_activation_reorg_uses_the_side_branch_ten_interval_history() {
     assert!(native_meta_better_than(&winner, &canonical[30]));
 
     node.reset_block_meta_load_counters();
-    assert!(
-        node.import_announced_block(winner.clone())
-            .expect("activation-spanning side branch replay and reorg")
-    );
+    assert!(node
+        .import_announced_block(winner.clone())
+        .expect("activation-spanning side branch replay and reorg"));
     assert_eq!(node.best_meta().hash, winner.hash);
     assert_eq!(node.hash_by_height(29).unwrap(), Some(side_parent.hash));
     assert_eq!(node.hash_by_height(30).unwrap(), Some(winner.hash));

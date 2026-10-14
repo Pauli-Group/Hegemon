@@ -55,6 +55,19 @@ describe('normalizeLoopbackWalletRpcEndpoint', () => {
 });
 
 describe('normalizeLoopbackWalletOneShotRpcEndpoint', () => {
+  it('adapts legacy wallet requests while preserving WebSocket validation for subscription consumers', () => {
+    const endpoint = 'wss://localhost:9955/rpc?client=wallet';
+    expect(normalizeLoopbackWalletRpcEndpoint(endpoint)).toBe(endpoint);
+    expect(normalizeLoopbackWalletOneShotRpcEndpoint(endpoint)).toBe(
+      'https://localhost:9955/rpc?client=wallet'
+    );
+  });
+
+  it('preserves explicit HTTP routes, query strings and IPv6 loopback hosts', () => {
+    expect(normalizeLoopbackWalletOneShotRpcEndpoint('http://[::1]:9955/rpc?client=wallet')).toBe(
+      'http://[::1]:9955/rpc?client=wallet'
+    );
+  });
   it('maps ws to http and wss to https', () => {
     expect(normalizeLoopbackWalletOneShotRpcEndpoint('ws://127.0.0.1:9944')).toBe(
       'http://127.0.0.1:9944/'

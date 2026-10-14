@@ -26,6 +26,8 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
+python3 -B "$ROOT/scripts/check_release_launcher_policy.py" --root "$ROOT" >/dev/null
+
 HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
 if [[ -z "$HOST_TRIPLE" ]]; then
   echo "could not determine rustc host triple" >&2

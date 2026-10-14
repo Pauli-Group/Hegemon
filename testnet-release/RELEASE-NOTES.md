@@ -1,27 +1,25 @@
-# Hegemon v0.10.2 — public testnet difficulty correction
+# Hegemon v0.10.3 — public testnet wallet and launcher maintenance
 
-This maintenance release is based on the published v0.10.1 release and targets the existing public v0.10 testnet running on hegemon-ovh. It retains the synchronization, mining-gate, wallet snapshot and dependency fixes from v0.10.1. The testnet genesis, node/wallet data formats and proof-backend review posture are retained.
+This maintenance release is based on the published v0.10.2 release and targets the existing public v0.10 testnet. It retains the synchronization, mining-gate, wallet snapshot/source-cache and difficulty correction from earlier maintenance releases. The testnet genesis, node/wallet data formats, activation schedule and proof-backend review posture are retained.
 
-## Mandatory upgrade before block 120,000
+## Wallet RPC transport
 
-The existing rule retargets every ten blocks but measures nine elapsed block intervals against a ten-minute denominator. At uniform 60-second intervals, this measures 540 seconds against 600 seconds and unnecessarily reduces the target by 10%.
+The native node serves HTTP JSON-RPC. One-shot wallet synchronization, status and send instructions use `http://127.0.0.1:9944`; the compatibility flag `--ws-url` and walletd field `ws_url` retain their existing names. Corrected operator runbooks and join skills no longer direct one-shot sync to the unsupported native WebSocket endpoint. Use your existing wallet store and allow a scan to complete before interpreting cached balances. A failed scan does not establish a zero on-chain balance.
 
-The corrected rule measures ten elapsed intervals against the same 600,000-ms denominator. For a retarget block at height `H`, it uses `timestamp[H-1] - timestamp[H-11]`; legacy validation uses `timestamp[H-1] - timestamp[H-10]`. The ten-block cadence, first retarget at height 20, 60-second target, compact encoding and 150,000..2,400,000-ms timespan clamps are retained.
+## Windows launcher without an execution-policy override
 
-**All public-testnet node operators and miners must upgrade to v0.10.2 before the chain reaches block 120,000.** The compiled consensus constant `RETARGET_CORRECTION_ACTIVATION_HEIGHT: Option<u64>` is `Some(120_000)`. Historical blocks below height 120,000 retain legacy validation; block 120,000 and later eligible retarget boundaries use the corrected rule. Mining and validation use the same schedule, with no environment-variable or command-line override.
+`testnet-start.cmd` starts the packaged native node directly and no longer invokes PowerShell. The Windows bundle contains no PowerShell helper and requires no execution-policy change. Relay is the default; mining still requires your existing public payout address, synchronized time and canonical-chain verification. The optional `-Status` action uses Windows 10/11 `curl.exe` for bounded local HTTP queries.
 
-Upgrade from v0.10.0 or v0.10.1 before activation while retaining your existing node data directory and wallet store. Older nodes do not implement this schedule and will reject a corrected block whenever its expected bits differ from their legacy calculation. Running an older miner after activation can produce an incompatible fork. Activation is determined by block height; calendar estimates are planning guidance and must not be treated as the upgrade deadline.
+A reviewed launcher hash policy is checked at build, native-manifest, assembly and download-packaging boundaries. It rejects changed or unlisted helpers and execution-policy weakening in the bounded release producers. This is a release-helper policy gate, not a general shell-code or supply-chain security proof. Windows behavior must pass the Windows release job before publication; portable source tests do not substitute for that execution.
 
-This is a maintenance release for the existing public testnet only. It retains the v0.10.1 fixes and existing chain identity without introducing the newer development-network consensus.
+## Retained difficulty correction
 
-## First wallet synchronization
-
-Wallet commitment pages reuse a derived cache of canonical source labels instead of repeatedly decoding earlier block history from genesis. The cache checks its canonical block anchor before reuse, resets when a reorganization replaces that history, and rebuilds after restart. This changes RPC work only; commitment/ciphertext archives, encrypted wallet storage and consensus rules retain their existing formats and semantics. A first wallet scan still processes the chain history and can take longer than subsequent incremental scans.
+v0.10.2 introduced the corrected ten-interval difficulty measurement at block 120,000. v0.10.3 retains exactly that schedule: historical blocks below 120,000 use legacy validation, and eligible retarget boundaries at and after activation use the corrected rule. Mining and validation share the same schedule, without a command-line or environment override. Nodes already on v0.10.2 share these consensus rules; v0.10.0/v0.10.1 do not implement the activation schedule and can diverge after activation.
 
 ## Testnet operation
 
-The node, wallet and wallet daemon identify as 0.10.2. Download the **hegemon-testnet-0.10.2 ZIP for your platform**, verify its accompanying SHA-256 checksum, and extract it. On Windows, run `testnet-start.cmd`; on Linux or macOS, run `bash testnet-start.sh`. The launcher supplies testnet seeds and persistent local data and starts with mining disabled. Read `TESTNET-README.txt` for chain comparison, existing data, wallet and optional mining instructions.
+Download the **hegemon-testnet-0.10.3 ZIP for your platform**, verify its accompanying SHA-256 checksum, and extract it. On Windows, run `testnet-start.cmd`; on Linux or macOS, run `bash testnet-start.sh`. Keep your existing node data directory and wallet store. The launcher supplies the documented testnet seeds, persistent data and mining disabled by default. Read `TESTNET-README.txt` for status, wallet and optional mining instructions.
 
-The testnet genesis is `0x506fc2cd5ed367cc68d6d23a987fe6e4a7916fde02a249105ab91884a1e6fa59`. The OVH seed is `hegemon.pauli.group:30333`; the second documented seed is reserved for development and may refuse the testnet connection. Canonical catch-up requires successful peers and a matching block hash at a shared height.
+The testnet genesis remains `0x506fc2cd5ed367cc68d6d23a987fe6e4a7916fde02a249105ab91884a1e6fa59`. The OVH seed is `hegemon.pauli.group:30333`; the second documented seed is reserved for development and may refuse the testnet connection. Successful peers and matching hashes at a shared height establish canonical catch-up. Enable system time synchronization before mining.
 
-Keep existing node and wallet data, choose an existing node path explicitly when updating, and enable system time synchronization before mining. A failed wallet scan does not establish a zero on-chain balance. This release remains a maintenance update for the existing public testnet.
+All required source, formal, dependency, native-backend, platform, packaging and downloaded-artifact gates remain publication requirements. This source preparation does not claim those gates have completed for v0.10.3.

@@ -1,8 +1,8 @@
 //! Async Wallet Sync Engine for native node RPC
 //!
 //! This module provides an async synchronization engine that syncs wallet state
-//! using the Hegemon WebSocket RPC client. It replaces the blocking sync engine
-//! for use with async runtimes.
+//! using the Hegemon HTTP or explicit WebSocket RPC client. It replaces the
+//! blocking sync engine for use with async runtimes.
 //!
 //! # Features
 //!
@@ -18,7 +18,7 @@
 //! use wallet::async_sync::AsyncWalletSyncEngine;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let client = Arc::new(NodeRpcClient::connect("ws://127.0.0.1:9944").await?);
+//! let client = Arc::new(NodeRpcClient::connect("http://127.0.0.1:9944").await?);
 //! let store = Arc::new(WalletStore::open("wallet.dat", "password")?);
 //! let engine = AsyncWalletSyncEngine::new(client, store);
 //! let outcome = engine.sync_once().await?;
@@ -47,8 +47,9 @@ pub const WALLET_SYNC_MAX_SNAPSHOT_GAP: u64 = 1_048_576;
 
 /// Async wallet synchronization engine
 ///
-/// This engine syncs wallet state with a Hegemon node using WebSocket RPC.
-/// It supports both one-shot synchronization and continuous sync via subscriptions.
+/// This engine syncs wallet state with a Hegemon node using HTTP or WebSocket RPC.
+/// One-shot synchronization defaults to native HTTP; continuous sync requires a
+/// provider that implements WebSocket subscriptions.
 pub struct AsyncWalletSyncEngine {
     /// RPC client for node communication
     client: Arc<NodeRpcClient>,

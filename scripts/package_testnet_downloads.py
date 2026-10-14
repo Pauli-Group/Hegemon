@@ -47,7 +47,7 @@ def read_regular(root: Path, path: Path, label: str) -> bytes:
 
 def launcher_names(platform: str) -> tuple[str, ...]:
     if platform.startswith("windows-"):
-        return ("TESTNET-README.txt", "testnet-start.ps1", "testnet-start.cmd")
+        return ("TESTNET-README.txt", "testnet-start.cmd")
     return ("TESTNET-README.txt", "testnet-start.sh")
 
 
@@ -69,8 +69,12 @@ def package_downloads(root: Path, assets_dir: Path, launchers_dir: Path, version
     if not re.fullmatch(r"0\.10\.[0-9]+", version):
         raise manifest.ManifestError("version must be a stable 0.10.x maintenance version")
     root = Path(os.path.abspath(root))
+    policy = manifest.verify_launcher_policy(root)
+    approved = {entry["path"]: entry["sha256"] for entry in policy["launchers"]}
     assets_dir, assets_relative = manifest._repository_relative(root, assets_dir)
-    launchers_dir, _ = manifest._repository_relative(root, launchers_dir)
+    launchers_dir, launcher_relative = manifest._repository_relative(root, launchers_dir)
+    if launcher_relative != "testnet-release":
+        raise manifest.ManifestError("launcher directory must be policy-bound testnet-release")
     output_dir = manifest._open_directory_beneath(root, assets_relative, "release assets")
     try:
         canonical = None
@@ -114,6 +118,8 @@ def package_downloads(root: Path, assets_dir: Path, launchers_dir: Path, version
         for name in sorted({name for platform in PLATFORMS for name in launcher_names(platform)}):
             data = read_regular(root, launchers_dir / name, "release launcher")
             _, relative = manifest._repository_relative(root, launchers_dir / name)
+            if approved.get(relative) != digest(data):
+                raise manifest.ManifestError(f"launcher differs from reviewed policy: {relative}")
             try:
                 committed = manifest.run_git(root, "show", f"HEAD:{relative}")
             except subprocess.CalledProcessError as exc:

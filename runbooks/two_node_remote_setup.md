@@ -269,7 +269,7 @@ This ensures both nodes can reconnect if either restarts.
 Use the Hegemon desktop app (`hegemon-app/`) from your local machine:
 
 1. Run a local relay node that connects over P2P to the remote miner. For ad hoc two-node tests, set `HEGEMON_SEEDS="<FRIEND_PUBLIC_IP>:30333"`; for the shared testnet, use the approved seed list instead: `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"`.
-2. Point the desktop app at the local relay RPC endpoint, for example `ws://127.0.0.1:9944`.
+2. Point the desktop app at the local relay RPC endpoint, for example `http://127.0.0.1:9944`.
 3. Create or open a wallet store.
 4. Sync the wallet and send funds to your friend's address.
 
@@ -277,17 +277,23 @@ Do not enter a public node RPC address into the desktop app. The app accepts onl
 
 ### Option B: Using walletd
 
+In Bash, read the existing wallet's passphrase without echo. Keep it in this
+shell only; do not export it or paste it into commands:
+
 ```bash
 # Build walletd if needed
 cargo build --release -p walletd
 
+read -r -s -p "Wallet passphrase: " HEGEMON_WALLET_PASSPHRASE
+printf '\n' >&2
+
 # Check wallet status
-printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "your-passphrase" \
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "$HEGEMON_WALLET_PASSPHRASE" \
   | ./target/release/walletd --store /tmp/my-hegemon-node/wallet --mode open \
   | jq '.result'
 
 # Generate a receiving address
-printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "your-passphrase" \
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "$HEGEMON_WALLET_PASSPHRASE" \
   | ./target/release/walletd --store /tmp/my-hegemon-node/wallet --mode open \
   | jq -r '.result.primaryAddress'
 ```
@@ -295,6 +301,9 @@ printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "your-passphrase" \
 Share the generated address with your friend to receive funds.
 
 ### Send a Transaction (walletd)
+
+Use the local native HTTP RPC endpoint. `ws_url` is the historical JSON field
+name; this one-shot request does not use WebSocket subscriptions.
 
 ```bash
 cat > recipients.json <<'JSON'
@@ -308,10 +317,11 @@ cat > recipients.json <<'JSON'
 ]
 JSON
 
-REQ=$(jq -nc --arg ws "ws://127.0.0.1:9944" --argjson recipients "$(jq -c '.' recipients.json)" \
+REQ=$(jq -nc --arg ws "http://127.0.0.1:9944" --argjson recipients "$(jq -c '.' recipients.json)" \
   '{id:1,method:"tx.send",params:{ws_url:$ws,recipients:$recipients,fee:0,auto_consolidate:true}}')
-printf '%s\n%s\n' "your-passphrase" "$REQ" \
+printf '%s\n%s\n' "$HEGEMON_WALLET_PASSPHRASE" "$REQ" \
   | ./target/release/walletd --store /tmp/my-hegemon-node/wallet --mode open
+unset HEGEMON_WALLET_PASSPHRASE
 ```
 
 Offline transaction crafting (`wallet tx-craft`) is not exposed by walletd yet.

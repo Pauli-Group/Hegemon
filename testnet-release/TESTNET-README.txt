@@ -1,19 +1,23 @@
-HEGEMON 0.10.2 — EXISTING PUBLIC TESTNET
+HEGEMON 0.10.3 — EXISTING PUBLIC TESTNET
 
-This v0.10.2 maintenance release starts from the published v0.10.1 release
-and retains its sync pagination, mining-gate and wallet snapshot fixes. It joins
-the existing 0.10 testnet with the same genesis and compatible node/wallet data.
+This v0.10.3 maintenance release starts from the published v0.10.2 release.
+It corrects native wallet HTTP instructions/defaults and replaces the Windows
+PowerShell helper with a direct CMD launcher requiring no execution-policy change.
+It retains the sync, mining-gate, wallet snapshot/cache and difficulty fixes,
+with the same public-testnet genesis and compatible node/wallet data.
 
-MANDATORY UPGRADE BEFORE TESTNET BLOCK 120,000
+RETAINED CONSENSUS ACTIVATION AT TESTNET BLOCK 120,000
 
 The correction uses ten elapsed block intervals for the existing 600,000 ms
 retarget denominator. Legacy validation measures nine elapsed intervals against
 that denominator. The retarget cadence (ten blocks), first retarget (height 20),
 60-second target, compact target encoding and 1/4x..4x timespan clamps are retained.
 
-All public-testnet node operators and miners must upgrade from v0.10.0 or
-v0.10.1 to v0.10.2 BEFORE the chain reaches block 120,000. Keep your existing
-node data directory and wallet store; no chain reset or new wallet is required.
+v0.10.2 introduced the consensus upgrade required at block 120,000; v0.10.3
+retains that same schedule. Nodes already using v0.10.2 share these consensus
+rules. Older v0.10.0/v0.10.1 nodes require the corrected release to follow the
+chain at and after activation. Keep your existing node data directory and
+wallet store; no chain reset or new wallet is required.
 
 The compiled consensus constant RETARGET_CORRECTION_ACTIVATION_HEIGHT is
 Some(120_000). Historical blocks below 120,000 keep the legacy rule. Block
@@ -46,8 +50,9 @@ value, and isolated --dev/--tmp launches keep their existing behavior.
 Windows x86_64:
   Double-click testnet-start.cmd, or run it from PowerShell:
     .\testnet-start.cmd
-  This starts a separate PowerShell process with a per-process execution-policy
-  override; it does not change the system's execution policy.
+  The batch launcher starts the node executable directly. It requires no
+  PowerShell helper or execution-policy change. The optional -Status command
+  uses curl.exe supplied with Windows 10/11 to query the local node.
 
 Linux x86_64 / macOS Intel / macOS Apple Silicon:
   Open a terminal in the extracted folder. Make the matching binary executable:
@@ -99,7 +104,7 @@ This reads loopback RPC without opening another node. Responses identify:
   id 2: chain_getHeader — local tip; its number is hexadecimal
   id 3: chain_getBlockHash(0) — full genesis; must match the hash above
   id 4: hegemon_miningStatus — block_height, syncing, mining_sync_gate_open
-  id 5: system_version — verify the running node is the 0.10.2 release
+  id 5: system_version — verify the running node is the 0.10.3 release
 
 A queued broadcast, wallet balance, or locally found block does not prove
 canonical synchronization. Wait for connected peers and completed catch-up.

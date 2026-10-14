@@ -12,7 +12,6 @@ import type {
   WalletDisclosureRecord,
   WalletDisclosureVerifyResult,
   WalletStatus,
-  WalletSyncResult,
   WalletUnlockSession
 } from './types';
 import blockMinedAudio from './assets/sounds/block-mined.wav';
@@ -33,6 +32,7 @@ import {
   defaultMineThreads,
   defaultP2pPort,
   defaultRpcPort,
+  defaultRpcUrl,
   defaultStorePath,
   hegemonNetworkName,
   hegemonNetworkVersionLabel,
@@ -91,7 +91,7 @@ import {
   findDefaultManagedConnection,
   inferRpcPort,
   isLoopbackHttpEndpoint,
-  isLoopbackWsEndpoint,
+  isLoopbackRpcEndpoint,
   normalizeConnection,
   normalizeLocalConnectionEndpoints,
   normalizeNetworkDisplayName,
@@ -101,10 +101,10 @@ import {
   parseListenAddrPort,
   parsePortFromUrl,
   rewriteListenAddrPort,
-  rewriteLoopbackHttpEndpoint,
-  rewriteLoopbackWsEndpoint,
+  rewriteLoopbackRpcEndpoint,
   shouldAutoStartDefaultProfile
 } from './lib/connections';
+import { withNativeWalletSyncTimeout } from './lib/walletSync';
 import {
   classifyLogCategory,
   classifyLogLevel,
@@ -175,7 +175,7 @@ export default function App() {
   const [createPassphraseConfirm, setCreatePassphraseConfirm] = useState('');
   const [openPassphrase, setOpenPassphrase] = useState('');
   const [activeUnlockToken, setActiveUnlockToken] = useState<string | null>(null);
-  const [wsUrl, setWsUrl] = useState(`ws://127.0.0.1:${defaultRpcPort}`);
+  const [wsUrl, setWsUrl] = useState(defaultRpcUrl);
   const [forceRescan, setForceRescan] = useState(false);
   const [autoLockEnabled, setAutoLockEnabled] = useState(true);
   const [autoLockMinutes, setAutoLockMinutes] = useState(15);
@@ -1177,33 +1177,10 @@ export default function App() {
         walletRpcUrl,
         rescan
       );
-      // Full rescans on long-running chains can take minutes; keep the shorter guardrail for normal syncs.
-      const timeoutMs = rescan ? 15 * 60_000 : 90_000;
-      const result = await new Promise<WalletSyncResult>((resolve, reject) => {
-        const timeout = window.setTimeout(async () => {
-          try {
-            await window.hegemon.wallet.lock();
-            setActiveUnlockToken(null);
-            setWalletStatus(null);
-          } catch {
-            // Ignore lock failures; we'll surface a timeout error.
-          }
-          const modeLabel = rescan ? 'force-rescan' : 'sync';
-          reject(
-            new Error(
-              `Wallet ${modeLabel} timed out after ${Math.round(timeoutMs / 1000)}s. Check the wallet RPC URL and try again.`
-            )
-          );
-        }, timeoutMs);
-        syncPromise
-          .then((value) => {
-            window.clearTimeout(timeout);
-            resolve(value);
-          })
-          .catch((error) => {
-            window.clearTimeout(timeout);
-            reject(error);
-          });
+      await withNativeWalletSyncTimeout(syncPromise, async () => {
+        setActiveUnlockToken(null);
+        setWalletStatus(null);
+        await window.hegemon.wallet.lock();
       });
       const refreshed = await refreshWalletStatus();
       if (refreshed) {
@@ -1263,7 +1240,7 @@ export default function App() {
         throw new Error('Miner tip cannot be negative.');
       }
       if (genesisMismatch) {
-        throw new Error('Genesis mismatch between wallet and node. Switch nodes or force a rescan before sending.');
+        throw new Error('Genesis mismatch between wallet and node. Switch nodes or reset the wallet scan for this chain before sending.');
       }
       const liveHttpUrl = deriveHttpUrl(wsUrl, activeConnection?.httpUrl);
       if (liveHttpUrl) {
@@ -1521,8 +1498,8 @@ export default function App() {
       id: makeId(),
       label: 'Local RPC endpoint',
       mode: 'remote',
-      wsUrl: `ws://127.0.0.1:${defaultRpcPort}`,
-      httpUrl: `http://127.0.0.1:${defaultRpcPort}`,
+      wsUrl: defaultRpcUrl,
+      httpUrl: defaultRpcUrl,
       allowRemoteMining: false
     };
     setConnections((prev) => [next, ...prev]);
@@ -2178,13 +2155,13 @@ export default function App() {
   const GenesisMismatchBanner = genesisMismatch ? (
     <div className="rounded-lg border border-amber/40 bg-amber/10 p-4 space-y-2">
       <p className="text-sm text-surface">
-        Genesis mismatch between the wallet store and the selected node. Choose the correct node or force a rescan.
+        Genesis mismatch between the wallet store and the selected node. Choose the correct node or reset the wallet scan for the selected chain.
       </p>
       <p className="text-sm text-surfaceMuted mono">
         Wallet: {formatHash(walletGenesis)} | Node: {formatHash(walletNodeGenesis)}
       </p>
       <button className="secondary" onClick={() => handleWalletSync(true)} disabled={walletBusy}>
-        Force rescan
+        Reset scan for this chain
       </button>
     </div>
   ) : null;
@@ -2396,7 +2373,7 @@ export default function App() {
           </select>
         </label>
         <label className="space-y-2">
-          <span className="label">WebSocket URL</span>
+          <span className="label">RPC URL</span>
           <input
             value={activeConnection?.wsUrl ?? ''}
             onChange={(event) => updateActiveConnection({ wsUrl: event.target.value })}
@@ -2496,11 +2473,12 @@ export default function App() {
                     updateActiveConnection((conn) => {
                       const port = Number.isNaN(nextPort) ? undefined : nextPort;
                       const updates: Partial<NodeConnection> = { rpcPort: port };
-                      if (conn.wsUrl.startsWith('ws://127.0.0.1:') || conn.wsUrl.startsWith('ws://localhost:')) {
-                        const host = conn.wsUrl.includes('localhost') ? 'localhost' : '127.0.0.1';
-                        if (port) {
-                          updates.wsUrl = `ws://${host}:${port}`;
-                          updates.httpUrl = `http://${host}:${port}`;
+                      if (port && isLoopbackRpcEndpoint(conn.wsUrl)) {
+                        updates.wsUrl = rewriteLoopbackRpcEndpoint(conn.wsUrl, port);
+                        if (!conn.httpUrl || isLoopbackHttpEndpoint(conn.httpUrl)) {
+                          updates.httpUrl = conn.httpUrl
+                            ? rewriteLoopbackRpcEndpoint(conn.httpUrl, port)
+                            : deriveHttpUrl(updates.wsUrl);
                         }
                       }
                       return updates;
@@ -3207,8 +3185,11 @@ export default function App() {
         ) : null}
         <label className="flex items-center gap-2 text-sm text-surfaceMuted">
           <input type="checkbox" checked={forceRescan} onChange={(event) => setForceRescan(event.target.checked)} />
-          Force rescan on next sync
+          Allow reset if the chain changed
         </label>
+        <p className="text-xs text-surfaceMuted">
+          First sync can take over an hour. Keep the app open; Cancel stops the scan and locks the wallet. Reset is only applied if the selected chain has a different genesis.
+        </p>
 
         <div className="panel space-y-3">
           <div className="flex items-center justify-between">

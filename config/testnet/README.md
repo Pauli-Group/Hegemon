@@ -140,13 +140,23 @@ been deliberately rotated.
 
 ## Connecting Wallet
 
-```bash
-# Sync wallet with testnet
-wallet node-sync --ws-url ws://localhost:9944
+Use the wallet store you already own. The CLI prompts for its passphrase;
+do not put the passphrase in the command. Replace this example store path
+with your existing path:
 
-# Start continuous sync daemon
-wallet node-daemon --ws-url ws://localhost:9944
+```bash
+wallet node-sync --store ~/.hegemon-wallet --ws-url http://localhost:9944
+wallet status --store ~/.hegemon-wallet --ws-url http://localhost:9944
 ```
+
+The `--ws-url` flag name is retained for compatibility. The native node serves
+HTTP JSON-RPC, so use `http://` for one-shot sync/status/send. Allow the scan to
+finish before interpreting cached balances; a failed scan does not prove that
+your on-chain balance is zero.
+
+`wallet node-daemon` relies on WebSocket subscriptions, which the native node
+RPC server does not provide. Use the one-shot sync above for this node; changing
+a daemon URL to HTTP does not enable subscriptions.
 
 ## Troubleshooting
 

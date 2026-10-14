@@ -2,7 +2,7 @@
 """Exercise release launcher behavior with temporary fake node/RPC executables.
 
 No Cargo build, real node, wallet, or network connection is used. Windows
-PowerShell syntax is checked separately by the Windows release job.
+CMD behavior is checked separately by the Windows release job.
 """
 from __future__ import annotations
 

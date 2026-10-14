@@ -6,8 +6,8 @@
 //!
 //! # RPC transports
 //!
-//! One-shot wallet operations support HTTP and WebSocket JSON-RPC. Streaming
-//! sync operations still require WebSocket subscriptions.
+//! One-shot wallet operations default to HTTP and also support explicit WebSocket
+//! JSON-RPC endpoints. Streaming sync operations require WebSocket subscriptions.
 //!
 //! The client supports:
 //! - Persistent connections with automatic reconnection
@@ -20,7 +20,7 @@
 //! use wallet::node_rpc::NodeRpcClient;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let client = NodeRpcClient::connect("ws://127.0.0.1:9944").await?;
+//! let client = NodeRpcClient::connect("http://127.0.0.1:9944").await?;
 //! let status = client.note_status().await?;
 //! println!("Tree has {} leaves", status.leaf_count);
 //! # Ok(())
@@ -63,9 +63,9 @@ fn is_method_unavailable(error: &WalletError, method: &str) -> bool {
 /// Configuration for the native node RPC client.
 #[derive(Clone, Debug)]
 pub struct NodeRpcConfig {
-    /// WebSocket endpoint URL (e.g., "ws://127.0.0.1:9944")
+    /// RPC endpoint URL (e.g., "http://127.0.0.1:9944" or "ws://127.0.0.1:9944")
     pub endpoint: String,
-    /// Optional archive provider endpoint (WebSocket URL)
+    /// Optional archive provider RPC endpoint (HTTP or WebSocket URL)
     pub archive_endpoint: Option<String>,
     /// Connection timeout
     pub connection_timeout: Duration,
@@ -90,7 +90,7 @@ pub struct ChainMetadata {
 impl Default for NodeRpcConfig {
     fn default() -> Self {
         Self {
-            endpoint: "ws://127.0.0.1:9944".to_string(),
+            endpoint: "http://127.0.0.1:9944".to_string(),
             archive_endpoint: None,
             connection_timeout: Duration::from_secs(30),
             request_timeout: Duration::from_secs(60),
@@ -475,7 +475,7 @@ impl NodeRpcClient {
     /// ```no_run
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// use wallet::node_rpc::NodeRpcClient;
-    /// let client = NodeRpcClient::connect("ws://127.0.0.1:9944").await?;
+    /// let client = NodeRpcClient::connect("http://127.0.0.1:9944").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -533,7 +533,17 @@ impl NodeRpcClient {
             .build(endpoint)
             .await
             .map(|client| RpcTransport::Ws(Box::new(client)))
-            .map_err(|e| WalletError::Rpc(format!("Failed to connect to {}: {}", endpoint, e)))
+            .map_err(|e| {
+                let hint = if endpoint.starts_with("ws://")
+                    && matches!(&e, RpcError::Transport(error)
+                        if error.to_string() == "Connection rejected with status code: 200")
+                {
+                    "; endpoint returned HTTP 200 instead of a WebSocket upgrade. Use an http:// RPC URL for native one-shot requests (--ws-url/ws_url also accepts HTTP), or a WebSocket-capable endpoint for subscriptions"
+                } else {
+                    ""
+                };
+                WalletError::Rpc(format!("Failed to connect to {}: {}{}", endpoint, e, hint))
+            })
     }
 
     /// Ensure connection is alive, reconnect if needed
@@ -2183,7 +2193,7 @@ mod tests {
     #[test]
     fn test_config_defaults() {
         let config = NodeRpcConfig::default();
-        assert_eq!(config.endpoint, "ws://127.0.0.1:9944");
+        assert_eq!(config.endpoint, "http://127.0.0.1:9944");
         assert_eq!(config.max_reconnect_attempts, 5);
     }
 

@@ -326,8 +326,8 @@ struct StablecoinBurnArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Stablecoin amount to burn
     #[arg(long)]
@@ -2002,4 +2002,35 @@ struct NoteSummary {
 struct BalanceReport {
     totals: BTreeMap<u64, u64>,
     recovered: Vec<NoteSummary>,
+}
+
+#[cfg(test)]
+mod rpc_argument_tests {
+    use super::*;
+
+    #[test]
+    fn one_shot_rpc_defaults_are_http_and_ws_url_remains_compatible() {
+        let sync = NodeSyncArgs::try_parse_from(["node-sync", "--store", "unused.wallet"]).unwrap();
+        assert_eq!(sync.ws_url, "http://127.0.0.1:9944");
+        let burn = StablecoinBurnArgs::try_parse_from([
+            "stablecoin-burn",
+            "--store",
+            "unused.wallet",
+            "--amount",
+            "1",
+            "--asset-id",
+            "1",
+        ])
+        .unwrap();
+        assert_eq!(burn.ws_url, "http://127.0.0.1:9944");
+        let explicit_ws = NodeSyncArgs::try_parse_from([
+            "node-sync",
+            "--store",
+            "unused.wallet",
+            "--ws-url",
+            "ws://localhost:9955",
+        ])
+        .unwrap();
+        assert_eq!(explicit_ws.ws_url, "ws://localhost:9955");
+    }
 }

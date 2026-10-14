@@ -101,6 +101,15 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
           shared-key: "core-rust"
+      - name: Test wallet HTTP and retained WebSocket transport
+        run: cargo test --locked -p wallet --test node_rpc
+
+      - name: Test wallet RPC argument defaults
+        run: cargo test --locked -p wallet --bin wallet rpc_argument_tests
+
+      - name: Test wallet HTTP TLS and bounded RPC unit behavior
+        run: cargo test --locked -p wallet --lib node_rpc::tests
+
       - name: Lean test gate
         run: ./scripts/check-core.sh test
 
@@ -158,6 +167,10 @@ jobs:
         run: npm ci --prefix hegemon-app
       - name: App UI guard gate
         run: npm --prefix hegemon-app run check:ui-guards
+
+      - name: Test app RPC endpoints and wallet sync watchdog
+        run: npm --prefix hegemon-app test -- tests/connections.test.ts tests/rpcEndpoint.test.ts tests/walletSync.test.ts tests/walletdProtocol.test.ts
+
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain

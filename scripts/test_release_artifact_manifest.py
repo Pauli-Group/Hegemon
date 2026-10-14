@@ -187,6 +187,8 @@ def test_portable_source_modes() -> None:
         git("config", "core.autocrlf", "false")
         (root / ".gitignore").write_text("target/\n")
         (root / "Cargo.lock").write_bytes(b"version = 4\n")
+        (root / "config").mkdir()
+        (root / "config/release-launcher-policy.json").write_text('{"schema_version": 1, "launchers": []}\n')
         script = root / "source.sh"
         original_script = b"#!/bin/sh\nprintf fixture\n"
         script.write_bytes(original_script)
