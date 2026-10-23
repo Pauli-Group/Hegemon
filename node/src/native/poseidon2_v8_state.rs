@@ -5794,6 +5794,9 @@ mod tests {
             fn native_leaf_profile(&self) -> Poseidon2V8NativeLeafProfile {
                 Poseidon2V8NativeLeafProfile::LaunchMixed
             }
+            fn launch_proof_lifetime_limit(&self) -> Option<u64> {
+                Some(100)
+            }
             fn verify_exact_v8_leaf(
                 &mut self,
                 _: Poseidon2V8BlockContext,

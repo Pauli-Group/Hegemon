@@ -435,19 +435,21 @@ mod tests {
 
     const TEST_WALLET_FILENAME: &str = "rp06-ordinary-wallet.dat";
 
-    fn append_empty_block(store: &WalletStore, context: LaunchWalletContext) {
+    fn append_empty_block(
+        store: &WalletStore,
+        context: LaunchWalletContext,
+    ) -> crate::Poseidon2V8CanonicalBlock {
         let parent = store.poseidon2_v8_tip().unwrap();
+        let block = crate::Poseidon2V8CanonicalBlock {
+            height: parent.height + 1,
+            hash: [100 + parent.height as u8; 32],
+            parent_hash: parent.block_hash,
+            action_bytes: Vec::new(),
+        };
         store
-            .apply_poseidon2_v8_launch_canonical_block_for_retained_test(
-                &crate::Poseidon2V8CanonicalBlock {
-                    height: parent.height + 1,
-                    hash: [100 + parent.height as u8; 32],
-                    parent_hash: parent.block_hash,
-                    action_bytes: Vec::new(),
-                },
-                context,
-            )
+            .apply_poseidon2_v8_launch_canonical_block_for_retained_test(&block, context)
             .unwrap();
+        block
     }
 
     fn retain_public_artifacts(
@@ -533,7 +535,7 @@ mod tests {
         store
             .ensure_poseidon2_v8_genesis_for_test(genesis, [0; 7])
             .unwrap();
-        let context = LaunchWalletContext::new([82; 32], genesis, [83; 64], 1, 100).unwrap();
+        let context = LaunchWalletContext::new([82; 32], genesis, [83; 64], 1, 500).unwrap();
         store
             .initialize_pinned_launch_context_for_retained_test(context)
             .unwrap();
@@ -592,6 +594,19 @@ mod tests {
                 .unwrap();
             blocks.push(block);
             parent = block_hash;
+        }
+        // Rewards enter the spend tree only at the actual 120-block maturity
+        // boundary. Keep the immature, first-release and second-release states
+        // explicit so this fixture cannot silently regress to immediate spends.
+        assert!(store.poseidon2_v8_owned_notes().unwrap().is_empty());
+        for height in 3..=protocol_versioning::COINBASE_MATURITY + 1 {
+            blocks.push(append_empty_block(&store, context));
+            if height >= protocol_versioning::COINBASE_MATURITY - 1 {
+                assert_eq!(
+                    store.poseidon2_v8_owned_notes().unwrap().len(),
+                    (height + 1 - protocol_versioning::COINBASE_MATURITY) as usize,
+                );
+            }
         }
         let recipient = crate::RootSecret::from_bytes([0x72; 32])
             .derive()
@@ -665,7 +680,7 @@ mod tests {
             context.genesis_hash(),
             context.manifest_digest(),
             1,
-            100,
+            500,
         )
         .unwrap();
         assert!(construct_material(
@@ -794,7 +809,7 @@ mod tests {
         // The same retained proof cannot export against a future reference or
         // an orphaned block at its height. Restore the original public block.
         reopened
-            .rollback_poseidon2_v8_to(exported.tip().height - 1, blocks[0].hash)
+            .rollback_poseidon2_v8_to(exported.tip().height - 1, blocks[blocks.len() - 2].hash)
             .unwrap();
         assert!(reopened
             .export_rp06_transfer_candidate_for_retained_test(reservation_id)
@@ -804,10 +819,13 @@ mod tests {
             .export_rp06_transfer_candidate_for_retained_test(reservation_id)
             .is_err());
         reopened
-            .rollback_poseidon2_v8_to(exported.tip().height - 1, blocks[0].hash)
+            .rollback_poseidon2_v8_to(exported.tip().height - 1, blocks[blocks.len() - 2].hash)
             .unwrap();
         reopened
-            .apply_poseidon2_v8_launch_canonical_block_for_retained_test(&blocks[1], context)
+            .apply_poseidon2_v8_launch_canonical_block_for_retained_test(
+                blocks.last().unwrap(),
+                context,
+            )
             .unwrap();
         assert!(construct_material(
             &reopened,

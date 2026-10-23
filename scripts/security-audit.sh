@@ -154,6 +154,7 @@ WARNINGS=0
 BINARY_PROFILE_CHECKED=false
 BINARY_PROFILE_AUTHORIZED=false
 BINARY_PRIVATE_LAUNCH_AUTHORIZED=false
+BINARY_CURRENT_BACKEND_ATTESTED=false
 
 if [ -n "${HEGEMON_LEAN_RELEASE_PQ_BINARY_POLICY_VECTORS:-}" ]; then
     echo "=== Step 0: Lean Release PQ Binary Policy Vector Check ==="
@@ -396,6 +397,17 @@ elif (p.get("production_authority") is False and p.get("private_spend_launch_aut
       and p.get("mode") == "executed-private-spend-launch"
       and p.get("authorization_scope") == "source-owned-current86-private-spend-launch"):
     print("private")
+elif (p.get("production_authority") is False and p.get("private_spend_launch_authority") is False
+      and p.get("mode") == "executed-exact-source-backend-h0"
+      and p.get("authorization_scope") == "exact-current-source-current-binary-backend-and-h0-only"
+      and p.get("actual_new_binary_proof_verification") is True
+      and p.get("current_network_G8_qualified") is False
+      and p.get("fresh_network_lifecycle_verified") is False
+      and p.get("state_admission_verified") is False
+      and p.get("public_cutover_authorized") is False
+      and p.get("historical_G8_reused") is True
+      and p.get("predecessor_lifecycle_reexecuted") is False):
+    print("current-backend")
 elif p.get("production_authority") is False and p.get("mode") == "review-unapproved-profile":
     print("review")
 else:
@@ -406,6 +418,8 @@ else:
             BINARY_PROFILE_AUTHORIZED=true
         elif [ "$PROFILE_SCOPE" = private ]; then
             BINARY_PRIVATE_LAUNCH_AUTHORIZED=true
+        elif [ "$PROFILE_SCOPE" = current-backend ]; then
+            BINARY_CURRENT_BACKEND_ATTESTED=true
         fi
     else
         echo -e "${RED}❌ RELEASE ARTIFACT ATTESTATION FAILED${NC}"
@@ -484,6 +498,8 @@ fi
 echo -n "Checking shielded protocol uses SmallWood STARK/FRI proofs... "
 if [ "$BINARY_PRIVATE_LAUNCH_AUTHORIZED" = true ]; then
     echo -e "${GREEN}✅ Current private CompFF01 profile attested; legacy global profile authority remains false${NC}"
+elif [ "$BINARY_CURRENT_BACKEND_ATTESTED" = true ]; then
+    echo -e "${GREEN}✅ Exact current-source binary backend proofs and H0 attested; fresh-network G8 and launch authority remain false${NC}"
 elif [ "$BINARY_PROFILE_AUTHORIZED" = true ]; then
     echo -e "${GREEN}✅ Compiled V4/Gamma SmallWood profile attested${NC}"
 elif [ "$BINARY_PROFILE_CHECKED" = true ] && [ "$ALLOW_UNAPPROVED_PROFILE" = true ]; then

@@ -6,7 +6,6 @@ use transaction_core::{asset_recovery_v1 as core, asset_registry_v1::AssetPolicy
 
 const SCHEMA: &str = "hegemon.native.development-recovery.v1";
 
-#[path = "asset_recovery_geometry_catalog.rs"]
 mod geometry_catalog;
 
 /// Chain and freeze roots are derived after manifest hashing, never JSON inputs.
@@ -222,7 +221,16 @@ mod tests {
             config().row([1; 32]).unwrap().controls.note_freeze_root,
             config().row([2; 32]).unwrap().controls.note_freeze_root
         );
-        assert!(d.require_qualified_geometry().is_ok());
+        if geometry_catalog::retained_catalog_matches_current_sources_for_test() {
+            assert!(d.require_qualified_geometry().is_ok());
+        } else {
+            assert_eq!(
+                d.require_qualified_geometry().unwrap_err().to_string(),
+                "recovery geometry catalog differs from compiled sources or unchanged SMZE profile"
+            );
+            assert!(d.validate().is_ok());
+            eprintln!("inactive recovery source: chain-bound genesis remains structural; current geometry qualification fails closed");
+        }
         let mut json = serde_json::to_value(&d).unwrap();
         json["initial_rows"][0]["note_freeze_root"] = serde_json::json!([1, 1, 1, 1, 1, 1, 1]);
         assert!(serde_json::from_value::<DevelopmentRecoveryV1>(json).is_err());

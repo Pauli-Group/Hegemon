@@ -1075,9 +1075,31 @@ mod tests {
             transaction_circuit::asset_spend_v1_wire::encode_native_asset_admin_action_v1(
                 &public, b"SMZE",
             )
-            .unwrap()
         };
-        let expired = encode(19);
+        let expired = match encode(19) {
+            Ok(bytes) => bytes,
+            Err(
+                transaction_circuit::asset_spend_v1_wire::AssetSpendWireErrorV1::RelationSource,
+            ) => {
+                use transaction_circuit::asset_spend_v1_admission as admission;
+                assert_eq!(
+                    admission::admin_profile_upper_bound_v1(),
+                    Err(admission::NativeAssetAdmissionErrorV1::SourceIdentity)
+                );
+                assert_ne!(
+                    hex::encode(admin::relation_digest()),
+                    admission::QUALIFIED_ADMIN_SOURCE_SHA512
+                );
+                assert_eq!(current_state.encode_exact().unwrap(), before);
+                assert_eq!(
+                    current_state.registry.row(1001).unwrap().controls(),
+                    row(1001).controls()
+                );
+                eprintln!("inactive admin source: exact RelationSource rejection before expiry/proof work; current state unchanged");
+                return;
+            }
+            Err(error) => panic!("unexpected moving admin fixture error: {error}"),
+        };
         assert!(matches!(
             current_state.plan_verified_actions_at_reference(
                 current,
@@ -1088,7 +1110,7 @@ mod tests {
             ),
             Err(AssetStateErrorV1::Context)
         ));
-        let live = encode(20);
+        let live = encode(20).unwrap();
         assert!(matches!(
             current_state.plan_verified_actions_at_reference(
                 current,

@@ -3686,6 +3686,14 @@ impl NativeNode {
     pub(crate) fn native_proof_binding_for_replay(
         &self,
     ) -> Result<Option<native_proof_binding::NativeProofBinding>, String> {
+        // Legacy authority is historical and does not bind a network genesis.
+        // Delegate its source gate without loading or decoding an unused block.
+        if self.config.network.profile() == network_profile::NativeNetworkProfile::Legacy {
+            return native_proof_binding::NativeProofBinding::from_source_for_replay(
+                &self.config.network,
+                [0; 32],
+            );
+        }
         let genesis = self
             .load_canonical_block_at_height_unverified(0)
             .map_err(|e| format!("load exact proof network genesis: {e}"))?;
@@ -3699,6 +3707,13 @@ impl NativeNode {
         &self,
         height: u64,
     ) -> Result<Option<native_proof_binding::NativeProofBinding>, String> {
+        if self.config.network.profile() == network_profile::NativeNetworkProfile::Legacy {
+            return native_proof_binding::NativeProofBinding::from_source_at(
+                &self.config.network,
+                [0; 32],
+                height,
+            );
+        }
         let genesis = self
             .load_canonical_block_at_height_unverified(0)
             .map_err(|e| format!("load exact proof network genesis: {e}"))?;

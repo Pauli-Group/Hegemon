@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Validate exact release-display and platform-shutdown deltas without relabeling G8.
+"""Check exact reviewed v0.11 source and final binary scopes without relabeling G8.
 
-The immutable predecessor checker runs in its own checkout. This validator then
-compares all audited runtime bytes, allowing only three exact release-display
-postimages and one Windows shutdown-signal postimage. Cargo metadata, dependency
-locks and proof-relation source remain byte identical. Artifact mode adds a real
-isolated identity smoke, not a replacement
-for a new-binary proof/lifecycle qualification or public launch approval.
+Legacy mode retains its exact version/platform changes and public-chain replay.
+Current-source mode compares all 598 authenticated predecessor runtime files and
+only exact reviewed additions/postimages, including the four lockfile updates
+and fresh identity arrays. Its distinct source-only receipt is not full-network
+lifecycle authorization. Final current mode executes the actual rebuilt node's
+cryptographic backend against five frozen public proof/statement pairs, cleanly
+rejects six invalid-input controls per pair, and checks isolated height-zero
+identity on that same executable. Historical G8/PR205 evidence stays conditional
+and historical; fresh-network G8, state admission, launch and cutover remain false.
 """
 from __future__ import annotations
 import argparse
@@ -36,7 +39,7 @@ UNCHANGED_CARGO_PATHS = ['Cargo.lock', 'node/Cargo.toml', 'wallet/Cargo.toml', '
 OLD_VERSION, NEW_VERSION = '0.10.0', '0.11.0'
 DISPATCH = '''    if (ROOT / "config/v011-release-successor.json").is_file():
         command = [sys.executable, "-I", "-B", str(ROOT / "scripts/check_v011_release_successor.py"), *sys.argv[1:]]
-        if "--artifact-manifest" in sys.argv[1:]:
+        if any(arg == "--artifact-manifest" or arg.startswith("--artifact-manifest=") for arg in sys.argv[1:]):
             command.append("--require-final-artifact")
         return subprocess.call(command, cwd=ROOT)
 
@@ -196,6 +199,9 @@ def stop_owned(process):
 
 def artifact_gate(root, predecessor, manifest_file, receipt, manifest, min_free_gib):
     checker_path = safe_file(root, 'scripts/release_artifact_manifest.py')
+    if receipt.get('authorization_kind') == CURRENT_SOURCE_KIND:
+        require(digest_bytes(checker_path.read_bytes()) == CURRENT_ARTIFACT_HELPER_SHA256, 'current artifact-manifest helper differs before execution')
+        require(digest_bytes(safe_file(root, 'scripts/check_release_launcher_policy.py').read_bytes()) == CURRENT_LAUNCHER_POLICY_SHA256, 'current launcher-policy helper differs before execution')
     artifact_bytes = manifest_file.read_bytes()
     artifact_sha = digest_bytes(artifact_bytes)
     artifact = json.loads(artifact_bytes)
@@ -233,7 +239,7 @@ def artifact_gate(root, predecessor, manifest_file, receipt, manifest, min_free_
             except (OSError, urllib.error.URLError):
                 require(time.monotonic() < deadline, 'smoke node RPC startup timeout')
                 time.sleep(.2)
-        identity = receipt['qualified_identity']
+        identity = receipt['identity'] if receipt.get('authorization_kind') == CURRENT_SOURCE_KIND else receipt['qualified_identity']
         require(cfg.get('networkProfile') == 'pre-mainnet' and cfg.get('networkManifest') == manifest and cfg.get('chainId') == '0x'+identity['chain_id'] and cfg.get('networkManifestDigest') == '0x'+identity['manifest_digest'], 'new binary network identity readback mismatch')
         require(rpc(rpc_port,'chain_getBlockHash',[0]) == '0x'+identity['genesis_hash'], 'new binary genesis differs')
         require(rpc(rpc_port,'system_version') == 'Hegemon Native Node '+NEW_VERSION, 'new node RPC version differs')
@@ -289,12 +295,260 @@ def validate_replay(replay, node_sha, artifact_sha):
                 'restart_verified':True, 'processes_reaped':True}
     require(isinstance(replay, dict) and all(type(replay.get(k)) is type(v) and replay[k] == v for k,v in expected.items()), 'actual public proof replay scope/identity is incomplete')
 
+# Exact current-source mode. Its distinct authorization kind deliberately cannot
+# satisfy the maintained full-network lifecycle harness's qualified_source_tuple.
+CURRENT_SCOPE = 'exact_current_source_current_binary_backend_and_h0'
+CURRENT_SOURCE_KIND = 'reviewed_source_successor_ci'
+CURRENT_CONFIG_SHA256 = '3f46bf42acbbfab8400f18b80d5ecfab4d6984808574fb425b12ab3e830da2d0'
+CURRENT_RUNNER_SHA256 = 'a8b14c133d0d02b9e000fe30d22fbed4584e9836e439086974540c2943ea9f80'
+CURRENT_FIXTURE_SHA256 = '8184f3bb1e77c03540a7e83a1a4efacf9b232c067d5f2781cf03167393c17057'
+CURRENT_NETWORK_MANIFEST_SHA256 = '386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754'
+CURRENT_ARTIFACT_HELPER_SHA256 = '17137d83d092b98c246b0fd7125bbb2f8ad71aba342fdc4717a071128c4efb6a'
+CURRENT_LAUNCHER_POLICY_SHA256 = '51700e93ac457574f262bff05f48e5e55fa328e37da30f665721a312de9d826e'
+CURRENT_CARGO_LOCK_SHA256 = 'ebef532fbfaee8fcafa4b6e12b2ad8cbb219bacfba4f2aaa24904bd59480e5d3'
+CURRENT_PROOF_CASES = [{'name': 'ordinary',
+  'proof': {'bytes': 171281,
+            'path': 'ordinary.proof',
+            'sha256': '0cd4641baff158811d59c0f1e3e1d3cb4d626655cdcc6b185e0b80983fc41436'},
+  'statement': {'bytes': 688,
+                'path': 'ordinary.statement',
+                'sha256': '07bf3c7ae29cfa21b2654731835e34af244c370e069e6ef1896cde1c8094de80'}},
+ {'name': 'policy_create',
+  'proof': {'bytes': 171281,
+            'path': 'policy_create.proof',
+            'sha256': 'c349547230010b1cf966188cf9c99420d01e93ad74c0e8d5d51e10b43c2f7830'},
+  'statement': {'bytes': 688,
+                'path': 'policy_create.statement',
+                'sha256': 'cae926d92fc29f4308c9140e218b2e19f78757423cb73489f81a090074f9a3f5'}},
+ {'name': 'absolute_height',
+  'proof': {'bytes': 171281,
+            'path': 'absolute_height.proof',
+            'sha256': '007a5e8ade95b2bb296164b66db171d290f6c744d9e3e189011cf4a39224555f'},
+  'statement': {'bytes': 688,
+                'path': 'absolute_height.statement',
+                'sha256': '66bbd965bf5c9a55c97cd9783dc327fa4c075484e2db22af7ab31cd2d5bc13b0'}},
+ {'name': 'policy_hash_release',
+  'proof': {'bytes': 171281,
+            'path': 'policy_hash_release.proof',
+            'sha256': 'b13765f8054f01052c7513c48d546f7698bf5b23c2cbc1d04cf3a2e3e66b8adf'},
+  'statement': {'bytes': 688,
+                'path': 'policy_hash_release.statement',
+                'sha256': 'd28560ebe0a98fc6cd028bb8e630b4c5af3ba1aa79f814d744aa6a8beb57b06c'}},
+ {'name': 'htlc_release',
+  'proof': {'bytes': 171281,
+            'path': 'htlc_release.proof',
+            'sha256': '86d1d049a052cb0de8eebf8451d139a0141687fcaa8182f32fa5c21c52108624'},
+  'statement': {'bytes': 688,
+                'path': 'htlc_release.statement',
+                'sha256': 'c6267fdc99026543872cacf34f9ba52670c34c0523d95a60da49e4c8e1f6ba29'}}]
+CURRENT_RUNTIME_DELTAS = {'Cargo.lock': ['bae447660a12610766620cb7e2afacb6b0ad92a3370dd5f15db18e12e753b7ec',
+                'ebef532fbfaee8fcafa4b6e12b2ad8cbb219bacfba4f2aaa24904bd59480e5d3'],
+ 'circuits/transaction/src/smallwood_htlc_transport.rs': ['4df08a64e1bc8e25c62bc479747730a0f585e6d0233eaac65618ce3bec1694be',
+                                                          '0e157cb668ec2602a5ae96cf81269697d5cd3396ab615709fc3f26441f63da26'],
+ 'network/src/lib.rs': ['d930d38df3cb5c09684e7196d60d1f4b4e3b17caff36e98fc0e03267566b9682',
+                        'a3776bf15654a5a3e7c2acc3e29acde25de0f157d8c534b191414e5be2a6ef3f'],
+ 'node/src/bin/native_node.rs': ['236cfb18659ba1ad624f3c2f25f03bc45601221ff19f586c83094ddadff8ac96',
+                                 '1b8382135f934f82191357d4e783f81779885bf51499ea5cd6a96229fdb3ff41'],
+ 'node/src/native/admission.rs': ['9f9e66d240facd9bd74b24d579734b41ea940154cb2722f14f3bb963e96dd0c1',
+                                  'e73b8e689db6b9ed5fe0a27f8e31826bb78337a4a1116cd6030c737319250fba'],
+ 'node/src/native/asset_native.rs': ['c59fcce5b265862a41903cdf7f6350950fb48c1fc553adaaf33836ae1856da29',
+                                     'd739f5060d6b481d5fdd383ab072e7f25633f0848cc1e5170afb0a608cac927b'],
+ 'node/src/native/asset_recovery_geometry_catalog.rs': ['89508735bc98d26066d4f754407080e0866048b49af44c6181dcdf0e1c46d50f',
+                                                        '979f6cee7b45d058f7a04e1c96316bd2b08d7ed740e9eef3242200fa7fb97188'],
+ 'node/src/native/asset_recovery_lifecycle_tests.rs': ['62cf4bec53d619556bc07a6cf0f66fc36d81130873b122bf88c2bff0353e8415',
+                                                       'e2e83d99062b5940a872b672e8d7e7564f45141005b8e5594277ff6d5b8d6950'],
+ 'node/src/native/asset_recovery_profile.rs': ['308e45158b51e648a4eed81984cd9fd40359861d29bfa8c2109ae0a346bac210',
+                                               'a030e331cbe317700eb605757734d37676e689b2b5a4f774a5dea8bc716ea389'],
+ 'node/src/native/asset_state.rs': ['ac98af4f5f6c13a65a4d2d90a7183121fc5f99d018d9e1a57d24c080f9fd59c9',
+                                    'aae89923687a2bd8e296f0bc2aaf4014e98895f2cfea0d9cf61eb34c8db9db56'],
+ 'node/src/native/block_flow.rs': ['cc650ad4fd11d582c78382d1de2cf27289310ccc5719393dd5df6d750e7bdb95',
+                                   '70c59140f1f51d09383276d7c2eabd0b0c4b990109c6403dffcef84e61fb96d8'],
+ 'node/src/native/mod.rs': ['6be69238c26189dd48d921a5a9c8b2aa2a9057af05060ba62edd9f7d8234bfa9',
+                            '60496dc754362a21286d247a55fe76fae197aa7b5611251aaca041c182cac973'],
+ 'node/src/native/node_impl.rs': ['05f84c22738c43c937201470a27649a3d73e4b8ce9dfbc87c7d6e95abd462e3c',
+                                  'e6efec45d1a9d3b4c5dee02f1a9d0f38d300a755c711d29ff0120b49a7ec5d00'],
+ 'node/src/native/poseidon2_v8_pending.rs': ['95b7f63283c59cdf41f82485401afc9941e0a214bbc5538f51e5ae0363e393de',
+                                             '8bbed7840590250121db5fa8ff26800d8f2f7af5d27debf2f2ee6f9559dcd07b'],
+ 'node/src/native/poseidon2_v8_state.rs': ['ae74b57b66c3fb1a0968767197eda87f4ebb23fbfcd3e3a1a74552e0ed85f838',
+                                           'eb65fc931e8623dc48751c54df47f096589aa65906889a59b4f4ec4bcdbc942c'],
+ 'node/src/native/rpc.rs': ['0250f8b5548f9e718d1f2b3fb60c39dc0c171fe31615442628c1af274cb8cd8c',
+                            '74a599d7234621925bddbc9709ecdab37927b9d7e428eaa38590c428b7a435b0'],
+ 'node/src/native/tests.rs': ['9ce2b15b592f82403f451f9fc76974c98cc7bdf74f6c421c7bf91228bc1b0e31',
+                              '98b490c43e2538c38c73a2ba5636cd5f23287d5e352c51e271bc3c73a3e2cdd1'],
+ 'node/src/native/util.rs': ['ccf0764d0059cff43f784171edf58819cabe9645ab2aa1c8f24592beee5e45b1',
+                             '51b0333cb00513dc427f4e7cf552f9b3584ffd5133b7ea32b53224ddfed1bea2'],
+ 'protocol/versioning/src/launch_candidate.rs': ['2ce83547371d7f0904dfc318286e3ae0a17f3776f415518f49c0e22627913539',
+                                                 '0e67e1c769d363897902dffae28c65f682eba696180a22ab1b0bd6650ce31ad7'],
+ 'protocol/versioning/src/lib.rs': ['150c5018a34fa6d92eba62f070692d10ccb77e477f2257ee6a4045b477c0f5ba',
+                                    '1b574f0b27635e0d33e42e16763300f2b732cacfe850953fc35f19028a58862d'],
+ 'scripts/hegemon_formal_core/src/lib.rs': ['33c1c47853fa7746d5f351db4e16b684590f2e6be568de6b9578e8fd9aa1bf1d',
+                                            '4987f1a5634898eae53bcc0103af21e48b775546884af84488399923b87773d3'],
+ 'wallet/src/bin/wallet.rs': ['df0b673176b10c730285d210f1c9ede4e6ba0b2621118ad63b325c4ffe64b024',
+                              '73a50becdd346cedd7ed765c600a3ee70e591ff2fc60564ba6e7d3262ee18f1b'],
+ 'wallet/src/htlc_store.rs': ['032030a1854beca9e395a04ada301bf7893442be6ef5e565b17e5b479353cd95',
+                              '20de39f484fd2010f6081529602d1d8158d75e2a020924727a9ab87d06d2f53e'],
+ 'wallet/src/rp06_transfer.rs': ['106f407bca70b1667e39e66ceff19fd8f023ee0bfbd976040df075d160b19203',
+                                 'd01dc7029703d08a404b87fd297cae3813708737e6c8a9838ee17d94436f72e3']}
+CURRENT_SOURCE_ADDITIONS = {'node/src/native/asset_recovery_profile/geometry_catalog.rs': {'bytes': 41029,
+                                                                'sha256': '31175e46be0807ee25880070780417e0a6e26e6ba613a57ed5254449dec7ea6f'}}
+CURRENT_CASE_NAMES = ['ordinary', 'policy_create', 'absolute_height', 'policy_hash_release', 'htlc_release']
+CURRENT_NEGATIVE_NAMES = ['changed_statement', 'changed_proof', 'truncated_proof', 'oversize_proof', 'truncated_statement', 'oversize_statement']
+
+legacy_source_gate = source_gate
+legacy_final_replay = final_replay
+
+def validate_current_runtime_change(relative, before, after):
+    if before == after:
+        return
+    expected = CURRENT_RUNTIME_DELTAS.get(relative)
+    require(expected is not None and (digest_bytes(before), digest_bytes(after)) == tuple(expected),
+            'current source differs beyond exact reviewed postimage: ' + relative)
+
+def current_source_gate(root, predecessor):
+    raw_config = safe_file(root, CONFIG).read_bytes()
+    require(digest_bytes(raw_config) == CURRENT_CONFIG_SHA256, 'reviewed current successor configuration differs or is not frozen')
+    config = json.loads(raw_config)
+    require(config['schema'] == 'hegemon.release.exact-source-successor.v2', 'current source schema differs')
+    require(config['new_version'] == NEW_VERSION and config['internal_cargo_version'] == OLD_VERSION, 'current release version boundary differs')
+    require(config['reviewed_runtime_deltas'] == {p:dict(zip(('before_sha256','after_sha256'), pair)) for p,pair in CURRENT_RUNTIME_DELTAS.items()}, 'current exact delta configuration differs')
+    require(config['reviewed_source_additions'] == CURRENT_SOURCE_ADDITIONS, 'current exact source additions differ')
+    for relative, sha in ((CHECKER, EXPECTED_CHECKER), (REGISTRY, EXPECTED_REGISTRY)):
+        before = safe_file(predecessor, relative).read_bytes()
+        require(digest_bytes(before) == sha, 'immutable predecessor authority differs: ' + relative)
+        after = safe_file(root, relative).read_bytes()
+        if relative == CHECKER:
+            require(before.count(b'def main():\n') == 1, 'ambiguous predecessor main dispatch')
+            require(after == before.replace(b'def main():\n', b'def main():\n'+DISPATCH.encode(), 1), 'current checker differs beyond approved successor dispatch')
+        else:
+            require(after == before, 'historical registry must remain byte identical')
+    require(digest_bytes(safe_file(root, 'scripts/release_artifact_manifest.py').read_bytes()) == CURRENT_ARTIFACT_HELPER_SHA256, 'current artifact-manifest helper differs')
+    require(digest_bytes(safe_file(root, 'scripts/check_release_launcher_policy.py').read_bytes()) == CURRENT_LAUNCHER_POLICY_SHA256, 'current launcher-policy helper differs')
+    command = [sys.executable, '-I', '-B', str(predecessor / CHECKER), '--require-authorized']
+    result = subprocess.run(command, cwd=predecessor, capture_output=True, timeout=240, check=False)
+    require(result.returncode == 0 and not result.stderr, 'immutable predecessor source gate failed')
+    old_receipt = json.loads(result.stdout)
+    require(old_receipt.get('authorization_kind') == 'qualified_source_tuple', 'predecessor did not qualify source tuple')
+    checker = import_checker(predecessor / CHECKER, '_v011_exact_immutable_predecessor')
+    registry = checker.load(checker.path(REGISTRY))
+    require(registry['release']['identity'] == config['predecessor_identity'], 'historical qualified identity differs')
+    binding = checker.load(checker.pin(registry['release']['binding'], 'predecessor binding'))
+    require(binding['runtime_inventory']['sha256'] == EXPECTED_RUNTIME, 'wrong predecessor runtime inventory')
+    rows = checker.load(checker.pin(binding['runtime_inventory'], 'predecessor runtime inventory'))['files']
+    require(len(rows) == 598 and len({r['path'] for r in rows}) == 598, 'exact 598-file predecessor inventory required')
+    roots = sorted({Path(r['path']).parts[0] for r in rows if len(Path(r['path']).parts)>1 and not r['path'].startswith('.')})
+    def build_sources(tree):
+        paths = set()
+        for name in roots:
+            for p in (tree/name).rglob('*'):
+                rel = p.relative_to(tree/name)
+                if 'target' in rel.parts:
+                    continue
+                if (p.suffix == '.rs' and ('src' in rel.parts or p.name == 'build.rs')) or p.name == 'Cargo.toml':
+                    safe_file(tree, p.relative_to(tree).as_posix())
+                    paths.add(p.relative_to(tree).as_posix())
+        return paths
+    require(build_sources(root) == build_sources(predecessor) | set(CURRENT_SOURCE_ADDITIONS), 'Rust/Cargo path set differs beyond exact reviewed additions')
+    for relative, expected in CURRENT_SOURCE_ADDITIONS.items():
+        require(not (predecessor/relative).exists(), 'new source existed in predecessor: '+relative)
+        raw = safe_file(root, relative).read_bytes()
+        require(len(raw) == expected['bytes'] and digest_bytes(raw) == expected['sha256'], 'new source postimage differs: '+relative)
+    changed = []
+    for row in rows:
+        before = safe_file(predecessor, row['path']).read_bytes()
+        require(len(before) == row['bytes'] and digest_bytes(before) == row['sha256'], 'predecessor runtime differs: '+row['path'])
+        after = safe_file(root, row['path']).read_bytes()
+        if before != after:
+            changed.append(row['path'])
+            validate_current_runtime_change(row['path'], before, after)
+    require(sorted(changed) == sorted(CURRENT_RUNTIME_DELTAS), 'exact current runtime delta set required')
+    for p in config['unchanged_cargo_manifests']:
+        require(safe_file(root,p).read_bytes() == safe_file(predecessor,p).read_bytes(), 'Cargo manifest changed: '+p)
+    require(digest_bytes(safe_file(root,'Cargo.lock').read_bytes()) == CURRENT_CARGO_LOCK_SHA256, 'exact four-update lockfile differs')
+    manifest_raw = safe_file(root, config['current_network_manifest']).read_bytes()
+    require(digest_bytes(manifest_raw) == config['current_network_manifest_sha256'], 'current immutable network manifest differs')
+    identity = config['current_identity']
+    receipt = {'schema':'hegemon.private-spend.release-authorization.v2',
+        'authorization_kind':CURRENT_SOURCE_KIND, 'status':'PASS_EXACT_REVIEWED_SOURCE_SUCCESSOR_ONLY',
+        'identity':identity, 'historical_qualified_identity':config['predecessor_identity'],
+        'source_successor_config_sha256':CURRENT_CONFIG_SHA256,
+        'predecessor_checker_sha256':EXPECTED_CHECKER, 'predecessor_registry_sha256':EXPECTED_REGISTRY,
+        'runtime_inventory_sha256':EXPECTED_RUNTIME, 'runtime_files_compared':598,
+        'changed_paths':sorted(changed), 'added_source_paths':sorted(CURRENT_SOURCE_ADDITIONS),
+        'reviewed_runtime_deltas':config['reviewed_runtime_deltas'], 'reviewed_source_additions':CURRENT_SOURCE_ADDITIONS,
+        'cargo_lock_sha256':CURRENT_CARGO_LOCK_SHA256, 'cargo_metadata_unchanged':False,
+        'proof_and_protocol_runtime_unchanged':False, 'new_version':NEW_VERSION,
+        'network_manifest_sha256':config['current_network_manifest_sha256'],
+        'predecessor_source_gate':old_receipt, 'assumptions':old_receipt['assumptions'],
+        'binding_sha256':old_receipt['binding_sha256'], 'g7_review_sha256':old_receipt['g7_review_sha256'],
+        'unchanged_evidence_reused':True, 'historical_G8_reused':True,
+        'predecessor_lifecycle_reexecuted':False, 'affected_lifecycle_verified':False,
+        'fresh_network_lifecycle_verified':False, 'current_network_G8_qualified':False,
+        'fresh_public_genesis_qualified':False, 'state_admission_verified':False,
+        'production_artifacts_verified':False, 'production_authorized':False,
+        'public_cutover_authorized':False, 'deployment_verified':False,
+        'actual_new_binary_proof_verification':False,
+        'limitations':config['limitations']}
+    return receipt, json.loads(manifest_raw)
+
+def source_gate(root, predecessor):
+    config = load_json(safe_file(root, CONFIG))
+    if config.get('schema') == 'hegemon.release.exact-source-successor.v2':
+        return current_source_gate(root, predecessor)
+    return legacy_source_gate(root, predecessor)
+
+def validate_current_binary_proofs(checks, node_sha, artifact_sha, relation_digest, fixture_manifest_sha):
+    expected = {'schema':'hegemon.v011.current-binary-proof-verification.v1',
+        'status':'PASS_CURRENT_BINARY_BACKEND_PROOFS', 'actual_proof_verification':True,
+        'node_sha256':node_sha, 'artifact_manifest_sha256':artifact_sha,
+        'cargo_lock_sha256':CURRENT_CARGO_LOCK_SHA256, 'relation_digest':relation_digest,
+        'fixture_manifest_sha256':fixture_manifest_sha, 'cases_verified':5,
+        'network_manifest_sha256':CURRENT_NETWORK_MANIFEST_SHA256,
+        'offline_cli_source_sha256':CURRENT_RUNTIME_DELTAS['node/src/bin/native_node.rs'][1],
+        'processes_reaped':True, 'cryptographic_verification_only':True,
+        'fresh_network_lifecycle_verified':False, 'state_admission_verified':False,
+        'production_authorized':False, 'public_cutover_authorized':False}
+    require(isinstance(checks,dict) and all(type(checks.get(k)) is type(v) and checks[k] == v for k,v in expected.items()), 'current binary proof scope/identity incomplete')
+    require(isinstance(checks.get('inputs_before'),dict) and bool(checks['inputs_before']) and checks['inputs_before'] == checks.get('inputs_after'), 'current proof execution input snapshots missing or changed')
+    cases = checks.get('cases')
+    require(isinstance(cases,list) and [r.get('name') for r in cases] == CURRENT_CASE_NAMES, 'exact five current proof cases required')
+    require(len(CURRENT_PROOF_CASES) == 5, 'current public fixture descriptors not frozen')
+    for actual, frozen in zip(cases, CURRENT_PROOF_CASES):
+        require(actual.get('name') == frozen['name'] and actual.get('proof') == frozen['proof'] and actual.get('statement') == frozen['statement'], 'current proof/statement differs from frozen actual fixture')
+        require(actual.get('verified') is True and actual.get('processes_reaped') is True and type(actual.get('exit_code')) is int and actual['exit_code'] == 0, 'actual current binary proof verification did not pass')
+        controls = actual.get('negative_controls')
+        require(isinstance(controls,dict) and sorted(controls) == sorted(CURRENT_NEGATIVE_NAMES), 'complete current-binary negative controls required')
+        for control in controls.values():
+            require(isinstance(control,dict) and control.get('rejected') is True and control.get('processes_reaped') is True and type(control.get('exit_code')) is int and control['exit_code'] == 1, 'negative input was not rejected by actual binary')
+
+def final_replay(root, artifact, receipt, min_free_gib):
+    if receipt.get('authorization_kind') != CURRENT_SOURCE_KIND:
+        return legacy_final_replay(root, artifact, receipt, min_free_gib)
+    runner = safe_file(root, 'scripts/check_v011_current_binary_proofs.py')
+    fixture = safe_file(root, 'release-evidence/v0.11-current-proof-fixture/manifest.json')
+    require(digest_bytes(runner.read_bytes()) == CURRENT_RUNNER_SHA256, 'reviewed current proof runner differs or is not frozen')
+    require(digest_bytes(fixture.read_bytes()) == CURRENT_FIXTURE_SHA256, 'reviewed current proof fixture differs or is not frozen')
+    node = next(r for r in load_json(artifact)['artifacts'] if r['binary'] == 'hegemon-node')
+    output = Path(receipt['identity_smoke']['scratch_directory'])/'current-binary-proofs'
+    command = [sys.executable, '-I', '-B', str(runner), '--node-bin',str(safe_file(root,node['path'])), '--artifact-manifest',str(artifact), '--output',str(output), '--min-free-gib',str(min_free_gib)]
+    result = subprocess.run(command, cwd=root, capture_output=True, timeout=240, check=False)
+    require(result.returncode == 0 and not result.stderr, 'actual current-binary proof verification failed: '+result.stderr.decode(errors='replace')[-2000:])
+    checks = json.loads(result.stdout)
+    require(checks.get('target_triple') == load_json(artifact)['target_triple'], 'current proof runner target differs from final artifact manifest')
+    validate_current_binary_proofs(checks, receipt['artifact_sha256']['hegemon-node'], receipt['artifact_manifest_sha256'], receipt['identity']['relation_digest'], CURRENT_FIXTURE_SHA256)
+    require(digest_bytes(artifact.read_bytes()) == receipt['artifact_manifest_sha256'], 'artifact manifest changed during current proof checks')
+    require(digest_bytes(safe_file(root,node['path']).read_bytes()) == receipt['artifact_sha256']['hegemon-node'], 'node changed during current proof checks')
+    receipt.update(status='PASS_EXACT_SOURCE_CURRENT_BINARY_BACKEND_AND_H0',
+        final_artifact_scope=CURRENT_SCOPE, current_binary_backend_artifacts_verified=True,
+        actual_new_binary_proof_verification=True, current_binary_proof_verification=checks)
+    return receipt
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--require-authorized', action='store_true', help='Explicit intent; receipt remains limited to version-only successor.')
+    parser.add_argument('--require-authorized', action='store_true', help='Explicit intent; source-only comparison remains distinct from final binary verification.')
     parser.add_argument('--predecessor-root', type=Path, default=ROOT/'target/v011-predecessor')
     parser.add_argument('--artifact-manifest', type=Path)
-    parser.add_argument('--require-final-artifact', action='store_true', help='Require actual fresh-node public proof replay using the produced executable; full predecessor lifecycle remains reused.')
+    parser.add_argument('--require-final-artifact', action='store_true', help='Require the exact mode-specific final executable proof verification; source-only or H0-only is insufficient.')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--min-free-gib', type=int, default=4, help='Minimum reserve for bounded CI smoke; local operators should select 15 GiB.')
     args = parser.parse_args()
@@ -302,10 +556,7 @@ def main():
         require(args.require_authorized, 'explicit --require-authorized intent required')
         require(args.min_free_gib >= 4, 'at least four GiB reserve required')
         require(not args.require_final_artifact or args.artifact_manifest is not None, 'final artifact phase requires an artifact manifest')
-        if not args.predecessor_root.exists():
-            command = [sys.executable, '-I', '-B', str(safe_file(ROOT, 'scripts/materialize_v011_predecessor.py')), '--destination', str(args.predecessor_root), '--reserve-bytes', str(args.min_free_gib * 1024**3)]
-            result = subprocess.run(command, cwd=ROOT, capture_output=True, timeout=240, check=False)
-            require(result.returncode == 0, 'authenticated predecessor materialization failed: '+result.stderr.decode(errors='replace')[-2000:])
+        require(args.predecessor_root.is_dir(), 'authenticated predecessor missing: run scripts/materialize_v011_predecessor.py explicitly before this gate')
         predecessor = args.predecessor_root.resolve(strict=True)
         require(predecessor != ROOT.resolve(), 'predecessor must be a separate immutable source tree')
         receipt, manifest = source_gate(ROOT, predecessor)

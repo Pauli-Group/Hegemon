@@ -8,10 +8,12 @@ def coin : Nat := 100000000
 def targetBlockSeconds : Nat := 60
 def yearSeconds : Nat := 31536000
 def epochYears : Nat := 4
-def halvingInterval : Nat := epochYears * yearSeconds / targetBlockSeconds
+/-- Fixed 2,100,000-block epochs at the unchanged 60-second target. The four-year
+calendar constants remain legacy labels, not a division used by this schedule. -/
+def halvingInterval : Nat := 2100000
+def epochSeconds : Nat := halvingInterval * targetBlockSeconds
 def maxMonetarySupply : Nat := 21000000 * coin
-def initialSubsidy : Nat :=
-  maxMonetarySupply * targetBlockSeconds / (2 * epochYears * yearSeconds)
+def initialSubsidy : Nat := 5 * coin
 
 def increaseSupplyDigest (parent amount : Nat) : Option Nat :=
   let next := parent + amount
@@ -38,17 +40,36 @@ def expectedConsensusSupply
 def pow2 (exponent : Nat) : Nat :=
   2 ^ exponent
 
-def cappedHalvingEpoch (height : Nat) : Nat :=
-  if height = 0 then
-    0
-  else
-    Nat.min ((height - 1) / halvingInterval) 63
+/-- Undistributed budget at the beginning of an epoch; shifts never reach64. -/
+def remainingBudget (epoch : Nat) : Nat :=
+  if epoch < 64 then maxMonetarySupply / pow2 epoch else 0
+
+def epochBudget (epoch : Nat) : Nat :=
+  remainingBudget epoch - remainingBudget (epoch + 1)
+
+/-- A slot receives the difference between adjacent floored prefix allocations.
+This distributes every epoch atom, including division dust, exactly once. -/
+def slotSubsidy (epoch slot : Nat) : Nat :=
+  ((slot + 1) * epochBudget epoch) / halvingInterval -
+    (slot * epochBudget epoch) / halvingInterval
+
+def subsidyEpoch (height : Nat) : Nat := (height - 1) / halvingInterval
+def subsidySlot (height : Nat) : Nat := (height - 1) % halvingInterval
+
+/-- Retained diagnostic compatibility projection; blockSubsidy uses the full
+uncapped epoch and remainingBudget performs the explicit bounded-shift check. -/
+def cappedHalvingEpoch (height : Nat) : Nat := Nat.min (subsidyEpoch height) 63
 
 def blockSubsidy (height : Nat) : Nat :=
-  if height = 0 then
-    0
-  else
-    initialSubsidy / pow2 (cappedHalvingEpoch height)
+  if height = 0 then 0 else slotSubsidy (subsidyEpoch height) (subsidySlot height)
+
+/-- Inclusive scheduled subsidy through height h, including zero at genesis.
+This is a mathematical schedule prefix, separate from fee-inclusive digest. -/
+def scheduledPrefix (height : Nat) : Nat :=
+  let epoch := height / halvingInterval
+  let slot := height % halvingInterval
+  maxMonetarySupply - remainingBudget epoch +
+    (slot * epochBudget epoch) / halvingInterval
 
 def checkedU64Add (left right : Nat) : Option Nat :=
   let sum := left + right
@@ -108,9 +129,10 @@ theorem monetaryConstants_match_tokenomics :
       ∧ targetBlockSeconds = 60
       ∧ yearSeconds = 31536000
       ∧ epochYears = 4
-      ∧ halvingInterval = 2102400
+      ∧ halvingInterval = 2100000
+      ∧ epochSeconds = 126000000
       ∧ maxMonetarySupply = 2100000000000000
-      ∧ initialSubsidy = 499429223 := by
+      ∧ initialSubsidy = 500000000 := by
   decide
 
 theorem blockSubsidy_zero_height :
@@ -142,13 +164,61 @@ theorem blockSubsidy_capped_shift_stable_after_extinction :
       blockSubsidy (64 * halvingInterval + 1) := by
   decide
 
-theorem blockSubsidy_uses_capped_halving_epoch
-    {height : Nat}
-    (nonzero : height ≠ 0) :
-    blockSubsidy height =
-      initialSubsidy / pow2 (cappedHalvingEpoch height) := by
+theorem halvingInterval_pos : 0 < halvingInterval := by decide
+
+theorem remainingBudget_zero : remainingBudget 0 = maxMonetarySupply := by rfl
+
+theorem remainingBudget_at64 : remainingBudget 64 = 0 := by rfl
+
+theorem remainingBudget_after64 {epoch : Nat} (late : 64 ≤ epoch) :
+    remainingBudget epoch = 0 := by
+  unfold remainingBudget
+  simp only [if_neg (Nat.not_lt.mpr late)]
+
+theorem epochBudget_after64 {epoch : Nat} (late : 64 ≤ epoch) :
+    epochBudget epoch = 0 := by
+  unfold epochBudget
+  rw [remainingBudget_after64 late,
+    remainingBudget_after64 (Nat.le_trans late (Nat.le_succ epoch))]
+
+theorem slotSubsidy_of_epochBudget_zero {epoch slot : Nat}
+    (zero : epochBudget epoch = 0) : slotSubsidy epoch slot = 0 := by
+  simp [slotSubsidy, zero]
+
+theorem blockSubsidy_uses_epoch_slot {height : Nat} (nonzero : height ≠ 0) :
+    blockSubsidy height = slotSubsidy (subsidyEpoch height) (subsidySlot height) := by
   unfold blockSubsidy
-  simp [nonzero]
+  simp only [if_neg nonzero]
+
+/-- Compatibility theorem name retained; the new formula uses the full epoch
+and its slot, not the obsolete per-epoch right-shift payout. -/
+theorem blockSubsidy_uses_capped_halving_epoch {height : Nat}
+    (nonzero : height ≠ 0) :
+    blockSubsidy height = slotSubsidy (subsidyEpoch height) (subsidySlot height) :=
+  blockSubsidy_uses_epoch_slot nonzero
+
+theorem blockSubsidy_after_budget_window {height : Nat}
+    (late : 64 ≤ subsidyEpoch height) : blockSubsidy height = 0 := by
+  by_cases zero : height = 0
+  · simp [blockSubsidy, zero]
+  · rw [blockSubsidy_uses_epoch_slot zero]
+    exact slotSubsidy_of_epochBudget_zero (epochBudget_after64 late)
+
+theorem epoch9_dust_slots :
+    epochBudget 9 = 2050781250000 ∧ slotSubsidy 9 0 = 976562 ∧
+    slotSubsidy 9 1 = 976563 ∧ slotSubsidy 9 2 = 976562 := by decide
+
+theorem final_positive_subsidy : blockSubsidy 107100000 = 1 := by decide
+
+theorem first_zero_tail_subsidy : blockSubsidy 107100001 = 0 := by decide
+
+theorem scheduledPrefix_zero : scheduledPrefix 0 = 0 := by decide
+
+theorem scheduledPrefix_complete : scheduledPrefix 107100000 = maxMonetarySupply := by decide
+
+theorem scheduledPrefix_tail : scheduledPrefix 107100001 = maxMonetarySupply := by decide
+
+theorem scheduledPrefix_u64_max : scheduledPrefix maxU64 = maxMonetarySupply := by decide
 
 theorem nativeSupplyDelta_with_coinbase
     {height feeTotal amount : Nat}

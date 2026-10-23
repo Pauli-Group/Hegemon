@@ -374,6 +374,62 @@ def main() -> None:
 
     ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     policy.check_ci_workflow(ROOT / ".github/workflows/ci.yml")
+    strict_binary_commands = (
+        "python3 -I -B scripts/test_check_v011_crypto_consumer.py",
+        "python3 -I -B scripts/materialize_v011_predecessor.py --reserve-bytes 4294967296",
+        "./scripts/security-audit.sh --require-binary --binary-manifest "
+        "target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node "
+        "--binary target/release/wallet --binary target/release/walletd",
+    )
+    for command in strict_binary_commands:
+        target = "        run: " + command + "\n"
+        for label, replacement in (
+            ("commented", "        run: echo disabled\n"),
+            ("echo only", "        run: echo " + command + "\n"),
+            ("soft failure", "        run: " + command + " || true\n"),
+            ("conditional", "        if: false\n" + target),
+            ("directory override", "        working-directory: attacker\n" + target),
+            ("environment override", "        env: {PYTHONPATH: /tmp/attacker}\n" + target),
+            ("extra argument", "        run: " + command + " --help\n"),
+        ):
+            expect_workflow_rejected(
+                "strict release binary " + label,
+                policy.check_ci_workflow,
+                replace_once(ci_workflow, target, replacement),
+            )
+    audit = strict_binary_commands[2]
+    for label, mutated in (
+        ("diagnostic bypass", audit.replace("--require-binary", "--allow-unapproved-profile --require-binary")),
+        ("manifest omission", audit.replace(" --binary-manifest target/release/hegemon-release-artifacts.json", "")),
+        ("node omission", audit.replace(" --node-bin target/release/hegemon-node", "")),
+        ("wallet omission", audit.replace(" --binary target/release/wallet ", " ")),
+        ("walletd omission", audit.replace(" --binary target/release/walletd", "")),
+    ):
+        expect_workflow_rejected(
+            "strict release binary " + label,
+            policy.check_ci_workflow,
+            replace_once(ci_workflow, "        run: " + audit, "        run: " + mutated),
+        )
+    for command in strict_binary_commands[:2]:
+        for option in (" -I", " -B"):
+            expect_workflow_rejected(
+                "strict release binary interpreter option omitted",
+                policy.check_ci_workflow,
+                replace_once(ci_workflow, command, command.replace(option, "", 1)),
+            )
+    controls_step = (
+        "      - name: Check bounded successor receipt rejection controls\n"
+        "        run: " + strict_binary_commands[0] + "\n\n"
+    )
+    predecessor_step = (
+        "      - name: Restore authenticated v0.11 predecessor for strict binary qualification\n"
+        "        run: " + strict_binary_commands[1] + "\n\n"
+    )
+    expect_workflow_rejected(
+        "strict release binary preparation order",
+        policy.check_ci_workflow,
+        replace_once(ci_workflow, controls_step + predecessor_step, predecessor_step + controls_step),
+    )
     ci_formal_crypto_timeout = (
         "  formal-crypto-sanity:\n"
         "    runs-on: ubuntu-latest\n"

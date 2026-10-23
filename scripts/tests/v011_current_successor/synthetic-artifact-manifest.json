@@ -1,0 +1,18 @@
+{
+  "artifacts": [
+    {
+      "binary": "hegemon-node",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "binary": "wallet",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+      "binary": "walletd",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  ],
+  "schema": "synthetic.unit.test.manifest.never.execution.evidence",
+  "target_triple": "synthetic-unit-test"
+}

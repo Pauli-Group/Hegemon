@@ -2685,6 +2685,12 @@ def final_artifact_phase(rows, artifact_manifest, record, receipt):
         receipt["real_treasury_spend_exercised"] = False
 
 def main():
+    if (ROOT / "config/v011-release-successor.json").is_file():
+        command = [sys.executable, "-I", "-B", str(ROOT / "scripts/check_v011_release_successor.py"), *sys.argv[1:]]
+        if any(arg == "--artifact-manifest" or arg.startswith("--artifact-manifest=") for arg in sys.argv[1:]):
+            command.append("--require-final-artifact")
+        return subprocess.call(command, cwd=ROOT)
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--require-authorized", action="store_true", help="explicit workflow intent; missing authority always rejects")
     parser.add_argument("--artifact-manifest", type=str, help="after the reviewed capability build, also verify the final existing release artifact manifest")

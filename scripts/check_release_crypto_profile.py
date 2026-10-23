@@ -278,6 +278,9 @@ PRIVATE_LAUNCH_ARTIFACTS = (("hegemon-node", "hegemon-node"), ("wallet", "wallet
 PRIVATE_LAUNCH_SCOPE = "source-owned-current86-private-spend-launch"
 
 
+V011_AUTHORITY_SHA256 = {'scripts/check_v011_release_successor.py': '260d6a7d9f8f2ed2a5f06124ed882481d0089c13f43528f07feefc680f92edc7', 'config/v011-release-successor.json': '3f46bf42acbbfab8400f18b80d5ecfab4d6984808574fb425b12ab3e830da2d0', 'scripts/materialize_v011_predecessor.py': '0dc2b129332bf1276e5790a2db2682946e54f5af6b6850eaca50ca9e17b4dee5', 'scripts/check_v011_public_chain_replay.py': '29c6655f1d8ced3ffa5a042e3c66f0567fc0ef465eda70de473e7a35054159dc', 'release-evidence/v0.11-public-chain-fixture/manifest.json': '16ce37d08a3bcfecca0f8dbe4c323f1f319d1da565ea5473d695a5c13c4676c0', 'release-evidence/v0.11-public-chain-fixture/native-chain.sled.tar.gz': '6ea33e96e3279d992475f7f1434b2d5c6ca161575c52ab4b675203ba3466f2c1', 'release-evidence/v0.11-predecessor/manifest.json': 'dbec7e35d7402e687c3a3aa19f70c45425a127a915c74185eb0054ed57aa76fc', 'scripts/check_private_spend_launch_authorization.py': '7f5265e5ddc8ec947bbc93df31df276c0fae787bfdcbc7b1e5a2547958ae60ab', 'scripts/check_v011_current_binary_proofs.py': 'a8b14c133d0d02b9e000fe30d22fbed4584e9836e439086974540c2943ea9f80', 'release-evidence/v0.11-current-proof-fixture/manifest.json': '8184f3bb1e77c03540a7e83a1a4efacf9b232c067d5f2781cf03167393c17057', 'scripts/security-audit.sh': 'd167e710e5b81389e8a2ba5383f7a3d6157476b30c6a4cf147d0dac5415c7c42', 'scripts/release_artifact_manifest.py': '17137d83d092b98c246b0fd7125bbb2f8ad71aba342fdc4717a071128c4efb6a', 'scripts/check_release_launcher_policy.py': '51700e93ac457574f262bff05f48e5e55fa328e37da30f665721a312de9d826e'}
+
+
 def sha256_file(file: Path) -> str:
     return hashlib.sha256(file.read_bytes()).hexdigest()
 
@@ -306,14 +309,142 @@ def private_launch_snapshot(root: Path, manifest_path: Path) -> tuple:
         binary_paths.append(binary)
     if len(set(binary_paths)) != 3:
         fail("private launch artifact paths must be distinct")
-    authority = tuple((str(file), sha256_file(file)) for file in (
+    if (root / "config/v011-release-successor.json").is_file():
+        for name, expected in V011_AUTHORITY_SHA256.items():
+            if not (root / name).is_file() or sha256_file(root / name) != expected:
+                fail("v0.11 reviewed authority changed: " + name)
+    authority_files = [root / "scripts/check_release_crypto_profile.py", *(root / name for name in V011_AUTHORITY_SHA256)] if (root / "config/v011-release-successor.json").is_file() else []
+    authority = tuple((str(file), sha256_file(file)) for file in (*authority_files,
         root / "scripts/check_private_spend_launch_authorization.py",
         root / "scripts/private_spend_launch_authorized_registry.json",
     ))
     return manifest, hashlib.sha256(manifest_bytes).hexdigest(), tuple(binary_paths), authority
 
 
+def validate_v011_current_successor_receipt(receipt, manifest, manifest_digest, registry):
+    """Exact current-source CI exception; never current-network G8 authority."""
+    config_path = SOURCE_ROOT / 'config/v011-release-successor.json'
+    if sha256_file(config_path) != V011_AUTHORITY_SHA256.get('config/v011-release-successor.json'):
+        fail('current successor configuration is not the exact reviewed postimage')
+    config = json.loads(config_path.read_text())
+    if config.get('schema') != 'hegemon.release.exact-source-successor.v2':
+        fail('current successor exact source configuration missing')
+    expected = {'schema':'hegemon.private-spend.release-authorization.v2',
+        'authorization_kind':'reviewed_source_successor_ci',
+        'status':'PASS_EXACT_SOURCE_CURRENT_BINARY_BACKEND_AND_H0',
+        'final_artifact_scope':'exact_current_source_current_binary_backend_and_h0',
+        'source_successor_config_sha256':V011_AUTHORITY_SHA256['config/v011-release-successor.json'],
+        'predecessor_checker_sha256':'6a0d9d0b6f1864160dd3f07adaa54f142a1ce513584f13d903e07265bee7e112',
+        'predecessor_registry_sha256':'c37455302ad34f631df1938b0ee7980af8bb8a57930ba38c05a6fe86941c145f',
+        'runtime_inventory_sha256':'dfd71b6a265e954261ed209c2ad3c34c97285016557f0f003f7f17f39ff541d0',
+        'runtime_files_compared':598, 'new_version':'0.11.0',
+        'artifact_manifest_sha256':manifest_digest,
+        'cargo_lock_sha256':config['reviewed_runtime_deltas']['Cargo.lock']['after_sha256'],
+        'network_manifest_sha256':config['current_network_manifest_sha256'],
+        'current_binary_backend_artifacts_verified':True,
+        'actual_new_binary_proof_verification':True,
+        'historical_G8_reused':True, 'unchanged_evidence_reused':True,
+        'predecessor_lifecycle_reexecuted':False, 'affected_lifecycle_verified':False,
+        'fresh_network_lifecycle_verified':False, 'current_network_G8_qualified':False,
+        'fresh_public_genesis_qualified':False, 'state_admission_verified':False,
+        'production_artifacts_verified':False, 'production_authorized':False,
+        'public_cutover_authorized':False, 'deployment_verified':False,
+        'proof_and_protocol_runtime_unchanged':False, 'cargo_metadata_unchanged':False}
+    if not isinstance(receipt,dict) or not all(type(receipt.get(k)) is type(v) and receipt[k] == v for k,v in expected.items()):
+        fail('current successor lacks exact final backend/H0 scope; source-only, H0-only and full-G8 relabeling are rejected')
+    identity = receipt.get('identity')
+    predecessor = config['predecessor_identity']
+    release = registry.get('release') if isinstance(registry,dict) else None
+    if (not isinstance(identity,dict) or identity != config['current_identity']
+        or identity.get('network_profile') != 'pre-mainnet'
+        or any(identity.get(k) != v for k,v in PRIVATE_LAUNCH_PROFILE.items() if k != 'relation_digest')
+        or registry.get('schema') != 'hegemon.private-spend.source-authorized-registry.v2'
+        or not isinstance(release,dict) or release.get('identity') != predecessor
+        or receipt.get('historical_qualified_identity') != predecessor):
+        fail('current successor changed the exact current or historical identity')
+    if (receipt.get('changed_paths') != sorted(config['reviewed_runtime_deltas'])
+        or receipt.get('added_source_paths') != sorted(config['reviewed_source_additions'])
+        or receipt.get('reviewed_runtime_deltas') != config['reviewed_runtime_deltas']
+        or receipt.get('reviewed_source_additions') != config['reviewed_source_additions']):
+        fail('current successor exact reviewed source delta differs')
+    artifacts = {row['binary']:row['sha256'] for row in manifest['artifacts']}
+    if receipt.get('target_triple') != manifest['target_triple'] or receipt.get('artifact_sha256') != artifacts:
+        fail('current successor final binary identities differ')
+    checks = receipt.get('current_binary_proof_verification')
+    if not isinstance(checks,dict) or checks.get('target_triple') != manifest['target_triple']:
+        fail('current proof runner target differs from final artifact manifest')
+    smoke = receipt.get('identity_smoke')
+    expected_smoke = {'qualified_manifest':True, 'genesis':identity['genesis_hash'],
+        'height':0, 'peers':0, 'wrong_compiled_rules_manifest_rejected':True,
+        'owned_node_reaped':True, 'node_rpc_version':'Hegemon Native Node 0.11.0',
+        'wallet_cli_version':'wallet 0.11.0'}
+    if (not isinstance(smoke,dict) or not all(type(smoke.get(k)) is type(v) and smoke[k] == v for k,v in expected_smoke.items())
+        or not isinstance(smoke.get('proof_parameters'),dict)
+        or smoke['proof_parameters'].get('relation_digest') != identity['relation_digest']
+        or smoke['proof_parameters'].get('public_words') != 86
+        or smoke['proof_parameters'].get('production_authorized') is not False):
+        fail('current successor final-node H0 scope or current proof profile differs')
+    # Invoke the same reviewed strict predicate as the executing gate. The gate
+    # itself runs this helper; a caller-supplied prerecorded receipt is not an API.
+    import importlib.util
+    helper_path = SOURCE_ROOT / 'scripts/check_v011_release_successor.py'
+    if sha256_file(helper_path) != V011_AUTHORITY_SHA256['scripts/check_v011_release_successor.py']:
+        fail('current successor helper is not the exact reviewed postimage')
+    spec = importlib.util.spec_from_file_location('_v011_current_final_predicate', helper_path)
+    if spec is None or spec.loader is None:
+        fail('cannot import reviewed current successor predicate')
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    try:
+        helper.validate_current_binary_proofs(receipt.get('current_binary_proof_verification'),
+            artifacts['hegemon-node'], manifest_digest, identity['relation_digest'], helper.CURRENT_FIXTURE_SHA256)
+    except (ValueError, KeyError, TypeError, helper.SuccessorError) as error:
+        fail('current successor final-node proof checks rejected: '+str(error))
+    return identity
+
+
+def validate_v011_successor_receipt(receipt, manifest, manifest_digest, registry):
+    """Separate bounded mode: predecessor lifecycle is reused, never relabeled."""
+    identity = receipt.get("identity")
+    expected = {"schema":"hegemon.private-spend.release-authorization.v2",
+        "authorization_kind":"qualified_source_tuple", "status":"PASS_VERSION_SUCCESSOR_ARTIFACTS_AND_PUBLIC_PROOF_REPLAY",
+        "final_artifact_scope":"version_and_exact_platform_shutdown_successor_public_proof_replay",
+        "production_artifacts_verified":False, "affected_lifecycle_verified":False,
+        "production_authorized":False, "deployment_verified":False, "public_cutover_authorized":False,
+        "fresh_public_genesis_qualified":False, "predecessor_lifecycle_reexecuted":False,
+        "version_only_artifacts_verified":True, "actual_new_binary_proof_verification":True,
+        "unchanged_evidence_reused":True, "proof_and_protocol_runtime_unchanged":True, "cargo_metadata_unchanged":True, "runtime_files_compared":598, "new_version":"0.11.0", "artifact_manifest_sha256":manifest_digest}
+    if not all(type(receipt.get(k)) is type(v) and receipt[k] == v for k,v in expected.items()):
+        fail("v0.11 lacks exact bounded successor/artifact/proof-replay scope")
+    release = registry.get("release") if isinstance(registry,dict) else None
+    if (not isinstance(identity,dict) or identity.get("network_profile") != "pre-mainnet"
+        or any(identity.get(k) != v for k,v in PRIVATE_LAUNCH_PROFILE.items())
+        or not isinstance(release,dict) or release.get("identity") != identity
+        or registry.get("schema") != "hegemon.private-spend.source-authorized-registry.v2"
+        or receipt.get("qualified_identity") != identity):
+        fail("v0.11 successor changed its qualified rehearsal identity")
+    artifacts = {row["binary"]:row["sha256"] for row in manifest["artifacts"]}
+    if (receipt.get("target_triple") != manifest["target_triple"] or receipt.get("artifact_sha256") != artifacts
+        or receipt.get("runtime_inventory_sha256") != "dfd71b6a265e954261ed209c2ad3c34c97285016557f0f003f7f17f39ff541d0"
+        or receipt.get("changed_paths") != ["node/src/native/rpc.rs","node/src/native/util.rs","protocol/versioning/src/lib.rs","wallet/src/bin/wallet.rs"]):
+        fail("v0.11 successor artifact/runtime binding differs")
+    replay = receipt.get("public_proof_replay")
+    replay_expected = {"status":"PASS", "actual_proof_verification":True,
+        "node_sha256":artifacts["hegemon-node"], "artifact_manifest_sha256":manifest_digest,
+        "fixture_manifest_sha256":"16ce37d08a3bcfecca0f8dbe4c323f1f319d1da565ea5473d695a5c13c4676c0",
+        "network_manifest_sha256":"ffda566f04cee22b2a7ba5c2be88f625e9c668f47a7765f36fb377c79ea25758",
+        "canonical_blocks_verified":163, "proof_cases_verified":6, "importer_started_at_genesis":True,
+        "importer_fixture_copied":False,"restart_verified":True,"processes_reaped":True}
+    if not isinstance(replay,dict) or not all(type(replay.get(k)) is type(v) and replay[k] == v for k,v in replay_expected.items()):
+        fail("v0.11 requires actual fresh-import/restart proof verification")
+    return identity
+
+
 def validate_private_launch_receipt(receipt: object, manifest: dict, manifest_digest: str, registry: dict) -> dict:
+    if isinstance(receipt,dict) and receipt.get("final_artifact_scope") == "exact_current_source_current_binary_backend_and_h0":
+        return validate_v011_current_successor_receipt(receipt, manifest, manifest_digest, registry)
+    if isinstance(receipt,dict) and receipt.get("final_artifact_scope") == "version_and_exact_platform_shutdown_successor_public_proof_replay":
+        return validate_v011_successor_receipt(receipt, manifest, manifest_digest, registry)
     if (not isinstance(receipt, dict)
         or receipt.get("schema") != "hegemon.private-spend.release-authorization.v2"
         or receipt.get("authorization_kind") != "qualified_source_tuple"
@@ -363,21 +494,34 @@ def private_launch_profile(root: Path, manifest_path: Path) -> dict:
             fail("private launch requires every legacy profile to refuse exactly")
     command = [sys.executable, "-I", "-B", str(root / "scripts/check_private_spend_launch_authorization.py"),
                "--require-authorized", "--artifact-manifest", manifest_path.relative_to(root).as_posix()]
-    completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=180)
+    completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=1300 if (root / "config/v011-release-successor.json").is_file() else 180)
     if completed.returncode != 0 or completed.stderr:
         fail("private launch source authorization failed: " + (completed.stderr.strip() or str(completed.returncode)))
     lines = completed.stdout.splitlines()
-    if len(lines) != 1:
+    receipt = json.loads(completed.stdout)
+    if len(lines) != 1 and receipt.get("final_artifact_scope") not in ("version_and_exact_platform_shutdown_successor_public_proof_replay", "exact_current_source_current_binary_backend_and_h0"):
         fail("private launch source authorization must return one JSON receipt")
-    receipt = json.loads(lines[0])
     registry = json.loads((root / "scripts/private_spend_launch_authorized_registry.json").read_text())
     identity = validate_private_launch_receipt(receipt, manifest, manifest_digest, registry)
     if private_launch_snapshot(root, manifest_path) != before:
         fail("private launch manifest, artifacts or authority changed during validation")
+    if receipt.get("final_artifact_scope") == "exact_current_source_current_binary_backend_and_h0":
+        return {"passed":True, "mode":"executed-exact-source-backend-h0",
+            "target_triple":manifest["target_triple"], "production_authority":False,
+            "authorization_scope":"exact-current-source-current-binary-backend-and-h0-only",
+            "private_spend_launch_authority":False, "current_network_G8_qualified":False,
+            "fresh_network_lifecycle_verified":False, "state_admission_verified":False,
+            "public_cutover_authorized":False, "identity":identity,
+            "artifact_manifest_sha256":manifest_digest,
+            "actual_new_binary_proof_verification":True,
+            "historical_G8_reused":True, "predecessor_lifecycle_reexecuted":False}
     return {"passed": True, "mode": "executed-private-spend-launch", "target_triple": manifest["target_triple"],
             "production_authority": False, "authorization_scope": PRIVATE_LAUNCH_SCOPE,
             "private_spend_launch_authority": True, "identity": identity,
-            "artifact_manifest_sha256": manifest_digest}
+            "artifact_manifest_sha256": manifest_digest,
+            "receipt_mode": receipt.get("final_artifact_scope", "full_current86_composite_lifecycle"),
+            "actual_new_binary_proof_verification": receipt.get("actual_new_binary_proof_verification", False),
+            "predecessor_lifecycle_reexecuted": receipt.get("predecessor_lifecycle_reexecuted", True)}
 
 
 def main() -> None:

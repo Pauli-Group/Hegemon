@@ -50,14 +50,13 @@ class PreparationWorkflowTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 preparation.verify_preparation(self.release, mutation)
 
-    def test_successor_checks_do_not_remove_original_authorization(self) -> None:
+    def test_only_explicit_successor_adapter_changes_authorization(self) -> None:
         self.assertEqual(self.workflow.count("scripts/materialize_v011_predecessor.py"), 5)
-        self.assertEqual(self.workflow.count("scripts/check_v011_release_successor.py"), 5)
+        self.assertEqual(self.workflow.count("scripts/check_v011_release_successor.py"), 7)
         self.assertEqual(self.workflow.count("--require-final-artifact"), 4)
-        self.assertEqual(self.workflow.count("scripts/check_private_spend_launch_authorization.py"), 5)
+        self.assertNotIn("scripts/check_private_spend_launch_authorization.py", self.workflow)
         self.assertIn("scripts/test_premainnet_launcher.py", self.workflow)
         for mutation in (
-            self.workflow.replace("scripts/check_private_spend_launch_authorization.py", "scripts/removed_original_gate.py", 1),
             self.workflow.replace(" --require-final-artifact", "", 1),
             self.workflow.replace(" --require-authorized", "", 1),
             self.workflow.replace("scripts/materialize_v011_predecessor.py", "scripts/unreviewed.py", 1),
@@ -65,6 +64,25 @@ class PreparationWorkflowTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 preparation.verify_preparation(self.release, mutation)
+
+    def test_all_current_successor_controls_are_required_after_restore(self) -> None:
+        source_job = self.workflow.split("  transaction-proof-authorization:\n", 1)[1].split("\n  security-gates:\n", 1)[0]
+        restore = source_job.index("scripts/materialize_v011_predecessor.py")
+        authorization = source_job.index("scripts/check_v011_release_successor.py --require-authorized")
+        for suite in (
+            "scripts/tests/v011_current_successor/test_successor_scope.py",
+            "scripts/tests/v011_current_successor/test_successor_consumer.py",
+            "scripts/tests/v011_current_successor/test_security_audit_scope.py",
+            "scripts/tests/v011_current_successor/test_artifact_gate_identity.py",
+            "scripts/test_check_v011_current_binary_proofs.py",
+        ):
+            with self.subTest(suite=suite):
+                self.assertEqual(self.workflow.count(suite), 1)
+                self.assertLess(restore, source_job.index(suite))
+                self.assertLess(source_job.index(suite), authorization)
+                with self.assertRaises(ValueError):
+                    preparation.verify_preparation(self.release, self.workflow.replace(suite, "scripts/unreviewed.py", 1))
+        self.assertIn("--launcher-helper scripts/check_release_launcher_policy.py", source_job)
 
     def test_new_release_job_requires_review(self) -> None:
         with self.assertRaises(ValueError):

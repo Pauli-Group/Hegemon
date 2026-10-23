@@ -5099,7 +5099,12 @@ mod native_asset_routing_tests {
         private_spend::CIPHERTEXT_BYTES,
     };
 
-    fn spend_fixture() -> (PendingAction, AssetSpendPublic, [[u8; CIPHERTEXT_BYTES]; 3]) {
+    fn spend_fixture() -> (
+        PendingAction,
+        AssetSpendPublic,
+        [[u8; CIPHERTEXT_BYTES]; 3],
+        bool,
+    ) {
         let ciphertexts = [
             [1; CIPHERTEXT_BYTES],
             [2; CIPHERTEXT_BYTES],
@@ -5132,8 +5137,37 @@ mod native_asset_routing_tests {
         };
         // Shape-only proof marker. Neither scope acceptance nor route
         // recognition verifies a proof or creates development authority.
-        let body =
-            wire::encode_native_asset_spend_action_v1(&public, &ciphertexts, b"SMZE").unwrap();
+        let (body, source_qualified) = match wire::encode_native_asset_spend_action_v1(
+            &public,
+            &ciphertexts,
+            b"SMZE",
+        ) {
+            Ok(body) => (body, true),
+            Err(wire::AssetSpendWireErrorV1::RelationSource) => {
+                use transaction_circuit::asset_spend_v1_admission as admission;
+                assert_eq!(
+                    admission::spend_profile_upper_bound_v1(0, 4),
+                    Err(admission::NativeAssetAdmissionErrorV1::SourceIdentity)
+                );
+                assert_ne!(
+                    hex::encode(transaction_circuit::asset_spend_v1::relation_digest()),
+                    admission::QUALIFIED_SPEND_SOURCE_SHA512
+                );
+                // Historical framing remains source-neutral structural evidence;
+                // it creates no native admission or geometry qualification.
+                let historical =
+                    wire::encode_asset_spend_action_v1(&public, &ciphertexts, b"SMZE").unwrap();
+                assert_eq!(
+                    wire::decode_asset_spend_action_v1(&historical)
+                        .unwrap()
+                        .public,
+                    public
+                );
+                eprintln!("inactive asset source: exact native RelationSource rejection; outer invariants only");
+                (historical, false)
+            }
+            Err(error) => panic!("unexpected native asset fixture error: {error}"),
+        };
         let action = PendingAction {
             tx_hash: ActionId48::ZERO,
             binding: KernelVersionBinding {
@@ -5151,16 +5185,16 @@ mod native_asset_routing_tests {
             fee: public.fee,
             candidate_artifact: None,
         };
-        (action, public, ciphertexts)
+        (action, public, ciphertexts, source_qualified)
     }
 
     #[test]
     fn native_asset_spend_structural_dispatch_and_exact_outer_binding() {
-        let (action, _, _) = spend_fixture();
+        let (action, _, _, source_qualified) = spend_fixture();
         assert!(is_native_asset_action(&action));
         assert!(is_shielded_transfer_action(&action));
         assert!(is_poseidon2_v8_action(&action));
-        assert!(transfer_action_scope_valid(&action));
+        assert_eq!(transfer_action_scope_valid(&action), source_qualified);
         assert!(!owns_legacy_ciphertext_da_rows(&action));
         assert!(ensure_native_v3_active_action_route_ids(
             action.family_id,
@@ -5190,7 +5224,7 @@ mod native_asset_routing_tests {
 
     #[test]
     fn native_asset_spend_rejects_historical_wire_unsupported_graph_and_byte_overflow() {
-        let (mut action, mut public, ciphertexts) = spend_fixture();
+        let (mut action, mut public, ciphertexts, _) = spend_fixture();
         action.public_args =
             wire::encode_asset_spend_action_v1(&public, &ciphertexts, b"SMZE").unwrap();
         assert!(!transfer_action_scope_valid(&action));
@@ -5233,9 +5267,33 @@ mod native_asset_routing_tests {
             expires_at: 110,
             action_intent: [9; 7],
         };
+        let bytes = match wire::encode_native_asset_admin_action_v1(&public, b"SMZE") {
+            Ok(bytes) => bytes,
+            Err(wire::AssetSpendWireErrorV1::RelationSource) => {
+                use transaction_circuit::asset_spend_v1_admission as admission;
+                assert_eq!(
+                    admission::admin_profile_upper_bound_v1(),
+                    Err(admission::NativeAssetAdmissionErrorV1::SourceIdentity)
+                );
+                assert_ne!(
+                    hex::encode(transaction_circuit::asset_policy_admin_v1::relation_digest()),
+                    admission::QUALIFIED_ADMIN_SOURCE_SHA512
+                );
+                assert!(public.validate_structure().is_ok());
+                assert!(ensure_native_v3_active_action_route_ids(
+                    FAMILY_SHIELDED_POOL,
+                    NATIVE_ASSET_ADMIN_ACTION_ID,
+                    false
+                )
+                .is_ok());
+                eprintln!("inactive admin source: exact native RelationSource rejection before outer/proof admission");
+                return;
+            }
+            Err(error) => panic!("unexpected native admin fixture error: {error}"),
+        };
         let mut action = spend_fixture().0;
         action.action_id = NATIVE_ASSET_ADMIN_ACTION_ID;
-        action.public_args = wire::encode_native_asset_admin_action_v1(&public, b"SMZE").unwrap();
+        action.public_args = bytes;
         action.ciphertext_hashes.clear();
         action.ciphertext_sizes.clear();
         action.fee = 0;

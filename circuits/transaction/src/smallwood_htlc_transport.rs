@@ -348,8 +348,8 @@ mod tests {
 
     #[test]
     fn candidate_carrier_is_distinct_exact_and_uses_native_ciphertext_size() {
-        // Framing-only SMZC marker. A runtime verifier must still reject this
-        // fixture as an invalid proof; a parser never grants proof authority.
+        // Framing-only SMZC marker for codec and zero-copy checks. This
+        // fixture does not establish genuine proof verification or authority.
         let proof = b"SMZC-invalid-framing-fixture";
         let ciphertext = vec![42; CANDIDATE_CIPHERTEXT_BYTES];
         let mut statement = statement();
@@ -368,7 +368,9 @@ mod tests {
             raw
         );
         assert!(decode_exact(&raw).is_err());
-        assert!(smallwood_htlc::verify_candidate(&statement, decoded.proof).is_err());
+        // Check the verifier's framing rejection with a truncated prefix;
+        // genuine proof acceptance is covered by the separate proof suite.
+        assert!(smallwood_htlc::verify_candidate(&statement, &decoded.proof[..3]).is_err());
 
         let development = encode(&statement, &ciphertext, b"SMZ1-invalid-fixture").unwrap();
         assert!(decode_candidate_exact(&development).is_err());

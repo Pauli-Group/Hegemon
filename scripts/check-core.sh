@@ -28,6 +28,7 @@ EOF
 
 run_lint() {
   python3 -I -B scripts/test_check_qualified_formatting.py
+  python3 -I -B scripts/test_check_qualified_clippy.py
   python3 -I -B scripts/check_qualified_formatting.py --manifest workspace
   python3 -I -B scripts/check_qualified_formatting.py --manifest htlc
   python3 -I -B scripts/check_qualified_formatting.py --manifest proof-backend
@@ -35,7 +36,7 @@ run_lint() {
   python3 -B scripts/check_smallwood_v5_candidate_gate.py
   # Keep correctness and suspicious-code diagnostics blocking. Style and unused
   # experimental/replay helpers remain visible warnings, not protocol rewrites.
-  cargo clippy \
+  python3 -I -B scripts/check_qualified_clippy.py \
     -p hegemon-node \
     -p protocol-kernel \
     -p protocol-shielded-pool \
@@ -47,14 +48,14 @@ run_lint() {
     -p transaction-circuit \
     -p block-circuit \
     -p cashvm-bridge \
-    --all-targets -- -D clippy::correctness -D clippy::suspicious -D unused_must_use -D unsafe_op_in_unsafe_fn
-  cargo clippy \
+    --all-targets
+  python3 -I -B scripts/check_qualified_clippy.py \
     -p superneo-backend-lattice \
     -p superneo-hegemon \
     -p superneo-bench \
     -p native-backend-ref \
     -p native-backend-timing \
-    --all-targets -- -D clippy::correctness -D clippy::suspicious -D unused_must_use -D unsafe_op_in_unsafe_fn
+    --all-targets
 }
 
 prepare_test_environment() {

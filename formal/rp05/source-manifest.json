@@ -1,7 +1,7 @@
 {
   "counts": {
-    "external_imports": 108,
-    "source_modules": 1471
+    "external_imports": 109,
+    "source_modules": 1472
   },
   "endpoint_source_pins": [
     {
@@ -121,6 +121,7 @@
     "Mathlib.Logic.Equiv.Fintype",
     "Mathlib.Logic.Equiv.Set",
     "Mathlib.NumberTheory.LucasPrimality",
+    "Mathlib.Order.Monotone.Basic",
     "Mathlib.Probability.ProbabilityMassFunction.Monad",
     "Mathlib.RingTheory.AdjoinRoot",
     "Mathlib.RingTheory.Coprime.Lemmas",
@@ -667,6 +668,12 @@
       "root": 9
     },
     {
+      "module": "Mathlib.Order.Monotone.Basic",
+      "olean_sha256": "c79a2b546ad518437f6e81a11acce34fb6fd2a8ee6ee89cb30268b31dc1b5330",
+      "relative_path": "Mathlib/Order/Monotone/Basic.olean",
+      "root": 9
+    },
+    {
       "module": "Mathlib.Probability.ProbabilityMassFunction.Monad",
       "olean_sha256": "a330e6c854518da0ea763c35a7be7134735e3de65daedea23ee86c7d128cd91b",
       "relative_path": "Mathlib/Probability/ProbabilityMassFunction/Monad.olean",
@@ -843,7 +850,7 @@
     },
     {
       "module": "Hegemon.Consensus.Supply",
-      "sha256": "0ff95a6302d17b520ef6d8b7781ae5ec4c4dc79f2f8e3d4f4950cf9a34dd4561",
+      "sha256": "9a611e10d92a1f35f29e669cf4c026392015ca3479d195312f60ff5a5c8bc051",
       "source": "formal/lean/Hegemon/Consensus/Supply.lean",
       "staged": "generated/Sources/Hegemon/Consensus/Supply.lean"
     },
@@ -1128,6 +1135,12 @@
       "sha256": "00eb8f664e4c41b0b9646322de47084625ae8e2fbf3bccdd40aa2b273fb38f6b",
       "source": "formal/crypto/HegemonCrypto/Goldilocks.lean",
       "staged": "generated/Sources/HegemonCrypto/Goldilocks.lean"
+    },
+    {
+      "module": "HegemonCrypto.NativeMonetaryCap",
+      "sha256": "7f4a40279250e3650a9fa1a7afabb73504252ccc9e0d77cbc7cf06165ab65e77",
+      "source": "formal/crypto/HegemonCrypto/NativeMonetaryCap.lean",
+      "staged": "generated/Sources/HegemonCrypto/NativeMonetaryCap.lean"
     },
     {
       "module": "HegemonCrypto.Poseidon2V8ExpressionRootSemantics",
@@ -2373,8 +2386,8 @@
     },
     {
       "module": "LifetimeIssuanceR2",
-      "sha256": "2922be16c37cabee9f95cec390d5e6aedf097cbe415a05fc72b2fa5ac8ccee60",
-      "source": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/issuance/LifetimeIssuanceR2.lean",
+      "sha256": "a5c7d02a228cd998b59335c117476e1237080a5fb8027728c94a4cc21e69ee3d",
+      "source": "formal/crypto/Hegemon/Consensus/LifetimeIssuanceR2.lean",
       "staged": "generated/Sources/LifetimeIssuanceR2.lean"
     },
     {

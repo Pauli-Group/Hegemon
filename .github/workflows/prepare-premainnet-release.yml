@@ -55,10 +55,22 @@ jobs:
       - name: Restore authenticated unchanged v0.11 predecessor
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
-      - name: Transaction-proof successor authorization release gate
-        run: /usr/bin/python3 -I -B scripts/check_private_spend_launch_authorization.py --require-authorized
+      - name: Current successor scope rejection controls
+        run: python3 -I -B scripts/tests/v011_current_successor/test_successor_scope.py --checker scripts/check_v011_release_successor.py
 
-      - name: Validate standalone v0.11 version-only successor
+      - name: Current successor final-consumer rejection controls
+        run: python3 -I -B scripts/tests/v011_current_successor/test_successor_consumer.py --consumer scripts/check_release_crypto_profile.py --receipt-fixture scripts/tests/v011_current_successor/synthetic-final-receipt.json --artifact-manifest scripts/tests/v011_current_successor/synthetic-artifact-manifest.json --registry scripts/tests/v011_current_successor/synthetic-historical-registry.json
+
+      - name: Current security-audit scope rejection controls
+        run: python3 -I -B scripts/tests/v011_current_successor/test_security_audit_scope.py --audit-script scripts/security-audit.sh
+
+      - name: Current artifact-gate identity rejection controls
+        run: python3 -I -B scripts/tests/v011_current_successor/test_artifact_gate_identity.py --checker scripts/check_v011_release_successor.py --artifact-helper scripts/release_artifact_manifest.py --launcher-helper scripts/check_release_launcher_policy.py
+
+      - name: Current-binary proof-runner rejection controls
+        run: python3 -I -B scripts/test_check_v011_current_binary_proofs.py
+
+      - name: Transaction-proof successor authorization release gate
         run: /usr/bin/python3 -I -B scripts/check_v011_release_successor.py --require-authorized --predecessor-root target/v011-predecessor
 
       - name: Release workflow policy regression
@@ -202,9 +214,6 @@ jobs:
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
       - name: Validate final common proof authorization and affected lifecycle
-        run: python3 -I -B scripts/check_private_spend_launch_authorization.py --require-authorized --artifact-manifest target/release/hegemon-release-artifacts.json
-
-      - name: Validate standalone v0.11 version-only successor
         run: python3 -I -B scripts/check_v011_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
@@ -247,9 +256,6 @@ jobs:
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
       - name: Validate final common proof authorization and affected lifecycle
-        run: python3 -I -B scripts/check_private_spend_launch_authorization.py --require-authorized --artifact-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json
-
-      - name: Validate standalone v0.11 version-only successor
         run: python3 -I -B scripts/check_v011_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
@@ -291,9 +297,6 @@ jobs:
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
       - name: Validate final common proof authorization and affected lifecycle
-        run: python3 -I -B scripts/check_private_spend_launch_authorization.py --require-authorized --artifact-manifest target/release/hegemon-release-artifacts.json
-
-      - name: Validate standalone v0.11 version-only successor
         run: python3 -I -B scripts/check_v011_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
@@ -345,10 +348,6 @@ jobs:
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
       - name: Validate final common proof authorization and affected lifecycle
-        shell: bash
-        run: python3 -I -B scripts/check_private_spend_launch_authorization.py --require-authorized --artifact-manifest target/release/hegemon-release-artifacts.json
-
-      - name: Validate standalone v0.11 version-only successor
         shell: bash
         run: python3 -I -B scripts/check_v011_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
 

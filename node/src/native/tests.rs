@@ -3568,7 +3568,7 @@ fn concurrent_two_poseidon2_v8_group_is_atomic_while_production_capability_is_ab
         assert!(
             error
                 .to_string()
-                .contains("production capability is absent or not active"),
+                .contains("exact network has no active source-owned proof capability"),
             "unexpected V8 group error: {error}"
         );
     }
@@ -5937,11 +5937,21 @@ fn sync_response_missing_fork_parent_stops_suffix_then_recovers() {
     );
     assert_eq!(node.best_meta().hash, peer_tip.hash);
     assert_eq!(node.best_meta().height, peer_tip.height);
+    let (target_height, target_peer, target_hash) = node.sync_target_tip_snapshot();
+    assert_eq!(target_height, peer_tip.height);
+    if let Some(target_peer) = target_peer {
+        assert_eq!(target_peer, peer);
+    }
+    if let Some(target_hash) = target_hash {
+        assert_eq!(target_hash, peer_tip.hash);
+    }
+    // Fork recovery and tip-extension batches may normalize the target at
+    // different points. Exact verified-tip evidence must always clear it.
+    node.observe_verified_sync_peer_tip(Some(peer), peer_tip.height, Some(peer_tip.hash));
     assert_eq!(
         node.sync_target_tip_snapshot(),
-        (peer_tip.height, Some(peer), Some(peer_tip.hash))
+        (peer_tip.height, None, None)
     );
-    node.observe_verified_sync_peer_tip(Some(peer), peer_tip.height, Some(peer_tip.hash));
     assert!(node.mining_sync_gate_allows_work());
 }
 
@@ -12264,7 +12274,7 @@ fn chain_get_block_actions_chunk_rpc_rejects_noncanonical_id_root_and_cap_drift(
     persist_block_record(&node.block_tree, &oversized).expect("persist oversized action fixture");
     let err = dispatch_rpc_method(&node, "chain_getBlockActionsChunk", params)
         .expect_err("oversized action must reject before serving");
-    assert!(err.to_string().contains("exceeds limit"), "{err}");
+    assert!(err.to_string().contains("finite route limit"), "{err}");
 
     persist_block_record(&node.block_tree, &block).expect("restore canonical block record");
     dispatch_rpc_method(
@@ -18654,7 +18664,7 @@ fn native_block_meta_bincode_budget_rejects_unbounded_lengths_before_deserialize
         .expect_err("oversized action payload must reject before bincode decode");
     assert!(err
         .to_string()
-        .contains("action payload 0 exceeds limit before bincode decode"));
+        .contains("action payload 0 exceeds its finite route limit before bincode decode"));
 }
 
 #[test]
@@ -30506,7 +30516,7 @@ fn block_action_byte_budget_rejects_oversized_payload_before_decode() {
     let err = decode_block_actions(&block)
         .expect_err("oversized block action payload must reject before SCALE decode");
     let message = err.to_string();
-    assert!(message.contains("block action payload exceeds per-action limit"));
+    assert!(message.contains("payload exceeds route-specific limit"));
     assert!(!message.contains("decode native block action failed"));
 }
 
@@ -40129,7 +40139,7 @@ fn protocol_v8_artifact_codec_matches_private_pending_action_v3_exactly() {
     assert_eq!(
         transaction_circuit::smallwood_poseidon2_v8_program::SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST,
         transaction_circuit::smallwood_poseidon2_v8_program::smallwood_poseidon2_v8_program_digest_from_bytes(
-            include_bytes!("../../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp05.bin"),
+            include_bytes!("../../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp05_grammar4_compff01.bin"),
         ),
         "current RP05 relation digest must be pinned to its current program bytes"
     );

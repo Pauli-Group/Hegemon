@@ -1,0 +1,62 @@
+{
+  "release": {
+    "identity": {
+      "action": 15,
+      "activation_height": 1,
+      "backend": 2,
+      "chain_id": "67aaaf82f6374e4438dbee1ed3f5f66c0ffe122044f1f5ebb6c7fddfecff446a",
+      "circuit": 12,
+      "compression_mode": "hegemon-p2w16-compress14-left-feedforward-v1",
+      "crypto": 7,
+      "cryptographic_class": {
+        "attempt_bound": "external_conditional_hypothesis",
+        "attempts_include": [
+          "failed",
+          "unused",
+          "successful"
+        ],
+        "continuation_queries": "uniform_all_context",
+        "max_ordinary_oracle_queries": 36893488147419103232,
+        "max_total_oracle_queries": 55340232221128654848,
+        "max_total_proof_attempts": 549755813888,
+        "max_total_trace_attempts": 549755813888,
+        "max_total_verification_attempts": 549755813888
+      },
+      "deactivation_height_exclusive": null,
+      "domain_set": 8,
+      "emission_schedule": "hegemon-native-emission-21m-atoms1e8-5hgn-epoch2100000-prefix-v1",
+      "family": 1,
+      "genesis_hash": "8c3722c22b59a13c43ed9bf596bcd2bbd118c08a0ed4bf3714c8ac6a8d1711eb",
+      "kind": "PrivateSpend",
+      "manifest_digest": "bf3463141161d00165e1122eb066fa117d6b10423aa6ca0b71b4bed2552843bf3e6235932ed3b7394ce4c9b2d2097cf61d35cd916dbe62d671f05c2494dfeca0",
+      "max_proof_actions_per_block": 8,
+      "max_proof_bytes": 177632,
+      "max_total_proofs": null,
+      "network_profile": "pre-mainnet",
+      "note_genesis_root": [
+        3013021922057677145,
+        1646436993411294138,
+        17930985046722462302,
+        4040104963526763525,
+        8044768705513318970,
+        5501470279516072626,
+        9669143789627659081
+      ],
+      "profile": 12,
+      "public_words": 86,
+      "relation_digest": "cd747b8430b51faee6c4bf94d7b0c8f8dfdb7863c6b927db53e7cea67c7a20a49aaf3ceda5b9ba2947dc9b89d070e1ac5fe9ab1c77cba6d859285c2f324b56f5",
+      "relation_id": "Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4",
+      "schema": "hegemon.private-spend.native-launch-identity.v2",
+      "stablecoin_genesis_root": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  "schema": "hegemon.private-spend.source-authorized-registry.v2"
+}

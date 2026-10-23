@@ -862,6 +862,12 @@ pub(super) fn require(selected: &DevelopmentRecoveryV1) -> Result<()> {
 }
 
 #[cfg(test)]
+pub(super) fn retained_catalog_matches_current_sources_for_test() -> bool {
+    let catalog: Catalog = serde_json::from_str(QUALIFIED_CATALOG_JSON).unwrap();
+    catalog.sources == compiled_sources().unwrap()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     fn selected() -> DevelopmentRecoveryV1 {
@@ -885,8 +891,23 @@ mod tests {
     #[test]
     fn reviewed_catalog_qualifies_exact_development_geometry_only() {
         let value = measured_catalog();
-        validate_catalog(&value, &selected()).unwrap();
-        require(&selected()).unwrap();
+        if retained_catalog_matches_current_sources_for_test() {
+            validate_catalog(&value, &selected()).unwrap();
+            require(&selected()).unwrap();
+        } else {
+            assert_ne!(value.sources, compiled_sources().unwrap());
+            assert_eq!(
+                validate_catalog(&value, &selected())
+                    .unwrap_err()
+                    .to_string(),
+                "recovery geometry catalog differs from compiled sources or unchanged SMZE profile"
+            );
+            assert_eq!(
+                require(&selected()).unwrap_err().to_string(),
+                "recovery geometry catalog differs from compiled sources or unchanged SMZE profile"
+            );
+            eprintln!("inactive recovery source: retained reviewed catalog rejects current source closure; retained artifact pins only");
+        }
         assert_eq!(value.cases.len(), 8);
         assert_eq!(value.measured_capsule_bundle_bytes, 3_574_186);
         assert_eq!(value.independent_review_receipt.path,

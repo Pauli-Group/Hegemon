@@ -1012,8 +1012,6 @@ def require_binary_audit(
     wallet_bin: str,
     walletd_bin: str,
     manifest: str,
-    *,
-    allow_unapproved_profile: bool = False,
 ) -> int:
     arguments = (
         "--require-binary",
@@ -1026,8 +1024,6 @@ def require_binary_audit(
         "--binary",
         walletd_bin,
     )
-    if allow_unapproved_profile:
-        arguments = ("--allow-unapproved-profile", *arguments)
     return require_executable_command(
         name,
         steps,
@@ -1497,9 +1493,30 @@ def check_ci_workflow(path: Path) -> None:
         "target/release/wallet",
         "target/release/walletd",
         "target/release/hegemon-release-artifacts.json",
-        allow_unapproved_profile=True,
     )
-    require_step_order("release-binaries build/audit order", build_index, audit_index)
+    require_exact_step_execution_context(
+        "release-binaries binary audit", release_steps[audit_index], shell=None,
+    )
+    receipt_controls_index = require_executable_command(
+        "release-binaries bounded successor receipt rejection controls",
+        release_steps,
+        "scripts/test_check_v011_crypto_consumer.py",
+        exact_argument_vectors=((),),
+        exact_interpreter_prefix=("python3", "-I", "-B"),
+        require_default_execution_context=True,
+    )
+    predecessor_index = require_executable_command(
+        "release-binaries authenticated predecessor materialization",
+        release_steps,
+        "scripts/materialize_v011_predecessor.py",
+        exact_argument_vectors=(("--reserve-bytes", "4294967296"),),
+        exact_interpreter_prefix=("python3", "-I", "-B"),
+        require_default_execution_context=True,
+    )
+    require_step_order(
+        "release-binaries build/receipt controls/predecessor/audit order",
+        build_index, receipt_controls_index, predecessor_index, audit_index,
+    )
     print(f"ci workflow release-build gate passed: {path}")
 
 

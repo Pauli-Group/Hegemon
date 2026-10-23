@@ -2,12 +2,12 @@
   "schema": "hegemon.pre-mainnet.release.v1",
   "release": "v0.11",
   "network": "pre-mainnet",
-  "network_manifest_sha256": "ffda566f04cee22b2a7ba5c2be88f625e9c668f47a7765f36fb377c79ea25758",
+  "network_manifest_sha256": "386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754",
   "seeds": [
     "hegemon.pauli.group:30333",
     "devnet.hegemonprotocol.com:30333"
   ],
   "cutover_status": "pending",
-  "identity_stage": "qualified-rehearsal-predecessor",
+  "identity_stage": "fresh-genesis-candidate-awaiting-final-qualification",
   "public_genesis_pending": true
 }

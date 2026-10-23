@@ -2,7 +2,7 @@
   "schema": "hegemon.qualified-formatting-debt.v1",
   "toolchain": "1.91.1",
   "rustfmt_version": "rustfmt 1.8.0-stable (ed61e7d7e2 2025-11-07)",
-  "scope": "qualified-predecessor-and-exact-version-display-only",
+  "scope": "qualified-predecessor-and-exact-reviewed-migrations",
   "files": [
     {
       "path": "circuits/transaction-core/src/lib.rs",
@@ -203,6 +203,26 @@
       "old": "env!(\"CARGO_PKG_VERSION\")",
       "new": "protocol_versioning::RELEASE_VERSION",
       "replacement_count": 2
+    }
+  ],
+  "reviewed_source_migrations": [
+    {
+      "path": "node/src/native/asset_state.rs",
+      "qualified_sha256": "ac98af4f5f6c13a65a4d2d90a7183121fc5f99d018d9e1a57d24c080f9fd59c9",
+      "postimage_sha256": "aae89923687a2bd8e296f0bc2aaf4014e98895f2cfea0d9cf61eb34c8db9db56",
+      "scope": "reviewed-node-ci-regression-delta-only"
+    },
+    {
+      "path": "node/src/native/node_impl.rs",
+      "qualified_sha256": "05f84c22738c43c937201470a27649a3d73e4b8ce9dfbc87c7d6e95abd462e3c",
+      "postimage_sha256": "e6efec45d1a9d3b4c5dee02f1a9d0f38d300a755c711d29ff0120b49a7ec5d00",
+      "scope": "reviewed-node-ci-regression-delta-only"
+    },
+    {
+      "path": "node/src/native/poseidon2_v8_state.rs",
+      "qualified_sha256": "ae74b57b66c3fb1a0968767197eda87f4ebb23fbfcd3e3a1a74552e0ed85f838",
+      "postimage_sha256": "eb65fc931e8623dc48751c54df47f096589aa65906889a59b4f4ec4bcdbc942c",
+      "scope": "reviewed-node-ci-regression-delta-only"
     }
   ]
 }

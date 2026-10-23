@@ -13,8 +13,11 @@ This release imposes neither of those limits on the blockchain.
 ## Identity and custody
 
 - Release/display/tag: **v0.11**; product/app version: **0.11.0**. Internal
-  Cargo package versions remain source-bound at their qualified values; changing
-  those changes the proof identity. The node RPC and wallet CLI report 0.11.0.
+  Cargo package versions remain unchanged; the node RPC and wallet CLI report
+  0.11.0. Four security dependency updates changed `Cargo.lock` and the proof
+  identity. Current proof checks and the H0 build pass; final current-artifact
+  and lifecycle authorization remain pending. Reused evidence keeps its original
+  source and artifact identity.
 - Network: **pre-mainnet**, fresh genesis distinct from the v0.10.3 chain and
   private qualification rehearsals. Never reinterpret either chain's old state
   or proofs under the new identity.

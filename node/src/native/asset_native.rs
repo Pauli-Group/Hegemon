@@ -44,8 +44,12 @@ impl AssetDevelopmentAuthorityV1 {
         let Some(descriptor) = network.development_assets() else {
             return Ok(None);
         };
-        let end = startup.deactivation_height_exclusive().ok_or("asset authority requires finite Development expiry")?;
-        let total = startup.max_total_proofs().ok_or("asset authority requires finite Development proof budget")?;
+        let end = startup
+            .deactivation_height_exclusive()
+            .ok_or("asset authority requires finite Development expiry")?;
+        let total = startup
+            .max_total_proofs()
+            .ok_or("asset authority requires finite Development proof budget")?;
         if !cfg!(feature = "development-candidate")
             || network.profile() != NativeNetworkProfile::Development
             || !startup.is_development_candidate()
@@ -142,18 +146,25 @@ impl AssetDevelopmentAuthorityV1 {
     /// Metadata eligibility only; inclusion still verifies the original proof,
     /// current accounting and all global/batch nullifiers in the shared store.
     pub(crate) fn checked_reference(
-        self, block: Poseidon2V8BlockContext, exact: &[u8], current_asset: &[u8],
-        parent_note_root: Poseidon2V8NoteRoot, references: &CanonicalLaunchReferences,
+        self,
+        block: Poseidon2V8BlockContext,
+        exact: &[u8],
+        current_asset: &[u8],
+        parent_note_root: Poseidon2V8NoteRoot,
+        references: &CanonicalLaunchReferences,
     ) -> Result<super::launch_reference::CheckedLaunchReference, String> {
         self.require_block(block)?;
         let state =
             AssetRegistryStateV1::decode_exact(current_asset).map_err(|error| error.to_string())?;
         if state.registry().context().chain_id != self.chain_id
-            || state.registry().context().parent_height != block.parent_height() {
+            || state.registry().context().parent_height != block.parent_height()
+        {
             return Err("asset CURRENT registry context mismatch".into());
         }
         if references.parent_note_anchor() != parent_note_root {
-            return Err("asset references differ from authenticated inclusion-parent note root".into());
+            return Err(
+                "asset references differ from authenticated inclusion-parent note root".into(),
+            );
         }
         let checked = if exact.starts_with(&wire::NATIVE_ASSET_SPEND_ACTION_MAGIC_V1) {
             let decoded = wire::decode_native_asset_spend_action_v1(exact)
@@ -189,7 +200,9 @@ impl AssetDevelopmentAuthorityV1 {
             state.registry().root().map(|word| word.as_canonical_u64()),
         )?;
         if checked.asset_registry_root() != Some(current_root) {
-            return Err("asset proof reference registry differs from CURRENT canonical registry".into());
+            return Err(
+                "asset proof reference registry differs from CURRENT canonical registry".into(),
+            );
         }
         Ok(checked)
     }
@@ -202,12 +215,18 @@ impl AssetDevelopmentAuthorityV1 {
         parent_note_root: Poseidon2V8NoteRoot,
         references: &CanonicalLaunchReferences,
     ) -> Result<(Poseidon2V8PublicTransition, Vec<u8>), String> {
-        let checked = self.checked_reference(block, exact, current_asset, parent_note_root, references)?;
-        let state = AssetRegistryStateV1::decode_exact(current_asset).map_err(|error| error.to_string())?;
-        let current_root = CanonicalAssetRegistryRoot::new(state.registry().root().map(|word| word.as_canonical_u64()))?;
+        let checked =
+            self.checked_reference(block, exact, current_asset, parent_note_root, references)?;
+        let state =
+            AssetRegistryStateV1::decode_exact(current_asset).map_err(|error| error.to_string())?;
+        let current_root = CanonicalAssetRegistryRoot::new(
+            state.registry().root().map(|word| word.as_canonical_u64()),
+        )?;
         let action = if exact.starts_with(&wire::NATIVE_ASSET_SPEND_ACTION_MAGIC_V1) {
             AssetReplayActionV1::Spend(exact)
-        } else { AssetReplayActionV1::Controls(exact) };
+        } else {
+            AssetReplayActionV1::Controls(exact)
+        };
         let plan = state
             .plan_verified_actions_at_reference(
                 AssetCanonicalContextV1 {
@@ -271,15 +290,21 @@ pub(crate) fn is_asset_leaf(exact: &[u8]) -> bool {
         || exact.starts_with(&wire::NATIVE_ASSET_ADMIN_ACTION_MAGIC_V1)
 }
 pub(crate) fn is_asset_action(action: &PendingAction) -> bool {
-    action.family_id == FAMILY_SHIELDED_POOL && matches!(action.action_id,
-        admission::ASSET_SPEND_ACTION_ID | admission::ASSET_ADMIN_ACTION_ID)
+    action.family_id == FAMILY_SHIELDED_POOL
+        && matches!(
+            action.action_id,
+            admission::ASSET_SPEND_ACTION_ID | admission::ASSET_ADMIN_ACTION_ID
+        )
 }
 
 pub(crate) fn pending_reference_eligible(action: &PendingAction, parent: u64) -> bool {
-    if preflight_pending(action).is_err() { return false; }
+    if preflight_pending(action).is_err() {
+        return false;
+    }
     let reference = if action.action_id == admission::ASSET_SPEND_ACTION_ID {
         match wire::decode_native_asset_spend_action_v1(&action.public_args) {
-            Ok(value) => value.public.parent_height, Err(_) => return false,
+            Ok(value) => value.public.parent_height,
+            Err(_) => return false,
         }
     } else {
         match wire::decode_native_asset_admin_action_v1(&action.public_args) {
@@ -287,7 +312,9 @@ pub(crate) fn pending_reference_eligible(action: &PendingAction, parent: u64) ->
             _ => return false,
         }
     };
-    parent.checked_sub(reference).is_some_and(|age| age <= super::launch_reference::LAUNCH_REFERENCE_WINDOW)
+    parent
+        .checked_sub(reference)
+        .is_some_and(|age| age <= super::launch_reference::LAUNCH_REFERENCE_WINDOW)
 }
 
 pub(crate) fn preflight_pending(action: &PendingAction) -> Result<(), String> {
@@ -408,14 +435,21 @@ impl<'a> NativeAssetActionViewV1<'a> {
             action.action_id,
             proof_bytes,
         )?;
-        let application_parent = height.checked_sub(1).ok_or("asset inclusion height underflow")?;
+        let application_parent = height
+            .checked_sub(1)
+            .ok_or("asset inclusion height underflow")?;
         if chain != authority.chain_id
-            || !application_parent.checked_sub(parent).is_some_and(|age|
-                age <= protocol_versioning::launch_reference_policy::LAUNCH_REFERENCE_WINDOW)
+            || !application_parent.checked_sub(parent).is_some_and(|age| {
+                age <= protocol_versioning::launch_reference_policy::LAUNCH_REFERENCE_WINDOW
+            })
         {
             return Err("asset pending proof reference age is outside the finite window".into());
         }
-        authority.require_height(parent.checked_add(1).ok_or("asset reference height overflow")?)?;
+        authority.require_height(
+            parent
+                .checked_add(1)
+                .ok_or("asset reference height overflow")?,
+        )?;
         // Hints are scheduling metadata only. Admin has no pool effect, and its
         // real transition obtains the authenticated reference root during replay.
         let transition = transition_from_exact(authority, &action.public_args, anchor)?
@@ -497,16 +531,20 @@ pub(crate) fn asset_genesis_bytes(
         .map_err(|error| error.to_string())
 }
 
-#[cfg(all(test, feature = "development-candidate"))]
+#[cfg(test)]
 mod tests {
+    #[cfg(feature = "development-candidate")]
     use super::super::network_profile::{self, DevelopmentAssetsV1};
+    #[cfg(feature = "development-candidate")]
     use super::*;
+    #[cfg(feature = "development-candidate")]
     use transaction_core::{
         asset_registry_v1::AssetPolicyV1,
         poseidon2_width16::Felt,
         stablecoin_poseidon2_v8::{StablecoinPoseidon2V8Config, StablecoinPoseidon2V8Counters},
     };
 
+    #[cfg(feature = "development-candidate")]
     fn network() -> NativeNetworkIdentity {
         let address = wallet::RootSecret::from_bytes([97; 32])
             .derive()
@@ -540,6 +578,7 @@ mod tests {
         NativeNetworkIdentity::from_manifest(manifest).unwrap()
     }
 
+    #[cfg(feature = "development-candidate")]
     #[test]
     fn moving_asset_pending_survives_empty_parent_advance_until_age_thirteen() {
         use super::super::{
@@ -548,65 +587,159 @@ mod tests {
             NullifierAccumulator, PersistentKeySet48,
         };
         let network = network();
-        let startup = LaunchStartup::from_source(&network, [11; 32]).unwrap().unwrap();
-        let assets = AssetRegistryStateV1::decode_exact(&asset_genesis_bytes(&network, [11; 32]).unwrap().unwrap()).unwrap();
+        let startup = LaunchStartup::from_source(&network, [11; 32])
+            .unwrap()
+            .unwrap();
+        let assets = AssetRegistryStateV1::decode_exact(
+            &asset_genesis_bytes(&network, [11; 32]).unwrap().unwrap(),
+        )
+        .unwrap();
         let controls = transaction_circuit::asset_policy_admin_v1::AssetControlsV1 {
-            frozen: true, ..assets.registry().row(1001).unwrap().controls()
+            frozen: true,
+            ..assets.registry().row(1001).unwrap().controls()
         };
-        let prepared = assets.registry().prepare_controls_update(assets.registry().context(), 1001, controls).unwrap();
-        let public = transaction_circuit::asset_policy_admin_v1::PolicyAdminPublicV1::from_prepared(&prepared, [11; 32], 100, [23; 7]).unwrap();
+        let prepared = assets
+            .registry()
+            .prepare_controls_update(assets.registry().context(), 1001, controls)
+            .unwrap();
+        let public =
+            transaction_circuit::asset_policy_admin_v1::PolicyAdminPublicV1::from_prepared(
+                &prepared, [11; 32], 100, [23; 7],
+            )
+            .unwrap();
         let bytes = wire::encode_native_asset_admin_action_v1(&public, b"SMZE").unwrap();
         // This framed invalid proof is a retention-only fixture. Neither
         // metadata retention nor this test can authorize its inclusion.
-        let mut action = pending_asset_action_from_inline_args(startup.asset_authority().unwrap(), 1,
-            native_binding(), admission::ASSET_ADMIN_ACTION_ID, bytes).unwrap();
+        let mut action = pending_asset_action_from_inline_args(
+            startup.asset_authority().unwrap(),
+            1,
+            native_binding(),
+            admission::ASSET_ADMIN_ACTION_ID,
+            bytes,
+        )
+        .unwrap();
         action.tx_hash = pending_action_hash(&action);
         let mut state = NativeState {
-            best: genesis_meta(0x207f_ffff).unwrap(), header_mmr_peaks: Vec::new(),
-            pending_actions: std::collections::BTreeMap::new(), pending_action_semantic_index: std::collections::BTreeMap::new(),
-            pending_action_order_index: std::collections::BTreeSet::new(), pending_nullifiers: std::collections::BTreeSet::new(),
-            pending_bridge_replay_keys: PersistentKeySet48::new(), pending_mempool_bytes: 0,
-            commitment_tree: CommitmentTreeState::default(), nullifiers: PersistentKeySet48::new(),
-            nullifier_accumulator: NullifierAccumulator::new(), consumed_bridge_messages: PersistentKeySet48::new(),
+            best: genesis_meta(0x207f_ffff).unwrap(),
+            header_mmr_peaks: Vec::new(),
+            pending_actions: std::collections::BTreeMap::new(),
+            pending_action_semantic_index: std::collections::BTreeMap::new(),
+            pending_action_order_index: std::collections::BTreeSet::new(),
+            pending_nullifiers: std::collections::BTreeSet::new(),
+            pending_bridge_replay_keys: PersistentKeySet48::new(),
+            pending_mempool_bytes: 0,
+            commitment_tree: CommitmentTreeState::default(),
+            nullifiers: PersistentKeySet48::new(),
+            nullifier_accumulator: NullifierAccumulator::new(),
+            consumed_bridge_messages: PersistentKeySet48::new(),
             stablecoin_policy_authorizations: std::collections::BTreeSet::new(),
-            staged_ciphertexts: std::collections::BTreeMap::new(), staged_proofs: std::collections::BTreeMap::new(),
+            staged_ciphertexts: std::collections::BTreeMap::new(),
+            staged_proofs: std::collections::BTreeMap::new(),
         };
         for parent in [1, 12, 13] {
             state.best.height = parent;
-            let retained = revalidate_pending_actions_after_state_advance(&state,
-                std::collections::BTreeMap::from([(action.tx_hash, action.clone())]));
+            let retained = revalidate_pending_actions_after_state_advance(
+                &state,
+                std::collections::BTreeMap::from([(action.tx_hash, action.clone())]),
+            );
             assert_eq!(retained.contains_key(&action.tx_hash), parent <= 12);
-            let reorged = revalidate_reorg_pending_actions(&state, std::collections::BTreeMap::new(), vec![action.clone()]);
+            let reorged = revalidate_reorg_pending_actions(
+                &state,
+                std::collections::BTreeMap::new(),
+                vec![action.clone()],
+            );
             assert_eq!(reorged.contains_key(&action.tx_hash), parent <= 12);
         }
-        let original_root = CanonicalAssetRegistryRoot::new(assets.registry().root().map(|word| word.as_canonical_u64())).unwrap();
-        let context = super::super::launch_reference::LaunchReferenceContext::from_startup(startup).unwrap();
+        let original_root = CanonicalAssetRegistryRoot::new(
+            assets.registry().root().map(|word| word.as_canonical_u64()),
+        )
+        .unwrap();
+        let context =
+            super::super::launch_reference::LaunchReferenceContext::from_startup(startup).unwrap();
         let anchor = startup.note_genesis_root();
-        let checkpoint = |hash, parent_hash, height, root| super::super::launch_reference::CanonicalLaunchCheckpoint::new(
-            hash, parent_hash, height, anchor, startup.stablecoin_genesis_root()).unwrap().with_asset_registry_root(Some(root));
+        let checkpoint = |hash, parent_hash, height, root| {
+            super::super::launch_reference::CanonicalLaunchCheckpoint::new(
+                hash,
+                parent_hash,
+                height,
+                anchor,
+                startup.stablecoin_genesis_root(),
+            )
+            .unwrap()
+            .with_asset_registry_root(Some(root))
+        };
         let block = Poseidon2V8BlockContext::new(1, [31; 32], 2, [32; 32]).unwrap();
-        let refs = |root| CanonicalLaunchReferences::from_validated_chain(context, [31; 32], 1, vec![
-            checkpoint([11; 32], [0; 32], 0, original_root), checkpoint([31; 32], [11; 32], 1, root)]).unwrap();
+        let refs = |root| {
+            CanonicalLaunchReferences::from_validated_chain(
+                context,
+                [31; 32],
+                1,
+                vec![
+                    checkpoint([11; 32], [0; 32], 0, original_root),
+                    checkpoint([31; 32], [11; 32], 1, root),
+                ],
+            )
+            .unwrap()
+        };
         let current = assets.advance_parent(1).unwrap().encode_exact().unwrap();
         let authority = startup.asset_authority().unwrap();
-        assert!(authority.checked_reference(block, &action.public_args, &current, anchor, &refs(original_root)).is_ok());
+        assert!(authority
+            .checked_reference(
+                block,
+                &action.public_args,
+                &current,
+                anchor,
+                &refs(original_root)
+            )
+            .is_ok());
         // A valid reference at an earlier inclusion must never grant source
         // authority at the actual retirement height. Check the precise early
         // lifetime rejection before any stale-reference/current-state check.
         let end = startup.deactivation_height_exclusive().unwrap();
         let retired_block = Poseidon2V8BlockContext::new(end - 1, [31; 32], end, [32; 32]).unwrap();
-        assert_eq!(authority.checked_reference(retired_block, &action.public_args, &current,
-            anchor, &refs(original_root)).unwrap_err(),
-            "asset block differs from its finite source lifetime/genesis");
-        let mut orphan = public.clone(); orphan.reference_parent_hash = [12; 32];
+        assert_eq!(
+            authority
+                .checked_reference(
+                    retired_block,
+                    &action.public_args,
+                    &current,
+                    anchor,
+                    &refs(original_root)
+                )
+                .unwrap_err(),
+            "asset block differs from its finite source lifetime/genesis"
+        );
+        let mut orphan = public.clone();
+        orphan.reference_parent_hash = [12; 32];
         let orphan = wire::encode_native_asset_admin_action_v1(&orphan, b"SMZE").unwrap();
-        assert!(authority.checked_reference(block, &orphan, &current, anchor, &refs(original_root)).is_err());
-        let mut changed = *assets.registry().row(1001).unwrap(); changed.frozen = true;
-        let changed = AssetRegistryStateV1::from_genesis_rows(network.chain_id(), &[changed]).unwrap().advance_parent(1).unwrap();
-        let changed_root = CanonicalAssetRegistryRoot::new(changed.registry().root().map(|word| word.as_canonical_u64())).unwrap();
-        assert!(authority.checked_reference(block, &action.public_args, &changed.encode_exact().unwrap(), anchor, &refs(changed_root)).is_err());
+        assert!(authority
+            .checked_reference(block, &orphan, &current, anchor, &refs(original_root))
+            .is_err());
+        let mut changed = *assets.registry().row(1001).unwrap();
+        changed.frozen = true;
+        let changed = AssetRegistryStateV1::from_genesis_rows(network.chain_id(), &[changed])
+            .unwrap()
+            .advance_parent(1)
+            .unwrap();
+        let changed_root = CanonicalAssetRegistryRoot::new(
+            changed
+                .registry()
+                .root()
+                .map(|word| word.as_canonical_u64()),
+        )
+        .unwrap();
+        assert!(authority
+            .checked_reference(
+                block,
+                &action.public_args,
+                &changed.encode_exact().unwrap(),
+                anchor,
+                &refs(changed_root)
+            )
+            .is_err());
     }
 
+    #[cfg(feature = "development-candidate")]
     #[test]
     fn separate_asset_authority_binds_network_source_lifetime_and_shared_genesis() {
         let network = network();
@@ -657,15 +790,34 @@ mod tests {
         assert!(is_asset_leaf(b"HGANSP01"));
         let references = CanonicalLaunchReferences::from_validated_chain(
             super::super::launch_reference::LaunchReferenceContext::from_startup(startup).unwrap(),
-            [11; 32], 0,
-            vec![super::super::launch_reference::CanonicalLaunchCheckpoint::new(
-                [11; 32], [0; 32], 0, startup.note_genesis_root(), startup.stablecoin_genesis_root(),
-            ).unwrap().with_asset_registry_root(Some(CanonicalAssetRegistryRoot::new(
-                state.registry().root().map(|word| word.as_canonical_u64()),
-            ).unwrap()))],
-        ).unwrap();
+            [11; 32],
+            0,
+            vec![
+                super::super::launch_reference::CanonicalLaunchCheckpoint::new(
+                    [11; 32],
+                    [0; 32],
+                    0,
+                    startup.note_genesis_root(),
+                    startup.stablecoin_genesis_root(),
+                )
+                .unwrap()
+                .with_asset_registry_root(Some(
+                    CanonicalAssetRegistryRoot::new(
+                        state.registry().root().map(|word| word.as_canonical_u64()),
+                    )
+                    .unwrap(),
+                )),
+            ],
+        )
+        .unwrap();
         assert!(authority
-            .verify_leaf(block, b"HGANSP01", &bytes, startup.note_genesis_root(), &references)
+            .verify_leaf(
+                block,
+                b"HGANSP01",
+                &bytes,
+                startup.note_genesis_root(),
+                &references
+            )
             .is_err());
         let advanced = authority.advance(block, &bytes).unwrap();
         assert_eq!(

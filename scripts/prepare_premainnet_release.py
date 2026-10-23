@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Preserve every reviewed release gate and add standalone v0.11 successor checks.
+"""Preserve reviewed release gates with an explicit v0.11 version-only adapter.
 
-The original common authorization commands remain required. The v0.11 version-only
-source and final artifact checks are additional gates, not substitutes. Removing
-the original fixed-identity commands requires a separately approved transition.
-Smoke-only successor results cannot assemble release assets. Publication remains
-in the unchanged tag workflow.
+The only changes to inherited jobs are predecessor materialization and replacement
+of the old exact-identity checker by the separate version-only successor checker.
+Final artifact checks still require actual proof replay; smoke-only results cannot
+assemble release assets. Publication remains in the unchanged tag workflow.
 """
 
 from __future__ import annotations
@@ -89,7 +88,7 @@ BUILD_JOBS = (
 
 
 def adapt_version_only_successor(builds: str) -> str:
-    """Add independent successor checks without replacing inherited authority."""
+    """Make only the reviewed checker substitution, preserving every other step."""
     old = "scripts/check_private_spend_launch_authorization.py --require-authorized"
     new = ("scripts/check_v011_release_successor.py --require-authorized "
            "--predecessor-root target/v011-predecessor")
@@ -111,15 +110,23 @@ def adapt_version_only_successor(builds: str) -> str:
             + "        run: python3 -I -B scripts/materialize_v011_predecessor.py "
             "--destination target/v011-predecessor --reserve-bytes 4294967296\n\n"
         )
+        if "--artifact-manifest " not in lines[index]:
+            materializer += (
+                "      - name: Current successor scope rejection controls\n"
+                "        run: python3 -I -B scripts/tests/v011_current_successor/test_successor_scope.py --checker scripts/check_v011_release_successor.py\n\n"
+                "      - name: Current successor final-consumer rejection controls\n"
+                "        run: python3 -I -B scripts/tests/v011_current_successor/test_successor_consumer.py --consumer scripts/check_release_crypto_profile.py --receipt-fixture scripts/tests/v011_current_successor/synthetic-final-receipt.json --artifact-manifest scripts/tests/v011_current_successor/synthetic-artifact-manifest.json --registry scripts/tests/v011_current_successor/synthetic-historical-registry.json\n\n"
+                "      - name: Current security-audit scope rejection controls\n"
+                "        run: python3 -I -B scripts/tests/v011_current_successor/test_security_audit_scope.py --audit-script scripts/security-audit.sh\n\n"
+                "      - name: Current artifact-gate identity rejection controls\n"
+                "        run: python3 -I -B scripts/tests/v011_current_successor/test_artifact_gate_identity.py --checker scripts/check_v011_release_successor.py --artifact-helper scripts/release_artifact_manifest.py --launcher-helper scripts/check_release_launcher_policy.py\n\n"
+                "      - name: Current-binary proof-runner rejection controls\n"
+                "        run: python3 -I -B scripts/test_check_v011_current_binary_proofs.py\n\n"
+            )
         line = lines[index].replace(old, new, 1)
         if "--artifact-manifest " in line:
             line = line.rstrip("\n") + " --require-final-artifact\n"
-        successor = (
-            "\n      - name: Validate standalone v0.11 version-only successor\n"
-            + ("        shell: bash\n" if is_windows else "")
-            + line
-        )
-        lines.insert(index + 1, successor)
+        lines[index] = line
         lines.insert(start, materializer)
     return "".join(lines)
 
@@ -169,7 +176,7 @@ def main() -> None:
             print(f"Generated {output.relative_to(root)}; tag workflow unchanged")
         else:
             verify_preparation(release, output.read_text(encoding="utf-8"))
-            print("Preparation preserves all original authorization gates and adds standalone v0.11 checks; final artifact replay required; publication absent")
+            print("Preparation preserves all seven release gate/build jobs with the version-only adapter; final artifact replay required; publication absent")
     except (OSError, ValueError) as error:
         raise SystemExit(str(error)) from error
 

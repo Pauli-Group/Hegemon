@@ -1,0 +1,292 @@
+{
+  "schema": "hegemon.v011.public-current-proof-fixture.v1",
+  "relation_id": "Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4",
+  "relation_digest": "4cce676154799baed5f3ade3b7a5f3e1a041f256f4b7acdb27386158e4902e9c5d63eb9a1b6c32bbbac912d17f057a71d2c35a769039d46a0007c351e1832594",
+  "cargo_lock_sha256": "ebef532fbfaee8fcafa4b6e12b2ad8cbb219bacfba4f2aaa24904bd59480e5d3",
+  "cases": [
+    {
+      "name": "ordinary",
+      "proof": {
+        "path": "ordinary.proof",
+        "bytes": 171281,
+        "sha256": "0cd4641baff158811d59c0f1e3e1d3cb4d626655cdcc6b185e0b80983fc41436"
+      },
+      "statement": {
+        "path": "ordinary.statement",
+        "bytes": 688,
+        "sha256": "07bf3c7ae29cfa21b2654731835e34af244c370e069e6ef1896cde1c8094de80"
+      }
+    },
+    {
+      "name": "policy_create",
+      "proof": {
+        "path": "policy_create.proof",
+        "bytes": 171281,
+        "sha256": "c349547230010b1cf966188cf9c99420d01e93ad74c0e8d5d51e10b43c2f7830"
+      },
+      "statement": {
+        "path": "policy_create.statement",
+        "bytes": 688,
+        "sha256": "cae926d92fc29f4308c9140e218b2e19f78757423cb73489f81a090074f9a3f5"
+      }
+    },
+    {
+      "name": "absolute_height",
+      "proof": {
+        "path": "absolute_height.proof",
+        "bytes": 171281,
+        "sha256": "007a5e8ade95b2bb296164b66db171d290f6c744d9e3e189011cf4a39224555f"
+      },
+      "statement": {
+        "path": "absolute_height.statement",
+        "bytes": 688,
+        "sha256": "66bbd965bf5c9a55c97cd9783dc327fa4c075484e2db22af7ab31cd2d5bc13b0"
+      }
+    },
+    {
+      "name": "policy_hash_release",
+      "proof": {
+        "path": "policy_hash_release.proof",
+        "bytes": 171281,
+        "sha256": "b13765f8054f01052c7513c48d546f7698bf5b23c2cbc1d04cf3a2e3e66b8adf"
+      },
+      "statement": {
+        "path": "policy_hash_release.statement",
+        "bytes": 688,
+        "sha256": "d28560ebe0a98fc6cd028bb8e630b4c5af3ba1aa79f814d744aa6a8beb57b06c"
+      }
+    },
+    {
+      "name": "htlc_release",
+      "proof": {
+        "path": "htlc_release.proof",
+        "bytes": 171281,
+        "sha256": "86d1d049a052cb0de8eebf8451d139a0141687fcaa8182f32fa5c21c52108624"
+      },
+      "statement": {
+        "path": "htlc_release.statement",
+        "bytes": 688,
+        "sha256": "c6267fdc99026543872cacf34f9ba52670c34c0523d95a60da49e4c8e1f6ba29"
+      }
+    }
+  ],
+  "generation_receipt": {
+    "path": "generation-receipt.json",
+    "bytes": 13814,
+    "sha256": "e8dc14d154797f845e022960334511f7ee0555426d4e0d58303cff4f6a0c6c8a"
+  },
+  "source_inputs": [
+    {
+      "bytes": 7290,
+      "path": "circuits/transaction/src/private_spend.rs",
+      "sha256": "dc23fb178a9bda8327a140b1bb0ea0a2c68f886189da855fd8f68f7c29500e1d"
+    },
+    {
+      "bytes": 8729,
+      "path": "circuits/transaction/src/private_spend/types.rs",
+      "sha256": "3807e1ff9f5cd02a4ce3a052a4afee0201b7fed7f8870b6f84b9c5e295f80770"
+    },
+    {
+      "bytes": 31692,
+      "path": "circuits/transaction/src/private_spend/circuit.rs",
+      "sha256": "3a3a6517c7c95954ac396cd0e86829e9f66830e389507e213dbc82c55ff3c560"
+    },
+    {
+      "bytes": 4206,
+      "path": "circuits/transaction/src/private_spend/helpers.rs",
+      "sha256": "69ed26b27cbb1d9e30d2bc93e6d1a687dc4826c63c44ce26a39b2e25d1abc2d1"
+    },
+    {
+      "bytes": 3129,
+      "path": "circuits/transaction/src/private_spend/proof.rs",
+      "sha256": "2b71ea0b82d9fbbab5a6910de504682b9cee7d643594e9012737da3be1a7164d"
+    },
+    {
+      "bytes": 59217,
+      "path": "circuits/transaction/src/smallwood_htlc/circuit.rs",
+      "sha256": "364d4a90fba65d175f1fad4719caa23e30551dace9dca080feb4221b9275d501"
+    },
+    {
+      "bytes": 16099,
+      "path": "circuits/transaction/src/smallwood_htlc/sha256.rs",
+      "sha256": "d8e89fee084c66b04f4b86f3a118ce62881f4459a4eb37e8c1ee376370bcac2b"
+    },
+    {
+      "bytes": 29318,
+      "path": "circuits/transaction/src/smallwood_htlc.rs",
+      "sha256": "e5926e5bee015a4cdc5c09c316e4fc0640a45fd0a7d6fee94abcd0d6869b901f"
+    },
+    {
+      "bytes": 813327,
+      "path": "circuits/transaction/src/smallwood_engine.rs",
+      "sha256": "e22044a84cacce46c266871dab74fc50eeb42c09ee147393c48a68ef2a5767c7"
+    },
+    {
+      "bytes": 94303,
+      "path": "circuits/transaction/src/smallwood_semantics.rs",
+      "sha256": "e9230ee4e62490800052627a014521e4a7c9403875d1504864183cd105e61e51"
+    },
+    {
+      "bytes": 165633,
+      "path": "circuits/transaction/src/smallwood_hx512_transcript.rs",
+      "sha256": "c9be52de7e56114727786c91a2b5c4347ae3ecfa90940b1cc8fa734c5fb7b104"
+    },
+    {
+      "bytes": 66023,
+      "path": "circuits/transaction/src/smallwood_v6_transcript.rs",
+      "sha256": "4f5833df06e8c8794cd04ddc3f3af053b47f200fd5f70231205b45a02eac4350"
+    },
+    {
+      "bytes": 39660,
+      "path": "circuits/transaction/src/smallwood_poseidon2_v8_rng_refinement.rs",
+      "sha256": "9671291f7ac84826cd3bea4617e41e1cf0adb7d829bdaa41113f7ea198669edc"
+    },
+    {
+      "bytes": 78203,
+      "path": "circuits/transaction/src/smallwood_poseidon2_v8_hash_schedule.rs",
+      "sha256": "f63bb415778dd2e0dacc7a2814861db24e48fb7f086f3f4799bf26cbf5dc955f"
+    },
+    {
+      "bytes": 103089,
+      "path": "circuits/transaction/src/smallwood_poseidon2_v8_types.rs",
+      "sha256": "0d40897eb0699fa3f09fada0dced803140c7475deb40d6b03117c9306a2e7329"
+    },
+    {
+      "bytes": 6390,
+      "path": "circuits/transaction-core/src/constants.rs",
+      "sha256": "3f1ec13a129bdd3bba8d0e07d3198ff1e8c6fa4b2ecec5e517743427264a20e4"
+    },
+    {
+      "bytes": 27910,
+      "path": "circuits/transaction-core/src/poseidon2_width16.rs",
+      "sha256": "18a9f3227e7fd46eca03a7963cb9998a777b00579b42843863eadeb9e2386b09"
+    },
+    {
+      "bytes": 3649,
+      "path": "circuits/transaction-core/src/poseidon2.rs",
+      "sha256": "0432952fef6850604773e6f42b7f9e03b898da1ab316e476069e58450484ec25"
+    },
+    {
+      "bytes": 9481,
+      "path": "circuits/transaction-core/src/hashing_pq.rs",
+      "sha256": "7d66a5cfe78d275b06f9f31cf7bd2b925690d8a6c3b028a1ee466292b05fb27f"
+    },
+    {
+      "bytes": 9190,
+      "path": "circuits/hegemon-field/src/lib.rs",
+      "sha256": "6058cb6f76eae3f5e6ab89405da433e0c28aef09dfc4f38d62c36d6d20cd7d1c"
+    },
+    {
+      "bytes": 16042,
+      "path": "crypto/src/private_note_encryption.rs",
+      "sha256": "4a3e256b01c3b541743b983fd34559d0b04968d2f35e07066a713ef480ab328a"
+    },
+    {
+      "bytes": 31297,
+      "path": "crypto/src/private_note_payload.rs",
+      "sha256": "37237a1a5ad8935dc17712be93d938878fa21eac72fc290002b30509e5d89d79"
+    },
+    {
+      "bytes": 13191,
+      "path": "crypto/src/ml_kem.rs",
+      "sha256": "8de074b11cb2c90a2d153e5351d6fc362b53eef0fbfab03bc5e37971c216dcd4"
+    },
+    {
+      "bytes": 1577,
+      "path": "crypto/src/deterministic.rs",
+      "sha256": "a552882af1525208bb5fc67cc682a23b3f57befd18bc0be497ed89f1beefa9d5"
+    },
+    {
+      "bytes": 1725,
+      "path": "crypto/src/traits.rs",
+      "sha256": "ccecb299964b31735b5499b7a15686cb168c0d79c6fbd08a67dc28544f58f631"
+    },
+    {
+      "bytes": 36998,
+      "path": "crypto/hash384/src/lib.rs",
+      "sha256": "0f36a3887f33a07c504cd3e19b05c87b9b7c7059947cedb42e1ab8f025356a6e"
+    },
+    {
+      "bytes": 19176,
+      "path": "protocol/shielded-pool/src/private_spend_transport.rs",
+      "sha256": "7bb336db9cfc8f076688d456d86571b4c867d0c8bb38d3bd7adf1e704085eb04"
+    },
+    {
+      "bytes": 1514,
+      "path": "protocol/versioning/src/launch_candidate_identity.rs",
+      "sha256": "4bd486cfd3333f8f817b4d8c147b7f4422497923e9456d684fb61e92f6db0dc1"
+    },
+    {
+      "bytes": 9695,
+      "path": "circuits/transaction-core/src/bounded_policy.rs",
+      "sha256": "e4fb340e9c905d5d46abf6a920d39336bb6db52444e4c88ff3668b1671cdfe49"
+    },
+    {
+      "bytes": 21225,
+      "path": "circuits/transaction/src/lib.rs",
+      "sha256": "20ccee3de87ec7b9f9526f19ccd43d639a20d268cb069b3b0d88f6b79481fce7"
+    },
+    {
+      "bytes": 44827,
+      "path": "circuits/transaction/src/smallwood_htlc/affine.rs",
+      "sha256": "b650da97ab6868853df4397de8d53c591a5ee44976371ad42ee1b38d86809f1d"
+    },
+    {
+      "bytes": 7480,
+      "path": "circuits/transaction/src/smallwood_htlc/boolean_guards.rs",
+      "sha256": "eb716cec59d45235b2d94865baf4f28b4af9259f69e0c405f6a2dc2650f5fad2"
+    },
+    {
+      "bytes": 19637,
+      "path": "circuits/transaction/src/smallwood_htlc/source_cse.rs",
+      "sha256": "9401f9f6a8ea5ac6b1884af0c24c7fd910c3a1452664be5b504b5377dae3825d"
+    },
+    {
+      "bytes": 11568,
+      "path": "circuits/transaction/src/smallwood_htlc/sha_lowering.rs",
+      "sha256": "f495c644d07929c3ebdc4b13e63650e6aa6d83c62309e6a6bc61601b947e7ad6"
+    },
+    {
+      "bytes": 20096,
+      "path": "circuits/transaction/src/smallwood_htlc/compact_sha256.rs",
+      "sha256": "3811261d5266a1da2e45d68e9fdb1d95c98c01e9e9507c7eb9c0e73fc4172ec0"
+    },
+    {
+      "bytes": 8238,
+      "path": "circuits/transaction/src/smallwood_htlc/compact_sha_certificate.rs",
+      "sha256": "96cb4055429de276776d6048c290f42ceaffd615cc8229015aec3c2080ca6b0e"
+    },
+    {
+      "bytes": 11486,
+      "path": "circuits/transaction/src/smallwood_htlc/compact_sha_lowering.rs",
+      "sha256": "4fce6db528ef66f683a34f0741ed29dd1682e8046e6e555d3a97856e743193c2"
+    },
+    {
+      "bytes": 9436,
+      "path": "circuits/transaction/src/smallwood_htlc/packed_poseidon_lowering.rs",
+      "sha256": "ec8312b4eff08d8e0e0b4f07420595fabc3b1a05abd0003ed7fb80b9620891d6"
+    },
+    {
+      "bytes": 9693,
+      "path": "circuits/transaction/src/private_spend_packed_poseidon.rs",
+      "sha256": "17fe979a0f052cfb474ad71e12e04c0c41ac5a6d296a0798edab609371cbc833"
+    },
+    {
+      "bytes": 50996,
+      "path": "circuits/transaction/src/smallwood_poseidon2_v8_hash_constraints.rs",
+      "sha256": "05cb932d7ba46dcba1a0ad042490d3a815c3baa122f176b453eb46faf032ca54"
+    },
+    {
+      "bytes": 112119,
+      "path": "Cargo.lock",
+      "sha256": "ebef532fbfaee8fcafa4b6e12b2ad8cbb219bacfba4f2aaa24904bd59480e5d3"
+    }
+  ],
+  "disclosure": {
+    "public_only": true,
+    "fixed_disposable_test_data": true,
+    "private_witnesses_included": false,
+    "wallets_or_keys_included": false,
+    "operator_wallet_opened": false
+  }
+}

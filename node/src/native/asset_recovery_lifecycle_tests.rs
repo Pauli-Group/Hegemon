@@ -1,6 +1,7 @@
 //! Opt-in, expensive real-node recovery qualification. No fixture verifier,
 //! capability override, root setter, or stored-proof acceptance shortcut.
-//! Root wires this as #[cfg(all(test, feature="development-candidate"))] mod.
+//! Root includes this test module; its candidate feature remains opt-in.
+#![cfg(feature = "development-candidate")]
 use super::*;
 use codec::{Decode, Encode};
 use sha2::{Digest as _, Sha256};

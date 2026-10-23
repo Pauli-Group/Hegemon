@@ -627,10 +627,12 @@ impl NativeConfig {
     }
 }
 
-#[cfg(all(test, feature = "development-candidate"))]
+#[cfg(test)]
 mod development_candidate_cli_tests {
+    #[cfg(feature = "development-candidate")]
     use super::*;
 
+    #[cfg(feature = "development-candidate")]
     #[test]
     fn development_candidate_cli_opt_in_rejects_legacy_premainnet_and_mainnet() {
         for profile in ["legacy", "pre-mainnet", "mainnet"] {
@@ -4150,7 +4152,7 @@ mod native_asset_rpc_projection_tests {
         asset_spend_v1_wire as wire, private_spend::CIPHERTEXT_BYTES,
     };
 
-    fn spend_request() -> (SubmitActionRpcRequest, Vec<u8>) {
+    fn spend_request() -> (SubmitActionRpcRequest, Vec<u8>, bool) {
         let ciphertexts = [
             [1; CIPHERTEXT_BYTES],
             [2; CIPHERTEXT_BYTES],
@@ -4182,8 +4184,34 @@ mod native_asset_rpc_projection_tests {
             released_secret: [0; 32],
         };
         // This marker exercises syntax only; it cannot pass a real verifier.
-        let bytes =
-            wire::encode_native_asset_spend_action_v1(&public, &ciphertexts, b"SMZE").unwrap();
+        let (bytes, source_qualified) = match wire::encode_native_asset_spend_action_v1(
+            &public,
+            &ciphertexts,
+            b"SMZE",
+        ) {
+            Ok(bytes) => (bytes, true),
+            Err(wire::AssetSpendWireErrorV1::RelationSource) => {
+                assert_eq!(
+                    admission::spend_profile_upper_bound_v1(0, 4),
+                    Err(admission::NativeAssetAdmissionErrorV1::SourceIdentity)
+                );
+                assert_ne!(
+                    hex::encode(spend::relation_digest()),
+                    admission::QUALIFIED_SPEND_SOURCE_SHA512
+                );
+                let historical =
+                    wire::encode_asset_spend_action_v1(&public, &ciphertexts, b"SMZE").unwrap();
+                assert_eq!(
+                    wire::decode_asset_spend_action_v1(&historical)
+                        .unwrap()
+                        .public,
+                    public
+                );
+                eprintln!("inactive asset RPC source: exact RelationSource rejection; request field gates remain exercised");
+                (historical, false)
+            }
+            Err(error) => panic!("unexpected native asset RPC fixture error: {error}"),
+        };
         (
             SubmitActionRpcRequest {
                 binding_circuit: 13,
@@ -4198,12 +4226,13 @@ mod native_asset_rpc_projection_tests {
                 aux_data: None,
             },
             bytes,
+            source_qualified,
         )
     }
 
     #[test]
     fn native_asset_rpc_spend_and_admin_use_fresh_exact_routes_and_caps() {
-        let (mut request, bytes) = spend_request();
+        let (mut request, bytes, source_qualified) = spend_request();
         assert!(native_submit_action_is_transfer_route(
             request.family_id,
             request.action_id
@@ -4220,6 +4249,22 @@ mod native_asset_rpc_projection_tests {
             native_action_request_public_args_cap(request.family_id, request.action_id),
             wire::NATIVE_ASSET_SPEND_MAX_ACTION_BYTES_V1
         );
+        if !source_qualified {
+            assert_eq!(
+                evaluate_native_action_request_projection(&request),
+                Err(NativeActionRequestProjectionAdmissionRejection::RoutePayloadDecodeNotExact)
+            );
+            request.action_id = admission::ASSET_ADMIN_ACTION_ID;
+            assert_eq!(
+                native_action_request_public_args_cap(request.family_id, request.action_id),
+                wire::NATIVE_ASSET_ADMIN_MAX_ACTION_BYTES_V1
+            );
+            assert_eq!(
+                admission::admin_profile_upper_bound_v1(),
+                Err(admission::NativeAssetAdmissionErrorV1::SourceIdentity)
+            );
+            return;
+        }
         assert_eq!(
             evaluate_native_action_request_projection(&request).unwrap(),
             bytes
@@ -4278,7 +4323,7 @@ mod native_asset_rpc_projection_tests {
 
     #[test]
     fn native_asset_rpc_rejects_forbidden_outer_fields_before_base64() {
-        let (request, _) = spend_request();
+        let (request, _, _) = spend_request();
         for field in 0..4 {
             let mut changed = request.clone();
             changed.public_args = "invalid base64!".into();
@@ -4844,5 +4889,5 @@ mod recovery_projection_tests {
     }
 }
 
-#[cfg(all(test, feature = "development-candidate"))]
+#[cfg(test)]
 mod asset_recovery_lifecycle_tests;

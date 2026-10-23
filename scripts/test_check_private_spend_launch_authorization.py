@@ -36,7 +36,7 @@ def identity(profile="pre-mainnet", *, ongoing=True):
         manifest_digest=hashlib.sha512(b"hegemon.native.network-manifest.sha512.v1\0" + canonical).hexdigest(),
         relation_digest=policy.ONGOING_POLICY_RELATION if ongoing else policy.CURRENT_RUNTIME_RELATION, activation_height=1,
         deactivation_height_exclusive=None if ongoing else 1000,
-        max_proof_bytes=2102936 if ongoing else 1931869, stablecoin_genesis_root=[0] * 7,
+        max_proof_bytes=177632 if ongoing else 1931869, stablecoin_genesis_root=[0] * 7,
         note_genesis_root=[1] * 7, max_proof_actions_per_block=8,
         max_total_proofs=None if ongoing else 128,
         cryptographic_class=copy.deepcopy(policy.ONGOING_CRYPTOGRAPHIC_CLASS if ongoing else policy.CRYPTOGRAPHIC_CLASS))
@@ -127,7 +127,7 @@ class NativeIdentityTests(unittest.TestCase):
     def test_per_action_limits_and_activation_remain_checked(self):
         for field, raw in (("activation_height", True), ("activation_height", 0),
                            ("activation_height", 1 << 63), ("max_proof_actions_per_block", 513),
-                           ("max_proof_bytes", 2102937), ("max_proof_bytes", 0)):
+                           ("max_proof_bytes", 177633), ("max_proof_bytes", 0)):
             value = identity(); value[field] = raw
             with self.subTest(field=field, raw=raw), self.assertRaises(policy.Rejected):
                 policy.identity_check(value)
@@ -171,7 +171,7 @@ class NativeIdentityTests(unittest.TestCase):
         value = identity()
         policy.identity_check(value)
         self.assertEqual(value["circuit"], 12)
-        self.assertEqual(value["max_proof_bytes"], 2102936)
+        self.assertEqual(value["max_proof_bytes"], 177632)
         for field, raw in (("circuit", 11), ("public_words", 77), ("relation_id", policy.CURRENT_RELATION_ID),
                            ("relation_digest", policy.CURRENT_RUNTIME_RELATION)):
             changed = copy.deepcopy(value); changed[field] = raw
@@ -358,7 +358,7 @@ class SourceAndReceiptTests(unittest.TestCase):
         external["proofs"] = {}
         external["actions"] = {}
         for name, case in policy.CURRENT_ACTION_CASES.items():
-            proof = b"SMZDfixture-only-not-a-proof"
+            proof = b"SMZLfixture-only-not-a-proof"
             carrier = bytearray(5784)
             carrier[:24] = b"HGPSLC02" + bytes.fromhex("01000c00070001000f000800020c0100")
             carrier[24:72] = bytes.fromhex(policy.ONGOING_POLICY_RELATION)[:48]

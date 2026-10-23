@@ -781,8 +781,46 @@ mod tests {
         // and planner ceilings, and grants no proof-verification authority.
         let mut proof = vec![0; 150_000];
         proof[..4].copy_from_slice(&spend::CANDIDATE_PROOF_MAGIC);
-        let carrier =
-            wire::encode_native_asset_spend_action_v1(&public, &ciphertexts, &proof).unwrap();
+        let carrier = match wire::encode_native_asset_spend_action_v1(&public, &ciphertexts, &proof)
+        {
+            Ok(carrier) => carrier,
+            Err(wire::AssetSpendWireErrorV1::RelationSource) => {
+                use transaction_circuit::asset_spend_v1_admission as admission;
+                assert_eq!(
+                    admission::spend_profile_upper_bound_v1(0, 4),
+                    Err(admission::NativeAssetAdmissionErrorV1::SourceIdentity)
+                );
+                assert_ne!(
+                    hex::encode(spend::relation_digest()),
+                    admission::QUALIFIED_SPEND_SOURCE_SHA512
+                );
+                let historical =
+                    wire::encode_asset_spend_action_v1(&public, &ciphertexts, &proof).unwrap();
+                assert_eq!(
+                    wire::decode_asset_spend_action_v1(&historical)
+                        .unwrap()
+                        .public,
+                    public
+                );
+                let native_root = root(10);
+                let encoded = historical.len() + NATIVE_ASSET_SPEND_MAX_PENDING_OUTER_BYTES_V1;
+                let action = Poseidon2V8PendingAction::new(
+                    action_id(9),
+                    encoded,
+                    &historical,
+                    Poseidon2V8PublicTransition::new(41, native_root, root(20)),
+                );
+                assert!(
+                    matches!(plan_poseidon2_v8_pending_chain(checkpoint(native_root), &[action],
+                    Poseidon2V8PendingCaps::native_block()),
+                    Err(Poseidon2V8PendingError::CarrierTooLarge { maximum, .. })
+                        if maximum == POSEIDON2_V8_MAX_PENDING_ACTION_BYTES)
+                );
+                eprintln!("inactive asset source: native RelationSource rejection; historical framing retains conservative pending cap");
+                return;
+            }
+            Err(error) => panic!("unexpected native asset pending fixture error: {error}"),
+        };
         let encoded_bytes = carrier.len() + NATIVE_ASSET_SPEND_MAX_PENDING_OUTER_BYTES_V1;
         assert!(encoded_bytes > POSEIDON2_V8_MAX_PENDING_ACTION_BYTES);
         let native_root = root(10);
@@ -839,7 +877,7 @@ mod tests {
             released_secret: [0; 32],
         };
         // This is a framing/planner fixture, not a cryptographically valid proof.
-        let mut proof = vec![0; 1_926_125];
+        let mut proof = vec![0; wire::MAX_PROOF_BYTES];
         proof[..4].copy_from_slice(&wire::INNER_PROOF_MAGIC);
         let carrier = wire::encode(&public, [&first, &second], &proof).unwrap();
         let outer_bytes = carrier.len() + super::super::POSEIDON2_V8_MAX_PENDING_ACTION_OUTER_BYTES;

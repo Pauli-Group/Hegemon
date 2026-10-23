@@ -1915,6 +1915,34 @@ pub(crate) fn prune_auto_coinbase_actions_from_pending(
     }
 }
 
+fn validate_revalidated_pending_action(
+    staged_state: &NativeState,
+    action: &PendingAction,
+) -> Result<()> {
+    // Already admitted/canonical asset carriers may remain candidates while
+    // their reference ages. This is retention, not a verified-tip token: node
+    // selection authenticates H/current root, then rechecks the actual proof,
+    // current policy/accounting and NFs before any canonical publication.
+    if asset_native::is_asset_action(action) {
+        if !asset_native::pending_reference_eligible(action, staged_state.best.height) {
+            return Err(anyhow!("asset pending reference is expired/future"));
+        } else if staged_state
+            .pending_actions
+            .values()
+            .filter(|value| is_poseidon2_v8_action(value))
+            .count()
+            >= MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK
+        {
+            return Err(anyhow!("asset pending retention exceeds V8 action cap"));
+        } else {
+            validate_transfer_action_payload(action)?;
+        }
+    } else {
+        validate_pending_action_against_mempool_state(staged_state, action)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn stage_revalidated_pending_action(
     staged_state: &mut NativeState,
     hash: ActionId48,
@@ -1933,28 +1961,7 @@ pub(crate) fn stage_revalidated_pending_action(
         );
         return;
     }
-    // Already admitted/canonical asset carriers may remain candidates while
-    // their reference ages. This is retention, not a verified-tip token: node
-    // selection authenticates H/current root, then rechecks the actual proof,
-    // current policy/accounting and NFs before any canonical publication.
-    let validation = if asset_native::is_asset_action(&action) {
-        if !asset_native::pending_reference_eligible(&action, staged_state.best.height) {
-            Err(anyhow!("asset pending reference is expired/future"))
-        } else if staged_state
-            .pending_actions
-            .values()
-            .filter(|value| is_poseidon2_v8_action(value))
-            .count()
-            >= MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK
-        {
-            Err(anyhow!("asset pending retention exceeds V8 action cap"))
-        } else {
-            validate_transfer_action_payload(&action)
-        }
-    } else {
-        validate_pending_action_against_mempool_state(staged_state, &action)
-    };
-    if let Err(err) = validation {
+    if let Err(err) = validate_revalidated_pending_action(staged_state, &action) {
         debug!(
             tx_hash = %hex48(hash.as_bytes()),
             source,
@@ -2862,13 +2869,12 @@ pub(crate) fn verify_native_legacy_block_artifacts_locked(
     )
 }
 
-fn verify_native_block_artifacts_against_manifest_locked(
+fn validate_native_block_artifact_proof_policy(
     node: &NativeNode,
     state: &NativeState,
     actions: &[PendingAction],
     meta: &NativeBlockMeta,
     manifest: &protocol_kernel::manifest::KernelManifest,
-    verify_poseidon2_v8: bool,
 ) -> Result<()> {
     if node.config.network.profile() == NativeNetworkProfile::Legacy {
         validate_native_block_proof_policy_against_manifest(
@@ -2880,6 +2886,18 @@ fn verify_native_block_artifacts_against_manifest_locked(
     } else {
         node.validate_network_block_proof_policy(state.best.height, meta.height, actions)?;
     }
+    Ok(())
+}
+
+fn verify_native_block_artifacts_against_manifest_locked(
+    node: &NativeNode,
+    state: &NativeState,
+    actions: &[PendingAction],
+    meta: &NativeBlockMeta,
+    manifest: &protocol_kernel::manifest::KernelManifest,
+    verify_poseidon2_v8: bool,
+) -> Result<()> {
+    validate_native_block_artifact_proof_policy(node, state, actions, meta, manifest)?;
 
     // The fresh seven-limb lane is verified independently from the historical
     // `consensus::Transaction`/NativeTxLeaf verifier.  Planning is read-only

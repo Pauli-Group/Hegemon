@@ -174,11 +174,11 @@ printf '\n[4/14] Verifying Lean-generated Rust conformance vectors\n'
 run_exact_lib_test \
   transaction-circuit \
   smallwood_poseidon2_v8_hash_constraints::tests::lean_generated_v8_hash_kernel_refinement_vectors_match_source
-# The Lean transcript above is historical. The active RP05 KAT checks current
+# The Lean transcript above is historical. The active feed-forward KAT checks current
 # source bytes, identity and unchanged proof caps; it is not Lean generation.
 run_exact_lib_test \
   transaction-circuit \
-  smallwood_poseidon2_v8_program::tests::rp05_program_fixture_matches_source_identity_and_existing_proof_caps
+  smallwood_poseidon2_v8_program::tests::feedforward_program_fixture_matches_source_identity_and_existing_proof_caps
 LEAN_BRIDGE_VECTORS="$(mktemp)"
 LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS="$(mktemp)"
 LEAN_BRIDGE_LONG_RANGE_VECTORS="$(mktemp)"

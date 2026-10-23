@@ -112,14 +112,18 @@ impl LaunchProofCapability {
         // Absence is an explicit ongoing common-HGN mode, never a default
         // authority for a missing historical or partially specified limit.
         let limits_valid = match (self.deactivation_height_exclusive, self.max_total_proofs) {
-            (Some(end), Some(total)) => self.activation_height < end && end != u64::MAX && total > 0,
+            (Some(end), Some(total)) => {
+                self.activation_height < end && end != u64::MAX && total > 0
+            }
             (None, None) => self.kind == LaunchProofKind::PrivateSpend,
             _ => false,
         };
         self.activation_height > 0
             && limits_valid
             && request.height >= self.activation_height
-            && self.deactivation_height_exclusive.is_none_or(|end| request.height < end)
+            && self
+                .deactivation_height_exclusive
+                .is_none_or(|end| request.height < end)
             && self.chain_id != [0; 32]
             && self.genesis_hash != [0; 32]
             && self.manifest_digest != [0; 64]
@@ -150,15 +154,39 @@ impl LaunchProofCapability {
 
 const AUTHORIZED_LAUNCH_PROOF_CAPABILITIES: &[LaunchProofCapability] = &[LaunchProofCapability {
     kind: LaunchProofKind::PrivateSpend,
-    chain_id: [103, 170, 175, 130, 246, 55, 78, 68, 56, 219, 238, 30, 211, 245, 246, 108, 15, 254, 18, 32, 68, 241, 245, 235, 182, 199, 253, 223, 236, 255, 68, 106],
-    genesis_hash: [140, 55, 34, 194, 43, 89, 161, 60, 67, 237, 155, 245, 150, 188, 210, 187, 209, 24, 192, 138, 14, 212, 191, 55, 20, 200, 172, 106, 141, 23, 17, 235],
-    manifest_digest: [191, 52, 99, 20, 17, 97, 208, 1, 101, 225, 18, 46, 176, 102, 250, 17, 125, 107, 16, 66, 58, 166, 202, 11, 113, 180, 190, 210, 85, 40, 67, 191, 62, 98, 53, 147, 46, 211, 183, 57, 76, 228, 201, 178, 210, 9, 124, 246, 29, 53, 205, 145, 109, 190, 98, 214, 113, 240, 92, 36, 148, 223, 236, 160],
-    relation_digest: [205, 116, 123, 132, 48, 181, 31, 174, 230, 196, 191, 148, 215, 176, 200, 248, 223, 219, 120, 99, 198, 185, 39, 219, 83, 231, 206, 166, 124, 122, 32, 164, 154, 175, 60, 237, 165, 185, 186, 41, 71, 220, 155, 137, 208, 112, 225, 172, 95, 233, 171, 28, 119, 203, 166, 216, 89, 40, 92, 47, 50, 75, 86, 245],
+    chain_id: [
+        123, 123, 8, 153, 213, 68, 79, 253, 146, 195, 139, 56, 24, 142, 156, 228, 248, 145, 145,
+        60, 167, 204, 168, 84, 253, 202, 224, 170, 34, 202, 27, 73,
+    ],
+    genesis_hash: [
+        217, 168, 207, 193, 88, 121, 11, 2, 81, 199, 73, 61, 114, 97, 218, 119, 31, 125, 87, 190,
+        99, 188, 231, 80, 186, 140, 26, 245, 217, 42, 154, 211,
+    ],
+    manifest_digest: [
+        25, 232, 211, 179, 217, 252, 20, 183, 98, 40, 143, 15, 230, 62, 141, 125, 85, 177, 77, 74,
+        158, 79, 82, 120, 59, 38, 215, 169, 228, 120, 93, 166, 251, 120, 49, 159, 237, 26, 139, 47,
+        96, 235, 194, 31, 14, 20, 45, 192, 123, 32, 208, 192, 158, 211, 122, 158, 40, 199, 175,
+        134, 94, 111, 80, 160,
+    ],
+    relation_digest: [
+        76, 206, 103, 97, 84, 121, 155, 174, 213, 243, 173, 227, 183, 165, 243, 225, 160, 65, 242,
+        86, 244, 183, 172, 219, 39, 56, 97, 88, 228, 144, 46, 156, 93, 99, 235, 154, 27, 108, 50,
+        187, 186, 201, 18, 209, 127, 5, 122, 113, 210, 195, 90, 118, 144, 57, 212, 106, 0, 7, 195,
+        81, 225, 131, 37, 148,
+    ],
     activation_height: 1,
     deactivation_height_exclusive: None,
     max_proof_bytes: 177632,
     stablecoin_genesis_root: [0, 0, 0, 0, 0, 0, 0],
-    note_genesis_root: [3013021922057677145, 1646436993411294138, 17930985046722462302, 4040104963526763525, 8044768705513318970, 5501470279516072626, 9669143789627659081],
+    note_genesis_root: [
+        3013021922057677145,
+        1646436993411294138,
+        17930985046722462302,
+        4040104963526763525,
+        8044768705513318970,
+        5501470279516072626,
+        9669143789627659081,
+    ],
     max_proof_actions_per_block: 8,
     max_total_proofs: None,
 }];
@@ -352,14 +380,21 @@ mod tests {
 
     #[test]
     fn ongoing_hgn_requires_explicit_paired_absence_and_exact_identity() {
-        for kind in [LaunchProofKind::Rp06, LaunchProofKind::Htlc, LaunchProofKind::PrivateSpend] {
+        for kind in [
+            LaunchProofKind::Rp06,
+            LaunchProofKind::Htlc,
+            LaunchProofKind::PrivateSpend,
+        ] {
             let (mut capability, mut request) = fixture(kind);
             capability.deactivation_height_exclusive = None;
             assert!(!capability.allows(request));
             capability.max_total_proofs = None;
             for height in [100, 100_001, 621_730_875, u64::MAX] {
                 request.height = height;
-                assert_eq!(capability.allows(request), kind == LaunchProofKind::PrivateSpend);
+                assert_eq!(
+                    capability.allows(request),
+                    kind == LaunchProofKind::PrivateSpend
+                );
             }
             if kind == LaunchProofKind::PrivateSpend {
                 let mut wrong = request;

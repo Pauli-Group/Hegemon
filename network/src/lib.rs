@@ -5,7 +5,7 @@ use crypto::hashes::sha256;
 use crypto::ml_dsa::{MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature};
 use crypto::ml_kem::{MlKemCiphertext, MlKemKeyPair, MlKemPublicKey, MlKemSharedSecret};
 use crypto::traits::{KemKeyPair, KemPublicKey, SigningKey, VerifyKey};
-use rand::{rngs::OsRng, RngCore};
+use rand::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
@@ -34,13 +34,13 @@ pub use network_backend::{
 };
 pub use peer_store::{PeerStore, PeerStoreConfig};
 pub use pq_transport::{
-    upgrade_inbound, upgrade_outbound, PqPeerIdentity, PqSecureConnection, PqTransportConfig,
+    PqPeerIdentity, PqSecureConnection, PqTransportConfig, upgrade_inbound, upgrade_outbound,
 };
 pub use protocol::{
+    BLOCK_ANNOUNCES_PQ, NegotiationResult, NotificationProtocolConfig, PQ_PROTOCOL_V1,
+    ProtocolNegotiationConfig, ProtocolSecurityLevel, ProtocolType, SYNC_PQ, TRANSACTIONS_PQ,
     is_pq_protocol, negotiate_protocol, protocol_security_level, protocol_type,
-    supported_protocols, NegotiationResult, NotificationProtocolConfig, ProtocolNegotiationConfig,
-    ProtocolSecurityLevel, ProtocolType, BLOCK_ANNOUNCES_PQ, PQ_PROTOCOL_V1, SYNC_PQ,
-    TRANSACTIONS_PQ,
+    supported_protocols,
 };
 pub use service::RelayConfig;
 pub use service::{P2PService, ProtocolHandle};
@@ -555,7 +555,7 @@ fn secure_channel_from_network_transcript(
     secret_b: &[u8],
     role: ChannelRole,
 ) -> Result<SecureChannel, NetworkError> {
-    match context {
+    let channel = match context {
         None => secure_channel_from_transcript(
             offer,
             acceptance,
@@ -563,7 +563,7 @@ fn secure_channel_from_network_transcript(
             secret_a,
             secret_b,
             role,
-        ),
+        )?,
         Some(context) => {
             let mut scoped_offer = Vec::with_capacity(
                 b"hegemon-network-context-session-v1\0".len() + context.len() + offer.len(),
@@ -578,9 +578,10 @@ fn secure_channel_from_network_transcript(
                 secret_a,
                 secret_b,
                 role,
-            )
+            )?
         }
-    }
+    };
+    Ok(channel)
 }
 
 fn secure_channel_from_transcript(

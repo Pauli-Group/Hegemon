@@ -226,6 +226,11 @@ jobs:
           - node-minimal
     env:
       PROPTEST_CASES: 64
+      # Keep all tests, debug assertions and overflow checks; optimize expensive
+      # circuit/wallet loops so CI measures them instead of timing out in debug.
+      CARGO_PROFILE_TEST_OPT_LEVEL: "2"
+      CARGO_BUILD_JOBS: "2"
+      RAYON_NUM_THREADS: "2"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -277,7 +282,8 @@ jobs:
           ./scripts/run_exact_cargo_lib_test.sh wallet poseidon2_v8::tests::smza_wallet_route_preserves_maximum_proof_and_rejects_smz9
           ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::submit_sidecar_action_rejects_before_consuming_embedded_staged_proof --no-default-features
           ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::pending_action_startup_durably_quarantines_inactive_sidecar_with_matching_ciphertext --no-default-features
-          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::poseidon2_v8_state::tests::trailing_coinbase_appends_after_outputs_and_survives_restart_reorg_and_fresh_replay --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::poseidon2_v8_state::tests::pending_coinbase_preserves_hash_kat_outputs_restart_reorg_and_fresh_replay --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::poseidon2_v8_state::tests::reward_maturity_excludes_both_roles_until_h_plus_120_and_reorgs_release --no-default-features
           ./scripts/run_exact_cargo_lib_test.sh transaction-circuit smallwood_frontend::tests::production_verifier_evidence_matches_active_verifier --release
           ./scripts/run_exact_ignored_cargo_lib_test.sh transaction-circuit smallwood_engine::tests::verifier_rejects_forged_self_consistent_pcs_layer --release
           ./scripts/run_exact_cargo_lib_test.sh block-recursion tests::recursive_proof_envelope_component_checks_reject_tampered_envelope
@@ -408,8 +414,14 @@ jobs:
       - name: Release binary build
         run: ./scripts/check-core.sh build
 
+      - name: Check bounded successor receipt rejection controls
+        run: python3 -I -B scripts/test_check_v011_crypto_consumer.py
+
+      - name: Restore authenticated v0.11 predecessor for strict binary qualification
+        run: python3 -I -B scripts/materialize_v011_predecessor.py --reserve-bytes 4294967296
+
       - name: Release PQ binary audit
-        run: ./scripts/security-audit.sh --allow-unapproved-profile --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
+        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
 
   release-build:
     runs-on: ubuntu-latest

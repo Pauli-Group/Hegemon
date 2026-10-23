@@ -119,10 +119,17 @@ pub struct HtlcStatementMetadata {
     pub fee: u64,
     pub revealed_secret_present: bool,
     pub revealed_secret_sha256: Option<[u8; 32]>,
+    /// Review-only digest of the validated canonical public statement. This is
+    /// neither the proof transcript binding nor proof/submission authorization.
     pub binding_sha512: [u8; 64],
 }
 impl HtlcStatementMetadata {
     fn from_statement(statement: &HtlcStatement) -> Result<Self, WalletError> {
+        // Review metadata must not compile a proof circuit. Keep its namespace
+        // separate from both proof transcripts and the exact carrier digest.
+        let mut binding = Sha512::new();
+        binding.update(b"hegemon-wallet-htlc-statement-review-v1");
+        binding.update(statement.binding_bytes().map_err(htlc::surface_error)?);
         Ok(Self {
             version: statement.version,
             action: statement.action,
@@ -138,12 +145,7 @@ impl HtlcStatementMetadata {
             revealed_secret_sha256: statement
                 .revealed_secret
                 .map(|secret| sha2::Sha256::digest(secret).into()),
-            binding_sha512: Sha512::digest(
-                statement
-                    .candidate_binding_bytes()
-                    .map_err(htlc::surface_error)?,
-            )
-            .into(),
+            binding_sha512: binding.finalize().into(),
         })
     }
 }
@@ -1164,6 +1166,73 @@ fn find_attempt_mut(
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
+    fn review_statement_fixture() -> HtlcStatement {
+        HtlcStatement {
+            version: 1,
+            action: HtlcAction::Claim,
+            network_id: [1; 32],
+            parent_hash: [2; 32],
+            parent_height: 3,
+            merkle_root: [4; 7],
+            nullifier: [5; 7],
+            output_commitment: [6; 7],
+            ciphertext_commitment: [7; 48],
+            fee: 8,
+            revealed_secret: None,
+        }
+    }
+    #[test]
+    fn htlc_review_digest_binds_public_fields_without_proof_compilation() {
+        let statement = review_statement_fixture();
+        let expected = HtlcStatementMetadata::from_statement(&statement).unwrap();
+        let mutations: [(&str, fn(&mut HtlcStatement)); 11] = [
+            ("action", |value| value.action = HtlcAction::Refund),
+            ("network high byte", |value| value.network_id[31] ^= 128),
+            ("parent high byte", |value| value.parent_hash[31] ^= 128),
+            ("height", |value| value.parent_height += 1),
+            ("merkle root", |value| value.merkle_root[6] += 1),
+            ("nullifier", |value| value.nullifier[6] += 1),
+            ("output", |value| value.output_commitment[6] += 1),
+            ("ciphertext", |value| value.ciphertext_commitment[47] ^= 128),
+            ("fee", |value| value.fee += 1),
+            ("secret presence", |value| {
+                value.revealed_secret = Some([0; 32])
+            }),
+            ("secret bytes", |value| {
+                value.revealed_secret = Some([9; 32])
+            }),
+        ];
+        let mut digests = std::collections::HashSet::from([expected.binding_sha512]);
+        for (name, mutate) in mutations {
+            let mut changed = statement.clone();
+            mutate(&mut changed);
+            let digest = HtlcStatementMetadata::from_statement(&changed)
+                .unwrap()
+                .binding_sha512;
+            assert!(digests.insert(digest), "review digest omitted {name}");
+        }
+        let unscoped: [u8; 64] = Sha512::digest(statement.binding_bytes().unwrap()).into();
+        assert_ne!(expected.binding_sha512, unscoped);
+    }
+    #[test]
+    fn htlc_review_digest_rejects_invalid_public_statements() {
+        let mutations: [fn(&mut HtlcStatement); 6] = [
+            |value| value.version += 1,
+            |value| value.network_id = [0; 32],
+            |value| value.parent_height = u64::MAX,
+            |value| value.merkle_root[0] = u64::MAX,
+            |value| value.fee = u64::MAX,
+            |value| {
+                value.action = HtlcAction::Refund;
+                value.revealed_secret = Some([9; 32]);
+            },
+        ];
+        for mutate in mutations {
+            let mut statement = review_statement_fixture();
+            mutate(&mut statement);
+            assert!(HtlcStatementMetadata::from_statement(&statement).is_err());
+        }
+    }
     fn ready_journal_fixture() -> (tempfile::TempDir, WalletStore, Vec<u8>) {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("wallet");
@@ -1220,11 +1289,42 @@ mod tests {
             .unwrap();
         (directory, store, carrier)
     }
+    fn assert_public_rejection_of_malformed_journal_carrier(store: &WalletStore) {
+        // This journal fixture has no genuine proof. Exercise public framing
+        // rejection without claiming that its plausible SMZC prefix is a proof.
+        // Corrupt only the in-memory carrier; no malformed wallet is persisted.
+        {
+            let mut state = store.state.lock().unwrap();
+            find_attempt_mut(&mut state, [81; 32])
+                .unwrap()
+                .exact_carrier[0] ^= 1;
+        }
+        let errors = [
+            store.export_htlc_attempt([81; 32]).err(),
+            store.recover_htlc_attempt([81; 32]).err(),
+            store.begin_htlc_submission([81; 32]).err(),
+            store
+                .begin_htlc_submission_for_retained_test([81; 32])
+                .err(),
+        ];
+        {
+            let mut state = store.state.lock().unwrap();
+            find_attempt_mut(&mut state, [81; 32])
+                .unwrap()
+                .exact_carrier[0] ^= 1;
+        }
+        for error in errors {
+            assert!(matches!(
+                error,
+                Some(WalletError::Serialization(message))
+                    if message.contains("HTLC carrier magic")
+            ));
+        }
+    }
     #[test]
     fn htlc_durable_recovery_preserves_exact_uncertain_and_submitted_bytes() {
         let (directory, store, carrier) = ready_journal_fixture();
-        assert!(store.export_htlc_attempt([81; 32]).is_err());
-        assert!(store.recover_htlc_attempt([81; 32]).is_err());
+        assert_public_rejection_of_malformed_journal_carrier(&store);
         let export = store
             .export_htlc_attempt_inner([81; 32], false, false, false)
             .unwrap();
@@ -1531,15 +1631,18 @@ mod tests {
                 .apply_poseidon2_v8_launch_canonical_block_for_retained_test(&block, context)
                 .unwrap();
         }
-        assert!(store.begin_htlc_submission([81; 32]).is_err());
+        assert_public_rejection_of_malformed_journal_carrier(&store);
         assert_eq!(
             store.htlc_swaps().unwrap()[0].attempts[0].status,
             HtlcAttemptStatus::Ready
         );
         assert_eq!(
+            // Journal projection only; genuine proof acceptance is exercised
+            // separately by the current compact-proof qualification suite.
             store
-                .begin_htlc_submission_for_retained_test([81; 32])
-                .unwrap(),
+                .export_htlc_attempt_inner([81; 32], false, false, false)
+                .unwrap()
+                .exact_carrier,
             exact_carrier
         );
         let final_parent = store.poseidon2_v8_tip().unwrap();

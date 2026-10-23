@@ -58,6 +58,37 @@ class FormattingTests(unittest.TestCase):
             self.file.write_bytes(b'new_version() + old_version()\n')
             with self.assertRaises(gate.Rejected):gate.verify_failures(self.root,{'old.rs'},baseline)
 
+    def test_only_exact_reviewed_source_migration_is_allowed(self):
+        before = self.file.read_bytes(); after = before + b'// reviewed test delta\n'
+        migration = {'path': 'old.rs', 'qualified_sha256': hashlib.sha256(before).hexdigest(),
+                     'postimage_sha256': hashlib.sha256(after).hexdigest(),
+                     'scope': 'reviewed-node-ci-regression-delta-only'}
+        with patch.object(gate, 'REVIEWED_SOURCE_MIGRATIONS', [migration]):
+            self.file.write_bytes(after)
+            gate.verify_failures(self.root, {'old.rs'}, self.baseline)
+            self.file.write_bytes(after + b'// unrelated change\n')
+            with self.assertRaises(gate.Rejected): gate.verify_failures(self.root, {'old.rs'}, self.baseline)
+            self.file.write_bytes(after)
+            with self.assertRaises(gate.Rejected): gate.verify_failures(self.root, {'old.rs'}, {'old.rs': '0' * 64})
+            migration['path'] = 'new.rs'
+            (self.root / 'new.rs').write_bytes(after)
+            with self.assertRaises(gate.Rejected): gate.verify_failures(self.root, {'new.rs'}, self.baseline)
+
+    def test_reviewed_migration_set_cannot_be_extended_by_config(self):
+        data = json.loads((gate.ROOT / gate.BASELINE).read_text())
+        data['reviewed_source_migrations'].append(dict(data['reviewed_source_migrations'][0], path='new.rs'))
+        raw = (json.dumps(data, indent=2) + '\n').encode()
+        file = self.root / 'baseline.json'; file.write_bytes(raw)
+        with self.assertRaises(gate.Rejected): gate.load_baseline(file, hashlib.sha256(raw).hexdigest())
+
+    def test_all_checked_in_migrations_bind_exact_current_files_and_old_debt(self):
+        baseline = gate.load_baseline(gate.ROOT / gate.BASELINE)
+        self.assertEqual(len(gate.REVIEWED_SOURCE_MIGRATIONS), 3)
+        for row in gate.REVIEWED_SOURCE_MIGRATIONS:
+            self.assertEqual(baseline[row['path']], row['qualified_sha256'])
+            self.assertEqual(hashlib.sha256((gate.ROOT / row['path']).read_bytes()).hexdigest(), row['postimage_sha256'])
+            gate.verify_failures(gate.ROOT, {row['path']}, baseline)
+
     def test_checked_in_baseline_has_identical_qualified_hashes(self):
         baseline=gate.load_baseline(gate.ROOT/gate.BASELINE)
         self.assertEqual(len(baseline),38)
