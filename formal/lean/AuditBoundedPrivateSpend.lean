@@ -1,0 +1,20 @@
+import Hegemon.Policy.BoundedPrivateSpend
+
+-- Semantic delta only; no runtime refinement or production authorization.
+#print axioms Hegemon.Policy.BoundedPrivateSpend.branch_words_length
+#print axioms Hegemon.Policy.BoundedPrivateSpend.descriptor_words_length
+#print axioms Hegemon.Policy.BoundedPrivateSpend.selected_branch_authority
+#print axioms Hegemon.Policy.BoundedPrivateSpend.selected_branch_has_nonzero_authority
+#print axioms Hegemon.Policy.BoundedPrivateSpend.wrong_authority_limb_rejects
+#print axioms Hegemon.Policy.BoundedPrivateSpend.disabled_branch_rejects
+#print axioms Hegemon.Policy.BoundedPrivateSpend.selected_false_branch_does_not_authorize
+#print axioms Hegemon.Policy.BoundedPrivateSpend.absolute_height_no_early_spend
+#print axioms Hegemon.Policy.BoundedPrivateSpend.before_absolute_height_rejects
+#print axioms Hegemon.Policy.BoundedPrivateSpend.mandatory_release_no_opt_out
+#print axioms Hegemon.Policy.BoundedPrivateSpend.released_preimage_matches_hashlock
+#print axioms Hegemon.Policy.BoundedPrivateSpend.no_release_has_zero_public_bytes
+#print axioms Hegemon.Policy.BoundedPrivateSpend.asset_compliance_outside_or
+#print axioms Hegemon.Policy.BoundedPrivateSpend.missing_asset_compliance_rejects_both_branches
+#print axioms Hegemon.Policy.BoundedPrivateSpend.both_branches_share_nullifier
+#print axioms Hegemon.Policy.BoundedPrivateSpend.accepted_has_nonzero_shared_nullifier_key
+#print axioms Hegemon.Policy.BoundedPrivateSpend.conservation_from_unchanged_bounded_balance

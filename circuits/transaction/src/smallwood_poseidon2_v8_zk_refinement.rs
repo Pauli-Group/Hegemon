@@ -48,14 +48,23 @@ pub const SMALLWOOD_POSEIDON2_V8_SMZ9_GLOBAL_QROM_LIFETIME_RECEIPT_ID: &str =
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_EXECUTABLE_ZK_BINDING: &[u8] =
     b"hegemon.smallwood.poseidon2-v8.smz9.executable-zk-refinement.v1\0";
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_EXECUTABLE_ZK_SEED: [u8; 64] = [0x93; 64];
-/// Byte-exact pin for the checked-in, source-rebuilt executable refinement vector.
-/// RP04 uses `docs/crypto/smallwood_poseidon2_v8_rp04_smz9_executable_zk_refinement.json`;
-/// the separately retained RP03 report is not evidence for this program.
-/// Updating this pin requires deliberately regenerating and reviewing the vector; it is not a
-/// cryptographic or production-authority receipt.
-pub const SMALLWOOD_POSEIDON2_V8_SMZ9_EXECUTABLE_ZK_REPORT_BYTES: usize = 4_230;
+/// Historical RP04 vector retained byte-for-byte. It is not a fixture for the current
+/// COMPFF01 program, and retaining its pin does not grant a QROM or production receipt.
+pub const SMALLWOOD_POSEIDON2_V8_RP04_SMZ9_EXECUTABLE_ZK_REPORT_BYTES: usize = 4_230;
+pub const SMALLWOOD_POSEIDON2_V8_RP04_SMZ9_EXECUTABLE_ZK_REPORT_SHA512_HEX: &str =
+    "53f50293f531a2246a2809c4acdbad5c4fde662e8f55cd70bc54a46c9654bad23c944fd3e18ef7b81e18abdd1d0bd30946730cc6845097b7c1fe30081fa2b1af";
+/// Source-rebuilt fixture for `hegemon-p2w16-compress14-left-feedforward-v1`.
+/// The genuine Rust report constructor generated the separately named fixture at
+/// `docs/crypto/smallwood_poseidon2_v8_compff01_smz9_executable_zk_refinement.json`.
+/// These are exact finite executable-vector pins, not cryptographic or production receipts.
+pub const SMALLWOOD_POSEIDON2_V8_COMPFF01_SMZ9_EXECUTABLE_ZK_REPORT_BYTES: usize = 4_247;
+pub const SMALLWOOD_POSEIDON2_V8_COMPFF01_SMZ9_EXECUTABLE_ZK_REPORT_SHA512_HEX: &str =
+    "fcf195b7e2981703ef40200ede879e3924fced58fdaead16d1d05d8de0c87cf7debca53382a903f0ac21308171bf09bbf4375061241caeb20d6cb07906b5b337";
+pub const SMALLWOOD_POSEIDON2_V8_COMPFF01_SMZ9_EXECUTABLE_ZK_ORACLE_QUERIES: usize = 26_202;
+pub const SMALLWOOD_POSEIDON2_V8_SMZ9_EXECUTABLE_ZK_REPORT_BYTES: usize =
+    SMALLWOOD_POSEIDON2_V8_COMPFF01_SMZ9_EXECUTABLE_ZK_REPORT_BYTES;
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_EXECUTABLE_ZK_REPORT_SHA512_HEX: &str =
-    "4ae8af96cdc7a653d8da0c9e4e268bcdd637c5e6a2f35c995f71a6b684b6e81d1a211704fc27924166e307d62b04885489c7dbd10f899fd2f1dc9d70c16e31d2";
+    SMALLWOOD_POSEIDON2_V8_COMPFF01_SMZ9_EXECUTABLE_ZK_REPORT_SHA512_HEX;
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_ACCEPTED_PROOF_REFINEMENT_SCHEMA: &str =
     "hegemon.smallwood.poseidon2-v8.smz9.accepted-proof-refinement.v1";
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_LEAN_WIRE_MODEL: &str =
@@ -1164,7 +1173,7 @@ fn sha512_hex(bytes: &[u8]) -> String {
     hex::encode(Sha512::digest(bytes))
 }
 
-/// Rebuild the exact HGV8RP03 relation, materialize one deterministic typed
+/// Rebuild the current COMPFF01 relation, materialize one deterministic typed
 /// coin fixture, execute the witness-free SMZ9 ROM simulator, replay every
 /// canonical verifier-facing field and programmed oracle seam, and audit the
 /// honest prover's six affine hiding maps.
@@ -1179,7 +1188,7 @@ pub fn report_smallwood_poseidon2_v8_smz9_executable_zk_refinement_v1(
     let relation = SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(&statement)
         .map_err(|error| {
             violation(format!(
-                "SMZ9 executable ZK refinement could not rebuild HGV8RP04: {error}"
+                "SMZ9 executable ZK refinement could not rebuild COMPFF01: {error}"
             ))
         })?;
     if relation.relation_digest() != &SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST
@@ -1366,18 +1375,19 @@ mod tests {
         const LEAF: &[u8] = b"hegemon.smallwood.strict-zk.merkle-leaf.v2";
         const NODE: &[u8] = b"hegemon.smallwood.level5.merkle-node";
         const ROOT: &[u8] = b"hegemon.smallwood.level5.merkle-root";
-        const PROOF: &[u8] = include_bytes!(concat!(
+        const OLD_PROOF: &[u8] = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../.agent/artifacts/smallwood-poseidon2-v8-smza/smza-rp05-dev-20260922/proof.bin"
+            "/../../testdata/formal_core_vectors/smallwood_smza_rp05_20260922/proof.bin"
         ));
-        const PREAMBLE: &[u8] = include_bytes!(concat!(
+        const OLD_PREAMBLE: &[u8] = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../.agent/artifacts/smallwood-poseidon2-v8-smza/smza-rp05-dev-20260922/preamble.bin"
+            "/../../testdata/formal_core_vectors/smallwood_smza_rp05_20260922/preamble.bin"
         ));
 
         assert!(!protocol_versioning::smallwood_poseidon2_production_authorized());
+        assert!(!crate::smallwood_poseidon2_v8_program::SMALLWOOD_POSEIDON2_V8_PROGRAM_IDENTITY_REGENERATION_REQUIRED);
         assert!(
-            crate::smallwood_poseidon2_v8_program::SMALLWOOD_POSEIDON2_V8_PROGRAM_IDENTITY_REGENERATION_REQUIRED
+            crate::smallwood_poseidon2_v8_program::smallwood_poseidon2_v8_program_digest_matches()
         );
         let statement = super::SmallwoodPoseidon2V8PublicStatement::default();
         let relation = super::SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement_for_rp05_development_artifact(&statement)
@@ -1386,11 +1396,60 @@ mod tests {
         let preamble = input
             .smza_candidate_transcript_preamble_v1()
             .expect("canonical RP05 preamble");
-        assert_eq!(preamble.as_bytes(), PREAMBLE);
+        use sha2::{Digest as _, Sha512};
+        assert_eq!(hex::encode(Sha512::digest(OLD_PROOF)), "e75a567d8004d288fbb7389675556cd50d8b384c5d2b40a57e18e336dcea73e551fddf25bdd6d0ce36f3268a9037f833e210d804148031bf6f1681c76eb6e584");
+        assert_eq!(hex::encode(Sha512::digest(OLD_PREAMBLE)), "95a1ec5a9fcb0b1f3227cfc2fe44576fe81a3edda4d140b55e25f9bcde3551421378c18798b8a34496c0dd7199a451dbc0e60954d9194ce79cc234ac104413bb");
+        assert_ne!(
+            preamble.as_bytes(),
+            OLD_PREAMBLE,
+            "historical context cannot name COMPFF01"
+        );
+        let old = super::validate_accepted_smallwood_poseidon2_v8_smza_with_evidence_v1(
+            &relation,
+            preamble.as_bytes(),
+            OLD_PROOF,
+        )
+        .expect("current recorder initializes");
+        assert!(
+            old.result.is_err(),
+            "historical proof must reject under current relation/context"
+        );
+        let directory = std::env::var_os("HEGEMON_COMPFF01_SMZA_FIXTURE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../testdata/formal_core_vectors/smallwood_smza_compff01")
+            });
+        let proof = std::fs::read(directory.join("proof.bin"))
+            .expect("generate genuine current COMPFF01 SMZA fixture first");
+        let retained_preamble =
+            std::fs::read(directory.join("preamble.bin")).expect("current fixture preamble");
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(directory.join("manifest.json")).expect("current fixture manifest"),
+        )
+        .unwrap();
+        assert_eq!(
+            manifest["program_sha512_hex"],
+            hex::encode(
+                crate::smallwood_poseidon2_v8_program::SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512
+            )
+        );
+        assert_eq!(
+            manifest["proof_sha512_hex"],
+            hex::encode(Sha512::digest(&proof))
+        );
+        assert_eq!(
+            manifest["preamble_sha512_hex"],
+            hex::encode(Sha512::digest(&retained_preamble))
+        );
+        assert_eq!(manifest["production_authorized"], false);
+        assert_eq!(preamble.as_bytes(), retained_preamble.as_slice());
+        let proof_bytes = proof.as_slice();
+        let fixture_preamble = retained_preamble.as_slice();
         let attempt = super::validate_accepted_smallwood_poseidon2_v8_smza_with_evidence_v1(
             &relation,
             preamble.as_bytes(),
-            PROOF,
+            proof_bytes,
         )
         .expect("recorder setup/finalization");
         let super::SmallwoodPoseidon2V8SmzaAcceptedRunAttemptV1 {
@@ -1399,8 +1458,8 @@ mod tests {
             phases,
         } = attempt;
         let accepted = result.expect("retained RP05 proof must pass the recorded audit");
-        assert_eq!(accepted.binded_data.as_slice(), PREAMBLE);
-        assert_eq!(accepted.proof_bytes.as_slice(), PROOF);
+        assert_eq!(accepted.binded_data.as_slice(), fixture_preamble);
+        assert_eq!(accepted.proof_bytes.as_slice(), proof_bytes);
         assert_eq!(phases.trace_start, Some(0));
         assert_eq!(phases.trace_end, phases.core_start);
         assert_eq!(phases.core_end, Some(queries.len()));
@@ -1548,8 +1607,8 @@ mod tests {
             "{}",
             serde_json::json!({
                 "schema": "hegemon.rp05.dev.accepted-run-merkle-log.v1",
-                "proof_bytes": PROOF.len(),
-                "preamble_bytes": PREAMBLE.len(),
+                "proof_bytes": proof_bytes.len(),
+                "preamble_bytes": fixture_preamble.len(),
                 "opened_leaf_count": indexes.len(),
                 "path_depth": 23,
                 "recorded_path_edges": indexes.len() * 25,
@@ -1781,9 +1840,9 @@ mod tests {
     }
 
     #[test]
-    fn exact_hgv8rp04_executable_rom_refinement_is_rebuilt_and_qrom_receipts_stay_absent() {
+    fn exact_compff01_executable_rom_refinement_is_rebuilt_and_qrom_receipts_stay_absent() {
         let report = report_smallwood_poseidon2_v8_smz9_executable_zk_refinement_v1()
-            .expect("rebuild exact HGV8RP04 executable ZK refinement");
+            .expect("rebuild exact COMPFF01 executable ZK refinement");
         assert_eq!(
             report.schema,
             SMALLWOOD_POSEIDON2_V8_SMZ9_EXECUTABLE_ZK_REFINEMENT_SCHEMA
@@ -1825,7 +1884,11 @@ mod tests {
             report.oracle_program_count,
             report.programmed_merkle_node_count + 1
         );
-        assert!(report.oracle_query_count > 0);
+        assert_eq!(
+            report.oracle_query_count,
+            SMALLWOOD_POSEIDON2_V8_COMPFF01_SMZ9_EXECUTABLE_ZK_ORACLE_QUERIES
+        );
+        assert_eq!(report.oracle_program_count, 354);
         assert_eq!(report.final_piop_program_hits, 1);
         assert_eq!(report.lazy_merkle_program_hits, 0);
         assert_eq!(report.oracle_program_table_sha512_hex.len(), 128);
@@ -1836,6 +1899,18 @@ mod tests {
         let mut report_bytes = serde_json::to_vec_pretty(&report)
             .expect("serialize exact executable refinement report");
         report_bytes.push(b'\n');
+        assert_eq!(
+            crate::smallwood_poseidon2_v8_program::SMALLWOOD_POSEIDON2_V8_COMPRESSION_MODE_ID,
+            "hegemon-p2w16-compress14-left-feedforward-v1"
+        );
+        assert_eq!(
+            crate::smallwood_poseidon2_v8_program::SMALLWOOD_POSEIDON2_V8_COMPRESSION_MODE_MARKER,
+            0x434f_4d50_4646_3031
+        );
+        assert_eq!(
+            report_bytes.as_slice(),
+            include_bytes!("../../../docs/crypto/smallwood_poseidon2_v8_compff01_smz9_executable_zk_refinement.json")
+        );
         assert_eq!(
             report_bytes.len(),
             SMALLWOOD_POSEIDON2_V8_SMZ9_EXECUTABLE_ZK_REPORT_BYTES
@@ -1869,6 +1944,48 @@ mod tests {
         )
         .expect("serialize repeated deterministic report");
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn historical_rp04_rom_fixture_is_preserved_and_is_not_the_compff01_fixture() {
+        let old = include_bytes!(
+            "../../../docs/crypto/smallwood_poseidon2_v8_rp04_smz9_executable_zk_refinement.json"
+        );
+        assert_eq!(
+            old.len(),
+            SMALLWOOD_POSEIDON2_V8_RP04_SMZ9_EXECUTABLE_ZK_REPORT_BYTES
+        );
+        assert_eq!(
+            sha512_hex(old),
+            SMALLWOOD_POSEIDON2_V8_RP04_SMZ9_EXECUTABLE_ZK_REPORT_SHA512_HEX
+        );
+        let historical: serde_json::Value =
+            serde_json::from_slice(old).expect("historical report JSON");
+        assert_eq!(
+            historical["semantic_target_id"],
+            "hegemon.smallwood.poseidon2-v8.stablecoin-relation.v3"
+        );
+        assert_eq!(historical["oracle_query_count"], 26_220);
+        assert_eq!(
+            historical["adaptive_qrom_complete_zero_knowledge_receipt_present"],
+            false
+        );
+        assert_eq!(
+            historical["global_qrom_lifetime_composition_receipt_present"],
+            false
+        );
+        assert_eq!(historical["production_eligible"], false);
+        let current = include_bytes!("../../../docs/crypto/smallwood_poseidon2_v8_compff01_smz9_executable_zk_refinement.json");
+        assert_ne!(old.as_slice(), current.as_slice());
+        // The longer successor relation ID adds 17 JSON bytes; it is not an operator count.
+        assert_eq!(
+            SMALLWOOD_POSEIDON2_V8_COMPFF01_SMZ9_EXECUTABLE_ZK_REPORT_BYTES - old.len(),
+            17
+        );
+        assert_eq!(
+            26_220 - SMALLWOOD_POSEIDON2_V8_COMPFF01_SMZ9_EXECUTABLE_ZK_ORACLE_QUERIES,
+            18
+        );
     }
 
     #[test]

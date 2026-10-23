@@ -10,11 +10,12 @@ fn parse_hex48(s: &str) -> [u8; 48] {
 
 #[tokio::main]
 async fn main() {
-    let client = NodeRpcClient::connect("ws://127.0.0.1:9955").await.unwrap();
-
-    let raw_client = jsonrpsee_ws_client::WsClientBuilder::default()
-        .build("ws://127.0.0.1:9955")
+    let client = NodeRpcClient::connect("http://127.0.0.1:9955")
         .await
+        .unwrap();
+
+    let raw_client = jsonrpsee_http_client::HttpClientBuilder::default()
+        .build("http://127.0.0.1:9955")
         .unwrap();
     use jsonrpsee_core::client::ClientT;
     let fin: String = raw_client

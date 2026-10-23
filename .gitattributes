@@ -1,0 +1,3 @@
+# Proof identities and release manifests bind exact Git blob bytes.
+# Preserve those bytes on every checkout, including Windows.
+* -text

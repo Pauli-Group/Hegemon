@@ -1,0 +1,330 @@
+{
+  "schema": "hegemon.rp05.primitive-assumptions.v1",
+  "source_revision": "66523412c6fa6682d67ea011d20f93b7cb6e0b27",
+  "status": "AUDITED_CONDITIONAL_UNQUANTIFIED",
+  "production_authorized": false,
+  "unconditional_128_bit_security": false,
+  "ideal_model_extraction_loss": "strictly less than 1/2^130 for the stated fixed-context experiment",
+  "proof_oracle_query_cap": "3*2^64",
+  "primitive_query_cap_inferred_from_proof_cap": false,
+  "aggregate_expression": "extraction_loss + epsilonNoteCommitment + epsilonMerkle + epsilonNullifier + epsilonSingle + epsilonAccumulator + epsilonMixed",
+  "sufficient_six_term_budget": {
+    "aggregate": "3/2^130",
+    "equal_allocation_per_term": "1/2^131",
+    "meaning": "Sufficient arithmetic allocation only; no actual primitive advantage is claimed to meet it.",
+    "covers_additional_assumptions": false
+  },
+  "terms": [
+    {
+      "name": "epsilonNoteCommitment",
+      "event": "currentHistoryGenesisPathNoteCommitmentGameEvent",
+      "primitive": "exactV8NoteCommitment",
+      "frame": "18 effective canonical field words: value, asset, recipient[4], rho[4], randomness[4], authorization[4]",
+      "domain": "1",
+      "output": {
+        "field_modulus": 18446744069414584321,
+        "field_words": 7
+      },
+      "game": "collision",
+      "evidence_ids": [
+        "semantic",
+        "history",
+        "games"
+      ],
+      "pointwise_game_mapping": "mechanized",
+      "same_outcome_mass_composition": "mechanized",
+      "standalone_efficient_quantum_reduction": "not_established_by_these_endpoints",
+      "primitive_resource_budget": null,
+      "concrete_advantage_bound": null,
+      "numerical_security_status": "unquantified_external_assumption",
+      "required_evidence": [
+        "Actual standalone game and adversary resource/time budget",
+        "Constructive efficient reduction with query/time overhead and target accounting",
+        "External justification of the concrete instantiated Poseidon2 construction at that budget"
+      ]
+    },
+    {
+      "name": "epsilonMerkle",
+      "event": "currentHistoryGenesisPathMerkleCompressionGameEvent",
+      "primitive": "merkleCompress14Evaluator",
+      "frame": "Ordered left[7] and right[7] children; domain and suite lanes",
+      "domain": "4",
+      "output": {
+        "field_modulus": 18446744069414584321,
+        "field_words": 7
+      },
+      "game": "collision",
+      "evidence_ids": [
+        "semantic",
+        "history",
+        "games"
+      ],
+      "pointwise_game_mapping": "mechanized",
+      "same_outcome_mass_composition": "mechanized",
+      "standalone_efficient_quantum_reduction": "not_established_by_these_endpoints",
+      "primitive_resource_budget": null,
+      "concrete_advantage_bound": null,
+      "numerical_security_status": "unquantified_external_assumption",
+      "required_evidence": [
+        "Actual standalone game and adversary resource/time budget",
+        "Constructive efficient reduction with query/time overhead and target accounting",
+        "External justification of the concrete instantiated Poseidon2 construction at that budget"
+      ]
+    },
+    {
+      "name": "epsilonNullifier",
+      "event": "nullifierPrimitiveEvent",
+      "primitive": "nullifierOutput",
+      "frame": "12 canonical field words: key[5], zero[2], position, rho[4]",
+      "domain": "0x484e554c56320001",
+      "output": {
+        "field_modulus": 18446744069414584321,
+        "field_words": 7
+      },
+      "game": "collision",
+      "evidence_ids": [
+        "nullifier",
+        "certificate"
+      ],
+      "pointwise_game_mapping": "mechanized",
+      "same_outcome_mass_composition": "mechanized",
+      "standalone_efficient_quantum_reduction": "not_established_by_these_endpoints",
+      "primitive_resource_budget": null,
+      "concrete_advantage_bound": null,
+      "numerical_security_status": "unquantified_external_assumption",
+      "required_evidence": [
+        "Actual standalone game and adversary resource/time budget",
+        "Constructive efficient reduction with query/time overhead and target accounting",
+        "External justification of the concrete instantiated Poseidon2 construction at that budget"
+      ]
+    },
+    {
+      "name": "epsilonSingle",
+      "event": "singleKeyPrimitiveEvent",
+      "primitive": "singleKeyEvaluator",
+      "frame": "Five canonical key words followed by two zero words",
+      "domain": "0x48534b4156320001",
+      "output": {
+        "field_modulus": 18446744069414584321,
+        "field_words": 7
+      },
+      "game": "collision",
+      "evidence_ids": [
+        "games",
+        "registry",
+        "certificate"
+      ],
+      "pointwise_game_mapping": "mechanized",
+      "same_outcome_mass_composition": "mechanized",
+      "standalone_efficient_quantum_reduction": "not_established_by_these_endpoints",
+      "primitive_resource_budget": null,
+      "concrete_advantage_bound": null,
+      "numerical_security_status": "unquantified_external_assumption",
+      "required_evidence": [
+        "Actual standalone game and adversary resource/time budget",
+        "Constructive efficient reduction with query/time overhead and target accounting",
+        "External justification of the concrete instantiated Poseidon2 construction at that budget"
+      ]
+    },
+    {
+      "name": "epsilonAccumulator",
+      "event": "accumulatorPrimitiveEvent",
+      "primitive": "accumulatorCompress14Evaluator",
+      "frame": "Ordered policyKey[7] and accumulatorDigest[7] authorization-binding operands",
+      "domain": "0x484d424456320001",
+      "output": {
+        "field_modulus": 18446744069414584321,
+        "field_words": 7
+      },
+      "game": "collision",
+      "evidence_ids": [
+        "games",
+        "registry",
+        "certificate"
+      ],
+      "pointwise_game_mapping": "mechanized",
+      "same_outcome_mass_composition": "mechanized",
+      "standalone_efficient_quantum_reduction": "not_established_by_these_endpoints",
+      "primitive_resource_budget": null,
+      "concrete_advantage_bound": null,
+      "numerical_security_status": "unquantified_external_assumption",
+      "required_evidence": [
+        "Actual standalone game and adversary resource/time budget",
+        "Constructive efficient reduction with query/time overhead and target accounting",
+        "External justification of the concrete instantiated Poseidon2 construction at that budget"
+      ]
+    },
+    {
+      "name": "epsilonMixed",
+      "event": "mixedClawPrimitiveEvent",
+      "primitive": "mixedDomainEvaluator",
+      "frame": "Tagged SingleKey input versus accumulator authorization-binding input; equality of the complete seven-word outputs",
+      "domain": [
+        "0x48534b4156320001",
+        "0x484d424456320001"
+      ],
+      "output": {
+        "field_modulus": 18446744069414584321,
+        "field_words": 7
+      },
+      "game": "cross-domain-claw",
+      "evidence_ids": [
+        "games",
+        "frames",
+        "certificate"
+      ],
+      "pointwise_game_mapping": "mechanized",
+      "same_outcome_mass_composition": "mechanized",
+      "standalone_efficient_quantum_reduction": "not_established_by_these_endpoints",
+      "primitive_resource_budget": null,
+      "concrete_advantage_bound": null,
+      "numerical_security_status": "unquantified_external_assumption",
+      "required_evidence": [
+        "Actual standalone game and adversary resource/time budget",
+        "Constructive efficient reduction with query/time overhead and target accounting",
+        "External justification of the concrete instantiated Poseidon2 construction at that budget"
+      ]
+    }
+  ],
+  "additional_boundaries": [
+    {
+      "id": "sha512_qrom",
+      "status": "ideal_quantum_random_oracle_model",
+      "evidence_ids": [
+        "authorization",
+        "conservation"
+      ],
+      "obligation": "Real SHA-512 instantiation is a cryptographic modeling assumption, not certified by digest width."
+    },
+    {
+      "id": "ciphertext_projection_binding",
+      "status": "unquantified_external_assumption",
+      "evidence_ids": [
+        "implementation",
+        "semantic"
+      ],
+      "obligation": "Bind the exact framed BLAKE2b-384 function after six u64 limbs are reduced modulo p; include distinct-digest projection collisions, not only raw hash collisions."
+    },
+    {
+      "id": "blake2b_interpretation",
+      "status": "implementation_refinement_unproved",
+      "evidence_ids": [
+        "semantic",
+        "implementation"
+      ],
+      "obligation": "Opaque Lean symbol and actual Rust frame/hash/projection/serialization require a correctness boundary separate from collision resistance."
+    },
+    {
+      "id": "rust_parser_verifier",
+      "status": "implementation_refinement_unproved",
+      "evidence_ids": [
+        "implementation"
+      ],
+      "obligation": "Serialized Rust acceptance to the post-parser model is not supplied by finite codec tests."
+    },
+    {
+      "id": "adaptive_context_extraction",
+      "status": "not_closed",
+      "evidence_ids": [
+        "authorization",
+        "conservation"
+      ],
+      "obligation": "Fixed-context/history theorems do not establish the actual oracle-adaptive context-output producer and efficient extractor."
+    },
+    {
+      "id": "encryption_authentication_rng",
+      "status": "separate_product_assumptions",
+      "evidence_ids": [
+        "implementation"
+      ],
+      "obligation": "ML-KEM, ML-DSA, AEAD/KDF confidentiality and authentic randomness are outside the six induced Poseidon2 collision/claw terms."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "semantic",
+      "path": "formal/lean/Hegemon/Transaction/Poseidon2V8SemanticSpecification.lean",
+      "sha256": "71276753755e85cd38e21eead46b2066eaa2df02d0a02afa56b0d1b680fbc6b7"
+    },
+    {
+      "id": "games",
+      "path": "formal/rp05/generated/Sources/SmzaRp05FivePrimitiveGameLedger.lean",
+      "sha256": "23a9ec986b50ba78fea75e515a0230d75118ed83b1b20cb48026a98b42aa28ad"
+    },
+    {
+      "id": "nullifier",
+      "path": "formal/rp05/generated/Sources/SmzaRp05PrimitiveCollisionGameLuna.lean",
+      "sha256": "17b3cea72b7ec04b3561586ab376d6fece0c0db8a4275d5a9fb218823424af53"
+    },
+    {
+      "id": "frames",
+      "path": "formal/rp05/generated/Sources/SmzaRp05ConcretePrimitiveCoverage.lean",
+      "sha256": "946c91c056bf7bc128b29c26f8aff157e44cf9d953818685a169ca6523511547"
+    },
+    {
+      "id": "registry",
+      "path": "formal/rp05/generated/Sources/SmzaRp05ThresholdRegistry.lean",
+      "sha256": "39344bc183ed44e911b489e8fbd68c5391b0382030cd6d9b3d7dff366a73509d"
+    },
+    {
+      "id": "certificate",
+      "path": "formal/rp05/generated/Sources/SmzaRp05CurrentAuthorizationCertificate.lean",
+      "sha256": "65bf10770db2471aa425b55365e5a19742d43306825a042d689fa6604bd1c38b"
+    },
+    {
+      "id": "history",
+      "path": "formal/rp05/generated/Sources/SmzaRp05CurrentHistoryCertificateMass.lean",
+      "sha256": "e499c830ed3f6390b1220b0bf14e55417a403148359feddedde1abbbc3bfe53f"
+    },
+    {
+      "id": "authorization",
+      "path": "formal/rp05/shared/SmzaRp05SingleSpendAuthorizationEndpoint.lean",
+      "sha256": "e017109611231ef273fef3991d98a6207f3da105e2064e5f56aed95b708617c1"
+    },
+    {
+      "id": "conservation",
+      "path": "formal/rp05/generated/Sources/SmzaRp05CurrentInitializedHistoryConservationEndpoint.lean",
+      "sha256": "8b8167511af822bfa90872d098ddccc4ee251f6ce0b9eb3c8d0b67255a7cad9c"
+    },
+    {
+      "id": "implementation",
+      "path": "docs/crypto/RP05_IMPLEMENTATION_BOUNDARY.md",
+      "sha256": "e089b1d0084cae97a6286b753c4255dc4a532cb78f3d52f8a4953b74dbe0e514"
+    },
+    {
+      "id": "parameter_manifest",
+      "path": "config/poseidon2-width16-v1.json",
+      "sha256": "598f9c4538ef9db10424a4347c420075c34f76b910e8c3478d373c3e339e770f"
+    },
+    {
+      "id": "rust_permutation",
+      "path": "circuits/transaction-core/src/poseidon2_width16.rs",
+      "sha256": "a788cddc23a7a0fbe52bcef81bac0a5cb430680c26e9d9c5982453fe8dcf5d35"
+    },
+    {
+      "id": "lean_permutation",
+      "path": "formal/lean/Hegemon/Transaction/Poseidon2Width16Kernel.lean",
+      "sha256": "92a1a681ee35f8c7b8e24ddcf23319f7b7d3c97e79a26d2d944b19c290aff7e9"
+    }
+  ],
+  "claim_policy": "Only conditional model loss may be quoted; no unconditional product security level or production authority follows from this ledger.",
+  "primitive_suite": {
+    "parameter_set_id": "hegemon-p2w16-v1-114a4e7eb2684d29",
+    "width": 16,
+    "sponge_rate": 8,
+    "sponge_capacity": 8,
+    "sbox_degree": 7,
+    "full_rounds": 8,
+    "partial_rounds": 22,
+    "digest_field_words": 7,
+    "parameter_review_status": "candidate_external_review_required",
+    "parameter_production_authorized": false,
+    "generic_work_or_reduced_round_screen_is_concrete_advantage_bound": false,
+    "evidence_ids": [
+      "parameter_manifest",
+      "rust_permutation",
+      "lean_permutation",
+      "semantic"
+    ]
+  }
+}

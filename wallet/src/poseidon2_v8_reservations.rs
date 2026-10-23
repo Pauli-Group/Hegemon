@@ -94,6 +94,7 @@ impl Poseidon2V8SpendReservation<'_> {
                     "V8 reservation canonical tip changed before submission",
                 ));
             }
+            state.require_poseidon2_v8_inputs_exclusive(self.id)?;
             let notes = state.poseidon2_v8.owned_notes()?;
             let record = state
                 .poseidon2_v8_reservations
@@ -151,19 +152,69 @@ impl Drop for Poseidon2V8SpendReservation<'_> {
 
 impl WalletState {
     fn poseidon2_v8_reservation_is_active(&self, record: &StoredPoseidon2V8Reservation) -> bool {
+        let retained_launch_candidate = self.native_rp06_transfers.iter().any(|candidate| {
+            candidate.reservation_id == record.id
+                && candidate.genesis_hash == record.genesis_hash
+                && candidate.parent_height == record.parent_height
+                && candidate.parent_hash == record.parent_hash
+        });
+        let last_parent = if retained_launch_candidate {
+            record
+                .parent_height
+                .checked_add(protocol_versioning::launch_reference_policy::LAUNCH_REFERENCE_WINDOW)
+                .unwrap_or(u64::MAX)
+        } else {
+            record.parent_height
+        };
         record.status != Poseidon2V8ReservationStatus::Abandoned
             || self
                 .poseidon2_v8
                 .tip()
-                .map_or(true, |tip| tip.height <= record.parent_height)
+                .map_or(true, |tip| tip.height <= last_parent)
     }
 
     pub(super) fn reserved_poseidon2_v8_nullifiers(&self) -> HashSet<Poseidon2V8Digest> {
+        self.reserved_ordinary_poseidon2_v8_nullifiers()
+            .into_iter()
+            .chain(self.htlc_reserved_nullifiers())
+            .chain(self.private_spend_reserved_nullifiers())
+            .chain(self.asset_spend_reserved_nullifiers())
+            .chain(self.recovery_reserved_nullifiers())
+            .chain(crate::poseidon2_v8_multisig::active_reserved_nullifiers(
+                &self.poseidon2_v8_treasuries,
+                &self.poseidon2_v8,
+            ))
+            .collect()
+    }
+
+    pub(super) fn reserved_ordinary_poseidon2_v8_nullifiers(&self) -> HashSet<Poseidon2V8Digest> {
         self.poseidon2_v8_reservations
             .iter()
             .filter(|record| self.poseidon2_v8_reservation_is_active(record))
             .flat_map(|record| record.inputs.iter().map(|input| input.nullifier))
             .collect()
+    }
+
+    /// Recheck before exposing/submitting bytes, including an idempotent retry.
+    /// Retained overlapping rows remain readable after rollback; they confer no
+    /// new submission capability while another active route holds an input.
+    pub(super) fn require_poseidon2_v8_inputs_exclusive(&self, id: [u8; 32]) -> Result<(), WalletError> {
+        let record = self.poseidon2_v8_reservations.iter().find(|r| r.id == id)
+            .ok_or(WalletError::InvalidState("V8 reservation missing"))?;
+        let other_reserved: HashSet<_> = self.htlc_reserved_nullifiers().into_iter()
+            .chain(self.private_spend_reserved_nullifiers())
+            .chain(self.asset_spend_reserved_nullifiers())
+            .chain(self.recovery_reserved_nullifiers())
+            .chain(crate::poseidon2_v8_multisig::active_reserved_nullifiers(
+                &self.poseidon2_v8_treasuries, &self.poseidon2_v8))
+            .chain(self.poseidon2_v8_reservations.iter()
+                .filter(|other| other.id != id && self.poseidon2_v8_reservation_is_active(other))
+                .flat_map(|other| other.inputs.iter().map(|input| input.nullifier)))
+            .collect();
+        if record.inputs.iter().any(|input| other_reserved.contains(&input.nullifier)) {
+            return Err(WalletError::InvalidState("V8 input reserved by another attempt"));
+        }
+        Ok(())
     }
 
     pub(super) fn validate_poseidon2_v8_reservations(&self) -> Result<(), WalletError> {
@@ -174,6 +225,7 @@ impl WalletState {
                 || record.genesis_hash == [0; 32]
                 || !ids.insert(record.id)
                 || record.inputs[0].position == record.inputs[1].position
+                || record.inputs[0].nullifier == record.inputs[1].nullifier
                 || record.inputs.iter().any(|input| {
                     input.nullifier == [0; 7]
                         || input
@@ -195,6 +247,106 @@ impl WalletState {
 }
 
 impl WalletStore {
+    /// Idempotent recovery transition for an exact retained candidate. The
+    /// historical guard methods keep their existing one-shot semantics.
+    pub(crate) fn begin_poseidon2_v8_reserved_submission(
+        &self,
+        id: [u8; 32],
+        context: crate::poseidon2_v8_sync::LaunchWalletContext,
+        expected_tip: crate::poseidon2_v8_sync::Poseidon2V8CanonicalTip,
+        authorized_proof_bytes: Option<usize>,
+    ) -> Result<(), WalletError> {
+        self.with_poseidon2_v8_reservations_mut(|state| {
+            state
+                .native_launch_context
+                .as_ref()
+                .ok_or(WalletError::InvalidState(
+                    "wallet launch context is not pinned",
+                ))?
+                .require_match(context)?;
+            let inclusion_height =
+                context.require_canonical_reference(&state.poseidon2_v8, expected_tip, false)?;
+            if let Some(proof_bytes) = authorized_proof_bytes {
+                crate::rp06_transfer::require_rp06_authority(
+                    context,
+                    inclusion_height,
+                    proof_bytes,
+                )?;
+            }
+            state.require_poseidon2_v8_inputs_exclusive(id)?;
+            let notes = state.poseidon2_v8.owned_notes()?;
+            let genesis = state.poseidon2_v8.canonical_hash(0);
+            let record = state
+                .poseidon2_v8_reservations
+                .iter_mut()
+                .find(|record| record.id == id)
+                .ok_or(WalletError::InvalidState("V8 retained reservation missing"))?;
+            if genesis != Some(record.genesis_hash)
+                || record.parent_height != expected_tip.height
+                || record.parent_hash != expected_tip.block_hash
+                || record
+                    .inputs
+                    .iter()
+                    .any(|input| !notes.iter().any(|note| input.matches(note) && !note.spent))
+            {
+                return Err(WalletError::InvalidState(
+                    "V8 retained reservation is not canonically spendable",
+                ));
+            }
+            match record.status {
+                Poseidon2V8ReservationStatus::Proving => {
+                    record.status = Poseidon2V8ReservationStatus::SubmissionUncertain
+                }
+                Poseidon2V8ReservationStatus::SubmissionUncertain
+                | Poseidon2V8ReservationStatus::Submitted(_) => {}
+                Poseidon2V8ReservationStatus::Abandoned => {
+                    return Err(WalletError::InvalidState(
+                        "abandoned V8 reservation cannot submit",
+                    ))
+                }
+            }
+            Ok(())
+        })
+    }
+    pub(crate) fn mark_poseidon2_v8_reserved_submitted(
+        &self,
+        id: [u8; 32],
+        action_id: ActionId48,
+    ) -> Result<(), WalletError> {
+        self.with_poseidon2_v8_reservations_mut(|state| {
+            let genesis = state.poseidon2_v8.canonical_hash(0);
+            let notes = state.poseidon2_v8.owned_notes()?;
+            let record = state
+                .poseidon2_v8_reservations
+                .iter_mut()
+                .find(|record| record.id == id)
+                .ok_or(WalletError::InvalidState(
+                    "V8 retained acknowledgement reservation missing",
+                ))?;
+            if genesis != Some(record.genesis_hash)
+                || record
+                    .inputs
+                    .iter()
+                    .any(|input| !notes.iter().any(|note| input.matches(note)))
+            {
+                return Err(WalletError::InvalidState(
+                    "V8 retained acknowledgement chain/input identity changed",
+                ));
+            }
+            match record.status {
+                Poseidon2V8ReservationStatus::SubmissionUncertain => {
+                    record.status = Poseidon2V8ReservationStatus::Submitted(action_id)
+                }
+                Poseidon2V8ReservationStatus::Submitted(previous) if previous == action_id => {}
+                _ => {
+                    return Err(WalletError::InvalidState(
+                        "V8 retained acknowledgement differs from durable submission",
+                    ))
+                }
+            }
+            Ok(())
+        })
+    }
     pub fn reserve_poseidon2_v8_spend(
         &self,
     ) -> Result<Poseidon2V8SpendReservation<'_>, WalletError> {

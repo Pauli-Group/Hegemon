@@ -246,7 +246,7 @@ fn smza_native_profile_selection_is_explicit_and_cross_profile_closed() {
 #[test]
 #[cfg(feature = "poseidon2-v8-retained-test-support")]
 #[ignore = "requires explicit source-generated SMZA pair via HEGEMON_TEST_RETAINED_SMZA_MANIFEST_PATH"]
-fn retained_smza_pair_survives_native_pending_mining_reorg_restart_and_fresh_import() {
+fn retained_smza_pair_verifies_but_immature_rewards_reject_across_restart_and_import() {
     let path = PathBuf::from(
         std::env::var("HEGEMON_TEST_RETAINED_SMZA_MANIFEST_PATH").expect("explicit SMZA manifest"),
     );
@@ -362,62 +362,26 @@ fn retained_smza_pair_survives_native_pending_mining_reorg_restart_and_fresh_imp
         &envelope,
     )
     .unwrap();
-    let staged = node.validate_and_stage_action(request).unwrap();
-    assert_eq!(staged.encode(), primary.encode());
-    let b3 = mine_current_retained_template(&node, &[primary.encode()]);
-    let other_dir = tempfile::tempdir().unwrap();
-    let other = crate::native::NativeNode::open(retained_native_config(
-        other_dir.path(),
-        "smza-independent",
-    ))
-    .unwrap();
-    import_exact_retained_blocks(&other, &[b1.clone(), b2.clone()]);
+    let expected_tip = node.best_meta();
+    let proof_context = Poseidon2V8BlockContext::new(2, b2.hash, 3, [0xa3; 32]).unwrap();
+    for bytes in [leaf.as_slice(), independent_leaf.as_slice()] {
+        production
+            .connector()
+            .verify_exact_v8_leaf(proof_context, 0, bytes)
+            .expect("unchanged historical SMZA relation proof still verifies");
+    }
+    let error = node
+        .validate_and_stage_action(request)
+        .expect_err("valid SMZA proof cannot spend immature height-one/two rewards");
+    assert!(error.to_string().contains("note anchor"), "{error}");
     let relayed =
         crate::native::decode_native_peer_pending_action_v3(&independent.encode(), 3).unwrap();
-    assert_eq!(
-        other
-            .stage_relayed_pending_action(relayed)
-            .unwrap()
-            .unwrap()
-            .encode(),
-        independent.encode()
-    );
-    let i3 = mine_current_retained_template(&other, &[independent.encode()]);
-    let i4 = mine_current_retained_template(&other, &[]);
-    let branch_dir = tempfile::tempdir().unwrap();
-    let branch =
-        crate::native::NativeNode::open(retained_native_config(branch_dir.path(), "smza-branch"))
-            .unwrap();
-    import_exact_retained_blocks(&branch, &[b1.clone(), b2.clone(), b3.clone()]);
-    let b4 = mine_current_retained_template(&branch, &[]);
-    let b5 = mine_current_retained_template(&branch, &[]);
-    import_exact_retained_blocks(&node, &[i3, i4.clone()]);
-    assert_eq!(node.best_meta().hash, i4.hash);
-    assert_eq!(
-        node.load_canonical_block_at_height_unverified(3)
-            .unwrap()
-            .action_bytes,
-        vec![independent.encode()]
-    );
-    import_exact_retained_blocks(&node, &[b4.clone(), b5.clone()]);
-    assert_eq!(node.best_meta().hash, b5.hash);
-    drop(node);
-    let restarted = crate::native::NativeNode::reopen_after_sled_release_for_test(config).unwrap();
-    let fresh_dir = tempfile::tempdir().unwrap();
-    let fresh =
-        crate::native::NativeNode::open(retained_native_config(fresh_dir.path(), "smza-fresh"))
-            .unwrap();
-    import_exact_retained_blocks(&fresh, &[b1, b2, b3, b4, b5.clone()]);
-    for current in [&restarted, &fresh] {
-        assert_eq!(current.best_meta().hash, b5.hash);
-        assert_eq!(
-            current
-                .load_canonical_block_at_height_unverified(3)
-                .unwrap()
-                .action_bytes,
-            vec![primary.encode()]
-        );
-    }
+    let error = node
+        .stage_relayed_pending_action(relayed)
+        .expect_err("peer admission enforces the same reward maturity");
+    assert!(error.to_string().contains("note anchor"), "{error}");
+    assert!(node.state.read().pending_actions.is_empty());
+    assert_eq!(node.best_meta(), expected_tip);
     let canonical_state = |node: &crate::native::NativeNode| {
         let store = Poseidon2V8StateStore::open(
             &node.db,
@@ -429,9 +393,35 @@ fn retained_smza_pair_survives_native_pending_mining_reorg_restart_and_fresh_imp
             production.note_genesis_root(),
         )
         .unwrap();
+        assert_eq!(store.note_tip().unwrap().leaf_count(), 0);
         (store.tip().unwrap(), store.note_tip().unwrap())
     };
-    assert_eq!(canonical_state(&restarted), canonical_state(&fresh));
+    let expected_state = canonical_state(&node);
+    drop(node);
+    let restarted = crate::native::NativeNode::reopen_after_sled_release_for_test(config).unwrap();
+    assert_eq!(canonical_state(&restarted), expected_state);
+    let fresh_dir = tempfile::tempdir().unwrap();
+    let fresh = crate::native::NativeNode::open(retained_native_config(
+        fresh_dir.path(),
+        "smza-immature-fresh",
+    ))
+    .unwrap();
+    import_exact_retained_blocks(&fresh, &[b1, b2]);
+    assert_eq!(canonical_state(&fresh), expected_state);
+    for current in [&restarted, &fresh] {
+        let request =
+            wallet::node_rpc::prepare_poseidon2_smza_submit_request_json_for_retained_test(
+                production.expected_context(),
+                &envelope,
+            )
+            .unwrap();
+        let error = current
+            .validate_and_stage_action(request)
+            .expect_err("replayed immature rewards remain unspendable");
+        assert!(error.to_string().contains("note anchor"), "{error}");
+        assert_eq!(current.best_meta(), expected_tip);
+        assert!(current.state.read().pending_actions.is_empty());
+    }
     assert_eq!(pview.exact_native_leaf(), leaf);
     assert_eq!(iview.exact_native_leaf(), independent_leaf);
     assert!(protocol_versioning::smallwood_poseidon2_production_capability().is_none());

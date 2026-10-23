@@ -81,6 +81,73 @@ pub const POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE: SmallwoodNoGrindingPr
         decs_eta: 5,
         decs_pow_bits: 0,
     };
+
+/// Separately identified complete-HTLC engine profile. Recognition is not release authority.
+pub const NATIVE_HTLC_SMZC_SMALLWOOD_NO_GRINDING_PROFILE: SmallwoodNoGrindingProfileV1 =
+    SmallwoodNoGrindingProfileV1 {
+        rho: 5,
+        nb_opened_evals: 6,
+        beta: 2,
+        opening_pow_bits: 0,
+        decs_nb_evals: 1 << 23,
+        decs_nb_opened_evals: 58,
+        decs_eta: 5,
+        decs_pow_bits: 0,
+    };
+pub const SMALLWOOD_PROOF_WIRE_MAGIC_NATIVE_HTLC_SMZC: [u8; 4] = *b"SMZC";
+pub const SMALLWOOD_NATIVE_HTLC_SMZC_MAX_INNER_PROOF_BYTES: usize = 2 * 1024 * 1024;
+pub const SMALLWOOD_NATIVE_HTLC_SMZC_SHA512_PROFILE_DOMAIN: &[u8] =
+    b"hegemon.smallwood.native-htlc.smzc.sha512.profile.v1";
+const SMALLWOOD_HTLC_SMZC_LEAF_STATEMENT_WORDS: usize = 72;
+const SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_HTLC: &[u8] =
+    b"hegemon.smallwood.strict-zk.merkle-leaf.htlc.v1";
+pub const SMALLWOOD_NATIVE_HTLC_SMZC_FIXED_DECS_CANDIDATE_COUNT: usize = 80;
+const SMALLWOOD_NATIVE_HTLC_SMZC_FIXED_DECS_DOMAIN: &[u8] =
+    b"hegemon.smallwood.native-htlc.smzc.decs-fixed-sampling.v1";
+/// Provisional private-spend candidate parameters, not a qualified security profile.
+/// Geometry and proof size are derived from the common adapter. No HTLC security
+/// estimate or production authority is inherited by this separate identity.
+pub const NATIVE_PRIVATE_SPEND_SMZD_SMALLWOOD_NO_GRINDING_PROFILE: SmallwoodNoGrindingProfileV1 =
+    SmallwoodNoGrindingProfileV1 {
+        rho: 5,
+        nb_opened_evals: 6,
+        beta: 2,
+        opening_pow_bits: 0,
+        decs_nb_evals: 1 << 23,
+        decs_nb_opened_evals: 38,
+        decs_eta: 5,
+        decs_pow_bits: 0,
+    };
+pub const SMALLWOOD_PROOF_WIRE_MAGIC_NATIVE_PRIVATE_SPEND_SMZD: [u8; 4] = *b"SMZL";
+/// Hard compact-proof release cap. Actual proof and security qualification are required.
+pub const SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_MAX_INNER_PROOF_BYTES: usize = 171_848;
+/// Exact candidate frame: structured SMZL payload followed by canonical zero
+/// reserved bytes. This normalizes total wire length; it is not a ZK claim.
+pub const SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_INNER_PROOF_BYTES: usize = 171_281;
+pub const SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_SHA512_PROFILE_DOMAIN: &[u8] =
+    b"hegemon.smallwood.native-private-spend.smzl.compact.compff01.sha512.profile.v1";
+const SMALLWOOD_PRIVATE_SPEND_SMZD_LEAF_STATEMENT_WORDS: usize = 86;
+const SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_PRIVATE_SPEND: &[u8] =
+    b"hegemon.smallwood.strict-zk.merkle-leaf.private-spend.compact.v1";
+pub const SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_DECS_CANDIDATE_COUNT: usize = 80;
+const SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_DECS_DOMAIN: &[u8] =
+    b"hegemon.smallwood.native-private-spend.smzl.compact.compff01.decs-fixed-sampling.v1";
+/// Inactive asset candidate, identical numeric parameters to native SMZD.
+/// Qualification and release authority remain separate protocol obligations.
+pub const ASSET_SPEND_SMZE_SMALLWOOD_NO_GRINDING_PROFILE: SmallwoodNoGrindingProfileV1 =
+    SmallwoodNoGrindingProfileV1 { rho: 5, nb_opened_evals: 6, beta: 2, opening_pow_bits: 0, decs_nb_evals: 1 << 23, decs_nb_opened_evals: 58, decs_eta: 5, decs_pow_bits: 0 };
+pub const SMALLWOOD_PROOF_WIRE_MAGIC_ASSET_SPEND_SMZE: [u8; 4] = *b"SMZE";
+/// Parser/allocation cap only; every proof is separately sized from its graph.
+pub const SMALLWOOD_ASSET_SPEND_SMZE_MAX_INNER_PROOF_BYTES: usize = 16 * 1024 * 1024;
+pub const SMALLWOOD_ASSET_SPEND_SMZE_SHA512_PROFILE_DOMAIN: &[u8] =
+    b"hegemon.smallwood.asset-spend.smze.compff01.sha512.profile.v1";
+const SMALLWOOD_ASSET_SPEND_SMZE_LEAF_STATEMENT_WORDS: usize = 134;
+const SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_ASSET_SPEND: &[u8] =
+    b"hegemon.smallwood.strict-zk.merkle-leaf.asset-spend.v1";
+pub const SMALLWOOD_ASSET_SPEND_SMZE_FIXED_DECS_CANDIDATE_COUNT: usize = 80;
+const SMALLWOOD_ASSET_SPEND_SMZE_FIXED_DECS_DOMAIN: &[u8] =
+    b"hegemon.smallwood.asset-spend.smze.compff01.decs-fixed-sampling.v1";
+
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_DECS_OPENED_LEAF_COUNT: usize = 20;
 pub const SMALLWOOD_POSEIDON2_V8_SMZ9_DECS_OPENED_TAPE_BYTES: usize =
     SMALLWOOD_POSEIDON2_V8_SMZ9_DECS_OPENED_LEAF_COUNT * SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES;
@@ -157,6 +224,11 @@ const SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_V1: &[u8] =
 const SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_V2: &[u8] =
     b"hegemon.smallwood.strict-zk.merkle-leaf.v2";
 const SMALLWOOD_SMZA_LEAF_STATEMENT_WORDS: usize = 138;
+pub const SMALLWOOD_PROOF_WIRE_MAGIC_RP06_SMZB: [u8; 4] = *b"SMZB";
+pub const SMALLWOOD_RP06_MAX_INNER_PROOF_BYTES: usize = 164_113;
+pub const SMALLWOOD_RP06_SHA512_PROFILE_DOMAIN: &[u8] =
+    b"hegemon.smallwood.rp06.smzb.sha512.profile.v1";
+const SMALLWOOD_RP06_LEAF_STATEMENT_WORDS: usize = 149;
 /// Every conventional SHA-512 request in the V8 proof absorbs this profile
 /// frame before its role-specific domain.  This keeps the role grammar while
 /// preventing any V8 request from aliasing historical Level-5, V3, or V6
@@ -424,6 +496,13 @@ pub enum SmallwoodArithmetization {
     DirectPacked64Poseidon2V8Sha512Smz9,
     /// Additive q=38 profile-9 selector; historical discriminants stay fixed.
     DirectPacked64Poseidon2V8Sha512Smza,
+    /// RP06 native treasury successor, dedicated profile10/domain6/SMZB.
+    DirectPacked64Poseidon2Rp06Sha512Smzb,
+    /// Complete native HTLC successor; separate q58 wire and public leaf binding.
+    DirectPacked64NativeHtlcSha512Smzc,
+    /// Candidate common private-spend relation; appended to preserve prior encodings.
+    DirectPacked64NativePrivateSpendSha512Smzd,
+    DirectPacked64AssetSpendSha512Smze,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -461,6 +540,10 @@ fn decs_challenge_format_for_arithmetization(
             | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
             | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
             | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza
+            | SmallwoodArithmetization::DirectPacked64Poseidon2Rp06Sha512Smzb
+            | SmallwoodArithmetization::DirectPacked64NativeHtlcSha512Smzc
+            | SmallwoodArithmetization::DirectPacked64AssetSpendSha512Smze
+            | SmallwoodArithmetization::DirectPacked64NativePrivateSpendSha512Smzd
             | SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
     ) {
         SmallwoodDecsChallengeFormat::Uniform
@@ -494,8 +577,19 @@ pub fn smallwood_no_grinding_profile_for_arithmetization(
         SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9 => {
             POSEIDON2_V8_SMZ9_SMALLWOOD_NO_GRINDING_PROFILE
         }
-        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
+        SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza
+        | SmallwoodArithmetization::DirectPacked64Poseidon2Rp06Sha512Smzb => {
             POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE
+        }
+        SmallwoodArithmetization::DirectPacked64NativeHtlcSha512Smzc => {
+            NATIVE_HTLC_SMZC_SMALLWOOD_NO_GRINDING_PROFILE
+        }
+        SmallwoodArithmetization::DirectPacked64AssetSpendSha512Smze => {
+            ASSET_SPEND_SMZE_SMALLWOOD_NO_GRINDING_PROFILE
+        }
+
+        SmallwoodArithmetization::DirectPacked64NativePrivateSpendSha512Smzd => {
+            NATIVE_PRIVATE_SPEND_SMZD_SMALLWOOD_NO_GRINDING_PROFILE
         }
         SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate => {
             HX512_SMALLWOOD_NO_GRINDING_PROFILE_V1
@@ -544,6 +638,10 @@ pub enum SmallwoodTranscriptBackend {
     Sha512Poseidon2V8Compact448Q20Smc8,
     /// Additive q=38 profile-9 full SHA-512 transcript.
     Sha512Poseidon2V8Smza,
+    Sha512Poseidon2Rp06Smzb,
+    Sha512NativeHtlcSmzc,
+    Sha512NativePrivateSpendSmzd,
+    Sha512AssetSpendSmze,
 }
 
 impl SmallwoodTranscriptBackend {
@@ -555,7 +653,11 @@ impl SmallwoodTranscriptBackend {
             | Self::Hx512Candidate
             | Self::Sha512Poseidon2V8
             | Self::Sha512Poseidon2V8Smz9
-            | Self::Sha512Poseidon2V8Smza => DIGEST_BYTES,
+            | Self::Sha512Poseidon2V8Smza
+            | Self::Sha512Poseidon2Rp06Smzb
+            | Self::Sha512NativeHtlcSmzc
+            | Self::Sha512AssetSpendSmze
+            | Self::Sha512NativePrivateSpendSmzd => DIGEST_BYTES,
             Self::Sha512Poseidon2V8Compact448Smc7 | Self::Sha512Poseidon2V8Compact448Q20Smc8 => {
                 SMALLWOOD_POSEIDON2_V8_COMPACT448_DIGEST_BYTES
             }
@@ -577,6 +679,10 @@ impl SmallwoodTranscriptBackend {
                 | Self::Sha512Poseidon2V8
                 | Self::Sha512Poseidon2V8Smz9
                 | Self::Sha512Poseidon2V8Smza
+                | Self::Sha512Poseidon2Rp06Smzb
+                | Self::Sha512NativeHtlcSmzc
+                | Self::Sha512AssetSpendSmze
+                | Self::Sha512NativePrivateSpendSmzd
                 | Self::Sha512Poseidon2V8Compact448Smc7
                 | Self::Sha512Poseidon2V8Compact448Q20Smc8
         )
@@ -599,6 +705,12 @@ impl SmallwoodTranscriptBackend {
             Self::Sha512Poseidon2V8 => Some(SMALLWOOD_POSEIDON2_V8_SHA512_PROFILE_DOMAIN),
             Self::Sha512Poseidon2V8Smz9 => Some(SMALLWOOD_POSEIDON2_V8_SMZ9_SHA512_PROFILE_DOMAIN),
             Self::Sha512Poseidon2V8Smza => Some(SMALLWOOD_POSEIDON2_V8_SMZA_SHA512_PROFILE_DOMAIN),
+            Self::Sha512Poseidon2Rp06Smzb => Some(SMALLWOOD_RP06_SHA512_PROFILE_DOMAIN),
+            Self::Sha512NativeHtlcSmzc => Some(SMALLWOOD_NATIVE_HTLC_SMZC_SHA512_PROFILE_DOMAIN),
+            Self::Sha512AssetSpendSmze => Some(SMALLWOOD_ASSET_SPEND_SMZE_SHA512_PROFILE_DOMAIN),
+            Self::Sha512NativePrivateSpendSmzd => {
+                Some(SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_SHA512_PROFILE_DOMAIN)
+            }
             Self::Sha512Poseidon2V8Compact448Smc7 => {
                 Some(SMALLWOOD_POSEIDON2_V8_COMPACT448_SHA512_PROFILE_DOMAIN)
             }
@@ -1582,6 +1694,10 @@ pub enum SmallwoodProofWireIdentityV1 {
     FreshHx512Candidate,
     /// Additive q=38 profile-9 strict wire; historical identities stay fixed.
     StrictZkSha512Poseidon2V8Smza,
+    StrictZkSha512Poseidon2Rp06Smzb,
+    StrictZkSha512NativeHtlcSmzc,
+    StrictZkSha512NativePrivateSpendSmzd,
+    StrictZkSha512AssetSpendSmze,
 }
 
 impl SmallwoodProofWireIdentityV1 {
@@ -1593,6 +1709,10 @@ impl SmallwoodProofWireIdentityV1 {
                 | Self::StrictZkSha512Poseidon2V8Smz8
                 | Self::StrictZkSha512Poseidon2V8Smz9
                 | Self::StrictZkSha512Poseidon2V8Smza
+                | Self::StrictZkSha512Poseidon2Rp06Smzb
+                | Self::StrictZkSha512NativeHtlcSmzc
+                | Self::StrictZkSha512AssetSpendSmze
+                | Self::StrictZkSha512NativePrivateSpendSmzd
                 | Self::StrictZkSha512Poseidon2V8Compact448Smc7
                 | Self::StrictZkSha512Poseidon2V8Compact448Q20Smc8
                 | Self::FreshHx512Candidate
@@ -1613,10 +1733,20 @@ impl SmallwoodProofWireIdentityV1 {
                 SMALLWOOD_POSEIDON2_V8_SMZ9_DECS_OPENED_LEAF_COUNT,
                 SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES,
             )),
-            Self::StrictZkSha512Poseidon2V8Smza => Some((
+            Self::StrictZkSha512Poseidon2V8Smza | Self::StrictZkSha512Poseidon2Rp06Smzb => Some((
                 SMALLWOOD_POSEIDON2_V8_SMZA_DECS_OPENED_LEAF_COUNT,
                 SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES,
             )),
+            Self::StrictZkSha512NativeHtlcSmzc => {
+                Some((58, SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES))
+            }
+            Self::StrictZkSha512AssetSpendSmze => {
+                Some((58, SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES))
+            }
+
+            Self::StrictZkSha512NativePrivateSpendSmzd => {
+                Some((38, SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES))
+            }
             Self::StrictZkSha512Poseidon2V8Compact448Smc7 => Some((
                 SMALLWOOD_POSEIDON2_V8_COMPACT448_DECS_OPENED_LEAF_COUNT,
                 SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES,
@@ -1639,6 +1769,10 @@ impl SmallwoodProofWireIdentityV1 {
             Self::StrictZkSha512Poseidon2V8Smz8
             | Self::StrictZkSha512Poseidon2V8Smz9
             | Self::StrictZkSha512Poseidon2V8Smza
+            | Self::StrictZkSha512Poseidon2Rp06Smzb
+            | Self::StrictZkSha512NativeHtlcSmzc
+            | Self::StrictZkSha512AssetSpendSmze
+            | Self::StrictZkSha512NativePrivateSpendSmzd
             | Self::StrictZkSha512Poseidon2V8Compact448Smc7
             | Self::StrictZkSha512Poseidon2V8Compact448Q20Smc8 => Some(23),
             Self::FreshHx512Candidate => Some(20),
@@ -1680,6 +1814,19 @@ fn proof_wire_identity_for_backend_and_domain(
             SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza => {
                 Ok(SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza)
             }
+            SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb => {
+                Ok(SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2Rp06Smzb)
+            }
+            SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc => {
+                Ok(SmallwoodProofWireIdentityV1::StrictZkSha512NativeHtlcSmzc)
+            }
+            SmallwoodTranscriptBackend::Sha512AssetSpendSmze => {
+                Ok(SmallwoodProofWireIdentityV1::StrictZkSha512AssetSpendSmze)
+            }
+
+            SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd => {
+                Ok(SmallwoodProofWireIdentityV1::StrictZkSha512NativePrivateSpendSmzd)
+            }
             SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 => {
                 Ok(SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Compact448Smc7)
             }
@@ -1717,6 +1864,26 @@ fn proof_wire_identity_for_backend_and_domain(
         SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza => {
             Err(TransactionCircuitError::ConstraintViolation(
                 "smallwood fresh V8 successor backend requires the SMZA disjoint-coset wire",
+            ))
+        }
+        SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb => {
+            Err(TransactionCircuitError::ConstraintViolation(
+                "RP06 requires its exact SMZB disjoint-coset wire",
+            ))
+        }
+        SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc => {
+            Err(TransactionCircuitError::ConstraintViolation(
+                "SMZC requires its exact disjoint-coset wire",
+            ))
+        }
+        SmallwoodTranscriptBackend::Sha512AssetSpendSmze => {
+            Err(TransactionCircuitError::ConstraintViolation(
+                "SMZE requires its exact disjoint-coset wire",
+            ))
+        }
+        SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd => {
+            Err(TransactionCircuitError::ConstraintViolation(
+                "SMZD requires its exact disjoint-coset wire",
             ))
         }
         SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 => {
@@ -2486,6 +2653,10 @@ impl SmallwoodProofWireIdentityV1 {
             | Self::StrictZkSha512Poseidon2V8Smz8
             | Self::StrictZkSha512Poseidon2V8Smz9
             | Self::StrictZkSha512Poseidon2V8Smza
+            | Self::StrictZkSha512Poseidon2Rp06Smzb
+            | Self::StrictZkSha512NativeHtlcSmzc
+            | Self::StrictZkSha512AssetSpendSmze
+            | Self::StrictZkSha512NativePrivateSpendSmzd
             | Self::FreshHx512Candidate => DIGEST_BYTES,
             Self::StrictZkSha512Poseidon2V8Compact448Smc7
             | Self::StrictZkSha512Poseidon2V8Compact448Q20Smc8 => {
@@ -2506,6 +2677,12 @@ impl SmallwoodProofWireIdentityV1 {
             Self::StrictZkSha512Poseidon2V8Smz8 => &SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8,
             Self::StrictZkSha512Poseidon2V8Smz9 => &SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_SMZ9,
             Self::StrictZkSha512Poseidon2V8Smza => &SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_SMZA,
+            Self::StrictZkSha512Poseidon2Rp06Smzb => &SMALLWOOD_PROOF_WIRE_MAGIC_RP06_SMZB,
+            Self::StrictZkSha512NativeHtlcSmzc => &SMALLWOOD_PROOF_WIRE_MAGIC_NATIVE_HTLC_SMZC,
+            Self::StrictZkSha512AssetSpendSmze => &SMALLWOOD_PROOF_WIRE_MAGIC_ASSET_SPEND_SMZE,
+            Self::StrictZkSha512NativePrivateSpendSmzd => {
+                &SMALLWOOD_PROOF_WIRE_MAGIC_NATIVE_PRIVATE_SPEND_SMZD
+            }
             Self::StrictZkSha512Poseidon2V8Compact448Smc7 => {
                 &SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_COMPACT448_SMC7
             }
@@ -3024,6 +3201,29 @@ fn decode_pcs_proof_v1(
 fn encode_smallwood_proof_bytes_v1(
     proof: &SmallwoodProof,
 ) -> Result<Vec<u8>, TransactionCircuitError> {
+    let mut out = encode_smallwood_proof_payload_v1(proof)?;
+    if proof.wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512NativePrivateSpendSmzd {
+        if SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_INNER_PROOF_BYTES
+            > SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_MAX_INNER_PROOF_BYTES
+            || out.len() > SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_INNER_PROOF_BYTES
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "SMZD payload exceeds its fixed candidate frame",
+            ));
+        }
+        out.resize(
+            SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_INNER_PROOF_BYTES,
+            0,
+        );
+    }
+    Ok(out)
+}
+
+// Raw structured fields, used only by the framed encoder and size projector.
+// This is not an independently accepted SMZD wire encoding.
+fn encode_smallwood_proof_payload_v1(
+    proof: &SmallwoodProof,
+) -> Result<Vec<u8>, TransactionCircuitError> {
     if proof.wire_identity == SmallwoodProofWireIdentityV1::FreshHx512Candidate {
         return Err(TransactionCircuitError::ConstraintViolation(
             "fresh HX512 core proof cannot be encoded as an SMW/SMZ wire",
@@ -3109,11 +3309,35 @@ fn encode_smallwood_proof_bytes_v1(
             "smallwood SMZ8/SMZ9 inner proof exceeds the 131072-byte cap",
         ));
     }
-    if proof.wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza
-        && out.len() > SMALLWOOD_POSEIDON2_V8_SMZA_MAX_INNER_PROOF_BYTES
+    if matches!(
+        proof.wire_identity,
+        SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza
+            | SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2Rp06Smzb
+    ) && out.len() > SMALLWOOD_POSEIDON2_V8_SMZA_MAX_INNER_PROOF_BYTES
     {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood SMZA inner proof exceeds the exact 164113-byte cap",
+        ));
+    }
+    if proof.wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512NativeHtlcSmzc
+        && out.len() > SMALLWOOD_NATIVE_HTLC_SMZC_MAX_INNER_PROOF_BYTES
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SMZC HTLC proof exceeds its independent 2MiB bound",
+        ));
+    }
+    if proof.wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512AssetSpendSmze
+        && out.len() > SMALLWOOD_ASSET_SPEND_SMZE_MAX_INNER_PROOF_BYTES
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SMZE asset proof exceeds its independent 16MiB bound",
+        ));
+    }
+    if proof.wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512NativePrivateSpendSmzd
+        && out.len() > SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_MAX_INNER_PROOF_BYTES
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SMZL proof exceeds its hard 171848-byte compact cap",
         ));
     }
     if proof.wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Compact448Smc7
@@ -3157,8 +3381,16 @@ fn decode_smallwood_proof_bytes_prefix_v1(
         SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smz8
     } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_SMZ9 {
         SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smz9
+    } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_RP06_SMZB {
+        SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2Rp06Smzb
     } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_SMZA {
         SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza
+    } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_NATIVE_HTLC_SMZC {
+        SmallwoodProofWireIdentityV1::StrictZkSha512NativeHtlcSmzc
+    } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_ASSET_SPEND_SMZE {
+        SmallwoodProofWireIdentityV1::StrictZkSha512AssetSpendSmze
+    } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_NATIVE_PRIVATE_SPEND_SMZD {
+        SmallwoodProofWireIdentityV1::StrictZkSha512NativePrivateSpendSmzd
     } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_COMPACT448_SMC7 {
         SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Compact448Smc7
     } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_COMPACT448_Q20_SMC8 {
@@ -3178,11 +3410,28 @@ fn decode_smallwood_proof_bytes_prefix_v1(
             "smallwood SMZ8/SMZ9 inner proof exceeds the 131072-byte cap",
         ));
     }
-    if wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza
-        && proof_bytes.len() > SMALLWOOD_POSEIDON2_V8_SMZA_MAX_INNER_PROOF_BYTES
+    if matches!(
+        wire_identity,
+        SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza
+            | SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2Rp06Smzb
+    ) && proof_bytes.len() > SMALLWOOD_POSEIDON2_V8_SMZA_MAX_INNER_PROOF_BYTES
     {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood SMZA inner proof exceeds the exact 164113-byte cap",
+        ));
+    }
+    if wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512NativeHtlcSmzc
+        && proof_bytes.len() > SMALLWOOD_NATIVE_HTLC_SMZC_MAX_INNER_PROOF_BYTES
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SMZC HTLC proof exceeds its independent 2MiB bound",
+        ));
+    }
+    if wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512AssetSpendSmze
+        && proof_bytes.len() > SMALLWOOD_ASSET_SPEND_SMZE_MAX_INNER_PROOF_BYTES
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SMZE asset proof exceeds its independent 16MiB bound",
         ));
     }
     if wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Compact448Smc7
@@ -3199,6 +3448,26 @@ fn decode_smallwood_proof_bytes_prefix_v1(
             "smallwood SMC8 inner proof exceeds the exact 119879-byte cap",
         ));
     }
+    // Bound all SMZD field reads to one frame, including prefix decoding.
+    let proof_bytes =
+        if wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512NativePrivateSpendSmzd {
+            // The cap applies to this proof frame, not an enclosing buffer.
+            // Full decoding separately rejects every unconsumed suffix.
+            if SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_INNER_PROOF_BYTES
+                > SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_MAX_INNER_PROOF_BYTES
+            {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "SMZL fixed proof frame exceeds its compact cap",
+                ));
+            }
+            proof_bytes
+                .get(..SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_INNER_PROOF_BYTES)
+                .ok_or(TransactionCircuitError::ConstraintViolation(
+                    "SMZD fixed frame is truncated",
+                ))?
+        } else {
+            proof_bytes
+        };
     let digest_bytes = wire_identity.digest_bytes();
     let strict_zk_decs_leaf_hiding = wire_identity.is_strict_zk();
     let salt = read_exact_v1(proof_bytes, &mut cursor, SALT_BYTES)?.to_vec();
@@ -3210,6 +3479,21 @@ fn decode_smallwood_proof_bytes_prefix_v1(
     let plin_highs = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
     let pcs = decode_pcs_proof_v1(proof_bytes, &mut cursor, digest_bytes, wire_identity)?;
     let opened_witness = decode_opened_witness_v1(proof_bytes, &mut cursor)?;
+    if wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512NativePrivateSpendSmzd {
+        let reserved_len = SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_INNER_PROOF_BYTES
+            .checked_sub(cursor)
+            .ok_or(TransactionCircuitError::ConstraintViolation(
+                "SMZD payload exceeds its fixed candidate frame",
+            ))?;
+        if read_exact_v1(proof_bytes, &mut cursor, reserved_len)?
+            .iter()
+            .any(|byte| *byte != 0)
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "SMZD reserved suffix must be canonical zero bytes",
+            ));
+        }
+    }
     Ok((
         SmallwoodProof {
             wire_identity,
@@ -4252,6 +4536,10 @@ pub fn ensure_row_polynomial_arithmetization(
         | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
         | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
         | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza
+        | SmallwoodArithmetization::DirectPacked64Poseidon2Rp06Sha512Smzb
+        | SmallwoodArithmetization::DirectPacked64NativeHtlcSha512Smzc
+        | SmallwoodArithmetization::DirectPacked64AssetSpendSha512Smze
+        | SmallwoodArithmetization::DirectPacked64NativePrivateSpendSha512Smzd
         | SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate => Ok(()),
     }
 }
@@ -4556,6 +4844,10 @@ fn transcript_xof_words(
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
+        | SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb
+        | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
+        | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
+        | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Q20Smc8 => {
             update_verifier_operation_profile_v1(|profile| {
@@ -4614,6 +4906,10 @@ fn transcript_xof_digest(
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
+        | SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb
+        | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
+        | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
+        | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Q20Smc8 => {
             sha512_commitment_domain_digest(backend, domain, words, 0)
@@ -4859,6 +5155,95 @@ fn ensure_poseidon2_v8_smza_profile(
     Ok(())
 }
 
+fn ensure_native_htlc_smzc_profile(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    profile: SmallwoodNoGrindingProfileV1,
+    domain: SmallwoodDecsEvaluationDomain,
+) -> Result<(), TransactionCircuitError> {
+    if statement.arithmetization() != SmallwoodArithmetization::DirectPacked64NativeHtlcSha512Smzc
+        || statement.packing_factor() != 64
+        || statement.constraint_degree() != 2
+        || profile != NATIVE_HTLC_SMZC_SMALLWOOD_NO_GRINDING_PROFILE
+        || domain != SmallwoodDecsEvaluationDomain::Radix2DisjointCoset
+    {
+        return Err(TransactionCircuitError::ConstraintViolation("SMZC requires exact HTLC/K64/degree2/rho5/open6/beta2/N2^23/q58/eta5/disjointcoset profile"));
+    }
+    Ok(())
+}
+
+fn validate_asset_spend_smze_binding(binding: &[u8]) -> Result<(), TransactionCircuitError> {
+    if binding.len() != SMALLWOOD_ASSET_SPEND_SMZE_LEAF_STATEMENT_WORDS * 8
+        || binding
+            .chunks_exact(8)
+            .any(|word| u64::from_le_bytes(word.try_into().expect("eight bytes")) >= FIELD_ORDER)
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SMZE requires exactly134 canonical public field words",
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_asset_spend_smze_profile(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    profile: SmallwoodNoGrindingProfileV1,
+    domain: SmallwoodDecsEvaluationDomain,
+) -> Result<(), TransactionCircuitError> {
+    if statement.arithmetization() != SmallwoodArithmetization::DirectPacked64AssetSpendSha512Smze
+        || statement.packing_factor() != 64
+        || statement.constraint_degree() != 2
+        || profile != ASSET_SPEND_SMZE_SMALLWOOD_NO_GRINDING_PROFILE
+        || domain != SmallwoodDecsEvaluationDomain::Radix2DisjointCoset
+    {
+        return Err(TransactionCircuitError::ConstraintViolation("SMZE requires exact asset/K64/degree2/rho5/open6/beta2/N2^23/q58/eta5/disjointcoset profile"));
+    }
+    Ok(())
+}
+
+/// Common public statement only; no operation selector or private policy payload.
+fn validate_native_private_spend_smzd_binding(
+    binding: &[u8],
+) -> Result<(), TransactionCircuitError> {
+    if binding.len() != SMALLWOOD_PRIVATE_SPEND_SMZD_LEAF_STATEMENT_WORDS * 8
+        || binding.chunks_exact(8).any(|chunk| {
+            u64::from_le_bytes(chunk.try_into().expect("exact eight-byte chunk")) >= FIELD_ORDER
+        })
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SMZD requires exactly 86 canonical public field words",
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_native_private_spend_smzd_profile(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    profile: SmallwoodNoGrindingProfileV1,
+    domain: SmallwoodDecsEvaluationDomain,
+) -> Result<(), TransactionCircuitError> {
+    if statement.arithmetization()
+        != SmallwoodArithmetization::DirectPacked64NativePrivateSpendSha512Smzd
+        || statement.packing_factor() != 64
+        || statement.constraint_degree() != 7
+        || statement.row_count() > 845
+        || profile != NATIVE_PRIVATE_SPEND_SMZD_SMALLWOOD_NO_GRINDING_PROFILE
+        || domain != SmallwoodDecsEvaluationDomain::Radix2DisjointCoset
+    {
+        return Err(TransactionCircuitError::ConstraintViolation("SMZL requires compact private-spend/K64/degree7/rows<=845/rho5/open6/beta2/N2^23/q38/eta5/disjointcoset profile"));
+    }
+    // Check the actual adapter on every prover/verifier profile entry. The
+    // projector measures raw fields before framing, so shrinkage also fails.
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    serialized_proof_size_hint_with_profile(
+        &cfg,
+        profile,
+        statement.auxiliary_witness_words().len(),
+        SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd,
+        domain,
+    )?;
+    Ok(())
+}
+
 fn ensure_poseidon2_v8_compact448_profile(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
     profile: SmallwoodNoGrindingProfileV1,
@@ -4948,6 +5333,12 @@ fn transcript_binding_words_for_domain(
         }
         return Ok(Vec::new());
     }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd {
+        validate_native_private_spend_smzd_binding(binded_data)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512AssetSpendSmze {
+        validate_asset_spend_smze_binding(binded_data)?;
+    }
     let mut binding_words = bytes_to_words(binded_data)?;
     if transcript_backend != SmallwoodTranscriptBackend::Sha512V6 {
         return Ok(binding_words);
@@ -4978,13 +5369,70 @@ fn transcript_binding_words_for_domain(
     Ok(binding_words)
 }
 
-/// Select the statement prefix used by strict Merkle leaves.  SMZA alone uses
-/// the canonical 1,104-byte/138-word public preamble directly in every leaf;
-/// historical profiles retain an empty prefix and the v1 leaf address.
+fn ensure_rp06_smzb_profile(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    profile: SmallwoodNoGrindingProfileV1,
+    domain: SmallwoodDecsEvaluationDomain,
+) -> Result<(), TransactionCircuitError> {
+    if statement.arithmetization()
+        != SmallwoodArithmetization::DirectPacked64Poseidon2Rp06Sha512Smzb
+        || statement.packing_factor() != 64
+        || statement.row_count() != 686
+        || statement.constraint_degree() != 8
+        || statement.constraint_count() != 818
+        || profile != POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE
+        || domain != SmallwoodDecsEvaluationDomain::Radix2DisjointCoset
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "RP06 requires exact source geometry and q38 disjoint-coset SMZB parameters",
+        ));
+    }
+    Ok(())
+}
+
+/// Select the complete statement prefix used by strict Merkle leaves. SMZA
+/// preserves its canonical 1,104-byte/138-word preamble; the distinct HTLC SMZC
+/// wire uses its 576-byte/72-word preamble and its own leaf domain. SMZD binds
+/// the common 688-byte/86-word public statement under a separate leaf domain. Historical
+/// profiles retain an empty prefix and the v1 leaf address.
 fn strict_zk_leaf_statement_binding<'a>(
     transcript_backend: SmallwoodTranscriptBackend,
     binding_words: &'a [u64],
 ) -> Result<&'a [u64], TransactionCircuitError> {
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb {
+        if binding_words.len() != SMALLWOOD_RP06_LEAF_STATEMENT_WORDS {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "RP06 strict leaf requires149 canonical preamble words",
+            ));
+        }
+        // The engine admission functions validate the canonical preamble once.
+        // This hot helper runs for every one of the 2^23 Merkle leaves.
+        return Ok(binding_words);
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc {
+        if binding_words.len() != SMALLWOOD_HTLC_SMZC_LEAF_STATEMENT_WORDS {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "SMZC requires the exact 576byte/72word HTLC public leaf statement",
+            ));
+        }
+        return Ok(binding_words);
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512AssetSpendSmze {
+        if binding_words.len() != SMALLWOOD_ASSET_SPEND_SMZE_LEAF_STATEMENT_WORDS {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "SMZE requires the exact 1072byte/134word asset public leaf statement",
+            ));
+        }
+        return Ok(binding_words);
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd {
+        if binding_words.len() != SMALLWOOD_PRIVATE_SPEND_SMZD_LEAF_STATEMENT_WORDS {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "SMZD requires the exact 688byte/86word private-spend public leaf statement",
+            ));
+        }
+        return Ok(binding_words);
+    }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza {
         if binding_words.len() != SMALLWOOD_SMZA_LEAF_STATEMENT_WORDS {
             return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
@@ -4998,7 +5446,20 @@ fn strict_zk_leaf_statement_binding<'a>(
 }
 
 fn strict_zk_merkle_leaf_domain(transcript_backend: SmallwoodTranscriptBackend) -> &'static [u8] {
-    if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza {
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc {
+        return SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_HTLC;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512AssetSpendSmze {
+        return SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_ASSET_SPEND;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd {
+        return SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_PRIVATE_SPEND;
+    }
+    if matches!(
+        transcript_backend,
+        SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
+            | SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb
+    ) {
         SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_V2
     } else {
         SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_V1
@@ -5077,6 +5538,21 @@ pub(crate) fn prove_statement_with_transcript_backend_profile_and_domain(
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza {
         ensure_poseidon2_v8_smza_profile(statement, profile, decs_evaluation_domain)?;
     }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb {
+        ensure_rp06_smzb_profile(statement, profile, decs_evaluation_domain)?;
+        crate::smallwood_poseidon2_v8_rp06::validate_rp06_transcript_bytes(binded_data)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc {
+        ensure_native_htlc_smzc_profile(statement, profile, decs_evaluation_domain)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512AssetSpendSmze {
+        ensure_asset_spend_smze_profile(statement, profile, decs_evaluation_domain)?;
+        validate_asset_spend_smze_binding(binded_data)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd {
+        ensure_native_private_spend_smzd_profile(statement, profile, decs_evaluation_domain)?;
+        validate_native_private_spend_smzd_binding(binded_data)?;
+    }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 {
         ensure_poseidon2_v8_compact448_profile(statement, profile, decs_evaluation_domain)?;
     }
@@ -5091,6 +5567,10 @@ pub(crate) fn prove_statement_with_transcript_backend_profile_and_domain(
                 | SmallwoodTranscriptBackend::Sha512Poseidon2V8
                 | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9
                 | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
+                | SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb
+                | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
+                | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
+                | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
                 | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7
                 | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Q20Smc8
         )
@@ -5148,6 +5628,21 @@ pub(crate) fn prove_statement_core_with_transcript_backend_profile_and_domain(
     }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza {
         ensure_poseidon2_v8_smza_profile(statement, profile, decs_evaluation_domain)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb {
+        ensure_rp06_smzb_profile(statement, profile, decs_evaluation_domain)?;
+        crate::smallwood_poseidon2_v8_rp06::validate_rp06_transcript_bytes(binded_data)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc {
+        ensure_native_htlc_smzc_profile(statement, profile, decs_evaluation_domain)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512AssetSpendSmze {
+        ensure_asset_spend_smze_profile(statement, profile, decs_evaluation_domain)?;
+        validate_asset_spend_smze_binding(binded_data)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd {
+        ensure_native_private_spend_smzd_profile(statement, profile, decs_evaluation_domain)?;
+        validate_native_private_spend_smzd_binding(binded_data)?;
     }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 {
         ensure_poseidon2_v8_compact448_profile(statement, profile, decs_evaluation_domain)?;
@@ -5231,6 +5726,10 @@ pub(crate) fn prove_statement_core_with_transcript_backend_profile_and_domain(
         transcript_backend,
         SmallwoodTranscriptBackend::Hx512Candidate
             | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
+            | SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb
+            | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
+            | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
+            | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
     ) {
         // Hx512's fresh RNG budget is thread-local and sequence-exact. SMZA
         // likewise samples complete witness rows in canonical order, including
@@ -5493,6 +5992,21 @@ pub(crate) fn verify_statement_with_transcript_backend_profile_and_domain_and_di
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza {
         ensure_poseidon2_v8_smza_profile(statement, profile, decs_evaluation_domain)?;
     }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb {
+        ensure_rp06_smzb_profile(statement, profile, decs_evaluation_domain)?;
+        crate::smallwood_poseidon2_v8_rp06::validate_rp06_transcript_bytes(binded_data)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc {
+        ensure_native_htlc_smzc_profile(statement, profile, decs_evaluation_domain)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512AssetSpendSmze {
+        ensure_asset_spend_smze_profile(statement, profile, decs_evaluation_domain)?;
+        validate_asset_spend_smze_binding(binded_data)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd {
+        ensure_native_private_spend_smzd_profile(statement, profile, decs_evaluation_domain)?;
+        validate_native_private_spend_smzd_binding(binded_data)?;
+    }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 {
         ensure_poseidon2_v8_compact448_profile(statement, profile, decs_evaluation_domain)?;
     }
@@ -5544,6 +6058,21 @@ pub(crate) fn verify_statement_core_with_transcript_backend_profile_and_domain(
     }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza {
         ensure_poseidon2_v8_smza_profile(statement, profile, decs_evaluation_domain)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb {
+        ensure_rp06_smzb_profile(statement, profile, decs_evaluation_domain)?;
+        crate::smallwood_poseidon2_v8_rp06::validate_rp06_transcript_bytes(binded_data)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc {
+        ensure_native_htlc_smzc_profile(statement, profile, decs_evaluation_domain)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512AssetSpendSmze {
+        ensure_asset_spend_smze_profile(statement, profile, decs_evaluation_domain)?;
+        validate_asset_spend_smze_binding(binded_data)?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd {
+        ensure_native_private_spend_smzd_profile(statement, profile, decs_evaluation_domain)?;
+        validate_native_private_spend_smzd_binding(binded_data)?;
     }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 {
         ensure_poseidon2_v8_compact448_profile(statement, profile, decs_evaluation_domain)?;
@@ -7740,8 +8269,14 @@ pub fn sample_smallwood_strict_whole_view_coins_v1<R: CryptoRng + RngCore + ?Siz
         ));
     }
     // SMZA has checked executable coin dimensions, but no transferred q20 formal receipt.
-    sampler.ledger.formal_coin_shape_bound =
-        transcript_backend != SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza;
+    sampler.ledger.formal_coin_shape_bound = !matches!(
+        transcript_backend,
+        SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
+            | SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb
+            | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
+            | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
+            | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
+    );
     Ok(SmallwoodStrictZkWholeViewSampleV1 {
         coins,
         draw_ledger: sampler.ledger,
@@ -7895,6 +8430,10 @@ pub fn simulate_smallwood_strict_whole_view_v1(
             | SmallwoodTranscriptBackend::Sha512Poseidon2V8
             | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9
             | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
+            | SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb
+            | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
+            | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
+            | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
             | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7
             | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Q20Smc8
     ) {
@@ -7918,6 +8457,27 @@ pub fn simulate_smallwood_strict_whole_view_v1(
     }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza {
         ensure_poseidon2_v8_smza_profile(
+            statement,
+            profile,
+            SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+        )?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc {
+        ensure_native_htlc_smzc_profile(
+            statement,
+            profile,
+            SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+        )?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512AssetSpendSmze {
+        ensure_asset_spend_smze_profile(
+            statement,
+            profile,
+            SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+        )?;
+    }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd {
+        ensure_native_private_spend_smzd_profile(
             statement,
             profile,
             SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
@@ -8754,8 +9314,24 @@ pub fn report_smallwood_lvcs_planner_projection_v1(
             SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9,
             SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
         ),
+        SmallwoodArithmetization::DirectPacked64Poseidon2Rp06Sha512Smzb => (
+            SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb,
+            SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+        ),
         SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => (
             SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
+            SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+        ),
+        SmallwoodArithmetization::DirectPacked64NativeHtlcSha512Smzc => (
+            SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc,
+            SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+        ),
+        SmallwoodArithmetization::DirectPacked64AssetSpendSha512Smze => (
+            SmallwoodTranscriptBackend::Sha512AssetSpendSmze,
+            SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+        ),
+        SmallwoodArithmetization::DirectPacked64NativePrivateSpendSha512Smzd => (
+            SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd,
             SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
         ),
         SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3 => (
@@ -11647,6 +12223,10 @@ fn decs_commit(
         transcript_backend,
         SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9
             | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
+            | SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb
+            | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
+            | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
+            | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
     ) && decs_evaluation_domain == SmallwoodDecsEvaluationDomain::Radix2DisjointCoset
     {
         return decs_commit_strict_bounded(
@@ -12783,6 +13363,10 @@ fn serialized_proof_size_hint_with_profile(
         SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Compact448Smc7
             | SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Compact448Q20Smc8
             | SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Smza
+            | SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2Rp06Smzb
+            | SmallwoodProofWireIdentityV1::StrictZkSha512NativeHtlcSmzc
+            | SmallwoodProofWireIdentityV1::StrictZkSha512AssetSpendSmze
+            | SmallwoodProofWireIdentityV1::StrictZkSha512NativePrivateSpendSmzd
     ) {
         let opened_leaf_count = profile.decs_nb_opened_evals;
         let total_nodes = maximum_smallwood_compact_authentication_nodes_v1(
@@ -12842,7 +13426,26 @@ fn serialized_proof_size_hint_with_profile(
             auxiliary_words_len,
         ),
     };
-    encode_smallwood_proof_bytes_v1(&proof).map(|bytes| bytes.len())
+    let projected = encode_smallwood_proof_payload_v1(&proof)?.len();
+    if wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512NativePrivateSpendSmzd {
+        ensure_native_private_spend_smzd_frame_projection(projected)?;
+    }
+    Ok(projected)
+}
+
+fn ensure_native_private_spend_smzd_frame_projection(
+    projected: usize,
+) -> Result<(), TransactionCircuitError> {
+    if projected != SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_INNER_PROOF_BYTES
+        || projected > SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_MAX_INNER_PROOF_BYTES
+    {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "SMZD projected frame {projected} differs from fixed frame {} or exceeds cap {}",
+            SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_INNER_PROOF_BYTES,
+            SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_MAX_INNER_PROOF_BYTES,
+        )));
+    }
+    Ok(())
 }
 
 /// Exact maximum number of serialized authentication nodes among canonical
@@ -13013,6 +13616,136 @@ pub fn projected_poseidon2_v8_smz9_inner_proof_bytes(
         ))
 }
 
+pub(crate) fn projected_native_htlc_smzc_inner_proof_bytes(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+) -> Result<usize, TransactionCircuitError> {
+    let profile = NATIVE_HTLC_SMZC_SMALLWOOD_NO_GRINDING_PROFILE;
+    ensure_native_htlc_smzc_profile(
+        statement,
+        profile,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )?;
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    serialized_proof_size_hint_with_profile(
+        &cfg,
+        profile,
+        statement.auxiliary_witness_words().len(),
+        SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )
+}
+
+pub(crate) fn projected_asset_spend_smze_inner_proof_bytes(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+) -> Result<usize, TransactionCircuitError> {
+    let profile = ASSET_SPEND_SMZE_SMALLWOOD_NO_GRINDING_PROFILE;
+    ensure_asset_spend_smze_profile(
+        statement,
+        profile,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )?;
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    serialized_proof_size_hint_with_profile(
+        &cfg,
+        profile,
+        statement.auxiliary_witness_words().len(),
+        SmallwoodTranscriptBackend::Sha512AssetSpendSmze,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )
+}
+
+/// Readback of the exact engine configuration used by the separate asset graph.
+pub(crate) fn asset_spend_smze_geometry_receipt(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+) -> Result<serde_json::Value, TransactionCircuitError> {
+    let profile = ASSET_SPEND_SMZE_SMALLWOOD_NO_GRINDING_PROFILE;
+    ensure_asset_spend_smze_profile(
+        statement,
+        profile,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )?;
+    let config = SmallwoodConfig::new_with_profile(statement, profile)?;
+    Ok(serde_json::json!({
+        "packing": config.packing_factor, "constraint_degree": config.constraint_degree,
+        "engine_config": {"witness_polynomial_degree": config.wit_poly_degree,
+            "mpol_degree": config.mpol_poly_degree, "mlin_degree": config.mlin_poly_degree,
+            "polys": config.nb_polys, "lvcs_rows": config.nb_lvcs_rows,
+            "lvcs_opened": config.nb_lvcs_opened_combi, "lvcs_cols": config.nb_lvcs_cols,
+            "unstacked_cols": config.nb_unstacked_cols, "unstacked_rows": config.nb_unstacked_rows},
+        "profile": {"rho":profile.rho,"opened_evals":profile.nb_opened_evals,"beta":profile.beta,
+            "decs_domain":profile.decs_nb_evals,"decs_queries":profile.decs_nb_opened_evals,"eta":profile.decs_eta,
+            "opening_pow_bits":profile.opening_pow_bits,"decs_pow_bits":profile.decs_pow_bits,
+            "query_bound_qualified":false},
+        "projected_inner_bytes": projected_asset_spend_smze_inner_proof_bytes(statement)?,
+        "proof_magic":"SMZE", "canonical_padding_bytes":0,
+        "verification_key":"transparent source graph, exact public binding and fixed profile; no trusted setup",
+        "production_authorized":false
+    }))
+}
+
+pub(crate) fn asset_spend_smze_proof_wire_receipt(
+    proof_bytes: &[u8],
+) -> Result<serde_json::Value, TransactionCircuitError> {
+    if proof_bytes.len() > SMALLWOOD_ASSET_SPEND_SMZE_MAX_INNER_PROOF_BYTES {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SMZE receipt exceeds allocation cap",
+        ));
+    }
+    let proof = decode_smallwood_proof_bytes_v1(proof_bytes)?;
+    if proof.wire_identity != SmallwoodProofWireIdentityV1::StrictZkSha512AssetSpendSmze {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SMZE receipt requires exact new wire identity",
+        ));
+    }
+    let encoded = encode_smallwood_proof_payload_v1(&proof)?;
+    if encoded != proof_bytes {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "SMZE receipt canonical reencoding mismatch",
+        ));
+    }
+    Ok(
+        serde_json::json!({"proof_magic":"SMZE","inner_bytes":proof_bytes.len(),
+        "structured_payload_bytes":encoded.len(),"canonical_padding_bytes":0,
+        "decs_opened_leaves":proof.pcs.decs.auth_paths.len(),
+        "decs_authentication_nodes":proof.pcs.decs.auth_paths.iter().map(Vec::len).sum::<usize>(),
+        "opened_leaf_tape_bytes":proof.pcs.decs.leaf_tapes.iter().map(Vec::len).sum::<usize>(),
+        "proof_verified":false}),
+    )
+}
+
+/// Existing SMZD wire readback; never converts native proof identity.
+pub(crate) fn native_private_spend_smzd_payload_size(
+    proof_bytes: &[u8],
+) -> Result<usize, TransactionCircuitError> {
+    let proof = decode_smallwood_proof_bytes_v1(proof_bytes)?;
+    if proof.wire_identity != SmallwoodProofWireIdentityV1::StrictZkSha512NativePrivateSpendSmzd {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "native payload readback requires exact SMZD",
+        ));
+    }
+    Ok(encode_smallwood_proof_payload_v1(&proof)?.len())
+}
+
+pub(crate) fn projected_native_private_spend_smzd_inner_proof_bytes(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+) -> Result<usize, TransactionCircuitError> {
+    // Sizing only. Same-bound q38 qualification and actual proof/lifecycle evidence are separate release gates.
+    let profile = NATIVE_PRIVATE_SPEND_SMZD_SMALLWOOD_NO_GRINDING_PROFILE;
+    ensure_native_private_spend_smzd_profile(
+        statement,
+        profile,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )?;
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    serialized_proof_size_hint_with_profile(
+        &cfg,
+        profile,
+        statement.auxiliary_witness_words().len(),
+        SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )
+}
+
 pub fn projected_poseidon2_v8_smza_inner_proof_bytes(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
 ) -> Result<usize, TransactionCircuitError> {
@@ -13039,6 +13772,41 @@ pub fn projected_poseidon2_v8_smza_inner_proof_bytes(
         SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza,
         SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
     )
+}
+
+/// Exact successor cap from source geometry and the q38 compact-path split dynamic program.
+pub(crate) fn projected_rp06_smzb_inner_proof_bytes(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+) -> Result<usize, TransactionCircuitError> {
+    let profile = POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE;
+    ensure_rp06_smzb_profile(
+        statement,
+        profile,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )?;
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    if maximum_smallwood_compact_authentication_nodes_v1(
+        profile.decs_nb_evals,
+        profile.decs_nb_opened_evals,
+    )? != 672
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "RP06 compact authentication maximum drift",
+        ));
+    }
+    let projected = serialized_proof_size_hint_with_profile(
+        &cfg,
+        profile,
+        0,
+        SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb,
+        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+    )?;
+    if projected != SMALLWOOD_RP06_MAX_INNER_PROOF_BYTES {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "RP06 source proof projection exceeds its frozen literal cap",
+        ));
+    }
+    Ok(projected)
 }
 
 /// Project the exact maximum canonical SMC7 inner-wire bytes. HGV8RP03 keeps
@@ -13204,6 +13972,7 @@ fn smallwood_piop_opening_points_are_valid_for_profile(
             profile,
             POSEIDON2_V8_SMZ9_SMALLWOOD_NO_GRINDING_PROFILE
                 | POSEIDON2_V8_SMZA_SMALLWOOD_NO_GRINDING_PROFILE
+                | NATIVE_HTLC_SMZC_SMALLWOOD_NO_GRINDING_PROFILE
                 | POSEIDON2_V8_COMPACT448_SMALLWOOD_NO_GRINDING_PROFILE
         ) || smallwood_smz9_pcs_unstack_blocks_v1(eval_points).is_some_and(|blocks| {
             blocks
@@ -13575,7 +14344,31 @@ pub fn xof_decs_opening_fixed_no_grinding(
             "fixed DECS domain must be a power of two fitting u32",
         ));
     }
-    if nb_opened_evals == 0 || nb_opened_evals > SMALLWOOD_LEVEL5_FIXED_DECS_CANDIDATE_COUNT {
+    // SMZC and the provisional SMZD candidate each own a distinct 80-draw
+    // sampler domain. All other backends retain their original 50-draw sequence.
+    let (candidate_count, query_domain) =
+        if transcript_backend == SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc {
+            (
+                SMALLWOOD_NATIVE_HTLC_SMZC_FIXED_DECS_CANDIDATE_COUNT,
+                SMALLWOOD_NATIVE_HTLC_SMZC_FIXED_DECS_DOMAIN,
+            )
+        } else if transcript_backend == SmallwoodTranscriptBackend::Sha512AssetSpendSmze {
+            (
+                SMALLWOOD_ASSET_SPEND_SMZE_FIXED_DECS_CANDIDATE_COUNT,
+                SMALLWOOD_ASSET_SPEND_SMZE_FIXED_DECS_DOMAIN,
+            )
+        } else if transcript_backend == SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd {
+            (
+                SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_DECS_CANDIDATE_COUNT,
+                SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_DECS_DOMAIN,
+            )
+        } else {
+            (
+                SMALLWOOD_LEVEL5_FIXED_DECS_CANDIDATE_COUNT,
+                SMALLWOOD_LEVEL5_FIXED_DECS_DOMAIN,
+            )
+        };
+    if nb_opened_evals == 0 || nb_opened_evals > candidate_count {
         return Err(TransactionCircuitError::ConstraintViolation(
             "DECS opening count exceeds the fixed sampler",
         ));
@@ -13591,12 +14384,8 @@ pub fn xof_decs_opening_fixed_no_grinding(
     });
     let mut input = Vec::with_capacity(DIGEST_WORDS);
     input.extend(digest_to_words(trans_hash, transcript_backend));
-    let candidates = transcript_xof_words(
-        transcript_backend,
-        SMALLWOOD_LEVEL5_FIXED_DECS_DOMAIN,
-        &input,
-        SMALLWOOD_LEVEL5_FIXED_DECS_CANDIDATE_COUNT,
-    );
+    let candidates =
+        transcript_xof_words(transcript_backend, query_domain, &input, candidate_count);
 
     let modulus_multiple = (FIELD_ORDER / nb_evals as u64) * nb_evals as u64;
     let mut seen = std::collections::BTreeSet::new();
@@ -19877,5 +20666,238 @@ mod complete_zk_domain_tests {
             &duplicate_decs,
         )
         .is_err());
+    }
+}
+
+#[cfg(test)]
+mod native_private_spend_smzd_identity_tests {
+    use super::*;
+
+    #[test]
+    fn smzd_is_appended_and_requires_its_own_wire_domain() {
+        assert_eq!(
+            SmallwoodArithmetization::DirectPacked64NativeHtlcSha512Smzc as u32,
+            20
+        );
+        assert_eq!(
+            SmallwoodArithmetization::DirectPacked64NativePrivateSpendSha512Smzd as u32,
+            21
+        );
+        let backend = SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd;
+        let wire = proof_wire_identity_for_backend_and_domain(
+            backend,
+            SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+        )
+        .unwrap();
+        assert_eq!(
+            wire,
+            SmallwoodProofWireIdentityV1::StrictZkSha512NativePrivateSpendSmzd
+        );
+        assert_eq!(wire.magic(), b"SMZL");
+        assert!(proof_wire_identity_for_backend_and_domain(
+            backend,
+            SmallwoodDecsEvaluationDomain::Radix2Subgroup,
+        )
+        .is_err());
+        assert!(proof_wire_identity_for_backend_and_domain(
+            backend,
+            SmallwoodDecsEvaluationDomain::Consecutive,
+        )
+        .is_err());
+        assert_ne!(
+            backend.sha512_profile_domain(),
+            SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc.sha512_profile_domain()
+        );
+        assert_ne!(
+            strict_zk_merkle_leaf_domain(backend),
+            strict_zk_merkle_leaf_domain(SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc)
+        );
+    }
+
+    #[test]
+    fn smzd_binding_rejects_length_aliases_and_noncanonical_words() {
+        let mut binding = vec![0u8; 86 * 8];
+        assert!(validate_native_private_spend_smzd_binding(&binding).is_ok());
+        assert!(validate_native_private_spend_smzd_binding(&binding[..binding.len() - 1]).is_err());
+        binding[..8].copy_from_slice(&FIELD_ORDER.to_le_bytes());
+        assert!(validate_native_private_spend_smzd_binding(&binding).is_err());
+        assert!(strict_zk_leaf_statement_binding(
+            SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd,
+            &[0; 72]
+        )
+        .is_err());
+        assert_eq!(
+            strict_zk_leaf_statement_binding(
+                SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd,
+                &[0; 86]
+            )
+            .unwrap()
+            .len(),
+            86
+        );
+    }
+
+    #[test]
+    fn smzd_sampling_is_deterministic_and_separate_from_smzc() {
+        let query_count = NATIVE_PRIVATE_SPEND_SMZD_SMALLWOOD_NO_GRINDING_PROFILE.decs_nb_opened_evals;
+        assert_eq!(query_count, 38);
+        assert_eq!(NATIVE_HTLC_SMZC_SMALLWOOD_NO_GRINDING_PROFILE.decs_nb_opened_evals, 58);
+        assert_eq!(ASSET_SPEND_SMZE_SMALLWOOD_NO_GRINDING_PROFILE.decs_nb_opened_evals, 58);
+        let sample = |backend| {
+            xof_decs_opening_fixed_no_grinding(1 << 23, query_count, 0, &[0; DIGEST_BYTES], backend).unwrap()
+        };
+        let backend = SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd;
+        let result = sample(backend);
+        assert_eq!(result, sample(backend));
+        assert_eq!(result.0.len(), 38);
+        assert_eq!(result.0.iter().copied().collect::<BTreeSet<_>>().len(), 38);
+        assert_ne!(
+            result.0,
+            sample(SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc).0
+        );
+    }
+    // Codec fixtures only; these do not claim to be valid relation proofs.
+    fn minimal_smzd_trace() -> SmallwoodProofTraceV1 {
+        SmallwoodProofTraceV1 {
+            wire_identity: SmallwoodProofWireIdentityV1::StrictZkSha512NativePrivateSpendSmzd,
+            salt: [0x31; SALT_BYTES],
+            nonce: [0x42; NONCE_BYTES],
+            h_piop: [0x53; DIGEST_BYTES],
+            piop: PiopProof {
+                ppol_highs: Vec::new(),
+                plin_highs: Vec::new(),
+            },
+            pcs: PcsProof {
+                rcombi_tails: Vec::new(),
+                subset_evals: Vec::new(),
+                partial_evals: Vec::new(),
+                decs: DecsProof {
+                    auth_paths: vec![Vec::new(); 38],
+                    leaf_tapes: vec![vec![0x64; 64]; 38],
+                    masking_evals: Vec::new(),
+                    high_coeffs: Vec::new(),
+                },
+            },
+            opened_witness_row_scalars: Vec::new(),
+            auxiliary_witness_words: Vec::new(),
+            auxiliary_witness_limb_count: 0,
+        }
+    }
+
+    #[test]
+    fn smzd_fixed_frame_roundtrip_and_prefix_consumption() {
+        let trace = minimal_smzd_trace();
+        let raw =
+            encode_smallwood_proof_payload_v1(&smallwood_proof_from_trace_v1(&trace)).unwrap();
+        let bytes = encode_smallwood_proof_trace_v1(&trace).unwrap();
+        assert_eq!(
+            bytes.len(),
+            SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_INNER_PROOF_BYTES
+        );
+        assert_eq!(&bytes[..raw.len()], raw.as_slice());
+        assert!(bytes[raw.len()..].iter().all(|byte| *byte == 0));
+        assert_eq!(decode_smallwood_proof_trace_v1(&bytes).unwrap(), trace);
+        let mut longer = trace.clone();
+        longer.pcs.decs.auth_paths[0].push([0x75; DIGEST_BYTES]);
+        let longer_bytes = encode_smallwood_proof_trace_v1(&longer).unwrap();
+        assert_eq!(longer_bytes.len(), bytes.len());
+        assert_eq!(
+            decode_smallwood_proof_trace_v1(&longer_bytes).unwrap(),
+            longer
+        );
+        let mut framed = bytes.clone();
+        framed.extend_from_slice(b"outer suffix");
+        let (_, consumed) = decode_smallwood_proof_bytes_prefix_v1(&framed).unwrap();
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(&framed[consumed..], b"outer suffix");
+        assert!(decode_smallwood_proof_bytes_v1(&framed).is_err());
+        let mut beyond_inner_cap = bytes.clone();
+        beyond_inner_cap.resize(SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_MAX_INNER_PROOF_BYTES + 1, 0);
+        let (_, consumed) = decode_smallwood_proof_bytes_prefix_v1(&beyond_inner_cap).unwrap();
+        assert_eq!(consumed, bytes.len());
+        assert!(decode_smallwood_proof_bytes_v1(&beyond_inner_cap).is_err());
+    }
+
+    #[test]
+    fn smzd_fixed_frame_rejects_nonzero_reserved_truncation_and_identity_aliases() {
+        let trace = minimal_smzd_trace();
+        let raw =
+            encode_smallwood_proof_payload_v1(&smallwood_proof_from_trace_v1(&trace)).unwrap();
+        let bytes = encode_smallwood_proof_trace_v1(&trace).unwrap();
+        for position in [raw.len(), (raw.len() + bytes.len()) / 2, bytes.len() - 1] {
+            let mut nonzero = bytes.clone();
+            nonzero[position] = 1;
+            assert!(decode_smallwood_proof_bytes_v1(&nonzero).is_err());
+            assert!(decode_smallwood_proof_bytes_prefix_v1(&nonzero).is_err());
+        }
+        for length in [raw.len(), bytes.len() - 1] {
+            assert!(decode_smallwood_proof_bytes_v1(&bytes[..length]).is_err());
+            assert!(decode_smallwood_proof_bytes_prefix_v1(&bytes[..length]).is_err());
+        }
+        let mut extra_zero = bytes.clone();
+        extra_zero.push(0);
+        assert!(decode_smallwood_proof_bytes_v1(&extra_zero).is_err());
+        // The historical q58 SMZC wire must not accept the compact q38 frame.
+        let mut alias = bytes.clone();
+        alias[..4].copy_from_slice(b"SMZC");
+        assert!(decode_smallwood_proof_bytes_v1(&alias).is_err());
+        alias[..4].copy_from_slice(b"SMZD");
+        assert!(decode_smallwood_proof_bytes_prefix_v1(&alias).is_err());
+        alias[..4].copy_from_slice(b"SMZX");
+        assert!(decode_smallwood_proof_bytes_prefix_v1(&alias).is_err());
+        let mut historical = trace;
+        historical.wire_identity = SmallwoodProofWireIdentityV1::StrictZkSha512NativeHtlcSmzc;
+        historical.pcs.decs.auth_paths = vec![Vec::new(); 58];
+        historical.pcs.decs.leaf_tapes = vec![vec![0x64; 64]; 58];
+        let historical_bytes = encode_smallwood_proof_trace_v1(&historical).unwrap();
+        let historical_raw = encode_smallwood_proof_payload_v1(
+            &smallwood_proof_from_trace_v1(&historical),
+        ).unwrap();
+        assert_eq!(historical_bytes, historical_raw);
+        assert_ne!(historical_bytes.len(), SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_INNER_PROOF_BYTES);
+        assert_eq!(
+            decode_smallwood_proof_trace_v1(&historical_bytes).unwrap(),
+            historical
+        );
+    }
+
+    #[test]
+    fn smzd_encoder_rejects_oversized_payload_and_mismatched_identity() {
+        let mut trace = minimal_smzd_trace();
+        trace.piop.ppol_highs = vec![vec![0; 64_000]; 4];
+        let proof = smallwood_proof_from_trace_v1(&trace);
+        assert!(encode_smallwood_proof_payload_v1(&proof).is_err());
+        assert!(encode_smallwood_proof_bytes_v1(&proof).is_err());
+        let mut wrong_identity = smallwood_proof_from_trace_v1(&minimal_smzd_trace());
+        wrong_identity.wire_identity = SmallwoodProofWireIdentityV1::LegacySmw1;
+        assert!(encode_smallwood_proof_bytes_v1(&wrong_identity).is_err());
+    }
+
+    #[test]
+    fn smzd_projection_rejects_geometry_drift_in_both_directions() {
+        let fixed = SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_INNER_PROOF_BYTES;
+        assert!(ensure_native_private_spend_smzd_frame_projection(fixed).is_ok());
+        assert!(ensure_native_private_spend_smzd_frame_projection(fixed - 8).is_err());
+        assert!(ensure_native_private_spend_smzd_frame_projection(fixed + 8).is_err());
+        // Pre-feed-forward rows26203 and their fixed frame are historical.
+        const PRE_POLICY_FEED_FORWARD_FRAME: usize = 1_926_125;
+        assert_ne!(fixed, PRE_POLICY_FEED_FORWARD_FRAME);
+        assert!(ensure_native_private_spend_smzd_frame_projection(PRE_POLICY_FEED_FORWARD_FRAME).is_err());
+        const LEGACY_RAW_COMPRESSION_FRAME: usize = 1_925_669;
+        assert_ne!(fixed, LEGACY_RAW_COMPRESSION_FRAME);
+        assert!(
+            ensure_native_private_spend_smzd_frame_projection(LEGACY_RAW_COMPRESSION_FRAME)
+                .is_err()
+        );
+        let current = encode_smallwood_proof_trace_v1(&minimal_smzd_trace()).unwrap();
+        let truncated = &current[..current.len() - 1];
+        assert!(decode_smallwood_proof_bytes_v1(truncated).is_err());
+        assert!(decode_smallwood_proof_bytes_prefix_v1(truncated).is_err());
+        // A buffer at the historical length is an identity rejection control,
+        // not a successful old proof and not a slice beyond the compact frame.
+        let mut legacy_sized = vec![0u8; LEGACY_RAW_COMPRESSION_FRAME];
+        legacy_sized[..4].copy_from_slice(b"SMZD");
+        assert!(decode_smallwood_proof_bytes_v1(&legacy_sized).is_err());
+        assert!(decode_smallwood_proof_bytes_prefix_v1(&legacy_sized).is_err());
     }
 }

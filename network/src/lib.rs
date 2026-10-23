@@ -5,7 +5,7 @@ use crypto::hashes::sha256;
 use crypto::ml_dsa::{MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature};
 use crypto::ml_kem::{MlKemCiphertext, MlKemKeyPair, MlKemPublicKey, MlKemSharedSecret};
 use crypto::traits::{KemKeyPair, KemPublicKey, SigningKey, VerifyKey};
-use rand::{RngCore, rngs::OsRng};
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
@@ -34,13 +34,13 @@ pub use network_backend::{
 };
 pub use peer_store::{PeerStore, PeerStoreConfig};
 pub use pq_transport::{
-    PqPeerIdentity, PqSecureConnection, PqTransportConfig, upgrade_inbound, upgrade_outbound,
+    upgrade_inbound, upgrade_outbound, PqPeerIdentity, PqSecureConnection, PqTransportConfig,
 };
 pub use protocol::{
-    BLOCK_ANNOUNCES_PQ, NegotiationResult, NotificationProtocolConfig, PQ_PROTOCOL_V1,
-    ProtocolNegotiationConfig, ProtocolSecurityLevel, ProtocolType, SYNC_PQ, TRANSACTIONS_PQ,
     is_pq_protocol, negotiate_protocol, protocol_security_level, protocol_type,
-    supported_protocols,
+    supported_protocols, NegotiationResult, NotificationProtocolConfig, ProtocolNegotiationConfig,
+    ProtocolSecurityLevel, ProtocolType, BLOCK_ANNOUNCES_PQ, PQ_PROTOCOL_V1, SYNC_PQ,
+    TRANSACTIONS_PQ,
 };
 pub use service::RelayConfig;
 pub use service::{P2PService, ProtocolHandle};
@@ -102,13 +102,42 @@ pub struct HandshakeConfirmation {
 pub struct PeerIdentity {
     signing: MlDsaSecretKey,
     verify: MlDsaPublicKey,
+    /// Consensus network identity authenticated by every handshake signature.
+    /// `None` retains the historical handshake for legacy callers only.
+    network_context: Option<[u8; 32]>,
 }
 
 impl PeerIdentity {
     pub fn generate(seed: &[u8]) -> Self {
         let signing = MlDsaSecretKey::generate_deterministic(seed);
         let verify = signing.verify_key();
-        Self { signing, verify }
+        Self {
+            signing,
+            verify,
+            network_context: None,
+        }
+    }
+
+    /// Generate an identity that can only establish sessions with peers using
+    /// the same validated consensus network context. There is no legacy fallback.
+    /// The context does not change the public key or peer identifier.
+    pub fn generate_for_network(seed: &[u8], network_context: [u8; 32]) -> Self {
+        let mut identity = Self::generate(seed);
+        identity.network_context = Some(network_context);
+        identity
+    }
+
+    fn bind_signing_digest(&self, digest: Vec<u8>) -> Vec<u8> {
+        match self.network_context {
+            None => digest,
+            Some(context) => {
+                let mut hasher = Sha256::new();
+                hasher.update(b"hegemon-network-context-signature-v1\0");
+                hasher.update(context);
+                hasher.update(digest);
+                hasher.finalize().to_vec()
+            }
+        }
     }
 
     pub fn identity_key(&self) -> &MlDsaPublicKey {
@@ -127,7 +156,8 @@ impl PeerIdentity {
         let ephemeral_kem = random_kem_keypair();
         let kem_public = ephemeral_kem.public_key().to_bytes();
         let nonce = random_nonce();
-        let preimage = offer_preimage(&self.verify.to_bytes(), &kem_public, nonce);
+        let preimage =
+            self.bind_signing_digest(offer_preimage(&self.verify.to_bytes(), &kem_public, nonce));
         let signature = self.signing.sign(&preimage);
         Ok(HandshakeOffer {
             identity_key: self.verify.to_bytes(),
@@ -143,7 +173,11 @@ impl PeerIdentity {
         offer: &HandshakeOffer,
     ) -> Result<(HandshakeAcceptance, MlKemSharedSecret, Vec<u8>), NetworkError> {
         let initiator_pk = MlDsaPublicKey::from_bytes(&offer.identity_key)?;
-        let preimage = offer_preimage(&offer.identity_key, &offer.kem_public, offer.nonce);
+        let preimage = self.bind_signing_digest(offer_preimage(
+            &offer.identity_key,
+            &offer.kem_public,
+            offer.nonce,
+        ));
         let signature = MlDsaSignature::from_bytes(&offer.signature)?;
         initiator_pk
             .verify(&preimage, &signature)
@@ -156,12 +190,12 @@ impl PeerIdentity {
         let local_ephemeral_kem = random_kem_keypair();
         let local_ephemeral_public = local_ephemeral_kem.public_key().to_bytes();
         let nonce = random_nonce();
-        let acceptance_preimage = acceptance_preimage(
+        let acceptance_preimage = self.bind_signing_digest(acceptance_preimage(
             &self.verify.to_bytes(),
             &local_ephemeral_public,
             &ciphertext_bytes,
             nonce,
-        );
+        ));
         let signature = self.signing.sign(&acceptance_preimage);
         let acceptance = HandshakeAcceptance {
             identity_key: self.verify.to_bytes(),
@@ -183,12 +217,12 @@ impl PeerIdentity {
         acceptance_bytes: &[u8],
     ) -> Result<(SecureChannel, HandshakeConfirmation, Vec<u8>), NetworkError> {
         let responder_pk = MlDsaPublicKey::from_bytes(&acceptance.identity_key)?;
-        let acceptance_preimage = acceptance_preimage(
+        let acceptance_preimage = self.bind_signing_digest(acceptance_preimage(
             &acceptance.identity_key,
             &acceptance.kem_public,
             &acceptance.ciphertext_to_initiator,
             acceptance.nonce,
-        );
+        ));
         let acceptance_sig = MlDsaSignature::from_bytes(&acceptance.signature)?;
         responder_pk
             .verify(&acceptance_preimage, &acceptance_sig)
@@ -208,7 +242,8 @@ impl PeerIdentity {
             encapsulate_with_seed(&responder_kem, &seed_material);
         let cipher_bytes = ciphertext_to_responder.to_bytes().to_vec();
         let nonce = random_nonce();
-        let confirmation_preimage = confirmation_preimage(&cipher_bytes, nonce);
+        let confirmation_preimage =
+            self.bind_signing_digest(confirmation_preimage(&cipher_bytes, nonce));
         let signature = self.signing.sign(&confirmation_preimage);
         let confirmation = HandshakeConfirmation {
             ciphertext_to_responder: cipher_bytes,
@@ -216,7 +251,8 @@ impl PeerIdentity {
             nonce,
         };
         let confirmation_bytes = wire::encode(&confirmation, wire::MAX_HANDSHAKE_FRAME_LEN)?;
-        let channel = secure_channel_from_transcript(
+        let channel = secure_channel_from_network_transcript(
+            self.network_context.as_ref(),
             offer_bytes,
             acceptance_bytes,
             &confirmation_bytes,
@@ -237,8 +273,10 @@ impl PeerIdentity {
         confirmation_bytes: &[u8],
         responder_secret: MlKemSharedSecret,
     ) -> Result<SecureChannel, NetworkError> {
-        let confirmation_preimage =
-            confirmation_preimage(&confirmation.ciphertext_to_responder, confirmation.nonce);
+        let confirmation_preimage = self.bind_signing_digest(confirmation_preimage(
+            &confirmation.ciphertext_to_responder,
+            confirmation.nonce,
+        ));
         let confirmation_sig = MlDsaSignature::from_bytes(&confirmation.signature)?;
         let initiator_pk = MlDsaPublicKey::from_bytes(&offer.identity_key)?;
         initiator_pk
@@ -253,7 +291,8 @@ impl PeerIdentity {
                 "missing responder ephemeral KEM state",
             ))?
             .decapsulate(&ciphertext)?;
-        secure_channel_from_transcript(
+        secure_channel_from_network_transcript(
+            self.network_context.as_ref(),
             offer_bytes,
             acceptance_bytes,
             confirmation_bytes,
@@ -501,6 +540,47 @@ fn encapsulate_with_seed(
     seed: &[u8; 32],
 ) -> (MlKemCiphertext, MlKemSharedSecret) {
     public_key.encapsulate(seed)
+}
+
+/// Bind the network context independently into the key schedule. The complete
+/// signed wire transcript remains unchanged; the scoped prefix is local KDF
+/// input and is never treated as a replacement handshake frame.
+#[allow(clippy::too_many_arguments)]
+fn secure_channel_from_network_transcript(
+    context: Option<&[u8; 32]>,
+    offer: &[u8],
+    acceptance: &[u8],
+    confirmation: &[u8],
+    secret_a: &[u8],
+    secret_b: &[u8],
+    role: ChannelRole,
+) -> Result<SecureChannel, NetworkError> {
+    match context {
+        None => secure_channel_from_transcript(
+            offer,
+            acceptance,
+            confirmation,
+            secret_a,
+            secret_b,
+            role,
+        ),
+        Some(context) => {
+            let mut scoped_offer = Vec::with_capacity(
+                b"hegemon-network-context-session-v1\0".len() + context.len() + offer.len(),
+            );
+            scoped_offer.extend_from_slice(b"hegemon-network-context-session-v1\0");
+            scoped_offer.extend_from_slice(context);
+            scoped_offer.extend_from_slice(offer);
+            secure_channel_from_transcript(
+                &scoped_offer,
+                acceptance,
+                confirmation,
+                secret_a,
+                secret_b,
+                role,
+            )
+        }
+    }
 }
 
 fn secure_channel_from_transcript(
@@ -896,6 +976,87 @@ mod tests {
                 case.name
             );
         }
+    }
+
+    #[test]
+    fn network_context_binds_every_handshake_signature() {
+        let context = [41u8; 32];
+        let other_context = [42u8; 32];
+        let initiator = PeerIdentity::generate_for_network(b"context-initiator", context);
+        let responder = PeerIdentity::generate_for_network(b"context-responder", context);
+        let wrong_initiator =
+            PeerIdentity::generate_for_network(b"context-initiator", other_context);
+        let wrong_responder =
+            PeerIdentity::generate_for_network(b"context-responder", other_context);
+
+        assert_eq!(
+            initiator.peer_id(),
+            PeerIdentity::generate(b"context-initiator").peer_id(),
+            "network scoping must preserve the public peer identity"
+        );
+
+        let offer = initiator.create_offer().expect("create scoped offer");
+        let offer_bytes = wire::encode(&offer, wire::MAX_HANDSHAKE_FRAME_LEN).unwrap();
+        assert!(matches!(
+            wrong_responder.accept_offer(&offer),
+            Err(NetworkError::InvalidSignature)
+        ));
+        let (acceptance, responder_secret, acceptance_bytes) =
+            responder.accept_offer(&offer).expect("accept scoped offer");
+        assert!(matches!(
+            wrong_initiator.finalize_handshake(
+                &offer,
+                &acceptance,
+                &offer_bytes,
+                &acceptance_bytes,
+            ),
+            Err(NetworkError::InvalidSignature)
+        ));
+        let (_, confirmation, confirmation_bytes) = initiator
+            .finalize_handshake(&offer, &acceptance, &offer_bytes, &acceptance_bytes)
+            .expect("finalize scoped handshake");
+        assert!(matches!(
+            wrong_responder.complete_handshake(
+                &offer,
+                &acceptance,
+                &confirmation,
+                &offer_bytes,
+                &acceptance_bytes,
+                &confirmation_bytes,
+                responder_secret,
+            ),
+            Err(NetworkError::InvalidSignature)
+        ));
+    }
+
+    #[test]
+    fn network_context_binds_session_keys_and_aad() {
+        let context = [51u8; 32];
+        let other_context = [52u8; 32];
+        let make_channel = |context: Option<&[u8; 32]>, role| {
+            secure_channel_from_network_transcript(
+                context,
+                b"offer",
+                b"acceptance",
+                b"confirmation",
+                &[1u8; 32],
+                &[2u8; 32],
+                role,
+            )
+            .unwrap()
+        };
+        let mut sender = make_channel(Some(&context), ChannelRole::Initiator);
+        let frame = sender.encrypt(b"network-bound-message").unwrap();
+        let mut correct_receiver = make_channel(Some(&context), ChannelRole::Responder);
+        let mut wrong_receiver = make_channel(Some(&other_context), ChannelRole::Responder);
+        let mut legacy_receiver = make_channel(None, ChannelRole::Responder);
+
+        assert!(wrong_receiver.decrypt(&frame).is_err());
+        assert!(legacy_receiver.decrypt(&frame).is_err());
+        assert_eq!(
+            correct_receiver.decrypt(&frame).unwrap(),
+            b"network-bound-message"
+        );
     }
 
     #[test]

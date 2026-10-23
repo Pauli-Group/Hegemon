@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 # Hashing
 hegemon-hash384 = { path = "hash384" }
+transaction-core = { path = "../circuits/transaction-core", default-features = false }
 sha2 = { version = "0.10", default-features = false }
 blake2 = { version = "0.10", default-features = false }
 blake3 = { version = "1", default-features = false }
@@ -27,7 +28,7 @@ chacha20poly1305 = { version = "0.10", default-features = false, features = ["al
 # Utilities
 thiserror = { version = "1", optional = true }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
-zeroize = { version = "1.8", default-features = false, features = ["derive"] }
+zeroize = { version = "1.8", default-features = false, features = ["alloc", "derive"] }
 hybrid-array = { version = "0.2", default-features = false }
 subtle = { version = "2", default-features = false }
 
@@ -41,6 +42,7 @@ hash384-codec = ["hegemon-hash384/codec"]
 hash384-serde = ["hegemon-hash384/serde"]
 hash384-type-info = ["hegemon-hash384/type-info"]
 std = [
+    "transaction-core/std",
     "rand/std",
     "rand/std_rng",
     "rand/os_rng",  # OS randomness only available in std builds

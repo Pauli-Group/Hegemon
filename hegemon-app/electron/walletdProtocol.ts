@@ -1,3 +1,5 @@
+import { NATIVE_WALLET_SYNC_TIMEOUT_MS } from '../src/lib/walletSync';
+
 export type WalletdResponse = {
   id: number;
   ok: boolean;
@@ -11,12 +13,13 @@ export const MIN_WALLETD_REQUEST_TIMEOUT_MS = 1_000;
 
 /**
  * Resolve the walletd per-request timeout from an environment override.
- * Falls back to the default when unset, unparsable, or below the minimum.
+ * Full-chain sync uses a longer bounded default; other methods keep their
+ * existing limit. Explicit valid operator overrides remain effective.
  */
-export function resolveWalletdRequestTimeoutMs(raw: string | undefined): number {
+export function resolveWalletdRequestTimeoutMs(raw: string | undefined, method?: string): number {
   const parsed = raw ? Number.parseInt(raw, 10) : NaN;
   if (!Number.isFinite(parsed) || parsed < MIN_WALLETD_REQUEST_TIMEOUT_MS) {
-    return DEFAULT_WALLETD_REQUEST_TIMEOUT_MS;
+    return method === 'sync.once' ? NATIVE_WALLET_SYNC_TIMEOUT_MS : DEFAULT_WALLETD_REQUEST_TIMEOUT_MS;
   }
   return parsed;
 }

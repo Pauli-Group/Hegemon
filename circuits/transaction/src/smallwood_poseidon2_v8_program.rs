@@ -22,10 +22,10 @@ use crate::smallwood_poseidon2_v8_types::{
 
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_MAGIC: [u8; 8] = *b"HGV8RP05";
 pub const SMALLWOOD_POSEIDON2_V8_SUCCESSOR_RELATION_ID: &str =
-    "hegemon.smallwood.poseidon2-v8.stablecoin-relation.v4";
-pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_GRAMMAR: u16 = 3;
+    "hegemon.smallwood.poseidon2-v8.stablecoin-relation.v5-left-feedforward";
+pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_GRAMMAR: u16 = 4;
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_SECTION_COUNT: u16 = 9;
-pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES: usize = 848_231;
+pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES: usize = 854147;
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512_BYTES: usize = 64;
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST_BYTES: usize = 48;
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_IS_PRODUCTION_AUTHORITY: bool = false;
@@ -49,14 +49,14 @@ pub const SMALLWOOD_POSEIDON2_V8_PACKED_WITNESS_WORDS: usize =
 pub const SMALLWOOD_POSEIDON2_V8_CONSTRAINT_DEGREE: usize = 8;
 pub const SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINTS: usize = 818;
 /// Exact node count in the current RP05 nonlinear expression DAG.
-pub const SMALLWOOD_POSEIDON2_V8_NONLINEAR_EXPRESSION_NODES: usize = 8_213;
+pub const SMALLWOOD_POSEIDON2_V8_NONLINEAR_EXPRESSION_NODES: usize = 8213;
 pub const SMALLWOOD_POSEIDON2_V8_HASH_LIVE_CALLS: usize = 128;
 pub const SMALLWOOD_POSEIDON2_V8_HASH_PADDED_CALLS: usize = 128;
 pub const SMALLWOOD_POSEIDON2_V8_HASH_ROWS: usize = 364;
 pub const SMALLWOOD_POSEIDON2_V8_AUXILIARY_WORDS: usize = 0;
 
 pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_COUNT: usize = 92;
-pub const SMALLWOOD_POSEIDON2_V8_PUBLIC_VERSION_DOMAIN_DESCRIPTOR_COUNT: usize = 59;
+pub const SMALLWOOD_POSEIDON2_V8_PUBLIC_VERSION_DOMAIN_DESCRIPTOR_COUNT: usize = 60;
 pub const SMALLWOOD_POSEIDON2_V8_GLOBAL_BINDING_DESCRIPTOR_COUNT: usize = 8;
 /// Canonical-public extrema: coefficient support depends only on the four activity bits,
 /// stable direction, and four asset-index bits. Empty rows have gated-zero targets, except
@@ -66,9 +66,9 @@ pub const SMALLWOOD_POSEIDON2_V8_MAXIMUM_LINEAR_CONSTRAINTS: usize = 20_496;
 pub const SMALLWOOD_POSEIDON2_V8_MAXIMUM_SUMMED_IDENTITY_UNION: usize = 21_314;
 /// Number of compiler-family instances before public-shape specialization and normalized empty
 /// rows are removed.  This is a DSL inventory count, not an emitted relation count.
-pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_INSTANCES: usize = 20_588;
+pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_INSTANCES: usize = 20588;
 /// Exact number of nodes in the public-only CSR specialization expression DAG.
-pub const SMALLWOOD_POSEIDON2_V8_CSR_EXPRESSION_NODES: usize = 566;
+pub const SMALLWOOD_POSEIDON2_V8_CSR_EXPRESSION_NODES: usize = 567;
 
 /// Reduced Goldilocks-field encoding of the external `u64::MAX` balance-slot padding marker.
 /// Padding is excluded from every active-note/stable-asset membership product.
@@ -83,6 +83,11 @@ pub const SMALLWOOD_POSEIDON2_V8_POSEIDON_PARAMETER_SHA256: [u8; 32] = [
 
 pub const SMALLWOOD_POSEIDON2_V8_SPONGE_MODE_MARKER: u64 = 0x5350_4f4e_4745_5631;
 pub const SMALLWOOD_POSEIDON2_V8_SUITE_MARKER: u64 = 0x4845_475f_5032_3136;
+/// Compression-only identity; sponge framing and permutation parameters stay unchanged.
+pub const SMALLWOOD_POSEIDON2_V8_COMPRESSION_MODE_ID: &str =
+    transaction_core::poseidon2_width16::POSEIDON2_WIDTH16_COMPRESSION_MODE_ID;
+pub const SMALLWOOD_POSEIDON2_V8_COMPRESSION_MODE_MARKER: u64 =
+    transaction_core::poseidon2_width16::POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER;
 
 /// Exact 37-word geometry section shared with
 /// `Hegemon.Transaction.Poseidon2V8RelationProgram.requiredGeometryWords`.
@@ -126,25 +131,25 @@ pub const SMALLWOOD_POSEIDON2_V8_REQUIRED_GEOMETRY_WORDS: [u64; 37] = [
     43_904,
 ];
 
-/// Exact SHA-512 of the canonical 848,231-byte HGV8RP05 source program.
+/// Exact SHA-512 of the current grammar-4 feed-forward encoded program.
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512: [u8; SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512_BYTES] = [
-    0x4b, 0x0a, 0xcd, 0x42, 0x89, 0xab, 0xd6, 0xae, 0x2f, 0x05, 0x44, 0x85, 0x7f, 0xd3, 0xfd, 0x01,
-    0x77, 0xdf, 0xf4, 0x5c, 0x2b, 0xae, 0x2a, 0x40, 0x0f, 0xbf, 0x68, 0x7e, 0x37, 0x59, 0x44, 0xff,
-    0xd4, 0xcf, 0x62, 0xb6, 0xd0, 0x71, 0xec, 0x1f, 0x29, 0xab, 0xd9, 0xdd, 0xce, 0x99, 0xc7, 0xe4,
-    0xe3, 0x05, 0xe2, 0x14, 0x23, 0x8b, 0x0d, 0x34, 0xe3, 0xc6, 0x4d, 0x7b, 0x5a, 0x0c, 0xde, 0x97,
+    0x3e, 0xb5, 0x71, 0x69, 0xaa, 0xde, 0x63, 0x33, 0xa2, 0x94, 0x9d, 0x52, 0xa3, 0xbc, 0x70, 0xf5,
+    0xc6, 0xbc, 0x33, 0xf4, 0x61, 0x98, 0x98, 0x7c, 0x02, 0xed, 0x6a, 0x48, 0x5b, 0x83, 0xa7, 0x60,
+    0x27, 0xcf, 0xcf, 0xaa, 0x7a, 0xff, 0x67, 0xba, 0x65, 0x59, 0x19, 0xb8, 0x96, 0xc1, 0x86, 0x9e,
+    0xe0, 0xcf, 0xe8, 0x12, 0x5c, 0xa4, 0xd2, 0xd5, 0x43, 0x2d, 0x7b, 0xbb, 0x9d, 0x3b, 0x87, 0x46,
 ];
 
-/// First 48 bytes of the current RP05 program SHA-512. This is an identity
+/// First 48 bytes of the current feed-forward program SHA-512. This is an identity
 /// pin, not authorization to accept the proof family for production.
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST: [u8; SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST_BYTES] = [
-    0x4b, 0x0a, 0xcd, 0x42, 0x89, 0xab, 0xd6, 0xae, 0x2f, 0x05, 0x44, 0x85, 0x7f, 0xd3, 0xfd, 0x01,
-    0x77, 0xdf, 0xf4, 0x5c, 0x2b, 0xae, 0x2a, 0x40, 0x0f, 0xbf, 0x68, 0x7e, 0x37, 0x59, 0x44, 0xff,
-    0xd4, 0xcf, 0x62, 0xb6, 0xd0, 0x71, 0xec, 0x1f, 0x29, 0xab, 0xd9, 0xdd, 0xce, 0x99, 0xc7, 0xe4,
+    0x3e, 0xb5, 0x71, 0x69, 0xaa, 0xde, 0x63, 0x33, 0xa2, 0x94, 0x9d, 0x52, 0xa3, 0xbc, 0x70, 0xf5,
+    0xc6, 0xbc, 0x33, 0xf4, 0x61, 0x98, 0x98, 0x7c, 0x02, 0xed, 0x6a, 0x48, 0x5b, 0x83, 0xa7, 0x60,
+    0x27, 0xcf, 0xcf, 0xaa, 0x7a, 0xff, 0x67, 0xba, 0x65, 0x59, 0x19, 0xb8, 0x96, 0xc1, 0x86, 0x9e,
 ];
 
-/// The canonical RP05 fixture, identity pins, and source-generated vectors
-/// are refreshed. This marker controls identity admission only; retained
-/// artifact qualification and production authority remain separate gates.
+/// Grammar-4 feed-forward bytes, exact length/DAG counts and static digests
+/// were regenerated from a source-matched export. Historical fixtures and proof
+/// qualification are separate; this flag does not grant production authority.
 pub const SMALLWOOD_POSEIDON2_V8_PROGRAM_IDENTITY_REGENERATION_REQUIRED: bool = false;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -537,8 +542,8 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
         "hash.input_merkle_initial",
         1_024,
         "hash_initial[merkle_call,lane],inline_left_right",
-        "compress14_v1",
-        "domain_and_suite",
+        "compress14_left_feedforward_v1",
+        "domain_and_compression_mode",
         Always
     ),
     csr!(
@@ -568,7 +573,7 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     csr!(
         "base.input_merkle_public_root",
         14,
-        "hash_final[root_call,limb]",
+        "hash_final[root_call,limb]+hash_initial[root_call,limb]",
         "public[input]",
         "public[input]*public[47+limb]",
         NormalizeDropEmptyZero
@@ -689,8 +694,8 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
         "hash.authorization_value_lock_initial",
         16,
         "hash_initial[106,lane],policy_intent",
-        "compress14_v1",
-        "domain_and_suite",
+        "compress14_left_feedforward_v1",
+        "domain_and_compression_mode",
         Always
     ),
     csr!(
@@ -709,10 +714,10 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
         "0",
         Always
     ),
-    csr!("hash.authorization_bound_current_initial", 16, "hash_initial[107,lane],policy_key,current_digest", "compress14_v1", "domain_and_suite", Always),
-    csr!("hash.authorization_bound_secondary_initial", 16, "hash_initial[108,lane],policy_key,secondary_digest", "compress14_v1", "domain_and_suite", Always),
-    csr!("auth.bound_digest_vectors", 14, "auth.bound_vector,hash_final[107_108,limb]", "1,-1", "0", Always),
-    csr!("auth.candidate_digest_vectors", 28, "auth.candidate_vector,hash_final[0_105_106,limb]", "1,-1", "0", Always),
+    csr!("hash.authorization_bound_current_initial", 16, "hash_initial[107,lane],policy_key,current_digest", "compress14_left_feedforward_v1", "domain_and_compression_mode", Always),
+    csr!("hash.authorization_bound_secondary_initial", 16, "hash_initial[108,lane],policy_key,secondary_digest", "compress14_left_feedforward_v1", "domain_and_compression_mode", Always),
+    csr!("auth.bound_digest_vectors", 14, "auth.bound_vector,hash_final[107_108,limb]+hash_initial[107_108,limb]", "1,-1", "0", Always),
+    csr!("auth.candidate_digest_vectors", 28, "auth.candidate_vector,sponge_final[0_105,limb]|hash_final[106,limb]+hash_initial[106,limb]", "1,-1", "0", Always),
     csr!(
         "stable.disabled_private_source",
         94,
@@ -845,38 +850,38 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
         "hash.stable_config_chunk_initial",
         64,
         "hash_initial[109_112,lane],stable_config_chunk",
-        "compress14_v1",
-        "chunk_domain_and_suite",
+        "compress14_left_feedforward_v1",
+        "chunk_domain_and_compression_mode",
         Always
     ),
     csr!(
         "hash.stable_config_tree_initial",
         48,
         "hash_initial[113_115,lane],prior_digest",
-        "compress14_v1",
-        "tree_domain_and_suite",
+        "compress14_left_feedforward_v1",
+        "tree_domain_and_compression_mode",
         Always
     ),
     csr!(
         "hash.stable_state_leaf_initial",
         32,
         "hash_initial[116_117,lane],config_digest_counters_index",
-        "compress14_v1",
-        "state_leaf_domain_and_suite",
+        "compress14_left_feedforward_v1",
+        "state_leaf_domain_and_compression_mode",
         Always
     ),
     csr!(
         "hash.stable_path_initial",
         128,
         "hash_initial[118_125,lane],oriented_prior_and_sibling",
-        "compress14_v1",
-        "state_node_domain(level)_and_suite",
+        "compress14_left_feedforward_v1",
+        "state_node_domain(level)_and_compression_mode",
         Always
     ),
     csr!(
         "stable.public_roots",
         14,
-        "hash_final[124_125,limb]",
+        "hash_final[124_125,limb]+hash_initial[124_125,limb]",
         "enabled(public[83]);before-attempt disabled arm binds public[95+limb]-public[102+limb]",
         "enabled*public[95_108] or disabled root pass-through",
         NormalizeDropEmptyZero
@@ -885,14 +890,14 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
         "hash.stable_issuer_initial",
         32,
         "hash_initial[126_127,lane],issuer_secret_and_public",
-        "compress14_v1",
-        "issuer_domain_and_suite",
+        "compress14_left_feedforward_v1",
+        "issuer_domain_and_compression_mode",
         Always
     ),
     csr!(
         "stable.issuer_commitment",
         7,
-        "hash_final[126,limb],stable.source[6+limb]",
+        "hash_final[126,limb]+hash_initial[126,limb],stable.source[6+limb]",
         "mint,-mint",
         "0",
         NormalizeDropEmptyZero
@@ -900,7 +905,7 @@ pub const SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILIES: [SmallwoodPoseidon2V8Sym
     csr!(
         "stable.issuer_authorization",
         7,
-        "hash_final[127,limb]",
+        "hash_final[127,limb]+hash_initial[127,limb]",
         "mint",
         "mint*public[113+limb]",
         NormalizeDropEmptyZero
@@ -1886,6 +1891,13 @@ fn public_map_version_domain_descriptors() -> Vec<SmallwoodPoseidon2V8ProgramDes
         label: "rate8-sponge-v1-and-width16-suite-markers".to_owned(),
     });
     out.push(SmallwoodPoseidon2V8ProgramDescriptor {
+        opcode: 0x0207,
+        words: vec![SMALLWOOD_POSEIDON2_V8_COMPRESSION_MODE_MARKER, 7, 14, 15],
+        label: format!(
+            "{SMALLWOOD_POSEIDON2_V8_COMPRESSION_MODE_ID}\0initial[15]=compression-mode;digest[i]=final[i]+initial[i];i<7"
+        ),
+    });
+    out.push(SmallwoodPoseidon2V8ProgramDescriptor {
         opcode: 0x0205,
         words: vec![
             SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_DOMAIN,
@@ -2104,6 +2116,47 @@ pub fn encode_smallwood_poseidon2_v8_program() -> Vec<u8> {
     out.bytes
 }
 
+/// Feed-forward RP06 program grammar: explicit compression identity, then the
+/// current grammar-4 parent and replacement CSR. Historical grammar-1 RP06 bytes
+/// are distinct. Eight explicit public u32 network fields extend the public schema.
+pub fn encode_smallwood_poseidon2_v8_rp06_program() -> Vec<u8> {
+    let parent = encode_smallwood_poseidon2_v8_program();
+    let mut out = CanonicalEncoder::default();
+    out.bytes
+        .extend_from_slice(&crate::smallwood_poseidon2_v8_rp06::RP06_PROGRAM_MAGIC);
+    out.u16(crate::smallwood_poseidon2_v8_rp06::RP06_PROGRAM_GRAMMAR);
+    out.u64(SMALLWOOD_POSEIDON2_V8_COMPRESSION_MODE_MARKER);
+    out.u64(SMALLWOOD_POSEIDON2_V8_COMPRESSION_MODE_ID.len() as u64);
+    out.bytes
+        .extend_from_slice(SMALLWOOD_POSEIDON2_V8_COMPRESSION_MODE_ID.as_bytes());
+    out.u64(parent.len() as u64);
+    out.bytes.extend_from_slice(&parent);
+    for word in [128u16, 9, 7, 1, 14, 2, 10, 6] {
+        out.u16(word);
+    }
+    out.bytes.extend_from_slice(b"SMZB");
+    out.u64(crate::smallwood_poseidon2_v8_rp06::RP06_ACTION_INTENT_DOMAIN);
+    // Source map replaces fixed-zero intent coordinates, never base public values.
+    for word in [
+        49u16, 50, 51, 52, 53, 87, 88, 89, 90, 91, 92, 93, 113, 114, 115,
+    ] {
+        out.u16(word);
+    }
+    out.bytes.extend_from_slice(b"network8u32;value-nullifier7;parent-height-zero;disabled-stable-roots-zero;value-intent-zero");
+    let program =
+        crate::smallwood_poseidon2_v8_semantics::smallwood_poseidon2_v8_rp06_csr_expression_program(
+        );
+    out.section_with(
+        9,
+        program.attempts.len(),
+        csr_executable_payload_len(&program),
+        |out| {
+            append_csr_executable_payload(out, &program);
+        },
+    );
+    out.bytes
+}
+
 pub fn smallwood_poseidon2_v8_program_sha512_from_bytes(
     bytes: &[u8],
 ) -> [u8; SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512_BYTES] {
@@ -2157,14 +2210,129 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rp05_program_fixture_matches_source_identity_and_existing_proof_caps() {
+    fn feedforward_program_identity_is_explicit_and_rejects_legacy_bytes() {
+        let legacy = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp05.bin"
+        ));
+        let current = encode_smallwood_poseidon2_v8_program();
+        assert_eq!(u16::from_le_bytes(current[8..10].try_into().unwrap()), 4);
+        assert_ne!(current.as_slice(), legacy);
+        assert_ne!(
+            smallwood_poseidon2_v8_program_sha512_from_bytes(&current),
+            smallwood_poseidon2_v8_program_sha512_from_bytes(legacy)
+        );
+        let mode = public_map_version_domain_descriptors()
+            .into_iter()
+            .find(|entry| entry.opcode == 0x0207)
+            .expect("compression mode descriptor");
+        assert_eq!(mode.words, vec![0x434f_4d50_4646_3031, 7, 14, 15]);
+        assert!(mode
+            .label
+            .starts_with("hegemon-p2w16-compress14-left-feedforward-v1\0"));
+        assert_eq!(
+            SMALLWOOD_POSEIDON2_V8_SPONGE_MODE_MARKER,
+            0x5350_4f4e_4745_5631
+        );
+        assert_eq!(SMALLWOOD_POSEIDON2_V8_SUITE_MARKER, 0x4845_475f_5032_3136);
+        if SMALLWOOD_POSEIDON2_V8_PROGRAM_IDENTITY_REGENERATION_REQUIRED {
+            assert!(!smallwood_poseidon2_v8_program_digest_matches());
+        } else {
+            assert!(smallwood_poseidon2_v8_program_digest_matches());
+            assert_ne!(
+                SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512,
+                smallwood_poseidon2_v8_program_sha512_from_bytes(legacy)
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "explicit fresh export path required; does not produce a proof or authorize release"]
+    fn export_feedforward_program_identity() {
+        use std::io::Write;
+        let path = std::path::PathBuf::from(
+            std::env::var_os("HEGEMON_FF_PROGRAM_EXPORT_PATH")
+                .expect("set fresh absolute HEGEMON_FF_PROGRAM_EXPORT_PATH"),
+        );
+        assert!(
+            path.is_absolute(),
+            "export path must be explicit and absolute"
+        );
+        let bytes = encode_smallwood_poseidon2_v8_program();
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .expect("create fresh feed-forward program without replacing any artifact");
+        file.write_all(&bytes)
+            .expect("write complete encoded program");
+        file.sync_all().expect("flush encoded program");
+        let nonlinear = smallwood_poseidon2_v8_nonlinear_expression_program();
+        let csr = smallwood_poseidon2_v8_csr_expression_program();
+        let rp06 = encode_smallwood_poseidon2_v8_rp06_program();
+        let rp06_path = path.with_extension("rp06.bin");
+        let mut rp06_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&rp06_path)
+            .expect("create fresh RP06 program without replacing any artifact");
+        rp06_file
+            .write_all(&rp06)
+            .expect("write complete RP06 encoded program");
+        rp06_file.sync_all().expect("flush RP06 program");
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "schema": "hegemon.poseidon2.feedforward-program-identity-export.v1",
+                "path": path,
+                "compiled_source_sha512": {
+                    "circuits/transaction/src/smallwood_poseidon2_v8_program.rs": lowercase_hex(&smallwood_poseidon2_v8_program_sha512_from_bytes(include_bytes!("smallwood_poseidon2_v8_program.rs"))),
+                    "circuits/transaction/src/smallwood_poseidon2_v8_rp06.rs": lowercase_hex(&smallwood_poseidon2_v8_program_sha512_from_bytes(include_bytes!("smallwood_poseidon2_v8_rp06.rs"))),
+                    "circuits/transaction/src/smallwood_poseidon2_v8_semantics.rs": lowercase_hex(&smallwood_poseidon2_v8_program_sha512_from_bytes(include_bytes!("smallwood_poseidon2_v8_semantics.rs"))),
+                    "circuits/transaction/src/smallwood_poseidon2_v8_hash_schedule.rs": lowercase_hex(&smallwood_poseidon2_v8_program_sha512_from_bytes(include_bytes!("smallwood_poseidon2_v8_hash_schedule.rs"))),
+                    "circuits/transaction-core/src/poseidon2_width16.rs": lowercase_hex(&smallwood_poseidon2_v8_program_sha512_from_bytes(include_bytes!("../../transaction-core/src/poseidon2_width16.rs")))
+                },
+                "compression_mode_id": SMALLWOOD_POSEIDON2_V8_COMPRESSION_MODE_ID,
+                "compression_mode_marker": SMALLWOOD_POSEIDON2_V8_COMPRESSION_MODE_MARKER,
+                "SMALLWOOD_POSEIDON2_V8_PROGRAM_GRAMMAR": SMALLWOOD_POSEIDON2_V8_PROGRAM_GRAMMAR,
+                "SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES": bytes.len(),
+                "SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512": lowercase_hex(&smallwood_poseidon2_v8_program_sha512_from_bytes(&bytes)),
+                "SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST": lowercase_hex(&smallwood_poseidon2_v8_program_digest_from_bytes(&bytes)),
+                "SMALLWOOD_POSEIDON2_V8_NONLINEAR_EXPRESSION_NODES": nonlinear.expressions.len(),
+                "SMALLWOOD_POSEIDON2_V8_CSR_EXPRESSION_NODES": csr.expressions.len(),
+                "SMALLWOOD_POSEIDON2_V8_PUBLIC_VERSION_DOMAIN_DESCRIPTOR_COUNT": public_map_version_domain_descriptors().len(),
+                "SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINTS": nonlinear.roots.len(),
+                "SMALLWOOD_POSEIDON2_V8_SYMBOLIC_CSR_FAMILY_INSTANCES": csr.attempts.len(),
+                "RP06_PROGRAM_GRAMMAR": crate::smallwood_poseidon2_v8_rp06::RP06_PROGRAM_GRAMMAR,
+                "rp06_path": rp06_path,
+                "rp06_program_bytes": rp06.len(),
+                "rp06_program_identity_sha512": lowercase_hex(&smallwood_poseidon2_v8_program_sha512_from_bytes(&rp06)),
+                "rp06_program_digest": lowercase_hex(&smallwood_poseidon2_v8_program_digest_from_bytes(&rp06)),
+                "production_authority": false
+            })
+        );
+    }
+
+    #[test]
+    fn feedforward_program_fixture_matches_source_identity_and_existing_proof_caps() {
+        // This fixture is the exact current Rust export, not a qualification receipt.
         let fixture = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp05_grammar4_compff01.bin"
+        ));
+        let legacy = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp05.bin"
         ));
         let source = encode_smallwood_poseidon2_v8_program();
-        assert_eq!(source.as_slice(), fixture);
+        assert!(
+            source.as_slice() == fixture,
+            "current source must equal the complete grammar4 fixture"
+        );
         assert_eq!(&fixture[..8], b"HGV8RP05");
+        let mut cursor = 8;
+        assert_eq!(read_u16(fixture, &mut cursor), 4);
+        assert_eq!(read_u16(fixture, &mut cursor), 9);
         assert_eq!(
             fixture.len(),
             SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES
@@ -2175,6 +2343,27 @@ mod tests {
         );
         assert_eq!(
             smallwood_poseidon2_v8_program_digest_from_bytes(fixture),
+            SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST
+        );
+        assert!(!SMALLWOOD_POSEIDON2_V8_PROGRAM_IDENTITY_REGENERATION_REQUIRED);
+        assert!(smallwood_poseidon2_v8_program_digest_matches());
+
+        // Preserve the complete historical bytes and full SHA512 as a negative control.
+        assert_eq!(&legacy[..8], b"HGV8RP05");
+        let mut legacy_cursor = 8;
+        assert_eq!(read_u16(legacy, &mut legacy_cursor), 3);
+        assert_eq!(read_u16(legacy, &mut legacy_cursor), 9);
+        assert_eq!(legacy.len(), 848_231);
+        let legacy_sha512 = smallwood_poseidon2_v8_program_sha512_from_bytes(legacy);
+        assert_eq!(hex::encode(legacy_sha512),
+            "4b0acd4289abd6ae2f0544857fd3fd0177dff45c2bae2a400fbf687e375944ffd4cf62b6d071ec1f29abd9ddce99c7e4e305e214238b0d34e3c64d7b5a0cde97");
+        assert!(
+            fixture.as_slice() != legacy.as_slice(),
+            "historical bytes cannot be the current program"
+        );
+        assert_ne!(legacy_sha512, SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512);
+        assert_ne!(
+            smallwood_poseidon2_v8_program_digest_from_bytes(legacy),
             SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST
         );
         assert_eq!(
@@ -2255,6 +2444,37 @@ mod tests {
             cursor,
             payload.len(),
             "descriptor payload has trailing bytes"
+        );
+    }
+
+    fn assert_compression_mode_descriptor_payload(payload: &[u8]) {
+        let mut cursor = 0;
+        let count = read_u32(payload, &mut cursor);
+        let mut compression_modes = 0;
+        for _ in 0..count {
+            let opcode = read_u16(payload, &mut cursor);
+            let word_count = read_u16(payload, &mut cursor);
+            let words = (0..word_count)
+                .map(|_| read_u64(payload, &mut cursor))
+                .collect::<Vec<_>>();
+            let label_len = usize::try_from(read_u32(payload, &mut cursor)).unwrap();
+            let label = &payload[cursor..cursor + label_len];
+            cursor += label_len;
+            if opcode == 0x0207 {
+                compression_modes += 1;
+                assert_eq!(words, vec![0x434f_4d50_4646_3031, 7, 14, 15]);
+                assert_eq!(label,
+                    b"hegemon-p2w16-compress14-left-feedforward-v1\0initial[15]=compression-mode;digest[i]=final[i]+initial[i];i<7");
+            }
+        }
+        assert_eq!(
+            compression_modes, 1,
+            "one exact compression mode descriptor required"
+        );
+        assert_eq!(
+            cursor,
+            payload.len(),
+            "mode scan must consume the complete descriptor payload"
         );
     }
 
@@ -3049,11 +3269,14 @@ mod tests {
                         assert_eq!(read_u64(payload, &mut geometry_cursor), expected);
                     }
                 }
-                2 => assert_descriptor_payload(
-                    payload,
-                    item_count,
-                    &[0x0201, 0x0202, 0x0203, 0x0204, 0x0205, 0x0206],
-                ),
+                2 => {
+                    assert_descriptor_payload(
+                        payload,
+                        item_count,
+                        &[0x0201, 0x0202, 0x0203, 0x0204, 0x0205, 0x0206, 0x0207],
+                    );
+                    assert_compression_mode_descriptor_payload(payload);
+                }
                 3 => assert_eq!(payload, SMALLWOOD_POSEIDON2_V8_POSEIDON_PARAMETER_SHA256),
                 4 => assert_descriptor_payload(payload, item_count, &[0x0401]),
                 5 => assert_descriptor_payload(payload, item_count, &[0x0501]),

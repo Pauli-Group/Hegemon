@@ -1,0 +1,45 @@
+-- Generated exact declaration inventory for SmzdLeafGrammarCore only.
+import SmzdLeafGrammarCore
+
+#print axioms HegemonCrypto.SmzdLeafGrammar.Byte
+#print axioms HegemonCrypto.SmzdLeafGrammar.Bytes
+#print axioms HegemonCrypto.SmzdLeafGrammar.LeafIndex
+#print axioms HegemonCrypto.SmzdLeafGrammar.LeafTape
+#print axioms HegemonCrypto.SmzdLeafGrammar.LeafInput
+#print axioms HegemonCrypto.SmzdLeafGrammar.LeafPrefix
+#print axioms HegemonCrypto.SmzdLeafGrammar.LeafSuffix
+#print axioms HegemonCrypto.SmzdLeafGrammar.IndexBytes
+#print axioms HegemonCrypto.SmzdLeafGrammar.HiddenTapes
+#print axioms HegemonCrypto.SmzdLeafGrammar.profileBytes
+#print axioms HegemonCrypto.SmzdLeafGrammar.roleBytes
+#print axioms HegemonCrypto.SmzdLeafGrammar.u64LE
+#print axioms HegemonCrypto.SmzdLeafGrammar.decodeIndexBytes
+#print axioms HegemonCrypto.SmzdLeafGrammar.encodeIndexBytes
+#print axioms HegemonCrypto.SmzdLeafGrammar.decode_encode_index
+#print axioms HegemonCrypto.SmzdLeafGrammar.sourceFrame
+#print axioms HegemonCrypto.SmzdLeafGrammar.beforeIndex
+#print axioms HegemonCrypto.SmzdLeafGrammar.sourceSuffix
+#print axioms HegemonCrypto.SmzdLeafGrammar.tapedLeafInput
+#print axioms HegemonCrypto.SmzdLeafGrammar.indexedLeafInput
+#print axioms HegemonCrypto.SmzdLeafGrammar.sourceLeafInput
+#print axioms HegemonCrypto.SmzdLeafGrammar.smzdLeafInput
+#print axioms HegemonCrypto.SmzdLeafGrammar.leafTapeProjection
+#print axioms HegemonCrypto.SmzdLeafGrammar.leafIndexBytesProjection
+#print axioms HegemonCrypto.SmzdLeafGrammar.leafIndexProjection
+#print axioms HegemonCrypto.SmzdLeafGrammar.leaf_layout_arithmetic
+#print axioms HegemonCrypto.SmzdLeafGrammar.tape_offset
+#print axioms HegemonCrypto.SmzdLeafGrammar.index_offset
+#print axioms HegemonCrypto.SmzdLeafGrammar.tape_byte_range
+#print axioms HegemonCrypto.SmzdLeafGrammar.index_byte_range
+#print axioms HegemonCrypto.SmzdLeafGrammar.taped_leaf_projection
+#print axioms HegemonCrypto.SmzdLeafGrammar.taped_leaf_input_injective
+#print axioms HegemonCrypto.SmzdLeafGrammar.indexed_leaf_tape_projection
+#print axioms HegemonCrypto.SmzdLeafGrammar.indexed_leaf_index_bytes_projection
+#print axioms HegemonCrypto.SmzdLeafGrammar.indexed_leaf_index_projection
+#print axioms HegemonCrypto.SmzdLeafGrammar.different_indices_separate_inputs
+#print axioms HegemonCrypto.SmzdLeafGrammar.smzd_leaf_tape_projection
+#print axioms HegemonCrypto.SmzdLeafGrammar.smzd_leaf_index_projection
+#print axioms HegemonCrypto.SmzdLeafGrammar.splitTapeWords
+#print axioms HegemonCrypto.SmzdLeafGrammar.joinTapeWords
+#print axioms HegemonCrypto.SmzdLeafGrammar.join_split_tape_words
+#print axioms HegemonCrypto.SmzdLeafGrammar.leaf_tape_cardinality

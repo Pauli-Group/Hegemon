@@ -1,0 +1,135 @@
+{
+  "schema": "hegemon.rp05.supplemental-roots.v1",
+  "entries": [
+    {
+      "module": "SmzaRp05ContextExtractionAccounting",
+      "path": "shared/SmzaRp05ContextExtractionAccounting.lean",
+      "sha256": "4713696a5da383f14552045f99da621d159679ce1b5dd4d4af713ee42dea1e01",
+      "theorems": [
+        "HegemonCrypto.SmallWood.SmzaRp05ContextExtractionAccounting.contextProducingVerifierProgram_eval_iff",
+        "HegemonCrypto.SmallWood.SmzaRp05ContextExtractionAccounting.fixedFailureMass_lt",
+        "HegemonCrypto.SmallWood.SmzaRp05ContextExtractionAccounting.sum_fixedFailureMass_lt",
+        "HegemonCrypto.SmallWood.SmzaRp05ContextExtractionAccounting.selected_event_mass_le_sum",
+        "HegemonCrypto.SmallWood.SmzaRp05ContextExtractionAccounting.selected_extraction_failure_mass_le_sum",
+        "HegemonCrypto.SmallWood.SmzaRp05ContextExtractionAccounting.diagonal_selection_mass",
+        "HegemonCrypto.SmallWood.SmzaRp05ContextExtractionAccounting.fixed_diagonal_mass"
+      ]
+    },
+    {
+      "module": "SmzaRp05ContextPhysicalBind",
+      "path": "shared/SmzaRp05ContextPhysicalBind.lean",
+      "sha256": "8b55be2c432e6a0754ed042e03cd37969c938720379f9528539f45abe6533fe7",
+      "theorems": [
+        "HegemonCrypto.SmallWood.SmzaRp05ContextPhysicalBind.accepted_bind_physical_decomposition",
+        "HegemonCrypto.SmallWood.SmzaRp05ContextPhysicalBind.accepted_context_output_physical_decomposition",
+        "HegemonCrypto.SmallWood.SmzaRp05ContextPhysicalBind.accepted_bind_grouped_claims_replay"
+      ]
+    },
+    {
+      "module": "SmzaRp05PrimitiveBudget",
+      "path": "shared/SmzaRp05PrimitiveBudget.lean",
+      "sha256": "02162e0e729c1d33cdb4f8a2d3184b361b94e032e068d341c502857e42230c0f",
+      "theorems": [
+        "HegemonCrypto.SmallWood.SmzaRp05PrimitiveBudget.below_128_of_aggregate_budget",
+        "HegemonCrypto.SmallWood.SmzaRp05PrimitiveBudget.six_individual_bounds_suffice"
+      ]
+    },
+    {
+      "module": "SmzaRp05ContextAmbientDecoder",
+      "path": "shared/SmzaRp05ContextAmbientDecoder.lean",
+      "sha256": "f318e35103e03ef6d93377e9d2443cd6780b82af03a0d48a92e64e6d1ed25b49",
+      "theorems": [
+        "HegemonCrypto.SmallWood.SmzaRp05ContextAmbientDecoder.accepted_retained_verifier_has_same_stage_decoder_outcome",
+        "HegemonCrypto.SmallWood.SmzaRp05ContextAmbientDecoder.accepted_parsed_context_has_ambient_decoder_outcome"
+      ]
+    },
+    {
+      "module": "SmzaRp05ContextAmbientCoverage",
+      "path": "shared/SmzaRp05ContextAmbientCoverage.lean",
+      "sha256": "b236b11def91fe98ae2e294821243dd4d45567f45d6e8e234d618eba1c56a1b7",
+      "theorems": [
+        "HegemonCrypto.SmallWood.SmzaRp05ContextAmbientCoverage.accepted_context_has_ambient_full_or_failure_selector_or_collision"
+      ]
+    },
+    {
+      "module": "SmzaRp05ContextAmbientSupport",
+      "path": "shared/SmzaRp05ContextAmbientSupport.lean",
+      "sha256": "018bd184384ef9aca31e2ccbe948f36c33dbbed0f15b824d0fce97717b51f0d2",
+      "theorems": [
+        "HegemonCrypto.SmallWood.SmzaRp05ContextAmbientSupport.selected_ambient_failure_role_replays_on_completion"
+      ]
+    },
+    {
+      "module": "SmzaRp05ContextAmbientMatrixEvent",
+      "path": "shared/SmzaRp05ContextAmbientMatrixEvent.lean",
+      "sha256": "5df097a3633957f04b8130d3ea0faf4e2c33cd26f4f7a4ce6e9cbcab04ef438e",
+      "theorems": [
+        "HegemonCrypto.SmallWood.SmzaRp05CurrentAcceptedNonleafRoleReadbackAmbient.accepted_stages_raw_nonleaf_outer_preambles",
+        "HegemonCrypto.SmallWood.SmzaRp05CurrentAcceptedFilteredRoleTracesAmbient.current_stages_supply_filtered_role_traces",
+        "HegemonCrypto.SmallWood.SmzaRp05CurrentAcceptedDecsOutputBindingAmbient.same_stage_decs_counter_zero_decodes",
+        "HegemonCrypto.SmallWood.SmzaRp05CurrentAcceptedMatrixFailureEventAmbient.accepted_execution_matrix_bad_yields_role_event",
+        "HegemonCrypto.SmallWood.SmzaRp05ContextAmbientMatrixSupport.grouped_decs_matrix_failure_support_implies_current_advice_event_or_missing_claims"
+      ]
+    },
+    {
+      "module": "SmzaRp05ContextAmbientSampleSupport",
+      "path": "shared/SmzaRp05ContextAmbientSampleSupport.lean",
+      "sha256": "77075dc41ddd43a6c4f1b2ff126a649bc099ec625140a973068359f7b98a733d",
+      "theorems": [
+        "HegemonCrypto.SmallWood.SmzaRp05CurrentAcceptedDecsSampleOutputBindingAmbient.accepted_current_decs_sample_output_binding",
+        "HegemonCrypto.SmallWood.SmzaRp05CurrentAcceptedFixedEarlierCellsAmbient.same_stage_fixed_decs_sample_earlier_readback",
+        "HegemonCrypto.SmallWood.SmzaRp05CurrentAcceptedFixedEarlierCellsAmbient.same_stage_current_fixed_opening_scan"
+      ]
+    },
+    {
+      "module": "SmzaRp05ContextAmbientSampleEvent",
+      "path": "shared/SmzaRp05ContextAmbientSampleEvent.lean",
+      "sha256": "6c83eb1442308255a32af408bf138d5b646d2ed0bc6d6d320973d9bd2975842f",
+      "theorems": [
+        "HegemonCrypto.SmallWood.SmzaRp05ContextAmbientSampleEvent.grouped_decs_sample_failure_support_implies_current_advice_event_or_missing_claims"
+      ]
+    },
+    {
+      "module": "SmzaRp05ContextAmbientPiop",
+      "path": "shared/SmzaRp05ContextAmbientPiop.lean",
+      "sha256": "4271e2deb54ceb15ebe7a84af78412baa1c006139f80ba222102142d07a44a8d",
+      "theorems": [
+        "HegemonCrypto.SmallWood.SmzaRp05CurrentAcceptedPiopRecordLiftAmbientPiop.verifier_record_pair_is_accepted_branch_answer",
+        "HegemonCrypto.SmallWood.SmzaRp05CurrentAcceptedPiopRecordLiftAmbientPiop.transcript_record_pair_is_accepted_branch_answer",
+        "HegemonCrypto.SmallWood.SmzaRp05CurrentAcceptedPiopRecordedOutputsAmbientPiop.accepted_matrix_call_and_vector",
+        "HegemonCrypto.SmallWood.SmzaRp05CurrentAcceptedPiopRecordedOutputsAmbientPiop.accepted_opening_call_and_vector",
+        "HegemonCrypto.SmallWood.SmzaRp05CurrentAcceptedPiopOutputBindingAmbientPiop.actual_grouped_piop_matrix_route_output",
+        "HegemonCrypto.SmallWood.SmzaRp05CurrentAcceptedPiopOutputBindingAmbientPiop.actual_grouped_piop_opening_route_output",
+        "HegemonCrypto.SmallWood.SmzaRp05CurrentAcceptedFixedEarlierPiopCellsAmbientPiop.same_stage_fixed_piop_earlier_readback",
+        "HegemonCrypto.SmallWood.SmzaRp05CurrentAcceptedPiopStageEventCoverageAmbientPiop.accepted_execution_piop_failure_yields_role_event",
+        "HegemonCrypto.SmallWood.SmzaRp05CurrentAcceptedPiopExtractionFailureEventAmbientPiop.grouped_piop_failure_support_implies_current_advice_event_or_missing_claims"
+      ]
+    },
+    {
+      "module": "SmzaRp05ContextAmbientFailureMass",
+      "path": "shared/SmzaRp05ContextAmbientFailureMass.lean",
+      "sha256": "c470383a489ef52bed2e3905552fbf44054f1f557690185ab2d9af441112dcbc",
+      "theorems": [
+        "HegemonCrypto.SmallWood.SmzaRp05ContextAmbientFailureMass.accepted_failure_projection_mass_le_collision_failure_missing",
+        "HegemonCrypto.SmallWood.SmzaRp05ContextAmbientFailureMass.ordinary_original_collision_mass_le_fiber_sum"
+      ]
+    },
+    {
+      "module": "SmzaRp05ContextAmbientFourRole",
+      "path": "shared/SmzaRp05ContextAmbientFourRole.lean",
+      "sha256": "607b63c8ba54fea798b93246110ab33f44c3e62062aad328359779fb0b5fe433",
+      "theorems": [
+        "HegemonCrypto.SmallWood.SmzaRp05ContextAmbientFourRole.grouped_four_role_failure_support_implies_current_advice_event_or_missing_claims"
+      ]
+    },
+    {
+      "module": "SmzaRp05ContextAmbientScalarEndpoint",
+      "path": "shared/SmzaRp05ContextAmbientScalarEndpoint.lean",
+      "sha256": "f0b4ec045fd750fcabe5cc10ed97ec702df7b290cfe6869983d4fb6a6ba6aabf",
+      "theorems": [
+        "HegemonCrypto.SmallWood.SmzaRp05ContextAmbientScalar.accepted_failure_projection_mass_le_scalar_lhs",
+        "HegemonCrypto.SmallWood.SmzaRp05ContextAmbientEndpoint.actual_accepted_full_extraction_failure_mass_below_130_bits"
+      ]
+    }
+  ]
+}

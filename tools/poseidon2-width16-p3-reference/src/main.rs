@@ -7,16 +7,28 @@ use p3_poseidon2::{
 use p3_symmetric::Permutation;
 use transaction_core::poseidon2_width16::{
     poseidon2_width16_compress14, poseidon2_width16_permutation, poseidon2_width16_sponge, Felt,
-    Poseidon2Width16RoundConstants, POSEIDON2_WIDTH16_DIGEST,
-    POSEIDON2_WIDTH16_INTERNAL_MATRIX_DIAG, POSEIDON2_WIDTH16_RATE,
-    POSEIDON2_WIDTH16_ROUND_CONSTANTS, POSEIDON2_WIDTH16_SPONGE_MODE_MARKER,
-    POSEIDON2_WIDTH16_SUITE_MARKER,
+    Poseidon2Width16RoundConstants, POSEIDON2_WIDTH16_COMPRESSION_MODE_ID,
+    POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER, POSEIDON2_WIDTH16_DIGEST,
+    POSEIDON2_WIDTH16_INTERNAL_MATRIX_DIAG, POSEIDON2_WIDTH16_PARAMETER_SET_ID,
+    POSEIDON2_WIDTH16_RATE, POSEIDON2_WIDTH16_ROUND_CONSTANTS,
+    POSEIDON2_WIDTH16_SPONGE_MODE_MARKER, POSEIDON2_WIDTH16_SUITE_MARKER,
 };
 
 const WIDTH: usize = 16;
 const D: u64 = 7;
 const COMPRESS_DOMAIN: u64 = 0x4845_475f_4d45_524b;
 const HASH_DOMAIN: u64 = 0x4845_475f_4841_5348;
+const REFERENCE_COMPRESSION_MODE_ID: &str = "hegemon-p2w16-compress14-left-feedforward-v1";
+const REFERENCE_COMPRESSION_MODE_MARKER: u64 = 0x434f_4d50_4646_3031;
+const COMPRESS14_SEQUENTIAL_KAT: [u64; 7] = [
+    0xe700_6f1f_2c8e_1e72,
+    0x1d25_610c_bfca_fc3f,
+    0x887c_159f_f141_dba6,
+    0x8cd5_fe8c_8607_1978,
+    0xf963_76d2_30d4_591a,
+    0x71c3_812b_36e0_f872,
+    0xd0aa_f513_4c18_8f7a,
+];
 
 fn p3_external_linear(state: &mut [P3Goldilocks; WIDTH]) {
     const M4: [[u64; 4]; 4] = [[2, 3, 1, 1], [1, 2, 3, 1], [1, 1, 2, 3], [3, 1, 1, 2]];
@@ -132,9 +144,9 @@ fn p3_compress14(
     state[..7].copy_from_slice(left);
     state[7..14].copy_from_slice(right);
     state[14] = P3Goldilocks::from_u64(domain);
-    state[15] = P3Goldilocks::from_u64(POSEIDON2_WIDTH16_SUITE_MARKER);
+    state[15] = P3Goldilocks::from_u64(REFERENCE_COMPRESSION_MODE_MARKER);
     permutation.permute_mut(&mut state);
-    state[..7].try_into().expect("seven output lanes")
+    core::array::from_fn(|lane| state[lane] + left[lane])
 }
 
 fn p3_sponge(permutation: &HardenedP3, domain: u64, input: &[P3Goldilocks]) -> [P3Goldilocks; 7] {
@@ -173,6 +185,14 @@ fn canonical_hegemon<const N: usize>(state: &[Felt; N]) -> [u64; N] {
 }
 
 fn main() {
+    assert_eq!(
+        POSEIDON2_WIDTH16_COMPRESSION_MODE_ID,
+        REFERENCE_COMPRESSION_MODE_ID
+    );
+    assert_eq!(
+        POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER,
+        REFERENCE_COMPRESSION_MODE_MARKER
+    );
     let reference = hardened_p3();
     for seed in [0u64, 1, 0x0123_4567_89ab_cdef] {
         let mut hegemon =
@@ -190,6 +210,7 @@ fn main() {
     let right_p = core::array::from_fn(|lane| P3Goldilocks::from_u64((lane + 7) as u64));
     let hegemon = poseidon2_width16_compress14(COMPRESS_DOMAIN, &left_h, &right_h);
     let p3 = p3_compress14(&reference, COMPRESS_DOMAIN, &left_p, &right_p);
+    assert_eq!(canonical_p3(&p3), COMPRESS14_SEQUENTIAL_KAT);
     assert_eq!(canonical_hegemon(&hegemon), canonical_p3(&p3));
 
     for length in [0usize, 7, 8, 9, 16, 34, 120] {
@@ -216,6 +237,6 @@ fn main() {
     assert_ne!(canonical_hegemon(&hardened), canonical_p3(&stock_state));
 
     println!(
-        "poseidon2-width16-p3-reference: hardened KATs match; stock p3 negative control differs"
+        "poseidon2-width16-p3-reference: parameter_set={POSEIDON2_WIDTH16_PARAMETER_SET_ID}; compression_mode={REFERENCE_COMPRESSION_MODE_ID}; compression_marker={REFERENCE_COMPRESSION_MODE_MARKER:#018x}; hardened KATs match; stock p3 negative control differs"
     );
 }

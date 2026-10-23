@@ -13,7 +13,8 @@ use transaction_core::{
     constants::{MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG},
     poseidon2_width16::{
         poseidon2_width16_compress14, poseidon2_width16_permutation, Felt,
-        POSEIDON2_WIDTH16_DIGEST, POSEIDON2_WIDTH16_RATE, POSEIDON2_WIDTH16_SPONGE_MODE_MARKER,
+        POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER, POSEIDON2_WIDTH16_DIGEST,
+        POSEIDON2_WIDTH16_RATE, POSEIDON2_WIDTH16_SPONGE_MODE_MARKER,
         POSEIDON2_WIDTH16_SUITE_MARKER, POSEIDON2_WIDTH16_WIDTH,
     },
     stablecoin_poseidon2_v8::{
@@ -279,6 +280,12 @@ pub enum SmallwoodPoseidon2V8SemanticWordRef {
     ActionIntentProjectionWord {
         word: usize,
     },
+    Rp06NetworkWord {
+        word: usize,
+    },
+    Rp06ValueNullifierWord {
+        limb: usize,
+    },
     AuthorizationPolicyThreshold,
     AuthorizationPolicySignerCount,
     AuthorizationPolicySignerTag {
@@ -335,6 +342,13 @@ pub enum SmallwoodPoseidon2V8HashLaneTerm {
         call: usize,
         lane: usize,
     },
+    /// A compression output is the raw permutation's final lane plus the
+    /// corresponding initial left lane, in the Goldilocks field. The relation
+    /// compiler must bind both physical lanes; this is not a free digest wire.
+    CallCompressDigest {
+        call: usize,
+        lane: usize,
+    },
     OrientedMerkleOperand {
         path: SmallwoodPoseidon2V8MerklePathRef,
         level: usize,
@@ -344,8 +358,9 @@ pub enum SmallwoodPoseidon2V8HashLaneTerm {
 }
 
 /// One initial-state lane as a verifier-shape field expression.  At most one
-/// prior-call lane and one semantic source are added, plus a canonical
-/// constant.  Merkle orientation is represented as one derived term whose
+/// prior-call output and one semantic source are added, plus a canonical
+/// constant. A compression output term includes its two physical lanes.
+/// Merkle orientation is represented as one derived term whose
 /// selector constraints are owned by the relation compiler.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SmallwoodPoseidon2V8HashLaneBinding {
@@ -458,15 +473,22 @@ pub struct SmallwoodPoseidon2V8HashCall {
     pub role: SmallwoodPoseidon2V8HashCallRole,
     pub initial_bindings: [SmallwoodPoseidon2V8HashLaneBinding; POSEIDON2_WIDTH16_WIDTH],
     pub initial_state: [u64; POSEIDON2_WIDTH16_WIDTH],
+    /// Raw permutation output. Feed-forward belongs to the compression digest
+    /// binding and does not alter the rows enforcing the permutation itself.
     pub final_state: [u64; POSEIDON2_WIDTH16_WIDTH],
     pub final_binding: SmallwoodPoseidon2V8HashFinalBinding,
 }
 
 impl SmallwoodPoseidon2V8HashCall {
     pub fn final_digest(self) -> SmallwoodPoseidon2V8Digest {
-        self.final_state[..POSEIDON2_WIDTH16_DIGEST]
-            .try_into()
-            .expect("the V8 digest occupies seven final-state lanes")
+        core::array::from_fn(|lane| match self.mode {
+            SmallwoodPoseidon2V8HashCallMode::Compress14 => {
+                (Felt::from_u64(self.final_state[lane]) + Felt::from_u64(self.initial_state[lane]))
+                    .as_canonical_u64()
+            }
+            SmallwoodPoseidon2V8HashCallMode::Sponge
+            | SmallwoodPoseidon2V8HashCallMode::Padding => self.final_state[lane],
+        })
     }
 }
 
@@ -539,10 +561,23 @@ impl BoundWord {
         }
     }
 
-    const fn call(value: u64, call: usize, lane: usize) -> Self {
+    const fn call_digest(
+        value: u64,
+        call: usize,
+        lane: usize,
+        mode: SmallwoodPoseidon2V8HashCallMode,
+    ) -> Self {
         Self {
             value,
-            term: Some(SmallwoodPoseidon2V8HashLaneTerm::CallFinal { call, lane }),
+            term: Some(match mode {
+                SmallwoodPoseidon2V8HashCallMode::Compress14 => {
+                    SmallwoodPoseidon2V8HashLaneTerm::CallCompressDigest { call, lane }
+                }
+                SmallwoodPoseidon2V8HashCallMode::Sponge
+                | SmallwoodPoseidon2V8HashCallMode::Padding => {
+                    SmallwoodPoseidon2V8HashLaneTerm::CallFinal { call, lane }
+                }
+            }),
         }
     }
 
@@ -577,7 +612,10 @@ impl ScheduleBuilder {
     }
 
     fn call_digest_words(&self, call: usize) -> [BoundWord; POSEIDON2_WIDTH16_DIGEST] {
-        core::array::from_fn(|lane| BoundWord::call(self.calls[call].final_state[lane], call, lane))
+        let digest = self.calls[call].final_digest();
+        core::array::from_fn(|lane| {
+            BoundWord::call_digest(digest[lane], call, lane, self.calls[call].mode)
+        })
     }
 
     fn push_sponge(
@@ -702,10 +740,11 @@ impl ScheduleBuilder {
             };
         }
         initial_state[14] = domain;
-        initial_state[15] = POSEIDON2_WIDTH16_SUITE_MARKER;
+        initial_state[15] = POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER;
         bindings[14] = SmallwoodPoseidon2V8HashLaneBinding::constant(domain);
-        bindings[15] =
-            SmallwoodPoseidon2V8HashLaneBinding::constant(POSEIDON2_WIDTH16_SUITE_MARKER);
+        bindings[15] = SmallwoodPoseidon2V8HashLaneBinding::constant(
+            POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER,
+        );
 
         let left_felts = left.map(|word| Felt::from_u64(word.value));
         let right_felts = right.map(|word| Felt::from_u64(word.value));
@@ -714,7 +753,9 @@ impl ScheduleBuilder {
         let mut state = initial_state.map(Felt::from_u64);
         poseidon2_width16_permutation(&mut state);
         let final_state = state.map(|value| value.as_canonical_u64());
-        if final_state[..POSEIDON2_WIDTH16_DIGEST] != expected {
+        let digest: SmallwoodPoseidon2V8Digest =
+            core::array::from_fn(|lane| (state[lane] + left_felts[lane]).as_canonical_u64());
+        if digest != expected {
             return Err(SmallwoodPoseidon2V8HashScheduleError::CompressTraceMismatch);
         }
         self.calls.push(SmallwoodPoseidon2V8HashCall {
@@ -987,6 +1028,15 @@ pub fn build_smallwood_poseidon2_v8_hash_schedule(
     statement: &SmallwoodPoseidon2V8PublicStatement,
     witness: &SmallwoodPoseidon2V8Witness,
 ) -> Result<SmallwoodPoseidon2V8HashScheduleMaterial, SmallwoodPoseidon2V8HashScheduleError> {
+    build_smallwood_poseidon2_v8_hash_schedule_with_rp06_context(statement, witness, None)
+}
+
+/// Additive RP06 materialization; the ordinary entrypoint above is byte-for-byte RP05.
+pub(crate) fn build_smallwood_poseidon2_v8_hash_schedule_with_rp06_context(
+    statement: &SmallwoodPoseidon2V8PublicStatement,
+    witness: &SmallwoodPoseidon2V8Witness,
+    network: Option<[u32; 8]>,
+) -> Result<SmallwoodPoseidon2V8HashScheduleMaterial, SmallwoodPoseidon2V8HashScheduleError> {
     scan_canonical_sources(statement, witness)?;
     let mut builder = ScheduleBuilder::new();
 
@@ -1143,7 +1193,13 @@ pub fn build_smallwood_poseidon2_v8_hash_schedule(
         )?;
     }
 
-    let projection = statement.action_intent_projection_words();
+    let projection = match network {
+        Some(words) => crate::smallwood_poseidon2_v8_rp06::rp06_intent_projection_from_public(
+            &statement.to_public_words(),
+            words.map(u64::from),
+        ),
+        None => statement.action_intent_projection_words(),
+    };
     let intent_words = projection
         .into_iter()
         .enumerate()
@@ -1159,6 +1215,31 @@ pub fn build_smallwood_poseidon2_v8_hash_schedule(
                 !SMALLWOOD_POSEIDON2_V8_INTENT_OMIT_NULLIFIERS.contains(&word)
                     && !SMALLWOOD_POSEIDON2_V8_INTENT_OMIT_MERKLE_ROOT_PREFIX.contains(&word)
             );
+            if network.is_some() {
+                if let Some(index) =
+                    crate::smallwood_poseidon2_v8_rp06::RP06_INTENT_NETWORK_POSITIONS
+                        .iter()
+                        .position(|position| *position == word)
+                {
+                    return BoundWord::semantic(
+                        value,
+                        SmallwoodPoseidon2V8SemanticWordRef::Rp06NetworkWord { word: index },
+                    );
+                }
+                if let Some(limb) =
+                    crate::smallwood_poseidon2_v8_rp06::RP06_INTENT_VALUE_NULLIFIER_POSITIONS
+                        .iter()
+                        .position(|position| *position == word)
+                {
+                    return BoundWord::semantic(
+                        value,
+                        SmallwoodPoseidon2V8SemanticWordRef::Rp06ValueNullifierWord { limb },
+                    );
+                }
+                if word == 94 || (95..109).contains(&word) || (116..120).contains(&word) {
+                    return BoundWord::ZERO;
+                }
+            }
             BoundWord::semantic(
                 value,
                 SmallwoodPoseidon2V8SemanticWordRef::ActionIntentProjectionWord { word },
@@ -1174,7 +1255,11 @@ pub fn build_smallwood_poseidon2_v8_hash_schedule(
         .collect::<Vec<_>>();
     builder.push_sponge(
         &intent_roles,
-        SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_DOMAIN,
+        if network.is_some() {
+            crate::smallwood_poseidon2_v8_rp06::RP06_ACTION_INTENT_DOMAIN
+        } else {
+            SMALLWOOD_POSEIDON2_V8_ACTION_INTENT_DOMAIN
+        },
         &intent_words,
         SmallwoodPoseidon2V8HashDigestRef::ActionIntent,
     )?;
@@ -1256,6 +1341,9 @@ pub fn build_smallwood_poseidon2_v8_hash_schedule(
         )
     });
     let value_lock_right = core::array::from_fn(|limb| {
+        if network.is_some() {
+            return BoundWord::ZERO;
+        }
         BoundWord::semantic(
             witness.auth.current.intent_digest[limb],
             SmallwoodPoseidon2V8SemanticWordRef::AuthorizationCurrent {
@@ -1721,8 +1809,155 @@ mod tests {
             let right = core::array::from_fn(|lane| Felt::from_u64(call.initial_state[7 + lane]));
             let expected = poseidon2_width16_compress14(call.initial_state[14], &left, &right)
                 .map(|value| value.as_canonical_u64());
-            assert_eq!(&call.final_state[..7], &expected);
+            assert_eq!(
+                call.initial_state[15],
+                POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER
+            );
+            assert_eq!(
+                call.initial_bindings[15],
+                SmallwoodPoseidon2V8HashLaneBinding::constant(
+                    POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER,
+                )
+            );
+            let mut raw_state = call.initial_state.map(Felt::from_u64);
+            poseidon2_width16_permutation(&mut raw_state);
+            assert_eq!(
+                call.final_state,
+                raw_state.map(|value| value.as_canonical_u64())
+            );
+            assert_eq!(call.final_digest(), expected);
+            for lane in 0..POSEIDON2_WIDTH16_DIGEST {
+                assert_eq!(
+                    expected[lane],
+                    (raw_state[lane] + left[lane]).as_canonical_u64()
+                );
+            }
         }
+    }
+
+    #[test]
+    fn compressor_chains_bind_raw_final_and_initial_left_lanes() {
+        let (statement, witness) = fixture();
+        let material = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
+        // Stable configuration chunks feed two tree nodes, then the root.
+        // The root subsequently supplies the left operand of both state leaves.
+        for (call, left, right) in [(113, 109, 110), (114, 111, 112), (115, 113, 114)] {
+            for (offset, source) in [(0, left), (POSEIDON2_WIDTH16_DIGEST, right)] {
+                let digest = material.calls[source].final_digest();
+                for lane in 0..POSEIDON2_WIDTH16_DIGEST {
+                    assert_eq!(
+                        material.calls[call].initial_state[offset + lane],
+                        digest[lane]
+                    );
+                    assert_eq!(
+                        material.calls[call].initial_bindings[offset + lane].terms,
+                        [
+                            Some(SmallwoodPoseidon2V8HashLaneTerm::CallCompressDigest {
+                                call: source,
+                                lane,
+                            }),
+                            None,
+                        ]
+                    );
+                }
+            }
+        }
+        for call in [116, 117] {
+            for lane in 0..POSEIDON2_WIDTH16_DIGEST {
+                assert_eq!(
+                    material.calls[call].initial_state[lane],
+                    material.calls[115].final_digest()[lane]
+                );
+                assert_eq!(
+                    material.calls[call].initial_bindings[lane].terms[0],
+                    Some(SmallwoodPoseidon2V8HashLaneTerm::CallCompressDigest { call: 115, lane })
+                );
+            }
+        }
+        // Input-path orientation is exported as a selector-derived operand;
+        // the value still comes from the corrected digest of the prior call.
+        for input in 0..2 {
+            let mut position = witness.inputs[input].position;
+            let first = if input == 0 { 4 } else { 41 };
+            for call in first..first + SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH {
+                let offset = if position & 1 == 0 {
+                    0
+                } else {
+                    POSEIDON2_WIDTH16_DIGEST
+                };
+                assert_eq!(
+                    &material.calls[call].initial_state[offset..offset + POSEIDON2_WIDTH16_DIGEST],
+                    &material.calls[call - 1].final_digest()
+                );
+                position >>= 1;
+            }
+        }
+    }
+
+    #[test]
+    fn compression_digest_feedforward_reduces_in_the_field() {
+        let (statement, witness) = fixture();
+        let material = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
+        let mut call = material.calls[4];
+        for lane in 0..POSEIDON2_WIDTH16_DIGEST {
+            call.initial_state[lane] = GOLDILOCKS_MODULUS - 1;
+            call.final_state[lane] = lane as u64 + 2;
+        }
+        assert_eq!(call.final_digest(), [1, 2, 3, 4, 5, 6, 7]);
+        call.mode = SmallwoodPoseidon2V8HashCallMode::Sponge;
+        assert_eq!(call.final_digest(), [2, 3, 4, 5, 6, 7, 8]);
+        call.mode = SmallwoodPoseidon2V8HashCallMode::Padding;
+        assert_eq!(call.final_digest(), [2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn sponge_and_padding_digest_controls_keep_raw_permutation_outputs() {
+        let (statement, witness) = fixture();
+        let material = build_smallwood_poseidon2_v8_hash_schedule(&statement, &witness).unwrap();
+        for call in material
+            .live_calls()
+            .iter()
+            .filter(|call| call.mode == SmallwoodPoseidon2V8HashCallMode::Sponge)
+        {
+            assert_eq!(
+                &call.final_digest(),
+                &call.final_state[..POSEIDON2_WIDTH16_DIGEST]
+            );
+            if let SmallwoodPoseidon2V8HashFinalBinding::NextSpongeCall { call: next } =
+                call.final_binding
+            {
+                let next = &material.calls[next];
+                for lane in POSEIDON2_WIDTH16_RATE..POSEIDON2_WIDTH16_WIDTH {
+                    assert_eq!(
+                        next.initial_state[lane],
+                        (Felt::from_u64(call.final_state[lane])
+                            + Felt::from_u64(next.initial_bindings[lane].constant))
+                        .as_canonical_u64()
+                    );
+                    assert_eq!(
+                        next.initial_bindings[lane].terms[0],
+                        Some(SmallwoodPoseidon2V8HashLaneTerm::CallFinal {
+                            call: call.index,
+                            lane,
+                        })
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            material.calls[0].initial_state[15],
+            POSEIDON2_WIDTH16_SUITE_MARKER
+        );
+        assert_eq!(
+            material.calls[0].initial_state[POSEIDON2_WIDTH16_RATE + 2],
+            POSEIDON2_WIDTH16_SPONGE_MODE_MARKER
+        );
+        let mut padding = material.calls[0];
+        padding.mode = SmallwoodPoseidon2V8HashCallMode::Padding;
+        assert_eq!(
+            &padding.final_digest(),
+            &padding.final_state[..POSEIDON2_WIDTH16_DIGEST]
+        );
     }
 
     #[test]

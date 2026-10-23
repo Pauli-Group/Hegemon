@@ -37,16 +37,39 @@ use crate::submission::ProvisionalActionId48;
 use crate::tx_builder::PreparedMultisigFinalPlan;
 use crate::viewing::{FullViewingKey, IncomingViewingKey, OutgoingViewingKey, RecoveredNote};
 
+#[path = "asset_recovery_store.rs"]
+pub mod asset_recovery_store;
+
+#[path = "asset_spend_store.rs"]
+pub mod asset_spend_store;
+
+#[path = "htlc_store.rs"]
+pub(crate) mod htlc_store;
+
 #[path = "poseidon2_v8_reservations.rs"]
 mod poseidon2_v8_reservations;
+#[path = "private_spend_journal.rs"]
+pub(crate) mod private_spend_journal;
 use poseidon2_v8_reservations::StoredPoseidon2V8Reservation;
 pub use poseidon2_v8_reservations::{
     Poseidon2V8ReservationStatus, Poseidon2V8ReservationView, Poseidon2V8SpendReservation,
 };
+pub use private_spend_journal::{PrivateSpendAttemptStatus, PrivateSpendAttemptView};
 
-/// V12 appends durable V8 input reservations. V11 remains the exact
-/// pre-reservation positional bincode schema, including its V8 mirror.
-const FILE_VERSION: u32 = 12;
+/// V13 added treasury state, V14 added RP06 candidates, and V15 stores private
+/// per-output encryption witnesses. Earlier positional bincode schemas remain frozen.
+// V20 adds recovery holder records; V18 added reward maturity and V19 controlled-asset
+// notes and the submission journal. Older positional codecs remain frozen and
+// may only be read or explicitly recovered into a separate fresh wallet.
+const FILE_VERSION: u32 = 20;
+const LEGACY_FILE_VERSION_V19: u32 = 19;
+const LEGACY_FILE_VERSION_V18: u32 = 18;
+const LEGACY_FILE_VERSION_V17: u32 = 17;
+const LEGACY_FILE_VERSION_V16: u32 = 16;
+const LEGACY_FILE_VERSION_V15: u32 = 15;
+const LEGACY_FILE_VERSION_V14: u32 = 14;
+const LEGACY_FILE_VERSION_V13: u32 = 13;
+const LEGACY_FILE_VERSION_V12: u32 = 12;
 const LEGACY_FILE_VERSION_V11: u32 = 11;
 const LEGACY_FILE_VERSION_V10: u32 = 10;
 const LEGACY_FILE_VERSION_V9: u32 = 9;
@@ -84,6 +107,7 @@ pub struct WalletStore {
     /// A stable sibling inode: wallet writes replace the encrypted file.
     _file_lock: Option<fs::File>,
     read_only: bool,
+    source_file_version: u32,
     key: [u8; KEY_LEN],
     salt: [u8; SALT_LEN],
     state: Mutex<WalletState>,
@@ -98,6 +122,157 @@ impl Drop for WalletStore {
 }
 
 impl WalletStore {
+    pub fn launch_context(
+        &self,
+    ) -> Result<crate::poseidon2_v8_sync::LaunchWalletContext, WalletError> {
+        self.with_state(|state| {
+            state
+                .native_launch_context
+                .as_ref()
+                .ok_or(WalletError::InvalidState(
+                    "wallet launch context is not pinned",
+                ))?
+                .current_context()
+        })
+    }
+    pub fn launch_chain_id(&self) -> Result<[u8; 32], WalletError> {
+        Ok(self.launch_context()?.chain_id())
+    }
+    pub fn require_launch_context(
+        &self,
+        context: crate::poseidon2_v8_sync::LaunchWalletContext,
+    ) -> Result<(), WalletError> {
+        self.with_state(|state| {
+            state
+                .native_launch_context
+                .as_ref()
+                .ok_or(WalletError::InvalidState(
+                    "wallet launch context is not pinned",
+                ))?
+                .require_match(context)
+        })
+    }
+    pub fn initialize_pinned_launch_context(
+        &self,
+        context: crate::poseidon2_v8_sync::LaunchWalletContext,
+    ) -> Result<(), WalletError> {
+        self.with_poseidon2_v8_mut_and_block(None, Some((context, true)), |_, _| Ok(()))
+    }
+    #[cfg(any(test, feature = "poseidon2-v8-retained-test-support"))]
+    pub fn initialize_pinned_launch_context_for_retained_test(
+        &self,
+        context: crate::poseidon2_v8_sync::LaunchWalletContext,
+    ) -> Result<(), WalletError> {
+        self.with_poseidon2_v8_mut_and_block(None, Some((context, false)), |_, _| Ok(()))
+    }
+    pub(crate) fn with_rp06_transfers<T>(
+        &self,
+        context: crate::poseidon2_v8_sync::LaunchWalletContext,
+        read: impl FnOnce(
+            &[crate::rp06_transfer_store::StoredRp06TransferCandidate],
+        ) -> Result<T, WalletError>,
+    ) -> Result<T, WalletError> {
+        self.with_state(|state| {
+            state
+                .native_launch_context
+                .as_ref()
+                .ok_or(WalletError::InvalidState(
+                    "wallet launch context is not pinned",
+                ))?
+                .require_match(context)?;
+            read(&state.native_rp06_transfers)
+        })
+    }
+
+    pub(crate) fn with_rp06_transfers_mut<T>(
+        &self,
+        context: crate::poseidon2_v8_sync::LaunchWalletContext,
+        mutate: impl FnOnce(
+            &mut Vec<crate::rp06_transfer_store::StoredRp06TransferCandidate>,
+        ) -> Result<T, WalletError>,
+    ) -> Result<T, WalletError> {
+        self.ensure_writable()?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::InvalidState("wallet poisoned"))?;
+        state
+            .native_launch_context
+            .as_ref()
+            .ok_or(WalletError::InvalidState(
+                "wallet launch context is not pinned",
+            ))?
+            .require_match(context)?;
+        let previous = state.native_rp06_transfers.clone();
+        let result = match mutate(&mut state.native_rp06_transfers) {
+            Ok(result) => result,
+            Err(error) => {
+                state.native_rp06_transfers = previous;
+                return Err(error);
+            }
+        };
+        if let Err(error) = validate_rp06_candidates(&state.native_rp06_transfers, context)
+            .and_then(|()| self.write_state(&state))
+        {
+            state.native_rp06_transfers = previous;
+            return Err(error);
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn with_v8_treasuries<T>(
+        &self,
+        read: impl FnOnce(
+            &[crate::poseidon2_v8_multisig::StoredV8Treasury],
+            &Poseidon2V8WalletState,
+        ) -> Result<T, WalletError>,
+    ) -> Result<T, WalletError> {
+        self.with_state(|state| read(&state.poseidon2_v8_treasuries, &state.poseidon2_v8))
+    }
+
+    pub(crate) fn with_v8_treasuries_mut<T>(
+        &self,
+        update: impl FnOnce(
+            &mut Vec<crate::poseidon2_v8_multisig::StoredV8Treasury>,
+            &Poseidon2V8WalletState,
+            &HashSet<[u64; 7]>,
+        ) -> Result<T, WalletError>,
+    ) -> Result<T, WalletError> {
+        self.ensure_writable()?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::InvalidState("wallet poisoned"))?;
+        if state.mode != WalletMode::Full {
+            return Err(WalletError::WatchOnly);
+        }
+        let reserved = state
+            .reserved_ordinary_poseidon2_v8_nullifiers()
+            .into_iter()
+            .chain(state.htlc_reserved_nullifiers())
+            .chain(state.private_spend_reserved_nullifiers())
+            .chain(state.asset_spend_reserved_nullifiers())
+            .chain(state.recovery_reserved_nullifiers())
+            .collect();
+        let previous = state.poseidon2_v8_treasuries.clone();
+        let result = {
+            let WalletState {
+                poseidon2_v8_treasuries,
+                poseidon2_v8,
+                ..
+            } = &mut *state;
+            update(poseidon2_v8_treasuries, poseidon2_v8, &reserved)
+        }
+        .and_then(|value| {
+            self.write_state(&state)?;
+            Ok(value)
+        });
+        if result.is_err() {
+            state.poseidon2_v8_treasuries = previous;
+        }
+        result
+    }
+
     pub fn create_full<P: AsRef<Path>>(path: P, passphrase: &str) -> Result<Self, WalletError> {
         let mut rng = OsRng;
         let root = RootSecret::from_rng(&mut rng);
@@ -157,6 +332,17 @@ impl WalletStore {
             local_note_openings: Vec::new(),
             poseidon2_v8: Poseidon2V8WalletState::default(),
             poseidon2_v8_reservations: Vec::new(),
+            htlc_swaps: Vec::new(),
+            poseidon2_v8_treasuries: Vec::new(),
+            native_launch_context: None,
+            native_rp06_transfers: Vec::new(),
+            private_spend_issued: Default::default(),
+            private_spend_notes: Vec::new(),
+            private_spend_templates: Vec::new(),
+            private_spend_attempts: Vec::new(),
+            private_spend_relation_digest: None,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
         };
         Self::create_with_state(path, passphrase, state, fail_if_exists)
     }
@@ -190,6 +376,17 @@ impl WalletStore {
             local_note_openings: Vec::new(),
             poseidon2_v8: Poseidon2V8WalletState::default(),
             poseidon2_v8_reservations: Vec::new(),
+            htlc_swaps: Vec::new(),
+            poseidon2_v8_treasuries: Vec::new(),
+            native_launch_context: None,
+            native_rp06_transfers: Vec::new(),
+            private_spend_issued: Default::default(),
+            private_spend_notes: Vec::new(),
+            private_spend_templates: Vec::new(),
+            private_spend_attempts: Vec::new(),
+            private_spend_relation_digest: None,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
         };
         Self::create_with_state(path, passphrase, state, false)
     }
@@ -211,6 +408,7 @@ impl WalletStore {
             path,
             _file_lock: Some(file_lock),
             read_only: false,
+            source_file_version: FILE_VERSION,
             key,
             salt,
             state: Mutex::new(state),
@@ -250,8 +448,17 @@ impl WalletStore {
                 },
             )
             .map_err(|_| WalletError::DecryptionFailure)?;
+        let plaintext = zeroize::Zeroizing::new(plaintext);
         let mut state: WalletState = match file.version {
             FILE_VERSION => deserialize_wallet_state(&plaintext)?,
+            LEGACY_FILE_VERSION_V19 => deserialize_wallet_state_v19(&plaintext)?,
+            LEGACY_FILE_VERSION_V18 => deserialize_wallet_state_v18(&plaintext)?,
+            LEGACY_FILE_VERSION_V17 => deserialize_wallet_state_v17(&plaintext)?,
+            LEGACY_FILE_VERSION_V16 => deserialize_wallet_state_v16(&plaintext)?,
+            LEGACY_FILE_VERSION_V15 => deserialize_wallet_state_v15(&plaintext)?,
+            LEGACY_FILE_VERSION_V14 => deserialize_wallet_state_v14(&plaintext)?,
+            LEGACY_FILE_VERSION_V13 => deserialize_wallet_state_v13(&plaintext)?,
+            LEGACY_FILE_VERSION_V12 => deserialize_wallet_state_v12(&plaintext)?,
             LEGACY_FILE_VERSION_V11 => deserialize_wallet_state_v11(&plaintext)?,
             LEGACY_FILE_VERSION_V10 => deserialize_wallet_state_v10(&plaintext)?,
             LEGACY_FILE_VERSION_V9 => deserialize_wallet_state_v9(&plaintext)?,
@@ -264,6 +471,14 @@ impl WalletStore {
                 )));
             }
         };
+        if file.version < FILE_VERSION && !read_only {
+            return Err(WalletError::InvalidState(
+                "legacy wallet is read-only; use explicit bootstrap-recover into a fresh destination, then rescan the intended network; original wallet is preserved",
+            ));
+        }
+        if file.version < LEGACY_FILE_VERSION_V16 {
+            seed_private_spend_issued_addresses(&mut state)?;
+        }
         // Exclusive file ownership proves no live builder can still submit
         // these pre-RPC records. Submitted/uncertain records survive restart.
         let abandoned_proving = state
@@ -275,19 +490,83 @@ impl WalletStore {
                 .poseidon2_v8_reservations
                 .retain(|record| record.status != Poseidon2V8ReservationStatus::Proving);
         }
+        let recovered_htlc = !read_only && state.recover_htlc_proving();
+        let recovered_asset = !read_only && state.recover_asset_spend_proving();
+        let recovered_recovery = !read_only && state.recover_recovery_proving();
         let store = WalletStore {
             path,
             _file_lock: file_lock,
             read_only,
+            source_file_version: file.version,
             key,
             salt: file.salt,
             state: Mutex::new(state),
             commitment_tree_cache: Mutex::new(None),
         };
-        if !read_only && (abandoned_proving || file.version != FILE_VERSION) {
+        if !read_only
+            && (abandoned_proving
+                || recovered_htlc
+                || recovered_asset
+                || recovered_recovery
+                || file.version != FILE_VERSION)
+        {
             store.write_locked()?;
         }
         Ok(store)
+    }
+
+    /// A pre-maturity snapshot is available only for historical inspection and
+    /// key recovery. It cannot be synchronized or persisted as a current wallet.
+    pub fn is_legacy_read_only(&self) -> bool {
+        self.read_only && self.source_file_version < FILE_VERSION
+    }
+
+    /// Recover the same keys and account registry into a separate encrypted
+    /// wallet for an explicit network reset/rescan. The source is read-only and
+    /// remains byte-for-byte intact; no old proof, pending submission, root or
+    /// note is reinterpreted as current-chain evidence.
+    pub fn recover_keys_to_fresh_wallet<P: AsRef<Path>, Q: AsRef<Path>>(
+        source: P,
+        source_passphrase: &str,
+        destination: Q,
+        destination_passphrase: &str,
+    ) -> Result<Self, WalletError> {
+        if destination_passphrase.is_empty() {
+            return Err(WalletError::InvalidArgument(
+                "new encrypted wallet passphrase must not be empty",
+            ));
+        }
+        // Existing paths, including hard links to the source, are never valid
+        // recovery destinations. create_with_state repeats the check under lock.
+        if fs::symlink_metadata(destination.as_ref()).is_ok() {
+            return Err(WalletError::StoreAlreadyExists);
+        }
+        let original = Self::open_read_only(source, source_passphrase)?;
+        let mut recovered = original.with_state(|state| Ok(state.clone()))?;
+        validate_legacy_wallet_key_material(&recovered)?;
+        reset_legacy_sync_fields(&mut recovered, true);
+        recovered.outgoing_disclosures.clear();
+        recovered.local_note_openings.clear();
+        recovered.poseidon2_v8 = Poseidon2V8WalletState::default();
+        recovered.poseidon2_v8_reservations.clear();
+        recovered.htlc_swaps.clear();
+        // Descriptors retain their original chain identities. Historical notes,
+        // plans and attempts stay solely in the untouched original wallet.
+        for treasury in &mut recovered.poseidon2_v8_treasuries {
+            treasury.notes.clear();
+            treasury.plans.clear();
+            treasury.attempts.clear();
+        }
+        recovered.native_launch_context = None;
+        recovered.native_rp06_transfers.clear();
+        recovered.private_spend_notes.clear();
+        recovered.private_spend_templates.clear();
+        recovered.private_spend_attempts.clear();
+        recovered.private_spend_relation_digest = None;
+        recovered.asset_spend = Default::default();
+        recovered.recovery = Default::default();
+        validate_wallet_state(&recovered)?;
+        Self::create_with_state(destination, destination_passphrase, recovered, true)
     }
 
     pub fn mode(&self) -> Result<WalletMode, WalletError> {
@@ -327,8 +606,51 @@ impl WalletStore {
         })
     }
 
-    /// Returns the primary shielded address (diversifier index 0).
-    /// This address is stable and never changes - ideal for mining rewards.
+    /// V8 recipient material for the common private-spend route. The encrypted
+    /// registry is written before an address leaves this method.
+    pub fn private_spend_address(&self, index: u32) -> Result<ShieldedAddress, WalletError> {
+        self.issue_private_spend_address(Some(index))
+    }
+    pub fn next_private_spend_address(&self) -> Result<ShieldedAddress, WalletError> {
+        self.issue_private_spend_address(None)
+    }
+    fn issue_private_spend_address(
+        &self,
+        requested: Option<u32>,
+    ) -> Result<ShieldedAddress, WalletError> {
+        self.ensure_writable()?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::InvalidState("wallet poisoned"))?;
+        let index = requested.unwrap_or(state.next_address_index);
+        let next = index
+            .checked_add(1)
+            .ok_or(WalletError::InvalidState("private address index overflow"))?;
+        let address = state
+            .derived
+            .as_ref()
+            .ok_or(WalletError::WatchOnly)?
+            .poseidon2_v8_address(index)?
+            .shielded_address();
+        let previous = state.private_spend_issued.clone();
+        let previous_next = state.next_address_index;
+        state.private_spend_issued.record_issued(index);
+        state.next_address_index = state.next_address_index.max(next);
+        if let Err(error) = self.write_state(&state) {
+            state.private_spend_issued = previous;
+            state.next_address_index = previous_next;
+            return Err(error);
+        }
+        Ok(address)
+    }
+    pub fn private_spend_notes(
+        &self,
+    ) -> Result<Vec<crate::private_spend::StoredPrivateSpendNote>, WalletError> {
+        self.with_state(|state| Ok(state.private_spend_notes.clone()))
+    }
+
+    /// Returns the stable legacy primary shielded address (index 0).
     pub fn primary_address(&self) -> Result<ShieldedAddress, WalletError> {
         self.with_state(|state| {
             let keys = state.derived.as_ref().ok_or(WalletError::WatchOnly)?;
@@ -425,6 +747,9 @@ impl WalletStore {
         self.with_mut(|state| {
             reset_legacy_sync_fields(state, true);
             state.poseidon2_v8.clear();
+            state.private_spend_notes.clear();
+            state.asset_spend = Default::default();
+            state.recovery = Default::default();
             self.invalidate_commitment_tree_cache()?;
             Ok(())
         })
@@ -437,6 +762,49 @@ impl WalletStore {
             reset_legacy_sync_fields(state, false);
             self.invalidate_commitment_tree_cache()?;
             Ok(())
+        })
+    }
+
+    /// Atomically pin the launch identity and initialize its exact source-owned roots.
+    pub fn ensure_poseidon2_v8_launch_genesis(
+        &self,
+        context: crate::poseidon2_v8_sync::LaunchWalletContext,
+    ) -> Result<(), WalletError> {
+        let (stable, note) = context.source_genesis_roots()?;
+        self.with_poseidon2_v8_mut_and_block(None, Some((context, true)), |mirror, _| {
+            mirror.ensure_launch_genesis(context.genesis_hash(), stable, note)
+        })
+    }
+
+    #[cfg(any(test, feature = "poseidon2-v8-retained-test-support"))]
+    pub fn ensure_poseidon2_v8_launch_genesis_for_retained_test(
+        &self,
+        context: crate::poseidon2_v8_sync::LaunchWalletContext,
+        stablecoin_genesis_root: crate::poseidon2_v8_sync::Poseidon2V8Digest,
+    ) -> Result<(), WalletError> {
+        self.with_poseidon2_v8_mut_and_block(None, Some((context, false)), |mirror, _| {
+            mirror.ensure_launch_genesis(
+                context.genesis_hash(),
+                stablecoin_genesis_root,
+                crate::poseidon2_v8_sync::empty_note_root(),
+            )
+        })
+    }
+
+    pub(crate) fn require_rp06_canonical_reference(
+        &self,
+        context: crate::poseidon2_v8_sync::LaunchWalletContext,
+        reference: Poseidon2V8CanonicalTip,
+    ) -> Result<u64, WalletError> {
+        self.with_state(|state| {
+            state
+                .native_launch_context
+                .as_ref()
+                .ok_or(WalletError::InvalidState(
+                    "wallet launch context is not pinned",
+                ))?
+                .require_match(context)?;
+            context.require_canonical_reference(&state.poseidon2_v8, reference, false)
         })
     }
 
@@ -469,6 +837,14 @@ impl WalletStore {
         self.with_state(|state| state.poseidon2_v8.tip())
     }
 
+    /// Exact canonical block-end checkpoint, independently of append-root history.
+    pub fn poseidon2_v8_canonical_tip_at_height(
+        &self,
+        height: u64,
+    ) -> Result<Option<Poseidon2V8CanonicalTip>, WalletError> {
+        self.with_state(|state| Ok(state.poseidon2_v8.canonical_tip_at_height(height)))
+    }
+
     pub fn poseidon2_v8_canonical_hash(
         &self,
         height: u64,
@@ -478,6 +854,19 @@ impl WalletStore {
 
     pub fn poseidon2_v8_owned_notes(&self) -> Result<Vec<Poseidon2V8OwnedNoteView>, WalletError> {
         self.with_state(|state| state.poseidon2_v8.owned_notes())
+    }
+
+    /// Find every exact position for a commitment in the authenticated current
+    /// canonical V8 note mirror. Duplicate commitments remain explicit.
+    pub fn poseidon2_v8_canonical_commitment_positions(
+        &self,
+        commitment: [u64; 7],
+    ) -> Result<Vec<u64>, WalletError> {
+        self.with_state(|state| {
+            state
+                .poseidon2_v8
+                .canonical_commitment_positions(commitment)
+        })
     }
 
     pub fn poseidon2_v8_spend_context(&self) -> Result<Poseidon2V8SpendContext, WalletError> {
@@ -492,7 +881,9 @@ impl WalletStore {
         &self,
         block: &Poseidon2V8CanonicalBlock,
     ) -> Result<Poseidon2V8SyncDelta, WalletError> {
-        self.with_poseidon2_v8_mut(|mirror, keys| mirror.apply_block(block, keys))
+        self.with_poseidon2_v8_mut_and_block(Some(block), None, |mirror, keys| {
+            mirror.apply_block(block, keys)
+        })
     }
 
     /// Mirror a retained test node's verified canonical actions using an
@@ -503,8 +894,29 @@ impl WalletStore {
         block: &Poseidon2V8CanonicalBlock,
         context: crate::poseidon2_v8_sync::Poseidon2V8RetainedTestContext,
     ) -> Result<Poseidon2V8SyncDelta, WalletError> {
-        self.with_poseidon2_v8_mut(|mirror, keys| {
+        self.with_poseidon2_v8_mut_and_block(Some(block), None, |mirror, keys| {
             mirror.apply_block_for_retained_test(block, keys, context)
+        })
+    }
+
+    pub fn apply_poseidon2_v8_launch_canonical_block(
+        &self,
+        block: &Poseidon2V8CanonicalBlock,
+        context: crate::poseidon2_v8_sync::LaunchWalletContext,
+    ) -> Result<Poseidon2V8SyncDelta, WalletError> {
+        self.with_poseidon2_v8_mut_and_block(Some(block), Some((context, true)), |mirror, keys| {
+            mirror.apply_launch_block(block, keys, context)
+        })
+    }
+
+    #[cfg(any(test, feature = "poseidon2-v8-retained-test-support"))]
+    pub fn apply_poseidon2_v8_launch_canonical_block_for_retained_test(
+        &self,
+        block: &Poseidon2V8CanonicalBlock,
+        context: crate::poseidon2_v8_sync::LaunchWalletContext,
+    ) -> Result<Poseidon2V8SyncDelta, WalletError> {
+        self.with_poseidon2_v8_mut_and_block(Some(block), Some((context, false)), |mirror, keys| {
+            mirror.apply_launch_block_for_retained_test(block, keys, context)
         })
     }
 
@@ -1663,12 +2075,59 @@ impl WalletStore {
     where
         F: FnOnce(&mut Poseidon2V8WalletState, Option<&DerivedKeys>) -> Result<T, WalletError>,
     {
+        self.with_poseidon2_v8_mut_and_block(None, None, func)
+    }
+
+    fn with_poseidon2_v8_mut_and_block<F, T>(
+        &self,
+        block: Option<&Poseidon2V8CanonicalBlock>,
+        launch_context: Option<(crate::poseidon2_v8_sync::LaunchWalletContext, bool)>,
+        func: F,
+    ) -> Result<T, WalletError>
+    where
+        F: FnOnce(&mut Poseidon2V8WalletState, Option<&DerivedKeys>) -> Result<T, WalletError>,
+    {
         self.ensure_writable()?;
         let mut state = self
             .state
             .lock()
             .map_err(|_| WalletError::InvalidState("wallet poisoned"))?;
+        let previous_context = state.native_launch_context.clone();
+        let previous_private_pin = state.private_spend_relation_digest.clone();
+        if let Some((context, require_authority)) = launch_context {
+            if require_authority {
+                context.require_source_authority()?;
+            }
+            if let Some(genesis) = state.poseidon2_v8.canonical_hash(0) {
+                if genesis != context.genesis_hash() {
+                    return Err(WalletError::InvalidState(
+                        "launch context differs from wallet genesis",
+                    ));
+                }
+            }
+            if let Some(stored) = &state.native_launch_context {
+                stored.require_match(context)?;
+            } else {
+                state.native_launch_context = Some(
+                    crate::poseidon2_v8_sync::launch_sync::StoredNativeLaunchContext::from_context(
+                        context,
+                    ),
+                );
+            }
+        }
+        if launch_context.is_some() {
+            if let Err(error) = state.pin_private_spend_source() {
+                state.native_launch_context = previous_context;
+                return Err(error);
+            }
+        }
         let previous = state.poseidon2_v8.clone();
+        let previous_private_notes = state.private_spend_notes.clone();
+        let previous_asset = state.asset_spend.clone();
+        let previous_recovery = state.recovery.clone();
+        let previous_private_attempts = state.private_spend_attempts.clone();
+        let previous_treasuries = state.poseidon2_v8_treasuries.clone();
+        let previous_htlc = state.htlc_swaps.clone();
         let result = {
             let WalletState {
                 poseidon2_v8,
@@ -1679,12 +2138,90 @@ impl WalletStore {
                 Ok(result) => result,
                 Err(error) => {
                     state.poseidon2_v8 = previous;
+                    state.asset_spend = previous_asset;
+                    state.recovery = previous_recovery;
+                    state.native_launch_context = previous_context;
+                    state.private_spend_relation_digest = previous_private_pin;
                     return Err(error);
                 }
             }
         };
-        if let Err(error) = self.write_state(&state) {
+        let reconcile_and_write = (|| {
+            let mut observed_actions = Vec::new();
+            if let Some(block) = block {
+                let (actions, htlc, rewards) =
+                    crate::poseidon2_v8_sync::launch_sync::canonical_launch_observations(block)?;
+                if let (Some(keys), Some((context, _))) = (state.derived.as_ref(), launch_context) {
+                    let recovered = state.poseidon2_v8.recover_private_spend_block(
+                        block,
+                        keys,
+                        &state.private_spend_issued,
+                        context,
+                    )?;
+                    state.private_spend_notes.extend(recovered);
+                    state.recover_asset_spend_block(context, block)?;
+                    state.recover_recovery_block(context, block)?;
+                }
+                observed_actions = actions;
+                state.observe_htlc_actions(block.height, block.hash, &htlc)?;
+                for opening in rewards {
+                    crate::poseidon2_v8_multisig::track_v8_treasury_public_reward(
+                        &mut state.poseidon2_v8_treasuries,
+                        opening,
+                    )?;
+                }
+            }
+            let WalletState {
+                poseidon2_v8,
+                poseidon2_v8_treasuries,
+                ..
+            } = &mut *state;
+            crate::poseidon2_v8_multisig::reconcile_v8_treasury_attempts(
+                poseidon2_v8_treasuries,
+                poseidon2_v8,
+                &observed_actions,
+            )?;
+            let WalletState {
+                poseidon2_v8,
+                private_spend_notes,
+                ..
+            } = &mut *state;
+            private_spend_notes.retain(|note| {
+                poseidon2_v8.canonical_hash(note.created_height) == Some(note.created_block_hash)
+            });
+            for note in private_spend_notes {
+                note.spent = poseidon2_v8.has_canonical_nullifier(note.nullifier);
+            }
+            state.reconcile_private_spend_attempts(&observed_actions)?;
+            state.reconcile_asset_spend_state()?;
+            state.reconcile_recovery_state()?;
+            state.validate_asset_spend_state()?;
+            state.validate_recovery_state()?;
+            state.validate_htlc_swaps()?;
+            if let Some(context) = &state.native_launch_context {
+                let pinned = context.current_context()?;
+                if state
+                    .poseidon2_v8
+                    .canonical_hash(0)
+                    .is_some_and(|genesis| genesis != pinned.genesis_hash())
+                {
+                    return Err(WalletError::InvalidState(
+                        "wallet mirror genesis differs from pinned launch context",
+                    ));
+                }
+            }
+            self.write_state(&state)
+        })();
+        if let Err(error) = reconcile_and_write {
             state.poseidon2_v8 = previous;
+            state.private_spend_notes = previous_private_notes;
+            state.asset_spend = previous_asset;
+            state.recovery = previous_recovery;
+            state.private_spend_attempts = previous_private_attempts;
+            state.poseidon2_v8_treasuries = previous_treasuries;
+            state.htlc_swaps = previous_htlc;
+            state.native_launch_context = previous_context;
+            state.private_spend_relation_digest = previous_private_pin;
             return Err(error);
         }
         Ok(result)
@@ -1700,7 +2237,7 @@ impl WalletStore {
 
     fn write_state(&self, state: &WalletState) -> Result<(), WalletError> {
         self.ensure_writable()?;
-        let plaintext = bincode::serialize(state)?;
+        let plaintext = zeroize::Zeroizing::new(bincode::serialize(state)?);
         let cipher = ChaCha20Poly1305::new(&self.key.into());
         let mut nonce = [0u8; NONCE_LEN];
         OsRng.fill_bytes(&mut nonce);
@@ -2012,14 +2549,114 @@ fn deserialize_wallet_state(bytes: &[u8]) -> Result<WalletState, WalletError> {
         }
         other => other,
     })?;
+    validate_wallet_state(&state)?;
+    Ok(state)
+}
+
+fn validate_wallet_state(state: &WalletState) -> Result<(), WalletError> {
+    state.validate_private_spend_source_pin()?;
+    state.validate_private_spend_journal()?;
+    state.validate_asset_spend_state()?;
+    state.validate_recovery_state()?;
     state.poseidon2_v8.validate()?;
+    if !state.private_spend_notes.is_empty() && state.native_launch_context.is_none() {
+        return Err(WalletError::InvalidState(
+            "private notes require pinned launch context",
+        ));
+    }
+    let mut private_positions = std::collections::BTreeSet::new();
+    for note in &state.private_spend_notes {
+        let payload = note.opening()?;
+        if !state.private_spend_issued.contains(payload.recipient_index)
+            || state
+                .native_launch_context
+                .as_ref()
+                .map(|ctx| ctx.current_context())
+                .transpose()?
+                .map(|ctx| ctx.chain_id())
+                != Some(note.chain_id)
+        {
+            return Err(WalletError::InvalidState(
+                "private stored chain or issued address mismatch",
+            ));
+        }
+        note.validate(state.derived.as_ref().ok_or(WalletError::WatchOnly)?)?;
+        if state
+            .poseidon2_v8
+            .canonical_note_witness_at(note.commitment, note.position)?
+            .is_none()
+        {
+            return Err(WalletError::InvalidState("private note occurrence missing"));
+        }
+        if !private_positions.insert(note.position)
+            || state.poseidon2_v8.canonical_hash(note.created_height)
+                != Some(note.created_block_hash)
+            || note.spent != state.poseidon2_v8.has_canonical_nullifier(note.nullifier)
+        {
+            return Err(WalletError::InvalidState(
+                "private note canonical state mismatch",
+            ));
+        }
+    }
     state.validate_poseidon2_v8_reservations()?;
+    state.validate_htlc_swaps()?;
+    if let Some(context) = &state.native_launch_context {
+        let pinned = context.current_context()?;
+        if state
+            .poseidon2_v8
+            .canonical_hash(0)
+            .is_some_and(|genesis| genesis != pinned.genesis_hash())
+        {
+            return Err(WalletError::InvalidState(
+                "wallet mirror genesis differs from pinned launch context",
+            ));
+        }
+        validate_rp06_candidates(&state.native_rp06_transfers, pinned)?;
+    } else if !state.native_rp06_transfers.is_empty() {
+        return Err(WalletError::InvalidState(
+            "retained RP06 candidates require pinned launch identity",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_rp06_candidates(
+    records: &[crate::rp06_transfer_store::StoredRp06TransferCandidate],
+    context: crate::poseidon2_v8_sync::LaunchWalletContext,
+) -> Result<(), WalletError> {
+    let mut identifiers = std::collections::HashSet::new();
+    for record in records {
+        record.validate(context)?;
+        if !identifiers.insert(record.reservation_id) {
+            return Err(WalletError::InvalidState(
+                "duplicate retained RP06 reservation identity",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn deserialize_wallet_state_v13(bytes: &[u8]) -> Result<WalletState, WalletError> {
+    let state = WalletState::from(deserialize_exact::<WalletStateV13>(bytes)?);
+    validate_legacy_wallet_key_material(&state)?;
+    Ok(state)
+}
+
+fn deserialize_wallet_state_v14(bytes: &[u8]) -> Result<WalletState, WalletError> {
+    let state = WalletState::from(deserialize_exact::<WalletStateV14>(bytes)?);
+    validate_legacy_wallet_key_material(&state)?;
+    Ok(state)
+}
+
+fn deserialize_wallet_state_v12(bytes: &[u8]) -> Result<WalletState, WalletError> {
+    let state = WalletState::from(deserialize_exact::<WalletStateV12>(bytes)?);
+    validate_legacy_wallet_key_material(&state)?;
     Ok(state)
 }
 
 fn deserialize_wallet_state_v11(bytes: &[u8]) -> Result<WalletState, WalletError> {
     let state = WalletState::from(deserialize_exact::<WalletStateV11>(bytes)?);
-    state.poseidon2_v8.validate()?;
+    validate_legacy_wallet_key_material(&state)?;
     Ok(state)
 }
 
@@ -2197,6 +2834,613 @@ struct WalletState {
     local_note_openings: Vec<LocalNoteOpeningRecord>,
     poseidon2_v8: Poseidon2V8WalletState,
     poseidon2_v8_reservations: Vec<StoredPoseidon2V8Reservation>,
+    htlc_swaps: Vec<htlc_store::StoredHtlcSwap>,
+    poseidon2_v8_treasuries: Vec<crate::poseidon2_v8_multisig::StoredV8Treasury>,
+    #[serde(default)]
+    native_launch_context: Option<crate::poseidon2_v8_sync::launch_sync::StoredNativeLaunchContext>,
+    native_rp06_transfers: Vec<crate::rp06_transfer_store::StoredRp06TransferCandidate>,
+
+    private_spend_issued: crate::private_spend::IssuedPrivateSpendAddresses,
+    private_spend_notes: Vec<crate::private_spend::StoredPrivateSpendNote>,
+    private_spend_templates: Vec<private_spend_journal::StoredPrivateTemplate>,
+    private_spend_attempts: Vec<private_spend_journal::StoredPrivateAttempt>,
+    private_spend_relation_digest: Option<Vec<u8>>,
+    asset_spend: asset_spend_store::AssetWalletState,
+    recovery: asset_recovery_store::RecoveryWalletState,
+}
+
+// Exact frozen V19 positional codec. No field reordering or automatic writable upgrade.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV19 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<PendingTransaction>,
+    #[serde(default)]
+    recent: Vec<RecentTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    #[serde(default)]
+    commitment_sources: Vec<NoteSource>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default, with = "serde_option_bytes32")]
+    last_synced_block_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    /// Genesis hash of the chain this wallet was synced with.
+    /// Used to detect chain resets/mismatches.
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    multisig_accounts: Vec<MultisigAccountRecord>,
+    #[serde(default)]
+    local_note_openings: Vec<LocalNoteOpeningRecord>,
+    poseidon2_v8: Poseidon2V8WalletState,
+    poseidon2_v8_reservations: Vec<StoredPoseidon2V8Reservation>,
+    htlc_swaps: Vec<htlc_store::StoredHtlcSwap>,
+    poseidon2_v8_treasuries: Vec<crate::poseidon2_v8_multisig::StoredV8Treasury>,
+    #[serde(default)]
+    native_launch_context: Option<crate::poseidon2_v8_sync::launch_sync::StoredNativeLaunchContext>,
+    native_rp06_transfers: Vec<crate::rp06_transfer_store::StoredRp06TransferCandidate>,
+
+    private_spend_issued: crate::private_spend::IssuedPrivateSpendAddresses,
+    private_spend_notes: Vec<crate::private_spend::StoredPrivateSpendNote>,
+    private_spend_templates: Vec<private_spend_journal::StoredPrivateTemplate>,
+    private_spend_attempts: Vec<private_spend_journal::StoredPrivateAttempt>,
+    private_spend_relation_digest: Option<Vec<u8>>,
+    asset_spend: asset_spend_store::AssetWalletState,
+}
+
+impl From<WalletStateV19> for WalletState {
+    fn from(value: WalletStateV19) -> Self {
+        Self {
+            mode: value.mode,
+            tree_depth: value.tree_depth,
+            root_secret: value.root_secret,
+            derived: value.derived,
+            incoming: value.incoming,
+            full_viewing_key: value.full_viewing_key,
+            outgoing: value.outgoing,
+            next_address_index: value.next_address_index,
+            notes: value.notes,
+            pending: value.pending,
+            recent: value.recent,
+            commitments: value.commitments,
+            commitment_sources: value.commitment_sources,
+            next_commitment_index: value.next_commitment_index,
+            next_ciphertext_index: value.next_ciphertext_index,
+            last_synced_height: value.last_synced_height,
+            last_synced_block_hash: value.last_synced_block_hash,
+            outgoing_disclosures: value.outgoing_disclosures,
+            genesis_hash: value.genesis_hash,
+            multisig_accounts: value.multisig_accounts,
+            local_note_openings: value.local_note_openings,
+            poseidon2_v8: value.poseidon2_v8,
+            poseidon2_v8_reservations: value.poseidon2_v8_reservations,
+            htlc_swaps: value.htlc_swaps,
+            poseidon2_v8_treasuries: value.poseidon2_v8_treasuries,
+            native_launch_context: value.native_launch_context,
+            native_rp06_transfers: value.native_rp06_transfers,
+            private_spend_issued: value.private_spend_issued,
+            private_spend_notes: value.private_spend_notes,
+            private_spend_templates: value.private_spend_templates,
+            private_spend_attempts: value.private_spend_attempts,
+            private_spend_relation_digest: value.private_spend_relation_digest,
+            asset_spend: value.asset_spend,
+            recovery: Default::default(),
+        }
+    }
+}
+fn deserialize_wallet_state_v19(bytes: &[u8]) -> Result<WalletState, WalletError> {
+    let state = WalletState::from(deserialize_exact::<WalletStateV19>(bytes)?);
+    validate_wallet_state(&state)?;
+    Ok(state)
+}
+
+// Exact V18 positional payload. Never append or reorder these fields.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV18 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<PendingTransaction>,
+    #[serde(default)]
+    recent: Vec<RecentTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    #[serde(default)]
+    commitment_sources: Vec<NoteSource>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default, with = "serde_option_bytes32")]
+    last_synced_block_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    /// Genesis hash of the chain this wallet was synced with.
+    /// Used to detect chain resets/mismatches.
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    multisig_accounts: Vec<MultisigAccountRecord>,
+    #[serde(default)]
+    local_note_openings: Vec<LocalNoteOpeningRecord>,
+    poseidon2_v8: Poseidon2V8WalletState,
+    poseidon2_v8_reservations: Vec<StoredPoseidon2V8Reservation>,
+    htlc_swaps: Vec<htlc_store::StoredHtlcSwap>,
+    poseidon2_v8_treasuries: Vec<crate::poseidon2_v8_multisig::StoredV8Treasury>,
+    #[serde(default)]
+    native_launch_context: Option<crate::poseidon2_v8_sync::launch_sync::StoredNativeLaunchContext>,
+    native_rp06_transfers: Vec<crate::rp06_transfer_store::StoredRp06TransferCandidate>,
+
+    private_spend_issued: crate::private_spend::IssuedPrivateSpendAddresses,
+    private_spend_notes: Vec<crate::private_spend::StoredPrivateSpendNote>,
+    private_spend_templates: Vec<private_spend_journal::StoredPrivateTemplate>,
+    private_spend_attempts: Vec<private_spend_journal::StoredPrivateAttempt>,
+    private_spend_relation_digest: Option<Vec<u8>>,
+}
+impl From<WalletStateV18> for WalletState {
+    fn from(value: WalletStateV18) -> Self {
+        Self {
+            mode: value.mode,
+            tree_depth: value.tree_depth,
+            root_secret: value.root_secret,
+            derived: value.derived,
+            incoming: value.incoming,
+            full_viewing_key: value.full_viewing_key,
+            outgoing: value.outgoing,
+            next_address_index: value.next_address_index,
+            notes: value.notes,
+            pending: value.pending,
+            recent: value.recent,
+            commitments: value.commitments,
+            commitment_sources: value.commitment_sources,
+            next_commitment_index: value.next_commitment_index,
+            next_ciphertext_index: value.next_ciphertext_index,
+            last_synced_height: value.last_synced_height,
+            last_synced_block_hash: value.last_synced_block_hash,
+            outgoing_disclosures: value.outgoing_disclosures,
+            genesis_hash: value.genesis_hash,
+            multisig_accounts: value.multisig_accounts,
+            local_note_openings: value.local_note_openings,
+            poseidon2_v8: value.poseidon2_v8,
+            poseidon2_v8_reservations: value.poseidon2_v8_reservations,
+            htlc_swaps: value.htlc_swaps,
+            poseidon2_v8_treasuries: value.poseidon2_v8_treasuries,
+            native_launch_context: value.native_launch_context,
+            native_rp06_transfers: value.native_rp06_transfers,
+            private_spend_issued: value.private_spend_issued,
+            private_spend_notes: value.private_spend_notes,
+            private_spend_templates: value.private_spend_templates,
+            private_spend_attempts: value.private_spend_attempts,
+            private_spend_relation_digest: value.private_spend_relation_digest,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
+        }
+    }
+}
+
+fn deserialize_wallet_state_v18(bytes: &[u8]) -> Result<WalletState, WalletError> {
+    let state = WalletState::from(deserialize_exact::<WalletStateV18>(bytes)?);
+    validate_legacy_wallet_key_material(&state)?;
+    Ok(state)
+}
+
+// Exact V17 positional payload. Never append or reorder these fields.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV17 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<PendingTransaction>,
+    #[serde(default)]
+    recent: Vec<RecentTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    #[serde(default)]
+    commitment_sources: Vec<NoteSource>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default, with = "serde_option_bytes32")]
+    last_synced_block_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    /// Genesis hash of the chain this wallet was synced with.
+    /// Used to detect chain resets/mismatches.
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    multisig_accounts: Vec<MultisigAccountRecord>,
+    #[serde(default)]
+    local_note_openings: Vec<LocalNoteOpeningRecord>,
+    #[serde(with = "frozen_v17_mirror_codec")]
+    poseidon2_v8: Poseidon2V8WalletState,
+    poseidon2_v8_reservations: Vec<StoredPoseidon2V8Reservation>,
+    htlc_swaps: Vec<htlc_store::StoredHtlcSwap>,
+    poseidon2_v8_treasuries: Vec<crate::poseidon2_v8_multisig::StoredV8Treasury>,
+    #[serde(default)]
+    native_launch_context: Option<crate::poseidon2_v8_sync::launch_sync::StoredNativeLaunchContext>,
+    native_rp06_transfers: Vec<crate::rp06_transfer_store::StoredRp06TransferCandidate>,
+
+    private_spend_issued: crate::private_spend::IssuedPrivateSpendAddresses,
+    private_spend_notes: Vec<crate::private_spend::StoredPrivateSpendNote>,
+    private_spend_templates: Vec<private_spend_journal::StoredPrivateTemplate>,
+    private_spend_attempts: Vec<private_spend_journal::StoredPrivateAttempt>,
+    private_spend_relation_digest: Option<Vec<u8>>,
+}
+impl From<WalletStateV17> for WalletState {
+    fn from(value: WalletStateV17) -> Self {
+        Self {
+            mode: value.mode,
+            tree_depth: value.tree_depth,
+            root_secret: value.root_secret,
+            derived: value.derived,
+            incoming: value.incoming,
+            full_viewing_key: value.full_viewing_key,
+            outgoing: value.outgoing,
+            next_address_index: value.next_address_index,
+            notes: value.notes,
+            pending: value.pending,
+            recent: value.recent,
+            commitments: value.commitments,
+            commitment_sources: value.commitment_sources,
+            next_commitment_index: value.next_commitment_index,
+            next_ciphertext_index: value.next_ciphertext_index,
+            last_synced_height: value.last_synced_height,
+            last_synced_block_hash: value.last_synced_block_hash,
+            outgoing_disclosures: value.outgoing_disclosures,
+            genesis_hash: value.genesis_hash,
+            multisig_accounts: value.multisig_accounts,
+            local_note_openings: value.local_note_openings,
+            poseidon2_v8: value.poseidon2_v8,
+            poseidon2_v8_reservations: value.poseidon2_v8_reservations,
+            htlc_swaps: value.htlc_swaps,
+            poseidon2_v8_treasuries: value.poseidon2_v8_treasuries,
+            native_launch_context: value.native_launch_context,
+            native_rp06_transfers: value.native_rp06_transfers,
+            private_spend_issued: value.private_spend_issued,
+            private_spend_notes: value.private_spend_notes,
+            private_spend_templates: value.private_spend_templates,
+            private_spend_attempts: value.private_spend_attempts,
+            private_spend_relation_digest: value.private_spend_relation_digest,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
+        }
+    }
+}
+
+mod frozen_v17_mirror_codec {
+    use super::*;
+    pub fn serialize<S: serde::Serializer>(
+        mirror: &Poseidon2V8WalletState,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        mirror
+            .to_legacy_v17()
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Poseidon2V8WalletState, D::Error> {
+        let frozen =
+            crate::poseidon2_v8_sync::Poseidon2V8WalletStateV17::deserialize(deserializer)?;
+        frozen
+            .into_legacy_read_only()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+fn deserialize_wallet_state_v17(bytes: &[u8]) -> Result<WalletState, WalletError> {
+    let state = WalletState::from(deserialize_exact::<WalletStateV17>(bytes)?);
+    validate_legacy_wallet_key_material(&state)?;
+    Ok(state)
+}
+
+fn validate_legacy_wallet_key_material(state: &WalletState) -> Result<(), WalletError> {
+    if let Some(root) = state.root_secret {
+        let derived = RootSecret::from_bytes(root).derive();
+        if state.mode != WalletMode::Full
+            || state.derived.as_ref() != Some(&derived)
+            || state.incoming != IncomingViewingKey::from_keys(&derived)
+            || state.full_viewing_key.as_ref() != Some(&FullViewingKey::from_keys(&derived))
+            || state.outgoing.as_ref() != Some(&OutgoingViewingKey::from_keys(&derived))
+        {
+            return Err(WalletError::InvalidState(
+                "legacy wallet key identity mismatch",
+            ));
+        }
+    } else if state.mode == WalletMode::Full {
+        return Err(WalletError::InvalidState(
+            "full legacy wallet has no root secret",
+        ));
+    }
+    for account in &state.multisig_accounts {
+        validate_account_record(account)?;
+    }
+    Ok(())
+}
+
+/// Exact V13 payload. Keep this positional encrypted-wallet shape frozen.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV13 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<PendingTransaction>,
+    #[serde(default)]
+    recent: Vec<RecentTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    #[serde(default)]
+    commitment_sources: Vec<NoteSource>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default, with = "serde_option_bytes32")]
+    last_synced_block_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    /// Genesis hash of the chain this wallet was synced with.
+    /// Used to detect chain resets/mismatches.
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    multisig_accounts: Vec<MultisigAccountRecord>,
+    #[serde(default)]
+    local_note_openings: Vec<LocalNoteOpeningRecord>,
+    #[serde(with = "frozen_v17_mirror_codec")]
+    poseidon2_v8: Poseidon2V8WalletState,
+    poseidon2_v8_reservations: Vec<StoredPoseidon2V8Reservation>,
+    htlc_swaps: Vec<htlc_store::StoredHtlcSwap>,
+    poseidon2_v8_treasuries: Vec<crate::poseidon2_v8_multisig::StoredV8TreasuryV14>,
+    #[serde(default)]
+    native_launch_context: Option<crate::poseidon2_v8_sync::launch_sync::StoredNativeLaunchContext>,
+}
+
+impl From<WalletStateV13> for WalletState {
+    fn from(value: WalletStateV13) -> Self {
+        Self {
+            mode: value.mode,
+            tree_depth: value.tree_depth,
+            root_secret: value.root_secret,
+            derived: value.derived,
+            incoming: value.incoming,
+            full_viewing_key: value.full_viewing_key,
+            outgoing: value.outgoing,
+            next_address_index: value.next_address_index,
+            notes: value.notes,
+            pending: value.pending,
+            recent: value.recent,
+            commitments: value.commitments,
+            commitment_sources: value.commitment_sources,
+            next_commitment_index: value.next_commitment_index,
+            next_ciphertext_index: value.next_ciphertext_index,
+            last_synced_height: value.last_synced_height,
+            last_synced_block_hash: value.last_synced_block_hash,
+            outgoing_disclosures: value.outgoing_disclosures,
+            genesis_hash: value.genesis_hash,
+            multisig_accounts: value.multisig_accounts,
+            local_note_openings: value.local_note_openings,
+            poseidon2_v8: value.poseidon2_v8,
+            poseidon2_v8_reservations: value.poseidon2_v8_reservations,
+            htlc_swaps: value.htlc_swaps,
+            poseidon2_v8_treasuries: value
+                .poseidon2_v8_treasuries
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            native_launch_context: value.native_launch_context,
+            native_rp06_transfers: Vec::new(),
+            private_spend_issued: Default::default(),
+            private_spend_notes: Vec::new(),
+            private_spend_templates: Vec::new(),
+            private_spend_attempts: Vec::new(),
+            private_spend_relation_digest: None,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
+        }
+    }
+}
+
+/// Exact V14 payload. Keep this positional encrypted-wallet shape frozen.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV14 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<PendingTransaction>,
+    #[serde(default)]
+    recent: Vec<RecentTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    #[serde(default)]
+    commitment_sources: Vec<NoteSource>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default, with = "serde_option_bytes32")]
+    last_synced_block_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    multisig_accounts: Vec<MultisigAccountRecord>,
+    #[serde(default)]
+    local_note_openings: Vec<LocalNoteOpeningRecord>,
+    #[serde(with = "frozen_v17_mirror_codec")]
+    poseidon2_v8: Poseidon2V8WalletState,
+    poseidon2_v8_reservations: Vec<StoredPoseidon2V8Reservation>,
+    htlc_swaps: Vec<htlc_store::StoredHtlcSwap>,
+    poseidon2_v8_treasuries: Vec<crate::poseidon2_v8_multisig::StoredV8TreasuryV14>,
+    #[serde(default)]
+    native_launch_context: Option<crate::poseidon2_v8_sync::launch_sync::StoredNativeLaunchContext>,
+    native_rp06_transfers: Vec<crate::rp06_transfer_store::StoredRp06TransferCandidate>,
+}
+
+impl From<WalletStateV14> for WalletState {
+    fn from(value: WalletStateV14) -> Self {
+        Self {
+            mode: value.mode,
+            tree_depth: value.tree_depth,
+            root_secret: value.root_secret,
+            derived: value.derived,
+            incoming: value.incoming,
+            full_viewing_key: value.full_viewing_key,
+            outgoing: value.outgoing,
+            next_address_index: value.next_address_index,
+            notes: value.notes,
+            pending: value.pending,
+            recent: value.recent,
+            commitments: value.commitments,
+            commitment_sources: value.commitment_sources,
+            next_commitment_index: value.next_commitment_index,
+            next_ciphertext_index: value.next_ciphertext_index,
+            last_synced_height: value.last_synced_height,
+            last_synced_block_hash: value.last_synced_block_hash,
+            outgoing_disclosures: value.outgoing_disclosures,
+            genesis_hash: value.genesis_hash,
+            multisig_accounts: value.multisig_accounts,
+            local_note_openings: value.local_note_openings,
+            poseidon2_v8: value.poseidon2_v8,
+            poseidon2_v8_reservations: value.poseidon2_v8_reservations,
+            htlc_swaps: value.htlc_swaps,
+            poseidon2_v8_treasuries: value
+                .poseidon2_v8_treasuries
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            native_launch_context: value.native_launch_context,
+            native_rp06_transfers: value.native_rp06_transfers,
+            private_spend_issued: Default::default(),
+            private_spend_notes: Vec::new(),
+            private_spend_templates: Vec::new(),
+            private_spend_attempts: Vec::new(),
+            private_spend_relation_digest: None,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
+        }
+    }
+}
+
+/// Exact V12 payload. Keep this positional encrypted-wallet shape frozen.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV12 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<PendingTransaction>,
+    #[serde(default)]
+    recent: Vec<RecentTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    #[serde(default)]
+    commitment_sources: Vec<NoteSource>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default, with = "serde_option_bytes32")]
+    last_synced_block_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    /// Genesis hash of the chain this wallet was synced with.
+    /// Used to detect chain resets/mismatches.
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    multisig_accounts: Vec<MultisigAccountRecord>,
+    #[serde(default)]
+    local_note_openings: Vec<LocalNoteOpeningRecord>,
+    #[serde(with = "frozen_v17_mirror_codec")]
+    poseidon2_v8: Poseidon2V8WalletState,
+    poseidon2_v8_reservations: Vec<StoredPoseidon2V8Reservation>,
+}
+
+impl From<WalletStateV12> for WalletState {
+    fn from(value: WalletStateV12) -> Self {
+        Self {
+            mode: value.mode,
+            tree_depth: value.tree_depth,
+            root_secret: value.root_secret,
+            derived: value.derived,
+            incoming: value.incoming,
+            full_viewing_key: value.full_viewing_key,
+            outgoing: value.outgoing,
+            next_address_index: value.next_address_index,
+            notes: value.notes,
+            pending: value.pending,
+            recent: value.recent,
+            commitments: value.commitments,
+            commitment_sources: value.commitment_sources,
+            next_commitment_index: value.next_commitment_index,
+            next_ciphertext_index: value.next_ciphertext_index,
+            last_synced_height: value.last_synced_height,
+            last_synced_block_hash: value.last_synced_block_hash,
+            outgoing_disclosures: value.outgoing_disclosures,
+            genesis_hash: value.genesis_hash,
+            multisig_accounts: value.multisig_accounts,
+            local_note_openings: value.local_note_openings,
+            poseidon2_v8: value.poseidon2_v8,
+            poseidon2_v8_reservations: value.poseidon2_v8_reservations,
+            htlc_swaps: Vec::new(),
+            poseidon2_v8_treasuries: Vec::new(),
+            native_launch_context: None,
+            native_rp06_transfers: Vec::new(),
+            private_spend_issued: Default::default(),
+            private_spend_notes: Vec::new(),
+            private_spend_templates: Vec::new(),
+            private_spend_attempts: Vec::new(),
+            private_spend_relation_digest: None,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
+        }
+    }
 }
 
 /// Exact V11 payload. Do not append fields to this frozen bincode shape.
@@ -2227,6 +3471,7 @@ struct WalletStateV11 {
     genesis_hash: Option<[u8; 32]>,
     multisig_accounts: Vec<MultisigAccountRecord>,
     local_note_openings: Vec<LocalNoteOpeningRecord>,
+    #[serde(with = "frozen_v17_mirror_codec")]
     poseidon2_v8: Poseidon2V8WalletState,
 }
 
@@ -2256,6 +3501,17 @@ impl From<WalletStateV11> for WalletState {
             local_note_openings: value.local_note_openings,
             poseidon2_v8: value.poseidon2_v8,
             poseidon2_v8_reservations: Vec::new(),
+            htlc_swaps: Vec::new(),
+            poseidon2_v8_treasuries: Vec::new(),
+            native_launch_context: None,
+            native_rp06_transfers: Vec::new(),
+            private_spend_issued: Default::default(),
+            private_spend_notes: Vec::new(),
+            private_spend_templates: Vec::new(),
+            private_spend_attempts: Vec::new(),
+            private_spend_relation_digest: None,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
         }
     }
 }
@@ -2539,6 +3795,17 @@ impl From<WalletStateV10> for WalletState {
             local_note_openings: value.local_note_openings,
             poseidon2_v8: Poseidon2V8WalletState::default(),
             poseidon2_v8_reservations: Vec::new(),
+            htlc_swaps: Vec::new(),
+            poseidon2_v8_treasuries: Vec::new(),
+            native_launch_context: None,
+            native_rp06_transfers: Vec::new(),
+            private_spend_issued: Default::default(),
+            private_spend_notes: Vec::new(),
+            private_spend_templates: Vec::new(),
+            private_spend_attempts: Vec::new(),
+            private_spend_relation_digest: None,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
         }
     }
 }
@@ -2577,6 +3844,17 @@ impl TryFrom<WalletStateV9> for WalletState {
             local_note_openings: value.local_note_openings,
             poseidon2_v8: Poseidon2V8WalletState::default(),
             poseidon2_v8_reservations: Vec::new(),
+            htlc_swaps: Vec::new(),
+            poseidon2_v8_treasuries: Vec::new(),
+            native_launch_context: None,
+            native_rp06_transfers: Vec::new(),
+            private_spend_issued: Default::default(),
+            private_spend_notes: Vec::new(),
+            private_spend_templates: Vec::new(),
+            private_spend_attempts: Vec::new(),
+            private_spend_relation_digest: None,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
         })
     }
 }
@@ -2615,6 +3893,17 @@ impl TryFrom<WalletStateV9BeforeNoteSources> for WalletState {
             local_note_openings: value.local_note_openings,
             poseidon2_v8: Poseidon2V8WalletState::default(),
             poseidon2_v8_reservations: Vec::new(),
+            htlc_swaps: Vec::new(),
+            poseidon2_v8_treasuries: Vec::new(),
+            native_launch_context: None,
+            native_rp06_transfers: Vec::new(),
+            private_spend_issued: Default::default(),
+            private_spend_notes: Vec::new(),
+            private_spend_templates: Vec::new(),
+            private_spend_attempts: Vec::new(),
+            private_spend_relation_digest: None,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
         })
     }
 }
@@ -2653,6 +3942,17 @@ impl TryFrom<WalletStateV6> for WalletState {
             local_note_openings: Vec::new(),
             poseidon2_v8: Poseidon2V8WalletState::default(),
             poseidon2_v8_reservations: Vec::new(),
+            htlc_swaps: Vec::new(),
+            poseidon2_v8_treasuries: Vec::new(),
+            native_launch_context: None,
+            native_rp06_transfers: Vec::new(),
+            private_spend_issued: Default::default(),
+            private_spend_notes: Vec::new(),
+            private_spend_templates: Vec::new(),
+            private_spend_attempts: Vec::new(),
+            private_spend_relation_digest: None,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
         })
     }
 }
@@ -2703,6 +4003,17 @@ impl TryFrom<WalletStateV8> for WalletState {
             local_note_openings,
             poseidon2_v8: Poseidon2V8WalletState::default(),
             poseidon2_v8_reservations: Vec::new(),
+            htlc_swaps: Vec::new(),
+            poseidon2_v8_treasuries: Vec::new(),
+            native_launch_context: None,
+            native_rp06_transfers: Vec::new(),
+            private_spend_issued: Default::default(),
+            private_spend_notes: Vec::new(),
+            private_spend_templates: Vec::new(),
+            private_spend_attempts: Vec::new(),
+            private_spend_relation_digest: None,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
         })
     }
 }
@@ -2741,6 +4052,17 @@ impl TryFrom<WalletStateV7> for WalletState {
             local_note_openings: Vec::new(),
             poseidon2_v8: Poseidon2V8WalletState::default(),
             poseidon2_v8_reservations: Vec::new(),
+            htlc_swaps: Vec::new(),
+            poseidon2_v8_treasuries: Vec::new(),
+            native_launch_context: None,
+            native_rp06_transfers: Vec::new(),
+            private_spend_issued: Default::default(),
+            private_spend_notes: Vec::new(),
+            private_spend_templates: Vec::new(),
+            private_spend_attempts: Vec::new(),
+            private_spend_relation_digest: None,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
         })
     }
 }
@@ -3358,6 +4680,96 @@ mod serde_bytes_vec {
 }
 
 #[cfg(test)]
+fn legacy_test_fixture_v11(state: &WalletState) -> WalletStateV11 {
+    WalletStateV11 {
+        mode: state.mode.clone(),
+        tree_depth: state.tree_depth.clone(),
+        root_secret: state.root_secret.clone(),
+        derived: state.derived.clone(),
+        incoming: state.incoming.clone(),
+        full_viewing_key: state.full_viewing_key.clone(),
+        outgoing: state.outgoing.clone(),
+        next_address_index: state.next_address_index.clone(),
+        notes: state.notes.clone(),
+        pending: state.pending.clone(),
+        recent: state.recent.clone(),
+        commitments: state.commitments.clone(),
+        commitment_sources: state.commitment_sources.clone(),
+        next_commitment_index: state.next_commitment_index.clone(),
+        next_ciphertext_index: state.next_ciphertext_index.clone(),
+        last_synced_height: state.last_synced_height.clone(),
+        last_synced_block_hash: state.last_synced_block_hash.clone(),
+        outgoing_disclosures: state.outgoing_disclosures.clone(),
+        genesis_hash: state.genesis_hash.clone(),
+        multisig_accounts: state.multisig_accounts.clone(),
+        local_note_openings: state.local_note_openings.clone(),
+        poseidon2_v8: state.poseidon2_v8.clone(),
+    }
+}
+
+#[cfg(test)]
+fn legacy_test_fixture_v12(state: &WalletState) -> WalletStateV12 {
+    WalletStateV12 {
+        mode: state.mode.clone(),
+        tree_depth: state.tree_depth.clone(),
+        root_secret: state.root_secret.clone(),
+        derived: state.derived.clone(),
+        incoming: state.incoming.clone(),
+        full_viewing_key: state.full_viewing_key.clone(),
+        outgoing: state.outgoing.clone(),
+        next_address_index: state.next_address_index.clone(),
+        notes: state.notes.clone(),
+        pending: state.pending.clone(),
+        recent: state.recent.clone(),
+        commitments: state.commitments.clone(),
+        commitment_sources: state.commitment_sources.clone(),
+        next_commitment_index: state.next_commitment_index.clone(),
+        next_ciphertext_index: state.next_ciphertext_index.clone(),
+        last_synced_height: state.last_synced_height.clone(),
+        last_synced_block_hash: state.last_synced_block_hash.clone(),
+        outgoing_disclosures: state.outgoing_disclosures.clone(),
+        genesis_hash: state.genesis_hash.clone(),
+        multisig_accounts: state.multisig_accounts.clone(),
+        local_note_openings: state.local_note_openings.clone(),
+        poseidon2_v8: state.poseidon2_v8.clone(),
+        poseidon2_v8_reservations: state.poseidon2_v8_reservations.clone(),
+    }
+}
+
+#[cfg(test)]
+fn legacy_test_fixture_v13(state: &WalletState) -> WalletStateV13 {
+    assert!(state.poseidon2_v8_treasuries.is_empty());
+    WalletStateV13 {
+        mode: state.mode.clone(),
+        tree_depth: state.tree_depth.clone(),
+        root_secret: state.root_secret.clone(),
+        derived: state.derived.clone(),
+        incoming: state.incoming.clone(),
+        full_viewing_key: state.full_viewing_key.clone(),
+        outgoing: state.outgoing.clone(),
+        next_address_index: state.next_address_index.clone(),
+        notes: state.notes.clone(),
+        pending: state.pending.clone(),
+        recent: state.recent.clone(),
+        commitments: state.commitments.clone(),
+        commitment_sources: state.commitment_sources.clone(),
+        next_commitment_index: state.next_commitment_index.clone(),
+        next_ciphertext_index: state.next_ciphertext_index.clone(),
+        last_synced_height: state.last_synced_height.clone(),
+        last_synced_block_hash: state.last_synced_block_hash.clone(),
+        outgoing_disclosures: state.outgoing_disclosures.clone(),
+        genesis_hash: state.genesis_hash.clone(),
+        multisig_accounts: state.multisig_accounts.clone(),
+        local_note_openings: state.local_note_openings.clone(),
+        poseidon2_v8: state.poseidon2_v8.clone(),
+        poseidon2_v8_reservations: state.poseidon2_v8_reservations.clone(),
+        htlc_swaps: state.htlc_swaps.clone(),
+        poseidon2_v8_treasuries: Vec::new(),
+        native_launch_context: state.native_launch_context.clone(),
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::notes::MemoPlaintext;
@@ -3455,6 +4867,270 @@ mod tests {
     }
 
     #[test]
+    fn v14_exact_v13_migration_preserves_launch_identity_and_key_bytes() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("wallet-v13");
+        let store =
+            WalletStore::create_from_root(&path, "passphrase", RootSecret::from_bytes([0x73; 32]))
+                .unwrap();
+        store.next_address().unwrap();
+        let context = crate::poseidon2_v8_sync::LaunchWalletContext::new(
+            [0x31; 32], [0x32; 32], [0x33; 64], 1, 100,
+        )
+        .unwrap();
+        store
+            .ensure_poseidon2_v8_launch_genesis_for_retained_test(context, [1, 2, 3, 4, 5, 6, 7])
+            .unwrap();
+        let expected_tip = store.poseidon2_v8_tip().unwrap();
+        let legacy = store
+            .with_state(|state| Ok(legacy_test_fixture_v13(state)))
+            .unwrap();
+        let plaintext = bincode::serialize(&legacy).unwrap();
+        let migrated = deserialize_wallet_state_v13(&plaintext).unwrap();
+        assert_eq!(migrated.next_address_index, 1);
+        assert!(migrated.native_rp06_transfers.is_empty());
+        assert_eq!(
+            migrated
+                .native_launch_context
+                .unwrap()
+                .current_context()
+                .unwrap(),
+            context
+        );
+        let mut trailing = plaintext.clone();
+        trailing.push(0);
+        assert!(deserialize_wallet_state_v13(&trailing).is_err());
+        assert!(deserialize_wallet_state(&plaintext).is_err());
+        let nonce = [0x27; NONCE_LEN];
+        let ciphertext = ChaCha20Poly1305::new(&store.key.into())
+            .encrypt(
+                &nonce.into(),
+                Payload {
+                    msg: &plaintext,
+                    aad: &store.salt,
+                },
+            )
+            .unwrap();
+        let file = WalletFile {
+            version: LEGACY_FILE_VERSION_V13,
+            salt: store.salt,
+            nonce,
+            ciphertext,
+        };
+        write_private_file(&path, &bincode::serialize(&file).unwrap()).unwrap();
+        let before = fs::read(&path).unwrap();
+        let snapshot = WalletStore::open_read_only(&path, "passphrase").unwrap();
+        assert_eq!(snapshot.launch_context().unwrap(), context);
+        assert_eq!(snapshot.signing_seed().unwrap(), [0x73; 32]);
+        assert_eq!(fs::read(&path).unwrap(), before);
+        drop(snapshot);
+        drop(store);
+        let reopened = WalletStore::open_read_only(&path, "passphrase").unwrap();
+        assert_eq!(reopened.signing_seed().unwrap(), [0x73; 32]);
+        assert_eq!(reopened.poseidon2_v8_tip().unwrap(), expected_tip);
+        assert_eq!(reopened.launch_context().unwrap(), context);
+        assert!(reopened.rp06_transfer_candidate_ids().unwrap().is_empty());
+        assert_eq!(
+            deserialize_exact::<WalletFile>(&fs::read(path).unwrap())
+                .unwrap()
+                .version,
+            LEGACY_FILE_VERSION_V13
+        );
+    }
+
+    #[test]
+    fn v15_migrates_v14_wallet_payload() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("wallet-v14");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        store.next_address().unwrap();
+        let descriptor = crate::poseidon2_v8_multisig::V8TreasuryDescriptor {
+            chain_id: [1; 32],
+            account_id: [2; 32],
+            policy_root: [3; 7],
+            policy_nullifier_key: [4; 5],
+            signer_tags: [[5; 7]; 6],
+            receive_address: crate::address::ShieldedAddress::default(),
+        };
+        let old_plan = crate::poseidon2_v8_multisig::V8TreasuryPlanV14 {
+            account_id: descriptor.account_id,
+            source_commitment: [6; 7],
+            source_position: 7,
+            source_note_words: vec![8; 18],
+            recipient_address: crate::address::ShieldedAddress::default(),
+            public_words: vec![9; 10],
+            output_note_words: [vec![10; 18], vec![11; 18]],
+            output_ciphertexts: [Some(vec![12; 13]), Some(vec![14; 15])],
+            intent_digest: [16; 7],
+        };
+        let converted_plan: crate::poseidon2_v8_multisig::V8TreasuryPlan = old_plan.clone().into();
+        let old_review_digest = converted_plan.review_digest().unwrap();
+        let retained_attempt = crate::poseidon2_v8_multisig::V8TreasuryAttempt {
+            review_digest: old_review_digest.to_vec(),
+            nullifiers: vec![[17; 7], [18; 7]],
+            ordinary_note_refs: vec![([19; 7], 20)],
+            policy_note_refs: vec![([21; 7], 22)],
+            status: crate::poseidon2_v8_multisig::V8TreasuryAttemptStatus::SubmissionUncertain,
+            action_id: Some(vec![23; 48]),
+            mined_in: Some((24, [25; 32])),
+            material_snapshot: Some(crate::poseidon2_v8_multisig::V8TreasuryMaterialSnapshot {
+                public_words: vec![26; 27],
+                witness_words: vec![28; 29],
+                inline_ciphertext_bytes: vec![30; 31],
+            }),
+            candidate_inline: Some(vec![32; 33]),
+        };
+        let old_treasury = crate::poseidon2_v8_multisig::StoredV8TreasuryV14 {
+            descriptor: descriptor.clone(),
+            notes: vec![crate::poseidon2_v8_multisig::V8TreasuryNote {
+                commitment: [34; 7],
+                note_words: vec![35; 18],
+                kind: crate::poseidon2_v8_multisig::V8TreasuryNoteKind::Value,
+            }],
+            plans: vec![old_plan],
+            attempts: vec![retained_attempt.clone()],
+        };
+        let expected_treasury: crate::poseidon2_v8_multisig::StoredV8Treasury =
+            old_treasury.clone().into();
+        let plaintext = store
+            .with_state(|state| {
+                let legacy = WalletStateV14 {
+                    mode: state.mode,
+                    tree_depth: state.tree_depth,
+                    root_secret: state.root_secret,
+                    derived: state.derived.clone(),
+                    incoming: state.incoming.clone(),
+                    full_viewing_key: state.full_viewing_key.clone(),
+                    outgoing: state.outgoing.clone(),
+                    next_address_index: state.next_address_index,
+                    notes: state.notes.clone(),
+                    pending: state.pending.clone(),
+                    recent: state.recent.clone(),
+                    commitments: state.commitments.clone(),
+                    commitment_sources: state.commitment_sources.clone(),
+                    next_commitment_index: state.next_commitment_index,
+                    next_ciphertext_index: state.next_ciphertext_index,
+                    last_synced_height: state.last_synced_height,
+                    last_synced_block_hash: state.last_synced_block_hash,
+                    outgoing_disclosures: state.outgoing_disclosures.clone(),
+                    genesis_hash: state.genesis_hash,
+                    multisig_accounts: state.multisig_accounts.clone(),
+                    local_note_openings: state.local_note_openings.clone(),
+                    poseidon2_v8: state.poseidon2_v8.clone(),
+                    poseidon2_v8_reservations: state.poseidon2_v8_reservations.clone(),
+                    htlc_swaps: state.htlc_swaps.clone(),
+                    poseidon2_v8_treasuries: vec![old_treasury],
+                    native_launch_context: state.native_launch_context.clone(),
+                    native_rp06_transfers: state.native_rp06_transfers.clone(),
+                };
+                Ok(bincode::serialize(&legacy)?)
+            })
+            .unwrap();
+        let nonce = [0x52; NONCE_LEN];
+        let ciphertext = ChaCha20Poly1305::new(&store.key.into())
+            .encrypt(
+                &nonce.into(),
+                Payload {
+                    msg: &plaintext,
+                    aad: &store.salt,
+                },
+            )
+            .unwrap();
+        let file = WalletFile {
+            version: LEGACY_FILE_VERSION_V14,
+            salt: store.salt,
+            nonce,
+            ciphertext,
+        };
+        write_private_file(&path, &bincode::serialize(&file).unwrap()).unwrap();
+        drop(store);
+        let migrated = WalletStore::open_read_only(&path, "passphrase").unwrap();
+        assert_eq!(
+            migrated
+                .with_state(|state| Ok(state.next_address_index))
+                .unwrap(),
+            1
+        );
+        let records = migrated
+            .with_state(|state| Ok(state.poseidon2_v8_treasuries.clone()))
+            .unwrap();
+        assert_eq!(records, vec![expected_treasury.clone()]);
+        assert_eq!(records[0].notes.len(), 1);
+        assert_eq!(
+            records[0].plans[0].review_digest().unwrap(),
+            old_review_digest
+        );
+        assert_eq!(records[0].attempts, vec![retained_attempt]);
+        assert_eq!(records[0].attempts[0].nullifiers, vec![[17; 7], [18; 7]]);
+        drop(migrated);
+        let reopened = WalletStore::open_read_only(&path, "passphrase").unwrap();
+        let persisted = reopened
+            .with_state(|state| Ok(state.poseidon2_v8_treasuries.clone()))
+            .unwrap();
+        assert_eq!(persisted, vec![expected_treasury]);
+        assert_eq!(
+            deserialize_exact::<WalletFile>(&fs::read(path).unwrap())
+                .unwrap()
+                .version,
+            LEGACY_FILE_VERSION_V14
+        );
+    }
+
+    #[test]
+    fn htlc_v12_migration_preserves_wallet_and_rejects_trailing_payload() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("wallet.dat");
+        let store =
+            WalletStore::create_from_root(&path, "passphrase", RootSecret::from_bytes([0x63; 32]))
+                .unwrap();
+        store.next_address().unwrap();
+        let legacy = store
+            .with_state(|state| Ok(legacy_test_fixture_v12(state)))
+            .unwrap();
+        let plaintext = bincode::serialize(&legacy).unwrap();
+        let migrated = deserialize_wallet_state_v12(&plaintext).unwrap();
+        assert!(migrated.htlc_swaps.is_empty());
+        assert!(migrated.poseidon2_v8_treasuries.is_empty());
+        assert_eq!(migrated.next_address_index, 1);
+        let mut trailing = plaintext.clone();
+        trailing.push(0);
+        assert!(deserialize_wallet_state_v12(&trailing).is_err());
+        assert!(deserialize_wallet_state(&plaintext).is_err());
+        let nonce = [0x24; NONCE_LEN];
+        let ciphertext = ChaCha20Poly1305::new(&store.key.into())
+            .encrypt(
+                &nonce.into(),
+                Payload {
+                    msg: &plaintext,
+                    aad: &store.salt,
+                },
+            )
+            .unwrap();
+        let file = WalletFile {
+            version: LEGACY_FILE_VERSION_V12,
+            salt: store.salt,
+            nonce,
+            ciphertext,
+        };
+        write_private_file(&path, &bincode::serialize(&file).unwrap()).unwrap();
+        let original = fs::read(&path).unwrap();
+        let snapshot = WalletStore::open_read_only(&path, "passphrase").unwrap();
+        assert_eq!(snapshot.signing_seed().unwrap(), [0x63; 32]);
+        assert_eq!(fs::read(&path).unwrap(), original);
+        drop(snapshot);
+        drop(store);
+        let reopened = WalletStore::open_read_only(&path, "passphrase").unwrap();
+        assert_eq!(reopened.signing_seed().unwrap(), [0x63; 32]);
+        assert!(reopened.htlc_swaps().unwrap().is_empty());
+        assert_eq!(
+            deserialize_exact::<WalletFile>(&fs::read(path).unwrap())
+                .unwrap()
+                .version,
+            LEGACY_FILE_VERSION_V12
+        );
+    }
+
+    #[test]
     fn v8_reservation_v11_bincode_migration_preserves_mirror_and_key_bytes() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("wallet.dat");
@@ -3465,12 +5141,9 @@ mod tests {
             .ensure_poseidon2_v8_genesis_for_test([0x41; 32], [1, 2, 3, 4, 5, 6, 7])
             .unwrap();
         let tip = store.poseidon2_v8_tip().unwrap();
-        let current = store
-            .with_state(|state| Ok(bincode::serialize(state)?))
+        let legacy = store
+            .with_state(|state| Ok(legacy_test_fixture_v11(state)))
             .unwrap();
-        // V12's only appended field is an empty Vec's exact 8-byte length.
-        // Decoding as V11 also checks the frozen positional schema itself.
-        let legacy = deserialize_exact::<WalletStateV11>(&current[..current.len() - 8]).unwrap();
         let plaintext = bincode::serialize(&legacy).unwrap();
         assert!(deserialize_wallet_state(&plaintext).is_err());
         let nonce = [0x22; NONCE_LEN];
@@ -3497,7 +5170,7 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), old_file);
         drop(snapshot);
         drop(store);
-        let migrated = WalletStore::open(&path, "passphrase").unwrap();
+        let migrated = WalletStore::open_read_only(&path, "passphrase").unwrap();
         assert_eq!(migrated.poseidon2_v8_tip().unwrap(), tip);
         assert_eq!(migrated.signing_seed().unwrap(), [0x61; 32]);
         assert_eq!(
@@ -3508,7 +5181,7 @@ mod tests {
         );
         assert!(migrated.poseidon2_v8_reservations().unwrap().is_empty());
         let file: WalletFile = deserialize_exact(&fs::read(&path).unwrap()).unwrap();
-        assert_eq!(file.version, FILE_VERSION);
+        assert_eq!(file.version, LEGACY_FILE_VERSION_V11);
         let mut trailing = plaintext;
         trailing.push(0xff);
         assert!(deserialize_wallet_state_v11(&trailing).is_err());
@@ -4140,6 +5813,17 @@ mod tests {
             local_note_openings: Vec::new(),
             poseidon2_v8: Poseidon2V8WalletState::default(),
             poseidon2_v8_reservations: Vec::new(),
+            htlc_swaps: Vec::new(),
+            poseidon2_v8_treasuries: Vec::new(),
+            native_launch_context: None,
+            native_rp06_transfers: Vec::new(),
+            private_spend_issued: Default::default(),
+            private_spend_notes: Vec::new(),
+            private_spend_templates: Vec::new(),
+            private_spend_attempts: Vec::new(),
+            private_spend_relation_digest: None,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
         };
         let mut bytes = bincode::serialize(&state).unwrap();
         bytes.push(0xff);
@@ -4625,5 +6309,789 @@ mod tests {
             .unwrap();
 
         assert!(store.validate_notes_internal_consistency().is_err());
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV15 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<PendingTransaction>,
+    #[serde(default)]
+    recent: Vec<RecentTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    #[serde(default)]
+    commitment_sources: Vec<NoteSource>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default, with = "serde_option_bytes32")]
+    last_synced_block_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    /// Genesis hash of the chain this wallet was synced with.
+    /// Used to detect chain resets/mismatches.
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    multisig_accounts: Vec<MultisigAccountRecord>,
+    #[serde(default)]
+    local_note_openings: Vec<LocalNoteOpeningRecord>,
+    #[serde(with = "frozen_v17_mirror_codec")]
+    poseidon2_v8: Poseidon2V8WalletState,
+    poseidon2_v8_reservations: Vec<StoredPoseidon2V8Reservation>,
+    htlc_swaps: Vec<htlc_store::StoredHtlcSwap>,
+    poseidon2_v8_treasuries: Vec<crate::poseidon2_v8_multisig::StoredV8Treasury>,
+    #[serde(default)]
+    native_launch_context: Option<crate::poseidon2_v8_sync::launch_sync::StoredNativeLaunchContext>,
+    native_rp06_transfers: Vec<crate::rp06_transfer_store::StoredRp06TransferCandidate>,
+}
+impl From<WalletStateV15> for WalletState {
+    fn from(value: WalletStateV15) -> Self {
+        Self {
+            mode: value.mode,
+            tree_depth: value.tree_depth,
+            root_secret: value.root_secret,
+            derived: value.derived,
+            incoming: value.incoming,
+            full_viewing_key: value.full_viewing_key,
+            outgoing: value.outgoing,
+            next_address_index: value.next_address_index,
+            notes: value.notes,
+            pending: value.pending,
+            recent: value.recent,
+            commitments: value.commitments,
+            commitment_sources: value.commitment_sources,
+            next_commitment_index: value.next_commitment_index,
+            next_ciphertext_index: value.next_ciphertext_index,
+            last_synced_height: value.last_synced_height,
+            last_synced_block_hash: value.last_synced_block_hash,
+            outgoing_disclosures: value.outgoing_disclosures,
+            genesis_hash: value.genesis_hash,
+            multisig_accounts: value.multisig_accounts,
+            local_note_openings: value.local_note_openings,
+            poseidon2_v8: value.poseidon2_v8,
+            poseidon2_v8_reservations: value.poseidon2_v8_reservations,
+            htlc_swaps: value.htlc_swaps,
+            poseidon2_v8_treasuries: value.poseidon2_v8_treasuries,
+            native_launch_context: value.native_launch_context,
+            native_rp06_transfers: value.native_rp06_transfers,
+            private_spend_issued: Default::default(),
+            private_spend_notes: Vec::new(),
+            private_spend_templates: Vec::new(),
+            private_spend_attempts: Vec::new(),
+            private_spend_relation_digest: None,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
+        }
+    }
+}
+
+fn deserialize_wallet_state_v15(bytes: &[u8]) -> Result<WalletState, WalletError> {
+    let mut state = WalletState::from(deserialize_exact::<WalletStateV15>(bytes)?);
+    seed_private_spend_issued_addresses(&mut state)?;
+    validate_legacy_wallet_key_material(&state)?;
+    Ok(state)
+}
+
+#[cfg(test)]
+mod private_spend_store_tests {
+    use super::*;
+    #[test]
+    fn private_address_issuance_survives_restart_and_readonly_rejects() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("private.wallet");
+        let store =
+            WalletStore::create_from_root(&path, "test", RootSecret::from_bytes([63; 32])).unwrap();
+        let expected = store.private_spend_address(37).unwrap();
+        assert!(store
+            .with_state(|s| Ok(s.private_spend_issued.contains(37)))
+            .unwrap());
+        drop(store);
+        let reopened = WalletStore::open(&path, "test").unwrap();
+        assert_eq!(reopened.private_spend_address(37).unwrap(), expected);
+        assert!(reopened
+            .with_state(|s| Ok(s.private_spend_issued.contains(37)))
+            .unwrap());
+        assert_eq!(
+            reopened
+                .next_private_spend_address()
+                .unwrap()
+                .diversifier_index,
+            38
+        );
+        drop(reopened);
+        let readonly = WalletStore::open_read_only(&path, "test").unwrap();
+        assert!(readonly.private_spend_address(99).is_err());
+    }
+    #[test]
+    fn private_store_v15_migration_is_exact_and_retains_old_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.wallet");
+        let store =
+            WalletStore::create_from_root(&path, "test", RootSecret::from_bytes([64; 32])).unwrap();
+        for _ in 0..3 {
+            store.next_address().unwrap();
+        }
+        let old = store
+            .with_state(|state| {
+                Ok(WalletStateV15 {
+                    mode: state.mode,
+                    tree_depth: state.tree_depth,
+                    root_secret: state.root_secret,
+                    derived: state.derived.clone(),
+                    incoming: state.incoming.clone(),
+                    full_viewing_key: state.full_viewing_key.clone(),
+                    outgoing: state.outgoing.clone(),
+                    next_address_index: state.next_address_index,
+                    notes: state.notes.clone(),
+                    pending: state.pending.clone(),
+                    recent: state.recent.clone(),
+                    commitments: state.commitments.clone(),
+                    commitment_sources: state.commitment_sources.clone(),
+                    next_commitment_index: state.next_commitment_index,
+                    next_ciphertext_index: state.next_ciphertext_index,
+                    last_synced_height: state.last_synced_height,
+                    last_synced_block_hash: state.last_synced_block_hash,
+                    outgoing_disclosures: state.outgoing_disclosures.clone(),
+                    genesis_hash: state.genesis_hash,
+                    multisig_accounts: state.multisig_accounts.clone(),
+                    local_note_openings: state.local_note_openings.clone(),
+                    poseidon2_v8: state.poseidon2_v8.clone(),
+                    poseidon2_v8_reservations: state.poseidon2_v8_reservations.clone(),
+                    htlc_swaps: state.htlc_swaps.clone(),
+                    poseidon2_v8_treasuries: state.poseidon2_v8_treasuries.clone(),
+                    native_launch_context: state.native_launch_context.clone(),
+                    native_rp06_transfers: state.native_rp06_transfers.clone(),
+                })
+            })
+            .unwrap();
+        let bytes = bincode::serialize(&old).unwrap();
+        let migrated = deserialize_wallet_state_v15(&bytes).unwrap();
+        assert_eq!(migrated.next_address_index, 3);
+        assert!(migrated.private_spend_issued.contains(2));
+        assert!(!migrated.private_spend_issued.contains(3));
+        assert!(migrated.private_spend_notes.is_empty());
+        assert!(migrated.private_spend_issued.contains(0));
+        assert!(deserialize_wallet_state(&bytes).is_err());
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert!(deserialize_wallet_state_v15(&trailing).is_err());
+    }
+}
+
+fn seed_private_spend_issued_addresses(state: &mut WalletState) -> Result<(), WalletError> {
+    let mut issued = crate::private_spend::IssuedPrivateSpendAddresses::from_legacy_issued_count(
+        state.next_address_index,
+    );
+    if state.poseidon2_v8.canonical_hash(0).is_some() {
+        for note in state.poseidon2_v8.owned_notes()? {
+            issued.record_issued(note.diversifier_index);
+        }
+    }
+    // These policy addresses are also persisted issuance evidence. Their KEM
+    // owner may differ from this wallet; trying an index never grants custody.
+    for treasury in &state.poseidon2_v8_treasuries {
+        issued.record_issued(treasury.descriptor.receive_address.diversifier_index);
+    }
+    state.private_spend_issued = issued;
+    Ok(())
+}
+
+// Exact V16 positional payload; never append fields to this frozen type.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV16 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<PendingTransaction>,
+    #[serde(default)]
+    recent: Vec<RecentTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    #[serde(default)]
+    commitment_sources: Vec<NoteSource>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default, with = "serde_option_bytes32")]
+    last_synced_block_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    /// Genesis hash of the chain this wallet was synced with.
+    /// Used to detect chain resets/mismatches.
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    multisig_accounts: Vec<MultisigAccountRecord>,
+    #[serde(default)]
+    local_note_openings: Vec<LocalNoteOpeningRecord>,
+    #[serde(with = "frozen_v17_mirror_codec")]
+    poseidon2_v8: Poseidon2V8WalletState,
+    poseidon2_v8_reservations: Vec<StoredPoseidon2V8Reservation>,
+    htlc_swaps: Vec<htlc_store::StoredHtlcSwap>,
+    poseidon2_v8_treasuries: Vec<crate::poseidon2_v8_multisig::StoredV8Treasury>,
+    #[serde(default)]
+    native_launch_context: Option<crate::poseidon2_v8_sync::launch_sync::StoredNativeLaunchContext>,
+    native_rp06_transfers: Vec<crate::rp06_transfer_store::StoredRp06TransferCandidate>,
+
+    private_spend_issued: crate::private_spend::IssuedPrivateSpendAddresses,
+    private_spend_notes: Vec<crate::private_spend::StoredPrivateSpendNote>,
+}
+
+impl From<WalletStateV16> for WalletState {
+    fn from(value: WalletStateV16) -> Self {
+        Self {
+            mode: value.mode,
+            tree_depth: value.tree_depth,
+            root_secret: value.root_secret,
+            derived: value.derived,
+            incoming: value.incoming,
+            full_viewing_key: value.full_viewing_key,
+            outgoing: value.outgoing,
+            next_address_index: value.next_address_index,
+            notes: value.notes,
+            pending: value.pending,
+            recent: value.recent,
+            commitments: value.commitments,
+            commitment_sources: value.commitment_sources,
+            next_commitment_index: value.next_commitment_index,
+            next_ciphertext_index: value.next_ciphertext_index,
+            last_synced_height: value.last_synced_height,
+            last_synced_block_hash: value.last_synced_block_hash,
+            outgoing_disclosures: value.outgoing_disclosures,
+            genesis_hash: value.genesis_hash,
+            multisig_accounts: value.multisig_accounts,
+            local_note_openings: value.local_note_openings,
+            poseidon2_v8: value.poseidon2_v8,
+            poseidon2_v8_reservations: value.poseidon2_v8_reservations,
+            htlc_swaps: value.htlc_swaps,
+            poseidon2_v8_treasuries: value.poseidon2_v8_treasuries,
+            native_launch_context: value.native_launch_context,
+            native_rp06_transfers: value.native_rp06_transfers,
+            private_spend_issued: value.private_spend_issued,
+            private_spend_notes: value.private_spend_notes,
+            private_spend_templates: Vec::new(),
+            private_spend_attempts: Vec::new(),
+            private_spend_relation_digest: None,
+            asset_spend: Default::default(),
+            recovery: Default::default(),
+        }
+    }
+}
+fn deserialize_wallet_state_v16(bytes: &[u8]) -> Result<WalletState, WalletError> {
+    let state = WalletState::from(deserialize_exact::<WalletStateV16>(bytes)?);
+    validate_legacy_wallet_key_material(&state)?;
+    Ok(state)
+}
+
+#[cfg(test)]
+mod private_spend_v17_tests {
+    use super::*;
+    #[test]
+    fn private_spend_v17_migrates_exact_v16_without_reseeding_sparse_issuance() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = WalletStore::create_from_root(
+            dir.path().join("wallet"),
+            "test",
+            RootSecret::from_bytes([61; 32]),
+        )
+        .unwrap();
+        store.private_spend_address(37).unwrap();
+        let old = store
+            .with_state(|s| {
+                Ok(WalletStateV16 {
+                    mode: s.mode.clone(),
+                    tree_depth: s.tree_depth.clone(),
+                    root_secret: s.root_secret.clone(),
+                    derived: s.derived.clone(),
+                    incoming: s.incoming.clone(),
+                    full_viewing_key: s.full_viewing_key.clone(),
+                    outgoing: s.outgoing.clone(),
+                    next_address_index: s.next_address_index.clone(),
+                    notes: s.notes.clone(),
+                    pending: s.pending.clone(),
+                    recent: s.recent.clone(),
+                    commitments: s.commitments.clone(),
+                    commitment_sources: s.commitment_sources.clone(),
+                    next_commitment_index: s.next_commitment_index.clone(),
+                    next_ciphertext_index: s.next_ciphertext_index.clone(),
+                    last_synced_height: s.last_synced_height.clone(),
+                    last_synced_block_hash: s.last_synced_block_hash.clone(),
+                    outgoing_disclosures: s.outgoing_disclosures.clone(),
+                    genesis_hash: s.genesis_hash.clone(),
+                    multisig_accounts: s.multisig_accounts.clone(),
+                    local_note_openings: s.local_note_openings.clone(),
+                    poseidon2_v8: s.poseidon2_v8.clone(),
+                    poseidon2_v8_reservations: s.poseidon2_v8_reservations.clone(),
+                    htlc_swaps: s.htlc_swaps.clone(),
+                    poseidon2_v8_treasuries: s.poseidon2_v8_treasuries.clone(),
+                    native_launch_context: s.native_launch_context.clone(),
+                    native_rp06_transfers: s.native_rp06_transfers.clone(),
+                    private_spend_issued: s.private_spend_issued.clone(),
+                    private_spend_notes: s.private_spend_notes.clone(),
+                })
+            })
+            .unwrap();
+        let bytes = bincode::serialize(&old).unwrap();
+        let migrated = deserialize_wallet_state_v16(&bytes).unwrap();
+        assert!(migrated.private_spend_issued.contains(37));
+        assert!(migrated.private_spend_templates.is_empty());
+        assert!(migrated.private_spend_attempts.is_empty());
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert!(deserialize_wallet_state_v16(&trailing).is_err());
+    }
+}
+
+impl WalletStore {
+    pub fn poseidon2_v8_canonical_note_witness_at(
+        &self,
+        commitment: [u64; 7],
+        position: u64,
+    ) -> Result<Option<crate::poseidon2_v8_sync::Poseidon2V8CanonicalNoteWitness>, WalletError>
+    {
+        self.with_state(|s| {
+            s.poseidon2_v8
+                .canonical_note_witness_at(commitment, position)
+        })
+    }
+    /// Only an explicitly validated private-only Development token can enter
+    /// this route. No retained-test selector or production capability is inferred.
+    #[cfg(feature = "private-spend-dev-artifacts")]
+    pub fn initialize_private_spend_development_context(
+        &self,
+        token: &crate::private_spend_rpc::DevelopmentPrivateSpendAuthority,
+    ) -> Result<(), WalletError> {
+        let context = token.context();
+        token.authorize(context, token.activation_height(), 1)?;
+        let (stablecoin_root, note_root) = token.genesis_roots();
+        self.with_poseidon2_v8_mut_and_block(None, Some((context, false)), |mirror, _| {
+            token.authorize(context, token.activation_height(), 1)?;
+            mirror.ensure_launch_genesis(context.genesis_hash(), stablecoin_root, note_root)
+        })
+    }
+    #[cfg(feature = "private-spend-dev-artifacts")]
+    pub fn apply_private_spend_development_block(
+        &self,
+        block: &Poseidon2V8CanonicalBlock,
+        token: &crate::private_spend_rpc::DevelopmentPrivateSpendAuthority,
+    ) -> Result<Poseidon2V8SyncDelta, WalletError> {
+        let context = token.context();
+        token.authorize(context, block.height, 1)?;
+        self.with_poseidon2_v8_mut_and_block(Some(block), Some((context, false)), |mirror, keys| {
+            mirror.apply_private_spend_development_block(block, keys, token)
+        })
+    }
+}
+
+impl WalletStore {
+    pub fn initialize_private_spend_source_context(
+        &self,
+        token: &crate::private_spend_rpc::SourcePrivateSpendAuthority,
+    ) -> Result<(), WalletError> {
+        let context = token.context();
+        token.authorize(context, token.activation_height(), 1)?;
+        let (stablecoin_root, note_root) = context.source_genesis_roots()?;
+        self.with_poseidon2_v8_mut_and_block(None, Some((context, true)), |mirror, _| {
+            token.authorize(context, token.activation_height(), 1)?;
+            mirror.ensure_launch_genesis(context.genesis_hash(), stablecoin_root, note_root)
+        })
+    }
+    pub fn apply_private_spend_source_block(
+        &self,
+        block: &Poseidon2V8CanonicalBlock,
+        token: &crate::private_spend_rpc::SourcePrivateSpendAuthority,
+    ) -> Result<Poseidon2V8SyncDelta, WalletError> {
+        let context = token.context();
+        token.authorize(context, block.height, 1)?;
+        self.with_poseidon2_v8_mut_and_block(Some(block), Some((context, true)), |mirror, keys| {
+            mirror.apply_private_spend_source_block(block, keys, context)
+        })
+    }
+}
+
+#[cfg(test)]
+mod legacy_v17_recovery_tests {
+    use super::*;
+    fn frozen_fixture(state: &WalletState) -> WalletStateV17 {
+        WalletStateV17 {
+            mode: state.mode.clone(),
+            tree_depth: state.tree_depth.clone(),
+            root_secret: state.root_secret.clone(),
+            derived: state.derived.clone(),
+            incoming: state.incoming.clone(),
+            full_viewing_key: state.full_viewing_key.clone(),
+            outgoing: state.outgoing.clone(),
+            next_address_index: state.next_address_index.clone(),
+            notes: state.notes.clone(),
+            pending: state.pending.clone(),
+            recent: state.recent.clone(),
+            commitments: state.commitments.clone(),
+            commitment_sources: state.commitment_sources.clone(),
+            next_commitment_index: state.next_commitment_index.clone(),
+            next_ciphertext_index: state.next_ciphertext_index.clone(),
+            last_synced_height: state.last_synced_height.clone(),
+            last_synced_block_hash: state.last_synced_block_hash.clone(),
+            outgoing_disclosures: state.outgoing_disclosures.clone(),
+            genesis_hash: state.genesis_hash.clone(),
+            multisig_accounts: state.multisig_accounts.clone(),
+            local_note_openings: state.local_note_openings.clone(),
+            poseidon2_v8: state.poseidon2_v8.clone(),
+            poseidon2_v8_reservations: state.poseidon2_v8_reservations.clone(),
+            htlc_swaps: state.htlc_swaps.clone(),
+            poseidon2_v8_treasuries: state.poseidon2_v8_treasuries.clone(),
+            native_launch_context: state.native_launch_context.clone(),
+            native_rp06_transfers: state.native_rp06_transfers.clone(),
+            private_spend_issued: state.private_spend_issued.clone(),
+            private_spend_notes: state.private_spend_notes.clone(),
+            private_spend_templates: state.private_spend_templates.clone(),
+            private_spend_attempts: state.private_spend_attempts.clone(),
+            private_spend_relation_digest: state.private_spend_relation_digest.clone(),
+        }
+    }
+    fn write_v17_fixture(store: &WalletStore) {
+        let frozen = store.with_state(|state| Ok(frozen_fixture(state))).unwrap();
+        let plaintext = zeroize::Zeroizing::new(bincode::serialize(&frozen).unwrap());
+        // Typed old payload must roundtrip exactly and reject extra bytes.
+        let parsed = deserialize_exact::<WalletStateV17>(&plaintext).unwrap();
+        assert_eq!(bincode::serialize(&parsed).unwrap(), plaintext.as_slice());
+        let mut trailing = plaintext.to_vec();
+        trailing.push(0);
+        assert!(deserialize_wallet_state_v17(&trailing).is_err());
+        let nonce = [0x6d; NONCE_LEN];
+        let ciphertext = ChaCha20Poly1305::new(&store.key.into())
+            .encrypt(
+                &nonce.into(),
+                Payload {
+                    msg: &plaintext,
+                    aad: &store.salt,
+                },
+            )
+            .unwrap();
+        let file = WalletFile {
+            version: LEGACY_FILE_VERSION_V17,
+            salt: store.salt,
+            nonce,
+            ciphertext,
+        };
+        write_private_file(&store.path, &bincode::serialize(&file).unwrap()).unwrap();
+    }
+    #[test]
+    fn old_v17_read_only_and_recovery_preserve_keys_accounts_and_source_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("historical-wallet");
+        let target = dir.path().join("fresh-wallet");
+        let store = WalletStore::create_from_root(
+            &source,
+            "old-test-only",
+            RootSecret::from_bytes([0x6b; 32]),
+        )
+        .unwrap();
+        let address = store.private_spend_address(37).unwrap();
+        let tags = (1..=3)
+            .map(|i| {
+                signer_tag_from_spend_key(
+                    &RootSecret::from_bytes([i; 32]).derive().spend.to_bytes(),
+                )
+            })
+            .collect();
+        let account = store.create_multisig_account(2, tags).unwrap();
+        let old_seed = store.signing_seed().unwrap();
+        write_v17_fixture(&store);
+        drop(store);
+        let source_bytes = fs::read(&source).unwrap();
+        let readonly = WalletStore::open_read_only(&source, "old-test-only").unwrap();
+        assert!(readonly.is_legacy_read_only());
+        assert_eq!(readonly.signing_seed().unwrap(), old_seed);
+        assert_eq!(readonly.multisig_accounts().unwrap(), vec![account.clone()]);
+        assert!(readonly.next_private_spend_address().is_err());
+        assert!(WalletStore::open(&source, "old-test-only").is_err());
+        assert_eq!(fs::read(&source).unwrap(), source_bytes);
+        drop(readonly);
+        let recovered = WalletStore::recover_keys_to_fresh_wallet(
+            &source,
+            "old-test-only",
+            &target,
+            "new-test-only",
+        )
+        .unwrap();
+        assert!(!recovered.is_legacy_read_only());
+        assert_eq!(recovered.signing_seed().unwrap(), old_seed);
+        assert_eq!(recovered.private_spend_address(37).unwrap(), address);
+        assert_eq!(recovered.multisig_accounts().unwrap(), vec![account]);
+        assert_eq!(recovered.genesis_hash().unwrap(), None);
+        assert!(recovered.launch_context().is_err());
+        assert!(recovered
+            .with_state(|state| Ok(state.private_spend_issued.contains(37)))
+            .unwrap());
+        assert_eq!(fs::read(&source).unwrap(), source_bytes);
+        let target_bytes = fs::read(&target).unwrap();
+        assert!(WalletStore::recover_keys_to_fresh_wallet(
+            &source,
+            "old-test-only",
+            &target,
+            "replacement-test-only"
+        )
+        .is_err());
+        assert!(WalletStore::recover_keys_to_fresh_wallet(
+            &source,
+            "old-test-only",
+            &source,
+            "replacement-test-only"
+        )
+        .is_err());
+        assert_eq!(fs::read(&source).unwrap(), source_bytes);
+        assert_eq!(fs::read(&target).unwrap(), target_bytes);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn recovery_rejects_hardlink_and_symlink_destinations() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        drop(
+            WalletStore::create_from_root(&source, "test-only", RootSecret::from_bytes([0x6c; 32]))
+                .unwrap(),
+        );
+        let before = fs::read(&source).unwrap();
+        let hardlink = dir.path().join("hardlink");
+        fs::hard_link(&source, &hardlink).unwrap();
+        assert!(WalletStore::recover_keys_to_fresh_wallet(
+            &source,
+            "test-only",
+            &hardlink,
+            "test-only"
+        )
+        .is_err());
+        let symlink = dir.path().join("symlink");
+        std::os::unix::fs::symlink(&source, &symlink).unwrap();
+        assert!(WalletStore::recover_keys_to_fresh_wallet(
+            &source,
+            "test-only",
+            &symlink,
+            "test-only"
+        )
+        .is_err());
+        assert_eq!(fs::read(&source).unwrap(), before);
+    }
+}
+
+#[cfg(test)]
+mod legacy_v18_asset_schema_tests {
+    use super::*;
+
+    fn frozen(state: &WalletState) -> WalletStateV18 {
+        WalletStateV18 {
+            mode: state.mode.clone(),
+            tree_depth: state.tree_depth.clone(),
+            root_secret: state.root_secret.clone(),
+            derived: state.derived.clone(),
+            incoming: state.incoming.clone(),
+            full_viewing_key: state.full_viewing_key.clone(),
+            outgoing: state.outgoing.clone(),
+            next_address_index: state.next_address_index.clone(),
+            notes: state.notes.clone(),
+            pending: state.pending.clone(),
+            recent: state.recent.clone(),
+            commitments: state.commitments.clone(),
+            commitment_sources: state.commitment_sources.clone(),
+            next_commitment_index: state.next_commitment_index.clone(),
+            next_ciphertext_index: state.next_ciphertext_index.clone(),
+            last_synced_height: state.last_synced_height.clone(),
+            last_synced_block_hash: state.last_synced_block_hash.clone(),
+            outgoing_disclosures: state.outgoing_disclosures.clone(),
+            genesis_hash: state.genesis_hash.clone(),
+            multisig_accounts: state.multisig_accounts.clone(),
+            local_note_openings: state.local_note_openings.clone(),
+            poseidon2_v8: state.poseidon2_v8.clone(),
+            poseidon2_v8_reservations: state.poseidon2_v8_reservations.clone(),
+            htlc_swaps: state.htlc_swaps.clone(),
+            poseidon2_v8_treasuries: state.poseidon2_v8_treasuries.clone(),
+            native_launch_context: state.native_launch_context.clone(),
+            native_rp06_transfers: state.native_rp06_transfers.clone(),
+            private_spend_issued: state.private_spend_issued.clone(),
+            private_spend_notes: state.private_spend_notes.clone(),
+            private_spend_templates: state.private_spend_templates.clone(),
+            private_spend_attempts: state.private_spend_attempts.clone(),
+            private_spend_relation_digest: state.private_spend_relation_digest.clone(),
+        }
+    }
+
+    fn write_frozen_v18(store: &WalletStore) {
+        let legacy = store.with_state(|state| Ok(frozen(state))).unwrap();
+        let plaintext = zeroize::Zeroizing::new(bincode::serialize(&legacy).unwrap());
+        let parsed = deserialize_exact::<WalletStateV18>(&plaintext).unwrap();
+        assert_eq!(bincode::serialize(&parsed).unwrap(), plaintext.as_slice());
+        let mut trailing = plaintext.to_vec();
+        trailing.push(0);
+        assert!(deserialize_wallet_state_v18(&trailing).is_err());
+        assert!(deserialize_wallet_state(&plaintext).is_err());
+        store
+            .with_state(|state| {
+                let current = bincode::serialize(state).unwrap();
+                // V18 remains the exact prefix. V19 appended asset state;
+                // V20 additionally appends recovery state. Compare the actual
+                // positional bytes so a missing, reordered or changed suffix
+                // cannot pass through an adjusted length expectation.
+                let mut expected = plaintext.to_vec();
+                expected.extend(bincode::serialize(&state.asset_spend).unwrap());
+                expected.extend(bincode::serialize(&state.recovery).unwrap());
+                assert_eq!(current, expected);
+                Ok(())
+            })
+            .unwrap();
+        let nonce = [0x6e; NONCE_LEN];
+        let ciphertext = ChaCha20Poly1305::new(&store.key.into())
+            .encrypt(
+                &nonce.into(),
+                Payload {
+                    msg: &plaintext,
+                    aad: &store.salt,
+                },
+            )
+            .unwrap();
+        let file = WalletFile {
+            version: LEGACY_FILE_VERSION_V18,
+            salt: store.salt,
+            nonce,
+            ciphertext,
+        };
+        write_private_file(&store.path, &bincode::serialize(&file).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn frozen_v18_is_read_only_and_key_recovery_creates_schema20_without_touching_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source-v18");
+        let destination = directory.path().join("recovered-v20");
+        let store = WalletStore::create_from_root(
+            &source,
+            "old-test-only",
+            RootSecret::from_bytes([0x74; 32]),
+        )
+        .unwrap();
+        let address = store.private_spend_address(37).unwrap();
+        let seed = store.signing_seed().unwrap();
+        write_frozen_v18(&store);
+        drop(store);
+        let source_bytes = fs::read(&source).unwrap();
+        let readonly = WalletStore::open_read_only(&source, "old-test-only").unwrap();
+        assert!(readonly.is_legacy_read_only());
+        assert_eq!(readonly.source_file_version, LEGACY_FILE_VERSION_V18);
+        assert_eq!(readonly.signing_seed().unwrap(), seed);
+        assert!(readonly.reset_sync_state().is_err());
+        assert!(WalletStore::open(&source, "old-test-only").is_err());
+        assert_eq!(fs::read(&source).unwrap(), source_bytes);
+        drop(readonly);
+        let recovered = WalletStore::recover_keys_to_fresh_wallet(
+            &source,
+            "old-test-only",
+            &destination,
+            "new-test-only",
+        )
+        .unwrap();
+        assert!(!recovered.is_legacy_read_only());
+        assert_eq!(recovered.signing_seed().unwrap(), seed);
+        assert_eq!(recovered.private_spend_address(37).unwrap(), address);
+        assert!(recovered.launch_context().is_err());
+        assert!(recovered.asset_spend_notes().unwrap().is_empty());
+        assert!(recovered.asset_spend_attempts().unwrap().is_empty());
+        assert!(recovered.recovery_notes().unwrap().is_empty());
+        recovered
+            .with_state(|state| {
+                // Both recovery notes and attempts must start empty. This also
+                // works before a new chain context exists.
+                assert_eq!(
+                    bincode::serialize(&state.recovery).unwrap(),
+                    bincode::serialize(&asset_recovery_store::RecoveryWalletState::default())
+                        .unwrap()
+                );
+                Ok(())
+            })
+            .unwrap();
+        let file = deserialize_exact::<WalletFile>(&fs::read(&destination).unwrap()).unwrap();
+        assert_eq!(file.version, 20);
+        assert_eq!(recovered.source_file_version, 20);
+        drop(recovered);
+        let reopened = WalletStore::open(&destination, "new-test-only").unwrap();
+        assert!(!reopened.is_legacy_read_only());
+        assert_eq!(reopened.source_file_version, 20);
+        assert_eq!(reopened.signing_seed().unwrap(), seed);
+        assert_eq!(reopened.private_spend_address(37).unwrap(), address);
+        assert_eq!(fs::read(&source).unwrap(), source_bytes);
+    }
+}
+
+#[cfg(test)]
+mod recovery_schema20_tests {
+    use super::*;
+    #[test]
+    fn frozen_v19_prefix_and_reader_are_exact_without_writable_upgrade() {
+        let d = tempfile::tempdir().unwrap();
+        let store = WalletStore::create_from_root(
+            d.path().join("schema20"),
+            "disposable",
+            RootSecret::from_bytes([0x54; 32]),
+        )
+        .unwrap();
+        let state = store.state.lock().unwrap();
+        let old = WalletStateV19 {
+            mode: state.mode.clone(),
+            tree_depth: state.tree_depth.clone(),
+            root_secret: state.root_secret.clone(),
+            derived: state.derived.clone(),
+            incoming: state.incoming.clone(),
+            full_viewing_key: state.full_viewing_key.clone(),
+            outgoing: state.outgoing.clone(),
+            next_address_index: state.next_address_index.clone(),
+            notes: state.notes.clone(),
+            pending: state.pending.clone(),
+            recent: state.recent.clone(),
+            commitments: state.commitments.clone(),
+            commitment_sources: state.commitment_sources.clone(),
+            next_commitment_index: state.next_commitment_index.clone(),
+            next_ciphertext_index: state.next_ciphertext_index.clone(),
+            last_synced_height: state.last_synced_height.clone(),
+            last_synced_block_hash: state.last_synced_block_hash.clone(),
+            outgoing_disclosures: state.outgoing_disclosures.clone(),
+            genesis_hash: state.genesis_hash.clone(),
+            multisig_accounts: state.multisig_accounts.clone(),
+            local_note_openings: state.local_note_openings.clone(),
+            poseidon2_v8: state.poseidon2_v8.clone(),
+            poseidon2_v8_reservations: state.poseidon2_v8_reservations.clone(),
+            htlc_swaps: state.htlc_swaps.clone(),
+            poseidon2_v8_treasuries: state.poseidon2_v8_treasuries.clone(),
+            native_launch_context: state.native_launch_context.clone(),
+            native_rp06_transfers: state.native_rp06_transfers.clone(),
+            private_spend_issued: state.private_spend_issued.clone(),
+            private_spend_notes: state.private_spend_notes.clone(),
+            private_spend_templates: state.private_spend_templates.clone(),
+            private_spend_attempts: state.private_spend_attempts.clone(),
+            private_spend_relation_digest: state.private_spend_relation_digest.clone(),
+            asset_spend: state.asset_spend.clone(),
+        };
+        let v19 = bincode::serialize(&old).unwrap();
+        let v20 = bincode::serialize(&*state).unwrap();
+        assert_eq!(&v20[..v19.len()], v19.as_slice());
+        assert_eq!(v20.len() - v19.len(), 16); // The two empty recovery Vec prefixes.
+        assert!(deserialize_wallet_state(&v19).is_err());
+        let recovered = deserialize_wallet_state_v19(&v19).unwrap();
+        assert!(recovered.recovery.notes_are_empty_for_schema_test());
     }
 }

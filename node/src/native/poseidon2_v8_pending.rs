@@ -22,6 +22,12 @@ use super::{
     POSEIDON2_V8_MAX_PENDING_ACTION_BYTES,
 };
 
+/// Exact maximum SCALE overhead for fresh three-output asset envelopes.
+/// The codec test below binds these constants to the actual PendingAction shape.
+/// Historical native two-output overhead remains unchanged.
+pub(crate) const NATIVE_ASSET_SPEND_MAX_PENDING_OUTER_BYTES_V1: usize = 277;
+pub(crate) const NATIVE_ASSET_ADMIN_MAX_PENDING_OUTER_BYTES_V1: usize = 121;
+
 /// A canonical pending action paired with the public transition extracted by
 /// exact V8 proof verification.
 ///
@@ -53,7 +59,21 @@ impl Poseidon2V8PendingAction {
             // Production callers supply a contextually decoded, source-verified
             // exact leaf. Select the larger cap only for exact additive framing;
             // unknown/historical forms retain the old conservative ceiling.
-            max_encoded_bytes: if protocol_shielded_pool::poseidon2_production_transport::preflight_poseidon2_production_smza_native_leaf_exact(exact_native_leaf).is_ok() {
+            max_encoded_bytes: if transaction_circuit::asset_spend_v1_wire::decode_native_asset_spend_action_v1(exact_native_leaf).is_ok() {
+                transaction_circuit::asset_spend_v1_wire::NATIVE_ASSET_SPEND_MAX_ACTION_BYTES_V1 + NATIVE_ASSET_SPEND_MAX_PENDING_OUTER_BYTES_V1
+            } else if transaction_circuit::asset_spend_v1_wire::decode_native_asset_admin_action_v1(exact_native_leaf).is_ok() {
+                transaction_circuit::asset_spend_v1_wire::NATIVE_ASSET_ADMIN_MAX_ACTION_BYTES_V1 + NATIVE_ASSET_ADMIN_MAX_PENDING_OUTER_BYTES_V1
+            } else if transaction_circuit::asset_recovery_wire_v1::decode_spend_ref(exact_native_leaf).is_ok() {
+                transaction_circuit::asset_recovery_wire_v1::MAX_SPEND_ACTION_BYTES + NATIVE_ASSET_SPEND_MAX_PENDING_OUTER_BYTES_V1
+            } else if transaction_circuit::asset_recovery_wire_v1::decode_admin_ref(exact_native_leaf).is_ok() {
+                transaction_circuit::asset_recovery_wire_v1::MAX_ADMIN_ACTION_BYTES + NATIVE_ASSET_ADMIN_MAX_PENDING_OUTER_BYTES_V1
+            } else if super::native_proof_binding::preflight_private_spend_args(exact_native_leaf).is_ok() {
+                protocol_shielded_pool::private_spend_transport::MAX_CARRIER_BYTES + super::POSEIDON2_V8_MAX_PENDING_ACTION_OUTER_BYTES
+            } else if protocol_shielded_pool::rp06_transport::preflight_rp06_native_leaf_exact(exact_native_leaf).is_ok() {
+                protocol_shielded_pool::rp06_transport::RP06_CANDIDATE_MAX_INLINE_BYTES + super::POSEIDON2_V8_MAX_PENDING_ACTION_OUTER_BYTES
+            } else if transaction_circuit::smallwood_htlc_transport::decode_candidate_exact(exact_native_leaf).is_ok() {
+                transaction_circuit::smallwood_htlc_transport::MAX_CANDIDATE_CARRIER_BYTES + super::POSEIDON2_V8_MAX_PENDING_ACTION_OUTER_BYTES
+            } else if protocol_shielded_pool::poseidon2_production_transport::preflight_poseidon2_production_smza_native_leaf_exact(exact_native_leaf).is_ok() {
                 super::POSEIDON2_V8_SMZA_MAX_PENDING_ACTION_BYTES
             } else {
                 POSEIDON2_V8_MAX_PENDING_ACTION_BYTES
@@ -162,6 +182,8 @@ pub(crate) enum Poseidon2V8PendingError {
         expected: u64,
         observed: u64,
     },
+    #[error("launch pending reference receipt differs from its application checkpoint")]
+    LaunchReferenceMismatch { action_id: ActionId48 },
     #[error("V8 pending stablecoin effect disagrees with its public roots")]
     StablecoinEffectMismatch {
         action_id: ActionId48,
@@ -340,7 +362,17 @@ fn validate_and_index_actions(
                 action_id: action.action_id,
             });
         }
-        let observed_height = action.transition.parent_height();
+        if let Some(checked) = action.transition.checked_launch_reference() {
+            if checked.application_parent_height() != checkpoint.height()
+                || checked.application_parent_hash() != checkpoint.block_hash()
+                || checkpoint.height().checked_add(1) != Some(checked.application_height())
+            {
+                return Err(Poseidon2V8PendingError::LaunchReferenceMismatch {
+                    action_id: action.action_id,
+                });
+            }
+        }
+        let observed_height = action.transition.application_parent_height();
         if observed_height != checkpoint.height() {
             return Err(Poseidon2V8PendingError::ParentHeightMismatch {
                 action_id: action.action_id,
@@ -683,6 +715,185 @@ mod tests {
             }) if observed == POSEIDON2_V8_MAX_PENDING_ACTION_BYTES + 1
                 && maximum == POSEIDON2_V8_MAX_PENDING_ACTION_BYTES
         ));
+    }
+
+    #[test]
+    fn asset_pending_outer_caps_are_bound_to_actual_scale_shapes() {
+        use codec::Encode;
+        let mut action = super::super::PendingAction {
+            tx_hash: action_id(8),
+            binding: super::super::asset_native::native_binding(),
+            family_id: super::super::FAMILY_SHIELDED_POOL,
+            action_id: transaction_circuit::asset_spend_v1_admission::ASSET_SPEND_ACTION_ID,
+            anchor: [0; 48],
+            nullifiers: Vec::new(),
+            commitments: Vec::new(),
+            ciphertext_hashes: vec![[1; 48], [2; 48], [3; 48]],
+            ciphertext_sizes: vec![2608; 3],
+            public_args: vec![0; 65_536],
+            fee: 1,
+            candidate_artifact: None,
+        };
+        assert_eq!(
+            action.encode().len() - action.public_args.len(),
+            NATIVE_ASSET_SPEND_MAX_PENDING_OUTER_BYTES_V1
+        );
+        action.action_id = transaction_circuit::asset_spend_v1_admission::ASSET_ADMIN_ACTION_ID;
+        action.ciphertext_hashes.clear();
+        action.ciphertext_sizes.clear();
+        action.fee = 0;
+        assert_eq!(
+            action.encode().len() - action.public_args.len(),
+            NATIVE_ASSET_ADMIN_MAX_PENDING_OUTER_BYTES_V1
+        );
+    }
+
+    #[test]
+    fn native_asset_pending_cap_requires_fresh_canonical_framing() {
+        use transaction_circuit::{asset_spend_v1 as spend, asset_spend_v1_wire as wire};
+        use transaction_core::hashing_pq::ciphertext_hash_bytes;
+        let ciphertexts = [[1; 2608], [2; 2608], [3; 2608]];
+        let public = spend::AssetSpendPublic {
+            chain_id: [1; 32],
+            reference_parent_hash: [2; 32],
+            parent_height: 41,
+            note_root: [3; 7],
+            registry_root: [4; 7],
+            asset_id: 1,
+            policy_version: 1,
+            credential_root: [5; 7],
+            credential_depth: 4,
+            frozen: false,
+            mint_enabled: true,
+            issuer_commitment: [6; 7],
+            operation: spend::TRANSFER,
+            magnitude: 0,
+            fee: 1,
+            nullifiers: [[7; 7], [8; 7]],
+            commitments: [[9; 7], [10; 7], [11; 7]],
+            ciphertext_commitments: ciphertexts
+                .map(|ciphertext| ciphertext_hash_bytes(&ciphertext)),
+            policy_mode: 0,
+            secret_release: 0,
+            released_secret: [0; 32],
+        };
+        // Deliberately invalid proof contents: this exercises exact framing
+        // and planner ceilings, and grants no proof-verification authority.
+        let mut proof = vec![0; 150_000];
+        proof[..4].copy_from_slice(&spend::CANDIDATE_PROOF_MAGIC);
+        let carrier =
+            wire::encode_native_asset_spend_action_v1(&public, &ciphertexts, &proof).unwrap();
+        let encoded_bytes = carrier.len() + NATIVE_ASSET_SPEND_MAX_PENDING_OUTER_BYTES_V1;
+        assert!(encoded_bytes > POSEIDON2_V8_MAX_PENDING_ACTION_BYTES);
+        let native_root = root(10);
+        let transition = Poseidon2V8PublicTransition::new(41, native_root, root(20));
+        let action =
+            Poseidon2V8PendingAction::new(action_id(9), encoded_bytes, &carrier, transition);
+        let plan = plan_poseidon2_v8_pending_chain(
+            checkpoint(native_root),
+            &[action],
+            Poseidon2V8PendingCaps::native_block(),
+        )
+        .unwrap();
+        assert_eq!(plan.selected_action_ids(), &[action.action_id()]);
+        let cap = wire::NATIVE_ASSET_SPEND_MAX_ACTION_BYTES_V1
+            + NATIVE_ASSET_SPEND_MAX_PENDING_OUTER_BYTES_V1;
+        let oversized = Poseidon2V8PendingAction::new(action_id(10), cap + 1, &carrier, transition);
+        assert!(
+            matches!(plan_poseidon2_v8_pending_chain(checkpoint(native_root), &[oversized], Poseidon2V8PendingCaps::native_block()),
+            Err(Poseidon2V8PendingError::CarrierTooLarge { maximum, .. }) if maximum == cap)
+        );
+        let mut malformed = carrier;
+        malformed[8] ^= 1;
+        let historical_cap =
+            Poseidon2V8PendingAction::new(action_id(11), encoded_bytes, &malformed, transition);
+        assert!(
+            matches!(plan_poseidon2_v8_pending_chain(checkpoint(native_root), &[historical_cap], Poseidon2V8PendingCaps::native_block()),
+            Err(Poseidon2V8PendingError::CarrierTooLarge { maximum, .. }) if maximum == POSEIDON2_V8_MAX_PENDING_ACTION_BYTES)
+        );
+    }
+
+    #[test]
+    fn private_spend_pending_cap_requires_its_exact_source_pinned_framing() {
+        use protocol_shielded_pool::private_spend_transport as wire;
+        use transaction_core::hashing_pq::ciphertext_hash_bytes;
+
+        let first = [0x31; wire::CIPHERTEXT_BYTES];
+        let second = [0x32; wire::CIPHERTEXT_BYTES];
+        let public = wire::PublicStatement {
+            relation_digest: transaction_circuit::private_spend::relation_digest()[..48]
+                .try_into()
+                .unwrap(),
+            chain_id: [1; 32],
+            reference_parent_hash: [2; 32],
+            reference_parent_height: 41,
+            merkle_root: [3; 7],
+            fee: 0,
+            nullifiers: [[4; 7], [5; 7]],
+            commitments: [[6; 7], [7; 7]],
+            ciphertext_commitments: [
+                ciphertext_hash_bytes(&first),
+                ciphertext_hash_bytes(&second),
+            ],
+            secret_release: 0,
+            released_secret: [0; 32],
+        };
+        // This is a framing/planner fixture, not a cryptographically valid proof.
+        let mut proof = vec![0; 1_926_125];
+        proof[..4].copy_from_slice(&wire::INNER_PROOF_MAGIC);
+        let carrier = wire::encode(&public, [&first, &second], &proof).unwrap();
+        let outer_bytes = carrier.len() + super::super::POSEIDON2_V8_MAX_PENDING_ACTION_OUTER_BYTES;
+        assert_eq!(
+            outer_bytes,
+            wire::FIXED_BYTES
+                + proof.len()
+                + super::super::POSEIDON2_V8_MAX_PENDING_ACTION_OUTER_BYTES
+        );
+        assert!(outer_bytes > POSEIDON2_V8_MAX_PENDING_ACTION_BYTES);
+        let a = root(10);
+        let transition = Poseidon2V8PublicTransition::new(41, a, root(20));
+        let action = Poseidon2V8PendingAction::new(action_id(9), outer_bytes, &carrier, transition);
+        let plan = plan_poseidon2_v8_pending_chain(
+            checkpoint(a),
+            &[action],
+            Poseidon2V8PendingCaps::native_block(),
+        )
+        .unwrap();
+        assert_eq!(plan.selected_action_ids(), &[action.action_id()]);
+        assert_eq!(plan.selected_action_bytes(), outer_bytes);
+
+        let maximum =
+            wire::MAX_CARRIER_BYTES + super::super::POSEIDON2_V8_MAX_PENDING_ACTION_OUTER_BYTES;
+        let oversized =
+            Poseidon2V8PendingAction::new(action_id(10), maximum + 1, &carrier, transition);
+        assert!(
+            matches!(plan_poseidon2_v8_pending_chain(checkpoint(a), &[oversized],
+            Poseidon2V8PendingCaps::native_block()),
+            Err(Poseidon2V8PendingError::CarrierTooLarge { observed, maximum: cap, .. })
+                if observed == maximum + 1 && cap == maximum)
+        );
+
+        let mut bad_identity = carrier.clone();
+        bad_identity[8] ^= 1;
+        let malformed =
+            Poseidon2V8PendingAction::new(action_id(11), outer_bytes, &bad_identity, transition);
+        assert!(
+            matches!(plan_poseidon2_v8_pending_chain(checkpoint(a), &[malformed],
+            Poseidon2V8PendingCaps::native_block()),
+            Err(Poseidon2V8PendingError::CarrierTooLarge { maximum, .. })
+                if maximum == POSEIDON2_V8_MAX_PENDING_ACTION_BYTES)
+        );
+
+        let mut bad_ciphertext = carrier;
+        bad_ciphertext[wire::PREAMBLE_BYTES] ^= 1;
+        let malformed =
+            Poseidon2V8PendingAction::new(action_id(12), outer_bytes, &bad_ciphertext, transition);
+        assert!(
+            matches!(plan_poseidon2_v8_pending_chain(checkpoint(a), &[malformed],
+            Poseidon2V8PendingCaps::native_block()),
+            Err(Poseidon2V8PendingError::CarrierTooLarge { maximum, .. })
+                if maximum == POSEIDON2_V8_MAX_PENDING_ACTION_BYTES)
+        );
     }
 
     #[test]

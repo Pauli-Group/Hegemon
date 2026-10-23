@@ -59,6 +59,30 @@ class MockRPC:
         raise AssertionError(method)
 
 
+class NodeRPCAuthenticationTest(unittest.TestCase):
+    def test_nonempty_rpc_token_is_rejected_instead_of_ignored(self):
+        with self.assertRaisesRegex(ValueError, "does not authenticate tokens"):
+            bridge.NodeRPC("http://127.0.0.1:9944", "secret")
+
+    def test_no_fake_authentication_field_is_sent(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def read(self, size):
+                return b'{"jsonrpc":"2.0","id":1,"result":{"available":false}}'
+
+        with patch.object(bridge, "urlopen", return_value=Response()) as opened:
+            result = bridge.NodeRPC("http://127.0.0.1:9944").call("hegemon_poolWork")
+        request = opened.call_args.args[0]
+        self.assertEqual(json.loads(request.data)["params"], [{}])
+        self.assertNotIn("auth_token", request.data.decode())
+        self.assertEqual(result, {"available": False})
+
+
 class StratumTCPTest(unittest.TestCase):
     def setUp(self):
         self.rpc = MockRPC()

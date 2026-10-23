@@ -1,0 +1,6 @@
+import HegemonCrypto.NativePrivateSpendQ58CurrentInitializedCompletePublic
+open HegemonCrypto.SmallWood.NativePrivateSpendQ58CurrentInitializedCompletePublic
+#print axioms source_program_mass
+#print axioms current_initialized_complete_public_bound
+#print axioms total_loss_below_128
+#print axioms current_initialized_complete_public_below_128

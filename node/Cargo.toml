@@ -59,6 +59,9 @@ hx512-working-proof = [
     "wallet/hx512-working-proof",
 ]
 poseidon2-v8-retained-test-support = ["wallet/poseidon2-v8-retained-test-support"]
+# Explicit, isolated Development-profile candidate verification. This does not
+# add launch authority to the production source registry.
+development-candidate = []
 
 [dev-dependencies]
 blake2 = "0.10"

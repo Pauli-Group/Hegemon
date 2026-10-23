@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,23 @@ EXPECTED_ARTIFACTS = (
 
 class ManifestError(RuntimeError):
     pass
+
+
+def verify_launcher_policy(root: Path) -> dict[str, object]:
+    """Check sibling release policy even for isolated (-I) Python callers."""
+    checker_path = Path(__file__).resolve().with_name("check_release_launcher_policy.py")
+    spec = importlib.util.spec_from_file_location("_hegemon_release_launcher_policy", checker_path)
+    if spec is None or spec.loader is None:
+        raise ManifestError("release launcher policy checker is unavailable")
+    checker = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(checker)
+    except OSError as exc:
+        raise ManifestError(f"release launcher policy checker is unavailable: {exc}") from exc
+    try:
+        return checker.verify_source(root)
+    except checker.LauncherPolicyError as exc:
+        raise ManifestError(f"release launcher policy rejected: {exc}") from exc
 
 
 @dataclass
@@ -388,6 +406,7 @@ def inspect_artifact(
 def create_manifest(
     root: Path, output: Path, target_triple: str, artifact_specs: list[str]
 ) -> dict[str, object]:
+    verify_launcher_policy(root)
     parsed = [parse_spec(root, value) for value in artifact_specs]
     identities = tuple((package, binary) for package, binary, _, _ in parsed)
     if identities != EXPECTED_ARTIFACTS:
@@ -418,6 +437,7 @@ def create_manifest(
 
 
 def verify_manifest(root: Path, manifest_path: Path, expected_specs: list[str]) -> dict[str, object]:
+    verify_launcher_policy(root)
     _, manifest_relative = _repository_relative(root, manifest_path)
     try:
         manifest_fd = _open_repository_file(root, manifest_relative, "release manifest")
@@ -774,6 +794,7 @@ def _load_asset_bundle(
 def assemble_release_assets(
     root: Path, bundle_manifests: list[Path], output_dir: Path
 ) -> dict[str, object]:
+    verify_launcher_policy(root)
     if not bundle_manifests:
         raise ManifestError("at least one release asset bundle is required")
     bundles = [

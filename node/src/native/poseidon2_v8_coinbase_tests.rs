@@ -103,3 +103,133 @@ fn v8_coinbase_mutations_reject_before_state_append() {
     legacy_commitment_seam.commitments.push([7; 48]);
     assert!(validate_coinbase_action_payload(&legacy_commitment_seam).is_err());
 }
+
+fn rewards_fixture(
+    height: u64,
+    miner_delta: i64,
+    funding_delta: i64,
+) -> (PendingAction, ShieldedAddress) {
+    let funding = RootSecret::from_bytes([0x61; 32])
+        .derive()
+        .poseidon2_v8_address(8)
+        .unwrap()
+        .shielded_address();
+    let miner = RootSecret::from_bytes([0x51; 32])
+        .derive()
+        .poseidon2_v8_address(9)
+        .unwrap()
+        .shielded_address();
+    let (miner_amount, funding_amount) =
+        poseidon2_v8_reward_split(consensus::reward::block_subsidy(height), 0).unwrap();
+    let args = wallet::poseidon2_v8_coinbase::build_poseidon2_v8_rewards_args(
+        &miner,
+        miner_amount.checked_add_signed(miner_delta).unwrap(),
+        &funding,
+        funding_amount.checked_add_signed(funding_delta).unwrap(),
+        &mut StdRng::seed_from_u64(41),
+    )
+    .unwrap();
+    let metadata = core::iter::once(&args.miner_note)
+        .chain(args.funding_note.iter())
+        .map(|note| {
+            coinbase_ciphertext_metadata(&note.encrypted_note)
+                .1
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let mut action = PendingAction {
+        tx_hash: ActionId48::ZERO,
+        binding: protocol_versioning::launch_candidate::RP06_VERSION_BINDING.into(),
+        family_id: FAMILY_SHIELDED_POOL,
+        action_id: ACTION_MINT_POSEIDON2_V8_REWARDS,
+        anchor: [0; 48],
+        nullifiers: Vec::new(),
+        commitments: Vec::new(),
+        ciphertext_hashes: metadata.iter().map(|(hash, _)| *hash).collect(),
+        ciphertext_sizes: metadata.iter().map(|(_, size)| *size).collect(),
+        public_args: args.encode(),
+        fee: 0,
+        candidate_artifact: None,
+    };
+    action.tx_hash = pending_action_hash(&action);
+    (action, funding)
+}
+
+#[test]
+fn exact_rewards_reject_tax_diversion_legacy_bypass_and_partial_issuance() {
+    let height = 1;
+    let (action, funding) = rewards_fixture(height, 0, 0);
+    validate_coinbase_action_payload(&action).unwrap();
+    validate_coinbase_funding_accounting(std::slice::from_ref(&action), height, Some(&funding))
+        .unwrap();
+    assert!(admitted_poseidon2_v8_coinbase_commitments(&action)
+        .unwrap()
+        .iter()
+        .all(Option::is_some));
+    assert_eq!(canonical_ciphertext_count_for_action(&action).unwrap(), 0);
+    assert!(!owns_legacy_ciphertext_da_rows(&action));
+    assert!(!pending_action_peer_relayable(&action));
+    assert!(ensure_native_v3_active_action_route_ids(
+        FAMILY_SHIELDED_POOL,
+        ACTION_MINT_POSEIDON2_V8_REWARDS,
+        false
+    )
+    .is_err());
+    assert!(
+        validate_coinbase_funding_accounting(std::slice::from_ref(&action), height, None).is_err()
+    );
+    // Preserve total while diverting one funding unit back to the miner.
+    let (diverted, _) = rewards_fixture(height, 1, -1);
+    assert!(validate_coinbase_accounting(&[diverted], height)
+        .unwrap_err()
+        .to_string()
+        .contains("allocation mismatch"));
+    let (legacy, _, _) = coinbase_fixture(consensus::reward::block_subsidy(height));
+    assert!(validate_coinbase_funding_accounting(&[legacy], height, Some(&funding)).is_err());
+    let wrong_address = RootSecret::from_bytes([0x71; 32])
+        .derive()
+        .poseidon2_v8_address(8)
+        .unwrap()
+        .shielded_address();
+    assert!(validate_coinbase_funding_accounting(
+        std::slice::from_ref(&action),
+        height,
+        Some(&wrong_address)
+    )
+    .is_err());
+    let mut wrong_extension = funding.clone();
+    wrong_extension.pk_auth_extension[0] ^= 1;
+    assert!(validate_coinbase_funding_accounting(
+        std::slice::from_ref(&action),
+        height,
+        Some(&wrong_extension)
+    )
+    .is_err());
+    // Both shares may be forfeited together; no partial issuance occurs.
+    validate_coinbase_funding_accounting(&[], height, Some(&funding)).unwrap();
+    let mut malformed = action.clone();
+    malformed.public_args.push(0);
+    assert!(validate_coinbase_action_payload(&malformed).is_err());
+    let mut missing = action;
+    missing.ciphertext_hashes.pop();
+    missing.ciphertext_sizes.pop();
+    assert!(validate_coinbase_action_payload(&missing).is_err());
+}
+
+#[test]
+fn late_subsidy_canonically_omits_only_zero_funding() {
+    let height = 27 * consensus::reward::HALVING_INTERVAL + 1;
+    let subsidy = consensus::reward::block_subsidy(height);
+    assert!((1..5).contains(&subsidy));
+    let (action, funding) = rewards_fixture(height, 0, 0);
+    validate_coinbase_funding_accounting(std::slice::from_ref(&action), height, Some(&funding))
+        .unwrap();
+    let args: MintPoseidon2V8RewardsArgs =
+        decode_scale_exact(&action.public_args, "late rewards").unwrap();
+    assert!(args.funding_note.is_none());
+    assert_eq!(args.miner_note.opening.value, subsidy);
+    assert_eq!(
+        admitted_poseidon2_v8_coinbase_commitments(&action).unwrap()[1],
+        None
+    );
+}

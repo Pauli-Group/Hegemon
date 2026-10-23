@@ -9,7 +9,7 @@ fn v8_reservation_concurrent_builders_select_disjoint_durable_inputs() {
     let root = RootSecret::from_bytes([0x51; 32]);
     let store = WalletStore::create_from_root(&path, PASSPHRASE, root.clone()).unwrap();
     seed_two_owned_coinbases(&store, &root);
-    for (height, hash, parent) in [(3, BLOCK_3, BLOCK_2), (4, [0x14; 32], BLOCK_3)] {
+    for (height, hash, parent) in [(122, BLOCK_3, BLOCK_2), (123, [0x14; 32], BLOCK_3)] {
         store
             .apply_poseidon2_v8_canonical_block(&canonical_block(
                 height,
@@ -22,6 +22,13 @@ fn v8_reservation_concurrent_builders_select_disjoint_durable_inputs() {
                 ))],
             ))
             .unwrap();
+    }
+    let mut parent = [0x14; 32];
+    for height in 124u64..=242 {
+        let mut hash = [0x35; 32];
+        hash[..8].copy_from_slice(&height.to_le_bytes());
+        store.apply_poseidon2_v8_canonical_block(&canonical_block(height, hash, parent, vec![])).unwrap();
+        parent = hash;
     }
     let barrier = Barrier::new(2);
     let selected = std::thread::scope(|scope| {
@@ -103,7 +110,7 @@ fn v8_reservation_success_confirmation_and_reorg_remain_locked_after_restart() {
     drop(spend);
     store
         .apply_poseidon2_v8_canonical_block_for_retained_test(
-            &canonical_block(3, BLOCK_3, BLOCK_2, vec![transfer]),
+            &canonical_block(122, BLOCK_3, BLOCK_2, vec![transfer]),
             retained_test_context(WalletProofRoute::Smza),
         )
         .unwrap();
@@ -114,7 +121,7 @@ fn v8_reservation_success_confirmation_and_reorg_remain_locked_after_restart() {
         reopened.poseidon2_v8_reservations().unwrap()[0].status,
         crate::store::Poseidon2V8ReservationStatus::Submitted(tx_id)
     );
-    reopened.rollback_poseidon2_v8_to(2, BLOCK_2).unwrap();
+    reopened.rollback_poseidon2_v8_to(121, BLOCK_2).unwrap();
     assert!(!reopened.poseidon2_v8_reservations().unwrap()[0].inputs_consumed);
     assert!(reopened.reserve_poseidon2_v8_spend().is_err());
     // Detaching the blocks that created the inputs must also retain the hold.
@@ -138,7 +145,7 @@ fn v8_reservation_explicit_abandonment_reactivates_on_parent_reorg() {
     drop(reservation);
     assert!(store.abandon_poseidon2_v8_reservation(id, parent).is_err());
     store
-        .apply_poseidon2_v8_canonical_block(&canonical_block(3, BLOCK_3, BLOCK_2, vec![]))
+        .apply_poseidon2_v8_canonical_block(&canonical_block(122, BLOCK_3, BLOCK_2, vec![]))
         .unwrap();
     let tip = store.poseidon2_v8_tip().unwrap();
     assert!(store.abandon_poseidon2_v8_reservation(id, parent).is_err());
@@ -153,7 +160,7 @@ fn v8_reservation_explicit_abandonment_reactivates_on_parent_reorg() {
     drop(replacement);
     drop(store);
     let reopened = WalletStore::open(&path, PASSPHRASE).unwrap();
-    reopened.rollback_poseidon2_v8_to(2, BLOCK_2).unwrap();
+    reopened.rollback_poseidon2_v8_to(121, BLOCK_2).unwrap();
     assert!(reopened.poseidon2_v8_reservations().unwrap()[0].inputs_reserved);
     assert!(reopened.reserve_poseidon2_v8_spend().is_err());
 }
@@ -171,7 +178,7 @@ fn v8_reservation_preflight_error_and_build_panic_release_inputs() {
     seed_two_owned_coinbases(&store, &root);
     let reservation = store.reserve_poseidon2_v8_spend().unwrap();
     store
-        .apply_poseidon2_v8_canonical_block(&canonical_block(3, BLOCK_3, BLOCK_2, vec![]))
+        .apply_poseidon2_v8_canonical_block(&canonical_block(122, BLOCK_3, BLOCK_2, vec![]))
         .unwrap();
     assert!(reservation.begin_submission().is_err());
     drop(reservation);

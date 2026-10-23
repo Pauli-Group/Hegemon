@@ -170,6 +170,7 @@ import Hegemon.Transaction.AcceptedTransactionSoundness
 import Hegemon.Transaction.AirBalanceBoundary
 import Hegemon.Transaction.AssetIsolation
 import Hegemon.Transaction.Balance
+import Hegemon.Transaction.QualifiedAssetBalanceV1
 import Hegemon.Transaction.CanonicalVerifierBoundary
 import Hegemon.Transaction.MerklePath
 import Hegemon.Transaction.NoteCommitmentInputs

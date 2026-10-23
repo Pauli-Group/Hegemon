@@ -27,6 +27,13 @@ describe('resolveWalletdRequestTimeoutMs', () => {
     );
   });
 
+  it('permits full-chain sync without extending other wallet operations', () => {
+    expect(resolveWalletdRequestTimeoutMs(undefined, 'sync.once')).toBe(2 * 60 * 60_000);
+    expect(resolveWalletdRequestTimeoutMs('not-a-number', 'sync.once')).toBe(2 * 60 * 60_000);
+    expect(resolveWalletdRequestTimeoutMs(undefined, 'tx.send')).toBe(600_000);
+    expect(resolveWalletdRequestTimeoutMs('60000', 'sync.once')).toBe(60_000);
+  });
+
   it('accepts explicit values at or above the minimum', () => {
     expect(resolveWalletdRequestTimeoutMs('1000')).toBe(1000);
     expect(resolveWalletdRequestTimeoutMs('900000')).toBe(900000);

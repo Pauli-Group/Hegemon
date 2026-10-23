@@ -30,7 +30,7 @@ jobs:
           toolchain: "1.91.1"
 
       - name: Transaction-proof successor authorization release gate
-        run: /usr/bin/python3 -I -B scripts/check_transaction_proof_successor_authorization.py config/transaction-proof-successor-selection.json --require-authorized --verify-retained-artifacts
+        run: /usr/bin/python3 -I -B scripts/check_private_spend_launch_authorization.py --require-authorized
 
       - name: Release workflow policy regression
         run: /usr/bin/python3 -I -B scripts/test_check_ci_release_gate_policy.py
@@ -169,6 +169,8 @@ jobs:
 
       - name: Verify release artifact manifest
         run: python3 scripts/release_artifact_manifest.py verify --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node --expect wallet:wallet:target/release/wallet --expect walletd:walletd:target/release/walletd
+      - name: Validate final common proof authorization and affected lifecycle
+        run: python3 -I -B scripts/check_private_spend_launch_authorization.py --require-authorized --artifact-manifest target/release/hegemon-release-artifacts.json
 
       - name: Release PQ binary audit
         run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
@@ -206,6 +208,8 @@ jobs:
 
       - name: Verify release artifact manifest
         run: python3 scripts/release_artifact_manifest.py verify --manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/x86_64-apple-darwin/release/hegemon-node --expect wallet:wallet:target/x86_64-apple-darwin/release/wallet --expect walletd:walletd:target/x86_64-apple-darwin/release/walletd
+      - name: Validate final common proof authorization and affected lifecycle
+        run: python3 -I -B scripts/check_private_spend_launch_authorization.py --require-authorized --artifact-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json
 
       - name: Release PQ binary audit
         run: ./scripts/security-audit.sh --require-binary --binary-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --node-bin target/x86_64-apple-darwin/release/hegemon-node --binary target/x86_64-apple-darwin/release/wallet --binary target/x86_64-apple-darwin/release/walletd
@@ -242,6 +246,8 @@ jobs:
 
       - name: Verify release artifact manifest
         run: python3 scripts/release_artifact_manifest.py verify --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node --expect wallet:wallet:target/release/wallet --expect walletd:walletd:target/release/walletd
+      - name: Validate final common proof authorization and affected lifecycle
+        run: python3 -I -B scripts/check_private_spend_launch_authorization.py --require-authorized --artifact-manifest target/release/hegemon-release-artifacts.json
 
       - name: Release PQ binary audit
         run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
@@ -275,6 +281,11 @@ jobs:
           toolchain: "1.91.1"
           components: rust-src
       
+      - name: Verify Windows raw-byte launcher hashing
+        shell: bash
+        run: |
+          python3 -B scripts/test_check_release_launcher_policy.py ReleaseLauncherPolicyTests.test_bounded_reader_preserves_crlf_and_ctrl_z_bytes ReleaseLauncherPolicyTests.test_crlf_helper_requires_its_raw_digest_not_normalized_lf
+
       - name: Build attested release artifacts
         shell: bash
         run: ./scripts/build_release_artifacts.sh
@@ -282,6 +293,9 @@ jobs:
       - name: Verify release artifact manifest
         shell: bash
         run: python3 scripts/release_artifact_manifest.py verify --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node.exe --expect wallet:wallet:target/release/wallet.exe --expect walletd:walletd:target/release/walletd.exe
+      - name: Validate final common proof authorization and affected lifecycle
+        shell: bash
+        run: python3 -I -B scripts/check_private_spend_launch_authorization.py --require-authorized --artifact-manifest target/release/hegemon-release-artifacts.json
 
       - name: Release PQ binary audit
         shell: bash

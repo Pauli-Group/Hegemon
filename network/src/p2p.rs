@@ -1,6 +1,6 @@
 use crate::{
-    GossipMessage, HandshakeAcceptance, HandshakeConfirmation, HandshakeOffer, NetworkError,
-    PeerId, PeerIdentity, ProtocolMessage, SecureChannel, wire,
+    wire, GossipMessage, HandshakeAcceptance, HandshakeConfirmation, HandshakeOffer, NetworkError,
+    PeerId, PeerIdentity, ProtocolMessage, SecureChannel,
 };
 use crypto::hashes::sha256;
 use futures::{SinkExt, StreamExt};
@@ -411,6 +411,98 @@ mod tests {
         match responder_conn.recv().await.expect("receive message") {
             Some(WireMessage::Ping) => {}
             other => panic!("unexpected message: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn scoped_handshake_round_trip_over_tcp() {
+        for context in [[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let initiator = PeerIdentity::generate_for_network(b"scoped-tcp-initiator", context);
+            let responder = PeerIdentity::generate_for_network(b"scoped-tcp-responder", context);
+
+            let exchange = async move {
+                let responder_task = task::spawn(async move {
+                    let (socket, _) = listener.accept().await.unwrap();
+                    let mut connection = Connection::new(socket);
+                    assert_eq!(
+                        connection.handshake_responder(&responder).await.unwrap(),
+                        PeerIdentity::generate(b"scoped-tcp-initiator").peer_id()
+                    );
+                    assert!(matches!(
+                        connection.recv().await.unwrap(),
+                        Some(WireMessage::Ping)
+                    ));
+                    connection.send(WireMessage::Pong).await.unwrap();
+                });
+                let socket = TcpStream::connect(addr).await.unwrap();
+                let mut connection = Connection::new(socket);
+                assert_eq!(
+                    connection.handshake_initiator(&initiator).await.unwrap(),
+                    PeerIdentity::generate(b"scoped-tcp-responder").peer_id()
+                );
+                connection.send(WireMessage::Ping).await.unwrap();
+                assert!(matches!(
+                    connection.recv().await.unwrap(),
+                    Some(WireMessage::Pong)
+                ));
+                responder_task.await.unwrap();
+            };
+            tokio::time::timeout(std::time::Duration::from_secs(5), exchange)
+                .await
+                .expect("scoped TCP session should complete promptly");
+        }
+    }
+
+    #[tokio::test]
+    async fn scoped_handshake_rejects_other_networks_and_legacy_over_tcp() {
+        // Exercise both dial directions for every pair, including the old
+        // unscoped handshake. A rejected peer must never obtain a secure session.
+        let contexts = [
+            None,
+            Some([1u8; 32]),
+            Some([2u8; 32]),
+            Some([3u8; 32]),
+            Some([4u8; 32]),
+        ];
+        for initiator_context in contexts {
+            for responder_context in contexts {
+                if initiator_context == responder_context {
+                    continue;
+                }
+                let identity = |seed: &[u8], context| match context {
+                    Some(context) => PeerIdentity::generate_for_network(seed, context),
+                    None => PeerIdentity::generate(seed),
+                };
+                let initiator = identity(b"rejected-tcp-initiator", initiator_context);
+                let responder = identity(b"rejected-tcp-responder", responder_context);
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let addr = listener.local_addr().unwrap();
+
+                let exchange = async move {
+                    let responder_task = task::spawn(async move {
+                        let (socket, _) = listener.accept().await.unwrap();
+                        let mut connection = Connection::new(socket);
+                        connection.handshake_responder(&responder).await
+                    });
+                    let socket = TcpStream::connect(addr).await.unwrap();
+                    let mut connection = Connection::new(socket);
+                    let initiator_result = connection.handshake_initiator(&initiator).await;
+                    let responder_result = responder_task.await.unwrap();
+                    assert!(
+                        initiator_result.is_err(),
+                        "initiator unexpectedly admitted {initiator_context:?} -> {responder_context:?}"
+                    );
+                    assert!(
+                        matches!(responder_result, Err(NetworkError::InvalidSignature)),
+                        "responder must reject the differently scoped signed offer"
+                    );
+                };
+                tokio::time::timeout(std::time::Duration::from_secs(5), exchange)
+                    .await
+                    .expect("wrong-network TCP peer must be rejected promptly");
+            }
         }
     }
 

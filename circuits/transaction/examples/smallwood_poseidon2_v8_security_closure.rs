@@ -53,6 +53,14 @@ fn check(path: &Path, expected: &[u8]) -> Result<(), String> {
 }
 
 fn write(path: &Path, expected: &[u8]) -> Result<(), String> {
+    if path.file_name().is_some_and(|name| {
+        name == "smallwood_poseidon2_v8_rp04_smz9_executable_zk_refinement.json"
+    }) {
+        return Err(
+            "the RP04 fixture is historical; write the current COMPFF01 report to smallwood_poseidon2_v8_compff01_smz9_executable_zk_refinement.json"
+                .to_owned(),
+        );
+    }
     fs::write(path, expected)
         .map_err(|error| format!("could not write {}: {error}", path.display()))?;
     println!(

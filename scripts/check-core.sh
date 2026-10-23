@@ -27,9 +27,10 @@ EOF
 }
 
 run_lint() {
-  cargo fmt --all -- --check
-  cargo fmt --manifest-path experimental/htlc-prototype/Cargo.toml --all -- --check
-  cargo fmt --manifest-path experimental/htlc-prototype/proof-backend/Cargo.toml --all -- --check
+  python3 -I -B scripts/test_check_qualified_formatting.py
+  python3 -I -B scripts/check_qualified_formatting.py --manifest workspace
+  python3 -I -B scripts/check_qualified_formatting.py --manifest htlc
+  python3 -I -B scripts/check_qualified_formatting.py --manifest proof-backend
   python3 scripts/check_native_startup_policy.py
   python3 -B scripts/check_smallwood_v5_candidate_gate.py
   # Keep correctness and suspicious-code diagnostics blocking. Style and unused
@@ -72,6 +73,9 @@ run_test_base() {
   cargo test -p protocol-shielded-pool
   cargo test -p cashvm-bridge
   cargo test --test security_pipeline -- --nocapture
+  python3 -B scripts/check_release_launcher_policy.py >/dev/null
+  python3 -B scripts/test_check_release_launcher_policy.py
+  python3 -B scripts/test_release_launcher_boundaries.py
   python3 -B scripts/test_release_artifact_manifest.py
   python3 -B scripts/test_check_release_crypto_profile.py
   python3 -B .agent/hardening/smallwood-pqc-zk/test_strict_profile.py

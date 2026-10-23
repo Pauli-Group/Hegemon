@@ -13,7 +13,12 @@ use hegemon_hash384::{
 };
 use thiserror::Error;
 #[cfg(test)]
-use transaction_core::poseidon2_width16::{poseidon2_width16_compress14, poseidon2_width16_sponge};
+use transaction_core::poseidon2_width16::{
+    poseidon2_width16_compress14, poseidon2_width16_permutation, poseidon2_width16_sponge,
+    POSEIDON2_WIDTH16_COMPRESSION_MODE_ID, POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER,
+    POSEIDON2_WIDTH16_PARAMETER_SET_ID, POSEIDON2_WIDTH16_PARAMETER_SET_SHA256,
+    POSEIDON2_WIDTH16_SUITE_MARKER,
+};
 #[cfg(test)]
 use transaction_core::{
     hashing_pq::ciphertext_hash_bytes,
@@ -69,9 +74,11 @@ pub const SMALLWOOD_POSEIDON2_V8_TYPED_LOWERING_REPLAY_AVAILABLE: bool = true;
 pub const SMALLWOOD_POSEIDON2_V8_ARBITRARY_PACKED_DECODER_AVAILABLE: bool = true;
 /// Source verification rebuilds the decoded typed witness and requires all 43,904 words equal.
 pub const SMALLWOOD_POSEIDON2_V8_CANONICAL_TYPED_RELOWERING_ENFORCED: bool = true;
-/// Lean now executes the exact width-16 V8 sponge/compress frames and cross-checks source KATs.
+/// Lean computes the unchanged sponge and separate COMPFF01 frame/output KATs.
+/// This finite cross-language evidence is not a universal Rust refinement theorem.
 pub const SMALLWOOD_POSEIDON2_V8_EXACT_POSEIDON2_INTERPRETATION_REFINED: bool = true;
-/// Lean executes the complete typed stablecoin transition and cross-checks source KATs.
+/// Lean recomputes COMPFF01 stablecoin config/tree/issuer links; source transition KATs run too.
+/// Universal typed-transition refinement to the concrete Rust function remains absent.
 pub const SMALLWOOD_POSEIDON2_V8_EXACT_STABLECOIN_TRANSITION_INTERPRETATION_REFINED: bool = true;
 /// Lean executes the exact ciphertext frame and canonical six-word digest projection.
 pub const SMALLWOOD_POSEIDON2_V8_EXACT_CIPHERTEXT_FRAMING_AND_PROJECTION_REFINED: bool = true;
@@ -494,8 +501,9 @@ mod tests {
     }
 
     #[test]
-    // Keep the historical filter name for callers; the checked-in vector is
-    // the legacy HGV8RP03 receipt, not a Lean semantic target for current RP05.
+    // Keep the historical filter name for callers. Historical receipt metadata
+    // remains HGV8RP03; a separate generated COMPFF01 primitive vector checks
+    // current field operations without promoting the old adequacy receipt.
     fn lean_generated_semantic_adequacy_receipt_matches_rust_status() {
         let vector: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -547,12 +555,83 @@ mod tests {
             json_u64_array(&vector["poseidon2_sponge_kat_domain2_1_2_3_4"]),
             sponge
         );
+        let mode_vector: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/formal_core_vectors/poseidon2_v8_compff01_primitives.json"
+        )))
+        .unwrap();
+        assert_eq!(
+            mode_vector["schema"],
+            "hegemon.poseidon2-v8.compff01-primitive-vectors-v1"
+        );
+        assert_eq!(
+            mode_vector["claim_scope"],
+            "lean_executable_field_framing_and_finite_kats"
+        );
+        assert_eq!(
+            mode_vector["generator"],
+            "Hegemon.Transaction.GeneratePoseidon2V8LeftFeedForwardVectors"
+        );
+        assert_eq!(
+            mode_vector["compression_mode_id"],
+            POSEIDON2_WIDTH16_COMPRESSION_MODE_ID
+        );
+        assert_eq!(
+            mode_vector["compression_mode_marker"],
+            POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER
+        );
+        assert_eq!(
+            mode_vector["parameter_set_id"],
+            POSEIDON2_WIDTH16_PARAMETER_SET_ID
+        );
+        assert_eq!(
+            mode_vector["parameter_set_sha256"],
+            POSEIDON2_WIDTH16_PARAMETER_SET_SHA256
+        );
+        assert_eq!(
+            mode_vector["historical_semantic_target"],
+            LEGACY_LEAN_EXACT_SEMANTIC_TARGET_V1
+        );
+        for status in [
+            "source_compiler_refinement_proved",
+            "universal_accepted_witness_soundness_proved",
+            "g1_qualified",
+            "g7_qualified",
+            "production_authority",
+        ] {
+            assert_eq!(
+                mode_vector[status], false,
+                "unexpected primitive qualification: {status}"
+            );
+        }
+        assert_eq!(
+            json_u64_array(&mode_vector["poseidon2_sponge_kat_domain2_1_2_3_4"]),
+            sponge
+        );
+
         let left = core::array::from_fn(|word| Felt::from_u64(word as u64));
         let right = core::array::from_fn(|word| Felt::from_u64((word + 7) as u64));
         let compressed =
             poseidon2_width16_compress14(4, &left, &right).map(|word| word.as_canonical_u64());
+        // Replay the historical compressor under its actual old marker and raw
+        // output rule. These bytes are retained as a negative current-mode KAT.
+        let mut historical_frame = [Felt::ZERO; 16];
+        historical_frame[..7].copy_from_slice(&left);
+        historical_frame[7..14].copy_from_slice(&right);
+        historical_frame[14] = Felt::from_u64(4);
+        historical_frame[15] = Felt::from_u64(POSEIDON2_WIDTH16_SUITE_MARKER);
+        poseidon2_width16_permutation(&mut historical_frame);
+        let historical_digest = historical_frame[..7]
+            .iter()
+            .map(|word| word.as_canonical_u64())
+            .collect::<Vec<_>>();
         assert_eq!(
             json_u64_array(&vector["poseidon2_compress14_kat_ranges"]),
+            historical_digest
+        );
+        assert_ne!(historical_digest, compressed);
+        assert_eq!(
+            json_u64_array(&mode_vector["poseidon2_compress14_kat_ranges"]),
             compressed
         );
         let nullifier = poseidon2_width16_sponge(2, &[1, 2, 3, 4, 5, 6].map(Felt::from_u64))
@@ -560,6 +639,10 @@ mod tests {
             .map(|word| word.as_canonical_u64());
         assert_eq!(
             json_u64_array(&vector["poseidon2_nullifier_kat"]),
+            nullifier
+        );
+        assert_eq!(
+            json_u64_array(&mode_vector["poseidon2_nullifier_kat"]),
             nullifier
         );
         assert_eq!(
@@ -634,29 +717,42 @@ mod tests {
         let issuer_authorization =
             stablecoin_poseidon2_v8_issuer_authorization(&action_intent, &issuer_secret);
         assert_eq!(
-            json_u64_array(&vector["stablecoin_config_digest_kat"]),
+            json_u64_array(&mode_vector["stablecoin_config_digest_kat"]),
             canonical_digest_words(config_digest)
         );
         assert_eq!(
-            json_u64_array(&vector["stablecoin_before_root_kat"]),
+            json_u64_array(&mode_vector["stablecoin_before_root_kat"]),
             canonical_digest_words(before_root)
         );
         assert_eq!(
-            json_u64_array(&vector["stablecoin_mint_after_root_kat"]),
+            json_u64_array(&mode_vector["stablecoin_mint_after_root_kat"]),
             canonical_digest_words(mint_after_root)
         );
         assert_eq!(
-            json_u64_array(&vector["stablecoin_burn_after_root_kat"]),
+            json_u64_array(&mode_vector["stablecoin_burn_after_root_kat"]),
             canonical_digest_words(burn_after_root)
         );
         assert_eq!(
-            json_u64_array(&vector["stablecoin_issuer_commitment_kat"]),
+            json_u64_array(&mode_vector["stablecoin_issuer_commitment_kat"]),
             canonical_digest_words(config.issuer_commitment)
         );
         assert_eq!(
-            json_u64_array(&vector["stablecoin_issuer_authorization_kat"]),
+            json_u64_array(&mode_vector["stablecoin_issuer_authorization_kat"]),
             canonical_digest_words(issuer_authorization)
         );
+        for changed in [
+            "stablecoin_config_digest_kat",
+            "stablecoin_before_root_kat",
+            "stablecoin_mint_after_root_kat",
+            "stablecoin_burn_after_root_kat",
+            "stablecoin_issuer_commitment_kat",
+            "stablecoin_issuer_authorization_kat",
+        ] {
+            assert_ne!(
+                vector[changed], mode_vector[changed],
+                "historical primitive value must not be relabeled COMPFF01: {changed}"
+            );
+        }
         let context = StablecoinPoseidon2V8Context {
             current_root: before_root,
             parent_height: 9_000,

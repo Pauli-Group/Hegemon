@@ -1,0 +1,99 @@
+{
+  "changed_paths": [
+    "node/src/native/rpc.rs",
+    "protocol/versioning/src/lib.rs",
+    "wallet/src/bin/wallet.rs"
+  ],
+  "immutable_predecessor_sha256": {
+    "scripts/check_private_spend_launch_authorization.py": "6a0d9d0b6f1864160dd3f07adaa54f142a1ce513584f13d903e07265bee7e112",
+    "scripts/private_spend_launch_authorized_registry.json": "c37455302ad34f631df1938b0ee7980af8bb8a57930ba38c05a6fe86941c145f"
+  },
+  "internal_cargo_version": "0.10.0",
+  "network_manifest_sha256": "ffda566f04cee22b2a7ba5c2be88f625e9c668f47a7765f36fb377c79ea25758",
+  "new_version": "0.11.0",
+  "old_version": "0.10.0",
+  "qualified_identity": {
+    "action": 15,
+    "activation_height": 1,
+    "backend": 2,
+    "chain_id": "67aaaf82f6374e4438dbee1ed3f5f66c0ffe122044f1f5ebb6c7fddfecff446a",
+    "circuit": 12,
+    "compression_mode": "hegemon-p2w16-compress14-left-feedforward-v1",
+    "crypto": 7,
+    "cryptographic_class": {
+      "attempt_bound": "external_conditional_hypothesis",
+      "attempts_include": [
+        "failed",
+        "unused",
+        "successful"
+      ],
+      "continuation_queries": "uniform_all_context",
+      "max_ordinary_oracle_queries": 36893488147419103232,
+      "max_total_oracle_queries": 55340232221128654848,
+      "max_total_proof_attempts": 549755813888,
+      "max_total_trace_attempts": 549755813888,
+      "max_total_verification_attempts": 549755813888
+    },
+    "deactivation_height_exclusive": null,
+    "domain_set": 8,
+    "emission_schedule": "hegemon-native-emission-21m-atoms1e8-5hgn-epoch2100000-prefix-v1",
+    "family": 1,
+    "genesis_hash": "8c3722c22b59a13c43ed9bf596bcd2bbd118c08a0ed4bf3714c8ac6a8d1711eb",
+    "kind": "PrivateSpend",
+    "manifest_digest": "bf3463141161d00165e1122eb066fa117d6b10423aa6ca0b71b4bed2552843bf3e6235932ed3b7394ce4c9b2d2097cf61d35cd916dbe62d671f05c2494dfeca0",
+    "max_proof_actions_per_block": 8,
+    "max_proof_bytes": 177632,
+    "max_total_proofs": null,
+    "network_profile": "pre-mainnet",
+    "note_genesis_root": [
+      3013021922057677145,
+      1646436993411294138,
+      17930985046722462302,
+      4040104963526763525,
+      8044768705513318970,
+      5501470279516072626,
+      9669143789627659081
+    ],
+    "profile": 12,
+    "public_words": 86,
+    "relation_digest": "cd747b8430b51faee6c4bf94d7b0c8f8dfdb7863c6b927db53e7cea67c7a20a49aaf3ceda5b9ba2947dc9b89d070e1ac5fe9ab1c77cba6d859285c2f324b56f5",
+    "relation_id": "Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4",
+    "schema": "hegemon.private-spend.native-launch-identity.v2",
+    "stablecoin_genesis_root": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "reviewed_display_deltas": {
+    "node/src/native/rpc.rs": {
+      "after_sha256": "74a599d7234621925bddbc9709ecdab37927b9d7e428eaa38590c428b7a435b0",
+      "before_sha256": "0250f8b5548f9e718d1f2b3fb60c39dc0c171fe31615442628c1af274cb8cd8c"
+    },
+    "protocol/versioning/src/lib.rs": {
+      "after_sha256": "1b574f0b27635e0d33e42e16763300f2b732cacfe850953fc35f19028a58862d",
+      "before_sha256": "150c5018a34fa6d92eba62f070692d10ccb77e477f2257ee6a4045b477c0f5ba"
+    },
+    "wallet/src/bin/wallet.rs": {
+      "after_sha256": "73a50becdd346cedd7ed765c600a3ee70e591ff2fc60564ba6e7d3262ee18f1b",
+      "before_sha256": "df0b673176b10c730285d210f1c9ede4e6ba0b2621118ad63b325c4ffe64b024"
+    }
+  },
+  "reviewed_shutdown_delta": {
+    "after_sha256": "51b0333cb00513dc427f4e7cf552f9b3584ffd5133b7ea32b53224ddfed1bea2",
+    "before_sha256": "ccf0764d0059cff43f784171edf58819cabe9645ab2aa1c8f24592beee5e45b1",
+    "path": "node/src/native/util.rs"
+  },
+  "schema": "hegemon.release.version-only-successor.v1",
+  "scope": "Packaging successor with three exact product-version display postimages and one reviewed Windows shutdown-signal glue postimage. Cargo manifests, Cargo.lock and proof-relation source bytes remain unchanged. The qualified rehearsal identity is retained. Fresh public genesis and cutover remain separate obligations; this configuration grants no deployment authority.",
+  "unchanged_cargo_paths": [
+    "Cargo.lock",
+    "node/Cargo.toml",
+    "wallet/Cargo.toml",
+    "walletd/Cargo.toml"
+  ]
+}

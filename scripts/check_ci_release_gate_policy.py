@@ -47,8 +47,8 @@ PINNED_UPLOAD_ARTIFACT_ACTION = (
     "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
 )
 PINNED_RELEASE_WORKFLOW_SHA512 = (
-    "f08ffb8a3567293bc1c77f16ba089d260626c70db897f5bc9f85a0271ffd9588e"
-    "b2537b5eeb458762aef9f5da385a459e32567099c196f58eac909ae57f0ed6b"
+    "e9148999b602840d89d18cf36aba65d5bf87dcbc5560f8a22581406d3d4ed4c2"
+    "09570bcd16e40dfd5e62a4add5b95a79d74df12711c6d46589257e6012a61cb4"
 )
 SUCCESSOR_CHECKER_RELATIVE_PATH = Path(
     "scripts/check_transaction_proof_successor_authorization.py"
@@ -1080,7 +1080,37 @@ def require_asset_package(
     )
 
 
+# Source-level execution guard for the shared CI/tag-release app gate.
+# Prefix/suffix are reviewed logical commands, not arbitrary shell parsing:
+# pinning their shape prevents conditionals/functions/set +e from bypassing the
+# five exact top-level commands. Blank lines/comments and continuations are OK.
+APP_TRANSPORT_REGRESSION_COMMANDS = (('cargo', 'test', '--locked', '-p', 'wallet', '--test', 'node_rpc'), ('cargo', 'test', '--locked', '-p', 'wallet', '--bin', 'wallet', 'rpc_argument_tests'), ('cargo', 'test', '--locked', '-p', 'wallet', '--lib', 'node_rpc::tests'), ('npm', '--prefix', 'hegemon-app', 'test', '--', '--no-cache', '--maxWorkers=1', '--no-file-parallelism', 'tests/connections.test.ts', 'tests/rpcEndpoint.test.ts', 'tests/walletSync.test.ts', 'tests/walletdProtocol.test.ts'), ('npm', '--prefix', 'hegemon-app', 'run', 'typecheck'))
+_APP_TRANSPORT_GATE_PREFIX = ('set -euo pipefail', 'ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"', 'cd "$ROOT"', 'MODE_ARGS=()', 'if [[ "$#" -gt 1 || ( "$#" -eq 1 && "$1" != "--review-only" ) ]]; then', 'echo "usage: $0 [--review-only]" >&2', 'exit 2', 'fi', 'if [[ "$#" -eq 1 ]]; then', 'MODE_ARGS+=("$1")', 'fi', 'node --check scripts/live-app-no-ssh-e2e.mjs', 'node --check scripts/app-no-ssh-e2e-mode.mjs', 'node --test scripts/test_app_no_ssh_e2e_mode.mjs', 'if [[ "${HEGEMON_APP_NO_SSH_E2E_SYNTAX_ONLY:-0}" == "1" ]]; then', 'exit 0', 'fi', 'if [[ -n "${HEGEMON_NODE_BIN:-}" || -n "${HEGEMON_WALLETD_BIN:-}" ]]; then', 'echo "HEGEMON_NODE_BIN and HEGEMON_WALLETD_BIN are not accepted by the required E2E gate" >&2', 'exit 2', 'fi')
+_APP_TRANSPORT_GATE_SUFFIX = ('NODE_BIN="$ROOT/target/release/hegemon-node"', 'WALLETD_BIN="$ROOT/target/release/walletd"', 'MANIFEST="$ROOT/target/release/hegemon-app-no-ssh-e2e-artifacts.json"', '"$ROOT/scripts/build_release_artifacts.sh" --manifest "$MANIFEST" >/dev/null', 'HEGEMON_NODE_BIN="$NODE_BIN" HEGEMON_WALLETD_BIN="$WALLETD_BIN" HEGEMON_RELEASE_MANIFEST="$MANIFEST" node scripts/live-app-no-ssh-e2e.mjs "${MODE_ARGS[@]}"')
+
+
+def require_app_transport_regressions(source: str) -> None:
+    logical = _logical_shell_lines(source)
+    start = len(_APP_TRANSPORT_GATE_PREFIX)
+    stop = start + len(APP_TRANSPORT_REGRESSION_COMMANDS)
+    if (tuple(logical[:start]) != _APP_TRANSPORT_GATE_PREFIX
+            or tuple(logical[stop:]) != _APP_TRANSPORT_GATE_SUFFIX):
+        raise SystemExit("shared app gate execution context/order differs from reviewed source")
+    actual = logical[start:stop]
+    if len(actual) != len(APP_TRANSPORT_REGRESSION_COMMANDS):
+        raise SystemExit("shared app gate must run all five transport regressions before native build")
+    for line, arguments in zip(actual, APP_TRANSPORT_REGRESSION_COMMANDS, strict=True):
+        if tuple(_command_tokens(line)) != arguments:
+            raise SystemExit("shared app gate transport command missing, changed or not fail closed")
+
+
+def check_app_transport_regression_source() -> None:
+    source = Path(__file__).resolve().parents[1] / "scripts/check-app-no-ssh-e2e.sh"
+    require_app_transport_regressions(source.read_text(encoding="utf-8"))
+
+
 def check_ci_workflow(path: Path) -> None:
+    check_app_transport_regression_source()
     workflow = path.read_text(encoding="utf-8")
     require_canonical_workflow_syntax(workflow)
     required_jobs = (
@@ -1584,6 +1614,7 @@ def check_release_workflow(path: Path) -> None:
     ):
         raise SystemExit("release workflow must be checked from its canonical checkout path")
     require_commit_rooted_successor_authority(repository_root)
+    check_app_transport_regression_source()
     require_canonical_workflow_syntax(workflow)
     top_level_keys = tuple(
         re.findall(r"(?m)^([A-Za-z_][A-Za-z0-9_-]*):", workflow)
@@ -1828,14 +1859,8 @@ def check_release_workflow(path: Path) -> None:
     successor_authorization_index = require_executable_command(
         "release transaction-proof successor authorization gate",
         authorization_steps,
-        "scripts/check_transaction_proof_successor_authorization.py",
-        exact_argument_vectors=(
-            (
-                "config/transaction-proof-successor-selection.json",
-                "--require-authorized",
-                "--verify-retained-artifacts",
-            ),
-        ),
+        "scripts/check_private_spend_launch_authorization.py",
+        exact_argument_vectors=(("--require-authorized",),),
         require_default_execution_context=True,
         exact_interpreter_prefix=("/usr/bin/python3", "-I", "-B"),
     )
@@ -1912,7 +1937,7 @@ def check_release_workflow(path: Path) -> None:
     ):
         block = job_block(workflow, job_name)
         steps = workflow_steps(workflow, job_name)
-        expected_step_count = 9 if job_name == "build-windows" else 8
+        expected_step_count = 11 if job_name == "build-windows" else 9
         if len(steps) != expected_step_count:
             raise SystemExit(
                 f"{job_name}: must contain exactly {expected_step_count} reviewed steps"
@@ -1935,6 +1960,27 @@ def check_release_workflow(path: Path) -> None:
             "scripts/build_release_artifacts.sh",
             exact_argument_vectors=(build_arguments,),
         )
+        if job_name == "build-windows":
+            launcher_regression_index = require_executable_command(
+                "build-windows raw-byte launcher hashing",
+                steps,
+                "scripts/test_check_release_launcher_policy.py",
+                exact_argument_vectors=((
+                    "ReleaseLauncherPolicyTests.test_bounded_reader_preserves_crlf_and_ctrl_z_bytes",
+                    "ReleaseLauncherPolicyTests.test_crlf_helper_requires_its_raw_digest_not_normalized_lf",
+                ),),
+                exact_interpreter_prefix=("python3", "-B"),
+            )
+            require_exact_step_execution_context(
+                "build-windows raw-byte launcher hashing",
+                steps[launcher_regression_index],
+                shell="bash",
+            )
+            require_step_order(
+                "build-windows launcher regression/build order",
+                launcher_regression_index,
+                build_index,
+            )
         if job_name == "build-macos-intel":
             manifest_path = "target/x86_64-apple-darwin/release/hegemon-release-artifacts.json"
             node_bin = "target/x86_64-apple-darwin/release/hegemon-node"
@@ -1982,6 +2028,13 @@ def check_release_workflow(path: Path) -> None:
             exact_argument_vectors=(manifest_arguments,),
             exact_interpreter_prefix=("python3",),
         )
+        common_authorization_index = require_executable_command(
+            f"{job_name} final common authorization",
+            steps,
+            "scripts/check_private_spend_launch_authorization.py",
+            exact_argument_vectors=(("--require-authorized", "--artifact-manifest", manifest_path),),
+            exact_interpreter_prefix=("python3", "-I", "-B"),
+        )
         audit_index = require_binary_audit(
             f"{job_name} binary audit",
             steps,
@@ -2024,6 +2077,7 @@ def check_release_workflow(path: Path) -> None:
         for label, index in (
             ("attested build", build_index),
             ("manifest verification", manifest_index),
+            ("final common authorization", common_authorization_index),
             ("binary audit", audit_index),
             ("asset package", package_index),
         ):
@@ -2036,6 +2090,7 @@ def check_release_workflow(path: Path) -> None:
             f"{job_name} attestation/package order",
             build_index,
             manifest_index,
+            common_authorization_index,
             audit_index,
             package_index,
             upload_index,

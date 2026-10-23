@@ -9,8 +9,8 @@ use codec::{Decode, DecodeWithMemLimit, DecodeWithMemTracking, Encode};
 use hegemon_hash384::{blake2b_384_domain_hash, domains};
 use protocol_shielded_pool::{
     family::{
-        ACTION_MINT_POSEIDON2_V8_COINBASE, ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE,
-        FAMILY_SHIELDED_POOL,
+        ACTION_MINT_POSEIDON2_V8_COINBASE, ACTION_MINT_POSEIDON2_V8_REWARDS,
+        ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE, FAMILY_SHIELDED_POOL,
     },
     poseidon2_production_transport::{
         decode_poseidon2_production_smz9_inline_args_exact,
@@ -22,7 +22,10 @@ use protocol_shielded_pool::{
         POSEIDON2_PRODUCTION_TRANSPORT_BACKEND_ID, POSEIDON2_PRODUCTION_TRANSPORT_DOMAIN_SET,
         POSEIDON2_PRODUCTION_TRANSPORT_FAMILY_ID,
     },
-    poseidon2_v8_coinbase::{MintPoseidon2V8CoinbaseArgs, POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES},
+    poseidon2_v8_coinbase::{
+        MintPoseidon2V8CoinbaseArgs, MintPoseidon2V8RewardsArgs, Poseidon2V8CoinbaseNoteData,
+        POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES, POSEIDON2_V8_REWARDS_MAX_ARGS_SCALE_BYTES,
+    },
     types::CandidateArtifact,
 };
 use serde::{Deserialize, Serialize};
@@ -50,6 +53,9 @@ use crate::{
     error::WalletError, keys::DerivedKeys, notes::NoteCiphertext,
     poseidon2_v8_coinbase::protocol_opening_to_relation,
 };
+
+pub(crate) const RECOVERY_SPEND_ACTION_ID: u16 = 18;
+pub(crate) const RECOVERY_ADMIN_ACTION_ID: u16 = 19;
 
 const MAX_CANONICAL_ACTION_BYTES: usize = 8 * 1024 * 1024;
 const NOTE_OPENING_WORDS: usize = 18;
@@ -158,6 +164,13 @@ pub(crate) fn poseidon2_v8_production_selection_at(
 pub type Poseidon2V8Digest = SmallwoodPoseidon2V8Digest;
 pub type Poseidon2V8Path = [Poseidon2V8Digest; SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH];
 
+#[path = "poseidon2_v8_launch_sync.rs"]
+pub(crate) mod launch_sync;
+pub use launch_sync::LaunchWalletContext;
+pub use launch_sync::{
+    encode_private_spend_candidate_action, project_private_spend_candidate_action,
+};
+
 /// Explicit local rehearsal context. This is absent from ordinary builds,
 /// does not install release authority, and cannot alter production resolution.
 /// Retained block actions must already have been verified by the test node;
@@ -242,6 +255,16 @@ pub struct Poseidon2V8OwnedNoteView {
     pub created_block_hash: [u8; 32],
 }
 
+/// A public commitment and its membership witness at one exact canonical
+/// position. It gives membership evidence only, never spending authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Poseidon2V8CanonicalNoteWitness {
+    pub commitment: Poseidon2V8Digest,
+    pub position: u64,
+    pub path: Poseidon2V8Path,
+    pub anchor: Poseidon2V8Digest,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Poseidon2V8SpendContext {
     pub tip: Poseidon2V8CanonicalTip,
@@ -270,6 +293,65 @@ pub(crate) struct Poseidon2V8WalletState {
     owned_notes: Vec<StoredPoseidon2V8OwnedNote>,
     nullifiers: Vec<StoredPoseidon2V8Nullifier>,
     blocks: Vec<StoredPoseidon2V8Block>,
+    /// Bounded reward queue, separate from spendable Merkle-tree leaves.
+    pending_rewards: Vec<StoredPoseidon2V8PendingReward>,
+    maturity_blocks: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct StoredPoseidon2V8PendingReward {
+    created_height: u64,
+    created_block_hash: [u8; 32],
+    notes: Vec<StoredPoseidon2V8PendingRewardNote>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct StoredPoseidon2V8PendingRewardNote {
+    commitment: Poseidon2V8Digest,
+    owned_opening: Option<([u64; NOTE_OPENING_WORDS], u32)>,
+}
+
+impl StoredPoseidon2V8PendingReward {
+    fn release_height(&self) -> Result<u64, WalletError> {
+        self.created_height
+            .checked_add(protocol_versioning::COINBASE_MATURITY - 1)
+            .ok_or(WalletError::InvalidState(
+                "V8 reward maturity height overflow",
+            ))
+    }
+
+    fn validate(&self, mirror: &Poseidon2V8WalletState) -> Result<(), WalletError> {
+        if self.created_height == 0
+            || self.created_block_hash == [0; 32]
+            || mirror.canonical_hash(self.created_height) != Some(self.created_block_hash)
+            || self.notes.is_empty()
+            || self.notes.len() > 2
+        {
+            return Err(WalletError::InvalidState(
+                "invalid V8 reward origin or note count",
+            ));
+        }
+        for (index, note) in self.notes.iter().enumerate() {
+            ensure_digest("queued V8 reward commitment", note.commitment)?;
+            if self.notes[..index]
+                .iter()
+                .any(|prior| prior.commitment == note.commitment)
+            {
+                return Err(WalletError::InvalidState("duplicate V8 reward commitment"));
+            }
+            if let Some((opening, _)) = note.owned_opening {
+                if poseidon2_v8_note_commitment(words_to_opening(opening)?)
+                    .map_err(|_| WalletError::InvalidState("invalid queued V8 opening"))?
+                    != note.commitment
+                {
+                    return Err(WalletError::InvalidState(
+                        "queued V8 reward opening mismatch",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -301,6 +383,69 @@ struct StoredPoseidon2V8Block {
     stablecoin_root_before: Option<Poseidon2V8Digest>,
     stablecoin_root_after: Option<Poseidon2V8Digest>,
     introduced_nullifiers: Vec<Poseidon2V8Digest>,
+    /// Exact rows removed from the queue by this block, restored on rollback.
+    released_rewards: Vec<StoredPoseidon2V8PendingReward>,
+}
+
+/// Frozen mirror shape embedded in wallet V11..V17. Never deserialize an old
+/// positional payload as the maturity-aware mirror.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Poseidon2V8WalletStateV17 {
+    genesis_hash: Option<[u8; 32]>,
+    tree_levels: Vec<Vec<Poseidon2V8Digest>>,
+    root_log: Vec<Poseidon2V8Digest>,
+    stablecoin_root: Option<Poseidon2V8Digest>,
+    owned_notes: Vec<StoredPoseidon2V8OwnedNote>,
+    nullifiers: Vec<StoredPoseidon2V8Nullifier>,
+    blocks: Vec<StoredPoseidon2V8BlockV17>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct StoredPoseidon2V8BlockV17 {
+    height: u64,
+    block_hash: [u8; 32],
+    parent_hash: [u8; 32],
+    leaf_count_before: u64,
+    root_log_len_before: u64,
+    root_after: Poseidon2V8Digest,
+    stablecoin_root_before: Option<Poseidon2V8Digest>,
+    stablecoin_root_after: Option<Poseidon2V8Digest>,
+    introduced_nullifiers: Vec<Poseidon2V8Digest>,
+}
+
+impl Poseidon2V8WalletStateV17 {
+    /// This conversion grants read-only historical inspection, never permission
+    /// to extend the old mirror under the new reward policy.
+    pub(crate) fn into_legacy_read_only(self) -> Result<Poseidon2V8WalletState, WalletError> {
+        let mirror = Poseidon2V8WalletState {
+            genesis_hash: self.genesis_hash,
+            tree_levels: self.tree_levels,
+            root_log: self.root_log,
+            stablecoin_root: self.stablecoin_root,
+            owned_notes: self.owned_notes,
+            nullifiers: self.nullifiers,
+            blocks: self
+                .blocks
+                .into_iter()
+                .map(|block| StoredPoseidon2V8Block {
+                    height: block.height,
+                    block_hash: block.block_hash,
+                    parent_hash: block.parent_hash,
+                    leaf_count_before: block.leaf_count_before,
+                    root_log_len_before: block.root_log_len_before,
+                    root_after: block.root_after,
+                    stablecoin_root_before: block.stablecoin_root_before,
+                    stablecoin_root_after: block.stablecoin_root_after,
+                    introduced_nullifiers: block.introduced_nullifiers,
+                    released_rewards: Vec::new(),
+                })
+                .collect(),
+            pending_rewards: Vec::new(),
+            maturity_blocks: 0,
+        };
+        mirror.validate_legacy_read_only()?;
+        Ok(mirror)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking)]
@@ -350,14 +495,55 @@ struct PendingActionIdentityBody<'a> {
 }
 
 enum DecodedPoseidon2V8Action {
+    Launch(launch_sync::LaunchProjection),
+    AssetSpend(transaction_circuit::asset_spend_v1::AssetSpendPublic),
+    AssetAdmin,
     Transfer {
         statement: SmallwoodPoseidon2V8PublicStatement,
         ciphertexts: [Option<[u8; POSEIDON2_PRODUCTION_CIPHERTEXT_BYTES]>; 2],
     },
-    Coinbase(MintPoseidon2V8CoinbaseArgs),
+    Coinbase(Vec<Poseidon2V8CoinbaseNoteData>),
 }
 
 impl Poseidon2V8WalletState {
+    /// Encode only mirrors representable by the frozen pre-maturity schema.
+    /// Used by legacy read-only recovery and exact historical-codec tests.
+    pub(crate) fn to_legacy_v17(&self) -> Result<Poseidon2V8WalletStateV17, WalletError> {
+        if !self.pending_rewards.is_empty()
+            || self
+                .blocks
+                .iter()
+                .any(|block| !block.released_rewards.is_empty())
+        {
+            return Err(WalletError::InvalidState(
+                "maturity-aware mirror cannot be encoded as legacy V17",
+            ));
+        }
+        Ok(Poseidon2V8WalletStateV17 {
+            genesis_hash: self.genesis_hash,
+            tree_levels: self.tree_levels.clone(),
+            root_log: self.root_log.clone(),
+            stablecoin_root: self.stablecoin_root,
+            owned_notes: self.owned_notes.clone(),
+            nullifiers: self.nullifiers.clone(),
+            blocks: self
+                .blocks
+                .iter()
+                .map(|block| StoredPoseidon2V8BlockV17 {
+                    height: block.height,
+                    block_hash: block.block_hash,
+                    parent_hash: block.parent_hash,
+                    leaf_count_before: block.leaf_count_before,
+                    root_log_len_before: block.root_log_len_before,
+                    root_after: block.root_after,
+                    stablecoin_root_before: block.stablecoin_root_before,
+                    stablecoin_root_after: block.stablecoin_root_after,
+                    introduced_nullifiers: block.introduced_nullifiers.clone(),
+                })
+                .collect(),
+        })
+    }
+
     pub(crate) fn clear(&mut self) {
         *self = Self::default();
     }
@@ -366,6 +552,7 @@ impl Poseidon2V8WalletState {
         match self.genesis_hash {
             None => {
                 let stablecoin_root = production_stablecoin_genesis(genesis_hash)?;
+                self.maturity_blocks = protocol_versioning::COINBASE_MATURITY;
                 self.genesis_hash = Some(genesis_hash);
                 self.tree_levels = empty_tree_levels();
                 self.root_log = vec![empty_note_root()];
@@ -377,6 +564,54 @@ impl Poseidon2V8WalletState {
                 "V8 wallet mirror genesis mismatch",
             )),
         }
+    }
+
+    pub(crate) fn ensure_launch_genesis(
+        &mut self,
+        genesis_hash: [u8; 32],
+        stablecoin_root: Poseidon2V8Digest,
+        note_root: Poseidon2V8Digest,
+    ) -> Result<(), WalletError> {
+        ensure_digest("launch stablecoin genesis root", stablecoin_root)?;
+        if note_root != empty_note_root() || genesis_hash == [0; 32] {
+            return Err(WalletError::InvalidState(
+                "launch genesis requires canonical empty note tree",
+            ));
+        }
+        match self.genesis_hash {
+            None => {
+                if !self.blocks.is_empty() || !self.root_log.is_empty() {
+                    return Err(WalletError::InvalidState(
+                        "launch genesis mirror is not pristine",
+                    ));
+                }
+                self.genesis_hash = Some(genesis_hash);
+                self.tree_levels = empty_tree_levels();
+                self.root_log = vec![note_root];
+                self.stablecoin_root = Some(stablecoin_root);
+                self.maturity_blocks = protocol_versioning::COINBASE_MATURITY;
+            }
+            Some(existing) if existing == genesis_hash => {
+                let original_stable = self
+                    .blocks
+                    .first()
+                    .map(|block| block.stablecoin_root_before)
+                    .unwrap_or(self.stablecoin_root);
+                if self.root_log.first() != Some(&note_root)
+                    || original_stable != Some(stablecoin_root)
+                {
+                    return Err(WalletError::InvalidState(
+                        "launch genesis roots differ from pinned mirror",
+                    ));
+                }
+            }
+            Some(_) => {
+                return Err(WalletError::InvalidState(
+                    "launch wallet mirror genesis mismatch",
+                ))
+            }
+        }
+        self.validate()
     }
 
     #[cfg(test)]
@@ -450,6 +685,53 @@ impl Poseidon2V8WalletState {
             .map(|block| block.block_hash)
     }
 
+    pub(crate) fn canonical_tip_at_height(&self, height: u64) -> Option<Poseidon2V8CanonicalTip> {
+        if height == 0 {
+            return Some(Poseidon2V8CanonicalTip {
+                height: 0,
+                block_hash: self.genesis_hash?,
+                anchor: empty_note_root(),
+                stablecoin_root: self
+                    .blocks
+                    .first()
+                    .map(|block| block.stablecoin_root_before)
+                    .unwrap_or(self.stablecoin_root),
+            });
+        }
+        let block = self
+            .blocks
+            .get(usize::try_from(height.checked_sub(1)?).ok()?)?;
+        if block.height != height {
+            return None;
+        }
+        Some(Poseidon2V8CanonicalTip {
+            height,
+            block_hash: block.block_hash,
+            anchor: block.root_after,
+            stablecoin_root: block.stablecoin_root_after,
+        })
+    }
+
+    /// Membership from the trusted full-node mirror, including policy-owned notes.
+    pub(crate) fn canonical_note_path(
+        &self,
+        commitment: Poseidon2V8Digest,
+        position: u64,
+    ) -> Result<Poseidon2V8Path, WalletError> {
+        self.validate_default_root()?;
+        if self.tree_levels.first().and_then(|level| {
+            usize::try_from(position)
+                .ok()
+                .and_then(|position| level.get(position))
+        }) != Some(&commitment)
+        {
+            return Err(WalletError::InvalidState(
+                "policy note absent from canonical mirror",
+            ));
+        }
+        note_path_from_levels(&self.tree_levels, position)
+    }
+
     pub(crate) fn owned_notes(&self) -> Result<Vec<Poseidon2V8OwnedNoteView>, WalletError> {
         self.validate_default_root()?;
         let anchor = current_note_root(&self.tree_levels)?;
@@ -460,6 +742,77 @@ impl Poseidon2V8WalletState {
                 stored_note_view(note, path, anchor)
             })
             .collect()
+    }
+
+    pub(crate) fn canonical_note_witness(
+        &self,
+        commitment: Poseidon2V8Digest,
+    ) -> Result<Option<Poseidon2V8CanonicalNoteWitness>, WalletError> {
+        self.validate_default_root()?;
+        let leaves = self
+            .tree_levels
+            .first()
+            .ok_or(WalletError::InvalidState("V8 commitment level missing"))?;
+        let mut matching = leaves
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| **candidate == commitment);
+        let Some((position, _)) = matching.next() else {
+            return Ok(None);
+        };
+        if matching.next().is_some() {
+            return Err(WalletError::InvalidState(
+                "V8 commitment has multiple canonical positions; select an exact position",
+            ));
+        }
+        self.canonical_note_witness_at(commitment, position as u64)
+    }
+
+    /// Return every exact position occupied by a public commitment in the
+    /// authenticated canonical mirror. Duplicate notes are deliberately not
+    /// collapsed: callers that require one position must reject ambiguity.
+    pub(crate) fn canonical_commitment_positions(
+        &self,
+        commitment: Poseidon2V8Digest,
+    ) -> Result<Vec<u64>, WalletError> {
+        self.validate_default_root()?;
+        let leaves = self
+            .tree_levels
+            .first()
+            .ok_or(WalletError::InvalidState("V8 commitment level missing"))?;
+        leaves
+            .iter()
+            .enumerate()
+            .filter_map(|(position, candidate)| (*candidate == commitment).then_some(position))
+            .map(|position| {
+                u64::try_from(position)
+                    .map_err(|_| WalletError::InvalidState("V8 note position overflow"))
+            })
+            .collect()
+    }
+
+    pub(crate) fn canonical_note_witness_at(
+        &self,
+        commitment: Poseidon2V8Digest,
+        position: u64,
+    ) -> Result<Option<Poseidon2V8CanonicalNoteWitness>, WalletError> {
+        self.validate_default_root()?;
+        let position_index = usize::try_from(position)
+            .map_err(|_| WalletError::InvalidState("V8 note position overflow"))?;
+        if self
+            .tree_levels
+            .first()
+            .and_then(|leaves| leaves.get(position_index))
+            != Some(&commitment)
+        {
+            return Ok(None);
+        }
+        Ok(Some(Poseidon2V8CanonicalNoteWitness {
+            commitment,
+            position,
+            path: note_path_from_levels(&self.tree_levels, position)?,
+            anchor: current_note_root(&self.tree_levels)?,
+        }))
     }
 
     pub(crate) fn has_canonical_nullifier(&self, value: Poseidon2V8Digest) -> bool {
@@ -540,8 +893,16 @@ impl Poseidon2V8WalletState {
             }
             self.root_log.truncate(expected_root_log_len);
             self.stablecoin_root = detached.stablecoin_root_before;
+            // An owned reward retains its origin hash. Its later insertion is
+            // undone by the release block's exact leaf-count boundary.
             self.owned_notes
-                .retain(|note| note.created_block_hash != detached.block_hash);
+                .retain(|note| note.position < detached.leaf_count_before);
+            // Restore rows drained by this release block before the younger
+            // queue, then remove rewards whose origin was itself detached.
+            let mut restored = detached.released_rewards;
+            restored.append(&mut self.pending_rewards);
+            restored.retain(|reward| reward.created_height < detached.height);
+            self.pending_rewards = restored;
             for note in &mut self.owned_notes {
                 if note.spent_by == Some(detached.block_hash) {
                     note.spent_by = None;
@@ -612,6 +973,11 @@ impl Poseidon2V8WalletState {
         keys: Option<&DerivedKeys>,
         decode_transfer: impl Fn(PendingActionWire) -> Result<DecodedPoseidon2V8Action, WalletError>,
     ) -> Result<Poseidon2V8SyncDelta, WalletError> {
+        if self.maturity_blocks != protocol_versioning::COINBASE_MATURITY {
+            return Err(WalletError::InvalidState(
+                "legacy V8 reward policy cannot extend the new chain",
+            ));
+        }
         let tip = self.tip()?;
         let expected_height = tip
             .height
@@ -639,25 +1005,94 @@ impl Poseidon2V8WalletState {
                 continue;
             };
             match action {
-                DecodedPoseidon2V8Action::Coinbase(args) => {
-                    let commitment = args.miner_note.commitment;
-                    self.append_commitment(commitment)?;
-                    delta.commitments = delta.commitments.saturating_add(1);
-                    delta.ciphertexts = delta.ciphertexts.saturating_add(1);
-                    if let Some(keys) = keys {
-                        if let Some((opening, diversifier_index)) =
-                            recover_coinbase_note(&args, keys)?
-                        {
-                            self.insert_owned_note(
-                                opening,
-                                commitment,
-                                diversifier_index,
-                                block,
-                                keys,
-                            )?;
-                            delta.recovered = delta.recovered.saturating_add(1);
-                        }
+                DecodedPoseidon2V8Action::AssetAdmin => {}
+                DecodedPoseidon2V8Action::AssetSpend(public) => {
+                    // The source decoder authenticates the original H-bound
+                    // statement. Recheck H against this mirror's linked history,
+                    // with the actual inclusion parent P (not the inclusion
+                    // block P+1 or a later sync tip) determining eligibility.
+                    crate::asset_spend_rpc::require_reference_window(
+                        public.parent_height,
+                        tip.height,
+                    )?;
+                    let reference = self.canonical_tip_at_height(public.parent_height).ok_or(
+                        WalletError::InvalidState("asset shared-pool canonical reference absent"),
+                    )?;
+                    if public.reference_parent_hash != reference.block_hash
+                        || public.note_root != reference.anchor
+                    {
+                        return Err(WalletError::InvalidState(
+                            "asset shared-pool reference differs from canonical checkpoint",
+                        ));
                     }
+                    for nullifier in public.nullifiers {
+                        if self.has_canonical_nullifier(nullifier) {
+                            return Err(WalletError::InvalidState(
+                                "asset nullifier already exists in shared pool",
+                            ));
+                        }
+                        for note in self
+                            .owned_notes
+                            .iter_mut()
+                            .filter(|n| n.nullifier == nullifier)
+                        {
+                            if note.spent_by.is_some() {
+                                return Err(WalletError::InvalidState(
+                                    "asset native input already spent",
+                                ));
+                            }
+                            note.spent_by = Some(block.hash);
+                            delta.spent = delta.spent.saturating_add(1);
+                        }
+                        self.nullifiers.push(StoredPoseidon2V8Nullifier {
+                            value: nullifier,
+                            block_hash: block.hash,
+                        });
+                        introduced_nullifiers.push(nullifier);
+                    }
+                    for commitment in public.commitments {
+                        self.append_commitment(commitment)?;
+                        delta.commitments = delta.commitments.saturating_add(1);
+                        delta.ciphertexts = delta.ciphertexts.saturating_add(1);
+                    }
+                }
+                DecodedPoseidon2V8Action::Launch(projection) => {
+                    self.apply_launch_projection(
+                        projection,
+                        block,
+                        keys,
+                        &mut delta,
+                        &mut introduced_nullifiers,
+                    )?;
+                }
+                DecodedPoseidon2V8Action::Coinbase(notes) => {
+                    if self
+                        .pending_rewards
+                        .last()
+                        .is_some_and(|reward| reward.created_height >= block.height)
+                    {
+                        return Err(WalletError::InvalidState(
+                            "duplicate V8 reward origin height",
+                        ));
+                    }
+                    let mut pending = Vec::new();
+                    for note in notes {
+                        let owned_opening = keys
+                            .map(|keys| recover_coinbase_note(&note, keys))
+                            .transpose()?
+                            .flatten()
+                            .map(|(opening, index)| (opening_to_words(opening), index));
+                        pending.push(StoredPoseidon2V8PendingRewardNote {
+                            commitment: note.commitment,
+                            owned_opening,
+                        });
+                        delta.ciphertexts = delta.ciphertexts.saturating_add(1);
+                    }
+                    self.pending_rewards.push(StoredPoseidon2V8PendingReward {
+                        created_height: block.height,
+                        created_block_hash: block.hash,
+                        notes: pending,
+                    });
                 }
                 DecodedPoseidon2V8Action::Transfer {
                     statement,
@@ -748,6 +1183,34 @@ impl Poseidon2V8WalletState {
             }
         }
 
+        // The block's actions used only pre-block roots. Appending mature
+        // rewards now exposes them first to the following block's proofs.
+        let mut released_rewards = Vec::new();
+        while self.pending_rewards.first().is_some_and(|reward| {
+            reward
+                .created_height
+                .checked_add(protocol_versioning::COINBASE_MATURITY - 1)
+                == Some(block.height)
+        }) {
+            let reward = self.pending_rewards.remove(0);
+            for note in &reward.notes {
+                let position = self.append_commitment(note.commitment)?;
+                delta.commitments = delta.commitments.saturating_add(1);
+                if let (Some(keys), Some((opening, index))) = (keys, note.owned_opening) {
+                    self.insert_owned_note_with_origin(
+                        words_to_opening(opening)?,
+                        note.commitment,
+                        index,
+                        position,
+                        reward.created_height,
+                        reward.created_block_hash,
+                        keys,
+                    )?;
+                    delta.recovered = delta.recovered.saturating_add(1);
+                }
+            }
+            released_rewards.push(reward);
+        }
         let root_after = current_note_root(&self.tree_levels)?;
         self.blocks.push(StoredPoseidon2V8Block {
             height: block.height,
@@ -759,9 +1222,34 @@ impl Poseidon2V8WalletState {
             stablecoin_root_before,
             stablecoin_root_after: self.stablecoin_root,
             introduced_nullifiers,
+            released_rewards,
         });
         self.validate_tip()?;
         Ok(delta)
+    }
+
+    /// Journal unit fixture only: creates one validated canonical CM occurrence
+    /// after an empty block. This is NOT a block/proof acceptance or authority API.
+    #[cfg(test)]
+    pub(crate) fn append_journal_test_commitment(
+        &mut self,
+        block: &Poseidon2V8CanonicalBlock,
+        commitment: Poseidon2V8Digest,
+    ) -> Result<u64, WalletError> {
+        if !block.action_bytes.is_empty() {
+            return Err(WalletError::InvalidState(
+                "journal fixture requires empty block",
+            ));
+        }
+        self.apply_block(block, None)?;
+        let position = self.append_commitment(commitment)?;
+        let root = current_note_root(&self.tree_levels)?;
+        self.blocks
+            .last_mut()
+            .ok_or(WalletError::InvalidState("journal fixture block absent"))?
+            .root_after = root;
+        self.validate()?;
+        Ok(position)
     }
 
     fn append_commitment(&mut self, commitment: Poseidon2V8Digest) -> Result<u64, WalletError> {
@@ -779,31 +1267,6 @@ impl Poseidon2V8WalletState {
         Ok(position)
     }
 
-    fn insert_owned_note(
-        &mut self,
-        opening: SmallwoodPoseidon2V8NoteOpening,
-        commitment: Poseidon2V8Digest,
-        diversifier_index: u32,
-        block: &Poseidon2V8CanonicalBlock,
-        keys: &DerivedKeys,
-    ) -> Result<(), WalletError> {
-        let position = self
-            .tree_levels
-            .first()
-            .map(Vec::len)
-            .and_then(|value| value.checked_sub(1))
-            .and_then(|value| u64::try_from(value).ok())
-            .ok_or(WalletError::InvalidState("V8 owned note position missing"))?;
-        self.insert_owned_note_at(
-            opening,
-            commitment,
-            diversifier_index,
-            position,
-            block,
-            keys,
-        )
-    }
-
     fn insert_owned_note_at(
         &mut self,
         opening: SmallwoodPoseidon2V8NoteOpening,
@@ -811,6 +1274,29 @@ impl Poseidon2V8WalletState {
         diversifier_index: u32,
         position: u64,
         block: &Poseidon2V8CanonicalBlock,
+        keys: &DerivedKeys,
+    ) -> Result<(), WalletError> {
+        self.insert_owned_note_with_origin(
+            opening,
+            commitment,
+            diversifier_index,
+            position,
+            block.height,
+            block.hash,
+            keys,
+        )
+    }
+
+    /// Preserve the actual reward origin independently of its later leaf
+    /// insertion. Ordinary outputs supply their own block as before.
+    fn insert_owned_note_with_origin(
+        &mut self,
+        opening: SmallwoodPoseidon2V8NoteOpening,
+        commitment: Poseidon2V8Digest,
+        diversifier_index: u32,
+        position: u64,
+        created_height: u64,
+        created_block_hash: [u8; 32],
         keys: &DerivedKeys,
     ) -> Result<(), WalletError> {
         if self
@@ -828,8 +1314,8 @@ impl Poseidon2V8WalletState {
             diversifier_index,
             nullifier,
             spent_by: None,
-            created_height: block.height,
-            created_block_hash: block.hash,
+            created_height,
+            created_block_hash,
         });
         Ok(())
     }
@@ -848,13 +1334,33 @@ impl Poseidon2V8WalletState {
     }
 
     pub(crate) fn validate(&self) -> Result<(), WalletError> {
+        self.validate_inner(false)
+    }
+
+    fn validate_legacy_read_only(&self) -> Result<(), WalletError> {
+        if self.maturity_blocks != 0
+            || !self.pending_rewards.is_empty()
+            || self
+                .blocks
+                .iter()
+                .any(|block| !block.released_rewards.is_empty())
+        {
+            return Err(WalletError::InvalidState(
+                "mixed legacy and mature V8 mirror",
+            ));
+        }
+        self.validate_inner(true)
+    }
+
+    fn validate_inner(&self, legacy_read_only: bool) -> Result<(), WalletError> {
         if self.genesis_hash.is_none()
             && (!self.blocks.is_empty()
                 || !self.tree_levels.is_empty()
                 || !self.root_log.is_empty()
                 || self.stablecoin_root.is_some()
                 || !self.owned_notes.is_empty()
-                || !self.nullifiers.is_empty())
+                || !self.nullifiers.is_empty()
+                || !self.pending_rewards.is_empty())
         {
             return Err(WalletError::InvalidState(
                 "uninitialized V8 mirror contains state",
@@ -862,6 +1368,30 @@ impl Poseidon2V8WalletState {
         }
         if self.genesis_hash.is_none() {
             return Ok(());
+        }
+        if !legacy_read_only && self.maturity_blocks != protocol_versioning::COINBASE_MATURITY {
+            return Err(WalletError::InvalidState(
+                "legacy V8 reward policy cannot extend the new chain",
+            ));
+        }
+        let tip_height = self.blocks.last().map_or(0, |block| block.height);
+        if self.pending_rewards.len() >= protocol_versioning::COINBASE_MATURITY as usize {
+            return Err(WalletError::InvalidState(
+                "oversized V8 reward maturity queue",
+            ));
+        }
+        let mut last_origin = 0;
+        for reward in &self.pending_rewards {
+            reward.validate(self)?;
+            if reward.created_height <= last_origin
+                || reward.created_height > tip_height
+                || reward.release_height()? <= tip_height
+            {
+                return Err(WalletError::InvalidState(
+                    "invalid V8 reward maturity queue order",
+                ));
+            }
+            last_origin = reward.created_height;
         }
         self.validate_default_root()?;
         let commitments = self
@@ -907,6 +1437,34 @@ impl Poseidon2V8WalletState {
             let expected_block_root = note_root(commitments.get(..prefix_len).ok_or(
                 WalletError::InvalidState("V8 block leaf count exceeds tree"),
             )?)?;
+            if block.released_rewards.len() > 1 {
+                return Err(WalletError::InvalidState(
+                    "multiple V8 reward release origins",
+                ));
+            }
+            for reward in &block.released_rewards {
+                reward.validate(self)?;
+                if reward.release_height()? != block.height {
+                    return Err(WalletError::InvalidState(
+                        "V8 reward released at wrong height",
+                    ));
+                }
+                let start =
+                    prefix_len
+                        .checked_sub(reward.notes.len())
+                        .ok_or(WalletError::InvalidState(
+                            "V8 reward release exceeds block leaves",
+                        ))?;
+                if start < block.leaf_count_before as usize
+                    || reward.notes.iter().enumerate().any(|(offset, note)| {
+                        commitments.get(start + offset) != Some(&note.commitment)
+                    })
+                {
+                    return Err(WalletError::InvalidState(
+                        "V8 reward release leaf order mismatch",
+                    ));
+                }
+            }
             if block.height != previous_height.saturating_add(1)
                 || block.parent_hash != previous_hash
                 || block.leaf_count_before != previous_leaf_count
@@ -999,6 +1557,27 @@ impl Poseidon2V8WalletState {
     }
 }
 
+/// Extract exact public reward notes after canonical framing and action-ID
+/// checks. This does not establish that a block is canonical or authorize a
+/// spend: custody scanners must consume an independently verified node stream.
+pub fn poseidon2_v8_reward_notes_from_canonical_action(
+    encoded: &[u8],
+) -> Result<Option<Vec<Poseidon2V8CoinbaseNoteData>>, WalletError> {
+    let wire = decode_canonical_action_exact(encoded)?;
+    if wire.family_id != FAMILY_SHIELDED_POOL
+        || !matches!(
+            wire.action_id,
+            ACTION_MINT_POSEIDON2_V8_COINBASE | ACTION_MINT_POSEIDON2_V8_REWARDS
+        )
+    {
+        return Ok(None);
+    }
+    match decode_v8_coinbase(wire)? {
+        DecodedPoseidon2V8Action::Coinbase(notes) => Ok(Some(notes)),
+        _ => unreachable!("reward decoder returns rewards only"),
+    }
+}
+
 fn decode_v8_action_exact(
     encoded: &[u8],
     decode_transfer: &impl Fn(PendingActionWire) -> Result<DecodedPoseidon2V8Action, WalletError>,
@@ -1009,7 +1588,18 @@ fn decode_v8_action_exact(
     }
     match wire.action_id {
         ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE => decode_transfer(wire).map(Some),
-        ACTION_MINT_POSEIDON2_V8_COINBASE => decode_v8_coinbase(wire).map(Some),
+        protocol_versioning::launch_candidate::HTLC_ACTION_ID
+        | protocol_versioning::launch_candidate::RP06_ACTION_ID
+        | protocol_versioning::launch_candidate::PRIVATE_SPEND_ACTION_ID => {
+            decode_transfer(wire).map(Some)
+        }
+        transaction_circuit::asset_spend_v1_admission::ASSET_SPEND_ACTION_ID
+        | transaction_circuit::asset_spend_v1_admission::ASSET_ADMIN_ACTION_ID
+        | RECOVERY_SPEND_ACTION_ID
+        | RECOVERY_ADMIN_ACTION_ID => decode_transfer(wire).map(Some),
+        ACTION_MINT_POSEIDON2_V8_COINBASE | ACTION_MINT_POSEIDON2_V8_REWARDS => {
+            decode_v8_coinbase(wire).map(Some)
+        }
         _ => Ok(None),
     }
 }
@@ -1039,14 +1629,146 @@ pub(crate) fn canonical_test_action_bytes(marker: u8) -> Vec<u8> {
     wire.encode()
 }
 
+// SCALE overhead for the exact empty-legacy-field recovery shapes, including
+// the four-byte compact public_args length. Inner caps are source-owned; this
+// exception never changes the ordinary eight-MiB ceiling or proof authority.
+const RECOVERY_SPEND_CANONICAL_OUTER_BYTES: usize = 277;
+const RECOVERY_ADMIN_CANONICAL_OUTER_BYTES: usize = 121;
+
+/// Allocation-free outer preflight followed by the typed borrowed recovery
+/// decoder. A route ID or magic prefix alone cannot grant the larger limit.
+fn recovery_canonical_decode_limit(encoded: &[u8]) -> Option<usize> {
+    use transaction_circuit::{asset_recovery_wire_v1 as wire, asset_spend_v1_admission as old};
+    if encoded.len() > wire::MAX_SPEND_ACTION_BYTES + RECOVERY_SPEND_CANONICAL_OUTER_BYTES {
+        return None;
+    }
+    fn take<'a>(cursor: &mut &'a [u8], n: usize) -> Option<&'a [u8]> {
+        let (head, tail) = cursor.split_at_checked(n)?;
+        *cursor = tail;
+        Some(head)
+    }
+    // Exact minimal SCALE compact-u32, without decoding any Vec.
+    fn count(cursor: &mut &[u8]) -> Option<usize> {
+        let first = *cursor.first()?;
+        let value = match first & 3 {
+            0 => u32::from(take(cursor, 1)?[0] >> 2),
+            1 => {
+                let n = u16::from_le_bytes(take(cursor, 2)?.try_into().ok()?) >> 2;
+                if n < 1 << 6 {
+                    return None;
+                }
+                u32::from(n)
+            }
+            2 => {
+                let n = u32::from_le_bytes(take(cursor, 4)?.try_into().ok()?) >> 2;
+                if n < 1 << 14 {
+                    return None;
+                }
+                n
+            }
+            _ => {
+                if take(cursor, 1)? != [3] {
+                    return None;
+                }
+                let n = u32::from_le_bytes(take(cursor, 4)?.try_into().ok()?);
+                if n <= 0x3fff_ffff {
+                    return None;
+                }
+                n
+            }
+        };
+        usize::try_from(value).ok()
+    }
+    let mut cursor = encoded;
+    take(&mut cursor, 48)?; // Fixed ActionId48; hash is checked by the exact decoder.
+    let binding = old::NATIVE_VERSION_BINDING;
+    if take(&mut cursor, 2)? != binding.circuit.to_le_bytes()
+        || take(&mut cursor, 2)? != binding.crypto.to_le_bytes()
+        || take(&mut cursor, 2)? != FAMILY_SHIELDED_POOL.to_le_bytes()
+    {
+        return None;
+    }
+    let action = u16::from_le_bytes(take(&mut cursor, 2)?.try_into().ok()?);
+    let (outputs, inner_cap, outer_cap) = match action {
+        RECOVERY_SPEND_ACTION_ID => (
+            3,
+            wire::MAX_SPEND_ACTION_BYTES,
+            RECOVERY_SPEND_CANONICAL_OUTER_BYTES,
+        ),
+        RECOVERY_ADMIN_ACTION_ID => (
+            0,
+            wire::MAX_ADMIN_ACTION_BYTES,
+            RECOVERY_ADMIN_CANONICAL_OUTER_BYTES,
+        ),
+        _ => return None,
+    };
+    if take(&mut cursor, 48)? != [0; 48]
+        || count(&mut cursor)? != 0
+        || count(&mut cursor)? != 0
+        || count(&mut cursor)? != outputs
+    {
+        return None;
+    }
+    let hashes = take(&mut cursor, outputs * 48)?;
+    if count(&mut cursor)? != outputs {
+        return None;
+    }
+    if !take(&mut cursor, outputs * 4)?
+        .chunks_exact(4)
+        .all(|n| n == (wire::CIPHERTEXT_BYTES as u32).to_le_bytes())
+    {
+        return None;
+    }
+    let length = count(&mut cursor)?;
+    // The fixed overhead above accounts for at most four length bytes.
+    if length > inner_cap || length > 0x3fff_ffff {
+        return None;
+    }
+    let body = take(&mut cursor, length)?;
+    let fee = u64::from_le_bytes(take(&mut cursor, 8)?.try_into().ok()?);
+    if take(&mut cursor, 1)? != [0] || !cursor.is_empty() {
+        return None;
+    }
+    match action {
+        RECOVERY_SPEND_ACTION_ID => {
+            let decoded = wire::decode_spend_ref(body).ok()?;
+            if fee != decoded.public.base.fee
+                || !hashes
+                    .chunks_exact(48)
+                    .zip(decoded.public.base.ciphertext_commitments.iter())
+                    .all(|(actual, expected)| actual == expected)
+            {
+                return None;
+            }
+        }
+        RECOVERY_ADMIN_ACTION_ID => {
+            wire::decode_admin_ref(body).ok()?;
+            if fee != 0 {
+                return None;
+            }
+        }
+        _ => return None,
+    }
+    Some(inner_cap + outer_cap)
+}
+
+fn canonical_action_decode_limit(encoded: &[u8]) -> usize {
+    if encoded.len() <= MAX_CANONICAL_ACTION_BYTES {
+        MAX_CANONICAL_ACTION_BYTES
+    } else {
+        recovery_canonical_decode_limit(encoded).unwrap_or(MAX_CANONICAL_ACTION_BYTES)
+    }
+}
+
 fn decode_canonical_action_exact(encoded: &[u8]) -> Result<PendingActionWire, WalletError> {
-    if encoded.len() > MAX_CANONICAL_ACTION_BYTES {
+    let maximum = canonical_action_decode_limit(encoded);
+    if encoded.len() > maximum {
         return Err(WalletError::Serialization(
             "canonical action exceeds wallet decode limit".into(),
         ));
     }
     let mut cursor = encoded;
-    let wire = PendingActionWire::decode_with_mem_limit(&mut cursor, MAX_CANONICAL_ACTION_BYTES)
+    let wire = PendingActionWire::decode_with_mem_limit(&mut cursor, maximum)
         .map_err(|error| WalletError::Serialization(format!("decode canonical action: {error}")))?;
     if !cursor.is_empty() || wire.encode().as_slice() != encoded {
         return Err(WalletError::Serialization(
@@ -1140,58 +1862,82 @@ fn decode_v8_transfer(
 }
 
 fn decode_v8_coinbase(wire: PendingActionWire) -> Result<DecodedPoseidon2V8Action, WalletError> {
-    let expected_binding: PendingVersionBinding =
-        protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING.into();
+    let is_rewards = wire.action_id == ACTION_MINT_POSEIDON2_V8_REWARDS;
+    let expected_binding: PendingVersionBinding = if is_rewards {
+        protocol_versioning::launch_candidate::RP06_VERSION_BINDING.into()
+    } else {
+        protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING.into()
+    };
     if wire.binding != expected_binding
         || wire.anchor != [0; 48]
         || !wire.nullifiers.is_empty()
         || !wire.commitments.is_empty()
         || wire.candidate_artifact.is_some()
         || wire.fee != 0
-        || wire.ciphertext_hashes.len() != 1
-        || wire.ciphertext_sizes.len() != 1
-        || wire.public_args.len() != POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES
+        || wire.ciphertext_hashes.len() != wire.ciphertext_sizes.len()
+        || (!is_rewards && wire.public_args.len() != POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES)
+        || (is_rewards && wire.public_args.len() > POSEIDON2_V8_REWARDS_MAX_ARGS_SCALE_BYTES)
     {
         return Err(WalletError::Serialization(
-            "noncanonical V8 coinbase outer state".into(),
+            "noncanonical V8 reward outer state".into(),
         ));
     }
     let mut cursor = wire.public_args.as_slice();
-    let args = MintPoseidon2V8CoinbaseArgs::decode(&mut cursor).map_err(|error| {
-        WalletError::Serialization(format!("decode V8 coinbase action: {error}"))
-    })?;
-    if !cursor.is_empty() || args.encode() != wire.public_args {
-        return Err(WalletError::Serialization(
-            "noncanonical V8 coinbase action encoding".into(),
-        ));
-    }
-    let opening = protocol_opening_to_relation(args.miner_note.opening);
-    if opening.value == 0
-        || u128::from(opening.value) > MAX_IN_CIRCUIT_VALUE
-        || opening.asset_id != NATIVE_ASSET_ID
-        || opening.recipient_key == [0; 4]
-        || opening.authorization_key == [0; 4]
-        || opening_words(opening)
-            .into_iter()
-            .any(|word| word >= FIELD_MODULUS_U64)
-        || poseidon2_v8_note_commitment(opening)
-            .map_err(|_| WalletError::Serialization("invalid V8 coinbase opening".into()))?
-            != args.miner_note.commitment
+    let (notes, reencoded) = if is_rewards {
+        let args = MintPoseidon2V8RewardsArgs::decode(&mut cursor)
+            .map_err(|error| WalletError::Serialization(format!("decode V8 rewards: {error}")))?;
+        let encoded = args.encode();
+        let mut notes = vec![args.miner_note];
+        notes.extend(args.funding_note);
+        (notes, encoded)
+    } else {
+        let args = MintPoseidon2V8CoinbaseArgs::decode(&mut cursor)
+            .map_err(|error| WalletError::Serialization(format!("decode V8 coinbase: {error}")))?;
+        let encoded = args.encode();
+        (vec![args.miner_note], encoded)
+    };
+    if !cursor.is_empty()
+        || reencoded != wire.public_args
+        || notes.len() != wire.ciphertext_hashes.len()
     {
         return Err(WalletError::Serialization(
-            "invalid V8 coinbase note commitment".into(),
+            "noncanonical V8 reward encoding/count".into(),
         ));
     }
-    let ciphertext = NoteCiphertext::from_chain_bytes(&args.miner_note.encrypted_note.encode())?;
-    let raw = ciphertext.to_da_bytes()?;
-    if wire.ciphertext_sizes[0] != u32::try_from(raw.len()).unwrap_or(u32::MAX)
-        || wire.ciphertext_hashes[0] != ciphertext_hash_bytes(&raw)
-    {
+    if notes.len() == 2 && notes[0].commitment == notes[1].commitment {
         return Err(WalletError::Serialization(
-            "V8 coinbase ciphertext metadata mismatch".into(),
+            "duplicate V8 reward commitment".into(),
         ));
     }
-    Ok(DecodedPoseidon2V8Action::Coinbase(args))
+    for (index, note) in notes.iter().enumerate() {
+        let opening = protocol_opening_to_relation(note.opening);
+        if opening.value == 0
+            || u128::from(opening.value) > MAX_IN_CIRCUIT_VALUE
+            || opening.asset_id != NATIVE_ASSET_ID
+            || opening.recipient_key == [0; 4]
+            || opening.authorization_key == [0; 4]
+            || opening_words(opening)
+                .into_iter()
+                .any(|word| word >= FIELD_MODULUS_U64)
+            || poseidon2_v8_note_commitment(opening)
+                .map_err(|_| WalletError::Serialization("invalid V8 reward opening".into()))?
+                != note.commitment
+        {
+            return Err(WalletError::Serialization(
+                "invalid V8 reward commitment".into(),
+            ));
+        }
+        let ciphertext = NoteCiphertext::from_chain_bytes(&note.encrypted_note.encode())?;
+        let raw = ciphertext.to_da_bytes()?;
+        if wire.ciphertext_sizes[index] != u32::try_from(raw.len()).unwrap_or(u32::MAX)
+            || wire.ciphertext_hashes[index] != ciphertext_hash_bytes(&raw)
+        {
+            return Err(WalletError::Serialization(
+                "V8 reward ciphertext metadata mismatch".into(),
+            ));
+        }
+    }
+    Ok(DecodedPoseidon2V8Action::Coinbase(notes))
 }
 
 fn pending_action_hash(wire: &PendingActionWire) -> [u8; 48] {
@@ -1213,24 +1959,26 @@ fn pending_action_hash(wire: &PendingActionWire) -> [u8; 48] {
 }
 
 fn recover_coinbase_note(
-    args: &MintPoseidon2V8CoinbaseArgs,
+    note: &Poseidon2V8CoinbaseNoteData,
     keys: &DerivedKeys,
 ) -> Result<Option<(SmallwoodPoseidon2V8NoteOpening, u32)>, WalletError> {
-    let ciphertext = NoteCiphertext::from_chain_bytes(&args.miner_note.encrypted_note.encode())?;
-    let material = keys.poseidon2_v8_address(ciphertext.diversifier_index)?;
-    let Ok(plaintext) = ciphertext.decrypt(&material) else {
-        return Ok(None);
-    };
-    let opening = recovered_opening(&plaintext, &material)?;
-    let Ok(recomputed) = poseidon2_v8_note_commitment(opening) else {
-        return Ok(None);
-    };
-    if opening != protocol_opening_to_relation(args.miner_note.opening)
-        || recomputed != args.miner_note.commitment
-    {
-        return Ok(None);
+    let ciphertext = NoteCiphertext::from_chain_bytes(&note.encrypted_note.encode())?;
+    // Header index is merely a hint. Always try the primary payout address as
+    // well, so changing that public header cannot hide an owned primary reward.
+    // Threshold scanners instead use their exact pinned policy address.
+    for index in [ciphertext.diversifier_index, 0] {
+        let material = keys.poseidon2_v8_address(index)?;
+        if let Ok(opening) = crate::poseidon2_v8_coinbase::public_poseidon2_v8_reward_opening(
+            note,
+            &material.shielded_address(),
+        ) {
+            return Ok(Some((opening, index)));
+        }
+        if index == 0 {
+            break;
+        }
     }
-    Ok(Some((opening, ciphertext.diversifier_index)))
+    Ok(None)
 }
 
 fn recover_transfer_note(
@@ -1312,7 +2060,7 @@ fn owned_note_nullifier(
         .ok_or(WalletError::InvalidState("V8 nullifier hash call missing"))
 }
 
-fn empty_note_root() -> Poseidon2V8Digest {
+pub(crate) fn empty_note_root() -> Poseidon2V8Digest {
     poseidon2_v8_default_note_nodes()[SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH]
 }
 
@@ -1323,8 +2071,10 @@ fn production_stablecoin_genesis(
         return Ok(None);
     };
     poseidon2_v8_production_selection_at(capability.activation_height())?;
-    if capability.coinbase_action_id() != ACTION_MINT_POSEIDON2_V8_COINBASE
-        || capability.activation_genesis_hash() != genesis_hash
+    if !matches!(
+        capability.coinbase_action_id(),
+        ACTION_MINT_POSEIDON2_V8_COINBASE | ACTION_MINT_POSEIDON2_V8_REWARDS
+    ) || capability.activation_genesis_hash() != genesis_hash
         || capability.note_genesis_root() != empty_note_root()
     {
         return Err(WalletError::InvalidState(
@@ -1501,7 +2251,9 @@ fn opening_words(opening: SmallwoodPoseidon2V8NoteOpening) -> [u64; NOTE_OPENING
     opening_to_words(opening)
 }
 
-fn opening_to_words(opening: SmallwoodPoseidon2V8NoteOpening) -> [u64; NOTE_OPENING_WORDS] {
+pub(crate) fn opening_to_words(
+    opening: SmallwoodPoseidon2V8NoteOpening,
+) -> [u64; NOTE_OPENING_WORDS] {
     [
         opening.value,
         opening.asset_id,
@@ -1524,7 +2276,7 @@ fn opening_to_words(opening: SmallwoodPoseidon2V8NoteOpening) -> [u64; NOTE_OPEN
     ]
 }
 
-fn words_to_opening(
+pub(crate) fn words_to_opening(
     words: [u64; NOTE_OPENING_WORDS],
 ) -> Result<SmallwoodPoseidon2V8NoteOpening, WalletError> {
     if words.into_iter().any(|word| word >= FIELD_MODULUS_U64) {
@@ -1564,7 +2316,7 @@ fn stored_note_view(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use rand::{rngs::StdRng, SeedableRng};
     use tempfile::tempdir;
 
@@ -1619,7 +2371,7 @@ mod tests {
             GENESIS,
             TEST_STABLECOIN_ROOT,
             1,
-            4,
+            200,
         )
         .unwrap()
     }
@@ -1767,7 +2519,10 @@ mod tests {
         )
     }
 
-    fn seed_two_owned_coinbases(store: &WalletStore, root: &RootSecret) -> Poseidon2V8CanonicalTip {
+    pub(crate) fn seed_two_owned_coinbases(
+        store: &WalletStore,
+        root: &RootSecret,
+    ) -> Poseidon2V8CanonicalTip {
         store
             .ensure_poseidon2_v8_genesis_for_test(GENESIS, TEST_STABLECOIN_ROOT)
             .unwrap();
@@ -1783,9 +2538,9 @@ mod tests {
                 ))
                 .unwrap(),
             Poseidon2V8SyncDelta {
-                commitments: 1,
+                commitments: 0,
                 ciphertexts: 1,
-                recovered: 1,
+                recovered: 0,
                 spent: 0,
             }
         );
@@ -1793,19 +2548,282 @@ mod tests {
             store
                 .apply_poseidon2_v8_canonical_block(&canonical_block(
                     2,
-                    BLOCK_2,
+                    [0x32; 32],
                     BLOCK_1,
                     vec![coinbase_action(&second)],
                 ))
                 .unwrap(),
             Poseidon2V8SyncDelta {
-                commitments: 1,
+                commitments: 0,
                 ciphertexts: 1,
-                recovered: 1,
+                recovered: 0,
                 spent: 0,
             }
         );
+        let mut parent = [0x32; 32];
+        for height in 3u64..=121 {
+            let hash = if height == 121 {
+                BLOCK_2
+            } else {
+                let mut hash = [0x34; 32];
+                hash[..8].copy_from_slice(&height.to_le_bytes());
+                hash
+            };
+            store
+                .apply_poseidon2_v8_canonical_block(&canonical_block(height, hash, parent, vec![]))
+                .unwrap();
+            parent = hash;
+        }
         store.poseidon2_v8_tip().unwrap()
+    }
+
+    #[test]
+    fn reward_maturity_delays_both_rewards_and_restores_detached_release_after_restart() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("maturity.wallet");
+        let root = RootSecret::from_bytes([0x71; 32]);
+        let funding_root = RootSecret::from_bytes([0x72; 32]);
+        let store = WalletStore::create_from_root(&path, PASSPHRASE, root.clone()).unwrap();
+        store
+            .ensure_poseidon2_v8_genesis_for_test(GENESIS, TEST_STABLECOIN_ROOT)
+            .unwrap();
+        let args = crate::poseidon2_v8_coinbase::build_poseidon2_v8_rewards_args(
+            &root
+                .derive()
+                .poseidon2_v8_address(SOURCE_DIVERSIFIER)
+                .unwrap()
+                .shielded_address(),
+            80,
+            &funding_root
+                .derive()
+                .poseidon2_v8_address(SOURCE_DIVERSIFIER)
+                .unwrap()
+                .shielded_address(),
+            20,
+            &mut StdRng::seed_from_u64(730),
+        )
+        .unwrap();
+        let mut wire =
+            decode_canonical_action_exact(&coinbase_action(&MintPoseidon2V8CoinbaseArgs {
+                miner_note: args.miner_note.clone(),
+            }))
+            .unwrap();
+        wire.action_id = ACTION_MINT_POSEIDON2_V8_REWARDS;
+        wire.binding = protocol_versioning::launch_candidate::RP06_VERSION_BINDING.into();
+        wire.public_args = args.encode();
+        let funding = args.funding_note.as_ref().unwrap();
+        let raw = NoteCiphertext::from_chain_bytes(&funding.encrypted_note.encode())
+            .unwrap()
+            .to_da_bytes()
+            .unwrap();
+        wire.ciphertext_hashes.push(ciphertext_hash_bytes(&raw));
+        wire.ciphertext_sizes.push(raw.len() as u32);
+        wire.tx_hash = pending_action_hash(&wire);
+        let delta = store
+            .apply_poseidon2_v8_canonical_block(&canonical_block(
+                1,
+                BLOCK_1,
+                GENESIS,
+                vec![wire.encode()],
+            ))
+            .unwrap();
+        assert_eq!(
+            (delta.commitments, delta.recovered, delta.ciphertexts),
+            (0, 0, 2)
+        );
+        let hash_at = |height: u64| {
+            if height == 1 {
+                BLOCK_1
+            } else {
+                let mut hash = [0x73; 32];
+                hash[..8].copy_from_slice(&height.to_le_bytes());
+                hash
+            }
+        };
+        for height in 2..=119 {
+            store
+                .apply_poseidon2_v8_canonical_block(&canonical_block(
+                    height,
+                    hash_at(height),
+                    hash_at(height - 1),
+                    vec![],
+                ))
+                .unwrap();
+        }
+        for commitment in [args.miner_note.commitment, funding.commitment] {
+            assert!(store
+                .poseidon2_v8_canonical_commitment_positions(commitment)
+                .unwrap()
+                .is_empty());
+        }
+        assert!(store.poseidon2_v8_owned_notes().unwrap().is_empty());
+        drop(store);
+        let reopened = WalletStore::open(&path, PASSPHRASE).unwrap();
+        let release = canonical_block(120, hash_at(120), hash_at(119), vec![]);
+        let delta = reopened
+            .apply_poseidon2_v8_canonical_block(&release)
+            .unwrap();
+        assert_eq!((delta.commitments, delta.recovered), (2, 1));
+        let miner_note = &reopened.poseidon2_v8_owned_notes().unwrap()[0];
+        assert_eq!(
+            (
+                miner_note.position,
+                miner_note.created_height,
+                miner_note.created_block_hash
+            ),
+            (0, 1, BLOCK_1)
+        );
+        assert_eq!(
+            reopened
+                .poseidon2_v8_canonical_commitment_positions(funding.commitment)
+                .unwrap(),
+            vec![1]
+        );
+        let released_tip = reopened.poseidon2_v8_tip().unwrap();
+        reopened
+            .rollback_poseidon2_v8_to(119, hash_at(119))
+            .unwrap();
+        assert!(reopened.poseidon2_v8_owned_notes().unwrap().is_empty());
+        assert!(reopened
+            .poseidon2_v8_canonical_commitment_positions(funding.commitment)
+            .unwrap()
+            .is_empty());
+        drop(reopened);
+        let reopened = WalletStore::open(&path, PASSPHRASE).unwrap();
+        reopened
+            .apply_poseidon2_v8_canonical_block(&release)
+            .unwrap();
+        assert_eq!(reopened.poseidon2_v8_tip().unwrap(), released_tip);
+        reopened.rollback_poseidon2_v8_to(0, GENESIS).unwrap();
+        assert!(reopened.poseidon2_v8_owned_notes().unwrap().is_empty());
+        assert_eq!(reopened.poseidon2_v8_tip().unwrap().height, 0);
+    }
+
+    #[test]
+    fn rewards_both_wallets_recover_distinct_positions_restore_reorg_and_self_spend() {
+        let directory = tempdir().unwrap();
+        let miner_root = RootSecret::from_bytes([0x51; 32]);
+        let funding_root = RootSecret::from_bytes([0x61; 32]);
+        let miner_path = directory.path().join("miner.dat");
+        let funding_path = directory.path().join("funding.dat");
+        let miner =
+            WalletStore::create_from_root(&miner_path, PASSPHRASE, miner_root.clone()).unwrap();
+        let funding =
+            WalletStore::create_from_root(&funding_path, PASSPHRASE, funding_root.clone()).unwrap();
+        for wallet in [&miner, &funding] {
+            wallet
+                .ensure_poseidon2_v8_genesis_for_test(GENESIS, TEST_STABLECOIN_ROOT)
+                .unwrap();
+        }
+        let make_reward = |seed| {
+            let args = crate::poseidon2_v8_coinbase::build_poseidon2_v8_rewards_args(
+                &miner_root
+                    .derive()
+                    .poseidon2_v8_address(SOURCE_DIVERSIFIER)
+                    .unwrap()
+                    .shielded_address(),
+                80,
+                &funding_root
+                    .derive()
+                    .poseidon2_v8_address(SOURCE_DIVERSIFIER)
+                    .unwrap()
+                    .shielded_address(),
+                20,
+                &mut StdRng::seed_from_u64(seed),
+            )
+            .unwrap();
+            let mut wire =
+                decode_canonical_action_exact(&coinbase_action(&MintPoseidon2V8CoinbaseArgs {
+                    miner_note: args.miner_note.clone(),
+                }))
+                .unwrap();
+            wire.action_id = ACTION_MINT_POSEIDON2_V8_REWARDS;
+            wire.binding = protocol_versioning::launch_candidate::RP06_VERSION_BINDING.into();
+            wire.public_args = args.encode();
+            let raw = NoteCiphertext::from_chain_bytes(
+                &args.funding_note.as_ref().unwrap().encrypted_note.encode(),
+            )
+            .unwrap()
+            .to_da_bytes()
+            .unwrap();
+            wire.ciphertext_hashes.push(ciphertext_hash_bytes(&raw));
+            wire.ciphertext_sizes.push(raw.len() as u32);
+            wire.tx_hash = pending_action_hash(&wire);
+            wire.encode()
+        };
+        let first = canonical_block(1, BLOCK_1, GENESIS, vec![make_reward(91)]);
+        let second = canonical_block(2, BLOCK_2, BLOCK_1, vec![make_reward(92)]);
+        for wallet in [&miner, &funding] {
+            let delta = wallet.apply_poseidon2_v8_canonical_block(&first).unwrap();
+            assert_eq!(delta.commitments, 0);
+            assert_eq!(delta.recovered, 0);
+            let delta = wallet.apply_poseidon2_v8_canonical_block(&second).unwrap();
+            assert_eq!(delta.commitments, 0);
+            assert_eq!(delta.recovered, 0);
+        }
+        let mature_hash = |height: u64| {
+            let mut hash = [0x74; 32];
+            hash[..8].copy_from_slice(&height.to_le_bytes());
+            hash
+        };
+        for height in 3..=121 {
+            let parent = if height == 3 {
+                BLOCK_2
+            } else {
+                mature_hash(height - 1)
+            };
+            let block = canonical_block(height, mature_hash(height), parent, vec![]);
+            for wallet in [&miner, &funding] {
+                wallet.apply_poseidon2_v8_canonical_block(&block).unwrap();
+            }
+        }
+        assert_eq!(
+            miner.poseidon2_v8_tip().unwrap(),
+            funding.poseidon2_v8_tip().unwrap()
+        );
+        let miner_notes = miner.poseidon2_v8_owned_notes().unwrap();
+        let funding_notes = funding.poseidon2_v8_owned_notes().unwrap();
+        assert_eq!(
+            miner_notes.iter().map(|n| n.position).collect::<Vec<_>>(),
+            vec![0, 2]
+        );
+        assert_eq!(
+            funding_notes.iter().map(|n| n.position).collect::<Vec<_>>(),
+            vec![1, 3]
+        );
+        for wallet in [&miner, &funding] {
+            let spend = build_poseidon2_v8_wallet_self_spend(
+                wallet,
+                [4, 7],
+                &mut StdRng::seed_from_u64(93),
+            )
+            .unwrap();
+            let compiled = transaction_circuit::smallwood_poseidon2_v8_semantics::compile_smallwood_poseidon2_v8_relation(&spend.material.statement,&spend.material.witness).unwrap();
+            compiled
+                .adapter
+                .verify_packed_witness(&compiled.witness_values)
+                .unwrap();
+        }
+        drop(miner);
+        drop(funding);
+        let miner = WalletStore::open(&miner_path, PASSPHRASE).unwrap();
+        let funding = WalletStore::open(&funding_path, PASSPHRASE).unwrap();
+        for wallet in [&miner, &funding] {
+            assert_eq!(wallet.poseidon2_v8_owned_notes().unwrap().len(), 2);
+            wallet
+                .rollback_poseidon2_v8_to(120, mature_hash(120))
+                .unwrap();
+            assert_eq!(wallet.poseidon2_v8_owned_notes().unwrap().len(), 1);
+            wallet
+                .apply_poseidon2_v8_canonical_block(&canonical_block(
+                    121,
+                    mature_hash(121),
+                    mature_hash(120),
+                    vec![],
+                ))
+                .unwrap();
+            assert_eq!(wallet.poseidon2_v8_owned_notes().unwrap().len(), 2);
+        }
     }
 
     #[test]
@@ -1932,7 +2950,7 @@ mod tests {
             build_poseidon2_v8_wallet_self_spend(&store, [4, 7], &mut StdRng::seed_from_u64(204))
                 .unwrap();
         let block = canonical_block(
-            3,
+            122,
             BLOCK_3,
             BLOCK_2,
             vec![transfer_action(&spend.material, WalletProofRoute::Smza)],
@@ -2163,7 +3181,7 @@ mod tests {
                 .unwrap();
         assert_eq!(spend.tip, funded_tip);
         assert_eq!(spend.material.statement.merkle_root, funded_tip.anchor);
-        assert_eq!(spend.material.statement.stablecoin.parent_height, 2);
+        assert_eq!(spend.material.statement.stablecoin.parent_height, 121);
         assert_eq!(funded_tip.stablecoin_root, Some(TEST_STABLECOIN_ROOT));
         assert_eq!(
             felt_digest_to_words(spend.material.statement.stablecoin.before_root),
@@ -2188,7 +3206,7 @@ mod tests {
         assert_eq!(
             store
                 .apply_poseidon2_v8_canonical_block_for_retained_test(
-                    &canonical_block(3, BLOCK_3, BLOCK_2, vec![transfer],),
+                    &canonical_block(122, BLOCK_3, BLOCK_2, vec![transfer],),
                     retained_test_context(route)
                 )
                 .unwrap(),
@@ -2219,6 +3237,13 @@ mod tests {
         assert!(spent_notes
             .iter()
             .all(|note| note.anchor == spent_tip.anchor));
+        let detached_output_commitment = spent_notes[2].commitment;
+        assert_eq!(
+            store
+                .poseidon2_v8_canonical_commitment_positions(detached_output_commitment)
+                .unwrap(),
+            vec![2]
+        );
 
         drop(spend);
         drop(store);
@@ -2226,8 +3251,12 @@ mod tests {
         assert_eq!(reopened.poseidon2_v8_tip().unwrap(), spent_tip);
         assert_eq!(reopened.poseidon2_v8_owned_notes().unwrap(), spent_notes);
 
-        reopened.rollback_poseidon2_v8_to(2, BLOCK_2).unwrap();
+        reopened.rollback_poseidon2_v8_to(121, BLOCK_2).unwrap();
         assert_eq!(reopened.poseidon2_v8_tip().unwrap(), funded_tip);
+        assert!(reopened
+            .poseidon2_v8_canonical_commitment_positions(detached_output_commitment)
+            .unwrap()
+            .is_empty());
         let rolled_back = reopened.poseidon2_v8_owned_notes().unwrap();
         assert_eq!(rolled_back.len(), 2);
         assert!(rolled_back.iter().all(|note| !note.spent));
@@ -2241,7 +3270,7 @@ mod tests {
 
         reopened
             .apply_poseidon2_v8_canonical_block(&canonical_block(
-                3,
+                122,
                 REPLACEMENT_3,
                 BLOCK_2,
                 Vec::new(),
@@ -2269,8 +3298,16 @@ mod tests {
         let empty = empty_note_root();
         let duplicate = [9, 8, 7, 6, 5, 4, 3];
         assert_eq!(state.append_commitment(duplicate).unwrap(), 0);
+        assert_eq!(
+            state.canonical_commitment_positions(duplicate).unwrap(),
+            vec![0]
+        );
         let first_root = current_note_root(&state.tree_levels).unwrap();
         assert_eq!(state.append_commitment(duplicate).unwrap(), 1);
+        assert_eq!(
+            state.canonical_commitment_positions(duplicate).unwrap(),
+            vec![0, 1]
+        );
         let second_root = current_note_root(&state.tree_levels).unwrap();
         assert_ne!(first_root, second_root);
         assert!(accepted_note_roots(&state.root_log).contains(&first_root));
@@ -2345,7 +3382,7 @@ mod tests {
         let bad_transfer = transfer_action_with_binding(&spend.material, wrong_binding, route);
         assert!(store
             .apply_poseidon2_v8_canonical_block_for_retained_test(
-                &canonical_block(3, BLOCK_3, BLOCK_2, vec![bad_transfer],),
+                &canonical_block(122, BLOCK_3, BLOCK_2, vec![bad_transfer],),
                 retained_test_context(route)
             )
             .is_err());
@@ -2355,5 +3392,800 @@ mod tests {
             .unwrap()
             .iter()
             .all(|note| !note.spent));
+    }
+
+    #[cfg(feature = "private-spend-dev-artifacts")]
+    mod moving_asset_reference_tests {
+        use super::*;
+        use transaction_circuit::{
+            asset_spend_v1::AssetSpendPublic, asset_spend_v1_admission as admission,
+            asset_spend_v1_wire as transport,
+        };
+
+        fn funded_parent() -> (Poseidon2V8WalletState, DerivedKeys) {
+            let root = RootSecret::from_bytes([71; 32]);
+            let keys = root.derive();
+            let mut mirror = Poseidon2V8WalletState::default();
+            mirror
+                .ensure_genesis_for_test(GENESIS, TEST_STABLECOIN_ROOT)
+                .unwrap();
+            for height in 1..=134 {
+                // Releases at 120, 123 and 135. H122 and P134 deliberately
+                // have different block-end roots; the last reward follows the
+                // three asset outputs in the inclusion block.
+                let actions = if matches!(height, 1 | 4 | 16) {
+                    vec![coinbase_action(&coinbase_args(&root, 1000, height))]
+                } else {
+                    Vec::new()
+                };
+                let parent = mirror.tip().unwrap();
+                mirror
+                    .apply_block(
+                        &canonical_block(
+                            height,
+                            [(height + 32) as u8; 32],
+                            parent.block_hash,
+                            actions,
+                        ),
+                        Some(&keys),
+                    )
+                    .unwrap();
+            }
+            (mirror, keys)
+        }
+
+        fn statement(mirror: &Poseidon2V8WalletState) -> AssetSpendPublic {
+            let fixture =
+                crate::asset_spend_v1_fixture::DisposableAssetFixtureV1::build(0, 4).unwrap();
+            let reference = mirror.canonical_tip_at_height(122).unwrap();
+            let mut public = fixture.public.clone();
+            public.parent_height = reference.height;
+            public.reference_parent_hash = reference.block_hash;
+            public.note_root = reference.anchor;
+            public.nullifiers = [[31; 7], mirror.owned_notes[0].nullifier];
+            public.commitments = [[9; 7], [10; 7], [11; 7]];
+            public.ciphertext_commitments =
+                [[7; 2608], [8; 2608], [9; 2608]].map(|c| ciphertext_hash_bytes(&c));
+            public
+        }
+
+        fn asset_block(
+            mirror: &Poseidon2V8WalletState,
+            public: &AssetSpendPublic,
+        ) -> Poseidon2V8CanonicalBlock {
+            let binding = admission::NATIVE_VERSION_BINDING;
+            let mut wire = PendingActionWire {
+                tx_hash: [0; 48],
+                binding: PendingVersionBinding {
+                    circuit: binding.circuit,
+                    crypto: binding.crypto,
+                },
+                family_id: FAMILY_SHIELDED_POOL,
+                action_id: admission::ASSET_SPEND_ACTION_ID,
+                anchor: [0; 48],
+                nullifiers: Vec::new(),
+                commitments: Vec::new(),
+                ciphertext_hashes: public.ciphertext_commitments.to_vec(),
+                ciphertext_sizes: vec![2608; 3],
+                // Framing only: no proof authority or proof generation. These
+                // bytes cannot pass the Development block proof verifier.
+                public_args: transport::encode_native_asset_spend_action_v1(
+                    public,
+                    &[[7; 2608], [8; 2608], [9; 2608]],
+                    b"SMZE",
+                )
+                .unwrap(),
+                fee: public.fee,
+                candidate_artifact: None,
+            };
+            wire.tx_hash = pending_action_hash(&wire);
+            let parent = mirror.tip().unwrap();
+            canonical_block(
+                parent.height + 1,
+                [201; 32],
+                parent.block_hash,
+                vec![wire.encode()],
+            )
+        }
+
+        #[test]
+        fn age_twelve_asset_applies_three_outputs_then_reward_and_rolls_back_exactly() {
+            let (mut mirror, keys) = funded_parent();
+            let public = statement(&mirror);
+            let context =
+                LaunchWalletContext::new(public.chain_id, GENESIS, [72; 64], 1, 1000).unwrap();
+            let parent = mirror.tip().unwrap();
+            let reference = mirror
+                .canonical_tip_at_height(public.parent_height)
+                .unwrap();
+            assert_eq!((reference.height, parent.height), (122, 134));
+            assert_ne!(reference.anchor, parent.anchor);
+            let before = mirror.clone();
+            let block = asset_block(&mirror, &public);
+            let references = (122..=134)
+                .map(|h| mirror.canonical_tip_at_height(h).unwrap())
+                .collect::<Vec<_>>();
+            let apply = |mirror: &mut Poseidon2V8WalletState| {
+                mirror.apply_block_with_transfer_decoder(&block, Some(&keys), |wire| {
+                    decode_native_asset_launch(wire, context, parent, &references)
+                })
+            };
+            let delta = apply(&mut mirror).unwrap();
+            assert_eq!(block.height, 135);
+            assert_eq!(
+                (delta.commitments, delta.ciphertexts, delta.spent),
+                (4, 3, 1)
+            );
+            assert_eq!(&mirror.tree_levels[0][2..5], &public.commitments);
+            assert_eq!(mirror.tree_levels[0].len(), 6);
+            assert_eq!(mirror.owned_notes[0].spent_by, Some(block.hash));
+            assert!(public
+                .nullifiers
+                .iter()
+                .all(|n| mirror.has_canonical_nullifier(*n)));
+            assert_eq!(mirror.canonical_tip_at_height(122).unwrap(), reference);
+            assert!(mirror
+                .recover_private_spend_block(
+                    &block,
+                    &keys,
+                    &crate::private_spend::IssuedPrivateSpendAddresses::default(),
+                    context,
+                )
+                .unwrap()
+                .is_empty());
+            mirror.validate().unwrap();
+            // A later otherwise eligible reference cannot spend either shared
+            // nullifier again. The current global state remains authoritative.
+            let mut duplicate = public.clone();
+            let now = mirror.tip().unwrap();
+            duplicate.parent_height = now.height;
+            duplicate.reference_parent_hash = now.block_hash;
+            duplicate.note_root = now.anchor;
+            let mut duplicate_block = asset_block(&mirror, &duplicate);
+            duplicate_block.hash = [204; 32];
+            let mut rejected = mirror.clone();
+            assert!(matches!(
+                rejected.apply_block_with_transfer_decoder(&duplicate_block, None, |_| {
+                    Ok(DecodedPoseidon2V8Action::AssetSpend(duplicate.clone()))
+                }),
+                Err(WalletError::InvalidState(
+                    "asset nullifier already exists in shared pool"
+                ))
+            ));
+            assert_eq!(rejected, mirror);
+            // Durable mirror serialization preserves the historical reference
+            // and shared effects before rollback/replay of the same exact body.
+            let serialized = bincode::serialize(&mirror).unwrap();
+            let mut reopened: Poseidon2V8WalletState = bincode::deserialize(&serialized).unwrap();
+            reopened.validate().unwrap();
+            reopened
+                .rollback_to(parent.height, parent.block_hash)
+                .unwrap();
+            assert_eq!(reopened, before);
+            apply(&mut reopened).unwrap();
+            assert_eq!(reopened, mirror);
+        }
+
+        #[test]
+        fn shared_apply_rejects_expired_future_orphan_and_wrong_root_before_effects() {
+            let (mirror, _) = funded_parent();
+            let public = statement(&mirror);
+            for mutation in 0..4 {
+                let mut changed = public.clone();
+                match mutation {
+                    0 => changed.parent_height = 121, // P134 is age 13.
+                    1 => changed.parent_height = 135,
+                    2 => changed.reference_parent_hash = [202; 32],
+                    _ => changed.note_root = [203; 7],
+                }
+                let block = asset_block(&mirror, &changed);
+                let mut rejected = mirror.clone();
+                // Intentionally bypass the earlier native reference decoder to
+                // exercise the shared mirror's independent canonical guard.
+                assert!(rejected
+                    .apply_block_with_transfer_decoder(&block, None, |_| {
+                        Ok(DecodedPoseidon2V8Action::AssetSpend(changed.clone()))
+                    })
+                    .is_err());
+                assert_eq!(rejected, mirror);
+            }
+            // A reference whose H was replaced on a fork must not be accepted
+            // merely because the replacement has the same block-end note root.
+            let mut fork = mirror.clone();
+            let ancestor = fork.canonical_tip_at_height(121).unwrap();
+            fork.rollback_to(ancestor.height, ancestor.block_hash)
+                .unwrap();
+            for height in 122..=134 {
+                let parent = fork.tip().unwrap();
+                fork.apply_block(
+                    &canonical_block(height, [(height + 80) as u8; 32], parent.block_hash, vec![]),
+                    None,
+                )
+                .unwrap();
+            }
+            let before = fork.clone();
+            let block = asset_block(&fork, &public);
+            assert!(fork
+                .apply_block_with_transfer_decoder(&block, None, |_| {
+                    Ok(DecodedPoseidon2V8Action::AssetSpend(public.clone()))
+                })
+                .is_err());
+            assert_eq!(fork, before);
+        }
+    }
+}
+
+impl Poseidon2V8WalletState {
+    /// Local canonical occurrence metadata, not authentication of a supplied
+    /// block's action body to its header. That body uses the trusted-node boundary.
+    pub(crate) fn canonical_block_leaf_count_before(
+        &self,
+        height: u64,
+        hash: [u8; 32],
+    ) -> Option<u64> {
+        self.blocks
+            .iter()
+            .find(|b| b.height == height && b.block_hash == hash)
+            .and_then(|b| u64::try_from(b.leaf_count_before).ok())
+    }
+}
+
+/// Exact native framing projection. This authenticates the action ID and all
+/// outer-to-inner fields; canonical inclusion and node consensus are separate.
+pub(crate) fn canonical_asset_action_body(
+    encoded: &[u8],
+) -> Result<Option<([u8; 48], Vec<u8>)>, WalletError> {
+    let wire = decode_canonical_action_exact(encoded)?;
+    use transaction_circuit::asset_spend_v1_admission as admission;
+    if wire.family_id != FAMILY_SHIELDED_POOL
+        || !matches!(
+            wire.action_id,
+            admission::ASSET_SPEND_ACTION_ID | admission::ASSET_ADMIN_ACTION_ID
+        )
+    {
+        return Ok(None);
+    }
+    validate_native_asset_outer(&wire)?;
+    if wire.action_id == admission::ASSET_ADMIN_ACTION_ID {
+        return Ok(None);
+    }
+    Ok(Some((wire.tx_hash, wire.public_args)))
+}
+fn validate_native_asset_outer(wire: &PendingActionWire) -> Result<(), WalletError> {
+    use transaction_circuit::{
+        asset_spend_v1_admission as admission, asset_spend_v1_wire as transport,
+    };
+    let binding = admission::NATIVE_VERSION_BINDING;
+    if wire.family_id != FAMILY_SHIELDED_POOL
+        || wire.binding
+            != (PendingVersionBinding {
+                circuit: binding.circuit,
+                crypto: binding.crypto,
+            })
+        || wire.anchor != [0; 48]
+        || !wire.nullifiers.is_empty()
+        || !wire.commitments.is_empty()
+        || wire.candidate_artifact.is_some()
+    {
+        return Err(WalletError::InvalidState(
+            "native asset outer identity or legacy state fields",
+        ));
+    }
+    match wire.action_id {
+        admission::ASSET_SPEND_ACTION_ID => {
+            let d = transport::decode_native_asset_spend_action_v1(&wire.public_args)
+                .map_err(|_| WalletError::InvalidState("native asset spend envelope"))?;
+            if wire.fee != d.public.fee
+                || wire.ciphertext_hashes != d.public.ciphertext_commitments
+                || wire.ciphertext_sizes != [2608; 3]
+            {
+                return Err(WalletError::InvalidState(
+                    "native asset ciphertext or fee projection",
+                ));
+            }
+        }
+        admission::ASSET_ADMIN_ACTION_ID => {
+            transport::decode_native_asset_admin_action_v1(&wire.public_args)
+                .map_err(|_| WalletError::InvalidState("native asset admin envelope"))?;
+            if wire.fee != 0
+                || !wire.ciphertext_hashes.is_empty()
+                || !wire.ciphertext_sizes.is_empty()
+            {
+                return Err(WalletError::InvalidState(
+                    "native asset admin carries pool effects",
+                ));
+            }
+        }
+        _ => return Err(WalletError::InvalidState("native asset action ID")),
+    }
+    Ok(())
+}
+fn decode_native_asset_launch(
+    wire: PendingActionWire,
+    context: LaunchWalletContext,
+    parent: Poseidon2V8CanonicalTip,
+    references: &[Poseidon2V8CanonicalTip],
+) -> Result<DecodedPoseidon2V8Action, WalletError> {
+    use transaction_circuit::{
+        asset_spend_v1_admission as admission, asset_spend_v1_wire as transport,
+    };
+    validate_native_asset_outer(&wire)?;
+    if wire.action_id == admission::ASSET_SPEND_ACTION_ID {
+        let d = transport::decode_native_asset_spend_action_v1(&wire.public_args)
+            .map_err(|_| WalletError::InvalidState("native asset spend framing"))?;
+        let reference = references
+            .iter()
+            .find(|r| r.height == d.public.parent_height)
+            .ok_or(WalletError::InvalidState(
+                "native asset reference absent from canonical window",
+            ))?;
+        crate::asset_spend_rpc::require_reference_window(reference.height, parent.height)?;
+        context.require_canonical_parent(context.genesis_hash(), reference.height)?;
+        context.require_canonical_parent(context.genesis_hash(), parent.height)?;
+        if d.public.chain_id != context.chain_id()
+            || d.public.reference_parent_hash != reference.block_hash
+            || d.public.note_root != reference.anchor
+        {
+            return Err(WalletError::InvalidState(
+                "native asset spend chain or parent differs",
+            ));
+        }
+        Ok(DecodedPoseidon2V8Action::AssetSpend(d.public))
+    } else {
+        let d = transport::decode_native_asset_admin_action_v1(&wire.public_args)
+            .map_err(|_| WalletError::InvalidState("native asset admin framing"))?;
+        let reference = references
+            .iter()
+            .find(|r| r.height == d.public.parent_height)
+            .ok_or(WalletError::InvalidState(
+                "native asset reference absent from canonical window",
+            ))?;
+        crate::asset_spend_rpc::require_reference_window(reference.height, parent.height)?;
+        context.require_canonical_parent(context.genesis_hash(), reference.height)?;
+        context.require_canonical_parent(context.genesis_hash(), parent.height)?;
+        if d.public.chain_id != context.chain_id()
+            || d.public.reference_parent_hash != reference.block_hash
+            || d.public.expires_at < parent.height
+        {
+            return Err(WalletError::InvalidState(
+                "native asset admin chain or parent differs",
+            ));
+        }
+        Ok(DecodedPoseidon2V8Action::AssetAdmin)
+    }
+}
+impl Poseidon2V8WalletState {
+    pub(crate) fn canonical_block_leaf_count_after(
+        &self,
+        height: u64,
+        hash: [u8; 32],
+    ) -> Option<u64> {
+        let index = self
+            .blocks
+            .iter()
+            .position(|b| b.height == height && b.block_hash == hash)?;
+        if let Some(next) = self.blocks.get(index + 1) {
+            Some(next.leaf_count_before)
+        } else {
+            u64::try_from(self.tree_levels.first()?.len()).ok()
+        }
+    }
+}
+
+#[cfg(all(test, feature = "private-spend-dev-artifacts"))]
+mod asset_projection_tests {
+    use super::*;
+    #[test]
+    fn native_asset_projection_binds_all_three_ciphertexts_and_never_enables_generic_route() {
+        use transaction_circuit::{
+            asset_spend_v1_admission as admission, asset_spend_v1_wire as transport,
+        };
+        let fixture = crate::asset_spend_v1_fixture::DisposableAssetFixtureV1::build(0, 4).unwrap();
+        let mut public = fixture.public.clone();
+        public.commitments = [[9; 7], [10; 7], [11; 7]];
+        let ciphertexts = [[7; 2608], [8; 2608], [9; 2608]];
+        public.ciphertext_commitments = ciphertexts.map(|c| ciphertext_hash_bytes(&c));
+        // Framing-only negative tests; these bytes cannot pass proof verification.
+        let body =
+            transport::encode_native_asset_spend_action_v1(&public, &ciphertexts, b"SMZE").unwrap();
+        let binding = admission::NATIVE_VERSION_BINDING;
+        let mut wire = PendingActionWire {
+            tx_hash: [0; 48],
+            binding: PendingVersionBinding {
+                circuit: binding.circuit,
+                crypto: binding.crypto,
+            },
+            family_id: FAMILY_SHIELDED_POOL,
+            action_id: admission::ASSET_SPEND_ACTION_ID,
+            anchor: [0; 48],
+            nullifiers: Vec::new(),
+            commitments: Vec::new(),
+            ciphertext_hashes: public.ciphertext_commitments.to_vec(),
+            ciphertext_sizes: vec![2608; 3],
+            public_args: body.clone(),
+            fee: public.fee,
+            candidate_artifact: None,
+        };
+        wire.tx_hash = pending_action_hash(&wire);
+        let context =
+            LaunchWalletContext::new(public.chain_id, [91; 32], [92; 64], 1, 1000).unwrap();
+        let reference = Poseidon2V8CanonicalTip {
+            height: public.parent_height,
+            block_hash: public.reference_parent_hash,
+            anchor: public.note_root,
+            stablecoin_root: None,
+        };
+        let parent = Poseidon2V8CanonicalTip {
+            height: reference.height + 12,
+            block_hash: [93; 32],
+            anchor: [94; 7],
+            ..reference
+        };
+        let retained = wire.public_args.clone();
+        assert!(matches!(
+            decode_native_asset_launch(wire.clone(), context, parent, &[reference]).unwrap(),
+            DecodedPoseidon2V8Action::AssetSpend(_)
+        ));
+        assert_eq!(wire.public_args, retained);
+        let expired = Poseidon2V8CanonicalTip {
+            height: parent.height + 1,
+            ..parent
+        };
+        assert!(decode_native_asset_launch(wire.clone(), context, expired, &[reference]).is_err());
+        let future = Poseidon2V8CanonicalTip {
+            height: reference.height - 1,
+            ..parent
+        };
+        assert!(decode_native_asset_launch(wire.clone(), context, future, &[reference]).is_err());
+        let orphan = Poseidon2V8CanonicalTip {
+            block_hash: [95; 32],
+            ..reference
+        };
+        assert!(decode_native_asset_launch(wire.clone(), context, parent, &[orphan]).is_err());
+        let wrong_root = Poseidon2V8CanonicalTip {
+            anchor: [96; 7],
+            ..reference
+        };
+        assert!(decode_native_asset_launch(wire.clone(), context, parent, &[wrong_root]).is_err());
+        assert_eq!(
+            canonical_asset_action_body(&wire.encode()).unwrap(),
+            Some((wire.tx_hash, body))
+        );
+        assert!(
+            decode_v8_action_exact(&wire.encode(), &|_| Err(WalletError::InvalidState(
+                "source route absent"
+            )))
+            .is_err()
+        );
+        for field in 0..3 {
+            let mut changed = wire.clone();
+            match field {
+                0 => changed.ciphertext_hashes[2][0] ^= 1,
+                1 => changed.fee += 1,
+                _ => changed.binding.crypto ^= 1,
+            }
+            changed.tx_hash = pending_action_hash(&changed);
+            assert!(canonical_asset_action_body(&changed.encode()).is_err());
+        }
+        let mut changed = wire.encode();
+        changed[0] ^= 1;
+        assert!(canonical_asset_action_body(&changed).is_err());
+    }
+}
+
+/// Exact fresh recovery projection; structural parsing alone is not authority.
+pub(crate) fn canonical_recovery_action_body(
+    encoded: &[u8],
+) -> Result<Option<([u8; 48], u16, Vec<u8>)>, WalletError> {
+    let wire = decode_canonical_action_exact(encoded)?;
+    if wire.family_id != FAMILY_SHIELDED_POOL
+        || !matches!(
+            wire.action_id,
+            RECOVERY_SPEND_ACTION_ID | RECOVERY_ADMIN_ACTION_ID
+        )
+    {
+        return Ok(None);
+    }
+    validate_native_recovery_outer(&wire)?;
+    Ok(Some((wire.tx_hash, wire.action_id, wire.public_args)))
+}
+
+fn validate_native_recovery_outer(w: &PendingActionWire) -> Result<(), WalletError> {
+    use transaction_circuit::{asset_recovery_wire_v1 as wire, asset_spend_v1_admission as old};
+    let v = old::NATIVE_VERSION_BINDING;
+    if w.family_id != FAMILY_SHIELDED_POOL
+        || w.binding
+            != (PendingVersionBinding {
+                circuit: v.circuit,
+                crypto: v.crypto,
+            })
+        || w.anchor != [0; 48]
+        || !w.nullifiers.is_empty()
+        || !w.commitments.is_empty()
+        || w.candidate_artifact.is_some()
+    {
+        return Err(WalletError::InvalidState(
+            "recovery outer binding or legacy fields",
+        ));
+    }
+    match w.action_id {
+        RECOVERY_SPEND_ACTION_ID => {
+            let d = wire::decode_spend_ref(&w.public_args)
+                .map_err(|_| WalletError::InvalidState("recovery spend framing"))?;
+            if w.fee != d.public.base.fee
+                || w.ciphertext_hashes != d.public.base.ciphertext_commitments
+                || w.ciphertext_sizes != [2608; 3]
+            {
+                return Err(WalletError::InvalidState("recovery spend outer metadata"));
+            }
+        }
+        RECOVERY_ADMIN_ACTION_ID => {
+            wire::decode_admin_ref(&w.public_args)
+                .map_err(|_| WalletError::InvalidState("recovery admin framing"))?;
+            if w.fee != 0 || !w.ciphertext_hashes.is_empty() || !w.ciphertext_sizes.is_empty() {
+                return Err(WalletError::InvalidState("recovery admin pool effects"));
+            }
+        }
+        _ => return Err(WalletError::InvalidState("recovery action ID")),
+    }
+    Ok(())
+}
+fn decode_native_recovery_launch(
+    wire: PendingActionWire,
+    context: LaunchWalletContext,
+    parent: Poseidon2V8CanonicalTip,
+    references: &[Poseidon2V8CanonicalTip],
+) -> Result<DecodedPoseidon2V8Action, WalletError> {
+    use transaction_circuit::asset_recovery_wire_v1 as transport;
+    validate_native_recovery_outer(&wire)?;
+    let (chain, height, hash, note, projection) = if wire.action_id == RECOVERY_SPEND_ACTION_ID {
+        let d = transport::decode_spend_ref(&wire.public_args)
+            .map_err(|_| WalletError::InvalidState("recovery spend framing"))?;
+        let p = d.public.base;
+        (
+            p.chain_id,
+            p.parent_height,
+            p.reference_parent_hash,
+            Some(p.note_root),
+            DecodedPoseidon2V8Action::AssetSpend(p),
+        )
+    } else {
+        let d = transport::decode_admin_ref(&wire.public_args)
+            .map_err(|_| WalletError::InvalidState("recovery admin framing"))?;
+        if d.public.expires_at < parent.height {
+            return Err(WalletError::InvalidState("recovery admin expired"));
+        }
+        (
+            d.public.context.chain_id,
+            d.public.context.parent_height,
+            d.public.context.parent_hash,
+            None,
+            DecodedPoseidon2V8Action::AssetAdmin,
+        )
+    };
+    crate::asset_spend_rpc::require_reference_window(height, parent.height)?;
+    let reference = references
+        .iter()
+        .find(|r| r.height == height)
+        .ok_or(WalletError::InvalidState("recovery reference absent"))?;
+    if chain != context.chain_id()
+        || hash != reference.block_hash
+        || note.is_some_and(|note| note != reference.anchor)
+    {
+        return Err(WalletError::InvalidState(
+            "recovery canonical reference mismatch",
+        ));
+    }
+    Ok(projection)
+}
+
+impl Poseidon2V8WalletState {
+    /// Bridge already-projected native fee change without a second append.
+    pub(crate) fn import_recovery_native_fee(
+        &mut self,
+        p: &crate::asset_spend_v1::AssetNotePayload,
+        cm: Poseidon2V8Digest,
+        position: u64,
+        block: &Poseidon2V8CanonicalBlock,
+        keys: &DerivedKeys,
+    ) -> Result<(), WalletError> {
+        let n = p.as_note();
+        let opening = SmallwoodPoseidon2V8NoteOpening {
+            value: n.value,
+            asset_id: n.asset_id,
+            recipient_key: n.recipient_key,
+            authorization_key: n.authorization_key,
+            rho: n.rho,
+            randomness: n.randomness,
+        };
+        if n.asset_id != NATIVE_ASSET_ID || self.canonical_note_witness_at(cm, position)?.is_none()
+        {
+            return Err(WalletError::InvalidState("recovery native fee occurrence"));
+        }
+        if let Some(existing) = self.owned_notes.iter().find(|n| n.position == position) {
+            if existing.commitment != cm
+                || existing.opening_words != opening_to_words(opening)
+                || existing.diversifier_index != p.recipient_index
+            {
+                return Err(WalletError::InvalidState(
+                    "recovery native fee duplicate mismatch",
+                ));
+            }
+            return Ok(());
+        }
+        self.insert_owned_note_at(opening, cm, p.recipient_index, position, block, keys)
+    }
+}
+
+/// Archive discovery reads mandatory public capsules from the canonical carrier;
+/// it does not depend on holder decryption or grant archive/delegate authority.
+pub fn recovery_archive_capsules_from_canonical_action(
+    encoded: &[u8],
+) -> Result<
+    Option<[transaction_circuit::asset_recovery_capsule_v1::AssetRecoveryCapsulePublicV1; 2]>,
+    WalletError,
+> {
+    let Some((_, id, body)) = canonical_recovery_action_body(encoded)? else {
+        return Ok(None);
+    };
+    if id != RECOVERY_SPEND_ACTION_ID {
+        return Ok(None);
+    }
+    let d = transaction_circuit::asset_recovery_wire_v1::decode_spend_ref(&body)
+        .map_err(|_| WalletError::InvalidState("archive recovery body"))?;
+    Ok(Some(d.capsules.map(|c| c.public)))
+}
+
+#[cfg(test)]
+mod recovery_decode_cap_tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_and_malformed_payloads_keep_eight_mib_limit() {
+        for n in [
+            0,
+            8,
+            104,
+            MAX_CANONICAL_ACTION_BYTES,
+            MAX_CANONICAL_ACTION_BYTES + 1,
+        ] {
+            let bytes = vec![0; n];
+            assert_eq!(
+                canonical_action_decode_limit(&bytes),
+                MAX_CANONICAL_ACTION_BYTES
+            );
+            assert!(recovery_canonical_decode_limit(&bytes).is_none());
+        }
+        let bytes = vec![0; MAX_CANONICAL_ACTION_BYTES + 1];
+        assert!(decode_canonical_action_exact(&bytes).is_err());
+    }
+
+    // Pure framing fixtures. SMZR/SMRC bodies below are deliberately NOT valid
+    // cryptographic proofs and are never submitted to a proof verifier.
+    #[cfg(feature = "private-spend-dev-artifacts")]
+    fn maximum_structural_spend() -> PendingActionWire {
+        use transaction_circuit::{
+            asset_recovery_capsule_v1 as capsule, asset_recovery_spend_v1 as spend,
+            asset_recovery_wire_v1 as wire,
+        };
+        fn framed(selector: u8, source: [u8; 64]) -> Vec<u8> {
+            let mut b = vec![0; wire::MAX_PROOF_BYTES];
+            b[..4].copy_from_slice(b"SMZR");
+            b[4..6].copy_from_slice(&1u16.to_le_bytes());
+            b[6] = selector;
+            b[8..72].copy_from_slice(&source);
+            let inner_len = (b.len() - 80) as u32;
+            b[72..76].copy_from_slice(&inner_len.to_le_bytes());
+            b[80..84].copy_from_slice(b"SMZE");
+            b
+        }
+        let (mut public, _) =
+            spend::fixtures::fixture(transaction_circuit::asset_spend_v1::TRANSFER, false).unwrap();
+        let ciphertexts = [
+            [1; wire::CIPHERTEXT_BYTES],
+            [2; wire::CIPHERTEXT_BYTES],
+            [3; wire::CIPHERTEXT_BYTES],
+        ];
+        public.base.ciphertext_commitments =
+            ciphertexts.each_ref().map(|c| ciphertext_hash_bytes(c));
+        let caps: [_; 2] = core::array::from_fn(|i| capsule::AssetRecoveryCapsulePublicV1 {
+            chain_id: public.base.chain_id,
+            asset_id: public.base.asset_id,
+            stable_policy_id: public.row.descriptor.stable_policy_id,
+            archive_key_commitment: public.row.descriptor.archive_key_commitment,
+            note_commitment: public.base.commitments[i],
+            ciphertext: [i as u8; capsule::CIPHERTEXT_BYTES],
+        });
+        let mut bundle = b"SMRC".to_vec();
+        bundle.extend(1u16.to_le_bytes());
+        bundle.extend([2, 0]);
+        for _ in 0..2 {
+            bundle.extend((wire::MAX_PROOF_BYTES as u32).to_le_bytes());
+        }
+        for i in 0..2 {
+            bundle.extend(framed(
+                2,
+                capsule::segment_relation_digest(capsule::relation_digest(), i).unwrap(),
+            ));
+        }
+        let body = wire::encode_spend(
+            &public,
+            &ciphertexts,
+            &framed(1, spend::relation_digest()),
+            [(&caps[0], bundle.as_slice()), (&caps[1], bundle.as_slice())],
+        )
+        .unwrap();
+        assert_eq!(body.len(), wire::MAX_SPEND_ACTION_BYTES);
+        let mut action = PendingActionWire {
+            tx_hash: [0; 48],
+            binding: PendingVersionBinding {
+                circuit: transaction_circuit::asset_spend_v1_admission::NATIVE_VERSION_BINDING
+                    .circuit,
+                crypto: transaction_circuit::asset_spend_v1_admission::NATIVE_VERSION_BINDING
+                    .crypto,
+            },
+            family_id: FAMILY_SHIELDED_POOL,
+            action_id: RECOVERY_SPEND_ACTION_ID,
+            anchor: [0; 48],
+            nullifiers: Vec::new(),
+            commitments: Vec::new(),
+            ciphertext_hashes: public.base.ciphertext_commitments.to_vec(),
+            ciphertext_sizes: vec![wire::CIPHERTEXT_BYTES as u32; 3],
+            public_args: body,
+            fee: public.base.fee,
+            candidate_artifact: None,
+        };
+        action.tx_hash = pending_action_hash(&action);
+        action
+    }
+
+    #[cfg(feature = "private-spend-dev-artifacts")]
+    #[test]
+    fn maximum_recovery_envelope_exact_decode_is_structural_only() {
+        use transaction_circuit::asset_recovery_wire_v1 as wire;
+        let action = maximum_structural_spend();
+        let bytes = action.encode();
+        let limit = wire::MAX_SPEND_ACTION_BYTES + RECOVERY_SPEND_CANONICAL_OUTER_BYTES;
+        assert!(bytes.len() > MAX_CANONICAL_ACTION_BYTES);
+        assert_eq!(bytes.len(), limit);
+        assert_eq!(recovery_canonical_decode_limit(&bytes), Some(limit));
+        assert_eq!(decode_canonical_action_exact(&bytes).unwrap(), action);
+        for index in [
+            48,
+            52,
+            54,
+            56,
+            104,
+            105,
+            106,
+            107,
+            251,
+            252,
+            bytes.len() - 9,
+            bytes.len() - 1,
+        ] {
+            let mut changed = bytes.clone();
+            changed[index] ^= 1;
+            assert!(
+                recovery_canonical_decode_limit(&changed).is_none(),
+                "index {index}"
+            );
+            assert_eq!(
+                canonical_action_decode_limit(&changed),
+                MAX_CANONICAL_ACTION_BYTES
+            );
+        }
+        let mut nonminimal = bytes.clone();
+        nonminimal.splice(104..105, [1, 0]); // Two-byte encoding of empty nullifiers.
+        assert!(recovery_canonical_decode_limit(&nonminimal).is_none());
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert!(recovery_canonical_decode_limit(&trailing).is_none());
+        for end in [0, 55, 104, 264, bytes.len() - 1] {
+            assert!(recovery_canonical_decode_limit(&bytes[..end]).is_none());
+        }
+        let mut bad_hash = bytes;
+        bad_hash[0] ^= 1;
+        assert!(decode_canonical_action_exact(&bad_hash).is_err());
     }
 }

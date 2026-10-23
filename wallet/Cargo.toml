@@ -22,6 +22,7 @@ jsonrpsee-core = { version = "0.24", default-features = false, features = ["clie
 jsonrpsee-http-client = { version = "0.24", default-features = false, optional = true }
 jsonrpsee-ws-client = { version = "0.24", default-features = false, optional = true }
 rand = { version = "0.8", features = ["std"] }
+rand_core09 = { package = "rand_core", version = "0.9" }
 rpassword = "7.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -35,6 +36,7 @@ hegemon-field = { workspace = true }
 superneo-hegemon = { path = "../circuits/superneo-hegemon" }
 synthetic-crypto = { path = "../crypto" }
 protocol-versioning = { path = "../protocol/versioning" }
+consensus-light-client = { path = "../consensus-light-client", optional = true }
 protocol-kernel = { path = "../protocol/kernel" }
 protocol-shielded-pool = { path = "../protocol/shielded-pool" }
 hegemon-hash384 = { path = "../crypto/hash384" }
@@ -43,6 +45,7 @@ zeroize = { version = "1.8", features = ["derive"] }
 hegemon-standalone-full-shake256-relation-prototype = { path = "../circuits/standalone-full-shake256-relation-prototype", optional = true }
 
 [dev-dependencies]
+soketto = { version = "0.8.1", default-features = false }
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
@@ -57,11 +60,17 @@ rpc-client = ["dep:jsonrpsee-core", "dep:jsonrpsee-http-client", "dep:jsonrpsee-
 poseidon2-v8-retained-test-support = ["rpc-client"]
 prospective-full-m4 = ["dep:hegemon-standalone-full-shake256-relation-prototype"]
 hx512-working-proof = ["transaction-circuit/hx512-working-proof-runner"]
+private-spend-dev-artifacts = ["transaction-circuit/private-spend-dev-artifacts", "dep:consensus-light-client"]
 
 [[example]]
 name = "hx512_prove_verify"
 path = "examples/hx512_prove_verify.rs"
 required-features = ["hx512-working-proof"]
+
+[[example]]
+name = "asset_spend_v1_artifact"
+path = "examples/asset_spend_v1_artifact.rs"
+required-features = ["private-spend-dev-artifacts"]
 
 [[bin]]
 name = "wallet"
@@ -70,3 +79,12 @@ required-features = ["rpc-client"]
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "treasury-v8"
+path = "src/bin/treasury_v8.rs"
+
+[[bin]]
+name = "private-spend"
+path = "src/bin/private_spend.rs"
+required-features = ["rpc-client"]

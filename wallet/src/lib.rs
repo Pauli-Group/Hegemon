@@ -5,6 +5,8 @@ pub mod async_sync;
 pub mod consolidate;
 pub mod disclosure;
 pub mod error;
+pub mod htlc;
+pub mod htlc_prepare;
 pub mod hx512_lifecycle;
 pub mod inactive_smallwood_v7;
 pub mod keys;
@@ -15,11 +17,24 @@ pub mod notes;
 #[cfg(feature = "rpc-client")]
 pub mod poseidon2_v8;
 pub mod poseidon2_v8_coinbase;
+pub mod poseidon2_v8_multisig;
 pub mod poseidon2_v8_sync;
+pub mod private_spend;
+pub mod asset_spend_v1;
+pub mod asset_recovery_v1;
+pub mod asset_recovery_build_v1;
+pub mod asset_spend_rpc;
+pub use store::asset_spend_store;
+#[cfg(feature = "private-spend-dev-artifacts")]
+pub mod asset_spend_v1_fixture;
+pub mod private_spend_build;
+pub mod private_spend_rpc;
 #[cfg(feature = "prospective-full-m4")]
 pub mod prospective_full_m4;
 pub mod prover;
 pub mod recipients;
+pub mod rp06_transfer;
+pub mod rp06_transfer_store;
 pub mod rpc;
 pub mod scanner;
 mod serde_bytes48;

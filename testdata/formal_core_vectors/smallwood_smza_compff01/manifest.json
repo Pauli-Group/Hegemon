@@ -1,0 +1,20 @@
+{
+  "action_cap_bytes": 169547,
+  "compression_mode_id": "hegemon-p2w16-compress14-left-feedforward-v1",
+  "fixture": "all-inactive-single-key-current-compff01",
+  "identity_regeneration_required": false,
+  "inner_cap_bytes": 164113,
+  "local_accepted_proof_audit_passed": true,
+  "measured_action_bytes": 164421,
+  "network_id": 17,
+  "offline_feature_verifier_accepts": true,
+  "opened_path_recorder_pending_feature_test": true,
+  "preamble_bytes": 1104,
+  "preamble_sha512_hex": "8490e3e4e3bae8ffe99c074b0066f58fa46552fb5e0d058a15d24be2269e3a21e61578bb6e7966e85efc26fc7d9736a7164bffaba5116838692a8317d6ad8a92",
+  "production_authorized": false,
+  "program_sha512_hex": "3eb57169aade6333a2949d52a3bc70f5c6bc33f46198987c02ed6a485b83a76027cfcfaa7aff67ba655919b896c1869ee0cfe8125ca4d2d5432d7bbb9d3b8746",
+  "proof_bytes": 163281,
+  "proof_sha512_hex": "05a688417dcb221fc7c79b87c9d6b76b566c4aa6ca349e167815c027e0d6ea18a5c7063db3cc349b5aa0259e5dea495d09804a3ee7703144361fedf6f0156397",
+  "relation_digest_hex": "3eb57169aade6333a2949d52a3bc70f5c6bc33f46198987c02ed6a485b83a76027cfcfaa7aff67ba655919b896c1869e",
+  "schema": "hegemon.compff01.offline-smza-development-proof.v1"
+}

@@ -13,7 +13,14 @@ pub(crate) fn resolve_base_path(cli: &NativeCli) -> Result<PathBuf> {
     if let Some(path) = &cli.base_path {
         return Ok(path.clone());
     }
-    Ok(PathBuf::from(".hegemon/native"))
+    Ok(PathBuf::from(
+        match cli.network.unwrap_or(NativeNetworkProfile::Legacy) {
+            NativeNetworkProfile::Legacy => ".hegemon/native",
+            NativeNetworkProfile::Development => ".hegemon/development",
+            NativeNetworkProfile::PreMainnet => ".hegemon/pre-mainnet",
+            NativeNetworkProfile::Mainnet => ".hegemon/mainnet",
+        },
+    ))
 }
 
 pub(crate) fn load_native_identity_seed(config: &NativeConfig) -> Result<[u8; 32]> {
@@ -110,6 +117,13 @@ pub(crate) fn effective_rpc_methods_label(raw: &str, rpc_external: bool) -> Resu
 pub(crate) fn rpc_method_policy(raw: &str, rpc_external: bool) -> Result<RpcMethodPolicy> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "safe" => Ok(RpcMethodPolicy::Safe),
+        "pool" => {
+            if rpc_external {
+                Err(anyhow!("--rpc-methods=pool requires a loopback listener behind an authenticated tunnel"))
+            } else {
+                Ok(RpcMethodPolicy::Pool)
+            }
+        }
         "unsafe" => {
             if rpc_external {
                 Err(anyhow!(
@@ -121,7 +135,7 @@ pub(crate) fn rpc_method_policy(raw: &str, rpc_external: bool) -> Result<RpcMeth
         }
         "auto" | "" => Ok(RpcMethodPolicy::Safe),
         other => Err(anyhow!(
-            "invalid --rpc-methods value {other:?}; expected auto, safe, or unsafe"
+            "invalid --rpc-methods value {other:?}; expected auto, safe, pool, or unsafe"
         )),
     }
 }
@@ -157,6 +171,37 @@ pub(crate) fn wallet_page_end(page: NativePagination, total: u64) -> Result<u64>
         .ok_or_else(|| anyhow!("native wallet page range overflow"))
 }
 
+/// The pool control plane exposes only mining and public chain identity/accounting.
+/// Payout construction/submission stays on a separate wallet control plane.
+pub(crate) fn is_pool_rpc_method(method: &str) -> bool {
+    matches!(
+        method,
+        "rpc_methods"
+            | "system_health"
+            | "system_name"
+            | "system_version"
+            | "system_chain"
+            | "chain_getBlockHash"
+            | "chain_getHeader"
+            | "hegemon_nodeConfig"
+            | "hegemon_consensusStatus"
+            | "hegemon_poolStatus"
+            | "hegemon_poolWork"
+            | "hegemon_compactJob"
+            | "hegemon_submitPoolShare"
+            | "hegemon_submitCompactSolution"
+            | "hegemon_blockReward"
+    )
+}
+
+pub(crate) fn rpc_method_allowed(policy: RpcMethodPolicy, method: &str) -> bool {
+    match policy {
+        RpcMethodPolicy::Unsafe => true,
+        RpcMethodPolicy::Safe => !is_unsafe_rpc_method(method),
+        RpcMethodPolicy::Pool => is_pool_rpc_method(method),
+    }
+}
+
 pub(crate) fn is_unsafe_rpc_method(method: &str) -> bool {
     matches!(
         method,
@@ -173,7 +218,8 @@ pub(crate) fn is_unsafe_rpc_method(method: &str) -> bool {
             | "system_peers"
             | "da_submitCiphertexts"
             | "da_submitProofs"
-    )
+    ) || (cfg!(feature = "development-candidate")
+        && method == "hegemon_developmentPendingActionChunk")
 }
 
 pub(crate) fn current_time_ms() -> u64 {
@@ -512,11 +558,21 @@ pub(crate) fn validate_native_block_meta_bincode_budget_with_total_limit(
             return Ok(());
         };
         if action_len > MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES {
-            return Err(anyhow!(
-                "{label} action payload {index} exceeds limit before bincode decode: {} > {}",
-                action_len,
-                MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES
-            ));
+            let start = cursor
+                .checked_add(BINCODE_FIXINT_VEC_LEN_BYTES)
+                .ok_or_else(|| anyhow!("{label} action offset overflow"))?;
+            let end = start
+                .checked_add(action_len)
+                .ok_or_else(|| anyhow!("{label} action end overflow"))?;
+            if action_len > MAX_NATIVE_RECOVERY_PENDING_ACTION_BYTES
+                || !bytes
+                    .get(start..end)
+                    .is_some_and(native_action_payload_within_route_cap)
+            {
+                return Err(anyhow!(
+                    "{label} action payload {index} exceeds its finite route limit before bincode decode"
+                ));
+            }
         }
         total_action_bytes = total_action_bytes
             .checked_add(action_len)
@@ -684,8 +740,13 @@ pub(crate) fn rpc_cors_origin(node: &NativeNode) -> Option<HeaderValue> {
     if cors.is_empty() {
         return None;
     }
-    if cors == "*" && node.rpc_policy().ok() == Some(RpcMethodPolicy::Unsafe) {
-        warn!("ignoring wildcard RPC CORS while unsafe RPC methods are enabled");
+    if cors == "*"
+        && matches!(
+            node.rpc_policy().ok(),
+            Some(RpcMethodPolicy::Unsafe | RpcMethodPolicy::Pool)
+        )
+    {
+        warn!("ignoring wildcard RPC CORS while privileged RPC methods are enabled");
         return None;
     }
     HeaderValue::from_str(cors).ok()
@@ -721,6 +782,7 @@ pub(crate) fn native_rpc_methods(policy: RpcMethodPolicy) -> Vec<&'static str> {
         "da_submitCiphertexts",
         "da_submitProofs",
         "da_submitWitnesses",
+        "hegemon_blockReward",
         "hegemon_blockTimestamps",
         "hegemon_compactJob",
         "hegemon_consensusStatus",
@@ -735,6 +797,11 @@ pub(crate) fn native_rpc_methods(policy: RpcMethodPolicy) -> Vec<&'static str> {
         "hegemon_peerList",
         "hegemon_poolStatus",
         "hegemon_poolWork",
+        "hegemon_privateSpendParameters",
+        "hegemon_assetParameters",
+        "hegemon_assetRegistry",
+        "hegemon_assetSnapshot",
+        "hegemon_assetRecoverySnapshot",
         "hegemon_startMining",
         "hegemon_stopMining",
         "hegemon_storageFootprint",
@@ -764,7 +831,7 @@ pub(crate) fn native_rpc_methods(policy: RpcMethodPolicy) -> Vec<&'static str> {
     if policy != RpcMethodPolicy::Unsafe {
         let mut safe_methods = Vec::with_capacity(methods.len());
         for method in methods {
-            if !is_unsafe_rpc_method(method) {
+            if rpc_method_allowed(policy, method) {
                 safe_methods.push(method);
             }
         }
@@ -906,7 +973,30 @@ pub(crate) async fn wait_for_native_shutdown_signal() -> &'static str {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub(crate) async fn wait_for_native_shutdown_signal() -> &'static str {
+    // An isolated Windows process group supports targeted Ctrl-Break. Handling
+    // it permits the release harness to flush state and reap only its own node.
+    let mut ctrl_break = match tokio::signal::windows::ctrl_break() {
+        Ok(signal) => signal,
+        Err(err) => {
+            warn!(error = %err, "failed to install Ctrl-Break handler; falling back to Ctrl-C");
+            let _ = tokio::signal::ctrl_c().await;
+            return "ctrl_c";
+        }
+    };
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => {
+            if let Err(err) = result {
+                warn!(error = %err, "failed while waiting for Ctrl-C shutdown signal");
+            }
+            "ctrl_c"
+        }
+        _ = ctrl_break.recv() => "ctrl_break",
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 pub(crate) async fn wait_for_native_shutdown_signal() -> &'static str {
     if let Err(err) = tokio::signal::ctrl_c().await {
         warn!(error = %err, "failed while waiting for Ctrl-C shutdown signal");

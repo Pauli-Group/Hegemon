@@ -12,6 +12,8 @@ pub mod poseidon2_pending_action_artifact;
 pub mod poseidon2_production_transport;
 pub mod poseidon2_v8_coinbase;
 pub mod poseidon2_v8_retained_vectors;
+pub mod rp06_transport;
+pub mod private_spend_transport;
 pub mod smallwood_v5_transport;
 pub mod types;
 pub mod verifier;

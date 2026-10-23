@@ -7,6 +7,7 @@ import {
   defaultMineThreads,
   defaultP2pPort,
   defaultRpcPort,
+  defaultRpcUrl,
   hegemonNetworkName,
   inferParticipationRole,
   legacyDefaultConnectionLabels,
@@ -75,7 +76,8 @@ export const deriveHttpUrl = (wsUrl: string, httpUrl?: string) => {
       return null;
     }
   };
-  const isLoopbackHost = (host: string) => host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  const isLoopbackHost = (host: string) =>
+    ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(host.toLowerCase());
   const wsEndpoint = parseEndpoint(trimmedWsUrl);
 
   if (httpUrl && httpUrl.trim()) {
@@ -176,6 +178,31 @@ export const isLoopbackHttpEndpoint = (value?: string): boolean =>
         value.startsWith('https://[::1]:'))
   );
 
+/** A stored RPC endpoint may be HTTP or a legacy explicit WebSocket URL. */
+export const isLoopbackRpcEndpoint = (value: string): boolean => {
+  try {
+    const parsed = new URL(value);
+    return (
+      ['http:', 'https:', 'ws:', 'wss:'].includes(parsed.protocol) &&
+      ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(parsed.hostname.toLowerCase()) &&
+      !parsed.username &&
+      !parsed.password &&
+      !parsed.hash
+    );
+  } catch {
+    return false;
+  }
+};
+
+export const rewriteLoopbackRpcEndpoint = (value: string, port: number): string => {
+  if (!isLoopbackRpcEndpoint(value) || normalizeRpcPort(port) === undefined) {
+    return value;
+  }
+  const parsed = new URL(value);
+  parsed.port = String(port);
+  return parsed.toString();
+};
+
 export const rewriteLoopbackWsEndpoint = (value: string, port: number): string => {
   if (value.startsWith('ws://localhost:')) {
     return `ws://localhost:${port}`;
@@ -224,9 +251,9 @@ export const normalizeLocalConnectionEndpoints = (connection: NodeConnection): N
   }
 
   if (!connection.wsUrl?.trim()) {
-    updates.wsUrl = `ws://127.0.0.1:${rpcPort}`;
-  } else if (isLoopbackWsEndpoint(connection.wsUrl) && parsePortFromUrl(connection.wsUrl) !== rpcPort) {
-    updates.wsUrl = rewriteLoopbackWsEndpoint(connection.wsUrl, rpcPort);
+    updates.wsUrl = `http://127.0.0.1:${rpcPort}`;
+  } else if (isLoopbackRpcEndpoint(connection.wsUrl) && parsePortFromUrl(connection.wsUrl) !== rpcPort) {
+    updates.wsUrl = rewriteLoopbackRpcEndpoint(connection.wsUrl, rpcPort);
   }
 
   const effectiveWsUrl = updates.wsUrl ?? connection.wsUrl;
@@ -234,7 +261,7 @@ export const normalizeLocalConnectionEndpoints = (connection: NodeConnection): N
   if (!connection.httpUrl?.trim()) {
     updates.httpUrl = derivedHttpUrl;
   } else if (isLoopbackHttpEndpoint(connection.httpUrl) && parsePortFromUrl(connection.httpUrl) !== rpcPort) {
-    updates.httpUrl = rewriteLoopbackHttpEndpoint(connection.httpUrl, rpcPort);
+    updates.httpUrl = rewriteLoopbackRpcEndpoint(connection.httpUrl, rpcPort);
   }
 
   if (Object.keys(updates).length === 0) {
@@ -248,8 +275,8 @@ export const buildDefaultConnection = (): NodeConnection => ({
   label: defaultDevConnectionLabel,
   mode: 'local',
   participationRole: 'full_node',
-  wsUrl: `ws://127.0.0.1:${defaultRpcPort}`,
-  httpUrl: `http://127.0.0.1:${defaultRpcPort}`,
+  wsUrl: defaultRpcUrl,
+  httpUrl: defaultRpcUrl,
   dev: true,
   tmp: false,
   basePath: defaultDevBasePath,
@@ -312,7 +339,7 @@ export const normalizeConnection = (connection: NodeConnection): NodeConnection 
     hasLegacyHegemonLabel &&
     Boolean(sanitizedConnection.dev) &&
     inferRpcPort(next) === defaultRpcPort &&
-    isLoopbackWsEndpoint(next.wsUrl) &&
+    isLoopbackRpcEndpoint(next.wsUrl) &&
     (!next.httpUrl || isLoopbackHttpEndpoint(next.httpUrl));
   if ((isDefaultLocal || isLegacyHegemonLocalProfile) && next.label !== defaultDevConnectionLabel) {
     next = { ...next, label: defaultDevConnectionLabel };
@@ -326,14 +353,16 @@ export const normalizeConnection = (connection: NodeConnection): NodeConnection 
   if (
     isDefaultLocal &&
     inferRpcPort(next) === legacyDesktopRpcPort &&
-    isLoopbackWsEndpoint(next.wsUrl) &&
+    isLoopbackRpcEndpoint(next.wsUrl) &&
     (!next.httpUrl || isLoopbackHttpEndpoint(next.httpUrl))
   ) {
     next = {
       ...next,
       rpcPort: defaultRpcPort,
-      wsUrl: rewriteLoopbackWsEndpoint(next.wsUrl, defaultRpcPort),
-      httpUrl: rewriteLoopbackHttpEndpoint(next.httpUrl, defaultRpcPort)
+      wsUrl: rewriteLoopbackRpcEndpoint(next.wsUrl, defaultRpcPort),
+      httpUrl: next.httpUrl
+        ? rewriteLoopbackRpcEndpoint(next.httpUrl, defaultRpcPort)
+        : deriveHttpUrl(rewriteLoopbackRpcEndpoint(next.wsUrl, defaultRpcPort))
     };
   }
   const inferredParticipationRole = inferParticipationRole(next);
@@ -397,7 +426,7 @@ export const shouldAutoStartDefaultProfile = (connection: NodeConnection): boole
     (relayProfileAllowed || miningProfileAllowed) &&
     inferRpcPort(normalized) === defaultRpcPort &&
     normalized.basePath === defaultDevBasePath &&
-    isLoopbackWsEndpoint(normalized.wsUrl) &&
+    isLoopbackRpcEndpoint(normalized.wsUrl) &&
     (!normalized.httpUrl || isLoopbackHttpEndpoint(normalized.httpUrl)) &&
     normalizeSeedsValue(normalized.seeds) === approvedSeeds
   );

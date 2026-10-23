@@ -5,7 +5,8 @@ use rand::{CryptoRng, RngCore};
 
 use protocol_shielded_pool::{
     poseidon2_v8_coinbase::{
-        MintPoseidon2V8CoinbaseArgs, Poseidon2V8CoinbaseNoteData, Poseidon2V8CoinbaseNoteOpening,
+        MintPoseidon2V8CoinbaseArgs, MintPoseidon2V8RewardsArgs, Poseidon2V8CoinbaseNoteData,
+        Poseidon2V8CoinbaseNoteOpening,
     },
     types::EncryptedNote,
 };
@@ -112,6 +113,60 @@ pub fn build_poseidon2_v8_coinbase_args<R: RngCore + ?Sized>(
         randomness: random_single_key_note_randomness(address, rng)?,
     };
     build_poseidon2_v8_coinbase_args_from_opening(address, opening, rng)
+}
+
+/// Construct the separately identified exact reward allocation. The caller
+/// supplies amounts derived from consensus, not recipient-selectable ratios.
+pub fn build_poseidon2_v8_rewards_args<R: RngCore + ?Sized>(
+    miner: &ShieldedAddress,
+    miner_amount: u64,
+    funding: &ShieldedAddress,
+    funding_amount: u64,
+    rng: &mut R,
+) -> Result<MintPoseidon2V8RewardsArgs, WalletError> {
+    let miner_note = build_poseidon2_v8_coinbase_args(miner, miner_amount, rng)?.miner_note;
+    let funding_note = if funding_amount == 0 {
+        None
+    } else {
+        Some(build_poseidon2_v8_coinbase_args(funding, funding_amount, rng)?.miner_note)
+    };
+    Ok(MintPoseidon2V8RewardsArgs {
+        miner_note,
+        funding_note,
+    })
+}
+
+/// Recover publicly opened rewards for an exact recipient without trusting
+/// encryption correctness chosen by a miner. Reward amounts/openings are
+/// already public, so no secrecy is lost when ciphertext decryption fails.
+/// Ownership checks bind all seven authorization words. Threshold custody can
+/// use this hook with its policy address and independently held spend witness.
+pub fn public_poseidon2_v8_reward_opening(
+    note: &Poseidon2V8CoinbaseNoteData,
+    address: &ShieldedAddress,
+) -> Result<SmallwoodPoseidon2V8NoteOpening, WalletError> {
+    let opening = protocol_opening_to_relation(note.opening);
+    if address.version != POSEIDON2_V8_ADDRESS_VERSION
+        || address.crypto_suite != protocol_versioning::CRYPTO_SUITE_ETA
+        || opening.value == 0
+        || u128::from(opening.value) > MAX_IN_CIRCUIT_VALUE
+        || opening.asset_id != NATIVE_ASSET_ID
+        || opening.recipient_key
+            != poseidon2_v8_words_from_canonical_bytes(address.pk_recipient)
+                .map_err(|_| WalletError::NoteMismatch("invalid reward recipient"))?
+        || opening.authorization_key
+            != poseidon2_v8_words_from_canonical_bytes(address.pk_auth)
+                .map_err(|_| WalletError::NoteMismatch("invalid reward authorization"))?
+        || opening.randomness[..3] != address_authorization_extension(address)?
+        || poseidon2_v8_note_commitment(opening)
+            .map_err(|_| WalletError::NoteMismatch("invalid reward opening"))?
+            != note.commitment
+    {
+        return Err(WalletError::NoteMismatch(
+            "reward opening differs from recipient/policy",
+        ));
+    }
+    Ok(opening)
 }
 
 /// Encrypt one exact source opening to its owning V8 wallet address.
@@ -336,7 +391,7 @@ pub fn build_poseidon2_v8_owned_spend_inputs(
     }))
 }
 
-fn build_poseidon2_v8_owned_spend_input(
+pub(crate) fn build_poseidon2_v8_owned_spend_input(
     material: &AddressKeyMaterial,
     spend_key: &SpendKey,
     note: SmallwoodPoseidon2V8NoteOpening,
@@ -759,6 +814,31 @@ mod tests {
 
     fn sha512_hex(bytes: &[u8]) -> String {
         hex::encode(Sha512::digest(bytes))
+    }
+
+    #[test]
+    fn public_rewards_recover_exact_policy_despite_hostile_ciphertext_and_header() {
+        let address = RootSecret::from_bytes([0x31; 32])
+            .derive()
+            .poseidon2_v8_address(7)
+            .unwrap()
+            .shielded_address();
+        let mut note =
+            build_poseidon2_v8_coinbase_args(&address, 20, &mut StdRng::seed_from_u64(31))
+                .unwrap()
+                .miner_note;
+        let expected = public_poseidon2_v8_reward_opening(&note, &address).unwrap();
+        note.encrypted_note.ciphertext.fill(0x55);
+        note.encrypted_note.kem_ciphertext.fill(0x55);
+        assert_eq!(
+            public_poseidon2_v8_reward_opening(&note, &address).unwrap(),
+            expected
+        );
+        let mut wrong_policy = address.clone();
+        wrong_policy.pk_auth_extension[0] ^= 1;
+        assert!(public_poseidon2_v8_reward_opening(&note, &wrong_policy).is_err());
+        note.opening.value += 1;
+        assert!(public_poseidon2_v8_reward_opening(&note, &address).is_err());
     }
 
     #[test]

@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 
 ACTIVE_ARITHMETIZATION = "DirectPacked64CompressedLevel5"
@@ -254,6 +256,130 @@ def run_profile(
         fail(f"{binary_name}: invalid profile JSON: {exc}")
 
 
+
+# This is a scope check, not an authority registry. Only the existing strict
+# source-owned private-spend checker can authorize the exact final artifacts.
+SOURCE_ROOT = Path(__file__).resolve().parents[1]
+PRIVATE_LAUNCH_PROFILE = {'kind': 'PrivateSpend',
+ 'circuit': 12,
+ 'crypto': 7,
+ 'family': 1,
+ 'action': 15,
+ 'backend': 2,
+ 'profile': 12,
+ 'domain_set': 8,
+ 'compression_mode': 'hegemon-p2w16-compress14-left-feedforward-v1',
+ 'emission_schedule': 'hegemon-native-emission-21m-atoms1e8-5hgn-epoch2100000-prefix-v1',
+ 'schema': 'hegemon.private-spend.native-launch-identity.v2',
+ 'relation_id': 'Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4',
+ 'relation_digest': 'cd747b8430b51faee6c4bf94d7b0c8f8dfdb7863c6b927db53e7cea67c7a20a49aaf3ceda5b9ba2947dc9b89d070e1ac5fe9ab1c77cba6d859285c2f324b56f5',
+ 'public_words': 86}
+PRIVATE_LAUNCH_ARTIFACTS = (("hegemon-node", "hegemon-node"), ("wallet", "wallet"), ("walletd", "walletd"))
+PRIVATE_LAUNCH_SCOPE = "source-owned-current86-private-spend-launch"
+
+
+def sha256_file(file: Path) -> str:
+    return hashlib.sha256(file.read_bytes()).hexdigest()
+
+
+def private_launch_snapshot(root: Path, manifest_path: Path) -> tuple:
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = json.loads(manifest_bytes)
+    if not isinstance(manifest, dict) or manifest.get("target_triple") != rustc_host():
+        fail("private launch requires the exact native target")
+    artifacts = manifest.get("artifacts")
+    if (not isinstance(artifacts, list) or len(artifacts) != 3
+        or not all(isinstance(item, dict) for item in artifacts)
+        or tuple((item.get("package"), item.get("binary")) for item in artifacts) != PRIVATE_LAUNCH_ARTIFACTS):
+        fail("private launch requires exactly node/wallet/walletd")
+    binary_paths = []
+    for item in artifacts:
+        if not isinstance(item.get("path"), str):
+            fail("private launch artifact path is absent")
+        binary = (root / item["path"]).resolve()
+        try:
+            binary.relative_to(root)
+        except ValueError:
+            fail("private launch artifact escapes source root")
+        if not binary.is_file() or sha256_file(binary) != item.get("sha256"):
+            fail("private launch artifact digest differs from manifest")
+        binary_paths.append(binary)
+    if len(set(binary_paths)) != 3:
+        fail("private launch artifact paths must be distinct")
+    authority = tuple((str(file), sha256_file(file)) for file in (
+        root / "scripts/check_private_spend_launch_authorization.py",
+        root / "scripts/private_spend_launch_authorized_registry.json",
+    ))
+    return manifest, hashlib.sha256(manifest_bytes).hexdigest(), tuple(binary_paths), authority
+
+
+def validate_private_launch_receipt(receipt: object, manifest: dict, manifest_digest: str, registry: dict) -> dict:
+    if (not isinstance(receipt, dict)
+        or receipt.get("schema") != "hegemon.private-spend.release-authorization.v2"
+        or receipt.get("authorization_kind") != "qualified_source_tuple"
+        or receipt.get("production_artifacts_verified") is not True
+        or receipt.get("affected_lifecycle_verified") is not True
+        or receipt.get("deployment_verified") is not False
+        or receipt.get("lifecycle_scope") != "hgn_single_key_composite"
+        or receipt.get("artifact_manifest_sha256") != manifest_digest):
+        fail("private launch lacks exact final source/artifact/lifecycle authorization")
+    identity = receipt.get("identity")
+    if (not isinstance(identity, dict)
+        or any(identity.get(key) != value for key, value in PRIVATE_LAUNCH_PROFILE.items())
+        or identity.get("network_profile") not in ("pre-mainnet", "mainnet")
+        or "deactivation_height_exclusive" not in identity
+        or identity["deactivation_height_exclusive"] is not None
+        or "max_total_proofs" not in identity or identity["max_total_proofs"] is not None):
+        fail("private launch is not the current86 ongoing HGN identity")
+    release = registry.get("release") if isinstance(registry, dict) else None
+    rows = registry.get("final_artifacts") if isinstance(registry, dict) else None
+    if (not isinstance(registry, dict)
+        or registry.get("schema") != "hegemon.private-spend.source-authorized-registry.v2"
+        or not isinstance(release, dict) or release.get("identity") != identity
+        or not isinstance(rows, list)):
+        fail("private launch receipt differs from source-owned identity")
+    matches = [row for row in rows if isinstance(row, dict) and row.get("target_triple") == manifest["target_triple"]]
+    expected = {item["binary"]: item["sha256"] for item in manifest["artifacts"]}
+    if (len(matches) != 1 or matches[0].get("identity") != identity
+        or matches[0].get("artifact_sha256") != expected):
+        fail("private launch receipt differs from source-owned final artifacts")
+    return identity
+
+
+def private_launch_profile(root: Path, manifest_path: Path) -> dict:
+    # A caller cannot replace the authority checker through the diagnostic --root.
+    if root != SOURCE_ROOT:
+        fail("private launch must use this checker's source root")
+    manifest_path = manifest_path.resolve()
+    try:
+        manifest_path.relative_to(root)
+    except ValueError:
+        fail("private launch manifest escapes source root")
+    before = private_launch_snapshot(root, manifest_path)
+    manifest, manifest_digest, binaries, _ = before
+    for item, binary in zip(manifest["artifacts"], binaries, strict=True):
+        validate_binary_profile_markers(binary, item["binary"])
+        if run_profile(binary, item["binary"], allow_unapproved_profile=True) is not None:
+            fail("private launch requires every legacy profile to refuse exactly")
+    command = [sys.executable, "-I", "-B", str(root / "scripts/check_private_spend_launch_authorization.py"),
+               "--require-authorized", "--artifact-manifest", manifest_path.relative_to(root).as_posix()]
+    completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=180)
+    if completed.returncode != 0 or completed.stderr:
+        fail("private launch source authorization failed: " + (completed.stderr.strip() or str(completed.returncode)))
+    lines = completed.stdout.splitlines()
+    if len(lines) != 1:
+        fail("private launch source authorization must return one JSON receipt")
+    receipt = json.loads(lines[0])
+    registry = json.loads((root / "scripts/private_spend_launch_authorized_registry.json").read_text())
+    identity = validate_private_launch_receipt(receipt, manifest, manifest_digest, registry)
+    if private_launch_snapshot(root, manifest_path) != before:
+        fail("private launch manifest, artifacts or authority changed during validation")
+    return {"passed": True, "mode": "executed-private-spend-launch", "target_triple": manifest["target_triple"],
+            "production_authority": False, "authorization_scope": PRIVATE_LAUNCH_SCOPE,
+            "private_spend_launch_authority": True, "identity": identity,
+            "artifact_manifest_sha256": manifest_digest}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, required=True)
@@ -271,8 +397,21 @@ def main() -> None:
             "exact known fail-closed production-authorization refusal"
         ),
     )
+    parser.add_argument(
+        "--private-spend-launch", action="store_true",
+        help="require exact current86 source-owned final-artifact authorization and closed legacy profiles",
+    )
     args = parser.parse_args()
     root = args.root.resolve()
+    if args.private_spend_launch:
+        if args.allow_unapproved_profile:
+            fail("private launch cannot use review-only unapproved-profile mode")
+        try:
+            result = private_launch_profile(root, args.manifest)
+        except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired) as error:
+            fail("private launch attestation failed: " + str(error))
+        print(json.dumps(result, sort_keys=True))
+        return
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     target = manifest.get("target_triple")
     artifacts = manifest.get("artifacts")

@@ -101,6 +101,65 @@ mod poseidon2_v8_throughput_tests {
     }
 
     #[test]
+    fn asset_competitors_are_deferred_without_dropping_native_actions() {
+        let native_first = action(1, true);
+        let mut asset_first = action(2, true);
+        asset_first.action_id =
+            transaction_circuit::asset_spend_v1_admission::ASSET_SPEND_ACTION_ID;
+        let native_second = action(3, false);
+        let mut asset_second = action(4, true);
+        asset_second.action_id =
+            transaction_circuit::asset_spend_v1_admission::ASSET_ADMIN_ACTION_ID;
+        let mut selected = vec![
+            native_first.clone(),
+            asset_first.clone(),
+            native_second.clone(),
+            asset_second.clone(),
+        ];
+        retain_one_native_controlled_asset_action(&mut selected);
+        assert_eq!(
+            selected
+                .iter()
+                .map(|action| action.tx_hash)
+                .collect::<Vec<_>>(),
+            [
+                native_first.tx_hash,
+                asset_first.tx_hash,
+                native_second.tx_hash
+            ]
+        );
+        // Selection changes only this disposable mining snapshot. Both
+        // original pending candidates remain available for later rebuilding.
+        assert!(is_native_controlled_asset_action(&asset_second));
+        assert!(!is_native_controlled_asset_action(&native_first));
+        assert_eq!(asset_second.tx_hash, ActionId48::new([4; 48]));
+        for recovery_id in [
+            asset_recovery_native::RECOVERY_SPEND_ACTION_ID,
+            asset_recovery_native::RECOVERY_ADMIN_ACTION_ID,
+        ] {
+            let mut recovery = action(5, true);
+            recovery.action_id = recovery_id;
+            let mut competing = vec![asset_first.clone(), recovery.clone(), native_first.clone()];
+            retain_one_native_controlled_asset_action(&mut competing);
+            assert!(is_native_controlled_asset_action(&recovery));
+            assert_eq!(competing.iter().map(|action| action.tx_hash).collect::<Vec<_>>(),
+                vec![asset_first.tx_hash, native_first.tx_hash]);
+        }
+    }
+
+    #[test]
+    fn mining_selection_reserves_reward_inside_exact_source_action_budget() {
+        let actions = (0..8).map(|index| action(index, true)).collect::<Vec<_>>();
+        let indices = (0..8).collect::<Vec<_>>();
+        assert_eq!(retain_selected_v8_proof_action_budget(&actions, &indices, 1, 8).unwrap(), indices[..7]);
+        assert_eq!(retain_selected_v8_proof_action_budget(&actions, &indices[..7], 1, 8).unwrap(), indices[..7]);
+        assert_eq!(retain_selected_v8_proof_action_budget(&actions, &indices, 0, 8).unwrap(), indices);
+        assert!(retain_selected_v8_proof_action_budget(&actions, &indices, 1, 0).is_err());
+        assert!(retain_selected_v8_proof_action_budget(&actions, &indices, 9, 8).is_err());
+        assert!(retain_selected_v8_proof_action_budget(&actions, &indices, 0, MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK + 1).is_err());
+    }
+
+    #[test]
     fn mining_selection_reserves_the_v8_coinbase_inside_the_512_action_budget() {
         let actions = (0..MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK)
             .map(|index| action((index % usize::from(u8::MAX)) as u8, true))
@@ -108,11 +167,11 @@ mod poseidon2_v8_throughput_tests {
         let all_indices = (0..actions.len()).collect::<Vec<_>>();
 
         let without_coinbase =
-            retain_selected_v8_proof_action_budget(&actions, &all_indices, 0).unwrap();
+            retain_selected_v8_proof_action_budget(&actions, &all_indices, 0, MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK).unwrap();
         assert_eq!(without_coinbase.len(), MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK);
 
         let with_coinbase =
-            retain_selected_v8_proof_action_budget(&actions, &all_indices, 1).unwrap();
+            retain_selected_v8_proof_action_budget(&actions, &all_indices, 1, MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK).unwrap();
         assert_eq!(with_coinbase.len(), MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK - 1);
         assert_eq!(with_coinbase, all_indices[..with_coinbase.len()]);
 
@@ -120,6 +179,7 @@ mod poseidon2_v8_throughput_tests {
             &actions,
             &all_indices,
             MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK + 1,
+            MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK,
         )
         .is_err());
     }
@@ -374,6 +434,64 @@ impl<V: poseidon2_v8_state::Poseidon2V8ExactLeafVerifier>
     fn native_leaf_profile(&self) -> poseidon2_v8_state::Poseidon2V8NativeLeafProfile {
         self.inner.native_leaf_profile()
     }
+    fn launch_proof_lifetime_limit(&self) -> Option<u64> {
+        self.inner.launch_proof_lifetime_limit()
+    }
+    fn launch_has_ongoing_hgn_authority(&self) -> bool {
+        self.inner.launch_has_ongoing_hgn_authority()
+    }
+    fn launch_proof_action_limit(&self) -> Option<usize> {
+        self.inner.launch_proof_action_limit()
+    }
+    fn exact_leaf_proof_units(&self, exact: &[u8]) -> std::result::Result<usize,String> {
+        self.inner.exact_leaf_proof_units(exact)
+    }
+
+    fn launch_reference_context(&self) -> Option<launch_reference::LaunchReferenceContext> {
+        self.inner.launch_reference_context()
+    }
+    fn set_launch_references(
+        &mut self,
+        references: launch_reference::CanonicalLaunchReferences,
+    ) -> std::result::Result<(), String> {
+        self.inner.set_launch_references(references)
+    }
+
+    fn is_asset_native_leaf(&self, leaf: &[u8]) -> bool {
+        self.inner.is_asset_native_leaf(leaf)
+    }
+
+    fn verify_exact_asset_leaf(
+        &mut self,
+        block: poseidon2_v8_state::Poseidon2V8BlockContext,
+        leaf_index: usize,
+        exact_native_leaf: &[u8],
+        current_asset: &[u8],
+        parent_note_root: poseidon2_v8_state::Poseidon2V8NoteRoot,
+        next_position: u32,
+        is_spent: &mut dyn FnMut([u64; 7]) -> std::result::Result<bool, String>,
+    ) -> std::result::Result<(poseidon2_v8_state::Poseidon2V8PublicTransition, Vec<u8>), String>
+    {
+        let (transition, state) = self.inner.verify_exact_asset_leaf(
+            block,
+            leaf_index,
+            exact_native_leaf,
+            current_asset,
+            parent_note_root,
+            next_position,
+            is_spent,
+        )?;
+        self.transitions.push(transition);
+        Ok((transition, state))
+    }
+
+    fn advance_asset_state(
+        &mut self,
+        block: poseidon2_v8_state::Poseidon2V8BlockContext,
+        current_asset: &[u8],
+    ) -> std::result::Result<Vec<u8>, String> {
+        self.inner.advance_asset_state(block, current_asset)
+    }
 
     fn verify_exact_v8_leaf_window(
         &mut self,
@@ -405,6 +523,102 @@ impl<V: poseidon2_v8_state::Poseidon2V8ExactLeafVerifier>
             .verify_exact_v8_leaf(block, leaf_index, exact_native_leaf)?;
         self.transitions.push(transition);
         Ok(transition)
+    }
+}
+
+#[cfg(test)]
+mod asset_verifier_forwarding_tests {
+    use super::*;
+    use poseidon2_v8_state::{
+        Poseidon2V8BlockContext, Poseidon2V8ExactLeafVerifier, Poseidon2V8NativeLeafProfile,
+        Poseidon2V8NoteRoot, Poseidon2V8PublicTransition, Poseidon2V8Root,
+    };
+
+    struct ForwardingFixture {
+        calls: usize,
+    }
+    impl Poseidon2V8ExactLeafVerifier for ForwardingFixture {
+        fn native_leaf_profile(&self) -> Poseidon2V8NativeLeafProfile {
+            Poseidon2V8NativeLeafProfile::Smz9
+        }
+        fn is_asset_native_leaf(&self, bytes: &[u8]) -> bool {
+            bytes == b"fixture-asset"
+        }
+        fn verify_exact_asset_leaf(
+            &mut self,
+            block: Poseidon2V8BlockContext,
+            index: usize,
+            bytes: &[u8],
+            current: &[u8],
+            parent_note_root: Poseidon2V8NoteRoot,
+            next_position: u32,
+            is_spent: &mut dyn FnMut([u64; 7]) -> std::result::Result<bool, String>,
+        ) -> std::result::Result<(Poseidon2V8PublicTransition, Vec<u8>), String> {
+            assert_eq!(index, 7);
+            assert_eq!(bytes, b"fixture-asset");
+            assert_eq!(current, [1, 2]);
+            assert_eq!(block.parent_height(), 4);
+            assert_eq!(parent_note_root.limbs(), [2; 7]);
+            assert_eq!(next_position, 123);
+            assert!(is_spent([9; 7])?);
+            self.calls += 1;
+            Ok((
+                Poseidon2V8PublicTransition::new_with_asset_shielded_state(
+                    block.parent_height(),
+                    Poseidon2V8Root::new([1; 7]).unwrap(),
+                    parent_note_root,
+                    [None; 2],
+                    [None; 3],
+                ),
+                vec![3, 4],
+            ))
+        }
+        fn advance_asset_state(
+            &mut self,
+            block: Poseidon2V8BlockContext,
+            current: &[u8],
+        ) -> std::result::Result<Vec<u8>, String> {
+            assert_eq!(block.height(), 5);
+            assert_eq!(current, [3, 4]);
+            self.calls += 1;
+            Ok(vec![5, 6])
+        }
+        fn verify_exact_v8_leaf(
+            &mut self,
+            _: Poseidon2V8BlockContext,
+            _: usize,
+            _: &[u8],
+        ) -> std::result::Result<Poseidon2V8PublicTransition, String> {
+            Err("this forwarding fixture accepts no native proof".into())
+        }
+    }
+
+    #[test]
+    fn recording_wrapper_forwards_authenticated_asset_context_and_records_once() {
+        let mut recording = RecordingPoseidon2V8Verifier::new(ForwardingFixture { calls: 0 });
+        let block = Poseidon2V8BlockContext::new(4, [4; 32], 5, [5; 32]).unwrap();
+        let parent_root = Poseidon2V8NoteRoot::new([2; 7]).unwrap();
+        assert!(recording.is_asset_native_leaf(b"fixture-asset"));
+        assert!(!recording.is_asset_native_leaf(b"other"));
+        let (transition, state) = recording
+            .verify_exact_asset_leaf(
+                block,
+                7,
+                b"fixture-asset",
+                &[1, 2],
+                parent_root,
+                123,
+                &mut |nf| Ok(nf == [9; 7]),
+            )
+            .unwrap();
+        assert_eq!(state, [3, 4]);
+        assert_eq!(recording.transitions(), [transition]);
+        assert_eq!(
+            recording.advance_asset_state(block, &state).unwrap(),
+            [5, 6]
+        );
+        assert_eq!(recording.transitions(), [transition]);
+        assert_eq!(recording.inner.calls, 2);
     }
 }
 
@@ -451,6 +665,33 @@ fn verify_recorded_poseidon2_v8_block_order(
 /// Replace only the V8 positions in a mixed native action list with the exact
 /// source-verified planner order. Non-V8 relative order and positions remain
 /// unchanged, and proof/public-argument buffers move rather than being copied.
+fn is_native_controlled_asset_action(action: &PendingAction) -> bool {
+    asset_recovery_native::is_recovery_action(action)
+        || action.family_id == FAMILY_SHIELDED_POOL
+        && matches!(
+            action.action_id,
+            transaction_circuit::asset_spend_v1_admission::ASSET_SPEND_ACTION_ID
+                | transaction_circuit::asset_spend_v1_admission::ASSET_ADMIN_ACTION_ID
+        )
+}
+
+/// Defer competing asset actions without removing them from the mempool. The
+/// initial Development profile accepts one such action per block, so policy
+/// root dependencies cannot be reordered by the native static-root planner.
+fn retain_one_native_controlled_asset_action(actions: &mut Vec<PendingAction>) {
+    let mut selected = false;
+    actions.retain(|action| {
+        if !is_native_controlled_asset_action(action) {
+            return true;
+        }
+        if selected {
+            return false;
+        }
+        selected = true;
+        true
+    });
+}
+
 fn reorder_poseidon2_v8_action_slots(
     actions: &mut [PendingAction],
     ordered_action_ids: &[ActionId48],
@@ -514,14 +755,15 @@ fn action_uses_poseidon2_v8_state(action: &PendingAction) -> bool {
 
 fn poseidon2_v8_coinbase_commitment_for_actions(
     actions: &[PendingAction],
-) -> Result<Option<poseidon2_v8_state::Poseidon2V8Commitment>> {
+) -> Result<[Option<poseidon2_v8_state::Poseidon2V8Commitment>; 2]> {
     let mut coinbases = actions
         .iter()
         .filter(|action| is_poseidon2_v8_coinbase_action(action));
     let commitment = coinbases
         .next()
-        .map(admitted_poseidon2_v8_coinbase_commitment)
-        .transpose()?;
+        .map(admitted_poseidon2_v8_coinbase_commitments)
+        .transpose()?
+        .unwrap_or([None; 2]);
     if coinbases.next().is_some() {
         return Err(anyhow!(
             "native block contains multiple Poseidon2 V8 coinbase outputs"
@@ -1142,7 +1384,7 @@ pub(crate) fn select_native_da_capacity_prefix<T>(
 pub(crate) fn select_native_da_action_prefix(
     actions: &[PendingAction],
 ) -> Result<NativeDaActionSelection> {
-    select_native_da_action_prefix_with_reservation(actions, 0, 0, 0)
+    select_native_da_action_prefix_with_reservation(actions, 0, 0, 0, MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK)
 }
 
 pub(crate) fn select_native_da_action_prefix_with_reservation(
@@ -1150,6 +1392,7 @@ pub(crate) fn select_native_da_action_prefix_with_reservation(
     reserved_action_count: usize,
     reserved_action_bytes: usize,
     reserved_v8_proof_actions: usize,
+    max_v8_proof_actions: usize,
 ) -> Result<NativeDaActionSelection> {
     let max_blob_bytes = state_da::max_da_blob_bytes(max_native_da_params())
         .map_err(|err| anyhow!("derive native DA blob capacity failed: {err}"))?;
@@ -1182,6 +1425,7 @@ pub(crate) fn select_native_da_action_prefix_with_reservation(
         actions,
         &selected_indices,
         reserved_v8_proof_actions,
+        max_v8_proof_actions,
     )?;
     let selected = selected_indices
         .into_iter()
@@ -1203,12 +1447,16 @@ fn retain_selected_v8_proof_action_budget(
     actions: &[PendingAction],
     selected_indices: &[usize],
     reserved_v8_proof_actions: usize,
+    max_v8_proof_actions: usize,
 ) -> Result<Vec<usize>> {
-    let maximum_transactions = MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK
+    if max_v8_proof_actions == 0 || max_v8_proof_actions > MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK {
+        return Err(anyhow!("invalid native source V8 action budget {max_v8_proof_actions}"));
+    }
+    let maximum_transactions = max_v8_proof_actions
         .checked_sub(reserved_v8_proof_actions)
         .ok_or_else(|| {
             anyhow!(
-                "native reserved V8 proof-authority action count {reserved_v8_proof_actions} exceeds {MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK}"
+                "native reserved V8 proof-authority action count {reserved_v8_proof_actions} exceeds {max_v8_proof_actions}"
             )
         })?;
     let mut selected_transactions = 0usize;
@@ -1259,11 +1507,14 @@ fn retain_capacity_selected_v8_prefix(
         .collect()
 }
 
-pub(crate) fn validate_poseidon2_v8_replay_window(
-    production: poseidon2_v8_verifier::Poseidon2V8ProductionBinding,
+pub(crate) fn validate_poseidon2_v8_replay_window<
+    P: Into<native_proof_binding::NativeProofBinding>,
+>(
+    production: P,
     height: u64,
     actions: &[PendingAction],
 ) -> Result<()> {
+    let production = production.into();
     if actions.iter().any(action_uses_poseidon2_v8_state) && !production.active_at(height) {
         return Err(anyhow!(
             "native V8 replay carries a proof-bearing action outside the source-authorized lifetime at height {height}"
@@ -1626,7 +1877,9 @@ fn inspect_native_pow_metadata_bincode_exact(
     let mut total_action_bytes = 0usize;
     for index in 0..action_count {
         let action_len = required_bincode_len(bytes, &mut cursor, label, "action byte payload")?;
-        if action_len > MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES {
+        if action_len
+            > MAX_NATIVE_RECOVERY_PENDING_ACTION_BYTES.max(MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES)
+        {
             return Err(anyhow!(
                 "{label} action payload {index} exceeds limit: {action_len} > {MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES}"
             ));
@@ -1641,6 +1894,11 @@ fn inspect_native_pow_metadata_bincode_exact(
         }
         let action =
             required_bincode_bytes(bytes, &mut cursor, action_len, label, "action byte payload")?;
+        if !native_action_payload_within_route_cap(action) {
+            return Err(anyhow!(
+                "{label} action payload {index} exceeds its exact route cap"
+            ));
+        }
         if let Some(meta) = expected {
             exact_match &= meta
                 .action_bytes
@@ -1678,6 +1936,11 @@ fn inspect_native_pow_metadata_bincode_exact(
 
 impl NativeNode {
     pub fn open(config: NativeConfig) -> Result<Arc<Self>> {
+        if config.pow_bits != config.network.pow_bits(config.pow_bits) {
+            return Err(anyhow!(
+                "configured pow_bits differ from immutable network manifest"
+            ));
+        }
         let startup_started = Instant::now();
         info!(
             base_path = %config.base_path.display(),
@@ -1711,14 +1974,21 @@ impl NativeNode {
         // transaction without a namespace race or legacy-width migration.
         let poseidon2_v8_tree = db.open_tree(poseidon2_v8_state::POSEIDON2_V8_STATE_TREE_NAME)?;
 
-        let best =
-            load_best_or_genesis(&db, &meta_tree, &height_tree, &block_tree, config.pow_bits)?;
-        let canonical_chain = validate_loaded_block_indexes(
+        let best = load_best_or_genesis_for_network(
+            &db,
+            &meta_tree,
+            &height_tree,
+            &block_tree,
+            config.pow_bits,
+            &config.network,
+        )?;
+        let canonical_chain = validate_loaded_block_indexes_for_network(
             &best,
             &meta_tree,
             &height_tree,
             &block_tree,
             config.pow_bits,
+            &config.network,
         )?;
         let pending_actions = load_pending_actions(&action_tree)?;
         let loaded_nullifiers = load_nullifiers(&nullifier_tree, &meta_tree)?;
@@ -1735,7 +2005,23 @@ impl NativeNode {
         let staged_ciphertexts = load_staged_sizes(&db, &da_ciphertext_tree)?;
         let staged_proofs = load_staged_proofs(&db, &da_proof_tree)?;
         let header_mmr_peaks = load_header_mmr_peaks_for_best(&canonical_chain, &best)?;
-        let startup_state = build_validated_startup_state(
+        let startup_source = if config.network.profile() == NativeNetworkProfile::Legacy {
+            None
+        } else {
+            let genesis = canonical_chain
+                .blocks()
+                .first()
+                .ok_or_else(|| anyhow!("startup has no canonical genesis"))?;
+            native_proof_binding::NativeProofBinding::from_source_at(
+                &config.network,
+                genesis.hash,
+                best.height
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow!("startup proof height overflow"))?,
+            )
+            .map_err(|e| anyhow!("launch startup source binding rejected: {e}"))?
+        };
+        let startup_state = build_validated_startup_state_with_limits_and_source(
             &db,
             &action_tree,
             best,
@@ -1748,6 +2034,9 @@ impl NativeNode {
             staged_ciphertexts,
             staged_proofs,
             true,
+            MAX_NATIVE_MEMPOOL_ACTIONS,
+            MAX_NATIVE_MEMPOOL_ACTION_BYTES,
+            startup_source,
         )?;
         info!(
             startup_reload_elapsed_ms = startup_started.elapsed().as_millis(),
@@ -1756,6 +2045,7 @@ impl NativeNode {
 
         let initial_mining_sync_gate_open = config.bootstrap_mining_authoring
             || (config.seeds.is_empty() && config.permits_empty_seed_authoring());
+        let selected_chain_id = config.chain_id();
         let node = Arc::new(Self {
             config,
             db,
@@ -1827,7 +2117,9 @@ impl NativeNode {
             pending_action_group_commit: NativePendingActionGroupCommit::default(),
             pending_proof_admissions_in_flight: Arc::new(Mutex::new(BTreeSet::new())),
             rejected_pending_actions: Mutex::new(RejectedPendingActionCache::default()),
-            block_body_send_cache: Mutex::new(NativeBlockBodySendCache::default()),
+            block_body_send_cache: Mutex::new(NativeBlockBodySendCache::for_chain(
+                selected_chain_id,
+            )),
             da_encoding_cache: Mutex::new(NativeDaEncodingCache::default()),
             da_encoding_build_lock: Mutex::new(()),
             in_process_verified_blocks: Mutex::new(NativeVerifiedBlockCache::default()),
@@ -1879,6 +2171,7 @@ impl NativeNode {
             &node.meta_tree,
             node.config.pow_bits,
             canonical_chain.block_index_reload_admission(),
+            &node.config.network,
         )?;
         node.ensure_current_canonical_checkpoint()?;
         drop(canonical_chain);
@@ -2811,6 +3104,21 @@ impl NativeNode {
             })
     }
 
+    pub(crate) fn has_live_outbound_sync_request_for_peer(&self, peer_id: PeerId) -> bool {
+        self.outbound_sync_requests
+            .lock()
+            .get(&Some(peer_id))
+            .is_some_and(|request| {
+                matches!(
+                    request.state,
+                    NativeOutboundSyncRequestState::InFlight
+                        | NativeOutboundSyncRequestState::ChunkFallback
+                ) && (request.state == NativeOutboundSyncRequestState::ChunkFallback
+                    || Instant::now().saturating_duration_since(request.requested_at)
+                        <= NATIVE_SYNC_REQUEST_RETRY_AFTER)
+            })
+    }
+
     pub(crate) fn charge_authorized_broadcast_sync_request_rate_slot(
         &self,
         _locked_requests: &BTreeMap<Option<PeerId>, NativeOutboundSyncRequest>,
@@ -3283,7 +3591,7 @@ impl NativeNode {
             }
             let mut accounting_actions = actions.to_vec();
             accounting_actions.push(action.clone());
-            validate_coinbase_accounting(&accounting_actions, height)?;
+            self.validate_network_coinbase_accounting(&accounting_actions, height)?;
             return Ok(Some(action));
         }
         if self.config.miner_address.is_none() {
@@ -3305,7 +3613,7 @@ impl NativeNode {
         let action = self.build_auto_coinbase_action(height, amount, production)?;
         let mut accounting_actions = actions.to_vec();
         accounting_actions.push(action.clone());
-        validate_coinbase_accounting(&accounting_actions, height)?;
+        self.validate_network_coinbase_accounting(&accounting_actions, height)?;
         Ok(Some(action))
     }
 
@@ -3352,14 +3660,188 @@ impl NativeNode {
             return Ok(0);
         };
         Ok(self
-            .build_auto_coinbase_action(height, 1, production)?
+            .build_auto_coinbase_action(
+                height,
+                consensus::reward::block_subsidy(height).max(1),
+                production,
+            )?
             .encoded_size())
+    }
+
+    fn validate_network_coinbase_accounting(
+        &self,
+        actions: &[PendingAction],
+        height: u64,
+    ) -> Result<()> {
+        let recipient = self
+            .config
+            .network
+            .funding_address()
+            .map(ShieldedAddress::decode)
+            .transpose()
+            .with_context(|| "decode immutable network funding recipient")?;
+        validate_coinbase_funding_accounting(actions, height, recipient.as_ref())
+    }
+
+    pub(crate) fn native_proof_binding_for_replay(
+        &self,
+    ) -> Result<Option<native_proof_binding::NativeProofBinding>, String> {
+        let genesis = self
+            .load_canonical_block_at_height_unverified(0)
+            .map_err(|e| format!("load exact proof network genesis: {e}"))?;
+        native_proof_binding::NativeProofBinding::from_source_for_replay(
+            &self.config.network,
+            genesis.hash,
+        )
+    }
+
+    fn native_proof_binding_at(
+        &self,
+        height: u64,
+    ) -> Result<Option<native_proof_binding::NativeProofBinding>, String> {
+        let genesis = self
+            .load_canonical_block_at_height_unverified(0)
+            .map_err(|e| format!("load exact proof network genesis: {e}"))?;
+        native_proof_binding::NativeProofBinding::from_source_at(
+            &self.config.network,
+            genesis.hash,
+            height,
+        )
+    }
+
+    fn require_native_proof_binding_at(
+        &self,
+        height: u64,
+    ) -> Result<native_proof_binding::NativeProofBinding, String> {
+        self.native_proof_binding_at(height)?
+            .ok_or_else(|| "exact network has no active source-owned proof capability".into())
+    }
+
+    fn validate_pending_action_for_network(
+        &self,
+        state: &NativeState,
+        action: &PendingAction,
+    ) -> Result<()> {
+        self.validate_network_action_scope(action)?;
+        let source = if self.config.network.profile() == NativeNetworkProfile::Legacy {
+            None
+        } else {
+            let height = state
+                .best
+                .height
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("launch pending height overflow"))?;
+            Some(
+                self.require_native_proof_binding_at(height)
+                    .map_err(|e| anyhow!("launch pending authority rejected: {e}"))?,
+            )
+        };
+        validate_pending_action_against_mempool_state_with_source(state, action, source)
+    }
+
+    pub(crate) fn validate_network_action_version_at_height(
+        &self,
+        height: u64,
+        binding: KernelVersionBinding,
+        family_id: u16,
+        action_id: u16,
+    ) -> Result<()> {
+        if self.config.network.profile() == NativeNetworkProfile::Legacy {
+            return validate_native_action_version_at_height(height, binding, family_id, action_id);
+        }
+        let source = self
+            .require_native_proof_binding_at(height)
+            .map_err(|e| anyhow!("launch action authority rejected: {e}"))?;
+        if !source.authorizes_launch_route(height, binding, family_id, action_id) {
+            return Err(anyhow!(
+                "launch source authority rejects exact network/height/binding/route"
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_network_action_authoring_version_policy(
+        &self,
+        best_height: u64,
+        binding: KernelVersionBinding,
+        family_id: u16,
+        action_id: u16,
+    ) -> Result<u64> {
+        let height = best_height
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("launch action authoring height overflow"))?;
+        self.validate_network_action_version_at_height(height, binding, family_id, action_id)?;
+        Ok(height)
+    }
+
+    pub(crate) fn validate_network_block_proof_policy(
+        &self,
+        best_height: u64,
+        block_height: u64,
+        actions: &[PendingAction],
+    ) -> Result<()> {
+        if self.config.network.profile() == NativeNetworkProfile::Legacy {
+            return validate_native_block_proof_policy(best_height, block_height, actions);
+        }
+        if best_height.checked_add(1) != Some(block_height) {
+            return Err(anyhow!(
+                "launch block does not target the canonical child height"
+            ));
+        }
+        let count = actions
+            .iter()
+            .filter(|a| is_poseidon2_v8_proof_authority_action(a))
+            .count();
+        if count > MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK {
+            return Err(anyhow!(
+                "launch block exceeds the source action-count ceiling"
+            ));
+        }
+        if count > 0 {
+            let source = self
+                .require_native_proof_binding_at(block_height)
+                .map_err(|e| anyhow!("launch block source authority rejected: {e}"))?;
+            if count > source.max_proof_actions_per_block() {
+                return Err(anyhow!(
+                    "launch block exceeds its exact source capability action budget"
+                ));
+            }
+        }
+        validate_native_coinbase_placement(actions, NATIVE_V2_COINBASE_REQUIRED)?;
+        for action in actions {
+            self.validate_network_action_scope(action)?;
+            ensure_native_v3_active_action_route(action, true)?;
+            self.validate_network_action_version_at_height(
+                block_height,
+                action.binding,
+                action.family_id,
+                action.action_id,
+            )?;
+        }
+        Ok(())
     }
 
     fn fresh_coinbase_authority_at_height(
         &self,
         height: u64,
-    ) -> Result<Option<poseidon2_v8_verifier::Poseidon2V8ProductionBinding>> {
+    ) -> Result<Option<native_proof_binding::NativeProofBinding>> {
+        if self.config.network.profile() != NativeNetworkProfile::Legacy {
+            let Some(source) = self
+                .native_proof_binding_at(height)
+                .map_err(|e| anyhow!("launch mint source rejected: {e}"))?
+            else {
+                return Ok(None);
+            };
+            let binding = protocol_versioning::launch_candidate::RP06_VERSION_BINDING.into();
+            return Ok(source
+                .authorizes_launch_route(
+                    height,
+                    binding,
+                    FAMILY_SHIELDED_POOL,
+                    ACTION_MINT_POSEIDON2_V8_REWARDS,
+                )
+                .then_some(source));
+        }
         let decision = kernel_manifest().proof_authority_decision(
             protocol_versioning::ProofAuthorityOperation::Authoring,
             protocol_versioning::HEGEMON_PROOF_NETWORK_ID,
@@ -3376,7 +3858,7 @@ impl NativeNode {
         ) {
             return Ok(None);
         }
-        poseidon2_v8_verifier::Poseidon2V8ProductionBinding::require_source_at(height)
+        self.require_native_proof_binding_at(height)
             .map(Some)
             .map_err(|error| anyhow!("native coinbase source connector rejected: {error}"))
     }
@@ -3385,7 +3867,7 @@ impl NativeNode {
         &self,
         height: u64,
         amount: u64,
-        production: poseidon2_v8_verifier::Poseidon2V8ProductionBinding,
+        production: native_proof_binding::NativeProofBinding,
     ) -> Result<PendingAction> {
         let miner_address = self
             .config
@@ -3405,7 +3887,94 @@ impl NativeNode {
                 "native V8 coinbase activation genesis does not match this chain"
             ));
         }
+        if self.config.network.funding_address().is_some() {
+            if !production.authorizes_launch_route(
+                height,
+                protocol_versioning::launch_candidate::RP06_VERSION_BINDING.into(),
+                FAMILY_SHIELDED_POOL,
+                ACTION_MINT_POSEIDON2_V8_REWARDS,
+            ) {
+                return Err(anyhow!(
+                    "allocated rewards lack exact source-owned mint authority"
+                ));
+            }
+            return self.build_allocated_reward_action(height, amount);
+        }
         self.build_poseidon2_v8_auto_coinbase_action(&recipient, amount)
+    }
+
+    /// Exact construction seam for the distinct launch source connector. The
+    /// caller must already hold source-owned action12 authority; this method
+    /// alone supplies no release capability or permission to author a block.
+    pub(crate) fn build_allocated_reward_action(
+        &self,
+        height: u64,
+        amount: u64,
+    ) -> Result<PendingAction> {
+        let funding = self
+            .config
+            .network
+            .funding_address()
+            .ok_or_else(|| anyhow!("allocated rewards require an immutable funding network"))?;
+        let funding = ShieldedAddress::decode(funding)?;
+        let miner = self
+            .config
+            .miner_address
+            .as_deref()
+            .ok_or_else(|| anyhow!("allocated rewards require a miner payout address"))?;
+        let miner = ShieldedAddress::decode(miner)?;
+        let funding_amount = consensus::reward::block_subsidy(height) / 5;
+        let miner_amount = amount
+            .checked_sub(funding_amount)
+            .ok_or_else(|| anyhow!("funding reward exceeds total reward"))?;
+        self.build_poseidon2_v8_auto_rewards_action(&miner, miner_amount, &funding, funding_amount)
+    }
+
+    fn build_poseidon2_v8_auto_rewards_action(
+        &self,
+        miner: &ShieldedAddress,
+        miner_amount: u64,
+        funding: &ShieldedAddress,
+        funding_amount: u64,
+    ) -> Result<PendingAction> {
+        let mut rng = OsRng;
+        let args = wallet::poseidon2_v8_coinbase::build_poseidon2_v8_rewards_args(
+            miner,
+            miner_amount,
+            funding,
+            funding_amount,
+            &mut rng,
+        )
+        .with_context(|| "construct exact native funding rewards")?;
+        let metadata = core::iter::once(&args.miner_note)
+            .chain(args.funding_note.iter())
+            .map(|note| {
+                let (raw_len, metadata) = coinbase_ciphertext_metadata(&note.encrypted_note);
+                if raw_len != POSEIDON2_V8_COINBASE_RAW_CIPHERTEXT_BYTES {
+                    return Err(anyhow!(
+                        "generated funding rewards ciphertext has wrong size"
+                    ));
+                }
+                metadata.ok_or_else(|| anyhow!("generated funding rewards ciphertext exceeds cap"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut action = PendingAction {
+            tx_hash: ActionId48::ZERO,
+            binding: protocol_versioning::launch_candidate::RP06_VERSION_BINDING.into(),
+            family_id: FAMILY_SHIELDED_POOL,
+            action_id: ACTION_MINT_POSEIDON2_V8_REWARDS,
+            anchor: [0; 48],
+            nullifiers: Vec::new(),
+            commitments: Vec::new(),
+            ciphertext_hashes: metadata.iter().map(|(hash, _)| *hash).collect(),
+            ciphertext_sizes: metadata.iter().map(|(_, size)| *size).collect(),
+            public_args: args.encode(),
+            fee: 0,
+            candidate_artifact: None,
+        };
+        action.tx_hash = pending_action_hash(&action);
+        validate_coinbase_action_payload(&action)?;
+        Ok(action)
     }
 
     fn build_poseidon2_v8_auto_coinbase_action(
@@ -3475,7 +4044,11 @@ impl NativeNode {
         NativeIndependentProofPreflightSuccess,
         NativeIndependentProofPreflightFailure,
     > {
-        validate_native_block_proof_policy(best.height, height, actions)
+        for action in actions {
+            self.validate_network_action_scope(action)
+                .map_err(NativeIndependentProofPreflightFailure::deterministic)?;
+        }
+        self.validate_network_block_proof_policy(best.height, height, actions)
             .map_err(NativeIndependentProofPreflightFailure::deterministic)?;
 
         let v8_actions = actions
@@ -3668,9 +4241,202 @@ impl NativeNode {
             .map_err(NativeIndependentProofPreflightFailure::into_anyhow)
     }
 
+    /// Reconstruct immutable asset genesis only from the selected manifest.
+    /// Runtime operations use the durable current snapshot; this helper never
+    /// resets registry counters, credentials or canonical administrator IDs.
+    pub(crate) fn poseidon2_v8_asset_genesis_bytes(&self) -> Result<Option<Vec<u8>>> {
+        let genesis = self.load_canonical_block_at_height_unverified(0)?;
+        launch_v8_verifier::asset_genesis_bytes(&self.config.network, genesis.hash)
+            .map_err(|error| anyhow!("native asset genesis authority rejected: {error}"))
+    }
+
+    /// Controlled assets and recovery remain isolated to the source-selected
+    /// Development network, including in binaries built with candidate support.
+    /// Run this before reading snapshots or decoding a submitted proof carrier.
+    pub(crate) fn require_development_controlled_asset_route(&self, recovery: bool) -> Result<()> {
+        let network = &self.config.network;
+        if !cfg!(feature = "development-candidate")
+            || network.profile() != NativeNetworkProfile::Development
+            || network.development_assets().is_none()
+            || (recovery && network.development_recovery().is_none())
+        {
+            return Err(anyhow!(
+                "controlled-asset and recovery routes require source-authorized Development selection"
+            ));
+        }
+        let binding = self
+            .native_proof_binding_for_replay()
+            .map_err(|error| anyhow!("Development controlled-asset source authority: {error}"))?
+            .ok_or_else(|| anyhow!("Development controlled-asset source authority is absent"))?;
+        if recovery {
+            binding
+                .recovery_authority()
+                .ok_or_else(|| anyhow!("Development recovery source authority is absent"))?;
+        } else {
+            binding
+                .asset_authority()
+                .ok_or_else(|| anyhow!("Development asset source authority is absent"))?;
+        }
+        Ok(())
+    }
+
+    /// One coherent public view of the exact, source-authorized current pool
+    /// and issued-asset registry. Holding the canonical state read lock prevents
+    /// a concurrent block/reorg from publishing a different head mid-response.
+    pub(crate) fn asset_rpc_readback(
+        &self,
+        asset_id: Option<u32>,
+        parameters: bool,
+    ) -> Result<Value> {
+        let snapshot = self.asset_snapshot_rpc(asset_id, None)?;
+        snapshot.get(if parameters { "parameters" } else { "registry" }).cloned()
+            .ok_or_else(|| anyhow!("asset snapshot response missing requested projection"))
+    }
+
+    /// Atomic reference/current readback. A historical reference is returned
+    /// only while its canonical registry commitment still equals CURRENT state.
+    pub(crate) fn asset_snapshot_rpc(
+        &self, asset_id: Option<u32>, reference_hash: Option<[u8; 32]>,
+    ) -> Result<Value> {
+        self.require_development_controlled_asset_route(false)?;
+        let canonical = self.state.read();
+        let parent = &canonical.best;
+        // Identity readback outside the finite proof interval grants no route.
+        let binding = self.native_proof_binding_for_replay()
+            .map_err(|error| anyhow!("native asset RPC source authority: {error}"))?
+            .ok_or_else(|| anyhow!("this network has no source-owned proof identity"))?;
+        binding.asset_authority()
+            .ok_or_else(|| anyhow!("this network has no source-owned asset authority"))?;
+        let genesis = self.load_canonical_block_at_height_unverified(0)?;
+        let store = self.poseidon2_v8_store_synced_to_parent(binding, parent)?;
+        let current_bytes = store.asset_tip()
+            .map_err(|error| anyhow!("native asset RPC snapshot: {error}"))?
+            .ok_or_else(|| anyhow!("native asset canonical registry is missing"))?;
+        let current = asset_state::AssetRegistryStateV1::decode_exact(&current_bytes)
+            .map_err(|error| anyhow!("native asset RPC canonical codec: {error}"))?;
+        let current_note = store.note_tip()
+            .map_err(|error| anyhow!("native asset RPC note root: {error}"))?.root().limbs();
+        let (reference, note, reference_bytes) = store.asset_reference_snapshot(reference_hash.unwrap_or(parent.hash))
+            .map_err(|error| anyhow!("native asset RPC reference: {error}"))?;
+        let assets = asset_state::AssetRegistryStateV1::decode_exact(&reference_bytes)
+            .map_err(|error| anyhow!("native asset RPC reference codec: {error}"))?;
+        if assets.registry().root() != current.registry().root() {
+            return Err(anyhow!("asset reference registry differs from CURRENT canonical registry"));
+        }
+        let parameters = asset_rpc::parameters(
+            &self.config.network,
+            genesis.hash,
+            reference.block_hash(),
+            reference.height(),
+            note.limbs(),
+            &assets,
+        )?;
+        let registry = asset_rpc::registry(
+            &self.config.network,
+            genesis.hash,
+            reference.block_hash(),
+            reference.height(),
+            note.limbs(),
+            &assets,
+            asset_id,
+        )?;
+        let current_parameters = asset_rpc::parameters(
+            &self.config.network,
+            genesis.hash,
+            parent.hash,
+            parent.height,
+            current_note,
+            &current,
+        )?;
+        let readback = store
+            .tip()
+            .map_err(|error| anyhow!("native asset RPC final checkpoint: {error}"))?;
+        if readback.height() != parent.height
+            || readback.block_hash() != parent.hash
+            || store
+                .asset_tip()
+                .map_err(|error| anyhow!("native asset RPC final snapshot: {error}"))?
+                .as_deref()
+                != Some(current_bytes.as_slice())
+        {
+            return Err(anyhow!("canonical state changed during native asset RPC readback"));
+        }
+        Ok(serde_json::json!({
+            "schema": "hegemon.native.asset-snapshot.v1", "parameters": parameters,
+            "registry": registry, "current_context": current_parameters["context"].clone(),
+        }))
+    }
+
+    /// CURRENT composite projection only; no historical row can replace live
+    /// recovery authority, credentials, epoch, delegate or note-freeze state.
+    pub(crate) fn asset_recovery_snapshot_rpc(
+        &self,
+        asset_id: Option<u32>,
+        position: Option<u32>,
+    ) -> Result<Value> {
+        self.require_development_controlled_asset_route(true)?;
+        let canonical = self.state.read();
+        let parent = &canonical.best;
+        let binding = self
+            .native_proof_binding_for_replay()
+            .map_err(|e| anyhow!("recovery RPC source authority: {e}"))?
+            .ok_or_else(|| anyhow!("network has no source-owned proof identity"))?;
+        binding
+            .recovery_authority()
+            .ok_or_else(|| anyhow!("network has no source-owned recovery authority"))?;
+        let selected = self
+            .config
+            .network
+            .development_recovery()
+            .ok_or_else(|| anyhow!("network has no recovery descriptor"))?;
+        let store = self.poseidon2_v8_store_synced_to_parent(binding, parent)?;
+        let bytes = store
+            .asset_tip()
+            .map_err(|e| anyhow!("recovery RPC snapshot: {e}"))?
+            .ok_or_else(|| anyhow!("missing canonical composite asset snapshot"))?;
+        let assets = asset_state::AssetRegistryStateV1::decode_exact(&bytes)
+            .map_err(|e| anyhow!("recovery RPC codec: {e}"))?;
+        let recovery = assets
+            .recovery()
+            .ok_or_else(|| anyhow!("missing canonical recovery state"))?;
+        let note = store
+            .note_tip()
+            .map_err(|e| anyhow!("recovery RPC note state: {e}"))?
+            .root()
+            .limbs();
+        let value = asset_recovery_rpc::snapshot(
+            selected,
+            self.config.chain_id(),
+            parent.hash,
+            parent.height,
+            note,
+            &assets,
+            recovery,
+            asset_id,
+            position,
+        )
+        .map_err(|e| anyhow!("recovery RPC projection: {e}"))?;
+        let tip = store
+            .tip()
+            .map_err(|e| anyhow!("recovery RPC final checkpoint: {e}"))?;
+        if tip.height() != parent.height
+            || tip.block_hash() != parent.hash
+            || store
+                .asset_tip()
+                .map_err(|e| anyhow!("recovery RPC final snapshot: {e}"))?
+                .as_deref()
+                != Some(bytes.as_slice())
+        {
+            return Err(anyhow!(
+                "canonical state changed during recovery RPC readback"
+            ));
+        }
+        Ok(value)
+    }
+
     fn poseidon2_v8_store_synced_to_parent(
         &self,
-        production: poseidon2_v8_verifier::Poseidon2V8ProductionBinding,
+        production: native_proof_binding::NativeProofBinding,
         parent: &NativeBlockMeta,
     ) -> Result<poseidon2_v8_state::Poseidon2V8StateStore> {
         self.poseidon2_v8_store_synced_to_parent_tip(production, parent.height, parent.hash)
@@ -3678,7 +4444,7 @@ impl NativeNode {
 
     fn poseidon2_v8_store_synced_to_parent_tip(
         &self,
-        production: poseidon2_v8_verifier::Poseidon2V8ProductionBinding,
+        production: native_proof_binding::NativeProofBinding,
         parent_height: u64,
         parent_hash: [u8; 32],
     ) -> Result<poseidon2_v8_state::Poseidon2V8StateStore> {
@@ -3693,10 +4459,12 @@ impl NativeNode {
             genesis.hash,
             production.stablecoin_genesis_root(),
         );
-        let store = poseidon2_v8_state::Poseidon2V8StateStore::open(
+        let asset_genesis = self.poseidon2_v8_asset_genesis_bytes()?;
+        let store = poseidon2_v8_state::Poseidon2V8StateStore::open_with_assets(
             &self.db,
             genesis_checkpoint,
             production.note_genesis_root(),
+            asset_genesis.as_deref(),
         )
         .map_err(|error| anyhow!("open native V8 canonical state failed: {error}"))?;
         let mut tip = store
@@ -3766,9 +4534,110 @@ impl NativeNode {
         {
             actions.push(pending.clone());
         }
+        if is_native_controlled_asset_action(pending) {
+            // Each incoming asset proof is verified against the canonical
+            // parent. Competing pending assets are a future selection issue,
+            // never permission to skip this candidate's proof verification.
+            actions.retain(|action| {
+                !is_native_controlled_asset_action(action) || action.tx_hash == pending.tx_hash
+            });
+        } else {
+            retain_one_native_controlled_asset_action(&mut actions);
+        }
+        if !is_native_controlled_asset_action(pending) {
+            self.retain_current_asset_reference_candidates(&mut actions, best, height)?;
+        }
         let action_refs = actions.iter().collect::<Vec<_>>();
         self.verify_poseidon2_v8_action_batch_against_parent(&action_refs, best, height)
             .map(|_| ())
+    }
+
+    /// Remove ineligible asset scheduling hints before the static-root order
+    /// planner. This does not cache proof acceptance; full exact verification
+    /// at the actual parent remains mandatory below.
+    fn retain_current_asset_reference_candidates(
+        &self, actions: &mut Vec<PendingAction>, best: &NativeBlockMeta, height: u64,
+    ) -> Result<()> {
+        if !actions.iter().any(is_native_controlled_asset_action) { return Ok(()); }
+        let binding = self.native_proof_binding_at(height)
+            .map_err(|error| anyhow!("asset pending source authority: {error}"))?;
+        let Some((binding, authority)) = binding.and_then(|binding| {
+            binding
+                .asset_authority()
+                .map(|authority| (binding, authority))
+        }) else {
+            actions.retain(|action| !is_native_controlled_asset_action(action));
+            return Ok(());
+        };
+        let store = self.poseidon2_v8_store_synced_to_parent(binding, best)?;
+        let context = poseidon2_v8_state::Poseidon2V8ExactLeafVerifier::launch_reference_context(
+            &binding.connector(),
+        )
+        .ok_or_else(|| anyhow!("asset pending selection lacks source reference identity"))?;
+        let references = store
+            .canonical_launch_references(context)
+            .map_err(|error| anyhow!("asset pending canonical references: {error}"))?;
+        let current = store.asset_tip().map_err(|error| anyhow!("asset pending current registry: {error}"))?
+            .ok_or_else(|| anyhow!("asset pending registry missing"))?;
+        let note = store
+            .note_tip()
+            .map_err(|error| anyhow!("asset pending note root: {error}"))?
+            .root();
+        let mut child_hash = best.hash;
+        child_hash[0] ^= 1;
+        let block = poseidon2_v8_state::Poseidon2V8BlockContext::new(
+            best.height,
+            best.hash,
+            height,
+            child_hash,
+        )
+        .map_err(|error| anyhow!("asset pending application context: {error}"))?;
+        let snapshot = asset_state::AssetRegistryStateV1::decode_exact(&current)
+            .map_err(|error| anyhow!("asset pending snapshot decode: {error}"))?;
+        let registry_root = snapshot.registry().root().map(|limb| limb.as_canonical_u64());
+        let recovery_authority = binding.recovery_authority();
+        actions.retain(|action| {
+            if !is_native_controlled_asset_action(action) { return true; }
+            if asset_recovery_native::is_recovery_action(action) {
+                let Some(recovery_authority) = recovery_authority else { return false; };
+                if asset_recovery_native::NativeRecoveryActionViewV1::from_pending(
+                    recovery_authority, height, action,
+                ).is_err() { return false; }
+                // Scheduling eligibility only. The exact aggregate verifier
+                // still checks all proofs, current accounting and shared NFs.
+                if let Ok(decoded) = transaction_circuit::asset_recovery_wire_v1::decode_spend_ref(
+                    &action.public_args,
+                ) {
+                    let public = &decoded.public.base;
+                    return snapshot.recovery()
+                        .and_then(|recovery| recovery.row(public.asset_id).ok())
+                        .is_some_and(|row| row == &decoded.public.row)
+                        && public.registry_root == registry_root
+                        && references.validate_asset_spend(public, block).is_ok();
+                }
+                if let Ok(decoded) = transaction_circuit::asset_recovery_wire_v1::decode_admin_ref(
+                    &action.public_args,
+                ) {
+                    let public = &decoded.public;
+                    return snapshot.recovery()
+                        .and_then(|recovery| recovery.row(public.before.descriptor.asset_id).ok())
+                        .is_some_and(|row| row == &public.before)
+                        && public.context.chain_id == self.config.chain_id()
+                        && public.context.parent_height == best.height
+                        && public.context.parent_hash == best.hash
+                        && public.expires_at >= best.height
+                        && references.validate_recovery_admin_current(
+                            public.context.chain_id, block, registry_root,
+                        ).is_ok();
+                }
+                return false;
+            }
+            asset_native::pending_reference_eligible(action, best.height)
+                && authority.checked_reference(
+                    block, &action.public_args, &current, note, &references,
+                ).is_ok()
+        });
+        Ok(())
     }
 
     /// Select the deterministic V8 order from canonical parser output. This
@@ -3781,7 +4650,7 @@ impl NativeNode {
         best: &NativeBlockMeta,
         height: u64,
     ) -> Result<(
-        poseidon2_v8_verifier::Poseidon2V8ProductionBinding,
+        native_proof_binding::NativeProofBinding,
         poseidon2_v8_state::Poseidon2V8StateStore,
         poseidon2_v8_state::Poseidon2V8Checkpoint,
         Vec<ActionId48>,
@@ -3795,19 +4664,23 @@ impl NativeNode {
                 actions.len()
             ));
         }
-        validate_block_action_byte_budget(
+        let encoded_actions = actions
+            .iter()
+            .map(|action| action.encode())
+            .collect::<Vec<_>>();
+        validate_block_action_payload_budget(
             u32::try_from(actions.len())
                 .map_err(|_| anyhow!("native V8 pending action count exceeds u32"))?,
             actions.len(),
-            actions.iter().map(|action| action.encoded_size()),
+            encoded_actions.iter().map(Vec::as_slice),
         )?;
-        let production =
-            poseidon2_v8_verifier::Poseidon2V8ProductionBinding::require_source_at(height)
-                .map_err(|error| anyhow!("native V8 preflight authority rejected: {error}"))?;
+        let production = self
+            .require_native_proof_binding_at(height)
+            .map_err(|error| anyhow!("native V8 preflight authority rejected: {error}"))?;
         let views = actions
             .iter()
             .map(|action| {
-                poseidon2_v8_verifier::Poseidon2V8ActionView::from_pending(
+                native_proof_binding::NativeProofActionView::from_pending(
                     production, height, action,
                 )
                 .map_err(|error| anyhow!("native V8 pending action rejected: {error}"))
@@ -3881,7 +4754,7 @@ impl NativeNode {
         let views = ordered
             .iter()
             .map(|action| {
-                poseidon2_v8_verifier::Poseidon2V8ActionView::from_pending(
+                native_proof_binding::NativeProofActionView::from_pending(
                     production, height, action,
                 )
                 .map_err(|error| anyhow!("native V8 pending action rejected: {error}"))
@@ -3943,13 +4816,13 @@ impl NativeNode {
 
     fn apply_poseidon2_v8_canonical_block_to_store(
         &self,
-        production: poseidon2_v8_verifier::Poseidon2V8ProductionBinding,
+        production: native_proof_binding::NativeProofBinding,
         store: &poseidon2_v8_state::Poseidon2V8StateStore,
         meta: &NativeBlockMeta,
     ) -> Result<()> {
         let actions = decode_block_actions(meta)?;
         verify_decoded_action_root(&actions, meta, "native V8 canonical replay action root")?;
-        validate_coinbase_route_at_height(&actions, meta.height)?;
+        self.validate_network_coinbase_accounting(&actions, meta.height)?;
         validate_poseidon2_v8_replay_window(production, meta.height, &actions)?;
         let v8_actions = actions
             .iter()
@@ -3958,7 +4831,7 @@ impl NativeNode {
         let views = v8_actions
             .iter()
             .map(|action| {
-                poseidon2_v8_verifier::Poseidon2V8ActionView::from_pending(
+                native_proof_binding::NativeProofActionView::from_pending(
                     production,
                     meta.height,
                     *action,
@@ -3995,7 +4868,7 @@ impl NativeNode {
             )
         })?;
         let trailing_coinbase = poseidon2_v8_coinbase_commitment_for_actions(&actions)?;
-        let block = poseidon2_v8_state::Poseidon2V8UnverifiedBlock::new_with_trailing_coinbase(
+        let block = poseidon2_v8_state::Poseidon2V8UnverifiedBlock::new_with_trailing_rewards(
             context,
             &leaves,
             trailing_coinbase,
@@ -4049,9 +4922,9 @@ impl NativeNode {
         let genesis = chain
             .first()
             .ok_or_else(|| anyhow!("native V8 startup reconciliation has no genesis"))?;
-        let Some(production) =
-            poseidon2_v8_verifier::Poseidon2V8ProductionBinding::from_source_for_replay()
-                .map_err(|error| anyhow!("native V8 startup authority rejected: {error}"))?
+        let Some(production) = self
+            .native_proof_binding_for_replay()
+            .map_err(|error| anyhow!("native V8 startup authority rejected: {error}"))?
         else {
             for meta in chain.iter().skip(1) {
                 if decode_block_actions(meta)?
@@ -4082,10 +4955,12 @@ impl NativeNode {
             .map_err(|error| {
                 anyhow!("open native V8 startup verification store failed: {error}")
             })?;
-        let scratch = poseidon2_v8_state::Poseidon2V8StateStore::open(
+        let asset_genesis = self.poseidon2_v8_asset_genesis_bytes()?;
+        let scratch = poseidon2_v8_state::Poseidon2V8StateStore::open_with_assets(
             &scratch_db,
             genesis_checkpoint,
             production.note_genesis_root(),
+            asset_genesis.as_deref(),
         )
         .map_err(|error| {
             anyhow!("initialize native V8 startup verification store failed: {error}")
@@ -4097,10 +4972,11 @@ impl NativeNode {
             self.apply_poseidon2_v8_canonical_block_to_store(production, &scratch, meta)?;
         }
 
-        let durable = poseidon2_v8_state::Poseidon2V8StateStore::open(
+        let durable = poseidon2_v8_state::Poseidon2V8StateStore::open_with_assets(
             &self.db,
             genesis_checkpoint,
             production.note_genesis_root(),
+            asset_genesis.as_deref(),
         )
         .map_err(|error| anyhow!("open durable native V8 startup state failed: {error}"))?;
         let durable_tip = durable
@@ -4162,9 +5038,13 @@ impl NativeNode {
             poseidon2_v8_state::Poseidon2V8CanonicalPlan,
         )>,
     > {
-        let Some(production) =
-            poseidon2_v8_verifier::Poseidon2V8ProductionBinding::from_source_at(meta.height)
-                .map_err(|error| anyhow!("native V8 block authority rejected: {error}"))?
+        // Canonical checkpoints, pending reward maturity and asset registry
+        // heights evolve on every block. The immutable source identity survives
+        // its finite proof interval; actual proof/reward actions below still
+        // pass their separate inclusion-height gates.
+        let Some(production) = self
+            .native_proof_binding_for_replay()
+            .map_err(|error| anyhow!("native V8 block authority rejected: {error}"))?
         else {
             if actions.iter().any(action_uses_poseidon2_v8_state) {
                 return Err(anyhow!(
@@ -4188,14 +5068,15 @@ impl NativeNode {
 
     fn plan_poseidon2_v8_block_in_store(
         &self,
-        production: poseidon2_v8_verifier::Poseidon2V8ProductionBinding,
+        production: native_proof_binding::NativeProofBinding,
         store: &poseidon2_v8_state::Poseidon2V8StateStore,
         parent_height: u64,
         parent_hash: [u8; 32],
         meta: &NativeBlockMeta,
         actions: &[PendingAction],
     ) -> Result<poseidon2_v8_state::Poseidon2V8CanonicalPlan> {
-        validate_coinbase_route_at_height(actions, meta.height)?;
+        self.validate_network_coinbase_accounting(actions, meta.height)?;
+        validate_poseidon2_v8_replay_window(production, meta.height, actions)?;
         let v8_actions = actions
             .iter()
             .filter(|action| is_poseidon2_v8_action(action))
@@ -4203,7 +5084,7 @@ impl NativeNode {
         let views = v8_actions
             .iter()
             .map(|action| {
-                poseidon2_v8_verifier::Poseidon2V8ActionView::from_pending(
+                native_proof_binding::NativeProofActionView::from_pending(
                     production,
                     meta.height,
                     *action,
@@ -4226,7 +5107,7 @@ impl NativeNode {
         )
         .map_err(|error| anyhow!("native V8 block context rejected: {error}"))?;
         let trailing_coinbase = poseidon2_v8_coinbase_commitment_for_actions(actions)?;
-        let block = poseidon2_v8_state::Poseidon2V8UnverifiedBlock::new_with_trailing_coinbase(
+        let block = poseidon2_v8_state::Poseidon2V8UnverifiedBlock::new_with_trailing_rewards(
             context,
             &leaves,
             trailing_coinbase,
@@ -4271,9 +5152,9 @@ impl NativeNode {
             ));
         }
         let has_v8 = actions.iter().any(action_uses_poseidon2_v8_state);
-        let Some(production) =
-            poseidon2_v8_verifier::Poseidon2V8ProductionBinding::from_source_at(meta.height)
-                .map_err(|error| anyhow!("native V8 fork authority rejected: {error}"))?
+        let Some(production) = self
+            .native_proof_binding_for_replay()
+            .map_err(|error| anyhow!("native V8 fork authority rejected: {error}"))?
         else {
             if has_v8 {
                 return Err(anyhow!(
@@ -4290,6 +5171,7 @@ impl NativeNode {
         if !has_v8 {
             return Ok(());
         }
+        validate_poseidon2_v8_replay_window(production, meta.height, actions)?;
 
         let canonical_tip_matches = {
             let state = self.state.read();
@@ -4331,7 +5213,7 @@ impl NativeNode {
             .iter()
             .zip(attach_actions.iter())
             .map(|(branch_meta, branch_actions)| {
-                validate_coinbase_route_at_height(branch_actions, branch_meta.height)?;
+                self.validate_network_coinbase_accounting(branch_actions, branch_meta.height)?;
                 validate_poseidon2_v8_replay_window(
                     production,
                     branch_meta.height,
@@ -4352,7 +5234,7 @@ impl NativeNode {
                     .iter()
                     .filter(|action| is_poseidon2_v8_action(action))
                     .map(|action| {
-                        poseidon2_v8_verifier::Poseidon2V8ActionView::from_pending(
+                        native_proof_binding::NativeProofActionView::from_pending(
                             production,
                             branch_meta.height,
                             action,
@@ -4394,7 +5276,7 @@ impl NativeNode {
                 .map_err(|error| anyhow!("native V8 stored branch context rejected: {error}"))?;
                 let trailing_coinbase =
                     poseidon2_v8_coinbase_commitment_for_actions(branch_actions)?;
-                poseidon2_v8_state::Poseidon2V8UnverifiedBlock::new_with_trailing_coinbase(
+                poseidon2_v8_state::Poseidon2V8UnverifiedBlock::new_with_trailing_rewards(
                     context,
                     leaves,
                     trailing_coinbase,
@@ -4473,9 +5355,9 @@ impl NativeNode {
             .chain(new_blocks.iter())
             .flat_map(|delta| delta.actions.iter())
             .any(action_uses_poseidon2_v8_state);
-        let Some(production) =
-            poseidon2_v8_verifier::Poseidon2V8ProductionBinding::from_source_for_replay()
-                .map_err(|error| anyhow!("native V8 reorg authority rejected: {error}"))?
+        let Some(production) = self
+            .native_proof_binding_for_replay()
+            .map_err(|error| anyhow!("native V8 reorg authority rejected: {error}"))?
         else {
             if has_v8 {
                 return Err(anyhow!(
@@ -4486,7 +5368,7 @@ impl NativeNode {
         };
 
         for delta in old_blocks.iter().chain(new_blocks.iter()) {
-            validate_coinbase_route_at_height(&delta.actions, delta.meta.height)?;
+            self.validate_network_coinbase_accounting(&delta.actions, delta.meta.height)?;
             validate_poseidon2_v8_replay_window(production, delta.meta.height, &delta.actions)?;
             let count = delta
                 .actions
@@ -4536,7 +5418,7 @@ impl NativeNode {
                     .iter()
                     .filter(|action| is_poseidon2_v8_action(action))
                     .map(|action| {
-                        poseidon2_v8_verifier::Poseidon2V8ActionView::from_pending(
+                        native_proof_binding::NativeProofActionView::from_pending(
                             production,
                             delta.meta.height,
                             action,
@@ -4583,7 +5465,7 @@ impl NativeNode {
                 })?;
                 let trailing_coinbase =
                     poseidon2_v8_coinbase_commitment_for_actions(&delta.actions)?;
-                poseidon2_v8_state::Poseidon2V8UnverifiedBlock::new_with_trailing_coinbase(
+                poseidon2_v8_state::Poseidon2V8UnverifiedBlock::new_with_trailing_rewards(
                     context,
                     leaves,
                     trailing_coinbase,
@@ -4680,9 +5562,9 @@ impl NativeNode {
             ));
         }
 
-        let production =
-            poseidon2_v8_verifier::Poseidon2V8ProductionBinding::from_source_for_replay()
-                .map_err(|error| anyhow!("native V8 stored reorg authority rejected: {error}"))?;
+        let production = self
+            .native_proof_binding_for_replay()
+            .map_err(|error| anyhow!("native V8 stored reorg authority rejected: {error}"))?;
         let supplied_start = ancestry
             .len()
             .checked_sub(supplied_suffix.len())
@@ -4730,7 +5612,7 @@ impl NativeNode {
                 verify_decoded_action_root(&actions, &meta, "native V8 stored reorg action root")?;
                 (actions, meta.height)
             };
-            validate_coinbase_route_at_height(&actions, height)?;
+            self.validate_network_coinbase_accounting(&actions, height)?;
             let block_has_v8 = actions.iter().any(action_uses_poseidon2_v8_state);
             has_v8 |= block_has_v8;
             let trailing_coinbase = poseidon2_v8_coinbase_commitment_for_actions(&actions)?;
@@ -4792,7 +5674,7 @@ impl NativeNode {
                 actions
                     .iter()
                     .map(|action| {
-                        poseidon2_v8_verifier::Poseidon2V8ActionView::from_pending(
+                        native_proof_binding::NativeProofActionView::from_pending(
                             production,
                             projection.height,
                             action,
@@ -4837,7 +5719,7 @@ impl NativeNode {
                         projection.height
                     )
                 })?;
-                poseidon2_v8_state::Poseidon2V8UnverifiedBlock::new_with_trailing_coinbase(
+                poseidon2_v8_state::Poseidon2V8UnverifiedBlock::new_with_trailing_rewards(
                     context,
                     leaves,
                     trailing_coinbase,
@@ -5442,6 +6324,8 @@ impl NativeNode {
                 .saturating_add(1)
                 .saturating_mul(1_000),
         );
+        self.retain_current_asset_reference_candidates(&mut pending_actions, &best, height)?;
+        retain_one_native_controlled_asset_action(&mut pending_actions);
         let v8_actions = pending_actions
             .iter()
             .filter(|action| is_poseidon2_v8_action(action))
@@ -5454,11 +6338,23 @@ impl NativeNode {
         let reserved_coinbase_bytes =
             self.auto_coinbase_action_reservation_bytes_at_height(height)?;
         let reserved_coinbase_count = usize::from(reserved_coinbase_bytes != 0);
+        // The reward consumes a source-authorized action slot too. Reserve
+        // against this network's exact cap before selecting transactions.
+        let max_v8_proof_actions = if reserved_coinbase_count != 0
+            || pending_actions.iter().any(is_poseidon2_v8_action)
+        {
+            self.require_native_proof_binding_at(height)
+                .map_err(|e| anyhow!("template V8 source authority rejected: {e}"))?
+                .max_proof_actions_per_block()
+        } else {
+            MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK
+        };
         let da_selection = select_native_da_action_prefix_with_reservation(
             &pending_actions,
             reserved_coinbase_count,
             reserved_coinbase_bytes,
             reserved_coinbase_count,
+            max_v8_proof_actions,
         )?;
         pending_actions = da_selection.selected;
         if !da_selection.individually_unencodable.is_empty() {
@@ -5637,15 +6533,19 @@ impl NativeNode {
         }
         let final_action_count = u32::try_from(actions.len())
             .map_err(|_| anyhow!("native work-template action count exceeds u32"))?;
-        validate_block_action_byte_budget(
+        let encoded_actions = actions
+            .iter()
+            .map(PendingAction::encode)
+            .collect::<Vec<_>>();
+        validate_block_action_payload_budget(
             final_action_count,
             actions.len(),
-            actions.iter().map(PendingAction::encoded_size),
+            encoded_actions.iter().map(Vec::as_slice),
         )?;
         // Re-evaluate the single source authority over the final template,
         // after miner-local coinbase insertion. This is the convergence point
         // that prevents 512 V8 transaction proofs plus a 513th mint action.
-        validate_native_block_proof_policy(best.height, height, &actions)?;
+        self.validate_network_block_proof_policy(best.height, height, &actions)?;
         let timestamp_ms = template_timestamp_ms.max(best.timestamp_ms.saturating_add(1));
         let supply_digest = match advance_native_supply_digest(best.supply_digest, &actions, height)
         {
@@ -5691,7 +6591,7 @@ impl NativeNode {
         let da_blob_len = da_encoding.data_len();
         let da_chunk_count = u32::try_from(da_encoding.chunks().len())
             .map_err(|_| anyhow!("native work-template DA chunk count exceeds u32"))?;
-        let pre_header = native_pow_header_from_parts(
+        let mut pre_header = native_pow_header_from_parts(
             height,
             timestamp_ms,
             best.hash,
@@ -5710,6 +6610,7 @@ impl NativeNode {
             supply_digest,
             tx_count,
         );
+        pre_header.chain_id = self.config.chain_id();
         let pre_hash = pre_header.pre_hash();
         {
             let state = self.state.read();
@@ -5768,7 +6669,7 @@ impl NativeNode {
                 return Ok(());
             };
             state.pending_actions.values().any(|action| {
-                validate_native_action_version_at_height(
+                self.validate_network_action_version_at_height(
                     action_height,
                     action.binding,
                     action.family_id,
@@ -5794,7 +6695,7 @@ impl NativeNode {
                 .pending_actions
                 .values()
                 .filter(|action| {
-                    validate_native_action_version_at_height(
+                    self.validate_network_action_version_at_height(
                         action_height,
                         action.binding,
                         action.family_id,
@@ -5955,7 +6856,7 @@ impl NativeNode {
             return Ok(None);
         }
 
-        validate_native_block_proof_policy(snapshot.best.height, work.height, &actions)?;
+        self.validate_network_block_proof_policy(snapshot.best.height, work.height, &actions)?;
         let (preview_state_root, preview_nullifier_root, preview_extrinsics_root, preview_tx_count) =
             match preview_pending_roots(&self.da_ciphertext_tree, &snapshot, &actions) {
                 Ok(roots) => roots,
@@ -6023,7 +6924,7 @@ impl NativeNode {
             ),
         )?;
         let meta = NativeBlockMeta {
-            chain_id: HEGEMON_CHAIN_ID_V1,
+            chain_id: self.config.chain_id(),
             rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
             height: work.height,
             hash: seal.work_hash,
@@ -6195,6 +7096,11 @@ impl NativeNode {
     }
 
     pub(crate) fn import_announced_block(&self, meta: NativeBlockMeta) -> Result<bool> {
+        if meta.chain_id != self.config.chain_id() {
+            return Err(anyhow!(
+                "announced native block chain id does not match selected network"
+            ));
+        }
         self.ensure_native_storage_healthy()?;
         let (snapshot, snapshot_generation) = {
             let state = self.state.read();
@@ -6245,7 +7151,7 @@ impl NativeNode {
             header_mmr_commitment_after_best(&parent_state.best, &parent_state.header_mmr_peaks)?;
         let actions = decode_block_actions(&meta)?;
         verify_decoded_action_root(&actions, &meta, "announced block action root")?;
-        validate_native_block_proof_policy(parent_state.best.height, meta.height, &actions)?;
+        self.validate_network_block_proof_policy(parent_state.best.height, meta.height, &actions)?;
         let (state_root, nullifier_root, extrinsics_root, tx_count) =
             preview_pending_roots(&self.da_ciphertext_tree, &parent_state, &actions)?;
         let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
@@ -6446,6 +7352,11 @@ impl NativeNode {
         &self,
         meta: &NativeBlockMeta,
     ) -> Result<NativeAnnouncedBlockImportOutcome> {
+        if meta.chain_id != self.config.chain_id() {
+            return Err(anyhow!(
+                "announced native block chain id does not match selected network"
+            ));
+        }
         if let Some((_, exact_match)) =
             self.inspect_stored_pow_metadata(&meta.hash, Some(meta), "known native block announce")?
         {
@@ -6975,11 +7886,16 @@ impl NativeNode {
             return;
         }
         let action_bytes = action.encode();
-        if action_bytes.len() > MAX_NATIVE_SYNC_PENDING_ACTION_BYTES {
+        // Match peer ingress: only an exact source-pinned recovery carrier
+        // may exceed the historical relay ceiling. This grants no proof authority.
+        if action_bytes.len() > MAX_NATIVE_SYNC_PENDING_ACTION_BYTES
+            && !native_action_payload_within_route_cap(&action_bytes)
+        {
             warn!(
                 tx_hash = %hex48(action.tx_hash.as_bytes()),
                 action_bytes = action_bytes.len(),
                 max_bytes = MAX_NATIVE_SYNC_PENDING_ACTION_BYTES,
+                recovery_max_bytes = MAX_NATIVE_RECOVERY_PENDING_ACTION_BYTES,
                 "refusing to relay oversized native pending action"
             );
             return;
@@ -7646,7 +8562,8 @@ impl NativeNode {
         ancestry: &[NativePowMetaProjection],
         height_entries: &[(u64, [u8; 32])],
     ) -> std::result::Result<(), NativeChainLoadError> {
-        let expected_genesis = genesis_meta(self.config.pow_bits)?;
+        let expected_genesis =
+            genesis_meta_for_network(self.config.pow_bits, &self.config.network)?;
         let genesis_matches_expected = ancestry
             .first()
             .is_some_and(|genesis| genesis == &NativePowMetaProjection::from(&expected_genesis))
@@ -7676,7 +8593,7 @@ impl NativeNode {
             canonical_heights_contiguous,
             canonical_chain_ids_match: ancestry
                 .iter()
-                .all(|meta| meta.chain_id == HEGEMON_CHAIN_ID_V1),
+                .all(|meta| meta.chain_id == self.config.chain_id()),
             canonical_rules_hashes_match: ancestry
                 .iter()
                 .all(|meta| meta.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE),
@@ -8063,7 +8980,7 @@ impl NativeNode {
             })?;
         let actions = decode_block_actions(&meta)?;
         verify_decoded_action_root(&actions, &meta, "native replay action root")?;
-        validate_native_block_proof_policy(state.best.height, meta.height, &actions)?;
+        self.validate_network_block_proof_policy(state.best.height, meta.height, &actions)?;
         validate_block_actions_locked(state, &actions)?;
         let (state_root, nullifier_root, extrinsics_root, tx_count) =
             preview_pending_roots_with_archive(
@@ -8639,7 +9556,8 @@ impl NativeNode {
                     "native streaming replay stored genesis changed during admission"
                 )));
             }
-            let expected_genesis = genesis_meta(self.config.pow_bits)?;
+            let expected_genesis =
+                genesis_meta_for_network(self.config.pow_bits, &self.config.network)?;
             if genesis != expected_genesis {
                 return Err(NativeChainLoadError::Corrupt(anyhow!(
                     "native streaming replay genesis does not match configured genesis"
@@ -9263,7 +10181,7 @@ impl NativeNode {
             };
             if meta.height != expected_parent.height.saturating_add(1)
                 || meta.parent_hash != expected_parent.hash
-                || meta.chain_id != HEGEMON_CHAIN_ID_V1
+                || meta.chain_id != self.config.chain_id()
                 || meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE
                 || meta.hash != meta.work_hash
             {
@@ -11162,6 +12080,10 @@ impl NativeNode {
         if policy != RpcMethodPolicy::Unsafe {
             return json!({
                 "chainSpecId": self.config.chain_spec_id(),
+                "networkProfile": self.config.network.profile().label(),
+                "chainId": hex32(&self.config.chain_id()),
+                "networkManifestDigest": self.config.network.manifest_digest().map(|digest| hex64(&digest)),
+                "networkManifest": self.config.network.manifest(),
                 "chainSpecName": "Hegemon",
                 "chainType": self.config.chain_type(),
                 "rpcMethods": self.config.rpc_methods,
@@ -11172,6 +12094,10 @@ impl NativeNode {
         json!({
             "nodeName": self.config.node_name,
             "chainSpecId": self.config.chain_spec_id(),
+                "networkProfile": self.config.network.profile().label(),
+                "chainId": hex32(&self.config.chain_id()),
+                "networkManifestDigest": self.config.network.manifest_digest().map(|digest| hex64(&digest)),
+                "networkManifest": self.config.network.manifest(),
             "chainSpecName": "Hegemon",
             "chainType": self.config.chain_type(),
             "basePath": self.config.base_path.display().to_string(),
@@ -11651,11 +12577,10 @@ impl NativeNode {
                         &request.pending,
                     )
                 } else {
-                    validate_pending_action_against_mempool_state(&state, &request.pending)
+                    self.validate_pending_action_for_network(&state, &request.pending)
                 };
                 #[cfg(not(test))]
-                let validation =
-                    validate_pending_action_against_mempool_state(&state, &request.pending);
+                let validation = self.validate_pending_action_for_network(&state, &request.pending);
                 if let Err(err) = validation {
                     outcomes[index] = Some(reject(err));
                     continue;
@@ -11736,23 +12661,33 @@ impl NativeNode {
                 .iter()
                 .any(|index| is_poseidon2_v8_action(&batch[*index].pending))
             {
-                let mut projected_v8 = state
+                // Retained asset rows are scheduling hints, not verified-tip tokens.
+                // Filter only existing hints; every accepted incoming action remains
+                // mandatory in the exact aggregate proof/state check below.
+                let mut existing_v8 = state
                     .pending_actions
                     .values()
                     .filter(|action| is_poseidon2_v8_action(action))
+                    .cloned()
                     .collect::<Vec<_>>();
-                projected_v8.extend(
-                    accepted_indices
-                        .iter()
-                        .map(|index| &batch[*index].pending)
-                        .filter(|action| is_poseidon2_v8_action(action)),
-                );
                 let aggregate_verification = state
                     .best
                     .height
                     .checked_add(1)
                     .ok_or_else(|| anyhow!("native V8 pending batch height overflow"))
                     .and_then(|candidate_height| {
+                        self.retain_current_asset_reference_candidates(
+                            &mut existing_v8,
+                            &state.best,
+                            candidate_height,
+                        )?;
+                        let mut projected_v8 = existing_v8.iter().collect::<Vec<_>>();
+                        projected_v8.extend(
+                            accepted_indices
+                                .iter()
+                                .map(|index| &batch[*index].pending)
+                                .filter(|action| is_poseidon2_v8_action(action)),
+                        );
                         self.verify_poseidon2_v8_action_batch_against_parent(
                             &projected_v8,
                             &state.best,
@@ -12017,6 +12952,7 @@ impl NativeNode {
         #[cfg(test)] bypass_active_route_for_group_engine_test: bool,
     ) -> Result<NativePendingActionStageDisposition> {
         self.ensure_native_storage_healthy()?;
+        self.validate_network_action_scope(&pending)?;
         if pending_encoded.len() > MAX_NATIVE_PENDING_ACTION_GROUP_COMMIT_BYTES {
             return Err(anyhow!(
                 "native pending action exceeds group-commit batch byte limit"
@@ -12275,13 +13211,26 @@ impl NativeNode {
 
     pub(crate) fn validate_and_stage_action(&self, request: Value) -> Result<PendingAction> {
         let request = decode_submit_action_rpc_request(request)?;
+        if request.family_id == FAMILY_SHIELDED_POOL {
+            match request.action_id {
+                transaction_circuit::asset_spend_v1_admission::ASSET_SPEND_ACTION_ID
+                | transaction_circuit::asset_spend_v1_admission::ASSET_ADMIN_ACTION_ID => {
+                    self.require_development_controlled_asset_route(false)?;
+                }
+                asset_recovery_native::RECOVERY_SPEND_ACTION_ID
+                | asset_recovery_native::RECOVERY_ADMIN_ACTION_ID => {
+                    self.require_development_controlled_asset_route(true)?;
+                }
+                _ => {}
+            }
+        }
         ensure_native_v3_active_action_route_ids(request.family_id, request.action_id, false)?;
         let binding = KernelVersionBinding {
             circuit: request.binding_circuit,
             crypto: request.binding_crypto,
         };
         let current_height = self.best_height();
-        let action_height = validate_native_action_authoring_version_policy(
+        let action_height = self.validate_network_action_authoring_version_policy(
             current_height,
             binding,
             request.family_id,
@@ -12372,11 +13321,15 @@ impl NativeNode {
                 }
             }
             (FAMILY_SHIELDED_POOL, ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE) => {
-                let production =
-                    poseidon2_v8_verifier::Poseidon2V8ProductionBinding::require_source_at(
-                        action_height,
-                    )
+                let production = self
+                    .require_native_proof_binding_at(action_height)
                     .map_err(|error| anyhow!("native V8 RPC authority rejected: {error}"))?;
+                let native_proof_binding::NativeProofBinding::Historical(production) = production
+                else {
+                    return Err(anyhow!(
+                        "historical V8 RPC route cannot consume launch authority"
+                    ));
+                };
                 poseidon2_v8_verifier::pending_poseidon2_v8_action_from_inline_args(
                     production,
                     action_height,
@@ -12384,6 +13337,33 @@ impl NativeNode {
                     public_args,
                 )
                 .map_err(|error| anyhow!("native V8 RPC action rejected: {error}"))?
+            }
+            (
+                FAMILY_SHIELDED_POOL,
+                RP06_ACTION_ID
+                | HTLC_ACTION_ID
+                | PRIVATE_SPEND_ACTION_ID
+                | transaction_circuit::asset_spend_v1_admission::ASSET_SPEND_ACTION_ID
+                | transaction_circuit::asset_spend_v1_admission::ASSET_ADMIN_ACTION_ID
+                | asset_recovery_native::RECOVERY_SPEND_ACTION_ID
+                | asset_recovery_native::RECOVERY_ADMIN_ACTION_ID,
+            ) => {
+                let production = self
+                    .require_native_proof_binding_at(action_height)
+                    .map_err(|e| anyhow!("launch RPC source authority rejected: {e}"))?;
+                let native_proof_binding::NativeProofBinding::Launch(startup) = production else {
+                    return Err(anyhow!(
+                        "launch RPC route cannot consume historical authority"
+                    ));
+                };
+                launch_v8_verifier::pending_launch_action_from_inline_args(
+                    startup,
+                    action_height,
+                    binding,
+                    request.action_id,
+                    public_args,
+                )
+                .map_err(|e| anyhow!("launch RPC exact carrier rejected: {e}"))?
             }
             (FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT) => {
                 return Err(anyhow!(
@@ -12453,7 +13433,7 @@ impl NativeNode {
                         {
                             return Err(anyhow!("duplicate semantic pending action"));
                         }
-                        validate_pending_action_against_mempool_state(&state, &pending)?;
+                        self.validate_pending_action_for_network(&state, &pending)?;
                         (state.best.clone(), state.commitment_tree.clone())
                     };
                     if self.rejected_pending_action_is_cached(&best.hash, &pending_semantic_hash) {
@@ -12537,6 +13517,7 @@ impl NativeNode {
         pending: PendingAction,
         pending_semantic_hash: ActionSemanticId48,
     ) -> Result<Option<PendingAction>> {
+        self.validate_network_action_scope(&pending)?;
         ensure_native_v3_active_action_route(&pending, false)?;
         if !pending_action_peer_relayable(&pending) {
             return Err(anyhow!("native pending action route is not peer-relayable"));
@@ -12544,9 +13525,13 @@ impl NativeNode {
         if pending_semantic_hash != pending_action_semantic_id_from_action_id(pending.tx_hash) {
             return Err(anyhow!("native pending action semantic identity mismatch"));
         }
-        if pending_action_mempool_bytes(&pending) > MAX_NATIVE_SYNC_PENDING_ACTION_BYTES {
+        let pending_bytes = pending_action_mempool_bytes(&pending);
+        if pending_bytes > MAX_NATIVE_SYNC_PENDING_ACTION_BYTES
+            && (pending_bytes > MAX_NATIVE_RECOVERY_PENDING_ACTION_BYTES
+                || !native_action_payload_within_route_cap(&pending.encode()))
+        {
             return Err(anyhow!(
-                "native pending action exceeds peer relay limit of {MAX_NATIVE_SYNC_PENDING_ACTION_BYTES} bytes"
+                "native pending action exceeds its finite peer relay route limit (ordinary: {MAX_NATIVE_SYNC_PENDING_ACTION_BYTES} bytes, recovery: {MAX_NATIVE_RECOVERY_PENDING_ACTION_BYTES} bytes)"
             ));
         }
         let initial_parent_hash = self.best_tip().1;
@@ -12575,7 +13560,7 @@ impl NativeNode {
                     {
                         return Ok(None);
                     }
-                    validate_pending_action_against_mempool_state(&state, &pending)?;
+                    self.validate_pending_action_for_network(&state, &pending)?;
                     (state.best.clone(), state.commitment_tree.clone())
                 };
                 if self.rejected_pending_action_is_cached(&best.hash, &pending_semantic_hash) {
@@ -12637,9 +13622,27 @@ impl NativeNode {
         ))
     }
 
+    pub(crate) fn validate_network_action_scope(&self, action: &PendingAction) -> Result<()> {
+        if self.config.network.profile() == NativeNetworkProfile::Legacy {
+            return Ok(());
+        }
+        if action.family_id == FAMILY_BRIDGE {
+            return Err(anyhow!(
+                "legacy bridge actions are unavailable on explicit network profiles"
+            ));
+        }
+        if action.family_id == FAMILY_SHIELDED_POOL
+            && action.action_id <= ACTION_MINT_POSEIDON2_V8_COINBASE
+        {
+            return Err(anyhow!("legacy shielded actions require a network-bound successor on explicit network profiles"));
+        }
+        Ok(())
+    }
+
     pub(crate) fn validate_action_state(&self, action: &PendingAction) -> Result<()> {
+        self.validate_network_action_scope(action)?;
         let state = self.state.read();
-        validate_pending_action_against_mempool_state(&state, action)
+        self.validate_pending_action_for_network(&state, action)
     }
 
     pub(crate) fn submit_transaction(&self, _bundle: Value) -> Value {
