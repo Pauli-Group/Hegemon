@@ -30,7 +30,7 @@ elab "q58_alpha_share" body:tacticSeq : tactic => withMainContext do
     if target.hasMVar || proof.hasMVar then
       throwError "q58_alpha_share: residual expression or level metavariables"
     if proof.hasSorry then
-      throwError "q58_alpha_share: sorry is forbidden"
+      throwError "q58_alpha_share: placeholder proofs are forbidden"
     let (_, sharedProof) := sharePair target proof
     setGoals originalGoals
     closeMainGoal `q58_alpha_share sharedProof
@@ -158,7 +158,7 @@ private def literalOpening {bound : Nat} (largeEnough : 1264811 ≤ bound)
  let choice := responseChoiceValue largeEnough old pref digest
  ⟨reply, pref, transcript, digest, choice⟩
 
-private opaque certifiedOpening {bound : Nat} (largeEnough : 1264811 ≤ bound)
+@[irreducible] private noncomputable def certifiedOpening {bound : Nat} (largeEnough : 1264811 ≤ bound)
   (old : Raw bound → DigestRegister) (relation : PublicRelation) (values : B.CurrentValues)
   (binding : Fin 77 → Goldilocks) (commit : CommitPrefix) (coins : OriginalCoins) :
   { computed : CertifiedOpeningValues //

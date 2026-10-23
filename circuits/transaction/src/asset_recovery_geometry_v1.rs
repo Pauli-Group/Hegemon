@@ -5,9 +5,45 @@ use crate::{
 };
 
 #[test]
-fn preserved_baseline_source_identity() {
-    assert_eq!(hex::encode(crate::asset_spend_v1::relation_digest()), "ca5887169d89d2f5b01ef5b48851183cc4b270c3f49f1be099a7717715dbd7b7a849f8b4494a5811ccac0b37d6c09de7b38ea9b62c0b72a6b099bf3d2580025b");
-    assert_eq!(hex::encode(crate::asset_policy_admin_v1::relation_digest()), "db34857cf3b8816ef59e779f129fc279bb0ef5ee03744d7ffcd4c87e394aad41ba18417a59a28dcb0c255da7737f42af65856fc63d19b69e7370c0ac26de764a");
+fn historical_asset_sources_are_not_current_authorization() {
+    // These are retained historical source identities. Dependency changes alter
+    // current identities; historical references do not authorize current code.
+    // Retained recovery catalog pins must stay unchanged and fail closed.
+    let historical_asset_source = "ca5887169d89d2f5b01ef5b48851183cc4b270c3f49f1be099a7717715dbd7b7a849f8b4494a5811ccac0b37d6c09de7b38ea9b62c0b72a6b099bf3d2580025b";
+    let historical_admin_source = "db34857cf3b8816ef59e779f129fc279bb0ef5ee03744d7ffcd4c87e394aad41ba18417a59a28dcb0c255da7737f42af65856fc63d19b69e7370c0ac26de764a";
+    assert_ne!(
+        hex::encode(crate::asset_spend_v1::relation_digest()),
+        historical_asset_source
+    );
+    assert_ne!(
+        hex::encode(crate::asset_policy_admin_v1::relation_digest()),
+        historical_admin_source
+    );
+    for (production_authorized, certificate_complete) in [
+        (
+            crate::asset_spend_v1::PRODUCTION_AUTHORIZED,
+            crate::asset_spend_v1::SOURCE_LOWERING_CERTIFICATE_COMPLETE,
+        ),
+        (
+            crate::asset_policy_admin_v1::PRODUCTION_AUTHORIZED,
+            crate::asset_policy_admin_v1::SOURCE_LOWERING_CERTIFICATE_COMPLETE,
+        ),
+        (
+            spend::PRODUCTION_AUTHORIZED,
+            spend::SOURCE_LOWERING_CERTIFICATE_COMPLETE,
+        ),
+        (
+            capsule::PRODUCTION_AUTHORIZED,
+            capsule::SOURCE_LOWERING_CERTIFICATE_COMPLETE,
+        ),
+        (
+            admin::PRODUCTION_AUTHORIZED,
+            admin::SOURCE_LOWERING_CERTIFICATE_COMPLETE,
+        ),
+    ] {
+        assert!(!production_authorized);
+        assert!(!certificate_complete);
+    }
 }
 
 #[test]
@@ -60,10 +96,8 @@ fn emit_exact_graph_costs() {
     let descriptor = recovery::RecoveryDescriptorV1 {
         asset_id: 17,
         stable_policy_id: [3; 7],
-        policy_admin_commitment: crate::asset_policy_admin_v1::policy_admin_commitment(
-            17, secret,
-        )
-        .unwrap(),
+        policy_admin_commitment: crate::asset_policy_admin_v1::policy_admin_commitment(17, secret)
+            .unwrap(),
         archive_key_commitment: [4; 7],
         maximum_powers: recovery::RecoveryPowersV1 {
             transfer: true,

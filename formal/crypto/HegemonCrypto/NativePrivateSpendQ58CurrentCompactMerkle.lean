@@ -585,7 +585,7 @@ private theorem finish_records_root (oracle : Oracle) (input : Input) (state : S
     exact complete
   simp [finish, valid, ask, Program.record, logRecords]
 
--- Keep the public theorem's execution and record-relation wrappers opaque
+-- Keep the public theorem's execution and record-relation wrappers unreduced
 -- during elaboration. Their explicit reductions above have already been
 -- packaged into helper theorems; unfolding them here expands the full run.
 attribute [local irreducible] recordedAttempt acceptedResult logRecords

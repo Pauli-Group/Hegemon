@@ -217,10 +217,7 @@ mod tests {
         adapter.verify_packed_witness(&witness).unwrap();
         let actual: Vec<_> = output
             .iter()
-            .map(|w| match w {
-                Word::Constant(v) => *v as u8,
-                Word::Wire(i) => witness[*i] as u8,
-            })
+            .map(|w| adapter.graph_word_from_packed(*w, &witness) as u8)
             .collect();
         assert_eq!(actual, expected);
         eprintln!(
@@ -262,10 +259,7 @@ mod tests {
         ] {
             let witness = adapter.evaluate(&[x as u64, y as u64]).unwrap();
             adapter.verify_packed_witness(&witness).unwrap();
-            let read = |word: Word| match word {
-                Word::Constant(v) => v,
-                Word::Wire(i) => witness[i],
-            };
+            let read = |word: Word| adapter.graph_word_from_packed(word, &witness);
             assert_eq!(read(sum.value), x.wrapping_add(y) as u64);
             assert_eq!(
                 read(rotated.value),

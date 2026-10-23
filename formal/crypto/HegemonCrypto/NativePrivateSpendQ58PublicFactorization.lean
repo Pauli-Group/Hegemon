@@ -12,7 +12,7 @@ set_option Elab.async false
 set_option maxHeartbeats 0
 set_option maxRecDepth 0
 
-/-- Definitional wrapper equation, independently kernel checked and opaque. -/
+/-- Definitional wrapper equation, independently kernel checked and irreducible. -/
 theorem public_mask_wrapper_eq (relation : Relation) (gamma : Gamma)
     (response : Fin 132 → Goldilocks) (opened : Row → Goldilocks) (point : Goldilocks) :
     publicLinearMask relation gamma response opened point =

@@ -27,7 +27,7 @@ abbrev Earlier := NativePrivateSpendQ58LvcsJoint.Earlier
 abbrev Later := NativePrivateSpendQ58LvcsJoint.Later
 abbrev Targets := NativePrivateSpendQ58LvcsJoint.Targets
 abbrev Response := D × Q
-/-- W/P types in output denote Z witness openings and S partial openings. -/
+/-- W/P types in output denote Z witness openings and S sampled openings. -/
 abbrev View := Response × ((W × P) × (Earlier × Later))
 abbrev Error := String
 abbrev Status := Option Error

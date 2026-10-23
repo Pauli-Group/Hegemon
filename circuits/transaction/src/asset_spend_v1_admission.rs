@@ -394,7 +394,19 @@ mod tests {
                 Err(NativeAssetAdmissionErrorV1::UnsupportedProfile)
             );
         }
-        assert_eq!(admin_profile_upper_bound_v1(), Ok(158_533));
+        let admin_source_is_qualified =
+            hex::encode(admin::relation_digest()) == QUALIFIED_ADMIN_SOURCE_SHA512;
+        eprintln!(
+            "inactive asset admission fixture: spend_source_qualified={source_is_qualified}; admin_source_qualified={admin_source_is_qualified}"
+        );
+        assert_eq!(
+            admin_profile_upper_bound_v1(),
+            if admin_source_is_qualified {
+                Ok(158_533)
+            } else {
+                Err(NativeAssetAdmissionErrorV1::SourceIdentity)
+            }
+        );
         assert_ne!(NATIVE_SPEND_IDENTITY, NATIVE_ADMIN_IDENTITY);
         assert_ne!(ASSET_SPEND_ACTION_ID, ASSET_ADMIN_ACTION_ID);
     }

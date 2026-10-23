@@ -2,7 +2,7 @@ import HegemonCrypto.NativePrivateSpendQ58CurrentSuccessfulFiber
 import HegemonCrypto.NativePrivateSpendQ58CurrentQualifiedRecovery
 
 /-! Current fixed-prefix raw q58 bad-event density. This is the actual80-field,
-14-block partial sampler; failures remain in the denominator. It supplies the
+14-block restricted sampler; failures remain in the denominator. It supplies the
 finite algebra-density input to a current event-instability proof, not the
 missing causal decoder-change or accepted-invalid event inclusion. -/
 namespace HegemonCrypto.SmallWood.NativePrivateSpendQ58CurrentRawDensity

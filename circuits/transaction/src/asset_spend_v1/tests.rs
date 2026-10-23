@@ -119,45 +119,52 @@ fn asset_spend_credentials_are_mandatory_for_input_payment_and_zero_change() {
     assert!(compile(&statement, &forged).is_err());
 }
 
-#[test]
-fn asset_spend_credentials_cover_entire_reference_window() {
-    for mode in [0, 1] {
-        for operation in [TRANSFER, MINT, BURN] {
-            let (mut public, mut witness) = if mode == 0 {
-                fixtures::fixture(operation, 4).unwrap()
-            } else {
-                fixtures::combined_fixture(operation, 4, 0).unwrap()
-            };
-            let horizon = credential_validity_horizon(public.parent_height).unwrap();
-            let first_active = usize::from(operation == MINT);
-            for slot in first_active..3 {
-                witness.credentials[slot].expires_at = horizon;
-            }
-            fixtures::rebind_credentials(&mut public, &mut witness).unwrap();
-            compile(&public, &witness).unwrap();
-            if operation == MINT {
-                // The absent holder stays canonical zero, never a credential bypass
-                // for either of the two mandatory asset outputs.
-                assert_eq!(witness.credentials[0].expires_at, 0);
-            }
-            for slot in first_active..3 {
-                let mut expired_public = public.clone();
-                let mut expired_witness = witness.clone();
-                expired_witness.credentials[slot].expires_at = horizon - 1;
-                // Re-authenticate the shorter expiry: this rejection must come
-                // from the horizon check, rather than a stale Merkle leaf/path.
-                fixtures::rebind_credentials(&mut expired_public, &mut expired_witness).unwrap();
-                assert!(
-                    compile(&expired_public, &expired_witness).is_err(),
-                    "H+11 credential mode{mode}/operation{operation}/slot{slot}"
-                );
-            }
+fn check_asset_spend_credential_reference_window(mode: u8) {
+    for operation in [TRANSFER, MINT, BURN] {
+        let (mut public, mut witness) = if mode == 0 {
+            fixtures::fixture(operation, 4).unwrap()
+        } else {
+            fixtures::combined_fixture(operation, 4, 0).unwrap()
+        };
+        let horizon = credential_validity_horizon(public.parent_height).unwrap();
+        let first_active = usize::from(operation == MINT);
+        for slot in first_active..3 {
+            witness.credentials[slot].expires_at = horizon;
+        }
+        fixtures::rebind_credentials(&mut public, &mut witness).unwrap();
+        compile(&public, &witness).unwrap();
+        if operation == MINT {
+            // The absent holder stays canonical zero, never a credential bypass
+            // for either of the two mandatory asset outputs.
+            assert_eq!(witness.credentials[0].expires_at, 0);
+        }
+        for slot in first_active..3 {
+            let mut expired_public = public.clone();
+            let mut expired_witness = witness.clone();
+            expired_witness.credentials[slot].expires_at = horizon - 1;
+            // Re-authenticate the shorter expiry: this rejection must come
+            // from the horizon check, rather than a stale Merkle leaf/path.
+            fixtures::rebind_credentials(&mut expired_public, &mut expired_witness).unwrap();
+            assert!(
+                compile(&expired_public, &expired_witness).is_err(),
+                "H+11 credential mode{mode}/operation{operation}/slot{slot}"
+            );
         }
     }
 }
 
 #[test]
-fn asset_spend_credential_horizon_covers_zero_change_and_later_policy_branch() {
+fn asset_spend_credentials_cover_entire_reference_window() {
+    check_asset_spend_credential_reference_window(0);
+}
+
+#[test]
+fn asset_spend_combined_policy_credentials_cover_entire_reference_window() {
+    check_asset_spend_credential_reference_window(1);
+}
+
+#[test]
+fn asset_spend_credential_horizon_covers_zero_change() {
     let (mut public, mut witness) = fixtures::fixture(TRANSFER, 4).unwrap();
     witness.outputs[0].value = 10;
     witness.outputs[1].value = 0;
@@ -174,7 +181,10 @@ fn asset_spend_credential_horizon_covers_zero_change_and_later_policy_branch() {
     witness.credentials[2].expires_at = horizon - 1;
     fixtures::rebind_credentials(&mut public, &mut witness).unwrap();
     assert!(compile(&public, &witness).is_err());
+}
 
+#[test]
+fn asset_spend_credential_horizon_covers_later_policy_branch() {
     let (mut public, mut witness) = fixtures::combined_fixture(TRANSFER, 4, 1).unwrap();
     let horizon = credential_validity_horizon(public.parent_height).unwrap();
     for credential in &mut witness.credentials {
@@ -408,8 +418,7 @@ fn asset_spend_recovery_shares_nullifier_and_cannot_bypass_current_policy() {
     assert!(compile(&wrong, &witness).is_err());
 }
 
-#[test]
-fn asset_spend_policy_credentials_bind_full_owner_and_zero_change() {
+fn asset_spend_policy_credential_owner_fixture() -> (AssetSpendPublic, AssetSpendWitness) {
     let (public, witness) = fixtures::combined_fixture(TRANSFER, 4, 0).unwrap();
     let committed_owner = crate::private_spend::policy_owner(
         public.chain_id,
@@ -447,6 +456,17 @@ fn asset_spend_policy_credentials_bind_full_owner_and_zero_change() {
         credential_root(wrong_leaf, credential.index, &credential.siblings).unwrap(),
         public.credential_root
     );
+    (public, witness)
+}
+
+#[test]
+fn asset_spend_policy_credential_owner_and_root_bindings_are_canonical() {
+    asset_spend_policy_credential_owner_fixture();
+}
+
+#[test]
+fn asset_spend_policy_credentials_bind_full_owner_and_zero_change() {
+    let (public, witness) = asset_spend_policy_credential_owner_fixture();
     let mut forged = witness.clone();
     forged.outputs[0].value = 10;
     forged.outputs[1].value = 0;

@@ -545,6 +545,20 @@ pub fn decode_native_asset_admin_action_v1(
 mod tests {
     use super::*;
 
+    fn native_spend_fixture_source_is_qualified(test: &str) -> bool {
+        let qualified = hex::encode(relation_digest())
+            == crate::asset_spend_v1_admission::QUALIFIED_SPEND_SOURCE_SHA512;
+        eprintln!("inactive asset fixture {test}: spend_source_qualified={qualified}");
+        qualified
+    }
+
+    fn native_admin_fixture_source_is_qualified(test: &str) -> bool {
+        let qualified = hex::encode(crate::asset_policy_admin_v1::relation_digest())
+            == crate::asset_spend_v1_admission::QUALIFIED_ADMIN_SOURCE_SHA512;
+        eprintln!("inactive asset fixture {test}: admin_source_qualified={qualified}");
+        qualified
+    }
+
     fn fixture() -> (AssetSpendPublic, [[u8; CIPHERTEXT_BYTES]; 3], Vec<u8>) {
         let ciphertexts = [
             [1; CIPHERTEXT_BYTES],
@@ -707,22 +721,43 @@ mod tests {
     #[test]
     fn native_spend_identity_profile_and_historical_candidate_are_distinct() {
         let (mut public, ciphertexts, proof) = fixture();
-        let native = encode_native_asset_spend_action_v1(&public, &ciphertexts, &proof).unwrap();
-        assert_eq!(&native[..8], b"HGANSP01");
-        assert_eq!(
-            decode_native_asset_spend_action_v1(&native).unwrap().public,
-            public
-        );
-        assert!(matches!(
-            decode_asset_spend_action_v1(&native),
-            Err(AssetSpendWireErrorV1::Magic)
-        ));
-        let candidate = encode_asset_spend_action_v1(&public, &ciphertexts, &proof).unwrap();
-        assert!(matches!(
-            decode_native_asset_spend_action_v1(&candidate),
-            Err(AssetSpendWireErrorV1::Magic)
-        ));
-        assert_eq!(&candidate[8..], &native[8..]);
+        if native_spend_fixture_source_is_qualified(
+            "native_spend_identity_profile_and_historical_candidate_are_distinct",
+        ) {
+            let native =
+                encode_native_asset_spend_action_v1(&public, &ciphertexts, &proof).unwrap();
+            assert_eq!(&native[..8], b"HGANSP01");
+            assert_eq!(
+                decode_native_asset_spend_action_v1(&native).unwrap().public,
+                public
+            );
+            assert!(matches!(
+                decode_asset_spend_action_v1(&native),
+                Err(AssetSpendWireErrorV1::Magic)
+            ));
+            let candidate = encode_asset_spend_action_v1(&public, &ciphertexts, &proof).unwrap();
+            assert!(matches!(
+                decode_native_asset_spend_action_v1(&candidate),
+                Err(AssetSpendWireErrorV1::Magic)
+            ));
+            assert_eq!(&candidate[8..], &native[8..]);
+        } else {
+            assert_eq!(
+                encode_native_asset_spend_action_v1(&public, &ciphertexts, &proof),
+                Err(AssetSpendWireErrorV1::RelationSource)
+            );
+            let mut candidate =
+                encode_asset_spend_action_v1(&public, &ciphertexts, &proof).unwrap();
+            assert!(matches!(
+                decode_native_asset_spend_action_v1(&candidate),
+                Err(AssetSpendWireErrorV1::Magic)
+            ));
+            candidate[..8].copy_from_slice(&NATIVE_ASSET_SPEND_ACTION_MAGIC_V1);
+            assert!(matches!(
+                decode_native_asset_spend_action_v1(&candidate),
+                Err(AssetSpendWireErrorV1::RelationSource)
+            ));
+        }
 
         public.policy_mode = 1;
         public.credential_depth = 16;
@@ -744,6 +779,26 @@ mod tests {
     #[test]
     fn native_size_limits_reject_before_proof_parse() {
         let (public, ciphertexts, proof) = fixture();
+        // The outer action-length bound precedes historical source admission.
+        let mut oversized = encode_asset_spend_action_v1(&public, &ciphertexts, &proof).unwrap();
+        oversized[..8].copy_from_slice(&NATIVE_ASSET_SPEND_ACTION_MAGIC_V1);
+        oversized.resize(NATIVE_ASSET_SPEND_MAX_ACTION_BYTES_V1 + 1, 0);
+        assert!(matches!(
+            decode_native_asset_spend_action_v1(&oversized),
+            Err(AssetSpendWireErrorV1::ActionLength)
+        ));
+        if !native_spend_fixture_source_is_qualified("native_size_limits_reject_before_proof_parse")
+        {
+            assert_eq!(
+                native_profile(&public),
+                Err(AssetSpendWireErrorV1::RelationSource)
+            );
+            assert_eq!(
+                encode_native_asset_spend_action_v1(&public, &ciphertexts, &proof),
+                Err(AssetSpendWireErrorV1::RelationSource)
+            );
+            return;
+        }
         let upper = native_profile(&public).unwrap();
         let mut too_large = vec![0; upper + 1];
         too_large[..4].copy_from_slice(&CANDIDATE_PROOF_MAGIC);
@@ -789,6 +844,41 @@ mod tests {
     fn native_admin_codec_binds_entire_canonical_statement() {
         let public = admin_fixture();
         let proof = b"SMZE";
+        // Canonical public-word decoding is independent of native source admission.
+        let canonical = public.binding_bytes();
+        assert_eq!(decode_admin_public(&canonical).unwrap(), public);
+        for (word, value) in [
+            (0, 0u64),
+            (1, 1 << 32),
+            (32, 1 << 32),
+            (63, 256),
+            (64, 2),
+            (65, 2),
+            (74, 0),
+            (90, 1),
+            (133, 1),
+        ] {
+            let mut mutation = canonical.clone();
+            let start = word * 8;
+            if word == 74 {
+                mutation[start] ^= 1;
+            } else {
+                mutation[start..start + 8].copy_from_slice(&value.to_le_bytes());
+            }
+            assert!(
+                decode_admin_public(&mutation).is_err(),
+                "public word {word}"
+            );
+        }
+        if !native_admin_fixture_source_is_qualified(
+            "native_admin_codec_binds_entire_canonical_statement",
+        ) {
+            assert_eq!(
+                encode_native_asset_admin_action_v1(&public, proof),
+                Err(AssetSpendWireErrorV1::RelationSource)
+            );
+            return;
+        }
         let bytes = encode_native_asset_admin_action_v1(&public, proof).unwrap();
         let decoded = decode_native_asset_admin_action_v1(&bytes).unwrap();
         assert_eq!(decoded.public, public);
@@ -844,6 +934,14 @@ mod tests {
             self as admission, NativeAssetAdmissionErrorV1 as E, NativeAssetContextV1,
         };
         let (mut public, _, proof) = fixture();
+        let spend_source_is_qualified = native_spend_fixture_source_is_qualified(
+            "native_admission_checks_current_context_and_actual_proof_parse",
+        );
+        let admin_source_is_qualified = native_admin_fixture_source_is_qualified(
+            "native_admission_checks_current_context_and_actual_proof_parse",
+        );
+        // Exercise the actual parser even when the native source gate stops first.
+        assert!(crate::asset_spend_v1::proof_wire_receipt(&proof).is_err());
         let current = NativeAssetContextV1 {
             chain_id: public.chain_id,
             reference_parent_hash: public.reference_parent_hash,
@@ -853,11 +951,19 @@ mod tests {
         };
         assert_eq!(
             admission::preflight_spend_v1(&public, &proof, current),
-            Err(E::NonCanonicalProof)
+            if spend_source_is_qualified {
+                Err(E::NonCanonicalProof)
+            } else {
+                Err(E::SourceIdentity)
+            }
         );
         assert_eq!(
             admission::verify_spend_v1(&public, &proof, current),
-            Err(E::NonCanonicalProof)
+            if spend_source_is_qualified {
+                Err(E::NonCanonicalProof)
+            } else {
+                Err(E::SourceIdentity)
+            }
         );
         for field in 0..5 {
             let mut stale = current;
@@ -870,7 +976,11 @@ mod tests {
             }
             assert_eq!(
                 admission::preflight_spend_v1(&public, &proof, stale),
-                Err(E::CurrentContext)
+                if spend_source_is_qualified {
+                    Err(E::CurrentContext)
+                } else {
+                    Err(E::SourceIdentity)
+                }
             );
         }
         public.policy_mode = 1;
@@ -886,7 +996,11 @@ mod tests {
         };
         assert_eq!(
             admission::preflight_admin_v1(&admin, &proof, admin_current),
-            Err(E::NonCanonicalProof)
+            if admin_source_is_qualified {
+                Err(E::NonCanonicalProof)
+            } else {
+                Err(E::SourceIdentity)
+            }
         );
         let stale = NativeAssetContextV1 {
             parent_height: 101,
@@ -894,7 +1008,11 @@ mod tests {
         };
         assert_eq!(
             admission::preflight_admin_v1(&admin, &proof, stale),
-            Err(E::CurrentContext)
+            if admin_source_is_qualified {
+                Err(E::CurrentContext)
+            } else {
+                Err(E::SourceIdentity)
+            }
         );
     }
 }

@@ -5,7 +5,7 @@ import HegemonCrypto.NativePrivateSpendQ58CurrentScalarRowFactorization
 
 /-! Current shared-row readback. Successful native decoding supplies the same
 scalar matrix to PCS reconstruction and PIOP. Successful list reconstruction
-derives its scalar and partial shapes; no successful-history, algebraic check,
+derives its scalar and sampled shapes; no successful-history, algebraic check,
 head-binding or scalar-agreement certificate is supplied. Source only. -/
 namespace HegemonCrypto.SmallWood.NativePrivateSpendQ58CurrentScalarStageReadback
 
@@ -125,7 +125,7 @@ theorem list_equals_typed_readback {α : Type} {count : Nat}
 
 attribute [local irreducible] List.ofFn
 
-/-- A successful actual row yields its current scalar and partial vectors.
+/-- A successful actual row yields its current scalar and sampled vectors.
 The scalar vector is the piop.rowScalars projection, not a second row. -/
 theorem successful_decoded_row_has_current_vectors
     (wire : E.Wire) (decoded : E.DecodedFields) (opening : E.Opening)

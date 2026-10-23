@@ -6,7 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import rp05_ci as ci
 
@@ -33,6 +33,31 @@ class CiTests(unittest.TestCase):
     def test_deadline_never_turns_into_success(self):
         with self.assertRaisesRegex(RuntimeError,'budget exhausted'):
             ci.run(['must-not-launch'],{},time.monotonic()-1)
+    def test_compile_timeout_remains_bounded_by_total_deadline(self):
+        with patch.object(ci.time, 'monotonic', return_value=100), \
+             patch.object(ci.subprocess, 'Popen') as launch:
+            proc = launch.return_value
+            proc.wait.return_value = 0
+            ci.run(['lean'], {}, 700, 180)
+            proc.wait.assert_called_once_with(timeout=180)
+            launch.assert_called_once_with(
+                ['lean'], cwd=ci.package.REPO/'formal/crypto', env={}, start_new_session=True)
+            proc.wait.reset_mock()
+            ci.run(['lean'], {}, 150, 180)
+            proc.wait.assert_called_once_with(timeout=50)
+    def test_compile_timeout_kills_and_reaps_owned_group_without_success(self):
+        command = ['lean']
+        with patch.object(ci.time, 'monotonic', return_value=100), \
+             patch.object(ci.subprocess, 'Popen') as launch, \
+             patch.object(ci.os, 'killpg') as kill_group:
+            proc = launch.return_value
+            proc.pid = 4321
+            proc.poll.return_value = None
+            proc.wait.side_effect = [ci.subprocess.TimeoutExpired(command, 180), 0]
+            with self.assertRaises(ci.subprocess.TimeoutExpired):
+                ci.run(command, {}, 700, 180)
+            kill_group.assert_called_once_with(4321, ci.signal.SIGKILL)
+            self.assertEqual(proc.wait.call_args_list, [call(timeout=180), call()])
     def test_source_guard_needs_no_lean(self):
         with patch.object(ci.package,'lake_environment',side_effect=AssertionError('Lean invoked')):
             _,graph,order=ci.source_guard()

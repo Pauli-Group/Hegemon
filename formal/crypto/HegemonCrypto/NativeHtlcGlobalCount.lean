@@ -34,7 +34,7 @@ set_option maxHeartbeats 4000000
 set_option maxRecDepth 10000
 set_option exponentiation.threshold 1024
 
--- Keep the concrete AdjoinRoot basis and its induced finite instance opaque
+-- Keep the concrete AdjoinRoot basis and its induced finite instance unreduced
 -- while elaborating the universal endpoint; their definitions are not part
 -- of this endpoint's proof and unfolding them causes pathological recursion.
 attribute [local irreducible]

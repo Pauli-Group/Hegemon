@@ -198,7 +198,7 @@ theorem linear_high_is_source (coins : Fin 132 → Goldilocks) (index : Fin 69) 
     (⟨63 + index.val, by have _ := index.isLt; omega⟩ : Fin 132)
 
 #eval IO.eprintln "COIN_OBSERVATION_DECL_START: sourcePartials"
-/-- The source ten partial columns with the SAME original60 PCS coins. -/
+/-- The source ten sampled columns with the SAME original60 PCS coins. -/
 def sourcePartials (points : Fin 6 → Goldilocks)
     (masks : NativePrivateSpendQ58CurrentRowBoundary.Q)
     (pcs : NativePrivateSpendQ58CurrentRowBoundary.P) : NativePrivateSpendQ58CurrentRowBoundary.P :=

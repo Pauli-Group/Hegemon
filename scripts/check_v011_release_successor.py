@@ -299,7 +299,7 @@ def validate_replay(replay, node_sha, artifact_sha):
 # satisfy the maintained full-network lifecycle harness's qualified_source_tuple.
 CURRENT_SCOPE = 'exact_current_source_current_binary_backend_and_h0'
 CURRENT_SOURCE_KIND = 'reviewed_source_successor_ci'
-CURRENT_CONFIG_SHA256 = '05ec0571c556c18558111daf3c225d9e9e74ab4f5a5432adcec4a5370f1854b9'
+CURRENT_CONFIG_SHA256 = 'fb40d7e77941cb047382cb6c0146caee9be0da3bce7c0935e67a49b969e06538'
 CURRENT_RUNNER_SHA256 = 'a8b14c133d0d02b9e000fe30d22fbed4584e9836e439086974540c2943ea9f80'
 CURRENT_FIXTURE_SHA256 = '50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c'
 CURRENT_NETWORK_MANIFEST_SHA256 = '386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754'
@@ -343,14 +343,26 @@ CURRENT_PROOF_CASES = [{'name': 'ordinary',
                 'sha256': 'c6267fdc99026543872cacf34f9ba52670c34c0523d95a60da49e4c8e1f6ba29'}}]
 CURRENT_RUNTIME_DELTAS = {'Cargo.lock': ['bae447660a12610766620cb7e2afacb6b0ad92a3370dd5f15db18e12e753b7ec',
                 '1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719'],
+ 'circuits/transaction/src/asset_recovery_chacha_v1.rs': ['523246cbd6a5440eddb5d62a09877bee29adac45fd7f01f8e996cfa9b386c284',
+                                                          'd9d051780a338cacf43fefb3ab3ba39d050fa921b4b0559094ed456d09d8f719'],
+ 'circuits/transaction/src/asset_recovery_geometry_v1.rs': ['912d6469374a9a3c9e8805c3374e26dbdbda67b7534e6799f169aa30173c040a',
+                                                            '03de9a894015dac1e594c8e632beb025cb593b7b26c036f91cadf5469ee14807'],
+ 'circuits/transaction/src/asset_spend_v1/tests.rs': ['5fdcf939036b882ec1b4748498a1bd1e0233da3ec3dadadc007cd91fba1d8aff',
+                                                      '5b1b01c2ee7f91a9538096e7b5f592e1246d3cfe7505e717cef2a66603996124'],
+ 'circuits/transaction/src/asset_spend_v1_admission.rs': ['e19ee867f5af10cc8234fa2384f11a5a9dc74703bc1760b39281d6a40877b530',
+                                                          '8d68021e52f56a00dd936987f5ce251defe977c80ddd9ae37600fda95aac556f'],
  'circuits/transaction/src/asset_spend_v1_state.rs': ['1006ed280fe8a16f8afb61934749c8fe8f4ffa0b5ebaed86b5a10315453b481b',
                                                       '27ff1a411a849d3f0b71b37422f9984facf447f48fe390c962da604c5bcb1b52'],
+ 'circuits/transaction/src/asset_spend_v1_wire.rs': ['f72252f8c8e3297c115b745bde7130a3af47c011b21b46b2d04344fcac042d3d',
+                                                     '81d11e1a46de076d2501a90d1f91bfafa8ff14047c9d2e9292cf6047a52f22a2'],
  'circuits/transaction/src/smallwood_htlc/source_cse.rs': ['9401f9f6a8ea5ac6b1884af0c24c7fd910c3a1452664be5b504b5377dae3825d',
                                                            '9e573c5a8579a516f9cff092abdce06a7a04a49f212fccc14138b088b20f0be6'],
  'circuits/transaction/src/smallwood_htlc_transport.rs': ['4df08a64e1bc8e25c62bc479747730a0f585e6d0233eaac65618ce3bec1694be',
                                                           '0e157cb668ec2602a5ae96cf81269697d5cd3396ab615709fc3f26441f63da26'],
  'config/poseidon2-width16-v1.json': ['b213f05b7db08a26693e4663477ab200d3201b3d3eab2e1dc7635e272ffdddfa',
                                       '43b3c90bfcc1cf4b040e036ce7c32e17b637fd136f59dda0df149da91a0ab9bb'],
+ 'experimental/htlc-prototype/proof-backend/Cargo.lock': ['03c7da68475157c7dd05a6fbfd8515c56a8b4062c1175e52030b0a41d2e35dfe',
+                                                          'ed8d205e44df98040490e7d3270d9ffbbfe242f1b5e5b9460ffbc238d3b72a0b'],
  'network/src/lib.rs': ['d930d38df3cb5c09684e7196d60d1f4b4e3b17caff36e98fc0e03267566b9682',
                         'a3776bf15654a5a3e7c2acc3e29acde25de0f157d8c534b191414e5be2a6ef3f'],
  'node/src/bin/native_node.rs': ['236cfb18659ba1ad624f3c2f25f03bc45601221ff19f586c83094ddadff8ac96',
@@ -371,6 +383,8 @@ CURRENT_RUNTIME_DELTAS = {'Cargo.lock': ['bae447660a12610766620cb7e2afacb6b0ad92
                                    '70c59140f1f51d09383276d7c2eabd0b0c4b990109c6403dffcef84e61fb96d8'],
  'node/src/native/mod.rs': ['6be69238c26189dd48d921a5a9c8b2aa2a9057af05060ba62edd9f7d8234bfa9',
                             '60496dc754362a21286d247a55fe76fae197aa7b5611251aaca041c182cac973'],
+ 'node/src/native/network_profile.rs': ['d1f5276aa03bd5f591a8fcb185761ca2edc26515b60ee1104f94127c9db33a7c',
+                                        'c90231a2c84bd18dca45c8b35aee568fd4f65e37b8807e54aa57f47f2e60479c'],
  'node/src/native/node_impl.rs': ['05f84c22738c43c937201470a27649a3d73e4b8ce9dfbc87c7d6e95abd462e3c',
                                   'e6efec45d1a9d3b4c5dee02f1a9d0f38d300a755c711d29ff0120b49a7ec5d00'],
  'node/src/native/poseidon2_v8_pending.rs': ['95b7f63283c59cdf41f82485401afc9941e0a214bbc5538f51e5ae0363e393de',

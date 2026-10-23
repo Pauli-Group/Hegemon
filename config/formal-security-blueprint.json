@@ -8,8 +8,8 @@
       "command": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
       "status": "passed",
       "exit_code": 0,
-      "executed_at": "2026-10-23T21:14:55Z",
-      "policy_inputs_blake3": "a954a0ad881a7a143ece19a7373cca1e25758bdbcc35f7720a20ed361b0e0055",
+      "executed_at": "2026-10-23T22:44:18Z",
+      "policy_inputs_blake3": "0a71e21741918b4ca68be5e47361d3bec04bfb8ae08fa453cfb3702a0987d616",
       "report": {
         "passed": true,
         "test_filter": "governance_",
@@ -134,7 +134,7 @@
         "reviewer": "Codex (internal CI hygiene review)",
         "reviewed_at": "2026-10-02",
         "notes": "Pending independent review. Internal source review on 2026-10-02: PR-only profile inspection accepts only the exact fail-closed unapproved-profile refusal and reports production_authority=false; tag release remains strict, and the historical native-backend posture does not authorize RP05. Focused profile and policy regressions pass. This is not an independent review, live binary attestation, or production authorization. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "779006066c10d2164c1e151c25c8c741490e1278e60af19629eed0527e8d7ea7"
+        "content_blake3": "79d1b0ba5c8da575511495b499d4b2946bb176d7cb57d2706fb694e5aafb77bc"
       },
       "falsification_cases": [
         {
@@ -190,7 +190,7 @@
         "reviewer": "Codex (internal CI hygiene review)",
         "reviewed_at": "2026-10-02",
         "notes": "Pending independent review. Internal source review on 2026-10-02: CI policy negative tests pin the dependency waiver gate, the PR-only unapproved-profile review flag, the zero-funds app review mode, and release-build dependencies; release workflow calls remain strict. CI no longer labels the historical native-backend package as current RP05 authority; tag release retains its package/posture checks. This does not establish live remote ruleset enforcement, runner integrity, production authority, or independent review. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal CI execution metadata refresh (2026-10-23): test optimization level 2 and two-job/Rayon concurrency bounds change execution cost; existing tests, overflow checks, debug assertions, strict release controls and timeout remain in force. This refresh adds no cryptographic assurance.",
-        "content_blake3": "f3947b29836a7bf12bb094b3aa93ba449b7d14fe9c93a94a7503128ac9bf5670"
+        "content_blake3": "e079aae6335275d4cae2ed9d97e6cfd6a0b388102eafd4b42434cb7dbe4b1525"
       },
       "falsification_cases": [
         {
@@ -276,7 +276,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-18",
         "notes": "Pending independent review. Previous internal assessment: Accepted as the final closure/accounting certificate for internal theorem coverage plus explicit external assumptions. It is not an unconditional proof of cryptographic primitive hardness or remote infrastructure behavior. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "0e914756c119ba46041d79c7f50af705544fff8ae2f7ae63a410dffd7ed20f3f"
+        "content_blake3": "219c4a05600296a6fdca88df4ae7d1001a9535d6b69f039055011c3958d74e11"
       },
       "falsification_cases": [
         {
@@ -958,7 +958,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-11",
         "notes": "Pending independent review. Generated table and semantic-program gates establish bounded exact-map conformance and internal production-family implications, but accepted-proof extraction and deployed AIR/row implementation-equivalence remain open while knowledge-soundness, canonical-semantic-refinement, and Poseidon2 constraint-digest-refinement evidence are premises. The executable Poseidon2 mirror and known-answer vectors do not discharge pair-local collision resistance. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "62f45d728b6f8c46ee4fd19dc6a8475bc57296d8b83064a0e853a3979847742d"
+        "content_blake3": "4ccdfe52d8a57940c60153aad3fd3e42ab31ae005bb2a5968e420729e083d357"
       },
       "falsification_cases": [
         {
@@ -1057,7 +1057,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-11",
         "notes": "Pending final headless review. Internal review replaced a caller-populated row certificate with an executable exact-map decision, but accepted-proof extraction still requires `DeployedSmallWoodKnowledgeSoundnessEvidence`; canonical-semantic refinement, Poseidon2 output binding, universal Rust/AIR equivalence, primitive hash security, and proof-system soundness remain explicit. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "d9b135490bd3488d6fa8edff2b8e761f9d4a8c4ecb5f7d041278cc0082acf676"
+        "content_blake3": "dcf92928e11ca2a12171c04c8212eba080bd784b8d1af73ab090477a3e13419f"
       },
       "falsification_cases": [
         {
@@ -1156,7 +1156,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a non-production canonical verifier-boundary refinement. It packages the deployed relation, accepted-transaction, transcript, native tx-leaf, and split spend/balance proof-boundary facts for future AIR/refinement proof work, but does not certify deployed STARK, SmallWood, or native verifier soundness. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "aab5f30ac15c327946a7bc891d4c0fbaa05c1784ac98e3112ec583ec9b2a6ac2"
+        "content_blake3": "7b153d0fd90621de174e056fdcefe84123685bce21b6bb66dcca9bb82eaa68f6"
       },
       "falsification_cases": [
         {
@@ -1254,7 +1254,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a non-production transaction and accepted-transaction-chain asset-isolation boundary with a production-bound public stablecoin exception payload surface, explicit live-policy authorization predicate, wallet-side storage-backed policy/oracle/attestation payload-construction regression, native import-time protocol-manifest policy/oracle/attestation/lifecycle/freshness/bounds admission, and a theorem bridge from accepted native authorization to the live-policy predicate for exactly matching production/public payloads. It does not certify replayed dynamic stablecoin policy state or bridge mint authorization. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "835ceac0ca672c119b5da23605c8c45b131feb8b3b293db0c62a1db56a8f2a92"
+        "content_blake3": "298f396abe7f648436a1317b3f69145bd872210ca03a09933c7614f545fa78a3"
       },
       "falsification_cases": [
         {
@@ -1557,7 +1557,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a non-production leakage-boundary model. It defines the observer projection used by future privacy games, composes native tx-leaf output-slot binding into that surface, and now proves combined private-witness/prover-randomness/local action/address/wallet-bookkeeping/network metadata exclusion for observer, public metadata, batch/timing, and valid-chain-surface projections. It does not prove cryptographic zero-knowledge or ciphertext confidentiality. The wallet ciphertext archive publication gate is now Lean/vector checked for contiguous indices and leaf-count bounds. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "0ebc0f8cd3bf1dc05c89288cc96c5b73446173e7988b521272747d97344fd7f0"
+        "content_blake3": "cb86b9e6d035609a2b031ae7991dafec3ef4730df92e8341113e107fbdb427c1"
       },
       "falsification_cases": [
         {
@@ -1659,7 +1659,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a research privacy-game boundary with explicit cryptographic, proof-system, wallet metadata, timing/batching, and network metadata assumptions plus production wallet randomness/bookkeeping/address-metadata regressions, PQ connection/relay metadata projection regression, and native mineable candidate-selection conformance. The secret-resampling and open-assumption package theorems strengthen deterministic unlinkability coverage, the seed-hardened PQ residual certificate removes KEM seed-source misuse from the residual by consuming the accepted KEM transcript/KDF certificate, and the materialized-sidecar PQ certificate carries those residuals through the accepted sidecar publication witness. This node still does not claim to mechanize ML-KEM, AEAD, RNG, global miner fairness, or simulator-based zero-knowledge security. The wallet ciphertext archive publication gate is now Lean/vector checked for contiguous indices and leaf-count bounds. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "676581701851aa206336839a3d70c8e8bc628fb41d38a0c7906e35498be9b08b"
+        "content_blake3": "37cc86bd2cd82e9586587e5c224688e412524fb71ff7acb859d9ffc5a5afd2ab"
       },
       "falsification_cases": [
         {
@@ -1758,7 +1758,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for protocol-shielded-pool nullifier stage/import behavior, with focused independent protocol transition and consensus sorted-unique commitment oracles. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "2eb1e4cba28f7fc1a6411134c006cad06158dfacae7509e04f9bd849b88a88ea"
+        "content_blake3": "d84a15fe7c3add08356e42ac501f2297a27fb3da529268e7503e5c66fca98b3e"
       },
       "falsification_cases": [
         {
@@ -1881,7 +1881,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves deterministic two-tip ordering, selected-tip source/facts, and no-lower-work selection only. It does not prove PoW admission arithmetic, SHA-256 header-hash implementation equivalence, every network partition, timestamp edge case, fork-choice convergence/liveness, or long-range adversarial mining schedule.",
       "target_review": {
-        "content_blake3": "d494f4132eb16a64b4bfff200fb24f4e9151c8c3fab1c74f09bc715ff98e2fbb",
+        "content_blake3": "3bd604730efb7b9581465cb4e236cf63957a2498d9e262028539d5f85fc6a84f",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for the deterministic fork-choice ordering helper, with the TLA+ finality model retained as bounded abstraction evidence. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
         "reviewed_at": "2026-06-06",
         "reviewer": "formal-core-operator",
@@ -4049,7 +4049,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for consensus and native supply accounting behavior. Scope is executable accounting only. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "f1e8272e11e1e838b39d5b70b96ad53f4f6f3f9c66679e6242f6bd11d141b63d"
+        "content_blake3": "e3be06b4802fe8c3f5d7ef60995efb1da35bc3ebfc51e33bd292c993dcbb95fd"
       },
       "falsification_cases": [
         {
@@ -4117,7 +4117,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-09",
         "notes": "Pending independent review. Previous internal assessment: Accepted as Lean theorem evidence plus generated Rust conformance vectors for the executable block-subsidy schedule. Scope is the schedule helper, not the economics of the schedule. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "c6beea59128cbdc4e5c6e4ee2403b71c4ade2bdf4f47d04000b81778bf683f9f"
+        "content_blake3": "bb566be6f67d256194232666eb05414675ec2cc20e5cedabcbb83f7d23275fc4"
       },
       "falsification_cases": [
         {
@@ -4479,7 +4479,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks native coinbase accounting admission only. It does not prove encrypted coinbase note construction, coinbase ciphertext hash binding, transfer proof soundness, monetary policy economics beyond the current subsidy helper, full action payload validation, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "b977c548b59674ee78f6d962158ce7e39962e5fde84ad70ef03d247d96455550",
+        "content_blake3": "01f06fca698bf7e4190bec310df38b59a5be1810aa683803e61138467baa975f",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native coinbase accounting admission. Scope is block reward admission policy, not encrypted note construction or monetary economics. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
         "reviewed_at": "2026-06-07",
         "reviewer": "formal-core-operator",
@@ -4575,7 +4575,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for decoded native coinbase reward-note payload admission. Scope is payload/public metadata binding after route/scope admission. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "c87c96077021fa8a3cd5119a23e6667366e38698c04be25f4b32b4e302198abc"
+        "content_blake3": "34a5285e1754d6dc6bf482d85585e819c5912bece9f446278dfdf9222f0b9bc0"
       },
       "falsification_cases": [
         {
@@ -4799,7 +4799,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native mempool and staged-proof byte-budget admission. Scope is resource-budget arithmetic, not RPC exposure safety or sidecar availability. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal v0.11 binding repair (2026-10-23): the legacy startup wrapper delegates to build_validated_startup_state_with_limits_and_source; bind the unchanged check in its actual loop, preserving result handling, ordering and theorem references. This is conditional call-site integration metadata, not independent assurance.",
-        "content_blake3": "68d6a53d2235ffe45f12bba9ffbce8d2fd93844fc6d57c9845be7a4c01f44f92"
+        "content_blake3": "4336961bfdb45c830cdd5b0f344934eec0f616e6ec297848f5f1c41613fc59cc"
       },
       "falsification_cases": [
         {
@@ -5081,7 +5081,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native JSON-RPC admission. Scope is exposed RPC policy/range/cap gating, not RPC authentication or full handler semantics. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal v0.11 binding repair (2026-10-23): dispatch and method listing now use rpc_method_allowed, which applies the unsafe-method classifier in Safe mode and the separate loopback-only pool allowlist in Pool mode. Preserve the original dominating dispatch ordering via that actual helper and bind its Safe classifier edge explicitly. The existing Lean Safe/Unsafe policy theorems do not model the additional Pool mode; this call-site metadata is conditional integration evidence, not a new Pool theorem, independent audit or production authorization.",
-        "content_blake3": "b37963b3ea132672c22acacda00be508f9a81ebcdc682d2bdc74a94c994b6e2d"
+        "content_blake3": "ec19207ce6cbd58edb20af10eb3b8d19da4d2db9cef80fe4d2f1f3bf97ebd935"
       },
       "falsification_cases": [
         {
@@ -5905,7 +5905,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node covers active native sync admission, exact locator/action-body large-block transport, response import/recovery, and the pre-allocation rejection of incompatible stored-record tags. It does not authorize the conditional SyncBlockChunk metadata-record protocol, infer validity from AnnounceTip, prove arbitrary postcard/bincode parser correctness, prove hash collision resistance, prove complete fork discovery or network liveness, bound allocator behavior, prove sled or filesystem durability, or prove complete native-node equivalence. Cross-file carrier-to-import wiring remains source review plus focused runtime evidence where the same-file binding checker cannot express it.",
       "target_review": {
-        "content_blake3": "aaef6380e54e4179e93d29d1813415966f2e3de489af6942ea898e8dbba4f400",
+        "content_blake3": "fb87684add8e09f969d32f06f5833168d1c3b54efbb3f42ccb0d83b00df5d1b1",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus schema-v2 Rust conformance vectors for native sync response range, raw sync request/empty-response/pending-action ingress bytes, missing-block request range, zero-cap fail-closed behavior, saturating u64 edges, inbound response block-count rejection, bounded-request item-count facts for accepted outbound response ranges, served block_range publication facts, imported/stored-noncanonical/missing-parent/error outcome accounting, and progress-aware retry control. Missing-parent, all-known, and stored-side-branch no-progress cases block direct continuation; generated cases require either a changed well-formed recovery range or explicit deferred backoff, and production filters unchanged candidates before queueing. Additional implementation bindings and regressions require overwide block_range serving to remain capped before response publication, non-genesis canonical sync rows to decode action bodies and verify decoded action roots before publication, the final peer-visible range to pass the served-count/height/previous-parent/parent/verification table, local submit staging to precede pending-action broadcast, and peer-relay staging to precede rebroadcast. Scope is representative raw-byte ingress, semantic sync admission and retry control, peer relay staging gates, and canonical row materialization after decode, not full postcard parser correctness, full block validity, complete fork discovery, allocator behavior, transaction propagation liveness, or network liveness. Current transport authority is the exact locator/action-body carrier at tags 4 through 7; stored-record tags 8 and 9 reject before postcard allocation, AnnounceTip tag 10 is non-authoritative, and SyncBlockChunkAdmission is conditional inactive evidence only. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal v0.11 binding repair (2026-10-23): canonical block decoding propagates the byte-aware payload-budget helper before allocation and action decoding. That helper propagates the existing count-budget check and separately enforces route-specific per-payload limits, aggregate byte limits and iterator-count equality. Preserve the original fail-closed and dominating decode ordering through the actual helper. The recovery-specific allowance is current implementation behavior; these metadata edges do not add a theorem for its cap or an independent security qualification.",
         "reviewed_at": "2026-06-08",
         "reviewer": "formal-core-operator",
@@ -6056,7 +6056,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-08",
         "notes": "Pending independent review. Internal assessment: real Lean theorem evidence plus generated Rust conformance vectors for native block-template action admission and unconditional candidate retirement. Scope is the cheap local selection gate before mining work, not transaction-proof soundness or global miner fairness. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal v0.11 binding repair (2026-10-23): the legacy startup wrapper delegates to build_validated_startup_state_with_limits_and_source; bind the unchanged check in its actual loop, preserving result handling, ordering and theorem references. This is conditional call-site integration metadata, not independent assurance.",
-        "content_blake3": "c5eac02930b2981693077c95706c3b66328a539fcf9a99f354b41baf5e24d1d0"
+        "content_blake3": "a849a649787be5c2693b346fff9923a858d911a7510c61cc45aed1a83fd6aadf"
       },
       "falsification_cases": [
         {
@@ -6204,7 +6204,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-09",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native local mined-work freshness admission. Scope excludes work-template construction, pending-action replay, body commitment replay, supply accounting, and PoW threshold verification. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "8a91d20d3ca74f68a9a21e8ec64af64f8b375aa8d7d41e631b6db55f9e13dcbe"
+        "content_blake3": "5d0d05a410b71d182b27fc5bd806d428486de0a753e5822539ae4c75ccc1b76a"
       },
       "falsification_cases": [
         {
@@ -6562,7 +6562,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks the explicit storage durability decision table and supported operation labels, and statically binds the direct mutation paths to the typed database barrier before publication or success. It records only lexical order plus focused-test evidence for grouped pending-action batch error propagation, and records graceful-shutdown flush-failure propagation as open. Empty fast paths perform no mutation and require no flush. The node does not prove sled implementation correctness, crash consistency, operating-system fsync semantics, disk firmware honesty, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "115c3e48ec624ca93a9df079d866100697e4e1a79a09fba611d912e7fc6dc3df",
+        "content_blake3": "6ff18b13eb584abd1b294dfa1d4f8636768188f13d8ade6a063bdede8045a589",
         "notes": "Pending independent review. Previous internal assessment: Accepted as Lean theorem evidence plus generated Rust conformance vectors for the explicit native storage durability barrier. Scope is the admission table and production wiring around supported storage-operation labels, sled transaction/write success, plus explicit database flush; it does not prove sled or operating-system crash semantics. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal v0.11 binding repair (2026-10-23): the legacy startup wrapper delegates to build_validated_startup_state_with_limits_and_source; bind the unchanged check in its actual loop, preserving result handling, ordering and theorem references. This is conditional call-site integration metadata, not independent assurance. Internal v0.11 binding repair (2026-10-23): bind production load_best_or_genesis_for_network, which propagates exact metadata decoding and the genesis durability barrier. The old unscoped function is a test-only compatibility wrapper; no production obligation is attributed to it. Existing result propagation, theorem content, review status and authority remain unchanged.",
         "reviewed_at": "2026-06-12",
         "reviewer": "formal-core-operator",
@@ -6864,7 +6864,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks the native atomic commit manifest table, including `CanonicalSuffixReorgCommit` with zero block-record writes over exact durable pre-stored suffix rows, the distinct `TipExtensionBatchCommit` chain-count write rule, and the exact zero-or-one equality between a source-present typed Poseidon2 V8 plan and the count produced after its transaction-local application. It source-binds the exact synchronous mined and canonical-suffix methods on the unique selected-library `NativeNode` to that helper and pins the selected runtime source bodies by ordered parsed-AST digest. The count claim does not enumerate the typed plan's exact rows, prove compiler/name-resolution equivalence, or prove the absence of arbitrary indirect post-helper row mutation; exact typed rows remain the plan/apply/readback contract. It also does not prove the source verifier or plan constructor, the suffix algorithm, operator/service reachability from the selected binary, deployed artifact identity, sled transaction implementation correctness, filesystem durability, OS fsync semantics, disk firmware behavior, row byte serialization correctness beyond existing codec gates, raw action replay equivalence, or complete native-node equivalence. The historical whole-index reorg source contains the transaction-local helper before shared-tree removal, but its closure-local call and older method signature are not accepted by the static binding checker; checker-level call binding, result propagation, and dominance for that path remain an explicit residual supported by focused rollback and restart tests.",
       "target_review": {
-        "content_blake3": "f8cb5ec565cea5e2a16711aa97949b66cf013382f48b99476f221ba6fafa1e32",
+        "content_blake3": "ff905fa489a89e8d7119d89afa907c69deae10998e3e45c3d33c6e5254918792",
         "notes": "Pending independent review. The Lean table and generated vectors include the active canonical-suffix kind with exact durable pre-storage and zero canonical-transaction block-record writes, the separate tip-extension chain-count rule, and exact zero-or-one Poseidon2 V8 source/application count equality. Rust derives the actual count only after the raw typed apply inside the shared transaction. Exact typed-plan rows remain source-verified by the separate plan contract and are not enumerated by this manifest theorem. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
         "reviewed_at": "2026-06-12",
         "reviewer": "formal-core-operator",
@@ -7019,7 +7019,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks native mining work-template admission only. It does not prove pending-action preview correctness, action validity, header preimage hash security, PoW seal search or liveness, import-time body replay, supply accounting, storage durability, fork-choice convergence, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "aa4869689ac6ae1c8e65c4d91ee0fcd47758aa70bb14ca9fe0c5661d730ce567",
+        "content_blake3": "2fd98bb6650415477b40dfe1b5dd44f518af2f0ad8fe02a44382ea28c8f1f29f",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native mining work-template admission. Scope excludes pending-action preview, body replay, supply accounting, PoW seal liveness, and full native-node equivalence. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
         "reviewed_at": "2026-06-09",
         "reviewer": "formal-core-operator",
@@ -7102,7 +7102,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-09",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native recursive artifact context admission. Scope excludes tx-leaf proof soundness, recursive proof cryptographic soundness, body replay, and full native-node equivalence. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal v0.11 branch-binding repair (2026-10-23): unconditional validate_native_block_artifact_proof_policy dominates the original artifact decoders/verifier and propagates both existing branches. Legacy retains the supplied manifest and the existing theorem-indexed legacy context check; non-Legacy retains its separate exact source-capability and child-height checks. These call edges do not claim a Lean refinement theorem for the non-Legacy branch or transfer Legacy authority to it. Exact checker scope (2026-10-23): the restricted call recognizer resolves bare/self calls and same-impl self/Self methods; it does not certify arbitrary-receiver node.validate_network_block_proof_policy calls. The unsupported newly introduced edge is therefore omitted. The unconditional wrapper dominance and every original Legacy result/order obligation remain enforced. Non-Legacy method-result propagation is independently inspected and covered by existing focused source tests, conditional on that source; it is not checker-certified refinement, proof equivalence or increased production authority.",
-        "content_blake3": "21c1654070906c1447393fb3b8967d030032c31153ab42f63c3754f8ae85f28f"
+        "content_blake3": "002c9bf6c946170a9cd43efd37cdae74d28d20500ffca1fcc039c59acb96ef21"
       },
       "falsification_cases": [
         {
@@ -7465,7 +7465,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native DA sidecar upload admission. Persisted staged ciphertext reload is tracked separately by native.staged-ciphertext-reload. Scope is upload admission policy, not parser correctness, RPC exposure safety, or sidecar availability. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "1c14004089ba2b8e7caaae1128c500eece6a4d04c1643d5940d9e63d636a98be"
+        "content_blake3": "353b96dc02a0e7a1146b6675e1636d26add0197477a45823ca2c66b5bebb861a"
       },
       "falsification_cases": [
         {
@@ -7647,7 +7647,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and checks pre-heavy decision-table composition and active locator/action-body bounds. It does not activate the conditional stored-record chunk protocol, bound every allocator or transient decode peak, prove arbitrary parser internals, establish cryptographic soundness, prove persistence durability, or prove complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "facc4240a4aea9d19214b852573a2577811536f98ba5fa6a2b8efa5afe58d2fb",
+        "content_blake3": "d6b41de554692bd45c0232a5740b13f8dd4be80b7460a6a26e4f8f4b62951db7",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a Lean composition over existing theorem-backed admission surfaces, now including strict action-request projection facts, transfer payload, candidate artifact, tx-leaf artifact parser/resource bounds, receipt-root schedule/resource facts, and pending/block action parser resource caps. The block-action cap slice is backed by a production pre-decode helper and Rust regression; tx-leaf and receipt-root resource projections are backed by generated superneo-hegemon vectors. Active oversized-block resource authority is BlockBodyChunkTransportAdmission over the exact locator/action-body carrier. SyncBlockChunkAdmission remains conditional and inactive because tags 8 and 9 reject before postcard allocation. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
         "reviewed_at": "2026-06-15",
         "reviewer": "formal-core-operator",
@@ -8009,7 +8009,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks native pending-action startup key/hash reload behavior. Blueprint bindings and regressions additionally require startup to reject persisted arrival-time-only semantic duplicates and semantically re-admit loaded pending actions against the loaded canonical state, bridge replay set, staged ciphertext metadata, staged proof cache, and mempool resource budgets before NativeState publication; they also require canonical reorg pending resurrection to revalidate the final pending set before atomic reorg persistence or in-memory publication. It does not prove sled atomicity, filesystem durability, I/O error behavior, SCALE decode implementation equivalence, BLAKE3 pending_action_hash or pending_action_semantic_hash derivation/security or implementation equivalence, tx leaf proof soundness, mining selection fairness, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "2c1785f29b2d46dfc99cfa26f3c47d964988d6057d54d2ce6d2a3881e760f626",
+        "content_blake3": "03230ca724549eb051f031017e3199c608f5e3ffb0d0ce34813fb1ec51ac7cd3",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native pending-action startup key/hash reload. Semantic startup re-admission and canonical reorg pending resurrection are covered by Rust implementation bindings and focused regressions; sled atomicity, filesystem durability, SCALE decode equivalence, and pending_action_hash cryptographic security remain outside Lean. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal v0.11 binding repair (2026-10-23): record the actual source-aware startup/network-method call chain while preserving fail-closed checks and ordering. Some(source) authorizes the exact launch height/binding/route; None retains legacy admission. The unchanged PendingActionReload theorems concern key/hash/uniqueness booleans, not source-capability derivation, semantic/proof soundness or deferred asset-retention preflight. Asset reorg retention is not immediate cryptographic revalidation. Independent review and production authorization remain unresolved. Internal v0.11 branch-binding repair (2026-10-23): stage_revalidated_pending_action directly checks the extracted validator result and returns on error. The helper propagates the ordinary mempool validator and preserves the separate asset-retention eligibility/count/payload branch. Retention is not proof acceptance; later selection/inclusion still checks actual proof, policy and state. Existing fail-closed obligations remain unchanged, with no new semantic-refinement or production-authority claim.",
         "reviewed_at": "2026-06-11",
         "reviewer": "formal-core-operator",
@@ -8093,7 +8093,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-10",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for per-entry native staged ciphertext startup reload. Scope is the deterministic admission/drop table over observed persisted entries; sled atomicity, filesystem durability, and ciphertext-hash cryptographic security remain outside Lean. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "5f68c45471ce4a08b9fb21c00af5950b7a005f52ecf880c49f2c41d4d8239856"
+        "content_blake3": "2d95bc31e351123f227c81867417527b25e9230e7f814e2db3422c56ebfc9f59"
       },
       "falsification_cases": [
         {
@@ -8200,7 +8200,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-11",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for per-entry native staged proof startup reload. Scope is the deterministic admission/drop table over observed persisted proof-cache entries, including native tx-leaf public-field binding-hash equality with the persisted key; sled atomicity, filesystem durability, full proof byte parser correctness, cryptographic binding-hash security, and native tx-leaf proof soundness remain outside Lean. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "e97510c58b8e21e3bc10153057c768ca652422f725f39b3e1df13d3db494dde1"
+        "content_blake3": "2d09946019c2d97a8daa50ef07a0aee88b88a0d949a7624463accf53fbdf1f62"
       },
       "falsification_cases": [
         {
@@ -8290,7 +8290,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Internal assessment: real Lean theorem evidence plus generated Rust conformance vectors for historical candidate-artifact decoding, explicit custom proof-kind rejection, bounded resource projection, and representative raw SCALE wire exact-decode conformance. Active candidate submission and template selection are retired. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "4cad5d2763b54e8916c3206540eac2e3dda0a43cf276849bbb284170a7a1242b"
+        "content_blake3": "056ad66102fcc2437bc95eb730fc842aa85d9052f489c78faf9ee3aef7b5f2bc"
       },
       "falsification_cases": [
         {
@@ -8362,7 +8362,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Retained research evidence for the retired recursive candidate format. No active production caller remains. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "f9aa8db0c8dc060403576136c48ec0665b608332792cdb61c5403f4558d89e23"
+        "content_blake3": "8f8c277387826a104f165f780faf614354ae0e82e95968772a83c363fde1ea24"
       },
       "falsification_cases": [
         {
@@ -8632,7 +8632,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks deterministic native block-artifact/action equality gates, including action-fee equality, stablecoin public payload equality, active-count agreement, tx balance-tag projection, receipt statement/public-input/proof digest agreement, backend/profile agreement, and payload-hash agreement. The blueprint/regression gate requires native block-artifact verification before mined commit/publication, announced side-branch persistence or reorg, and canonical replay memory application, and requires sidecar ciphertext bytes used for artifact tx construction to pass the same canonical materialization checks used by replay planning. It does not prove SCALE decoder correctness, ciphertext hash derivation/security, DA-root hash security/equivalence, tx statement commitment hash security/equivalence, recursive proof cryptographic soundness, native tx-leaf proof soundness, candidate selection fairness, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "3ba5cf99e5c9d35e78810d6df47658c2b6c1223f5e8e1e04f39c9a3bc4d0724d",
+        "content_blake3": "60de696a2dc1a1d435b1d9a17c5c2fb5b727be3d6b6c1f7601eacf7fcaba5f71",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for deterministic block-artifact/action equality gates. Scope is binding admission after decoding and computed production predicates, not recursive proof cryptographic soundness. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
         "reviewed_at": "2026-06-07",
         "reviewer": "formal-core-operator",
@@ -8683,7 +8683,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a research-only cross-boundary composition. It narrows the native tx-leaf/action to canonical statement/proof facts assumption-free and to the accepted-transaction relation under deployed verifier soundness; it does not certify the backend proof system. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "75dd049439eae34f0c48ec0e25bd8f658c7fc3bdf6841739a2ddeae4d8735779"
+        "content_blake3": "5e626ce6f01f2e6bb505589a050670b596ef7c5b5d42ce8bc4a11ea6ec73d7e0"
       },
       "falsification_cases": [
         {
@@ -8772,7 +8772,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for the native transfer-key ordering predicate, accepted-transfer preimage construction, and public non-transfer semantic-hash preimage construction. Scope is ordering and local-arrival-insensitive preimage construction, not hash security, fairness policy, or full payload validation. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "9955fcf2bf8f811a5974506237ec2a9236ec15604a150285cb67bb25f283b8b3"
+        "content_blake3": "6f571c548218ae5adca0a5f4b8afd1ffb31a0caf49570861117211f3fbd323a1"
       },
       "falsification_cases": [
         {
@@ -8852,7 +8852,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native block action hash/count admission. Scope is the cheap admission table before action semantic validation. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "d6b32cbc0c8a559522fb65a7945eb22d47b0e635451d545d6a256fd53632d771"
+        "content_blake3": "a42941f94c4ef8c3a98b716e713f14015c5ec90c37550cd656212eeabcaf4d91"
       },
       "falsification_cases": [
         {
@@ -9003,7 +9003,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks native action-root preimage bytes only. It does not prove BLAKE3 collision resistance, pending_action_hash derivation, SCALE encoding implementation equivalence, full block action payload validation, transfer-key ordering, tx leaf proof soundness, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "c3a83719b269ec99ab02d7cd786c80ccdb3abec52f9430d18ce5a80bc725d79a",
+        "content_blake3": "b6d5eb4d00bf197bcc8d041cc3314c196295526d9ae6cb597a6831a69d579d37",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for the native block action-root transcript grammar before hashing. Scope excludes BLAKE3 security and full action semantics. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
         "reviewed_at": "2026-06-09",
         "reviewer": "formal-core-operator",
@@ -9338,7 +9338,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks the pure native action-state effect planner called before pending root preview, memory replay, sled-backed import, and canonical index rebuild mutation. Canonical-state and bridge replay reload binding are covered by separate Lean-gated startup admission nodes. It does not prove BLAKE3 action/hash security, SCALE decoding correctness, bridge receipt soundness, tx leaf proof soundness, commitment-tree hash security, storage atomicity under I/O failure, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "ad4373013259f5164421b72b3b6b05c47960ff428a404e35d5646041a0ec83e7",
+        "content_blake3": "4e36747efedf367206f07b47e157520591414f80229a1edf0660765134bc6a86",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native action state-effect planning before root derivation or mutation. Canonical-state and bridge replay reload binding are separate Lean-gated startup admission nodes. Scope excludes storage atomicity under I/O failure and full action semantics. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
         "reviewed_at": "2026-06-10",
         "reviewer": "formal-core-operator",
@@ -9473,7 +9473,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks native announced-block pre-PoW admission only. Blueprint bindings additionally require propagation of native metadata projection, whose miner-identity and PoW checks are modeled by separate claims. It does not prove PoW hash-threshold validity, light-client header verification, body commitment replay, action payload validation, fork-choice, sync liveness, wall-clock correctness, storage atomicity under I/O failure, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "6161f1b744110734d245bc5b4a2d59d03e82b9f56c62b0b64462504077e8288e",
+        "content_blake3": "548ca573b74daa471b3612b1b7d57ac9c16ff339449e63dd3ada9c52a1b30c01",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native announced-block pre-PoW admission. Scope excludes PoW cryptographic/hash-threshold verification and body commitment replay. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
         "reviewed_at": "2026-06-11",
         "reviewer": "formal-core-operator",
@@ -9608,7 +9608,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks the deterministic native canonical block-index startup reload admission and missing-genesis-marker repair table. Rust type and call bindings establish reuse of one `ValidatedCanonicalChainSnapshot` by bridge replay validation, header-MMR reconstruction, and replay/index repair, but Lean does not prove those consumers' complete algorithms here; their own claims and regressions remain necessary. It does not prove sled atomicity, filesystem durability, bincode implementation correctness, hash collision resistance, MMR hash correctness, full historical replay correctness, state-root reload equivalence, consumed bridge replay equivalence, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "571fe731a9e3376a4b11e45bef42f954d79ea6d3efa4d1baf7f2f6add6b79d6e",
+        "content_blake3": "f1ab7c3f7ca1d7f38b6a500e272cbb7aba603fe4676a25ba9625d431564e5713",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native canonical block-index startup reload. Scope is the deterministic admission and repair table over observed persisted metadata; sled atomicity and filesystem durability remain outside Lean. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal v0.11 selected-network startup binding reconciliation (2026-10-23): NativeNode::open now propagates validate_loaded_block_indexes_for_network and hands its typed ValidatedCanonicalChainSnapshot to the same startup consumers, with build_validated_startup_state_with_limits_and_source as the actual fail-closed startup successor. Existing propagation, ordering, dominance and theorem references remain enforced. The selected expected genesis is produced by genesis_meta_for_network(pow_bits, network), and open passes config.network. The Lean admission table remains conditional on those selected network parameters and does not prove complete network-identity or native-node equivalence.",
         "reviewed_at": "2026-06-11",
         "reviewer": "formal-core-operator",
@@ -9684,7 +9684,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-11",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native canonical commitment/nullifier startup reload. Scope is the deterministic admission table over observed persisted state; sled atomicity, filesystem durability, and hash security remain outside Lean. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "f97d3048e3b336bf394591321b7b20ccad01250fa6242caef2583de79246652e"
+        "content_blake3": "73dd9d398d9cc0c32f34191007db8b2de663e86b51111ddb5921eb4c051f0914"
       },
       "falsification_cases": [
         {
@@ -9775,7 +9775,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-11",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native inbound bridge replay startup reload. Scope is the deterministic admission table over observed persisted replay state and replay-derived canonical history; sled atomicity, filesystem durability, action decoding correctness, and replay-key hash security remain outside Lean. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "f29b901860409289e064d45ced329a482885f5f89a25804c23597f9b3db3db78"
+        "content_blake3": "59b37f02718e8fcf5586f6f44a9d8e2a7f0998a4cb8b8c3356cdb4d46228ee48"
       },
       "falsification_cases": [
         {
@@ -10835,7 +10835,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks strict native codec admission, current-only native metadata decode with explicit retired-format rejection, concrete PendingAction SCALE wire conformance for no-candidate actions plus recursive-block and bounded receipt-root CandidateArtifact::Some lanes, concrete MintCoinbaseArgs SCALE wire conformance, concrete ShieldedTransferInlineArgs SCALE route-payload conformance for bounded empty, one-output, and stablecoin-some inline lanes, concrete ShieldedTransferSidecarArgs SCALE route-payload conformance for bounded empty, one-output, and stablecoin-some sidecar lanes, concrete OutboundBridgeArgsV1 SCALE route-payload conformance, concrete InboundBridgeArgsV1 SCALE route-payload conformance, concrete BridgeVerifierRegistrationV1 SCALE route-payload conformance, an independent native metadata bincode mutation-oracle corpus, a bounded codec-canonical publication certificate over accepted route-wire witnesses, and theorem-level production-binding projections for route exact decode/full consumption/canonical re-encode plus pre-heavy ordering. It does not prove postcard, parity-scale-codec, or bincode parser implementation correctness for all arbitrary bytes, arbitrary custom CandidateArtifact payload grammars, arbitrary stablecoin policy semantics beyond these wire fixtures, BLAKE3 collision resistance, sync networking liveness, full action payload validation, tx leaf proof soundness, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "86d077548f6f99c71b00d0bb9d912521d1193e62245332255269ba65439feba7",
+        "content_blake3": "fe273c8712b225c79500e7d085de7abd28c8b36dd37ac248e6d76012386fd886",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for strict native codec admission at sync, metadata current-only with explicit legacy rejection, block-action decode boundaries, concrete PendingAction wire lanes, concrete MintCoinbaseArgs route bytes, concrete ShieldedTransferInlineArgs route bytes, concrete ShieldedTransferSidecarArgs route bytes, concrete OutboundBridgeArgsV1 route bytes, concrete InboundBridgeArgsV1 route bytes, and concrete BridgeVerifierRegistrationV1 route bytes. The codec-canonical publication boundary now packages accepted exact decode and canonical publication facts on one witness, and the bounded codec gate ties concrete PendingAction, MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs, OutboundBridgeArgsV1, InboundBridgeArgsV1, and BridgeVerifierRegistrationV1 wire witnesses to that review surface. The new production-binding projections expose route-wire exact decode, full consumption, canonical re-encode, current-format acceptance and legacy-rejection ordering, and pre-heavy ordering before expensive work. Scope is exact parser consumption and count/source selection, not parser implementation correctness. Native sync codec authority now distinguishes active exact-carrier tags 4 through 7, fail-closed stored-record tags 8 and 9 before postcard allocation, and non-authoritative AnnounceTip tag 10. Retained old-layout Lean vectors are conditional evidence only. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal v0.11 binding repair (2026-10-23): bind production load_best_or_genesis_for_network, which propagates exact metadata decoding and the genesis durability barrier. The old unscoped function is a test-only compatibility wrapper; no production obligation is attributed to it. Existing result propagation, theorem content, review status and authority remain unchanged.",
         "reviewed_at": "2026-06-07",
         "reviewer": "formal-core-operator",
@@ -10953,7 +10953,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-12",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a bounded conformance/vector-and-wiring hardening slice for the native RPC action projection boundary. This does not prove complete SCALE parser implementation correctness or the later block replay semantics. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "c1eca00cf53efff6ec62856e4672ea9b2dee942ffd7129411e3fc5882c18bafb"
+        "content_blake3": "43f1164a3cc484c20bafd24560cc4cb570dc7afbfadd8c89877dcf6ec5060192"
       },
       "falsification_cases": [
         {
@@ -11082,7 +11082,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native action route/scope admission. Scope is the cheap route and public metadata-shape table before deep action payload validation. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "9a00527ec25d11b77d9043b5891d4868ebe2a706da5fa2a9eeb5935034134a44"
+        "content_blake3": "7014dce651ae5f4a003853d7de0b97e9defd53832226ac001ad4525cc481cc92"
       },
       "falsification_cases": [
         {
@@ -11456,7 +11456,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for decoded bridge action payload admission and raw BridgeMintPayloadV1 exact-decode-to-policy conformance. Scope is cheap pre-receipt payload admission and verified-receipt mint-payload handoff; external receipt verification remains separate and RISC Zero remains disabled/fail-closed in the release native node. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "4815274104d26230b7bea94e1df88f1f3b9b9e15ad19a236bf065460bc78c485"
+        "content_blake3": "022a5e422dab1855364844773efbcd643747bde9e15c3a9042fdb243cbb4569e"
       },
       "falsification_cases": [
         {
@@ -11574,7 +11574,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-14",
         "notes": "Pending independent review. Previous internal assessment: Accepted as Lean theorem evidence plus generated Rust conformance vectors for deterministic post-verifier bridge receipt output admission. Scope is the decoded output gate, not receipt cryptographic soundness. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "5d5d07ae32d6fbe4c82b3c5a060508e177755d5574e5380aa6a78bbd6b1b786c"
+        "content_blake3": "86c89590ca6c15391b18c546ee397dfcce8d0bd230b5f55cc0e84ed8f50f6f32"
       },
       "falsification_cases": [
         {
@@ -11654,7 +11654,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-11",
         "notes": "Pending independent review. Previous internal assessment: Accepted as Lean theorem evidence plus generated Rust conformance vectors for bounded latest-message bridge witness backscan selection. Scope is deterministic scan selection/rejection before the resolved block's export-admission gate. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "0ffcad30fcbe744771c6b13629399b4dcd95e6f663b02c1e8a2591dc877e0f42"
+        "content_blake3": "1cdc4a1c828cbc11a34edecb27bbd01b53f869d1cd5fd5f33704f0b3903f8f20"
       },
       "falsification_cases": [
         {
@@ -11754,7 +11754,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-11",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native outbound bridge witness export admission. Scope is the deterministic native export gate and confirmation-count output before cryptographic MMR/FlyClient/light-client soundness assumptions. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "a7a1f146e04b76b3181015fbed896a4ec9c45f2673528db143db5cf5c666d17d"
+        "content_blake3": "3b1badb6287dc26b804644d89f923c2e96ebf309b1a6dae84f54df05ef62fbdf"
       },
       "falsification_cases": [
         {
@@ -11913,7 +11913,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-17",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for decoded transfer payload admission and inline ciphertext bounded-resource projection. Scope is the decoded payload/resource table after the existing submit-action public_args cap and exact SCALE decode, before nullifier replay, anchor-state, and tx-leaf proof verification. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "9dd55be51562e50f6f65a519d0ef18c5903be4017466ca322c7f5fab8d41ce50"
+        "content_blake3": "337940c8f4f65a563127e80526b9e4c48ec849a47a203789781bcc35af5ed608"
       },
       "falsification_cases": [
         {
@@ -12046,7 +12046,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native transfer state admission. Scope is the cheap post-payload transfer state table before tx-leaf proof and recursive artifact verification. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "99021a50da54830d51939a1de06a0261496a5cfc6df856e2775497b52c48016a"
+        "content_blake3": "6dcffee44c884f1ca806a44197d313924c0185cfc82908444e6d2f620259c361"
       },
       "falsification_cases": [
         {
@@ -12311,7 +12311,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks decoded native block-action validation composition only. A separate production binding and regression require arrival-time-insensitive semantic duplicate rejection before transfer/replay state mutation. It does not prove SCALE decoder correctness, BLAKE3 pending_action_hash or pending_action_semantic_hash security or implementation equivalence, BLAKE2 transfer-key derivation, bridge payload-hash security, ciphertext hash derivation/security, bridge receipt soundness, native tx-leaf proof soundness, recursive proof soundness, storage atomicity or durability, PoW threshold validity, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "8118ff6a32f24cab0a2704d04e95a693e856366595f693e7e208308df2761f0a",
+        "content_blake3": "86145987961f9a457b82a1c29e9c8e7cae80ec2b7cd71cc7ff3cd744b697a89a",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a decoded block-action validation composition boundary over production-derived route, payload, replay, order, and transfer-state predicates. It narrows the gap between raw decoded actions and block replay/accounting but is not a complete native-node equivalence proof. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
         "reviewed_at": "2026-06-11",
         "reviewer": "formal-core-operator",
@@ -12359,7 +12359,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a Lean composition theorem that names the decoded-action-validation to replay-publication boundary. The stronger shared-actions entry point derives row/count agreement from accepted wire replay projection, and the generated conformance gate binds the production helper composition and rejection order. Production construction from arbitrary raw bytes remains explicit until deeper native-node parser refinement is mechanized. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "ed9d6cb379378c51a7cd7480e74ab647ea35ada57f0273d78dcba4b28e0f8591"
+        "content_blake3": "48f2cd0e370c92b68234bba3eca9c9dbc0f450146c8a98d6c51ca852d298893e"
       },
       "falsification_cases": [
         {
@@ -12421,7 +12421,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a theorem-level sync/raw-batch publication composition. The stronger entry point derives decoded-row/raw-replay agreement from accepted wire replay projection, while arbitrary-byte parser internals and production construction of that projection remain residual implementation-equivalence work. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "03e18cf4be54197bda570912b22fbb8a96392518f5ff589779eb0057cc8e2baa"
+        "content_blake3": "9bc3489e4e4ff0e799b1c2fa92a4800d3039f9dac0e45fea2be468383a63f5a1"
       },
       "falsification_cases": [
         {
@@ -12538,7 +12538,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native derived block commitment admission. Scope is equality of already-derived roots, counts, header history, and checked supply digest. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "8c2758f4b4d73059b9316d493d45a73836bad3e74de49c1c880e9e779e18ea4d"
+        "content_blake3": "6df9d9cd67068b7e64b57b10048d5720bb1357a2c4b6f055df53393e59f4f384"
       },
       "falsification_cases": [
         {
@@ -12846,7 +12846,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks ordered action-stream planning over already-decoded action summaries. The blueprint/regression gate requires compact/hash-projection canonical stored reorg to finish semantic rebuild planning, exact-check and durability-flush the full winning suffix as pre-stored rows, and then execute `CanonicalSuffixReorgCommit` with zero block-record writes before in-memory publication. The separate `TipExtensionBatchCommit` fast path retains chain-count block writes. Startup canonical-index repair must plan before its atomic sled repair commit. Nonwinning announced side-branch block-record reload is covered separately by the native block replay-refinement implementation-binding gate. It does not prove SCALE decode equivalence, pending_action_hash security, nullifier derivation, inbound replay-key derivation, bridge receipt soundness, commitment-tree hash security, sled transaction implementation correctness, filesystem/fsync durability, full action payload validity, tx proof soundness, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "bbc2f77041aaabe162bbcdab5a4d837b908691d02b09f8669c1ea6b45c829c45",
+        "content_blake3": "f70d6ad971004a2ab07bdf134ccea21571415875f874c8765f35cc1d712da5c2",
         "notes": "Pending independent review. Previous internal assessment: Accepted as Lean theorem evidence plus generated Rust conformance vectors for ordered native action-stream planning. It narrows the multi-action replay gap; scope excludes raw action decoding, cryptographic derivations, storage durability, and full native-node equivalence. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
         "reviewed_at": "2026-06-11",
         "reviewer": "formal-core-operator",
@@ -12933,7 +12933,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks planned-start application over already-decoded action commitment counts and planned starts. It hardens release behavior by replacing debug-only planned-start assertions with propagated errors and by making in-memory commitment application fail closed before live-state mutation when the whole batch cannot append. It does not prove SCALE decode equivalence, full PendingAction field projection, ciphertext materialization row values beyond the separate wire-replay projection gate, tx-leaf proof/artifact binding, commitment-tree hash security, sled transaction correctness, filesystem durability, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "dafb8a55574cac35fe735aeaf06caae013af61b6a90015070301b85cc99dd503",
+        "content_blake3": "adab6157d9052e8f90537a01e4ac1d78bcb7a33a2bb8227871989208da3dff48",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a narrow Lean/vector/release-regression implementation-equivalence slice for applying action-stream planned starts. The production memory-apply path now also has a near-full-tree atomicity regression proving commitment batch overflow rejects before live tree/nullifier/pending mutation. Row-value projection is covered separately by native.action-wire-replay-projection-admission; full raw SCALE grammar and complete native-node equivalence remain out of scope. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
         "reviewed_at": "2026-06-12",
         "reviewer": "formal-core-operator",
@@ -13014,7 +13014,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks decoded action wire-to-replay projection for ciphertext row hashes/sizes and inbound bridge replay-key equality before replay rows are derived. It does not prove SCALE decode equivalence, complete raw PendingAction field projection, BLAKE3 ciphertext-hash security or implementation equivalence, bridge replay-key hash security/equivalence, bridge receipt soundness, tx-leaf proof/artifact binding, sled transaction correctness, filesystem durability, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "e5d2b5d732d80f1435b152cd18806c4d4dab89e8a94a7208613adf45115b08c4",
+        "content_blake3": "778fe1e2b3a5a2b4990231de3592bf07d9386227721fb2057bee161ac846c6e3",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a Lean/vector/release-regression implementation-equivalence slice for decoded action wire-to-replay row projection. Scope excludes raw SCALE grammar, hash-function security, bridge receipt soundness, and complete native-node equivalence. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
         "reviewed_at": "2026-06-12",
         "reviewer": "formal-core-operator",
@@ -13070,7 +13070,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a Lean composition slice over already production-bound DA, sidecar, artifact, semantic, wire projection, projected replay, and raw-decoded projected replay predicates. Scope excludes arbitrary raw byte parser equivalence, DA availability, hash security, recursive proof soundness, and complete native-node equivalence. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "a514d900a79169ed028abd8e6505e4e2b2b2eb6a29f5d685613d7c2d0d9ce17c"
+        "content_blake3": "1b1eaa74cd14f356b1a7cf1b93bda0d3995ab054d27f1333294c31667b68a2cd"
       },
       "falsification_cases": [
         {
@@ -13136,7 +13136,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a Lean composition slice over already production-bound raw ingress, sidecar reload, transfer-state, DA binding, and projected replay predicates. Scope excludes full parser byte refinement, DA availability, hash security, proof soundness, and complete native-node equivalence. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "8d39f39e83d04fb04561c5dbbb1a4d70182927501d1ec0cd6efc302df82789f7"
+        "content_blake3": "7814abdb825f1e0d7b8f526b553c06a6b0efce57bed93239ea6d4bcdec2b8530"
       },
       "falsification_cases": [
         {
@@ -13207,7 +13207,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean composition over already production-bound raw-ingress sidecar replay, pending-action byte publication, canonical publication, and native tx-leaf/canonical statement artifact predicates. Scope excludes arbitrary-byte parser internals, cryptographic soundness, DA availability, proof soundness, and complete native-node refinement. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "6b91e8f64d375f0ddf1eb327892a44172c43c5f57e4693155c8878011ccec4db"
+        "content_blake3": "3e3e7a0d0ad500ec76d125bb50b7414099725b88bfc807469a795d72a7f20848"
       },
       "falsification_cases": [
         {
@@ -13268,7 +13268,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean composition that names the pending-action parser/publication replay-row binding, validated-row boundary, and ordered field-row projection surface. Scope keeps arbitrary raw parser internals explicit. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "eea201b1a12cf59ad32c6e8f247a778d54a8b64fc9fe6713ab4b8785b4e3782f"
+        "content_blake3": "8dc186c68f21c53f3732c5462f72ae6bb12a38e69678c570db3754536dfe4056"
       },
       "falsification_cases": [
         {
@@ -13344,7 +13344,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean parser-shape/projection composition over the existing tx-leaf artifact parser, tx-leaf canonical surface, pending-action publication, raw-ingress publication, and explicit deployed verifier boundary predicates. Scope keeps the full parser-to-canonical vector projection, proof soundness, hash security, and complete native-node refinement explicit. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "eb95919b25adad831544e435411c5d8680199a0ad6e07ea4d3f08daa3a2cb074"
+        "content_blake3": "d92c890f46bc4d1049f64aeeaa95f5fc0a9a4d86505de5d46cf42b9804c15092"
       },
       "falsification_cases": [
         {
@@ -13427,7 +13427,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean composition over raw-ingress pending-action publication and existing transfer no-theft/input-slot authorization boundary predicates. Scope keeps deployed-verifier soundness explicit and excludes arbitrary-byte parser internals, cryptographic soundness, wallet custody, and complete native-node refinement. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "32ec846268d613ac7c95df3dddd577eac849831923d8806346bb89754c82f651"
+        "content_blake3": "3deb586827ddd1dce2a66ecca5a3bbfa292161fc83c29a65ff574aa2b9e3604c"
       },
       "falsification_cases": [
         {
@@ -13508,7 +13508,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean composition over raw-ingress pending-action publication and existing bridge mint/replay safety predicates. The production review certificate co-witnesses abstract mint/replay policy acceptance with inbound receipt admission, native backend review preconditions, explicit external PQ receipt verifier soundness, authorized asset delta, final canonical replay membership, and final duplicate rejection. The release-disabled theorem family proves the current release RISC Zero verifier cannot feed accepted receipt-mint policy publication when the policy receipt bit reflects that gate. Scope excludes arbitrary-byte parser internals, external receipt soundness, cryptographic soundness, DA availability, and complete native-node refinement. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "7af139941beac76e78d8cb2bafef2726c4fdb0fa39ec38ef6f2c5e98c2fb7fc4"
+        "content_blake3": "5cc82e4879fc54cf4317a28be810bbe76559765c58e229a83bec8fa68059580b"
       },
       "falsification_cases": [
         {
@@ -13924,7 +13924,7 @@
       "kind": "target_claim",
       "scope_boundary": "This node proves and vector-checks the composed replay/accounting helper now called by native mined-block import, announced-block import, explicit-chain canonical branch replay, and each stored-block replay used by canonical sync tip-extension batches over ordered decoded action summaries, materialized inline/sidecar ciphertext counts, checked native supply advancement, and block commitment predicates. The direct stored-block binding checks replay refinement before legacy artifact verification and memory application; outer sync loop-to-transaction/publication composition remains conditional integration evidence because the static checker cannot establish dominance across that loop. The blueprint/regression gate also requires a connected nonwinning sync suffix to propagate compact/hash-projection ancestry plus suffix streaming replay before selective missing-record Batch persistence, binds nonwinning announced side-branch persistence through a named block-record helper, checks reload without canonical-height replacement, and covers a combined disabled-inbound sidecar/nullifier/bridge-replay reorg candidate failing closed before publication. It does not prove SCALE decoder correctness, sled Batch or transaction implementation correctness or atomicity, filesystem/fsync durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full raw-action native-node replay equivalence, replay correctness outside the production-bound helpers, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, positive inbound bridge mint publication while the release path is disabled, or complete native-node equivalence.",
       "target_review": {
-        "content_blake3": "fab7a2b9362439f4cdbaccd9cf61556dbd00b9ea01450e5c83418f2660814a97",
+        "content_blake3": "f115466565ca2cda8230a98af143ec999d9d142903b585734b91331fbab52660",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a compositional Lean refinement boundary over existing production-derived predicates. It narrows the gap toward end-to-end no-counterfeiting but is not a complete native-node equivalence proof. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
         "reviewed_at": "2026-06-11",
         "reviewer": "formal-core-operator",
@@ -14011,7 +14011,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
         "notes": "Pending independent review. Previous internal assessment: Accepted as real Lean theorem evidence plus generated Rust conformance vectors for protocol-kernel bridge encoding and replay helper behavior. Native persisted replay reload canonical binding is separately covered by native.bridge-replay-reload. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "5ed03b450a69b8385c21d457c92c38ecdce282cb0bc7efd682026818b3b7c765"
+        "content_blake3": "38ad90919b8c2f3455c32a78ee7eaa4490c75ff133b9a8d10c09663bf15bc1cb"
       },
       "falsification_cases": [
         {
@@ -14306,7 +14306,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-11",
         "notes": "Pending independent review. Previous internal assessment: Pending independent review of the 64-bit reducer preimage classification, degree-support predicate, and package parity gate. This is arithmetic, vector, and byte-grammar evidence only; random-oracle independence, irreducibility, collision reduction, proof of knowledge, and production fold equivalence remain open. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal CI execution metadata refresh (2026-10-23): test optimization level 2 and two-job/Rayon concurrency bounds change execution cost; existing tests, overflow checks, debug assertions, strict release controls and timeout remain in force. This refresh adds no cryptographic assurance.",
-        "content_blake3": "c786458294238507a1377713b4f33c9c5f50be15598c97dd704335fe03d2f6ee"
+        "content_blake3": "aa9bafd5340633717363b84878f33d5d2aa0bfe0a356accbbddd9ed104e2b7ea"
       },
       "falsification_cases": [
         {
@@ -14372,7 +14372,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a fail-closed residual-risk node; it is not production-eligible bridge receipt acceptance. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "c8e9d4e6470d4264f1c3ae3535e7995da4fde677d97051022ee7bce6090a2d88"
+        "content_blake3": "d55da8e23c7d841dc5721403e1ef6a453fdd15ce9d42ea34a96b2d4ed76048fe"
       },
       "falsification_cases": [
         {
@@ -14515,7 +14515,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-13",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a non-production implementation-equivalence refinement across existing Lean action-stream, action-plan, tree-transition, accepted-ledger replay, and raw projection kernels. It now includes a raw-decoded ledger/tree replay lift, a Lean-vector-checked production append-transition certificate gate, a focused state-merkle independent append/path oracle, and an accepted raw-ingress append-publication surface whose append-summary indexes are derived from the executable action-plan row-start model and tied to canonical commitment-row indexes. It does not yet claim complete commitment-tree integrity. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "d093505ac9877483f5a31a056bdb2b627ce87984614f09706f2132838ab064db"
+        "content_blake3": "e4a76fc1ad4d110151429bff903887bc8a633e8bbafb06db58a8674b449ff3ad"
       },
       "falsification_cases": [
         {
@@ -14647,7 +14647,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean projection surface over existing raw-ingress pending-action tx-leaf publication facts. Parser, hash, statement-hash, and native tx-leaf proof-system soundness remain explicit assumptions. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization.",
-        "content_blake3": "2a3d4fc2594dcf15705efccbb95a135e0d929f429b5a4e1ca31307aaac5cc7a8"
+        "content_blake3": "bb391a691e556869094a2249501562f77366226aa11de4134afd125f3850dd82"
       },
       "falsification_cases": [
         {
@@ -14699,7 +14699,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean composition over raw-ingress sidecar and canonical publication predicates. DA availability, parser internals, hash security/equivalence, storage durability, proof soundness, and complete native-node equivalence remain explicit assumptions. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization.",
-        "content_blake3": "38e38480e161248c5ab58e1ab1657dd0ff7a7b83f096a6b0e5f132b68a8d0f1d"
+        "content_blake3": "99a386612c727cf92841df86a116346144f0a334926f3c0112bc1d9e119870c3"
       },
       "falsification_cases": [
         {
@@ -14766,7 +14766,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost top-level review surface over existing accepted parser/publication/projection predicates plus ordered field-row projection evidence, exact commitment/replay/ciphertext content binders, the accepted-block admission-safety certificate, and the canonical admission-safety certificate with explicit residuals. Parser internals, projection assumptions, hash security, proof soundness, DA availability, and complete native-node refinement remain explicit. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization.",
-        "content_blake3": "f351bf2f72cc00d577ea9c48e9bcbdd1b185bfe2f939c14acac9935163d1bef3"
+        "content_blake3": "2aea45a021f5c07444bea86efc7ad5da8606df4383ec3883b1b77e23155a70ed"
       },
       "falsification_cases": [
         {
@@ -14901,7 +14901,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean review surface over raw-ingress full-byte publication, production decoded/validated/materialized/wire projection facts, and tx-leaf ciphertext binding facts. The production replay path now also materializes committed sidecar ciphertexts from the canonical archive after staged DA cleanup while rechecking hash and size. The successor materialized consensus DA-blob refinement specializes row-to-Transaction::new and DA-blob equivalence into concrete relations for the transfer sidecar path; DA availability, DA-root hash/security, proof soundness, and complete native-node refinement remain explicit assumptions. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "3be14d0a5f221f581ecb2ec997201773563a9442457f99ed453d5d8da85a0603"
+        "content_blake3": "2a38d844ea3544eefef86fc47797ec001cde289d6c052909e417e7de7621a337"
       },
       "falsification_cases": [
         {
@@ -14974,7 +14974,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean refinement plus targeted Rust conformance test over the materialized sidecar transfer-to-consensus DA path. The concrete Transaction::new-to-DA-blob relation is proved for the production-shaped payload list, the projection variant derives the transfer-filtered transaction row package from the raw-ingress production projection facts, and the transfer-filtered bridge-replay separation theorem keeps projected bridge replay rows out of the consensus DA blob even in bridge-first mixed ordering. The integrated certificate ties that concrete DA package to SmallWood no-theft/conservation, native stablecoin policy authorization, accepted-block admission safety, and the open-assumption sidecar ciphertext privacy boundary on one materialized publication witness. The end-to-end theorem records all remaining residuals explicitly instead of hiding them in the publication certificate. DA availability, DA-root hash/security, proof soundness, parser internals, storage durability, and complete native-node refinement remain explicit. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "308517e081bb23711133c85b316883a02db698bb03f0b949d42d569536c0b490"
+        "content_blake3": "04983b75054d454fc102da8f844ffb69ee495130af4f34b7da709e5f70573304"
       },
       "falsification_cases": [
         {
@@ -15056,7 +15056,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean review surface over materialized DA publication, transfer no-theft/input-slot authorization, per-asset authorized-delta, public stablecoin-exception facts, the stablecoin mint exception payload surface, explicit live-policy authorization predicate carrying, and output-slot statement/proof artifact facts. Deployed verifier soundness, DA availability/hash security, production live stablecoin policy validity, materialized-row-to-Transaction::new equivalence, and complete native-node refinement remain explicit assumptions. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization.",
-        "content_blake3": "abb8695caeef1bfc07d82e1f3529fff3ccd89bdec8808be355609179ad11ffe8"
+        "content_blake3": "5aa581a2ab3cdf552b73bf4f67dfeb1582fe28eb0376f8642495ff1f58c2f826"
       },
       "falsification_cases": [
         {
@@ -15112,7 +15112,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a zero-runtime-cost Lean composition plus generated production conformance vectors over existing mined-work, block-commitment, and atomic mined-commit manifest gates. It strengthens the review surface but keeps PoW cryptographic threshold validity, replay/body equivalence, storage durability, and complete native-node refinement explicit. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "9c7f152344d13810aee61b4e67579dfaf4bd1814959c7d3c756bdd7d37c08efb"
+        "content_blake3": "ffa52be09013399d88cc2ee370ff6bbcb327fafd49c43b58e4a8bdce393d0139"
       },
       "falsification_cases": [
         {
@@ -15291,7 +15291,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-18",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a classification ratchet and roadmap. It does not discharge parser/native/proof/bridge residuals; it names them as mechanized work and prevents them from being hidden under broad cryptographic or infrastructure assumptions. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization.",
-        "content_blake3": "f0847e758e9caa4e2789f25b42695e000f9466dea73fbcfeef37a15b305cc59d"
+        "content_blake3": "b3491674de0dea3c9802ed2d004cc0d288b05ac32d045cd09d3db813b876ec01"
       },
       "falsification_cases": [
         {
@@ -15348,7 +15348,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-18",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a release-blocking system-model evidence gate. It does not prove external environmental honesty; it fails closed if required monitoring categories or evidence are removed. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "4c4e059ae5bc55c92b49b4c2c59d0611d247366355634942a273c2d3a661cfea"
+        "content_blake3": "99e9b124b70a2b1b3d5d62cfc48ad27fea7481c6c79d300291a1f09c1531be07"
       },
       "falsification_cases": [
         {
@@ -15448,7 +15448,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-13",
         "notes": "Pending final headless branch-diff review. Internal review rejected the first caller-populated row certificate and replaced it with an executable exact production-row decision before the conditional production-family reduction was credited; no production no-counterfeit closure was recorded. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "451b20c1d1ccf4d128c395889f8a39795042e9a8980b5abf5864d9f63b8aaaec"
+        "content_blake3": "056fbb83fa37d1dded40138116d50d5eac5df20c02a1299bc4c5bfc2bd0398ae"
       },
       "falsification_cases": [
         {

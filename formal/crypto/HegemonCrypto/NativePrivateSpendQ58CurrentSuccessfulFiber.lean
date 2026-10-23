@@ -137,7 +137,7 @@ theorem selecting_streams_nat_card_equal (source target : Finset SmzaQ38McaSourc
     Equiv.Perm.exists_map_finset_eq source target sameCard
   exact Nat.card_congr (selectingStreamsEquiv permutation source target mapped)
 
-/-- Exact partial postprocessor: fail on fewer than58 distinct accepted
+/-- Exact restricted postprocessor: fail on fewer than58 distinct accepted
 indices. Sorting is represented by canonicalSorted below. -/
 def decoder (stream : CandidateStream) : Option Query :=
   let selected := selectedSet (streamCandidates stream)

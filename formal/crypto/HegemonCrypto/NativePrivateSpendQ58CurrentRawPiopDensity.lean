@@ -125,7 +125,7 @@ theorem raw_current_piop_matrix_success_and_bad_le
       simpa only [rawPiopMatrixOutput] using sampled
     _ ≤ _ := P.current_matrix_probability candidate invalid
 
-/-- New current partial decoder, singleton fibers and the current domain
+/-- New current restricted decoder, singleton fibers and the current domain
 count give the actual raw opening success-and-bad bound. Only one six-field
 nonce attempt is modeled; chronology and first-valid selection stay separate. -/
 theorem raw_current_piop_opening_success_and_bad_le

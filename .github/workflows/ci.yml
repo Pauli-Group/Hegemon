@@ -411,6 +411,9 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
           shared-key: "core-rust"
+          # Target-cache pruning treats retained evidence as a Cargo profile.
+          # Keep registry reuse; restore evidence only from its authenticated archive.
+          cache-targets: false
       - name: Release binary build
         run: ./scripts/check-core.sh build
 

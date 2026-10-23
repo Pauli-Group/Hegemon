@@ -1187,12 +1187,14 @@ mod tests {
             .contains("chain id"));
         assert_eq!(node.best_meta(), initial);
         drop(node);
+        // Wait only for sled's transient advisory-lock release. The existing
+        // test helper returns the wrong-network validation error unchanged.
         let wrong_config = config(directory.path(), other);
-        let error = NativeNode::open(wrong_config)
+        let error = NativeNode::reopen_after_sled_release_for_test(wrong_config)
             .err()
             .expect("wrong manifest must fail before use");
         assert!(error.to_string().contains("another network"), "{error:#}");
-        let reopened = NativeNode::open(node_config).unwrap();
+        let reopened = NativeNode::reopen_after_sled_release_for_test(node_config).unwrap();
         assert_eq!(reopened.best_meta(), initial);
     }
 
@@ -1304,8 +1306,12 @@ mod action_scope_tests {
             DevelopmentRecoveryV1, RecoveryGenesisConfigV1,
         };
         let funding_address = wallet::RootSecret::from_bytes([0x43; 32])
-            .derive().poseidon2_v8_address(0).unwrap()
-            .shielded_address().encode().unwrap();
+            .derive()
+            .poseidon2_v8_address(0)
+            .unwrap()
+            .shielded_address()
+            .encode()
+            .unwrap();
         let mut selected = development_candidate_manifest(&funding_address).unwrap();
         let before = serde_json::to_vec(&selected).unwrap();
         let recovery = DevelopmentRecoveryV1::compiled(vec![RecoveryGenesisConfigV1 {

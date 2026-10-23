@@ -288,7 +288,8 @@ def compile_audit(cache, cold, seconds):
         for p in target.parent.glob(target.name+'*'):
             p.unlink()
         source_root = package.SOURCE_ROOT if source.is_relative_to(package.SOURCE_ROOT) else package.PACKAGE/'shared'
-        run([lean,*FLAGS,'-o',str(target),f'--root={source_root}',str(source)],env,deadline)
+        # Generated constraint tables can exceed 120s; retain the aggregate deadline.
+        run([lean,*FLAGS,'-o',str(target),f'--root={source_root}',str(source)],env,deadline,180)
         if not target.is_file():
             raise RuntimeError('compiler did not produce object')
         state[module] = {'key':key, 'parts':object_parts(target)}

@@ -174,9 +174,29 @@
       "after_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
       "before_sha256": "bae447660a12610766620cb7e2afacb6b0ad92a3370dd5f15db18e12e753b7ec"
     },
+    "circuits/transaction/src/asset_recovery_chacha_v1.rs": {
+      "after_sha256": "d9d051780a338cacf43fefb3ab3ba39d050fa921b4b0559094ed456d09d8f719",
+      "before_sha256": "523246cbd6a5440eddb5d62a09877bee29adac45fd7f01f8e996cfa9b386c284"
+    },
+    "circuits/transaction/src/asset_recovery_geometry_v1.rs": {
+      "after_sha256": "03de9a894015dac1e594c8e632beb025cb593b7b26c036f91cadf5469ee14807",
+      "before_sha256": "912d6469374a9a3c9e8805c3374e26dbdbda67b7534e6799f169aa30173c040a"
+    },
+    "circuits/transaction/src/asset_spend_v1/tests.rs": {
+      "after_sha256": "5b1b01c2ee7f91a9538096e7b5f592e1246d3cfe7505e717cef2a66603996124",
+      "before_sha256": "5fdcf939036b882ec1b4748498a1bd1e0233da3ec3dadadc007cd91fba1d8aff"
+    },
+    "circuits/transaction/src/asset_spend_v1_admission.rs": {
+      "after_sha256": "8d68021e52f56a00dd936987f5ce251defe977c80ddd9ae37600fda95aac556f",
+      "before_sha256": "e19ee867f5af10cc8234fa2384f11a5a9dc74703bc1760b39281d6a40877b530"
+    },
     "circuits/transaction/src/asset_spend_v1_state.rs": {
       "after_sha256": "27ff1a411a849d3f0b71b37422f9984facf447f48fe390c962da604c5bcb1b52",
       "before_sha256": "1006ed280fe8a16f8afb61934749c8fe8f4ffa0b5ebaed86b5a10315453b481b"
+    },
+    "circuits/transaction/src/asset_spend_v1_wire.rs": {
+      "after_sha256": "81d11e1a46de076d2501a90d1f91bfafa8ff14047c9d2e9292cf6047a52f22a2",
+      "before_sha256": "f72252f8c8e3297c115b745bde7130a3af47c011b21b46b2d04344fcac042d3d"
     },
     "circuits/transaction/src/smallwood_htlc/source_cse.rs": {
       "after_sha256": "9e573c5a8579a516f9cff092abdce06a7a04a49f212fccc14138b088b20f0be6",
@@ -189,6 +209,10 @@
     "config/poseidon2-width16-v1.json": {
       "after_sha256": "43b3c90bfcc1cf4b040e036ce7c32e17b637fd136f59dda0df149da91a0ab9bb",
       "before_sha256": "b213f05b7db08a26693e4663477ab200d3201b3d3eab2e1dc7635e272ffdddfa"
+    },
+    "experimental/htlc-prototype/proof-backend/Cargo.lock": {
+      "after_sha256": "ed8d205e44df98040490e7d3270d9ffbbfe242f1b5e5b9460ffbc238d3b72a0b",
+      "before_sha256": "03c7da68475157c7dd05a6fbfd8515c56a8b4062c1175e52030b0a41d2e35dfe"
     },
     "network/src/lib.rs": {
       "after_sha256": "a3776bf15654a5a3e7c2acc3e29acde25de0f157d8c534b191414e5be2a6ef3f",
@@ -229,6 +253,10 @@
     "node/src/native/mod.rs": {
       "after_sha256": "60496dc754362a21286d247a55fe76fae197aa7b5611251aaca041c182cac973",
       "before_sha256": "6be69238c26189dd48d921a5a9c8b2aa2a9057af05060ba62edd9f7d8234bfa9"
+    },
+    "node/src/native/network_profile.rs": {
+      "after_sha256": "c90231a2c84bd18dca45c8b35aee568fd4f65e37b8807e54aa57f47f2e60479c",
+      "before_sha256": "d1f5276aa03bd5f591a8fcb185761ca2edc26515b60ee1104f94127c9db33a7c"
     },
     "node/src/native/node_impl.rs": {
       "after_sha256": "e6efec45d1a9d3b4c5dee02f1a9d0f38d300a755c711d29ff0120b49a7ec5d00",
