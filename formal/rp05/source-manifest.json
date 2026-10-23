@@ -1366,7 +1366,7 @@
     },
     {
       "module": "HegemonCrypto.SmallWoodProductionPolynomials",
-      "sha256": "3ec7eefd5076da44d9fe661a2d474962ad4a7e36d074c12c642925b57886f200",
+      "sha256": "48ec8b90a5cc24489d4a0b43de272107759e8f7bba73f77ff5231c5097199c4d",
       "source": "formal/crypto/HegemonCrypto/SmallWoodProductionPolynomials.lean",
       "staged": "generated/Sources/HegemonCrypto/SmallWoodProductionPolynomials.lean"
     },
