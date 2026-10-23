@@ -278,7 +278,19 @@ PRIVATE_LAUNCH_ARTIFACTS = (("hegemon-node", "hegemon-node"), ("wallet", "wallet
 PRIVATE_LAUNCH_SCOPE = "source-owned-current86-private-spend-launch"
 
 
-V011_AUTHORITY_SHA256 = {'scripts/check_v011_release_successor.py': '260d6a7d9f8f2ed2a5f06124ed882481d0089c13f43528f07feefc680f92edc7', 'config/v011-release-successor.json': '3f46bf42acbbfab8400f18b80d5ecfab4d6984808574fb425b12ab3e830da2d0', 'scripts/materialize_v011_predecessor.py': '0dc2b129332bf1276e5790a2db2682946e54f5af6b6850eaca50ca9e17b4dee5', 'scripts/check_v011_public_chain_replay.py': '29c6655f1d8ced3ffa5a042e3c66f0567fc0ef465eda70de473e7a35054159dc', 'release-evidence/v0.11-public-chain-fixture/manifest.json': '16ce37d08a3bcfecca0f8dbe4c323f1f319d1da565ea5473d695a5c13c4676c0', 'release-evidence/v0.11-public-chain-fixture/native-chain.sled.tar.gz': '6ea33e96e3279d992475f7f1434b2d5c6ca161575c52ab4b675203ba3466f2c1', 'release-evidence/v0.11-predecessor/manifest.json': 'dbec7e35d7402e687c3a3aa19f70c45425a127a915c74185eb0054ed57aa76fc', 'scripts/check_private_spend_launch_authorization.py': '7f5265e5ddc8ec947bbc93df31df276c0fae787bfdcbc7b1e5a2547958ae60ab', 'scripts/check_v011_current_binary_proofs.py': 'a8b14c133d0d02b9e000fe30d22fbed4584e9836e439086974540c2943ea9f80', 'release-evidence/v0.11-current-proof-fixture/manifest.json': '8184f3bb1e77c03540a7e83a1a4efacf9b232c067d5f2781cf03167393c17057', 'scripts/security-audit.sh': 'd167e710e5b81389e8a2ba5383f7a3d6157476b30c6a4cf147d0dac5415c7c42', 'scripts/release_artifact_manifest.py': '17137d83d092b98c246b0fd7125bbb2f8ad71aba342fdc4717a071128c4efb6a', 'scripts/check_release_launcher_policy.py': '51700e93ac457574f262bff05f48e5e55fa328e37da30f665721a312de9d826e'}
+V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': '05ec0571c556c18558111daf3c225d9e9e74ab4f5a5432adcec4a5370f1854b9',
+ 'release-evidence/v0.11-current-proof-fixture/manifest.json': '50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c',
+ 'release-evidence/v0.11-predecessor/manifest.json': 'dbec7e35d7402e687c3a3aa19f70c45425a127a915c74185eb0054ed57aa76fc',
+ 'release-evidence/v0.11-public-chain-fixture/manifest.json': '16ce37d08a3bcfecca0f8dbe4c323f1f319d1da565ea5473d695a5c13c4676c0',
+ 'release-evidence/v0.11-public-chain-fixture/native-chain.sled.tar.gz': '6ea33e96e3279d992475f7f1434b2d5c6ca161575c52ab4b675203ba3466f2c1',
+ 'scripts/check_private_spend_launch_authorization.py': '7f5265e5ddc8ec947bbc93df31df276c0fae787bfdcbc7b1e5a2547958ae60ab',
+ 'scripts/check_release_launcher_policy.py': '51700e93ac457574f262bff05f48e5e55fa328e37da30f665721a312de9d826e',
+ 'scripts/check_v011_current_binary_proofs.py': 'a8b14c133d0d02b9e000fe30d22fbed4584e9836e439086974540c2943ea9f80',
+ 'scripts/check_v011_public_chain_replay.py': '29c6655f1d8ced3ffa5a042e3c66f0567fc0ef465eda70de473e7a35054159dc',
+ 'scripts/check_v011_release_successor.py': 'fcb3dd1099592177e4cc1e4eae5fad14beb84692836a9a67376a04b9b519ebd8',
+ 'scripts/materialize_v011_predecessor.py': '0dc2b129332bf1276e5790a2db2682946e54f5af6b6850eaca50ca9e17b4dee5',
+ 'scripts/release_artifact_manifest.py': '17137d83d092b98c246b0fd7125bbb2f8ad71aba342fdc4717a071128c4efb6a',
+ 'scripts/security-audit.sh': 'd167e710e5b81389e8a2ba5383f7a3d6157476b30c6a4cf147d0dac5415c7c42'}
 
 
 def sha256_file(file: Path) -> str:

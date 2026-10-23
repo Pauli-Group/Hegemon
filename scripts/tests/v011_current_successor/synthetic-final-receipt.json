@@ -11,11 +11,14 @@
     "walletd": "3333333333333333333333333333333333333333333333333333333333333333"
   },
   "authorization_kind": "reviewed_source_successor_ci",
-  "cargo_lock_sha256": "ebef532fbfaee8fcafa4b6e12b2ad8cbb219bacfba4f2aaa24904bd59480e5d3",
+  "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
   "cargo_metadata_unchanged": false,
   "changed_paths": [
     "Cargo.lock",
+    "circuits/transaction/src/asset_spend_v1_state.rs",
+    "circuits/transaction/src/smallwood_htlc/source_cse.rs",
     "circuits/transaction/src/smallwood_htlc_transport.rs",
+    "config/poseidon2-width16-v1.json",
     "network/src/lib.rs",
     "node/src/bin/native_node.rs",
     "node/src/native/admission.rs",
@@ -34,16 +37,20 @@
     "node/src/native/util.rs",
     "protocol/versioning/src/launch_candidate.rs",
     "protocol/versioning/src/lib.rs",
+    "scripts/check_transaction_proof_successor_authorization.py",
     "scripts/hegemon_formal_core/src/lib.rs",
     "wallet/src/bin/wallet.rs",
+    "wallet/src/htlc_prepare.rs",
     "wallet/src/htlc_store.rs",
+    "wallet/src/poseidon2_v8_coinbase.rs",
+    "wallet/src/poseidon2_v8_multisig.rs",
     "wallet/src/rp06_transfer.rs"
   ],
   "current_binary_backend_artifacts_verified": true,
   "current_binary_proof_verification": {
     "actual_proof_verification": true,
     "artifact_manifest_sha256": "818e34cbcf96b16893a9a21a64181229415a7f00a17252a22f060963d9661128",
-    "cargo_lock_sha256": "ebef532fbfaee8fcafa4b6e12b2ad8cbb219bacfba4f2aaa24904bd59480e5d3",
+    "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
     "cases": [
       {
         "exit_code": 0,
@@ -84,7 +91,7 @@
         "proof": {
           "bytes": 171281,
           "path": "ordinary.proof",
-          "sha256": "0cd4641baff158811d59c0f1e3e1d3cb4d626655cdcc6b185e0b80983fc41436"
+          "sha256": "cbe2dfd00a95c432eb43626d3acf7c31a442cd3db111e4b58db60a0fe4f412f3"
         },
         "statement": {
           "bytes": 688,
@@ -132,7 +139,7 @@
         "proof": {
           "bytes": 171281,
           "path": "policy_create.proof",
-          "sha256": "c349547230010b1cf966188cf9c99420d01e93ad74c0e8d5d51e10b43c2f7830"
+          "sha256": "d0bb5a49bdb14e252e1658e9cb03abf52f221ace394caf07080a543e939a735c"
         },
         "statement": {
           "bytes": 688,
@@ -180,7 +187,7 @@
         "proof": {
           "bytes": 171281,
           "path": "absolute_height.proof",
-          "sha256": "007a5e8ade95b2bb296164b66db171d290f6c744d9e3e189011cf4a39224555f"
+          "sha256": "d42fad512039ff1ed2683e52b41e767475d091bb0c70a4e747efef0809b1b992"
         },
         "statement": {
           "bytes": 688,
@@ -228,7 +235,7 @@
         "proof": {
           "bytes": 171281,
           "path": "policy_hash_release.proof",
-          "sha256": "b13765f8054f01052c7513c48d546f7698bf5b23c2cbc1d04cf3a2e3e66b8adf"
+          "sha256": "1c2d063506eab8d528864858a070684318d0e7b096265d701b30ca75a1279687"
         },
         "statement": {
           "bytes": 688,
@@ -276,7 +283,7 @@
         "proof": {
           "bytes": 171281,
           "path": "htlc_release.proof",
-          "sha256": "86d1d049a052cb0de8eebf8451d139a0141687fcaa8182f32fa5c21c52108624"
+          "sha256": "1b25fc4e5897f43bd59bd91b506837bc90667bb2f7298d6ccb0c2a223a4dffb6"
         },
         "statement": {
           "bytes": 688,
@@ -288,7 +295,7 @@
     ],
     "cases_verified": 5,
     "cryptographic_verification_only": true,
-    "fixture_manifest_sha256": "8184f3bb1e77c03540a7e83a1a4efacf9b232c067d5f2781cf03167393c17057",
+    "fixture_manifest_sha256": "50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c",
     "fresh_network_lifecycle_verified": false,
     "inputs_after": {
       "TEST_ONLY_SYNTHETIC_INPUT": {
@@ -308,7 +315,7 @@
     "processes_reaped": true,
     "production_authorized": false,
     "public_cutover_authorized": false,
-    "relation_digest": "4cce676154799baed5f3ade3b7a5f3e1a041f256f4b7acdb27386158e4902e9c5d63eb9a1b6c32bbbac912d17f057a71d2c35a769039d46a0007c351e1832594",
+    "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
     "schema": "hegemon.v011.current-binary-proof-verification.v1",
     "state_admission_verified": false,
     "status": "PASS_CURRENT_BINARY_BACKEND_PROOFS",
@@ -422,7 +429,7 @@
     ],
     "profile": 12,
     "public_words": 86,
-    "relation_digest": "4cce676154799baed5f3ade3b7a5f3e1a041f256f4b7acdb27386158e4902e9c5d63eb9a1b6c32bbbac912d17f057a71d2c35a769039d46a0007c351e1832594",
+    "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
     "relation_id": "Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4",
     "schema": "hegemon.private-spend.native-launch-identity.v2",
     "stablecoin_genesis_root": [
@@ -444,7 +451,7 @@
     "proof_parameters": {
       "production_authorized": false,
       "public_words": 86,
-      "relation_digest": "4cce676154799baed5f3ade3b7a5f3e1a041f256f4b7acdb27386158e4902e9c5d63eb9a1b6c32bbbac912d17f057a71d2c35a769039d46a0007c351e1832594"
+      "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685"
     },
     "qualified_manifest": true,
     "wallet_cli_version": "wallet 0.11.0",
@@ -461,12 +468,24 @@
   "public_cutover_authorized": false,
   "reviewed_runtime_deltas": {
     "Cargo.lock": {
-      "after_sha256": "ebef532fbfaee8fcafa4b6e12b2ad8cbb219bacfba4f2aaa24904bd59480e5d3",
+      "after_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
       "before_sha256": "bae447660a12610766620cb7e2afacb6b0ad92a3370dd5f15db18e12e753b7ec"
+    },
+    "circuits/transaction/src/asset_spend_v1_state.rs": {
+      "after_sha256": "27ff1a411a849d3f0b71b37422f9984facf447f48fe390c962da604c5bcb1b52",
+      "before_sha256": "1006ed280fe8a16f8afb61934749c8fe8f4ffa0b5ebaed86b5a10315453b481b"
+    },
+    "circuits/transaction/src/smallwood_htlc/source_cse.rs": {
+      "after_sha256": "9e573c5a8579a516f9cff092abdce06a7a04a49f212fccc14138b088b20f0be6",
+      "before_sha256": "9401f9f6a8ea5ac6b1884af0c24c7fd910c3a1452664be5b504b5377dae3825d"
     },
     "circuits/transaction/src/smallwood_htlc_transport.rs": {
       "after_sha256": "0e157cb668ec2602a5ae96cf81269697d5cd3396ab615709fc3f26441f63da26",
       "before_sha256": "4df08a64e1bc8e25c62bc479747730a0f585e6d0233eaac65618ce3bec1694be"
+    },
+    "config/poseidon2-width16-v1.json": {
+      "after_sha256": "43b3c90bfcc1cf4b040e036ce7c32e17b637fd136f59dda0df149da91a0ab9bb",
+      "before_sha256": "b213f05b7db08a26693e4663477ab200d3201b3d3eab2e1dc7635e272ffdddfa"
     },
     "network/src/lib.rs": {
       "after_sha256": "a3776bf15654a5a3e7c2acc3e29acde25de0f157d8c534b191414e5be2a6ef3f",
@@ -533,12 +552,16 @@
       "before_sha256": "ccf0764d0059cff43f784171edf58819cabe9645ab2aa1c8f24592beee5e45b1"
     },
     "protocol/versioning/src/launch_candidate.rs": {
-      "after_sha256": "0e67e1c769d363897902dffae28c65f682eba696180a22ab1b0bd6650ce31ad7",
+      "after_sha256": "fab9c38631d069c2e778cf362f3fb63d02b4f29abe7cb20b8253364c24405107",
       "before_sha256": "2ce83547371d7f0904dfc318286e3ae0a17f3776f415518f49c0e22627913539"
     },
     "protocol/versioning/src/lib.rs": {
       "after_sha256": "1b574f0b27635e0d33e42e16763300f2b732cacfe850953fc35f19028a58862d",
       "before_sha256": "150c5018a34fa6d92eba62f070692d10ccb77e477f2257ee6a4045b477c0f5ba"
+    },
+    "scripts/check_transaction_proof_successor_authorization.py": {
+      "after_sha256": "e392df3a774e3e3ab6a1bff1e76b247d4c77be413d85cb37e3ac668a521ed163",
+      "before_sha256": "e01c8dfd9f8bd256c2b7de065986bf46b78d773e62017601a64937127ffba821"
     },
     "scripts/hegemon_formal_core/src/lib.rs": {
       "after_sha256": "4987f1a5634898eae53bcc0103af21e48b775546884af84488399923b87773d3",
@@ -548,9 +571,21 @@
       "after_sha256": "73a50becdd346cedd7ed765c600a3ee70e591ff2fc60564ba6e7d3262ee18f1b",
       "before_sha256": "df0b673176b10c730285d210f1c9ede4e6ba0b2621118ad63b325c4ffe64b024"
     },
+    "wallet/src/htlc_prepare.rs": {
+      "after_sha256": "3e1e1e588e38a8f8b38b646ac4da1c0a7270d629bb1d5df74cfe20b508da9856",
+      "before_sha256": "54c2df105428a8b45074b0f92f10c16752d20324a0660ade670dc472fb242515"
+    },
     "wallet/src/htlc_store.rs": {
       "after_sha256": "20de39f484fd2010f6081529602d1d8158d75e2a020924727a9ab87d06d2f53e",
       "before_sha256": "032030a1854beca9e395a04ada301bf7893442be6ef5e565b17e5b479353cd95"
+    },
+    "wallet/src/poseidon2_v8_coinbase.rs": {
+      "after_sha256": "96078b0fbb7a945facf76c8e6fd8ef80d83d109ad62138dea7dc25884aed2dc5",
+      "before_sha256": "a4170caf6fa9dbd47e8dcf8dd4f82bec28a322f316f6d9f32d913d282150dde1"
+    },
+    "wallet/src/poseidon2_v8_multisig.rs": {
+      "after_sha256": "6ce0854abce3ddba79ee80e26889d6f807f55d06fcdb9790c992f9260edf7e71",
+      "before_sha256": "34c134fa553343eab2c5134bea48400e84ff9410fdeb933e9eebb122bd4634ca"
     },
     "wallet/src/rp06_transfer.rs": {
       "after_sha256": "d01dc7029703d08a404b87fd297cae3813708737e6c8a9838ee17d94436f72e3",
@@ -566,7 +601,7 @@
   "runtime_files_compared": 598,
   "runtime_inventory_sha256": "dfd71b6a265e954261ed209c2ad3c34c97285016557f0f003f7f17f39ff541d0",
   "schema": "hegemon.private-spend.release-authorization.v2",
-  "source_successor_config_sha256": "3f46bf42acbbfab8400f18b80d5ecfab4d6984808574fb425b12ab3e830da2d0",
+  "source_successor_config_sha256": "05ec0571c556c18558111daf3c225d9e9e74ab4f5a5432adcec4a5370f1854b9",
   "state_admission_verified": false,
   "status": "PASS_EXACT_SOURCE_CURRENT_BINARY_BACKEND_AND_H0",
   "target_triple": "synthetic-unit-test",

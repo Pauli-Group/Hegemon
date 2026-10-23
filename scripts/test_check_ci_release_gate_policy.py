@@ -453,6 +453,29 @@ def main() -> None:
             ci_formal_crypto_timeout.replace("    timeout-minutes: 60\n", ""),
         ),
     )
+    ci_formal_vectors_timeout = (
+        "  formal-core-vectors:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    timeout-minutes: 60\n"
+    )
+    expect_workflow_rejected(
+        "PR formal-core vectors 30-minute timeout regression",
+        policy.check_ci_workflow,
+        replace_once(
+            ci_workflow,
+            ci_formal_vectors_timeout,
+            ci_formal_vectors_timeout.replace("timeout-minutes: 60", "timeout-minutes: 30"),
+        ),
+    )
+    expect_workflow_rejected(
+        "PR formal-core vectors missing timeout",
+        policy.check_ci_workflow,
+        replace_once(
+            ci_workflow,
+            ci_formal_vectors_timeout,
+            ci_formal_vectors_timeout.replace("    timeout-minutes: 60\n", ""),
+        ),
+    )
     ci_smz9_parser_step = (
         "      - name: SMZ9 parser/verifier refinement regression\n"
         "        run: ./scripts/run_exact_cargo_lib_test.sh transaction-circuit "

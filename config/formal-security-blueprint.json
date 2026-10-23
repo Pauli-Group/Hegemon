@@ -8,8 +8,8 @@
       "command": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
       "status": "passed",
       "exit_code": 0,
-      "executed_at": "2026-10-23T20:33:34Z",
-      "policy_inputs_blake3": "c000382a747c9fee7874e673070794e7e766759434a119aa5fb634be3a3d6945",
+      "executed_at": "2026-10-23T21:14:55Z",
+      "policy_inputs_blake3": "a954a0ad881a7a143ece19a7373cca1e25758bdbcc35f7720a20ed361b0e0055",
       "report": {
         "passed": true,
         "test_filter": "governance_",
@@ -72,7 +72,7 @@
         "reviewer": "Codex (internal CI hygiene review)",
         "reviewed_at": "2026-10-02",
         "notes": "Pending independent review. Internal source review on 2026-10-02: unmaintained findings remain visible as nonblocking maintenance notices; vulnerabilities, unsoundness, and yanked findings still block unless covered by exact current waivers; unknown warning kinds and malformed warning shapes fail closed; unused waivers still reject. The focused gate regression suite passes. This is not an independent review or assurance of advisory database completeness. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. The current dependency lock has four security updates; current-source proof qualification remains separate from retained predecessor evidence.",
-        "content_blake3": "228f17a5fa491eda07f7d107190719c538a5abae02be1caa0c3f9d4d7fbf3e8c"
+        "content_blake3": "c931674c5c206d48a53ac341df8018afe5a04726a8caa2f9fd53268447de68a7"
       },
       "falsification_cases": [
         {
@@ -190,7 +190,7 @@
         "reviewer": "Codex (internal CI hygiene review)",
         "reviewed_at": "2026-10-02",
         "notes": "Pending independent review. Internal source review on 2026-10-02: CI policy negative tests pin the dependency waiver gate, the PR-only unapproved-profile review flag, the zero-funds app review mode, and release-build dependencies; release workflow calls remain strict. CI no longer labels the historical native-backend package as current RP05 authority; tag release retains its package/posture checks. This does not establish live remote ruleset enforcement, runner integrity, production authority, or independent review. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal CI execution metadata refresh (2026-10-23): test optimization level 2 and two-job/Rayon concurrency bounds change execution cost; existing tests, overflow checks, debug assertions, strict release controls and timeout remain in force. This refresh adds no cryptographic assurance.",
-        "content_blake3": "c308dc8f5482fdd48c220139e8f20ea2f405958c55c840a5eb9321cbd78028b9"
+        "content_blake3": "f3947b29836a7bf12bb094b3aa93ba449b7d14fe9c93a94a7503128ac9bf5670"
       },
       "falsification_cases": [
         {
@@ -14306,7 +14306,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-11",
         "notes": "Pending independent review. Previous internal assessment: Pending independent review of the 64-bit reducer preimage classification, degree-support predicate, and package parity gate. This is arithmetic, vector, and byte-grammar evidence only; random-oracle independence, irreducibility, collision reduction, proof of knowledge, and production fold equivalence remain open. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal CI execution metadata refresh (2026-10-23): test optimization level 2 and two-job/Rayon concurrency bounds change execution cost; existing tests, overflow checks, debug assertions, strict release controls and timeout remain in force. This refresh adds no cryptographic assurance.",
-        "content_blake3": "1b8904c42cc46b9a1120c632f611dc55abdb57a1bb896280c1192917d248cddb"
+        "content_blake3": "c786458294238507a1377713b4f33c9c5f50be15598c97dd704335fe03d2f6ee"
       },
       "falsification_cases": [
         {
@@ -15291,7 +15291,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-18",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a classification ratchet and roadmap. It does not discharge parser/native/proof/bridge residuals; it names them as mechanized work and prevents them from being hidden under broad cryptographic or infrastructure assumptions. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization.",
-        "content_blake3": "63cf589cdd3370c0e14f454c2a723469efbe11a5e49998612c26b2b553ec3bde"
+        "content_blake3": "f0847e758e9caa4e2789f25b42695e000f9466dea73fbcfeef37a15b305cc59d"
       },
       "falsification_cases": [
         {
@@ -15348,7 +15348,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-18",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a release-blocking system-model evidence gate. It does not prove external environmental honesty; it fails closed if required monitoring categories or evidence are removed. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "e330ca67e6a6095b1bc1200178beae16d9e1cf8430a05a86ff639c2861e35c2d"
+        "content_blake3": "4c4e059ae5bc55c92b49b4c2c59d0611d247366355634942a273c2d3a661cfea"
       },
       "falsification_cases": [
         {
@@ -15448,7 +15448,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-13",
         "notes": "Pending final headless branch-diff review. Internal review rejected the first caller-populated row certificate and replaced it with an executable exact production-row decision before the conditional production-family reduction was credited; no production no-counterfeit closure was recorded. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "9b1761c4cf05f30fda6470ad4c82fa08781e39cb951e0cbbacc138e50f308a69"
+        "content_blake3": "451b20c1d1ccf4d128c395889f8a39795042e9a8980b5abf5864d9f63b8aaaec"
       },
       "falsification_cases": [
         {

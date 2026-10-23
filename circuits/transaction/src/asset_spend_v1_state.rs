@@ -1042,7 +1042,6 @@ mod tests {
             AssetLedgerV1::restore_authenticated_snapshot(ledger.snapshot()).unwrap(),
             ledger
         );
-        drop(prove_spend);
         measurements.push(serde_json::json!({"name":"freeze", "proof_bytes": freeze_proof.len(), "proof_sha256": hash(&freeze_proof), "proving_seconds": freeze_seconds}));
         measurements.push(serde_json::json!({"name":"unfreeze", "proof_bytes": unfreeze_proof.len(), "proof_sha256": hash(&unfreeze_proof), "proving_seconds": unfreeze_seconds}));
         let report = serde_json::json!({

@@ -305,7 +305,9 @@ mod tests {
         let p = first[0] * (y - x);
         let negative = (x - y) * second[0];
         let duplicate = (y - x) * first[0];
-        let zero = x * (y - y);
+        // Copied wire handles deliberately cancel in the source graph.
+        let same_y = y;
+        let zero = x * (y - same_y);
         equal(zero, Word::ZERO);
         let mut adapter = HtlcAdapter::from_graph(scope.finish());
         adapter.bind_public(x, 5);

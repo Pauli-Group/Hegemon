@@ -1,15 +1,15 @@
 {
   "schema": "hegemon.v011.public-current-proof-fixture.v1",
   "relation_id": "Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4",
-  "relation_digest": "4cce676154799baed5f3ade3b7a5f3e1a041f256f4b7acdb27386158e4902e9c5d63eb9a1b6c32bbbac912d17f057a71d2c35a769039d46a0007c351e1832594",
-  "cargo_lock_sha256": "ebef532fbfaee8fcafa4b6e12b2ad8cbb219bacfba4f2aaa24904bd59480e5d3",
+  "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
+  "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
   "cases": [
     {
       "name": "ordinary",
       "proof": {
         "path": "ordinary.proof",
         "bytes": 171281,
-        "sha256": "0cd4641baff158811d59c0f1e3e1d3cb4d626655cdcc6b185e0b80983fc41436"
+        "sha256": "cbe2dfd00a95c432eb43626d3acf7c31a442cd3db111e4b58db60a0fe4f412f3"
       },
       "statement": {
         "path": "ordinary.statement",
@@ -22,7 +22,7 @@
       "proof": {
         "path": "policy_create.proof",
         "bytes": 171281,
-        "sha256": "c349547230010b1cf966188cf9c99420d01e93ad74c0e8d5d51e10b43c2f7830"
+        "sha256": "d0bb5a49bdb14e252e1658e9cb03abf52f221ace394caf07080a543e939a735c"
       },
       "statement": {
         "path": "policy_create.statement",
@@ -35,7 +35,7 @@
       "proof": {
         "path": "absolute_height.proof",
         "bytes": 171281,
-        "sha256": "007a5e8ade95b2bb296164b66db171d290f6c744d9e3e189011cf4a39224555f"
+        "sha256": "d42fad512039ff1ed2683e52b41e767475d091bb0c70a4e747efef0809b1b992"
       },
       "statement": {
         "path": "absolute_height.statement",
@@ -48,7 +48,7 @@
       "proof": {
         "path": "policy_hash_release.proof",
         "bytes": 171281,
-        "sha256": "b13765f8054f01052c7513c48d546f7698bf5b23c2cbc1d04cf3a2e3e66b8adf"
+        "sha256": "1c2d063506eab8d528864858a070684318d0e7b096265d701b30ca75a1279687"
       },
       "statement": {
         "path": "policy_hash_release.statement",
@@ -61,7 +61,7 @@
       "proof": {
         "path": "htlc_release.proof",
         "bytes": 171281,
-        "sha256": "86d1d049a052cb0de8eebf8451d139a0141687fcaa8182f32fa5c21c52108624"
+        "sha256": "1b25fc4e5897f43bd59bd91b506837bc90667bb2f7298d6ccb0c2a223a4dffb6"
       },
       "statement": {
         "path": "htlc_release.statement",
@@ -72,8 +72,8 @@
   ],
   "generation_receipt": {
     "path": "generation-receipt.json",
-    "bytes": 13814,
-    "sha256": "e8dc14d154797f845e022960334511f7ee0555426d4e0d58303cff4f6a0c6c8a"
+    "bytes": 13765,
+    "sha256": "6456470c2fd12df1b37bd7e0261692dce2199298867efe8d814456d621da9efd"
   },
   "source_inputs": [
     {
@@ -237,9 +237,9 @@
       "sha256": "eb716cec59d45235b2d94865baf4f28b4af9259f69e0c405f6a2dc2650f5fad2"
     },
     {
-      "bytes": 19637,
+      "bytes": 19738,
       "path": "circuits/transaction/src/smallwood_htlc/source_cse.rs",
-      "sha256": "9401f9f6a8ea5ac6b1884af0c24c7fd910c3a1452664be5b504b5377dae3825d"
+      "sha256": "9e573c5a8579a516f9cff092abdce06a7a04a49f212fccc14138b088b20f0be6"
     },
     {
       "bytes": 11568,
@@ -279,7 +279,7 @@
     {
       "bytes": 112119,
       "path": "Cargo.lock",
-      "sha256": "ebef532fbfaee8fcafa4b6e12b2ad8cbb219bacfba4f2aaa24904bd59480e5d3"
+      "sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719"
     }
   ],
   "disclosure": {

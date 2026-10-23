@@ -293,12 +293,12 @@
     },
     {
       "id": "parameter_manifest",
-      "path": "config/poseidon2-width16-v1.json",
+      "path": "formal/rp05/retained-primitives/poseidon2-width16-v1.json",
       "sha256": "598f9c4538ef9db10424a4347c420075c34f76b910e8c3478d373c3e339e770f"
     },
     {
       "id": "rust_permutation",
-      "path": "circuits/transaction-core/src/poseidon2_width16.rs",
+      "path": "formal/rp05/retained-primitives/poseidon2_width16.rs",
       "sha256": "a788cddc23a7a0fbe52bcef81bac0a5cb430680c26e9d9c5982453fe8dcf5d35"
     },
     {

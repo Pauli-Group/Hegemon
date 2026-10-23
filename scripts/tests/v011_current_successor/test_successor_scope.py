@@ -26,7 +26,7 @@ NODE_SHA = '11' * 32
 ARTIFACT_SHA = '22' * 32
 RELATION_DIGEST = '33' * 64
 FIXTURE_SHA = '44' * 32
-LOCK_SHA = 'ebef532fbfaee8fcafa4b6e12b2ad8cbb219bacfba4f2aaa24904bd59480e5d3'
+LOCK_SHA = '1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719'
 
 
 def load_module(path: Path, name: str):

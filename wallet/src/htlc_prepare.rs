@@ -204,7 +204,14 @@ mod tests {
             crate::RootSecret::from_bytes([72; 32]),
         )
         .unwrap();
-        let context = LaunchWalletContext::new([82; 32], [81; 32], [83; 64], 1, 100).unwrap();
+        let context = LaunchWalletContext::new(
+            [82; 32],
+            [81; 32],
+            [83; 64],
+            1,
+            protocol_versioning::COINBASE_MATURITY + 100,
+        )
+        .unwrap();
         for store in [&alice, &bob] {
             store
                 .ensure_poseidon2_v8_launch_genesis_for_retained_test(context, [0; 7])
@@ -258,6 +265,27 @@ mod tests {
         );
         bob.apply_poseidon2_v8_launch_canonical_block_for_retained_test(&funding, context)
             .unwrap();
+        assert!(alice.poseidon2_v8_owned_notes().unwrap().is_empty());
+        // Reward outputs enter the note tree only at the real maturity boundary.
+        for height in 2..=protocol_versioning::COINBASE_MATURITY {
+            let mut hash = [0xa5; 32];
+            hash[..8].copy_from_slice(&height.to_le_bytes());
+            let block = crate::Poseidon2V8CanonicalBlock {
+                height,
+                hash,
+                parent_hash: alice.poseidon2_v8_tip().unwrap().block_hash,
+                action_bytes: Vec::new(),
+            };
+            for store in [&alice, &bob] {
+                store
+                    .apply_poseidon2_v8_launch_canonical_block_for_retained_test(&block, context)
+                    .unwrap();
+            }
+            if height == protocol_versioning::COINBASE_MATURITY - 1 {
+                assert!(alice.poseidon2_v8_owned_notes().unwrap().is_empty());
+            }
+        }
+        assert_eq!(alice.poseidon2_v8_owned_notes().unwrap().len(), 1);
         let offer = HtlcOffer {
             version: 1,
             nonce: [84; 32],
@@ -265,7 +293,7 @@ mod tests {
             hashlock: Sha256::digest([85; 32]).into(),
             value: 100,
             maximum_fee: 5,
-            timeout_height: 5,
+            timeout_height: protocol_versioning::COINBASE_MATURITY + 5,
             claim_authority: address_fields(&claim).unwrap().1,
             refund_authority: address_fields(&refund).unwrap().1,
             claim_recipient: address_fields(&claim).unwrap().0,
@@ -314,7 +342,7 @@ mod tests {
             f.context.genesis_hash(),
             [86; 64],
             1,
-            100,
+            protocol_versioning::COINBASE_MATURITY + 100,
         )
         .unwrap();
         assert!(import_htlc_agreement(&f.bob, &wrong, f.id, &envelope, 0).is_err());
@@ -603,7 +631,8 @@ mod tests {
         f.bob
             .rollback_poseidon2_v8_to(locked_tip.height, locked_tip.block_hash)
             .unwrap();
-        while f.alice.poseidon2_v8_tip().unwrap().height < 5 {
+        let timeout_height = f.alice.htlc_swaps().unwrap()[0].offer.timeout_height;
+        while f.alice.poseidon2_v8_tip().unwrap().height < timeout_height {
             let marker = 100 + f.alice.poseidon2_v8_tip().unwrap().height as u8;
             let block = apply(&f.alice, f.context, vec![], marker);
             f.bob

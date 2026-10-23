@@ -21,13 +21,13 @@
     "sponge_mode_marker_hex": "0x53504f4e47455631"
   },
   "digests": {
-    "source_sha256": "b8f6f37bc0c2e687314b0b277eaebc84fde7955864c124ab7290eab7dc90d323",
+    "source_sha256": "18a9f3227e7fd46eca03a7963cb9998a777b00579b42843863eadeb9e2386b09",
     "round_constants_sha256": "52247f75c0c7ac08ec42845f962d4301db116a7a74362ef8000cb285790880ec",
     "internal_diagonal_sha256": "cc55ae3623f501aa05dee94a4741ab618362cbd6b80d459c4aa1533ad2a06529",
     "external_matrix_sha256": "b3618c4f255c84d136997225410fd7d8954890c05e21f20e93157088a39dbca4",
     "parameter_set_sha256": "114a4e7eb2684d293d13d306a756b03fc734f19edbfb80a07126ab1b2ad9e529",
     "compression_mode_sha256": "5f62084be213c8b457e04f2eefe687220f131cedf7984f745abe18099005422f",
-    "p3_reference_lock_sha256": "ce29197c80ed83a9436848129a86ae4d9cb849b49af57b80d71416a98b4a54d1"
+    "p3_reference_lock_sha256": "1ec6cd1ff4bfb7acb04eb10aae6daef23f4e7a3d433312d0f2daf7f152c4506d"
   },
   "algebra": {
     "alpha_gcd": 1,

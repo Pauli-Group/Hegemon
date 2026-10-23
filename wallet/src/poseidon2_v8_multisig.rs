@@ -1894,6 +1894,31 @@ mod tests {
             anchor: current[0],
         }
     }
+    // One reward origin per block, then genuine block-end reward maturity.
+    fn mature_reward_fixture_blocks(
+        source: Vec<u8>,
+        capability: Vec<u8>,
+    ) -> Vec<crate::poseidon2_v8_sync::Poseidon2V8CanonicalBlock> {
+        let mut parent_hash = [91; 32];
+        (1..=protocol_versioning::COINBASE_MATURITY + 1)
+            .map(|height| {
+                let mut hash = [0xa6; 32];
+                hash[..8].copy_from_slice(&height.to_le_bytes());
+                let block = crate::poseidon2_v8_sync::Poseidon2V8CanonicalBlock {
+                    height,
+                    hash,
+                    parent_hash,
+                    action_bytes: match height {
+                        1 => vec![source.clone()],
+                        2 => vec![capability.clone()],
+                        _ => Vec::new(),
+                    },
+                };
+                parent_hash = hash;
+                block
+            })
+            .collect()
+    }
     fn keys() -> [DerivedKeys; 3] {
         core::array::from_fn(|i| RootSecret::from_bytes([i as u8 + 1; 32]).derive())
     }
@@ -2266,7 +2291,6 @@ mod tests {
         use crate::poseidon2_v8_coinbase::{
             build_poseidon2_v8_coinbase_args, protocol_opening_to_relation,
         };
-        use crate::poseidon2_v8_sync::Poseidon2V8CanonicalBlock;
         use codec::Encode;
         use protocol_shielded_pool::{
             family::{ACTION_MINT_POSEIDON2_V8_COINBASE, FAMILY_SHIELDED_POOL},
@@ -2359,14 +2383,12 @@ mod tests {
         store
             .ensure_poseidon2_v8_genesis_for_test([91; 32], [55; 7])
             .unwrap();
-        store
-            .apply_poseidon2_v8_canonical_block(&Poseidon2V8CanonicalBlock {
-                height: 1,
-                hash: [1; 32],
-                parent_hash: [91; 32],
-                action_bytes: vec![coinbase(&source_args), coinbase(&cap_args)],
-            })
-            .unwrap();
+        let funding_blocks =
+            mature_reward_fixture_blocks(coinbase(&source_args), coinbase(&cap_args));
+        for block in &funding_blocks {
+            store.apply_poseidon2_v8_canonical_block(block).unwrap();
+        }
+        let reference_height = protocol_versioning::COINBASE_MATURITY + 1;
         let plan = V8TreasuryPlan::create(
             &descriptor,
             &source,
@@ -2392,12 +2414,14 @@ mod tests {
             0,
             None,
             path(&commitments, 0).anchor,
-            1,
+            reference_height,
             1,
             &mut rng,
         )
         .unwrap();
-        material.set_current_context(1, [55; 7]).unwrap();
+        material
+            .set_current_context(reference_height, [55; 7])
+            .unwrap();
         store.persist_v8_treasury_plan(plan.clone()).unwrap();
         assert_eq!(
             store
@@ -2479,14 +2503,11 @@ mod tests {
         wrong_signer
             .ensure_poseidon2_v8_genesis_for_test([91; 32], [55; 7])
             .unwrap();
-        wrong_signer
-            .apply_poseidon2_v8_canonical_block(&Poseidon2V8CanonicalBlock {
-                height: 1,
-                hash: [1; 32],
-                parent_hash: [91; 32],
-                action_bytes: vec![coinbase(&source_args), coinbase(&cap_args)],
-            })
-            .unwrap();
+        for block in &funding_blocks {
+            wrong_signer
+                .apply_poseidon2_v8_canonical_block(block)
+                .unwrap();
+        }
         let saved_records = store
             .with_v8_treasuries(|records, _| Ok(records.to_vec()))
             .unwrap();
@@ -2618,17 +2639,10 @@ mod tests {
         let commitments = [source.commitment, cap_args.miner_note.commitment];
         let mut mirror = Poseidon2V8WalletState::default();
         mirror.ensure_genesis_for_test([91; 32], [55; 7]).unwrap();
-        mirror
-            .apply_block(
-                &Poseidon2V8CanonicalBlock {
-                    height: 1,
-                    hash: [1; 32],
-                    parent_hash: [91; 32],
-                    action_bytes: vec![coinbase(&source_args), coinbase(&cap_args)],
-                },
-                None,
-            )
-            .unwrap();
+        for block in mature_reward_fixture_blocks(coinbase(&source_args), coinbase(&cap_args)) {
+            mirror.apply_block(&block, None).unwrap();
+        }
+        let reference_height = protocol_versioning::COINBASE_MATURITY + 1;
         assert_eq!(mirror.tip().unwrap().anchor, path(&commitments, 0).anchor);
         let plan = V8TreasuryPlan::create(
             &descriptor,
@@ -2655,12 +2669,14 @@ mod tests {
             0,
             None,
             path(&commitments, 0).anchor,
-            1,
+            reference_height,
             1,
             &mut rng,
         )
         .unwrap();
-        material.set_current_context(1, [55; 7]).unwrap();
+        material
+            .set_current_context(reference_height, [55; 7])
+            .unwrap();
         let mut attempt = V8TreasuryAttempt {
             review_digest: plan.review_digest().unwrap().to_vec(),
             nullifiers: vec![material.statement.base.nullifiers[1]],
@@ -2684,7 +2700,7 @@ mod tests {
         let mut missing_future = record.clone();
         missing_future.plans.clear();
         assert!(!attempt_future_source_available(&missing_future, &attempt, &mirror).unwrap());
-        for height in 2..=13 {
+        for height in reference_height + 1..=reference_height + 12 {
             let parent = mirror.tip().unwrap();
             mirror
                 .apply_block(
@@ -2705,8 +2721,8 @@ mod tests {
         mirror
             .apply_block(
                 &Poseidon2V8CanonicalBlock {
-                    height: 14,
-                    hash: [14; 32],
+                    height: reference_height + 13,
+                    hash: [(reference_height + 13) as u8; 32],
                     parent_hash: checkpoint.block_hash,
                     action_bytes: Vec::new(),
                 },
@@ -2718,12 +2734,14 @@ mod tests {
         attempt.status = V8TreasuryAttemptStatus::Abandoned;
         let preserved = attempt.clone();
         assert!(!attempt_reservation_active(&attempt, &mirror));
-        mirror.rollback_to(13, checkpoint.block_hash).unwrap();
+        mirror
+            .rollback_to(reference_height + 12, checkpoint.block_hash)
+            .unwrap();
         assert!(attempt_reservation_active(&attempt, &mirror));
         assert_eq!(attempt, preserved); // No bytes, receipt or tombstone is erased.
         let mut future = attempt.clone();
         let mut statement = attempt_statement(&future).unwrap();
-        statement.base.stablecoin.parent_height = 14;
+        statement.base.stablecoin.parent_height = reference_height + 13;
         future.material_snapshot.as_mut().unwrap().public_words =
             statement.to_public_words().to_vec();
         assert!(!attempt_reference_ready(&future, &mirror).unwrap());

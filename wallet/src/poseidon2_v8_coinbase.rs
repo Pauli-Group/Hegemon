@@ -1067,10 +1067,11 @@ mod tests {
             sha512_hex(&spend.inline_ciphertexts.to_inline_ciphertext_bytes()),
             RETAINED_V8_INLINE_CIPHERTEXT_SHA512
         );
+        // COMPFF01 framing/feed-forward changes the Merkle root and path words.
         assert_eq!(sha512_hex(&spend.statement.to_public_bytes()),
-            "ba8ae0df3d68e8637f87b64180d5747761edd39924b706d33792cea3333da2916520c62fdc3bf46c6e919ebfbbd50ae079c4357069543fec29fbe287f8b08a70");
+            "0aa6eceb67ce972726278509f4df9193d1aca45bfa6b3583ab1011edc6c3fb377617006016d1b51df862bf5fd86ebe3cf9383d8618157f2a5db15a720c46f2fd");
         assert_eq!(sha512_hex(&spend.witness.to_witness_bytes()),
-            "9624b502dbce634b171c6c214bb29c23455a3ba6d3f83b3df93e47f0d177a7be04dece7285bd37c9cf4304f8a3ef8380bef2ab5362d80de45913d9946f96984b");
+            "19e891a639c90bf847d59f762281b5ee52b955f3a584292659f119e431eaa5a0b5db4c3d13305aebcb85032b1286cfa08f2a761b1f8768bc9e4730c8aa69f241");
         assert_eq!(sha512_hex(&spend.inline_ciphertexts.to_inline_ciphertext_bytes()),
             "1101e122f9164f05ee7c27bf159eee0ad5985aa03924d4433633360848dc68d7a0ecb2b137cc3c62f8e2bdcca6a5dd394466960f7051b95a9dc196f3d4315077");
 

@@ -1,7 +1,7 @@
 {
   "artifact_bytes_retained": 859845,
-  "artifact_disclosure": "fixed public disposable fixture proofs/statements retained only in ignored target directory; no operator wallet/keys opened",
-  "cargo_lock_sha256": "ebef532fbfaee8fcafa4b6e12b2ad8cbb219bacfba4f2aaa24904bd59480e5d3",
+  "artifact_disclosure": "fixed public disposable proof statements and SMZL proofs only; no private witnesses, wallet files, keys or operator wallet opened",
+  "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
   "checks": {
     "all_five_cases": true,
     "carrier_overhead_unchanged": true,
@@ -38,9 +38,9 @@
   "compiled_test_binary": {
     "bytes": 18870896,
     "path": "target/release/deps/transaction_circuit-e9b4a13241f78774",
-    "sha256": "711dfe65838d66a5ebe25c9bf9fd6f2c983f6e2a34bc3d7aca5a788b1419e3fc"
+    "sha256": "e41175c0ac413eae6902c1d0e502fd340ea84e437421b034e1b5bfb693e46c50"
   },
-  "elapsed_seconds": 271.016,
+  "elapsed_seconds": 379.464,
   "exit_code": 0,
   "geometry": {
     "canonical_wires": 4547,
@@ -57,11 +57,11 @@
       "linear_equations": 21320,
       "nonlinear_batches": 721,
       "proof_bytes": 171281,
-      "proving_seconds": 40.027155667,
+      "proving_seconds": 60.045102375,
       "public_words": 86,
-      "relation_digest": "4cce676154799baed5f3ade3b7a5f3e1a041f256f4b7acdb27386158e4902e9c5d63eb9a1b6c32bbbac912d17f057a71d2c35a769039d46a0007c351e1832594",
+      "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
       "rows": 837,
-      "verification_seconds": 0.248953334
+      "verification_seconds": 0.352896208
     },
     {
       "canonical_wires": 4547,
@@ -70,11 +70,11 @@
       "linear_equations": 21320,
       "nonlinear_batches": 721,
       "proof_bytes": 171281,
-      "proving_seconds": 40.254169792,
+      "proving_seconds": 56.135711209,
       "public_words": 86,
-      "relation_digest": "4cce676154799baed5f3ade3b7a5f3e1a041f256f4b7acdb27386158e4902e9c5d63eb9a1b6c32bbbac912d17f057a71d2c35a769039d46a0007c351e1832594",
+      "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
       "rows": 837,
-      "verification_seconds": 0.2479025
+      "verification_seconds": 0.366438333
     },
     {
       "canonical_wires": 4547,
@@ -83,11 +83,11 @@
       "linear_equations": 21320,
       "nonlinear_batches": 721,
       "proof_bytes": 171281,
-      "proving_seconds": 39.684015958,
+      "proving_seconds": 45.368213875,
       "public_words": 86,
-      "relation_digest": "4cce676154799baed5f3ade3b7a5f3e1a041f256f4b7acdb27386158e4902e9c5d63eb9a1b6c32bbbac912d17f057a71d2c35a769039d46a0007c351e1832594",
+      "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
       "rows": 837,
-      "verification_seconds": 0.24716625
+      "verification_seconds": 0.254822458
     },
     {
       "canonical_wires": 4547,
@@ -96,11 +96,11 @@
       "linear_equations": 21320,
       "nonlinear_batches": 721,
       "proof_bytes": 171281,
-      "proving_seconds": 39.715827958,
+      "proving_seconds": 42.181918833,
       "public_words": 86,
-      "relation_digest": "4cce676154799baed5f3ade3b7a5f3e1a041f256f4b7acdb27386158e4902e9c5d63eb9a1b6c32bbbac912d17f057a71d2c35a769039d46a0007c351e1832594",
+      "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
       "rows": 837,
-      "verification_seconds": 0.247098083
+      "verification_seconds": 0.250359958
     },
     {
       "canonical_wires": 4547,
@@ -109,24 +109,24 @@
       "linear_equations": 21320,
       "nonlinear_batches": 721,
       "proof_bytes": 171281,
-      "proving_seconds": 39.659247375,
+      "proving_seconds": 46.458922625,
       "public_words": 86,
-      "relation_digest": "4cce676154799baed5f3ade3b7a5f3e1a041f256f4b7acdb27386158e4902e9c5d63eb9a1b6c32bbbac912d17f057a71d2c35a769039d46a0007c351e1832594",
+      "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
       "rows": 837,
-      "verification_seconds": 0.248790125
+      "verification_seconds": 0.379025875
     }
   ],
-  "minimum_disk_free_bytes": 34495418368,
+  "minimum_disk_free_bytes": 31915204608,
   "new_network_lifecycle": false,
-  "peak_owned_process_rss_bytes": 2305327104,
+  "peak_owned_process_rss_bytes": 2302656512,
   "production_authority": false,
-  "relation_digest": "4cce676154799baed5f3ade3b7a5f3e1a041f256f4b7acdb27386158e4902e9c5d63eb9a1b6c32bbbac912d17f057a71d2c35a769039d46a0007c351e1832594",
+  "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
   "resource_error": null,
   "retained_disposable_artifact_inventory": [
     {
       "bytes": 171281,
       "name": "absolute_height.proof",
-      "sha256": "007a5e8ade95b2bb296164b66db171d290f6c744d9e3e189011cf4a39224555f"
+      "sha256": "d42fad512039ff1ed2683e52b41e767475d091bb0c70a4e747efef0809b1b992"
     },
     {
       "bytes": 688,
@@ -136,7 +136,7 @@
     {
       "bytes": 171281,
       "name": "htlc_release.proof",
-      "sha256": "86d1d049a052cb0de8eebf8451d139a0141687fcaa8182f32fa5c21c52108624"
+      "sha256": "1b25fc4e5897f43bd59bd91b506837bc90667bb2f7298d6ccb0c2a223a4dffb6"
     },
     {
       "bytes": 688,
@@ -146,7 +146,7 @@
     {
       "bytes": 171281,
       "name": "ordinary.proof",
-      "sha256": "0cd4641baff158811d59c0f1e3e1d3cb4d626655cdcc6b185e0b80983fc41436"
+      "sha256": "cbe2dfd00a95c432eb43626d3acf7c31a442cd3db111e4b58db60a0fe4f412f3"
     },
     {
       "bytes": 688,
@@ -156,7 +156,7 @@
     {
       "bytes": 171281,
       "name": "policy_create.proof",
-      "sha256": "c349547230010b1cf966188cf9c99420d01e93ad74c0e8d5d51e10b43c2f7830"
+      "sha256": "d0bb5a49bdb14e252e1658e9cb03abf52f221ace394caf07080a543e939a735c"
     },
     {
       "bytes": 688,
@@ -166,7 +166,7 @@
     {
       "bytes": 171281,
       "name": "policy_hash_release.proof",
-      "sha256": "b13765f8054f01052c7513c48d546f7698bf5b23c2cbc1d04cf3a2e3e66b8adf"
+      "sha256": "1c2d063506eab8d528864858a070684318d0e7b096265d701b30ca75a1279687"
     },
     {
       "bytes": 688,
@@ -174,7 +174,6 @@
       "sha256": "d28560ebe0a98fc6cd028bb8e630b4c5af3ba1aa79f814d744aa6a8beb57b06c"
     }
   ],
-  "rustc_version": "rustc 1.91.1 (ed61e7d7e 2025-11-07)",
   "schema": "hegemon.v011.current-lock-policy-backend-qualification.v1",
   "scope": "current-source-backend-fixed-disposable-fixtures-not-public-network-lifecycle",
   "source_inputs": [
@@ -339,9 +338,9 @@
       "sha256": "eb716cec59d45235b2d94865baf4f28b4af9259f69e0c405f6a2dc2650f5fad2"
     },
     {
-      "bytes": 19637,
+      "bytes": 19738,
       "path": "circuits/transaction/src/smallwood_htlc/source_cse.rs",
-      "sha256": "9401f9f6a8ea5ac6b1884af0c24c7fd910c3a1452664be5b504b5377dae3825d"
+      "sha256": "9e573c5a8579a516f9cff092abdce06a7a04a49f212fccc14138b088b20f0be6"
     },
     {
       "bytes": 11568,
@@ -381,10 +380,10 @@
     {
       "bytes": 112119,
       "path": "Cargo.lock",
-      "sha256": "ebef532fbfaee8fcafa4b6e12b2ad8cbb219bacfba4f2aaa24904bd59480e5d3"
+      "sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719"
     }
   ],
   "status": "PASS",
-  "stdout_sha256": "6b90aec1d635d261f943819f22905abeab297026fa3a48f745e0dbb102982a26",
+  "stdout_sha256": "33b1e28b90965d6a7c5e307d168957c79586c58aa45e97be45dfa7fb55520316",
   "test_source_sha256": "151619b3588a7354b23879eb2bdc04ebe0fcaa51d70381d1478f7a087bd0c0d4"
 }

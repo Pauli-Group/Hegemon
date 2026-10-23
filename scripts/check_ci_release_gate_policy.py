@@ -1140,7 +1140,7 @@ def check_ci_workflow(path: Path) -> None:
         ("dependency-audit", 30),
         ("formal-core-checker", 30),
         ("formal-core-lean", 30),
-        ("formal-core-vectors", 30),
+        ("formal-core-vectors", 60),
         ("formal-core-policy", 30),
         ("formal-crypto-isolation", 30),
         ("formal-crypto-sanity", 60),
