@@ -992,24 +992,47 @@ private theorem simulator_leaf_tape_bytes_length :
     Function.comp_def, List.map_const', encodeLE_length,
     smz9OpenedLeaves, openedLeafTapesBytes, openedLeafCount, openedLeafTapeBytes]
 
-private theorem simulator_proof_is_canonical : simulatorProof.Canonical := by
+private theorem simulator_auth_paths_are_canonical :
+    AuthPathsCanonical simulatorAuthPaths := by
+  refine ⟨⟨?_, ?_, ?_, ?_⟩, ?_, ?_⟩
+  · exact encodeLE_length 2 smz9OpenedLeaves
+  · decide
+  · decide
+  · change (List.replicate (368 * 64) (0 : Byte)).length = _
+    rw [List.length_replicate]
+    decide
+  · decide
+  · decide
+
+private theorem proof_with_leaf_tapes_is_canonical
+    (paths : AuthPathsWire) (tapes : List Byte)
+    (pathsCanonical : AuthPathsCanonical paths)
+    (tapesLength : tapes.length = openedLeafTapesBytes) :
+    (let base := SmallWoodSmz9ProofWire.Examples.makeProof paths
+     { base with
+       pcs :=
+         { base.pcs with
+           decs := { base.pcs.decs with leafTapeBytes := tapes } } }).Canonical := by
   dsimp only [SmallWoodSmz9ProofWire.ProofWire.Canonical,
     SmallWoodSmz9ProofWire.proofPayloadCodec, PrefixCodec.xmap, PrefixCodec.pair,
     PrefixCodec.fixed, SmallWoodProofWire.piopCodec, SmallWoodSmz9ProofWire.pcsCodec,
     SmallWoodSmz9ProofWire.decsCodec, SmallWoodSmz9ProofWire.openedWitnessSmz9Codec,
     PrefixCodec.refine, SmallWoodProofWire.openedWitnessCodec,
     SmallWoodProofWire.matrixCodec, SmallWoodSmz9ProofWire.authPathsCodec]
-  simp only [simulatorProof, SmallWoodSmz9ProofWire.Examples.makeProof,
+  simp only [SmallWoodSmz9ProofWire.Examples.makeProof,
     SmallWoodSmz9ProofWire.Examples.makePcs, SmallWoodSmz9ProofWire.Examples.makeDecs,
-    SmallWoodSmz9ProofWire.Examples.zeroPiop, SmallWoodSmz9ProofWire.Examples.zeroMatrix,
-    SmallWoodSmz9ProofWire.Examples.zeroBytes, simulatorAuthPaths]
-  rw [simulator_leaf_tape_bytes_length]
-  simp [OpenedWitnessSmz9, OpenedWitnessWire.Canonical, AuthPathsCanonical,
-    openedLeafCount, openedLeafTapeBytes, openedLeafTapesBytes, smz9OpenedLeaves,
-    maximumAuthPathDepth, MatrixWire.Canonical, MatrixWire.rowCount, MatrixWire.columnCount,
-    AuthPathsWire.Canonical, AuthPathsWire.rowCount, AuthPathsWire.nodeCount,
-    maximumCollectionRows, digestBytes, fieldWordsCanonicalB, fieldOrder,
+    SmallWoodSmz9ProofWire.Examples.zeroPiop]
+  simp [pathsCanonical, tapesLength,
+    SmallWoodSmz9ProofWire.Examples.zeroMatrix, SmallWoodSmz9ProofWire.Examples.zeroBytes,
+    OpenedWitnessSmz9, OpenedWitnessWire.Canonical,
+    MatrixWire.Canonical, MatrixWire.rowCount, MatrixWire.columnCount,
+    maximumCollectionRows, fieldWordsCanonicalB, fieldOrder,
     encodeLE_length, decodeLE_encodeLE]
+
+private theorem simulator_proof_is_canonical : simulatorProof.Canonical := by
+  exact proof_with_leaf_tapes_is_canonical simulatorAuthPaths
+    (simulatorOpenedLeafTapes.map Subtype.val).flatten
+    simulator_auth_paths_are_canonical simulator_leaf_tape_bytes_length
 
 private theorem smz9_encoded_length (proof : SmallWoodSmz9ProofWire.ProofWire) :
     proof.encode.length = 4 + proof.saltBytes.length + proof.nonceBytes.length +
