@@ -67,6 +67,7 @@ jobs:
   formal-core-lean:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    if: ${{ github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -90,6 +91,7 @@ jobs:
   formal-core-vectors:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    if: ${{ github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -141,7 +143,7 @@ jobs:
       - formal-core-policy
     timeout-minutes: 2
     steps:
-      - name: Require every formal-core shard
+      - name: Require PR checks and separate formal qualification
         env:
           CHECKER_RESULT: ${{ needs.formal-core-checker.result }}
           LEAN_RESULT: ${{ needs.formal-core-lean.result }}
@@ -149,9 +151,14 @@ jobs:
           POLICY_RESULT: ${{ needs.formal-core-policy.result }}
         run: |
           test "$CHECKER_RESULT" = success
-          test "$LEAN_RESULT" = success
-          test "$VECTORS_RESULT" = success
           test "$POLICY_RESULT" = success
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            test "$LEAN_RESULT" = skipped
+            test "$VECTORS_RESULT" = skipped
+          else
+            test "$LEAN_RESULT" = success
+            test "$VECTORS_RESULT" = success
+          fi
 
   formal-crypto-isolation:
     runs-on: ubuntu-latest
@@ -190,6 +197,7 @@ jobs:
       - name: Transaction-proof successor authorization regression
         run: python3 -I -B scripts/test_check_transaction_proof_successor_authorization.py
       - name: Install Lean toolchain manager
+        if: ${{ github.event_name != 'pull_request' }}
         env:
           ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
         run: |
@@ -198,6 +206,7 @@ jobs:
           printf '%s  %s\n' "$ELAN_INIT_SHA256" "$ELAN_INIT" | sha256sum -c -
           sh "$ELAN_INIT" -y --default-toolchain none
       - name: Complete formal cryptography gate
+        if: ${{ github.event_name != 'pull_request' }}
         env:
           HEGEMON_FORMAL_CRYPTO_MIN_FREE_GIB: '8'
         run: bash scripts/check_formal_crypto.sh full

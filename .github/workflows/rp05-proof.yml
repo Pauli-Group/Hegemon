@@ -53,7 +53,8 @@ jobs:
       # Existing release/authorization jobs remain independently required.
   proof:
     needs: source
-    if: needs.source.outputs.proof == 'true'
+    # Exhaustive compilation/body audit/kernel replay runs on main, schedule or manual dispatch.
+    if: github.event_name != 'pull_request' && needs.source.outputs.proof == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 270
     steps:

@@ -601,6 +601,26 @@ def main() -> None:
             "        continue-on-error: true\n",
         ),
     )
+    for formal_job in ("formal-core-lean", "formal-core-vectors"):
+        body = policy.job_block(ci_workflow, formal_job)
+        for condition in ("", "    if: ${{ true }}\n"):
+            changed = body.replace("    if: " + policy.NON_PR_QUALIFICATION + "\n", condition)
+            expect_workflow_rejected(
+                formal_job + " event scope", policy.check_ci_workflow,
+                replace_once(ci_workflow, body, changed),
+            )
+    for step_name in ("Install Lean toolchain manager", "Complete formal cryptography gate"):
+        target = "      - name: " + step_name + "\n        if: " + policy.NON_PR_QUALIFICATION + "\n"
+        # Lean installers also exist in separately conditioned jobs; target the sanity job only.
+        body = policy.job_block(ci_workflow, "formal-crypto-sanity")
+        changed = replace_once(body, target, "      - name: " + step_name + "\n")
+        expect_workflow_rejected(step_name + " PR condition removed", policy.check_ci_workflow,
+                                 replace_once(ci_workflow, body, changed))
+    for result in ("LEAN_RESULT", "VECTORS_RESULT"):
+        expect_workflow_rejected(
+            result + " fake PR pass", policy.check_ci_workflow,
+            replace_once(ci_workflow, f'            test "${result}" = skipped\n', f'            test "${result}" = success\n'),
+        )
     expect_workflow_rejected(
         "PR formal-core shard mode substitution",
         policy.check_ci_workflow,
@@ -657,8 +677,19 @@ def main() -> None:
     policy.check_formal_crypto_workflow(
         ROOT / ".github/workflows/formal-crypto.yml"
     )
+    focused_body = policy.job_block(focused_formal_crypto_workflow, "formal-crypto-sanity")
+    expect_workflow_rejected(
+        "standalone formal PR exclusion removed", policy.check_formal_crypto_workflow,
+        replace_once(focused_formal_crypto_workflow, focused_body,
+                     focused_body.replace("    if: " + policy.NON_PR_QUALIFICATION + "\n", "")),
+    )
+    expect_workflow_rejected(
+        "standalone formal manual trigger removed", policy.check_formal_crypto_workflow,
+        replace_once(focused_formal_crypto_workflow, "  workflow_dispatch:\n", ""),
+    )
     standalone_formal_crypto_timeout = (
         "  formal-crypto-sanity:\n"
+        "    if: ${{ github.event_name != 'pull_request' }}\n"
         "    runs-on: ubuntu-latest\n"
         "    timeout-minutes: 90\n"
     )

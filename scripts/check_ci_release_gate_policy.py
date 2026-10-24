@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import re
@@ -689,6 +689,7 @@ def require_job_and_steps_fail_closed(
     job_name: str,
     *,
     allow_always_condition: bool = False,
+    exact_job_condition: str | None = None,
 ) -> None:
     body = job_block(workflow, job_name)
     job_keys = re.findall(r"(?m)^    ([A-Za-z_][A-Za-z0-9_-]*):", body)
@@ -704,8 +705,12 @@ def require_job_and_steps_fail_closed(
         raise SystemExit(f"{job_name}: duplicate job-level if")
     if job_conditions:
         normalized = _yaml_scalar(job_conditions[0]).strip()
-        if not allow_always_condition or normalized != "${{ always() }}":
+        if normalized != exact_job_condition and (
+            not allow_always_condition or normalized != "${{ always() }}"
+        ):
             raise SystemExit(f"{job_name}: job-level if is not permitted")
+    if exact_job_condition is not None and job_conditions != [exact_job_condition]:
+        raise SystemExit(f"{job_name}: exact non-PR qualification condition required")
     job_values = re.findall(
         r"(?m)^    continue-on-error:(?:\s*(.*))?$",
         body,
@@ -997,6 +1002,54 @@ def require_strict_success_aggregate(
         )
 
 
+NON_PR_QUALIFICATION = "${{ github.event_name != 'pull_request' }}"
+
+
+def require_non_pr_formal_steps(steps: list[WorkflowStep]) -> list[WorkflowStep]:
+    """Check the two deferred steps before checking their executable bodies."""
+    result = []
+    expected = {"Install Lean toolchain manager", "Complete formal cryptography gate"}
+    found = set()
+    for step in steps:
+        if step.name in expected:
+            if step.condition != NON_PR_QUALIFICATION:
+                raise SystemExit(f"{step.name}: exact non-PR qualification condition required")
+            found.add(step.name)
+            result.append(replace(step, condition=None))
+        else:
+            if step.condition is not None:
+                raise SystemExit(f"{step.name}: PR runtime check must remain unconditional")
+            result.append(step)
+    if found != expected:
+        raise SystemExit("both separate formal qualification steps are required")
+    return result
+
+
+def require_formal_core_aggregate(workflow: str) -> None:
+    """Require real checker/policy success and honest event-specific formal results."""
+    body = job_block(workflow, "formal-core")
+    steps = workflow_steps(workflow, "formal-core")
+    if len(steps) != 1 or steps[0].condition is not None or not _continue_on_error_is_safely_disabled(steps[0].continue_on_error):
+        raise SystemExit("formal-core: exactly one unconditional fail-closed aggregate required")
+    for need, variable in (("formal-core-checker", "CHECKER_RESULT"), ("formal-core-policy", "POLICY_RESULT"), ("formal-core-lean", "LEAN_RESULT"), ("formal-core-vectors", "VECTORS_RESULT")):
+        expected = f"          {variable}: ${{{{ needs.{need}.result }}}}"
+        if body.count(expected) != 1:
+            raise SystemExit(f"formal-core: exact {variable} result binding required")
+    expected_commands = [
+        'test "$CHECKER_RESULT" = success',
+        'test "$POLICY_RESULT" = success',
+        'if [ "$GITHUB_EVENT_NAME" = pull_request ]; then',
+        'test "$LEAN_RESULT" = skipped',
+        'test "$VECTORS_RESULT" = skipped',
+        'else',
+        'test "$LEAN_RESULT" = success',
+        'test "$VECTORS_RESULT" = success',
+        'fi',
+    ]
+    if _logical_shell_lines(steps[0].run or "") != expected_commands:
+        raise SystemExit("formal-core: exact PR-skip/non-PR-success aggregate required")
+
+
 def require_lean_installer_outside_worktree(name: str, text: str) -> None:
     require_contains(name, text, 'ELAN_INIT="$RUNNER_TEMP/elan-init.sh"')
     require_contains(name, text, '-o "$ELAN_INIT"')
@@ -1140,6 +1193,8 @@ def check_ci_workflow(path: Path) -> None:
             job_name,
             allow_always_condition=job_name
             in {"formal-core", "core-tests", "release-build"},
+            exact_job_condition=NON_PR_QUALIFICATION
+            if job_name in {"formal-core-lean", "formal-core-vectors"} else None,
         )
     for timed_job, timeout_minutes in (
         ("rust-lints", 30),
@@ -1180,21 +1235,14 @@ def check_ci_workflow(path: Path) -> None:
     app_steps = workflow_steps(workflow, "app-no-ssh-e2e")
     release_steps = workflow_steps(workflow, "release-binaries")
     formal_crypto_isolation_steps = workflow_steps(workflow, "formal-crypto-isolation")
-    formal_crypto_sanity_steps = workflow_steps(workflow, "formal-crypto-sanity")
+    formal_crypto_sanity_steps = require_non_pr_formal_steps(
+        workflow_steps(workflow, "formal-crypto-sanity")
+    )
     formal_core_checker_steps = workflow_steps(workflow, "formal-core-checker")
     formal_core_lean_steps = workflow_steps(workflow, "formal-core-lean")
     formal_core_vectors_steps = workflow_steps(workflow, "formal-core-vectors")
     formal_core_policy_steps = workflow_steps(workflow, "formal-core-policy")
-    require_strict_success_aggregate(
-        workflow,
-        "formal-core",
-        (
-            ("formal-core-checker", "CHECKER_RESULT"),
-            ("formal-core-lean", "LEAN_RESULT"),
-            ("formal-core-vectors", "VECTORS_RESULT"),
-            ("formal-core-policy", "POLICY_RESULT"),
-        ),
-    )
+    require_formal_core_aggregate(workflow)
     require_exact_needs(
         workflow,
         "formal-core",
@@ -1549,6 +1597,10 @@ def check_formal_crypto_workflow(path: Path) -> None:
                     f"focused formal-crypto {event} trigger must contain exactly one "
                     f"{trigger_path} path"
                 )
+    require_job_and_steps_fail_closed(
+        workflow, "formal-crypto-sanity", exact_job_condition=NON_PR_QUALIFICATION
+    )
+    require_contains("manual formal qualification entry point", workflow, "  workflow_dispatch:\n")
     steps = workflow_steps(workflow, "formal-crypto-sanity")
     require_contains(
         "focused formal-crypto-sanity wall-clock budget",

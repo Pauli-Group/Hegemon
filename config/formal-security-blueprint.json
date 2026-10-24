@@ -190,7 +190,7 @@
         "reviewer": "Codex (internal CI hygiene review)",
         "reviewed_at": "2026-10-02",
         "notes": "Pending independent review. Internal source review on 2026-10-02: CI policy negative tests pin the dependency waiver gate, the PR-only unapproved-profile review flag, the zero-funds app review mode, and release-build dependencies; release workflow calls remain strict. CI no longer labels the historical native-backend package as current RP05 authority; tag release retains its package/posture checks. This does not establish live remote ruleset enforcement, runner integrity, production authority, or independent review. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal CI execution metadata refresh (2026-10-23): test optimization level 2 and two-job/Rayon concurrency bounds change execution cost; existing tests, overflow checks, debug assertions, strict release controls and timeout remain in force. This refresh adds no cryptographic assurance.",
-        "content_blake3": "cf060775a9153b586f028e1fc8409748002f0e454d29489420d74051f4965451"
+        "content_blake3": "ea8fbca1638785ee64de488cf5821d24e895a3411f09b05f9cc4c0b494565232"
       },
       "falsification_cases": [
         {
@@ -14306,7 +14306,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-11",
         "notes": "Pending independent review. Previous internal assessment: Pending independent review of the 64-bit reducer preimage classification, degree-support predicate, and package parity gate. This is arithmetic, vector, and byte-grammar evidence only; random-oracle independence, irreducibility, collision reduction, proof of knowledge, and production fold equivalence remain open. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal CI execution metadata refresh (2026-10-23): test optimization level 2 and two-job/Rayon concurrency bounds change execution cost; existing tests, overflow checks, debug assertions, strict release controls and timeout remain in force. This refresh adds no cryptographic assurance.",
-        "content_blake3": "628a2df2d3df969ffde3aed6e50d77b903441493908c4a9d3bf9f8fb563dd157"
+        "content_blake3": "8734fca584fa5d2c46945c30a5e50eb4ba987e1f315e6766645c405a435e1c2a"
       },
       "falsification_cases": [
         {

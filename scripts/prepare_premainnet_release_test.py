@@ -30,6 +30,53 @@ class PreparationWorkflowTests(unittest.TestCase):
             (ROOT / ".github/workflows/prepare-premainnet-release.yml").read_text(),
         )
 
+    def test_pr_scope_defers_only_exhaustive_formal_steps(self) -> None:
+        security = self.workflow.split("  security-gates:\n", 1)[1].split("\n  app-no-ssh-e2e:\n", 1)[0]
+        for mode in ("checker", "policy"):
+            self.assertEqual(security.count(
+                "        if: github.event_name == 'pull_request'\n"
+                f"        run: bash scripts/check_formal_core.sh {mode}\n"
+            ), 1)
+        for name in ("Install Lean toolchain manager", "Formal-core release gate", "Complete formal cryptography release gate"):
+            self.assertEqual(security.count(
+                f"      - name: {name}\n"
+                "        if: github.event_name != 'pull_request'\n"
+            ), 1)
+        self.assertEqual(security.count("        if: "), 5)
+        self.assertIn("PR review defers exhaustive Lean/vector checks", self.workflow)
+        # Inverting just the reviewed formal substitutions restores all inherited
+        # build-job bytes, including every runtime, parser and artifact check.
+        jobs = self.release.split("\njobs:\n", 1)[1].split("\n  create-release:\n", 1)[0]
+        inherited = preparation.adapt_version_only_successor(jobs)
+        adapted = preparation.adapt_pr_formal_scope(inherited)
+        for mode, label in (("checker", "checker controls"), ("policy", "policy checks")):
+            adapted = adapted.replace(
+                f"      - name: Formal-core {label} for PR review\n"
+                "        if: github.event_name == 'pull_request'\n"
+                f"        run: bash scripts/check_formal_core.sh {mode}\n\n", "", 1)
+        adapted = adapted.replace("        if: github.event_name != 'pull_request'\n", "")
+        self.assertEqual(adapted, inherited)
+
+    def test_formal_deferral_mutations_reject(self) -> None:
+        non_pr = "        if: github.event_name != 'pull_request'\n"
+        pr = "        if: github.event_name == 'pull_request'\n"
+        for before, after in (
+            (non_pr, ""),
+            (non_pr, pr),
+            (pr, non_pr),
+            ("bash scripts/check_formal_core.sh checker", "bash scripts/check_formal_core.sh lean"),
+            ("bash scripts/check_formal_core.sh policy", "true"),
+            ("bash scripts/check_formal_crypto.sh full", "bash scripts/check_formal_crypto.sh full || true"),
+            ("      - name: Formal-core release gate\n", "      - name: Formal-core release gate\n        continue-on-error: true\n"),
+        ):
+            self.assertIn(before, self.workflow)
+            with self.subTest(before=before), self.assertRaises(ValueError):
+                preparation.verify_preparation(self.release, self.workflow.replace(before, after, 1))
+        for name in ("Install Lean toolchain manager", "Formal-core release gate", "Complete formal cryptography release gate"):
+            changed_release = self.release.replace(f"      - name: {name}\n", f"      - name: Unreviewed {name}\n", 1)
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                preparation.expected_workflow(changed_release)
+
     def test_gate_removal_or_soft_failure_rejects(self) -> None:
         command = "./scripts/security-audit.sh --require-binary"
         self.assertIn(command, self.workflow)
