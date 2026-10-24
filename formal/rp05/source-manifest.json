@@ -6634,7 +6634,7 @@
     },
     {
       "module": "SmzaRp05FinalIntentFold",
-      "sha256": "088963eadc54ef108df0c90880bac9bea7cdce9a96da39aed07a3062e5748d31",
+      "sha256": "07ac137a4c66b0b5d32b3bb079b2d93e766300725cb7f5b6cccf8e089acd1ff7",
       "source": ".agent/prod-closure-2026-09-19/extraction/SmzaRp05FinalIntentFold.lean",
       "staged": "generated/Sources/SmzaRp05FinalIntentFold.lean"
     },
