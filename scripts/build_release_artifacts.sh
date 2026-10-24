@@ -61,12 +61,13 @@ build_release() {
 }
 
 build_release -p hegemon-node --bin hegemon-node --no-default-features
-build_release -p wallet --bin wallet
+build_release -p wallet --bin wallet --bin private-spend --no-default-features --features rpc-client
 build_release -p walletd --bin walletd
 
 NODE_BIN="$RELEASE_DIR/hegemon-node$EXE_SUFFIX"
 WALLET_BIN="$RELEASE_DIR/wallet$EXE_SUFFIX"
 WALLETD_BIN="$RELEASE_DIR/walletd$EXE_SUFFIX"
+PRIVATE_SPEND_BIN="$RELEASE_DIR/private-spend$EXE_SUFFIX"
 
 python3 "$ROOT/scripts/release_artifact_manifest.py" create \
   --output "$MANIFEST" \
@@ -74,12 +75,14 @@ python3 "$ROOT/scripts/release_artifact_manifest.py" create \
   --artifact "hegemon-node:hegemon-node:$NODE_BIN" \
   --artifact "wallet:wallet:$WALLET_BIN" \
   --artifact "walletd:walletd:$WALLETD_BIN" \
+  --artifact "wallet:private-spend:$PRIVATE_SPEND_BIN" \
   >/dev/null
 python3 "$ROOT/scripts/release_artifact_manifest.py" verify \
   --manifest "$MANIFEST" \
   --expect "hegemon-node:hegemon-node:$NODE_BIN" \
   --expect "wallet:wallet:$WALLET_BIN" \
   --expect "walletd:walletd:$WALLETD_BIN" \
+  --expect "wallet:private-spend:$PRIVATE_SPEND_BIN" \
   >/dev/null
 
 printf '%s\n' "$MANIFEST"

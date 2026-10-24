@@ -186,7 +186,9 @@ jobs:
           components: rust-src
 
       - name: App no-SSH release workflow
-        run: ./scripts/check-app-no-ssh-e2e.sh
+        run: ./scripts/check-app-no-ssh-e2e.sh --review-only
+        # Seed/relay and fresh-wallet sync only; fundedTransactionsExercised:false.
+        # Native HGN lifecycle and final-binary proof/security gates remain required.
 
   build-linux:
     runs-on: ubuntu-latest
@@ -212,7 +214,7 @@ jobs:
         run: ./scripts/build_release_artifacts.sh
 
       - name: Verify release artifact manifest
-        run: python3 scripts/release_artifact_manifest.py verify --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node --expect wallet:wallet:target/release/wallet --expect walletd:walletd:target/release/walletd
+        run: python3 scripts/release_artifact_manifest.py verify --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node --expect wallet:wallet:target/release/wallet --expect walletd:walletd:target/release/walletd --expect wallet:private-spend:target/release/private-spend
       - name: Restore authenticated unchanged v0.11 predecessor
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
@@ -220,10 +222,10 @@ jobs:
         run: python3 -I -B scripts/check_v011_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
-        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
+        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd --binary target/release/private-spend
 
       - name: Package manifest-bound release assets
-        run: python3 scripts/release_artifact_manifest.py package --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node --expect wallet:wallet:target/release/wallet --expect walletd:walletd:target/release/walletd --asset hegemon-node:hegemon-node:hegemon-node-linux-x86_64 --asset wallet:wallet:wallet-linux-x86_64 --asset walletd:walletd:walletd-linux-x86_64 --output-dir release --asset-manifest-name hegemon-release-assets-linux-x86_64.json
+        run: python3 scripts/release_artifact_manifest.py package --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node --expect wallet:wallet:target/release/wallet --expect walletd:walletd:target/release/walletd --expect wallet:private-spend:target/release/private-spend --asset hegemon-node:hegemon-node:hegemon-node-linux-x86_64 --asset wallet:wallet:wallet-linux-x86_64 --asset walletd:walletd:walletd-linux-x86_64 --asset wallet:private-spend:private-spend-linux-x86_64 --output-dir release --asset-manifest-name hegemon-release-assets-linux-x86_64.json
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -254,7 +256,7 @@ jobs:
         run: ./scripts/build_release_artifacts.sh --target x86_64-apple-darwin
 
       - name: Verify release artifact manifest
-        run: python3 scripts/release_artifact_manifest.py verify --manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/x86_64-apple-darwin/release/hegemon-node --expect wallet:wallet:target/x86_64-apple-darwin/release/wallet --expect walletd:walletd:target/x86_64-apple-darwin/release/walletd
+        run: python3 scripts/release_artifact_manifest.py verify --manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/x86_64-apple-darwin/release/hegemon-node --expect wallet:wallet:target/x86_64-apple-darwin/release/wallet --expect walletd:walletd:target/x86_64-apple-darwin/release/walletd --expect wallet:private-spend:target/x86_64-apple-darwin/release/private-spend
       - name: Restore authenticated unchanged v0.11 predecessor
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
@@ -262,10 +264,10 @@ jobs:
         run: python3 -I -B scripts/check_v011_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
-        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --node-bin target/x86_64-apple-darwin/release/hegemon-node --binary target/x86_64-apple-darwin/release/wallet --binary target/x86_64-apple-darwin/release/walletd
+        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --node-bin target/x86_64-apple-darwin/release/hegemon-node --binary target/x86_64-apple-darwin/release/wallet --binary target/x86_64-apple-darwin/release/walletd --binary target/x86_64-apple-darwin/release/private-spend
 
       - name: Package manifest-bound release assets
-        run: python3 scripts/release_artifact_manifest.py package --manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/x86_64-apple-darwin/release/hegemon-node --expect wallet:wallet:target/x86_64-apple-darwin/release/wallet --expect walletd:walletd:target/x86_64-apple-darwin/release/walletd --asset hegemon-node:hegemon-node:hegemon-node-macos-x86_64 --asset wallet:wallet:wallet-macos-x86_64 --asset walletd:walletd:walletd-macos-x86_64 --output-dir release --asset-manifest-name hegemon-release-assets-macos-x86_64.json
+        run: python3 scripts/release_artifact_manifest.py package --manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/x86_64-apple-darwin/release/hegemon-node --expect wallet:wallet:target/x86_64-apple-darwin/release/wallet --expect walletd:walletd:target/x86_64-apple-darwin/release/walletd --expect wallet:private-spend:target/x86_64-apple-darwin/release/private-spend --asset hegemon-node:hegemon-node:hegemon-node-macos-x86_64 --asset wallet:wallet:wallet-macos-x86_64 --asset walletd:walletd:walletd-macos-x86_64 --asset wallet:private-spend:private-spend-macos-x86_64 --output-dir release --asset-manifest-name hegemon-release-assets-macos-x86_64.json
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -295,7 +297,7 @@ jobs:
         run: ./scripts/build_release_artifacts.sh
 
       - name: Verify release artifact manifest
-        run: python3 scripts/release_artifact_manifest.py verify --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node --expect wallet:wallet:target/release/wallet --expect walletd:walletd:target/release/walletd
+        run: python3 scripts/release_artifact_manifest.py verify --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node --expect wallet:wallet:target/release/wallet --expect walletd:walletd:target/release/walletd --expect wallet:private-spend:target/release/private-spend
       - name: Restore authenticated unchanged v0.11 predecessor
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
@@ -303,10 +305,10 @@ jobs:
         run: python3 -I -B scripts/check_v011_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
-        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
+        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd --binary target/release/private-spend
 
       - name: Package manifest-bound release assets
-        run: python3 scripts/release_artifact_manifest.py package --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node --expect wallet:wallet:target/release/wallet --expect walletd:walletd:target/release/walletd --asset hegemon-node:hegemon-node:hegemon-node-macos-arm64 --asset wallet:wallet:wallet-macos-arm64 --asset walletd:walletd:walletd-macos-arm64 --output-dir release --asset-manifest-name hegemon-release-assets-macos-arm64.json
+        run: python3 scripts/release_artifact_manifest.py package --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node --expect wallet:wallet:target/release/wallet --expect walletd:walletd:target/release/walletd --expect wallet:private-spend:target/release/private-spend --asset hegemon-node:hegemon-node:hegemon-node-macos-arm64 --asset wallet:wallet:wallet-macos-arm64 --asset walletd:walletd:walletd-macos-arm64 --asset wallet:private-spend:private-spend-macos-arm64 --output-dir release --asset-manifest-name hegemon-release-assets-macos-arm64.json
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -345,7 +347,7 @@ jobs:
 
       - name: Verify release artifact manifest
         shell: bash
-        run: python3 scripts/release_artifact_manifest.py verify --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node.exe --expect wallet:wallet:target/release/wallet.exe --expect walletd:walletd:target/release/walletd.exe
+        run: python3 scripts/release_artifact_manifest.py verify --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node.exe --expect wallet:wallet:target/release/wallet.exe --expect walletd:walletd:target/release/walletd.exe --expect wallet:private-spend:target/release/private-spend.exe
       - name: Restore authenticated unchanged v0.11 predecessor
         shell: bash
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
@@ -356,11 +358,11 @@ jobs:
 
       - name: Release PQ binary audit
         shell: bash
-        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node.exe --binary target/release/wallet.exe --binary target/release/walletd.exe
+        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node.exe --binary target/release/wallet.exe --binary target/release/walletd.exe --binary target/release/private-spend.exe
 
       - name: Package manifest-bound release assets
         shell: bash
-        run: python3 scripts/release_artifact_manifest.py package --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node.exe --expect wallet:wallet:target/release/wallet.exe --expect walletd:walletd:target/release/walletd.exe --asset hegemon-node:hegemon-node:hegemon-node-windows-x86_64.exe --asset wallet:wallet:wallet-windows-x86_64.exe --asset walletd:walletd:walletd-windows-x86_64.exe --output-dir release --asset-manifest-name hegemon-release-assets-windows-x86_64.json
+        run: python3 scripts/release_artifact_manifest.py package --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node.exe --expect wallet:wallet:target/release/wallet.exe --expect walletd:walletd:target/release/walletd.exe --expect wallet:private-spend:target/release/private-spend.exe --asset hegemon-node:hegemon-node:hegemon-node-windows-x86_64.exe --asset wallet:wallet:wallet-windows-x86_64.exe --asset walletd:walletd:walletd-windows-x86_64.exe --asset wallet:private-spend:private-spend-windows-x86_64.exe --output-dir release --asset-manifest-name hegemon-release-assets-windows-x86_64.json
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

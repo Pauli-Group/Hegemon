@@ -45,11 +45,21 @@ class FinalConsumerControls(unittest.TestCase):
         self.reject(value)
 
     def test_every_shipped_binary_is_bound(self):
-        for name in ('hegemon-node', 'wallet', 'walletd'):
+        for name in ('hegemon-node', 'wallet', 'walletd', 'private-spend'):
             with self.subTest(binary=name):
                 value = copy.deepcopy(RECEIPT)
                 value['artifact_sha256'][name] = '00' * 32
                 self.reject(value)
+
+    def test_private_spend_cli_version_is_exact_and_required(self):
+        for replacement in ('private-spend 0.10.0', 'wallet 0.11.0', True, None):
+            with self.subTest(replacement=replacement):
+                value = copy.deepcopy(RECEIPT)
+                value['identity_smoke']['private_spend_cli_version'] = replacement
+                self.reject(value)
+        value = copy.deepcopy(RECEIPT)
+        del value['identity_smoke']['private_spend_cli_version']
+        self.reject(value)
 
     def test_embedded_proof_checks_match_the_artifact_target_triple(self):
         value = copy.deepcopy(RECEIPT)

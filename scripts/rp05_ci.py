@@ -21,7 +21,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rp05_proof_package as package
 
-FLAGS = ['-j1', '-M3500', '-DwarningAsError=true', '-DautoImplicit=false', '-DElab.async=false']
+FLAGS = ['-j1', '-M4000', '-DwarningAsError=true', '-DautoImplicit=false', '-DElab.async=false']
 # Unlike collectAxioms, this deliberately never reads the imported axiom-summary extension.
 BODY_AUDIT = r'''import Lean.Environment
 import Lean.CoreM
@@ -299,7 +299,7 @@ def compile_audit(cache, cold, seconds):
     audit = cache/'BodyAudit.lean'
     audit.write_text(BODY_AUDIT)
     for module, theorem in audit_roots(m):
-        run([lean,'-j1','-M3500','--run',str(audit),module,theorem],env,deadline,180)
+        run([lean,'-j1','-M4000','--run',str(audit),module,theorem],env,deadline,180)
     if cold:
         checker = str(Path(lean).with_name('leanchecker'))
         if not Path(checker).is_file():

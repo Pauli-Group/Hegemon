@@ -26,7 +26,7 @@ CURRENT = {'chain_id': '11' * 32, 'genesis_hash': '22' * 32,
 HISTORICAL = {'chain_id': '55' * 32, 'genesis_hash': '66' * 32,
     'manifest_digest': '77' * 64, 'relation_id': 'TEST_ONLY_HISTORICAL_RELATION',
     'relation_digest': '88' * 64}
-ARTIFACT_HELPER_SHA256 = 'a429626f609f9f447057a6e362cf53d3e1b42a0c14a6b83c876d6b0faf3feffc'
+ARTIFACT_HELPER_SHA256 = '17178256d95ad03cf663991c3bf68224116f07d6671a7f281c70179987eadbb1'
 LAUNCHER_POLICY_SHA256 = '51700e93ac457574f262bff05f48e5e55fa328e37da30f665721a312de9d826e'
 
 
@@ -60,11 +60,11 @@ class ArtifactGateIdentityControls(unittest.TestCase):
             (root / 'scripts/release_artifact_manifest.py').write_bytes(ARTIFACT_HELPER_BYTES)
             (root / 'scripts/check_release_launcher_policy.py').write_bytes(LAUNCHER_POLICY_BYTES)
             artifacts = []
-            for name in ('hegemon-node', 'wallet', 'walletd'):
+            for package, name in (('hegemon-node', 'hegemon-node'), ('wallet', 'wallet'), ('walletd', 'walletd'), ('wallet', 'private-spend')):
                 path = root / 'target' / name
                 raw = ('TEST ONLY INERT FILE ' + name).encode()
                 path.write_bytes(raw)
-                artifacts.append({'package': name, 'binary': name,
+                artifacts.append({'package': package, 'binary': name,
                     'path': path.relative_to(root).as_posix(),
                     'sha256': hashlib.sha256(raw).hexdigest()})
             artifact = {'target_triple': 'synthetic-unit-test-target', 'artifacts': artifacts}
@@ -103,6 +103,8 @@ class ArtifactGateIdentityControls(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, stdout=b'', stderr=b'')
                 if command == [str(root / 'target/wallet'), '--version']:
                     return subprocess.CompletedProcess(command, 0, stdout=b'wallet 0.11.0\n', stderr=b'')
+                if command == [str(root / 'target/private-spend'), '--version']:
+                    return subprocess.CompletedProcess(command, 0, stdout=b'private-spend 0.11.0\n', stderr=b'')
                 if '--network-manifest' in command:
                     wrong = Path(command[command.index('--network-manifest') + 1])
                     self.assertEqual(wrong.name, 'wrong-manifest.json')
@@ -118,7 +120,7 @@ class ArtifactGateIdentityControls(unittest.TestCase):
                 result = CHECKER.artifact_gate(root, root / 'unused-predecessor', artifact_file,
                     receipt, network_manifest, 4)
 
-            self.assertEqual(run_mock.call_count, 3)
+            self.assertEqual(run_mock.call_count, 4)
             popen_mock.assert_called_once()
             environment = popen_mock.call_args.kwargs['env']
             self.assertEqual(environment['HEGEMON_MINE'], '0')
@@ -131,6 +133,7 @@ class ArtifactGateIdentityControls(unittest.TestCase):
             self.assertEqual(result['identity_smoke']['genesis'], expected_identity['genesis_hash'])
             self.assertEqual(result['identity_smoke']['proof_parameters']['relation_digest'], expected_identity['relation_digest'])
             self.assertIs(result['identity_smoke']['owned_node_reaped'], True)
+            self.assertEqual(result['identity_smoke']['private_spend_cli_version'], 'private-spend 0.11.0')
             self.assertEqual(result['identity_smoke']['height'], 0)
             self.assertEqual(result['identity_smoke']['peers'], 0)
             self.assertEqual(result['artifact_sha256'], {row['binary']: row['sha256'] for row in artifacts})

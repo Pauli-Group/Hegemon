@@ -424,7 +424,7 @@ jobs:
         run: python3 -I -B scripts/materialize_v011_predecessor.py --reserve-bytes 4294967296
 
       - name: Release PQ binary audit
-        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
+        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd --binary target/release/private-spend
 
   release-build:
     runs-on: ubuntu-latest

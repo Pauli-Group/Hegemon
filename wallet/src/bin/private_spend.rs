@@ -75,6 +75,7 @@ impl SpendAuthority {
 #[derive(Parser)]
 #[command(
     name = "private-spend",
+    version = protocol_versioning::RELEASE_VERSION,
     about = "Current common private-spend wallet with exact source-owned release authority"
 )]
 struct Args {
@@ -664,6 +665,13 @@ fn validate_network_args(args: &Args) -> Result<()> {
 }
 #[tokio::main]
 async fn main() -> Result<()> {
+    let identity_args: Vec<_> = std::env::args_os().skip(1).collect();
+    if identity_args.iter().any(|arg| arg == "--print-crypto-profile") {
+        ensure!(identity_args.len() == 1, "--print-crypto-profile must be used alone");
+        let profile = transaction_circuit::proof::production_crypto_profile_attestation()?;
+        println!("{}", serde_json::to_string(&profile)?);
+        return Ok(());
+    }
     let args = Args::parse();
     // Offline bootstrap intentionally precedes manifest/genesis validation,
     // RPC connection, authority lookup and chain synchronization.

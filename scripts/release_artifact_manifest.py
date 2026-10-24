@@ -20,6 +20,7 @@ EXPECTED_ARTIFACTS = (
     ("hegemon-node", "hegemon-node"),
     ("wallet", "wallet"),
     ("walletd", "walletd"),
+    ("wallet", "private-spend"),
 )
 
 
@@ -503,7 +504,7 @@ def verify_manifest(root: Path, manifest_path: Path, expected_specs: list[str]) 
         )
     manifest_artifacts = payload.get("artifacts")
     if not isinstance(manifest_artifacts, list) or len(manifest_artifacts) != len(expected):
-        raise ManifestError("release manifest must contain exactly three artifacts")
+        raise ManifestError("release manifest must contain exactly four artifacts")
 
     verified: list[dict[str, object]] = []
     for item, (package, binary, path, relative) in zip(
@@ -748,7 +749,7 @@ def _load_asset_bundle(
         raise ManifestError("release asset manifest target_triple is missing")
     assets = payload.get("assets")
     if not isinstance(assets, list) or len(assets) != len(EXPECTED_ARTIFACTS):
-        raise ManifestError("release asset manifest must contain exactly three assets")
+        raise ManifestError("release asset manifest must contain exactly four assets")
     identities = tuple(
         (item.get("package"), item.get("binary")) if isinstance(item, dict) else (None, None)
         for item in assets

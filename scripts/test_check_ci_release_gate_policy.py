@@ -416,7 +416,7 @@ def main() -> None:
         "python3 -I -B scripts/materialize_v011_predecessor.py --reserve-bytes 4294967296",
         "./scripts/security-audit.sh --require-binary --binary-manifest "
         "target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node "
-        "--binary target/release/wallet --binary target/release/walletd",
+        "--binary target/release/wallet --binary target/release/walletd --binary target/release/private-spend",
     )
     for command in strict_binary_commands:
         target = "        run: " + command + "\n"
@@ -441,6 +441,7 @@ def main() -> None:
         ("node omission", audit.replace(" --node-bin target/release/hegemon-node", "")),
         ("wallet omission", audit.replace(" --binary target/release/wallet ", " ")),
         ("walletd omission", audit.replace(" --binary target/release/walletd", "")),
+        ("private-spend omission", audit.replace(" --binary target/release/private-spend", "")),
     ):
         expect_workflow_rejected(
             "strict release binary " + label,

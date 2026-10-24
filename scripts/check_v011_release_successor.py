@@ -206,8 +206,8 @@ def artifact_gate(root, predecessor, manifest_file, receipt, manifest, min_free_
     artifact_sha = digest_bytes(artifact_bytes)
     artifact = json.loads(artifact_bytes)
     artifacts = artifact.get('artifacts', [])
-    expected = [('hegemon-node','hegemon-node'), ('wallet','wallet'), ('walletd','walletd')]
-    require([(row.get('package'), row.get('binary')) for row in artifacts] == expected, 'node/wallet/walletd artifact order required')
+    expected = [('hegemon-node','hegemon-node'), ('wallet','wallet'), ('walletd','walletd'), ('wallet','private-spend')]
+    require([(row.get('package'), row.get('binary')) for row in artifacts] == expected, 'node/wallet/walletd/private-spend artifact order required')
     command = [sys.executable, '-I', '-B', str(checker_path), 'verify', '--manifest', str(manifest_file)]
     for row in artifacts:
         safe_file(root, row['path'])
@@ -223,6 +223,8 @@ def artifact_gate(root, predecessor, manifest_file, receipt, manifest, min_free_
     bins = {row['binary']:safe_file(root,row['path']) for row in artifacts}
     version = subprocess.run([str(bins['wallet']), '--version'], capture_output=True, timeout=15, env=environment, check=False)
     require(version.returncode == 0 and version.stdout.decode().strip() == 'wallet ' + NEW_VERSION, 'rebuilt wallet --version mismatch')
+    private_version = subprocess.run([str(bins['private-spend']), '--version'], capture_output=True, timeout=15, env=environment, check=False)
+    require(private_version.returncode == 0 and not private_version.stderr and private_version.stdout.decode().strip() == 'private-spend ' + NEW_VERSION, 'rebuilt private-spend --version mismatch')
     port, rpc_port = free_port(), free_port()
     while rpc_port == port:
         rpc_port = free_port()
@@ -262,7 +264,7 @@ def artifact_gate(root, predecessor, manifest_file, receipt, manifest, min_free_
     require(digest_bytes(manifest_file.read_bytes()) == artifact_sha, 'artifact manifest changed during identity smoke')
     for row in artifacts:
         require(digest_bytes(safe_file(root, row['path']).read_bytes()) == row['sha256'], 'artifact changed during identity smoke')
-    receipt.update(status='PASS_PACKAGING_AND_IDENTITY_SMOKE_ONLY', artifact_manifest_sha256=artifact_sha, target_triple=artifact['target_triple'], artifact_sha256={r['binary']:r['sha256'] for r in artifacts}, identity_smoke={'scratch_directory':str(scratch), 'node_rpc_version':'Hegemon Native Node '+NEW_VERSION, 'wallet_cli_version':version.stdout.decode().strip(), 'walletd_version_cli':'not implemented; artifact hash/source version checked', 'qualified_manifest':True, 'genesis':identity['genesis_hash'], 'proof_parameters':params, 'height':0, 'peers':0, 'wrong_compiled_rules_manifest_rejected':True, 'owned_node_reaped':True}, actual_new_binary_proof_verification=False)
+    receipt.update(status='PASS_PACKAGING_AND_IDENTITY_SMOKE_ONLY', artifact_manifest_sha256=artifact_sha, target_triple=artifact['target_triple'], artifact_sha256={r['binary']:r['sha256'] for r in artifacts}, identity_smoke={'scratch_directory':str(scratch), 'node_rpc_version':'Hegemon Native Node '+NEW_VERSION, 'wallet_cli_version':version.stdout.decode().strip(), 'private_spend_cli_version':private_version.stdout.decode().strip(), 'walletd_version_cli':'not implemented; artifact hash/source version checked', 'qualified_manifest':True, 'genesis':identity['genesis_hash'], 'proof_parameters':params, 'height':0, 'peers':0, 'wrong_compiled_rules_manifest_rejected':True, 'owned_node_reaped':True}, actual_new_binary_proof_verification=False)
     return receipt
 
 def final_replay(root, artifact, receipt, min_free_gib):
@@ -299,11 +301,11 @@ def validate_replay(replay, node_sha, artifact_sha):
 # satisfy the maintained full-network lifecycle harness's qualified_source_tuple.
 CURRENT_SCOPE = 'exact_current_source_current_binary_backend_and_h0'
 CURRENT_SOURCE_KIND = 'reviewed_source_successor_ci'
-CURRENT_CONFIG_SHA256 = 'e7a281441062e75192547caeb6fd3500f0b187ce0e06fd56f9e02def0cd26e07'
-CURRENT_RUNNER_SHA256 = '2d66821c28cb2c057878c86725ff5be6ad337f763d45b5c7ecbf6bcb08a0d06b'
+CURRENT_CONFIG_SHA256 = '1c23c3055fa8f7c21326d7b9ac1e972f985af95871aa2f54e23eb2b98a0c69fe'
+CURRENT_RUNNER_SHA256 = 'a96a9764633e28df98c323e34b6d0633c0c4cf0baf3747b6797005e68309aa38'
 CURRENT_FIXTURE_SHA256 = '50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c'
 CURRENT_NETWORK_MANIFEST_SHA256 = '386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754'
-CURRENT_ARTIFACT_HELPER_SHA256 = 'a429626f609f9f447057a6e362cf53d3e1b42a0c14a6b83c876d6b0faf3feffc'
+CURRENT_ARTIFACT_HELPER_SHA256 = '17178256d95ad03cf663991c3bf68224116f07d6671a7f281c70179987eadbb1'
 CURRENT_LAUNCHER_POLICY_SHA256 = '51700e93ac457574f262bff05f48e5e55fa328e37da30f665721a312de9d826e'
 CURRENT_CARGO_LOCK_SHA256 = '1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719'
 CURRENT_PROOF_CASES = [{'name': 'ordinary',
@@ -405,6 +407,8 @@ CURRENT_RUNTIME_DELTAS = {'Cargo.lock': ['bae447660a12610766620cb7e2afacb6b0ad92
                                                                 '13b4e38045f80b6425db94300c1d245c6a03a1b6e35651799b5fa07ad5b81639'],
  'scripts/hegemon_formal_core/src/lib.rs': ['33c1c47853fa7746d5f351db4e16b684590f2e6be568de6b9578e8fd9aa1bf1d',
                                             '4987f1a5634898eae53bcc0103af21e48b775546884af84488399923b87773d3'],
+ 'wallet/src/bin/private_spend.rs': ['f4fe101db48d477025437fae9e9eba93cba9c4c2dd197f71afe495760ab8bd5f',
+                                     '4e7da335ee53f3f132f48984855d16e91806ba2144d88decc5c913864746cf4f'],
  'wallet/src/bin/wallet.rs': ['df0b673176b10c730285d210f1c9ede4e6ba0b2621118ad63b325c4ffe64b024',
                               '73a50becdd346cedd7ed765c600a3ee70e591ff2fc60564ba6e7d3262ee18f1b'],
  'wallet/src/htlc_prepare.rs': ['54c2df105428a8b45074b0f92f10c16752d20324a0660ade670dc472fb242515',

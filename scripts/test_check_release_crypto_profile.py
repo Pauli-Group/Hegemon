@@ -520,25 +520,47 @@ def private_launch_tests() -> None:
         manifest_path.write_text(json.dumps(manifest))
         expect_rejected(run, "exact native target")
         controls += 1
-        fixture()
-        binaries[1].write_text(binaries[1].read_text() + "# changed after manifest\n")
-        expect_rejected(run, "digest differs from manifest")
-        controls += 1
-        fixture()
-        write_profile_command(binaries[2], stderr="Error: unrelated failure", status=1)
-        # Repin the intentionally changed fixture so the execution check runs.
-        manifest = json.loads(manifest_path.read_text())
-        manifest["artifacts"][2]["sha256"] = hashlib.sha256(binaries[2].read_bytes()).hexdigest()
+        for mutation in ("missing", "extra", "reordered", "wrong-package"):
+            manifest, _, _ = fixture()
+            if mutation == "missing":
+                manifest["artifacts"].pop()
+            elif mutation == "extra":
+                manifest["artifacts"].append(dict(manifest["artifacts"][-1]))
+            elif mutation == "reordered":
+                manifest["artifacts"][-2:] = reversed(manifest["artifacts"][-2:])
+            else:
+                manifest["artifacts"][-1]["package"] = "private-spend"
+            manifest_path.write_text(json.dumps(manifest))
+            expect_rejected(run, "requires exactly node/wallet/walletd/private-spend")
+            controls += 1
+        manifest, _, _ = fixture()
+        manifest["artifacts"][-1]["path"] = manifest["artifacts"][0]["path"]
+        manifest["artifacts"][-1]["sha256"] = manifest["artifacts"][0]["sha256"]
         manifest_path.write_text(json.dumps(manifest))
-        expect_rejected(run, "unrelated failure")
+        expect_rejected(run, "artifact paths must be distinct")
         controls += 1
-        fixture()
-        write_profile_command(binaries[1], stdout=json.dumps(canonical_profile()))
-        manifest = json.loads(manifest_path.read_text())
-        manifest["artifacts"][1]["sha256"] = hashlib.sha256(binaries[1].read_bytes()).hexdigest()
-        manifest_path.write_text(json.dumps(manifest))
-        expect_rejected(run, "every legacy profile to refuse exactly")
-        controls += 1
+        for index in (1, 3):
+            fixture()
+            binaries[index].write_text(binaries[index].read_text() + "# changed after manifest\n")
+            expect_rejected(run, "digest differs from manifest")
+            controls += 1
+        for index in (2, 3):
+            fixture()
+            write_profile_command(binaries[index], stderr="Error: unrelated failure", status=1)
+            # Repin the intentionally changed fixture so the execution check runs.
+            manifest = json.loads(manifest_path.read_text())
+            manifest["artifacts"][index]["sha256"] = hashlib.sha256(binaries[index].read_bytes()).hexdigest()
+            manifest_path.write_text(json.dumps(manifest))
+            expect_rejected(run, "unrelated failure")
+            controls += 1
+        for index in (1, 3):
+            fixture()
+            write_profile_command(binaries[index], stdout=json.dumps(canonical_profile()))
+            manifest = json.loads(manifest_path.read_text())
+            manifest["artifacts"][index]["sha256"] = hashlib.sha256(binaries[index].read_bytes()).hexdigest()
+            manifest_path.write_text(json.dumps(manifest))
+            expect_rejected(run, "every legacy profile to refuse exactly")
+            controls += 1
         fixture()
         authorizer.write_text(authorizer.read_text()
             + "pathlib.Path(__file__).write_text(pathlib.Path(__file__).read_text()+'\\n# changed\\n')\n")

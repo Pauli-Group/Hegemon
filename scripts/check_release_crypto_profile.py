@@ -274,23 +274,23 @@ PRIVATE_LAUNCH_PROFILE = {'kind': 'PrivateSpend',
  'relation_id': 'Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4',
  'relation_digest': 'cd747b8430b51faee6c4bf94d7b0c8f8dfdb7863c6b927db53e7cea67c7a20a49aaf3ceda5b9ba2947dc9b89d070e1ac5fe9ab1c77cba6d859285c2f324b56f5',
  'public_words': 86}
-PRIVATE_LAUNCH_ARTIFACTS = (("hegemon-node", "hegemon-node"), ("wallet", "wallet"), ("walletd", "walletd"))
+PRIVATE_LAUNCH_ARTIFACTS = (("hegemon-node", "hegemon-node"), ("wallet", "wallet"), ("walletd", "walletd"), ("wallet", "private-spend"))
 PRIVATE_LAUNCH_SCOPE = "source-owned-current86-private-spend-launch"
 
 
-V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': 'e7a281441062e75192547caeb6fd3500f0b187ce0e06fd56f9e02def0cd26e07',
+V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': '1c23c3055fa8f7c21326d7b9ac1e972f985af95871aa2f54e23eb2b98a0c69fe',
  'release-evidence/v0.11-current-proof-fixture/manifest.json': '50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c',
  'release-evidence/v0.11-predecessor/manifest.json': 'dbec7e35d7402e687c3a3aa19f70c45425a127a915c74185eb0054ed57aa76fc',
  'release-evidence/v0.11-public-chain-fixture/manifest.json': '16ce37d08a3bcfecca0f8dbe4c323f1f319d1da565ea5473d695a5c13c4676c0',
  'release-evidence/v0.11-public-chain-fixture/native-chain.sled.tar.gz': '6ea33e96e3279d992475f7f1434b2d5c6ca161575c52ab4b675203ba3466f2c1',
  'scripts/check_private_spend_launch_authorization.py': '7f5265e5ddc8ec947bbc93df31df276c0fae787bfdcbc7b1e5a2547958ae60ab',
  'scripts/check_release_launcher_policy.py': '51700e93ac457574f262bff05f48e5e55fa328e37da30f665721a312de9d826e',
- 'scripts/check_v011_current_binary_proofs.py': '2d66821c28cb2c057878c86725ff5be6ad337f763d45b5c7ecbf6bcb08a0d06b',
+ 'scripts/check_v011_current_binary_proofs.py': 'a96a9764633e28df98c323e34b6d0633c0c4cf0baf3747b6797005e68309aa38',
  'scripts/check_v011_public_chain_replay.py': '29c6655f1d8ced3ffa5a042e3c66f0567fc0ef465eda70de473e7a35054159dc',
- 'scripts/check_v011_release_successor.py': '7588bbceae13655eb32d6b3a90736bf2e3d30501adb989c78e1452bb5756f31b',
+ 'scripts/check_v011_release_successor.py': '78716865c7a831ac59272b2c752ea567b2de8cf154f870a4871ef13010068f0b',
  'scripts/materialize_v011_predecessor.py': '0dc2b129332bf1276e5790a2db2682946e54f5af6b6850eaca50ca9e17b4dee5',
- 'scripts/release_artifact_manifest.py': 'a429626f609f9f447057a6e362cf53d3e1b42a0c14a6b83c876d6b0faf3feffc',
- 'scripts/security-audit.sh': 'd167e710e5b81389e8a2ba5383f7a3d6157476b30c6a4cf147d0dac5415c7c42'}
+ 'scripts/release_artifact_manifest.py': '17178256d95ad03cf663991c3bf68224116f07d6671a7f281c70179987eadbb1',
+ 'scripts/security-audit.sh': 'b103c1e0ae4a18c7cf873a6b9f95cc13079bd0b5b8c6a526e3c1dae84eb3953b'}
 
 
 def sha256_file(file: Path) -> str:
@@ -303,10 +303,10 @@ def private_launch_snapshot(root: Path, manifest_path: Path) -> tuple:
     if not isinstance(manifest, dict) or manifest.get("target_triple") != rustc_host():
         fail("private launch requires the exact native target")
     artifacts = manifest.get("artifacts")
-    if (not isinstance(artifacts, list) or len(artifacts) != 3
+    if (not isinstance(artifacts, list) or len(artifacts) != 4
         or not all(isinstance(item, dict) for item in artifacts)
         or tuple((item.get("package"), item.get("binary")) for item in artifacts) != PRIVATE_LAUNCH_ARTIFACTS):
-        fail("private launch requires exactly node/wallet/walletd")
+        fail("private launch requires exactly node/wallet/walletd/private-spend")
     binary_paths = []
     for item in artifacts:
         if not isinstance(item.get("path"), str):
@@ -319,7 +319,7 @@ def private_launch_snapshot(root: Path, manifest_path: Path) -> tuple:
         if not binary.is_file() or sha256_file(binary) != item.get("sha256"):
             fail("private launch artifact digest differs from manifest")
         binary_paths.append(binary)
-    if len(set(binary_paths)) != 3:
+    if len(set(binary_paths)) != 4:
         fail("private launch artifact paths must be distinct")
     if (root / "config/v011-release-successor.json").is_file():
         for name, expected in V011_AUTHORITY_SHA256.items():
@@ -389,7 +389,8 @@ def validate_v011_current_successor_receipt(receipt, manifest, manifest_digest, 
     expected_smoke = {'qualified_manifest':True, 'genesis':identity['genesis_hash'],
         'height':0, 'peers':0, 'wrong_compiled_rules_manifest_rejected':True,
         'owned_node_reaped':True, 'node_rpc_version':'Hegemon Native Node 0.11.0',
-        'wallet_cli_version':'wallet 0.11.0'}
+        'wallet_cli_version':'wallet 0.11.0',
+        'private_spend_cli_version':'private-spend 0.11.0'}
     if (not isinstance(smoke,dict) or not all(type(smoke.get(k)) is type(v) and smoke[k] == v for k,v in expected_smoke.items())
         or not isinstance(smoke.get('proof_parameters'),dict)
         or smoke['proof_parameters'].get('relation_digest') != identity['relation_digest']

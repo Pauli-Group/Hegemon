@@ -238,12 +238,13 @@ class RuntimePostimageChecks(unittest.TestCase):
             self.validate('node/Cargo.toml', b'before', b'after')
 
     def test_a_reviewed_path_does_not_allow_an_arbitrary_postimage(self):
-        relative = 'protocol/versioning/src/lib.rs'
-        before = (PREDECESSOR / relative).read_bytes()
-        after = (SOURCE_ROOT / relative).read_bytes()
-        self.validate(relative, before, after)
-        with self.assertRaises(CHECKER.SuccessorError):
-            self.validate(relative, before, after + b'\n// unreviewed mutation\n')
+        for relative in ('protocol/versioning/src/lib.rs', 'wallet/src/bin/private_spend.rs'):
+            with self.subTest(relative=relative):
+                before = (PREDECESSOR / relative).read_bytes()
+                after = (SOURCE_ROOT / relative).read_bytes()
+                self.validate(relative, before, after)
+                with self.assertRaises(CHECKER.SuccessorError):
+                    self.validate(relative, before, after + b'\n// unreviewed mutation\n')
 
 
 class ImmutableAuthorityChecks(unittest.TestCase):

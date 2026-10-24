@@ -27,7 +27,7 @@ RELATION_ID = 'Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4'
 FIXTURE_SCHEMA = 'hegemon.v011.public-current-proof-fixture.v1'
 RECEIPT_SCHEMA = 'hegemon.v011.current-binary-proof-verification.v1'
 NEGATIVES = ('changed_statement', 'changed_proof', 'truncated_proof', 'oversize_proof', 'truncated_statement', 'oversize_statement')
-ARTIFACT_HELPER_SHA256 = 'a429626f609f9f447057a6e362cf53d3e1b42a0c14a6b83c876d6b0faf3feffc'
+ARTIFACT_HELPER_SHA256 = '17178256d95ad03cf663991c3bf68224116f07d6671a7f281c70179987eadbb1'
 LAUNCHER_POLICY_SHA256 = '51700e93ac457574f262bff05f48e5e55fa328e37da30f665721a312de9d826e'
 
 class CheckError(RuntimeError):
@@ -131,8 +131,8 @@ def verify_artifacts(node, manifest_path, root=ROOT):
     m = strict_json(manifest_path, 8 * 1024 * 1024)
     require(m.get('schema_version') == 1 and m.get('cargo_lock_sha256') == sha(root / 'Cargo.lock'), 'artifact manifest identity/lock differs')
     artifacts = m.get('artifacts')
-    identities = (('hegemon-node', 'hegemon-node'), ('wallet', 'wallet'), ('walletd', 'walletd'))
-    require(isinstance(artifacts, list) and len(artifacts) == 3, 'exact three artifacts required')
+    identities = (('hegemon-node', 'hegemon-node'), ('wallet', 'wallet'), ('walletd', 'walletd'), ('wallet', 'private-spend'))
+    require(isinstance(artifacts, list) and len(artifacts) == 4, 'exact four artifacts required')
     files = [manifest_path]
     specs = []
     for row, identity in zip(artifacts, identities):

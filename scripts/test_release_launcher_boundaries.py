@@ -23,7 +23,7 @@ sys.dont_write_bytecode = True
 import release_artifact_manifest as manifest
 
 
-IDENTITIES = (("hegemon-node", "hegemon-node"), ("wallet", "wallet"), ("walletd", "walletd"))
+IDENTITIES = (("hegemon-node", "hegemon-node"), ("wallet", "wallet"), ("walletd", "walletd"), ("wallet", "private-spend"))
 FORMATS = {
     "elf": "x86_64-unknown-linux-gnu",
     "mach_o": "aarch64-apple-darwin",

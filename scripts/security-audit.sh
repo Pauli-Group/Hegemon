@@ -12,7 +12,7 @@
 #   ./scripts/security-audit.sh           # Full audit
 #   ./scripts/security-audit.sh --quick   # Skip cargo.lock (faster)
 #   ./scripts/security-audit.sh --fix     # Show suggested fixes
-#   ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
+#   ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd --binary target/release/private-spend
 #
 # Exit codes:
 #   0 - Audit passed (no forbidden primitives)
@@ -373,9 +373,9 @@ if [ "$REQUIRE_BINARY" = true ]; then
         echo -e "${RED}❌ RELEASE MANIFEST REQUIRED${NC}"
         echo "  --require-binary requires --binary-manifest"
         VIOLATIONS=$((VIOLATIONS + 1))
-    elif [ "${#RELEASE_BINS[@]}" -ne 3 ]; then
+    elif [ "${#RELEASE_BINS[@]}" -ne 4 ]; then
         echo -e "${RED}❌ EXACT ARTIFACT SET REQUIRED${NC}"
-        echo "  Expected node, wallet, and walletd paths"
+        echo "  Expected node, wallet, walletd, and private-spend paths"
         VIOLATIONS=$((VIOLATIONS + 1))
     elif python3 -B "$PROJECT_ROOT/scripts/check_smallwood_v5_candidate_gate.py" \
         --root "$PROJECT_ROOT" >/dev/null && \
@@ -383,7 +383,8 @@ if [ "$REQUIRE_BINARY" = true ]; then
         --manifest "$BINARY_MANIFEST" \
         --expect "hegemon-node:hegemon-node:${RELEASE_BINS[0]}" \
         --expect "wallet:wallet:${RELEASE_BINS[1]}" \
-        --expect "walletd:walletd:${RELEASE_BINS[2]}" >/dev/null && \
+        --expect "walletd:walletd:${RELEASE_BINS[2]}" \
+        --expect "wallet:private-spend:${RELEASE_BINS[3]}" >/dev/null && \
         PROFILE_ARGS=(--manifest "$BINARY_MANIFEST" --require-executed) && \
         { [ "$ALLOW_UNAPPROVED_PROFILE" = false ] || PROFILE_ARGS+=(--allow-unapproved-profile); } && \
         PROFILE_RESULT=$(release_crypto_profile) && \

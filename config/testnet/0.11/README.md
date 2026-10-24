@@ -33,6 +33,21 @@ This release imposes neither of those limits on the blockchain.
 - Native HGN only; stablecoins and AuxPoW/merge mining stay disabled. Miner and
   treasury rewards mature after **120 blocks**. Keep NTP/chrony synchronized.
 
+## Wallet and app qualification scope
+
+The v0.11 bundle contains the native node, wallet CLI and walletd. The app CI
+check exercises a real mining seed, P2P relay and fresh-wallet synchronization
+over loopback RPC with zero funds. Its result explicitly reports
+`fundedTransactionsExercised:false`; it does not qualify funded desktop-wallet
+sends, consolidation or private multisig. The older GUI flow uses a retired
+mint/spend route and its legacy primary address is not a v0.11 mining recipient.
+Use a full V8 recipient created by the separately qualified native wallet tooling.
+
+Native HGN spending, HTLCs and 120-block miner/treasury maturity retain their
+source-authorized lifecycle evidence. Final platform artifacts must still pass
+their required source/identity, proof/H0 and binary security checks. App sync
+success does not replace those gates or authorize cutover.
+
 ## Start a syncing node after cutover
 
 Verify the published release hashes and network record before installing the
@@ -63,6 +78,42 @@ The launcher uses the final release seed list and rejects a different inherited
 `HEGEMON_SEEDS` value. It requires mining to be exactly 0 or 1. The node validates
 the address and network/proof authority. No key is generated or copied to the
 server. Do not use the old interactive mining helper for this launch.
+
+## Use the packaged common HGN private-spend CLI
+
+The four platform bundles include `private-spend` with the node, wallet and
+wallet daemon. Verify its published SHA-256 checksum before installing the
+matching platform binary as `private-spend` (`private-spend.exe` on Windows).
+`private-spend --version` reports the release version. Its standalone
+`--print-crypto-profile` command is the existing offline legacy-profile
+diagnostic and retains that diagnostic's fail-closed refusal; it does not attest
+the current PrivateSpend relation. Network commands verify the supplied manifest
+and genesis against the node and require the separate source-owned
+private-spend authority. Identify installed files by the release manifest and
+binary checksum.
+
+After the final release and network are approved, use the verified loopback RPC
+and an encrypted wallet whose notes have been synced on that exact network:
+
+```bash
+./private-spend --wallet '<encrypted-wallet>' \
+  --manifest config/testnet/0.11/network-manifest.json \
+  --genesis '<approved-genesis-hash>' --rpc http://127.0.0.1:9944 notes
+./private-spend --wallet '<encrypted-wallet>' \
+  --manifest config/testnet/0.11/network-manifest.json \
+  --genesis '<approved-genesis-hash>' --rpc http://127.0.0.1:9944 \
+  ordinary --inputs '<note-position>' --recipient '<full-private-spend-address>' \
+  --amount '<integer-HGN-atoms>' --fee '<integer-HGN-atoms>'
+./private-spend --wallet '<encrypted-wallet>' \
+  --manifest config/testnet/0.11/network-manifest.json \
+  --genesis '<approved-genesis-hash>' --rpc http://127.0.0.1:9944 \
+  submit '<retained-attempt-id>'
+```
+
+`ordinary` retains the exact prepared attempt in the encrypted wallet; submit
+that retained identifier. The packaged production build enables `rpc-client`
+and omits development artifacts. Existing native proof, H0, lifecycle and
+security qualification remain mandatory before release authorization.
 
 ## Cutover acceptance
 

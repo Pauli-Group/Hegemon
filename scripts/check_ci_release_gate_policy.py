@@ -47,8 +47,8 @@ PINNED_UPLOAD_ARTIFACT_ACTION = (
     "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
 )
 PINNED_RELEASE_WORKFLOW_SHA512 = (
-    "502aea0e422f9f6438dcad9947a018c45ac65e7d25b816d71bd1bbcbf1754f48"
-    "e63324f71b6e1c109220b68318c62cff9b13b692813cae72f02f7de4a78700f8"
+    "09e58a8053dedcbb31067d080a8a87376f9ba3fe1f47060804c7a43e81e62713"
+    "1d6b01d634ffac974a0eb90c00092711320ddebcadb9596fa8722a8a18bfa44d"
 )
 SUCCESSOR_CHECKER_RELATIVE_PATH = Path(
     "scripts/check_transaction_proof_successor_authorization.py"
@@ -1023,6 +1023,8 @@ def require_binary_audit(
         wallet_bin,
         "--binary",
         walletd_bin,
+        "--binary",
+        walletd_bin.replace("/walletd", "/private-spend"),
     )
     return require_executable_command(
         name,
@@ -1055,12 +1057,16 @@ def require_asset_package(
         f"wallet:wallet:{wallet_bin}",
         "--expect",
         f"walletd:walletd:{walletd_bin}",
+        "--expect",
+        f"wallet:private-spend:{walletd_bin.replace('/walletd', '/private-spend')}",
         "--asset",
         f"hegemon-node:hegemon-node:{node_asset}",
         "--asset",
         f"wallet:wallet:{wallet_asset}",
         "--asset",
         f"walletd:walletd:{walletd_asset}",
+        "--asset",
+        f"wallet:private-spend:{walletd_asset.replace('walletd-', 'private-spend-', 1)}",
         "--output-dir",
         "release",
         "--asset-manifest-name",
@@ -1951,10 +1957,10 @@ def check_release_workflow(path: Path) -> None:
     require_exact_needs(workflow, "app-no-ssh-e2e", ("security-gates",))
     require_contains("release app no-SSH needs", app_no_ssh, "needs: security-gates")
     require_executable_command(
-        "release app no-SSH gate",
+        "release app no-SSH sync-only gate",
         app_steps,
         "scripts/check-app-no-ssh-e2e.sh",
-        exact_argument_vectors=((),),
+        exact_argument_vectors=(("--review-only",),),
     )
     require_executable_command(
         "release app UI guard install", app_steps, "npm", ("ci", "--prefix", "hegemon-app")
@@ -2055,6 +2061,8 @@ def check_release_workflow(path: Path) -> None:
             f"wallet:wallet:{wallet_bin}",
             "--expect",
             f"walletd:walletd:{walletd_bin}",
+            "--expect",
+            f"wallet:private-spend:{walletd_bin.replace('/walletd', '/private-spend')}",
         )
         manifest_index = require_executable_command(
             f"{job_name} manifest verification",

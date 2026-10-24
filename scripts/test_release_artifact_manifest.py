@@ -38,10 +38,10 @@ def main() -> None:
     target_root.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="release-manifest-test-", dir=target_root) as raw:
         temp = Path(raw)
-        sources = [Path("/bin/echo"), Path("/bin/ls"), Path("/bin/cat")]
+        sources = [Path("/bin/echo"), Path("/bin/ls"), Path("/bin/cat"), Path("/bin/date")]
         if not all(source.is_file() for source in sources):
             raise SystemExit("release artifact manifest test requires standard host executables")
-        binaries = [temp / "hegemon-node", temp / "wallet", temp / "walletd"]
+        binaries = [temp / "hegemon-node", temp / "wallet", temp / "walletd", temp / "private-spend"]
         for source, destination in zip(sources, binaries, strict=True):
             shutil.copyfile(source, destination)
             destination.chmod(0o755)
@@ -50,6 +50,7 @@ def main() -> None:
             f"hegemon-node:hegemon-node:{binaries[0]}",
             f"wallet:wallet:{binaries[1]}",
             f"walletd:walletd:{binaries[2]}",
+            f"wallet:private-spend:{binaries[3]}",
         ]
         manifest_path = temp / "manifest.json"
         manifest.create_manifest(ROOT, manifest_path, host_triple(), specs)
@@ -61,6 +62,7 @@ def main() -> None:
             f"hegemon-node:hegemon-node:{symlink}",
             specs[1],
             specs[2],
+            specs[3],
         ]
         expect_rejection(
             lambda: manifest.create_manifest(
@@ -84,6 +86,7 @@ def main() -> None:
                     "hegemon-node:hegemon-node:hegemon-node-fallback",
                     "wallet:wallet:wallet-fallback",
                     "walletd:walletd:walletd-fallback",
+                    "wallet:private-spend:private-spend-fallback",
                 ],
                 fallback_bundle,
                 "hegemon-release-assets-fallback.json",
@@ -101,6 +104,7 @@ def main() -> None:
             "hegemon-node:hegemon-node:hegemon-node-test",
             "wallet:wallet:wallet-test",
             "walletd:walletd:walletd-test",
+            "wallet:private-spend:private-spend-test",
         ]
         bundle_dir = temp / "bundle"
         asset_manifest_name = "hegemon-release-assets-test.json"
@@ -116,9 +120,9 @@ def main() -> None:
         assembled = manifest.assemble_release_assets(
             ROOT, [bundle_dir / asset_manifest_name], assembled_dir
         )
-        if len(assembled["files"]) != 7:
+        if len(assembled["files"]) != 9:
             raise SystemExit(f"assembled release file count mismatch: {assembled}")
-        for source, name in zip(binaries, ("hegemon-node-test", "wallet-test", "walletd-test"), strict=True):
+        for source, name in zip(binaries, ("hegemon-node-test", "wallet-test", "walletd-test", "private-spend-test"), strict=True):
             if (assembled_dir / name).read_bytes() != source.read_bytes():
                 raise SystemExit(f"assembled release asset mismatch: {name}")
 
@@ -139,7 +143,7 @@ def main() -> None:
         )
         binaries[0].write_bytes(original_node)
 
-        duplicate_specs = [specs[0], f"wallet:wallet:{binaries[0]}", specs[2]]
+        duplicate_specs = [specs[0], f"wallet:wallet:{binaries[0]}", specs[2], specs[3]]
         expect_rejection(
             lambda: manifest.create_manifest(
                 ROOT, temp / "duplicate.json", host_triple(), duplicate_specs

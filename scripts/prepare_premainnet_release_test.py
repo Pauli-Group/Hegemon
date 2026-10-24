@@ -23,6 +23,8 @@ class PreparationWorkflowTests(unittest.TestCase):
 
     def test_checked_in_workflow_matches_all_release_checks(self) -> None:
         self.assertTrue(all(line == line.rstrip() for line in self.workflow.splitlines()))
+        self.assertEqual(self.workflow.count("./scripts/check-app-no-ssh-e2e.sh --review-only"), 1)
+        self.assertIn("fundedTransactionsExercised:false", self.workflow)
         preparation.verify_preparation(
             self.release,
             (ROOT / ".github/workflows/prepare-premainnet-release.yml").read_text(),
@@ -35,6 +37,10 @@ class PreparationWorkflowTests(unittest.TestCase):
             self.workflow.replace(command, "true # " + command, 1),
             self.workflow.replace("  security-gates:\n", "  security-gates:\n    continue-on-error: true\n", 1),
             self.workflow.replace("    needs: preparation-policy\n", "", 1),
+            self.workflow.replace("./scripts/check-app-no-ssh-e2e.sh --review-only", "./scripts/check-app-no-ssh-e2e.sh", 1),
+            self.workflow.replace("./scripts/check-app-no-ssh-e2e.sh --review-only", "./scripts/check-app-no-ssh-e2e.sh --review-only --skip", 1),
+            self.workflow.replace("./scripts/check-app-no-ssh-e2e.sh --review-only", "", 1),
+            self.workflow.replace("./scripts/check-app-no-ssh-e2e.sh --review-only", "./scripts/check-app-no-ssh-e2e.sh --review-only || true", 1),
         ):
             with self.subTest(mutation=mutation[:60]), self.assertRaises(ValueError):
                 preparation.verify_preparation(self.release, mutation)

@@ -115,7 +115,7 @@ class CurrentBinaryProofTests(unittest.TestCase):
         helper = root / 'scripts/release_artifact_manifest.py'
         helper.write_text('raise AssertionError("unreviewed helper executed")\n')
         artifacts = []
-        for package, binary in (('hegemon-node', 'hegemon-node'), ('wallet', 'wallet'), ('walletd', 'walletd')):
+        for package, binary in (('hegemon-node', 'hegemon-node'), ('wallet', 'wallet'), ('walletd', 'walletd'), ('wallet', 'private-spend')):
             f = root / binary; f.write_bytes(b'inert-' + binary.encode())
             artifacts.append({'package': package, 'binary': binary, 'path': binary, 'size': f.stat().st_size, 'sha256': policy.sha(f)})
         manifest = root / 'artifacts.json'
@@ -131,7 +131,7 @@ class CurrentBinaryProofTests(unittest.TestCase):
         shutil.copyfile(ROOT / 'scripts/release_artifact_manifest.py', root / 'scripts/release_artifact_manifest.py')
         (root / 'scripts/check_release_launcher_policy.py').write_text('raise AssertionError("unreviewed launcher policy executed")\n')
         artifacts = []
-        for package, binary in (('hegemon-node', 'hegemon-node'), ('wallet', 'wallet'), ('walletd', 'walletd')):
+        for package, binary in (('hegemon-node', 'hegemon-node'), ('wallet', 'wallet'), ('walletd', 'walletd'), ('wallet', 'private-spend')):
             f = root / binary; f.write_bytes(b'inert-' + binary.encode())
             artifacts.append({'package': package, 'binary': binary, 'path': binary, 'size': f.stat().st_size, 'sha256': policy.sha(f)})
         manifest = root / 'artifacts.json'
@@ -140,12 +140,38 @@ class CurrentBinaryProofTests(unittest.TestCase):
             with self.assertRaisesRegex(policy.CheckError, 'launcher policy changed before helper import'):
                 policy.verify_artifacts(root / 'hegemon-node', manifest, root)
             loader.assert_not_called()
-    def test_artifact_manifest_requires_exact_three_files_before_execution(self):
+    def test_artifact_manifest_requires_exact_four_files_before_execution(self):
         root=self.directory/'root';root.mkdir();(root/'Cargo.lock').write_bytes(b'lock')
         node=root/'node';node.write_bytes(b'inert')
         m=root/'artifacts.json';m.write_text(json.dumps({'schema_version':1,'cargo_lock_sha256':policy.sha(root/'Cargo.lock'),'artifacts':[]}))
-        with self.assertRaisesRegex(policy.CheckError,'three artifacts'):policy.verify_artifacts(node,m,root)
-        payload=json.loads(m.read_text());payload['artifacts']=[{'package':a,'binary':b,'path':'../outside','size':1,'sha256':'ab'*32} for a,b in (('hegemon-node','hegemon-node'),('wallet','wallet'),('walletd','walletd'))];m.write_text(json.dumps(payload))
+        with self.assertRaisesRegex(policy.CheckError,'four artifacts'):policy.verify_artifacts(node,m,root)
+        payload=json.loads(m.read_text());payload['artifacts']=[{'package':a,'binary':b,'path':'../outside','size':1,'sha256':'ab'*32} for a,b in (('hegemon-node','hegemon-node'),('wallet','wallet'),('walletd','walletd'),('wallet','private-spend'))];m.write_text(json.dumps(payload))
         with self.assertRaisesRegex(policy.CheckError,'path invalid'):policy.verify_artifacts(node,m,root)
+
+    def test_fourth_artifact_identity_and_bytes_checked_before_helper_import(self):
+        root = self.directory / 'four-artifact-root'; root.mkdir()
+        (root / 'Cargo.lock').write_bytes(b'lock')
+        artifacts = []
+        for package, binary in (('hegemon-node', 'hegemon-node'), ('wallet', 'wallet'), ('walletd', 'walletd'), ('wallet', 'private-spend')):
+            f = root / binary; f.write_bytes(b'inert-' + binary.encode())
+            artifacts.append({'package': package, 'binary': binary, 'path': binary, 'size': f.stat().st_size, 'sha256': policy.sha(f)})
+        base = {'schema_version': 1, 'cargo_lock_sha256': policy.sha(root / 'Cargo.lock'), 'artifacts': artifacts}
+        manifest = root / 'artifacts.json'
+        for mutation, reason in (('missing', 'four artifacts'), ('extra', 'four artifacts'),
+                ('reordered', 'identities differ'), ('wrong-package', 'identities differ'),
+                ('fourth-hash', 'bytes differ'), ('fourth-size', 'bytes differ')):
+            with self.subTest(mutation=mutation):
+                payload = copy.deepcopy(base)
+                if mutation == 'missing': payload['artifacts'].pop()
+                elif mutation == 'extra': payload['artifacts'].append(dict(artifacts[-1]))
+                elif mutation == 'reordered': payload['artifacts'][-2:] = reversed(payload['artifacts'][-2:])
+                elif mutation == 'wrong-package': payload['artifacts'][-1]['package'] = 'private-spend'
+                elif mutation == 'fourth-hash': payload['artifacts'][-1]['sha256'] = '00' * 32
+                else: payload['artifacts'][-1]['size'] += 1
+                manifest.write_text(json.dumps(payload))
+                with patch.object(policy.importlib.util, 'spec_from_file_location') as loader:
+                    with self.assertRaisesRegex(policy.CheckError, reason):
+                        policy.verify_artifacts(root / 'hegemon-node', manifest, root)
+                    loader.assert_not_called()
 
 if __name__ == '__main__': unittest.main()

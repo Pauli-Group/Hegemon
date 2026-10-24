@@ -7072,7 +7072,7 @@
     },
     {
       "module": "SmzaRp05PairedDagHighBlock3002",
-      "sha256": "c151ddeb49dc8ceee8dad6225042a66afa0e36d4b8411c7e866c45baeb8bf574",
+      "sha256": "873d48969e985518d5aed8e7f9fa82d664d51d349c22b61dfa931b33ccd7ac32",
       "source": ".agent/prod-closure-2026-09-19/relation/rp05-nullifier-export/SmzaRp05PairedDagHighBlock3002.lean",
       "staged": "generated/Sources/SmzaRp05PairedDagHighBlock3002.lean"
     },
@@ -9118,13 +9118,13 @@
     },
     {
       "module": "SmzaRp05PairedDagHighChunk00",
-      "sha256": "9a9bee91c7e5bc70a18324943e6d2eed6acc658b71a4209bfd53edd06dea1ec9",
+      "sha256": "5ddc0a1b8e8d92ecff107ad0bd2e7305807df5f8e8693c61391f36d3bb855a0b",
       "source": ".agent/prod-closure-2026-09-19/relation/rp05-nullifier-export/SmzaRp05PairedDagHighChunk00.lean",
       "staged": "generated/Sources/SmzaRp05PairedDagHighChunk00.lean"
     },
     {
       "module": "SmzaRp05PairedDagHighChunk01",
-      "sha256": "ba4f6d88e3634f74e4efbac8e969c7c7261b99161467354f2f876ca03196cd12",
+      "sha256": "034e3146913011e47b06b4c77e775896b686a62d638b9940be8a74697ae34776",
       "source": ".agent/prod-closure-2026-09-19/relation/rp05-nullifier-export/SmzaRp05PairedDagHighChunk01.lean",
       "staged": "generated/Sources/SmzaRp05PairedDagHighChunk01.lean"
     },
