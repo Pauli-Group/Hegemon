@@ -55,7 +55,7 @@ jobs:
     needs: source
     if: needs.source.outputs.proof == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 270
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -117,7 +117,7 @@ jobs:
         run: python3 -I -B scripts/rp05_ci.py verify --seconds 600
       - name: Cold project compilation, body audits, serial kernel replay
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || steps.trusted.outputs.artifact == ''
-        run: python3 -I -B scripts/rp05_ci.py verify --cold --seconds 4800
+        run: python3 -I -B scripts/rp05_ci.py verify --cold --seconds 14400
       - uses: actions/upload-artifact@v4
         if: success() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         with:

@@ -6214,7 +6214,7 @@
     },
     {
       "module": "SmzaRp05CurrentTwelveCalculated",
-      "sha256": "9ebc03b8e29d0270917264e5f9c297de6df1646ad9c582a7c3786370b1d48a6c",
+      "sha256": "4af5d1495166e071e308d20469129dbf9404a0c1d3bf1a979561c0944035c6ea",
       "source": ".agent/prod-closure-2026-09-19/extraction/SmzaRp05CurrentTwelveCalculated.lean",
       "staged": "generated/Sources/SmzaRp05CurrentTwelveCalculated.lean"
     },
@@ -6292,13 +6292,13 @@
     },
     {
       "module": "SmzaRp05DegreeGroup0",
-      "sha256": "e2dc97ed0fa691779352805ebf441cfa71fd3f92a163d3dfffbe26dad339df6a",
+      "sha256": "54f2146925d54a53b3b047445aa618c0ba42c38c295283aa0e666c7301f50a65",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05DegreeGroup0.lean",
       "staged": "generated/Sources/SmzaRp05DegreeGroup0.lean"
     },
     {
       "module": "SmzaRp05DegreeGroup1",
-      "sha256": "e4b89b8d6f7b336fda060bda41d2298f540e9a05f39069dc11fea940a5eb48a2",
+      "sha256": "035d067c4f03b26d92f27b444433d5a9d2ac8b5aa25a53e30a0835dfa404c927",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05DegreeGroup1.lean",
       "staged": "generated/Sources/SmzaRp05DegreeGroup1.lean"
     },
@@ -6514,7 +6514,7 @@
     },
     {
       "module": "SmzaRp05ExecutablePcsClosureLvcsAlgebra",
-      "sha256": "3abbeb214f4cc252eabeb0e15d62b358baaae127cfcbfe9f7f92344be56ab763",
+      "sha256": "c092179b1ebd941547c45353d692a30298069eb4c7706dcc0c2a9577885c9cba",
       "source": ".agent/prod-closure-2026-09-19/extraction/SmzaRp05ExecutablePcsClosureLvcsAlgebra.lean",
       "staged": "generated/Sources/SmzaRp05ExecutablePcsClosureLvcsAlgebra.lean"
     },
