@@ -6262,7 +6262,7 @@
     },
     {
       "module": "SmzaRp05DegreeAssemblyRootReadback",
-      "sha256": "3409d7af71d3de781dffbbe739220a4cd3b7bc105a3eb26de003255aa0c1786c",
+      "sha256": "eb125756fd5a8388353d7e564fd1df25c80d0c3ab34cc41bb28a268ac44b1c4c",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05DegreeAssemblyRootReadback.lean",
       "staged": "generated/Sources/SmzaRp05DegreeAssemblyRootReadback.lean"
     },
