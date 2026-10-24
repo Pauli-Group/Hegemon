@@ -606,7 +606,7 @@
       "before_sha256": "33c1c47853fa7746d5f351db4e16b684590f2e6be568de6b9578e8fd9aa1bf1d"
     },
     "wallet/src/bin/private_spend.rs": {
-      "after_sha256": "4e7da335ee53f3f132f48984855d16e91806ba2144d88decc5c913864746cf4f",
+      "after_sha256": "c17d7d8b5cbdfc1d717ae096f72ffa311bf41495138f306d41fdec7a7a6adb9e",
       "before_sha256": "f4fe101db48d477025437fae9e9eba93cba9c4c2dd197f71afe495760ab8bd5f"
     },
     "wallet/src/bin/wallet.rs": {
@@ -643,7 +643,7 @@
   "runtime_files_compared": 598,
   "runtime_inventory_sha256": "dfd71b6a265e954261ed209c2ad3c34c97285016557f0f003f7f17f39ff541d0",
   "schema": "hegemon.private-spend.release-authorization.v2",
-  "source_successor_config_sha256": "1c23c3055fa8f7c21326d7b9ac1e972f985af95871aa2f54e23eb2b98a0c69fe",
+  "source_successor_config_sha256": "74183fc1eb1fed4bf2972fbc90e7211cb3b0ac6cf036b60928f46d130c8bc1ac",
   "state_admission_verified": false,
   "status": "PASS_EXACT_SOURCE_CURRENT_BINARY_BACKEND_AND_H0",
   "target_triple": "synthetic-unit-test",

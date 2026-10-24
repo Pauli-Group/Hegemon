@@ -1,3 +1,4 @@
+import SmzaRp05SupplyClosureCsrChunks
 import SmzaRp05AcceptedAllModeNullifierKeys
 import SmzaRp05AuthorizationClosureTags
 
@@ -49,7 +50,9 @@ def approvalReplicateAttempt (lane : Fin 4) : CsrExecutableAttempt :=
 
 theorem approvalReplicateAttempt_member (lane : Fin 4) :
     approvalReplicateAttempt lane ∈ program.csrAttempts := by
-  fin_cases lane <;> decide
+  apply SmzaRp05SupplyClosureCsrChunks.chunk_member
+    (chunk := (5859 + lane.val) / 32) (by omega)
+  fin_cases lane <;> decide +revert
 
 private theorem accepted_approval_replication {publicWords packed : List Nat}
     (accepted : program.AcceptsPacked publicWords packed) (lane : Fin 4) :

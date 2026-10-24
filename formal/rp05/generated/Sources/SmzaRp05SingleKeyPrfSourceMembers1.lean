@@ -1,3 +1,4 @@
+import SmzaRp05SupplyClosureCsrChunks
 import SmzaRp05SingleKeyPrfSourceData
 import Mathlib.Tactic.FinCases
 import Mathlib.Data.Fintype.Basic
@@ -11,6 +12,8 @@ set_option maxHeartbeats 1000000
 
 theorem initial (lane : Fin 6) :
     initialAttempt ⟨lane.val + 6, by omega⟩ ∈ program.csrAttempts := by
-  fin_cases lane <;> decide
+  apply SmzaRp05SupplyClosureCsrChunks.chunk_member
+    (chunk := (15736 + (lane.val + 6)) / 32) (by omega)
+  fin_cases lane <;> decide +revert
 
 end HegemonCrypto.SmallWood.SmzaRp05SingleKeyPrfSourceMembers1

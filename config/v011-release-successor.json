@@ -299,7 +299,7 @@
       "before_sha256": "33c1c47853fa7746d5f351db4e16b684590f2e6be568de6b9578e8fd9aa1bf1d"
     },
     "wallet/src/bin/private_spend.rs": {
-      "after_sha256": "4e7da335ee53f3f132f48984855d16e91806ba2144d88decc5c913864746cf4f",
+      "after_sha256": "c17d7d8b5cbdfc1d717ae096f72ffa311bf41495138f306d41fdec7a7a6adb9e",
       "before_sha256": "f4fe101db48d477025437fae9e9eba93cba9c4c2dd197f71afe495760ab8bd5f"
     },
     "wallet/src/bin/wallet.rs": {

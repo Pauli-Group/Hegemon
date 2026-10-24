@@ -23,53 +23,144 @@ use wallet::{
 use zeroize::Zeroizing;
 
 #[cfg(feature = "private-spend-dev-artifacts")]
-use wallet::private_spend_rpc::{prepare_submit_request_local_candidate, DevelopmentPrivateSpendAuthority};
+use wallet::private_spend_rpc::{
+    prepare_submit_request_local_candidate, DevelopmentPrivateSpendAuthority,
+};
 enum SpendAuthority {
     Source(SourcePrivateSpendAuthority),
     #[cfg(feature = "private-spend-dev-artifacts")]
     Development(DevelopmentPrivateSpendAuthority),
 }
 impl SpendAuthority {
-    fn context(&self) -> wallet::poseidon2_v8_sync::LaunchWalletContext { match self {
-        Self::Source(t) => t.context(),
-        #[cfg(feature = "private-spend-dev-artifacts")] Self::Development(t) => t.context(),
-    }}
-    fn authorize_current(&self, height: u64) -> Result<()> { match self {
-        Self::Source(t) => Ok(t.authorize_current(height)?),
-        #[cfg(feature = "private-spend-dev-artifacts")] Self::Development(t) => Ok(t.authorize_current(height)?),
-    }}
-    fn initialize(&self, store: &WalletStore) -> Result<()> { match self {
-        Self::Source(t) => Ok(store.initialize_private_spend_source_context(t)?),
-        #[cfg(feature = "private-spend-dev-artifacts")] Self::Development(t) => Ok(store.initialize_private_spend_development_context(t)?),
-    }}
-    fn apply(&self, store: &WalletStore, block: &wallet::poseidon2_v8_sync::Poseidon2V8CanonicalBlock) -> Result<()> { match self {
-        Self::Source(t) => { store.apply_private_spend_source_block(block, t)?; Ok(()) },
-        #[cfg(feature = "private-spend-dev-artifacts")] Self::Development(t) => { store.apply_private_spend_development_block(block, t)?; Ok(()) },
-    }}
-    fn prove(&self, prepared: &build::PreparedPrivateSpend) -> Result<Vec<u8>> { match self {
-        Self::Source(t) => Ok(prepared.prove_authorized(t.context())?),
-        #[cfg(feature = "private-spend-dev-artifacts")] Self::Development(_) => Ok(prepared.prove_local_candidate()?),
-    }}
-    fn retain(&self, store: &WalletStore, id: [u8; 32], action: &[u8]) -> Result<()> { match self {
-        Self::Source(t) => Ok(store.retain_private_spend_action(t.context(), id, action)?),
-        #[cfg(feature = "private-spend-dev-artifacts")] Self::Development(t) => Ok(store.retain_private_spend_action_local_candidate(t.context(), id, action, t)?),
-    }}
-    fn submission_bytes(&self, store: &WalletStore, id: [u8; 32]) -> Result<Vec<u8>> { match self {
-        Self::Source(t) => Ok(store.private_spend_submission_bytes(t.context(), id)?),
-        #[cfg(feature = "private-spend-dev-artifacts")] Self::Development(t) => Ok(store.private_spend_submission_bytes_local_candidate(t.context(), id, t)?),
-    }}
-    fn request(&self, height: u64, carrier: &[u8]) -> Result<Value> { match self {
-        Self::Source(t) => Ok(prepare_submit_request(t.context(), height, carrier)?),
-        #[cfg(feature = "private-spend-dev-artifacts")] Self::Development(t) => Ok(prepare_submit_request_local_candidate(t, height, carrier)?),
-    }}
-    fn import_refund(&self, store: &WalletStore, bytes: &[u8], passphrase: &str, index: u32, block: &wallet::poseidon2_v8_sync::Poseidon2V8CanonicalBlock) -> Result<relation::Digest> { match self {
-        Self::Source(t) => Ok(store.import_private_htlc_refund_handoff_encrypted(t.context(), bytes, passphrase, index, block)?),
-        #[cfg(feature = "private-spend-dev-artifacts")] Self::Development(t) => Ok(store.import_private_htlc_refund_handoff_encrypted_local_candidate(t.context(), bytes, passphrase, index, block, t)?),
-    }}
-    fn import_policy(&self, store: &WalletStore, bytes: &[u8], passphrase: &str, index: u32, block: &wallet::poseidon2_v8_sync::Poseidon2V8CanonicalBlock) -> Result<relation::Digest> { match self {
-        Self::Source(t) => Ok(store.import_private_policy_handoff_encrypted(t.context(), bytes, passphrase, index, block)?),
-        #[cfg(feature = "private-spend-dev-artifacts")] Self::Development(t) => Ok(store.import_private_policy_handoff_encrypted_local_candidate(t.context(), bytes, passphrase, index, block, t)?),
-    }}
+    fn context(&self) -> wallet::poseidon2_v8_sync::LaunchWalletContext {
+        match self {
+            Self::Source(t) => t.context(),
+            #[cfg(feature = "private-spend-dev-artifacts")]
+            Self::Development(t) => t.context(),
+        }
+    }
+    fn authorize_current(&self, height: u64) -> Result<()> {
+        match self {
+            Self::Source(t) => Ok(t.authorize_current(height)?),
+            #[cfg(feature = "private-spend-dev-artifacts")]
+            Self::Development(t) => Ok(t.authorize_current(height)?),
+        }
+    }
+    fn initialize(&self, store: &WalletStore) -> Result<()> {
+        match self {
+            Self::Source(t) => Ok(store.initialize_private_spend_source_context(t)?),
+            #[cfg(feature = "private-spend-dev-artifacts")]
+            Self::Development(t) => Ok(store.initialize_private_spend_development_context(t)?),
+        }
+    }
+    fn apply(
+        &self,
+        store: &WalletStore,
+        block: &wallet::poseidon2_v8_sync::Poseidon2V8CanonicalBlock,
+    ) -> Result<()> {
+        match self {
+            Self::Source(t) => {
+                store.apply_private_spend_source_block(block, t)?;
+                Ok(())
+            }
+            #[cfg(feature = "private-spend-dev-artifacts")]
+            Self::Development(t) => {
+                store.apply_private_spend_development_block(block, t)?;
+                Ok(())
+            }
+        }
+    }
+    fn prove(&self, prepared: &build::PreparedPrivateSpend) -> Result<Vec<u8>> {
+        match self {
+            Self::Source(t) => Ok(prepared.prove_authorized(t.context())?),
+            #[cfg(feature = "private-spend-dev-artifacts")]
+            Self::Development(_) => Ok(prepared.prove_local_candidate()?),
+        }
+    }
+    fn retain(&self, store: &WalletStore, id: [u8; 32], action: &[u8]) -> Result<()> {
+        match self {
+            Self::Source(t) => Ok(store.retain_private_spend_action(t.context(), id, action)?),
+            #[cfg(feature = "private-spend-dev-artifacts")]
+            Self::Development(t) => Ok(store.retain_private_spend_action_local_candidate(
+                t.context(),
+                id,
+                action,
+                t,
+            )?),
+        }
+    }
+    fn submission_bytes(&self, store: &WalletStore, id: [u8; 32]) -> Result<Vec<u8>> {
+        match self {
+            Self::Source(t) => Ok(store.private_spend_submission_bytes(t.context(), id)?),
+            #[cfg(feature = "private-spend-dev-artifacts")]
+            Self::Development(t) => {
+                Ok(store.private_spend_submission_bytes_local_candidate(t.context(), id, t)?)
+            }
+        }
+    }
+    fn request(&self, height: u64, carrier: &[u8]) -> Result<Value> {
+        match self {
+            Self::Source(t) => Ok(prepare_submit_request(t.context(), height, carrier)?),
+            #[cfg(feature = "private-spend-dev-artifacts")]
+            Self::Development(t) => Ok(prepare_submit_request_local_candidate(t, height, carrier)?),
+        }
+    }
+    fn import_refund(
+        &self,
+        store: &WalletStore,
+        bytes: &[u8],
+        passphrase: &str,
+        index: u32,
+        block: &wallet::poseidon2_v8_sync::Poseidon2V8CanonicalBlock,
+    ) -> Result<relation::Digest> {
+        match self {
+            Self::Source(t) => Ok(store.import_private_htlc_refund_handoff_encrypted(
+                t.context(),
+                bytes,
+                passphrase,
+                index,
+                block,
+            )?),
+            #[cfg(feature = "private-spend-dev-artifacts")]
+            Self::Development(t) => Ok(store
+                .import_private_htlc_refund_handoff_encrypted_local_candidate(
+                    t.context(),
+                    bytes,
+                    passphrase,
+                    index,
+                    block,
+                    t,
+                )?),
+        }
+    }
+    fn import_policy(
+        &self,
+        store: &WalletStore,
+        bytes: &[u8],
+        passphrase: &str,
+        index: u32,
+        block: &wallet::poseidon2_v8_sync::Poseidon2V8CanonicalBlock,
+    ) -> Result<relation::Digest> {
+        match self {
+            Self::Source(t) => Ok(store.import_private_policy_handoff_encrypted(
+                t.context(),
+                bytes,
+                passphrase,
+                index,
+                block,
+            )?),
+            #[cfg(feature = "private-spend-dev-artifacts")]
+            Self::Development(t) => Ok(store
+                .import_private_policy_handoff_encrypted_local_candidate(
+                    t.context(),
+                    bytes,
+                    passphrase,
+                    index,
+                    block,
+                    t,
+                )?),
+        }
+    }
 }
 
 #[derive(Parser)]
@@ -81,9 +172,15 @@ impl SpendAuthority {
 struct Args {
     #[arg(long)]
     wallet: PathBuf,
-    #[arg(long, help = "Required for network commands; unused by offline bootstrap")]
+    #[arg(
+        long,
+        help = "Required for network commands; unused by offline bootstrap"
+    )]
     manifest: Option<PathBuf>,
-    #[arg(long, help = "Expected genesis hash for network commands; unused by offline bootstrap")]
+    #[arg(
+        long,
+        help = "Expected genesis hash for network commands; unused by offline bootstrap"
+    )]
     genesis: Option<String>,
     #[arg(long, default_value = "http://127.0.0.1:9944")]
     rpc: String,
@@ -303,21 +400,46 @@ struct PublicPolicyBranch {
 }
 fn policy_branches(bytes: &[u8]) -> Result<[relation::PolicyBranch; 2]> {
     const P: u64 = 0xffff_ffff_0000_0001;
-    let config: PublicPolicyConfig = serde_json::from_slice(bytes)
-        .context("expected exactly two public policy branches; secrets and nullifier keys are not accepted")?;
-    let mut branches = [relation::PolicyBranch::default(), relation::PolicyBranch::default()];
+    let config: PublicPolicyConfig = serde_json::from_slice(bytes).context(
+        "expected exactly two public policy branches; secrets and nullifier keys are not accepted",
+    )?;
+    let mut branches = [
+        relation::PolicyBranch::default(),
+        relation::PolicyBranch::default(),
+    ];
     for (branch, public) in branches.iter_mut().zip(config.branches) {
-        ensure!(public.authority.iter().all(|word| *word < P), "noncanonical policy authority");
-        ensure!(public.not_before < 1 << 48, "policy height exceeds 48-bit bound");
-        let hashlock = unhex(&public.hashlock).context("policy hashlock must be exactly 32 bytes of hex")?;
-        ensure!(!public.release_secret || public.hash_required, "secret release requires a hash condition");
-        ensure!(public.hash_required || hashlock == [0; 32], "hash-free branch must have a zero hashlock");
+        ensure!(
+            public.authority.iter().all(|word| *word < P),
+            "noncanonical policy authority"
+        );
+        ensure!(
+            public.not_before < 1 << 48,
+            "policy height exceeds 48-bit bound"
+        );
+        let hashlock =
+            unhex(&public.hashlock).context("policy hashlock must be exactly 32 bytes of hex")?;
+        ensure!(
+            !public.release_secret || public.hash_required,
+            "secret release requires a hash condition"
+        );
+        ensure!(
+            public.hash_required || hashlock == [0; 32],
+            "hash-free branch must have a zero hashlock"
+        );
         if public.enabled {
-            ensure!(public.authority != [0; 7], "enabled branch requires a nonzero authority");
+            ensure!(
+                public.authority != [0; 7],
+                "enabled branch requires a nonzero authority"
+            );
         } else {
-            ensure!(public.authority == [0; 7] && public.not_before == 0
-                && !public.hash_required && hashlock == [0; 32] && !public.release_secret,
-                "disabled branch must have zero parameters");
+            ensure!(
+                public.authority == [0; 7]
+                    && public.not_before == 0
+                    && !public.hash_required
+                    && hashlock == [0; 32]
+                    && !public.release_secret,
+                "disabled branch must have zero parameters"
+            );
         }
         branch.enabled = u64::from(public.enabled);
         branch.authority = public.authority;
@@ -339,19 +461,30 @@ fn policy_branch(value: &str) -> std::result::Result<usize, String> {
 fn disclosure_warning() {
     eprintln!("This policy releases its hash preimage in public transaction bytes. Exporting shares it with file recipients; broadcasting makes it public before confirmation. Rejection, orphaning or a reorg cannot undo disclosure.");
 }
-fn warn_carrier_disclosure(context: wallet::poseidon2_v8_sync::LaunchWalletContext, carrier: &[u8]) -> Result<()> {
+fn warn_carrier_disclosure(
+    context: wallet::poseidon2_v8_sync::LaunchWalletContext,
+    carrier: &[u8],
+) -> Result<()> {
     use protocol_shielded_pool::private_spend_transport as wire;
-    let expected = wire::ExpectedContext::new(context.chain_id(), relation::relation_digest()[..48].try_into()?)?;
+    let expected = wire::ExpectedContext::new(
+        context.chain_id(),
+        relation::relation_digest()[..48].try_into()?,
+    )?;
     if wire::decode_exact(expected, carrier)?.public.secret_release == 1 {
         disclosure_warning();
     }
     Ok(())
 }
 fn prompted_secret() -> Result<[u8; 32]> {
-    let secret = Zeroizing::new(rpassword::prompt_password("Private 32-byte preimage (hex): ")?);
+    let secret = Zeroizing::new(rpassword::prompt_password(
+        "Private 32-byte preimage (hex): ",
+    )?);
     let mut decoded = Zeroizing::new([0; 32]);
-    hex::decode_to_slice(secret.strip_prefix("0x").unwrap_or(&secret), &mut decoded[..])
-        .context("preimage must be exactly 32 bytes of hex")?;
+    hex::decode_to_slice(
+        secret.strip_prefix("0x").unwrap_or(&secret),
+        &mut decoded[..],
+    )
+    .context("preimage must be exactly 32 bytes of hex")?;
     Ok(*decoded)
 }
 fn unhex<const N: usize>(s: &str) -> Result<[u8; N]> {
@@ -408,27 +541,47 @@ async fn rpc(url: &str, method: &str, param: Option<Value>) -> Result<Value> {
         bail!("RPC must use HTTP(S) or WS(S)")
     }
 }
-async fn authority(
-    a: &Args,
-    node: &wallet::node_rpc::NodeRpcClient,
-) -> Result<SpendAuthority> {
+async fn authority(a: &Args, node: &wallet::node_rpc::NodeRpcClient) -> Result<SpendAuthority> {
     let config = rpc(&a.rpc, "hegemon_nodeConfig", None).await?;
     let params = rpc(&a.rpc, "hegemon_privateSpendParameters", None).await?;
     let genesis = node.block_hash(0).await?.context("genesis unavailable")?;
     let tip = node.latest_block().await?;
-    let manifest = bounded_read(a.manifest.as_ref().context("--manifest is required for network commands")?, 16 * 1024)?;
-    let expected_genesis = unhex(a.genesis.as_deref().context("--genesis is required for network commands")?)?;
+    let manifest = bounded_read(
+        a.manifest
+            .as_ref()
+            .context("--manifest is required for network commands")?,
+        16 * 1024,
+    )?;
+    let expected_genesis = unhex(
+        a.genesis
+            .as_deref()
+            .context("--genesis is required for network commands")?,
+    )?;
     if a.development_local_candidate {
         #[cfg(feature = "private-spend-dev-artifacts")]
-        return Ok(SpendAuthority::Development(DevelopmentPrivateSpendAuthority::from_verified_node(
-            &manifest, expected_genesis, genesis, &config, &params, tip.height,
-        )?));
+        return Ok(SpendAuthority::Development(
+            DevelopmentPrivateSpendAuthority::from_verified_node(
+                &manifest,
+                expected_genesis,
+                genesis,
+                &config,
+                &params,
+                tip.height,
+            )?,
+        ));
         #[cfg(not(feature = "private-spend-dev-artifacts"))]
         bail!("Development candidate mode is absent from this production build");
     }
-    Ok(SpendAuthority::Source(SourcePrivateSpendAuthority::from_verified_node(
-        &manifest, expected_genesis, genesis, &config, &params, tip.height,
-    )?))
+    Ok(SpendAuthority::Source(
+        SourcePrivateSpendAuthority::from_verified_node(
+            &manifest,
+            expected_genesis,
+            genesis,
+            &config,
+            &params,
+            tip.height,
+        )?,
+    ))
 }
 async fn sync(
     s: &WalletStore,
@@ -601,7 +754,12 @@ fn prove(
     is_policy_lock: bool,
     policy_handoff: Option<&Path>,
 ) -> Result<()> {
-    t.authorize_current(p.public_statement().reference_parent_height.checked_add(1).context("height overflow")?)?;
+    t.authorize_current(
+        p.public_statement()
+            .reference_parent_height
+            .checked_add(1)
+            .context("height overflow")?,
+    )?;
     let id = s.reserve_private_spend(t.context(), &p)?;
     let carrier = t
         .prove(&p)
@@ -625,7 +783,9 @@ fn prove(
         s.retain_private_policy_handoff(t.context(), id, &p)?;
     }
     if let Some(path) = policy_handoff {
-        let pw = Zeroizing::new(rpassword::prompt_password("Encrypted policy handoff passphrase: ")?);
+        let pw = Zeroizing::new(rpassword::prompt_password(
+            "Encrypted policy handoff passphrase: ",
+        )?);
         let bytes = s.export_stored_private_policy_handoff_encrypted(t.context(), id, &pw)?;
         write_new(path, &bytes).with_context(|| {
             format!("attempt {} remains durably reserved; retry with export-policy-handoff and a new destination", hex::encode(id))
@@ -646,8 +806,14 @@ fn bootstrap_public(store: &WalletStore, index: u32) -> Result<Value> {
     }))
 }
 fn bootstrap_new(path: &Path, passphrase: &str, confirmation: &str) -> Result<Value> {
-    ensure!(!passphrase.is_empty(), "encrypted wallet passphrase must not be empty");
-    ensure!(passphrase == confirmation, "encrypted wallet passphrases differ");
+    ensure!(
+        !passphrase.is_empty(),
+        "encrypted wallet passphrase must not be empty"
+    );
+    ensure!(
+        passphrase == confirmation,
+        "encrypted wallet passphrases differ"
+    );
     // Uses OS randomness and the existing encrypted wallet format; the writer
     // lock makes refusal to replace an existing store race-safe.
     let store = WalletStore::create_full_if_missing(path, passphrase)?;
@@ -658,16 +824,28 @@ fn bootstrap_address(path: &Path, passphrase: &str, index: u32) -> Result<Value>
     bootstrap_public(&store, index)
 }
 fn validate_network_args(args: &Args) -> Result<()> {
-    ensure!(args.manifest.is_some(), "--manifest is required for network commands");
-    let genesis = args.genesis.as_deref().context("--genesis is required for network commands")?;
+    ensure!(
+        args.manifest.is_some(),
+        "--manifest is required for network commands"
+    );
+    let genesis = args
+        .genesis
+        .as_deref()
+        .context("--genesis is required for network commands")?;
     let _: [u8; 32] = unhex(genesis)?;
     Ok(())
 }
 #[tokio::main]
 async fn main() -> Result<()> {
     let identity_args: Vec<_> = std::env::args_os().skip(1).collect();
-    if identity_args.iter().any(|arg| arg == "--print-crypto-profile") {
-        ensure!(identity_args.len() == 1, "--print-crypto-profile must be used alone");
+    if identity_args
+        .iter()
+        .any(|arg| arg == "--print-crypto-profile")
+    {
+        ensure!(
+            identity_args.len() == 1,
+            "--print-crypto-profile must be used alone"
+        );
         let profile = transaction_circuit::proof::production_crypto_profile_attestation()?;
         println!("{}", serde_json::to_string(&profile)?);
         return Ok(());
@@ -677,21 +855,44 @@ async fn main() -> Result<()> {
     // RPC connection, authority lookup and chain synchronization.
     match &args.command {
         Command::BootstrapNew => {
-            let phrase = Zeroizing::new(rpassword::prompt_password("Encrypted wallet passphrase: ")?);
-            let confirmation = Zeroizing::new(rpassword::prompt_password("Confirm encrypted wallet passphrase: ")?);
+            let phrase =
+                Zeroizing::new(rpassword::prompt_password("Encrypted wallet passphrase: ")?);
+            let confirmation = Zeroizing::new(rpassword::prompt_password(
+                "Confirm encrypted wallet passphrase: ",
+            )?);
             println!("{}", bootstrap_new(&args.wallet, &phrase, &confirmation)?);
             return Ok(());
         }
         Command::BootstrapRecover { source } => {
-            let source_phrase = Zeroizing::new(rpassword::prompt_password("Source encrypted wallet passphrase: ")?);
-            let phrase = Zeroizing::new(rpassword::prompt_password("New encrypted wallet passphrase: ")?);
-            let confirmation = Zeroizing::new(rpassword::prompt_password("Confirm new encrypted wallet passphrase: ")?);
-            ensure!(!phrase.is_empty(), "new encrypted wallet passphrase must not be empty");
-            ensure!(phrase == confirmation, "new encrypted wallet passphrases differ");
+            let source_phrase = Zeroizing::new(rpassword::prompt_password(
+                "Source encrypted wallet passphrase: ",
+            )?);
+            let phrase = Zeroizing::new(rpassword::prompt_password(
+                "New encrypted wallet passphrase: ",
+            )?);
+            let confirmation = Zeroizing::new(rpassword::prompt_password(
+                "Confirm new encrypted wallet passphrase: ",
+            )?);
+            ensure!(
+                !phrase.is_empty(),
+                "new encrypted wallet passphrase must not be empty"
+            );
+            ensure!(
+                phrase == confirmation,
+                "new encrypted wallet passphrases differ"
+            );
             let original = WalletStore::open_read_only(source, &source_phrase)?;
-            ensure!(original.mode()? == wallet::store::WalletMode::Full, "treasury bootstrap recovery requires a full wallet");
+            ensure!(
+                original.mode()? == wallet::store::WalletMode::Full,
+                "treasury bootstrap recovery requires a full wallet"
+            );
             drop(original);
-            let store = WalletStore::recover_keys_to_fresh_wallet(source, &source_phrase, &args.wallet, &phrase)?;
+            let store = WalletStore::recover_keys_to_fresh_wallet(
+                source,
+                &source_phrase,
+                &args.wallet,
+                &phrase,
+            )?;
             let mut public = bootstrap_public(&store, 0)?;
             public["recovered_same_keys"] = Value::Bool(true);
             public["requires_network_rescan"] = Value::Bool(true);
@@ -700,7 +901,8 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Command::BootstrapAddress { index } => {
-            let phrase = Zeroizing::new(rpassword::prompt_password("Encrypted wallet passphrase: ")?);
+            let phrase =
+                Zeroizing::new(rpassword::prompt_password("Encrypted wallet passphrase: ")?);
             println!("{}", bootstrap_address(&args.wallet, &phrase, *index)?);
             return Ok(());
         }
@@ -723,7 +925,9 @@ async fn main() -> Result<()> {
         None
     };
     match args.command {
-        Command::BootstrapNew | Command::BootstrapRecover { .. } | Command::BootstrapAddress { .. } => unreachable!("offline bootstrap returned before RPC"),
+        Command::BootstrapNew
+        | Command::BootstrapRecover { .. }
+        | Command::BootstrapAddress { .. } => unreachable!("offline bootstrap returned before RPC"),
         Command::New | Command::Sync => println!("synced {}", r.parent_height),
         Command::Address { index } => {
             let address = match index {
@@ -791,8 +995,12 @@ async fn main() -> Result<()> {
             let pw = Zeroizing::new(rpassword::prompt_password(
                 "Encrypted refund handoff passphrase: ",
             )?);
-            let commitment = token.import_refund(&store,
-                &bounded_read(&path, 1024 * 1024)?, &pw, refund_index, &block,
+            let commitment = token.import_refund(
+                &store,
+                &bounded_read(&path, 1024 * 1024)?,
+                &pw,
+                refund_index,
+                &block,
             )?;
             println!(
                 "imported HTLC commitment {}",
@@ -805,15 +1013,44 @@ async fn main() -> Result<()> {
             );
         }
         Command::ExportPolicyHandoff { attempt, path } => {
-            let pw = Zeroizing::new(rpassword::prompt_password("Encrypted policy handoff passphrase: ")?);
-            let bytes = store.export_stored_private_policy_handoff_encrypted(token.context(), unhex(&attempt)?, &pw)?;
+            let pw = Zeroizing::new(rpassword::prompt_password(
+                "Encrypted policy handoff passphrase: ",
+            )?);
+            let bytes = store.export_stored_private_policy_handoff_encrypted(
+                token.context(),
+                unhex(&attempt)?,
+                &pw,
+            )?;
             write_new(&path, &bytes)?;
         }
-        Command::ImportPolicyHandoff { path, block_height, recipient_index } => {
-            let block = node.canonical_block_actions(block_height).await?.context("canonical policy lock block missing")?;
-            let pw = Zeroizing::new(rpassword::prompt_password("Encrypted policy handoff passphrase: ")?);
-            let commitment = token.import_policy(&store, &bounded_read(&path, 1024 * 1024)?, &pw, recipient_index, &block)?;
-            println!("imported policy commitment {}", hex::encode(commitment.iter().flat_map(|word| word.to_le_bytes()).collect::<Vec<_>>()));
+        Command::ImportPolicyHandoff {
+            path,
+            block_height,
+            recipient_index,
+        } => {
+            let block = node
+                .canonical_block_actions(block_height)
+                .await?
+                .context("canonical policy lock block missing")?;
+            let pw = Zeroizing::new(rpassword::prompt_password(
+                "Encrypted policy handoff passphrase: ",
+            )?);
+            let commitment = token.import_policy(
+                &store,
+                &bounded_read(&path, 1024 * 1024)?,
+                &pw,
+                recipient_index,
+                &block,
+            )?;
+            println!(
+                "imported policy commitment {}",
+                hex::encode(
+                    commitment
+                        .iter()
+                        .flat_map(|word| word.to_le_bytes())
+                        .collect::<Vec<_>>()
+                )
+            );
         }
         Command::ExportTemplate { template, path } => {
             let pw = Zeroizing::new(rpassword::prompt_password(
@@ -840,7 +1077,8 @@ async fn main() -> Result<()> {
         Command::Export { attempt, path } => {
             let id = unhex(&attempt)?;
             let b = token.submission_bytes(&store, id)?;
-            let (_, carrier) = wallet::poseidon2_v8_sync::project_private_spend_candidate_action(&b)?;
+            let (_, carrier) =
+                wallet::poseidon2_v8_sync::project_private_spend_candidate_action(&b)?;
             warn_carrier_disclosure(token.context(), &carrier)?;
             write_new(&path, &b)?;
         }
@@ -922,7 +1160,8 @@ async fn main() -> Result<()> {
                     let (i, total) = ordinary_inputs(&store, &keys, r, &inputs)?;
                     let ca = ShieldedAddress::decode(&claim)?;
                     let ra = ShieldedAddress::decode(&refund)?;
-                    let mut policy = build::new_htlc_policy(r, &ca, &ra, unhex(&hashlock)?, timeout)?;
+                    let mut policy =
+                        build::new_htlc_policy(r, &ca, &ra, unhex(&hashlock)?, timeout)?;
                     policy.release_secret = u64::from(release_secret);
                     if release_secret {
                         eprintln!("HTLC claims will publish their hash preimage. Disclosure persists even if a claim is rejected, orphaned or reorganized away.");
@@ -935,7 +1174,14 @@ async fn main() -> Result<()> {
                         SpendOperation::HtlcLock(policy),
                     )?
                 }
-                Command::PolicyLock { inputs, policy, recipient, amount, fee, policy_handoff: _ } => {
+                Command::PolicyLock {
+                    inputs,
+                    policy,
+                    recipient,
+                    amount,
+                    fee,
+                    policy_handoff: _,
+                } => {
                     let branches = policy_branches(&bounded_read(&policy, 16 * 1024)?)?;
                     let policy = build::new_bounded_policy(r, branches)?;
                     let (inputs, total) = ordinary_inputs(&store, &keys, r, &inputs)?;
@@ -947,7 +1193,14 @@ async fn main() -> Result<()> {
                         SpendOperation::PolicyLock(policy),
                     )?
                 }
-                Command::PolicySpend { locked, fee_input, branch, recipient, amount, fee } => {
+                Command::PolicySpend {
+                    locked,
+                    fee_input,
+                    branch,
+                    recipient,
+                    amount,
+                    fee,
+                } => {
                     ensure!(locked != fee_input, "policy note and fee input must differ");
                     let note = private_note(&store, locked)?;
                     let payload = note.opening()?;
@@ -955,23 +1208,40 @@ async fn main() -> Result<()> {
                         bail!("not a bounded policy note")
                     };
                     let policy = build::bounded_policy_from_payload(policy);
-                    let selected = policy.branches.get(branch).context("policy branch must be 0 or 1")?;
+                    let selected = policy
+                        .branches
+                        .get(branch)
+                        .context("policy branch must be 0 or 1")?;
                     ensure!(selected.enabled == 1, "selected policy branch is disabled");
-                    ensure!(r.parent_height >= selected.not_before,
-                        "selected policy branch has not reached its spend height");
+                    ensure!(
+                        r.parent_height >= selected.not_before,
+                        "selected policy branch has not reached its spend height"
+                    );
                     if selected.release_secret == 1 {
                         disclosure_warning();
                     }
-                    let secret = if selected.hash_required == 1 { prompted_secret()? } else { [0; 32] };
+                    let secret = if selected.hash_required == 1 {
+                        prompted_secret()?
+                    } else {
+                        [0; 32]
+                    };
                     let input = stored_input(&store, &keys, &note)?;
                     let (fee_note, fee_value) = ordinary_input(&store, &keys, r, fee_input)?;
-                    let total = payload.note.value.checked_add(fee_value).context("value overflow")?;
+                    let total = payload
+                        .note
+                        .value
+                        .checked_add(fee_value)
+                        .context("value overflow")?;
                     build::prepare(
                         r,
                         fee,
                         [input, fee_note],
                         outputs(&recipient, amount, change, total, fee)?,
-                        SpendOperation::PolicySpend { policy, branch, secret },
+                        SpendOperation::PolicySpend {
+                            policy,
+                            branch,
+                            secret,
+                        },
                     )?
                 }
                 Command::Claim {
@@ -1096,7 +1366,15 @@ async fn main() -> Result<()> {
                 }
                 _ => unreachable!(),
             };
-            prove(&store, &token, p, is_lock, refund_handoff.as_deref(), is_policy_lock, policy_handoff.as_deref())?;
+            prove(
+                &store,
+                &token,
+                p,
+                is_lock,
+                refund_handoff.as_deref(),
+                is_policy_lock,
+                policy_handoff.as_deref(),
+            )?;
         }
     }
     Ok(())
@@ -1108,19 +1386,46 @@ mod bootstrap_tests {
 
     #[test]
     fn offline_commands_need_no_launch_settings() {
-        let args = Args::try_parse_from(["private-spend", "--wallet", "new.store", "bootstrap-new"]).unwrap();
+        let args =
+            Args::try_parse_from(["private-spend", "--wallet", "new.store", "bootstrap-new"])
+                .unwrap();
         assert!(matches!(args.command, Command::BootstrapNew));
         assert!(args.manifest.is_none() && args.genesis.is_none());
-        let args = Args::try_parse_from(["private-spend", "--wallet", "new.store", "--rpc", "invalid-no-network", "bootstrap-address", "--index", "7"]).unwrap();
-        assert!(matches!(args.command, Command::BootstrapAddress { index: 7 }));
-        let args = Args::try_parse_from(["private-spend", "--wallet", "fresh.store", "bootstrap-recover", "--source", "historical.store"]).unwrap();
+        let args = Args::try_parse_from([
+            "private-spend",
+            "--wallet",
+            "new.store",
+            "--rpc",
+            "invalid-no-network",
+            "bootstrap-address",
+            "--index",
+            "7",
+        ])
+        .unwrap();
+        assert!(matches!(
+            args.command,
+            Command::BootstrapAddress { index: 7 }
+        ));
+        let args = Args::try_parse_from([
+            "private-spend",
+            "--wallet",
+            "fresh.store",
+            "bootstrap-recover",
+            "--source",
+            "historical.store",
+        ])
+        .unwrap();
         assert!(matches!(args.command, Command::BootstrapRecover { .. }));
     }
 
     #[test]
     fn network_commands_still_require_launch_settings() {
-        let args = Args::try_parse_from(["private-spend", "--wallet", "new.store", "sync"]).unwrap();
-        assert!(validate_network_args(&args).unwrap_err().to_string().contains("--manifest"));
+        let args =
+            Args::try_parse_from(["private-spend", "--wallet", "new.store", "sync"]).unwrap();
+        assert!(validate_network_args(&args)
+            .unwrap_err()
+            .to_string()
+            .contains("--manifest"));
     }
 
     #[test]
@@ -1134,12 +1439,18 @@ mod bootstrap_tests {
         let original = fs::read(&path).unwrap();
         assert!(bootstrap_new(&path, "replacement-test-only", "replacement-test-only").is_err());
         assert_eq!(fs::read(&path).unwrap(), original);
-        assert_eq!(bootstrap_address(&path, "disposable-test-only", 0).unwrap(), public);
+        assert_eq!(
+            bootstrap_address(&path, "disposable-test-only", 0).unwrap(),
+            public
+        );
         assert!(bootstrap_address(&path, "incorrect-test-only", 0).is_err());
         let additional = bootstrap_address(&path, "disposable-test-only", 7).unwrap();
         assert_eq!(additional["address_index"], 7);
         assert_ne!(additional["address"], public["address"]);
-        assert_eq!(bootstrap_address(&path, "disposable-test-only", 7).unwrap(), additional);
+        assert_eq!(
+            bootstrap_address(&path, "disposable-test-only", 7).unwrap(),
+            additional
+        );
     }
 
     #[test]
@@ -1180,7 +1491,7 @@ mod policy_cli_tests {
         with_secret["branches"][0]["secret"] = Value::String("ab".repeat(32));
         assert!(parsed(&with_secret).is_err());
         let mut with_key = config;
-        with_key["nullifier_key"] = serde_json::json!([1,2,3,4,5]);
+        with_key["nullifier_key"] = serde_json::json!([1, 2, 3, 4, 5]);
         assert!(parsed(&with_key).is_err());
     }
 
@@ -1208,12 +1519,30 @@ mod policy_cli_tests {
 
     #[test]
     fn policy_cli_bounds_branch_selection_and_keeps_secrets_off_arguments() {
-        let base = ["private-spend", "--wallet", "wallet.store", "policy-spend", "--locked", "1",
-            "--fee-input", "2", "--recipient", "public-address", "--amount", "3", "--fee", "1", "--branch"];
+        let base = [
+            "private-spend",
+            "--wallet",
+            "wallet.store",
+            "policy-spend",
+            "--locked",
+            "1",
+            "--fee-input",
+            "2",
+            "--recipient",
+            "public-address",
+            "--amount",
+            "3",
+            "--fee",
+            "1",
+            "--branch",
+        ];
         let mut command = base.to_vec();
         command.push("1");
         let args = Args::try_parse_from(&command).unwrap();
-        assert!(matches!(args.command, Command::PolicySpend { branch: 1, .. }));
+        assert!(matches!(
+            args.command,
+            Command::PolicySpend { branch: 1, .. }
+        ));
         command.pop();
         command.push("2");
         assert!(Args::try_parse_from(&command).is_err());
@@ -1225,13 +1554,43 @@ mod policy_cli_tests {
 
     #[test]
     fn htlc_preimage_release_is_explicit_opt_in() {
-        let base = ["private-spend", "--wallet", "wallet.store", "lock", "--inputs", "1", "--claim", "a",
-            "--refund", "b", "--hashlock", "00", "--timeout", "120", "--amount", "3", "--fee", "1"];
+        let base = [
+            "private-spend",
+            "--wallet",
+            "wallet.store",
+            "lock",
+            "--inputs",
+            "1",
+            "--claim",
+            "a",
+            "--refund",
+            "b",
+            "--hashlock",
+            "00",
+            "--timeout",
+            "120",
+            "--amount",
+            "3",
+            "--fee",
+            "1",
+        ];
         let args = Args::try_parse_from(base).unwrap();
-        assert!(matches!(args.command, Command::Lock { release_secret: false, .. }));
+        assert!(matches!(
+            args.command,
+            Command::Lock {
+                release_secret: false,
+                ..
+            }
+        ));
         let mut opted_in = base.to_vec();
         opted_in.push("--release-secret");
         let args = Args::try_parse_from(opted_in).unwrap();
-        assert!(matches!(args.command, Command::Lock { release_secret: true, .. }));
+        assert!(matches!(
+            args.command,
+            Command::Lock {
+                release_secret: true,
+                ..
+            }
+        ));
     }
 }

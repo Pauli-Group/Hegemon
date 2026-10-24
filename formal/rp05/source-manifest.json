@@ -4612,13 +4612,13 @@
     },
     {
       "module": "SmzaRp05AuthorizationClosureSameNote",
-      "sha256": "c323d532c0ff72a0e60fbd9ca5afa680a1ec3d8e57ac22cae8f3b521bd79fa1a",
+      "sha256": "182644df14e807a22fb84699fcab33d3b478881810062969f965b93e2c97c028",
       "source": ".agent/prod-closure-2026-09-19/authorization/SmzaRp05AuthorizationClosureSameNote.lean",
       "staged": "generated/Sources/SmzaRp05AuthorizationClosureSameNote.lean"
     },
     {
       "module": "SmzaRp05AuthorizationClosureTags",
-      "sha256": "f7b00ba7e6a0b9676d62e7243fcb7d5b3ea51c3da4fa08400bdaa22979e5a939",
+      "sha256": "9f5a0c5ea7e3f26ca01c0c0ed0941bcf3c7f8d264614edc7ce9a03790f6c7660",
       "source": ".agent/prod-closure-2026-09-19/authorization/SmzaRp05AuthorizationClosureTags.lean",
       "staged": "generated/Sources/SmzaRp05AuthorizationClosureTags.lean"
     },
@@ -5566,7 +5566,7 @@
     },
     {
       "module": "SmzaRp05CurrentHistorySelectedRoleStateReplay",
-      "sha256": "ebbb6277c135b8d2e1fb21a898660b583668518664ed9a9c0fde1287a53d2f50",
+      "sha256": "65c0e3db78ba3ec22de1a22d8c96501b5094318faf428c223cc29cd2aa9d6200",
       "source": ".agent/prod-closure-2026-09-19/extraction/SmzaRp05CurrentHistorySelectedRoleStateReplay.lean",
       "staged": "generated/Sources/SmzaRp05CurrentHistorySelectedRoleStateReplay.lean"
     },
@@ -6418,7 +6418,7 @@
     },
     {
       "module": "SmzaRp05DirectCsrCertificate",
-      "sha256": "6bd4934f625b3d367114d8767a35321c83232c07bb95ca0e585c0514e532e4c7",
+      "sha256": "518428ee7b0fb2f3a7f793766c128d55160a7c1d311660a29af20b0805bf8a6f",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05DirectCsrCertificate.lean",
       "staged": "generated/Sources/SmzaRp05DirectCsrCertificate.lean"
     },
@@ -6910,13 +6910,13 @@
     },
     {
       "module": "SmzaRp05NullifierRootChunk01",
-      "sha256": "26912b44ae99f4b2509f51411de7bdcfdf3fc1329dc7e27cb6b19e0c535d91fc",
+      "sha256": "948bfa49b984dd52f700a8e94fcbb6aa6aed4133d764c558322203712eabba20",
       "source": ".agent/prod-closure-2026-09-19/relation/rp05-nullifier-export/SmzaRp05NullifierRootChunk01.lean",
       "staged": "generated/Sources/SmzaRp05NullifierRootChunk01.lean"
     },
     {
       "module": "SmzaRp05NullifierRootChunk02",
-      "sha256": "03dc392b5ff8c2ff38631ec24aa6a47599204a0fd68d5b4063e0c0450218c533",
+      "sha256": "be255703bb2568a2992fe5553fe8e24bc7622a5ae18abd450909ff02be29d7bc",
       "source": ".agent/prod-closure-2026-09-19/relation/rp05-nullifier-export/SmzaRp05NullifierRootChunk02.lean",
       "staged": "generated/Sources/SmzaRp05NullifierRootChunk02.lean"
     },
@@ -6952,19 +6952,19 @@
     },
     {
       "module": "SmzaRp05NullifierRootChunk08",
-      "sha256": "b759b732aa687ff172fbc811d02d2d82b3e2aec157ced0b5bd036efb63cf590c",
+      "sha256": "ccfce836dedfd10c54ae32f54f73ff0656af67be9b3af4255ca1b228fe1f906a",
       "source": ".agent/prod-closure-2026-09-19/relation/rp05-nullifier-export/SmzaRp05NullifierRootChunk08.lean",
       "staged": "generated/Sources/SmzaRp05NullifierRootChunk08.lean"
     },
     {
       "module": "SmzaRp05NullifierRootChunk09",
-      "sha256": "5f301ad428c02f796857c8e0d97bf7352942dff7485ea90383523f95010e988e",
+      "sha256": "48f1c9615c8ba6e30a3334f1e0631526865df4a1bd7d4765d932ca46372626a8",
       "source": ".agent/prod-closure-2026-09-19/relation/rp05-nullifier-export/SmzaRp05NullifierRootChunk09.lean",
       "staged": "generated/Sources/SmzaRp05NullifierRootChunk09.lean"
     },
     {
       "module": "SmzaRp05NullifierRootChunk10",
-      "sha256": "e536f84c1a86cf7c5e96f91373fbdfef37b4e746791fd725be85e1ae03f9dbeb",
+      "sha256": "aaf2e6d3609350d08d21bb3ce553b9ef4b3dd1b2d536f8e13923557dbd0428f9",
       "source": ".agent/prod-closure-2026-09-19/relation/rp05-nullifier-export/SmzaRp05NullifierRootChunk10.lean",
       "staged": "generated/Sources/SmzaRp05NullifierRootChunk10.lean"
     },
@@ -9406,7 +9406,7 @@
     },
     {
       "module": "SmzaRp05SingleKeyPrfSourceCanonical",
-      "sha256": "dfc0334912115b8ab88cb254310a06a6d8989bdb376eebef5600cab4a4a79300",
+      "sha256": "1c5bb918ae5259618ea6ee174716c9a939d88009357569d44d2d0fc66de70cff",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05SingleKeyPrfSourceCanonical.lean",
       "staged": "generated/Sources/SmzaRp05SingleKeyPrfSourceCanonical.lean"
     },
@@ -9424,25 +9424,25 @@
     },
     {
       "module": "SmzaRp05SingleKeyPrfSourceMembers0",
-      "sha256": "56d89d3701820779fdedfaeaf5efbf3b78b240ee7b6503401b439cf76682fa64",
+      "sha256": "d6840b2c115f87c493cc05764936ffb1994b722fad7810efadb63f0c4b321ab3",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05SingleKeyPrfSourceMembers0.lean",
       "staged": "generated/Sources/SmzaRp05SingleKeyPrfSourceMembers0.lean"
     },
     {
       "module": "SmzaRp05SingleKeyPrfSourceMembers1",
-      "sha256": "5a0dd11d77544db47649b7968c035dff5e3d998a6cb781cd02203a3c15843adc",
+      "sha256": "e18d4fa743e6c52f48dad818b651cab68cda31a4e469a46e0120dfa28adc9cea",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05SingleKeyPrfSourceMembers1.lean",
       "staged": "generated/Sources/SmzaRp05SingleKeyPrfSourceMembers1.lean"
     },
     {
       "module": "SmzaRp05SingleKeyPrfSourceMembers2",
-      "sha256": "29fd14544ed33f0c87d31db178b166b511f68d6dda788e680a66e6afede3f040",
+      "sha256": "1cd7ee758a833f274d869a20405369a233b5bd0fba5184eeacf1986e9985ed2b",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05SingleKeyPrfSourceMembers2.lean",
       "staged": "generated/Sources/SmzaRp05SingleKeyPrfSourceMembers2.lean"
     },
     {
       "module": "SmzaRp05SingleKeyPrfSourceMembers3",
-      "sha256": "749dfa7a6129c489d1740d10f424f67556586dae91228f8ae5be3440d5450a15",
+      "sha256": "297382b77660b47b6b2d4f5d03c6ba58075cc0097d08f6fb10d8060316014383",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05SingleKeyPrfSourceMembers3.lean",
       "staged": "generated/Sources/SmzaRp05SingleKeyPrfSourceMembers3.lean"
     },

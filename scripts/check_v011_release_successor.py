@@ -301,7 +301,7 @@ def validate_replay(replay, node_sha, artifact_sha):
 # satisfy the maintained full-network lifecycle harness's qualified_source_tuple.
 CURRENT_SCOPE = 'exact_current_source_current_binary_backend_and_h0'
 CURRENT_SOURCE_KIND = 'reviewed_source_successor_ci'
-CURRENT_CONFIG_SHA256 = '1c23c3055fa8f7c21326d7b9ac1e972f985af95871aa2f54e23eb2b98a0c69fe'
+CURRENT_CONFIG_SHA256 = '74183fc1eb1fed4bf2972fbc90e7211cb3b0ac6cf036b60928f46d130c8bc1ac'
 CURRENT_RUNNER_SHA256 = 'a96a9764633e28df98c323e34b6d0633c0c4cf0baf3747b6797005e68309aa38'
 CURRENT_FIXTURE_SHA256 = '50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c'
 CURRENT_NETWORK_MANIFEST_SHA256 = '386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754'
@@ -408,7 +408,7 @@ CURRENT_RUNTIME_DELTAS = {'Cargo.lock': ['bae447660a12610766620cb7e2afacb6b0ad92
  'scripts/hegemon_formal_core/src/lib.rs': ['33c1c47853fa7746d5f351db4e16b684590f2e6be568de6b9578e8fd9aa1bf1d',
                                             '4987f1a5634898eae53bcc0103af21e48b775546884af84488399923b87773d3'],
  'wallet/src/bin/private_spend.rs': ['f4fe101db48d477025437fae9e9eba93cba9c4c2dd197f71afe495760ab8bd5f',
-                                     '4e7da335ee53f3f132f48984855d16e91806ba2144d88decc5c913864746cf4f'],
+                                     'c17d7d8b5cbdfc1d717ae096f72ffa311bf41495138f306d41fdec7a7a6adb9e'],
  'wallet/src/bin/wallet.rs': ['df0b673176b10c730285d210f1c9ede4e6ba0b2621118ad63b325c4ffe64b024',
                               '73a50becdd346cedd7ed765c600a3ee70e591ff2fc60564ba6e7d3262ee18f1b'],
  'wallet/src/htlc_prepare.rs': ['54c2df105428a8b45074b0f92f10c16752d20324a0660ade670dc472fb242515',

@@ -278,7 +278,7 @@ PRIVATE_LAUNCH_ARTIFACTS = (("hegemon-node", "hegemon-node"), ("wallet", "wallet
 PRIVATE_LAUNCH_SCOPE = "source-owned-current86-private-spend-launch"
 
 
-V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': '1c23c3055fa8f7c21326d7b9ac1e972f985af95871aa2f54e23eb2b98a0c69fe',
+V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': '74183fc1eb1fed4bf2972fbc90e7211cb3b0ac6cf036b60928f46d130c8bc1ac',
  'release-evidence/v0.11-current-proof-fixture/manifest.json': '50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c',
  'release-evidence/v0.11-predecessor/manifest.json': 'dbec7e35d7402e687c3a3aa19f70c45425a127a915c74185eb0054ed57aa76fc',
  'release-evidence/v0.11-public-chain-fixture/manifest.json': '16ce37d08a3bcfecca0f8dbe4c323f1f319d1da565ea5473d695a5c13c4676c0',
@@ -287,7 +287,7 @@ V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': '1c23c3055fa8f7c2
  'scripts/check_release_launcher_policy.py': '51700e93ac457574f262bff05f48e5e55fa328e37da30f665721a312de9d826e',
  'scripts/check_v011_current_binary_proofs.py': 'a96a9764633e28df98c323e34b6d0633c0c4cf0baf3747b6797005e68309aa38',
  'scripts/check_v011_public_chain_replay.py': '29c6655f1d8ced3ffa5a042e3c66f0567fc0ef465eda70de473e7a35054159dc',
- 'scripts/check_v011_release_successor.py': '78716865c7a831ac59272b2c752ea567b2de8cf154f870a4871ef13010068f0b',
+ 'scripts/check_v011_release_successor.py': 'f02c6b4cb4102fa58f610151d24d516f0dfa4fcd28b809205fbfd495afeb0572',
  'scripts/materialize_v011_predecessor.py': '0dc2b129332bf1276e5790a2db2682946e54f5af6b6850eaca50ca9e17b4dee5',
  'scripts/release_artifact_manifest.py': '17178256d95ad03cf663991c3bf68224116f07d6671a7f281c70179987eadbb1',
  'scripts/security-audit.sh': 'b103c1e0ae4a18c7cf873a6b9f95cc13079bd0b5b8c6a526e3c1dae84eb3953b'}
