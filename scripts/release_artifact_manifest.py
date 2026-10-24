@@ -99,6 +99,22 @@ def _file_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
     )
 
 
+def _path_matches_open_file(path_stat: os.stat_result, opened_stat: os.stat_result) -> bool:
+    # Windows path stat/lstat preserves legacy ctime=creation time, whereas
+    # fstat can expose metadata change time. Normalize only this cross-API
+    # comparison; descriptor-to-descriptor checks retain full change time.
+    path_identity = _file_identity(path_stat)
+    opened_identity = _file_identity(opened_stat)
+    if os.name == "nt":
+        path_birth = getattr(path_stat, "st_birthtime_ns", None)
+        opened_birth = getattr(opened_stat, "st_birthtime_ns", None)
+        if path_birth is not None or opened_birth is not None:
+            if path_birth is None or opened_birth is None:
+                return False
+            return path_identity[:4] + (path_birth,) == opened_identity[:4] + (opened_birth,)
+    return path_identity == opened_identity
+
+
 def _checked_fallback_path(
     base: Path,
     relative: str,
@@ -165,14 +181,19 @@ def _open_regular_beneath(base: Path, relative: str, label: str) -> int:
             raise ManifestError(
                 f"{label} is not a regular non-symlink file: {relative}"
             ) from exc
-        actual = os.fstat(file_fd)
-        if not stat.S_ISREG(actual.st_mode) or _file_identity(actual) != _file_identity(expected):
+        try:
+            actual = os.fstat(file_fd)
+            if not stat.S_ISREG(actual.st_mode) or not _path_matches_open_file(expected, actual):
+                raise ManifestError(f"{label} changed while being opened: {relative}")
+            # Re-check the lexical chain and bind its final object to the opened
+            # descriptor before inspecting or copying any bytes.
+            _, after = _checked_fallback_path(base, relative, label, directory=False)
+            if not _path_matches_open_file(after, actual):
+                raise ManifestError(f"{label} changed while being opened: {relative}")
+            return file_fd
+        except BaseException:
             os.close(file_fd)
-            raise ManifestError(f"{label} changed while being opened: {relative}")
-        # Re-check the lexical chain after opening. The file descriptor remains
-        # bound to the object whose bytes are inspected and copied below.
-        _checked_fallback_path(base, relative, label, directory=False)
-        return file_fd
+            raise
     try:
         current_fd = os.open(base, _directory_open_flags())
     except OSError as exc:
@@ -230,7 +251,9 @@ def _open_at(
 ) -> int:
     if directory.fd is not None:
         return os.open(name, flags, mode, dir_fd=directory.fd)
-    return os.open(directory.path / name, flags, mode)
+    # Windows CRT descriptors default to text mode, including output files.
+    # Manifest checksums bind raw bytes, so fallback writes must stay binary.
+    return os.open(directory.path / name, flags | getattr(os, "O_BINARY", 0), mode)
 
 
 def _open_repository_file(root: Path, relative: str, label: str) -> int:

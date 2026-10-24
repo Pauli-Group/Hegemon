@@ -224,6 +224,101 @@ class ReleaseLauncherBoundaryTests(unittest.TestCase):
                 self.assertEqual(result.stdout.strip(), output)
 
 
+    def test_fallback_windows_path_and_handle_times_preserve_identity(self) -> None:
+        path = self.target / "fixture.exe"
+        path.write_bytes(native_bytes("pe", 0))
+        opened: list[int] = []
+        phase = {"post": False, "read": False}
+        mismatch = {"field": None}
+
+        def metadata(value, *, descriptor=False):
+            fields = {key: getattr(value, key) for key in dir(value) if key.startswith("st_")}
+            fields.update(st_birthtime_ns=123, st_ctime_ns=456 if descriptor else 123)
+            if descriptor and mismatch["field"]:
+                fields[mismatch["field"]] += 1
+            if not descriptor and phase["post"]:
+                fields["st_ino"] += 1
+            if descriptor and phase["read"]:
+                fields["st_ctime_ns"] += 1
+            return SimpleNamespace(**fields)
+
+        def checked_lstat(candidate):
+            value = metadata(os.lstat(candidate))
+            return value
+
+        def opened_file(*args, **kwargs):
+            fd = os.open(*args, **kwargs)
+            opened.append(fd)
+            return fd
+
+        windows_os = SimpleNamespace(**{**vars(os), "name": "nt", "open": opened_file,
+            "lstat": checked_lstat, "fstat": lambda fd: metadata(os.fstat(fd), descriptor=True)})
+        inspect = lambda: manifest.inspect_artifact(self.root, "wallet", "wallet", path,
+                                                    "target/fixture.exe", FORMATS["pe"])
+        with mock.patch.object(manifest, "os", windows_os), mock.patch.object(
+                manifest, "_descriptor_relative_io_available", return_value=False):
+            self.assertEqual(inspect()["size"], path.stat().st_size)
+            for field in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_birthtime_ns"):
+                with self.subTest(field=field):
+                    mismatch["field"] = field
+                    with self.assertRaisesRegex(manifest.ManifestError, "changed while being opened"):
+                        inspect()
+                    with self.assertRaises(OSError):
+                        os.fstat(opened[-1])
+            mismatch["field"] = None
+            original_read = manifest._sha256_fd
+            def changed_during_read(fd):
+                digest = original_read(fd)
+                phase["read"] = True
+                return digest
+            with mock.patch.object(manifest, "_sha256_fd", side_effect=changed_during_read):
+                with self.assertRaisesRegex(manifest.ManifestError, "changed while being inspected"):
+                    inspect()
+            phase["read"] = False
+            original_check = manifest._checked_fallback_path
+            calls = 0
+            def replaced_after_open(*args, **kwargs):
+                nonlocal calls
+                calls += 1
+                phase["post"] = calls == 2
+                return original_check(*args, **kwargs)
+            with mock.patch.object(manifest, "_checked_fallback_path", side_effect=replaced_after_open):
+                with self.assertRaisesRegex(manifest.ManifestError, "changed while being opened"):
+                    inspect()
+                with self.assertRaises(OSError):
+                    os.fstat(opened[-1])
+            phase["post"] = False
+            with mock.patch.object(manifest, "_checked_fallback_path", side_effect=[
+                    (path, metadata(path.stat())), manifest.ManifestError("post-open reparse point")]):
+                with self.assertRaisesRegex(manifest.ManifestError, "reparse point"):
+                    inspect()
+                with self.assertRaises(OSError):
+                    os.fstat(opened[-1])
+            windows_os.name = "posix"
+            with self.assertRaisesRegex(manifest.ManifestError, "changed while being opened"):
+                inspect()
+
+    def test_windows_open_identity_legacy_and_missing_birthtime(self) -> None:
+        fields = dict(st_dev=1, st_ino=2, st_size=3, st_mtime_ns=4, st_ctime_ns=5)
+        legacy = SimpleNamespace(**fields)
+        modern = SimpleNamespace(**fields, st_birthtime_ns=5)
+        windows_os = SimpleNamespace(**{**vars(os), "name": "nt"})
+        with mock.patch.object(manifest, "os", windows_os):
+            self.assertTrue(manifest._path_matches_open_file(legacy, legacy))
+            self.assertFalse(manifest._path_matches_open_file(legacy, modern))
+            self.assertFalse(manifest._path_matches_open_file(modern, legacy))
+
+    def test_fallback_output_open_preserves_binary_and_security_flags(self) -> None:
+        opened = mock.Mock(return_value=123)
+        binary_flag = 0x8000
+        windows_os = SimpleNamespace(**{**vars(os), "name": "nt", "open": opened,
+                                       "O_BINARY": binary_flag})
+        directory = manifest._DirectoryHandle(path=self.target, fd=None)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        with mock.patch.object(manifest, "os", windows_os):
+            self.assertEqual(manifest._open_at(directory, "output.exe", flags, 0o600), 123)
+        opened.assert_called_once_with(self.target / "output.exe", flags | binary_flag, 0o600)
+
     def test_tracked_modes_match_simulated_windows(self) -> None:
         self.tracked_source("ordinary.txt")
         self.tracked_source("executable.sh", executable=True)

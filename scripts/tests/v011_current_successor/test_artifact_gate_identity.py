@@ -26,7 +26,7 @@ CURRENT = {'chain_id': '11' * 32, 'genesis_hash': '22' * 32,
 HISTORICAL = {'chain_id': '55' * 32, 'genesis_hash': '66' * 32,
     'manifest_digest': '77' * 64, 'relation_id': 'TEST_ONLY_HISTORICAL_RELATION',
     'relation_digest': '88' * 64}
-ARTIFACT_HELPER_SHA256 = '17178256d95ad03cf663991c3bf68224116f07d6671a7f281c70179987eadbb1'
+ARTIFACT_HELPER_SHA256 = '0f41da8be0536335978ed42d2f93f930b2c9ee078f3ecbeb6293e44ce20c42cb'
 LAUNCHER_POLICY_SHA256 = '51700e93ac457574f262bff05f48e5e55fa328e37da30f665721a312de9d826e'
 
 
