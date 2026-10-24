@@ -1142,11 +1142,47 @@ private theorem simulator_expected_programs_extract :
       some simulator_expected_programs := by
   decide
 
+private def simulator_merkle_program_table : List RawSha512OracleProgram :=
+  (List.range simulatorProgramPositions.length).map fun ordinal =>
+    (⟨rawKey merkleNodeDomain
+      ((taggedDigest (1000 + 2 * ordinal)).rawWords ++
+        (taggedDigest (1001 + 2 * ordinal)).rawWords),
+      Sha512Digest.zero, .lazyMerkle⟩ : RawSha512OracleProgram)
+
+private theorem simulator_merkle_programs_build :
+    simulatorProgramNodes.mapM (programmedMerkleProgram simulatorProof) =
+      some simulator_merkle_program_table := by
+  decide
+
+private theorem simulator_program_table_pairwise :
+    simulator_program_table.Pairwise (fun left right => left.key ≠ right.key) := by
+  decide
+
+private theorem buildProgramTable_of_merkle_programs
+    (proof : SmallWoodSmz9ProofWire.ProofWire)
+    (nodes : List ProgrammedMerkleNode)
+    (finalWords : List RawWord) (finalOutput : Sha512Digest)
+    (merklePrograms : List RawSha512OracleProgram)
+    (merkleBuilt : nodes.mapM (programmedMerkleProgram proof) = some merklePrograms)
+    (keysDistinct : (merklePrograms ++ [finalPiopProgram finalWords finalOutput]).Pairwise
+      (fun left right => left.key ≠ right.key)) :
+    buildProgramTable proof nodes finalWords finalOutput =
+      some (merklePrograms ++ [finalPiopProgram finalWords finalOutput]) := by
+  unfold buildProgramTable
+  rw [merkleBuilt]
+  change (if (merklePrograms ++ [finalPiopProgram finalWords finalOutput]).Pairwise
+      (fun left right => left.key ≠ right.key)
+    then some (merklePrograms ++ [finalPiopProgram finalWords finalOutput])
+    else none) = _
+  exact if_pos keysDistinct
+
 private theorem simulator_program_table_build :
     buildProgramTable simulatorProof simulatorProgramNodes
       simulatorConcreteTrace.piopTranscriptWords Sha512Digest.zero =
       some simulator_program_table := by
-  decide
+  exact buildProgramTable_of_merkle_programs simulatorProof simulatorProgramNodes
+    simulatorConcreteTrace.piopTranscriptWords Sha512Digest.zero simulator_merkle_program_table
+    simulator_merkle_programs_build simulator_program_table_pairwise
 
 private theorem simulator_trace_shape_valid :
     traceShapeValid simulatorConcreteTrace = true := by
@@ -1165,15 +1201,88 @@ private theorem simulator_inputs_fresh :
     allInputDigestsFresh simulatorOpenedLeafTapes simulatorProgramNodes = true := by
   decide
 
+private theorem rawKey_canonical_of_words
+    (domain : List Byte) (words : List RawWord)
+    (role : domain ∈ smz9VerifierRawSha512RoleDomains)
+    (bounds : words.Forall (fun word => word < rawWordCardinality)) :
+    (rawKey domain words).Canonical := by
+  exact ⟨rfl, role, bounds, by change 0 < rawWordCardinality; decide⟩
+
+private theorem replicated_raw_words_bounded
+    (count word : Nat) (bound : word < rawWordCardinality) :
+    (List.replicate count word).Forall (fun value => value < rawWordCardinality) := by
+  apply List.forall_iff_forall_mem.mpr
+  intro value member
+  have same : value = word := (List.mem_replicate.mp member).2
+  exact same ▸ bound
+
+private theorem simulator_final_key_canonical : simulatorFinalProgram.key.Canonical := by
+  apply rawKey_canonical_of_words
+  · decide
+  · exact replicated_raw_words_bounded smz9FinalPiopInputWordCount 8 (by decide)
+
+private theorem simulator_merkle_keys_canonical :
+    simulator_merkle_program_table.all (fun program => decide program.key.Canonical) = true := by
+  decide
+
 private theorem simulator_table_keys_canonical :
     simulator_program_table.all (fun program => decide program.key.Canonical) = true := by
-  decide
+  change (simulator_merkle_program_table ++ [simulatorFinalProgram]).all
+    (fun program => decide program.key.Canonical) = true
+  apply List.all_eq_true.mpr
+  intro program member
+  rcases List.mem_append.mp member with merkleMember | finalMember
+  · exact List.all_eq_true.mp simulator_merkle_keys_canonical program merkleMember
+  · have same : program = simulatorFinalProgram := List.mem_singleton.mp finalMember
+    subst program
+    simpa only [decide_eq_true_eq] using simulator_final_key_canonical
+
+private theorem lookup_appended_final_program
+    (merklePrograms : List RawSha512OracleProgram) (finalProgram : RawSha512OracleProgram)
+    (distinct : ∀ program ∈ merklePrograms, program.key ≠ finalProgram.key) :
+    lookupProgram (merklePrograms ++ [finalProgram]) finalProgram.key = some finalProgram := by
+  unfold lookupProgram
+  apply List.find?_eq_some_iff_append.mpr
+  refine ⟨by simp, merklePrograms, [], rfl, ?_⟩
+  intro program member
+  simpa using distinct program member
+
+private theorem simulator_merkle_keys_ne_final :
+    ∀ program ∈ simulator_merkle_program_table, program.key ≠ simulatorFinalProgram.key := by
+  intro program member equality
+  obtain ⟨ordinal, _, rfl⟩ := List.mem_map.mp member
+  have domains : merkleNodeDomain = piopTranscriptDomain :=
+    congrArg RawSha512OracleKey.roleDomain equality
+  exact (by decide : merkleNodeDomain ≠ piopTranscriptDomain) domains
+
+private theorem final_query_consistent
+    (oracle : ConcreteRawOracle) (merklePrograms : List RawSha512OracleProgram)
+    (finalProgram : RawSha512OracleProgram)
+    (distinct : ∀ program ∈ merklePrograms, program.key ≠ finalProgram.key) :
+    queryConsistent oracle (merklePrograms ++ [finalProgram])
+      ⟨finalProgram.key, finalProgram.output, some finalProgram.kind⟩ = true := by
+  unfold queryConsistent
+  rw [lookup_appended_final_program merklePrograms finalProgram distinct]
+  simp
+
+private theorem singleton_final_query_all
+    (oracle : ConcreteRawOracle) (merklePrograms : List RawSha512OracleProgram)
+    (finalProgram : RawSha512OracleProgram)
+    (canonical : finalProgram.key.Canonical)
+    (distinct : ∀ program ∈ merklePrograms, program.key ≠ finalProgram.key) :
+    [⟨finalProgram.key, finalProgram.output, some finalProgram.kind⟩].all
+      (fun query => decide query.key.Canonical &&
+        queryConsistent oracle (merklePrograms ++ [finalProgram]) query) = true := by
+  simp only [List.all_cons, List.all_nil, Bool.and_true]
+  rw [final_query_consistent oracle merklePrograms finalProgram distinct]
+  simpa only [Bool.and_true, decide_eq_true_eq] using canonical
 
 private theorem simulator_queries_consistent :
     simulatorQueryTrace.all (fun query =>
       decide query.key.Canonical && queryConsistent zeroOracle simulator_program_table query) =
       true := by
-  decide
+  exact singleton_final_query_all zeroOracle simulator_merkle_program_table simulatorFinalProgram
+    simulator_final_key_canonical simulator_merkle_keys_ne_final
 
 private theorem simulator_constructor_checks :
     traceShapeValid simulatorInput.verifierTrace ∧
