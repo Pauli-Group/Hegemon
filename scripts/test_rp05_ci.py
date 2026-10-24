@@ -38,12 +38,12 @@ class CiTests(unittest.TestCase):
              patch.object(ci.subprocess, 'Popen') as launch:
             proc = launch.return_value
             proc.wait.return_value = 0
-            ci.run(['lean'], {}, 700, 180)
-            proc.wait.assert_called_once_with(timeout=180)
+            ci.run(['lean'], {}, 700, 360)
+            proc.wait.assert_called_once_with(timeout=360)
             launch.assert_called_once_with(
                 ['lean'], cwd=ci.package.REPO/'formal/crypto', env={}, start_new_session=True)
             proc.wait.reset_mock()
-            ci.run(['lean'], {}, 150, 180)
+            ci.run(['lean'], {}, 150, 360)
             proc.wait.assert_called_once_with(timeout=50)
     def test_compile_timeout_kills_and_reaps_owned_group_without_success(self):
         command = ['lean']
@@ -53,11 +53,11 @@ class CiTests(unittest.TestCase):
             proc = launch.return_value
             proc.pid = 4321
             proc.poll.return_value = None
-            proc.wait.side_effect = [ci.subprocess.TimeoutExpired(command, 180), 0]
+            proc.wait.side_effect = [ci.subprocess.TimeoutExpired(command, 360), 0]
             with self.assertRaises(ci.subprocess.TimeoutExpired):
-                ci.run(command, {}, 700, 180)
+                ci.run(command, {}, 700, 360)
             kill_group.assert_called_once_with(4321, ci.signal.SIGKILL)
-            self.assertEqual(proc.wait.call_args_list, [call(timeout=180), call()])
+            self.assertEqual(proc.wait.call_args_list, [call(timeout=360), call()])
     def test_source_guard_needs_no_lean(self):
         with patch.object(ci.package,'lake_environment',side_effect=AssertionError('Lean invoked')):
             _,graph,order=ci.source_guard()

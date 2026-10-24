@@ -288,8 +288,9 @@ def compile_audit(cache, cold, seconds):
         for p in target.parent.glob(target.name+'*'):
             p.unlink()
         source_root = package.SOURCE_ROOT if source.is_relative_to(package.SOURCE_ROOT) else package.PACKAGE/'shared'
-        # Generated constraint tables can exceed 120s; retain the aggregate deadline.
-        run([lean,*FLAGS,'-o',str(target),f'--root={source_root}',str(source)],env,deadline,180)
+        # Measured finite checking took 254.11s total (241s in kernel scopes,
+        # max 4.13s per scope); retain bounded phases and the aggregate deadline.
+        run([lean,*FLAGS,'-o',str(target),f'--root={source_root}',str(source)],env,deadline,360)
         if not target.is_file():
             raise RuntimeError('compiler did not produce object')
         state[module] = {'key':key, 'parts':object_parts(target)}
@@ -304,7 +305,7 @@ def compile_audit(cache, cold, seconds):
         if not Path(checker).is_file():
             raise RuntimeError('pinned toolchain leanchecker unavailable; kernel replay not verified')
         for module in order:
-            run([checker,module],env,deadline,120)
+            run([checker,module],env,deadline,360)
     # Fail closed on source or compiler/library mutation during compilation/auditing.
     manifest_after, graph_after, order_after = source_guard()
     if graph_key(inputs,m,graph,order) != graph_key(inputs,manifest_after,graph_after,order_after):

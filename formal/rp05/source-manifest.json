@@ -1612,7 +1612,7 @@
     },
     {
       "module": "HegemonCrypto.SmallWoodV8Smz9HashDependencyCertificate",
-      "sha256": "2028c1e12fc762b501c846f699dfefc1ea31b4fcdbfb14ce5afdb68f88905775",
+      "sha256": "5583be511888d5d3e59ceefc0b5730cda4e0195ae0609f6784a4673b2cbf0d27",
       "source": "formal/crypto/HegemonCrypto/SmallWoodV8Smz9HashDependencyCertificate.lean",
       "staged": "generated/Sources/HegemonCrypto/SmallWoodV8Smz9HashDependencyCertificate.lean"
     },

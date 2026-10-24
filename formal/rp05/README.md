@@ -182,9 +182,11 @@ audit-root lists invalidate reuse. Every registered theorem's actual proof-body
 closure is audited, rejecting missing bodies, unsafe/partial dependencies and
 nonstandard axioms, including sorry/native-decide-generated axioms.
 
-Weekly/manual cold main runs use a separate 4800-second verification deadline
-and 90-minute job cap, recompiling the entire project graph and serially
-replaying project modules with the pinned `leanchecker`. This uses the same
+Weekly/manual cold main runs use a separate 14400-second verification deadline
+and 270-minute job cap, recompiling the entire project graph and serially
+replaying project modules with the pinned `leanchecker`. Compilation and kernel
+replay each have a 360-second per-module limit; theorem-body audits retain their
+180-second limit. Every phase remains bounded by the aggregate deadline. This uses the same
 Lean kernel, not an independent verifier. External libraries remain explicit
 pinned cached inputs. A first unseeded ordinary run may exhaust its budget;
 seed the trusted main artifact via the separate cold lane before crediting
