@@ -7778,23 +7778,14 @@ fn reorg_rejects_missing_old_canonical_chain_before_publish() {
         false,
     ))
     .expect("node");
-    let genesis = node.best_meta();
-
-    let canonical_work = node.prepare_work().expect("prepare canonical native work");
-    let canonical_seal = mine_native_round(canonical_work.clone(), 0).expect("canonical seal");
-    let canonical = node
-        .import_mined_block(&canonical_work, canonical_seal)
-        .expect("canonical import")
-        .expect("canonical block");
+    let (canonical_chain, side_chain) = mine_ordered_empty_native_fork(&node, test_pow_bits, 1);
+    let canonical = canonical_chain[1].clone();
+    let side_one = side_chain[1].clone();
     assert_eq!(node.best_meta().hash, canonical.hash);
     let old_height_one = node.hash_by_height(1).expect("height one before reorg");
     let old_pending_len = node.state.read().pending_actions.len();
     let old_state_root = node.state.read().commitment_tree.root();
 
-    let side_one = (1..128)
-        .map(|round| mined_empty_child(&genesis, 1, test_pow_bits, round))
-        .find(|candidate| !native_meta_better_than(candidate, &canonical))
-        .expect("side child that does not beat canonical tip");
     persist_block_record(&node.block_tree, &side_one).expect("persist side parent");
 
     node.block_tree

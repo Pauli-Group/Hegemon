@@ -299,7 +299,7 @@ def validate_replay(replay, node_sha, artifact_sha):
 # satisfy the maintained full-network lifecycle harness's qualified_source_tuple.
 CURRENT_SCOPE = 'exact_current_source_current_binary_backend_and_h0'
 CURRENT_SOURCE_KIND = 'reviewed_source_successor_ci'
-CURRENT_CONFIG_SHA256 = '151bdfa0094188723f7569589ab5bb226632072067caae9db68d79b3cb59c6d3'
+CURRENT_CONFIG_SHA256 = 'e7a281441062e75192547caeb6fd3500f0b187ce0e06fd56f9e02def0cd26e07'
 CURRENT_RUNNER_SHA256 = '2d66821c28cb2c057878c86725ff5be6ad337f763d45b5c7ecbf6bcb08a0d06b'
 CURRENT_FIXTURE_SHA256 = '50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c'
 CURRENT_NETWORK_MANIFEST_SHA256 = '386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754'
@@ -394,7 +394,7 @@ CURRENT_RUNTIME_DELTAS = {'Cargo.lock': ['bae447660a12610766620cb7e2afacb6b0ad92
  'node/src/native/rpc.rs': ['0250f8b5548f9e718d1f2b3fb60c39dc0c171fe31615442628c1af274cb8cd8c',
                             '74a599d7234621925bddbc9709ecdab37927b9d7e428eaa38590c428b7a435b0'],
  'node/src/native/tests.rs': ['9ce2b15b592f82403f451f9fc76974c98cc7bdf74f6c421c7bf91228bc1b0e31',
-                              '98b490c43e2538c38c73a2ba5636cd5f23287d5e352c51e271bc3c73a3e2cdd1'],
+                              '41452d1335f7c1dee128b8b726476422e60d7066314dd0acb9c4f56c80580094'],
  'node/src/native/util.rs': ['ccf0764d0059cff43f784171edf58819cabe9645ab2aa1c8f24592beee5e45b1',
                              '51b0333cb00513dc427f4e7cf552f9b3584ffd5133b7ea32b53224ddfed1bea2'],
  'protocol/versioning/src/launch_candidate.rs': ['2ce83547371d7f0904dfc318286e3ae0a17f3776f415518f49c0e22627913539',

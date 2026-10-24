@@ -8,8 +8,8 @@
       "command": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
       "status": "passed",
       "exit_code": 0,
-      "executed_at": "2026-10-24T00:54:04Z",
-      "policy_inputs_blake3": "424fd5082c73cacc9e2cbd54e7ec62a84baa6df71b55c9662db5eee72b9e6070",
+      "executed_at": "2026-10-24T03:32:40Z",
+      "policy_inputs_blake3": "e58a9a5ebc5b45716cba0559035686ff66640cc257a97f50273b3690307ced46",
       "report": {
         "passed": true,
         "test_filter": "governance_",
@@ -4236,7 +4236,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-11",
         "notes": "Pending final headless review. Same-block fee, burn, coinbase, transaction-order, artifact-identity, and claimed-supply projection is mechanized, while accepted-block no-counterfeit closure remains conditional on the named SmallWood knowledge-soundness, canonical-semantic-refinement, and Poseidon2 output-security evidence bundles. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "0e85b0612c95f50c6ff2b201587514490eb6bc95e79b9e28171ff2d75b295867"
+        "content_blake3": "2f182875a5c153d045b219771dc6b8184b584c7a6d6b5a1f30af5a62fa5a385d"
       },
       "falsification_cases": [
         {
@@ -15448,7 +15448,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-13",
         "notes": "Pending final headless branch-diff review. Internal review rejected the first caller-populated row certificate and replaced it with an executable exact production-row decision before the conditional production-family reduction was credited; no production no-counterfeit closure was recorded. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "056fbb83fa37d1dded40138116d50d5eac5df20c02a1299bc4c5bfc2bd0398ae"
+        "content_blake3": "4942e7a61b16e2dba7e02aaf6583411392eb711556acabc8f366cf8def555601"
       },
       "falsification_cases": [
         {
