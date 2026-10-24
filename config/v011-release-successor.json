@@ -291,7 +291,7 @@
       "before_sha256": "150c5018a34fa6d92eba62f070692d10ccb77e477f2257ee6a4045b477c0f5ba"
     },
     "scripts/check_transaction_proof_successor_authorization.py": {
-      "after_sha256": "e392df3a774e3e3ab6a1bff1e76b247d4c77be413d85cb37e3ac668a521ed163",
+      "after_sha256": "13b4e38045f80b6425db94300c1d245c6a03a1b6e35651799b5fa07ad5b81639",
       "before_sha256": "e01c8dfd9f8bd256c2b7de065986bf46b78d773e62017601a64937127ffba821"
     },
     "scripts/hegemon_formal_core/src/lib.rs": {
