@@ -2170,7 +2170,7 @@
     },
     {
       "module": "HegemonCrypto.SmallWoodV8Smz9ProgramPolynomials",
-      "sha256": "081feb728d8b60d04726aa3c331a2b6eb47e39f72671e7b4838b352b1dcfaec5",
+      "sha256": "99ab667d4d4306bdb3e8d70c13af124b8880b9b0aa8d5c4f246a31a440617a35",
       "source": "formal/crypto/HegemonCrypto/SmallWoodV8Smz9ProgramPolynomials.lean",
       "staged": "generated/Sources/HegemonCrypto/SmallWoodV8Smz9ProgramPolynomials.lean"
     },
