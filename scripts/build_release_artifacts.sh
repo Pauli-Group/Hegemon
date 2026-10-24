@@ -64,10 +64,13 @@ build_release -p hegemon-node --bin hegemon-node --no-default-features
 build_release -p wallet --bin wallet --bin private-spend --no-default-features --features rpc-client
 build_release -p walletd --bin walletd
 
-NODE_BIN="$RELEASE_DIR/hegemon-node$EXE_SUFFIX"
-WALLET_BIN="$RELEASE_DIR/wallet$EXE_SUFFIX"
-WALLETD_BIN="$RELEASE_DIR/walletd$EXE_SUFFIX"
-PRIVATE_SPEND_BIN="$RELEASE_DIR/private-spend$EXE_SUFFIX"
+# Colon-delimited artifact specs are not reliably converted by MSYS. Resolve
+# repository-relative paths inside the native manifest reader instead.
+ARTIFACT_DIR="${RELEASE_DIR#"$ROOT"/}"
+NODE_BIN="$ARTIFACT_DIR/hegemon-node$EXE_SUFFIX"
+WALLET_BIN="$ARTIFACT_DIR/wallet$EXE_SUFFIX"
+WALLETD_BIN="$ARTIFACT_DIR/walletd$EXE_SUFFIX"
+PRIVATE_SPEND_BIN="$ARTIFACT_DIR/private-spend$EXE_SUFFIX"
 
 python3 "$ROOT/scripts/release_artifact_manifest.py" create \
   --output "$MANIFEST" \

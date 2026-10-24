@@ -178,6 +178,52 @@ class ReleaseLauncherBoundaryTests(unittest.TestCase):
         self.git("update-index", "--chmod=+x" if executable else "--chmod=-x", "--", name)
         return path
 
+    def test_build_producer_uses_repository_relative_artifact_specs(self) -> None:
+        root = self.root / "producer root with spaces"
+        script = root / "scripts/build_release_artifacts.sh"
+        script.parent.mkdir(parents=True)
+        script.write_bytes(Path(__file__).with_name("build_release_artifacts.sh").read_bytes())
+        tools = self.root / "stub-tools"
+        tools.mkdir()
+        record = self.root / "manifest-argv.bin"
+        stubs = {
+            "python3": '#!/usr/bin/env bash\nprintf "%s\\0" "$@" >> "$STUB_RECORD"\nprintf "\\0" >> "$STUB_RECORD"\n',
+            "rustc": '#!/usr/bin/env bash\nprintf "host: x86_64-pc-windows-msvc\\n"\n',
+            "cargo": "#!/usr/bin/env bash\nexit 0\n",
+        }
+        for name, body in stubs.items():
+            executable = tools / name
+            executable.write_text(body, encoding="utf-8")
+            executable.chmod(0o755)
+        environment = {**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+                       "STUB_RECORD": str(record)}
+        triple = "x86_64-pc-windows-msvc"
+        for target, custom in ((None, None), (triple, None),
+                               (None, "target/custom manifest.json"),
+                               (triple, "target/custom manifest.json")):
+            with self.subTest(target=target, custom=custom):
+                record.write_bytes(b"")
+                arguments = ["--target", target] if target else []
+                if custom:
+                    arguments += ["--manifest", custom]
+                result = subprocess.run(["bash", str(script), *arguments], cwd=self.root,
+                                        env=environment, check=True, text=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                calls = [[value.decode() for value in row.split(b"\0")]
+                         for row in record.read_bytes().split(b"\0\0") if row]
+                calls = [args for args in calls if len(args) > 1 and args[1] in ("create", "verify")]
+                self.assertEqual([args[1] for args in calls], ["create", "verify"])
+                directory = f"target/{target}/release" if target else "target/release"
+                expected = [f"{package}:{binary}:{directory}/{binary}.exe"
+                            for package, binary in IDENTITIES]
+                for args, flag in zip(calls, ("--artifact", "--expect"), strict=True):
+                    self.assertEqual([args[i + 1] for i, item in enumerate(args) if item == flag], expected)
+                output = str(root / (custom or f"{directory}/hegemon-release-artifacts.json"))
+                self.assertEqual(calls[0][calls[0].index("--output") + 1], output)
+                self.assertEqual(calls[1][calls[1].index("--manifest") + 1], output)
+                self.assertEqual(result.stdout.strip(), output)
+
+
     def test_tracked_modes_match_simulated_windows(self) -> None:
         self.tracked_source("ordinary.txt")
         self.tracked_source("executable.sh", executable=True)
