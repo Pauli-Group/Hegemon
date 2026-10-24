@@ -20,7 +20,7 @@
     "path": "docs/crypto/smallwood_poseidon2_v8_smz9_source_security_report.json",
     "production_authorizing": false,
     "schema": "hegemon.smallwood.poseidon2-v8.smz9.source-security-report.v3",
-    "sha512": "79ff255c709958f7991e34138fdefcf15d3b7c6771e66190c92ec8746bab36553cfba3d64fc198c85776764eacf0b5250a2c37c9471cd2e12962bf27583f21c5"
+    "sha512": "c3e8aee0ed8ebeda736d94e4c9bb0abb2cca99cafd0c0198ac253329eec2671e0c828127d09b232862235f9166268faf9905806140dd47d90c9b9d2e7047fa13"
   },
   "executable_zk_refinement_report": {
     "bytes": 4230,

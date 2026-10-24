@@ -13,8 +13,8 @@ use transaction_core::constants::{
     BALANCE_SLOT_PADDING_FIELD_ID, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG,
 };
 use transaction_core::poseidon2_width16::{
-    Felt, POSEIDON2_WIDTH16_RATE, POSEIDON2_WIDTH16_SPONGE_MODE_MARKER,
-    POSEIDON2_WIDTH16_SUITE_MARKER, POSEIDON2_WIDTH16_WIDTH,
+    Felt, POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER, POSEIDON2_WIDTH16_RATE,
+    POSEIDON2_WIDTH16_SPONGE_MODE_MARKER, POSEIDON2_WIDTH16_SUITE_MARKER, POSEIDON2_WIDTH16_WIDTH,
 };
 use transaction_core::stablecoin_poseidon2_v8::{
     StablecoinPoseidon2V8Context, StablecoinPoseidon2V8Direction, STABLECOIN_POSEIDON2_V8_DEPTH,
@@ -449,6 +449,18 @@ const fn hash_initial_index(call: usize, lane: usize) -> usize {
 const fn hash_final_index(call: usize, lane: usize) -> usize {
     SMALLWOOD_POSEIDON2_V8_HASH_ROW_START * SMALLWOOD_POSEIDON2_V8_PACKING_FACTOR
         + smallwood_poseidon2_v8_hash_call_final_witness_index(call, lane)
+}
+
+/// Digest of a compression call. The packed final lanes retain raw P(state), while the
+/// compressor exposes P(state)[0..7] + left[0..7] in the Goldilocks field.
+fn compression_digest_expression(call: usize, limb: usize) -> LinearExpression {
+    assert!(limb < DIGEST, "compression digest limb must be in 0..7");
+    assert!(
+        matches!(call, 4..=35 | 41..=72 | 106..=127),
+        "compression digest expression must refer to a compression call"
+    );
+    LinearExpression::witness(hash_final_index(call, limb))
+        .add(LinearExpression::witness(hash_initial_index(call, limb)))
 }
 
 #[inline]
@@ -1326,7 +1338,7 @@ fn bind_compress14(
     );
     csr.bind(
         hash_initial_index(call, 15),
-        LinearExpression::constant(POSEIDON2_WIDTH16_SUITE_MARKER),
+        LinearExpression::constant(POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER),
     );
 }
 
@@ -1371,6 +1383,14 @@ fn inline_index(input: usize, level: usize, limb: usize, component: usize) -> us
 fn build_base_linear_constraints(
     public: &[u64; SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS],
     csr: &mut CsrBuilder,
+) {
+    build_base_linear_constraints_with_rp06_context(public, csr, None)
+}
+
+fn build_base_linear_constraints_with_rp06_context(
+    public: &[u64; SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS],
+    csr: &mut CsrBuilder,
+    network: Option<[u64; 8]>,
 ) {
     // Raw semantic rows are scalar values replicated across all SIMD lanes.  This makes every
     // cross-row base predicate a genuine low-degree row-polynomial identity.
@@ -1587,7 +1607,7 @@ fn build_base_linear_constraints(
                 let current_source = if level == 0 {
                     LinearExpression::witness(hash_final_index(note_call + 2, limb))
                 } else {
-                    LinearExpression::witness(hash_final_index(call - 1, limb))
+                    compression_digest_expression(call - 1, limb)
                 };
                 csr.set_family("base.input_merkle_current_copy");
                 csr.bind(inline_index(input, level, limb, 0), current_source);
@@ -1607,7 +1627,9 @@ fn build_base_linear_constraints(
         csr.set_family("base.input_merkle_public_root");
         for limb in 0..DIGEST {
             csr.push(
-                [(hash_final_index(root_call, limb), public[input])],
+                compression_digest_expression(root_call, limb)
+                    .scale(public[input])
+                    .terms,
                 fmul(public[input], public[47 + limb]),
             );
         }
@@ -1701,7 +1723,10 @@ fn build_base_linear_constraints(
         }
     }
 
-    let projection = {
+    let projection = if let Some(network) = network {
+        crate::smallwood_poseidon2_v8_rp06::rp06_intent_projection_from_public(public, network)
+            .to_vec()
+    } else {
         let mut words = *public;
         words[49..54].fill(0);
         words[87..94].fill(0);
@@ -1722,7 +1747,16 @@ fn build_base_linear_constraints(
         .map(|value| Some(LinearExpression::constant(value)))
         .collect::<Vec<_>>();
     csr.set_family("hash.action_intent_initial");
-    bind_sponge(csr, 81, AUTH_INTENT_DOMAIN, &intent_sources);
+    bind_sponge(
+        csr,
+        81,
+        if network.is_some() {
+            crate::smallwood_poseidon2_v8_rp06::RP06_ACTION_INTENT_DOMAIN
+        } else {
+            AUTH_INTENT_DOMAIN
+        },
+        &intent_sources,
+    );
     csr.set_family("auth.intent_digest_copy");
     for limb in 0..DIGEST {
         csr.equality(
@@ -1787,7 +1821,13 @@ fn build_base_linear_constraints(
         106,
         AUTH_VALUE_LOCK_DOMAIN,
         core::array::from_fn(|limb| LinearExpression::witness(raw_index(auth_policy_row(limb)))),
-        core::array::from_fn(|limb| LinearExpression::witness(raw_index(auth_intent_row(limb)))),
+        core::array::from_fn(|limb| {
+            if network.is_some() {
+                LinearExpression::constant(0)
+            } else {
+                LinearExpression::witness(raw_index(auth_intent_row(limb)))
+            }
+        }),
     );
     csr.set_family("auth.candidate_digest_vectors");
     for limb in 0..DIGEST {
@@ -1795,9 +1835,9 @@ fn build_base_linear_constraints(
             packed_index(auth_next_vector_row(), limb),
             hash_final_index(105, limb),
         );
-        csr.equality(
+        csr.bind(
             packed_index(auth_value_lock_vector_row(), limb),
-            hash_final_index(106, limb),
+            compression_digest_expression(106, limb),
         );
         csr.equality(
             packed_index(auth_legacy_vector_row(), limb),
@@ -1836,13 +1876,13 @@ fn build_base_linear_constraints(
     );
     csr.set_family("auth.bound_digest_vectors");
     for limb in 0..DIGEST {
-        csr.equality(
+        csr.bind(
             packed_index(auth_bound_current_vector_row(), limb),
-            hash_final_index(107, limb),
+            compression_digest_expression(107, limb),
         );
-        csr.equality(
+        csr.bind(
             packed_index(auth_bound_secondary_vector_row(), limb),
-            hash_final_index(108, limb),
+            compression_digest_expression(108, limb),
         );
     }
 
@@ -2771,22 +2811,22 @@ fn build_stable_linear_constraints(
         csr,
         113,
         STABLECOIN_POSEIDON2_V8_DOMAIN_CONFIG_NODE_0,
-        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(109, limb))),
-        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(110, limb))),
+        core::array::from_fn(|limb| compression_digest_expression(109, limb)),
+        core::array::from_fn(|limb| compression_digest_expression(110, limb)),
     );
     bind_compress14(
         csr,
         114,
         STABLECOIN_POSEIDON2_V8_DOMAIN_CONFIG_NODE_1,
-        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(111, limb))),
-        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(112, limb))),
+        core::array::from_fn(|limb| compression_digest_expression(111, limb)),
+        core::array::from_fn(|limb| compression_digest_expression(112, limb)),
     );
     bind_compress14(
         csr,
         115,
         STABLECOIN_POSEIDON2_V8_DOMAIN_CONFIG_ROOT,
-        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(113, limb))),
-        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(114, limb))),
+        core::array::from_fn(|limb| compression_digest_expression(113, limb)),
+        core::array::from_fn(|limb| compression_digest_expression(114, limb)),
     );
     let index = (0..4).fold(0, |value, bit| {
         fadd(value, fmul(fbit(public[84], bit), 1u64 << bit))
@@ -2801,8 +2841,7 @@ fn build_stable_linear_constraints(
         4 => LinearExpression::constant(index),
         _ => LinearExpression::constant(0),
     });
-    let config_digest =
-        core::array::from_fn(|limb| LinearExpression::witness(hash_final_index(115, limb)));
+    let config_digest = core::array::from_fn(|limb| compression_digest_expression(115, limb));
     csr.set_family("hash.stable_state_leaf_initial");
     bind_compress14(
         csr,
@@ -2825,14 +2864,14 @@ fn build_stable_linear_constraints(
             let call = 118 + level * 2 + path;
             let previous = if level == 0 { leaf_call } else { call - 2 };
             let left = core::array::from_fn(|limb| {
-                LinearExpression::witness(hash_final_index(previous, limb))
+                compression_digest_expression(previous, limb)
                     .scale(fsub(1, bit))
                     .add(LinearExpression::witness(stable_source(55 + level * 7 + limb)).scale(bit))
             });
             let right = core::array::from_fn(|limb| {
                 LinearExpression::witness(stable_source(55 + level * 7 + limb))
                     .scale(fsub(1, bit))
-                    .add(LinearExpression::witness(hash_final_index(previous, limb)).scale(bit))
+                    .add(compression_digest_expression(previous, limb).scale(bit))
             });
             bind_compress14(
                 csr,
@@ -2856,11 +2895,15 @@ fn build_stable_linear_constraints(
             fsub(public[95 + limb], public[102 + limb]),
         );
         csr.push(
-            [(hash_final_index(124, limb), enabled)],
+            compression_digest_expression(124, limb)
+                .scale(enabled)
+                .terms,
             fadd(fmul(enabled, public[95 + limb]), disabled_passthrough),
         );
         csr.push(
-            [(hash_final_index(125, limb), enabled)],
+            compression_digest_expression(125, limb)
+                .scale(enabled)
+                .terms,
             fmul(enabled, public[102 + limb]),
         );
     }
@@ -2886,15 +2929,15 @@ fn build_stable_linear_constraints(
     for limb in 0..DIGEST {
         csr.set_family("stable.issuer_commitment");
         csr.push(
-            [
-                (hash_final_index(126, limb), mint),
-                (stable_source(6 + limb), fsub(0, mint)),
-            ],
+            compression_digest_expression(126, limb)
+                .sub(LinearExpression::witness(stable_source(6 + limb)))
+                .scale(mint)
+                .terms,
             0,
         );
         csr.set_family("stable.issuer_authorization");
         csr.push(
-            [(hash_final_index(127, limb), mint)],
+            compression_digest_expression(127, limb).scale(mint).terms,
             fmul(mint, public[113 + limb]),
         );
     }
@@ -2915,6 +2958,18 @@ pub(crate) fn smallwood_poseidon2_v8_csr_expression_program(
     csr.finish_symbolic()
 }
 
+pub(crate) fn smallwood_poseidon2_v8_rp06_csr_expression_program(
+) -> SmallwoodPoseidon2V8CsrExpressionProgram {
+    begin_smallwood_poseidon2_v8_expression_program();
+    let public = core::array::from_fn(smallwood_poseidon2_v8_symbolic_public_handle);
+    let network =
+        core::array::from_fn(|index| smallwood_poseidon2_v8_symbolic_public_handle(120 + index));
+    let mut csr = CsrBuilder::new();
+    build_base_linear_constraints_with_rp06_context(&public, &mut csr, Some(network));
+    build_stable_linear_constraints(&public, &mut csr);
+    csr.finish_symbolic()
+}
+
 fn executable_csr_program() -> &'static SmallwoodPoseidon2V8CsrExpressionProgram {
     static PROGRAM: std::sync::OnceLock<SmallwoodPoseidon2V8CsrExpressionProgram> =
         std::sync::OnceLock::new();
@@ -2927,7 +2982,13 @@ fn executable_csr_program() -> &'static SmallwoodPoseidon2V8CsrExpressionProgram
 fn specialize_executable_csr_program(
     public: &[u64; SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS],
 ) -> Result<FinalizedCsr, SmallwoodPoseidon2V8RelationError> {
-    let program = executable_csr_program();
+    specialize_csr_expression_program(public, executable_csr_program())
+}
+
+fn specialize_csr_expression_program(
+    public: &[u64],
+    program: &SmallwoodPoseidon2V8CsrExpressionProgram,
+) -> Result<FinalizedCsr, SmallwoodPoseidon2V8RelationError> {
     let values =
         evaluate_smallwood_poseidon2_v8_expression_nodes(&program.expressions, public, &[])
             .map_err(
@@ -3168,10 +3229,18 @@ fn build_smallwood_poseidon2_v8_assignment(
     statement: &SmallwoodPoseidon2V8PublicStatement,
     witness: &SmallwoodPoseidon2V8Witness,
 ) -> Result<Vec<u64>, SmallwoodPoseidon2V8RelationError> {
+    build_smallwood_poseidon2_v8_assignment_with_rp06_context(statement, witness, None)
+}
+
+fn build_smallwood_poseidon2_v8_assignment_with_rp06_context(
+    statement: &SmallwoodPoseidon2V8PublicStatement,
+    witness: &SmallwoodPoseidon2V8Witness,
+    network: Option<[u32; 8]>,
+) -> Result<Vec<u64>, SmallwoodPoseidon2V8RelationError> {
     witness.validate_against_statement(statement)?;
     let public = statement.to_public_words();
-    let schedule = Box::new(build_smallwood_poseidon2_v8_hash_schedule(
-        statement, witness,
+    let schedule = Box::new(crate::smallwood_poseidon2_v8_hash_schedule::build_smallwood_poseidon2_v8_hash_schedule_with_rp06_context(
+        statement, witness, network,
     )?);
     let mut rows = vec![[0u64; 64]; SMALLWOOD_POSEIDON2_V8_ROW_COUNT];
 
@@ -4218,6 +4287,7 @@ pub struct SmallwoodPoseidon2V8ConstraintAdapter {
     public_values: [u64; SMALLWOOD_POSEIDON2_V8_PUBLIC_WORDS],
     relation_balance_binding: [u64; SMALLWOOD_POSEIDON2_V8_RELATION_BINDING_LIMBS],
     program_csr: ProgramSpecializedCsr,
+    rp06_network: Option<[u32; 8]>,
 }
 
 #[derive(Clone, Debug)]
@@ -4288,8 +4358,8 @@ impl SmallwoodPoseidon2V8ConstraintAdapter {
         Self::from_public_statement_after_identity_check(statement)
     }
 
-    /// Offline RP05 artifact construction only. The normal verifier factory
-    /// still refuses this relation while identity regeneration is pending.
+    /// Offline development artifacts use the exact current grammar-4 COMPFF01 source
+    /// and fixture pins. Production verifier construction and release authority remain separate.
     #[cfg(feature = "rp05-dev-artifacts")]
     pub fn from_public_statement_for_rp05_development_artifact(
         statement: &SmallwoodPoseidon2V8PublicStatement,
@@ -4306,9 +4376,15 @@ impl SmallwoodPoseidon2V8ConstraintAdapter {
         let source = encode_smallwood_poseidon2_v8_program();
         let fixture = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp05_grammar4_compff01.bin"
+        ));
+        let legacy = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
             "/../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp05.bin"
         ));
-        if source.len() != SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES
+        if source.as_slice() == legacy
+            || source.get(8..10) != Some(4u16.to_le_bytes().as_slice())
+            || source.len() != SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES
             || source.as_slice() != fixture
             || smallwood_poseidon2_v8_program_sha512_from_bytes(&source)
                 != SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512
@@ -4334,6 +4410,7 @@ impl SmallwoodPoseidon2V8ConstraintAdapter {
             public_values,
             relation_balance_binding,
             program_csr,
+            rp06_network: None,
         })
     }
 
@@ -4473,8 +4550,61 @@ impl SmallwoodPoseidon2V8ConstraintAdapter {
         }
         let statement =
             SmallwoodPoseidon2V8PublicStatement::try_from_public_words(&self.public_values)?;
-        verify_canonical_smallwood_poseidon2_v8_typed_lowering(&statement, witness_values)
+        if let Some(network) = self.rp06_network {
+            let decoded = decode_smallwood_poseidon2_v8_packed_witness(&statement, witness_values)?;
+            let canonical = build_smallwood_poseidon2_v8_assignment_with_rp06_context(
+                &statement,
+                &decoded,
+                Some(network),
+            )?;
+            if let Some(index) = witness_values
+                .iter()
+                .zip(canonical.iter())
+                .position(|(actual, expected)| actual != expected)
+            {
+                return Err(SmallwoodPoseidon2V8RelationError::NonCanonicalTypedLowering { index });
+            }
+            Ok(())
+        } else {
+            verify_canonical_smallwood_poseidon2_v8_typed_lowering(&statement, witness_values)
+        }
     }
+}
+
+/// Internal additive successor construction. The public RP06 wrapper owns its128-word schema,
+/// transcript and relation identity; this inner adapter preserves the RP05 nonlinear predicates.
+pub(crate) fn compile_smallwood_poseidon2_v8_rp06_inner(
+    statement: &crate::smallwood_poseidon2_v8_rp06::Rp06PublicStatement,
+    witness: Option<&SmallwoodPoseidon2V8Witness>,
+) -> Result<
+    (SmallwoodPoseidon2V8ConstraintAdapter, Option<Vec<u64>>),
+    SmallwoodPoseidon2V8RelationError,
+> {
+    statement.validate()?;
+    let public_values = statement.base.to_public_words();
+    let program = smallwood_poseidon2_v8_rp06_csr_expression_program();
+    let program_csr = ProgramSpecializedCsr(specialize_csr_expression_program(
+        &statement.to_public_words(),
+        &program,
+    )?);
+    let adapter = SmallwoodPoseidon2V8ConstraintAdapter {
+        public_values,
+        relation_balance_binding: statement.expected_action_intent()?,
+        program_csr,
+        rp06_network: Some(statement.network_words()),
+    };
+    let packed = witness
+        .map(|witness| {
+            let packed = build_smallwood_poseidon2_v8_assignment_with_rp06_context(
+                &statement.base,
+                witness,
+                Some(statement.network_words()),
+            )?;
+            adapter.verify_packed_witness(&packed)?;
+            Ok::<_, SmallwoodPoseidon2V8RelationError>(packed)
+        })
+        .transpose()?;
+    Ok((adapter, packed))
 }
 
 impl SmallwoodConstraintAdapter for SmallwoodPoseidon2V8ConstraintAdapter {
@@ -4648,6 +4778,264 @@ mod tests {
             .find(|row| row.terms.iter().any(|(index, _)| *index == witness_index))
     }
 
+    /// Check a real emitted CSR row on an assignment crossing the field modulus. The
+    /// consumer is either a packed digest word or the public target of the row.
+    fn assert_compression_binding_rejects_raw_output(
+        row: &CsrNormalizedRow,
+        call: usize,
+        limb: usize,
+        consumer: Option<usize>,
+    ) {
+        let initial = hash_initial_index(call, limb);
+        let final_word = hash_final_index(call, limb);
+        let coefficient = row
+            .terms
+            .iter()
+            .find(|(index, _)| *index == final_word)
+            .expect("raw permutation final is represented")
+            .1;
+        assert_ne!(coefficient, 0);
+        assert_eq!(
+            row.terms.iter().find(|(index, _)| *index == initial),
+            Some(&(initial, coefficient)),
+            "left feed-forward has the same coefficient as the raw final"
+        );
+        let evaluate = |raw_consumer: bool| {
+            field_sum(row.terms.iter().map(|(index, coefficient)| {
+                let word = if *index == initial {
+                    13
+                } else if *index == final_word {
+                    // A public-root consumer cannot be changed inside the assignment. A
+                    // legacy raw-output assignment sets P(state) equal to that public root.
+                    if raw_consumer && consumer.is_none() {
+                        8
+                    } else {
+                        MODULUS - 5
+                    }
+                } else if Some(*index) == consumer {
+                    if raw_consumer {
+                        MODULUS - 5
+                    } else {
+                        8
+                    }
+                } else {
+                    0
+                };
+                fmul(*coefficient, word)
+            }))
+        };
+        assert_eq!(
+            evaluate(false),
+            row.target,
+            "feed-forward digest satisfies actual CSR"
+        );
+        assert_ne!(
+            evaluate(true),
+            row.target,
+            "legacy raw permutation digest is rejected"
+        );
+    }
+
+    #[test]
+    fn merkle_and_owner_csr_bind_feedforward_digest_and_reject_raw_output() {
+        let mut public = SmallwoodPoseidon2V8PublicStatement::default().to_public_words();
+        public[0] = 1;
+        public[1] = 1;
+        public[47..54].fill(8);
+        let mut builder = CsrBuilder::new();
+        build_base_linear_constraints(&public, &mut builder);
+        for input in 0..INPUTS {
+            for level in 1..MERKLE_DEPTH {
+                let previous = input_merkle_call(input, level) - 1;
+                for limb in 0..DIGEST {
+                    let consumer = inline_index(input, level, limb, 0);
+                    let row = numeric_row_binding_witness(
+                        &builder,
+                        "base.input_merkle_current_copy",
+                        consumer,
+                    )
+                    .expect("every compressor chain copy is constrained");
+                    assert_compression_binding_rejects_raw_output(
+                        row,
+                        previous,
+                        limb,
+                        Some(consumer),
+                    );
+                }
+            }
+            let root = input_merkle_call(input, MERKLE_DEPTH - 1);
+            for limb in 0..DIGEST {
+                let row = numeric_row_binding_witness(
+                    &builder,
+                    "base.input_merkle_public_root",
+                    hash_final_index(root, limb),
+                )
+                .expect("active input root is constrained");
+                assert_compression_binding_rejects_raw_output(row, root, limb, None);
+            }
+        }
+        for (call, family, vector_row) in [
+            (
+                106,
+                "auth.candidate_digest_vectors",
+                auth_value_lock_vector_row(),
+            ),
+            (
+                107,
+                "auth.bound_digest_vectors",
+                auth_bound_current_vector_row(),
+            ),
+            (
+                108,
+                "auth.bound_digest_vectors",
+                auth_bound_secondary_vector_row(),
+            ),
+        ] {
+            for limb in 0..DIGEST {
+                let consumer = packed_index(vector_row, limb);
+                let row = numeric_row_binding_witness(&builder, family, consumer)
+                    .expect("each compressed owner candidate is constrained");
+                assert_compression_binding_rejects_raw_output(row, call, limb, Some(consumer));
+            }
+        }
+    }
+
+    #[test]
+    fn stable_and_issuer_csr_bind_feedforward_digest_and_reject_raw_output() {
+        for path_index in [0, 15] {
+            let mut public = SmallwoodPoseidon2V8PublicStatement::default().to_public_words();
+            public[83] = 1; // Enabled mint, including both issuer equations.
+            public[84] = path_index;
+            public[95..109].fill(8);
+            public[113..120].fill(8);
+            let mut builder = CsrBuilder::new();
+            build_stable_linear_constraints(&public, &mut builder);
+            let mut copies = Vec::new();
+            for (call, left, right) in [(113, 109, 110), (114, 111, 112), (115, 113, 114)] {
+                copies.push(("hash.stable_config_tree_initial", call, 0, left));
+                copies.push(("hash.stable_config_tree_initial", call, DIGEST, right));
+            }
+            for call in [116, 117] {
+                copies.push(("hash.stable_state_leaf_initial", call, 0, 115));
+            }
+            for level in 0..STABLECOIN_POSEIDON2_V8_DEPTH {
+                for (path, leaf) in [(0, 116), (1, 117)] {
+                    let call = 118 + level * 2 + path;
+                    let previous = if level == 0 { leaf } else { call - 2 };
+                    let offset = if path_index == 0 { 0 } else { DIGEST };
+                    copies.push(("hash.stable_path_initial", call, offset, previous));
+                }
+            }
+            for (family, call, offset, previous) in copies {
+                for limb in 0..DIGEST {
+                    let consumer = hash_initial_index(call, offset + limb);
+                    let row = numeric_row_binding_witness(&builder, family, consumer)
+                        .expect("each stable compressor join is constrained");
+                    assert_compression_binding_rejects_raw_output(
+                        row,
+                        previous,
+                        limb,
+                        Some(consumer),
+                    );
+                }
+            }
+            for call in [124, 125] {
+                for limb in 0..DIGEST {
+                    let row = numeric_row_binding_witness(
+                        &builder,
+                        "stable.public_roots",
+                        hash_final_index(call, limb),
+                    )
+                    .expect("enabled stable root is constrained");
+                    assert_compression_binding_rejects_raw_output(row, call, limb, None);
+                }
+            }
+            for limb in 0..DIGEST {
+                let consumer = stable_source(6 + limb);
+                let row =
+                    numeric_row_binding_witness(&builder, "stable.issuer_commitment", consumer)
+                        .expect("mint issuer commitment is constrained");
+                assert_compression_binding_rejects_raw_output(row, 126, limb, Some(consumer));
+                let row = numeric_row_binding_witness(
+                    &builder,
+                    "stable.issuer_authorization",
+                    hash_final_index(127, limb),
+                )
+                .expect("mint issuer authorization is constrained");
+                assert_compression_binding_rejects_raw_output(row, 127, limb, None);
+            }
+        }
+    }
+
+    #[test]
+    fn compression_csr_uses_fresh_marker_and_preserves_raw_sponge_final() {
+        let mut public = SmallwoodPoseidon2V8PublicStatement::default().to_public_words();
+        public[2] = 1;
+        public[18..25].fill(8);
+        let mut builder = CsrBuilder::new();
+        build_base_linear_constraints(&public, &mut builder);
+        build_stable_linear_constraints(&public, &mut builder);
+        let mut count = 0;
+        for (family, calls) in [
+            (
+                "hash.input_merkle_initial",
+                (4..36).chain(41..73).collect::<Vec<_>>(),
+            ),
+            ("hash.authorization_value_lock_initial", vec![106]),
+            ("hash.authorization_bound_current_initial", vec![107]),
+            ("hash.authorization_bound_secondary_initial", vec![108]),
+            ("hash.stable_config_chunk_initial", (109..113).collect()),
+            ("hash.stable_config_tree_initial", (113..116).collect()),
+            ("hash.stable_state_leaf_initial", vec![116, 117]),
+            ("hash.stable_path_initial", (118..126).collect()),
+            ("hash.stable_issuer_initial", vec![126, 127]),
+        ] {
+            for call in calls {
+                let initial = hash_initial_index(call, 15);
+                let row = numeric_row_binding_witness(&builder, family, initial)
+                    .expect("each compressor frame marker is constrained");
+                assert_eq!(row.terms, vec![(initial, 1)]);
+                assert_eq!(row.target, POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER);
+                count += 1;
+            }
+        }
+        assert_eq!(count, 86);
+        let call = output_note_call(0);
+        for limb in 0..DIGEST {
+            let final_word = hash_final_index(call + 2, limb);
+            let row =
+                numeric_row_binding_witness(&builder, "base.output_commitment_public", final_word)
+                    .expect("active output note sponge digest is constrained");
+            assert_eq!(row.terms, vec![(final_word, 1)]);
+            assert_eq!(row.target, 8);
+        }
+        let sponge_marker = hash_initial_index(call, 15);
+        let row = numeric_row_binding_witness(&builder, "hash.output_note_initial", sponge_marker)
+            .expect("sponge frame retains its suite marker");
+        assert_eq!(row.terms, vec![(sponge_marker, 1)]);
+        assert_eq!(row.target, POSEIDON2_WIDTH16_SUITE_MARKER);
+        assert_ne!(
+            POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER,
+            POSEIDON2_WIDTH16_SUITE_MARKER
+        );
+        assert_ne!(
+            POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER,
+            POSEIDON2_WIDTH16_SPONGE_MODE_MARKER
+        );
+    }
+
+    #[cfg(feature = "rp05-dev-artifacts")]
+    #[test]
+    fn development_artifact_factory_uses_current_compff01_identity() {
+        let statement = SmallwoodPoseidon2V8PublicStatement::default();
+        let development = SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement_for_rp05_development_artifact(&statement)
+            .expect("current source and grammar-4 COMPFF01 fixture must construct");
+        let ordinary = SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(&statement)
+            .expect("normal factory checks the same current source identity");
+        assert_eq!(development.relation_digest(), ordinary.relation_digest());
+        assert_eq!(development.public_values(), ordinary.public_values());
+    }
+
     #[test]
     fn output_note_final_block_tail_lanes_preserve_previous_final_state() {
         let call = output_note_call(0);
@@ -4792,7 +5180,13 @@ mod tests {
         assert_eq!(refinement.packed_lanes, 64);
         assert_eq!(refinement.nonlinear_expression_nodes, 8_213);
         assert_eq!(refinement.nonlinear_roots, 818);
-        assert_eq!(refinement.csr_expression_nodes, 566);
+        // The distinct compression marker contributes one public-only DAG
+        // constant; permutation rows and attempted CSR identities are intact.
+        assert_eq!(refinement.csr_expression_nodes, 567);
+        assert_eq!(
+            refinement.csr_expression_nodes,
+            SMALLWOOD_POSEIDON2_V8_CSR_EXPRESSION_NODES
+        );
         assert_eq!(refinement.csr_attempts, 20_588);
         assert_eq!(
             refinement.emitted_linear_constraints,

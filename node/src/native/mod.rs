@@ -62,14 +62,15 @@ use protocol_kernel::{
 use protocol_shielded_pool::family::{
     MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs,
     SubmitCandidateArtifactArgs, ACTION_MINT_COINBASE, ACTION_MINT_POSEIDON2_V8_COINBASE,
-    ACTION_SHIELDED_TRANSFER_INLINE, ACTION_SHIELDED_TRANSFER_SIDECAR,
-    ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE, ACTION_SUBMIT_CANDIDATE_ARTIFACT,
-    FAMILY_SHIELDED_POOL,
+    ACTION_MINT_POSEIDON2_V8_REWARDS, ACTION_SHIELDED_TRANSFER_INLINE,
+    ACTION_SHIELDED_TRANSFER_SIDECAR, ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE,
+    ACTION_SUBMIT_CANDIDATE_ARTIFACT, FAMILY_SHIELDED_POOL,
 };
 use protocol_shielded_pool::poseidon2_production_transport::preflight_poseidon2_production_smz9_inline_args_exact;
 use protocol_shielded_pool::poseidon2_v8_coinbase::{
-    MintPoseidon2V8CoinbaseArgs, POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES,
-    POSEIDON2_V8_COINBASE_RAW_CIPHERTEXT_BYTES,
+    poseidon2_v8_reward_split, MintPoseidon2V8CoinbaseArgs, MintPoseidon2V8RewardsArgs,
+    POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES, POSEIDON2_V8_COINBASE_RAW_CIPHERTEXT_BYTES,
+    POSEIDON2_V8_REWARDS_MAX_ARGS_SCALE_BYTES,
 };
 use protocol_shielded_pool::smallwood_v5_transport::{
     decode_smallwood_v5_inline_args_exact, SMALLWOOD_V5_TRANSPORT_ACTION_ID,
@@ -82,6 +83,9 @@ use protocol_shielded_pool::types::{
 };
 use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
 use protocol_shielded_pool::{NullifierReject, NullifierState, PersistentKeySet48};
+use protocol_versioning::launch_candidate::{
+    HTLC_ACTION_ID, PRIVATE_SPEND_ACTION_ID, RP06_ACTION_ID,
+};
 use rand::{rngs::OsRng, RngCore};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -201,6 +205,15 @@ pub(crate) const MIN_NATIVE_WALLET_CIPHERTEXT_BYTES: usize =
 pub(crate) const MAX_NATIVE_TIMESTAMP_ROWS: u64 = 4096;
 pub(crate) const MAX_NATIVE_RPC_BATCH_REQUESTS: usize = 128;
 pub(crate) const MAX_NATIVE_RPC_BODY_BYTES: usize = 8 * 1024 * 1024;
+/// Recovery is a separate finite grammar: five proofs (one spend and two
+/// two-segment capsules), each independently capped at 2 MiB. The generic action
+/// and HTTP budgets above are unchanged.
+pub(crate) const MAX_NATIVE_RECOVERY_PENDING_ACTION_BYTES: usize =
+    transaction_circuit::asset_recovery_wire_v1::MAX_SPEND_ACTION_BYTES + 512;
+/// Exact base64 ceiling plus a bounded single JSON-RPC envelope. Large batches
+/// and unrelated methods never inherit this exception.
+pub(crate) const MAX_NATIVE_RECOVERY_RPC_BODY_BYTES: usize =
+    4 * transaction_circuit::asset_recovery_wire_v1::MAX_SPEND_ACTION_BYTES.div_ceil(3) + 16 * 1024;
 pub(crate) const MAX_NATIVE_RPC_CONCURRENT_REQUESTS: usize = 8;
 pub(crate) const MAX_NATIVE_MEMPOOL_ACTION_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_NATIVE_BLOCK_ACTIONS: usize = MAX_NATIVE_MEMPOOL_ACTIONS;
@@ -336,6 +349,32 @@ pub struct NativeCli {
     /// Print the compiled production cryptographic profile as JSON and exit.
     #[arg(long)]
     pub print_crypto_profile: bool,
+    /// Explicit network selection. Omission preserves the legacy chain.
+    #[arg(long, value_enum)]
+    pub network: Option<NativeNetworkProfile>,
+    /// Immutable public network manifest; candidate Development manifests require explicit opt-in.
+    #[arg(long, value_name = "PATH")]
+    pub network_manifest: Option<PathBuf>,
+    /// Explicitly enable the finite candidate routes selected by a Development manifest.
+    #[cfg(feature = "development-candidate")]
+    #[arg(long, default_value_t = false)]
+    pub development_candidate: bool,
+    /// Print a fresh finite private-spend-only Development candidate manifest and exit.
+    #[cfg(feature = "development-candidate")]
+    #[arg(long, default_value_t = false)]
+    pub print_development_candidate_manifest: bool,
+    /// Public full V8 funding address for the manifest generator.
+    #[cfg(feature = "development-candidate")]
+    #[arg(long, value_name = "FULL_V8_ADDRESS")]
+    pub development_funding_address: Option<String>,
+    /// Public controlled-asset descriptor for a fresh Development manifest.
+    #[cfg(feature = "development-candidate")]
+    #[arg(long, value_name = "PATH")]
+    pub development_assets_json: Option<PathBuf>,
+    /// Public recovery opt-in descriptor for a fresh Development manifest only.
+    #[cfg(feature = "development-candidate")]
+    #[arg(long, value_name = "PATH")]
+    pub development_recovery_json: Option<PathBuf>,
     /// Run an ephemeral development chain.
     #[arg(long)]
     pub dev: bool,
@@ -351,7 +390,7 @@ pub struct NativeCli {
     /// Expose JSON-RPC on all interfaces.
     #[arg(long)]
     pub rpc_external: bool,
-    /// RPC method policy: auto, safe, or unsafe.
+    /// RPC method policy: auto, safe, pool (loopback only), or unsafe.
     #[arg(long, default_value = "auto")]
     pub rpc_methods: String,
     /// CORS policy. Default is no browser cross-origin access; set explicitly for trusted UIs.
@@ -370,6 +409,7 @@ pub struct NativeCli {
 
 #[derive(Clone, Debug)]
 pub struct NativeConfig {
+    pub network: NativeNetworkIdentity,
     pub dev: bool,
     pub tmp: bool,
     pub base_path: PathBuf,
@@ -392,6 +432,7 @@ pub struct NativeConfig {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RpcMethodPolicy {
     Safe,
+    Pool,
     Unsafe,
 }
 
@@ -399,6 +440,7 @@ impl RpcMethodPolicy {
     fn label(self) -> &'static str {
         match self {
             Self::Safe => "safe",
+            Self::Pool => "pool",
             Self::Unsafe => "unsafe",
         }
     }
@@ -406,6 +448,47 @@ impl RpcMethodPolicy {
 
 impl NativeConfig {
     pub fn from_cli(cli: NativeCli) -> Result<Self> {
+        let network_profile = cli.network.unwrap_or(NativeNetworkProfile::Legacy);
+        #[cfg(feature = "development-candidate")]
+        let development_candidate_opt_in = cli.development_candidate;
+        #[cfg(not(feature = "development-candidate"))]
+        let development_candidate_opt_in = false;
+        if development_candidate_opt_in
+            && (network_profile != NativeNetworkProfile::Development
+                || cli.network_manifest.is_none())
+        {
+            return Err(anyhow!(
+                "--development-candidate requires --network development and an explicit Development manifest"
+            ));
+        }
+        if cli.dev
+            && matches!(
+                network_profile,
+                NativeNetworkProfile::PreMainnet | NativeNetworkProfile::Mainnet
+            )
+        {
+            return Err(anyhow!(
+                "--dev cannot override a pre-mainnet/mainnet network manifest"
+            ));
+        }
+        let network = match (network_profile, cli.network_manifest.as_deref()) {
+            (NativeNetworkProfile::Legacy, None) => NativeNetworkIdentity::legacy(),
+            (NativeNetworkProfile::Development, None) => NativeNetworkIdentity::development(),
+            (NativeNetworkProfile::Legacy, Some(_)) => {
+                return Err(anyhow!("legacy profile does not accept --network-manifest"))
+            }
+            (profile, Some(path)) => NativeNetworkIdentity::load(path, profile)?,
+            (_, None) => {
+                return Err(anyhow!(
+                    "--network-manifest is required for pre-mainnet/mainnet"
+                ))
+            }
+        };
+        if network.development_candidate().is_some() != development_candidate_opt_in {
+            return Err(anyhow!(
+                "Development candidate manifest and --development-candidate opt-in must match"
+            ));
+        }
         let base_path = resolve_base_path(&cli)?;
         let db_path = base_path.join("native-chain.sled");
         let rpc_methods =
@@ -432,7 +515,18 @@ impl NativeConfig {
             .transpose()?
             .unwrap_or(1);
         let bootstrap_mining_authoring = env_bool("HEGEMON_BOOTSTRAP_AUTHORING");
-        if mine && !cli.dev && seeds.is_empty() && !bootstrap_mining_authoring {
+        if mine
+            && !cli.dev
+            && network.profile() != NativeNetworkProfile::Development
+            && seeds.is_empty()
+            && !bootstrap_mining_authoring
+        {
+            if network.profile() != NativeNetworkProfile::Legacy {
+                return Err(anyhow!(
+                    "refusing {} mining with empty HEGEMON_SEEDS; set the release-approved seeds for the selected manifest or explicitly set HEGEMON_BOOTSTRAP_AUTHORING=1 for a deliberate first-author bootstrap",
+                    network.profile().label()
+                ));
+            }
             return Err(anyhow!(
                 "refusing live mining with empty HEGEMON_SEEDS; set HEGEMON_SEEDS=\"{}\" or explicitly set HEGEMON_BOOTSTRAP_AUTHORING=1 for a deliberate first-author bootstrap",
                 APPROVED_PUBLIC_JOIN_SEEDS
@@ -442,13 +536,15 @@ impl NativeConfig {
             .ok()
             .map(|raw| raw.trim().to_string())
             .filter(|raw| !raw.is_empty());
-        let pow_bits = if cli.dev {
+        let legacy_pow_bits = if cli.dev {
             NATIVE_DEV_POW_BITS
         } else {
             consensus::pow::DEFAULT_GENESIS_POW_BITS
         };
 
+        let pow_bits = network.pow_bits(legacy_pow_bits);
         Ok(Self {
+            network,
             dev: cli.dev,
             tmp: cli.tmp,
             base_path,
@@ -470,10 +566,15 @@ impl NativeConfig {
     }
 
     fn permits_empty_seed_authoring(&self) -> bool {
-        self.dev || self.bootstrap_mining_authoring
+        self.dev
+            || self.network.profile() == NativeNetworkProfile::Development
+            || self.bootstrap_mining_authoring
     }
 
     fn public_testnet_profile(&self) -> bool {
+        if self.network.profile() != NativeNetworkProfile::Legacy {
+            return false;
+        }
         if !self.dev || self.tmp {
             return false;
         }
@@ -489,7 +590,17 @@ impl NativeConfig {
                 .contains("testnet"))
     }
 
+    pub fn chain_id(&self) -> [u8; 32] {
+        self.network.chain_id()
+    }
+
     fn chain_spec_id(&self) -> &'static str {
+        match self.network.profile() {
+            NativeNetworkProfile::Development => return "hegemon-native-development",
+            NativeNetworkProfile::PreMainnet => return "hegemon-native-pre-mainnet",
+            NativeNetworkProfile::Mainnet => return "hegemon-native-mainnet",
+            NativeNetworkProfile::Legacy => {}
+        }
         if self.public_testnet_profile() {
             "hegemon-native-testnet"
         } else if self.dev {
@@ -500,6 +611,12 @@ impl NativeConfig {
     }
 
     fn chain_type(&self) -> &'static str {
+        match self.network.profile() {
+            NativeNetworkProfile::Development => return "dev",
+            NativeNetworkProfile::PreMainnet => return "testnet",
+            NativeNetworkProfile::Mainnet => return "live",
+            NativeNetworkProfile::Legacy => {}
+        }
         if self.public_testnet_profile() {
             "testnet"
         } else if self.dev {
@@ -507,6 +624,44 @@ impl NativeConfig {
         } else {
             "live"
         }
+    }
+}
+
+#[cfg(test)]
+mod development_candidate_cli_tests {
+    #[cfg(feature = "development-candidate")]
+    use super::*;
+
+    #[cfg(feature = "development-candidate")]
+    #[test]
+    fn development_candidate_cli_opt_in_rejects_legacy_premainnet_and_mainnet() {
+        for profile in ["legacy", "pre-mainnet", "mainnet"] {
+            let cli = NativeCli::try_parse_from([
+                "hegemon-node",
+                "--network",
+                profile,
+                "--network-manifest",
+                "/private/tmp/unused-development-candidate.json",
+                "--development-candidate",
+            ])
+            .unwrap();
+            let error = NativeConfig::from_cli(cli).unwrap_err().to_string();
+            assert!(
+                error.contains("requires --network development"),
+                "{profile} unexpectedly accepted development candidate opt-in: {error}"
+            );
+        }
+        let cli = NativeCli::try_parse_from([
+            "hegemon-node",
+            "--network",
+            "development",
+            "--development-candidate",
+        ])
+        .unwrap();
+        assert!(NativeConfig::from_cli(cli)
+            .unwrap_err()
+            .to_string()
+            .contains("explicit Development manifest"));
     }
 }
 
@@ -3620,6 +3775,13 @@ pub(crate) fn native_submit_action_is_transfer_route(family_id: u16, action_id: 
             ACTION_SHIELDED_TRANSFER_INLINE
                 | ACTION_SHIELDED_TRANSFER_SIDECAR
                 | ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
+                | RP06_ACTION_ID
+                | HTLC_ACTION_ID
+                | PRIVATE_SPEND_ACTION_ID
+                | transaction_circuit::asset_spend_v1_admission::ASSET_SPEND_ACTION_ID
+                | transaction_circuit::asset_spend_v1_admission::ASSET_ADMIN_ACTION_ID
+                | asset_recovery_native::RECOVERY_SPEND_ACTION_ID
+                | asset_recovery_native::RECOVERY_ADMIN_ACTION_ID
         )
 }
 
@@ -3647,6 +3809,25 @@ pub(crate) fn native_submit_action_route_supported(family_id: u16, action_id: u1
                 FAMILY_SHIELDED_POOL,
                 ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
             )
+            | (FAMILY_SHIELDED_POOL, RP06_ACTION_ID)
+            | (FAMILY_SHIELDED_POOL, HTLC_ACTION_ID)
+            | (FAMILY_SHIELDED_POOL, PRIVATE_SPEND_ACTION_ID)
+            | (
+                FAMILY_SHIELDED_POOL,
+                transaction_circuit::asset_spend_v1_admission::ASSET_SPEND_ACTION_ID
+            )
+            | (
+                FAMILY_SHIELDED_POOL,
+                transaction_circuit::asset_spend_v1_admission::ASSET_ADMIN_ACTION_ID
+            )
+            | (
+                FAMILY_SHIELDED_POOL,
+                asset_recovery_native::RECOVERY_SPEND_ACTION_ID
+            )
+            | (
+                FAMILY_SHIELDED_POOL,
+                asset_recovery_native::RECOVERY_ADMIN_ACTION_ID
+            )
             | (FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT)
             | (FAMILY_SHIELDED_POOL, ACTION_MINT_COINBASE)
     )
@@ -3670,11 +3851,60 @@ pub(crate) fn native_action_request_nullifiers_decode(
             .all(|raw| parse_hex48(raw).is_some())
 }
 
+fn is_native_asset_rpc_request(request: &SubmitActionRpcRequest) -> bool {
+    request.family_id == FAMILY_SHIELDED_POOL
+        && matches!(
+            request.action_id,
+            transaction_circuit::asset_spend_v1_admission::ASSET_SPEND_ACTION_ID
+                | transaction_circuit::asset_spend_v1_admission::ASSET_ADMIN_ACTION_ID
+                | asset_recovery_native::RECOVERY_SPEND_ACTION_ID
+                | asset_recovery_native::RECOVERY_ADMIN_ACTION_ID
+        )
+}
+
+fn native_asset_rpc_request_fields_valid(request: &SubmitActionRpcRequest) -> bool {
+    let binding = transaction_circuit::asset_spend_v1_admission::NATIVE_VERSION_BINDING;
+    request.binding_circuit == binding.circuit
+        && request.binding_crypto == binding.crypto
+        && request.new_nullifiers.is_empty()
+        && native_action_request_kernel_fields_absent(request)
+}
+
 pub(crate) fn native_action_request_route_payload_decodes_exactly(
     request: &SubmitActionRpcRequest,
     public_args: &[u8],
 ) -> bool {
     match (request.family_id, request.action_id) {
+        (
+            FAMILY_SHIELDED_POOL,
+            transaction_circuit::asset_spend_v1_admission::ASSET_SPEND_ACTION_ID,
+        ) => {
+            native_asset_rpc_request_fields_valid(request)
+                && transaction_circuit::asset_spend_v1_wire::decode_native_asset_spend_action_v1(
+                    public_args,
+                )
+                .is_ok()
+        }
+        (
+            FAMILY_SHIELDED_POOL,
+            transaction_circuit::asset_spend_v1_admission::ASSET_ADMIN_ACTION_ID,
+        ) => {
+            native_asset_rpc_request_fields_valid(request)
+                && transaction_circuit::asset_spend_v1_wire::decode_native_asset_admin_action_v1(
+                    public_args,
+                )
+                .is_ok()
+        }
+        (FAMILY_SHIELDED_POOL, asset_recovery_native::RECOVERY_SPEND_ACTION_ID) => {
+            native_asset_rpc_request_fields_valid(request)
+                && transaction_circuit::asset_recovery_wire_v1::decode_spend_ref(public_args)
+                    .is_ok()
+        }
+        (FAMILY_SHIELDED_POOL, asset_recovery_native::RECOVERY_ADMIN_ACTION_ID) => {
+            native_asset_rpc_request_fields_valid(request)
+                && transaction_circuit::asset_recovery_wire_v1::decode_admin_ref(public_args)
+                    .is_ok()
+        }
         (FAMILY_BRIDGE, ACTION_BRIDGE_OUTBOUND) => decode_scale_exact::<OutboundBridgeArgsV1>(
             public_args,
             "native outbound bridge action request args",
@@ -3718,6 +3948,17 @@ pub(crate) fn native_action_request_route_payload_decodes_exactly(
             preflight_poseidon2_production_smz9_inline_args_exact(public_args).is_ok()
                 || protocol_shielded_pool::poseidon2_production_transport::preflight_poseidon2_production_smza_inline_args_exact(public_args).is_ok()
         }
+        (FAMILY_SHIELDED_POOL, RP06_ACTION_ID) => {
+            protocol_shielded_pool::rp06_transport::preflight_rp06_inline_args_exact(public_args)
+                .is_ok()
+        }
+        (FAMILY_SHIELDED_POOL, PRIVATE_SPEND_ACTION_ID) => {
+            native_proof_binding::preflight_private_spend_args(public_args).is_ok()
+        }
+        (FAMILY_SHIELDED_POOL, HTLC_ACTION_ID) => {
+            transaction_circuit::smallwood_htlc_transport::decode_candidate_exact(public_args)
+                .is_ok()
+        }
         (FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT) => {
             decode_scale_exact::<SubmitCandidateArtifactArgs>(
                 public_args,
@@ -3747,16 +3988,104 @@ pub(crate) const fn native_action_request_public_args_cap(family_id: u16, action
         // profile ceiling. Syntax/context decoding then enforces each profile's
         // own cap; q20 retains 131,072 bytes.
         protocol_shielded_pool::poseidon2_production_transport::POSEIDON2_PRODUCTION_SMZA_MAX_ACTION_BYTES
+    } else if family_id == FAMILY_SHIELDED_POOL
+        && action_id == transaction_circuit::asset_spend_v1_admission::ASSET_SPEND_ACTION_ID
+    {
+        transaction_circuit::asset_spend_v1_wire::NATIVE_ASSET_SPEND_MAX_ACTION_BYTES_V1
+    } else if family_id == FAMILY_SHIELDED_POOL
+        && action_id == transaction_circuit::asset_spend_v1_admission::ASSET_ADMIN_ACTION_ID
+    {
+        transaction_circuit::asset_spend_v1_wire::NATIVE_ASSET_ADMIN_MAX_ACTION_BYTES_V1
+    } else if family_id == FAMILY_SHIELDED_POOL
+        && action_id == asset_recovery_native::RECOVERY_SPEND_ACTION_ID
+    {
+        transaction_circuit::asset_recovery_wire_v1::MAX_SPEND_ACTION_BYTES
+    } else if family_id == FAMILY_SHIELDED_POOL
+        && action_id == asset_recovery_native::RECOVERY_ADMIN_ACTION_ID
+    {
+        transaction_circuit::asset_recovery_wire_v1::MAX_ADMIN_ACTION_BYTES
+    } else if family_id == FAMILY_SHIELDED_POOL && action_id == RP06_ACTION_ID {
+        protocol_shielded_pool::rp06_transport::RP06_CANDIDATE_MAX_INLINE_BYTES
+    } else if family_id == FAMILY_SHIELDED_POOL && action_id == PRIVATE_SPEND_ACTION_ID {
+        protocol_shielded_pool::private_spend_transport::MAX_CARRIER_BYTES
+    } else if family_id == FAMILY_SHIELDED_POOL && action_id == HTLC_ACTION_ID {
+        // Projection for the largest strict branch, including one canonical ciphertext.
+        // Strict decode and the source verifier independently enforce the full shape.
+        1_485_573 + 417 + 2_147
     } else if family_id == FAMILY_SHIELDED_POOL && action_id == ACTION_MINT_POSEIDON2_V8_COINBASE {
         POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES
+    } else if family_id == FAMILY_SHIELDED_POOL && action_id == ACTION_MINT_POSEIDON2_V8_REWARDS {
+        POSEIDON2_V8_REWARDS_MAX_ARGS_SCALE_BYTES
     } else {
         MAX_NATIVE_RPC_ACTION_BYTES
+    }
+}
+
+/// Physical record budget, not proof or settlement authority. Oversized
+/// records must decode exactly as the new recovery grammar; no legacy route
+/// receives the recovery ceiling. Callers must still authenticate source and
+/// verify all three proof leaves/current state before retaining effects.
+pub(crate) fn native_action_payload_within_route_cap(encoded: &[u8]) -> bool {
+    if encoded.len() <= MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES {
+        return true;
+    }
+    if encoded.len() > MAX_NATIVE_RECOVERY_PENDING_ACTION_BYTES {
+        return false;
+    }
+    let Ok(action) = decode_scale_exact::<PendingAction>(encoded, "recovery pending action budget")
+    else {
+        return false;
+    };
+    if action.family_id != FAMILY_SHIELDED_POOL
+        || action.binding != asset_native::native_binding()
+        || action.anchor != [0; 48]
+        || !action.nullifiers.is_empty()
+        || !action.commitments.is_empty()
+        || action.candidate_artifact.is_some()
+    {
+        return false;
+    }
+    match action.action_id {
+        asset_recovery_native::RECOVERY_SPEND_ACTION_ID => {
+            transaction_circuit::asset_recovery_wire_v1::decode_spend_ref(&action.public_args)
+                .is_ok_and(|a| {
+                    action.fee == a.public.base.fee
+                        && action.ciphertext_hashes == a.public.base.ciphertext_commitments
+                        && action.ciphertext_sizes == [2608u32; 3]
+                })
+        }
+        asset_recovery_native::RECOVERY_ADMIN_ACTION_ID => {
+            transaction_circuit::asset_recovery_wire_v1::decode_admin_ref(&action.public_args)
+                .is_ok()
+                && action.fee == 0
+                && action.ciphertext_hashes.is_empty()
+                && action.ciphertext_sizes.is_empty()
+        }
+        _ => false,
     }
 }
 
 pub(crate) fn evaluate_native_action_request_projection(
     request: &SubmitActionRpcRequest,
 ) -> std::result::Result<Vec<u8>, NativeActionRequestProjectionAdmissionRejection> {
+    // Reject forbidden native-asset outer fields and wrong bindings before
+    // base64 allocates the bounded public-argument buffer. Source authority
+    // remains a separate prerequisite in RPC and peer/block admission.
+    if is_native_asset_rpc_request(request) {
+        if !native_action_request_kernel_fields_absent(request) {
+            return Err(
+                NativeActionRequestProjectionAdmissionRejection::KernelEnvelopeFieldsPresent,
+            );
+        }
+        if !request.new_nullifiers.is_empty() {
+            return Err(NativeActionRequestProjectionAdmissionRejection::NonTransferNullifiers);
+        }
+        if !native_asset_rpc_request_fields_valid(request) {
+            return Err(
+                NativeActionRequestProjectionAdmissionRejection::RoutePayloadDecodeNotExact,
+            );
+        }
+    }
     let outer_nullifier_route =
         native_submit_action_uses_outer_nullifiers(request.family_id, request.action_id);
     let route_supported =
@@ -3812,6 +4141,223 @@ pub(crate) fn admit_native_action_request_projection(
 ) -> Result<Vec<u8>> {
     evaluate_native_action_request_projection(request)
         .map_err(native_action_request_projection_error)
+}
+
+#[cfg(test)]
+mod native_asset_rpc_projection_tests {
+    use super::*;
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use transaction_circuit::{
+        asset_spend_v1 as spend, asset_spend_v1_admission as admission,
+        asset_spend_v1_wire as wire, private_spend::CIPHERTEXT_BYTES,
+    };
+
+    fn spend_request() -> (SubmitActionRpcRequest, Vec<u8>, bool) {
+        let ciphertexts = [
+            [1; CIPHERTEXT_BYTES],
+            [2; CIPHERTEXT_BYTES],
+            [3; CIPHERTEXT_BYTES],
+        ];
+        let public = spend::AssetSpendPublic {
+            chain_id: [1; 32],
+            reference_parent_hash: [2; 32],
+            parent_height: 100,
+            note_root: [3; 7],
+            registry_root: [4; 7],
+            asset_id: 1,
+            policy_version: 1,
+            credential_root: [5; 7],
+            credential_depth: 4,
+            frozen: false,
+            mint_enabled: true,
+            issuer_commitment: [6; 7],
+            operation: spend::TRANSFER,
+            magnitude: 0,
+            fee: 7,
+            nullifiers: [[7; 7], [8; 7]],
+            commitments: [[9; 7], [10; 7], [11; 7]],
+            ciphertext_commitments: ciphertexts
+                .each_ref()
+                .map(|ct| transaction_core::hashing_pq::ciphertext_hash_bytes(ct)),
+            policy_mode: 0,
+            secret_release: 0,
+            released_secret: [0; 32],
+        };
+        // This marker exercises syntax only; it cannot pass a real verifier.
+        let (bytes, source_qualified) = match wire::encode_native_asset_spend_action_v1(
+            &public,
+            &ciphertexts,
+            b"SMZE",
+        ) {
+            Ok(bytes) => (bytes, true),
+            Err(wire::AssetSpendWireErrorV1::RelationSource) => {
+                assert_eq!(
+                    admission::spend_profile_upper_bound_v1(0, 4),
+                    Err(admission::NativeAssetAdmissionErrorV1::SourceIdentity)
+                );
+                assert_ne!(
+                    hex::encode(spend::relation_digest()),
+                    admission::QUALIFIED_SPEND_SOURCE_SHA512
+                );
+                let historical =
+                    wire::encode_asset_spend_action_v1(&public, &ciphertexts, b"SMZE").unwrap();
+                assert_eq!(
+                    wire::decode_asset_spend_action_v1(&historical)
+                        .unwrap()
+                        .public,
+                    public
+                );
+                eprintln!("inactive asset RPC source: exact RelationSource rejection; request field gates remain exercised");
+                (historical, false)
+            }
+            Err(error) => panic!("unexpected native asset RPC fixture error: {error}"),
+        };
+        (
+            SubmitActionRpcRequest {
+                binding_circuit: 13,
+                binding_crypto: 7,
+                family_id: FAMILY_SHIELDED_POOL,
+                action_id: admission::ASSET_SPEND_ACTION_ID,
+                object_refs: Vec::new(),
+                new_nullifiers: Vec::new(),
+                public_args: STANDARD.encode(&bytes),
+                authorization_proof: None,
+                authorization_signatures: Vec::new(),
+                aux_data: None,
+            },
+            bytes,
+            source_qualified,
+        )
+    }
+
+    #[test]
+    fn native_asset_rpc_spend_and_admin_use_fresh_exact_routes_and_caps() {
+        let (mut request, bytes, source_qualified) = spend_request();
+        assert!(native_submit_action_is_transfer_route(
+            request.family_id,
+            request.action_id
+        ));
+        assert!(native_submit_action_route_supported(
+            request.family_id,
+            request.action_id
+        ));
+        assert!(!native_submit_action_uses_outer_nullifiers(
+            request.family_id,
+            request.action_id
+        ));
+        assert_eq!(
+            native_action_request_public_args_cap(request.family_id, request.action_id),
+            wire::NATIVE_ASSET_SPEND_MAX_ACTION_BYTES_V1
+        );
+        if !source_qualified {
+            assert_eq!(
+                evaluate_native_action_request_projection(&request),
+                Err(NativeActionRequestProjectionAdmissionRejection::RoutePayloadDecodeNotExact)
+            );
+            request.action_id = admission::ASSET_ADMIN_ACTION_ID;
+            assert_eq!(
+                native_action_request_public_args_cap(request.family_id, request.action_id),
+                wire::NATIVE_ASSET_ADMIN_MAX_ACTION_BYTES_V1
+            );
+            assert_eq!(
+                admission::admin_profile_upper_bound_v1(),
+                Err(admission::NativeAssetAdmissionErrorV1::SourceIdentity)
+            );
+            return;
+        }
+        assert_eq!(
+            evaluate_native_action_request_projection(&request).unwrap(),
+            bytes
+        );
+        let mut historical = bytes.clone();
+        historical[..8].copy_from_slice(b"HGASLC02");
+        assert!(!native_action_request_route_payload_decodes_exactly(
+            &request,
+            &historical
+        ));
+        request.action_id = PRIVATE_SPEND_ACTION_ID;
+        assert!(!native_action_request_route_payload_decodes_exactly(
+            &request, &bytes
+        ));
+        request.action_id = ACTION_SHIELDED_TRANSFER_INLINE;
+        assert!(!native_action_request_route_payload_decodes_exactly(
+            &request, &bytes
+        ));
+        request.action_id = admission::ASSET_ADMIN_ACTION_ID;
+        assert_eq!(
+            native_action_request_public_args_cap(request.family_id, request.action_id),
+            wire::NATIVE_ASSET_ADMIN_MAX_ACTION_BYTES_V1
+        );
+        assert!(!native_action_request_route_payload_decodes_exactly(
+            &request, &bytes
+        ));
+        use transaction_core::{asset_registry_v1::AssetControlsV1, poseidon2_width16::Felt};
+        let admin = transaction_circuit::asset_policy_admin_v1::PolicyAdminPublicV1 {
+            chain_id: [1; 32],
+            reference_parent_hash: [2; 32],
+            parent_height: 100,
+            registry_root: [3; 7],
+            after_registry_root: [4; 7],
+            asset_id: 1,
+            old_policy_version: 1,
+            new_policy_version: 1,
+            policy_admin_commitment: [5; 7],
+            before_policy_leaf: [6; 7],
+            after_policy_leaf: [7; 7],
+            controls: AssetControlsV1 {
+                credential_root: [Felt::from_u64(8); 7],
+                credential_depth: 8,
+                frozen: false,
+                mint_enabled: true,
+            },
+            expires_at: 110,
+            action_intent: [9; 7],
+        };
+        let bytes = wire::encode_native_asset_admin_action_v1(&admin, b"SMZE").unwrap();
+        request.public_args = STANDARD.encode(&bytes);
+        assert_eq!(
+            evaluate_native_action_request_projection(&request).unwrap(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn native_asset_rpc_rejects_forbidden_outer_fields_before_base64() {
+        let (request, _, _) = spend_request();
+        for field in 0..4 {
+            let mut changed = request.clone();
+            changed.public_args = "invalid base64!".into();
+            let expected = match field {
+                0 => {
+                    changed.binding_circuit = 12;
+                    NativeActionRequestProjectionAdmissionRejection::RoutePayloadDecodeNotExact
+                }
+                1 => {
+                    changed.binding_crypto = 6;
+                    NativeActionRequestProjectionAdmissionRejection::RoutePayloadDecodeNotExact
+                }
+                2 => {
+                    changed.new_nullifiers.push("invalid nullifier".into());
+                    NativeActionRequestProjectionAdmissionRejection::NonTransferNullifiers
+                }
+                _ => {
+                    changed.authorization_proof = Some(String::new());
+                    NativeActionRequestProjectionAdmissionRejection::KernelEnvelopeFieldsPresent
+                }
+            };
+            assert_eq!(
+                evaluate_native_action_request_projection(&changed),
+                Err(expected)
+            );
+        }
+        let mut huge = request;
+        let cap = native_action_request_public_args_cap(huge.family_id, huge.action_id);
+        huge.public_args = "A".repeat(encoded_len_limit(cap) + 1);
+        assert_eq!(
+            evaluate_native_action_request_projection(&huge),
+            Err(NativeActionRequestProjectionAdmissionRejection::PublicArgsTooLarge)
+        );
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -4151,6 +4697,13 @@ pub struct NativeNode {
 
 mod admission;
 mod asic_mining;
+mod asset_native;
+mod asset_recovery_native;
+mod asset_recovery_profile;
+mod asset_recovery_rpc;
+mod asset_recovery_state;
+mod asset_rpc;
+mod asset_state;
 mod block_flow;
 // Experimental V3 storage helpers remain available through their unit tests.
 #[cfg(test)]
@@ -4159,14 +4712,21 @@ mod block_store_v3;
 mod canonical_membership;
 #[cfg(test)]
 mod fork_retention;
+mod htlc_candidate;
 pub mod hx512_lifecycle;
 mod inactive_smallwood_v7;
+mod launch_reference;
+mod launch_v8_verifier;
 mod mining;
+mod native_proof_binding;
+pub mod network_profile;
 mod node_impl;
 mod nullifier_accumulator;
 mod poseidon2_v8_pending;
 pub(crate) mod poseidon2_v8_state;
 pub(crate) mod poseidon2_v8_verifier;
+mod rp06_verifier;
+pub use network_profile::{NativeNetworkIdentity, NativeNetworkManifest, NativeNetworkProfile};
 mod pow;
 #[cfg(test)]
 mod reorg_wal;
@@ -4207,8 +4767,127 @@ mod bitcoin_asic_tests;
 #[cfg(test)]
 mod pending_action_canonicality_tests;
 #[cfg(test)]
+mod pool_rpc_tests;
+#[cfg(test)]
 mod poseidon2_v8_coinbase_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod transport_tests;
+
+#[cfg(test)]
+mod recovery_projection_tests {
+    use super::*;
+
+    #[test]
+    fn recovery_routes_have_finite_caps_and_no_outer_nullifiers() {
+        for (action, cap) in [
+            (
+                asset_recovery_native::RECOVERY_SPEND_ACTION_ID,
+                transaction_circuit::asset_recovery_wire_v1::MAX_SPEND_ACTION_BYTES,
+            ),
+            (
+                asset_recovery_native::RECOVERY_ADMIN_ACTION_ID,
+                transaction_circuit::asset_recovery_wire_v1::MAX_ADMIN_ACTION_BYTES,
+            ),
+        ] {
+            assert!(native_submit_action_route_supported(
+                FAMILY_SHIELDED_POOL,
+                action
+            ));
+            assert!(native_submit_action_is_transfer_route(
+                FAMILY_SHIELDED_POOL,
+                action
+            ));
+            assert!(!native_submit_action_uses_outer_nullifiers(
+                FAMILY_SHIELDED_POOL,
+                action
+            ));
+            assert_eq!(
+                native_action_request_public_args_cap(FAMILY_SHIELDED_POOL, action),
+                cap
+            );
+            assert!(!native_submit_action_route_supported(FAMILY_BRIDGE, action));
+            assert_eq!(
+                native_action_request_public_args_cap(FAMILY_BRIDGE, action),
+                MAX_NATIVE_RPC_ACTION_BYTES
+            );
+        }
+        use transaction_circuit::{
+            asset_recovery_capsule_v1 as capsule, asset_recovery_wire_v1 as wire,
+        };
+        assert_eq!(wire::MAX_PROOF_BYTES, 2 * 1024 * 1024);
+        assert_eq!(capsule::MAX_PROOF_BYTES, wire::MAX_PROOF_BYTES);
+        assert_eq!(capsule::SEGMENT_COUNT, 2);
+        assert_eq!(capsule::BUNDLE_HEADER_BYTES, 16);
+        assert_eq!(wire::PROOF_UNITS, 5);
+        // One bounded spend proof plus two exact bounded capsule bundles.
+        assert_eq!(
+            wire::MAX_SPEND_ACTION_BYTES,
+            wire::SPEND_FIXED_BYTES
+                + wire::MAX_PROOF_BYTES
+                + 2 * (capsule::BUNDLE_HEADER_BYTES
+                    + capsule::SEGMENT_COUNT * capsule::MAX_PROOF_BYTES)
+        );
+        assert_eq!(wire::MAX_SPEND_ACTION_BYTES, 10_496_540);
+        assert_eq!(
+            transaction_circuit::asset_recovery_wire_v1::MAX_ADMIN_ACTION_BYTES,
+            2_098_260
+        );
+        assert_eq!(MAX_NATIVE_RPC_ACTION_BYTES, 2 * 1024 * 1024);
+        assert_eq!(
+            MAX_NATIVE_SYNC_PENDING_ACTION_BYTES,
+            MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES
+        );
+    }
+
+    #[test]
+    fn recovery_forbidden_outer_fields_reject_before_payload_allocation() {
+        for action_id in [
+            asset_recovery_native::RECOVERY_SPEND_ACTION_ID,
+            asset_recovery_native::RECOVERY_ADMIN_ACTION_ID,
+        ] {
+            let binding = transaction_circuit::asset_spend_v1_admission::NATIVE_VERSION_BINDING;
+            let mut request: SubmitActionRpcRequest = serde_json::from_value(json!({
+                "binding_circuit": binding.circuit, "binding_crypto": binding.crypto,
+                "family_id": FAMILY_SHIELDED_POOL, "action_id": action_id, "public_args": "!"
+            }))
+            .unwrap();
+            request.new_nullifiers.push(String::new());
+            assert_eq!(
+                evaluate_native_action_request_projection(&request),
+                Err(NativeActionRequestProjectionAdmissionRejection::NonTransferNullifiers)
+            );
+            request.new_nullifiers.clear();
+            request.authorization_proof = Some(String::new());
+            assert_eq!(
+                evaluate_native_action_request_projection(&request),
+                Err(NativeActionRequestProjectionAdmissionRejection::KernelEnvelopeFieldsPresent)
+            );
+            request.authorization_proof = None;
+            request.binding_crypto = binding.crypto.wrapping_add(1);
+            assert_eq!(
+                evaluate_native_action_request_projection(&request),
+                Err(NativeActionRequestProjectionAdmissionRejection::RoutePayloadDecodeNotExact)
+            );
+        }
+    }
+
+    #[test]
+    fn oversized_record_is_not_a_generic_cap_increase() {
+        assert!(native_action_payload_within_route_cap(&[0; 1]));
+        assert!(!native_action_payload_within_route_cap(&vec![
+            0;
+            MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES
+                + 1
+        ]));
+        assert!(!native_action_payload_within_route_cap(&vec![
+            0;
+            MAX_NATIVE_RECOVERY_PENDING_ACTION_BYTES
+                + 1
+        ]));
+    }
+}
+
+#[cfg(test)]
+mod asset_recovery_lifecycle_tests;

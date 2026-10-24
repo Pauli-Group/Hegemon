@@ -19,8 +19,91 @@ HGN is a shielded-only monetary protocol built for a quantum-adversarial future.
 ### Protocol overview
 The HGN protocol consists of four tightly-coupled subsystems:
 
-Current working relation: `HGV8RP05` is a development source, not a
-production-authorized verifier. The canonical source fixture is 848,231 bytes
+The HGN launch candidate uses the native-only
+`Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4` relation, with one common
+86-word (688-byte) public statement and two opaque 2,608-byte ciphertexts.
+It supports ordinary transfer, bounded policy composition, absolute-height locks
+and HTLC lock/claim/refund with explicit secret release where selected. The
+pre-mainnet treasury uses one key. Public issuance allocates
+`floor(subsidy/5)` to funding and the remainder plus fees to the miner; both
+reward roles mature after 120 blocks. Controlled assets, privileged asset
+recovery and merge mining remain disabled for launch and require a later
+separately qualified consensus upgrade.
+
+The compact SMZL/q38 compiler retains every spend branch in one common shape:
+837 packed rows, 21,320 linear equations, 721 nonlinear batches, packing 64,
+constraint degree 7, 441 heads and DECS degree 478. Five cases (ordinary,
+policy creation, absolute height, policy hash release and HTLC release)
+generated and verified 171,281-byte proofs and encoded 177,065-byte carriers.
+The inner proof is 4.65% larger than the retained 163,665-byte baseline. Local
+proving took about 73–108 seconds and verification 0.43–0.72 seconds. The
+source caps are 171,848 proof bytes and 177,632 carrier bytes. Earlier v3/q58
+and 77-word SMZD measurements remain historical evidence for their exact
+source identities and do not identify this compact successor.
+
+The compact q38 count/recovery and fresh source composition have checked
+receipts and scoped independent reviews. Qualification must bind the exact
+v4 relation and its 41 source inputs; preceding v3/q58 security and privacy
+receipts do not qualify changed source. PR205's disclosed source/compiler/
+serialization, ideal-oracle, extraction, independent-coin and adaptive-QROM
+assumptions remain explicit. Soundness and privacy are separate games; no
+unconditional or joint 128-bit claim is made. Failed, partial and unused
+attempts count in the security experiment.
+
+Normal HGN operation has no release expiry or cumulative accepted-transaction
+quota. The persisted proof count is audit state; per-block byte/action limits,
+canonical reference freshness, nullifier checks and HTLC deadlines remain.
+Runtime inventories and final artifacts require their own exact bindings. The
+exact current binaries passed the six-action, same-identity HGN single-key
+lifecycle, and native public treasury readback passed after a clean restart.
+G8 also requires the independently reviewed composite and all five final
+source/artifact acceptance checks; actual clearance is recorded separately in
+a detached acceptance receipt. No deployment, production authorization or
+public-network launch is claimed. See the
+[pre-mainnet execution plan](.agent/pre-mainnet-network/EXECPLAN.md).
+
+The deferred controlled-asset implementation shares the native note and nullifier
+pool under a distinct finite Development manifest. Its retained results below
+do not enable assets on the HGN launch network. The v3 two-input, three-output relation enforces
+current credentials and freeze controls on ordinary and bounded-policy transfers,
+issuer-authorized minting and holder burns, with native HGN funding fees.
+Administrator proofs update authenticated controls; genesis rows contain zero
+issued supply. A proof retains its canonical reference H while the inclusion
+parent P satisfies `H <= P <= H+12`, with private credential expiry `E >= H+12`.
+The complete registry root must still be current; accounting and nullifier
+freshness use P. The persistent wallet preserves exact submitted bytes and
+reservations across restart and rollback.
+
+The actual V10 moving-chain lifecycle passed with 13 genuine proof candidates
+(8 asset, 4 administrator and 1 native), 21 unique checks and 22 observations.
+All 11 owned processes were reaped and the serialized guard exited zero.
+The retained native receipt is SHA256
+`476dfcdf4960cfd838600b2d5ef0218b0eea4f0c39fc7a3d4103a94aedbacbc0`.
+The [final handoff](.agent/stablecoin-moving-chain-v1/FINAL_HANDOFF.md) binds the
+source package and separate conditional security disposition; lifecycle success
+does not supply a cryptographic security assumption.
+
+The five admitted geometries retain the degree envelope `D <= 14088`; bounded
+depth 16 is excluded. Fresh lifecycle scope is ordinary depth4 and bounded depth4,
+not a new lifecycle qualification of every admitted profile. The three source-bound conditional arguments are: (1) current CSR/public134
+binding and geometry under accepted-source/decoder interpretation; (2) issuer,
+credential and administrator authority on the same recovered packet and physical
+execution, with the normalized chosen-context seven-game bound; and (3) the actual
+witness-free V10 operational public simulator for source bytes/errors and the same
+persistent physical oracle lifetime. Witness indistinguishability is not a
+substitute for the third endpoint. These arguments retain PR205, exact source and
+compiler/serialization/platform interpretation, fresh RNG/field coins, F1 recovery
+and efficient extraction, authenticated provider provenance, primitive and
+chosen-context game hypotheses, the same physical shared QRO, query/lifetime
+bounds and `ExternalAdaptiveReprogramming`. They grant no unconditional backend
+security or production authority. The final conditional disposition and review
+are recorded separately in
+`.agent/stablecoin-moving-chain-v1/changed-arguments/final-security-staging-v6/final-security-v1.json`;
+that receipt must be verified before the integration handoff is finalized. See the [asset implementation and evidence boundaries](docs/STABLECOIN_ASSET_V1.md).
+
+The retained `HGV8RP05` relation is a separate development source, not a
+production-authorized verifier. Its source-specific results follow; they do
+not qualify the private-spend successor. The canonical source fixture is 848,231 bytes
 with SHA-512
 `4b0acd4289abd6ae2f0544857fd3fd0177dff45c2bae2a400fbf687e375944ffd4cf62b6d071ec1f29abd9ddce99c7e4e305e214238b0d34e3c64d7b5a0cde97`;
 Canonical fixture and vector identity preflight now passes, and the identity-
@@ -29,7 +112,7 @@ false. Current Rust vector consumption and retained-artifact development
 qualification are recorded for the streamlined runtime source inventory
 `f6641cd0…`; subsequent test-only edits are assessed separately from those
 immutable proof/lifecycle runs.
-The proof, inline-action, and complete `PendingAction` limits remain 164,113,
+The RP05 proof, inline-action, and complete `PendingAction` limits remain 164,113,
 169,547, and 169,772 bytes. Strict module checks and dependency-body audits
 pass for the retained accepted-invalid-branch soundness, pairwise authorization,
 initialized-history conservation, and initialized adaptive two-witness privacy
@@ -56,7 +139,7 @@ Release activation remains open. The retained streamlined RP05 pair measures
 (23.793 seconds), and actual HTTP/PQ socket lifecycle guard (69.438 seconds), including restart,
 fresh-node sync and clean shutdown; the in-process test also covers reorg.
 The four-gate Q38 evidence contract is installed with exact source and receipt
-pins. These are current-candidate development results, not activation authority.
+pins. These are RP05 development results, not successor or activation authority.
 Retained RP04 proofs and lifecycle results
 apply only to their recorded historical source snapshot.
 
@@ -110,7 +193,7 @@ flowchart TB
 The operator `hegemon-node` binary is native. It starts a fresh chain, stores native block and shielded-state metadata in `sled`, mines development PoW blocks, syncs over the Hegemon PQ service, and preserves the existing JSON-RPC method names for walletd, Electron, and scripts. Version 0.10 launches by native profile and environment rather than legacy JSON chain-spec files; the public 0.10 testnet migration is a fresh-genesis restart with a versioned release record, while private devnets use `--dev` plus an isolated base path.
 
 #### Transaction proofs and data availability
-The production architecture is fixed: SmallWood proves a two-input, two-output Poseidon2 V8 transaction relation, with separate SMZ9 and additive SMZA candidate encodings. SMZA uses profile 9/domain set 5, 38 final queries, 38 random tails per row, degree-405 masks, and distinct HGV8TX03/SWP8LC03 carriers. Its source maximum is 164,113 proof bytes and 169,772 complete PendingAction bytes; it is not production-authorized. The following historical SMZ9 sizes and receipts do not authorize SMZA. The repaired executable relation uses the eight-byte `HGV8RP03` semantic-relation-v2 program magic, which identifies the format lineage rather than the relation itself: 686 rows, 368 proof columns, 830 nonlinear identities, 19,935 through 20,509 statement-specialized linear identities, and a maximum 21,339-identity soundness union. Its canonical 853,429-byte program has SHA-512 `7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17`; the first 48 bytes, `7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d0`, are the relation id. It covers every one of the sixteen input/output activity masks, every authorization mode, Merkle membership, nullifiers, canonical zero padding for absent output-note sponge lanes, output commitments, balance conservation, and stablecoin state changes. Disabled stablecoin is a canonical pass-through: it binds the actual parent height and requires the before and after roots to equal the native context's current stablecoin root, while the inactive stablecoin asset, policy, magnitude, action-intent, counters, authorization, and witness fields remain zero. `HGV8TX02`, `SWP8LC02`, SMZ9, profile 6, and the 686-by-368 geometry remain unchanged because the relation digest is the semantic compatibility key. The source capability now carries a distinct seven-limb `note_genesis_root` and requires the canonical empty depth-32 Poseidon2 root for a fresh activation; production capability nevertheless remains absent until every evidence gate passes.
+The baseline proof architecture uses a two-input, two-output Poseidon2 V8 transaction relation with separate SMZ9 and additive SMZA candidate encodings. The native-only private-spend successor above uses a distinct compact SMZL identity and must complete its own qualification. SMZA uses profile 9/domain set 5, 38 final queries, 38 random tails per row, degree-405 masks, and distinct HGV8TX03/SWP8LC03 carriers. Its source maximum is 164,113 proof bytes and 169,772 complete PendingAction bytes; it is not production-authorized. The following historical SMZ9 sizes and receipts do not authorize SMZA. The repaired executable relation uses the eight-byte `HGV8RP03` semantic-relation-v2 program magic, which identifies the format lineage rather than the relation itself: 686 rows, 368 proof columns, 830 nonlinear identities, 19,935 through 20,509 statement-specialized linear identities, and a maximum 21,339-identity soundness union. Its canonical 853,429-byte program has SHA-512 `7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17`; the first 48 bytes, `7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d0`, are the relation id. It covers every one of the sixteen input/output activity masks, every authorization mode, Merkle membership, nullifiers, canonical zero padding for absent output-note sponge lanes, output commitments, balance conservation, and stablecoin state changes. Disabled stablecoin is a canonical pass-through: it binds the actual parent height and requires the before and after roots to equal the native context's current stablecoin root, while the inactive stablecoin asset, policy, magnitude, action-intent, counters, authorization, and witness fields remain zero. `HGV8TX02`, `SWP8LC02`, SMZ9, profile 6, and the 686-by-368 geometry remain unchanged because the relation digest is the semantic compatibility key. The source capability now carries a distinct seven-limb `note_genesis_root` and requires the canonical empty depth-32 Poseidon2 root for a fresh activation; production capability nevertheless remains absent until every evidence gate passes.
 
 Hegemon has no transparent value pool, so production V8 requires both the sign and magnitude of `value_balance` to be canonical zero. The current digest-bound relation enforces that inside the program, and native projection rejects nonzero values again before verification. The source capability's seven-limb `note_genesis_root` is the canonical empty depth-32 Poseidon2 root for a fresh launch; a root alone cannot bootstrap a nonempty append frontier. The selected positive-value source is the miner-local V8 coinbase action `11`. It carries an exact public opening and encrypted Eta note whose seven-limb commitment is recomputed with the same HGV8RP03-format note hash, is accepted only as the final block action after V8 activation, and is rejected from RPC, peer relay, and the mempool. The historical retained spend fixture uses two exact positive action-11 notes at canonical positions zero and one. That fixture does not bind the current repaired relation, and the route remains capability-gated and not production authorized.
 

@@ -485,8 +485,14 @@ impl PackedRowLayout {
             }
             SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz8
             | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smz9
-            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza => {
+            | SmallwoodArithmetization::DirectPacked64Poseidon2V8Sha512Smza
+        | SmallwoodArithmetization::DirectPacked64Poseidon2Rp06Sha512Smzb => {
                 panic!("the fresh Poseidon2 V8 adapter must use its dedicated width-16 row layout")
+            }
+            SmallwoodArithmetization::DirectPacked64NativeHtlcSha512Smzc
+            | SmallwoodArithmetization::DirectPacked64NativePrivateSpendSha512Smzd
+            | SmallwoodArithmetization::DirectPacked64AssetSpendSha512Smze => {
+                panic!("the native HTLC adapter must use its dedicated arithmetic graph row layout")
             }
         }
     }

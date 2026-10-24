@@ -1,0 +1,5 @@
+import HegemonCrypto.NativePrivateSpendHtlcRecipient
+
+#print axioms HegemonCrypto.NativePrivateSpendHtlcRecipient.selected_gate
+#print axioms HegemonCrypto.NativePrivateSpendHtlcRecipient.recipient_consequences
+#print axioms HegemonCrypto.NativePrivateSpendHtlcRecipient.g1_with_recipients

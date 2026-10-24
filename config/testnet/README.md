@@ -1,200 +1,49 @@
 # Hegemon Testnet Deployment
 
-This directory contains configuration and tools for deploying the Hegemon testnet.
+The next public testnet is **v0.11 pre-mainnet**, starting from fresh genesis.
+Use the [v0.11 operator guide](0.11/README.md) and
+[release checklist](../../docs/releases/v0.11.md). The release tag/display name is
+`v0.11`; executable package versions are `0.11.0`. Mainnet is planned as `v1.00`.
 
-For the fresh-testnet rollout on the laptop + `hegemon-ovh`,
-follow [config/testnet-initialization.md](/Users/pldd/Projects/Reflexivity/Hegemon/config/testnet-initialization.md)
-before starting any host. The laptop-created boot-wallet address is the payout
-address that should be configured everywhere for mining.
+**Cutover is pending.** The v0.10.3 testnet on `hegemon-ovh` must remain running
+until the operator announces its shutdown. Preparing a PR or building v0.11
+artifacts does not change the live network. Do not join the existing seed with
+the new manifest or replace the old database in place.
 
-## Quick Start
+For v0.11, `hegemon.pauli.group:30333` (`hegemon-ovh`) is the planned primary
+seed. `hegemon-dev` is a secondary node after cutover. The exact approved seed
+list comes from `0.11/release.json`; local defaults do not establish live
+approval. Keep every miner on the same approved list and enable NTP/chrony:
+PoW headers outside the allowed future timestamp skew are rejected.
 
-### Prerequisites
+The source launcher `../../start.sh` validates the versioned manifest digest,
+refuses a pending release record and defaults to a syncing node with a separate
+`~/.hegemon-node-v0.11` database. Mining is opt-in and requires the operator's
+public reward address. It never creates or deletes a wallet.
 
-- Docker and Docker Compose
-- Rust toolchain (for building from source)
-- jq (for scripts)
+## Pool interfaces
 
-### 1. Build the Node Image
+Follow the [pool interface contract](../../docs/POOL_INTERFACES.md). Select the
+approved release, genesis, chain/rules and full public pool payout recipient
+before requesting work. The node supplies mining interfaces; share accounting
+and pool operation remain the pool operator's responsibility.
 
-```bash
-# From project root
-docker build -t hegemon/node:latest .
-```
+Use `--rpc-methods=pool` on loopback. Forward it through authenticated SSH or an
+existing authenticated gateway if remote access is needed; do not expose unsafe
+RPC publicly. The method allowlist is not caller authentication. Keep spending
+credentials and payout submission on a separate wallet control plane.
 
-### 2. Generate Node Keys
+`hegemon_blockReward` returns canonical reward observations with decimal
+`*_atoms` strings and public recipient bindings. Miner and treasury rewards
+created in block `h` first permit spending in block `h + 120`. Extra payout
+confirmations/reserves are operator policy. Reconcile orphaned rewards before
+crediting miners; confirmations do not establish deterministic finality.
+Stablecoin infrastructure and merge mining remain disabled for this release.
 
-```bash
-./scripts/generate-testnet-keys.sh
-```
+## Historical deployment material
 
-This creates:
-- `keys/boot1.key`, `keys/boot2.key`, `keys/boot3.key` - Node identity keys
-- `.env.testnet` - Environment file with peer IDs
-
-All miners should use the same approved `HEGEMON_SEEDS` list when joining the shared testnet. Divergent seed lists can reduce connectivity and increase fork risk. Enable NTP/chrony on every host because PoW timestamps are rejected if they exceed the future-skew bound.
-
-### 3. Build The Native Node
-
-```bash
-make node
-```
-
-The 0.10 native testnet starts from fresh native genesis state and does not use
-the deleted 0.9 JSON chain-spec files or a runtime `--chain` flag. When the
-public testnet migrates from 0.9.1 to 0.10.0, publish the new genesis/release
-record under a versioned directory such as `config/testnet/0.10.0/` with the
-genesis hash, chain id/rules hash, binary commit, approved seed list, PoW bits,
-and operator notes. Private devnets can start directly with `--dev` and an
-isolated base path.
-
-### 4. Start the Testnet
-
-```bash
-# Load environment variables
-source .env.testnet
-
-# Start all services
-docker-compose -f docker-compose.testnet.yml up -d
-```
-
-### 5. Verify Deployment
-
-```bash
-# Check node health
-curl -s -X POST -H "Content-Type: application/json" \
-    -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}' \
-    http://localhost:9944 | jq '.result'
-
-# Check block height
-curl -s -X POST -H "Content-Type: application/json" \
-    -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' \
-    http://localhost:9944 | jq '.result.number'
-
-# Check peer count
-curl -s -X POST -H "Content-Type: application/json" \
-    -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}' \
-    http://localhost:9944 | jq '.result.peers'
-```
-
-## Services
-
-| Service | Port | Description |
-|---------|------|-------------|
-| boot1 | 9944 (RPC), 30333 (P2P) | Primary mining node |
-| boot2 | 9945 (RPC), 30334 (P2P) | Secondary mining node |
-| boot3 | 9946 (RPC), 30335 (P2P) | Full node (non-mining) |
-
-## Monitoring
-
-Use JSON-RPC for current native testnet checks:
-
-```bash
-curl -s -X POST -H "Content-Type: application/json" \
-    -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' \
-    http://localhost:9944 | jq '.result.number'
-
-curl -s -X POST -H "Content-Type: application/json" \
-    -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}' \
-    http://localhost:9944 | jq '.result.peers'
-```
-
-## Soak Testing
-
-Run a long-duration stability test:
-
-```bash
-# 7-day soak test
-./scripts/soak-test.sh 168
-
-# 24-hour test
-./scripts/soak-test.sh 24
-
-# Custom RPC endpoint
-RPC_ENDPOINT=http://testnet.example.com:9944 ./scripts/soak-test.sh 168
-```
-
-The soak test monitors:
-- Block production rate
-- Peer connectivity
-- Memory usage
-- Chain forks
-
-## Connecting External Nodes
-
-To connect an external node to the testnet:
-
-```bash
-HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333" \
-hegemon-node \
-    --dev \
-    --base-path=/data/hegemon \
-    --port=30333 \
-    --rpc-port=9944 \
-    --name=my-node
-```
-
-The public Hegemon 0.10 testnet seeds are `hegemon.pauli.group:30333` and
-`devnet.hegemonprotocol.com:30333`. Use the full approved list unless it has
-been deliberately rotated.
-
-## Connecting Wallet
-
-```bash
-# Sync wallet with testnet
-wallet node-sync --ws-url ws://localhost:9944
-
-# Start continuous sync daemon
-wallet node-daemon --ws-url ws://localhost:9944
-```
-
-## Troubleshooting
-
-### Node won't start
-
-Check logs:
-```bash
-docker logs hegemon-boot1
-```
-
-Common issues:
-- Missing keys: Run `./scripts/generate-testnet-keys.sh`
-- Port conflict: Check if ports 9944, 30333 are in use
-
-### Nodes not connecting
-
-1. Verify peer IDs are correctly set in `.env.testnet`
-2. Check network connectivity between containers
-3. Verify boot node is healthy before dependent nodes start
-
-### No blocks being produced
-
-1. Check mining is enabled: `HEGEMON_MINE=1`
-2. Verify difficulty is appropriate for testnet
-3. Check node logs for mining errors
-
-### High memory usage
-
-1. Check for memory leaks with soak test
-2. Increase container memory limits
-3. Consider pruning chain data
-
-## Security Notes
-
-- Testnet keys in this directory are for testing only
-- Do not use testnet keys on mainnet
-- RPC is exposed with `--rpc-methods=safe` by default
-- PQ transport is the default transport; no extra flag is required
-
-## File Structure
-
-```
-config/
-└── testnet/
-    └── README.md             # Native testnet deployment guide
-
-keys/
-├── boot1.key                  # Boot node 1 identity
-├── boot2.key                  # Boot node 2 identity
-└── boot3.key                  # Boot node 3 identity
-```
+The v0.10.3 database, service configuration and wallets are historical state.
+Preserve them through cutover. Legacy Docker instructions, `--dev` startup and
+`scripts/start-mining.sh` are not the v0.11 public join procedure. A fresh chain
+changes balances and network identity; it does not require changing the existing
+treasury wallet key. No private wallet material belongs in a release or Git.

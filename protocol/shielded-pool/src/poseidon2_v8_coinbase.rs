@@ -82,6 +82,27 @@ pub struct MintPoseidon2V8CoinbaseArgs {
     pub miner_note: Poseidon2V8CoinbaseNoteData,
 }
 
+/// A separately identified wire successor; action11 bytes remain unchanged.
+/// Funding is absent only when the subsidy rounds down to zero funding.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+pub struct MintPoseidon2V8RewardsArgs {
+    pub miner_note: Poseidon2V8CoinbaseNoteData,
+    pub funding_note: Option<Poseidon2V8CoinbaseNoteData>,
+}
+
+pub const POSEIDON2_V8_REWARDS_MAX_ARGS_SCALE_BYTES: usize =
+    2 * POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES + 1;
+
+/// Permanent allocation on issued subsidy. Fees belong wholly to the miner.
+/// Integer division assigns rounding dust to the miner and avoids overflow.
+pub const fn poseidon2_v8_reward_split(subsidy: u64, fees: u64) -> Option<(u64, u64)> {
+    let funding = subsidy / 5;
+    match (subsidy - funding).checked_add(fees) {
+        Some(miner) => Some((miner, funding)),
+        None => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;
@@ -106,6 +127,48 @@ mod tests {
                 },
             },
         }
+    }
+
+    #[test]
+    fn reward_split_preserves_subsidy_and_assigns_fees_and_rounding_to_miner() {
+        for subsidy in [0, 1, 2, 3, 4, 5, 6, 499_429_223, u64::MAX] {
+            let (miner, funding) = poseidon2_v8_reward_split(subsidy, 0).unwrap();
+            assert_eq!(funding, subsidy / 5);
+            assert_eq!(miner.checked_add(funding), Some(subsidy));
+        }
+        assert_eq!(poseidon2_v8_reward_split(6, 9), Some((14, 1)));
+        assert_eq!(poseidon2_v8_reward_split(0, 9), Some((9, 0)));
+        assert_eq!(poseidon2_v8_reward_split(u64::MAX, u64::MAX), None);
+    }
+
+    #[test]
+    fn separate_rewards_codec_keeps_old_carrier_and_pins_both_sizes() {
+        let note = fixture().miner_note;
+        let rewards = MintPoseidon2V8RewardsArgs {
+            miner_note: note.clone(),
+            funding_note: Some(note.clone()),
+        };
+        assert_eq!(
+            rewards.encode().len(),
+            POSEIDON2_V8_REWARDS_MAX_ARGS_SCALE_BYTES
+        );
+        assert_eq!(POSEIDON2_V8_REWARDS_MAX_ARGS_SCALE_BYTES, 4699);
+        let rewards = MintPoseidon2V8RewardsArgs {
+            miner_note: note,
+            funding_note: None,
+        };
+        assert_eq!(
+            rewards.encode().len(),
+            POSEIDON2_V8_COINBASE_ARGS_SCALE_BYTES + 1
+        );
+        let encoded = rewards.encode();
+        let mut cursor = encoded.as_slice();
+        assert_eq!(
+            MintPoseidon2V8RewardsArgs::decode(&mut cursor).unwrap(),
+            rewards
+        );
+        assert!(cursor.is_empty());
+        assert_eq!(fixture().encode().len(), 2349);
     }
 
     #[test]

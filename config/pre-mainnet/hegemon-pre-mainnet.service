@@ -1,0 +1,25 @@
+[Unit]
+Description=Hegemon isolated pre-mainnet rehearsal
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hegemon
+Group=hegemon
+EnvironmentFile=/etc/hegemon/pre-mainnet/node.env
+ExecStart=/opt/hegemon/pre-mainnet/bin/hegemon-node --network pre-mainnet --network-manifest /etc/hegemon/pre-mainnet/network-manifest.json --base-path /var/lib/hegemon/pre-mainnet --port 30335 --rpc-port 19944 --rpc-methods safe --name hegemon-pre-mainnet
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=180
+LimitNOFILE=65536
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/hegemon/pre-mainnet
+
+[Install]
+WantedBy=multi-user.target

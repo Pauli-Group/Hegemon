@@ -13,6 +13,17 @@
 //! SmallWood is the only accepted transaction proof backend. The proof object
 //! carries an explicit backend identifier so retired wire values fail closed.
 
+#[cfg(test)]
+mod asset_recovery_actual_v1;
+pub mod asset_recovery_admin_v1;
+mod asset_recovery_backend_v1;
+pub mod asset_recovery_capsule_v1;
+pub mod asset_recovery_chacha_v1;
+#[cfg(test)]
+mod asset_recovery_geometry_v1;
+pub mod asset_recovery_spend_v1;
+pub mod asset_recovery_wire_v1;
+pub mod asset_spend_v1;
 pub mod constants;
 pub mod error;
 pub mod full_blake2b448_relation;
@@ -24,6 +35,20 @@ pub mod hx512_production_relation;
 pub mod keys;
 pub mod note;
 pub mod private_multisig_accumulator;
+pub mod private_spend;
+mod private_spend_packed_poseidon;
+pub use transaction_core::asset_recovery_v1;
+#[cfg(feature = "private-spend-dev-artifacts")]
+pub mod asset_admin_topology_readout_v1;
+pub mod asset_policy_admin_v1;
+#[cfg(feature = "private-spend-dev-artifacts")]
+pub mod asset_raw_ledger_v1;
+#[cfg(feature = "private-spend-dev-artifacts")]
+pub mod asset_security_readout_v1;
+pub mod asset_spend_v1_admission;
+pub mod asset_spend_v1_state;
+pub mod asset_spend_v1_wire;
+pub use transaction_core::{asset_registry_v1, stablecoin_poseidon2_v8};
 pub mod proof;
 pub mod proof_options;
 pub mod public_inputs;
@@ -34,6 +59,8 @@ pub mod smallwood_blake2b384_source_constraints;
 pub mod smallwood_blake2b384_source_projection;
 mod smallwood_engine;
 pub mod smallwood_frontend;
+pub mod smallwood_htlc;
+pub mod smallwood_htlc_transport;
 pub mod smallwood_hx512_adapter;
 pub mod smallwood_hx512_engine;
 pub mod smallwood_hx512_topology;
@@ -50,6 +77,7 @@ pub mod smallwood_poseidon2_v8_native_import;
 pub mod smallwood_poseidon2_v8_program;
 pub mod smallwood_poseidon2_v8_relation;
 pub mod smallwood_poseidon2_v8_rng_refinement;
+pub mod smallwood_poseidon2_v8_rp06;
 pub mod smallwood_poseidon2_v8_security;
 pub mod smallwood_poseidon2_v8_semantic_refinement;
 pub mod smallwood_poseidon2_v8_semantics;
@@ -335,3 +363,6 @@ pub use transaction_core::TransactionVerifierInputs;
 
 // Re-export circuit versioning and AIR identification
 pub use constants::{compute_air_hash, expected_air_hash, CIRCUIT_VERSION};
+
+#[cfg(test)]
+mod asset_recovery_certificate_v1;

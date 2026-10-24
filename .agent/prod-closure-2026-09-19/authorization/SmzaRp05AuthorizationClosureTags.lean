@@ -1,3 +1,4 @@
+import SmzaRp05SupplyClosureCsrChunks
 import SmzaRp05AcceptedSingleKeySemanticIdentity
 import SmzaRp05LocalCertificate
 
@@ -35,7 +36,9 @@ def signerTagAttempt (limb : Fin 7) : CsrExecutableAttempt :=
 
 theorem signerTagAttempt_member (limb : Fin 7) :
     signerTagAttempt limb ∈ program.csrAttempts := by
-  fin_cases limb <;> decide
+  apply SmzaRp05SupplyClosureCsrChunks.chunk_member
+    (chunk := (19126 + 4 * limb.val) / 32) (by omega)
+  fin_cases limb <;> decide +revert
 
 private theorem constant_trace_value {publicWords values : List Nat}
     (evaluated : evalExpressionNodes publicWords [] program.csrExpressions =

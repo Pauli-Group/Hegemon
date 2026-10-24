@@ -175,12 +175,12 @@ class Job:
 
 class NodeRPC:
     def __init__(self, url: str, token: str | None = None) -> None:
-        self.url, self.token = url, token
+        if token:
+            raise ValueError("native RPC does not authenticate tokens; unset the RPC token and use a loopback listener through an authenticated SSH tunnel")
+        self.url = url
 
     def call(self, method: str, param: dict[str, Any] | None = None) -> Any:
         payload = dict(param or {})
-        if self.token:
-            payload["auth_token"] = self.token
         body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method,
                            "params": [payload]}, separators=(",", ":")).encode()
         request = Request(self.url, data=body, headers={"Content-Type": "application/json"})
@@ -506,7 +506,8 @@ def main() -> None:
     parser.add_argument("--rpc-url", default="http://127.0.0.1:9944")
     parser.add_argument("--worker", required=True, help="exact authorized worker name")
     parser.add_argument("--password-env", default="HEGEMON_STRATUM_PASSWORD")
-    parser.add_argument("--rpc-token-env", default="HEGEMON_POOL_RPC_TOKEN")
+    parser.add_argument("--rpc-token-env", default="HEGEMON_POOL_RPC_TOKEN",
+                        help="legacy option: a nonempty token is rejected; use authenticated SSH forwarding")
     parser.add_argument("--share-difficulty", default="0.001")
     parser.add_argument("--poll-seconds", type=float, default=2.0)
     parser.add_argument("--max-clients", type=int, default=32)

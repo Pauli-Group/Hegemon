@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import re
@@ -47,8 +47,8 @@ PINNED_UPLOAD_ARTIFACT_ACTION = (
     "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
 )
 PINNED_RELEASE_WORKFLOW_SHA512 = (
-    "f08ffb8a3567293bc1c77f16ba089d260626c70db897f5bc9f85a0271ffd9588e"
-    "b2537b5eeb458762aef9f5da385a459e32567099c196f58eac909ae57f0ed6b"
+    "09e58a8053dedcbb31067d080a8a87376f9ba3fe1f47060804c7a43e81e62713"
+    "1d6b01d634ffac974a0eb90c00092711320ddebcadb9596fa8722a8a18bfa44d"
 )
 SUCCESSOR_CHECKER_RELATIVE_PATH = Path(
     "scripts/check_transaction_proof_successor_authorization.py"
@@ -689,6 +689,7 @@ def require_job_and_steps_fail_closed(
     job_name: str,
     *,
     allow_always_condition: bool = False,
+    exact_job_condition: str | None = None,
 ) -> None:
     body = job_block(workflow, job_name)
     job_keys = re.findall(r"(?m)^    ([A-Za-z_][A-Za-z0-9_-]*):", body)
@@ -704,8 +705,12 @@ def require_job_and_steps_fail_closed(
         raise SystemExit(f"{job_name}: duplicate job-level if")
     if job_conditions:
         normalized = _yaml_scalar(job_conditions[0]).strip()
-        if not allow_always_condition or normalized != "${{ always() }}":
+        if normalized != exact_job_condition and (
+            not allow_always_condition or normalized != "${{ always() }}"
+        ):
             raise SystemExit(f"{job_name}: job-level if is not permitted")
+    if exact_job_condition is not None and job_conditions != [exact_job_condition]:
+        raise SystemExit(f"{job_name}: exact non-PR qualification condition required")
     job_values = re.findall(
         r"(?m)^    continue-on-error:(?:\s*(.*))?$",
         body,
@@ -997,6 +1002,54 @@ def require_strict_success_aggregate(
         )
 
 
+NON_PR_QUALIFICATION = "${{ github.event_name != 'pull_request' }}"
+
+
+def require_non_pr_formal_steps(steps: list[WorkflowStep]) -> list[WorkflowStep]:
+    """Check the two deferred steps before checking their executable bodies."""
+    result = []
+    expected = {"Install Lean toolchain manager", "Complete formal cryptography gate"}
+    found = set()
+    for step in steps:
+        if step.name in expected:
+            if step.condition != NON_PR_QUALIFICATION:
+                raise SystemExit(f"{step.name}: exact non-PR qualification condition required")
+            found.add(step.name)
+            result.append(replace(step, condition=None))
+        else:
+            if step.condition is not None:
+                raise SystemExit(f"{step.name}: PR runtime check must remain unconditional")
+            result.append(step)
+    if found != expected:
+        raise SystemExit("both separate formal qualification steps are required")
+    return result
+
+
+def require_formal_core_aggregate(workflow: str) -> None:
+    """Require real checker/policy success and honest event-specific formal results."""
+    body = job_block(workflow, "formal-core")
+    steps = workflow_steps(workflow, "formal-core")
+    if len(steps) != 1 or steps[0].condition is not None or not _continue_on_error_is_safely_disabled(steps[0].continue_on_error):
+        raise SystemExit("formal-core: exactly one unconditional fail-closed aggregate required")
+    for need, variable in (("formal-core-checker", "CHECKER_RESULT"), ("formal-core-policy", "POLICY_RESULT"), ("formal-core-lean", "LEAN_RESULT"), ("formal-core-vectors", "VECTORS_RESULT")):
+        expected = f"          {variable}: ${{{{ needs.{need}.result }}}}"
+        if body.count(expected) != 1:
+            raise SystemExit(f"formal-core: exact {variable} result binding required")
+    expected_commands = [
+        'test "$CHECKER_RESULT" = success',
+        'test "$POLICY_RESULT" = success',
+        'if [ "$GITHUB_EVENT_NAME" = pull_request ]; then',
+        'test "$LEAN_RESULT" = skipped',
+        'test "$VECTORS_RESULT" = skipped',
+        'else',
+        'test "$LEAN_RESULT" = success',
+        'test "$VECTORS_RESULT" = success',
+        'fi',
+    ]
+    if _logical_shell_lines(steps[0].run or "") != expected_commands:
+        raise SystemExit("formal-core: exact PR-skip/non-PR-success aggregate required")
+
+
 def require_lean_installer_outside_worktree(name: str, text: str) -> None:
     require_contains(name, text, 'ELAN_INIT="$RUNNER_TEMP/elan-init.sh"')
     require_contains(name, text, '-o "$ELAN_INIT"')
@@ -1012,8 +1065,6 @@ def require_binary_audit(
     wallet_bin: str,
     walletd_bin: str,
     manifest: str,
-    *,
-    allow_unapproved_profile: bool = False,
 ) -> int:
     arguments = (
         "--require-binary",
@@ -1025,9 +1076,9 @@ def require_binary_audit(
         wallet_bin,
         "--binary",
         walletd_bin,
+        "--binary",
+        walletd_bin.replace("/walletd", "/private-spend"),
     )
-    if allow_unapproved_profile:
-        arguments = ("--allow-unapproved-profile", *arguments)
     return require_executable_command(
         name,
         steps,
@@ -1059,12 +1110,16 @@ def require_asset_package(
         f"wallet:wallet:{wallet_bin}",
         "--expect",
         f"walletd:walletd:{walletd_bin}",
+        "--expect",
+        f"wallet:private-spend:{walletd_bin.replace('/walletd', '/private-spend')}",
         "--asset",
         f"hegemon-node:hegemon-node:{node_asset}",
         "--asset",
         f"wallet:wallet:{wallet_asset}",
         "--asset",
         f"walletd:walletd:{walletd_asset}",
+        "--asset",
+        f"wallet:private-spend:{walletd_asset.replace('walletd-', 'private-spend-', 1)}",
         "--output-dir",
         "release",
         "--asset-manifest-name",
@@ -1080,7 +1135,37 @@ def require_asset_package(
     )
 
 
+# Source-level execution guard for the shared CI/tag-release app gate.
+# Prefix/suffix are reviewed logical commands, not arbitrary shell parsing:
+# pinning their shape prevents conditionals/functions/set +e from bypassing the
+# five exact top-level commands. Blank lines/comments and continuations are OK.
+APP_TRANSPORT_REGRESSION_COMMANDS = (('cargo', 'test', '--locked', '-p', 'wallet', '--test', 'node_rpc'), ('cargo', 'test', '--locked', '-p', 'wallet', '--bin', 'wallet', 'rpc_argument_tests'), ('cargo', 'test', '--locked', '-p', 'wallet', '--lib', 'node_rpc::tests'), ('npm', '--prefix', 'hegemon-app', 'test', '--', '--no-cache', '--maxWorkers=1', '--no-file-parallelism', 'tests/connections.test.ts', 'tests/rpcEndpoint.test.ts', 'tests/walletSync.test.ts', 'tests/walletdProtocol.test.ts'), ('npm', '--prefix', 'hegemon-app', 'run', 'typecheck'))
+_APP_TRANSPORT_GATE_PREFIX = ('set -euo pipefail', 'ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"', 'cd "$ROOT"', 'MODE_ARGS=()', 'if [[ "$#" -gt 1 || ( "$#" -eq 1 && "$1" != "--review-only" ) ]]; then', 'echo "usage: $0 [--review-only]" >&2', 'exit 2', 'fi', 'if [[ "$#" -eq 1 ]]; then', 'MODE_ARGS+=("$1")', 'fi', 'node --check scripts/live-app-no-ssh-e2e.mjs', 'node --check scripts/app-no-ssh-e2e-mode.mjs', 'node --test scripts/test_app_no_ssh_e2e_mode.mjs', 'if [[ "${HEGEMON_APP_NO_SSH_E2E_SYNTAX_ONLY:-0}" == "1" ]]; then', 'exit 0', 'fi', 'if [[ -n "${HEGEMON_NODE_BIN:-}" || -n "${HEGEMON_WALLETD_BIN:-}" ]]; then', 'echo "HEGEMON_NODE_BIN and HEGEMON_WALLETD_BIN are not accepted by the required E2E gate" >&2', 'exit 2', 'fi')
+_APP_TRANSPORT_GATE_SUFFIX = ('NODE_BIN="$ROOT/target/release/hegemon-node"', 'WALLETD_BIN="$ROOT/target/release/walletd"', 'MANIFEST="$ROOT/target/release/hegemon-app-no-ssh-e2e-artifacts.json"', '"$ROOT/scripts/build_release_artifacts.sh" --manifest "$MANIFEST" >/dev/null', 'HEGEMON_NODE_BIN="$NODE_BIN" HEGEMON_WALLETD_BIN="$WALLETD_BIN" HEGEMON_RELEASE_MANIFEST="$MANIFEST" node scripts/live-app-no-ssh-e2e.mjs "${MODE_ARGS[@]}"')
+
+
+def require_app_transport_regressions(source: str) -> None:
+    logical = _logical_shell_lines(source)
+    start = len(_APP_TRANSPORT_GATE_PREFIX)
+    stop = start + len(APP_TRANSPORT_REGRESSION_COMMANDS)
+    if (tuple(logical[:start]) != _APP_TRANSPORT_GATE_PREFIX
+            or tuple(logical[stop:]) != _APP_TRANSPORT_GATE_SUFFIX):
+        raise SystemExit("shared app gate execution context/order differs from reviewed source")
+    actual = logical[start:stop]
+    if len(actual) != len(APP_TRANSPORT_REGRESSION_COMMANDS):
+        raise SystemExit("shared app gate must run all five transport regressions before native build")
+    for line, arguments in zip(actual, APP_TRANSPORT_REGRESSION_COMMANDS, strict=True):
+        if tuple(_command_tokens(line)) != arguments:
+            raise SystemExit("shared app gate transport command missing, changed or not fail closed")
+
+
+def check_app_transport_regression_source() -> None:
+    source = Path(__file__).resolve().parents[1] / "scripts/check-app-no-ssh-e2e.sh"
+    require_app_transport_regressions(source.read_text(encoding="utf-8"))
+
+
 def check_ci_workflow(path: Path) -> None:
+    check_app_transport_regression_source()
     workflow = path.read_text(encoding="utf-8")
     require_canonical_workflow_syntax(workflow)
     required_jobs = (
@@ -1108,16 +1193,18 @@ def check_ci_workflow(path: Path) -> None:
             job_name,
             allow_always_condition=job_name
             in {"formal-core", "core-tests", "release-build"},
+            exact_job_condition=NON_PR_QUALIFICATION
+            if job_name in {"formal-core-lean", "formal-core-vectors"} else None,
         )
     for timed_job, timeout_minutes in (
         ("rust-lints", 30),
         ("dependency-audit", 30),
         ("formal-core-checker", 30),
         ("formal-core-lean", 30),
-        ("formal-core-vectors", 30),
+        ("formal-core-vectors", 60),
         ("formal-core-policy", 30),
         ("formal-crypto-isolation", 30),
-        ("formal-crypto-sanity", 60),
+        ("formal-crypto-sanity", 90),
         ("core-test-shards", 30),
         ("native-path-tests", 30),
         ("app-no-ssh-e2e", 30),
@@ -1148,21 +1235,14 @@ def check_ci_workflow(path: Path) -> None:
     app_steps = workflow_steps(workflow, "app-no-ssh-e2e")
     release_steps = workflow_steps(workflow, "release-binaries")
     formal_crypto_isolation_steps = workflow_steps(workflow, "formal-crypto-isolation")
-    formal_crypto_sanity_steps = workflow_steps(workflow, "formal-crypto-sanity")
+    formal_crypto_sanity_steps = require_non_pr_formal_steps(
+        workflow_steps(workflow, "formal-crypto-sanity")
+    )
     formal_core_checker_steps = workflow_steps(workflow, "formal-core-checker")
     formal_core_lean_steps = workflow_steps(workflow, "formal-core-lean")
     formal_core_vectors_steps = workflow_steps(workflow, "formal-core-vectors")
     formal_core_policy_steps = workflow_steps(workflow, "formal-core-policy")
-    require_strict_success_aggregate(
-        workflow,
-        "formal-core",
-        (
-            ("formal-core-checker", "CHECKER_RESULT"),
-            ("formal-core-lean", "LEAN_RESULT"),
-            ("formal-core-vectors", "VECTORS_RESULT"),
-            ("formal-core-policy", "POLICY_RESULT"),
-        ),
-    )
+    require_formal_core_aggregate(workflow)
     require_exact_needs(
         workflow,
         "formal-core",
@@ -1467,9 +1547,30 @@ def check_ci_workflow(path: Path) -> None:
         "target/release/wallet",
         "target/release/walletd",
         "target/release/hegemon-release-artifacts.json",
-        allow_unapproved_profile=True,
     )
-    require_step_order("release-binaries build/audit order", build_index, audit_index)
+    require_exact_step_execution_context(
+        "release-binaries binary audit", release_steps[audit_index], shell=None,
+    )
+    receipt_controls_index = require_executable_command(
+        "release-binaries bounded successor receipt rejection controls",
+        release_steps,
+        "scripts/test_check_v011_crypto_consumer.py",
+        exact_argument_vectors=((),),
+        exact_interpreter_prefix=("python3", "-I", "-B"),
+        require_default_execution_context=True,
+    )
+    predecessor_index = require_executable_command(
+        "release-binaries authenticated predecessor materialization",
+        release_steps,
+        "scripts/materialize_v011_predecessor.py",
+        exact_argument_vectors=(("--reserve-bytes", "4294967296"),),
+        exact_interpreter_prefix=("python3", "-I", "-B"),
+        require_default_execution_context=True,
+    )
+    require_step_order(
+        "release-binaries build/receipt controls/predecessor/audit order",
+        build_index, receipt_controls_index, predecessor_index, audit_index,
+    )
     print(f"ci workflow release-build gate passed: {path}")
 
 
@@ -1496,11 +1597,15 @@ def check_formal_crypto_workflow(path: Path) -> None:
                     f"focused formal-crypto {event} trigger must contain exactly one "
                     f"{trigger_path} path"
                 )
+    require_job_and_steps_fail_closed(
+        workflow, "formal-crypto-sanity", exact_job_condition=NON_PR_QUALIFICATION
+    )
+    require_contains("manual formal qualification entry point", workflow, "  workflow_dispatch:\n")
     steps = workflow_steps(workflow, "formal-crypto-sanity")
     require_contains(
         "focused formal-crypto-sanity wall-clock budget",
         job_block(workflow, "formal-crypto-sanity"),
-        "timeout-minutes: 60",
+        "timeout-minutes: 90",
     )
     formal_crypto_gate_index = require_executable_command(
         "focused complete formal-crypto gate",
@@ -1573,6 +1678,28 @@ def check_formal_crypto_workflow(path: Path) -> None:
     print(f"focused formal-crypto workflow gate passed: {path}")
 
 
+def require_historical_native_review(steps: list[WorkflowStep]) -> tuple[int, int]:
+    fetch_index = require_executable_command(
+        "release historical native backend source",
+        steps,
+        "git",
+        exact_argument_vectors=((
+            "fetch", "--no-tags", "--depth=1", "origin",
+            "4810888722e8c9a2440e31b139f8cb10b060acee",
+        ),),
+        require_default_execution_context=True,
+    )
+    review_index = require_executable_command(
+        "release historical native backend review",
+        steps,
+        "scripts/verify_native_backend_review_package.sh",
+        exact_argument_vectors=(("--historical-release",),),
+        require_default_execution_context=True,
+    )
+    require_step_order("release historical native backend source/review", fetch_index, review_index)
+    return fetch_index, review_index
+
+
 def check_release_workflow(path: Path) -> None:
     workflow = path.read_text(encoding="utf-8")
     if hashlib.sha512(workflow.encode("utf-8")).hexdigest() != PINNED_RELEASE_WORKFLOW_SHA512:
@@ -1584,6 +1711,7 @@ def check_release_workflow(path: Path) -> None:
     ):
         raise SystemExit("release workflow must be checked from its canonical checkout path")
     require_commit_rooted_successor_authority(repository_root)
+    check_app_transport_regression_source()
     require_canonical_workflow_syntax(workflow)
     top_level_keys = tuple(
         re.findall(r"(?m)^([A-Za-z_][A-Za-z0-9_-]*):", workflow)
@@ -1828,14 +1956,8 @@ def check_release_workflow(path: Path) -> None:
     successor_authorization_index = require_executable_command(
         "release transaction-proof successor authorization gate",
         authorization_steps,
-        "scripts/check_transaction_proof_successor_authorization.py",
-        exact_argument_vectors=(
-            (
-                "config/transaction-proof-successor-selection.json",
-                "--require-authorized",
-                "--verify-retained-artifacts",
-            ),
-        ),
+        "scripts/check_private_spend_launch_authorization.py",
+        exact_argument_vectors=(("--require-authorized",),),
         require_default_execution_context=True,
         exact_interpreter_prefix=("/usr/bin/python3", "-I", "-B"),
     )
@@ -1863,11 +1985,7 @@ def check_release_workflow(path: Path) -> None:
         "HEGEMON_SMALLWOOD_V5_TRUST_ROOT_SHA256: "
         "${{ vars.HEGEMON_SMALLWOOD_V5_TRUST_ROOT_SHA256 }}",
     )
-    native_review_index = require_executable_command(
-        "release security-gates",
-        security_steps,
-        "scripts/verify_native_backend_review_package.sh",
-    )
+    native_source_index, native_review_index = require_historical_native_review(security_steps)
     native_posture_index = require_executable_command(
         "release security-gates",
         security_steps,
@@ -1884,16 +2002,17 @@ def check_release_workflow(path: Path) -> None:
         "release backend package gate order",
         strict_v5_regression_index,
         v5_candidate_gate_index,
+        native_source_index,
         native_review_index,
         native_posture_index,
     )
     require_exact_needs(workflow, "app-no-ssh-e2e", ("security-gates",))
     require_contains("release app no-SSH needs", app_no_ssh, "needs: security-gates")
     require_executable_command(
-        "release app no-SSH gate",
+        "release app no-SSH sync-only gate",
         app_steps,
         "scripts/check-app-no-ssh-e2e.sh",
-        exact_argument_vectors=((),),
+        exact_argument_vectors=(("--review-only",),),
     )
     require_executable_command(
         "release app UI guard install", app_steps, "npm", ("ci", "--prefix", "hegemon-app")
@@ -1912,7 +2031,7 @@ def check_release_workflow(path: Path) -> None:
     ):
         block = job_block(workflow, job_name)
         steps = workflow_steps(workflow, job_name)
-        expected_step_count = 9 if job_name == "build-windows" else 8
+        expected_step_count = 11 if job_name == "build-windows" else 9
         if len(steps) != expected_step_count:
             raise SystemExit(
                 f"{job_name}: must contain exactly {expected_step_count} reviewed steps"
@@ -1935,6 +2054,27 @@ def check_release_workflow(path: Path) -> None:
             "scripts/build_release_artifacts.sh",
             exact_argument_vectors=(build_arguments,),
         )
+        if job_name == "build-windows":
+            launcher_regression_index = require_executable_command(
+                "build-windows raw-byte launcher hashing",
+                steps,
+                "scripts/test_check_release_launcher_policy.py",
+                exact_argument_vectors=((
+                    "ReleaseLauncherPolicyTests.test_bounded_reader_preserves_crlf_and_ctrl_z_bytes",
+                    "ReleaseLauncherPolicyTests.test_crlf_helper_requires_its_raw_digest_not_normalized_lf",
+                ),),
+                exact_interpreter_prefix=("python3", "-B"),
+            )
+            require_exact_step_execution_context(
+                "build-windows raw-byte launcher hashing",
+                steps[launcher_regression_index],
+                shell="bash",
+            )
+            require_step_order(
+                "build-windows launcher regression/build order",
+                launcher_regression_index,
+                build_index,
+            )
         if job_name == "build-macos-intel":
             manifest_path = "target/x86_64-apple-darwin/release/hegemon-release-artifacts.json"
             node_bin = "target/x86_64-apple-darwin/release/hegemon-node"
@@ -1973,6 +2113,8 @@ def check_release_workflow(path: Path) -> None:
             f"wallet:wallet:{wallet_bin}",
             "--expect",
             f"walletd:walletd:{walletd_bin}",
+            "--expect",
+            f"wallet:private-spend:{walletd_bin.replace('/walletd', '/private-spend')}",
         )
         manifest_index = require_executable_command(
             f"{job_name} manifest verification",
@@ -1981,6 +2123,13 @@ def check_release_workflow(path: Path) -> None:
             manifest_arguments,
             exact_argument_vectors=(manifest_arguments,),
             exact_interpreter_prefix=("python3",),
+        )
+        common_authorization_index = require_executable_command(
+            f"{job_name} final common authorization",
+            steps,
+            "scripts/check_private_spend_launch_authorization.py",
+            exact_argument_vectors=(("--require-authorized", "--artifact-manifest", manifest_path),),
+            exact_interpreter_prefix=("python3", "-I", "-B"),
         )
         audit_index = require_binary_audit(
             f"{job_name} binary audit",
@@ -2024,6 +2173,7 @@ def check_release_workflow(path: Path) -> None:
         for label, index in (
             ("attested build", build_index),
             ("manifest verification", manifest_index),
+            ("final common authorization", common_authorization_index),
             ("binary audit", audit_index),
             ("asset package", package_index),
         ):
@@ -2036,6 +2186,7 @@ def check_release_workflow(path: Path) -> None:
             f"{job_name} attestation/package order",
             build_index,
             manifest_index,
+            common_authorization_index,
             audit_index,
             package_index,
             upload_index,

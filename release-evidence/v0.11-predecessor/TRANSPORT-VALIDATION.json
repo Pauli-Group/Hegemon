@@ -1,0 +1,32 @@
+{
+  "archive_sha256": "c2f2ec5d98e14c3abe5ed0db3438afd91725f4be106a923ca1f0f2c6a489876f",
+  "authority_scope": "UNCHANGED_PREDECESSOR_ONLY",
+  "checks": {
+    "actual_materialization": "PASS_FRESH_AND_VERIFIED_REUSE",
+    "deterministic_rebuild": "PASS_ALL_SEVEN_PART_DIGESTS_FROM_RESTORED_TREE",
+    "isolated_unit_controls": {
+      "command": [
+        "python3",
+        "-I",
+        "-B",
+        "scripts/test_materialize_v011_predecessor.py"
+      ],
+      "failed": 0,
+      "passed": 31
+    },
+    "unchanged_source_checker": "PASS",
+    "unchanged_source_checker_file_opens_confined_to_restored_root": 25723
+  },
+  "compressed_bytes": 278177589,
+  "deployment_authorized": false,
+  "file_bytes": 837909361,
+  "file_count": 3058,
+  "free_disk_bytes_after_work": 36907687936,
+  "manifest_sha256": "dbec7e35d7402e687c3a3aa19f70c45425a127a915c74185eb0054ed57aa76fc",
+  "materializer_sha256": "0dc2b129332bf1276e5790a2db2682946e54f5af6b6850eaca50ca9e17b4dee5",
+  "new_release_authorized": false,
+  "part_count": 7,
+  "schema": "hegemon.v011.predecessor-transport-validation.v1",
+  "status": "PASS_TRANSPORT_ONLY",
+  "unit_tests_sha256": "86e48ac4fad009bca71e3448b97c95790bbd06ee1355289ddfa3457d6149490e"
+}

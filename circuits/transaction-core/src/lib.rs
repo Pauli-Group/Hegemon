@@ -8,6 +8,9 @@
 
 extern crate alloc;
 
+pub mod asset_registry_v1;
+pub mod asset_recovery_v1;
+pub mod bounded_policy;
 pub mod constants;
 pub mod hashing;
 pub mod hashing_pq;

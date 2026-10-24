@@ -1,0 +1,260 @@
+{
+  "schema": "hegemon.private-spend.launch-evidence-contract.v5",
+  "status": "NOT_QUALIFIED",
+  "source_authority": "scripts/private_spend_launch_authorized_registry.json",
+  "gate_receipts": [
+    "G1",
+    "G2",
+    "G3",
+    "G4",
+    "G5",
+    "G6"
+  ],
+  "independent_review": "G7 exact source-pinned binding digest and all gate digests",
+  "actual_deployment": "Separate operator live-chain receipt; authorization never implies shipped",
+  "build_phase": "Qualified source tuple precedes release build. Final authority rows and actual new-tuple lifecycle must already be frozen for the built artifacts. Existing final manifest is generated/verified afterward, and the common final phase runs after existing verification before packaging on each target.",
+  "review_requirements": [
+    "Inspect actual gate endpoints and receipts, not prepared candidates",
+    "Authenticate G4 actual full cohort and integration",
+    "Authenticate G6 actual 35-gate same-byte local lifecycle and unchanged runtime binary source snapshot",
+    "Review one persistent inclusive Q <= 3*2^64 protocol experiment across proof families",
+    "Review exact funding recipient, selected pre-mainnet/mainnet manifest, activation height and per-block/per-proof source limits; ongoing HGN has no expiry or accepted-proof quota",
+    "Review same source-native identity derivation output and genesis empty/21M schedule",
+    "Record retained trusted implementation/compiler/primitive assumptions without expanding to universal Rust equivalence"
+  ],
+  "source_closure": {
+    "runtime_files": 541,
+    "runtime_predecessor_sha256": "7f47443a61a53130cd39b938758845ace2fa8cfa74ac7580c43bf5a49aec2955",
+    "runtime_path_set_sha256": "290e18918d2b701d8d8bf2bd9f57d0e367210899a6ddacec848b06a2dd796f63",
+    "named_formal_sources": 70,
+    "formal_map_sha256": "a6aa702f014e7cb73f2f075dbd18cd456dcee6a7ac33dd60a5ee32c8f2468ca7",
+    "permitted_runtime_delta": [
+      "one reviewed capability literal in launch_candidate.rs",
+      "historical release-checker workflow digest only",
+      "node/src/native/rpc.rs",
+      "wallet/Cargo.toml",
+      "wallet/src/bin/private_spend.rs",
+      "wallet/src/poseidon2_v8_launch_sync.rs",
+      "wallet/src/poseidon2_v8_sync.rs",
+      "wallet/src/private_spend_journal.rs",
+      "wallet/src/private_spend_rpc.rs",
+      "wallet/src/store.rs"
+    ],
+    "additional_formal_sources": "Exact G1/G3/G5 accepted source_closure and imports; no unrelated inventory rows",
+    "runtime_delta_review": "Source-owned SHA256 remains unset until actual focused compiler/regression CLI0 receipts and independent finite F1 review; exact eight postimages only. No generic Rust equivalence."
+  },
+  "actual_g1_g3_g5_schema": "hegemon.current-release-gate-qualification.v1",
+  "future_gate_required_fields": [
+    "gate",
+    "qualified=true",
+    "status=QUALIFIED_CONDITIONAL",
+    "preparation_only=false",
+    "source_root exact retained SRC",
+    "identity exact current relation/profile/common77/CompFF01",
+    "endpoint fully qualified symbols in actual Std-only audit logs",
+    "assumptions exact PR205 F1/F4 plus ideal SHA512/coins/external adaptive GHHM and inclusive lifetime hypothesis",
+    "evidence_prerequisites exact pins",
+    "source_closure exact current source pins",
+    "canonical_checks strict actual native CLI0/source/object/log/provenance",
+    "independent_review exact current endpoint/source/evidence/assumptions"
+  ],
+  "final_phase": "Source-owned target row binds produced node/wallet/walletd and actual lifecycle plus independent final review. Legacy full lifecycle keeps its immutable 35-gate semantics. Ongoing HGN single-key may use the separate composite successor schema below, never relabel its external subreceipt as legacy success. Empty rows reject.",
+  "retained_g6_boundary": "PASS_DEV_ONLY is accepted solely as an immutable implementation predecessor. It does not validate or authorize new pre-mainnet/mainnet identity/capability binaries.",
+  "portable_evidence_layout": {
+    "recorded_SRC": "current checkout; only exact source-approved runtime beforeimages use the predecessor archive",
+    "recorded_project": "release-evidence/retained plus original project-relative suffix; no arbitrary host path access"
+  },
+  "new_scoped_checks": "Exact Lean4.32.2 SHA256, ordered strict8 argv, pinned launcher and actual65520KiB stack, natural CLI0, frozen plan/result/actual-checks joins, full-consumption unique Std-only audit roots; producer stdout exactly empty.",
+  "retained_checks": "Immutable independently reviewed G4/PR205 source/object/import provenance with original actual flags. No retrospective strict8 demand or compiler replay. Required endpoint closure has actual producer/audit or authenticated retained reuse; incidental70 sources are hashfrozen.",
+  "cryptographic_class": {
+    "max_total_oracle_queries": 55340232221128654848,
+    "max_total_proof_attempts": 2097152,
+    "attempts_include": [
+      "failed",
+      "unused",
+      "successful"
+    ],
+    "continuation_queries": "uniform_all_context",
+    "attempt_bound": "external_conditional_hypothesis"
+  },
+  "accepted_chain_cap_boundary": "Bounded historical identity retains its accepted-chain proof cap and finite expiry. Ongoing identity requires both fields explicitly null and no automatic shutdown by height or accepted-proof count. The selected finite adversarial attempt/query class remains an external conditional hypothesis, never an infinite-security claim.",
+  "authority_sources": "Seven exact source pins: contract, common checker, CI policy checker, artifact manifest helper, local lifecycle runner, IO helper and progress watchdog.",
+  "actual_runtime_delta_review_schema": "hegemon.private-spend.actual-runtime-delta-review.v1",
+  "local_lifecycle": "Exact approved non-Development native profile and produced binaries. Legacy six-case/35-gate route unchanged. Composite successor requires four fresh cases, external26 gates, exact real public treasury output and custody restoration, authenticated retained disposable obligations, explicit current-source semantic bridge and actual policy regressions. Real treasury spend stays unexecuted; fresh two-of-three execution stays deferred.",
+  "native_network_identity": "Source-reviewed exact pre-mainnet or mainnet derivation receipt; ongoing identity explicitly selects network_profile and has null expiry and accepted-proof quota; canonical SHA512 manifest recomputed; BLAKE3 chain/genesis derivation remains trusted native construction independently reviewed under PR205 F1",
+  "cryptographic_class_scope": "The numeric cryptographic_class below is the immutable bounded historical class. Ongoing class extension is separately reviewed under ongoing_security_qualification; no runtime accepted-proof count enforces offline/failed attempts.",
+  "ongoing_identity_contract": {
+    "identity_schema": "hegemon.private-spend.native-launch-identity.v2",
+    "network_profiles": [
+      "pre-mainnet",
+      "mainnet"
+    ],
+    "deactivation_height_exclusive": null,
+    "max_total_proofs": null,
+    "binding_schema": "hegemon.private-spend.release-binding.v4",
+    "manifest_field": "network_manifest",
+    "native_receipt_field": "native_identity_receipt",
+    "native_receipt_schema": "hegemon.private-spend.native-identity.v2",
+    "qualification_field": "ongoing_security_qualification",
+    "qualification_schema": "hegemon.private-spend.ongoing-security-qualification.v1",
+    "qualification_authority": "Actual conditional compact security qualification source pin 0feac630cf0edfb67f95bc5583148c32c9dc7836e262e467761c5ccef33e384d. Final source review, runtime and artifact lifecycle authority remain separately checked.",
+    "relation_profile": {
+      "relation_id": "Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4",
+      "relation_digest": "cd747b8430b51faee6c4bf94d7b0c8f8dfdb7863c6b927db53e7cea67c7a20a49aaf3ceda5b9ba2947dc9b89d070e1ac5fe9ab1c77cba6d859285c2f324b56f5",
+      "public_words": 86,
+      "binding_bytes": 688,
+      "circuit": 12,
+      "carrier_magic": "HGPSLC02",
+      "carrier_fixed_bytes": 5784,
+      "max_proof_bytes": 171848,
+      "max_carrier_bytes": 177632
+    },
+    "additional_identity_fields": [
+      "relation_id",
+      "public_words"
+    ],
+    "policy_qualification_field": "ongoing_policy_qualification",
+    "policy_qualification_schema": "hegemon.private-spend.ongoing-policy-relation-qualification.v1",
+    "policy_qualification_authority": "Actual compact86/source41 G1/G2/G3/G4/G5/privacy conditional qualification source pin 0c7b76db682b65510eab6a8af38f44927bf50a72258c8d38a350d804e8ebfe39. No development receipt grants production authority.",
+    "native_manifest_rules_encoding": "Actual native canonical 0x-prefixed lowercase rules_hash and launch_reference_rules_hash; preserve prefixes in canonical SHA512 serialization.",
+    "native_output": "Actual raw H0 JSON binds genesis_hash,node_config.networkManifest/networkProfile/chainId/networkManifestDigest and exact current private_spend_parameters."
+  },
+  "ongoing_runtime_review": {
+    "schema": "hegemon.private-spend.ongoing-runtime-delta-review.v1",
+    "decision": "GO_FINITE_F1_ONGOING_HGN_SOURCE",
+    "source_owned_pin": "SOURCE_ONGOING_RUNTIME_DELTA_REVIEW_SHA256 initially None",
+    "required_fields": [
+      "schema",
+      "decision",
+      "reviewer",
+      "source_root",
+      "identity",
+      "assumptions",
+      "parent_runtime_inventory",
+      "current_runtime_inventory",
+      "reviewed_runtime_delta",
+      "proof_relation_inputs",
+      "actual_checks",
+      "normalized_capability_sha256",
+      "hgn_only",
+      "assets_enabled",
+      "production_authorized",
+      "universal_rust_equivalence"
+    ],
+    "actual_check_names": [
+      "production_node_compile",
+      "production_wallet_compile",
+      "production_walletd_compile",
+      "ongoing_policy_regressions",
+      "wallet_rpc_regressions"
+    ],
+    "actual_check_schema": "hegemon.private-spend.actual-runtime-check.v1",
+    "scope": "Exact historical541 parent paths plus explicitly reviewed genuine additions; no removals. Every changed path has authenticated beforeimage (null only for new paths) and exact current postimage. Capability executable source additionally normalized by CAPABILITY declaration body. proof_relation_inputs must equal the exact ordered41 compact source pins from the mandatory current86 policy qualification; their native manifest hash must reproduce the newly qualified source-owned compact relation digest. HGN-only, assets disabled, no universal Rust equivalence or production authorization."
+  },
+  "composite_lifecycle": {
+    "schema": "hegemon.hgn-single-key.composite-lifecycle.v1",
+    "status": "PASS_LOCAL_HGN_SINGLE_KEY_COMPOSITE",
+    "final_review_schema": "hegemon.hgn-single-key.final-independent-review.v1",
+    "final_review_decision": "GO_LOCAL_HGN_SINGLE_KEY_COMPOSITE",
+    "components": [
+      "external_lifecycle",
+      "treasury_public_output",
+      "custody_restore",
+      "disposable_treasury_spend",
+      "semantic_bridge",
+      "policy_regressions"
+    ],
+    "fresh_cases": [
+      "ordinary",
+      "lock",
+      "claim",
+      "refund"
+    ],
+    "external_actual_schema": "hegemon.private-spend.actualnode.compff01.v1",
+    "external_actual_status": "PASS_LOCAL_EXTERNAL_TREASURY_NETWORK_LIFECYCLE",
+    "external_gate_count": 26,
+    "external_gate_boundary": "Six fresh actions each inclusion/rollback/unchanged-resubmission, plus canonical_issuance,reward_maturity_wait,claim_payout,treasury_canonical_value,refund_payout,persistent_restart,fresh_node_all_bodies,all_exact_carriers_restart_fresh_node. Exact gate set required.",
+    "structured_obligation": {
+      "fields": [
+        "id",
+        "mode",
+        "passed",
+        "evidence"
+      ],
+      "evidence_assertion_fields": [
+        "receipt",
+        "pointer",
+        "expected"
+      ],
+      "pointer": "Nonempty list of exact JSON object keys or array indices; authenticated actual field must exist and equal expected.",
+      "modes": [
+        "fresh",
+        "retained",
+        "composed"
+      ],
+      "acceptance": "Every required named obligation exactly once, passed true, nonempty pinned observations. Final independent review binds concrete semantic mapping, checker, contract and all component hashes."
+    },
+    "public_native_readback": {
+      "status": "PASS_PUBLIC_OUTPUT_NATIVE_READBACK",
+      "required_fields": [
+        "status",
+        "final_identity",
+        "runtime_inventory",
+        "observed",
+        "commitment_recomputed",
+        "restart_fresh_node_match",
+        "producer"
+      ],
+      "observed_fields": [
+        "funding_address",
+        "reward_height",
+        "block_hash",
+        "action_sha256",
+        "canonical_body_sha256",
+        "output_position",
+        "opening",
+        "recipient_key",
+        "authorization_limbs",
+        "commitment"
+      ],
+      "boundary": "Actual producer must independently decode/recompute and tie restart/fresh node body bytes; adapter cannot invent unobserved evidence."
+    },
+    "deferred_scope": [
+      "fresh_two_of_three_approval_final"
+    ],
+    "real_treasury_spend_exercised": false,
+    "production_authorized": false,
+    "limitations": "Finite reviewed composition only. Missing retained source/binary bytes or undisclosed changed semantics reject; neither same relation digest nor arbitrary summary booleans establish the bridge. Legacy 35-gate mapping explicitly labels nine approval/final gates deferred, treasury value/payout composed, remaining gates fresh.",
+    "current_proof_files": "Wrapper current_proofs names fee_fund_1,fee_fund_2,claim_lock,claim,refund_lock,refund. Each value exactly action/carrier/proof pins. They join actual external records and SHA512s; validate unchanged action framing, HGPSLC02/circuit12/current digest/chain/reference,86 canonical public words, SMZL tail and actual measured bytes within caps. Six actions cover four unique cases; never substitute old77 proof sizes.",
+    "recipient_codec": "recipient_key4 field limbs; commitment7; authorization owner7 equals authorization_key4 plus randomness extension3. Exact native readback remains required."
+  },
+  "current_policy_qualification": {
+    "schema": "hegemon.private-spend.ongoing-policy-relation-qualification.v1",
+    "status": "QUALIFIED_CONDITIONAL",
+    "source_owned_pin": "SOURCE_ONGOING_POLICY_QUALIFICATION_SHA256 = 0c7b76db682b65510eab6a8af38f44927bf50a72258c8d38a350d804e8ebfe39",
+    "relation_profile": {
+      "relation_id": "Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4",
+      "relation_digest": "cd747b8430b51faee6c4bf94d7b0c8f8dfdb7863c6b927db53e7cea67c7a20a49aaf3ceda5b9ba2947dc9b89d070e1ac5fe9ab1c77cba6d859285c2f324b56f5",
+      "public_words": 86,
+      "binding_bytes": 688,
+      "circuit": 12,
+      "carrier_magic": "HGPSLC02",
+      "carrier_fixed_bytes": 5784,
+      "max_proof_bytes": 171848,
+      "max_carrier_bytes": 177632
+    },
+    "source_inputs": "Exact ordered41 compact relation-source pins, including lib.rs and every affine, Boolean, source-CSE, packed-Poseidon, direct-SHA and compact-SHA lowering/certificate module. The source-owned ordered path tuple is COMPACT_RELATION_SOURCE_PATHS. Recompute native source-manifest SHA512 and match actual native output; current source bytes must match. This requirement does not qualify new source or install new authority.",
+    "qualified_obligations": [
+      "G1_current_relation",
+      "G2_current_implementation_binding",
+      "G3_current_relation",
+      "G4_current_public_statement",
+      "G5_current_history",
+      "current_policy_privacy"
+    ],
+    "inherited_boundary": "Exact historical gates and six77-word proof artifacts are predecessor evidence only. New qualification binds their hashes plus actual current policy source/statement/privacy endpoints and the reviewed ongoing adversarial class.",
+    "review_schema": "hegemon.private-spend.ongoing-policy-independent-review.v1",
+    "review_decision": "GO_QUALIFIED_CURRENT_POLICY_RELATION",
+    "authority_boundary": "No current-policy qualification receipt was promoted by this checker change. Development-only shape/proof receipts and17 semantic predicates cannot alone qualify the current relation."
+  }
+}

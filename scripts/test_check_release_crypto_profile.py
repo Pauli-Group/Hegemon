@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+import copy
+import hashlib
+from unittest.mock import patch
 from pathlib import Path
 import subprocess
 import sys
@@ -421,5 +424,151 @@ def main() -> None:
     print("release crypto profile canonical/contradiction tests passed")
 
 
+
+
+def private_launch_tests() -> None:
+    """Synthetic pinned fixtures exercise the adapter, never real authority."""
+    controls = 0
+    with tempfile.TemporaryDirectory(prefix="private-profile-synthetic-test-") as raw:
+        root = Path(raw).resolve()
+        (root / "scripts").mkdir()
+        manifest_path = root / "manifest.json"
+        registry_path = root / "scripts/private_spend_launch_authorized_registry.json"
+        authorizer = root / "scripts/check_private_spend_launch_authorization.py"
+        receipt_path = root / "synthetic-authorization.json"
+        binaries = [root / name for _, name in checker.PRIVATE_LAUNCH_ARTIFACTS]
+        refusal = "Error: " + checker.UNAPPROVED_PROFILE_REFUSAL
+
+        def fixture():
+            for binary in binaries:
+                write_profile_command(binary, stderr=refusal, status=1)
+            identity = dict(checker.PRIVATE_LAUNCH_PROFILE,
+                network_profile="pre-mainnet", chain_id="01" * 32,
+                genesis_hash="02" * 32, manifest_digest="03" * 64,
+                deactivation_height_exclusive=None, max_total_proofs=None)
+            manifest = {"target_triple": "synthetic-test-host", "artifacts": [
+                {"package": package, "binary": name, "path": name,
+                 "sha256": hashlib.sha256(binary.read_bytes()).hexdigest()}
+                for (package, name), binary in zip(checker.PRIVATE_LAUNCH_ARTIFACTS, binaries, strict=True)]}
+            manifest_path.write_text(json.dumps(manifest))
+            registry = {"schema": "hegemon.private-spend.source-authorized-registry.v2",
+                "release": {"identity": identity}, "final_artifacts": [{
+                "target_triple": "synthetic-test-host", "identity": identity,
+                "artifact_sha256": {x["binary"]: x["sha256"] for x in manifest["artifacts"]}}]}
+            registry_path.write_text(json.dumps(registry))
+            receipt = {"schema": "hegemon.private-spend.release-authorization.v2",
+                "authorization_kind": "qualified_source_tuple", "identity": identity,
+                "production_artifacts_verified": True, "affected_lifecycle_verified": True,
+                "deployment_verified": False, "lifecycle_scope": "hgn_single_key_composite",
+                "artifact_manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest()}
+            receipt_path.write_text(json.dumps(receipt))
+            # Only this temporary test root contains a synthetic authorizer.
+            # Its argv must match the real strict source/artifact invocation.
+            authorizer.write_text("import pathlib,sys\n"
+                "root=pathlib.Path(__file__).resolve().parents[1]\n"
+                "assert sys.argv[1:]==['--require-authorized','--artifact-manifest','manifest.json']\n"
+                "print((root/'synthetic-authorization.json').read_text())\n")
+            return manifest, registry, receipt
+
+        def run():
+            with patch.object(checker, "SOURCE_ROOT", root), patch.object(checker, "rustc_host", return_value="synthetic-test-host"):
+                return checker.private_launch_profile(root, manifest_path)
+
+        fixture()
+        passed = run()
+        assert passed["private_spend_launch_authority"] is True
+        assert passed["production_authority"] is False
+        assert passed["authorization_scope"] == checker.PRIVATE_LAUNCH_SCOPE
+        assert passed["identity"]["public_words"] == 86
+        controls += 1
+        expect_rejected(lambda: checker.private_launch_profile(root, manifest_path), "source root")
+        controls += 1
+
+        for field, value in [("authorization_kind", "operator_opt_in"),
+            ("production_artifacts_verified", False), ("affected_lifecycle_verified", 1),
+            ("deployment_verified", True), ("lifecycle_scope", "historical77"),
+            ("artifact_manifest_sha256", "00" * 32)]:
+            _, _, receipt = fixture()
+            receipt[field] = value
+            receipt_path.write_text(json.dumps(receipt))
+            expect_rejected(run, "final source/artifact/lifecycle authorization")
+            controls += 1
+        for field, value in [("public_words", 77), ("circuit", 11),
+            ("relation_digest", "00" * 64), ("network_profile", "development"),
+            ("max_total_proofs", 1000)]:
+            _, _, receipt = fixture()
+            receipt["identity"][field] = value
+            receipt_path.write_text(json.dumps(receipt))
+            expect_rejected(run, "current86 ongoing HGN identity")
+            controls += 1
+        _, registry, _ = fixture()
+        registry["release"] = None
+        registry_path.write_text(json.dumps(registry))
+        expect_rejected(run, "source-owned identity")
+        controls += 1
+        _, registry, _ = fixture()
+        registry["final_artifacts"][0]["artifact_sha256"]["wallet"] = "00" * 32
+        registry_path.write_text(json.dumps(registry))
+        expect_rejected(run, "source-owned final artifacts")
+        controls += 1
+        fixture()
+        authorizer.write_text("raise SystemExit('unqualified current source')\n")
+        expect_rejected(run, "source authorization failed")
+        controls += 1
+        manifest, _, _ = fixture()
+        manifest["target_triple"] = "other-target"
+        manifest_path.write_text(json.dumps(manifest))
+        expect_rejected(run, "exact native target")
+        controls += 1
+        for mutation in ("missing", "extra", "reordered", "wrong-package"):
+            manifest, _, _ = fixture()
+            if mutation == "missing":
+                manifest["artifacts"].pop()
+            elif mutation == "extra":
+                manifest["artifacts"].append(dict(manifest["artifacts"][-1]))
+            elif mutation == "reordered":
+                manifest["artifacts"][-2:] = reversed(manifest["artifacts"][-2:])
+            else:
+                manifest["artifacts"][-1]["package"] = "private-spend"
+            manifest_path.write_text(json.dumps(manifest))
+            expect_rejected(run, "requires exactly node/wallet/walletd/private-spend")
+            controls += 1
+        manifest, _, _ = fixture()
+        manifest["artifacts"][-1]["path"] = manifest["artifacts"][0]["path"]
+        manifest["artifacts"][-1]["sha256"] = manifest["artifacts"][0]["sha256"]
+        manifest_path.write_text(json.dumps(manifest))
+        expect_rejected(run, "artifact paths must be distinct")
+        controls += 1
+        for index in (1, 3):
+            fixture()
+            binaries[index].write_text(binaries[index].read_text() + "# changed after manifest\n")
+            expect_rejected(run, "digest differs from manifest")
+            controls += 1
+        for index in (2, 3):
+            fixture()
+            write_profile_command(binaries[index], stderr="Error: unrelated failure", status=1)
+            # Repin the intentionally changed fixture so the execution check runs.
+            manifest = json.loads(manifest_path.read_text())
+            manifest["artifacts"][index]["sha256"] = hashlib.sha256(binaries[index].read_bytes()).hexdigest()
+            manifest_path.write_text(json.dumps(manifest))
+            expect_rejected(run, "unrelated failure")
+            controls += 1
+        for index in (1, 3):
+            fixture()
+            write_profile_command(binaries[index], stdout=json.dumps(canonical_profile()))
+            manifest = json.loads(manifest_path.read_text())
+            manifest["artifacts"][index]["sha256"] = hashlib.sha256(binaries[index].read_bytes()).hexdigest()
+            manifest_path.write_text(json.dumps(manifest))
+            expect_rejected(run, "every legacy profile to refuse exactly")
+            controls += 1
+        fixture()
+        authorizer.write_text(authorizer.read_text()
+            + "pathlib.Path(__file__).write_text(pathlib.Path(__file__).read_text()+'\\n# changed\\n')\n")
+        expect_rejected(run, "authority changed during validation")
+        controls += 1
+    print(f"private launch adapter synthetic controls passed: {controls}")
+
+
 if __name__ == "__main__":
     main()
+    private_launch_tests()

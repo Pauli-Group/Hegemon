@@ -69,9 +69,10 @@ Retained runs must stay within the package's 16-GiB memory ceiling; successful
 receipts produced with lower memory ceilings remain reusable. Dependencies
 compile or validate before their importers. `check` is read-only:
 it requires every package OLean and state entry to match the current
-source/import/compiler pins. Both commands cover the four public wrappers,
-which checks their exact theorem aliases in Lean's kernel. A successful `check`
-prints `PASS read-only RP05 package check`.
+source/import/compiler pins. `build` checks newly compiled theorem aliases in
+Lean's kernel. `check` validates recorded object integrity and provenance; it
+does not invoke Lean or independently recheck theorem bodies. A successful
+`check` prints `PASS read-only RP05 package check`; this is an integrity result.
 
 Before package-local cache or retained-receipt reuse, `build` also attempts to
 reuse the 257 unchanged original `formal/crypto/` and `formal/lean/` objects.
@@ -164,3 +165,39 @@ with clean-check commands in
 [`RP05_REVIEW_REPRODUCTION.md`](../../docs/crypto/RP05_REVIEW_REPRODUCTION.md).
 Local execution plans and raw compiler/lifecycle records are not part of the
 portable public review package.
+
+## Bounded continuous integration
+
+`.github/workflows/rp05-proof.yml` runs a source/import/public-contract guard and
+tooling regressions without Lean. Relevant proof changes additionally run
+isolated incremental compilation with a 600-second verification deadline and
+a 20-minute whole-job cap. Locked external-library cache preparation has an
+eight-minute cap. Documentation-only changes skip the proof job after the
+source guard determines that no proof inputs changed.
+
+Project objects come only from successful main runs of this workflow; PR caches,
+local retained receipts and original project build objects are not admitted.
+Source, ordered imports, every OLean part, compiler/library inputs, options and
+audit-root lists invalidate reuse. Every registered theorem's actual proof-body
+closure is audited, rejecting missing bodies, unsafe/partial dependencies and
+nonstandard axioms, including sorry/native-decide-generated axioms.
+
+Weekly/manual cold main runs use a separate 14400-second verification deadline
+and 270-minute job cap, recompiling the entire project graph and serially
+replaying project modules with the pinned `leanchecker`. Compilation and kernel
+replay each have a 360-second per-module limit; theorem-body audits retain their
+180-second limit. Every phase remains bounded by the aggregate deadline. This uses the same
+Lean kernel, not an independent verifier. External libraries remain explicit
+pinned cached inputs. A first unseeded ordinary run may exhaust its budget;
+seed the trusted main artifact via the separate cold lane before crediting
+incremental checks. No successful remote run is claimed by this implementation.
+
+    python3 -I -B scripts/rp05_ci.py source
+    python3 -I -B scripts/test_rp05_ci.py
+
+`supplemental-roots.json` adds source-pinned shared modules and theorem roots
+without altering the baseline four-root manifest. The new context accounting,
+physical bind/replay and primitive-budget results preserve their explicit
+limits. [H2 remains open](../../docs/crypto/RP05_ADAPTIVE_CONTEXT_OBLIGATION.md).
+The [primitive audit](../../docs/crypto/RP05_PRIMITIVE_ASSUMPTIONS.md) records six
+unquantified advantages and separately identifies model/implementation trust.

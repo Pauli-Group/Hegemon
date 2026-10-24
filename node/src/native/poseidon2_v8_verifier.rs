@@ -2102,10 +2102,6 @@ mod tests {
         assert!(!probe.outside_pool.load(Ordering::SeqCst));
         assert!(probe.maximum.load(Ordering::SeqCst) <= pool.current_num_threads());
     }
-    use crate::native::poseidon2_v8_pending::{
-        plan_poseidon2_v8_pending_chain, verify_poseidon2_v8_block_order, Poseidon2V8PendingAction,
-        Poseidon2V8PendingCaps,
-    };
     use crate::native::poseidon2_v8_state::{
         Poseidon2V8Checkpoint, Poseidon2V8NoteTreeState, Poseidon2V8StateStore,
         Poseidon2V8UnverifiedBlock,
@@ -3343,7 +3339,7 @@ mod tests {
     #[cfg(feature = "poseidon2-v8-retained-test-support")]
     #[test]
     #[ignore = "requires generated source-bound disjoint SMZA fixtures selected by HEGEMON_TEST_DISJOINT_SMZA_DIRECTORY"]
-    fn bounded_native_disjoint_smza_block_survives_restart_and_fresh_import() {
+    fn historical_disjoint_smza_proofs_verify_but_immature_membership_rejects() {
         // Explicit source-candidate fixture binding, not production activation.
         assert!(protocol_versioning::smallwood_poseidon2_production_capability().is_none());
         let directory = std::path::PathBuf::from(
@@ -3461,103 +3457,69 @@ mod tests {
         let parent_tip = parent_store.tip().unwrap();
         let parent_notes = parent_store.note_tip().unwrap();
         assert_eq!(parent_tip.height(), 2);
-        assert_eq!(parent_notes.leaf_count(), 2);
-        assert_eq!(parent_notes.root(), views[0].note_anchor());
+        assert_eq!(parent_notes.leaf_count(), 0);
+        assert_eq!(parent_notes.root(), production.note_genesis_root());
+        assert_ne!(parent_notes.root(), views[0].note_anchor());
         let context = retained_block_context(parent_tip, [0xa3; 32]);
-        let duplicates = [actions[0].1.as_slice(), actions[0].1.as_slice()];
-        let duplicate_error = parent_store
-            .verify_uncommitted_block(
-                Poseidon2V8UnverifiedBlock::new(context, &duplicates).unwrap(),
-                &mut production.connector(),
-            )
-            .expect_err("two valid copies of one spend must not form a valid block");
-        assert!(matches!(
-            duplicate_error,
-            crate::native::poseidon2_v8_state::Poseidon2V8StateError::DuplicateNullifier(_)
-        ));
+        for (action, leaf) in &actions {
+            production
+                .connector()
+                .verify_exact_v8_leaf(context, 0, leaf)
+                .expect("unchanged disjoint relation proof still verifies");
+            let leaves = [leaf.as_slice()];
+            let error = parent_store
+                .verify_uncommitted_block(
+                    Poseidon2V8UnverifiedBlock::new(context, &leaves).unwrap(),
+                    &mut production.connector(),
+                )
+                .expect_err("valid historical relation has an immature membership root");
+            assert!(matches!(
+                error,
+                crate::native::poseidon2_v8_state::Poseidon2V8StateError::UnknownNoteAnchor { .. }
+            ));
+            let relayed =
+                crate::native::decode_native_peer_pending_action_v3(&action.encode(), 3).unwrap();
+            let error = node
+                .stage_relayed_pending_action(relayed)
+                .expect_err("relayed historical proof cannot bypass maturity");
+            assert!(error.to_string().contains("note anchor"), "{error}");
+        }
         let mut mutated = actions[1].1.clone();
         *mutated.last_mut().unwrap() ^= 1;
-        let bad_proof_leaves = [actions[0].1.as_slice(), mutated.as_slice()];
-        let proof_error = parent_store
-            .verify_uncommitted_block(
-                Poseidon2V8UnverifiedBlock::new(context, &bad_proof_leaves).unwrap(),
-                &mut production.connector(),
-            )
-            .expect_err("later proof mutation must fail without committing the earlier spend");
-        assert!(matches!(
-            proof_error,
-            crate::native::poseidon2_v8_state::Poseidon2V8StateError::ProofRejected(_)
-        ));
+        assert!(production
+            .connector()
+            .verify_exact_v8_leaf(context, 0, &mutated)
+            .is_err());
         assert_eq!(parent_store.tip().unwrap(), parent_tip);
         assert_eq!(parent_store.note_tip().unwrap(), parent_notes);
         assert_eq!(parent_store.proof_lifetime_count().unwrap().get(), 0);
         for view in views {
-            for nullifier in view.nullifiers().into_iter().flatten() {
-                assert!(!parent_store.is_nullifier_spent(nullifier).unwrap());
+            for nf in view.nullifiers().into_iter().flatten() {
+                assert!(!parent_store.is_nullifier_spent(nf).unwrap());
             }
         }
         drop(parent_store);
-        for (action, _) in &actions {
-            let relayed =
-                crate::native::decode_native_peer_pending_action_v3(&action.encode(), 3).unwrap();
-            let staged = node.stage_relayed_pending_action(relayed).unwrap().unwrap();
-            assert_eq!(staged.encode(), action.encode());
-        }
-        let ordered_bytes = actions.each_ref().map(|(action, _)| action.encode());
-        let block3 = mine_current_retained_template(&node, &ordered_bytes);
-        assert_eq!(block3.height, 3);
-        let store =
-            Poseidon2V8StateStore::open(&node.db, genesis, production.note_genesis_root()).unwrap();
-        let expected_tip = store.tip().unwrap();
-        let expected_notes = store.note_tip().unwrap();
-        assert_eq!(expected_tip.block_hash(), block3.hash);
-        assert_eq!(expected_notes.leaf_count(), 4);
-        assert_eq!(store.proof_lifetime_count().unwrap().get(), 2);
-        for view in views {
-            for nullifier in view.nullifiers().into_iter().flatten() {
-                assert!(store.is_nullifier_spent(nullifier).unwrap());
-            }
-        }
-        drop(store);
         drop(node);
         let restarted =
             crate::native::NativeNode::reopen_after_sled_release_for_test(config).unwrap();
-        assert_eq!(
-            restarted
-                .load_canonical_block_at_height_unverified(3)
-                .unwrap()
-                .action_bytes,
-            ordered_bytes
-        );
         let restarted_store =
             Poseidon2V8StateStore::open(&restarted.db, genesis, production.note_genesis_root())
                 .unwrap();
-        assert_eq!(restarted_store.tip().unwrap(), expected_tip);
-        assert_eq!(restarted_store.note_tip().unwrap(), expected_notes);
-        assert_eq!(restarted_store.proof_lifetime_count().unwrap().get(), 2);
-        for view in views {
-            for nullifier in view.nullifiers().into_iter().flatten() {
-                assert!(restarted_store.is_nullifier_spent(nullifier).unwrap());
-            }
-        }
+        assert_eq!(restarted_store.tip().unwrap(), parent_tip);
+        assert_eq!(restarted_store.note_tip().unwrap(), parent_notes);
         let fresh_directory = tempfile::tempdir().unwrap();
         let fresh = crate::native::NativeNode::open(retained_native_config(
             fresh_directory.path(),
-            "disjoint-smza-fresh",
+            "immature-disjoint-fresh",
         ))
         .unwrap();
-        import_exact_retained_blocks(&fresh, &[block1, block2, block3]);
+        import_exact_retained_blocks(&fresh, &[block1, block2]);
         let fresh_store =
             Poseidon2V8StateStore::open(&fresh.db, genesis, production.note_genesis_root())
                 .unwrap();
-        assert_eq!(fresh_store.tip().unwrap(), expected_tip);
-        assert_eq!(fresh_store.note_tip().unwrap(), expected_notes);
-        assert_eq!(fresh_store.proof_lifetime_count().unwrap().get(), 2);
-        for view in views {
-            for nullifier in view.nullifiers().into_iter().flatten() {
-                assert!(fresh_store.is_nullifier_spent(nullifier).unwrap());
-            }
-        }
+        assert_eq!(fresh_store.tip().unwrap(), parent_tip);
+        assert_eq!(fresh_store.note_tip().unwrap(), parent_notes);
+        assert!(fresh_store.exact_rows_equal(&restarted_store).unwrap());
     }
 
     fn retained_coinbase_action(
@@ -3608,6 +3570,7 @@ mod tests {
     #[cfg(feature = "poseidon2-v8-retained-test-support")]
     fn retained_native_config(path: &Path, name: &str) -> crate::native::NativeConfig {
         crate::native::NativeConfig {
+            network: crate::native::NativeNetworkIdentity::legacy(),
             dev: true,
             tmp: false,
             base_path: path.to_path_buf(),
@@ -3770,8 +3733,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "poseidon2-v8-retained-test-support")]
-    #[ignore = "verifies both retained RP03 proofs and their exact positive-value native lifecycle; optional test-only manifest is selected by HEGEMON_TEST_RETAINED_SMZ9_MANIFEST_PATH"]
-    fn retained_rp03_two_coinbase_chain_survives_rpc_relay_mining_restart_reorg_and_fresh_sync() {
+    #[ignore = "verifies unchanged historical RP03 cryptography and immature-reward rejection; optional manifest is selected by HEGEMON_TEST_RETAINED_SMZ9_MANIFEST_PATH"]
+    fn retained_rp03_proofs_verify_but_height_three_rewards_reject_as_immature() {
         assert!(protocol_versioning::smallwood_poseidon2_production_capability().is_none());
         let production =
             test_production(protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_NETWORK_ID)
@@ -3939,11 +3902,9 @@ mod tests {
             primary_view.note_anchor()
         );
 
-        // Drive the retained bytes through the real native-node RPC,
-        // peer/mempool, mining, block-store, restart, reorg, and fresh-import
-        // paths. Only fixture insertion for the miner-local action-11 notes is
-        // test-specific; user action 10 enters through the actual wallet JSON
-        // request or peer PendingAction decoder.
+        // Preserve unchanged historical relation evidence, then prove that the
+        // real native RPC/peer paths reject its now-immature reward membership.
+        // A fresh positive lifecycle needs a newly bound mature statement.
         let live_primary_directory = tempfile::tempdir().unwrap();
         let live_primary_config =
             retained_native_config(live_primary_directory.path(), "retained-v8-primary");
@@ -3997,180 +3958,38 @@ mod tests {
         );
         assert!(live_primary.state.read().pending_actions.is_empty());
 
-        let staged_primary = live_primary
+        // The relation proof remains valid evidence. Its fixed parent height
+        // is two, however, so these particular bytes cannot spend rewards
+        // issued at heights one and two under the new maturity rule.
+        let immutable_parent = live_primary.best_meta();
+        let immature_error = live_primary
             .validate_and_stage_action(retained_wallet_rpc_request(
                 production.expected_context(),
                 &primary.envelope,
             ))
-            .expect("actual native RPC path stages the retained primary action");
-        assert_eq!(staged_primary.encode(), primary.pending_action_bytes);
-        assert_eq!(
-            live_primary
-                .action_tree
-                .get(staged_primary.tx_hash.as_ref())
-                .expect("read retained primary mempool row")
-                .expect("retained primary mempool row exists")
-                .as_ref(),
-            primary.pending_action_bytes.as_slice(),
+            .expect_err("valid historical proof cannot spend an immature reward");
+        assert!(
+            immature_error.to_string().contains("note anchor"),
+            "{immature_error}"
         );
-        let primary_block_3 = mine_current_retained_template(
-            &live_primary,
-            std::slice::from_ref(&primary.pending_action_bytes),
-        );
-        assert_eq!(primary_block_3.height, 3);
-
-        // A second node receives the exact action through the production peer
-        // decoder and stages it through the relayed mempool path before mining
-        // the independently randomized sibling proof.
-        let independent_directory = tempfile::tempdir().unwrap();
-        let independent_node = crate::native::NativeNode::open(retained_native_config(
-            independent_directory.path(),
-            "retained-v8-independent",
-        ))
-        .expect("open retained independent native node");
-        import_exact_retained_blocks(
-            &independent_node,
-            &[coinbase_block_1.clone(), coinbase_block_2.clone()],
-        );
-        let independent_peer_action = crate::native::decode_native_peer_pending_action_v3(
+        assert_eq!(live_primary.best_meta(), immutable_parent);
+        assert!(live_primary.state.read().pending_actions.is_empty());
+        let relayed = crate::native::decode_native_peer_pending_action_v3(
             &independent.pending_action_bytes,
             3,
         )
-        .expect("peer decoder accepts exact independent retained action");
-        let relayed_independent = independent_node
-            .stage_relayed_pending_action(independent_peer_action)
-            .expect("relayed retained action passes proof and state preflight")
-            .expect("relayed retained action is newly inserted");
-        assert_eq!(
-            relayed_independent.encode(),
-            independent.pending_action_bytes
-        );
-        let independent_block_3 = mine_current_retained_template(
-            &independent_node,
-            std::slice::from_ref(&independent.pending_action_bytes),
-        );
-        let independent_block_4 = mine_current_retained_template(&independent_node, &[]);
-
-        // Extend the stored primary branch independently so the original
-        // proof can win back after the independent sibling first becomes the
-        // canonical branch.
-        let primary_branch_directory = tempfile::tempdir().unwrap();
-        let primary_branch_node = crate::native::NativeNode::open(retained_native_config(
-            primary_branch_directory.path(),
-            "retained-v8-primary-branch",
-        ))
-        .expect("open retained primary branch node");
-        import_exact_retained_blocks(
-            &primary_branch_node,
-            &[
-                coinbase_block_1.clone(),
-                coinbase_block_2.clone(),
-                primary_block_3.clone(),
-            ],
-        );
-        let primary_block_4 = mine_current_retained_template(&primary_branch_node, &[]);
-        let primary_block_5 = mine_current_retained_template(&primary_branch_node, &[]);
-
-        live_primary
-            .import_announced_block(independent_block_3.clone())
-            .expect("store independent retained sibling");
-        live_primary
-            .import_announced_block(independent_block_4.clone())
-            .expect("independent retained branch wins");
-        assert_eq!(live_primary.best_meta().hash, independent_block_4.hash);
-        assert_eq!(
-            live_primary
-                .load_canonical_block_at_height_unverified(3)
-                .expect("load independent canonical height three")
-                .action_bytes,
-            vec![independent.pending_action_bytes.clone()],
-        );
-        live_primary
-            .import_announced_block(primary_block_4.clone())
-            .expect("store extended primary sibling");
-        live_primary
-            .import_announced_block(primary_block_5.clone())
-            .expect("longer primary branch wins back");
-        assert_eq!(live_primary.best_meta().hash, primary_block_5.hash);
-        assert_eq!(
-            live_primary
-                .load_canonical_block_at_height_unverified(3)
-                .expect("load restored primary canonical height three")
-                .action_bytes,
-            vec![primary.pending_action_bytes.clone()],
-        );
-
-        drop(live_primary);
-        let restarted_live_primary =
-            crate::native::NativeNode::reopen_after_sled_release_for_test(live_primary_config)
-                .expect("restart source-reverifies the retained primary branch");
-        assert_eq!(
-            restarted_live_primary.best_meta().hash,
-            primary_block_5.hash
-        );
-        let restarted_primary_block = restarted_live_primary
-            .load_canonical_block_at_height_unverified(3)
-            .expect("restart reloads exact retained action body");
-        assert_eq!(
-            restarted_primary_block.action_bytes,
-            vec![primary.pending_action_bytes.clone()]
-        );
-        let restarted_actions = crate::native::decode_block_actions(&restarted_primary_block)
-            .expect("restart exact-decodes retained action body");
-        let restarted_view =
-            Poseidon2V8ActionView::from_pending(production, 3, &restarted_actions[0])
-                .expect("restart reconstructs retained V8 action view");
-        assert_eq!(restarted_view.exact_native_leaf(), primary.native_leaf);
-
-        // Fresh import uses the exact persisted block bodies. A body mutation
-        // is rejected against the unchanged action root before the valid block
-        // is accepted and replayed.
-        let fresh_live_directory = tempfile::tempdir().unwrap();
-        let fresh_live = crate::native::NativeNode::open(retained_native_config(
-            fresh_live_directory.path(),
-            "retained-v8-fresh",
-        ))
-        .expect("open retained fresh native node");
-        import_exact_retained_blocks(
-            &fresh_live,
-            &[coinbase_block_1.clone(), coinbase_block_2.clone()],
-        );
-        let mut mutated_primary_block = primary_block_3.clone();
-        let mutated_block_byte = mutated_primary_block.action_bytes[0]
-            .len()
-            .checked_sub(1)
-            .expect("retained block action is nonempty");
-        mutated_primary_block.action_bytes[0][mutated_block_byte] ^= 1;
-        let mutated_block_error = fresh_live
-            .import_announced_block(mutated_primary_block)
-            .expect_err("fresh import rejects retained action-body mutation");
+        .expect("historical independent proof preserves exact peer bytes");
+        let relay_error = live_primary
+            .stage_relayed_pending_action(relayed)
+            .expect_err("peer submission must enforce the same maturity");
         assert!(
-            mutated_block_error.to_string().contains("action root")
-                || mutated_block_error.to_string().contains("identity")
-                || mutated_block_error
-                    .to_string()
-                    .contains("decode native block action failed"),
-            "unexpected mutated block-body error: {mutated_block_error}"
+            relay_error.to_string().contains("note anchor"),
+            "{relay_error}"
         );
-        import_exact_retained_blocks(
-            &fresh_live,
-            &[
-                primary_block_3.clone(),
-                primary_block_4.clone(),
-                primary_block_5.clone(),
-            ],
-        );
-        assert_eq!(fresh_live.best_meta().hash, primary_block_5.hash);
-        let fresh_primary_block = fresh_live
-            .load_canonical_block_at_height_unverified(3)
-            .expect("fresh node reloads retained primary action body");
-        assert_eq!(
-            fresh_primary_block.action_bytes,
-            vec![primary.pending_action_bytes.clone()]
-        );
+        assert!(live_primary.state.read().pending_actions.is_empty());
 
-        let canonical_directory = tempfile::tempdir().unwrap();
-        let database = sled::open(canonical_directory.path()).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let database = sled::open(directory.path()).unwrap();
         let store = Poseidon2V8StateStore::open(&database, genesis, production.note_genesis_root())
             .unwrap();
         let no_leaves: [&[u8]; 0] = [];
@@ -4180,187 +3999,104 @@ mod tests {
             Some(coinbase_0),
         )
         .unwrap();
-        let mut connector = production.connector();
-        let tip_1 = store.apply_verified_block(block_1, &mut connector).unwrap();
+        let tip_1 = store
+            .apply_verified_block(block_1, &mut production.connector())
+            .unwrap();
         let block_2 = Poseidon2V8UnverifiedBlock::new_with_trailing_coinbase(
             retained_block_context(tip_1, [0x12; 32]),
             &no_leaves,
             Some(coinbase_1),
         )
         .unwrap();
-        let tip_2 = store.apply_verified_block(block_2, &mut connector).unwrap();
-        assert_eq!(tip_2.height(), 2);
-        assert_eq!(store.note_tip().unwrap(), expected_two_coinbase_notes);
-        assert_eq!(store.proof_lifetime_count().unwrap().get(), 0);
-
-        // Exact source verification yields the sole mempool/mining transition.
-        let pending = Poseidon2V8PendingAction::new(
-            primary.pending_action.tx_hash,
-            primary.pending_action_bytes.len(),
-            primary_view.exact_native_leaf(),
-            primary_transition,
-        );
-        let pending_plan = plan_poseidon2_v8_pending_chain(
-            tip_2,
-            &[pending],
-            Poseidon2V8PendingCaps::native_block(),
-        )
-        .expect("retained RP03 action is selectable for the height-three template");
-        assert_eq!(
-            pending_plan.selected_action_ids(),
-            &[primary.pending_action.tx_hash]
-        );
-        assert_eq!(
-            pending_plan.selected_action_bytes(),
-            primary.pending_action_bytes.len()
-        );
-        assert_eq!(
-            verify_poseidon2_v8_block_order(tip_2, &[pending]).unwrap(),
-            primary_transition.after_root()
-        );
-
-        let primary_leaves = [primary_view.exact_native_leaf()];
-        let primary_block = Poseidon2V8UnverifiedBlock::new(primary_context, &primary_leaves)
-            .expect("primary retained mined block is exact");
-        let mut preflight_connector =
-            ExactRetainedLeafVerifier::new(production, &primary.native_leaf);
-        assert_eq!(
-            store
-                .verify_uncommitted_block(primary_block, &mut preflight_connector)
-                .unwrap()
-                .height(),
-            3
-        );
-        assert_eq!(preflight_connector.verified_calls, 1);
-        assert_eq!(store.tip().unwrap(), tip_2);
-        let mut block_connector = ExactRetainedLeafVerifier::new(production, &primary.native_leaf);
-        let primary_tip = store
-            .apply_verified_block(primary_block, &mut block_connector)
-            .expect("primary retained proof commits as the height-three block");
-        assert_eq!(block_connector.verified_calls, 1);
-        assert_eq!(primary_tip.height(), 3);
-        assert_eq!(store.proof_lifetime_count().unwrap().get(), 1);
-        let mut expected_spend_notes = expected_two_coinbase_notes.clone();
-        for commitment in primary_view.commitments().into_iter().flatten() {
-            expected_spend_notes.append(commitment).unwrap();
-        }
-        assert_eq!(expected_spend_notes.leaf_count(), 4);
-        assert_eq!(store.note_tip().unwrap(), expected_spend_notes);
-        for nullifier in primary_view.nullifiers().into_iter().flatten() {
-            assert!(store.is_nullifier_spent(nullifier).unwrap());
+        let tip_2 = store
+            .apply_verified_block(block_2, &mut production.connector())
+            .unwrap();
+        let pending_notes = store.note_tip().unwrap();
+        assert_eq!(pending_notes.leaf_count(), 0);
+        assert_eq!(pending_notes.root(), production.note_genesis_root());
+        for (view, block_context, exact_leaf) in [
+            (
+                primary_view,
+                primary_context,
+                primary.native_leaf.as_slice(),
+            ),
+            (
+                independent_view,
+                independent_context,
+                independent.native_leaf.as_slice(),
+            ),
+        ] {
+            let leaves = [view.exact_native_leaf()];
+            let block = Poseidon2V8UnverifiedBlock::new(block_context, &leaves).unwrap();
+            let mut exact_verifier = ExactRetainedLeafVerifier::new(production, exact_leaf);
+            let error = store
+                .verify_uncommitted_block(block, &mut exact_verifier)
+                .expect_err(
+                    "verified relation cannot authorize an unknown immature membership root",
+                );
+            assert!(matches!(
+                error,
+                crate::native::poseidon2_v8_state::Poseidon2V8StateError::UnknownNoteAnchor { .. }
+            ));
+            assert_eq!(exact_verifier.verified_calls, 1);
+            assert_eq!(store.tip().unwrap(), tip_2);
+            assert_eq!(store.note_tip().unwrap(), pending_notes);
+            for nf in view.nullifiers().into_iter().flatten() {
+                assert!(!store.is_nullifier_spent(nf).unwrap());
+            }
         }
         drop(store);
         drop(database);
-
-        // Restart reads the exact committed rows; no cached proof-validity bit
-        // is used for the independent replacement or fresh-node replay below.
-        let database = sled::open(canonical_directory.path()).unwrap();
+        let database = sled::open(directory.path()).unwrap();
         let restarted =
             Poseidon2V8StateStore::open(&database, genesis, production.note_genesis_root())
                 .unwrap();
-        assert_eq!(restarted.tip().unwrap(), primary_tip);
-        assert_eq!(restarted.note_tip().unwrap(), expected_spend_notes);
-
-        let independent_leaves = [independent_view.exact_native_leaf()];
-        let independent_block =
-            Poseidon2V8UnverifiedBlock::new(independent_context, &independent_leaves)
-                .expect("independent retained replacement block is exact");
-        let mut reorg_connector =
-            ExactRetainedLeafVerifier::new(production, &independent.native_leaf);
-        let independent_tip = restarted
-            .reorganize_verified(
-                &[primary_tip.block_hash()],
-                &[independent_block],
-                &mut reorg_connector,
-            )
-            .expect(
-                "independent retained proof replaces the primary proof after full verification",
-            );
-        assert_eq!(reorg_connector.verified_calls, 1);
-        assert_eq!(independent_tip.height(), 3);
-        assert_ne!(independent_tip.block_hash(), primary_tip.block_hash());
-        assert_eq!(restarted.proof_lifetime_count().unwrap().get(), 1);
-        assert_eq!(restarted.note_tip().unwrap(), expected_spend_notes);
-        for nullifier in independent_view.nullifiers().into_iter().flatten() {
-            assert!(restarted.is_nullifier_spent(nullifier).unwrap());
-        }
-
-        // Extend the stored primary sibling and reorg back to it. The source
-        // verifier sees the original primary native-leaf bytes again; the
-        // empty child changes chain weight without changing proof lifetime.
-        let no_extension_leaves: [&[u8]; 0] = [];
-        let primary_extension = Poseidon2V8UnverifiedBlock::new(
-            retained_block_context(primary_tip, [0x14; 32]),
-            &no_extension_leaves,
-        )
-        .unwrap();
-        let mut restore_primary_connector =
-            ExactRetainedLeafVerifier::new(production, &primary.native_leaf);
-        let restored_primary_tip = restarted
-            .reorganize_verified(
-                &[independent_tip.block_hash()],
-                &[primary_block, primary_extension],
-                &mut restore_primary_connector,
-            )
-            .expect("the extended primary branch wins after re-verifying the original bytes");
-        assert_eq!(restore_primary_connector.verified_calls, 1);
-        assert_eq!(restored_primary_tip.height(), 4);
-        assert_eq!(restored_primary_tip.block_hash(), [0x14; 32]);
-        assert_eq!(restarted.proof_lifetime_count().unwrap().get(), 1);
-        assert_eq!(restarted.note_tip().unwrap(), expected_spend_notes);
-        for nullifier in primary_view.nullifiers().into_iter().flatten() {
-            assert!(restarted.is_nullifier_spent(nullifier).unwrap());
-        }
-
-        // Restart only after the final primary branch is canonical.
-        drop(restarted);
-        drop(database);
-        let database = sled::open(canonical_directory.path()).unwrap();
-        let restarted =
-            Poseidon2V8StateStore::open(&database, genesis, production.note_genesis_root())
-                .unwrap();
-        assert_eq!(restarted.tip().unwrap(), restored_primary_tip);
-        assert_eq!(restarted.proof_lifetime_count().unwrap().get(), 1);
-        assert_eq!(restarted.note_tip().unwrap(), expected_spend_notes);
-
+        assert_eq!(restarted.tip().unwrap(), tip_2);
+        assert_eq!(restarted.note_tip().unwrap(), pending_notes);
         let fresh_directory = tempfile::tempdir().unwrap();
         let fresh_database = sled::open(fresh_directory.path()).unwrap();
         let fresh =
             Poseidon2V8StateStore::open(&fresh_database, genesis, production.note_genesis_root())
                 .unwrap();
-        let fresh_block_1 = Poseidon2V8UnverifiedBlock::new_with_trailing_coinbase(
-            retained_block_context(genesis, [0x11; 32]),
-            &no_leaves,
-            Some(coinbase_0),
-        )
-        .unwrap();
-        let fresh_tip_1 = Poseidon2V8Checkpoint::new(1, [0x11; 32], genesis.root());
-        let fresh_block_2 = Poseidon2V8UnverifiedBlock::new_with_trailing_coinbase(
-            retained_block_context(fresh_tip_1, [0x12; 32]),
-            &no_leaves,
-            Some(coinbase_1),
-        )
-        .unwrap();
-        let mut fresh_connector = ExactRetainedLeafVerifier::new(production, &primary.native_leaf);
-        let fresh_tip = fresh
-            .replay_verified_suffix(
-                &[
-                    fresh_block_1,
-                    fresh_block_2,
-                    primary_block,
-                    primary_extension,
-                ],
-                &mut fresh_connector,
-            )
-            .expect("fresh node source-verifies the original primary proof bytes");
-        assert_eq!(fresh_connector.verified_calls, 1);
-        assert_eq!(fresh_tip, restored_primary_tip);
-        assert_eq!(fresh.proof_lifetime_count().unwrap().get(), 1);
-        assert_eq!(fresh.note_tip().unwrap(), restarted.note_tip().unwrap());
+        fresh
+            .replay_verified_suffix(&[block_1, block_2], &mut production.connector())
+            .unwrap();
         assert!(restarted.exact_rows_equal(&fresh).unwrap());
+        let live_store = Poseidon2V8StateStore::open(
+            &live_primary.db,
+            Poseidon2V8Checkpoint::new(
+                0,
+                production.activation_genesis_hash(),
+                production.stablecoin_genesis_root(),
+            ),
+            production.note_genesis_root(),
+        )
+        .unwrap();
+        let live_notes = live_store.note_tip().unwrap();
+        assert_eq!(live_notes.leaf_count(), 0);
+        drop(live_store);
+        drop(live_primary);
+        let restarted_live =
+            crate::native::NativeNode::reopen_after_sled_release_for_test(live_primary_config)
+                .unwrap();
+        assert_eq!(restarted_live.best_meta(), immutable_parent);
+        let fresh_live_directory = tempfile::tempdir().unwrap();
+        let fresh_live = crate::native::NativeNode::open(retained_native_config(
+            fresh_live_directory.path(),
+            "immature-retained-fresh",
+        ))
+        .unwrap();
+        import_exact_retained_blocks(&fresh_live, &[coinbase_block_1, coinbase_block_2]);
+        let error = fresh_live
+            .validate_and_stage_action(retained_wallet_rpc_request(
+                production.expected_context(),
+                &primary.envelope,
+            ))
+            .expect_err("fresh native replay retains immature-reward rejection");
+        assert!(error.to_string().contains("note anchor"), "{error}");
 
-        // Lifecycle evidence can only make the wire routes recognizable. The
-        // shared authority decision remains fail-closed while the source
+        // Historical relation evidence does not authorize a new-maturity
+        // positive lifecycle. The shared authority remains fail-closed while the source
         // capability is absent.
         drop(_test_binding);
         assert!(Poseidon2V8ProductionBinding::from_source_for_replay()

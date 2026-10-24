@@ -1,6 +1,11 @@
 //! Action, transfer, bridge, sidecar, and resource admission evaluators.
 
+use super::asset_recovery_native::{RECOVERY_ADMIN_ACTION_ID, RECOVERY_SPEND_ACTION_ID};
 use super::*;
+use transaction_circuit::asset_spend_v1_admission::{
+    ASSET_ADMIN_ACTION_ID as NATIVE_ASSET_ADMIN_ACTION_ID,
+    ASSET_SPEND_ACTION_ID as NATIVE_ASSET_SPEND_ACTION_ID,
+};
 
 pub(crate) fn validate_binding_hash(
     anchor: [u8; 48],
@@ -561,12 +566,10 @@ pub(crate) fn native_action_wire_replay_projection_step(
         // ciphertext archive/state stream. This projection is therefore an
         // exact zero-row effect after route-local payload validation.
         if is_poseidon2_v8_action(action) {
-            super::poseidon2_v8_verifier::preflight_poseidon2_v8_selected_action_args(
-                &action.public_args,
-            )
-            .map_err(|error| anyhow!("decode V8 wire replay projection failed: {error}"))?;
+            super::native_proof_binding::preflight_native_proof_action_args(action)
+                .map_err(|error| anyhow!("decode V8 wire replay projection failed: {error}"))?;
         } else {
-            admitted_poseidon2_v8_coinbase_commitment(action)?;
+            admitted_poseidon2_v8_coinbase_commitments(action)?;
         }
         return Ok(NativeActionWireReplayProjectionStep {
             ciphertext_hash_count: 0,
@@ -1107,6 +1110,16 @@ pub(crate) fn validate_transfer_action_payload(action: &PendingAction) -> Result
     // connector at the actual candidate/block height.  Never let this route
     // fall through to the historical 48-byte transfer checks below.
     if is_poseidon2_v8_action(action) {
+        if is_native_asset_action(action) && !native_asset_action_scope_valid(action) {
+            return Err(anyhow!(
+                "native asset action envelope or outer metadata mismatch"
+            ));
+        }
+        if is_native_recovery_action(action) && !native_recovery_action_scope_valid(action) {
+            return Err(anyhow!(
+                "native recovery action envelope or outer metadata mismatch"
+            ));
+        }
         if action.anchor != [0u8; 48]
             || !action.nullifiers.is_empty()
             || !action.commitments.is_empty()
@@ -1116,10 +1129,8 @@ pub(crate) fn validate_transfer_action_payload(action: &PendingAction) -> Result
                 "Poseidon2 V8 action must not carry legacy 48-byte anchor, nullifier, commitment, or artifact state"
             ));
         }
-        super::poseidon2_v8_verifier::preflight_poseidon2_v8_selected_action_args(
-            &action.public_args,
-        )
-        .map_err(|error| anyhow!("Poseidon2 V8 action framing rejected: {error}"))?;
+        super::native_proof_binding::preflight_native_proof_action_args(action)
+            .map_err(|error| anyhow!("Poseidon2 V8 action framing rejected: {error}"))?;
         return Ok(());
     }
     if action.nullifiers.is_empty() {
@@ -1650,7 +1661,7 @@ pub(crate) fn validate_coinbase_action_payload(action: &PendingAction) -> Result
         return Err(anyhow!("not a coinbase action"));
     }
     if is_poseidon2_v8_coinbase_action(action) {
-        admitted_poseidon2_v8_coinbase_commitment(action)?;
+        admitted_poseidon2_v8_coinbase_commitments(action)?;
         return Ok(());
     }
     if !action.nullifiers.is_empty()
@@ -1690,10 +1701,55 @@ pub(crate) fn validate_coinbase_action_payload(action: &PendingAction) -> Result
         .map_err(|rejection| native_coinbase_action_payload_admission_error(input, rejection))
 }
 
+/// Validate each exact note using the unchanged source-owned note admission.
+/// Returned order is miner then funding and consumes one authority action slot.
+pub(crate) fn admitted_poseidon2_v8_coinbase_commitments(
+    action: &PendingAction,
+) -> Result<[Option<poseidon2_v8_state::Poseidon2V8Commitment>; 2]> {
+    if action.action_id != ACTION_MINT_POSEIDON2_V8_REWARDS {
+        return Ok([
+            Some(admitted_poseidon2_v8_coinbase_commitment(action)?),
+            None,
+        ]);
+    }
+    if !is_poseidon2_v8_coinbase_action(action)
+        || action.binding != protocol_versioning::launch_candidate::RP06_VERSION_BINDING.into()
+        || !coinbase_action_scope_valid(action)
+        || action.public_args.len() > POSEIDON2_V8_REWARDS_MAX_ARGS_SCALE_BYTES
+    {
+        return Err(anyhow!(
+            "invalid V8 rewards action route/binding/surface/size"
+        ));
+    }
+    let args: MintPoseidon2V8RewardsArgs =
+        decode_scale_exact(&action.public_args, "V8 rewards args")?;
+    let notes = [Some(args.miner_note), args.funding_note];
+    let count = notes.iter().flatten().count();
+    if action.ciphertext_hashes.len() != count || action.ciphertext_sizes.len() != count {
+        return Err(anyhow!("V8 rewards ciphertext count mismatch"));
+    }
+    let mut commitments = [None; 2];
+    for (index, note) in notes.into_iter().enumerate() {
+        if let Some(note) = note {
+            commitments[index] = Some(admitted_poseidon2_v8_coinbase_note(
+                &note,
+                action.ciphertext_hashes[index],
+                action.ciphertext_sizes[index],
+            )?);
+        }
+    }
+    if commitments[0] == commitments[1] {
+        return Err(anyhow!("V8 rewards notes must have distinct commitments"));
+    }
+    Ok(commitments)
+}
+
 pub(crate) fn admitted_poseidon2_v8_coinbase_commitment(
     action: &PendingAction,
 ) -> Result<poseidon2_v8_state::Poseidon2V8Commitment> {
-    if !is_poseidon2_v8_coinbase_action(action) {
+    if !is_poseidon2_v8_coinbase_action(action)
+        || action.action_id != ACTION_MINT_POSEIDON2_V8_COINBASE
+    {
         return Err(anyhow!("not a Poseidon2 V8 coinbase action"));
     }
     if action.binding != protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING.into()
@@ -1717,7 +1773,21 @@ pub(crate) fn admitted_poseidon2_v8_coinbase_commitment(
     }
     let args: MintPoseidon2V8CoinbaseArgs =
         decode_scale_exact(&action.public_args, "Poseidon2 V8 coinbase action args")?;
-    let opening = args.miner_note.opening;
+    admitted_poseidon2_v8_coinbase_note(
+        &args.miner_note,
+        action.ciphertext_hashes[0],
+        action.ciphertext_sizes[0],
+    )
+}
+
+/// Route-independent validation of a public native note. This establishes its
+/// exact commitment/ciphertext shape, not any mint authorization or allocation.
+fn admitted_poseidon2_v8_coinbase_note(
+    note: &protocol_shielded_pool::poseidon2_v8_coinbase::Poseidon2V8CoinbaseNoteData,
+    supplied_ciphertext_hash: [u8; 48],
+    supplied_ciphertext_size: u32,
+) -> Result<poseidon2_v8_state::Poseidon2V8Commitment> {
+    let opening = note.opening;
     if opening.value == 0
         || u128::from(opening.value) > transaction_core::constants::MAX_IN_CIRCUIT_VALUE
     {
@@ -1756,11 +1826,11 @@ pub(crate) fn admitted_poseidon2_v8_coinbase_commitment(
             relation_opening,
         )
         .map_err(|error| anyhow!("Poseidon2 V8 coinbase note hash rejected: {error:?}"))?;
-    if args.miner_note.commitment != expected_commitment || expected_commitment == [0; 7] {
+    if note.commitment != expected_commitment || expected_commitment == [0; 7] {
         return Err(anyhow!("Poseidon2 V8 coinbase commitment mismatch"));
     }
 
-    let encrypted = &args.miner_note.encrypted_note;
+    let encrypted = &note.encrypted_note;
     let (raw_len, metadata) = coinbase_ciphertext_metadata(encrypted);
     if raw_len != POSEIDON2_V8_COINBASE_RAW_CIPHERTEXT_BYTES {
         return Err(anyhow!(
@@ -1790,8 +1860,8 @@ pub(crate) fn admitted_poseidon2_v8_coinbase_commitment(
     let Some((ciphertext_hash, ciphertext_size)) = metadata else {
         return Err(anyhow!("Poseidon2 V8 coinbase ciphertext metadata missing"));
     };
-    if action.ciphertext_hashes[0] != ciphertext_hash
-        || action.ciphertext_sizes[0] != ciphertext_size
+    if supplied_ciphertext_hash != ciphertext_hash
+        || supplied_ciphertext_size != ciphertext_size
         || ciphertext_size as usize != POSEIDON2_V8_COINBASE_RAW_CIPHERTEXT_BYTES
     {
         return Err(anyhow!(
@@ -1814,6 +1884,13 @@ pub(crate) fn decode_pending_action_v3_exact(
     bytes: &[u8],
     context: &'static str,
 ) -> Result<PendingAction> {
+    let maximum = storage::native_action_payload_byte_cap_v3(bytes);
+    if bytes.len() > maximum {
+        return Err(anyhow!(
+            "{context} payload exceeds route-specific limit: {} > {maximum}",
+            bytes.len()
+        ));
+    }
     match decode_scale_exact::<PendingAction>(bytes, context) {
         Ok(action) => Ok(action),
         Err(active_error) => {
@@ -2422,9 +2499,21 @@ pub(crate) fn native_sync_observed_tip_request_range_from_admitted_missing(
     admitted_missing_range: Option<NativeSyncRange>,
 ) -> Option<NativeSyncRange> {
     if let Some(admitted_range) = admitted_missing_range {
-        let gap = input.announced_height.saturating_sub(input.best_height);
-        if gap > input.max_blocks && backfill_blocks <= NATIVE_SYNC_REORG_BACKFILL_BLOCKS {
-            return Some(admitted_range);
+        // A higher peer tip establishes an ordinary extension candidate, not
+        // evidence that the local chain diverges within the default ancestor
+        // window. Probe immediately after the local tip first. If that block
+        // reveals a missing fork parent, the import path escalates the
+        // backfill window and retries with authenticated recovery context.
+        // Equal-height forks take the separate path below and still receive
+        // the default ancestor window.
+        if backfill_blocks <= NATIVE_SYNC_REORG_BACKFILL_BLOCKS {
+            let from_height = input.best_height.saturating_add(1);
+            return Some(NativeSyncRange {
+                from_height,
+                to_height: input
+                    .announced_height
+                    .min(from_height.saturating_add(input.max_blocks.saturating_sub(1))),
+            });
         }
         return Some(native_sync_missing_request_range_apply_reorg_backfill(
             input,
@@ -3044,6 +3133,13 @@ pub(crate) fn is_transfer_action(action_id: u16) -> bool {
         ACTION_SHIELDED_TRANSFER_INLINE
             | ACTION_SHIELDED_TRANSFER_SIDECAR
             | ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
+            | RP06_ACTION_ID
+            | HTLC_ACTION_ID
+            | PRIVATE_SPEND_ACTION_ID
+            | NATIVE_ASSET_SPEND_ACTION_ID
+            | NATIVE_ASSET_ADMIN_ACTION_ID
+            | RECOVERY_SPEND_ACTION_ID
+            | RECOVERY_ADMIN_ACTION_ID
     )
 }
 
@@ -3075,7 +3171,74 @@ pub(crate) fn owns_legacy_ciphertext_da_rows(action: &PendingAction) -> bool {
 
 pub(crate) fn is_poseidon2_v8_action(action: &PendingAction) -> bool {
     action.family_id == FAMILY_SHIELDED_POOL
-        && action.action_id == ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
+        && matches!(
+            action.action_id,
+            ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
+                | RP06_ACTION_ID
+                | HTLC_ACTION_ID
+                | PRIVATE_SPEND_ACTION_ID
+                | NATIVE_ASSET_SPEND_ACTION_ID
+                | NATIVE_ASSET_ADMIN_ACTION_ID
+                | RECOVERY_SPEND_ACTION_ID
+                | RECOVERY_ADMIN_ACTION_ID
+        )
+}
+
+/// Structural recognition only. Exact development-network authority is
+/// enforced separately by NativeProofBinding before proof/state admission.
+pub(crate) fn is_native_asset_action(action: &PendingAction) -> bool {
+    action.family_id == FAMILY_SHIELDED_POOL
+        && matches!(
+            action.action_id,
+            NATIVE_ASSET_SPEND_ACTION_ID | NATIVE_ASSET_ADMIN_ACTION_ID
+        )
+}
+
+/// Strict native envelope and outer metadata binding without proof verification
+/// or authority creation. The decoder applies source/profile/byte ceilings
+/// before ciphertext hashing or structured proof work. Profile13/domain9/
+/// backend2 are source-owned authority fields; PendingAction encodes only the
+/// circuit/crypto pair checked here.
+pub(crate) fn native_asset_action_scope_valid(action: &PendingAction) -> bool {
+    is_native_asset_action(action) && super::asset_native::preflight_pending(action).is_ok()
+}
+
+/// Fresh recovery recognition only; does not activate a network or verify proofs.
+pub(crate) fn is_native_recovery_action(action: &PendingAction) -> bool {
+    action.family_id == FAMILY_SHIELDED_POOL
+        && matches!(
+            action.action_id,
+            RECOVERY_SPEND_ACTION_ID | RECOVERY_ADMIN_ACTION_ID
+        )
+}
+
+/// Exact recovery wire and canonical outer metadata, before cryptographic work.
+/// Every nested proof remains subject to the source-owned verifier later.
+pub(crate) fn native_recovery_action_scope_valid(action: &PendingAction) -> bool {
+    use transaction_circuit::asset_recovery_wire_v1 as wire;
+    if !is_native_recovery_action(action)
+        || action.binding != super::asset_native::native_binding()
+        || action.anchor != [0; 48]
+        || !action.nullifiers.is_empty()
+        || !action.commitments.is_empty()
+        || action.candidate_artifact.is_some()
+    {
+        return false;
+    }
+    match action.action_id {
+        RECOVERY_SPEND_ACTION_ID => wire::decode_spend_ref(&action.public_args).is_ok_and(|a| {
+            action.fee == a.public.base.fee
+                && action.ciphertext_hashes == a.public.base.ciphertext_commitments
+                && action.ciphertext_sizes == [wire::CIPHERTEXT_BYTES as u32; 3]
+        }),
+        RECOVERY_ADMIN_ACTION_ID => {
+            wire::decode_admin_ref(&action.public_args).is_ok()
+                && action.fee == 0
+                && action.ciphertext_hashes.is_empty()
+                && action.ciphertext_sizes.is_empty()
+        }
+        _ => false,
+    }
 }
 
 pub(crate) fn is_inactive_native_sidecar_transfer(action: &PendingAction) -> bool {
@@ -3205,11 +3368,22 @@ pub(crate) fn ensure_native_v3_active_action_route_ids(
         ));
     }
     if family_id == FAMILY_SHIELDED_POOL
-        && action_id == ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
+        && matches!(
+            action_id,
+            ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
+                | RP06_ACTION_ID
+                | HTLC_ACTION_ID
+                | PRIVATE_SPEND_ACTION_ID
+                | NATIVE_ASSET_SPEND_ACTION_ID
+                | NATIVE_ASSET_ADMIN_ACTION_ID
+                | RECOVERY_SPEND_ACTION_ID
+                | RECOVERY_ADMIN_ACTION_ID
+        )
     {
         // Route recognition is structural only. The exact network, height,
-        // binding, family, action, and class are authorized by the shared
-        // protocol-versioning decision before payload/proof admission.
+        // binding, family, action, and class are authorized by the route's
+        // source-owned proof authority before proof/state admission. The asset
+        // namespace uses its separate finite Development authority.
         return Ok(());
     }
     if family_id == FAMILY_BRIDGE {
@@ -3225,7 +3399,12 @@ pub(crate) fn ensure_native_v3_active_action_route_ids(
             "coinbase actions are internal mining outputs and cannot enter the native V3 mempool"
         ));
     }
-    if family_id == FAMILY_SHIELDED_POOL && action_id == ACTION_MINT_POSEIDON2_V8_COINBASE {
+    if family_id == FAMILY_SHIELDED_POOL
+        && matches!(
+            action_id,
+            ACTION_MINT_POSEIDON2_V8_COINBASE | ACTION_MINT_POSEIDON2_V8_REWARDS
+        )
+    {
         if !allow_internal_coinbase {
             return Err(anyhow!(
                 "Poseidon2 V8 coinbase actions are miner-local outputs and cannot enter RPC, peer relay, or the mempool"
@@ -3249,7 +3428,10 @@ pub(crate) fn is_legacy_coinbase_action(action: &PendingAction) -> bool {
 
 pub(crate) fn is_poseidon2_v8_coinbase_action(action: &PendingAction) -> bool {
     action.family_id == FAMILY_SHIELDED_POOL
-        && action.action_id == ACTION_MINT_POSEIDON2_V8_COINBASE
+        && matches!(
+            action.action_id,
+            ACTION_MINT_POSEIDON2_V8_COINBASE | ACTION_MINT_POSEIDON2_V8_REWARDS
+        )
 }
 
 /// Every action charged to the V8 release security budget. The mint source has
@@ -4375,10 +4557,10 @@ pub(crate) fn bridge_messages_from_actions(
 }
 
 pub(crate) fn decode_block_actions(meta: &NativeBlockMeta) -> Result<Vec<PendingAction>> {
-    validate_block_action_byte_budget(
+    validate_block_action_payload_budget(
         meta.tx_count,
         meta.action_bytes.len(),
-        meta.action_bytes.iter().map(Vec::len),
+        meta.action_bytes.iter().map(Vec::as_slice),
     )?;
     evaluate_native_action_hash_admission(NativeActionHashAdmissionInput {
         action_count_matches: meta.action_bytes.len() == meta.tx_count as usize,
@@ -4447,6 +4629,49 @@ where
     Ok(())
 }
 
+/// Byte-aware alternative for canonical action bodies. A length alone cannot
+/// grant the recovery allowance. Historical callers of the length-only helper
+/// retain their original cap until explicitly migrated to this interface.
+pub(crate) fn validate_block_action_payload_budget<'a, I>(
+    declared_tx_count: u32,
+    action_payload_count: usize,
+    action_payloads: I,
+) -> Result<()>
+where
+    I: IntoIterator<Item = &'a [u8]>,
+{
+    validate_block_action_byte_budget(declared_tx_count, action_payload_count, [])?;
+    let mut total = 0usize;
+    let mut observed = 0usize;
+    for payload in action_payloads {
+        observed = observed
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("native action count overflow"))?;
+        let maximum = storage::native_action_payload_byte_cap_v3(payload);
+        if payload.len() > maximum {
+            return Err(anyhow!(
+                "native block action payload exceeds route-specific limit: {} > {maximum}",
+                payload.len()
+            ));
+        }
+        total = total
+            .checked_add(payload.len())
+            .ok_or_else(|| anyhow!("native block action byte total overflow"))?;
+        if total > MAX_NATIVE_BLOCK_ACTION_BYTES {
+            return Err(anyhow!(
+                "native block action bytes exceed aggregate limit: {total} > {}",
+                MAX_NATIVE_BLOCK_ACTION_BYTES
+            ));
+        }
+    }
+    if observed != action_payload_count {
+        return Err(anyhow!(
+            "native block action payload iterator count mismatch"
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn evaluate_native_action_hash_admission(
     input: NativeActionHashAdmissionInput,
 ) -> Result<(), NativeActionHashAdmissionRejection> {
@@ -4498,8 +4723,12 @@ pub(crate) fn coinbase_action_scope_valid(action: &PendingAction) -> bool {
     if is_poseidon2_v8_coinbase_action(action) {
         return action.nullifiers.is_empty()
             && action.commitments.is_empty()
-            && action.ciphertext_hashes.len() == 1
-            && action.ciphertext_sizes.len() == 1
+            && action.ciphertext_hashes.len() == action.ciphertext_sizes.len()
+            && (if action.action_id == ACTION_MINT_POSEIDON2_V8_REWARDS {
+                (1..=2).contains(&action.ciphertext_hashes.len())
+            } else {
+                action.ciphertext_hashes.len() == 1
+            })
             && action.fee == 0
             && action.anchor == [0u8; 48]
             && action.candidate_artifact.is_none();
@@ -4514,6 +4743,23 @@ pub(crate) fn coinbase_action_scope_valid(action: &PendingAction) -> bool {
 }
 
 pub(crate) fn transfer_action_scope_valid(action: &PendingAction) -> bool {
+    if is_native_asset_action(action) {
+        return native_asset_action_scope_valid(action);
+    }
+    if is_native_recovery_action(action) {
+        return native_recovery_action_scope_valid(action);
+    }
+    if action.family_id == FAMILY_SHIELDED_POOL && action.action_id == PRIVATE_SPEND_ACTION_ID {
+        return action.anchor == [0u8; 48]
+            && action.nullifiers.is_empty()
+            && action.commitments.is_empty()
+            && action.candidate_artifact.is_none()
+            && action.ciphertext_hashes.len() == 2
+            && action.ciphertext_sizes.len() == 2
+            && action.ciphertext_sizes.iter().all(|size| {
+                *size as usize == protocol_shielded_pool::private_spend_transport::CIPHERTEXT_BYTES
+            });
+    }
     if is_poseidon2_v8_action(action) {
         return action.anchor == [0u8; 48]
             && action.nullifiers.is_empty()
@@ -4840,5 +5086,234 @@ pub(crate) fn native_block_action_validation_transfer_state_rejection(
             Some(NativeTransferStateAdmissionRejection::SidecarCiphertextSizeMismatch)
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod native_asset_routing_tests {
+    use super::*;
+    use transaction_circuit::{
+        asset_policy_admin_v1::PolicyAdminPublicV1,
+        asset_spend_v1::{AssetSpendPublic, TRANSFER},
+        asset_spend_v1_wire as wire,
+        private_spend::CIPHERTEXT_BYTES,
+    };
+
+    fn spend_fixture() -> (
+        PendingAction,
+        AssetSpendPublic,
+        [[u8; CIPHERTEXT_BYTES]; 3],
+        bool,
+    ) {
+        let ciphertexts = [
+            [1; CIPHERTEXT_BYTES],
+            [2; CIPHERTEXT_BYTES],
+            [3; CIPHERTEXT_BYTES],
+        ];
+        let public = AssetSpendPublic {
+            chain_id: [1; 32],
+            reference_parent_hash: [2; 32],
+            parent_height: 100,
+            note_root: [3; 7],
+            registry_root: [4; 7],
+            asset_id: 1,
+            policy_version: 1,
+            credential_root: [5; 7],
+            credential_depth: 4,
+            frozen: false,
+            mint_enabled: true,
+            issuer_commitment: [6; 7],
+            operation: TRANSFER,
+            magnitude: 0,
+            fee: 7,
+            nullifiers: [[7; 7], [8; 7]],
+            commitments: [[9; 7], [10; 7], [11; 7]],
+            ciphertext_commitments: ciphertexts
+                .each_ref()
+                .map(|ct| transaction_core::hashing_pq::ciphertext_hash_bytes(ct)),
+            policy_mode: 0,
+            secret_release: 0,
+            released_secret: [0; 32],
+        };
+        // Shape-only proof marker. Neither scope acceptance nor route
+        // recognition verifies a proof or creates development authority.
+        let (body, source_qualified) = match wire::encode_native_asset_spend_action_v1(
+            &public,
+            &ciphertexts,
+            b"SMZE",
+        ) {
+            Ok(body) => (body, true),
+            Err(wire::AssetSpendWireErrorV1::RelationSource) => {
+                use transaction_circuit::asset_spend_v1_admission as admission;
+                assert_eq!(
+                    admission::spend_profile_upper_bound_v1(0, 4),
+                    Err(admission::NativeAssetAdmissionErrorV1::SourceIdentity)
+                );
+                assert_ne!(
+                    hex::encode(transaction_circuit::asset_spend_v1::relation_digest()),
+                    admission::QUALIFIED_SPEND_SOURCE_SHA512
+                );
+                // Historical framing remains source-neutral structural evidence;
+                // it creates no native admission or geometry qualification.
+                let historical =
+                    wire::encode_asset_spend_action_v1(&public, &ciphertexts, b"SMZE").unwrap();
+                assert_eq!(
+                    wire::decode_asset_spend_action_v1(&historical)
+                        .unwrap()
+                        .public,
+                    public
+                );
+                eprintln!("inactive asset source: exact native RelationSource rejection; outer invariants only");
+                (historical, false)
+            }
+            Err(error) => panic!("unexpected native asset fixture error: {error}"),
+        };
+        let action = PendingAction {
+            tx_hash: ActionId48::ZERO,
+            binding: KernelVersionBinding {
+                circuit: 13,
+                crypto: 7,
+            },
+            family_id: FAMILY_SHIELDED_POOL,
+            action_id: NATIVE_ASSET_SPEND_ACTION_ID,
+            anchor: [0; 48],
+            nullifiers: vec![],
+            commitments: vec![],
+            ciphertext_hashes: public.ciphertext_commitments.to_vec(),
+            ciphertext_sizes: vec![CIPHERTEXT_BYTES as u32; 3],
+            public_args: body,
+            fee: public.fee,
+            candidate_artifact: None,
+        };
+        (action, public, ciphertexts, source_qualified)
+    }
+
+    #[test]
+    fn native_asset_spend_structural_dispatch_and_exact_outer_binding() {
+        let (action, _, _, source_qualified) = spend_fixture();
+        assert!(is_native_asset_action(&action));
+        assert!(is_shielded_transfer_action(&action));
+        assert!(is_poseidon2_v8_action(&action));
+        assert_eq!(transfer_action_scope_valid(&action), source_qualified);
+        assert!(!owns_legacy_ciphertext_da_rows(&action));
+        assert!(ensure_native_v3_active_action_route_ids(
+            action.family_id,
+            action.action_id,
+            false
+        )
+        .is_ok());
+        for field in 0..9 {
+            let mut changed = action.clone();
+            match field {
+                0 => changed.binding.circuit = 12,
+                1 => changed.binding.crypto = 6,
+                2 => changed.fee += 1,
+                3 => changed.ciphertext_hashes[0][0] ^= 1,
+                4 => changed.ciphertext_sizes[0] -= 1,
+                5 => {
+                    changed.ciphertext_hashes.pop();
+                }
+                6 => changed.anchor[0] = 1,
+                7 => changed.nullifiers.push([1; 48]),
+                _ => changed.commitments.push([2; 48]),
+            }
+            assert!(!native_asset_action_scope_valid(&changed), "field {field}");
+            assert!(!transfer_action_scope_valid(&changed), "field {field}");
+        }
+    }
+
+    #[test]
+    fn native_asset_spend_rejects_historical_wire_unsupported_graph_and_byte_overflow() {
+        let (mut action, mut public, ciphertexts, _) = spend_fixture();
+        action.public_args =
+            wire::encode_asset_spend_action_v1(&public, &ciphertexts, b"SMZE").unwrap();
+        assert!(!transfer_action_scope_valid(&action));
+        public.policy_mode = 1;
+        public.credential_depth = 16;
+        action.public_args =
+            wire::encode_asset_spend_action_v1(&public, &ciphertexts, b"SMZE").unwrap();
+        action.public_args[..8].copy_from_slice(&wire::NATIVE_ASSET_SPEND_ACTION_MAGIC_V1);
+        assert!(!transfer_action_scope_valid(&action));
+        action
+            .public_args
+            .resize(wire::NATIVE_ASSET_SPEND_MAX_ACTION_BYTES_V1 + 1, 0);
+        assert!(!transfer_action_scope_valid(&action));
+        action.family_id = FAMILY_BRIDGE;
+        assert!(!is_native_asset_action(&action));
+        assert!(!is_poseidon2_v8_action(&action));
+    }
+
+    #[test]
+    fn native_asset_admin_scope_requires_zero_fee_and_no_outer_state() {
+        use transaction_core::{asset_registry_v1::AssetControlsV1, poseidon2_width16::Felt};
+        let public = PolicyAdminPublicV1 {
+            chain_id: [1; 32],
+            reference_parent_hash: [2; 32],
+            parent_height: 100,
+            registry_root: [3; 7],
+            after_registry_root: [4; 7],
+            asset_id: 1,
+            old_policy_version: 1,
+            new_policy_version: 1,
+            policy_admin_commitment: [5; 7],
+            before_policy_leaf: [6; 7],
+            after_policy_leaf: [7; 7],
+            controls: AssetControlsV1 {
+                credential_root: [Felt::from_u64(8); 7],
+                credential_depth: 8,
+                frozen: false,
+                mint_enabled: true,
+            },
+            expires_at: 110,
+            action_intent: [9; 7],
+        };
+        let bytes = match wire::encode_native_asset_admin_action_v1(&public, b"SMZE") {
+            Ok(bytes) => bytes,
+            Err(wire::AssetSpendWireErrorV1::RelationSource) => {
+                use transaction_circuit::asset_spend_v1_admission as admission;
+                assert_eq!(
+                    admission::admin_profile_upper_bound_v1(),
+                    Err(admission::NativeAssetAdmissionErrorV1::SourceIdentity)
+                );
+                assert_ne!(
+                    hex::encode(transaction_circuit::asset_policy_admin_v1::relation_digest()),
+                    admission::QUALIFIED_ADMIN_SOURCE_SHA512
+                );
+                assert!(public.validate_structure().is_ok());
+                assert!(ensure_native_v3_active_action_route_ids(
+                    FAMILY_SHIELDED_POOL,
+                    NATIVE_ASSET_ADMIN_ACTION_ID,
+                    false
+                )
+                .is_ok());
+                eprintln!("inactive admin source: exact native RelationSource rejection before outer/proof admission");
+                return;
+            }
+            Err(error) => panic!("unexpected native admin fixture error: {error}"),
+        };
+        let mut action = spend_fixture().0;
+        action.action_id = NATIVE_ASSET_ADMIN_ACTION_ID;
+        action.public_args = bytes;
+        action.ciphertext_hashes.clear();
+        action.ciphertext_sizes.clear();
+        action.fee = 0;
+        assert!(is_poseidon2_v8_action(&action));
+        assert!(is_shielded_transfer_action(&action));
+        assert!(transfer_action_scope_valid(&action));
+        assert!(!owns_legacy_ciphertext_da_rows(&action));
+        for field in 0..6 {
+            let mut changed = action.clone();
+            match field {
+                0 => changed.fee = 1,
+                1 => changed.ciphertext_hashes.push([1; 48]),
+                2 => changed.ciphertext_sizes.push(CIPHERTEXT_BYTES as u32),
+                3 => changed.binding.circuit = 12,
+                4 => changed.anchor[0] = 1,
+                _ => {
+                    changed.public_args[0] ^= 1;
+                }
+            }
+            assert!(!transfer_action_scope_valid(&changed), "field {field}");
+        }
     }
 }

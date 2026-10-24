@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import hashlib
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,7 +81,195 @@ def expect_policy_rejected(name: str, operation: Callable[[], None]) -> None:
     raise SystemExit(f"{name}: policy mutation unexpectedly passed")
 
 
+def check_app_transport_regression_controls() -> dict[str, int]:
+    source = (ROOT / "scripts/check-app-no-ssh-e2e.sh").read_text(encoding="utf-8")
+    policy.require_app_transport_regressions(source)
+    positive = 1
+    negative = 0
+    for arguments in policy.APP_TRANSPORT_REGRESSION_COMMANDS:
+        command = " ".join(arguments)
+        target = command + "\n"
+        # The existing logical-line parser accepts genuine shell continuations.
+        policy.require_app_transport_regressions(
+            replace_once(source, target, command.replace(" ", " \\\n  ", 1) + "\n")
+        )
+        positive += 1
+        mutations = (
+            ("deleted", ""),
+            ("commented", "# " + command + "\n"),
+            ("echo only", "echo " + command + "\n"),
+            ("short circuit", "false && " + command + "\n"),
+            ("ignored failure", command + " || true\n"),
+            ("background", command + " &\n"),
+            ("negated", "! " + command + "\n"),
+            ("skipped", "if false; then\n" + command + "\nfi\n"),
+            ("errexit disabled", "set +e\n" + command + "\n"),
+            ("pipeline", command + " | cat\n"),
+            ("subshell", "(" + command + ")\n"),
+            ("help", command + " --help\n"),
+            ("extra skip", command + " --skip transport\n"),
+            ("substitution", ': "$(' + command + ')"\n'),
+            ("heredoc text", "cat <<'UNEXECUTED'\n" + command + "\nUNEXECUTED\n"),
+        )
+        for label, replacement in mutations:
+            expect_policy_rejected(
+                "app transport " + label,
+                lambda replacement=replacement: policy.require_app_transport_regressions(
+                    replace_once(source, target, replacement)
+                ),
+            )
+            negative += 1
+    for label, mutation in (
+        ("no errexit", replace_once(source, "set -euo pipefail", "set -uo pipefail")),
+        ("early success", replace_once(source, "set -euo pipefail", "set -euo pipefail\nexit 0")),
+        ("build before regressions", source.replace(
+            "cargo test --locked -p wallet --test node_rpc\n",
+            '"$ROOT/scripts/build_release_artifacts.sh" --manifest "$MANIFEST" >/dev/null\n'
+            "cargo test --locked -p wallet --test node_rpc\n", 1)),
+    ):
+        expect_policy_rejected(
+            "app transport " + label,
+            lambda mutation=mutation: policy.require_app_transport_regressions(mutation),
+        )
+        negative += 1
+    return {"positive_controls": positive, "negative_controls": negative,
+            "required_commands": len(policy.APP_TRANSPORT_REGRESSION_COMMANDS)}
+
+
+def check_windows_launcher_regression_controls(workflow: str) -> dict[str, int]:
+    """Reach semantic checks using canonical fixtures with deliberately re-pinned hashes."""
+    reader_test = (
+        "ReleaseLauncherPolicyTests.test_bounded_reader_preserves_crlf_and_ctrl_z_bytes"
+    )
+    digest_test = (
+        "ReleaseLauncherPolicyTests.test_crlf_helper_requires_its_raw_digest_not_normalized_lf"
+    )
+    command = (
+        "python3 -B scripts/test_check_release_launcher_policy.py "
+        f"{reader_test} {digest_test}"
+    )
+    step = (
+        "      - name: Verify Windows raw-byte launcher hashing\n"
+        "        shell: bash\n"
+        "        run: |\n"
+        f"          {command}\n\n"
+    )
+    build_step = (
+        "      - name: Build attested release artifacts\n"
+        "        shell: bash\n"
+        "        run: ./scripts/build_release_artifacts.sh\n\n"
+    )
+    command_error = "build-windows raw-byte launcher hashing: executable command"
+    context_error = "build-windows raw-byte launcher hashing:"
+    cases = [
+        (
+            "step omission",
+            replace_once(workflow, step, ""),
+            "build-windows: must contain exactly 11 reviewed steps",
+        ),
+        (
+            "post-build execution",
+            replace_once(workflow, step + build_step, build_step + step),
+            "build-windows launcher regression/build order:",
+        ),
+    ]
+    for name, replacement in (
+        ("reader test omission", command.replace(f"{reader_test} ", "")),
+        ("digest test omission", command.replace(f" {digest_test}", "")),
+        ("test substitution", command.replace(digest_test, "ReleaseLauncherPolicyTests.test_missing_policy_fails")),
+        ("bytecode flag omission", command.replace(" -B", "")),
+        ("soft failure", command + " || true"),
+        ("echo substitution", "echo " + command),
+    ):
+        cases.append((name, replace_once(workflow, command, replacement), command_error))
+    for name, replacement, expected in (
+        ("conditional execution", "        if: false\n        shell: bash\n", command_error),
+        ("continue on error", "        continue-on-error: true\n        shell: bash\n", "continue-on-error must be false"),
+        ("shell substitution", "        shell: pwsh\n", context_error),
+        ("directory override", "        working-directory: attacker\n        shell: bash\n", context_error),
+        ("environment override", "        env: {PYTHONPATH: /tmp/attacker}\n        shell: bash\n", context_error),
+    ):
+        changed_step = replace_once(step, "        shell: bash\n", replacement)
+        cases.append((name, replace_once(workflow, step, changed_step), expected))
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        path = root / ".github/workflows/release.yml"
+        path.parent.mkdir(parents=True)
+        # Preserve the real source-authority check; copy its exact current inputs
+        # into the fixture rather than mocking or weakening that check.
+        for relative in (
+            policy.SUCCESSOR_CHECKER_RELATIVE_PATH,
+            policy.SUCCESSOR_REGISTRY_RELATIVE_PATH,
+        ):
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((ROOT / relative).read_bytes())
+
+        def check(source: str) -> None:
+            path.write_text(source, encoding="utf-8")
+            with patch.object(
+                policy,
+                "PINNED_RELEASE_WORKFLOW_SHA512",
+                hashlib.sha512(source.encode("utf-8")).hexdigest(),
+            ):
+                policy.check_release_workflow(path)
+
+        # A passing control proves that canonical path/source checks are not
+        # rejecting every fixture before the new semantic checks can execute.
+        check(workflow)
+        for name, changed, expected in cases:
+            try:
+                check(changed)
+            except SystemExit as error:
+                if expected not in str(error):
+                    raise SystemExit(
+                        f"Windows launcher {name} rejected at the wrong gate: {error}"
+                    ) from error
+            else:
+                raise SystemExit(f"Windows launcher {name} unexpectedly passed")
+    return {"positive_controls": 1, "negative_controls": len(cases)}
+
+
+def check_historical_native_review_controls() -> dict[str, int]:
+    positive = 0
+    negative = 0
+    fetch = "git fetch --no-tags --depth=1 origin 4810888722e8c9a2440e31b139f8cb10b060acee"
+    verify = "./scripts/verify_native_backend_review_package.sh --historical-release"
+    for relative in (".github/workflows/release.yml", ".github/workflows/prepare-premainnet-release.yml"):
+        source = (ROOT / relative).read_text(encoding="utf-8")
+        policy.require_historical_native_review(policy.workflow_steps(source, "security-gates"))
+        positive += 1
+        changes = (
+            (fetch, "true"),
+            (fetch, "# " + fetch),
+            (fetch, fetch.replace("--depth=1", "--depth=2")),
+            (fetch, fetch.replace("4810888722e8c9a2440e31b139f8cb10b060acee", "HEAD")),
+            (fetch, fetch + " || true"),
+            (verify, "true"),
+            (verify, verify.replace(" --historical-release", "")),
+            (verify, verify + " --skip"),
+            (verify, verify + " || true"),
+            ("      - name: Fetch pinned historical native backend source\n", "      - name: Fetch pinned historical native backend source\n        if: false\n"),
+            ("      - name: Historical native backend review package verification\n", "      - name: Historical native backend review package verification\n        working-directory: untrusted\n"),
+            ("      - name: Fetch pinned historical native backend source\n", "      - name: Fetch pinned historical native backend source\n        continue-on-error: true\n"),
+            ("      - name: Historical native backend review package verification\n", "      - name: Historical native backend review package verification\n        continue-on-error: true\n"),
+            ("      - name: Historical native backend review package verification\n", "      - name: Historical native backend review package verification\n        if: false\n"),
+        )
+        for before, after in changes:
+            mutated = replace_once(source, before, after)
+            expect_policy_rejected("historical package command mutation", lambda: policy.require_historical_native_review(policy.workflow_steps(mutated, "security-gates")))
+            negative += 1
+        # Swapping only the commands retains valid syntax but reverses the required order.
+        swapped = source.replace(fetch, "__FETCH_PLACEHOLDER__", 1).replace(verify, fetch, 1).replace("__FETCH_PLACEHOLDER__", verify, 1)
+        expect_policy_rejected("historical source fetched after verification", lambda: policy.require_historical_native_review(policy.workflow_steps(swapped, "security-gates")))
+        negative += 1
+    return {"positive_controls": positive, "negative_controls": negative}
+
+
 def main() -> None:
+    check_historical_native_review_controls()
+    check_app_transport_regression_controls()
     expect_missing(fixture("# ./scripts/security-audit.sh --require-binary"))
     expect_missing(fixture("echo ./scripts/security-audit.sh --require-binary"))
     expect_missing(
@@ -221,10 +411,67 @@ def main() -> None:
 
     ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     policy.check_ci_workflow(ROOT / ".github/workflows/ci.yml")
+    strict_binary_commands = (
+        "python3 -I -B scripts/test_check_v011_crypto_consumer.py",
+        "python3 -I -B scripts/materialize_v011_predecessor.py --reserve-bytes 4294967296",
+        "./scripts/security-audit.sh --require-binary --binary-manifest "
+        "target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node "
+        "--binary target/release/wallet --binary target/release/walletd --binary target/release/private-spend",
+    )
+    for command in strict_binary_commands:
+        target = "        run: " + command + "\n"
+        for label, replacement in (
+            ("commented", "        run: echo disabled\n"),
+            ("echo only", "        run: echo " + command + "\n"),
+            ("soft failure", "        run: " + command + " || true\n"),
+            ("conditional", "        if: false\n" + target),
+            ("directory override", "        working-directory: attacker\n" + target),
+            ("environment override", "        env: {PYTHONPATH: /tmp/attacker}\n" + target),
+            ("extra argument", "        run: " + command + " --help\n"),
+        ):
+            expect_workflow_rejected(
+                "strict release binary " + label,
+                policy.check_ci_workflow,
+                replace_once(ci_workflow, target, replacement),
+            )
+    audit = strict_binary_commands[2]
+    for label, mutated in (
+        ("diagnostic bypass", audit.replace("--require-binary", "--allow-unapproved-profile --require-binary")),
+        ("manifest omission", audit.replace(" --binary-manifest target/release/hegemon-release-artifacts.json", "")),
+        ("node omission", audit.replace(" --node-bin target/release/hegemon-node", "")),
+        ("wallet omission", audit.replace(" --binary target/release/wallet ", " ")),
+        ("walletd omission", audit.replace(" --binary target/release/walletd", "")),
+        ("private-spend omission", audit.replace(" --binary target/release/private-spend", "")),
+    ):
+        expect_workflow_rejected(
+            "strict release binary " + label,
+            policy.check_ci_workflow,
+            replace_once(ci_workflow, "        run: " + audit, "        run: " + mutated),
+        )
+    for command in strict_binary_commands[:2]:
+        for option in (" -I", " -B"):
+            expect_workflow_rejected(
+                "strict release binary interpreter option omitted",
+                policy.check_ci_workflow,
+                replace_once(ci_workflow, command, command.replace(option, "", 1)),
+            )
+    controls_step = (
+        "      - name: Check bounded successor receipt rejection controls\n"
+        "        run: " + strict_binary_commands[0] + "\n\n"
+    )
+    predecessor_step = (
+        "      - name: Restore authenticated v0.11 predecessor for strict binary qualification\n"
+        "        run: " + strict_binary_commands[1] + "\n\n"
+    )
+    expect_workflow_rejected(
+        "strict release binary preparation order",
+        policy.check_ci_workflow,
+        replace_once(ci_workflow, controls_step + predecessor_step, predecessor_step + controls_step),
+    )
     ci_formal_crypto_timeout = (
         "  formal-crypto-sanity:\n"
         "    runs-on: ubuntu-latest\n"
-        "    timeout-minutes: 60\n"
+        "    timeout-minutes: 90\n"
     )
     expect_workflow_rejected(
         "PR formal-crypto sanity 30-minute timeout regression",
@@ -232,7 +479,7 @@ def main() -> None:
         replace_once(
             ci_workflow,
             ci_formal_crypto_timeout,
-            ci_formal_crypto_timeout.replace("timeout-minutes: 60", "timeout-minutes: 30"),
+            ci_formal_crypto_timeout.replace("timeout-minutes: 90", "timeout-minutes: 30"),
         ),
     )
     expect_workflow_rejected(
@@ -241,7 +488,30 @@ def main() -> None:
         replace_once(
             ci_workflow,
             ci_formal_crypto_timeout,
-            ci_formal_crypto_timeout.replace("    timeout-minutes: 60\n", ""),
+            ci_formal_crypto_timeout.replace("    timeout-minutes: 90\n", ""),
+        ),
+    )
+    ci_formal_vectors_timeout = (
+        "  formal-core-vectors:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    timeout-minutes: 60\n"
+    )
+    expect_workflow_rejected(
+        "PR formal-core vectors 30-minute timeout regression",
+        policy.check_ci_workflow,
+        replace_once(
+            ci_workflow,
+            ci_formal_vectors_timeout,
+            ci_formal_vectors_timeout.replace("timeout-minutes: 60", "timeout-minutes: 30"),
+        ),
+    )
+    expect_workflow_rejected(
+        "PR formal-core vectors missing timeout",
+        policy.check_ci_workflow,
+        replace_once(
+            ci_workflow,
+            ci_formal_vectors_timeout,
+            ci_formal_vectors_timeout.replace("    timeout-minutes: 60\n", ""),
         ),
     )
     ci_smz9_parser_step = (
@@ -331,6 +601,26 @@ def main() -> None:
             "        continue-on-error: true\n",
         ),
     )
+    for formal_job in ("formal-core-lean", "formal-core-vectors"):
+        body = policy.job_block(ci_workflow, formal_job)
+        for condition in ("", "    if: ${{ true }}\n"):
+            changed = body.replace("    if: " + policy.NON_PR_QUALIFICATION + "\n", condition)
+            expect_workflow_rejected(
+                formal_job + " event scope", policy.check_ci_workflow,
+                replace_once(ci_workflow, body, changed),
+            )
+    for step_name in ("Install Lean toolchain manager", "Complete formal cryptography gate"):
+        target = "      - name: " + step_name + "\n        if: " + policy.NON_PR_QUALIFICATION + "\n"
+        # Lean installers also exist in separately conditioned jobs; target the sanity job only.
+        body = policy.job_block(ci_workflow, "formal-crypto-sanity")
+        changed = replace_once(body, target, "      - name: " + step_name + "\n")
+        expect_workflow_rejected(step_name + " PR condition removed", policy.check_ci_workflow,
+                                 replace_once(ci_workflow, body, changed))
+    for result in ("LEAN_RESULT", "VECTORS_RESULT"):
+        expect_workflow_rejected(
+            result + " fake PR pass", policy.check_ci_workflow,
+            replace_once(ci_workflow, f'            test "${result}" = skipped\n', f'            test "${result}" = success\n'),
+        )
     expect_workflow_rejected(
         "PR formal-core shard mode substitution",
         policy.check_ci_workflow,
@@ -387,10 +677,21 @@ def main() -> None:
     policy.check_formal_crypto_workflow(
         ROOT / ".github/workflows/formal-crypto.yml"
     )
+    focused_body = policy.job_block(focused_formal_crypto_workflow, "formal-crypto-sanity")
+    expect_workflow_rejected(
+        "standalone formal PR exclusion removed", policy.check_formal_crypto_workflow,
+        replace_once(focused_formal_crypto_workflow, focused_body,
+                     focused_body.replace("    if: " + policy.NON_PR_QUALIFICATION + "\n", "")),
+    )
+    expect_workflow_rejected(
+        "standalone formal manual trigger removed", policy.check_formal_crypto_workflow,
+        replace_once(focused_formal_crypto_workflow, "  workflow_dispatch:\n", ""),
+    )
     standalone_formal_crypto_timeout = (
         "  formal-crypto-sanity:\n"
+        "    if: ${{ github.event_name != 'pull_request' }}\n"
         "    runs-on: ubuntu-latest\n"
-        "    timeout-minutes: 60\n"
+        "    timeout-minutes: 90\n"
     )
     expect_workflow_rejected(
         "focused formal-crypto sanity 30-minute timeout regression",
@@ -399,7 +700,7 @@ def main() -> None:
             focused_formal_crypto_workflow,
             standalone_formal_crypto_timeout,
             standalone_formal_crypto_timeout.replace(
-                "timeout-minutes: 60", "timeout-minutes: 30"
+                "timeout-minutes: 90", "timeout-minutes: 30"
             ),
         ),
     )
@@ -409,7 +710,7 @@ def main() -> None:
         replace_once(
             focused_formal_crypto_workflow,
             standalone_formal_crypto_timeout,
-            standalone_formal_crypto_timeout.replace("    timeout-minutes: 60\n", ""),
+            standalone_formal_crypto_timeout.replace("    timeout-minutes: 90\n", ""),
         ),
     )
     for trigger_path in policy.FORMAL_CRYPTO_POSEIDON2_V8_TRIGGER_PATHS:
@@ -855,6 +1156,7 @@ def main() -> None:
             lambda: policy.require_commit_rooted_successor_authority(authority_root),
         )
     policy.check_release_workflow(ROOT / ".github/workflows/release.yml")
+    check_windows_launcher_regression_controls(release_workflow)
     authorization_build_dependency_step = (
         "      - name: Install retained-artifact verifier build dependencies\n"
         "        run: sudo apt-get update && sudo apt-get install -y "
@@ -1463,154 +1765,50 @@ def main() -> None:
     successor_authorization_step = (
         "      - name: Transaction-proof successor authorization release gate\n"
         "        run: /usr/bin/python3 -I -B "
-        "scripts/check_transaction_proof_successor_authorization.py "
-        "config/transaction-proof-successor-selection.json --require-authorized "
-        "--verify-retained-artifacts\n"
+        "scripts/check_private_spend_launch_authorization.py --require-authorized\n"
     )
     expect_workflow_rejected(
-        "tag release successor authorization gate removal",
-        policy.check_release_workflow,
+        "tag release common authorization gate removal", policy.check_release_workflow,
         replace_once(release_workflow, successor_authorization_step, ""),
     )
-    expect_workflow_rejected(
-        "tag release successor authorization gate continue-on-error",
-        policy.check_release_workflow,
-        replace_once(
-            release_workflow,
-            successor_authorization_step,
-            "      - name: Transaction-proof successor authorization release gate\n"
-            "        continue-on-error: true\n"
-            "        run: /usr/bin/python3 -I -B "
-            "scripts/check_transaction_proof_successor_authorization.py "
-            "config/transaction-proof-successor-selection.json "
-            "--require-authorized --verify-retained-artifacts\n",
-        ),
-    )
-    expect_workflow_rejected(
-        "tag release retained-artifact verification flag removal",
-        policy.check_release_workflow,
-        replace_once(
-            release_workflow,
-            " --require-authorized --verify-retained-artifacts\n",
-            " --require-authorized\n",
-        ),
-    )
-    expect_workflow_rejected(
-        "tag release successor authorization gate shell soft-fail",
-        policy.check_release_workflow,
-        replace_once(
-            release_workflow,
-            successor_authorization_step,
-            "      - name: Transaction-proof successor authorization release gate\n"
-            "        run: /usr/bin/python3 -I -B "
-            "scripts/check_transaction_proof_successor_authorization.py "
-            "config/transaction-proof-successor-selection.json "
-            "--require-authorized || true\n",
-        ),
-    )
-    expect_workflow_rejected(
-        "tag release successor authorization flag removal",
-        policy.check_release_workflow,
-        replace_once(
-            release_workflow,
-            successor_authorization_step,
-            "      - name: Transaction-proof successor authorization release gate\n"
-            "        run: /usr/bin/python3 -I -B "
-            "scripts/check_transaction_proof_successor_authorization.py "
-            "config/transaction-proof-successor-selection.json\n",
-        ),
-    )
-    for name, interpreter in (
-        ("tag release successor bare interpreter", "python3 -I -B"),
-        ("tag release successor isolation removal", "/usr/bin/python3 -B"),
-        ("tag release successor flag reorder", "/usr/bin/python3 -B -I"),
+    final_common_command = "python3 -I -B scripts/check_private_spend_launch_authorization.py --require-authorized --artifact-manifest "
+    for name, mutation in (
+        ("final artifact phase removal", lambda text: text.replace("        run: " + final_common_command, "        run: echo skipped ", 1)),
+        ("final phase artifact flag removal", lambda text: text.replace(" --artifact-manifest target/release/hegemon-release-artifacts.json", "", 1)),
+        ("final phase soft failure", lambda text: text.replace(final_common_command + "target/release/hegemon-release-artifacts.json", final_common_command + "target/release/hegemon-release-artifacts.json || true", 1)),
     ):
+        expect_workflow_rejected(name, policy.check_release_workflow, mutation(release_workflow))
+    base_command = "/usr/bin/python3 -I -B scripts/check_private_spend_launch_authorization.py --require-authorized"
+    mutations = {
+        "soft failure": base_command + " || true",
+        "flag removal": base_command.replace(" --require-authorized", ""),
+        "old-profile substitution": "/usr/bin/python3 -I -B scripts/check_transaction_proof_successor_authorization.py config/transaction-proof-successor-selection.json --require-authorized --verify-retained-artifacts",
+        "root substitution": base_command + " --root /tmp/attacker",
+        "diagnostic smuggling": base_command + " --diagnostic-only",
+        "bare interpreter": base_command.replace("/usr/bin/python3", "python3"),
+        "isolation removal": base_command.replace(" -I", ""),
+        "isolation reorder": base_command.replace(" -I -B", " -B -I"),
+        "PYTHONPATH assignment": "PYTHONPATH=/tmp/evil " + base_command,
+        "env PYTHONPATH assignment": "env PYTHONPATH=/tmp/evil " + base_command,
+    }
+    for name, command in mutations.items():
         expect_workflow_rejected(
-            name,
-            policy.check_release_workflow,
-            replace_once(
-                release_workflow,
-                successor_authorization_step,
+            "tag release common authorization " + name, policy.check_release_workflow,
+            replace_once(release_workflow, successor_authorization_step,
                 "      - name: Transaction-proof successor authorization release gate\n"
-                f"        run: {interpreter} "
-                "scripts/check_transaction_proof_successor_authorization.py "
-                "config/transaction-proof-successor-selection.json "
-                "--require-authorized\n",
-            ),
-        )
-    expect_workflow_rejected(
-        "tag release successor selection substitution",
-        policy.check_release_workflow,
-        replace_once(
-            release_workflow,
-            successor_authorization_step,
-            "      - name: Transaction-proof successor authorization release gate\n"
-            "        run: /usr/bin/python3 -I -B "
-            "scripts/check_transaction_proof_successor_authorization.py "
-            "config/formal-security-claims.json --require-authorized\n",
-        ),
-    )
-    expect_workflow_rejected(
-        "tag release successor root substitution",
-        policy.check_release_workflow,
-        replace_once(
-            release_workflow,
-            successor_authorization_step,
-            "      - name: Transaction-proof successor authorization release gate\n"
-            "        run: /usr/bin/python3 -I -B "
-            "scripts/check_transaction_proof_successor_authorization.py "
-            "config/transaction-proof-successor-selection.json "
-            "--require-authorized --root /tmp/attacker-controlled\n",
-        ),
-    )
-    expect_workflow_rejected(
-        "tag release successor diagnostic smuggling",
-        policy.check_release_workflow,
-        replace_once(
-            release_workflow,
-            successor_authorization_step,
-            "      - name: Transaction-proof successor authorization release gate\n"
-            "        run: /usr/bin/python3 -I -B "
-            "scripts/check_transaction_proof_successor_authorization.py "
-            "config/transaction-proof-successor-selection.json "
-            "--require-authorized --diagnostic-only\n",
-        ),
-    )
-    for name, prefix in (
-        ("tag release successor PYTHONPATH assignment", "PYTHONPATH=/tmp/evil "),
-        ("tag release successor env PYTHONPATH assignment", "env PYTHONPATH=/tmp/evil "),
-    ):
-        expect_workflow_rejected(
-            name,
-            policy.check_release_workflow,
-            replace_once(
-                release_workflow,
-                successor_authorization_step,
-                "      - name: Transaction-proof successor authorization release gate\n"
-                f"        run: {prefix}/usr/bin/python3 -I -B "
-                "scripts/check_transaction_proof_successor_authorization.py "
-                "config/transaction-proof-successor-selection.json "
-                "--require-authorized\n",
-            ),
+                "        run: " + command + "\n"),
         )
     for name, context_line in (
-        ("tag release successor step env override", "        env: {PYTHONPATH: /tmp/evil}\n"),
-        ("tag release successor working-directory override", "        working-directory: attacker\n"),
-        ("tag release successor shell override", "        shell: attacker {0}\n"),
+        ("continue-on-error", "        continue-on-error: true\n"),
+        ("step env override", "        env: {PYTHONPATH: /tmp/evil}\n"),
+        ("working-directory override", "        working-directory: attacker\n"),
+        ("shell override", "        shell: attacker {0}\n"),
     ):
         expect_workflow_rejected(
-            name,
-            policy.check_release_workflow,
-            replace_once(
-                release_workflow,
-                successor_authorization_step,
+            "tag release common authorization " + name, policy.check_release_workflow,
+            replace_once(release_workflow, successor_authorization_step,
                 "      - name: Transaction-proof successor authorization release gate\n"
-                f"{context_line}"
-                "        run: /usr/bin/python3 -I -B "
-                "scripts/check_transaction_proof_successor_authorization.py "
-                "config/transaction-proof-successor-selection.json "
-                "--require-authorized\n",
-            ),
+                + context_line + "        run: " + base_command + "\n"),
         )
     v5_candidate_step = (
         "      - name: SmallWood V5 candidate manifest gate\n"

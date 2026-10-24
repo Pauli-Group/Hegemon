@@ -1,0 +1,2 @@
+import HegemonCrypto.NativePrivateSpendQ58CurrentRawDensity
+#print axioms HegemonCrypto.SmallWood.NativePrivateSpendQ58CurrentRawDensity.nonexceptional_raw_q58_bad_and_success_density

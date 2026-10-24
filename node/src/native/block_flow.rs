@@ -1763,9 +1763,15 @@ fn revalidate_pending_actions_with_limits(
         staged_proofs: canonical_state.staged_proofs.clone(),
     };
 
-    let (existing_revalidatable, existing_tip_bound): (Vec<_>, Vec<_>) = existing_pending
-        .into_iter()
-        .partition(|(_, action)| !is_coinbase_action(action) && !is_poseidon2_v8_action(action));
+    let (existing_revalidatable, existing_tip_bound): (Vec<_>, Vec<_>) =
+        existing_pending.into_iter().partition(|(_, action)| {
+            !is_coinbase_action(action)
+                && (!is_poseidon2_v8_action(action)
+                    || asset_native::pending_reference_eligible(
+                        action,
+                        canonical_state.best.height,
+                    ))
+        });
     let existing_tip_bound_hashes = existing_tip_bound
         .iter()
         .map(|(hash, _)| *hash)
@@ -1797,7 +1803,10 @@ fn revalidate_pending_actions_with_limits(
         {
             continue;
         }
-        if is_coinbase_action(&action) || is_poseidon2_v8_action(&action) {
+        if is_coinbase_action(&action)
+            || (is_poseidon2_v8_action(&action)
+                && !asset_native::pending_reference_eligible(&action, canonical_state.best.height))
+        {
             debug!(
                 tx_hash = %hex48(hash.as_bytes()),
                 context,
@@ -1906,6 +1915,34 @@ pub(crate) fn prune_auto_coinbase_actions_from_pending(
     }
 }
 
+fn validate_revalidated_pending_action(
+    staged_state: &NativeState,
+    action: &PendingAction,
+) -> Result<()> {
+    // Already admitted/canonical asset carriers may remain candidates while
+    // their reference ages. This is retention, not a verified-tip token: node
+    // selection authenticates H/current root, then rechecks the actual proof,
+    // current policy/accounting and NFs before any canonical publication.
+    if asset_native::is_asset_action(action) {
+        if !asset_native::pending_reference_eligible(action, staged_state.best.height) {
+            return Err(anyhow!("asset pending reference is expired/future"));
+        } else if staged_state
+            .pending_actions
+            .values()
+            .filter(|value| is_poseidon2_v8_action(value))
+            .count()
+            >= MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK
+        {
+            return Err(anyhow!("asset pending retention exceeds V8 action cap"));
+        } else {
+            validate_transfer_action_payload(action)?;
+        }
+    } else {
+        validate_pending_action_against_mempool_state(staged_state, action)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn stage_revalidated_pending_action(
     staged_state: &mut NativeState,
     hash: ActionId48,
@@ -1924,7 +1961,7 @@ pub(crate) fn stage_revalidated_pending_action(
         );
         return;
     }
-    if let Err(err) = validate_pending_action_against_mempool_state(staged_state, &action) {
+    if let Err(err) = validate_revalidated_pending_action(staged_state, &action) {
         debug!(
             tx_hash = %hex48(hash.as_bytes()),
             source,
@@ -1962,7 +1999,8 @@ pub(crate) fn validate_coinbase_accounting(actions: &[PendingAction], height: u6
     evaluate_native_coinbase_accounting_admission(native_coinbase_accounting_admission_input(
         actions, height,
     ))
-    .map_err(native_coinbase_accounting_admission_error)
+    .map_err(native_coinbase_accounting_admission_error)?;
+    validate_coinbase_reward_split(actions, height)
 }
 
 pub(crate) fn validate_coinbase_route_at_height(
@@ -1975,7 +2013,8 @@ pub(crate) fn validate_coinbase_route_at_height(
         {
             return Err(anyhow!("legacy coinbase binding is not decoder-compatible"));
         }
-        if is_poseidon2_v8_coinbase_action(action)
+        if action.action_id == ACTION_MINT_POSEIDON2_V8_COINBASE
+            && is_poseidon2_v8_coinbase_action(action)
             && action.binding
                 != protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING.into()
         {
@@ -2057,6 +2096,83 @@ pub(crate) fn advance_native_supply_digest(
     parent_supply
         .checked_add(delta)
         .ok_or_else(|| anyhow!("native supply digest overflow"))
+}
+
+/// Exact allocation check independent of the network's chosen public recipient.
+fn validate_coinbase_reward_split(actions: &[PendingAction], height: u64) -> Result<()> {
+    for action in actions.iter().filter(|action| {
+        action.action_id == ACTION_MINT_POSEIDON2_V8_REWARDS
+            && is_poseidon2_v8_coinbase_action(action)
+    }) {
+        admitted_poseidon2_v8_coinbase_commitments(action)?;
+        let args: MintPoseidon2V8RewardsArgs =
+            decode_scale_exact(&action.public_args, "V8 rewards args")?;
+        let fees = checked_transfer_fee_total(actions)
+            .ok_or_else(|| anyhow!("block fee total overflow"))?;
+        let (miner, funding) =
+            poseidon2_v8_reward_split(consensus::reward::block_subsidy(height), fees)
+                .ok_or_else(|| anyhow!("V8 split reward overflow"))?;
+        if args.miner_note.opening.value != miner
+            || args.funding_note.as_ref().map(|note| note.opening.value)
+                != (funding != 0).then_some(funding)
+        {
+            return Err(anyhow!("V8 rewards allocation mismatch"));
+        }
+    }
+    Ok(())
+}
+
+/// Contextual acceptance pins the complete funding authorization identity to
+/// the network manifest. Absence of coinbase forfeits both shares; claiming
+/// any subsidy cannot bypass or redirect the funding output.
+pub(crate) fn validate_coinbase_funding_accounting(
+    actions: &[PendingAction],
+    height: u64,
+    recipient: Option<&ShieldedAddress>,
+) -> Result<()> {
+    validate_coinbase_accounting(actions, height)?;
+    for action in actions.iter().filter(|action| is_coinbase_action(action)) {
+        match (
+            recipient,
+            action.action_id == ACTION_MINT_POSEIDON2_V8_REWARDS,
+        ) {
+            (None, true) => {
+                return Err(anyhow!(
+                    "V8 funding issuance requires a network funding recipient"
+                ))
+            }
+            (Some(_), false) => {
+                return Err(anyhow!("network requires the V8 funding reward bundle"))
+            }
+            (None, false) => continue,
+            (Some(address), true) => {
+                let args: MintPoseidon2V8RewardsArgs =
+                    decode_scale_exact(&action.public_args, "V8 rewards args")?;
+                if let Some(note) = args.funding_note {
+                    let recipient = transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_words_from_canonical_bytes(address.pk_recipient)
+                        .map_err(|error| anyhow!("invalid funding recipient: {error:?}"))?;
+                    let authorization = transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_words_from_canonical_bytes(address.pk_auth)
+                        .map_err(|error| anyhow!("invalid funding authorization: {error:?}"))?;
+                    let extension = core::array::from_fn::<_, 3, _>(|index| {
+                        u64::from_le_bytes(
+                            address.pk_auth_extension[index * 8..(index + 1) * 8]
+                                .try_into()
+                                .unwrap(),
+                        )
+                    });
+                    if address.version != wallet::address::POSEIDON2_V8_ADDRESS_VERSION
+                        || address.crypto_suite != protocol_versioning::CRYPTO_SUITE_ETA
+                        || note.opening.recipient_key != recipient
+                        || note.opening.authorization_key != authorization
+                        || note.opening.randomness[..3] != extension
+                    {
+                        return Err(anyhow!("V8 rewards funding recipient/policy mismatch"));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn expected_coinbase_amount(actions: &[PendingAction], height: u64) -> Result<u64> {
@@ -2156,6 +2272,22 @@ pub(crate) fn coinbase_action_amount(action: &PendingAction) -> Result<u64> {
         let args: MintCoinbaseArgs =
             decode_scale_exact(&action.public_args, "coinbase action args")?;
         return Ok(args.reward_bundle.miner_note.amount);
+    }
+    if action.action_id == ACTION_MINT_POSEIDON2_V8_REWARDS
+        && is_poseidon2_v8_coinbase_action(action)
+    {
+        let args: MintPoseidon2V8RewardsArgs =
+            decode_scale_exact(&action.public_args, "V8 rewards args")?;
+        return args
+            .miner_note
+            .opening
+            .value
+            .checked_add(
+                args.funding_note
+                    .map(|note| note.opening.value)
+                    .unwrap_or(0),
+            )
+            .ok_or_else(|| anyhow!("V8 rewards amount overflow"));
     }
     if is_poseidon2_v8_coinbase_action(action) {
         let args: MintPoseidon2V8CoinbaseArgs =
@@ -2526,13 +2658,16 @@ fn native_action_proof_authority_class(
     match action_id {
         ACTION_SHIELDED_TRANSFER_INLINE
         | ACTION_SHIELDED_TRANSFER_SIDECAR
-        | ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE => {
-            Some(protocol_versioning::ProofAuthorityClass::Transaction)
-        }
+        | ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE
+        | RP06_ACTION_ID
+        | HTLC_ACTION_ID
+        | PRIVATE_SPEND_ACTION_ID => Some(protocol_versioning::ProofAuthorityClass::Transaction),
         ACTION_SUBMIT_CANDIDATE_ARTIFACT => {
             Some(protocol_versioning::ProofAuthorityClass::RecursiveBlock)
         }
-        ACTION_MINT_COINBASE | ACTION_MINT_POSEIDON2_V8_COINBASE => {
+        ACTION_MINT_COINBASE
+        | ACTION_MINT_POSEIDON2_V8_COINBASE
+        | ACTION_MINT_POSEIDON2_V8_REWARDS => {
             Some(protocol_versioning::ProofAuthorityClass::MintSource)
         }
         _ => None,
@@ -2734,6 +2869,26 @@ pub(crate) fn verify_native_legacy_block_artifacts_locked(
     )
 }
 
+fn validate_native_block_artifact_proof_policy(
+    node: &NativeNode,
+    state: &NativeState,
+    actions: &[PendingAction],
+    meta: &NativeBlockMeta,
+    manifest: &protocol_kernel::manifest::KernelManifest,
+) -> Result<()> {
+    if node.config.network.profile() == NativeNetworkProfile::Legacy {
+        validate_native_block_proof_policy_against_manifest(
+            state.best.height,
+            meta.height,
+            actions,
+            manifest,
+        )?;
+    } else {
+        node.validate_network_block_proof_policy(state.best.height, meta.height, actions)?;
+    }
+    Ok(())
+}
+
 fn verify_native_block_artifacts_against_manifest_locked(
     node: &NativeNode,
     state: &NativeState,
@@ -2742,12 +2897,7 @@ fn verify_native_block_artifacts_against_manifest_locked(
     manifest: &protocol_kernel::manifest::KernelManifest,
     verify_poseidon2_v8: bool,
 ) -> Result<()> {
-    validate_native_block_proof_policy_against_manifest(
-        state.best.height,
-        meta.height,
-        actions,
-        manifest,
-    )?;
+    validate_native_block_artifact_proof_policy(node, state, actions, meta, manifest)?;
 
     // The fresh seven-limb lane is verified independently from the historical
     // `consensus::Transaction`/NativeTxLeaf verifier.  Planning is read-only
@@ -3246,10 +3396,10 @@ pub(crate) fn native_action_root_v3_from_action_bytes(
 ) -> Result<ActionRoot48> {
     let declared_count = u32::try_from(action_bytes.len())
         .map_err(|_| anyhow!("native V3 action count exceeds u32"))?;
-    validate_block_action_byte_budget(
+    validate_block_action_payload_budget(
         declared_count,
         action_bytes.len(),
-        action_bytes.iter().map(Vec::len),
+        action_bytes.iter().map(Vec::as_slice),
     )?;
     let mut action_ids = Vec::with_capacity(action_bytes.len());
     let mut unique = BTreeSet::new();

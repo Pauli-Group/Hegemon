@@ -26,6 +26,14 @@ SOURCE_EXCLUSIONS = {
     "audits/native-backend-128b/native-backend-128b-review-package.tar.gz",
     "audits/native-backend-128b/package.sha256",
 }
+# Reviewed historical archive identity; never derive these trust anchors from the
+# archive itself. This review is not current RP05 or production authorization.
+HISTORICAL_RELEASE_IDENTITY = {
+    "source_commit": "4810888722e8c9a2440e31b139f8cb10b060acee",
+    "source_git_tree": "875735946b8f5cd76ec830fd7ebd685d2ce5e6af",
+    "archive_sha256": "8953e05016d8aba8211940e47c22dcbe5ecc6ddb4132589b139d4151ccb872c3",
+    "source_tree_sha256": "bc1f4133e0a2f515232f61d91afa667ba52b47a90e8265160bbb3c0aa020993c",
+}
 WINDOWS_RESERVED_COMPONENTS = {
     "CON",
     "PRN",
@@ -436,8 +444,13 @@ def _git_output(checkout: Path, *args: str) -> bytes:
         ) from exc
 
 
-def tracked_source_entries(checkout: Path) -> dict[str, tuple[str, str]]:
-    raw = _git_output(checkout, "ls-tree", "-r", "-z", "HEAD")
+def tracked_source_entries(
+    checkout: Path, source_ref: str = "HEAD"
+) -> dict[str, tuple[str, str]]:
+    commit = _git_output(
+        checkout, "rev-parse", "--verify", "--end-of-options", f"{source_ref}^{{commit}}"
+    ).decode("ascii").strip()
+    raw = _git_output(checkout, "ls-tree", "-r", "-z", commit)
     entries: dict[str, tuple[str, str]] = {}
     for record in raw.split(b"\0"):
         if not record:
@@ -467,7 +480,9 @@ def tracked_source_paths(checkout: Path) -> list[str]:
     return list(tracked_source_entries(checkout))
 
 
-def verify_source_snapshot(checkout: Path, package_root: Path) -> None:
+def verify_source_snapshot(
+    checkout: Path, package_root: Path, source_ref: str = "HEAD"
+) -> None:
     checkout = checkout.resolve()
     source_root = (package_root / "source").resolve()
     if not source_root.is_dir():
@@ -478,7 +493,7 @@ def verify_source_snapshot(checkout: Path, package_root: Path) -> None:
             "source snapshot verification requires a clean tracked checkout"
         )
 
-    expected_entries = tracked_source_entries(checkout)
+    expected_entries = tracked_source_entries(checkout, source_ref)
     expected = list(expected_entries)
     actual = []
     for path in source_root.rglob("*"):
@@ -514,6 +529,33 @@ def verify_source_snapshot(checkout: Path, package_root: Path) -> None:
                 f"Git/package source executable-mode mismatch for {relative}: "
                 f"{actual_executable} != {expected_executable}"
             )
+
+
+def verify_historical_source_snapshot(
+    checkout: Path, package_root: Path, archive: Path
+) -> None:
+    """Authenticate only the externally pinned historical review, then its source."""
+    identity = HISTORICAL_RELEASE_IDENTITY
+    if archive.stat().st_size > MAX_COMPRESSED_BYTES:
+        raise ReviewPackageError("historical archive exceeds compressed size limit")
+    if sha256_file(archive) != identity["archive_sha256"]:
+        raise ReviewPackageError("historical archive SHA-256 differs from reviewed identity")
+    commit = identity["source_commit"]
+    resolved = _git_output(
+        checkout, "rev-parse", "--verify", "--end-of-options", f"{commit}^{{commit}}"
+    ).decode("ascii").strip()
+    if resolved != commit:
+        raise ReviewPackageError("historical source commit differs from reviewed identity")
+    tree = _git_output(checkout, "rev-parse", f"{commit}^{{tree}}").decode("ascii").strip()
+    if tree != identity["source_git_tree"]:
+        raise ReviewPackageError("historical Git tree differs from reviewed identity")
+    verify_source_snapshot(checkout, package_root, source_ref=commit)
+    digest = source_tree_sha256(package_root / "source")
+    if digest != identity["source_tree_sha256"]:
+        raise ReviewPackageError("historical source SHA-256 differs from reviewed identity")
+    fingerprint = json.loads((package_root / "code_fingerprint.json").read_text())
+    if fingerprint.get("source_tree_sha256") != digest:
+        raise ReviewPackageError("historical source fingerprint differs from reviewed identity")
 
 
 def verify_package_layout(package_root: Path) -> None:
@@ -925,6 +967,8 @@ def parse_args() -> argparse.Namespace:
     verify_source = subcommands.add_parser("verify-source")
     verify_source.add_argument("--checkout", type=Path, required=True)
     verify_source.add_argument("--package-root", type=Path, required=True)
+    verify_source.add_argument("--historical-release", action="store_true")
+    verify_source.add_argument("--archive", type=Path)
 
     verify_layout = subcommands.add_parser("verify-package-layout")
     verify_layout.add_argument("--package-root", type=Path, required=True)
@@ -955,8 +999,16 @@ def main() -> None:
             verify_archive_hash(args.archive, args.sha)
             print(safe_extract(args.archive, args.destination))
         elif args.command == "verify-source":
-            verify_source_snapshot(args.checkout, args.package_root)
-            print("native backend review package matches the complete Git source tree")
+            if args.historical_release:
+                if args.archive is None:
+                    raise ReviewPackageError("historical verification requires --archive")
+                verify_historical_source_snapshot(args.checkout, args.package_root, args.archive)
+                print("historical native backend review matches its pinned complete Git source tree")
+            else:
+                if args.archive is not None:
+                    raise ReviewPackageError("--archive requires explicit --historical-release")
+                verify_source_snapshot(args.checkout, args.package_root)
+                print("native backend review package matches the complete Git HEAD source tree")
         elif args.command == "verify-package-layout":
             verify_package_layout(args.package_root)
             print("native backend review package has the exact non-source layout")

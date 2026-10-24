@@ -38,6 +38,7 @@ export const walletAutoLockMinutesKey = 'hegemon.walletAutoLockMinutes';
 export const blockAlertEnabledKey = 'hegemon.blockAlertEnabled';
 export const minWalletPassphraseLength = 12;
 export const defaultRpcPort = 9955;
+export const defaultRpcUrl = `http://127.0.0.1:${defaultRpcPort}`;
 export const defaultP2pPort = canonicalTestnetP2pPort;
 export const maxDesktopMineThreads = 4;
 export const walletHistoryPageSize = 24;

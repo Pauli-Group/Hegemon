@@ -36,6 +36,8 @@ formal-generator = []
 hx512-refinement-evidence = []
 hx512-working-proof-runner = ["hx512-refinement-evidence"]
 rp05-dev-artifacts = []
+htlc-dev-artifacts = []
+private-spend-dev-artifacts = []
 slow-smallwood-e2e = []
 stark-fast = ["transaction-core/stark-fast"]
 
@@ -56,3 +58,8 @@ required-features = ["rp05-dev-artifacts"]
 
 [lints]
 workspace = true
+
+[[example]]
+name = "private_spend_candidate_artifact"
+path = "examples/private_spend_candidate_artifact.rs"
+required-features = ["private-spend-dev-artifacts"]

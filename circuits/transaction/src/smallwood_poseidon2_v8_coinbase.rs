@@ -296,9 +296,44 @@ mod tests {
             SmallwoodPoseidon2V8Witness,
         },
     };
+    use transaction_core::poseidon2_width16::{
+        poseidon2_width16_permutation, POSEIDON2_WIDTH16_COMPRESSION_MODE_ID,
+        POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER, POSEIDON2_WIDTH16_SUITE_MARKER,
+        POSEIDON2_WIDTH16_WIDTH,
+    };
 
     #[test]
     fn canonical_empty_note_has_known_zero_value_preimage_and_pinned_root() {
+        // Independently calculated with the integer Goldilocks permutation,
+        // unchanged sponge leaf and32 COMPFF01/raw-final-plus-left rounds.
+        const FEEDFORWARD_EMPTY_ROOT: SmallwoodPoseidon2V8Digest = [
+            3_013_021_922_057_677_145,
+            1_646_436_993_411_294_138,
+            17_930_985_046_722_462_302,
+            4_040_104_963_526_763_525,
+            8_044_768_705_513_318_970,
+            5_501_470_279_516_072_626,
+            9_669_143_789_627_659_081,
+        ];
+        // Historical suite-marker/raw-output compression. Keep only as a
+        // negative control; this value is never current default tree state.
+        const LEGACY_SUITE_RAW_EMPTY_ROOT: SmallwoodPoseidon2V8Digest = [
+            17_350_853_413_121_414_251,
+            11_311_714_906_264_832_276,
+            5_494_323_263_975_105_675,
+            16_684_950_828_932_818_263,
+            7_241_422_828_316_666_478,
+            13_669_884_728_521_486_080,
+            15_137_873_680_347_988_554,
+        ];
+        assert_eq!(
+            POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER,
+            0x434f_4d50_4646_3031
+        );
+        assert_eq!(
+            POSEIDON2_WIDTH16_COMPRESSION_MODE_ID,
+            "hegemon-p2w16-compress14-left-feedforward-v1"
+        );
         let opening = poseidon2_v8_empty_note_opening();
         assert_eq!(opening.value, 0);
         assert_eq!(opening.asset_id, 0);
@@ -322,18 +357,37 @@ mod tests {
                 4_433_333_151_475_486_468,
             ]
         );
+        let mut reference = nodes[0];
+        let mut legacy = nodes[0];
+        for level in 0..SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH {
+            let left = reference.map(Felt::from_u64);
+            let mut raw = [Felt::ZERO; POSEIDON2_WIDTH16_WIDTH];
+            raw[..7].copy_from_slice(&left);
+            raw[7..14].copy_from_slice(&left);
+            raw[14] = Felt::from_u64(MERKLE_DOMAIN_TAG);
+            raw[15] = Felt::from_u64(POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER);
+            poseidon2_width16_permutation(&mut raw);
+            reference = core::array::from_fn(|lane| (raw[lane] + left[lane]).as_canonical_u64());
+            assert_eq!(nodes[level + 1], reference, "feed-forward level {level}");
+
+            // Reproduce the old value under its original arithmetic solely to
+            // detect accidental reuse; do not feed it into current defaults.
+            let old_left = legacy.map(Felt::from_u64);
+            let mut old_raw = [Felt::ZERO; POSEIDON2_WIDTH16_WIDTH];
+            old_raw[..7].copy_from_slice(&old_left);
+            old_raw[7..14].copy_from_slice(&old_left);
+            old_raw[14] = Felt::from_u64(MERKLE_DOMAIN_TAG);
+            old_raw[15] = Felt::from_u64(POSEIDON2_WIDTH16_SUITE_MARKER);
+            poseidon2_width16_permutation(&mut old_raw);
+            legacy = core::array::from_fn(|lane| old_raw[lane].as_canonical_u64());
+        }
+        assert_eq!(reference, FEEDFORWARD_EMPTY_ROOT);
         assert_eq!(
             nodes[SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH],
-            [
-                17_350_853_413_121_414_251,
-                11_311_714_906_264_832_276,
-                5_494_323_263_975_105_675,
-                16_684_950_828_932_818_263,
-                7_241_422_828_316_666_478,
-                13_669_884_728_521_486_080,
-                15_137_873_680_347_988_554,
-            ]
+            FEEDFORWARD_EMPTY_ROOT
         );
+        assert_eq!(legacy, LEGACY_SUITE_RAW_EMPTY_ROOT);
+        assert_ne!(reference, LEGACY_SUITE_RAW_EMPTY_ROOT);
     }
 
     #[test]

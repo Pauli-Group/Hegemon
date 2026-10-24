@@ -238,71 +238,71 @@ def spanCheckBlock (block : Nat) : Bool :=
     decide (exactSpan index = expressionSpan exactSpan expression))
     (128 * block) ((exactNonlinearExpressions.drop (128 * block)).take 128)
 
-private theorem span_check_0 : spanCheckBlock 0 = true := by decide
-private theorem span_check_1 : spanCheckBlock 1 = true := by decide
-private theorem span_check_2 : spanCheckBlock 2 = true := by decide
-private theorem span_check_3 : spanCheckBlock 3 = true := by decide
-private theorem span_check_4 : spanCheckBlock 4 = true := by decide
-private theorem span_check_5 : spanCheckBlock 5 = true := by decide
-private theorem span_check_6 : spanCheckBlock 6 = true := by decide
-private theorem span_check_7 : spanCheckBlock 7 = true := by decide
-private theorem span_check_8 : spanCheckBlock 8 = true := by decide
-private theorem span_check_9 : spanCheckBlock 9 = true := by decide
-private theorem span_check_10 : spanCheckBlock 10 = true := by decide
-private theorem span_check_11 : spanCheckBlock 11 = true := by decide
-private theorem span_check_12 : spanCheckBlock 12 = true := by decide
-private theorem span_check_13 : spanCheckBlock 13 = true := by decide
-private theorem span_check_14 : spanCheckBlock 14 = true := by decide
-private theorem span_check_15 : spanCheckBlock 15 = true := by decide
-private theorem span_check_16 : spanCheckBlock 16 = true := by decide
-private theorem span_check_17 : spanCheckBlock 17 = true := by decide
-private theorem span_check_18 : spanCheckBlock 18 = true := by decide
-private theorem span_check_19 : spanCheckBlock 19 = true := by decide
-private theorem span_check_20 : spanCheckBlock 20 = true := by decide
-private theorem span_check_21 : spanCheckBlock 21 = true := by decide
-private theorem span_check_22 : spanCheckBlock 22 = true := by decide
-private theorem span_check_23 : spanCheckBlock 23 = true := by decide
-private theorem span_check_24 : spanCheckBlock 24 = true := by decide
-private theorem span_check_25 : spanCheckBlock 25 = true := by decide
-private theorem span_check_26 : spanCheckBlock 26 = true := by decide
-private theorem span_check_27 : spanCheckBlock 27 = true := by decide
-private theorem span_check_28 : spanCheckBlock 28 = true := by decide
-private theorem span_check_29 : spanCheckBlock 29 = true := by decide
-private theorem span_check_30 : spanCheckBlock 30 = true := by decide
-private theorem span_check_31 : spanCheckBlock 31 = true := by decide
-private theorem span_check_32 : spanCheckBlock 32 = true := by decide
-private theorem span_check_33 : spanCheckBlock 33 = true := by decide
-private theorem span_check_34 : spanCheckBlock 34 = true := by decide
-private theorem span_check_35 : spanCheckBlock 35 = true := by decide
-private theorem span_check_36 : spanCheckBlock 36 = true := by decide
-private theorem span_check_37 : spanCheckBlock 37 = true := by decide
-private theorem span_check_38 : spanCheckBlock 38 = true := by decide
-private theorem span_check_39 : spanCheckBlock 39 = true := by decide
-private theorem span_check_40 : spanCheckBlock 40 = true := by decide
-private theorem span_check_41 : spanCheckBlock 41 = true := by decide
-private theorem span_check_42 : spanCheckBlock 42 = true := by decide
-private theorem span_check_43 : spanCheckBlock 43 = true := by decide
-private theorem span_check_44 : spanCheckBlock 44 = true := by decide
-private theorem span_check_45 : spanCheckBlock 45 = true := by decide
-private theorem span_check_46 : spanCheckBlock 46 = true := by decide
-private theorem span_check_47 : spanCheckBlock 47 = true := by decide
-private theorem span_check_48 : spanCheckBlock 48 = true := by decide
-private theorem span_check_49 : spanCheckBlock 49 = true := by decide
-private theorem span_check_50 : spanCheckBlock 50 = true := by decide
-private theorem span_check_51 : spanCheckBlock 51 = true := by decide
-private theorem span_check_52 : spanCheckBlock 52 = true := by decide
-private theorem span_check_53 : spanCheckBlock 53 = true := by decide
-private theorem span_check_54 : spanCheckBlock 54 = true := by decide
-private theorem span_check_55 : spanCheckBlock 55 = true := by decide
-private theorem span_check_56 : spanCheckBlock 56 = true := by decide
-private theorem span_check_57 : spanCheckBlock 57 = true := by decide
-private theorem span_check_58 : spanCheckBlock 58 = true := by decide
-private theorem span_check_59 : spanCheckBlock 59 = true := by decide
-private theorem span_check_60 : spanCheckBlock 60 = true := by decide
-private theorem span_check_61 : spanCheckBlock 61 = true := by decide
-private theorem span_check_62 : spanCheckBlock 62 = true := by decide
-private theorem span_check_63 : spanCheckBlock 63 = true := by decide
-private theorem span_check_64 : spanCheckBlock 64 = true := by decide
+private theorem span_check_0 : spanCheckBlock 0 = true := by decide +kernel
+private theorem span_check_1 : spanCheckBlock 1 = true := by decide +kernel
+private theorem span_check_2 : spanCheckBlock 2 = true := by decide +kernel
+private theorem span_check_3 : spanCheckBlock 3 = true := by decide +kernel
+private theorem span_check_4 : spanCheckBlock 4 = true := by decide +kernel
+private theorem span_check_5 : spanCheckBlock 5 = true := by decide +kernel
+private theorem span_check_6 : spanCheckBlock 6 = true := by decide +kernel
+private theorem span_check_7 : spanCheckBlock 7 = true := by decide +kernel
+private theorem span_check_8 : spanCheckBlock 8 = true := by decide +kernel
+private theorem span_check_9 : spanCheckBlock 9 = true := by decide +kernel
+private theorem span_check_10 : spanCheckBlock 10 = true := by decide +kernel
+private theorem span_check_11 : spanCheckBlock 11 = true := by decide +kernel
+private theorem span_check_12 : spanCheckBlock 12 = true := by decide +kernel
+private theorem span_check_13 : spanCheckBlock 13 = true := by decide +kernel
+private theorem span_check_14 : spanCheckBlock 14 = true := by decide +kernel
+private theorem span_check_15 : spanCheckBlock 15 = true := by decide +kernel
+private theorem span_check_16 : spanCheckBlock 16 = true := by decide +kernel
+private theorem span_check_17 : spanCheckBlock 17 = true := by decide +kernel
+private theorem span_check_18 : spanCheckBlock 18 = true := by decide +kernel
+private theorem span_check_19 : spanCheckBlock 19 = true := by decide +kernel
+private theorem span_check_20 : spanCheckBlock 20 = true := by decide +kernel
+private theorem span_check_21 : spanCheckBlock 21 = true := by decide +kernel
+private theorem span_check_22 : spanCheckBlock 22 = true := by decide +kernel
+private theorem span_check_23 : spanCheckBlock 23 = true := by decide +kernel
+private theorem span_check_24 : spanCheckBlock 24 = true := by decide +kernel
+private theorem span_check_25 : spanCheckBlock 25 = true := by decide +kernel
+private theorem span_check_26 : spanCheckBlock 26 = true := by decide +kernel
+private theorem span_check_27 : spanCheckBlock 27 = true := by decide +kernel
+private theorem span_check_28 : spanCheckBlock 28 = true := by decide +kernel
+private theorem span_check_29 : spanCheckBlock 29 = true := by decide +kernel
+private theorem span_check_30 : spanCheckBlock 30 = true := by decide +kernel
+private theorem span_check_31 : spanCheckBlock 31 = true := by decide +kernel
+private theorem span_check_32 : spanCheckBlock 32 = true := by decide +kernel
+private theorem span_check_33 : spanCheckBlock 33 = true := by decide +kernel
+private theorem span_check_34 : spanCheckBlock 34 = true := by decide +kernel
+private theorem span_check_35 : spanCheckBlock 35 = true := by decide +kernel
+private theorem span_check_36 : spanCheckBlock 36 = true := by decide +kernel
+private theorem span_check_37 : spanCheckBlock 37 = true := by decide +kernel
+private theorem span_check_38 : spanCheckBlock 38 = true := by decide +kernel
+private theorem span_check_39 : spanCheckBlock 39 = true := by decide +kernel
+private theorem span_check_40 : spanCheckBlock 40 = true := by decide +kernel
+private theorem span_check_41 : spanCheckBlock 41 = true := by decide +kernel
+private theorem span_check_42 : spanCheckBlock 42 = true := by decide +kernel
+private theorem span_check_43 : spanCheckBlock 43 = true := by decide +kernel
+private theorem span_check_44 : spanCheckBlock 44 = true := by decide +kernel
+private theorem span_check_45 : spanCheckBlock 45 = true := by decide +kernel
+private theorem span_check_46 : spanCheckBlock 46 = true := by decide +kernel
+private theorem span_check_47 : spanCheckBlock 47 = true := by decide +kernel
+private theorem span_check_48 : spanCheckBlock 48 = true := by decide +kernel
+private theorem span_check_49 : spanCheckBlock 49 = true := by decide +kernel
+private theorem span_check_50 : spanCheckBlock 50 = true := by decide +kernel
+private theorem span_check_51 : spanCheckBlock 51 = true := by decide +kernel
+private theorem span_check_52 : spanCheckBlock 52 = true := by decide +kernel
+private theorem span_check_53 : spanCheckBlock 53 = true := by decide +kernel
+private theorem span_check_54 : spanCheckBlock 54 = true := by decide +kernel
+private theorem span_check_55 : spanCheckBlock 55 = true := by decide +kernel
+private theorem span_check_56 : spanCheckBlock 56 = true := by decide +kernel
+private theorem span_check_57 : spanCheckBlock 57 = true := by decide +kernel
+private theorem span_check_58 : spanCheckBlock 58 = true := by decide +kernel
+private theorem span_check_59 : spanCheckBlock 59 = true := by decide +kernel
+private theorem span_check_60 : spanCheckBlock 60 = true := by decide +kernel
+private theorem span_check_61 : spanCheckBlock 61 = true := by decide +kernel
+private theorem span_check_62 : spanCheckBlock 62 = true := by decide +kernel
+private theorem span_check_63 : spanCheckBlock 63 = true := by decide +kernel
+private theorem span_check_64 : spanCheckBlock 64 = true := by decide +kernel
 
 theorem all_span_blocks_checked {block : Nat} (bound : block < 65) :
     spanCheckBlock block = true := by

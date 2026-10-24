@@ -2,6 +2,7 @@ use super::*;
 
 fn asic_test_config(path: &Path) -> NativeConfig {
     NativeConfig {
+        network: NativeNetworkIdentity::legacy(),
         dev: true,
         tmp: false,
         base_path: path.to_path_buf(),

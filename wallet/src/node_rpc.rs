@@ -21,8 +21,8 @@
 //!
 //! # RPC transports
 //!
-//! One-shot wallet operations support HTTP and WebSocket JSON-RPC. Streaming
-//! sync operations still require WebSocket subscriptions.
+//! One-shot wallet operations default to HTTP and also support explicit WebSocket
+//! JSON-RPC endpoints. Streaming sync operations require WebSocket subscriptions.
 //!
 //! The client supports:
 //! - Persistent connections with automatic reconnection
@@ -35,7 +35,7 @@
 //! use wallet::node_rpc::NodeRpcClient;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let client = NodeRpcClient::connect("ws://127.0.0.1:9944").await?;
+//! let client = NodeRpcClient::connect("http://127.0.0.1:9944").await?;
 //! let status = client.note_status().await?;
 //! println!("Tree has {} leaves", status.leaf_count);
 //! # Ok(())
@@ -104,9 +104,9 @@ fn is_method_unavailable(error: &WalletError, method: &str) -> bool {
 /// Configuration for the native node RPC client.
 #[derive(Clone, Debug)]
 pub struct NodeRpcConfig {
-    /// WebSocket endpoint URL (e.g., "ws://127.0.0.1:9944")
+    /// RPC endpoint URL (e.g., "http://127.0.0.1:9944" or "ws://127.0.0.1:9944")
     pub endpoint: String,
-    /// Optional archive provider endpoint (WebSocket URL)
+    /// Optional archive provider RPC endpoint (HTTP or WebSocket URL)
     pub archive_endpoint: Option<String>,
     /// Connection timeout
     pub connection_timeout: Duration,
@@ -131,7 +131,7 @@ pub struct ChainMetadata {
 impl Default for NodeRpcConfig {
     fn default() -> Self {
         Self {
-            endpoint: "ws://127.0.0.1:9944".to_string(),
+            endpoint: "http://127.0.0.1:9944".to_string(),
             archive_endpoint: None,
             connection_timeout: Duration::from_secs(30),
             request_timeout: Duration::from_secs(60),
@@ -186,6 +186,10 @@ const NATIVE_ACTION_BODY_CHUNK_RPC_SCHEMA: &str = "hegemon.native.action-body-ch
 const MAX_NATIVE_ACTION_BODY_CHUNK_BYTES: usize = 1024 * 1024;
 const MAX_NATIVE_BLOCK_ACTIONS: usize = 10_000;
 const MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES: usize = 2 * 1024 * 1024 + 16 * 1024;
+const MAX_NATIVE_RECOVERY_ACTION_BYTES: usize =
+    transaction_circuit::asset_recovery_wire_v1::MAX_SPEND_ACTION_BYTES + 512;
+const MAX_NATIVE_RECOVERY_RPC_REQUEST_BYTES: usize =
+    4 * transaction_circuit::asset_recovery_wire_v1::MAX_SPEND_ACTION_BYTES.div_ceil(3) + 16 * 1024;
 const MAX_NATIVE_BLOCK_ACTION_BYTES: usize = 64 * 1024 * 1024;
 const MAX_NATIVE_ACTION_BODY_BYTES: usize =
     MAX_NATIVE_BLOCK_ACTION_BYTES + 5 * (MAX_NATIVE_BLOCK_ACTIONS + 1);
@@ -555,7 +559,7 @@ impl NodeRpcClient {
     /// ```no_run
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// use wallet::node_rpc::NodeRpcClient;
-    /// let client = NodeRpcClient::connect("ws://127.0.0.1:9944").await?;
+    /// let client = NodeRpcClient::connect("http://127.0.0.1:9944").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -590,6 +594,14 @@ impl NodeRpcClient {
         endpoint: &str,
         config: &NodeRpcConfig,
     ) -> Result<RpcTransport, WalletError> {
+        Self::build_client_for_endpoint_with_request_cap(endpoint, config, None).await
+    }
+
+    async fn build_client_for_endpoint_with_request_cap(
+        endpoint: &str,
+        config: &NodeRpcConfig,
+        request_cap: Option<u32>,
+    ) -> Result<RpcTransport, WalletError> {
         if endpoint.starts_with("https://") || endpoint.starts_with("wss://") {
             return Err(WalletError::Rpc(format!(
                 "TLS RPC endpoint not supported by PQ-only wallet build: {}",
@@ -598,22 +610,33 @@ impl NodeRpcClient {
         }
 
         if endpoint.starts_with("http://") {
-            return HttpClientBuilder::default()
-                .request_timeout(config.request_timeout)
-                .build(endpoint)
+            let mut builder = HttpClientBuilder::default().request_timeout(config.request_timeout);
+            if let Some(cap) = request_cap { builder = builder.max_request_size(cap); }
+            return builder.build(endpoint)
                 .map(|client| RpcTransport::Http(Box::new(client)))
                 .map_err(|e| {
                     WalletError::Rpc(format!("Failed to connect to {}: {}", endpoint, e))
                 });
         }
 
-        WsClientBuilder::default()
+        let mut builder = WsClientBuilder::default()
             .connection_timeout(config.connection_timeout)
-            .request_timeout(config.request_timeout)
-            .build(endpoint)
+            .request_timeout(config.request_timeout);
+        if let Some(cap) = request_cap { builder = builder.max_request_size(cap); }
+        builder.build(endpoint)
             .await
             .map(|client| RpcTransport::Ws(Box::new(client)))
-            .map_err(|e| WalletError::Rpc(format!("Failed to connect to {}: {}", endpoint, e)))
+            .map_err(|e| {
+                let hint = if endpoint.starts_with("ws://")
+                    && matches!(&e, RpcError::Transport(error)
+                        if error.to_string() == "Connection rejected with status code: 200")
+                {
+                    "; endpoint returned HTTP 200 instead of a WebSocket upgrade. Use an http:// RPC URL for native one-shot requests (--ws-url/ws_url also accepts HTTP), or a WebSocket-capable endpoint for subscriptions"
+                } else {
+                    ""
+                };
+                WalletError::Rpc(format!("Failed to connect to {}: {}{}", endpoint, e, hint))
+            })
     }
 
     /// Ensure connection is alive, reconnect if needed
@@ -689,6 +712,196 @@ impl NodeRpcClient {
     /// List archive providers from the chain.
     pub async fn archive_providers(&self) -> Result<Vec<ArchiveProviderEntry>, WalletError> {
         Ok(Vec::new())
+    }
+
+    /// Read the node's public network configuration for exact context checks.
+    pub async fn node_config(&self) -> Result<serde_json::Value, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        client
+            .request("hegemon_nodeConfig", rpc_params![])
+            .await
+            .map_err(|error| WalletError::Rpc(format!("hegemon_nodeConfig failed: {error}")))
+    }
+
+    /// Read the native private-spend descriptor for verified wallet sync.
+    /// Callers must bind this public readback to their selected network authority.
+    pub async fn private_spend_parameters(&self) -> Result<serde_json::Value, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        client
+            .request("hegemon_privateSpendParameters", rpc_params![])
+            .await
+            .map_err(|error| {
+                WalletError::Rpc(format!("hegemon_privateSpendParameters failed: {error}"))
+            })
+    }
+
+    /// Read asset source parameters. Callers must authenticate this descriptor
+    /// against their exact selected network and compiled source authority.
+    pub async fn asset_parameters(&self) -> Result<serde_json::Value, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        client
+            .request("hegemon_assetParameters", rpc_params![])
+            .await
+            .map_err(|error| WalletError::Rpc(format!("hegemon_assetParameters failed: {error}")))
+    }
+
+    /// Atomically read selected canonical H and the current application parent
+    /// with the complete authenticated row(s). The caller validates all fields.
+    pub async fn asset_snapshot(
+        &self,
+        asset_id: Option<u32>,
+        reference_hash: Option<[u8; 32]>,
+    ) -> Result<serde_json::Value, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        client
+            .request(
+                "hegemon_assetSnapshot",
+                rpc_params![asset_id, reference_hash.map(hex::encode)],
+            )
+            .await
+            .map_err(|error| WalletError::Rpc(format!("hegemon_assetSnapshot failed: {error}")))
+    }
+
+    /// Read all authenticated public asset rows, or one requested asset's row.
+    /// This is transport only; the asset wallet validates context/membership.
+    pub async fn asset_registry(
+        &self,
+        asset_id: Option<u32>,
+    ) -> Result<serde_json::Value, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        let params = match asset_id {
+            Some(asset) => rpc_params![asset],
+            None => rpc_params![],
+        };
+        client
+            .request("hegemon_assetRegistry", params)
+            .await
+            .map_err(|error| WalletError::Rpc(format!("hegemon_assetRegistry failed: {error}")))
+    }
+
+    /// Read the canonical current recovery parameters/row and optional sparse
+    /// target path. The caller validates it against its selected source token.
+    pub async fn recovery_snapshot(
+        &self, asset_id: Option<u32>, position: Option<u32>,
+    ) -> Result<serde_json::Value, WalletError> {
+        if asset_id == Some(0) || (position.is_some() && asset_id.is_none()) {
+            return Err(WalletError::InvalidState("recovery snapshot asset/position scope"));
+        }
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        client.request("hegemon_assetRecoverySnapshot", rpc_params![asset_id, position])
+            .await.map_err(|error| WalletError::Rpc(format!("hegemon_assetRecoverySnapshot failed: {error}")))
+    }
+    pub async fn recovery_parameters(&self) -> Result<serde_json::Value, WalletError> {
+        self.recovery_snapshot(None, None).await
+    }
+    pub async fn recovery_freeze_witness(
+        &self, asset_id: u32, position: u32,
+    ) -> Result<serde_json::Value, WalletError> {
+        self.recovery_snapshot(Some(asset_id), Some(position)).await
+    }
+    /// Exact, source-authenticated recovery submission. This is a transport
+    /// preflight; the high-level builder and node still verify actual proofs.
+    /// Preserve the wallet's SubmissionUncertain journal before calling it.
+    #[cfg(feature = "private-spend-dev-artifacts")]
+    pub async fn submit_native_recovery_action(
+        &self,
+        token: &crate::private_spend_rpc::DevelopmentPrivateSpendAuthority,
+        action_id: u16,
+        body: &[u8],
+    ) -> Result<[u8;48], WalletError> {
+        if !token.recovery_enabled() || !matches!(action_id, 18 | 19) {
+            return Err(WalletError::InvalidState("recovery source/action not selected"));
+        }
+        let metadata = self.get_chain_metadata().await?;
+        let config = self.node_config().await?;
+        let context = token.context();
+        let selected = serde_json::to_value(token.recovery_descriptor()
+            .ok_or(WalletError::InvalidState("recovery source absent"))?)
+            .map_err(|error| WalletError::Serialization(error.to_string()))?;
+        if metadata.genesis_hash != context.genesis_hash()
+            || config["networkProfile"] != "development"
+            || config["chainId"] != format!("0x{}", hex::encode(context.chain_id()))
+            || config["networkManifestDigest"] != format!("0x{}", hex::encode(context.manifest_digest()))
+            || config["networkManifest"]["development_candidate"]["recovery"] != selected {
+            return Err(WalletError::InvalidState("connected recovery source differs from selected authority"));
+        }
+        let height = metadata.block_number.checked_add(1)
+            .ok_or(WalletError::InvalidState("recovery inclusion height overflow"))?;
+        let request = match action_id {
+            18 => crate::private_spend_rpc::prepare_recovery_spend_request_local_candidate(token, height, body)?,
+            19 => crate::private_spend_rpc::prepare_recovery_admin_request_local_candidate(token, height, body)?,
+            _ => return Err(WalletError::InvalidState("unsupported recovery action")),
+        };
+        let encoded = serde_json::to_vec(&request)
+            .map_err(|error| WalletError::Serialization(error.to_string()))?;
+        if encoded.len() > MAX_NATIVE_RECOVERY_RPC_REQUEST_BYTES - 1024 {
+            return Err(WalletError::InvalidState("recovery request exceeds its exact transport budget"));
+        }
+        drop(encoded);
+        let cap = u32::try_from(MAX_NATIVE_RECOVERY_RPC_REQUEST_BYTES)
+            .map_err(|_| WalletError::InvalidState("recovery request budget width"))?;
+        // A dedicated bounded transport keeps generic methods at their previous
+        // request limit. The node independently enforces the recovery grammar.
+        let client = Self::build_client_for_endpoint_with_request_cap(
+            &self.config.endpoint, &self.config, Some(cap)).await?;
+        Self::send_native_asset_request(&client, request).await
+    }
+
+    /// Submit an exact request prepared by the asset wallet through ordinary
+    /// native action admission. This transport does not grant source authority
+    /// or verify a proof; callers must do both before marking submission intent.
+    /// The request and its proof bytes are forwarded without modification.
+    pub async fn submit_native_asset_request(
+        &self,
+        request: serde_json::Value,
+    ) -> Result<[u8; 48], WalletError> {
+        if !request.is_object() {
+            return Err(WalletError::Serialization(
+                "native asset submit request must be a JSON object".to_owned(),
+            ));
+        }
+        if request["action_id"].as_u64().is_some_and(|id| matches!(id, 18 | 19)) {
+            return Err(WalletError::InvalidState("recovery submission requires its authenticated source token"));
+        }
+        self.submit_native_asset_request_inner(request).await
+    }
+
+    async fn submit_native_asset_request_inner(
+        &self, request: serde_json::Value,
+    ) -> Result<[u8;48], WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        Self::send_native_asset_request(&client, request).await
+    }
+
+    async fn send_native_asset_request(
+        client: &RpcTransport, request: serde_json::Value,
+    ) -> Result<[u8;48], WalletError> {
+        let response: SubmitActionResponse = client
+            .request("hegemon_submitAction", rpc_params![request])
+            .await
+            .map_err(|error| WalletError::Rpc(format!("hegemon_submitAction failed: {error}")))?;
+        if !response.success {
+            return Err(WalletError::Http(format!(
+                "Native asset action rejected: {}",
+                response.error.unwrap_or_else(|| "unknown error".to_owned())
+            )));
+        }
+        if response.error.is_some() {
+            return Err(WalletError::Rpc(
+                "Native asset submission returned both success and an error".to_owned(),
+            ));
+        }
+        let tx_hash = response
+            .tx_hash
+            .ok_or_else(|| WalletError::Rpc("Missing tx_hash in response".to_owned()))?;
+        hex_to_array48(&tx_hash)
     }
 
     /// Get wallet note status (commitment tree info)
@@ -2547,9 +2760,13 @@ fn decode_and_bind_canonical_action_body(
     let mut unique_ids = HashSet::with_capacity(actions.len());
     for action in &actions {
         if action.len() > MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES {
-            return Err(WalletError::InvalidState(
-                "canonical action exceeds the per-action consensus cap",
-            ));
+            if action.len() > MAX_NATIVE_RECOVERY_ACTION_BYTES
+                || crate::poseidon2_v8_sync::canonical_recovery_action_body(action)?.is_none()
+            {
+                return Err(WalletError::InvalidState(
+                    "canonical action exceeds its exact per-action consensus cap",
+                ));
+            }
         }
         total = total
             .checked_add(action.len())
@@ -2968,7 +3185,7 @@ mod tests {
     #[test]
     fn test_config_defaults() {
         let config = NodeRpcConfig::default();
-        assert_eq!(config.endpoint, "ws://127.0.0.1:9944");
+        assert_eq!(config.endpoint, "http://127.0.0.1:9944");
         assert_eq!(config.max_reconnect_attempts, 5);
     }
 

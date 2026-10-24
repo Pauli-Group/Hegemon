@@ -1,0 +1,4 @@
+import HegemonCrypto.NativePrivateSpendQ58CurrentOpeningDensity
+
+#print axioms HegemonCrypto.SmallWood.NativePrivateSpendQ58CurrentOpeningDensity.current_opening_card_lower_bound
+#print axioms HegemonCrypto.SmallWood.NativePrivateSpendQ58CurrentOpeningDensity.current_root_tuple_card_le

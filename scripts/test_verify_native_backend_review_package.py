@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -135,12 +136,127 @@ def expect_vector_equivalence_rejection(
         raise SystemExit("semantically mutated review vectors unexpectedly matched")
 
 
+def check_historical_source_controls() -> dict[str, int]:
+    positive = 0
+    negative = 0
+
+    def rejected(operation, expected: str) -> None:
+        nonlocal negative
+        try:
+            operation()
+        except review.ReviewPackageError as error:
+            if expected not in str(error):
+                raise SystemExit(f"historical control rejected at wrong gate: {error}") from error
+            negative += 1
+        else:
+            raise SystemExit(f"historical control unexpectedly accepted: {expected}")
+
+    with tempfile.TemporaryDirectory(prefix="hegemon-historical-source-") as raw:
+        temp = Path(raw)
+        checkout = temp / "checkout"
+        checkout.mkdir()
+
+        def git(*args: str) -> str:
+            return subprocess.check_output(["git", *args], cwd=checkout, text=True).strip()
+
+        git("init", "-q")
+        git("config", "user.email", "historical-review-test@invalid")
+        git("config", "user.name", "Historical Review Test")
+        (checkout / "tracked.txt").write_text("original committed source\n")
+        git("add", ".")
+        git("commit", "-q", "-m", "historical source")
+        commit = git("rev-parse", "HEAD")
+        package = temp / "package"
+        source = package / "source"
+        source.mkdir(parents=True)
+        tracked = source / "tracked.txt"
+        tracked.write_bytes((checkout / "tracked.txt").read_bytes())
+        fingerprint = {"source_tree_sha256": review.source_tree_sha256(source)}
+        fingerprint_path = package / "code_fingerprint.json"
+        fingerprint_path.write_text(json.dumps(fingerprint))
+        archive = temp / "fixture.tar.gz"
+        write_archive(archive, [regular_member(
+            f"{review.PACKAGE_ROOT_NAME}/source/tracked.txt", tracked.read_bytes()
+        )])
+        identity = {
+            "source_commit": commit,
+            "source_git_tree": git("rev-parse", "HEAD^{tree}"),
+            "archive_sha256": review.sha256_file(archive),
+            "source_tree_sha256": review.source_tree_sha256(source),
+        }
+        # The unmodified generic API still verifies a current clean HEAD.
+        review.verify_source_snapshot(checkout, package)
+        positive += 1
+        (checkout / "later.txt").write_text("later unrelated source\n")
+        git("add", ".")
+        git("commit", "-q", "-m", "subsequent source")
+        current_head = git("rev-parse", "HEAD")
+        rejected(lambda: review.verify_source_snapshot(checkout, package), "file-set mismatch")
+        with patch.dict(review.HISTORICAL_RELEASE_IDENTITY, identity, clear=True):
+            verify = lambda: review.verify_historical_source_snapshot(checkout, package, archive)
+            verify()
+            positive += 1
+            original = tracked.read_bytes()
+            tracked.write_bytes(original + b"changed\n")
+            rejected(verify, "content mismatch")
+            tracked.write_bytes(original)
+            original_mode = tracked.stat().st_mode
+            tracked.chmod(original_mode | 0o111)
+            rejected(verify, "executable-mode mismatch")
+            tracked.chmod(original_mode)
+            tracked.unlink()
+            rejected(verify, "file-set mismatch")
+            tracked.write_bytes(original)
+            (source / "extra.txt").write_text("extra")
+            rejected(verify, "file-set mismatch")
+            (source / "extra.txt").unlink()
+            original_archive = archive.read_bytes()
+            archive.write_bytes(original_archive + b"tamper")
+            rejected(verify, "archive SHA-256")
+            archive.write_bytes(original_archive)
+            for key, replacement, expected in (
+                ("source_commit", current_head, "Git tree"),
+                ("source_commit", "0" * 40, "git rev-parse"),
+                ("source_git_tree", "0" * 40, "Git tree"),
+                ("source_tree_sha256", "0" * 64, "source SHA-256"),
+            ):
+                with patch.dict(review.HISTORICAL_RELEASE_IDENTITY, {key: replacement}):
+                    rejected(verify, expected)
+            fingerprint_path.write_text(json.dumps({"source_tree_sha256": "0" * 64}))
+            rejected(verify, "source fingerprint")
+            fingerprint_path.write_text(json.dumps(fingerprint))
+            (checkout / "tracked.txt").write_text("dirty current checkout")
+            rejected(verify, "clean tracked checkout")
+            (checkout / "tracked.txt").write_bytes(original)
+            verify()
+            positive += 1
+            # A depth-one CI checkout initially lacks the historical object.
+            # Fetch only that precise commit, without replacing checked-out HEAD.
+            shallow = temp / "shallow"
+            subprocess.run([
+                "git", "clone", "-q", "--depth=1", checkout.as_uri(), str(shallow)
+            ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            rejected(
+                lambda: review.verify_historical_source_snapshot(shallow, package, archive),
+                "git rev-parse",
+            )
+            subprocess.run([
+                "git", "fetch", "--no-tags", "--depth=1", "origin", commit
+            ], cwd=shallow, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            review.verify_historical_source_snapshot(shallow, package, archive)
+            if subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=shallow, text=True).strip() != current_head:
+                raise SystemExit("historical fetch changed the current checkout")
+            positive += 1
+    return {"positive_controls": positive, "negative_controls": negative}
+
+
 def main() -> None:
+    historical_controls = check_historical_source_controls()
     with tempfile.TemporaryDirectory(prefix="hegemon-native-review-package-") as raw:
         temp = Path(raw)
         review.verify_archive_hash(PACKAGE, PACKAGE_SHA)
         package_root = review.safe_extract(PACKAGE, temp / "current")
-        review.verify_source_snapshot(ROOT, package_root)
+        review.verify_historical_source_snapshot(ROOT, package_root, PACKAGE)
         review.verify_package_layout(package_root)
         review.verify_evidence_semantics(package_root)
 
@@ -268,22 +384,22 @@ def main() -> None:
         original_mode = mutation.stat().st_mode
         mutation.write_bytes(original_mutation + b"\n// parity mutation\n")
         try:
-            review.verify_source_snapshot(ROOT, package_root)
+            review.verify_historical_source_snapshot(ROOT, package_root, PACKAGE)
         except review.ReviewPackageError as exc:
             if "Git/package source content mismatch" not in str(exc):
                 raise SystemExit(f"source mutation rejected for wrong reason: {exc}") from exc
         else:
-            raise SystemExit("mutated package source unexpectedly matched Git HEAD")
+            raise SystemExit("mutated package source unexpectedly matched its pinned historical source")
 
         mutation.write_bytes(original_mutation)
         mutation.chmod(original_mode | 0o111)
         try:
-            review.verify_source_snapshot(ROOT, package_root)
+            review.verify_historical_source_snapshot(ROOT, package_root, PACKAGE)
         except review.ReviewPackageError as exc:
             if "executable-mode mismatch" not in str(exc):
                 raise SystemExit(f"mode mutation rejected for wrong reason: {exc}") from exc
         else:
-            raise SystemExit("mode-mutated package source unexpectedly matched Git HEAD")
+            raise SystemExit("mode-mutated package source unexpectedly matched its pinned historical source")
         mutation.chmod(original_mode)
         mutation.write_bytes(original_mutation + b"\n// parity mutation\n")
 
@@ -655,6 +771,9 @@ def main() -> None:
                 str(ROOT),
                 "--package-root",
                 str(package_root),
+                "--historical-release",
+                "--archive",
+                str(PACKAGE),
             ],
             cwd=ROOT,
             env={**os.environ, "PYTHONOPTIMIZE": "1"},
@@ -673,7 +792,7 @@ def main() -> None:
                 + optimized.stdout
             )
 
-    print("native backend review package safety and Git-parity mutations rejected")
+    print("native backend review package safety and Git-parity mutations rejected", historical_controls)
 
 
 if __name__ == "__main__":

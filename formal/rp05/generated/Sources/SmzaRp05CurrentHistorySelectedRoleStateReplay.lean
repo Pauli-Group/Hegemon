@@ -560,6 +560,7 @@ theorem history_role_selector_supplies_retained_stage_failure
     i, readback, stageFailure⟩
   exact ⟨i, readback, stageFailure⟩
 
+set_option maxHeartbeats 1000000 in
 /-- A nonzero selected history-role coefficient transfers to the exact
 retained-stage failure selector carried by that history branch.  All stage
 data are the canonical casts of the one history fiber; the readback and

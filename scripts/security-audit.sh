@@ -12,7 +12,7 @@
 #   ./scripts/security-audit.sh           # Full audit
 #   ./scripts/security-audit.sh --quick   # Skip cargo.lock (faster)
 #   ./scripts/security-audit.sh --fix     # Show suggested fixes
-#   ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
+#   ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd --binary target/release/private-spend
 #
 # Exit codes:
 #   0 - Audit passed (no forbidden primitives)
@@ -153,6 +153,8 @@ VIOLATIONS=0
 WARNINGS=0
 BINARY_PROFILE_CHECKED=false
 BINARY_PROFILE_AUTHORIZED=false
+BINARY_PRIVATE_LAUNCH_AUTHORIZED=false
+BINARY_CURRENT_BACKEND_ATTESTED=false
 
 if [ -n "${HEGEMON_LEAN_RELEASE_PQ_BINARY_POLICY_VECTORS:-}" ]; then
     echo "=== Step 0: Lean Release PQ Binary Policy Vector Check ==="
@@ -172,6 +174,25 @@ echo ""
 # Some trust-boundary code has to name a forbidden primitive in order to reject
 # it explicitly. Keep those branches auditable without letting real use sites
 # disappear from the report.
+# Exempt only this complete transparent-verifier metadata declaration. Source
+# matches have an rg/grep file:line prefix; binary strings must match as-is.
+# Extra text (including a primitive on the same line) remains reportable.
+# Ambiguous colon-containing source paths remain reportable as well.
+filter_transparent_metadata_matches() {
+    local mode="$1"
+    local match source_line
+    while IFS= read -r match; do
+        source_line="$match"
+        if [ "$mode" = source ] && [[ "$match" =~ ^([^:]+):([0-9]+):(.*)$ ]]; then
+            source_line="${BASH_REMATCH[3]}"
+        fi
+        if printf '%s\n' "$source_line" | grep -Eq '^[[:space:]]*"verification_key"[[:space:]]*:[[:space:]]*"transparent source graph, exact public binding and fixed profile; no trusted setup"[[:space:]]*,[[:space:]]*$'; then
+            continue
+        fi
+        printf '%s\n' "$match"
+    done
+}
+
 filter_reject_only_matches() {
     while IFS= read -r match; do
         [ -z "$match" ] && continue
@@ -245,7 +266,7 @@ check_pattern() {
         | grep -v "keywords =" \
         | grep -v "// " \
         || true)
-    matches=$(printf '%s\n' "$raw_matches" | filter_reject_only_matches)
+    matches=$(printf '%s\n' "$raw_matches" | filter_transparent_metadata_matches source | filter_reject_only_matches)
     
     if [ -n "$matches" ]; then
         printf "${RED}❌ FOUND${NC}\n"
@@ -329,30 +350,77 @@ fi
 echo "=== Step 3: Native Binary Symbol Scan ==="
 echo ""
 
+# The strict legacy route remains first. The private route has its own source-
+# owned final artifact authority; an exact refusal alone can never authorize it.
+release_crypto_profile() {
+    local legacy_output private_output
+    if legacy_output=$(python3 "$PROJECT_ROOT/scripts/check_release_crypto_profile.py" "${PROFILE_ARGS[@]}" 2>&1); then
+        printf '%s\n' "$legacy_output"
+        return 0
+    fi
+    if [ "$ALLOW_UNAPPROVED_PROFILE" = false ] && \
+        private_output=$(python3 "$PROJECT_ROOT/scripts/check_release_crypto_profile.py" \
+            --manifest "$BINARY_MANIFEST" --require-executed --private-spend-launch 2>&1); then
+        printf '%s\n' "$private_output"
+        return 0
+    fi
+    printf '%s\n' "$legacy_output" "${private_output:-}" >&2
+    return 1
+}
+
 if [ "$REQUIRE_BINARY" = true ]; then
     if [ -z "$BINARY_MANIFEST" ]; then
         echo -e "${RED}❌ RELEASE MANIFEST REQUIRED${NC}"
         echo "  --require-binary requires --binary-manifest"
         VIOLATIONS=$((VIOLATIONS + 1))
-    elif [ "${#RELEASE_BINS[@]}" -ne 3 ]; then
+    elif [ "${#RELEASE_BINS[@]}" -ne 4 ]; then
         echo -e "${RED}❌ EXACT ARTIFACT SET REQUIRED${NC}"
-        echo "  Expected node, wallet, and walletd paths"
+        echo "  Expected node, wallet, walletd, and private-spend paths"
         VIOLATIONS=$((VIOLATIONS + 1))
     elif python3 -B "$PROJECT_ROOT/scripts/check_smallwood_v5_candidate_gate.py" \
         --root "$PROJECT_ROOT" >/dev/null && \
         python3 "$PROJECT_ROOT/scripts/release_artifact_manifest.py" verify \
         --manifest "$BINARY_MANIFEST" \
-        --expect "hegemon-node:hegemon-node:${RELEASE_BINS[0]}" \
-        --expect "wallet:wallet:${RELEASE_BINS[1]}" \
-        --expect "walletd:walletd:${RELEASE_BINS[2]}" >/dev/null && \
+        --expect "hegemon-node:hegemon-node:${RELEASE_BINS[0]#"$PROJECT_ROOT"/}" \
+        --expect "wallet:wallet:${RELEASE_BINS[1]#"$PROJECT_ROOT"/}" \
+        --expect "walletd:walletd:${RELEASE_BINS[2]#"$PROJECT_ROOT"/}" \
+        --expect "wallet:private-spend:${RELEASE_BINS[3]#"$PROJECT_ROOT"/}" >/dev/null && \
         PROFILE_ARGS=(--manifest "$BINARY_MANIFEST" --require-executed) && \
         { [ "$ALLOW_UNAPPROVED_PROFILE" = false ] || PROFILE_ARGS+=(--allow-unapproved-profile); } && \
-        PROFILE_RESULT=$(python3 "$PROJECT_ROOT/scripts/check_release_crypto_profile.py" \
-          "${PROFILE_ARGS[@]}"); then
-        echo -e "${GREEN}✅ Release manifest and crypto profile checks passed${NC}"
+        PROFILE_RESULT=$(release_crypto_profile) && \
+        PROFILE_SCOPE=$(python3 -c 'import json, sys
+p = json.load(sys.stdin)
+if p.get("passed") is not True:
+    raise SystemExit("release profile did not pass")
+if p.get("production_authority") is True and p.get("mode") == "executed":
+    print("legacy")
+elif (p.get("production_authority") is False and p.get("private_spend_launch_authority") is True
+      and p.get("mode") == "executed-private-spend-launch"
+      and p.get("authorization_scope") == "source-owned-current86-private-spend-launch"):
+    print("private")
+elif (p.get("production_authority") is False and p.get("private_spend_launch_authority") is False
+      and p.get("mode") == "executed-exact-source-backend-h0"
+      and p.get("authorization_scope") == "exact-current-source-current-binary-backend-and-h0-only"
+      and p.get("actual_new_binary_proof_verification") is True
+      and p.get("current_network_G8_qualified") is False
+      and p.get("fresh_network_lifecycle_verified") is False
+      and p.get("state_admission_verified") is False
+      and p.get("public_cutover_authorized") is False
+      and p.get("historical_G8_reused") is True
+      and p.get("predecessor_lifecycle_reexecuted") is False):
+    print("current-backend")
+elif p.get("production_authority") is False and p.get("mode") == "review-unapproved-profile":
+    print("review")
+else:
+    raise SystemExit("release profile scope is unauthorized")' <<< "$PROFILE_RESULT"); then
+        echo -e "${GREEN}✅ Release manifest and scoped crypto profile checks passed${NC}"
         BINARY_PROFILE_CHECKED=true
-        if [[ "$PROFILE_RESULT" == *'"production_authority": true'* ]]; then
+        if [ "$PROFILE_SCOPE" = legacy ]; then
             BINARY_PROFILE_AUTHORIZED=true
+        elif [ "$PROFILE_SCOPE" = private ]; then
+            BINARY_PRIVATE_LAUNCH_AUTHORIZED=true
+        elif [ "$PROFILE_SCOPE" = current-backend ]; then
+            BINARY_CURRENT_BACKEND_ATTESTED=true
         fi
     else
         echo -e "${RED}❌ RELEASE ARTIFACT ATTESTATION FAILED${NC}"
@@ -371,6 +439,7 @@ if [ -f "$release_bin" ]; then
         symbol_matches=$(
             strings "$release_bin" 2>/dev/null \
                 | grep -iE "curve25519|secp|ecdsa|ed25519|x25519|bls12|bn254|jubjub|groth16|halo2|trusted[[:space:]_-]*setup|powers[[:space:]_-]*of[[:space:]_-]*tau" \
+                | filter_transparent_metadata_matches binary \
                 || true
             strings "$release_bin" 2>/dev/null \
                 | grep -iE "(^|[^[:alnum:]_])pallas([^[:alnum:]_]|$)|(^|[^[:alnum:]_])vesta([^[:alnum:]_]|$)|(^|[^[:alnum:]_.])rsa([^[:alnum:]]|$)|(^|[^[:alnum:]])rsa_|(^|[^[:alnum:]_])plonk([^[:alnum:]_y]|$)|(^|[^[:alnum:]_])kzg([^[:alnum:]_]|$)" \
@@ -428,7 +497,11 @@ fi
 
 # Check the exact release artifacts report the production SmallWood path.
 echo -n "Checking shielded protocol uses SmallWood STARK/FRI proofs... "
-if [ "$BINARY_PROFILE_AUTHORIZED" = true ]; then
+if [ "$BINARY_PRIVATE_LAUNCH_AUTHORIZED" = true ]; then
+    echo -e "${GREEN}✅ Current private CompFF01 profile attested; legacy global profile authority remains false${NC}"
+elif [ "$BINARY_CURRENT_BACKEND_ATTESTED" = true ]; then
+    echo -e "${GREEN}✅ Exact current-source binary backend proofs and H0 attested; fresh-network G8 and launch authority remain false${NC}"
+elif [ "$BINARY_PROFILE_AUTHORIZED" = true ]; then
     echo -e "${GREEN}✅ Compiled V4/Gamma SmallWood profile attested${NC}"
 elif [ "$BINARY_PROFILE_CHECKED" = true ] && [ "$ALLOW_UNAPPROVED_PROFILE" = true ]; then
     echo -e "${YELLOW}⚠️  Compiled profile inspected; production_authority=false${NC}"

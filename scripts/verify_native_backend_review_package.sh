@@ -2,6 +2,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HISTORICAL_RELEASE=0
+if [[ "${1:-}" == "--historical-release" ]]; then
+  HISTORICAL_RELEASE=1
+  shift
+fi
+if (( $# > 2 )); then
+  echo "usage: $0 [--historical-release] [archive [checksum]]" >&2
+  exit 2
+fi
 PACKAGE_TAR="${1:-$ROOT/audits/native-backend-128b/native-backend-128b-review-package.tar.gz}"
 PACKAGE_SHA="${2:-$ROOT/audits/native-backend-128b/package.sha256}"
 PACKAGE_HELPER="$ROOT/scripts/native_backend_review_package.py"
@@ -26,14 +35,15 @@ python3 -I "$PACKAGE_HELPER" extract \
 PACKAGE_ROOT="$WORKDIR/native-backend-128b-review-package"
 SOURCE_ROOT="$PACKAGE_ROOT/source"
 
-python3 -I "$PACKAGE_HELPER" verify-source \
-  --checkout "$ROOT" \
-  --package-root "$PACKAGE_ROOT"
+SOURCE_IDENTITY_ARGS=(--checkout "$ROOT" --package-root "$PACKAGE_ROOT")
+if (( HISTORICAL_RELEASE )); then
+  SOURCE_IDENTITY_ARGS+=(--historical-release --archive "$PACKAGE_TAR")
+fi
+python3 -I "$PACKAGE_HELPER" verify-source "${SOURCE_IDENTITY_ARGS[@]}"
 python3 -I "$PACKAGE_HELPER" verify-package-layout \
   --package-root "$PACKAGE_ROOT"
 python3 -I "$PACKAGE_HELPER" verify-evidence-semantics \
   --root "$PACKAGE_ROOT"
-python3 -B "$SOURCE_ROOT/scripts/test_check_release_crypto_profile.py"
 SOURCE_TREE_SHA256="$(python3 -I "$PACKAGE_HELPER" source-digest --source "$SOURCE_ROOT")"
 
 required_files=(
@@ -188,6 +198,9 @@ require(
     f"aggregation theorem document missing from manifest: {theorems}",
 )
 PY
+
+# Execute archived code only after complete source, identity and fingerprint checks.
+python3 -B "$SOURCE_ROOT/scripts/test_check_release_crypto_profile.py"
 
 REGENERATED_ROOT="$WORKDIR/regenerated"
 VERIFIED_SOURCE_ROOT="$WORKDIR/verified-source"

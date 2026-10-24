@@ -2,6 +2,10 @@
 
 extern crate alloc;
 
+pub mod launch_candidate;
+mod launch_candidate_identity;
+pub mod launch_reference_policy;
+
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use codec::{Decode, Encode};
@@ -10,8 +14,33 @@ use scale_info::TypeInfo;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha384};
 
+/// Product release label, independent of source-bound Cargo package metadata.
+pub const RELEASE_VERSION: &str = "0.11.0";
+
 pub type CircuitVersion = u16;
 pub type CryptoSuiteId = u16;
+
+/// Earliest spending block for a reward created at `h` is `h + 120`.
+/// Nodes append the reward to the spendable tree at the end of `h + 119`;
+/// same-block anchors are not accepted. Ordinary outputs are unaffected.
+pub const COINBASE_MATURITY: u64 = 120;
+pub const COINBASE_MATURITY_RULES_ID: &[u8] =
+    b"hegemon-native-reward-maturity120-block-end119-miner-before-treasury-v1";
+
+pub const fn coinbase_maturity_height(origin_height: u64) -> Option<u64> {
+    origin_height.checked_add(COINBASE_MATURITY)
+}
+
+pub const fn coinbase_release_height(origin_height: u64) -> Option<u64> {
+    origin_height.checked_add(COINBASE_MATURITY - 1)
+}
+
+pub const fn coinbase_mature_in_block(origin_height: u64, inclusion_height: u64) -> bool {
+    match coinbase_maturity_height(origin_height) {
+        Some(maturity_height) => inclusion_height >= maturity_height,
+        None => false,
+    }
+}
 
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Encode,
@@ -376,14 +405,18 @@ pub const SMALLWOOD_POSEIDON2_PRODUCTION_MAX_PROOF_ACTIONS_PER_BLOCK: u32 = 512;
 /// identity grows such a snapshot, the only sound root-only initialization is
 /// this source-derived empty-tree root. Unoccupied leaves commit to the known
 /// zero-value opening from `poseidon2_v8_empty_note_opening`, not raw zero.
+/// The leaf uses the unchanged variable-length sponge; its32 parents use
+/// COMPFF01 left-feed-forward compression. This pin belongs to the current
+/// fresh source-bound relation identity; predecessor roots are not migrated.
+/// Updating this pin does not grant the reserved V8/Eta route production authority.
 pub const SMALLWOOD_POSEIDON2_PRODUCTION_NOTE_GENESIS_ROOT: [u64; 7] = [
-    17_350_853_413_121_414_251,
-    11_311_714_906_264_832_276,
-    5_494_323_263_975_105_675,
-    16_684_950_828_932_818_263,
-    7_241_422_828_316_666_478,
-    13_669_884_728_521_486_080,
-    15_137_873_680_347_988_554,
+    3_013_021_922_057_677_145,
+    1_646_436_993_411_294_138,
+    17_930_985_046_722_462_302,
+    4_040_104_963_526_763_525,
+    8_044_768_705_513_318_970,
+    5_501_470_279_516_072_626,
+    9_669_143_789_627_659_081,
 ];
 
 /// Release-owned capability for the exact V8 transaction-proof route.
@@ -633,6 +666,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reward_maturity_boundaries_and_height_overflow_fail_closed() {
+        let origin = 7;
+        assert_eq!(coinbase_release_height(origin), Some(126));
+        assert_eq!(coinbase_maturity_height(origin), Some(127));
+        assert!(!coinbase_mature_in_block(origin, origin));
+        assert!(!coinbase_mature_in_block(origin, 126));
+        assert!(coinbase_mature_in_block(origin, 127));
+        assert!(coinbase_mature_in_block(origin, 128));
+        assert_eq!(coinbase_maturity_height(u64::MAX - 120), Some(u64::MAX));
+        assert!(coinbase_mature_in_block(u64::MAX - 120, u64::MAX));
+        assert_eq!(coinbase_maturity_height(u64::MAX - 119), None);
+        assert!(!coinbase_mature_in_block(u64::MAX - 119, u64::MAX));
+        assert_eq!(coinbase_release_height(u64::MAX), None);
+    }
+
+    #[test]
     fn default_binding_is_decode_compatible_but_has_no_fresh_authority() {
         assert_eq!(DEFAULT_VERSION_BINDING, SMALLWOOD_CANDIDATE_VERSION_BINDING);
         assert_eq!(DEFAULT_TX_PROOF_BACKEND, TxProofBackend::SmallwoodCandidate);
@@ -742,6 +791,19 @@ mod tests {
             .into_iter()
             .all(|limb| limb < 0xffff_ffff_0000_0001));
         assert_ne!(SMALLWOOD_POSEIDON2_PRODUCTION_NOTE_GENESIS_ROOT, [0; 7]);
+        // Historical suite-marker/raw-output empty root is a negative control.
+        assert_ne!(
+            SMALLWOOD_POSEIDON2_PRODUCTION_NOTE_GENESIS_ROOT,
+            [
+                17_350_853_413_121_414_251,
+                11_311_714_906_264_832_276,
+                5_494_323_263_975_105_675,
+                16_684_950_828_932_818_263,
+                7_241_422_828_316_666_478,
+                13_669_884_728_521_486_080,
+                15_137_873_680_347_988_554,
+            ]
+        );
         assert_eq!(
             SMALLWOOD_POSEIDON2_PRODUCTION_VERSION_BINDING,
             VersionBinding::new(CIRCUIT_V8, CRYPTO_SUITE_ETA)

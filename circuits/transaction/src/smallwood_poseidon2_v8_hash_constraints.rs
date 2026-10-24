@@ -228,6 +228,61 @@ fn write_call_rows(
     }
 }
 
+/// Single-call native trace for a separately bound packed adapter candidate.
+/// This reuses the exact retained round writer; it is not a new profile.
+pub fn build_smallwood_poseidon2_v8_single_call_trace(
+    initial_state: [u64; POSEIDON2_WIDTH16_WIDTH],
+) -> Result<
+    [u64; SMALLWOOD_POSEIDON2_V8_HASH_ROWS_PER_GROUP],
+    SmallwoodPoseidon2V8HashConstraintError,
+> {
+    for (state_lane, value) in initial_state.iter().enumerate() {
+        if *value >= GOLDILOCKS_MODULUS {
+            return Err(SmallwoodPoseidon2V8HashConstraintError::NonCanonicalInput {
+                call: 0,
+                state_lane,
+            });
+        }
+    }
+    let mut rows = vec![
+        [0u64; SMALLWOOD_POSEIDON2_V8_HASH_PACKING_FACTOR];
+        SMALLWOOD_POSEIDON2_V8_HASH_ROWS_PER_GROUP
+    ];
+    write_call_rows(&mut rows, 0, initial_state);
+    Ok(core::array::from_fn(|row| rows[row][0]))
+}
+
+/// Evaluate one packed permutation group using the retained evaluator unchanged.
+/// Groups are independent: duplicate this group's scalar rows into its two group
+/// slots, evaluate all identities, and return exactly the first group's block.
+pub fn evaluate_smallwood_poseidon2_v8_single_group_constraints_ring<R: PrimeCharacteristicRing>(
+    lane_rows: &[R],
+    out: &mut [R],
+) -> Result<(), SmallwoodPoseidon2V8HashConstraintError> {
+    if lane_rows.len() != SMALLWOOD_POSEIDON2_V8_HASH_ROWS_PER_GROUP {
+        return Err(SmallwoodPoseidon2V8HashConstraintError::WrongLaneRowCount {
+            expected: SMALLWOOD_POSEIDON2_V8_HASH_ROWS_PER_GROUP,
+            actual: lane_rows.len(),
+        });
+    }
+    if out.len() != SMALLWOOD_POSEIDON2_V8_HASH_CONSTRAINTS_PER_GROUP {
+        return Err(
+            SmallwoodPoseidon2V8HashConstraintError::WrongConstraintCount {
+                expected: SMALLWOOD_POSEIDON2_V8_HASH_CONSTRAINTS_PER_GROUP,
+                actual: out.len(),
+            },
+        );
+    }
+    let mut repeated = Vec::with_capacity(SMALLWOOD_POSEIDON2_V8_HASH_ROW_COUNT);
+    for _ in 0..SMALLWOOD_POSEIDON2_V8_HASH_GROUP_COUNT {
+        repeated.extend_from_slice(lane_rows);
+    }
+    let mut residuals = vec![R::ZERO; SMALLWOOD_POSEIDON2_V8_HASH_CONSTRAINT_COUNT];
+    evaluate_smallwood_poseidon2_v8_hash_constraints_ring(&repeated, &mut residuals)?;
+    out.copy_from_slice(&residuals[..SMALLWOOD_POSEIDON2_V8_HASH_CONSTRAINTS_PER_GROUP]);
+    Ok(())
+}
+
 /// Materialize the exact compressed witness rows for 128 live width-16 Poseidon2 calls.
 pub fn build_smallwood_poseidon2_v8_hash_rows(
     initial_states: &[[u64; POSEIDON2_WIDTH16_WIDTH]],
@@ -727,6 +782,196 @@ mod tests {
         );
     }
 
+    #[derive(Deserialize)]
+    struct LeanCompff01Case {
+        call: usize,
+        domain: u64,
+        left: [u64; 7],
+        right: [u64; 7],
+        initial_state: [u64; 16],
+        raw_final_state: [u64; 16],
+        digest: [u64; 7],
+    }
+
+    #[derive(Deserialize)]
+    struct LeanCompff01Vectors {
+        schema: String,
+        claim_scope: String,
+        generator: String,
+        compression_mode_id: String,
+        compression_mode_marker: u64,
+        parameter_set_id: String,
+        parameter_set_sha256: String,
+        source_compiler_refinement_proved: bool,
+        universal_accepted_witness_soundness_proved: bool,
+        g1_qualified: bool,
+        g7_qualified: bool,
+        production_authority: bool,
+        packed_compression_cases: Vec<LeanCompff01Case>,
+    }
+
+    #[test]
+    fn lean_generated_compff01_frames_and_digests_match_all_packed_trace_positions() {
+        use crate::smallwood_poseidon2_v8_hash_schedule::{
+            build_smallwood_poseidon2_v8_hash_schedule, SmallwoodPoseidon2V8HashCallMode,
+        };
+        use crate::smallwood_poseidon2_v8_types::{
+            SmallwoodPoseidon2V8PublicStatement, SmallwoodPoseidon2V8Witness,
+        };
+        use transaction_core::poseidon2_width16::{
+            poseidon2_width16_compress14, POSEIDON2_WIDTH16_COMPRESSION_MODE_ID,
+            POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER, POSEIDON2_WIDTH16_SUITE_MARKER,
+        };
+        let vectors: LeanCompff01Vectors = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/formal_core_vectors/poseidon2_v8_compff01_primitives.json"
+        )))
+        .unwrap();
+        assert_eq!(
+            vectors.schema,
+            "hegemon.poseidon2-v8.compff01-primitive-vectors-v1"
+        );
+        assert_eq!(
+            vectors.claim_scope,
+            "lean_executable_field_framing_and_finite_kats"
+        );
+        assert_eq!(
+            vectors.generator,
+            "Hegemon.Transaction.GeneratePoseidon2V8LeftFeedForwardVectors"
+        );
+        assert_eq!(
+            vectors.compression_mode_id,
+            POSEIDON2_WIDTH16_COMPRESSION_MODE_ID
+        );
+        assert_eq!(
+            vectors.compression_mode_marker,
+            POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER
+        );
+        assert_eq!(vectors.parameter_set_id, POSEIDON2_WIDTH16_PARAMETER_SET_ID);
+        assert_eq!(
+            vectors.parameter_set_sha256,
+            POSEIDON2_WIDTH16_PARAMETER_SET_SHA256
+        );
+        assert!(!vectors.source_compiler_refinement_proved);
+        assert!(!vectors.universal_accepted_witness_soundness_proved);
+        assert!(!vectors.g1_qualified);
+        assert!(!vectors.g7_qualified);
+        assert!(!vectors.production_authority);
+        assert_eq!(
+            vectors.packed_compression_cases.len(),
+            SMALLWOOD_POSEIDON2_V8_HASH_CALL_COUNT
+        );
+
+        let inputs = vectors
+            .packed_compression_cases
+            .iter()
+            .map(|case| case.initial_state)
+            .collect::<Vec<_>>();
+        let material = build_smallwood_poseidon2_v8_hash_rows(&inputs).unwrap();
+        verify_smallwood_poseidon2_v8_hash_rows(material.as_rows()).unwrap();
+        for (position, case) in vectors.packed_compression_cases.iter().enumerate() {
+            assert_eq!(case.call, position);
+            assert_eq!(case.domain, 4);
+            assert_eq!(
+                case.left,
+                core::array::from_fn(|lane| (position * 17 + lane) as u64)
+            );
+            assert_eq!(
+                case.right,
+                core::array::from_fn(|lane| (position * 19 + lane + 7) as u64)
+            );
+            assert_eq!(&case.initial_state[..7], &case.left);
+            assert_eq!(&case.initial_state[7..14], &case.right);
+            assert_eq!(case.initial_state[14], case.domain);
+            assert_eq!(
+                case.initial_state[15],
+                POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER
+            );
+            let group = smallwood_poseidon2_v8_hash_call_group(position);
+            let lane = smallwood_poseidon2_v8_hash_call_lane(position);
+            for state_lane in 0..16 {
+                assert_eq!(
+                    material.rows[smallwood_poseidon2_v8_hash_initial_row(group, state_lane)][lane],
+                    case.initial_state[state_lane]
+                );
+                assert_eq!(
+                    material.rows[smallwood_poseidon2_v8_hash_final_row(group, state_lane)][lane],
+                    case.raw_final_state[state_lane]
+                );
+            }
+            let compressed = poseidon2_width16_compress14(
+                case.domain,
+                &case.left.map(Felt::from_u64),
+                &case.right.map(Felt::from_u64),
+            )
+            .map(|word| word.as_canonical_u64());
+            assert_eq!(compressed, case.digest);
+            for output_lane in 0..7 {
+                let raw =
+                    material.rows[smallwood_poseidon2_v8_hash_final_row(group, output_lane)][lane];
+                let initial = material.rows
+                    [smallwood_poseidon2_v8_hash_initial_row(group, output_lane)][lane];
+                assert_eq!(
+                    (Felt::from_u64(raw) + Felt::from_u64(initial)).as_canonical_u64(),
+                    case.digest[output_lane]
+                );
+            }
+            // Neither historical framing nor omission of feed-forward may pass
+            // as a current-mode digest, even though permutation rows stay raw.
+            assert_ne!(&case.raw_final_state[..7], &case.digest);
+            let mut historical = case.initial_state.map(Felt::from_u64);
+            historical[15] = Felt::from_u64(POSEIDON2_WIDTH16_SUITE_MARKER);
+            poseidon2_width16_permutation(&mut historical);
+            assert_ne!(
+                historical[..7]
+                    .iter()
+                    .map(|word| word.as_canonical_u64())
+                    .collect::<Vec<_>>(),
+                case.digest
+            );
+        }
+        for call in [0, 63, 64, 127] {
+            let mut corrupted = material.clone();
+            let group = smallwood_poseidon2_v8_hash_call_group(call);
+            let lane = smallwood_poseidon2_v8_hash_call_lane(call);
+            let row = smallwood_poseidon2_v8_hash_final_row(group, 0);
+            corrupted.rows[row][lane] = (corrupted.rows[row][lane] + 1) % GOLDILOCKS_MODULUS;
+            assert!(matches!(
+                verify_smallwood_poseidon2_v8_hash_rows(corrupted.as_rows()),
+                Err(SmallwoodPoseidon2V8HashConstraintError::ConstraintViolation { .. })
+            ));
+        }
+
+        // Independently exercise the actual mixed schedule and all 86
+        // compression stages, rather than treating the synthetic packed KATs
+        // as a theorem about every transaction schedule.
+        let schedule = build_smallwood_poseidon2_v8_hash_schedule(
+            &SmallwoodPoseidon2V8PublicStatement::default(),
+            &SmallwoodPoseidon2V8Witness::default(),
+        )
+        .unwrap();
+        verify_smallwood_poseidon2_v8_hash_rows(schedule.packed_rows.as_rows()).unwrap();
+        let compression_calls = schedule
+            .calls
+            .iter()
+            .filter(|call| call.mode == SmallwoodPoseidon2V8HashCallMode::Compress14)
+            .collect::<Vec<_>>();
+        assert_eq!(compression_calls.len(), 86);
+        for call in compression_calls {
+            assert_eq!(
+                call.initial_state[15],
+                POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER
+            );
+            let left = core::array::from_fn(|lane| Felt::from_u64(call.initial_state[lane]));
+            let right = core::array::from_fn(|lane| Felt::from_u64(call.initial_state[lane + 7]));
+            assert_eq!(
+                call.final_digest(),
+                poseidon2_width16_compress14(call.initial_state[14], &left, &right)
+                    .map(|word| word.as_canonical_u64())
+            );
+        }
+    }
+
     #[test]
     fn lean_generated_v8_hash_kernel_refinement_vectors_match_source() {
         use crate::smallwood_poseidon2_v8_program::{
@@ -783,9 +1028,9 @@ mod tests {
         assert!(lean_v8_geometry_matches_source(&vectors.geometry));
 
         // The RP04 Lean hash-kernel receipt above remains a historical KAT.
-        // Current RP05 identity is pinned by its separate source-bound
-        // relation-program transcript, not by copying successor values into
-        // the old Lean receipt.
+        // The grammar-3 RP05 transcript below also stays historical. Current
+        // grammar-4 identity is checked by source recomputation and its separate
+        // program fixture test, not by relabeling either old receipt.
         let rp05: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp05_transcript.json"
@@ -795,17 +1040,44 @@ mod tests {
             rp05["schema"],
             "hegemon.poseidon2-v8.relation-program-transcript-v2"
         );
+        // The grammar-3 RP05 fixture is historical raw compression evidence.
+        // Check its own unchanged bytes; its identity must differ from COMPFF01.
+        let historical_program = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp05.bin"
+        ));
+        let historical_sha512 =
+            crate::smallwood_poseidon2_v8_program::smallwood_poseidon2_v8_program_sha512_from_bytes(
+                historical_program,
+            );
+        let historical_relation_id =
+            crate::smallwood_poseidon2_v8_program::smallwood_poseidon2_v8_program_digest_from_bytes(
+                historical_program,
+            );
+        assert_eq!(rp05["grammar"], 3);
+        assert_eq!(&historical_program[..8], b"HGV8RP05");
+        assert_eq!(&historical_program[8..12], &[3, 0, 9, 0]);
+        assert_eq!(rp05["transcript_bytes"], 848_231);
         assert_eq!(
             rp05["transcript_bytes"].as_u64(),
-            Some(SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES as u64)
+            Some(historical_program.len() as u64)
         );
         assert_eq!(
             rp05["final_program_sha512"].as_str(),
-            Some(hex::encode(SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512).as_str())
+            Some(hex::encode(historical_sha512).as_str())
         );
         assert_eq!(
             rp05["final_relation_id_48"].as_str(),
-            Some(hex::encode(SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST).as_str())
+            Some(hex::encode(historical_relation_id).as_str())
+        );
+        assert_ne!(
+            historical_program.len(),
+            SMALLWOOD_POSEIDON2_V8_PROGRAM_TRANSCRIPT_BYTES
+        );
+        assert_ne!(historical_sha512, SMALLWOOD_POSEIDON2_V8_PROGRAM_SHA512);
+        assert_ne!(
+            historical_relation_id,
+            SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST
         );
         let fixed_geometry = &rp05["fixed_geometry"];
         assert_eq!(
@@ -824,7 +1096,8 @@ mod tests {
             fixed_geometry["nonlinear_expression_roots"].as_u64(),
             Some(SMALLWOOD_POSEIDON2_V8_NONLINEAR_CONSTRAINTS as u64)
         );
-        assert_eq!(
+        assert_eq!(fixed_geometry["csr_expression_nodes"], 566);
+        assert_ne!(
             fixed_geometry["csr_expression_nodes"].as_u64(),
             Some(SMALLWOOD_POSEIDON2_V8_CSR_EXPRESSION_NODES as u64)
         );

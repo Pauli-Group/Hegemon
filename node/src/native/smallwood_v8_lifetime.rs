@@ -1,4 +1,4 @@
-//! Consensus-visible conditional proof-count accounting for SmallWood V8.
+//! Consensus-visible proof-count accounting for SmallWood V8.
 //!
 //! This counter records canonical accepted V8 transaction proofs from profile
 //! activation through the current canonical tip. It never treats the
@@ -7,6 +7,8 @@
 //! claim that the missing SHA-512, Poseidon2, adaptive-QROM, or global-history
 //! reductions are complete. The per-block ceiling is imported from the same
 //! protocol-versioning source that owns fresh capability admission.
+//! Historical bounded admission and full-width audit accounting are separate
+//! operations; callers must select admission using the exact source authority.
 
 #![allow(dead_code)]
 
@@ -32,6 +34,7 @@ impl SmallwoodV8ProofLifetimeCount {
         Self(0)
     }
 
+    /// Construct a count within the historical conditional lifetime maximum.
     pub(crate) fn new(value: u64) -> Result<Self, SmallwoodV8ProofLifetimeError> {
         if value > SMALLWOOD_V8_CONDITIONAL_MAX_TOTAL_PROOFS_AT_128_BITS {
             return Err(
@@ -52,6 +55,7 @@ impl SmallwoodV8ProofLifetimeCount {
         self.0.to_le_bytes()
     }
 
+    /// Decode an audit count without selecting a source admission authority.
     pub(crate) fn decode_exact(bytes: &[u8]) -> Result<Self, SmallwoodV8ProofLifetimeError> {
         if bytes.len() != 8 {
             return Err(SmallwoodV8ProofLifetimeError::CodecLength {
@@ -59,14 +63,33 @@ impl SmallwoodV8ProofLifetimeCount {
                 observed: bytes.len(),
             });
         }
-        Self::new(u64::from_le_bytes(
+        Ok(Self(u64::from_le_bytes(
             bytes
                 .try_into()
                 .expect("exact lifetime counter codec is eight bytes"),
-        ))
+        )))
     }
 
     pub(crate) fn checked_accept_block(
+        self,
+        proof_count: usize,
+    ) -> Result<Self, SmallwoodV8ProofLifetimeError> {
+        let next = self.checked_accept_audit_block(proof_count)?;
+        if next.0 > SMALLWOOD_V8_CONDITIONAL_MAX_TOTAL_PROOFS_AT_128_BITS {
+            return Err(
+                SmallwoodV8ProofLifetimeError::ConditionalLifetimeLimitExceeded {
+                    before: self.0,
+                    block_proofs: next.0 - self.0,
+                    maximum: SMALLWOOD_V8_CONDITIONAL_MAX_TOTAL_PROOFS_AT_128_BITS,
+                },
+            );
+        }
+        Ok(next)
+    }
+
+    /// Record a block without imposing a cumulative conditional maximum.
+    /// This does not itself grant authority to accept ongoing proofs.
+    pub(crate) fn checked_accept_audit_block(
         self,
         proof_count: usize,
     ) -> Result<Self, SmallwoodV8ProofLifetimeError> {
@@ -82,15 +105,6 @@ impl SmallwoodV8ProofLifetimeCount {
             .0
             .checked_add(proof_count)
             .ok_or(SmallwoodV8ProofLifetimeError::CountOverflow)?;
-        if next > SMALLWOOD_V8_CONDITIONAL_MAX_TOTAL_PROOFS_AT_128_BITS {
-            return Err(
-                SmallwoodV8ProofLifetimeError::ConditionalLifetimeLimitExceeded {
-                    before: self.0,
-                    block_proofs: proof_count,
-                    maximum: SMALLWOOD_V8_CONDITIONAL_MAX_TOTAL_PROOFS_AT_128_BITS,
-                },
-            );
-        }
         Ok(Self(next))
     }
 
@@ -217,5 +231,64 @@ mod tests {
                 .checked_accept_block(1),
             Err(SmallwoodV8ProofLifetimeError::CountOverflow)
         ));
+    }
+
+    #[test]
+    fn audit_count_crosses_conditional_limit_without_changing_bounded_admission() {
+        let maximum = SMALLWOOD_V8_CONDITIONAL_MAX_TOTAL_PROOFS_AT_128_BITS;
+        let bounded = SmallwoodV8ProofLifetimeCount::new(maximum).unwrap();
+        let audit = bounded.checked_accept_audit_block(1).unwrap();
+        assert_eq!(audit.get(), maximum + 1);
+        assert_eq!(
+            SmallwoodV8ProofLifetimeCount::decode_exact(&audit.encode()).unwrap(),
+            audit,
+        );
+        assert!(matches!(
+            SmallwoodV8ProofLifetimeCount::new(audit.get()),
+            Err(SmallwoodV8ProofLifetimeError::PersistedCountExceedsConditionalMaximum { .. })
+        ));
+        assert!(matches!(
+            bounded.checked_accept_block(1),
+            Err(SmallwoodV8ProofLifetimeError::ConditionalLifetimeLimitExceeded { .. })
+        ));
+        assert!(matches!(
+            audit.checked_accept_block(0),
+            Err(SmallwoodV8ProofLifetimeError::ConditionalLifetimeLimitExceeded { .. })
+        ));
+    }
+
+    #[test]
+    fn audit_codec_preserves_full_u64_and_checks_overflow() {
+        let maximum = SmallwoodV8ProofLifetimeCount::decode_exact(&u64::MAX.to_le_bytes()).unwrap();
+        assert_eq!(maximum.get(), u64::MAX);
+        assert_eq!(maximum.encode(), u64::MAX.to_le_bytes());
+        assert_eq!(maximum.checked_accept_audit_block(0).unwrap(), maximum);
+        assert!(matches!(
+            maximum.checked_accept_audit_block(1),
+            Err(SmallwoodV8ProofLifetimeError::CountOverflow)
+        ));
+        assert!(matches!(
+            SmallwoodV8ProofLifetimeCount::decode_exact(&[0; 9]),
+            Err(SmallwoodV8ProofLifetimeError::CodecLength { .. })
+        ));
+    }
+
+    #[test]
+    fn audit_acceptance_retains_per_block_cap() {
+        assert_eq!(SMALLWOOD_V8_CONDITIONAL_MAX_PROOFS_PER_BLOCK, 512);
+        let count = SmallwoodV8ProofLifetimeCount::genesis();
+        assert_eq!(count.checked_accept_audit_block(512).unwrap().get(), 512);
+        for result in [
+            count.checked_accept_audit_block(513),
+            count.checked_accept_block(513),
+        ] {
+            assert_eq!(
+                result,
+                Err(SmallwoodV8ProofLifetimeError::BlockProofCapExceeded {
+                    observed: 513,
+                    maximum: 512,
+                }),
+            );
+        }
     }
 }

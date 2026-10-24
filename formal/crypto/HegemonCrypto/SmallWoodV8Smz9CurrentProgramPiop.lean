@@ -90,10 +90,11 @@ theorem current_nonlinear_batch_evaluation
     (currentNonlinearBatch parameters witness polynomial).eval point =
       ∑ constraint : Fin 830, parameters.nonlinearGamma polynomial constraint *
         currentConstraintOpenings parameters (fun row => (witness row).eval point) constraint := by
-  rw [currentNonlinearBatch, V8Smz9PiopOpeningRecovery.nonlinear_batch_eval]
-  apply Finset.sum_congr rfl
-  intro constraint _
-  rw [current_constraint_evaluation parameters witness degreeBound]
+  exact (V8Smz9PiopOpeningRecovery.nonlinear_batch_eval
+    (parameters.nonlinearGamma polynomial) (currentConstraints parameters witness) point).trans
+    (Finset.sum_congr rfl (fun constraint _ =>
+      congrArg (fun value => parameters.nonlinearGamma polynomial constraint * value)
+        (current_constraint_evaluation parameters witness degreeBound constraint point)))
 
 /-- Actual successful interpreter acceptance at every packing assignment supplies
 all 830 zero identities. The conclusion is not an assumption about abstract roots. -/
@@ -154,6 +155,160 @@ def currentPublicMaskOpenings (parameters : CurrentPublicParameters)
         (V8Smz9PiopOpeningRecovery.sourcePackingLagrange canonicalPacking)
         (opened opening) (points opening))
 
+private theorem recover_nonlinear_response_coefficients {F : Type*} [Field F]
+    (packing : Fin 64 → F) (injective : Function.Injective packing)
+    (batch : F[X]) (mask : Fin 489 → F) (degreeBound : batch.natDegree ≤ 552)
+    (valid : ∀ lane, batch.eval (packing lane) = 0)
+    (point opening : F) (outside : ∀ lane, point ≠ packing lane)
+    (openingCorrect : opening = batch.eval point) :
+    V8Smz9PiopOpeningRecovery.recoverNonlinearMaskOpening packing
+      (coefficientPolynomial (fun coefficient : Fin 489 =>
+        (V8Smz9PiopOpeningRecovery.sourceNonlinearTranscript packing batch
+          (coefficientPolynomial mask)).coeff coefficient.val)) opening point =
+      (coefficientPolynomial mask).eval point := by
+  have transcriptDegree :
+      (V8Smz9PiopOpeningRecovery.sourceNonlinearTranscript packing batch
+        (coefficientPolynomial mask)).natDegree < 489 := by
+    have quotientDegree := V8Smz9PiopOpeningRecovery.nonlinear_quotient_degree
+      packing batch degreeBound
+    have maskDegree := coefficient_polynomial_nat_degree_le mask
+    have bound := (natDegree_add_le _ _).trans (max_le quotientDegree maskDegree)
+    change (V8Smz9PiopOpeningRecovery.sourceNonlinearQuotient packing batch +
+      coefficientPolynomial mask).natDegree < 489
+    omega
+  rw [coefficient_polynomial_of_coefficients _ transcriptDegree, openingCorrect]
+  exact V8Smz9PiopOpeningRecovery.recover_nonlinear_mask_opening packing injective
+    batch (coefficientPolynomial mask) valid point outside
+
+private theorem public_nonlinear_mask_opening_matches_source
+    (parameters : CurrentPublicParameters) (points : Fin 6 → Goldilocks)
+    (packingInjective : Function.Injective canonicalPacking)
+    (witness : Fin 686 → Goldilocks[X])
+    (witnessDegree : ∀ row, (witness row).natDegree ≤ 69)
+    (masks : PiopCoefficients Goldilocks)
+    (validNonlinear : ∀ constraint lane,
+      (currentConstraints parameters witness constraint).eval (canonicalPacking lane) = 0)
+    (outside : ∀ opening lane, points opening ≠ canonicalPacking lane)
+    (opening : Fin 6) (polynomial : Fin 5) :
+    (currentPublicMaskOpenings parameters points (currentResponseCoefficients parameters witness masks)
+      (fun opening row => (witness row).eval (points opening))).1 opening polynomial =
+      (coefficientPolynomial (masks.1 polynomial)).eval (points opening) := by
+  exact recover_nonlinear_response_coefficients canonicalPacking packingInjective
+    (currentNonlinearBatch parameters witness polynomial) (masks.1 polynomial)
+    (current_nonlinear_batch_degree parameters witness witnessDegree polynomial)
+    (V8Smz9PiopOpeningRecovery.nonlinear_batch_valid canonicalPacking
+      (parameters.nonlinearGamma polynomial) (currentConstraints parameters witness) validNonlinear)
+    (points opening) _ (outside opening)
+    (current_nonlinear_batch_evaluation parameters witness witnessDegree polynomial (points opening)).symm
+
+private theorem public_linear_mask_opening_shape
+    (parameters : CurrentPublicParameters) (points : Fin 6 → Goldilocks)
+    (transcript : PiopCoefficients Goldilocks) (opened : WitnessOpeningView Goldilocks)
+    (opening : Fin 6) (polynomial : Fin 5) :
+    (currentPublicMaskOpenings parameters points transcript opened).2 opening polynomial =
+      V8Smz9PiopOpeningRecovery.recoverLinearMaskOpening canonicalPacking
+        (parameters.linearTargets polynomial) (transcript.2 polynomial)
+        (parameters.linearWeights polynomial)
+        (V8Smz9PiopOpeningRecovery.sourcePackingLagrange canonicalPacking)
+        (opened opening) (points opening) := rfl
+
+private theorem source_linear_response_coefficients_shape
+    (parameters : CurrentPublicParameters) (witness : Fin 686 → Goldilocks[X])
+    (masks : PiopCoefficients Goldilocks) (polynomial : Fin 5) :
+    (currentResponseCoefficients parameters witness masks).2 polynomial =
+      (fun coefficient : Fin 132 =>
+        (currentLinearResponsePolynomial parameters witness masks polynomial).coeff
+          (coefficient.val + 1)) := rfl
+
+private theorem source_linear_response_function_shape :
+    currentLinearResponsePolynomial = fun parameters witness masks polynomial =>
+      V8Smz9PiopOpeningRecovery.sourceLinearUnmasked (parameters.linearWeights polynomial)
+        (V8Smz9PiopOpeningRecovery.sourcePackingLagrange canonicalPacking) witness +
+      V8Smz9PiopOpeningRecovery.sourceLinearMask canonicalPacking (masks.2 polynomial) := rfl
+
+private theorem source_linear_response_polynomial_shape
+    (parameters : CurrentPublicParameters) (witness : Fin 686 → Goldilocks[X])
+    (masks : PiopCoefficients Goldilocks) (polynomial : Fin 5) :
+    currentLinearResponsePolynomial parameters witness masks polynomial =
+      V8Smz9PiopOpeningRecovery.sourceLinearUnmasked (parameters.linearWeights polynomial)
+        (V8Smz9PiopOpeningRecovery.sourcePackingLagrange canonicalPacking) witness +
+      V8Smz9PiopOpeningRecovery.sourceLinearMask canonicalPacking (masks.2 polynomial) := by
+  exact congrFun (congrFun (congrFun (congrFun source_linear_response_function_shape
+    parameters) witness) masks) polynomial
+
+private theorem public_linear_mask_opening_matches_source
+    (parameters : CurrentPublicParameters) (points : Fin 6 → Goldilocks)
+    (packingInjective : Function.Injective canonicalPacking)
+    (packingCardNonzero : (64 : Goldilocks) ≠ 0)
+    (witness : Fin 686 → Goldilocks[X])
+    (witnessDegree : ∀ row, (witness row).natDegree ≤ 69)
+    (masks : PiopCoefficients Goldilocks)
+    (validLinear : ∀ polynomial,
+      (∑ row : Fin 686, ∑ lane : Fin 64, parameters.linearWeights polynomial row lane *
+        (witness row).eval (canonicalPacking lane)) = parameters.linearTargets polynomial)
+    (opening : Fin 6) (polynomial : Fin 5) :
+    (currentPublicMaskOpenings parameters points (currentResponseCoefficients parameters witness masks)
+      (fun opening row => (witness row).eval (points opening))).2 opening polynomial =
+      (V8Smz9PiopOpeningRecovery.sourceLinearMask canonicalPacking (masks.2 polynomial)).eval
+        (points opening) := by
+  have coefficients := (source_linear_response_coefficients_shape parameters witness masks
+    polynomial).trans (congrArg (fun response : Goldilocks[X] =>
+      fun coefficient : Fin 132 => response.coeff (coefficient.val + 1))
+      (source_linear_response_polynomial_shape parameters witness masks polynomial))
+  exact (public_linear_mask_opening_shape parameters points
+    (currentResponseCoefficients parameters witness masks)
+    (fun opening row => (witness row).eval (points opening)) opening polynomial).trans
+    ((congrArg (fun responseCoefficients : Fin 132 → Goldilocks =>
+      V8Smz9PiopOpeningRecovery.recoverLinearMaskOpening canonicalPacking
+        (parameters.linearTargets polynomial) responseCoefficients
+        (parameters.linearWeights polynomial)
+        (V8Smz9PiopOpeningRecovery.sourcePackingLagrange canonicalPacking)
+        (fun row => (witness row).eval (points opening)) (points opening)) coefficients).trans
+      (V8Smz9PiopOpeningRecovery.source_linear_coins_recovered_from_opened_rows
+        canonicalPacking packingInjective packingCardNonzero (parameters.linearWeights polynomial)
+        witness witnessDegree (masks.2 polynomial) (parameters.linearTargets polynomial)
+        (validLinear polynomial) (points opening)))
+
+private theorem nonlinear_response_coefficient_affine {F : Type*} [Field F]
+    {count : Nat} (base : F[X]) (mask baseline : Fin count → F) (selected : Fin count)
+    (baselineZero : baseline selected = 0) :
+    (base + coefficientPolynomial mask).coeff selected.val =
+      (base + coefficientPolynomial baseline).coeff selected.val + mask selected := by
+  rw [coeff_add, coeff_add, coefficient_polynomial_coefficient,
+    coefficient_polynomial_coefficient, baselineZero, add_zero]
+
+private theorem linear_response_coefficient_affine {F : Type*} [Field F]
+    (packing : Fin 64 → F) (base : F[X]) (mask baseline : Fin 132 → F)
+    (selected : Fin 132) (baselineZero : baseline selected = 0) :
+    (base + V8Smz9PiopOpeningRecovery.sourceLinearMask packing mask).coeff
+        (selected.val + 1) =
+      (base + V8Smz9PiopOpeningRecovery.sourceLinearMask packing baseline).coeff
+        (selected.val + 1) + mask selected := by
+  rw [coeff_add, coeff_add, source_linear_mask_nonconstant_coefficient,
+    source_linear_mask_nonconstant_coefficient, baselineZero, add_zero]
+
+private theorem source_linear_response_affine_at
+    (parameters : CurrentPublicParameters) (witness : Fin 686 → Goldilocks[X])
+    (masks : PiopCoefficients Goldilocks) (polynomial : Fin 5) (coefficient : Fin 132) :
+    (currentResponseCoefficients parameters witness masks).2 polynomial coefficient =
+      (currentResponseCoefficients parameters witness 0).2 polynomial coefficient +
+        masks.2 polynomial coefficient := by
+  have maskCoefficients := (source_linear_response_coefficients_shape parameters witness masks
+    polynomial).trans (congrArg (fun response : Goldilocks[X] =>
+      fun selected : Fin 132 => response.coeff (selected.val + 1))
+      (source_linear_response_polynomial_shape parameters witness masks polynomial))
+  have zeroCoefficients := (source_linear_response_coefficients_shape parameters witness 0
+    polynomial).trans (congrArg (fun response : Goldilocks[X] =>
+      fun selected : Fin 132 => response.coeff (selected.val + 1))
+      (source_linear_response_polynomial_shape parameters witness 0 polynomial))
+  exact (congrFun maskCoefficients coefficient).trans
+    ((linear_response_coefficient_affine canonicalPacking
+      (V8Smz9PiopOpeningRecovery.sourceLinearUnmasked (parameters.linearWeights polynomial)
+        (V8Smz9PiopOpeningRecovery.sourcePackingLagrange canonicalPacking) witness)
+      (masks.2 polynomial) ((0 : PiopCoefficients Goldilocks).2 polynomial) coefficient rfl).trans
+      (congrArg (fun value => value + masks.2 polynomial coefficient)
+        (congrFun zeroCoefficients coefficient).symm))
+
 theorem current_public_mask_openings_match_source_masks
     (parameters : CurrentPublicParameters) (points : Fin 6 → Goldilocks)
     (packingInjective : Function.Injective canonicalPacking)
@@ -175,34 +330,11 @@ theorem current_public_mask_openings_match_source_masks
             (points opening)) := by
   apply Prod.ext
   · funext opening polynomial
-    have transcriptDegree :
-        (currentNonlinearResponsePolynomial parameters witness masks polynomial).natDegree < 489 := by
-      have quotientDegree := V8Smz9PiopOpeningRecovery.nonlinear_quotient_degree
-        canonicalPacking _ (current_nonlinear_batch_degree parameters witness witnessDegree polynomial)
-      have maskDegree := coefficient_polynomial_nat_degree_le (masks.1 polynomial)
-      have bound := (natDegree_add_le _ _).trans (max_le quotientDegree maskDegree)
-      change (V8Smz9PiopOpeningRecovery.sourceNonlinearQuotient canonicalPacking _ +
-        coefficientPolynomial (masks.1 polynomial)).natDegree < 489
-      omega
-    change V8Smz9PiopOpeningRecovery.recoverNonlinearMaskOpening canonicalPacking
-      (coefficientPolynomial (fun coefficient : Fin 489 =>
-        (currentNonlinearResponsePolynomial parameters witness masks polynomial).coeff coefficient.val))
-      (∑ constraint : Fin 830, parameters.nonlinearGamma polynomial constraint *
-        currentConstraintOpenings parameters (fun row => (witness row).eval (points opening)) constraint)
-      (points opening) = _
-    rw [coefficient_polynomial_of_coefficients _ transcriptDegree,
-      ← current_nonlinear_batch_evaluation parameters witness witnessDegree]
-    exact V8Smz9PiopOpeningRecovery.recover_nonlinear_mask_opening canonicalPacking
-      packingInjective (currentNonlinearBatch parameters witness polynomial)
-      (coefficientPolynomial (masks.1 polynomial))
-      (V8Smz9PiopOpeningRecovery.nonlinear_batch_valid canonicalPacking
-        (parameters.nonlinearGamma polynomial) (currentConstraints parameters witness) validNonlinear)
-      (points opening) (outside opening)
+    exact public_nonlinear_mask_opening_matches_source parameters points packingInjective
+      witness witnessDegree masks validNonlinear outside opening polynomial
   · funext opening polynomial
-    exact V8Smz9PiopOpeningRecovery.source_linear_coins_recovered_from_opened_rows
-      canonicalPacking packingInjective packingCardNonzero (parameters.linearWeights polynomial)
-      witness witnessDegree (masks.2 polynomial) (parameters.linearTargets polynomial)
-      (validLinear polynomial) (points opening)
+    exact public_linear_mask_opening_matches_source parameters points packingInjective
+      packingCardNonzero witness witnessDegree masks validLinear opening polynomial
 
 theorem current_response_is_affine_mask_map
     (parameters : CurrentPublicParameters) (witness : Fin 686 → Goldilocks[X])
@@ -211,15 +343,12 @@ theorem current_response_is_affine_mask_map
       currentResponseCoefficients parameters witness 0 + masks := by
   apply Prod.ext
   · funext polynomial coefficient
-    simp only [currentResponseCoefficients, currentNonlinearResponsePolynomial,
-      V8Smz9PiopOpeningRecovery.sourceNonlinearTranscript, coeff_add,
-      coefficient_polynomial_coefficient, Prod.fst_add, Prod.fst_zero, Pi.add_apply, Pi.zero_apply]
-    simp
+    exact nonlinear_response_coefficient_affine
+      (V8Smz9PiopOpeningRecovery.sourceNonlinearQuotient canonicalPacking
+        (currentNonlinearBatch parameters witness polynomial))
+      (masks.1 polynomial) ((0 : PiopCoefficients Goldilocks).1 polynomial) coefficient rfl
   · funext polynomial coefficient
-    simp only [currentResponseCoefficients, currentLinearResponsePolynomial, coeff_add,
-      source_linear_mask_nonconstant_coefficient, Prod.snd_add, Prod.snd_zero,
-      Pi.add_apply, Pi.zero_apply]
-    simp
+    exact source_linear_response_affine_at parameters witness masks polynomial coefficient
 
 def currentRecoveredMasks (parameters : CurrentPublicParameters)
     (witness : Fin 686 → Goldilocks[X]) (transcript : PiopCoefficients Goldilocks) :

@@ -744,4 +744,8 @@ theorem execution_stages_authenticated_checks
   rcases accepted with ⟨positions, query, claims, ordered, image, checks⟩
   exact ⟨stages, positions, query, claims, ordered, image, checks⟩
 
+-- Keep the 406-node interpolant opaque to downstream specialization.
+-- The defining module proofs above retain their existing transparency.
+attribute [irreducible] currentQueryPolynomial
+
 end HegemonCrypto.SmallWood.SmzaRp05CurrentTwelveCalculated

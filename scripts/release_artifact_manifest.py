@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -19,11 +20,29 @@ EXPECTED_ARTIFACTS = (
     ("hegemon-node", "hegemon-node"),
     ("wallet", "wallet"),
     ("walletd", "walletd"),
+    ("wallet", "private-spend"),
 )
 
 
 class ManifestError(RuntimeError):
     pass
+
+
+def verify_launcher_policy(root: Path) -> dict[str, object]:
+    """Check sibling release policy even for isolated (-I) Python callers."""
+    checker_path = Path(__file__).resolve().with_name("check_release_launcher_policy.py")
+    spec = importlib.util.spec_from_file_location("_hegemon_release_launcher_policy", checker_path)
+    if spec is None or spec.loader is None:
+        raise ManifestError("release launcher policy checker is unavailable")
+    checker = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(checker)
+    except OSError as exc:
+        raise ManifestError(f"release launcher policy checker is unavailable: {exc}") from exc
+    try:
+        return checker.verify_source(root)
+    except checker.LauncherPolicyError as exc:
+        raise ManifestError(f"release launcher policy rejected: {exc}") from exc
 
 
 @dataclass
@@ -78,6 +97,22 @@ def _file_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
         value.st_mtime_ns,
         value.st_ctime_ns,
     )
+
+
+def _path_matches_open_file(path_stat: os.stat_result, opened_stat: os.stat_result) -> bool:
+    # Windows path stat/lstat preserves legacy ctime=creation time, whereas
+    # fstat can expose metadata change time. Normalize only this cross-API
+    # comparison; descriptor-to-descriptor checks retain full change time.
+    path_identity = _file_identity(path_stat)
+    opened_identity = _file_identity(opened_stat)
+    if os.name == "nt":
+        path_birth = getattr(path_stat, "st_birthtime_ns", None)
+        opened_birth = getattr(opened_stat, "st_birthtime_ns", None)
+        if path_birth is not None or opened_birth is not None:
+            if path_birth is None or opened_birth is None:
+                return False
+            return path_identity[:4] + (path_birth,) == opened_identity[:4] + (opened_birth,)
+    return path_identity == opened_identity
 
 
 def _checked_fallback_path(
@@ -146,14 +181,19 @@ def _open_regular_beneath(base: Path, relative: str, label: str) -> int:
             raise ManifestError(
                 f"{label} is not a regular non-symlink file: {relative}"
             ) from exc
-        actual = os.fstat(file_fd)
-        if not stat.S_ISREG(actual.st_mode) or _file_identity(actual) != _file_identity(expected):
+        try:
+            actual = os.fstat(file_fd)
+            if not stat.S_ISREG(actual.st_mode) or not _path_matches_open_file(expected, actual):
+                raise ManifestError(f"{label} changed while being opened: {relative}")
+            # Re-check the lexical chain and bind its final object to the opened
+            # descriptor before inspecting or copying any bytes.
+            _, after = _checked_fallback_path(base, relative, label, directory=False)
+            if not _path_matches_open_file(after, actual):
+                raise ManifestError(f"{label} changed while being opened: {relative}")
+            return file_fd
+        except BaseException:
             os.close(file_fd)
-            raise ManifestError(f"{label} changed while being opened: {relative}")
-        # Re-check the lexical chain after opening. The file descriptor remains
-        # bound to the object whose bytes are inspected and copied below.
-        _checked_fallback_path(base, relative, label, directory=False)
-        return file_fd
+            raise
     try:
         current_fd = os.open(base, _directory_open_flags())
     except OSError as exc:
@@ -211,7 +251,9 @@ def _open_at(
 ) -> int:
     if directory.fd is not None:
         return os.open(name, flags, mode, dir_fd=directory.fd)
-    return os.open(directory.path / name, flags, mode)
+    # Windows CRT descriptors default to text mode, including output files.
+    # Manifest checksums bind raw bytes, so fallback writes must stay binary.
+    return os.open(directory.path / name, flags | getattr(os, "O_BINARY", 0), mode)
 
 
 def _open_repository_file(root: Path, relative: str, label: str) -> int:
@@ -253,9 +295,21 @@ def run_git(root: Path, *args: str) -> bytes:
 
 
 def source_tree_sha256(root: Path) -> str:
-    tracked = run_git(root, "ls-files", "-z").decode(
-        "utf-8", "surrogateescape"
-    ).split("\0")
+    tracked: dict[str, int] = {}
+    for record in run_git(root, "ls-files", "--stage", "-z").split(b"\0"):
+        if not record:
+            continue
+        header, separator, raw_path = record.partition(b"\t")
+        fields = re.fullmatch(rb"([0-7]{6}) ([0-9a-f]{40}|[0-9a-f]{64}) ([0-3])", header)
+        if not separator or not raw_path or fields is None:
+            raise ManifestError("malformed Git source index entry")
+        git_mode, _, stage = fields.groups()
+        relative = raw_path.decode("utf-8", "surrogateescape")
+        if stage != b"0" or relative in tracked:
+            raise ManifestError(f"unmerged or duplicate Git source index entry: {relative}")
+        if git_mode not in {b"100644", b"100755"}:
+            raise ManifestError(f"unsupported Git source mode: {relative}")
+        tracked[relative] = 0o755 if git_mode == b"100755" else 0o644
     untracked = run_git(
         root, "ls-files", "--others", "--exclude-standard", "-z"
     ).decode("utf-8", "surrogateescape").split("\0")
@@ -265,7 +319,24 @@ def source_tree_sha256(root: Path) -> str:
         path = root / relative
         digest.update(relative.encode("utf-8", "surrogateescape"))
         digest.update(b"\0")
-        if path.is_symlink():
+        if relative in tracked:
+            if path.is_symlink() or not path.is_file():
+                raise ManifestError(f"source is not a regular non-symlink file: {relative}")
+            fd = _open_repository_file(root, relative, "source")
+            try:
+                before = os.fstat(fd)
+                mode = tracked[relative]
+                if os.name == "posix" and bool(before.st_mode & stat.S_IXUSR) != (mode == 0o755):
+                    raise ManifestError(f"source executable mode disagrees with Git index: {relative}")
+                digest.update(f"file:{mode:o}:{before.st_size}".encode("ascii"))
+                digest.update(b"\0")
+                while chunk := os.read(fd, 1024 * 1024):
+                    digest.update(chunk)
+                if _file_identity(before) != _file_identity(os.fstat(fd)):
+                    raise ManifestError(f"source changed while being inspected: {relative}")
+            finally:
+                os.close(fd)
+        elif path.is_symlink():
             digest.update(b"symlink\0")
             digest.update(os.readlink(path).encode("utf-8", "surrogateescape"))
         elif path.is_file():
@@ -388,6 +459,7 @@ def inspect_artifact(
 def create_manifest(
     root: Path, output: Path, target_triple: str, artifact_specs: list[str]
 ) -> dict[str, object]:
+    verify_launcher_policy(root)
     parsed = [parse_spec(root, value) for value in artifact_specs]
     identities = tuple((package, binary) for package, binary, _, _ in parsed)
     if identities != EXPECTED_ARTIFACTS:
@@ -418,6 +490,7 @@ def create_manifest(
 
 
 def verify_manifest(root: Path, manifest_path: Path, expected_specs: list[str]) -> dict[str, object]:
+    verify_launcher_policy(root)
     _, manifest_relative = _repository_relative(root, manifest_path)
     try:
         manifest_fd = _open_repository_file(root, manifest_relative, "release manifest")
@@ -454,7 +527,7 @@ def verify_manifest(root: Path, manifest_path: Path, expected_specs: list[str]) 
         )
     manifest_artifacts = payload.get("artifacts")
     if not isinstance(manifest_artifacts, list) or len(manifest_artifacts) != len(expected):
-        raise ManifestError("release manifest must contain exactly three artifacts")
+        raise ManifestError("release manifest must contain exactly four artifacts")
 
     verified: list[dict[str, object]] = []
     for item, (package, binary, path, relative) in zip(
@@ -699,7 +772,7 @@ def _load_asset_bundle(
         raise ManifestError("release asset manifest target_triple is missing")
     assets = payload.get("assets")
     if not isinstance(assets, list) or len(assets) != len(EXPECTED_ARTIFACTS):
-        raise ManifestError("release asset manifest must contain exactly three assets")
+        raise ManifestError("release asset manifest must contain exactly four assets")
     identities = tuple(
         (item.get("package"), item.get("binary")) if isinstance(item, dict) else (None, None)
         for item in assets
@@ -774,6 +847,7 @@ def _load_asset_bundle(
 def assemble_release_assets(
     root: Path, bundle_manifests: list[Path], output_dir: Path
 ) -> dict[str, object]:
+    verify_launcher_policy(root)
     if not bundle_manifests:
         raise ManifestError("at least one release asset bundle is required")
     bundles = [

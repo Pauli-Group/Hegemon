@@ -3,6 +3,84 @@
 use super::*;
 
 pub async fn run(cli: NativeCli) -> Result<()> {
+    #[cfg(feature = "development-candidate")]
+    if cli.print_development_candidate_manifest {
+        if cli.print_crypto_profile
+            || cli
+                .network
+                .is_some_and(|profile| profile != NativeNetworkProfile::Development)
+            || cli.network_manifest.is_some()
+            || cli.development_candidate
+        {
+            return Err(anyhow!("development candidate manifest generation accepts no other network, manifest, or candidate opt-in flags"));
+        }
+        let address = cli.development_funding_address.as_deref().ok_or_else(|| {
+            anyhow!("manifest generation requires --development-funding-address FULL_V8_ADDRESS")
+        })?;
+        let mut manifest =
+            network_profile::private_spend_only_development_candidate_manifest(address)?;
+        if let Some(path) = cli.development_assets_json.as_ref() {
+            let size = std::fs::metadata(path)?.len();
+            if size == 0 || size > 64 * 1024 {
+                return Err(anyhow!(
+                    "asset descriptor must contain 1..=65536 public bytes"
+                ));
+            }
+            let descriptor: network_profile::DevelopmentAssetsV1 =
+                serde_json::from_slice(&std::fs::read(path)?)?;
+            descriptor.validate()?;
+            manifest
+                .development_candidate
+                .as_mut()
+                .ok_or_else(|| anyhow!("fresh Development candidate configuration missing"))?
+                .assets = Some(descriptor);
+            network_profile::NativeNetworkIdentity::from_manifest(manifest.clone())?;
+        }
+        if let Some(path) = cli.development_recovery_json.as_ref() {
+            use std::io::Read as _;
+            if manifest
+                .development_candidate
+                .as_ref()
+                .and_then(|source| source.assets.as_ref())
+                .is_none()
+            {
+                return Err(anyhow!(
+                    "recovery manifest generation requires --development-assets-json"
+                ));
+            }
+            let mut bytes = Vec::new();
+            std::fs::File::open(path)?
+                .take(64 * 1024 + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.is_empty() || bytes.len() > 64 * 1024 {
+                return Err(anyhow!(
+                    "recovery descriptor must contain 1..=65536 public bytes"
+                ));
+            }
+            let descriptor: super::asset_recovery_profile::DevelopmentRecoveryV1 =
+                serde_json::from_slice(&bytes)?;
+            descriptor.validate()?;
+            manifest
+                .development_candidate
+                .as_mut()
+                .ok_or_else(|| anyhow!("fresh Development candidate configuration missing"))?
+                .recovery = Some(descriptor);
+            // Includes exact old-row cross-validation and the separate geometry
+            // eligibility gate; an unqualified descriptor cannot mint a network.
+            network_profile::NativeNetworkIdentity::from_manifest(manifest.clone())?;
+        }
+        println!("{}", serde_json::to_string_pretty(&manifest)?);
+        return Ok(());
+    }
+    #[cfg(feature = "development-candidate")]
+    if cli.development_funding_address.is_some()
+        || cli.development_assets_json.is_some()
+        || cli.development_recovery_json.is_some()
+    {
+        return Err(anyhow!(
+            "Development manifest inputs require --print-development-candidate-manifest"
+        ));
+    }
     if cli.print_crypto_profile {
         let profile = transaction_circuit::proof::production_crypto_profile_attestation()?;
         println!("{}", serde_json::to_string(&profile)?);
@@ -25,6 +103,8 @@ pub(super) async fn run_with_config(config: NativeConfig) -> Result<()> {
         base_path = %config.base_path.display(),
         db_path = %config.db_path.display(),
         tmp = config.tmp,
+        network_profile = config.network.profile().label(),
+        chain_id = %hex32(&config.chain_id()),
         seeds = ?config.seeds,
         miner_address = ?config.miner_address,
         "starting native Hegemon node"
@@ -71,7 +151,11 @@ pub(crate) fn start_native_p2p(node: Arc<NativeNode>, config: &NativeConfig) -> 
         config.base_path.join("pq-peers.bin"),
     ));
     let identity_seed = load_native_identity_seed(config)?;
-    let identity = PeerIdentity::generate(&identity_seed);
+    let identity = if config.network.profile() == NativeNetworkProfile::Legacy {
+        PeerIdentity::generate(&identity_seed)
+    } else {
+        PeerIdentity::generate_for_network(&identity_seed, config.chain_id())
+    };
     node.set_network_local_peer_id(identity.peer_id());
     let mut service = P2PService::new(
         identity,
@@ -289,13 +373,20 @@ pub(crate) fn native_sync_response_materialization_next(
 pub(crate) fn validate_native_block_body_locator(
     locator: &NativeBlockBodyLocator,
 ) -> Result<usize> {
+    validate_native_block_body_locator_for_chain(locator, HEGEMON_CHAIN_ID_V1)
+}
+
+pub(crate) fn validate_native_block_body_locator_for_chain(
+    locator: &NativeBlockBodyLocator,
+    expected_chain_id: [u8; 32],
+) -> Result<usize> {
     if locator.schema_version != NATIVE_BLOCK_BODY_SCHEMA_VERSION {
         return Err(anyhow!(
             "unsupported native block body schema version: {}",
             locator.schema_version
         ));
     }
-    if locator.chain_id != HEGEMON_CHAIN_ID_V1 {
+    if locator.chain_id != expected_chain_id {
         return Err(anyhow!("native block body locator chain id mismatch"));
     }
     if locator.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE {
@@ -403,13 +494,25 @@ pub(crate) fn validate_native_block_body_locator_v3(
     locator: &NativeBlockBodyLocatorV3,
     expected_rules_hash: RulesHash48,
 ) -> Result<usize> {
+    validate_native_block_body_locator_v3_for_chain(
+        locator,
+        expected_rules_hash,
+        HEGEMON_CHAIN_ID_V1,
+    )
+}
+
+pub(crate) fn validate_native_block_body_locator_v3_for_chain(
+    locator: &NativeBlockBodyLocatorV3,
+    expected_rules_hash: RulesHash48,
+    expected_chain_id: [u8; 32],
+) -> Result<usize> {
     if locator.schema_version != NATIVE_BLOCK_BODY_SCHEMA_VERSION {
         return Err(anyhow!(
             "unsupported native V3 block body schema version: {}",
             locator.schema_version
         ));
     }
-    if locator.chain_id != HEGEMON_CHAIN_ID_V1 {
+    if locator.chain_id != expected_chain_id {
         return Err(anyhow!("native V3 block body locator chain id mismatch"));
     }
     if locator.rules_hash != expected_rules_hash {
@@ -643,6 +746,7 @@ impl NativeBlockBodyReassembler {
         locator: NativeBlockBodyLocator,
         now: Instant,
     ) -> Result<bool> {
+        validate_native_block_body_locator(&locator)?;
         self.register_with_started_at(peer_id, locator, now, now)
     }
 
@@ -659,7 +763,7 @@ impl NativeBlockBodyReassembler {
                 "native block body request exceeded absolute reassembly lifetime"
             ));
         }
-        let total_len = validate_native_block_body_locator(&locator)?;
+        let total_len = validate_native_block_body_locator_for_chain(&locator, locator.chain_id)?;
         let key = (peer_id, locator.block_hash);
         if let Some(existing) = self.entries.get(&key) {
             if existing.locator == locator {
@@ -799,7 +903,10 @@ impl NativeBlockBodyReassembler {
 pub(crate) fn decode_completed_native_block_body(
     completed: NativeCompletedBlockBody,
 ) -> Result<NativeBlockMeta> {
-    let total_len = validate_native_block_body_locator(&completed.locator)?;
+    let total_len = validate_native_block_body_locator_for_chain(
+        &completed.locator,
+        completed.locator.chain_id,
+    )?;
     if completed.received_bytes != total_len {
         return Err(anyhow!("native block body completed byte count mismatch"));
     }
@@ -859,8 +966,9 @@ struct NativePeerBlockBodyQueue {
     waiting: VecDeque<NativeQueuedBlockBody>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct NativeBlockBodyTransport {
+    expected_chain_id: [u8; 32],
     reassembler: NativeBlockBodyReassembler,
     peers: BTreeMap<PeerId, NativePeerBlockBodyQueue>,
     queued_bodies: usize,
@@ -895,13 +1003,35 @@ pub(crate) fn complete_native_block_body_range_origins(
     }
 }
 
+impl Default for NativeBlockBodyTransport {
+    fn default() -> Self {
+        Self::for_chain(HEGEMON_CHAIN_ID_V1)
+    }
+}
+
 impl NativeBlockBodyTransport {
+    pub(crate) fn for_chain(expected_chain_id: [u8; 32]) -> Self {
+        Self {
+            expected_chain_id,
+            reassembler: NativeBlockBodyReassembler::default(),
+            peers: BTreeMap::new(),
+            queued_bodies: 0,
+            round_robin_cursor: None,
+        }
+    }
+
+    fn has_pending_peer_work(&self, peer_id: PeerId) -> bool {
+        self.peers
+            .get(&peer_id)
+            .is_some_and(|queue| queue.active.is_some() || !queue.waiting.is_empty())
+    }
+
     pub(crate) fn enqueue_announce(
         &mut self,
         peer_id: PeerId,
         locator: NativeBlockBodyLocator,
     ) -> Result<bool> {
-        validate_native_block_body_locator(&locator)?;
+        validate_native_block_body_locator_for_chain(&locator, self.expected_chain_id)?;
         if self.peer_contains_hash(peer_id, locator.block_hash) {
             return Ok(false);
         }
@@ -946,19 +1076,10 @@ impl NativeBlockBodyTransport {
                 MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE
             ));
         }
-        if self
-            .peers
-            .get(&peer_id)
-            .is_some_and(|queue| queue.active.is_some() || !queue.waiting.is_empty())
-        {
-            return Err(anyhow!(
-                "native peer already has a block body response in flight"
-            ));
-        }
         let mut previous: Option<&NativeBlockBodyLocator> = None;
         let mut hashes = BTreeSet::new();
         for locator in &locators {
-            validate_native_block_body_locator(locator)?;
+            validate_native_block_body_locator_for_chain(locator, self.expected_chain_id)?;
             if !hashes.insert(locator.block_hash) {
                 return Err(anyhow!(
                     "native block locator response repeats a block hash"
@@ -988,7 +1109,15 @@ impl NativeBlockBodyTransport {
             from_height: first.height,
             to_height: last.height,
         };
-        self.reserve_queue_slot(peer_id, locators.len())?;
+        // Only malformed remote data is an error. A valid authorized response
+        // can race local body work or encounter a full bounded queue; defer it
+        // through the caller's nonterminal retry path without evicting the peer.
+        // Validate every locator before this check so pressure cannot hide bad data.
+        if self.has_pending_peer_work(peer_id)
+            || self.reserve_queue_slot(peer_id, locators.len()).is_err()
+        {
+            return Ok(None);
+        }
         let locator_count = locators.len();
         let queue = self.peers.entry(peer_id).or_default();
         for (index, locator) in locators.into_iter().enumerate() {
@@ -1041,6 +1170,16 @@ impl NativeBlockBodyTransport {
         queue.active = Some(next.clone());
         self.round_robin_cursor = Some(peer_id);
         Ok(Some(next.locator))
+    }
+
+    #[cfg(test)]
+    pub(super) fn push_chunk_for_test(
+        &mut self,
+        peer_id: PeerId,
+        chunk: NativeBlockBodyChunk,
+        now: Instant,
+    ) -> Result<Option<(NativeCompletedBlockBody, NativeQueuedBlockBodyOrigin)>> {
+        self.push_chunk(peer_id, chunk, now)
     }
 
     fn push_chunk(
@@ -1272,14 +1411,30 @@ pub(crate) struct NativeEncodedBlockBody {
     pub(crate) locator: NativeBlockBodyLocator,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct NativeBlockBodySendCache {
+    expected_chain_id: [u8; 32],
     entries: BTreeMap<[u8; 32], Arc<NativeEncodedBlockBody>>,
     order: VecDeque<[u8; 32]>,
     bytes: usize,
 }
 
+impl Default for NativeBlockBodySendCache {
+    fn default() -> Self {
+        Self::for_chain(HEGEMON_CHAIN_ID_V1)
+    }
+}
+
 impl NativeBlockBodySendCache {
+    pub(crate) fn for_chain(expected_chain_id: [u8; 32]) -> Self {
+        Self {
+            expected_chain_id,
+            entries: BTreeMap::new(),
+            order: VecDeque::new(),
+            bytes: 0,
+        }
+    }
+
     fn get(&mut self, block_hash: [u8; 32]) -> Option<Arc<NativeEncodedBlockBody>> {
         let encoded = self.entries.get(&block_hash).cloned()?;
         self.order.retain(|hash| *hash != block_hash);
@@ -1309,7 +1464,7 @@ impl NativeBlockBodySendCache {
         if let Some(encoded) = self.get(meta.hash) {
             return Ok(encoded);
         }
-        if meta.chain_id != HEGEMON_CHAIN_ID_V1
+        if meta.chain_id != self.expected_chain_id
             || meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE
         {
             return Err(anyhow!(
@@ -1600,16 +1755,6 @@ fn native_sync_response_message_from_encoded(
             "native sync response encoding count does not match block count"
         ));
     }
-    let mut locators = Vec::with_capacity(encoded.len());
-    let mut inline_body_bytes = 0usize;
-    let mut all_inline = true;
-    for (body_len, locator) in encoded {
-        inline_body_bytes = inline_body_bytes
-            .checked_add(body_len)
-            .ok_or_else(|| anyhow!("native sync inline body-byte total overflow"))?;
-        all_inline &= body_len <= MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES;
-        locators.push(locator);
-    }
     #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
     if let Some(prefix) = poseidon2_v8_verifier::retained_carrier_inline_response_prefix(&blocks) {
         if prefix > 0 {
@@ -1620,30 +1765,53 @@ fn native_sync_response_message_from_encoded(
                 best_height,
                 blocks: blocks.into_iter().take(prefix).collect(),
             });
-        } else if let Some(locator) = locators.first() {
+        } else if let Some((_, locator)) = encoded.first() {
             return Ok(NativeSyncMessage::ResponseLocators {
                 best_height,
                 blocks: vec![locator.clone()],
             });
         }
     }
-    if all_inline && inline_body_bytes <= MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES {
-        let inline = NativeSyncMessage::Response {
-            best_height,
-            blocks,
-        };
-        let payload = encode_sync_message(&inline)?;
-        if native_sync_protocol_frame_bytes(&payload)? <= MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES {
-            return Ok(inline);
+    let mut sizer = NativeSyncResponseWireSizer::new(best_height)?;
+    let mut inline_body_bytes = 0usize;
+    let mut inline_count = 0usize;
+    for (block, (body_len, _)) in blocks.iter().zip(encoded.iter()) {
+        if *body_len > MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES {
+            break;
         }
-        return Ok(NativeSyncMessage::ResponseLocators {
+        let next_body_bytes = inline_body_bytes
+            .checked_add(*body_len)
+            .ok_or_else(|| anyhow!("native sync inline body-byte total overflow"))?;
+        if next_body_bytes > MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES {
+            break;
+        }
+        let Some(wire_bytes) = sizer.try_push_block(block)? else {
+            break;
+        };
+        if wire_bytes > MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES {
+            break;
+        }
+        inline_body_bytes = next_body_bytes;
+        inline_count += 1;
+    }
+    if inline_count > 0 || blocks.is_empty() {
+        // A later oversized body must not force the small requested prefix
+        // through the single-body carrier and its per-peer egress window.
+        return Ok(NativeSyncMessage::Response {
             best_height,
-            blocks: locators,
+            blocks: blocks.into_iter().take(inline_count).collect(),
         });
     }
     Ok(NativeSyncMessage::ResponseLocators {
         best_height,
-        blocks: locators,
+        // The active exact-body receive path binds one body to each completed
+        // request. The receiver follows this response with the next missing
+        // height, so locator replies must advance one canonical body at a time.
+        blocks: encoded
+            .into_iter()
+            .take(1)
+            .map(|(_, locator)| locator)
+            .collect(),
     })
 }
 
@@ -1709,17 +1877,21 @@ fn native_sync_protocol_payload_fits_transport(payload_bytes: usize) -> Result<b
     Ok(encrypted_bytes <= wire::MAX_WIRE_FRAME_LEN)
 }
 
-/// Encode a full inline announce when it fits the encrypted transport cap;
-/// otherwise emit only the bounded height/hash tip. The receiver treats that
-/// tip solely as unverified request-planning evidence and obtains any large
-/// body through the exact locator/action-body carrier.
+/// Encode a full inline announce only when it fits both the receiver's inline
+/// body limit and the encrypted transport cap; otherwise emit only the bounded
+/// height/hash tip. The receiver treats that tip solely as unverified request-
+/// planning evidence and obtains any large body through the exact carrier.
 pub(crate) fn encode_native_sync_announce_or_tip(
     meta: &NativeBlockMeta,
 ) -> Result<(Vec<u8>, bool)> {
     let borrowed = BorrowedNativeSyncMessage::Announce(meta);
     let announce_bytes = wire::encoded_len(&borrowed, usize::MAX)
         .context("measure borrowed native sync announce")?;
-    if native_sync_protocol_payload_fits_transport(announce_bytes)? {
+    let inline_body_bytes =
+        bincode::serialized_size(meta).context("measure bincode native sync announce body")?;
+    if inline_body_bytes <= MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES as u64
+        && native_sync_protocol_payload_fits_transport(announce_bytes)?
+    {
         return Ok((
             wire::encode(&borrowed, MAX_NATIVE_SYNC_MESSAGE_BYTES)
                 .context("encode borrowed native sync announce")?,
@@ -1943,7 +2115,7 @@ async fn send_native_block_body_chunks_with_sender(
     body: Arc<Vec<u8>>,
     locator: NativeBlockBodyLocator,
 ) -> Result<()> {
-    let total_len = validate_native_block_body_locator(&locator)?;
+    let total_len = validate_native_block_body_locator_for_chain(&locator, locator.chain_id)?;
     if body.len() != total_len {
         return Err(anyhow!(
             "stored native block body length does not match its canonical locator"
@@ -2791,6 +2963,24 @@ pub(crate) fn preflight_native_peer_pending_action(
     Ok((tx_hash, is_shielded_transfer_action(pending)))
 }
 
+/// Production peer preflight obtains authority from the receiving node's
+/// immutable network and actual genesis before reserving any proof work.
+pub(crate) fn preflight_native_peer_pending_action_for_node(
+    node: &NativeNode,
+    pending: &PendingAction,
+    best_height: u64,
+) -> Result<(ActionId48, bool)> {
+    ensure_native_v3_active_action_route(pending, false)?;
+    node.validate_network_action_authoring_version_policy(
+        best_height,
+        pending.binding,
+        pending.family_id,
+        pending.action_id,
+    )?;
+    let (tx_hash, _) = validate_pending_action_identity(pending)?;
+    Ok((tx_hash, is_shielded_transfer_action(pending)))
+}
+
 pub(crate) const NATIVE_PENDING_ACTION_V3_FAMILY_ID_OFFSET: usize = 52;
 pub(crate) const NATIVE_PENDING_ACTION_V3_ACTION_ID_OFFSET: usize = 54;
 pub(crate) const NATIVE_PENDING_ACTION_V3_FIXED_PREFIX_BYTES: usize = 56;
@@ -2810,6 +3000,23 @@ pub(crate) fn prefilter_native_peer_pending_action_route(
     action: &[u8],
     action_height: u64,
 ) -> Result<()> {
+    let (binding, family_id, action_id) = native_peer_pending_action_route_prefix(action)?;
+    validate_native_action_version_at_height(action_height, binding, family_id, action_id)
+}
+
+pub(crate) fn prefilter_native_peer_pending_action_route_for_node(
+    node: &NativeNode,
+    action: &[u8],
+    action_height: u64,
+) -> Result<()> {
+    let (binding, family_id, action_id) = native_peer_pending_action_route_prefix(action)?;
+    node.validate_network_action_version_at_height(action_height, binding, family_id, action_id)
+}
+
+/// Parse only the fixed prefix; vector decoding must follow the authority gate.
+fn native_peer_pending_action_route_prefix(
+    action: &[u8],
+) -> Result<(KernelVersionBinding, u16, u16)> {
     if action.len() < NATIVE_PENDING_ACTION_V3_FIXED_PREFIX_BYTES {
         return Err(anyhow!(
             "native V3 pending action is truncated before its fixed route prefix: {} < {}",
@@ -2836,7 +3043,7 @@ pub(crate) fn prefilter_native_peer_pending_action_route(
             action[NATIVE_PENDING_ACTION_V3_CRYPTO_OFFSET + 1],
         ]),
     };
-    validate_native_action_version_at_height(action_height, binding, family_id, action_id)
+    Ok((binding, family_id, action_id))
 }
 
 pub(crate) fn decode_native_peer_pending_action_v3(
@@ -2847,6 +3054,83 @@ pub(crate) fn decode_native_peer_pending_action_v3(
     #[cfg(test)]
     NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS.with(|count| count.set(count.get() + 1));
     decode_pending_action_v3_exact(action, "native pending action relay")
+}
+
+pub(crate) fn decode_native_peer_pending_action_v3_for_node(
+    node: &NativeNode,
+    action: &[u8],
+    action_height: u64,
+) -> Result<PendingAction> {
+    prefilter_native_peer_pending_action_route_for_node(node, action, action_height)?;
+    #[cfg(test)]
+    NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS.with(|count| count.set(count.get() + 1));
+    decode_pending_action_v3_exact(action, "native pending action relay")
+}
+
+#[cfg(test)]
+mod launch_peer_source_tests {
+    use super::*;
+
+    #[test]
+    fn empty_launch_registry_rejects_peer_routes_before_payload_decode() {
+        let directory = tempfile::tempdir().unwrap();
+        let node = NativeNode::open(NativeConfig {
+            network: NativeNetworkIdentity::development(),
+            dev: true,
+            tmp: false,
+            base_path: directory.path().to_owned(),
+            db_path: directory.path().join("native-chain.sled"),
+            rpc_addr: "127.0.0.1:0".parse().unwrap(),
+            p2p_listen_addr: "127.0.0.1:0".into(),
+            node_name: "launch-peer-source-test".into(),
+            rpc_methods: "safe".into(),
+            rpc_external: false,
+            rpc_cors: None,
+            seeds: Vec::new(),
+            max_peers: 0,
+            mine: false,
+            mine_threads: 1,
+            bootstrap_mining_authoring: true,
+            miner_address: None,
+            pow_bits: NATIVE_DEV_POW_BITS,
+        })
+        .unwrap();
+        for (binding, action_id) in [
+            (
+                protocol_versioning::launch_candidate::RP06_VERSION_BINDING,
+                RP06_ACTION_ID,
+            ),
+            (
+                protocol_versioning::launch_candidate::HTLC_VERSION_BINDING,
+                HTLC_ACTION_ID,
+            ),
+            (
+                protocol_versioning::launch_candidate::PRIVATE_SPEND_VERSION_BINDING,
+                PRIVATE_SPEND_ACTION_ID,
+            ),
+        ] {
+            let mut prefix = vec![0; NATIVE_PENDING_ACTION_V3_FIXED_PREFIX_BYTES];
+            prefix[NATIVE_PENDING_ACTION_V3_CIRCUIT_OFFSET..NATIVE_PENDING_ACTION_V3_CRYPTO_OFFSET]
+                .copy_from_slice(&binding.circuit.to_le_bytes());
+            prefix
+                [NATIVE_PENDING_ACTION_V3_CRYPTO_OFFSET..NATIVE_PENDING_ACTION_V3_FAMILY_ID_OFFSET]
+                .copy_from_slice(&binding.crypto.to_le_bytes());
+            prefix[NATIVE_PENDING_ACTION_V3_FAMILY_ID_OFFSET
+                ..NATIVE_PENDING_ACTION_V3_ACTION_ID_OFFSET]
+                .copy_from_slice(&FAMILY_SHIELDED_POOL.to_le_bytes());
+            prefix[NATIVE_PENDING_ACTION_V3_ACTION_ID_OFFSET
+                ..NATIVE_PENDING_ACTION_V3_FIXED_PREFIX_BYTES]
+                .copy_from_slice(&action_id.to_le_bytes());
+            NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS.with(|count| count.set(0));
+            let error = decode_native_peer_pending_action_v3_for_node(node.as_ref(), &prefix, 1)
+                .unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("no active source-owned proof capability"));
+            NATIVE_PENDING_ACTION_PEER_FULL_DECODE_INVOCATIONS
+                .with(|count| assert_eq!(count.get(), 0));
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3314,6 +3598,10 @@ impl NativeSyncImportQueue {
         Ok(())
     }
 
+    fn has_peer_work(&self, peer_id: PeerId) -> bool {
+        self.peers.contains(&peer_id)
+    }
+
     pub(crate) fn pop_front(&mut self) -> Option<NativeSyncImportWork> {
         if self.active.is_some() {
             return None;
@@ -3377,7 +3665,25 @@ impl NativeSyncImportQueue {
     }
 }
 
-enum NativeSyncImportCompletion {
+pub(super) fn native_sync_peer_has_pending_body_or_import(
+    peer_id: PeerId,
+    block_body_transport: &NativeBlockBodyTransport,
+    sync_import_queue: &NativeSyncImportQueue,
+) -> bool {
+    block_body_transport.has_pending_peer_work(peer_id) || sync_import_queue.has_peer_work(peer_id)
+}
+
+pub(super) fn native_sync_peer_announce_admission_blocked(
+    node: &NativeNode,
+    peer_id: PeerId,
+    block_body_transport: &NativeBlockBodyTransport,
+    sync_import_queue: &NativeSyncImportQueue,
+) -> bool {
+    native_sync_peer_has_pending_body_or_import(peer_id, block_body_transport, sync_import_queue)
+        || node.has_live_outbound_sync_request_for_peer(peer_id)
+}
+
+pub(super) enum NativeSyncImportCompletion {
     Announce {
         peer_id: PeerId,
     },
@@ -3411,6 +3717,15 @@ impl NativeSyncImportCompletion {
             | Self::ChunkRange { peer_id, .. } => *peer_id,
         }
     }
+}
+
+/// Release the completed async import owner before its completion handler can
+/// schedule the peer's next sync request and receive the next body.
+pub(super) fn finish_native_sync_import_owner(
+    queue: &mut NativeSyncImportQueue,
+    completion: &NativeSyncImportCompletion,
+) {
+    queue.finish(completion.peer_id());
 }
 
 fn spawn_native_sync_response_import(
@@ -3770,8 +4085,19 @@ async fn handle_native_sync_import_completion(
                 local_best_height,
                 trusted_peer_best_height,
             );
-            if progress.imported_blocks > 0 {
-                node.reset_sync_reorg_backfill();
+            if progress.imported_blocks > 0
+                && progress.attempted_blocks == progress.response_block_count
+                && !progress.stopped_on_error
+                && !progress.stopped_on_missing_parent
+            {
+                reset_sync_reorg_backfill_preserving_partial_prefix(
+                    node.as_ref(),
+                    peer_id,
+                    completed_request,
+                    response_range,
+                    response_tip_hash,
+                    progress,
+                );
                 info!(
                     imported = progress.imported_blocks,
                     best_height = local_best_height,
@@ -3794,6 +4120,14 @@ async fn handle_native_sync_import_completion(
                     "matched empty native sync response supplied no verified target evidence"
                 );
             }
+            preserve_native_sync_partial_prefix_progress(
+                node.as_ref(),
+                peer_id,
+                completed_request,
+                response_range,
+                response_tip_hash,
+                progress,
+            );
             if progress.should_request_more(local_best_height, trusted_peer_best_height) {
                 request_missing_blocks(
                     node,
@@ -3831,6 +4165,12 @@ async fn handle_native_sync_import_completion(
             completed_request,
             result,
         } => {
+            debug!(peer = %hex32(&peer_id), recovery_page = completed_request.context.recovery_page,
+                request_from = completed_request.range.from_height, request_to = completed_request.range.to_height,
+                response_from = response_range.from_height, response_to = response_range.to_height,
+                completed_target = ?completed_request.context.target_tip, current_target = ?node.sync_target_tip_snapshot(),
+                result_class = match &result { Ok(Some(_)) => "verified_report", Ok(None) => "stale", Err(_) => "worker_error" },
+                "completed native chunk range result");
             let report = match result {
                 Ok(Some(report)) => report,
                 Ok(None) => {
@@ -3873,6 +4213,12 @@ async fn handle_native_sync_import_completion(
                 }
             };
             let progress = report.progress;
+            debug!(peer = %hex32(&peer_id), attempted = progress.attempted_blocks,
+                response_blocks = progress.response_block_count, imported = progress.imported_blocks,
+                stored_noncanonical = progress.stored_noncanonical_blocks,
+                missing_parent = progress.stopped_on_missing_parent, stopped_on_error = progress.stopped_on_error,
+                recovery_page = completed_request.context.recovery_page,
+                "classified native chunk range progress");
             if let Some(failure) = report.failure {
                 block_body_transport.abort_peer(peer_id);
                 let evicted = handle_native_sync_terminal_target_failure(
@@ -3974,11 +4320,30 @@ async fn handle_native_sync_import_completion(
                     local_height,
                     trusted_peer_best_height,
                 );
-                if progress.imported_blocks > 0 {
-                    node.reset_sync_reorg_backfill();
+                if progress.imported_blocks > 0
+                    && progress.attempted_blocks == progress.response_block_count
+                    && !progress.stopped_on_error
+                    && !progress.stopped_on_missing_parent
+                {
+                    reset_sync_reorg_backfill_preserving_partial_prefix(
+                        node.as_ref(),
+                        peer_id,
+                        completed_request,
+                        Some(response_range),
+                        response_tip_hash,
+                        progress,
+                    );
                 } else if recovery_required {
                     node.escalate_sync_reorg_backfill();
                 }
+                preserve_native_sync_partial_prefix_progress(
+                    node.as_ref(),
+                    peer_id,
+                    completed_request,
+                    Some(response_range),
+                    response_tip_hash,
+                    progress,
+                );
                 if progress.should_request_more(local_height, trusted_peer_best_height) {
                     request_missing_blocks(
                         node,
@@ -4025,7 +4390,7 @@ async fn handle_native_sync_import_completion(
 
 pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
     let sync_tx = handle.sender();
-    let mut block_body_transport = NativeBlockBodyTransport::default();
+    let mut block_body_transport = NativeBlockBodyTransport::for_chain(node.config.chain_id());
     let block_body_send_limiter = Arc::new(NativeBlockBodySendLimiter::default());
     let mut block_body_send_queue = NativeBlockBodySendQueue::default();
     let (block_body_send_completion_tx, mut block_body_send_completion_rx) =
@@ -4074,7 +4439,22 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                     &node,
                     &peer_non_proof_completion_tx,
                 );
-                queue_missing_blocks_from_sync_target(&node, &sync_tx).await;
+                let (_, target_peer, _) = node.sync_target_tip_snapshot();
+                let pending_target_peer = target_peer.filter(|peer_id| {
+                    native_sync_peer_has_pending_body_or_import(
+                        *peer_id,
+                        &block_body_transport,
+                        &sync_import_queue,
+                    )
+                });
+                if let Some(peer_id) = pending_target_peer {
+                    debug!(
+                        peer = %hex32(&peer_id),
+                        "deferring native sync target request while its body is pending"
+                    );
+                } else {
+                    queue_missing_blocks_from_sync_target(&node, &sync_tx).await;
+                }
                 let retry_batch = block_body_transport.expire_and_retry(Instant::now());
                 for (aborted_peer, origins) in retry_batch.aborted {
                     complete_native_block_body_range_origins(&node, aborted_peer, &origins);
@@ -4143,7 +4523,7 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                     warn!("native sync import completion channel closed");
                     continue;
                 };
-                let completed_peer = import_completion.peer_id();
+                finish_native_sync_import_owner(&mut sync_import_queue, &import_completion);
                 handle_native_sync_import_completion(
                     &node,
                     &handle,
@@ -4151,7 +4531,6 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                     &mut block_body_transport,
                     import_completion,
                 ).await;
-                sync_import_queue.finish(completed_peer);
                 pump_native_sync_import_queue(
                     &mut sync_import_queue,
                     &node,
@@ -4208,6 +4587,19 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                         inline_len,
                         max_inline_len = MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES,
                         "rejecting oversized inline native block announce; locator transport required"
+                    );
+                    continue;
+                }
+                if native_sync_peer_announce_admission_blocked(
+                    node.as_ref(),
+                    peer_id,
+                    &block_body_transport,
+                    &sync_import_queue,
+                ) {
+                    debug!(
+                        peer = %hex32(&peer_id),
+                        height = meta.height,
+                        "deferring inline native announce while peer sync work is pending"
                     );
                     continue;
                 }
@@ -4489,11 +4881,27 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                 );
             }
             NativeSyncMessage::AnnounceLocator { locator } => {
-                if let Err(err) = validate_native_block_body_locator(&locator) {
+                if let Err(err) =
+                    validate_native_block_body_locator_for_chain(&locator, node.config.chain_id())
+                {
                     warn!(
                         peer = %hex32(&peer_id),
                         error = %err,
                         "rejecting malformed native block body locator announce"
+                    );
+                    continue;
+                }
+                if native_sync_peer_announce_admission_blocked(
+                    node.as_ref(),
+                    peer_id,
+                    &block_body_transport,
+                    &sync_import_queue,
+                ) {
+                    debug!(
+                        peer = %hex32(&peer_id),
+                        height = locator.height,
+                        block_hash = %hex32(&locator.block_hash),
+                        "deferring native locator announce while peer sync work is pending"
                     );
                     continue;
                 }
@@ -4690,6 +5098,10 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                             completed_request.request_target,
                             completed_request.range,
                         );
+                        debug!(
+                            peer = %hex32(&peer_id),
+                            "deferring valid native block locator response under local body backpressure"
+                        );
                         continue;
                     }
                     Err(err) => {
@@ -4872,6 +5284,18 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                 continue;
             }
             NativeSyncMessage::AnnounceTip(tip) => {
+                if native_sync_peer_has_pending_body_or_import(
+                    peer_id,
+                    &block_body_transport,
+                    &sync_import_queue,
+                ) {
+                    debug!(
+                        peer = %hex32(&peer_id),
+                        height = tip.best_height,
+                        "deferring native sync tip scheduling while that peer's body is pending"
+                    );
+                    continue;
+                }
                 if let Err(rejection) =
                     process_native_sync_tip_announcement(node.as_ref(), &handle, peer_id, tip).await
                 {
@@ -4884,11 +5308,18 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                 }
             }
             NativeSyncMessage::PendingAction { action } => {
-                if action.len() > MAX_NATIVE_SYNC_PENDING_ACTION_BYTES {
+                // Keep the historical relay ceiling for every legacy grammar.
+                // Only a bounded, exact recovery PendingAction may use the
+                // additive allowance. Shape alone is not authority: the source,
+                // CURRENT state and proof checks below still run before staging.
+                if action.len() > MAX_NATIVE_SYNC_PENDING_ACTION_BYTES
+                    && !native_action_payload_within_route_cap(&action)
+                {
                     warn!(
                         peer = %hex32(&peer_id),
                         action_bytes = action.len(),
                         max_bytes = MAX_NATIVE_SYNC_PENDING_ACTION_BYTES,
+                        recovery_max_bytes = MAX_NATIVE_RECOVERY_PENDING_ACTION_BYTES,
                         "rejecting oversized native pending action relay"
                     );
                     continue;
@@ -4900,7 +5331,11 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                     );
                     continue;
                 };
-                let pending = match decode_native_peer_pending_action_v3(&action, action_height) {
+                let pending = match decode_native_peer_pending_action_v3_for_node(
+                    node.as_ref(),
+                    &action,
+                    action_height,
+                ) {
                     Ok(pending) => pending,
                     Err(err) => {
                         warn!(
@@ -4911,7 +5346,8 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                         continue;
                     }
                 };
-                let (tx_hash, requires_proof) = match preflight_native_peer_pending_action(
+                let (tx_hash, requires_proof) = match preflight_native_peer_pending_action_for_node(
+                    node.as_ref(),
                     &pending,
                     action_height.saturating_sub(1),
                 ) {
@@ -5041,6 +5477,141 @@ pub(crate) fn native_sync_verified_response_observed_height(
         return Some(local_best_height);
     }
     None
+}
+
+/// Derive the follow-up cursor when a successful response imported only a
+/// prefix of the requested range before the peer's target.
+pub(super) fn native_sync_partial_prefix_recovery_cursor(
+    peer_id: PeerId,
+    completed_request: NativeCompletedSyncRequest,
+    response_range: Option<NativeSyncRange>,
+    response_tip_hash: Option<[u8; 32]>,
+    progress: NativeSyncResponseImportProgress,
+    current_target: (u64, Option<PeerId>, Option<[u8; 32]>),
+    max_blocks: u64,
+) -> Option<NativeSyncRecoveryCursor> {
+    let (target_height, target_hash) = completed_request.context.target_tip?;
+    let request_peer = completed_request.request_target.unwrap_or(peer_id);
+    if request_peer != peer_id
+        || current_target.0 != target_height
+        || current_target.1.is_none()
+        || current_target.2 != Some(target_hash)
+        || progress.response_block_count == 0
+        || progress.attempted_blocks != progress.response_block_count
+        || (progress.imported_blocks == 0
+            && progress.stored_noncanonical_blocks == 0
+            && !completed_request.context.recovery_page)
+        || progress.stopped_on_error
+        || progress.stopped_on_missing_parent
+    {
+        return None;
+    }
+    let response_range = response_range?;
+    if response_range.from_height != completed_request.range.from_height
+        || response_range.from_height > response_range.to_height
+        || response_range.to_height >= completed_request.range.to_height.min(target_height)
+    {
+        return None;
+    }
+    let response_block_count = response_range
+        .to_height
+        .checked_sub(response_range.from_height)?
+        .checked_add(1)?;
+    if usize::try_from(response_block_count).ok()? != progress.response_block_count {
+        return None;
+    }
+    let response_tip_hash = response_tip_hash?;
+    let next_range = native_sync_follow_response_request_range(
+        response_range,
+        completed_request.range.to_height.min(target_height),
+        max_blocks,
+    )?;
+    Some(NativeSyncRecoveryCursor {
+        // Completed work remains authorized by its original peer/request. Only
+        // its validated forward cursor follows the same exact target's owner.
+        peer_id: current_target.1,
+        target_height,
+        target_hash: Some(target_hash),
+        range: next_range,
+        expected_parent_hash: Some(response_tip_hash),
+    })
+}
+
+pub(super) fn preserve_native_sync_partial_prefix_progress(
+    node: &NativeNode,
+    peer_id: PeerId,
+    completed_request: NativeCompletedSyncRequest,
+    response_range: Option<NativeSyncRange>,
+    response_tip_hash: Option<[u8; 32]>,
+    progress: NativeSyncResponseImportProgress,
+) {
+    let current_target = node.sync_target_tip_snapshot();
+    let Some(cursor) = native_sync_partial_prefix_recovery_cursor(
+        peer_id,
+        completed_request,
+        response_range,
+        response_tip_hash,
+        progress,
+        current_target,
+        native_sync_request_max_blocks(node.sync_reorg_backfill_blocks()),
+    ) else {
+        return;
+    };
+    if node
+        .sync_recovery_cursor_for_target(cursor.peer_id, cursor.target_height, cursor.target_hash)
+        .is_some_and(|current| current.range.from_height > cursor.range.from_height)
+    {
+        return; // A late earlier completion must not rewind verified traversal.
+    }
+    node.set_sync_recovery_cursor(
+        cursor.peer_id,
+        cursor.target_height,
+        cursor.target_hash,
+        cursor.range,
+        cursor.expected_parent_hash,
+    );
+}
+
+pub(super) fn reset_sync_reorg_backfill_preserving_partial_prefix(
+    node: &NativeNode,
+    peer_id: PeerId,
+    completed_request: NativeCompletedSyncRequest,
+    response_range: Option<NativeSyncRange>,
+    response_tip_hash: Option<[u8; 32]>,
+    progress: NativeSyncResponseImportProgress,
+) {
+    let target = node.sync_target_tip_snapshot();
+    let partial = native_sync_partial_prefix_recovery_cursor(
+        peer_id,
+        completed_request,
+        response_range,
+        response_tip_hash,
+        progress,
+        target,
+        native_sync_request_max_blocks(node.sync_reorg_backfill_blocks()),
+    )
+    .is_some();
+    let previous = partial
+        .then(|| node.sync_recovery_cursor_for_target(target.1, target.0, target.2))
+        .flatten();
+    node.reset_sync_reorg_backfill();
+    if let Some(cursor) = previous {
+        node.set_sync_recovery_cursor(
+            cursor.peer_id,
+            cursor.target_height,
+            cursor.target_hash,
+            cursor.range,
+            cursor.expected_parent_hash,
+        );
+    }
+    preserve_native_sync_partial_prefix_progress(
+        node,
+        peer_id,
+        completed_request,
+        response_range,
+        response_tip_hash,
+        progress,
+    );
 }
 
 /// Drop a stale ordinary response before import, while allowing an exact
@@ -6445,4 +7016,347 @@ pub(crate) fn prefilter_native_sync_wire_tag(payload: &[u8]) -> Result<u8> {
 pub(crate) fn decode_sync_message(payload: &[u8]) -> Result<NativeSyncMessage> {
     prefilter_native_sync_wire_tag(payload)?;
     wire::decode(payload, MAX_NATIVE_SYNC_MESSAGE_BYTES).context("decode native sync message")
+}
+
+/// Actual compiler-derived common relation geometry. This read-only query
+/// supplies no source capability and never creates a proof or a witness.
+pub(crate) fn private_spend_parameters() -> Result<Value> {
+    static PARAMETERS: std::sync::OnceLock<std::result::Result<Value, String>> =
+        std::sync::OnceLock::new();
+    PARAMETERS.get_or_init(|| {
+        use transaction_circuit::private_spend::{self, PrivateSpendAdapter, PrivateSpendPublic};
+        let public = PrivateSpendPublic {
+            chain_id: [1; 32], reference_parent_hash: [2; 32], reference_parent_height: 0,
+            merkle_root: [0; 7], fee: 0, nullifiers: [[1; 7], [2; 7]],
+            commitments: [[0; 7]; 2], ciphertext_commitments: [[0; 48]; 2],
+            secret_release: 0, released_secret: [0; 32],
+        };
+        let adapter = PrivateSpendAdapter::from_public(&public).map_err(|e| e.to_string())?;
+        let geometry = adapter.geometry();
+        Ok(json!({
+            "relation_id": private_spend::RELATION_ID,
+            "relation_digest": hex::encode(private_spend::relation_digest()),
+            "production_authorized": private_spend::PRODUCTION_AUTHORIZED,
+            "action_id": PRIVATE_SPEND_ACTION_ID,
+            "public_words": private_spend::PUBLIC_WORDS,
+            "ciphertext_bytes": private_spend::CIPHERTEXT_BYTES,
+            "input_slots": 2, "output_slots": 2,
+            "reference_inclusion_offsets": [1, 13],
+            "max_proof_bytes": private_spend::MAX_CANDIDATE_PROOF_BYTES,
+            "max_carrier_bytes": protocol_shielded_pool::private_spend_transport::MAX_CARRIER_BYTES,
+            "geometry": {
+                "canonical_wires": geometry.canonical_wires, "rows": geometry.rows,
+                "nonlinear_batches": geometry.nonlinear_batches,
+                "linear_equations": geometry.linear_equations,
+                "private_inputs": geometry.private_inputs,
+                "packing": geometry.packing, "degree": geometry.degree,
+            }
+        }))
+    }).clone().map_err(|e| anyhow!(e))
+}
+
+#[cfg(test)]
+mod native_sync_inline_prefix_tests {
+    use super::*;
+
+    // These are transport-selection fixtures, not proof-verified blocks.
+    fn block_with_body_bytes(height: u64, body_bytes: usize) -> NativeBlockMeta {
+        let mut block = genesis_meta(NATIVE_DEV_POW_BITS).unwrap();
+        block.height = height;
+        block.hash = [height as u8; 32];
+        block.work_hash = block.hash;
+        block.parent_hash = [height.saturating_sub(1) as u8; 32];
+        block.action_bytes = vec![Vec::new()];
+        block.tx_count = 1;
+        let overhead = bincode::serialized_size(&block).unwrap() as usize;
+        assert!(body_bytes >= overhead);
+        block.action_bytes[0].resize(body_bytes - overhead, 0x5a);
+        assert_eq!(
+            bincode::serialized_size(&block).unwrap() as usize,
+            body_bytes
+        );
+        block
+    }
+
+    fn inline_blocks(message: NativeSyncMessage) -> (u64, Vec<NativeBlockMeta>) {
+        match message {
+            NativeSyncMessage::Response {
+                best_height,
+                blocks,
+            } => (best_height, blocks),
+            _ => panic!("expected an inline response prefix"),
+        }
+    }
+
+    #[test]
+    fn mixed_range_preserves_small_prefix_before_large_body() {
+        let blocks = vec![
+            block_with_body_bytes(65, 4096),
+            block_with_body_bytes(66, 8192),
+            block_with_body_bytes(67, MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES + 1),
+            block_with_body_bytes(68, 4096),
+        ];
+        let (best_height, prefix) =
+            inline_blocks(native_sync_response_message(162, blocks.clone()).unwrap());
+        assert_eq!(best_height, 162);
+        assert_eq!(prefix, blocks[..2]);
+        assert!(native_sync_response_is_contiguous_request_prefix(
+            NativeSyncRange {
+                from_height: 65,
+                to_height: 128,
+            },
+            &prefix,
+        ));
+        let payload = encode_sync_message(&NativeSyncMessage::Response {
+            best_height,
+            blocks: prefix.clone(),
+        })
+        .unwrap();
+        assert!(
+            native_sync_protocol_frame_bytes(&payload).unwrap()
+                <= MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES
+        );
+        assert_eq!(
+            inline_blocks(decode_sync_message(&payload).unwrap()).1,
+            prefix
+        );
+    }
+
+    #[test]
+    fn oversized_first_body_keeps_exact_single_locator() {
+        let blocks = vec![
+            block_with_body_bytes(67, MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES + 1),
+            block_with_body_bytes(68, 4096),
+        ];
+        let (_, first_locator) = native_block_body_bytes_and_locator(&blocks[0]).unwrap();
+        match native_sync_response_message(162, blocks).unwrap() {
+            NativeSyncMessage::ResponseLocators {
+                best_height,
+                blocks,
+            } => {
+                assert_eq!(best_height, 162);
+                assert_eq!(blocks, vec![first_locator]);
+            }
+            _ => panic!("oversized first body must keep the single-body exact carrier"),
+        }
+    }
+
+    #[test]
+    fn exact_inline_body_limit_is_accepted_before_one_byte_over() {
+        let blocks = vec![
+            block_with_body_bytes(1, MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES),
+            block_with_body_bytes(2, MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES + 1),
+        ];
+        let (_, prefix) = inline_blocks(native_sync_response_message(2, blocks.clone()).unwrap());
+        assert_eq!(prefix, blocks[..1]);
+    }
+
+    #[test]
+    fn inline_prefix_stops_at_existing_body_and_encrypted_frame_caps() {
+        let full_count =
+            MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES / MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES;
+        let blocks = (1..=full_count + 1)
+            .map(|height| {
+                block_with_body_bytes(height as u64, MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES)
+            })
+            .collect::<Vec<_>>();
+        let (best_height, prefix) = inline_blocks(
+            native_sync_response_message(blocks.len() as u64, blocks.clone()).unwrap(),
+        );
+        assert_eq!(prefix, blocks[..full_count]);
+        assert_eq!(
+            prefix
+                .iter()
+                .map(|block| bincode::serialized_size(block).unwrap() as usize)
+                .sum::<usize>(),
+            MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES,
+        );
+        let payload = encode_sync_message(&NativeSyncMessage::Response {
+            best_height,
+            blocks: prefix.clone(),
+        })
+        .unwrap();
+        assert!(
+            native_sync_protocol_frame_bytes(&payload).unwrap()
+                <= MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES
+        );
+        assert!(native_sync_response_is_contiguous_request_prefix(
+            NativeSyncRange {
+                from_height: 1,
+                to_height: blocks.len() as u64,
+            },
+            &prefix,
+        ));
+    }
+
+    #[test]
+    fn empty_response_and_mismatched_encoding_count_keep_existing_contract() {
+        let (best_height, blocks) =
+            inline_blocks(native_sync_response_message(162, Vec::new()).unwrap());
+        assert_eq!(best_height, 162);
+        assert!(blocks.is_empty());
+        assert!(native_sync_response_message_from_encoded(
+            162,
+            vec![block_with_body_bytes(65, 4096)],
+            Vec::new(),
+        )
+        .is_err());
+    }
+}
+
+#[cfg(test)]
+mod locator_local_backpressure_tests {
+    use super::*;
+
+    fn locator(seed: u8) -> NativeBlockBodyLocator {
+        NativeBlockBodyLocator {
+            schema_version: NATIVE_BLOCK_BODY_SCHEMA_VERSION,
+            chain_id: HEGEMON_CHAIN_ID_V1,
+            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
+            height: u64::from(seed),
+            block_hash: [seed; 32],
+            parent_hash: [seed.wrapping_sub(1); 32],
+            cumulative_work: [0; 48],
+            total_len: 1,
+            body_hash: native_block_body_hash(&[seed]),
+            chunk_count: 1,
+        }
+    }
+
+    fn request(peer: PeerId, next: &NativeBlockBodyLocator) -> NativeCompletedSyncRequest {
+        NativeCompletedSyncRequest {
+            request_target: Some(peer),
+            range: NativeSyncRange {
+                from_height: next.height,
+                to_height: next.height,
+            },
+            context: NativeOutboundSyncRequestContext::default(),
+        }
+    }
+
+    #[test]
+    fn valid_locator_deferred_during_body_transfer_can_retry_after_completion() {
+        let peer = [0x41; 32];
+        let now = Instant::now();
+        let first = locator(19);
+        let next = locator(20);
+        let completed = request(peer, &next);
+        let mut transport = NativeBlockBodyTransport::default();
+        transport.enqueue_announce(peer, first.clone()).unwrap();
+        // Both a queued body and an active reassembly are local pressure.
+        assert!(transport
+            .enqueue_range(peer, 21, vec![next.clone()], completed)
+            .unwrap()
+            .is_none());
+        assert_eq!(transport.queued_bodies_for_test(), 1);
+        assert_eq!(
+            transport.start_next(peer, now).unwrap(),
+            Some(first.clone())
+        );
+        let before = transport.reassembler.reserved_bytes();
+        assert!(transport
+            .enqueue_range(peer, 21, vec![next.clone()], completed)
+            .unwrap()
+            .is_none());
+        assert_eq!(transport.queued_bodies_for_test(), 1);
+        assert_eq!(transport.reassembler.reserved_bytes(), before);
+        let chunk = native_block_body_chunk(&first, &[19], 0).unwrap();
+        assert!(transport
+            .push_chunk_for_test(peer, chunk, now)
+            .unwrap()
+            .is_some());
+        assert_eq!(transport.queued_bodies_for_test(), 0);
+        assert!(transport
+            .enqueue_range(peer, 21, vec![next.clone()], completed)
+            .unwrap()
+            .is_some());
+        assert_eq!(transport.start_next(peer, now).unwrap(), Some(next));
+    }
+
+    #[test]
+    fn busy_peer_still_rejects_malformed_locators_without_changing_existing_body() {
+        let peer = [0x42; 32];
+        let next = locator(20);
+        let completed = request(peer, &next);
+        let mut transport = NativeBlockBodyTransport::default();
+        transport.enqueue_announce(peer, locator(19)).unwrap();
+        let mut malformed = Vec::new();
+        let mut wrong_chain = next.clone();
+        wrong_chain.chain_id[0] ^= 1;
+        malformed.push(wrong_chain);
+        let mut wrong_rules = next.clone();
+        wrong_rules.rules_hash[0] ^= 1;
+        malformed.push(wrong_rules);
+        let mut wrong_schema = next.clone();
+        wrong_schema.schema_version += 1;
+        malformed.push(wrong_schema);
+        let mut wrong_chunks = next.clone();
+        wrong_chunks.chunk_count += 1;
+        malformed.push(wrong_chunks);
+        let mut empty_body = next.clone();
+        empty_body.total_len = 0;
+        malformed.push(empty_body);
+        for bad in malformed {
+            assert!(transport
+                .enqueue_range(peer, 21, vec![bad], completed)
+                .is_err());
+            assert_eq!(transport.queued_bodies_for_test(), 1);
+        }
+        assert!(transport
+            .enqueue_range(peer, 19, vec![next.clone()], completed)
+            .is_err());
+        assert!(transport
+            .enqueue_range(peer, 21, vec![next.clone(), next.clone()], completed)
+            .is_err());
+        let mut discontinuous = locator(21);
+        discontinuous.parent_hash = [0xff; 32];
+        assert!(transport
+            .enqueue_range(peer, 21, vec![next.clone(), discontinuous], completed)
+            .is_err());
+        assert!(transport
+            .enqueue_range(
+                peer,
+                21,
+                vec![next; MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE + 1],
+                completed
+            )
+            .is_err());
+        assert_eq!(transport.queued_bodies_for_test(), 1);
+    }
+
+    #[test]
+    fn full_local_body_queue_defers_valid_response_and_preserves_capacity() {
+        let mut transport = NativeBlockBodyTransport::default();
+        for index in 0..MAX_NATIVE_BLOCK_BODY_QUEUE_GLOBAL {
+            let mut peer = [0; 32];
+            peer[..8].copy_from_slice(&(index as u64).to_le_bytes());
+            transport.enqueue_announce(peer, locator(19)).unwrap();
+        }
+        let peer = [0xff; 32];
+        let next = locator(20);
+        let completed = request(peer, &next);
+        assert!(transport
+            .enqueue_range(peer, 21, vec![next.clone()], completed)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            transport.queued_bodies_for_test(),
+            MAX_NATIVE_BLOCK_BODY_QUEUE_GLOBAL
+        );
+        // Local pressure still cannot conceal invalid chain identity.
+        let mut wrong = next.clone();
+        wrong.chain_id[0] ^= 1;
+        assert!(transport
+            .enqueue_range(peer, 21, vec![wrong], completed)
+            .is_err());
+        transport.abort_peer([0; 32]);
+        assert!(transport
+            .enqueue_range(peer, 21, vec![next], completed)
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            transport.queued_bodies_for_test(),
+            MAX_NATIVE_BLOCK_BODY_QUEUE_GLOBAL
+        );
+    }
 }

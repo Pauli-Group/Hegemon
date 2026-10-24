@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::{self, BufRead, ErrorKind, Write};
+use std::io::{self, BufRead, ErrorKind, Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -25,6 +25,11 @@ use wallet::{
     LocalNoteOpeningRecord, MultisigAccountRecord, MultisigIntentRecipient, MultisigSpendIntent,
     PreparedMultisigFinalPlan, RecipientSpec, WalletError, MAX_INPUTS,
 };
+
+mod asset;
+mod recovery;
+#[cfg(feature = "development-assets")]
+mod recovery_archive_process;
 
 const PROTOCOL_VERSION: u32 = 2;
 const MAX_WALLETD_REQUEST_LINE_BYTES: usize = 8 * 1024 * 1024;
@@ -626,12 +631,34 @@ struct MultisigIntentRecipientParams {
 }
 
 fn main() -> Result<()> {
+    // Custodian mode has no wallet/passphrase, RPC connection, or action witness.
+    if std::env::args().nth(1).as_deref() == Some("--recovery-archive-worker") {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        if args.len() != 3 || args[1] != "--archive-key-file" {
+            anyhow::bail!("archive worker requires only --archive-key-file PATH");
+        }
+        #[cfg(feature = "development-assets")]
+        {
+            recovery_archive_process::worker(std::path::Path::new(&args[2]))
+                .map_err(|_| anyhow!("archive worker failed"))?;
+            return Ok(());
+        }
+        #[cfg(not(feature = "development-assets"))]
+        anyhow::bail!("archive worker requires development-assets");
+    }
+    if std::env::args().skip(1).eq(["--asset-help"])
+        || std::env::args().skip(1).eq(["--recovery-help"])
+        || std::env::args().skip(1).eq(["--help"])
+    {
+        println!("{}\n{}", asset::HELP, recovery::HELP);
+        return Ok(());
+    }
     if std::env::args().skip(1).eq(["--print-crypto-profile"]) {
         let profile = transaction_circuit::proof::production_crypto_profile_attestation()?;
         println!("{}", serde_json::to_string(&profile)?);
         return Ok(());
     }
-    let (store_path, mode) = parse_args()?;
+    let (store_path, mode, request_file) = parse_args()?;
     let stdin = io::stdin();
     let mut stdin = stdin.lock();
     let passphrase = read_limited_line(&mut stdin, MAX_WALLETD_REQUEST_LINE_BYTES)?
@@ -651,6 +678,18 @@ fn main() -> Result<()> {
         .build()
         .context("failed to create tokio runtime")?;
     let multisig_final_plans: MultisigFinalPlanCache = Arc::new(Mutex::new(HashMap::new()));
+
+    if let Some(path) = request_file {
+        let file = std::fs::File::open(&path)
+            .with_context(|| format!("failed to open request file {path}"))?;
+        let request = read_request_file(file, MAX_WALLETD_REQUEST_LINE_BYTES)?;
+        let response = handle_request(&runtime, store, multisig_final_plans, &store_path, request);
+        println!("{}", serde_json::to_string(&response)?);
+        if !response.ok {
+            anyhow::bail!("wallet request failed");
+        }
+        return Ok(());
+    }
 
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
@@ -694,6 +733,15 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+fn read_request_file(reader: impl Read, max_bytes: usize) -> Result<RequestEnvelope> {
+    let mut bytes = Vec::new();
+    reader.take(max_bytes as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > max_bytes {
+        anyhow::bail!("request file exceeds {max_bytes} bytes");
+    }
+    serde_json::from_slice(&bytes).context("invalid JSON request in request file")
+}
+
 fn read_limited_line<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result<Option<String>> {
     let mut buf = Vec::new();
     loop {
@@ -723,10 +771,11 @@ fn read_limited_line<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result
         .map_err(|err| io::Error::new(ErrorKind::InvalidData, err))
 }
 
-fn parse_args() -> Result<(String, WalletdMode)> {
+fn parse_args() -> Result<(String, WalletdMode, Option<String>)> {
     let mut args = std::env::args().skip(1);
     let mut store_path: Option<String> = None;
     let mut mode = WalletdMode::Open;
+    let mut request_file = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--store" => {
@@ -741,12 +790,21 @@ fn parse_args() -> Result<(String, WalletdMode)> {
                     .ok_or_else(|| anyhow!("--mode requires a value"))?;
                 mode = parse_mode(&value)?;
             }
+            "--request-file" => {
+                if request_file.is_some() {
+                    anyhow::bail!("--request-file may be supplied only once");
+                }
+                request_file = Some(
+                    args.next()
+                        .ok_or_else(|| anyhow!("--request-file requires a path"))?,
+                );
+            }
             _ => {}
         }
     }
     let store_path =
         store_path.ok_or_else(|| anyhow!("usage: walletd --store <PATH> [--mode open|create]"))?;
-    Ok((store_path, mode))
+    Ok((store_path, mode, request_file))
 }
 
 fn open_store(store_path: &str, passphrase: &str, mode: WalletdMode) -> WalletdResult<WalletStore> {
@@ -818,6 +876,12 @@ fn handle_request(
             "sync.once" => {
                 let params: SyncParams = parse_params(request.params)?;
                 to_json(sync_once(runtime, store, params)?)
+            }
+            method if method.starts_with("recovery.") => {
+                recovery::handle(runtime, store, method, request.params)
+            }
+            method if method.starts_with("asset.") => {
+                asset::handle(runtime, store, method, request.params)
             }
             "tx.plan" => {
                 let params: TxPlanParams = parse_params(request.params)?;
@@ -2148,11 +2212,28 @@ where
     })
 }
 
+// The generic send/planning route is native HGN only. Controlled assets use
+// their separate source-authenticated Development route, including native fees.
+// Check every recipient before address parsing, RPC sync, or input selection.
+fn require_native_recipients(recipients: &[RecipientSpec]) -> WalletdResult<()> {
+    if recipients
+        .iter()
+        .any(|recipient| recipient.asset_id != transaction_circuit::constants::NATIVE_ASSET_ID)
+    {
+        return Err(WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            "tx.send and tx.plan support only native HGN recipients; controlled assets require the Development asset route",
+        ));
+    }
+    Ok(())
+}
+
 fn tx_send(
     runtime: &tokio::runtime::Runtime,
     store: Arc<WalletStore>,
     params: SendParams,
 ) -> WalletdResult<SendResponse> {
+    require_native_recipients(&params.recipients)?;
     if store.mode().map_err(WalletdError::internal)? == WalletMode::WatchOnly {
         return Err(WalletdError::new(
             WalletdErrorCode::WatchOnly,
@@ -2597,6 +2678,7 @@ fn tx_send(
 }
 
 fn tx_plan(store: &Arc<WalletStore>, params: TxPlanParams) -> WalletdResult<TxPlanResponse> {
+    require_native_recipients(&params.recipients)?;
     if store.mode().map_err(WalletdError::internal)? == WalletMode::WatchOnly {
         return Err(WalletdError::new(
             WalletdErrorCode::WatchOnly,
@@ -2611,21 +2693,6 @@ fn tx_plan(store: &Arc<WalletStore>, params: TxPlanParams) -> WalletdResult<TxPl
         .first()
         .map(|recipient| recipient.asset_id)
         .unwrap_or(transaction_circuit::constants::NATIVE_ASSET_ID);
-
-    if output_asset != transaction_circuit::constants::NATIVE_ASSET_ID {
-        return Ok(TxPlanResponse {
-            asset_id: output_asset,
-            total_needed: recipients.iter().map(|r| r.value).sum::<u64>(),
-            available_value: 0,
-            wallet_note_count: 0,
-            selected_note_count: 0,
-            selected_value: 0,
-            max_inputs: MAX_INPUTS as u64,
-            sufficient_funds: true,
-            needs_consolidation: false,
-            plan: None,
-        });
-    }
 
     let mut notes = store
         .spendable_notes(output_asset)
@@ -3065,6 +3132,159 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn walletd_hgn_only_checks_every_recipient_before_rpc_or_reservation() {
+        let runtime = RuntimeBuilder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (store, store_path) = temp_store();
+        let before = std::fs::read(&store_path).unwrap();
+        for asset_ids in [[0, 17], [17, 0], [0, u64::MAX]] {
+            // Invalid addresses and URL establish rejection before decoding/RPC;
+            // the native first recipient must not hide a later issued asset.
+            let recipients: Vec<_> = asset_ids
+                .into_iter()
+                .map(|asset_id| RecipientSpec {
+                    address: "invalid-address".to_string(),
+                    value: 1,
+                    asset_id,
+                    memo: None,
+                })
+                .collect();
+            let plan = tx_plan(
+                &store,
+                TxPlanParams {
+                    recipients: recipients.clone(),
+                    fee: 1,
+                },
+            )
+            .err()
+            .unwrap();
+            assert!(matches!(plan.code, WalletdErrorCode::InvalidParams));
+            assert!(plan.message.contains("only native HGN"));
+            let send = tx_send(
+                &runtime,
+                store.clone(),
+                SendParams {
+                    ws_url: "invalid-url".to_string(),
+                    recipients,
+                    fee: 1,
+                    auto_consolidate: true,
+                },
+            )
+            .err()
+            .unwrap();
+            assert!(matches!(send.code, WalletdErrorCode::InvalidParams));
+            assert!(send.message.contains("only native HGN"));
+            assert!(store.asset_spend_attempts().unwrap().is_empty());
+            assert_eq!(std::fs::read(&store_path).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn walletd_hgn_only_native_plan_preserves_balance_result() {
+        let (store, _) = temp_store();
+        let address = store.primary_address().unwrap().encode().unwrap();
+        let plan = tx_plan(
+            &store,
+            TxPlanParams {
+                recipients: vec![RecipientSpec {
+                    address,
+                    value: 1,
+                    asset_id: 0,
+                    memo: None,
+                }],
+                fee: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(plan.asset_id, 0);
+        assert_eq!(plan.total_needed, 2);
+        assert_eq!(plan.available_value, 0);
+        assert!(!plan.sufficient_funds);
+        assert!(store.asset_spend_attempts().unwrap().is_empty());
+    }
+
+    #[cfg(not(feature = "development-assets"))]
+    #[test]
+    fn walletd_hgn_only_asset_recovery_mutations_reject_before_rpc_or_reservation() {
+        let runtime = RuntimeBuilder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (store, store_path) = temp_store();
+        let before = std::fs::read(&store_path).unwrap();
+        for method in [
+            "asset.sync",
+            "asset.prepare",
+            "asset.submit",
+            "asset.adminPrepare",
+            "asset.admin",
+            "asset.adminSubmit",
+            "recovery.prepare",
+            "recovery.submit",
+            "recovery.adminPrepare",
+            "recovery.adminSubmit",
+        ] {
+            let response = handle_request(
+                &runtime,
+                store.clone(),
+                Arc::new(Mutex::new(HashMap::new())),
+                &store_path,
+                RequestEnvelope {
+                    id: json!(1),
+                    method: method.to_string(),
+                    // Incomplete parameters and invalid URL establish that the
+                    // launch boundary runs before any RPC or proof work.
+                    params: json!({"ws_url": "invalid-url"}),
+                },
+            );
+            assert!(!response.ok, "{method}");
+            assert!(
+                matches!(response.error_code, Some(WalletdErrorCode::InvalidRequest)),
+                "{method}"
+            );
+            assert!(
+                response.error.unwrap().contains("development-assets"),
+                "{method}"
+            );
+            assert!(store.asset_spend_attempts().unwrap().is_empty(), "{method}");
+            assert_eq!(std::fs::read(&store_path).unwrap(), before, "{method}");
+        }
+        for method in [
+            "asset.help",
+            "recovery.help",
+            "asset.balances",
+            "asset.journal",
+        ] {
+            let response = handle_request(
+                &runtime,
+                store.clone(),
+                Arc::new(Mutex::new(HashMap::new())),
+                &store_path,
+                RequestEnvelope {
+                    id: json!(2),
+                    method: method.to_string(),
+                    params: json!({}),
+                },
+            );
+            assert!(response.ok, "{method}: {:?}", response.error);
+        }
+    }
+
+    #[test]
+    fn walletd_request_file_bounds_and_exact_single_request() {
+        let valid = br#"{"id":1,"method":"asset.help","params":{}}"#;
+        let request = read_request_file(valid.as_slice(), valid.len()).unwrap();
+        assert_eq!(request.method, "asset.help");
+        assert!(read_request_file(valid.as_slice(), valid.len() - 1).is_err());
+        let mut duplicated = valid.to_vec();
+        duplicated.extend_from_slice(valid);
+        assert!(read_request_file(duplicated.as_slice(), duplicated.len()).is_err());
+        assert!(read_request_file(b"".as_slice(), 64).is_err());
+    }
 
     #[test]
     fn walletd_submission_policy_preserves_pending_for_ambiguous_rpc_failures() {
