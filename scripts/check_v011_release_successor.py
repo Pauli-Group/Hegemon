@@ -119,7 +119,7 @@ def source_gate(root, predecessor):
         require(digest_bytes(safe_file(predecessor, relative).read_bytes()) == old and
                 digest_bytes(safe_file(root, relative).read_bytes()) == new,
                 'reviewed release consumer bytes differ')
-    command = [sys.executable, '-I', '-B', str(predecessor / CHECKER), '--require-authorized']
+    command = [sys.executable, '-I', '-B', '-X', 'utf8', str(predecessor / CHECKER), '--require-authorized']
     result = subprocess.run(command, cwd=predecessor, capture_output=True, timeout=240, check=False)
     require(result.returncode == 0, 'immutable predecessor source gate failed: ' + result.stderr.decode(errors='replace')[-2000:])
     old_receipt = json.loads(result.stdout)
@@ -455,9 +455,9 @@ def current_source_gate(root, predecessor):
             require(after == before, 'historical registry must remain byte identical')
     require(digest_bytes(safe_file(root, 'scripts/release_artifact_manifest.py').read_bytes()) == CURRENT_ARTIFACT_HELPER_SHA256, 'current artifact-manifest helper differs')
     require(digest_bytes(safe_file(root, 'scripts/check_release_launcher_policy.py').read_bytes()) == CURRENT_LAUNCHER_POLICY_SHA256, 'current launcher-policy helper differs')
-    command = [sys.executable, '-I', '-B', str(predecessor / CHECKER), '--require-authorized']
+    command = [sys.executable, '-I', '-B', '-X', 'utf8', str(predecessor / CHECKER), '--require-authorized']
     result = subprocess.run(command, cwd=predecessor, capture_output=True, timeout=240, check=False)
-    require(result.returncode == 0 and not result.stderr, 'immutable predecessor source gate failed')
+    require(result.returncode == 0 and not result.stderr, 'immutable predecessor source gate failed: ' + result.stderr.decode(errors='replace')[-2000:])
     old_receipt = json.loads(result.stdout)
     require(old_receipt.get('authorization_kind') == 'qualified_source_tuple', 'predecessor did not qualify source tuple')
     checker = import_checker(predecessor / CHECKER, '_v011_exact_immutable_predecessor')

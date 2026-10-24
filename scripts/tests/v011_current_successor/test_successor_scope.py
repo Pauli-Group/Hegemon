@@ -248,6 +248,36 @@ class RuntimePostimageChecks(unittest.TestCase):
 
 
 class ImmutableAuthorityChecks(unittest.TestCase):
+    def test_immutable_predecessor_commands_force_utf8_without_changing_bytes(self):
+        import ast
+        import os
+        import subprocess
+        tree = ast.parse(Path(CHECKER.__file__).read_text(encoding='utf-8'))
+        commands = [node.value for node in ast.walk(tree)
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.List)
+            and any(isinstance(item, ast.Constant) and item.value == '--require-authorized'
+                    for item in node.value.elts)]
+        self.assertEqual(len(commands), 2)
+        with tempfile.TemporaryDirectory(prefix='v011-utf8-child-') as directory:
+            predecessor = Path(directory)
+            child = predecessor / CHECKER.CHECKER
+            child.parent.mkdir(parents=True)
+            child.write_text("from pathlib import Path\nimport sys\n"
+                "assert sys.flags.utf8_mode == 1\n"
+                "assert sys.argv[1:] == ['--require-authorized']\n"
+                "assert Path('evidence.txt').read_text() == '\u2080'\n",
+                encoding='utf-8')
+            evidence = predecessor / 'evidence.txt'
+            evidence.write_bytes('\u2080'.encode('utf-8'))
+            snapshots = {path: path.read_bytes() for path in (child, evidence)}
+            for command in commands:
+                argv = eval(compile(ast.Expression(command), '<immutable-child-argv>', 'eval'),
+                    {'sys': sys, 'str': str, 'predecessor': predecessor, 'CHECKER': CHECKER.CHECKER})
+                result = subprocess.run(argv, cwd=predecessor, capture_output=True, timeout=15,
+                    env={**os.environ, 'PYTHONUTF8': '0', 'PYTHONIOENCODING': 'cp1252'})
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, b'', b''))
+                self.assertEqual({path: path.read_bytes() for path in snapshots}, snapshots)
+
     def attempt_tampered_gate(self, tamper, expected_message):
         with tempfile.TemporaryDirectory(prefix='v011-validator-control-') as directory:
             base = Path(directory)

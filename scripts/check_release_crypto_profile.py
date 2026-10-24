@@ -287,7 +287,7 @@ V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': '74183fc1eb1fed4b
  'scripts/check_release_launcher_policy.py': '51700e93ac457574f262bff05f48e5e55fa328e37da30f665721a312de9d826e',
  'scripts/check_v011_current_binary_proofs.py': 'd2f0fae819828482093676f831a5d6c621013c02368cdddafcdf491d294eb2f2',
  'scripts/check_v011_public_chain_replay.py': '29c6655f1d8ced3ffa5a042e3c66f0567fc0ef465eda70de473e7a35054159dc',
- 'scripts/check_v011_release_successor.py': 'dad6d32508098d12a8de40537cea222841dcefe4abea6f7ba8a6dbd7387fdb75',
+ 'scripts/check_v011_release_successor.py': '2f8ce7110eb687ad332bc1d6ceea689e9333d6a9140c3778ff233593bb4c3dd4',
  'scripts/materialize_v011_predecessor.py': '0dc2b129332bf1276e5790a2db2682946e54f5af6b6850eaca50ca9e17b4dee5',
  'scripts/release_artifact_manifest.py': '0f41da8be0536335978ed42d2f93f930b2c9ee078f3ecbeb6293e44ce20c42cb',
  'scripts/security-audit.sh': 'b103c1e0ae4a18c7cf873a6b9f95cc13079bd0b5b8c6a526e3c1dae84eb3953b'}
