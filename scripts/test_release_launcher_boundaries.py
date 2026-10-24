@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import json
 import os
+import stat
+from types import SimpleNamespace
+from unittest import mock
 from pathlib import Path
 import subprocess
 import sys
@@ -165,6 +168,145 @@ class ReleaseLauncherBoundaryTests(unittest.TestCase):
         self.assertEqual(self.snapshot(bundle), original)
         manifest.assemble_release_assets(self.root, [bundle_manifest], self.target / "restored-assembly")
 
+
+    def tracked_source(self, name: str, *, executable: bool = False) -> Path:
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"same reviewed source bytes\n")
+        path.chmod(0o755 if executable else 0o644)
+        self.git("add", "--", name)
+        self.git("update-index", "--chmod=+x" if executable else "--chmod=-x", "--", name)
+        return path
+
+    def test_tracked_modes_match_simulated_windows(self) -> None:
+        self.tracked_source("ordinary.txt")
+        self.tracked_source("executable.sh", executable=True)
+        expected = manifest.source_tree_sha256(self.root)
+
+        def windows_fstat(fd: int):
+            value = os.fstat(fd)
+            fields = {key: getattr(value, key) for key in dir(value) if key.startswith("st_")}
+            fields["st_mode"] = (value.st_mode & ~0o777) | (
+                0o777 if value.st_mode & stat.S_IXUSR else 0o666
+            )
+            return SimpleNamespace(**fields)
+
+        windows_os = SimpleNamespace(**{**vars(os), "name": "nt", "fstat": windows_fstat})
+        with mock.patch.object(manifest, "os", windows_os):
+            self.assertEqual(manifest.source_tree_sha256(self.root), expected)
+
+    def test_tracked_git_mode_changes_identity(self) -> None:
+        path = self.tracked_source("mode.txt")
+        before = manifest.source_tree_sha256(self.root)
+        path.chmod(0o755)
+        self.git("update-index", "--chmod=+x", "--", "mode.txt")
+        self.assertNotEqual(manifest.source_tree_sha256(self.root), before)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX executable-bit consistency")
+    def test_tracked_executable_mismatch_rejects(self) -> None:
+        for executable in (False, True):
+            with self.subTest(executable=executable):
+                path = self.tracked_source("mode.txt", executable=executable)
+                path.chmod(0o644 if executable else 0o755)
+                with self.assertRaisesRegex(manifest.ManifestError, "executable mode disagrees"):
+                    manifest.source_tree_sha256(self.root)
+                path.chmod(0o755 if executable else 0o644)
+
+    def test_tracked_hashes_unstaged_bytes(self) -> None:
+        path = self.tracked_source("source.txt")
+        before = manifest.source_tree_sha256(self.root)
+        path.write_bytes(b"changed unstaged source bytes\n")
+        self.assertNotEqual(manifest.source_tree_sha256(self.root), before)
+
+    def test_untracked_source_bytes_and_native_mode_remain_bound(self) -> None:
+        before = manifest.source_tree_sha256(self.root)
+        path = self.root / "untracked.txt"
+        path.write_bytes(b"untracked source bytes\n")
+        path.chmod(0o644)
+        created = manifest.source_tree_sha256(self.root)
+        self.assertNotEqual(created, before)
+        path.write_bytes(b"modified untracked source bytes\n")
+        modified = manifest.source_tree_sha256(self.root)
+        self.assertNotEqual(modified, created)
+        if os.name == "posix":
+            path.chmod(0o755)
+            self.assertNotEqual(manifest.source_tree_sha256(self.root), modified)
+
+    def test_malformed_unmerged_and_unsupported_index_reject(self) -> None:
+        oid = b"1" * 40
+        valid = b"100644 " + oid + b" 0\tCargo.lock\0"
+        records = (
+            b"not a Git index record\0",
+            b"100644 " + oid + b" 1\tCargo.lock\0",
+            b"120000 " + oid + b" 0\tCargo.lock\0",
+            b"160000 " + oid + b" 0\tCargo.lock\0",
+            valid + valid,
+        )
+        original = manifest.run_git
+        for record in records:
+            with self.subTest(record=record):
+                def git(root, *args):
+                    return record if args == ("ls-files", "--stage", "-z") else original(root, *args)
+                with mock.patch.object(manifest, "run_git", side_effect=git):
+                    with self.assertRaises(manifest.ManifestError):
+                        manifest.source_tree_sha256(self.root)
+
+    def test_missing_tracked_source_rejects(self) -> None:
+        self.tracked_source("missing.txt").unlink()
+        with self.assertRaisesRegex(manifest.ManifestError, "non-symlink"):
+            manifest.source_tree_sha256(self.root)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX symlink fixture")
+    def test_tracked_source_symlinks_reject_on_both_io_paths(self) -> None:
+        path = self.tracked_source("source.txt")
+        data = path.read_bytes()
+        destination = self.target / "source-copy.txt"
+        destination.write_bytes(data)
+        path.unlink()
+        path.symlink_to(destination)
+        for descriptor_io in (True, False):
+            with self.subTest(descriptor_io=descriptor_io):
+                with mock.patch.object(manifest, "_descriptor_relative_io_available", return_value=descriptor_io):
+                    with self.assertRaisesRegex(manifest.ManifestError, "non-symlink|symlink"):
+                        manifest.source_tree_sha256(self.root)
+        path.unlink()
+        path.write_bytes(data)
+        path.chmod(0o644)
+        nested = self.tracked_source("nested/source.txt")
+        nested.unlink()
+        nested.parent.rmdir()
+        nested.parent.symlink_to(self.target, target_is_directory=True)
+        for descriptor_io in (True, False):
+            with self.subTest(ancestor=True, descriptor_io=descriptor_io):
+                with mock.patch.object(manifest, "_descriptor_relative_io_available", return_value=descriptor_io):
+                    with self.assertRaisesRegex(manifest.ManifestError, "non-symlink|symlink"):
+                        manifest.source_tree_sha256(self.root)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX FIFO fixture")
+    def test_tracked_source_fifo_rejects_without_opening(self) -> None:
+        path = self.tracked_source("source.txt")
+        path.unlink()
+        os.mkfifo(path)
+        with self.assertRaisesRegex(manifest.ManifestError, "non-symlink"):
+            manifest.source_tree_sha256(self.root)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX tab/newline filenames")
+    def test_index_filename_tabs_and_newlines_are_preserved(self) -> None:
+        path = self.tracked_source("source\twith\nseparators.txt")
+        before = manifest.source_tree_sha256(self.root)
+        path.write_bytes(b"different actual bytes\n")
+        self.assertNotEqual(manifest.source_tree_sha256(self.root), before)
+
+    def test_all_source_provenance_fields_still_reject_changes(self) -> None:
+        specs, manifest_path, _bundle, _assets = self.prepare_bundle()
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for field in ("source_head", "source_index_tree", "source_tree_sha256", "cargo_lock_sha256"):
+            with self.subTest(field=field):
+                changed = {**payload, field: "00" * 32}
+                manifest_path.write_text(json.dumps(changed), encoding="utf-8")
+                with self.assertRaisesRegex(manifest.ManifestError, field + " does not match current source"):
+                    manifest.verify_manifest(self.root, manifest_path, specs)
+        manifest_path.write_text(json.dumps(payload), encoding="utf-8")
 
 def positive_case(kind: str):
     def test(self: ReleaseLauncherBoundaryTests) -> None:

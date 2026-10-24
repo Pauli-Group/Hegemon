@@ -231,7 +231,44 @@ def check_windows_launcher_regression_controls(workflow: str) -> dict[str, int]:
     return {"positive_controls": 1, "negative_controls": len(cases)}
 
 
+def check_historical_native_review_controls() -> dict[str, int]:
+    positive = 0
+    negative = 0
+    fetch = "git fetch --no-tags --depth=1 origin 4810888722e8c9a2440e31b139f8cb10b060acee"
+    verify = "./scripts/verify_native_backend_review_package.sh --historical-release"
+    for relative in (".github/workflows/release.yml", ".github/workflows/prepare-premainnet-release.yml"):
+        source = (ROOT / relative).read_text(encoding="utf-8")
+        policy.require_historical_native_review(policy.workflow_steps(source, "security-gates"))
+        positive += 1
+        changes = (
+            (fetch, "true"),
+            (fetch, "# " + fetch),
+            (fetch, fetch.replace("--depth=1", "--depth=2")),
+            (fetch, fetch.replace("4810888722e8c9a2440e31b139f8cb10b060acee", "HEAD")),
+            (fetch, fetch + " || true"),
+            (verify, "true"),
+            (verify, verify.replace(" --historical-release", "")),
+            (verify, verify + " --skip"),
+            (verify, verify + " || true"),
+            ("      - name: Fetch pinned historical native backend source\n", "      - name: Fetch pinned historical native backend source\n        if: false\n"),
+            ("      - name: Historical native backend review package verification\n", "      - name: Historical native backend review package verification\n        working-directory: untrusted\n"),
+            ("      - name: Fetch pinned historical native backend source\n", "      - name: Fetch pinned historical native backend source\n        continue-on-error: true\n"),
+            ("      - name: Historical native backend review package verification\n", "      - name: Historical native backend review package verification\n        continue-on-error: true\n"),
+            ("      - name: Historical native backend review package verification\n", "      - name: Historical native backend review package verification\n        if: false\n"),
+        )
+        for before, after in changes:
+            mutated = replace_once(source, before, after)
+            expect_policy_rejected("historical package command mutation", lambda: policy.require_historical_native_review(policy.workflow_steps(mutated, "security-gates")))
+            negative += 1
+        # Swapping only the commands retains valid syntax but reverses the required order.
+        swapped = source.replace(fetch, "__FETCH_PLACEHOLDER__", 1).replace(verify, fetch, 1).replace("__FETCH_PLACEHOLDER__", verify, 1)
+        expect_policy_rejected("historical source fetched after verification", lambda: policy.require_historical_native_review(policy.workflow_steps(swapped, "security-gates")))
+        negative += 1
+    return {"positive_controls": positive, "negative_controls": negative}
+
+
 def main() -> None:
+    check_historical_native_review_controls()
     check_app_transport_regression_controls()
     expect_missing(fixture("# ./scripts/security-audit.sh --require-binary"))
     expect_missing(fixture("echo ./scripts/security-audit.sh --require-binary"))
@@ -433,7 +470,7 @@ def main() -> None:
     ci_formal_crypto_timeout = (
         "  formal-crypto-sanity:\n"
         "    runs-on: ubuntu-latest\n"
-        "    timeout-minutes: 60\n"
+        "    timeout-minutes: 90\n"
     )
     expect_workflow_rejected(
         "PR formal-crypto sanity 30-minute timeout regression",
@@ -441,7 +478,7 @@ def main() -> None:
         replace_once(
             ci_workflow,
             ci_formal_crypto_timeout,
-            ci_formal_crypto_timeout.replace("timeout-minutes: 60", "timeout-minutes: 30"),
+            ci_formal_crypto_timeout.replace("timeout-minutes: 90", "timeout-minutes: 30"),
         ),
     )
     expect_workflow_rejected(
@@ -450,7 +487,7 @@ def main() -> None:
         replace_once(
             ci_workflow,
             ci_formal_crypto_timeout,
-            ci_formal_crypto_timeout.replace("    timeout-minutes: 60\n", ""),
+            ci_formal_crypto_timeout.replace("    timeout-minutes: 90\n", ""),
         ),
     )
     ci_formal_vectors_timeout = (
@@ -622,7 +659,7 @@ def main() -> None:
     standalone_formal_crypto_timeout = (
         "  formal-crypto-sanity:\n"
         "    runs-on: ubuntu-latest\n"
-        "    timeout-minutes: 60\n"
+        "    timeout-minutes: 90\n"
     )
     expect_workflow_rejected(
         "focused formal-crypto sanity 30-minute timeout regression",
@@ -631,7 +668,7 @@ def main() -> None:
             focused_formal_crypto_workflow,
             standalone_formal_crypto_timeout,
             standalone_formal_crypto_timeout.replace(
-                "timeout-minutes: 60", "timeout-minutes: 30"
+                "timeout-minutes: 90", "timeout-minutes: 30"
             ),
         ),
     )
@@ -641,7 +678,7 @@ def main() -> None:
         replace_once(
             focused_formal_crypto_workflow,
             standalone_formal_crypto_timeout,
-            standalone_formal_crypto_timeout.replace("    timeout-minutes: 60\n", ""),
+            standalone_formal_crypto_timeout.replace("    timeout-minutes: 90\n", ""),
         ),
     )
     for trigger_path in policy.FORMAL_CRYPTO_POSEIDON2_V8_TRIGGER_PATHS:

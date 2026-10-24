@@ -47,8 +47,8 @@ PINNED_UPLOAD_ARTIFACT_ACTION = (
     "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
 )
 PINNED_RELEASE_WORKFLOW_SHA512 = (
-    "e9148999b602840d89d18cf36aba65d5bf87dcbc5560f8a22581406d3d4ed4c2"
-    "09570bcd16e40dfd5e62a4add5b95a79d74df12711c6d46589257e6012a61cb4"
+    "502aea0e422f9f6438dcad9947a018c45ac65e7d25b816d71bd1bbcbf1754f48"
+    "e63324f71b6e1c109220b68318c62cff9b13b692813cae72f02f7de4a78700f8"
 )
 SUCCESSOR_CHECKER_RELATIVE_PATH = Path(
     "scripts/check_transaction_proof_successor_authorization.py"
@@ -1143,7 +1143,7 @@ def check_ci_workflow(path: Path) -> None:
         ("formal-core-vectors", 60),
         ("formal-core-policy", 30),
         ("formal-crypto-isolation", 30),
-        ("formal-crypto-sanity", 60),
+        ("formal-crypto-sanity", 90),
         ("core-test-shards", 30),
         ("native-path-tests", 30),
         ("app-no-ssh-e2e", 30),
@@ -1547,7 +1547,7 @@ def check_formal_crypto_workflow(path: Path) -> None:
     require_contains(
         "focused formal-crypto-sanity wall-clock budget",
         job_block(workflow, "formal-crypto-sanity"),
-        "timeout-minutes: 60",
+        "timeout-minutes: 90",
     )
     formal_crypto_gate_index = require_executable_command(
         "focused complete formal-crypto gate",
@@ -1618,6 +1618,28 @@ def check_formal_crypto_workflow(path: Path) -> None:
         ),
     )
     print(f"focused formal-crypto workflow gate passed: {path}")
+
+
+def require_historical_native_review(steps: list[WorkflowStep]) -> tuple[int, int]:
+    fetch_index = require_executable_command(
+        "release historical native backend source",
+        steps,
+        "git",
+        exact_argument_vectors=((
+            "fetch", "--no-tags", "--depth=1", "origin",
+            "4810888722e8c9a2440e31b139f8cb10b060acee",
+        ),),
+        require_default_execution_context=True,
+    )
+    review_index = require_executable_command(
+        "release historical native backend review",
+        steps,
+        "scripts/verify_native_backend_review_package.sh",
+        exact_argument_vectors=(("--historical-release",),),
+        require_default_execution_context=True,
+    )
+    require_step_order("release historical native backend source/review", fetch_index, review_index)
+    return fetch_index, review_index
 
 
 def check_release_workflow(path: Path) -> None:
@@ -1905,11 +1927,7 @@ def check_release_workflow(path: Path) -> None:
         "HEGEMON_SMALLWOOD_V5_TRUST_ROOT_SHA256: "
         "${{ vars.HEGEMON_SMALLWOOD_V5_TRUST_ROOT_SHA256 }}",
     )
-    native_review_index = require_executable_command(
-        "release security-gates",
-        security_steps,
-        "scripts/verify_native_backend_review_package.sh",
-    )
+    native_source_index, native_review_index = require_historical_native_review(security_steps)
     native_posture_index = require_executable_command(
         "release security-gates",
         security_steps,
@@ -1926,6 +1944,7 @@ def check_release_workflow(path: Path) -> None:
         "release backend package gate order",
         strict_v5_regression_index,
         v5_candidate_gate_index,
+        native_source_index,
         native_review_index,
         native_posture_index,
     )

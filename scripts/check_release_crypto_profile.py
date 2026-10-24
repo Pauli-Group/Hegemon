@@ -285,11 +285,11 @@ V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': 'fb40d7e77941cb04
  'release-evidence/v0.11-public-chain-fixture/native-chain.sled.tar.gz': '6ea33e96e3279d992475f7f1434b2d5c6ca161575c52ab4b675203ba3466f2c1',
  'scripts/check_private_spend_launch_authorization.py': '7f5265e5ddc8ec947bbc93df31df276c0fae787bfdcbc7b1e5a2547958ae60ab',
  'scripts/check_release_launcher_policy.py': '51700e93ac457574f262bff05f48e5e55fa328e37da30f665721a312de9d826e',
- 'scripts/check_v011_current_binary_proofs.py': 'a8b14c133d0d02b9e000fe30d22fbed4584e9836e439086974540c2943ea9f80',
+ 'scripts/check_v011_current_binary_proofs.py': '2d66821c28cb2c057878c86725ff5be6ad337f763d45b5c7ecbf6bcb08a0d06b',
  'scripts/check_v011_public_chain_replay.py': '29c6655f1d8ced3ffa5a042e3c66f0567fc0ef465eda70de473e7a35054159dc',
- 'scripts/check_v011_release_successor.py': '760e5775a5a0227a27b82498abd47fc9ac89b427c25b0bc44cb317c5afe2556a',
+ 'scripts/check_v011_release_successor.py': '7f57fa1b4cbc45975942e5018d830cdb7045670705d78267610d62d0a134cf53',
  'scripts/materialize_v011_predecessor.py': '0dc2b129332bf1276e5790a2db2682946e54f5af6b6850eaca50ca9e17b4dee5',
- 'scripts/release_artifact_manifest.py': '17137d83d092b98c246b0fd7125bbb2f8ad71aba342fdc4717a071128c4efb6a',
+ 'scripts/release_artifact_manifest.py': 'a429626f609f9f447057a6e362cf53d3e1b42a0c14a6b83c876d6b0faf3feffc',
  'scripts/security-audit.sh': 'd167e710e5b81389e8a2ba5383f7a3d6157476b30c6a4cf147d0dac5415c7c42'}
 
 

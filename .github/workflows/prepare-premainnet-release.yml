@@ -142,8 +142,11 @@ jobs:
           HEGEMON_SMALLWOOD_V5_TRUST_ROOT_SHA256: ${{ vars.HEGEMON_SMALLWOOD_V5_TRUST_ROOT_SHA256 }}
         run: python3 scripts/check_smallwood_v5_candidate_gate.py
 
-      - name: Native backend review package verification
-        run: ./scripts/verify_native_backend_review_package.sh
+      - name: Fetch pinned historical native backend source
+        run: git fetch --no-tags --depth=1 origin 4810888722e8c9a2440e31b139f8cb10b060acee
+
+      - name: Historical native backend review package verification
+        run: ./scripts/verify_native_backend_review_package.sh --historical-release
 
       - name: Native backend release posture gate
         run: ./scripts/check_native_backend_release_posture.sh --package audits/native-backend-128b/native-backend-128b-review-package.tar.gz

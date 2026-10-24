@@ -27,7 +27,7 @@ RELATION_ID = 'Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4'
 FIXTURE_SCHEMA = 'hegemon.v011.public-current-proof-fixture.v1'
 RECEIPT_SCHEMA = 'hegemon.v011.current-binary-proof-verification.v1'
 NEGATIVES = ('changed_statement', 'changed_proof', 'truncated_proof', 'oversize_proof', 'truncated_statement', 'oversize_statement')
-ARTIFACT_HELPER_SHA256 = '17137d83d092b98c246b0fd7125bbb2f8ad71aba342fdc4717a071128c4efb6a'
+ARTIFACT_HELPER_SHA256 = 'a429626f609f9f447057a6e362cf53d3e1b42a0c14a6b83c876d6b0faf3feffc'
 LAUNCHER_POLICY_SHA256 = '51700e93ac457574f262bff05f48e5e55fa328e37da30f665721a312de9d826e'
 
 class CheckError(RuntimeError):

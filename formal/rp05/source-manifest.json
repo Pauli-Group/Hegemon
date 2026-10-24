@@ -2362,7 +2362,7 @@
     },
     {
       "module": "HegemonCrypto.SmallWoodV8Smz9WholeViewObservation",
-      "sha256": "32957bc165a9081afb51da7ddc2b9e8dcbd9d529b1de4070fdda00feca5f9dcc",
+      "sha256": "5b94698133a62542e8e08928d1c225169153ce6eceebfcc378e082e60f78522a",
       "source": "formal/crypto/HegemonCrypto/SmallWoodV8Smz9WholeViewObservation.lean",
       "staged": "generated/Sources/HegemonCrypto/SmallWoodV8Smz9WholeViewObservation.lean"
     },

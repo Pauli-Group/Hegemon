@@ -84,6 +84,21 @@ class PreparationWorkflowTests(unittest.TestCase):
                     preparation.verify_preparation(self.release, self.workflow.replace(suite, "scripts/unreviewed.py", 1))
         self.assertIn("--launcher-helper scripts/check_release_launcher_policy.py", source_job)
 
+    def test_historical_native_identity_and_fetch_are_preserved(self) -> None:
+        fetch = "git fetch --no-tags --depth=1 origin 4810888722e8c9a2440e31b139f8cb10b060acee"
+        verify = "./scripts/verify_native_backend_review_package.sh --historical-release"
+        self.assertEqual(self.workflow.count(fetch), 1)
+        self.assertEqual(self.workflow.count(verify), 1)
+        self.assertLess(self.workflow.index(fetch), self.workflow.index(verify))
+        for before, after in (
+            (fetch, "true"),
+            (fetch, fetch.replace("--depth=1", "--unshallow")),
+            (verify, verify.replace(" --historical-release", "")),
+            (verify, verify + " || true"),
+        ):
+            with self.subTest(before=before), self.assertRaises(ValueError):
+                preparation.verify_preparation(self.release, self.workflow.replace(before, after, 1))
+
     def test_new_release_job_requires_review(self) -> None:
         with self.assertRaises(ValueError):
             preparation.expected_workflow(self.release.replace(

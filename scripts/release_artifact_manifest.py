@@ -271,9 +271,21 @@ def run_git(root: Path, *args: str) -> bytes:
 
 
 def source_tree_sha256(root: Path) -> str:
-    tracked = run_git(root, "ls-files", "-z").decode(
-        "utf-8", "surrogateescape"
-    ).split("\0")
+    tracked: dict[str, int] = {}
+    for record in run_git(root, "ls-files", "--stage", "-z").split(b"\0"):
+        if not record:
+            continue
+        header, separator, raw_path = record.partition(b"\t")
+        fields = re.fullmatch(rb"([0-7]{6}) ([0-9a-f]{40}|[0-9a-f]{64}) ([0-3])", header)
+        if not separator or not raw_path or fields is None:
+            raise ManifestError("malformed Git source index entry")
+        git_mode, _, stage = fields.groups()
+        relative = raw_path.decode("utf-8", "surrogateescape")
+        if stage != b"0" or relative in tracked:
+            raise ManifestError(f"unmerged or duplicate Git source index entry: {relative}")
+        if git_mode not in {b"100644", b"100755"}:
+            raise ManifestError(f"unsupported Git source mode: {relative}")
+        tracked[relative] = 0o755 if git_mode == b"100755" else 0o644
     untracked = run_git(
         root, "ls-files", "--others", "--exclude-standard", "-z"
     ).decode("utf-8", "surrogateescape").split("\0")
@@ -283,7 +295,24 @@ def source_tree_sha256(root: Path) -> str:
         path = root / relative
         digest.update(relative.encode("utf-8", "surrogateescape"))
         digest.update(b"\0")
-        if path.is_symlink():
+        if relative in tracked:
+            if path.is_symlink() or not path.is_file():
+                raise ManifestError(f"source is not a regular non-symlink file: {relative}")
+            fd = _open_repository_file(root, relative, "source")
+            try:
+                before = os.fstat(fd)
+                mode = tracked[relative]
+                if os.name == "posix" and bool(before.st_mode & stat.S_IXUSR) != (mode == 0o755):
+                    raise ManifestError(f"source executable mode disagrees with Git index: {relative}")
+                digest.update(f"file:{mode:o}:{before.st_size}".encode("ascii"))
+                digest.update(b"\0")
+                while chunk := os.read(fd, 1024 * 1024):
+                    digest.update(chunk)
+                if _file_identity(before) != _file_identity(os.fstat(fd)):
+                    raise ManifestError(f"source changed while being inspected: {relative}")
+            finally:
+                os.close(fd)
+        elif path.is_symlink():
             digest.update(b"symlink\0")
             digest.update(os.readlink(path).encode("utf-8", "surrogateescape"))
         elif path.is_file():
