@@ -381,10 +381,10 @@ if [ "$REQUIRE_BINARY" = true ]; then
         --root "$PROJECT_ROOT" >/dev/null && \
         python3 "$PROJECT_ROOT/scripts/release_artifact_manifest.py" verify \
         --manifest "$BINARY_MANIFEST" \
-        --expect "hegemon-node:hegemon-node:${RELEASE_BINS[0]}" \
-        --expect "wallet:wallet:${RELEASE_BINS[1]}" \
-        --expect "walletd:walletd:${RELEASE_BINS[2]}" \
-        --expect "wallet:private-spend:${RELEASE_BINS[3]}" >/dev/null && \
+        --expect "hegemon-node:hegemon-node:${RELEASE_BINS[0]#"$PROJECT_ROOT"/}" \
+        --expect "wallet:wallet:${RELEASE_BINS[1]#"$PROJECT_ROOT"/}" \
+        --expect "walletd:walletd:${RELEASE_BINS[2]#"$PROJECT_ROOT"/}" \
+        --expect "wallet:private-spend:${RELEASE_BINS[3]#"$PROJECT_ROOT"/}" >/dev/null && \
         PROFILE_ARGS=(--manifest "$BINARY_MANIFEST" --require-executed) && \
         { [ "$ALLOW_UNAPPROVED_PROFILE" = false ] || PROFILE_ARGS+=(--allow-unapproved-profile); } && \
         PROFILE_RESULT=$(release_crypto_profile) && \

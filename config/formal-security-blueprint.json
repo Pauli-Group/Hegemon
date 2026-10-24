@@ -8,8 +8,8 @@
       "command": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
       "status": "passed",
       "exit_code": 0,
-      "executed_at": "2026-10-24T16:04:31Z",
-      "policy_inputs_blake3": "f5c0aaadaa2736740b64234278a9ba4b017057614c9f776981a091b20e77be4c",
+      "executed_at": "2026-10-24T20:13:10Z",
+      "policy_inputs_blake3": "0de0975944aa1d5ec467f4b1f6a3a583444da7003bc22e9d3242078d36f9e5a4",
       "report": {
         "passed": true,
         "test_filter": "governance_",
@@ -134,7 +134,7 @@
         "reviewer": "Codex (internal CI hygiene review)",
         "reviewed_at": "2026-10-02",
         "notes": "Pending independent review. Internal source review on 2026-10-02: PR-only profile inspection accepts only the exact fail-closed unapproved-profile refusal and reports production_authority=false; tag release remains strict, and the historical native-backend posture does not authorize RP05. Focused profile and policy regressions pass. This is not an independent review, live binary attestation, or production authorization. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content.",
-        "content_blake3": "619e1b61fb3852e73a63502e38e1eed7fa6d6c74ae7a6c8301eb4376de7b06f0"
+        "content_blake3": "b296c6ee286fb9ea6e4c432f56b9fc8c1eacc916881f873255aa445dbbbbbc31"
       },
       "falsification_cases": [
         {
