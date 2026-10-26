@@ -4,6 +4,25 @@ v0.11 is the fresh HGN-only pre-mainnet test network. It replaces v0.10.3;
 old balances and proofs do not migrate. Mainnet will use a separate v1.00
 launch and identity. Preserve old node data and wallet backups.
 
+## Select the public chain first
+
+Use **tag `v0.11`** for source builds, or the platform archives from that release.
+The tag is `da7be324`; older source links to `9e580878` predate the final joining
+package. They do not identify a different public chain.
+
+**Building v0.11 does not select pre-mainnet automatically.** A bare
+`hegemon-node` defaults to the legacy profile. `--dev` and `--network development`
+select other chains; seed addresses alone never select a network. The public
+launch must include `--network pre-mainnet` and this release's frozen
+`--network-manifest`. The launchers below supply both, so use them instead of
+older testnet or development commands.
+
+Stop any existing local node before taking port 9944, so the identity checks
+query the node you just started. Start in sync/relay mode and verify the full
+genesis and chain ID below before enabling mining. If the genesis differs,
+preserve the existing database and wallet and select a new, unused data path.
+Do not mine a separate block 1 or delete old state.
+
 ## Install the release package
 
 Download the archive for your platform from the
@@ -92,6 +111,37 @@ curl -s http://127.0.0.1:9944 -H 'Content-Type: application/json' \
 The genesis result and `chainId` must match the table. Check that peers connect
 and the canonical height advances before enabling mining. Keep RPC bound to
 loopback; remote spending tools should use an authenticated tunnel.
+
+## Join from a source checkout
+
+The commands above use `start.py` from a downloaded release archive. For a
+source build, clone the release tag rather than an older commit or a moving
+branch:
+
+```bash
+git clone --branch v0.11 --depth 1 https://github.com/Pauli-Group/Hegemon.git Hegemon-v0.11
+cd Hegemon-v0.11
+make setup
+make node
+```
+
+If you already built this tag, reuse the compatible binary; no rebuild is
+needed just to correct the launch arguments. Stop your previous node, choose a
+new, unused data directory and start a syncing relay:
+
+```bash
+export HEGEMON_NODE_PATH="$HOME/.hegemon-node-v0.11-public"
+export HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"
+HEGEMON_MINE=0 HEGEMON_MINER_ADDRESS= ./start.sh
+```
+
+If that directory already contains another chain, keep it and choose a different
+name. `./start.sh` selects the pre-mainnet profile and frozen manifest. Keep the
+same `HEGEMON_NODE_PATH` when restarting; run the identity RPC checks above and
+wait for the public chain to sync before mining. From this source checkout,
+restart with `HEGEMON_MINE=1 HEGEMON_MINER_ADDRESS='<your-full-V8-public-address>' ./start.sh`
+after creating and backing up your wallet. The `python3 start.py` examples in
+this guide apply to extracted release packages, not the source checkout.
 
 ## Create and back up your wallet
 
