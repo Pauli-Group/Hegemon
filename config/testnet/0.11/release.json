@@ -7,7 +7,9 @@
     "hegemon.pauli.group:30333",
     "devnet.hegemonprotocol.com:30333"
   ],
-  "cutover_status": "pending",
-  "identity_stage": "fresh-genesis-candidate-awaiting-final-qualification",
-  "public_genesis_pending": true
+  "cutover_status": "ready",
+  "identity_stage": "deployed-public-genesis",
+  "public_genesis_pending": false,
+  "genesis_hash": "0xd9a8cfc158790b0251c7493d7261da771f7d57be63bce750ba8c1af5d92a9ad3",
+  "chain_id": "0x7b7b0899d5444ffd92c38b38188e9ce4f891913ca7cca854fdcae0aa22ca1b49"
 }
