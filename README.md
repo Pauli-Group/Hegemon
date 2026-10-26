@@ -429,7 +429,21 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 
 ## Getting started
 
-### Building the Native Node
+### Join the public v0.11 pre-mainnet
+
+Download the [v0.11 release](https://github.com/Pauli-Group/Hegemon/releases/tag/v0.11)
+and follow the [joining guide](config/testnet/0.11/README.md). For source builds,
+use tag `v0.11` and its `./start.sh`; release archives use `python3 start.py`.
+Both launchers select `--network pre-mainnet` and the frozen network manifest.
+A bare node or `--dev` selects a different chain, even with the public seeds.
+
+Start as a syncing relay and verify genesis
+`0xd9a8cfc158790b0251c7493d7261da771f7d57be63bce750ba8c1af5d92a9ad3`
+before mining. Preserve old wallets and databases; choose a new data directory
+if a previous node used the wrong network. The development examples below are
+for isolated local chains, not joining public v0.11.
+
+### Building the Native Node for local development
 
 1. **Install toolchains**:
    ```bash
@@ -496,9 +510,9 @@ Environment variables:
 - `HEGEMON_MINE_THREADS=N` - Mining thread count
 - `HEGEMON_MINER_ADDRESS=<shielded_addr>` - Shielded address for coinbase rewards
 
-### Two-node testnet pairing
+### Isolated local development pairing
 
-Use this when you want to run two deliberately isolated local nodes that peer with each other. For the shared testnet, set `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"` unless the approved list has rotated, keep every miner on that same list to avoid partitions and forks, and enable NTP or chrony because future-skewed PoW timestamps are rejected. The append-only oversized-record chunk extension has no capability negotiation: a persisted block record above the legacy 16 MiB frame requires upgraded endpoints on both sides of its transfer. Before a one-node rolling canary against an old peer, verify that every record needed for catch-up fits the legacy frame or provide an upgraded relay.
+These `--dev` examples run two deliberately isolated local nodes; they do not join public v0.11. For the public network, follow the [v0.11 joining guide](config/testnet/0.11/README.md) and use its launcher and frozen manifest. Setting public seeds alone does not select the public chain. Keep NTP or chrony enabled when mining because future-skewed PoW timestamps are rejected. The append-only oversized-record chunk extension has no capability negotiation: a persisted block record above the legacy 16 MiB frame requires upgraded endpoints on both sides of its transfer. Before a one-node rolling canary against an old peer, verify that every record needed for catch-up fits the legacy frame or provide an upgraded relay.
 
 1. **Build the binary**:
    ```bash

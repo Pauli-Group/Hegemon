@@ -1,25 +1,33 @@
 # Hegemon Testnet Deployment
 
-The next public testnet is **v0.11 pre-mainnet**, starting from fresh genesis.
-Use the [v0.11 operator guide](0.11/README.md) and
-[release checklist](../../docs/releases/v0.11.md). The release tag/display name is
-`v0.11`; executable package versions are `0.11.0`. Mainnet is planned as `v1.00`.
+The public test network is **v0.11 pre-mainnet**, running from a fresh genesis.
+Use the [v0.11 joining guide](0.11/README.md) and
+[v0.11 release](https://github.com/Pauli-Group/Hegemon/releases/tag/v0.11).
+For source builds, check out **tag `v0.11`**. Mainnet will use a separate `v1.00`
+launch; v0.10.3 balances and databases do not migrate.
 
-**Cutover is pending.** The v0.10.3 testnet on `hegemon-ovh` must remain running
-until the operator announces its shutdown. Preparing a PR or building v0.11
-artifacts does not change the live network. Do not join the existing seed with
-the new manifest or replace the old database in place.
+**The software version alone does not select the public chain.** A bare
+`hegemon-node` defaults to the legacy profile, and `--dev` does not join public
+v0.11. Use `./start.sh` from the tagged source checkout, or `python3 start.py`
+from an extracted release package. These launchers select `--network pre-mainnet`
+and `config/testnet/0.11/network-manifest.json` explicitly. Setting seed addresses
+alone cannot change network identity.
 
-For v0.11, `hegemon.pauli.group:30333` (`hegemon-ovh`) is the planned primary
-seed. `hegemon-dev` is a secondary node after cutover. The exact approved seed
-list comes from `0.11/release.json`; local defaults do not establish live
-approval. Keep every miner on the same approved list and enable NTP/chrony:
+The primary seed is `hegemon.pauli.group:30333` (`hegemon-ovh`); the secondary is
+`devnet.hegemonprotocol.com:30333` (`hegemon-dev`). The launchers use this approved
+list from `0.11/release.json`. Keep NTP/chrony or automatic time sync enabled:
 PoW headers outside the allowed future timestamp skew are rejected.
 
-The source launcher `../../start.sh` validates the versioned manifest digest,
-refuses a pending release record and defaults to a syncing node with a separate
-`~/.hegemon-node-v0.11` database. Mining is opt-in and requires the operator's
-public reward address. It never creates or deletes a wallet.
+Before mining, verify genesis:
+`0xd9a8cfc158790b0251c7493d7261da771f7d57be63bce750ba8c1af5d92a9ad3`.
+The joining guide includes the RPC commands and expected chain ID. Peer count
+alone is not proof that you joined the correct chain.
+
+If genesis differs or all peers remain at height zero, stop the node cleanly,
+preserve its data and wallet, and use a new, unused data directory with the
+correct launcher. Do not mine block 1 on a different chain or delete an existing
+database to repair a configuration mistake. The launcher defaults to sync/relay;
+mining is opt-in and requires your own full public reward address.
 
 ## Pool interfaces
 
