@@ -430,6 +430,17 @@ impl NoteCiphertext {
         let mut kem_seed = [0u8; NOTE_CIPHERTEXT_KEM_RANDOMNESS_LEN];
         rng.fill_bytes(&mut kem_seed);
 
+        Self::encrypt_with_kem_seed(address, note, &kem_seed)
+    }
+
+    /// Deterministically encrypt with retained private KEM randomness. Callers
+    /// must keep the seed in encrypted wallet state or a mode-0600 private plan,
+    /// and never place it on a public carrier.
+    pub(crate) fn encrypt_with_kem_seed(
+        address: &ShieldedAddress,
+        note: &NotePlaintext,
+        kem_seed: &[u8; NOTE_CIPHERTEXT_KEM_RANDOMNESS_LEN],
+    ) -> Result<Self, WalletError> {
         let crypto_note = note.to_crypto();
         let crypto_ct = CryptoNoteCiphertext::encrypt(
             &address.pk_enc,
@@ -438,7 +449,7 @@ impl NoteCiphertext {
             address.crypto_suite,
             address.diversifier_index,
             &crypto_note,
-            &kem_seed,
+            kem_seed,
         )
         .map_err(|_e| WalletError::EncryptionFailure)?;
 

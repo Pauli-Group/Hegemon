@@ -42,8 +42,17 @@ formal-generator = []
 hx512-refinement-evidence = []
 hx512-working-proof-runner = ["hx512-refinement-evidence"]
 rp05-dev-artifacts = []
+htlc-dev-artifacts = []
 slow-smallwood-e2e = []
 stark-fast = ["transaction-core/stark-fast"]
+
+[[example]]
+name = "full_htlc_artifact"
+required-features = ["htlc-dev-artifacts"]
+
+[[example]]
+name = "full_htlc_candidate_artifact"
+required-features = ["htlc-dev-artifacts"]
 
 [profile.dev]
 debug = 0

@@ -1,0 +1,21 @@
+import NativePrivateSpendApprovalHistoryV4
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.Signer
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.Context
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.Owner
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.Note
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.Receipt
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.Ledger
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.empty
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.IOValid
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.applyIO
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.Chain
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.chain_mono
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.Good
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.OrdinaryRoute
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.NonAccumulator
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.Step
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.good_apply
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.step_preserves_good
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.Reachable
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.reachable_good
+#print axioms HegemonCrypto.NativePrivateSpendApprovalHistory.final_accumulator_provenance

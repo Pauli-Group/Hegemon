@@ -1,0 +1,25 @@
+import HegemonCrypto.NativePrivateSpendCurrentG1CanonicalGameAdapter
+
+/-! ROOT-only kernel audit: nineteen unique declared roots, permitted Std axioms only. -/
+open HegemonCrypto.NativePrivateSpendCurrentCanonicalHash
+open HegemonCrypto.NativePrivateSpendCurrentG1CanonicalGameAdapter
+
+#print axioms permutation_canonical
+#print axioms sponge_canonical
+#print axioms compff_canonical
+#print axioms source_leaf_good
+#print axioms native_empty_owner_eq
+#print axioms empty_note_good
+#print axioms source_path_good
+#print axioms native_path_good
+#print axioms effective_inputs_good
+#print axioms canonical_collision_game
+#print axioms canonical_source_native_raw_readback_or_collision
+#print axioms canonical_native_trace_source_history_or_merkle_bad
+#print axioms canonical_current_final_authorization_or_failure
+#print axioms canonical_snapshot_collision_game
+#print axioms produced_ordinary_good
+#print axioms canonical_current_final_failure_game
+#print axioms source_game_coverage
+#print axioms same_execution_current_g1_failure_mass_le_game_sum
+#print axioms same_execution_current_g1_failure_mass_le_current_advantages

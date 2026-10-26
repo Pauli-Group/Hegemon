@@ -28,6 +28,8 @@ RF = 8
 RP = 22
 SUITE_MARKER = 0x4845_475F_5032_3136
 SPONGE_MODE_MARKER = 0x5350_4F4E_4745_5631
+COMPRESSION_MODE_ID = "hegemon-p2w16-compress14-left-feedforward-v1"
+COMPRESSION_MODE_MARKER = 0x434F_4D50_4646_3031
 MAX_INPUTS = 120
 M4 = [[2, 3, 1, 1], [1, 2, 3, 1], [1, 1, 2, 3], [3, 1, 1, 2]]
 P4 = [[2 if row == column else 1 for column in range(4)] for row in range(4)]
@@ -119,6 +121,15 @@ def extract_source_parameters(source: str) -> tuple[list[int], list[int]]:
         "Apply the 2026/306 countermeasure orientation `M4 ⊗ P4`",
     ):
         require(snippet in source, f"source parameter drift: {snippet}")
+    require(re.search(
+        r'pub const POSEIDON2_WIDTH16_COMPRESSION_MODE_ID:\s*&str\s*=\s*"'
+        + re.escape(COMPRESSION_MODE_ID) + r'";', source) is not None,
+        "source compression mode identity drift")
+    marker = re.search(
+        r"pub const POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER:\s*u64\s*=\s*(0x[0-9a-fA-F_]+);",
+        source)
+    require(marker is not None and int(marker.group(1).replace("_", ""), 16)
+        == COMPRESSION_MODE_MARKER, "source compression marker drift")
     return diag, constants
 
 
@@ -351,7 +362,8 @@ def permutation(
 
 
 def compress14(domain: int, left: list[int], right: list[int], diag: list[int], constants: list[int], external: list[list[int]]) -> list[int]:
-    return permutation(left + right + [domain, SUITE_MARKER], diag, constants, external)[:DIGEST]
+    permuted = permutation(left + right + [domain, COMPRESSION_MODE_MARKER], diag, constants, external)
+    return [(permuted[lane] + left[lane]) % P for lane in range(DIGEST)]
 
 
 def sponge(domain: int, inputs: list[int], diag: list[int], constants: list[int], external: list[list[int]]) -> list[int]:
@@ -406,6 +418,17 @@ def derive() -> dict[str, Any]:
         P, WIDTH, RATE, CAPACITY, DIGEST, ALPHA, RF, RP, 1, SUITE_MARKER,
         SPONGE_MODE_MARKER, MAX_INPUTS,
     ] + [value for row in external for value in row] + diag + canonical_constants
+    compression_mode = {
+        "mode_id": COMPRESSION_MODE_ID,
+        "mode_marker_hex": f"0x{COMPRESSION_MODE_MARKER:016x}",
+        "permutation_parameter_set_id": "hegemon-p2w16-v1-" + hash_words("parameter-set", parameter_words)[:16],
+        "permutation_parameter_set_sha256": hash_words("parameter-set", parameter_words),
+        "state_layout": "left[0..7] || right[0..7] || domain || compression_mode_marker",
+        "permutations": 1,
+        "feed_forward": True,
+        "feed_forward_operand": "left[0..7]",
+        "output_lanes": "permuted_state[0..7] + left[0..7] (mod field_modulus)",
+    }
     digest_cardinality = P**DIGEST
     queries = 1 << 128
     result = {
@@ -416,6 +439,13 @@ def derive() -> dict[str, Any]:
             "internal_diagonal_sha256": hash_words("internal-diagonal", diag),
             "external_matrix_sha256": hash_words("external-matrix-m4-kron-p4", [value for row in external for value in row]),
             "parameter_set_sha256": hash_words("parameter-set", parameter_words),
+            "compression_mode_sha256": hash_words(
+                "compression-mode:" + COMPRESSION_MODE_ID,
+                # marker, left/right widths, domain/marker lanes, permutation
+                # count, feed-forward flag, output start/width, then the unchanged
+                # permutation parameter words. This binds the mode independently.
+                [COMPRESSION_MODE_MARKER, DIGEST, DIGEST, 14, 15, 1, 1, 0, DIGEST]
+                + parameter_words),
             "p3_reference_lock_sha256": hashlib.sha256(P3_REFERENCE_LOCK.read_bytes()).hexdigest(),
         },
         "algebra": {
@@ -429,6 +459,7 @@ def derive() -> dict[str, Any]:
             "internal_determinant": str(determinant(internal_mat)),
             "internal_power_charpolys_irreducible_1_through_32": list(minpoly),
         },
+        "compression_mode": compression_mode,
         "security": {
             "digest_cardinality": str(digest_cardinality),
             "generic_bht_collision_work_bits": math.log2(digest_cardinality) / 3,
@@ -505,6 +536,8 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         "sponge_mode_marker_hex": f"0x{SPONGE_MODE_MARKER:016x}",
     }, "manifest parameter tuple mismatch")
     require(manifest.get("digests") == expected["digests"], "manifest digest binding mismatch")
+    require(manifest.get("modes", {}).get("compress14") == expected["compression_mode"],
+        "manifest compression-mode descriptor mismatch")
     require(manifest.get("algebra") == expected["algebra"], "manifest algebra certificate mismatch")
     require(manifest.get("security") == expected["security"], "manifest security arithmetic mismatch")
     require(manifest.get("known_answer_tests") == expected["kats"], "manifest known-answer vectors mismatch")
@@ -513,6 +546,9 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     require(provenance.get("horizen_commit") == "055bde3f4782731ba5f5ce5888a440a94327eaf3", "Horizen commit mismatch")
     require(provenance.get("horizen_instance_commit") == "bb476b9ca38198cf5092487283c8b8c5d4317c4e", "Horizen instance commit mismatch")
     require(provenance.get("p3_goldilocks_version") == "0.6.3", "p3 version mismatch")
+    require(provenance.get("compression_mode_canonical_serialization") ==
+        "hash_words(compression-mode:<mode_id>, [marker,left_width,right_width,domain_lane,marker_lane,permutations,feed_forward,output_start,output_width] || unchanged_parameter_words); u64 little endian",
+        "compression mode provenance mismatch")
     require(provenance.get("p3_goldilocks_crate_sha256") == "d03b3f31080df31be723b876709246f8f1e532e1c5b82efb5281d705c8304c63", "p3 crate digest mismatch")
     require(provenance.get("p3_poseidon2_crate_sha256") == "43eb8a73a26d14becaed1c67c3e8a047e4311d7909b402383c82ca9643ba17c6", "p3 Poseidon2 crate digest mismatch")
     attacks = manifest.get("cryptanalysis_screen", {})

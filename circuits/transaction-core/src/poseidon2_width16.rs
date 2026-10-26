@@ -30,6 +30,10 @@ pub const POSEIDON2_WIDTH16_FIXED_INPUT: usize = 16;
 pub const POSEIDON2_WIDTH16_SPONGE_MAX_INPUTS: usize = 120;
 pub const POSEIDON2_WIDTH16_SUITE_MARKER: u64 = 0x4845_475f_5032_3136; // "HEG_P216"
 pub const POSEIDON2_WIDTH16_SPONGE_MODE_MARKER: u64 = 0x5350_4f4e_4745_5631; // "SPONGEV1"
+/// Fresh compression-only framing; the variable-length sponge retains V1.
+pub const POSEIDON2_WIDTH16_COMPRESSION_MODE_ID: &str =
+    "hegemon-p2w16-compress14-left-feedforward-v1";
+pub const POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER: u64 = 0x434f_4d50_4646_3031; // "COMPFF01"
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Poseidon2Width16SpongeError {
@@ -386,13 +390,29 @@ pub fn poseidon2_width16_permutation(state: &mut [Felt; POSEIDON2_WIDTH16_WIDTH]
 
 /// Fixed-arity binary compression for fresh seven-limb Merkle nodes.
 ///
-/// The exact state is `left[0..7] || right[0..7] || domain || suite_marker`.
-/// There is no feed-forward step. Callers must use a canonical domain tag below
-/// the Goldilocks modulus; protocol constants satisfy that requirement.
+/// The exact state is `left[0..7] || right[0..7] || domain || compression_marker`.
+/// The compression-only mode uses `COMPFF01` and returns `state[i] + left[i]`
+/// for all seven digest lanes after the unchanged permutation. Callers must
+/// use a canonical domain tag below the Goldilocks modulus.
 pub fn poseidon2_width16_compress14_ring<R: PrimeCharacteristicRing>(
     domain_tag: u64,
     left: &[R; POSEIDON2_WIDTH16_DIGEST],
     right: &[R; POSEIDON2_WIDTH16_DIGEST],
+) -> [R; POSEIDON2_WIDTH16_DIGEST] {
+    poseidon2_width16_compress14_with_permutation_ring(
+        domain_tag,
+        left,
+        right,
+        poseidon2_width16_permutation_ring::<R>,
+    )
+}
+
+/// Shared canonical framing; the callback replaces only the permutation.
+pub fn poseidon2_width16_compress14_with_permutation_ring<R: PrimeCharacteristicRing>(
+    domain_tag: u64,
+    left: &[R; POSEIDON2_WIDTH16_DIGEST],
+    right: &[R; POSEIDON2_WIDTH16_DIGEST],
+    mut permute: impl FnMut(&mut [R; POSEIDON2_WIDTH16_WIDTH]),
 ) -> [R; POSEIDON2_WIDTH16_DIGEST] {
     assert!(
         domain_tag < GOLDILOCKS_MODULUS,
@@ -402,11 +422,13 @@ pub fn poseidon2_width16_compress14_ring<R: PrimeCharacteristicRing>(
     state[..POSEIDON2_WIDTH16_DIGEST].copy_from_slice(left);
     state[POSEIDON2_WIDTH16_DIGEST..2 * POSEIDON2_WIDTH16_DIGEST].copy_from_slice(right);
     state[14] = R::from_u64(domain_tag);
-    state[15] = R::from_u64(POSEIDON2_WIDTH16_SUITE_MARKER);
-    poseidon2_width16_permutation_ring(&mut state);
+    state[15] = R::from_u64(POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER);
+    permute(&mut state);
 
     let mut output = [R::ZERO; POSEIDON2_WIDTH16_DIGEST];
-    output.copy_from_slice(&state[..POSEIDON2_WIDTH16_DIGEST]);
+    for lane in 0..POSEIDON2_WIDTH16_DIGEST {
+        output[lane] = state[lane] + left[lane];
+    }
     output
 }
 
@@ -441,6 +463,19 @@ pub fn poseidon2_width16_sponge_ring<R: PrimeCharacteristicRing>(
     domain_tag: u64,
     input: &[R],
 ) -> Result<[R; POSEIDON2_WIDTH16_DIGEST], Poseidon2Width16SpongeError> {
+    poseidon2_width16_sponge_with_permutation_ring(
+        domain_tag,
+        input,
+        poseidon2_width16_permutation_ring::<R>,
+    )
+}
+
+/// Shared canonical framing; the callback replaces only the permutation.
+pub fn poseidon2_width16_sponge_with_permutation_ring<R: PrimeCharacteristicRing>(
+    domain_tag: u64,
+    input: &[R],
+    mut permute: impl FnMut(&mut [R; POSEIDON2_WIDTH16_WIDTH]),
+) -> Result<[R; POSEIDON2_WIDTH16_DIGEST], Poseidon2Width16SpongeError> {
     if domain_tag >= GOLDILOCKS_MODULUS {
         return Err(Poseidon2Width16SpongeError::NonCanonicalDomain);
     }
@@ -467,7 +502,7 @@ pub fn poseidon2_width16_sponge_ring<R: PrimeCharacteristicRing>(
         if block + 1 == block_count {
             state[POSEIDON2_WIDTH16_RATE + 3] += R::ONE;
         }
-        poseidon2_width16_permutation_ring(&mut state);
+        permute(&mut state);
         block += 1;
     }
 
@@ -580,7 +615,15 @@ mod tests {
         let left = core::array::from_fn(|index| Felt::from_u64(index as u64));
         let right = core::array::from_fn(|index| Felt::from_u64((index + 7) as u64));
         let compressed = poseidon2_width16_compress14(COMPRESS_DOMAIN, &left, &right);
-        assert_eq!(
+        // Independent Python reference KAT for COMPFF01 and seven field additions.
+        assert_eq!(compressed.map(|value| value.as_canonical_u64()), [
+            0xe7006f1f2c8e1e72, 0x1d25610cbfcafc3f, 0x887c159ff141dba6,
+            0x8cd5fe8c86071978, 0xf96376d230d4591a, 0x71c3812b36e0f872,
+            0xd0aaf5134c188f7a,
+        ]);
+        // This pinned predecessor vector must never be reinterpreted as the
+        // fresh compression mode. The sponge KAT below remains unchanged.
+        assert_ne!(
             compressed.map(|value| value.as_canonical_u64()),
             [
                 0xf1bb4ef4525eb582,
@@ -620,6 +663,26 @@ mod tests {
             hash,
             poseidon2_width16_hash_fixed_16(HASH_DOMAIN + 1, &input)
         );
+    }
+
+    #[test]
+    fn compression_feed_forward_uses_original_left_and_rejects_raw_output() {
+        let left = core::array::from_fn(|i| Felt::from_u64(GOLDILOCKS_MODULUS - 1 - i as u64));
+        let right = core::array::from_fn(|i| Felt::from_u64(9 + i as u64));
+        let mut frame = [Felt::ZERO; POSEIDON2_WIDTH16_WIDTH];
+        frame[..7].copy_from_slice(&left);
+        frame[7..14].copy_from_slice(&right);
+        frame[14] = Felt::from_u64(COMPRESS_DOMAIN);
+        frame[15] = Felt::from_u64(POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER);
+        poseidon2_width16_permutation(&mut frame);
+        let raw: [Felt; 7] = frame[..7].try_into().unwrap();
+        let output = poseidon2_width16_compress14(COMPRESS_DOMAIN, &left, &right);
+        for i in 0..7 {
+            assert_eq!(output[i] - left[i], raw[i]);
+            assert_ne!(output[i], raw[i]);
+        }
+        assert_ne!(POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER, POSEIDON2_WIDTH16_SUITE_MARKER);
+        assert_ne!(POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER, POSEIDON2_WIDTH16_SPONGE_MODE_MARKER);
     }
 
     #[test]

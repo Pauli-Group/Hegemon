@@ -1,5 +1,76 @@
 ## 0. Design goals (what we’re optimizing for)
 
+The controlled-asset Development integration uses the existing V8 note tree,
+canonical positions and global spent-nullifier set. Its separate typed asset
+authority is constructed from the exact fresh Development manifest and compiled
+spend/admin identities; it grants no production authority. The manifest commits
+zero-supply public registry rows, ordinary credential depths 4/8/16, bounded
+depths 4/8, the unchanged 2 MiB inner proof cap and one asset action per block.
+Bounded depth 16 rejects before proving or admission. Each accepted asset spend
+appends three outputs and consumes its asset/native inputs in that shared pool.
+Registry and consumed-administrator-action snapshots publish in the same sled
+transaction as native block state, and rollback/replay restore the corresponding
+canonical snapshot.
+
+The moving-chain Development implementation retains its finite qualification scope. A proof keeps
+its original canonical reference parent H, hash and block-end note root while the
+actual inclusion parent P may satisfy `H <= P <= H+12`. Inclusion is at P+1, so the
+eligible blocks are H+1 through H+13. The relation checks each active private
+credential expiry E and `E-(H+12)` as 48-bit integers; host validation rejects an
+unrepresentable H+12. Thus E covers P, using the existing parent-height expiry
+convention. Bounded-policy `not_before` remains checked at H; advancing P cannot
+activate a branch that was unavailable at the reference.
+
+The reference checkpoint authenticates the issued-asset registry separately from
+the static stablecoin root. The complete registry root at H must equal the current
+root at P, and the public policy must match the complete current row. Freeze,
+revocation, credential-depth changes and any other registry-root change stale the
+proof immediately, even if another asset changed. Supply accounting, issuer mint
+policy and global nullifier freshness are checked at P. Administrator updates use
+the current prepared before/after rows, preserve issuer configuration and counters,
+check their public expiry at P, and retain consumed action identities. Canonical
+reference receipts bind both H and P; reorg replay restores registry/admin history
+with the shared note/nullifier pool and revalidates the selected reference.
+
+The spend relation has a fresh v3 source identity with the same 134 public words;
+the administrator relation and proof backend parameters are unchanged. The fresh
+manifest-derived network identity commits the moving-chain policy, so manifests,
+genesis identity and affected proofs must be regenerated. Historical exact-parent
+certificates and measurements remain conditional on their frozen source pins.
+They do not qualify this changed relation or continuously moving-chain lifecycle.
+The actual V10 moving-chain lifecycle passed with 13 genuine proof candidates
+(8 asset, 4 administrator and 1 native), 21 unique checks and 22 observations.
+All 11 owned processes were reaped and the serialized guard exited zero.
+The retained native receipt is SHA256
+`476dfcdf4960cfd838600b2d5ef0218b0eea4f0c39fc7a3d4103a94aedbacbc0`.
+The [final handoff](.agent/stablecoin-moving-chain-v1/FINAL_HANDOFF.md) binds the
+source package and separate conditional security disposition; lifecycle success
+does not supply a cryptographic security assumption.
+
+Five admitted asset geometries (ordinary depths 4/8/16 and bounded depths 4/8)
+retain `D <= 14088`; bounded depth 16 remains excluded. Fresh lifecycle evidence
+covers ordinary depth 4 and bounded depth 4 only. The V10 inventory is 13 genuine candidates (8 asset, 4 administrator, 1 native).
+The focused summary records 101 passing test executions, not distinct tests, with
+3 ignored. The three-gate aggregate-reorg regression generated zero proofs;
+nine retry fixtures are separate bounded helper checks.
+
+
+The three source-bound conditional arguments are: (1) current CSR/public134
+binding and geometry under accepted-source/decoder interpretation; (2) issuer,
+credential and administrator authority on the same recovered packet and physical
+execution, with the normalized chosen-context seven-game bound; and (3) the actual
+witness-free V10 operational public simulator for source bytes/errors and the same
+persistent physical oracle lifetime. Witness indistinguishability is not a
+substitute for the third endpoint. These arguments retain PR205, exact source and
+compiler/serialization/platform interpretation, fresh RNG/field coins, F1 recovery
+and efficient extraction, authenticated provider provenance, primitive and
+chosen-context game hypotheses, the same physical shared QRO, query/lifetime
+bounds and `ExternalAdaptiveReprogramming`. They grant no unconditional backend
+security or production authority. The final conditional disposition and review
+are recorded separately in
+`.agent/stablecoin-moving-chain-v1/changed-arguments/final-security-staging-v6/final-security-v1.json`;
+that receipt must be verified before the integration handoff is finalized.
+
 The design goals are:
 
 1. **One canonical privacy pool** (no fragmented upgrade pools).
@@ -30,7 +101,295 @@ Everything else is negotiable.
 * **No sudo, validator session, or superuser module** in production/testnet genesis. The PoW chain runs without validator sessions.
 * The live chain has no on-chain governance path. Protocol changes ship through socially adopted release lines and PoW uptake, not a built‑in superuser key.
 
+### 0.2.1 Explicit network identity
+
+New development, pre-mainnet and mainnet native profiles select a validated public
+manifest. Its digest commits the profile, genesis parameters, compiled consensus
+`rules_hash`, mandatory `launch_reference_rules_hash` and exact public funding
+recipient. Both rules fields must equal their compiled lowercase 64-hex values.
+The launch field separately commits the block-end reference policy described
+below; the historical header rules bytes remain unchanged. Native PQ peer signatures and session
+keys authenticate this digest; genesis, mined headers, block import, reorg,
+persisted-chain reload and body transport use the same selected identifier.
+Omitting the explicit profile preserves the legacy identity and signature
+preimages. Network-specific operation intent and proof context remain necessary
+for transaction replay protection; header and transport isolation alone are not
+that proof. Legacy bridge and unbound shielded routes reject on explicit profiles
+until network-bound successors are separately qualified. See
+[pre-mainnet rehearsal](runbooks/pre_mainnet_rehearsal.md) for manifest and
+isolated operator paths. No profile selection grants production proof authority.
+
+Adding `launch_reference_rules_hash` changes the compact typed JSON and therefore
+all explicit manifest-derived chain IDs and manifest digests. Older explicit
+manifests reject because the field is missing; regenerate the manifest and its
+matching wallet/release identity before qualification, and use a new base path.
+Omitted-profile legacy identity, genesis and signature bytes stay unchanged.
+
+The approved launch-reference integration at `a16194cca` preserves every proof's
+original public statement and carrier bytes. RP06, HTLC Claim and Refund may
+reference a canonical block-end note root at height H when the actual inclusion
+parent P satisfies `0 <= P - H <= 12`; their eligible inclusion heights are
+H+1 through H+13. Reference checkpoints begin at activation minus one.
+HTLC Lock requires P=H because its timeout is checked at its
+original reference. A block-end root includes every accepted transaction output
+and the final miner and funding outputs. State authenticates at most 13 linked
+canonical or already validated staged checkpoints and checks a receipt bound to
+the selected parent height/hash and actual inclusion height. Ordering hints
+cannot authorize state, and orphan roots are not canonical references.
+
+The source capability must independently authorize the exact route, proof bytes
+and actual inclusion height in its finite `[activation, end)` interval. Typed
+state replay permits empty blocks and trailing reward commitments across these
+boundaries while stored genesis/static-root identity remains checked. Complete
+native reward actions retain their separate source activation and retirement
+gates; the typed state fixture does not bypass those gates. The manifest policy hash
+cannot widen that interval or install authority. Production capability registries
+remain empty; the approved source integration still needs its affected compiler,
+policy and genuine unchanged-carrier lifecycle checks.
+
 ### 0.3 Native node cutover posture
+
+**Ongoing native HGN admission (October22,2026).** The source-owned common
+PrivateSpend capability can explicitly omit both release expiry and cumulative
+accepted-proof quota. Only this exact HGN mode permits paired absence; partial
+absence, missing source authority and ongoing historical/Development modes reject.
+Network, genesis, manifest, relation and route binding still apply. Per-block
+action/proof-byte ceilings, canonical fresh references, nullifiers, proof checks,
+individual HTLC deadlines and120-block reward maturity are unchanged. The persisted
+proof count is exact audit state in this mode; it does not stop transactions at
+the historical621730874 threshold. Its existing eight-byte codec, per-block checks
+and arithmetic-overflow rejection remain. Finite historical modes retain their
+original source limits. Wallet finite-context bytes remain compatible; storage
+value0 denotes the previously invalid absent end, while runtime types use Option.
+
+The current source is the 86-word/688-byte
+`Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4` relation, circuit 12, with
+837 packed rows, 21,320 linear equations, 721 nonlinear batches, packing 64
+and constraint degree 7. The compact SMZL/q38 configuration has 441 heads and
+DECS degree 478, with six PIOP openings, rho 5, beta 2 and eta 5. Its
+`HGPSLC02` common carrier retains 5,784 fixed bytes including two opaque
+2,608-byte ciphertexts. Five current proof cases generated and verified
+171,281-byte proofs and encoded 177,065-byte carriers; the inner proof is
+4.65% larger than the retained 163,665-byte baseline. The source limits are
+171,848 proof bytes and 177,632 carrier bytes. Compiler packing preserves
+ordinary, treasury, bounded-policy, height-lock, HTLC and private-authorization
+semantics; it does not remove branches or change the native monetary rules.
+
+The compact q38 count/recovery envelope and fresh source composition have
+checked receipts and scoped independent reviews. Their qualification must
+bind the exact v4 relation and 41 source inputs. Earlier v3/q58 and 77-word
+endpoints remain evidence for their original identities, not authorization
+of this compiler. Inclusive source accounting charges prover, verifier and
+trace attempts separately, including partial, failed and unused attempts.
+External mathematical resource conditions are not blockchain transaction quotas.
+Primitive-game, ideal-oracle, independent-coin, adaptive-QROM, finite F1
+extraction, source/compiler and serialization assumptions remain explicit;
+the separate soundness and privacy games yield no unconditional or joint
+128-bit claim. The exact current binaries passed the six-action, same-identity
+HGN single-key lifecycle and native public treasury readback after a clean
+restart. G8 also requires the independently reviewed composite and all five
+final source/artifact acceptance checks. Record actual clearance in a detached
+acceptance receipt; documentation alone grants no release authority. No
+deployment or production authorization is claimed.
+
+**HGN-only launch scope (October 22, 2026).** Pre-mainnet and mainnet launch
+with native HGN, the 120-block miner/treasury reward maturity, native bounded
+policies and HTLCs. Controlled assets, privileged asset recovery and merge
+mining are deferred. Keep the Development implementations and their retained
+evidence for a later separately qualified consensus upgrade. Selected launch
+proof authority has no asset or recovery authority. Node RPC discovery and
+readback require exact source-authorized Development selection; submission
+rejects the four asset/recovery action IDs before decoding their payloads.
+The shared block/import/replay verifier independently requires that authority.
+Ordinary walletd builds reject asset/recovery mutations before RPC, reservation
+or proving, and generic send/plan require every recipient to use native HGN.
+Compiling Development support grants no authority to pre-mainnet or mainnet.
+These boundaries leave the native proof equations and framing unchanged;
+final source/artifact review, identity-bound lifecycle and release authorization
+remain separate requirements.
+
+The separate [qualified asset V1 candidate](docs/STABLECOIN_ASSET_V1.md) adds
+proof-backed issued-asset transfer/mint/burn, native fee accounting, current
+credential checks, freezing and separate administrator controls. Its finite
+Development route is distinct from production activation. The moving-chain
+revision described above requires the final conditional acceptance bundle and
+grants no production authority. Its changed source and public asset/policy
+metadata require the exact source, security and lifecycle evidence linked above. The tested parent bounded policy evaluator is shared by native and asset
+relations. Current asset rules wrap every authorization alternative, including
+height/hash conditions and committed public secret release. Ordinary and combined
+asset geometries are explicitly disclosed in a fresh 134-word statement. Native HGN administrative and monetary rules remain unchanged.
+
+**Historical privacy-redesign evidence.** The earlier development HTLC/RP06
+split exposed spend family and HTLC operation in public carrier bytes. A
+public-byte reproduction classified all 20 retained fixtures. Those paths did
+not satisfy private spend semantics. The replacement design uses one common
+public schema, fixed slots/proof geometry and private constrained selectors
+for ordinary, treasury and HTLC spending. It preserves public subsidy issuance
+at `floor(subsidy/5)`. The earlier static six-operation relation, opaque
+2,608-byte ciphertexts, exact common carrier and typed wallet construction were
+development candidates. Historical pre-feed-forward source-v4 candidate proofs (ordinary, approval, final, lock, claim and refund) share the fixed SMZD geometry: 1,925,669 inner bytes and 1,931,413 bytes per complete carrier. The retained proof-progress/per-branch receipts record exact carrier decoding and unchanged inner-proof checks for source relation digest `9a81b991d2fab104d0ec261b16765a8b5640d97431e2b1189ecc9da433195daa6232124c6e293d324a83d7180694d03f3898502877c8c949a6528848feefd080`. Source-v2 variable-length and source-v3 fixed-frame proofs remain historical. Wallet private-spend 25/25, CLI cargo check, native common 5/5 and protocol 5/5 checks pass; the native exact six-carrier/tampering unit test and optimized CLI build/`--help` also pass with constructed references. Those candidate proofs and focused checks did not close the eight qualification gates at that checkpoint. Current86 conditional security qualification is recorded above; the fresh current-binary lifecycle and release authority remain separate. See the [historical private spend ExecPlan](.agent/native-private-spend-redesign-20261005.md).
+
+PR205 supplies the composed soundness, privacy, authorization and conservation
+foundation. Reuse its initialized oracle/physical compiler, adaptive accounting
+and opened-tape conditioning. The following retained q58/Chron/WPCS
+geometry and 77-field statement describe the historical predecessor; the compact
+SMZL/q38 successor requires its own exact source binding. Match raw roles, public
+heads/selectors/aborts and query ledger under the same disclosed trusted
+Rust/compiler and primitive assumptions. Efficient extraction remains an
+inherited open boundary. The
+[reuse crosswalk](.agent/private-spend-pr205-reuse-20261005.md) records the exact
+premises and changed bindings.
+
+The current release scope preserves PR205's disclosed Rust/compiler and
+primitive interpretation assumptions. Universal Rust equivalence, exhaustive
+per-row reconstruction and a Rust quantum-query lifetime limiter are outside
+the release scope. The required mathematical delta is the repaired compression
+equation/current roles, current Q58 parameters and the complete public-proof
+game with its original state, oracle history, selectors and error outcomes.
+The total-query bound remains conditional on `Q <= 3 * 2^64`; removing the
+runtime limiter does not make that hypothesis or production authority true.
+
+The current G1 endpoint
+`NativePrivateSpendCurrentNativeHistoryJoin.current_native_final_authorization_or_failure`
+covers a satisfying current six-case relation and a source trace with the
+disclosed PR205 F1 native raw-note table, append-prefix and depth32 frontier
+interpretation. It derives original credential-backed Approval lineage and
+Final authorization, or the explicit current history, Final, native Merkle or
+final-snapshot failure predicate. Occupied zero-value Approvals are included;
+Final requires at least two distinct `Fin 3` signer slots with the exact
+context/bitmap and increasing source stages. Distinct slots do not establish
+independently controlled keyholders.
+
+The failure predicates use the current NOTE sponge and COMPFF ordered-node
+hash, raw ordinary-recipient/accumulator equality, accumulator/value/HTLC
+role failures and the exact native empty-owner SINGLE target from
+`[1,0,0,0,0]`. G3 must separately connect verifier acceptance to a satisfying
+assignment. G7 must bind these literal current predicates and their event
+mass in the same execution; historical key-only or zero-target advantages
+are not inherited implicitly. The G1 semantic implication supplies no
+standalone numerical cryptographic bound or production authority.
+
+G2 qualifies the exact current carrier/parser/context, common77 statement,
+checked graph/profile and raw chronological constructors under unchanged
+PR205 F1 implementation trust. Independent review authenticated541 runtime
+source pins,70 applied formal sources, four retained constructor checks and
+six current native proof/carrier pairs with predecessor rejection evidence.
+This finite binding qualification proves no universal Rust equivalence and
+does not close G3 accepted-invalid/prequery/extraction or G5 history bounds.
+
+The retained 77-word G4 kernel-checked endpoint is
+`NativePrivateSpendQ58CurrentInitializedCompletePublic.current_initialized_complete_public_below_128`.
+It compares the honest historical SMZD source with a public-only simulator for
+the complete public proof and error outcome. The common public view retains
+commitment labels and tree layers, D/Q and FPP challenge state, six witness
+openings and reconstructed masks, PCS partials and LVCS tails/subsets, all58
+selected indices and tapes, authentication context and the full error outcome.
+The same arbitrary public caller receives that full view in both games.
+Source/public transformation and unopened-leaf erasure are derived; no desired
+response-binding or prior-membership hypothesis supplies the privacy result.
+
+The conditional loss is `freshLifetimeLoss(Q) + 4*Q/2^256 < 2^-128` for
+inclusive `Q <= 3*2^64`. The contract assumes an honest satisfying current
+relation, ideal SHA512/oracle and independent coins, external adaptive
+reprogramming/GHHM, and the same normalized pre-oracle registers initialized
+with an empty CMS. The public caller and its future mode are shared and its
+queries are charged. Native/compiler/serialization interpretation remains
+trusted under PR205 F1. G4 qualification requires the exact complete38-root
+cohort, independent actual review and application of the17 checked source
+files. This conditional privacy result supplies no mainnet authority.
+
+The retained 77-word G5 endpoint is
+`NativePrivateSpendQ58CurrentPersistentHistory.current_initialized_history_below_128`.
+It composes the current complete public-proof simulator over one persistent
+oracle/register/CMS history, preserving fixed writes, random branches, aborts
+and the same public caller and future mode. The global fresh-table loss is
+charged once; unopened-leaf erasure is charged per request. The total loss is
+`freshLifetimeLoss(Q) + 4*M*Q/2^256 < 2^-128` for `Q <= 3*2^64` and
+`M <= 2^21`.
+M counts all proof attempts, including failed and unused requests. Accepted-chain proof counts supply no bound on M. The class requires both the complete real/public compiled query
+budget and uniform all-context continuation query bounds, including branches
+unreachable in a particular real run. Honest current relation validity,
+normalized empty-CMS initialization, ideal SHA512/oracle, independent coins,
+external adaptive GHHM and PR205 F1/F4 remain explicit assumptions. This is a
+conditional history privacy qualification; it provides no accepted-invalid
+soundness or production authority and installs no runtime quantum limiter.
+
+The retained 77-word G3 endpoint is
+`NativePrivateSpendQ58CurrentAcceptedSourceInitialized128.initialized_accepted_no_source_witness_mass_below_128`.
+For the same produced wire and accepted verifier branch, SourceWitness retains
+that producer execution, its actual native stages and prior records, the
+canonical decoded source, all polynomial identities and a satisfying current
+relation assignment. The raw physical mass of accepted branches without this
+same-source witness is below `2^-128`, including satisfiable public relations.
+The witness-or-current-event classification and raw full-claim cut are derived
+internally on the same execution. Missing claims are charged against their
+original unselected branch mass; fixed tables and physical branch weights are
+preserved. No supplied classifier, event inclusion, certificate, desired
+witness or global-unsatisfiability assumption supplies the result.
+
+This retained G3 qualification uses its historical SMZD/q58 wire,
+`COMPFF01`/v2, 14 DECS blocks yielding the actual58 selected samples, the
+700-cell matrix in `140*row+column` order and current PIOP opening insertion.
+The normalized empty-CMS ordinary-prefix class permits arbitrary
+database-independent private contractions without adversarial programming of
+SHA512 leaf cells. Both support/read-depth and complete prefix/producer/verifier
+queries are charged under `Q <= 3*2^64`. Ideal SHA512/oracle interpretation,
+the disclosed F5 numerical/game conditions and PR205 F1 native
+Rust/parser/compiler/platform binding remain conditional. The exact final
+51-file strict CLI0 cohort, complete three-root Std-only audit, natural reaped
+result, independent actual review and selected source postimages supply the
+qualification evidence. This proves the source-owned witness-failure mass
+bound; efficient extraction remains open. It establishes no full computational
+PoK, global G7 composition, source-catalog approval or production authority.
+
+The retained Compact Merkle, DecodedRelation and ExecutableVerifier components
+supply their recorded readback, decoded-relation and native-stage facts. The
+DecodedRelation legacy conditional Opening theorem remains unselected for the
+current wire. Their failed enclosing cohorts remain failed.
+
+At that historical checkpoint, the runtime lowering checker independently checked the graph, CSR row data, all product/copy/padding lanes and exact77 public bindings without inspecting private assignments. This changed the source-owned relation manifest after the source-v3 receipts; those proofs and executable checks remain historical evidence for their pinned source. Current relation, CSR-corruption and range-metadata tests pass; all six pre-feed-forward V4 proofs were generated and verified with 521 source pins before COMPFF01; those artifacts are now historical. The current native six-carrier test also passes with constructed references. Those pre-repair lifecycle and degree13,169 receipts remain historical. The retained degree13,172/q58 count and recovery component passed24 strict validation steps and14 named axiom roots;23 exact source modules are applied. The repaired21M/COMPFF01 candidate also passed the separate six-case local lifecycle with unchanged complete proof bytes. These are component and local-execution results; complete protocol security, independent review and production authority remain open.
+
+
+
+Pre-mainnet reward development reserves a separate action12 rather than
+reinterpreting action11 carriers. One final internal action appends an exact
+miner note followed by a funding note. Funding receives `floor(subsidy/5)`;
+miners receive the rest plus all fees. Canonical omission forfeits both shares,
+and the funding note is absent only when its amount rounds to zero. A network
+manifest pins the complete recipient and seven-word authorization identity.
+The permanent threshold treasury requires the RP06 relation successor and
+its own reviewed source capability; the existing production selector remains
+closed. The feature source and host tests do not establish release authority.
+
+The Development candidate rehearsal is a separate, default-off path. It
+requires the `development-candidate` build feature, an explicit
+`--development-candidate` opt-in, and a marked candidate manifest that selects
+the `Development` profile with its own chain and genesis identity. A funded
+manifest pins one immutable recipient; consensus assigns it `floor(subsidy/5)`.
+The production capability registry remains empty; candidate identity and
+successful local rehearsal do not create production authority. Rehearsal uses
+the real RP06/SMZC verifiers and the exact source/reference window. During this
+prototype's Lock proof, development mining must pause so the required current
+parent remains fixed; that coordination requirement is not a general liveness
+claim. Real local Bitcoin Core regtest acceptance is a separate gate from
+formal or QROM evidence and from release approval.
+
+The operator path now includes `treasury-v8` notes, attempts,
+canonical-position, recovery, and guarded submit commands, plus a disposable
+three-signer coordinator. Candidate bytes remain locally retained until the
+reviewed digest, exact RP06 carrier, canonical reference, and submit-node tip
+checks pass. Ordinary builds still require source-owned launch authority; its
+registry is empty, so production submission remains denied. The feature-gated
+`--retained-test` path pins an exact Development manifest and is limited to
+rehearsal. A local run reached canonical treasury approvals at H20 and H21 and
+a 50,000-unit final output at H22; this execution receipt is not source authority
+or peer-sync/reorg qualification. Bitcoin Core regtest claim, refund, and scoped
+negative checks have executed. Finite Development runs have since exercised
+public verification, unchanged
+proof-byte relay, persistent restart, fresh-node synchronization and higher-work
+HTLC reorg/replay on the isolated runtime. Their receipts and the running
+four-node measured soak are finite execution evidence; native cryptographic
+qualification and production release authority remain open.
 
 The [current RP05 security scope and review disposition](docs/crypto/RP05_INDEPENDENT_REVIEW_RESOLUTIONS.md)
 and [implementation boundary](docs/crypto/RP05_IMPLEMENTATION_BOUNDARY.md)
@@ -103,6 +462,8 @@ SMZA implementation and local tests do not establish complete adaptive ZK,
 quantum knowledge extraction, lifetime security or release authorization.
 
 Tag-release publication is byte-bound to the attested build outputs. Each platform packages `hegemon-node`, `wallet`, and `walletd` by copying from the same opened file descriptors whose native formats, sizes, and SHA-256 digests match the source release manifest; logical symlinks and reparse points reject, source mutation during inspection or copy rejects, and output files are created exclusively. Every uploaded platform bundle carries a manifest over its exact assets and checksum files. The only job with `contents: write` reopens all downloaded bundles without following symlinks, requires exact file sets and common source provenance, rechecks every asset and checksum, and assembles only those verified bytes for the draft GitHub release. `scripts/check_ci_release_gate_policy.py` parses executable workflow steps and pins this verify/audit/package/upload/download/assemble/publish order, including exact commands and unconditional execution.
+
+Common PrivateSpend release authorization has two phases. The source-owned registry must first bind current G1–G6 evidence and an independent G7 review to the exact relation, finite source closure, mainnet tuple and capability literal under PR205 F1/F4. After the release binaries are produced, each platform must bind their exact `hegemon-node`, `wallet` and `walletd` hashes to an actual 35-gate lifecycle on the new tuple and an independent final review. Freeze this authority metadata before creating the complete artifact manifest; `scripts/check_private_spend_launch_authorization.py` checks that manifest after existing verification and before audit or packaging. An empty registry authorizes no launch. Retained development lifecycle evidence alone cannot authorize the new mainnet tuple; actual deployment remains a separate operator receipt.
 
 The native review fixture uses its initial schema. Its malformed-STARK case recomputes the canonical receipt proof digest after mutating proof bytes, so both verifiers must reach and reject inside SmallWood proof verification rather than obtaining credit from an earlier receipt mismatch. Each receipt-root context embeds the exact full encoded child tx-leaf artifacts, their SHA-256 digests, and their complete transaction contexts. Production and reference root verification independently verify every child artifact before comparing the root leaf statement, witness commitment, and proof identity, so self-described leaf metadata cannot substitute for the artifact being aggregated.
 
@@ -368,6 +729,13 @@ Native fork recovery treats an announced block whose parent is absent as `Missin
 Native sync preserves the legacy postcard enum bytes for ordinals 0 through 3. The active exact locator and action-body carrier occupies ordinals 4 through 7: `AnnounceLocator`, `ResponseLocators`, `BlockBodyRequest`, and `BlockBodyChunk`. The incompatible stored-metadata-record fallback variants `RequestBlockChunk` and `BlockChunk` occupy ordinals 8 and 9 but reject in the raw tag prefilter before postcard can allocate any length-bearing field. Ordinal 10 `AnnounceTip` is active only as a bounded, unverified height/hash hint: it may close the mining gate and schedule an ordinary request, but it cannot import a block, prove a tip, open or resolve the gate, or count as canonical progress. This is an append-only extension, not capability negotiation; large-block interoperability requires both peers to support the exact locator/action-body carrier.
 
 Large blocks are announced or returned as exact locators and their canonical action bodies are requested one at a time by block hash. The locator binds the active schema, chain, rules, height, block and parent identities, cumulative work, exact body length, body hash, and derived bounded chunk count. Every non-final `BlockBodyChunk` fills the fixed chunk cap and the final chunk equals the exact remainder; peer/global reassembly counts, bytes, idle lifetime, and absolute lifetime are capped before retention. Completion requires the exact accumulated length and body hash, bounded full-consumption decode, canonical re-encoding, and equality with the locator before the block reaches the existing authorized import path. The retired metadata-record chunk model remains useful conditional analysis, but ordinals 8 and 9 are deliberately unreachable and provide no production validity or availability path.
+
+A mixed-size response keeps the maximal contiguous small-block prefix that fits the existing body-byte and encrypted-frame limits. A later large body does not force that prefix through the rate-limited single-body carrier. When the first requested body is large, the response still contains exactly one locator. Body verification, request authorization and sender rate limits are unchanged.
+
+A valid authorized locator response that arrives while the local peer body queue is busy, or while bounded queue capacity is exhausted, is deferred through the existing retry path. Locator identity, shape, order, count and advertised-tip validation still runs first. Local backpressure does not classify an honest peer as malformed or evict its unresolved target; malformed responses retain their terminal rejection behavior.
+
+Validated sync response prefixes retain their forward recovery cursor across a peer handoff only when the exact target height and hash remain identical. The completed body stays bound to its original authorized request, hash, parent and proof checks. Durably verified recovery rows may advance traversal without claiming canonical progress; ordinary stale skips may not. Late prefixes cannot rewind a later cursor, and a complete target response clears obsolete traversal.
+
 
 These caps bound session cardinality, canonical segment count and size, and each admitted raw record; they are not a process-RSS or completion-peak bound. At completion the receiver can transiently own segmented chunks, a consolidated raw record, the decoded metadata, exact-decoder work, and the current encrypted/decrypted protocol frame, with sled pages and allocator residency outside that accounting. The sender can retain one raw sled record per active serving session. After the common import handoff, winning-fork adoption exact-classifies and durability-flushes missing rows, then uses compact ancestry and one-stored-body-at-a-time replay/index passes instead of retaining a full-body branch vector. Replay state and canonical output-plan/write-set data still scale with history, state, or canonical outputs. Regression coverage therefore includes append-only legacy bytes, a valid record requiring more than four authenticated chunks, invalid request/chunk floods that consume zero workers, idle and hard expiry, failover and explicit close release, strict canonical length/order/offset admission, malformed schema and digest rejection, total/chunk oversize rejection, and the common successful import path; those tests establish the named structural bounds, not a global heap bound.
 
@@ -721,6 +1089,86 @@ The bridge long-range proof-shape admission table is represented in Lean as well
 
 ### 2.6 Independent transaction proof mode
 
+#### Bounded-policy candidate delta (October 16, 2026)
+
+The new candidate implements exactly two fixed OR branch slots, each requiring
+one spending credential AND an absolute minimum reference-parent height AND
+an optional SHA256 preimage. A branch may commit to mandatory public preimage
+release; release requires a hash condition. A satisfied branch controls the
+ordinary payment destinations and fee, rather than supplying an independent
+joint signature. There is no arbitrary nesting, threshold or relative-delay
+language. The owner commits chain, asset, version, both branches and a shared
+nullifier key; every branch spends the same note with the same nullifier.
+
+The current compact relation is `Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4`, with 86
+public words and `HGPSLC02`/circuit 12 transport: a 568-byte preamble and two
+2,608-byte ciphertexts, followed by the actual proof. HTLC disclosure is opt-in
+at lock creation under a fresh releasing owner domain. Old private HTLC owners
+and exact `PSN2` plaintexts stay unchanged; bounded policies and releasing HTLCs
+use `PSN3`. A minimum parent height T first permits inclusion at T+1.
+Releasing action export/broadcast irreversibly exposes its preimage even if
+orphaned; release alone does not prove cross-chain swap safety. No HTLC claim
+upper deadline is added, so the existing claim/refund race after timeout remains.
+
+Source capability and registry checks require the exact qualified tuple.
+Historical 77-word and v3/q58 descriptions, measured predecessor proof bytes
+and retained PR205/G1–G8 receipts keep their original identities. The compact
+v4 proof measurements above do not replace its changed mathematical/source
+obligations or the fresh wallet/node lifecycle and final artifact checks. See
+[bounded policies](docs/BOUNDED_POLICIES.md) for limits, private handoffs,
+CLI workflow and the validation boundary.
+
+The prepared source-authorized PrivateSpend wallet route uses the same common
+relation and proof geometry. A wallet derives its authority from the exact
+source-owned mainnet capability and validated manifest/genesis; the existing
+authorized prover and journal retain and submit the unchanged proof. A bounded
+unsafe loopback pending-action observer returns only already-public canonical
+action bytes. These finite wallet/RPC changes require their own actual scoped
+compiler/regression review and exact postimage pins. Empty source registries
+still reject. The local release runner copies an existing private custody
+fixture into fresh stores using produced binaries. A legacy 2-of-3 fixture
+exercises six proof cases; a single-key fixture exercises four fresh cases
+(ordinary, lock, claim and refund), with its treasury payout using the ordinary
+case. The historical35-check/six-case receipt is not a fresh single-key receipt.
+Report the actual custody/coverage and required release checks before packaging;
+a local lifecycle does not itself close G8 or establish operator deployment.
+No new key, recipient or mainnet identity is inferred.
+
+The current pool interface separates work/share submission, public reward
+accounting and wallet spending. `--rpc-methods=pool` is a loopback-only method
+allowlist used behind an authenticated tunnel. `hegemon_blockReward` returns
+canonical observations and exact decimal atom strings; its public recipient
+binding is not the whole shielded address. Both miner and treasury rewards
+created at height `h` enter the spendable note tree at the end of `h + 119`
+(miner before treasury, after ordinary outputs), so their first spending block
+is `h + 120`. Ordinary outputs retain their prior timing. The maturity rule and
+pending-state codec require the corresponding fresh launch identity/state;
+old roots and proof artifacts cannot be reinterpreted under it. See
+[external mining pool interfaces](docs/POOL_INTERFACES.md) for the contract,
+reorg/accounting boundary and separate single-key operator-tool scope.
+
+The width-16 candidate compressor uses the separate `COMPFF01` compression
+identity and returns `P(left || right || domain || COMPFF01)[i] + left[i]`
+in the Goldilocks field for all seven output limbs. Permutation rounds,
+matrices and constants remain unchanged. The variable-length sponge retains
+its original suite and `SPONGEV1` framing. Native/ring calls, manually emitted
+V8/RP06 constraints, chained output references and witness material apply the
+same feed-forward equation while permutation trace cells remain raw.
+
+Compression-bound owners, default Merkle roots, proof source/transcript
+identities and encoded V8/RP06 programs require regeneration. Saved root and
+frontier codecs require the new compression marker. Ordinary `PSN1` payloads
+retain their encoding; conditional notes require mode-bound `PSN2`. Old roots,
+conditional payloads and proof identities are rejected rather than rewritten.
+Six regenerated current-mode private-spend proofs verify unchanged under
+relation `3ef6aaa1…182756a`: each inner proof is 1,926,125 bytes and each complete
+carrier is 1,931,869 bytes, an actual 456-byte increase. All six share the same
+static source geometry and opaque ciphertext shape. Unmodified predecessor
+proofs and carriers reject under the repaired context. This finite evidence
+does not establish a new hash-security proof, complete privacy or universal
+source refinement. Full lifecycle qualification and production authorization
+remain separate requirements.
+
 The active product path is an ordered chain of independent native SmallWood transaction proofs. Every shielded transfer carries one canonical `tx_leaf` artifact. Block authors preflight those proofs and publish no `proven_batch`, `block_artifact`, receipt root, commitment proof, or recursive candidate. Import verifies each transaction proof, its parent-state anchor, the ordered DA projection, and the resulting state transition through `InlineRequired`. Historical `recursive_block_v1` and `recursive_block_v2` artifacts remain readable only for replaying blocks that already contain them; the native `receipt_root` object is decode-only.
 
 Wallet synchronization mirrors a local full node or a trusted operator's full
@@ -761,6 +1209,15 @@ order cannot authorize state writes or change the first reported failure.
 Stateful test verifiers keep the sequential default. Single-CPU hosts or pool
 initialization failure retain the legacy per-caller sequential fallback, not a
 claimed global worker bound. Proof bytes and verifier equations are unchanged.
+
+RP05 CI now separates a source-only guard, bounded incremental theorem
+compilation/body audits, and scheduled/manual cold project replay. Supplemental
+roots preserve the four reviewed endpoint statements. The
+[primitive audit](docs/crypto/RP05_PRIMITIVE_ASSUMPTIONS.md) pins the six concrete
+games; all numerical advantages remain unquantified. The
+[adaptive context obligation](docs/crypto/RP05_ADAPTIVE_CONTEXT_OBLIGATION.md)
+records a checked adaptive parsed-context model bound below `2^-130`, with
+the parsing connection and efficient-extractor requirement still open. These changes grant no production authority.
 
 The RP05 mathematical interface is maintained in `formal/rp05`: four public
 entry modules expose soundness, adaptive privacy, authorization/nullifiers and
@@ -1278,3 +1735,77 @@ the analysis indices `q <= 2^65` and `r <= 2^21` give simulator distance at most
 and a two-witness gap below `2^-128`. This is not a deployed resource policy, concrete
 SHA-512 construction theorem, runtime refinement, or production P7 receipt. See the
 [privacy endpoint](docs/crypto/smz9-campaign/privacy-endpoint-completion.md).
+
+### RP06 native treasury candidate
+
+The additive `HGV8RP06` source program keeps the V8 note and private approval-accumulator equations, while defining a permanent native value-note authorization as `H(AUTH_MODE_BIND, policy_nullifier_key, H(AUTH_VALUE_LOCK, policy_root, zero_digest))`. The shared descriptor/nullifier key identifies and tracks custody notes; the source relation still requires ledger-proven approvals from two distinct members of the hidden three-signer policy before a final spend. The final operation includes its exact source value nullifier, destination commitments, ciphertext commitments, amounts/fee surface and all 32 network bytes. Anchor, parent height and disabled stable state are checked for each proof and may advance while approvals are collected.
+
+The wallet checks each proposed recipient and change ciphertext by re-encrypting
+its reviewed opening to the full address with a retained private KEM seed. This
+wallet validation does not change the RP06 statement, proof relation or public
+carrier. V14 plans migrate without seed evidence and require recreation and fresh
+review before new approval or final construction; retained preexisting attempts
+remain recoverable only from their exact saved digest and material snapshot.
+Legacy approval recovery binds the retained accumulator to the reviewed final
+payment intent; final-spend recovery also requires the statement-derived payment
+intent. Approval recovery restores the local signer key; both paths preserve
+reserved nullifiers.
+
+RP06 is a separate 128-word public grammar, action14/circuit9/crypto7/profile10/domain6 with `SMZB` proof bytes and an exact 1192-byte public preamble. Historical 120-word V8 grammar and proof authority remain separate. The source-only candidate and wallet setup/proving APIs do not install release authority. Genuine source-generated proofs and encrypted wallet recovery are finite development evidence; independent privacy/security, whole-node lifecycle, release authorization and live-chain evidence remain required.
+
+The retained q58 private-spend component model includes twenty-two arithmetic-topology theorems and two q58 algebra modules with thirty-one and twenty-four audited declarations. The latter derive the exact 140-by-58 tail to 12-by-58 published plus 58-by-128 subset law, and five masks with 58 evaluations and 13,112 high coefficients, under ideal field randomness and their stated fixed-history/admissibility conditions. Same-prefix feedback and explicit abort outputs are retained. Actual Rust certificate/accepted-byte correspondence, complete transcript conditioning, sampler and oracle execution, full six-case semantics and outer ciphertext/nullifier privacy composition remain separate open obligations. These components do not grant release authority.
+
+The checked `NativePrivateSpendQ58ChronologicalMasks.lean` composes an explicit bijection over 232,283 ideal field coordinates, recovering PIOP masks from the DECS response before the same-tail LVCS transport. Its 46-declaration strict audit contains only standard Lean logical axioms. It retains witness and PCS coins, arbitrary continuations, finite instrument kernels and explicit abort observations. Gamma is fixed context in this model. Removal of those private coordinates, actual commitment-dependent oracle chronology, source refinement and complete public-only simulation remain open. This modeled component grants no production authority.
+
+## Release helper source policy
+
+This branch permits zero executable release helpers; its approved download contents are the three native binaries and their existing checksum/manifest records. `config/release-launcher-policy.json` declares the permitted source files and digests. `scripts/check_release_launcher_policy.py` rejects changed or unlisted helpers, unsupported executable types, PowerShell startup, and execution-policy weakening in the bounded release producers. Builds, native manifest creation/verification, bundle assembly, and maintenance ZIP packaging call this guard before producing outputs. Existing native bundle checks still require exact file sets, formats, hashes, and source provenance. Markdown release notes are source documentation and are not downloadable helpers.
+
+Review every helper or packaging-recipe change together with its allowlist and digest changes. The guard catches this launcher regression; it does not certify arbitrary shell semantics, dependencies, build hosts, or the whole supply chain. A changed allowlist is not human approval. Existing cryptographic and production authorization gates, final package inspection, and explicit release publication authorization remain required. Run `python3 -B scripts/check_release_launcher_policy.py`, `python3 -B scripts/test_check_release_launcher_policy.py`, and `python3 -B scripts/test_release_launcher_boundaries.py`; the suites also run through the existing `check-core.sh` base-test path. Actual Windows launcher behavior requires the Windows release CI checks.
+
+## Optional Development asset recovery profile
+
+The native Development route implements recovery for explicitly opted-in, pre-issuance non-native assets. The selected genesis descriptor separates holder authorization, immutable archive decryption and a rotating delegate action key; its maximum powers cannot expand. Holder and delegate routes use the same committed independent nullifier key and enforce current actor and recipient credentials, whole-asset freeze and the targeted-note freeze tree. Existing non-opted asset routes retain their identities. Production capability remains unauthorized; implementation and conditional argument evidence require exact source-bound qualification.
+
+The fresh Development recovery wire (`HGARCV02`, version2) carries one spend proof and two output capsules. Each capsule is a strict `SMRC` collection of two `SMZR` proofs with separate compiled source identities, covering ChaCha20 bytes0..128 at counter1 and128..176 at counter3. Each graph binds all82 public words and repeats canonical full30-word opening, owner, shared-nullifier and archive-key checks. Compact22 encryption omits only fields deterministically reconstructed from the public context and committed owner equation. Agreement of independently extracted component openings relies on the retained note/archive/owner commitment binding assumptions.
+
+Every component remains capped at2097152 bytes. The explicit capsule collection cap is4194320 bytes; full recovery action and JSON/base64 transport limits derive from the five-component grammar. The canonical pool charges five proof units, permits one recovery carrier per block and retains the global note positions/nullifiers and atomic registry/snapshot/reorg publication. Wallet journals reserve exact final inputs before proving, retain exact bytes before export and persist submission uncertainty before RPC.
+
+Retained recovery bytes are immutable journal artifacts. `recovery.export` is an archival read and remains available after canonical consumption, reference expiry or orphaning, including after restart. It accepts only nonempty retained candidate/submission records whose exact framing, public words, nullifiers, chain and recorded reference identity match the journal. Proving, abandoned and mismatched records cannot be exported. Export neither changes reservations nor makes an old action eligible for inclusion: candidate retrieval and submission still require reservation exclusivity, a canonical reference within its height window and unspent inputs. Node admission independently checks current state and the actual proofs.
+
+Ordinary holders and issuers can select exactly one `archive_provider` process or explicitly privileged local `archive_key`. The provider route does not supply S to the ordinary holder. The bounded private process protocol sends the original public descriptor/context and recoverable opening/shared-nullifier material; the provider returns a complete capsule. The wallet verifies both actual component proofs against that original request for each output before preparing the action. The archive worker uses its independently provisioned immutable archive secret S and receives no holder, issuer, administrator or delegate action secret. The privileged delegate route explicitly supplies local S for input recovery and inspection together with an independent current delegate action secret and credential; provider-assisted input decryption is not implemented. Archive knowledge alone supplies no action authority, which also depends on independently generated holder/action keys and current authorization controls.
+
+The archive operator is a trusted custodian of recoverable plaintext and shared-nullifier material. It provisions an independent uniformly random32-byte S, authenticates its immutable commitment at genesis and protects the private key file, directory and backups. Separate custody requires an archive-operator security context and an authenticated, confidential deployment wrapper; walletd supplies a bounded local process protocol, not remote key provisioning, transport authentication or service availability. Key availability, independent honest setup entropy and custody remain explicit premises. A same-UID fixture shows which process loads S and supplies no hostile-process isolation from that UID. Normal cleanup kills/reaps the directly owned child and joins its reader; the outer process-group supervisor and any approved wrapper own abrupt-parent termination, descendants and remote jobs.
+
+Source-bound finite Development fixtures have exercised the implemented paths. The cooperative fixture completed four genuine carriers with16 proof components: issuer mint through walletd using local S and issuer authority, ordinary holder preparation through `archive_provider` without S in that request, privileged delegate transfer using local S and its independent current action key without the input holder's spending secret, and governance-authorized delegate rotation. It also checked exact retained holder/delegate bytes after inclusion and sync, cold restart and fresh peer re-verification. Only the ordinary holder path demonstrates provider-only/no-S preparation; the same-UID coordinator knows the public disposable fixture S. The separate full native fixture completed46 proof components and checks current controls, both holder/delegate shared-nullifier orders, targeted/whole freezes, credential revocation, rotation, native fees, accounting, administrative root cycles, restart and actual-work reorgs. CLI build/focused host tests and both fixture receipts bind exact source/binary bytes and drained process guards. These are finite Development results, not production deployment or hostile-OS isolation.
+
+The independently checked public cost readback accounts for complete retained carrier and component bytes, canonical recovery proof units/fees, source/binary bindings and aggregate guarded runtime for both fixtures. Generated costs include rejected or noncanonical candidates; canonical unit accounting is separate. These measurements establish finite fixture costs, not TPS, pure-prover attribution, live encrypted-network throughput or production capacity.
+
+Geometry and same-execution authority are conditional source-bound arguments. Privacy qualification requires the actual witness-free operational simulator, successful reached-source witness production, every-repeat capsule recomputation, adaptive public proof/ciphertext requests, all error paths and the same persistent oracle history.
+
+<!-- RECOVERY_FINAL_QUALIFICATION_BEGIN -->
+The exact selected source instance is conditionally qualified by the actual123-module compile/kernel closure,986 enumerated root-body audits and recursive dependency/standard-axiom checks of the three original public roots and independent reviews of accepted-source geometry, original same-execution authority and the original actual witness-free adaptive lifetime simulator. The simulator endpoint includes bytes/errors and the same persistent prefix/future; it is not a witness-indistinguishability substitute. Original retained assumptions and the production boundary below remain in force.
+
+Qualification pins: formal_receipt `b0d0fed95c998a42ede259110125d1f90e5ee34779d7f11dc12164015fe429b6`; source_manifest `c67bb797338eb3e718c5af05ca48a6a2be72ee733df8377d222ef7f2ac4dcef6`; geometry_review `b71b492b3223987672ddf05410adc2b894385b49a58957205c01e0793d3290b9`; authority_review `bd9ed04305062dcee3312b18bb5f34a0df0e95c3710aa888bdb001c9fece5e42`; privacy_review `9868b96c2dfa1d9f9b7a31bb4f377e6694540c14f877760ec231903e61b7219f`.
+<!-- RECOVERY_FINAL_QUALIFICATION_END -->
+
+ Local identities and witness indistinguishability do not establish that endpoint. The retained PR205, source/compiler/serialization/platform, canonical-field and honest-RNG interpretation, F1 recovery and efficient extraction, chosen-context primitive-game bounds, same physical shared-QRO execution, authenticated provider provenance and `ExternalAdaptiveReprogramming` assumptions remain explicit. This does not assert general Rust equivalence, unconditional backend security or production authority.
+
+
+
+### v0.11 pre-mainnet release boundary
+
+The prepared pre-mainnet release is `v0.11` (display version `0.11.0`);
+mainnet is planned as `v1.00`. The versioned public network manifest and release
+record live in `config/testnet/0.11/`. The public launcher pins that manifest,
+uses a separate state path and defaults to syncing without mining. A pending
+cutover record blocks this launcher only; it adds no blockchain expiry or
+lifetime transaction quota. `hegemon-ovh` is the planned primary seed and
+`hegemon-dev` a secondary after the separately authorized cutover. Preparing
+source/CI/release files leaves the running v0.10.3 network unchanged. Preserve
+its state and keep the existing single-key treasury; miners require only the
+user-controlled public payout address. Stablecoins and merge mining stay
+disabled. Retained formal/protocol receipts keep their original identities;
+versioned final binaries require fresh artifact provenance and affected checks.
+See [the operator guide](config/testnet/0.11/README.md) and
+[release checklist](docs/releases/v0.11.md).

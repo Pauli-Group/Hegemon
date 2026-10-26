@@ -2,12 +2,15 @@
 
 extern crate alloc;
 
+pub mod asset_note_encryption_v1;
 pub mod deterministic;
 pub mod error;
 pub mod hashes;
 pub mod ml_dsa;
 pub mod ml_kem;
 pub mod note_encryption;
+pub mod private_note_encryption;
+pub mod private_note_payload;
 pub mod slh_dsa;
 pub mod traits;
 

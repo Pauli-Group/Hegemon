@@ -35,6 +35,9 @@ pub const ACTION_SMALLWOOD_POSEIDON2_PRODUCTION_INLINE: ActionId = 10;
 /// consensus accepts it only under the same source-owned production capability
 /// as action 10, only as the final block action, and never from RPC or relay.
 pub const ACTION_MINT_POSEIDON2_V8_COINBASE: ActionId = 11;
+/// Final internally authored reward bundle for the exact 80/20 subsidy split.
+/// Recognition reserves bytes only; release authority is separately gated.
+pub const ACTION_MINT_POSEIDON2_V8_REWARDS: ActionId = 12;
 
 pub const ACTION_SUBMIT_PROVEN_BATCH: ActionId = ACTION_SUBMIT_CANDIDATE_ARTIFACT;
 

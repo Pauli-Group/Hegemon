@@ -590,15 +590,53 @@ theorem production_nonlinear_roots_are_in_expression_program_kernel :
     (List.getElem_mem constraintBound)
   simpa [List.getD, constraintBound] using of_decide_eq_true checked
 
+private theorem bool_all_getD
+    {Value : Type}
+    (predicate : Value -> Bool)
+    (fallback : Value)
+    (fallbackChecked : predicate fallback = true)
+    (values : List Value) :
+    ∀ index, values.all predicate = true ->
+      predicate (values.getD index fallback) = true := by
+  induction values with
+  | nil =>
+      intro index checked
+      simpa only [List.getD_nil] using fallbackChecked
+  | cons value values inductionHypothesis =>
+      intro index checked
+      have parts : predicate value = true ∧ values.all predicate = true := by
+        simpa only [List.all_cons, Bool.and_eq_true] using checked
+      cases index with
+      | zero =>
+          simpa only [List.getD_cons_zero] using parts.1
+      | succ index =>
+          simpa only [List.getD_cons_succ] using inductionHypothesis index parts.2
+
+private theorem production_formal_degree_table_bounded_checked :
+    productionFormalDegreeBlocks.all
+      (fun block => block.all
+        (fun degree => decide (degree ≤ effectiveConstraintDegree))) = true := by
+  decide
+
+private theorem production_formal_degree_at_bounded (index : Nat) :
+    productionFormalDegreeAt index ≤ effectiveConstraintDegree := by
+  have blockChecked := bool_all_getD
+    (fun block : List Nat => block.all
+      (fun degree => decide (degree ≤ effectiveConstraintDegree)))
+    [] (by rfl) productionFormalDegreeBlocks (index / 256)
+    production_formal_degree_table_bounded_checked
+  have degreeChecked := bool_all_getD
+    (fun degree : Nat => decide (degree ≤ effectiveConstraintDegree))
+    0 (by decide) (productionFormalDegreeBlocks.getD (index / 256) [])
+    (index % 256) blockChecked
+  exact of_decide_eq_true degreeChecked
+
 theorem production_constraint_degrees_bounded :
     ∀ constraint, constraint < nonlinearConstraintCount ->
       productionConstraintFormalDegree constraint ≤ effectiveConstraintDegree := by
   intro constraint constraintBound
-  have checked :
-      productionConstraintDegreesBoundedB = true := by
-    decide
-  have certificateBound := of_decide_eq_true <|
-    (List.all_eq_true.mp checked) constraint (List.mem_range.mpr constraintBound)
+  have certificateBound := production_formal_degree_at_bounded
+    (productionNonlinearConstraintRoots.getD constraint 0)
   have staticConstraintBound :
       constraint < productionNonlinearConstraintRoots.length := by
     rw [production_nonlinear_root_count_is_exact]

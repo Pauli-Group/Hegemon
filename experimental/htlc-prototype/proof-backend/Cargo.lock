@@ -1065,6 +1065,7 @@ dependencies = [
  "slh-dsa",
  "subtle",
  "thiserror 1.0.69",
+ "transaction-core",
  "zeroize",
 ]
 

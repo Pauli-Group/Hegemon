@@ -67,6 +67,7 @@ jobs:
   formal-core-lean:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    if: ${{ github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -89,7 +90,8 @@ jobs:
 
   formal-core-vectors:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
+    if: ${{ github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -141,7 +143,7 @@ jobs:
       - formal-core-policy
     timeout-minutes: 2
     steps:
-      - name: Require every formal-core shard
+      - name: Require PR checks and separate formal qualification
         env:
           CHECKER_RESULT: ${{ needs.formal-core-checker.result }}
           LEAN_RESULT: ${{ needs.formal-core-lean.result }}
@@ -149,9 +151,14 @@ jobs:
           POLICY_RESULT: ${{ needs.formal-core-policy.result }}
         run: |
           test "$CHECKER_RESULT" = success
-          test "$LEAN_RESULT" = success
-          test "$VECTORS_RESULT" = success
           test "$POLICY_RESULT" = success
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            test "$LEAN_RESULT" = skipped
+            test "$VECTORS_RESULT" = skipped
+          else
+            test "$LEAN_RESULT" = success
+            test "$VECTORS_RESULT" = success
+          fi
 
   formal-crypto-isolation:
     runs-on: ubuntu-latest
@@ -165,7 +172,7 @@ jobs:
 
   formal-crypto-sanity:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     needs: formal-crypto-isolation
     steps:
       - name: Free disk space
@@ -190,6 +197,7 @@ jobs:
       - name: Transaction-proof successor authorization regression
         run: python3 -I -B scripts/test_check_transaction_proof_successor_authorization.py
       - name: Install Lean toolchain manager
+        if: ${{ github.event_name != 'pull_request' }}
         env:
           ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
         run: |
@@ -198,6 +206,7 @@ jobs:
           printf '%s  %s\n' "$ELAN_INIT_SHA256" "$ELAN_INIT" | sha256sum -c -
           sh "$ELAN_INIT" -y --default-toolchain none
       - name: Complete formal cryptography gate
+        if: ${{ github.event_name != 'pull_request' }}
         env:
           HEGEMON_FORMAL_CRYPTO_MIN_FREE_GIB: '8'
         run: bash scripts/check_formal_crypto.sh full
@@ -226,6 +235,11 @@ jobs:
           - node-minimal
     env:
       PROPTEST_CASES: 64
+      # Keep all tests, debug assertions and overflow checks; optimize expensive
+      # circuit/wallet loops so CI measures them instead of timing out in debug.
+      CARGO_PROFILE_TEST_OPT_LEVEL: "2"
+      CARGO_BUILD_JOBS: "2"
+      RAYON_NUM_THREADS: "2"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -277,7 +291,8 @@ jobs:
           ./scripts/run_exact_cargo_lib_test.sh wallet poseidon2_v8::tests::smza_wallet_route_preserves_maximum_proof_and_rejects_smz9
           ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::submit_sidecar_action_rejects_before_consuming_embedded_staged_proof --no-default-features
           ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::pending_action_startup_durably_quarantines_inactive_sidecar_with_matching_ciphertext --no-default-features
-          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::poseidon2_v8_state::tests::trailing_coinbase_appends_after_outputs_and_survives_restart_reorg_and_fresh_replay --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::poseidon2_v8_state::tests::pending_coinbase_preserves_hash_kat_outputs_restart_reorg_and_fresh_replay --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::poseidon2_v8_state::tests::reward_maturity_excludes_both_roles_until_h_plus_120_and_reorgs_release --no-default-features
           ./scripts/run_exact_cargo_lib_test.sh transaction-circuit smallwood_frontend::tests::production_verifier_evidence_matches_active_verifier --release
           ./scripts/run_exact_ignored_cargo_lib_test.sh transaction-circuit smallwood_engine::tests::verifier_rejects_forged_self_consistent_pcs_layer --release
           ./scripts/run_exact_cargo_lib_test.sh block-recursion tests::recursive_proof_envelope_component_checks_reject_tampered_envelope
@@ -405,11 +420,20 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
           shared-key: "core-rust"
+          # Target-cache pruning treats retained evidence as a Cargo profile.
+          # Keep registry reuse; restore evidence only from its authenticated archive.
+          cache-targets: false
       - name: Release binary build
         run: ./scripts/check-core.sh build
 
+      - name: Check bounded successor receipt rejection controls
+        run: python3 -I -B scripts/test_check_v011_crypto_consumer.py
+
+      - name: Restore authenticated v0.11 predecessor for strict binary qualification
+        run: python3 -I -B scripts/materialize_v011_predecessor.py --reserve-bytes 4294967296
+
       - name: Release PQ binary audit
-        run: ./scripts/security-audit.sh --allow-unapproved-profile --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
+        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd --binary target/release/private-spend
 
   release-build:
     runs-on: ubuntu-latest

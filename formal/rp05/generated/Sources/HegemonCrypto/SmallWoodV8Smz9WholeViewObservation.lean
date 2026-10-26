@@ -986,10 +986,364 @@ def simulatorInput : SimulatorViewInput Unit :=
 def simulatorConstructorRegression : Bool :=
   (simulatorWholeView? zeroOracle simulatorInput).isSome
 
+private theorem simulator_leaf_tape_bytes_length :
+    (simulatorOpenedLeafTapes.map Subtype.val).flatten.length = openedLeafTapesBytes := by
+  simp [simulatorOpenedLeafTapes, taggedDigest, List.length_flatten, List.map_map,
+    Function.comp_def, List.map_const', encodeLE_length,
+    smz9OpenedLeaves, openedLeafTapesBytes, openedLeafCount, openedLeafTapeBytes]
+
+private theorem simulator_auth_paths_are_canonical :
+    AuthPathsCanonical simulatorAuthPaths := by
+  refine ⟨⟨?_, ?_, ?_, ?_⟩, ?_, ?_⟩
+  · exact encodeLE_length 2 smz9OpenedLeaves
+  · decide
+  · decide
+  · change (List.replicate (368 * 64) (0 : Byte)).length = _
+    rw [List.length_replicate]
+    decide
+  · decide
+  · decide
+
+private theorem proof_with_leaf_tapes_is_canonical
+    (paths : AuthPathsWire) (tapes : List Byte)
+    (pathsCanonical : AuthPathsCanonical paths)
+    (tapesLength : tapes.length = openedLeafTapesBytes) :
+    (let base := SmallWoodSmz9ProofWire.Examples.makeProof paths
+     { base with
+       pcs :=
+         { base.pcs with
+           decs := { base.pcs.decs with leafTapeBytes := tapes } } }).Canonical := by
+  dsimp only [SmallWoodSmz9ProofWire.ProofWire.Canonical,
+    SmallWoodSmz9ProofWire.proofPayloadCodec, PrefixCodec.xmap, PrefixCodec.pair,
+    PrefixCodec.fixed, SmallWoodProofWire.piopCodec, SmallWoodSmz9ProofWire.pcsCodec,
+    SmallWoodSmz9ProofWire.decsCodec, SmallWoodSmz9ProofWire.openedWitnessSmz9Codec,
+    PrefixCodec.refine, SmallWoodProofWire.openedWitnessCodec,
+    SmallWoodProofWire.matrixCodec, SmallWoodSmz9ProofWire.authPathsCodec]
+  simp only [SmallWoodSmz9ProofWire.Examples.makeProof,
+    SmallWoodSmz9ProofWire.Examples.makePcs, SmallWoodSmz9ProofWire.Examples.makeDecs,
+    SmallWoodSmz9ProofWire.Examples.zeroPiop]
+  simp [pathsCanonical, tapesLength,
+    SmallWoodSmz9ProofWire.Examples.zeroMatrix, SmallWoodSmz9ProofWire.Examples.zeroBytes,
+    OpenedWitnessSmz9, OpenedWitnessWire.Canonical,
+    MatrixWire.Canonical, MatrixWire.rowCount, MatrixWire.columnCount,
+    maximumCollectionRows, fieldWordsCanonicalB, fieldOrder,
+    encodeLE_length, decodeLE_encodeLE]
+
+private theorem simulator_proof_is_canonical : simulatorProof.Canonical := by
+  exact proof_with_leaf_tapes_is_canonical simulatorAuthPaths
+    (simulatorOpenedLeafTapes.map Subtype.val).flatten
+    simulator_auth_paths_are_canonical simulator_leaf_tape_bytes_length
+
+private theorem smz9_encoded_length (proof : SmallWoodSmz9ProofWire.ProofWire) :
+    proof.encode.length = 4 + proof.saltBytes.length + proof.nonceBytes.length +
+      proof.piopHashBytes.length + proof.piop.polynomialHighs.encode.length +
+      proof.piop.linearHighs.encode.length + proof.pcs.randomCombinationTails.encode.length +
+      proof.pcs.subsetEvaluations.encode.length + proof.pcs.partialEvaluations.encode.length +
+      proof.pcs.decs.authPaths.encode.length + proof.pcs.decs.leafTapeBytes.length +
+      proof.pcs.decs.maskingEvaluations.encode.length + proof.pcs.decs.highCoefficients.encode.length +
+      proof.openedWitness.encode.length := by
+  simp only [SmallWoodSmz9ProofWire.ProofWire.encode,
+    SmallWoodSmz9ProofWire.proofPayloadCodec, PrefixCodec.xmap, PrefixCodec.pair,
+    PrefixCodec.fixed, SmallWoodProofWire.piopCodec, SmallWoodSmz9ProofWire.pcsCodec,
+    SmallWoodSmz9ProofWire.decsCodec, SmallWoodSmz9ProofWire.openedWitnessSmz9Codec,
+    PrefixCodec.refine, SmallWoodProofWire.openedWitnessCodec,
+    SmallWoodProofWire.matrixCodec, SmallWoodSmz9ProofWire.authPathsCodec,
+    List.length_append, SmallWoodSmz9ProofWire.proofMagic_length, id_eq]
+  omega
+
+private theorem simulator_proof_within_cap :
+    simulatorProof.encode.length ≤ maximumInnerProofBytes := by
+  rw [smz9_encoded_length]
+  simp only [simulatorProof, SmallWoodSmz9ProofWire.Examples.makeProof,
+    SmallWoodSmz9ProofWire.Examples.makePcs, SmallWoodSmz9ProofWire.Examples.makeDecs,
+    SmallWoodSmz9ProofWire.Examples.zeroPiop, SmallWoodSmz9ProofWire.Examples.zeroMatrix,
+    SmallWoodSmz9ProofWire.Examples.zeroBytes, simulatorAuthPaths,
+    MatrixWire.encode, AuthPathsWire.encode, OpenedWitnessWire.encode]
+  rw [simulator_leaf_tape_bytes_length]
+  simp only [List.length_append, List.length_replicate, List.length_cons, List.length_nil,
+    encodeLE_length, smz9OpenedLeaves, digestBytes, openedLeafTapesBytes,
+    openedLeafCount, openedLeafTapeBytes, maximumInnerProofBytes]
+  decide
+
+private theorem simulator_proof_roundtrips :
+    SmallWoodSmz9ProofWire.decodeProofExact simulatorProof.encode = some simulatorProof := by
+  exact SmallWoodSmz9ProofWire.decodeProofExact_encode simulatorProof
+    simulator_proof_is_canonical simulator_proof_within_cap
+
+private theorem decodeDigestList_encode
+    (digests : List Sha512Digest) (suffix : List Byte) :
+    decodeDigestList digests.length ((digests.map Subtype.val).flatten ++ suffix) =
+      some (digests, suffix) := by
+  induction digests with
+  | nil => rfl
+  | cons digest digests inductionHypothesis =>
+      simp only [List.length_cons, List.map_cons, List.flatten_cons,
+        List.append_assoc, decodeDigestList]
+      rw [readFixed_append digest.property]
+      change (digestOfBytes? digest.val >>= fun head =>
+        decodeDigestList digests.length ((digests.map Subtype.val).flatten ++ suffix) >>=
+          fun pair => some (head :: pair.1, pair.2)) = _
+      have digestDecoded : digestOfBytes? digest.val = some digest := by
+        simp only [digestOfBytes?, dif_pos digest.property]
+      rw [digestDecoded]
+      change (decodeDigestList digests.length ((digests.map Subtype.val).flatten ++ suffix) >>=
+        fun pair => some (digest :: pair.1, pair.2)) = _
+      rw [inductionHypothesis]
+      rfl
+
+private theorem simulator_node_digests_decode :
+    decodeDigestList 368 (List.replicate (368 * 64) 0) =
+      some (List.replicate 368 Sha512Digest.zero, []) := by
+  have decoded := decodeDigestList_encode (List.replicate 368 Sha512Digest.zero) []
+  simpa only [List.length_replicate, List.map_replicate, Sha512Digest.zero,
+    List.flatten_replicate_replicate, List.append_nil] using decoded
+
+private theorem simulator_auth_paths_decode :
+    decodeAuthenticationPaths simulatorProof =
+      some (List.replicate 16 (List.replicate 18 Sha512Digest.zero) ++
+        List.replicate 4 (List.replicate 20 Sha512Digest.zero)) := by
+  unfold decodeAuthenticationPaths
+  change (do
+    let (digests, suffix) ← decodeDigestList 368 (List.replicate (368 * 64) 0)
+    if suffix = [] then
+      splitDigestPaths (List.replicate 16 18 ++ List.replicate 4 20) digests
+    else none) = _
+  rw [simulator_node_digests_decode]
+  decide
+
+private theorem simulator_leaf_tapes_decode :
+    decodeOpenedLeafTapes simulatorProof = some simulatorOpenedLeafTapes := by
+  have decoded := decodeDigestList_encode simulatorOpenedLeafTapes []
+  have lengthExact : simulatorOpenedLeafTapes.length = smz9OpenedLeaves := by
+    simp [simulatorOpenedLeafTapes]
+  rw [lengthExact, List.append_nil] at decoded
+  unfold decodeOpenedLeafTapes
+  rw [show decodeDigestList smz9OpenedLeaves simulatorProof.pcs.decs.leafTapeBytes =
+      some (simulatorOpenedLeafTapes, []) from decoded]
+  rfl
+
+
+private def simulator_expected_programs : List ExpectedProgram :=
+  simulatorProgramPositions.map fun position =>
+    ⟨position.1, position.2, Sha512Digest.zero⟩
+
+private def simulator_program_table : List RawSha512OracleProgram :=
+  ((List.range simulatorProgramPositions.length).map fun ordinal =>
+    (⟨rawKey merkleNodeDomain
+      ((taggedDigest (1000 + 2 * ordinal)).rawWords ++
+        (taggedDigest (1001 + 2 * ordinal)).rawWords),
+      Sha512Digest.zero, .lazyMerkle⟩ : RawSha512OracleProgram)) ++
+    [simulatorFinalProgram]
+
+private theorem simulator_expected_programs_extract :
+    extractExpectedPrograms canonicalLeafIndexes
+      (List.replicate 16 (List.replicate 18 Sha512Digest.zero) ++
+        List.replicate 4 (List.replicate 20 Sha512Digest.zero)) =
+      some simulator_expected_programs := by
+  decide
+
+private def simulator_merkle_program_table : List RawSha512OracleProgram :=
+  (List.range simulatorProgramPositions.length).map fun ordinal =>
+    (⟨rawKey merkleNodeDomain
+      ((taggedDigest (1000 + 2 * ordinal)).rawWords ++
+        (taggedDigest (1001 + 2 * ordinal)).rawWords),
+      Sha512Digest.zero, .lazyMerkle⟩ : RawSha512OracleProgram)
+
+private theorem simulator_merkle_programs_build :
+    simulatorProgramNodes.mapM (programmedMerkleProgram simulatorProof) =
+      some simulator_merkle_program_table := by
+  decide
+
+private theorem simulator_program_table_pairwise :
+    simulator_program_table.Pairwise (fun left right => left.key ≠ right.key) := by
+  decide
+
+private theorem buildProgramTable_of_merkle_programs
+    (proof : SmallWoodSmz9ProofWire.ProofWire)
+    (nodes : List ProgrammedMerkleNode)
+    (finalWords : List RawWord) (finalOutput : Sha512Digest)
+    (merklePrograms : List RawSha512OracleProgram)
+    (merkleBuilt : nodes.mapM (programmedMerkleProgram proof) = some merklePrograms)
+    (keysDistinct : (merklePrograms ++ [finalPiopProgram finalWords finalOutput]).Pairwise
+      (fun left right => left.key ≠ right.key)) :
+    buildProgramTable proof nodes finalWords finalOutput =
+      some (merklePrograms ++ [finalPiopProgram finalWords finalOutput]) := by
+  unfold buildProgramTable
+  rw [merkleBuilt]
+  change (if (merklePrograms ++ [finalPiopProgram finalWords finalOutput]).Pairwise
+      (fun left right => left.key ≠ right.key)
+    then some (merklePrograms ++ [finalPiopProgram finalWords finalOutput])
+    else none) = _
+  exact if_pos keysDistinct
+
+private theorem simulator_program_table_build :
+    buildProgramTable simulatorProof simulatorProgramNodes
+      simulatorConcreteTrace.piopTranscriptWords Sha512Digest.zero =
+      some simulator_program_table := by
+  exact buildProgramTable_of_merkle_programs simulatorProof simulatorProgramNodes
+    simulatorConcreteTrace.piopTranscriptWords Sha512Digest.zero simulator_merkle_program_table
+    simulator_merkle_programs_build simulator_program_table_pairwise
+
+private theorem simulator_trace_shape_valid :
+    traceShapeValid simulatorConcreteTrace = true := by
+  simp [traceShapeValid, simulatorConcreteTrace]
+  decide
+
+private theorem simulator_positions_increasing :
+    merklePositionsStrictlyIncreasing simulatorProgramNodes = true := by
+  decide
+
+private theorem simulator_nodes_match :
+    nodesMatchExpected simulatorProgramNodes simulator_expected_programs = true := by
+  decide
+
+private theorem simulator_inputs_fresh :
+    allInputDigestsFresh simulatorOpenedLeafTapes simulatorProgramNodes = true := by
+  decide
+
+private theorem rawKey_canonical_of_words
+    (domain : List Byte) (words : List RawWord)
+    (role : domain ∈ smz9VerifierRawSha512RoleDomains)
+    (bounds : words.Forall (fun word => word < rawWordCardinality)) :
+    (rawKey domain words).Canonical := by
+  exact ⟨rfl, role, bounds, by change 0 < rawWordCardinality; decide⟩
+
+private theorem replicated_raw_words_bounded
+    (count word : Nat) (bound : word < rawWordCardinality) :
+    (List.replicate count word).Forall (fun value => value < rawWordCardinality) := by
+  apply List.forall_iff_forall_mem.mpr
+  intro value member
+  have same : value = word := (List.mem_replicate.mp member).2
+  exact same ▸ bound
+
+private theorem simulator_final_key_canonical : simulatorFinalProgram.key.Canonical := by
+  apply rawKey_canonical_of_words
+  · decide
+  · exact replicated_raw_words_bounded smz9FinalPiopInputWordCount 8 (by decide)
+
+private theorem simulator_merkle_keys_canonical :
+    simulator_merkle_program_table.all (fun program => decide program.key.Canonical) = true := by
+  decide
+
+private theorem simulator_table_keys_canonical :
+    simulator_program_table.all (fun program => decide program.key.Canonical) = true := by
+  change (simulator_merkle_program_table ++ [simulatorFinalProgram]).all
+    (fun program => decide program.key.Canonical) = true
+  apply List.all_eq_true.mpr
+  intro program member
+  rcases List.mem_append.mp member with merkleMember | finalMember
+  · exact List.all_eq_true.mp simulator_merkle_keys_canonical program merkleMember
+  · have same : program = simulatorFinalProgram := List.mem_singleton.mp finalMember
+    subst program
+    simpa only [decide_eq_true_eq] using simulator_final_key_canonical
+
+private theorem lookup_appended_final_program
+    (merklePrograms : List RawSha512OracleProgram) (finalProgram : RawSha512OracleProgram)
+    (distinct : ∀ program ∈ merklePrograms, program.key ≠ finalProgram.key) :
+    lookupProgram (merklePrograms ++ [finalProgram]) finalProgram.key = some finalProgram := by
+  unfold lookupProgram
+  apply List.find?_eq_some_iff_append.mpr
+  refine ⟨by simp, merklePrograms, [], rfl, ?_⟩
+  intro program member
+  simpa using distinct program member
+
+private theorem simulator_merkle_keys_ne_final :
+    ∀ program ∈ simulator_merkle_program_table, program.key ≠ simulatorFinalProgram.key := by
+  intro program member equality
+  obtain ⟨ordinal, _, rfl⟩ := List.mem_map.mp member
+  have domains : merkleNodeDomain = piopTranscriptDomain :=
+    congrArg RawSha512OracleKey.roleDomain equality
+  exact (by decide : merkleNodeDomain ≠ piopTranscriptDomain) domains
+
+private theorem final_query_consistent
+    (oracle : ConcreteRawOracle) (merklePrograms : List RawSha512OracleProgram)
+    (finalProgram : RawSha512OracleProgram)
+    (distinct : ∀ program ∈ merklePrograms, program.key ≠ finalProgram.key) :
+    queryConsistent oracle (merklePrograms ++ [finalProgram])
+      ⟨finalProgram.key, finalProgram.output, some finalProgram.kind⟩ = true := by
+  unfold queryConsistent
+  rw [lookup_appended_final_program merklePrograms finalProgram distinct]
+  simp
+
+private theorem singleton_final_query_all
+    (oracle : ConcreteRawOracle) (merklePrograms : List RawSha512OracleProgram)
+    (finalProgram : RawSha512OracleProgram)
+    (canonical : finalProgram.key.Canonical)
+    (distinct : ∀ program ∈ merklePrograms, program.key ≠ finalProgram.key) :
+    [⟨finalProgram.key, finalProgram.output, some finalProgram.kind⟩].all
+      (fun query => decide query.key.Canonical &&
+        queryConsistent oracle (merklePrograms ++ [finalProgram]) query) = true := by
+  simp only [List.all_cons, List.all_nil, Bool.and_true]
+  rw [final_query_consistent oracle merklePrograms finalProgram distinct]
+  simpa only [Bool.and_true, decide_eq_true_eq] using canonical
+
+private theorem simulator_queries_consistent :
+    simulatorQueryTrace.all (fun query =>
+      decide query.key.Canonical && queryConsistent zeroOracle simulator_program_table query) =
+      true := by
+  exact singleton_final_query_all zeroOracle simulator_merkle_program_table simulatorFinalProgram
+    simulator_final_key_canonical simulator_merkle_keys_ne_final
+
+private theorem simulator_constructor_checks :
+    traceShapeValid simulatorInput.verifierTrace ∧
+      traceShapeValid simulatorInput.concreteVerifierTrace ∧
+      simulatorInput.verifierTrace.payload = simulatorInput.concreteVerifierTrace.payload ∧
+      simulatorInput.verifierTrace.piopTranscriptWords =
+        simulatorInput.concreteVerifierTrace.piopTranscriptWords ∧
+      simulatorInput.verifierTrace.decsLeafIndexes =
+        simulatorInput.concreteVerifierTrace.decsLeafIndexes ∧
+      simulatorInput.programmedFinalPiopInputWords =
+        simulatorInput.concreteVerifierTrace.piopTranscriptWords ∧
+      simulatorInput.programmedFinalPiopOutput = Sha512Digest.zero ∧
+      merklePositionsStrictlyIncreasing simulatorInput.programmedMerkleNodes ∧
+      nodesMatchExpected simulatorInput.programmedMerkleNodes simulator_expected_programs ∧
+      allInputDigestsFresh simulatorOpenedLeafTapes simulatorInput.programmedMerkleNodes ∧
+      simulator_program_table.all (fun program => decide program.key.Canonical) ∧
+      (histogram simulatorInput.programmedMerkleNodes) = simulatorInput.recordedMerkleHistogram ∧
+      simulatorCoinLedgerValid simulatorInput.coinLedger simulatorInput.programmedMerkleNodes (histogram simulatorInput.programmedMerkleNodes) ∧
+      simulatorInput.priorSha512Queries.all (fun key => decide key.Canonical) ∧
+      simulatorInput.priorSha512Queries.Nodup ∧
+      simulatorInput.priorSha512Queries.all (fun key => (lookupProgram simulator_program_table key).isNone) ∧
+      simulatorInput.orderedOracleQueryTrace.all (fun query =>
+        decide query.key.Canonical && queryConsistent zeroOracle simulator_program_table query) ∧
+      (replayReceipt simulator_program_table simulatorInput.orderedOracleQueryTrace) = simulatorInput.recordedReplayReceipt ∧
+      (replayReceipt simulator_program_table simulatorInput.orderedOracleQueryTrace).finalPiopProgramHits = 1 ∧
+      (replayReceipt simulator_program_table simulatorInput.orderedOracleQueryTrace).lazyMerkleProgramHits = 0 ∧
+      simulatorInput.verifierTrace.accepts = true ∧
+      simulatorInput.concreteSha512Accepts = simulatorInput.concreteVerifierTrace.accepts := by
+  exact ⟨simulator_trace_shape_valid, simulator_trace_shape_valid,
+    rfl, rfl, rfl, rfl, rfl,
+    simulator_positions_increasing, simulator_nodes_match, simulator_inputs_fresh,
+    simulator_table_keys_canonical, rfl, by decide, rfl, by decide, rfl,
+    simulator_queries_consistent, by decide, by decide, by decide, rfl, rfl⟩
+
+private theorem option_bind_isSome_of_some {α β : Type}
+    {input : Option α} {value : α} {next : α → Option β}
+    (h : input = some value) (hnext : (next value).isSome = true) :
+    (input >>= next).isSome = true := by
+  rw [h]
+  exact hnext
+
+private theorem option_isSome_if_pos {α : Type} {p : Prop} [Decidable p]
+    (h : p) (value : α) : (if p then some value else none).isSome = true := by
+  rw [if_pos h]
+  rfl
+
 set_option maxRecDepth 1000000 in
 theorem simulator_constructor_regression_passes :
     simulatorConstructorRegression = true := by
-  decide
+  unfold simulatorConstructorRegression simulatorWholeView?
+  rw [show simulatorInputEnvelopeValid simulatorInput = true by decide]
+  change (simulatorWholeViewAfterEnvelope? zeroOracle simulatorInput).isSome = true
+  unfold simulatorWholeViewAfterEnvelope?
+  refine option_bind_isSome_of_some (show SmallWoodSmz9ProofWire.decodeProofExact simulatorInput.proofBytes = some simulatorProof from simulator_proof_roundtrips) ?_
+  refine option_bind_isSome_of_some simulator_auth_paths_decode ?_
+  refine option_bind_isSome_of_some simulator_leaf_tapes_decode ?_
+  refine option_bind_isSome_of_some (show proofPiopDigest? simulatorProof = some Sha512Digest.zero by rfl) ?_
+  refine option_bind_isSome_of_some simulator_expected_programs_extract ?_
+  refine option_bind_isSome_of_some simulator_program_table_build ?_
+  apply option_isSome_if_pos
+  exact simulator_constructor_checks
 
 def simulatorSurfaceRegression : Bool :=
   match simulatorWholeView? zeroOracle simulatorInput with

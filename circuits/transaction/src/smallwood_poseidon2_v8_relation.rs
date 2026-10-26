@@ -9,8 +9,8 @@
 use blake3::Hasher;
 use transaction_core::{
     poseidon2_width16::{
-        poseidon2_width16_step_ring, Felt, POSEIDON2_WIDTH16_DIGEST, POSEIDON2_WIDTH16_STEPS,
-        POSEIDON2_WIDTH16_SUITE_MARKER, POSEIDON2_WIDTH16_WIDTH,
+        poseidon2_width16_step_ring, Felt, POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER,
+        POSEIDON2_WIDTH16_DIGEST, POSEIDON2_WIDTH16_STEPS, POSEIDON2_WIDTH16_WIDTH,
     },
     stablecoin_poseidon2_v8::{
         verify_stablecoin_transition_v8, StablecoinPoseidon2V8Context, StablecoinPoseidon2V8Digest,
@@ -256,15 +256,16 @@ fn compression_call(
     state[..POSEIDON2_WIDTH16_DIGEST].copy_from_slice(&left);
     state[POSEIDON2_WIDTH16_DIGEST..2 * POSEIDON2_WIDTH16_DIGEST].copy_from_slice(&right);
     state[14] = Felt::from_u64(domain_tag);
-    state[15] = Felt::from_u64(POSEIDON2_WIDTH16_SUITE_MARKER);
+    state[15] = Felt::from_u64(POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER);
     let mut states = [[0u64; POSEIDON2_WIDTH16_WIDTH]; POSEIDON2_WIDTH16_STEPS + 1];
     states[0] = snapshot(&state);
     for step in 0..POSEIDON2_WIDTH16_STEPS {
         poseidon2_width16_step_ring(&mut state, step);
         states[step + 1] = snapshot(&state);
     }
-    let mut output = [Felt::ZERO; POSEIDON2_WIDTH16_DIGEST];
-    output.copy_from_slice(&state[..POSEIDON2_WIDTH16_DIGEST]);
+    // Keep all trace snapshots as raw permutation states. Only the named
+    // compression digest adds the original left operand in the field.
+    let output = core::array::from_fn(|lane| state[lane] + left[lane]);
     SmallwoodPoseidon2V8CompressionCall {
         domain_tag,
         left,
@@ -994,6 +995,7 @@ pub fn smallwood_poseidon2_v8_relation_supports_mask_and_auth(
 mod tests {
     use super::*;
     use crate::smallwood_frontend::SmallwoodPrivateAuthMode;
+    use transaction_core::poseidon2_width16::poseidon2_width16_compress14;
     use transaction_core::stablecoin_poseidon2_v8::{
         stablecoin_poseidon2_v8_config_digest, stablecoin_poseidon2_v8_issuer_authorization,
         stablecoin_poseidon2_v8_issuer_commitment, stablecoin_poseidon2_v8_leaf,
@@ -1187,6 +1189,34 @@ mod tests {
                 &witness.issuer_secret
             )
         );
+    }
+
+    #[test]
+    fn compression_witness_calls_match_native_feedforward_and_raw_steps() {
+        let (context, public, witness) = fixture();
+        let material =
+            build_smallwood_poseidon2_v8_relation_material(context, public, witness).unwrap();
+        assert_eq!(material.poseidon_calls.len(), 19);
+        for call in &material.poseidon_calls {
+            assert_eq!(
+                call.states[0][15],
+                POSEIDON2_WIDTH16_COMPRESSION_MODE_MARKER
+            );
+            assert_eq!(
+                call.output,
+                poseidon2_width16_compress14(call.domain_tag, &call.left, &call.right)
+            );
+            let mut state = call.states[0].map(Felt::from_u64);
+            for step in 0..POSEIDON2_WIDTH16_STEPS {
+                poseidon2_width16_step_ring(&mut state, step);
+                assert_eq!(call.states[step + 1], snapshot(&state));
+            }
+            for lane in 0..POSEIDON2_WIDTH16_DIGEST {
+                assert_eq!(call.output[lane], state[lane] + call.left[lane]);
+            }
+        }
+        assert_eq!(material.poseidon_calls[15].output, public.before_root);
+        assert_eq!(material.poseidon_calls[16].output, public.after_root);
     }
 
     #[test]

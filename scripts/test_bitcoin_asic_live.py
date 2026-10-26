@@ -53,13 +53,115 @@ def reserve_ports(count: int) -> list[int]:
 def rpc(url: str, method: str, params: list[Any] | None = None, timeout: float = 5) -> Any:
     payload = {"jsonrpc": "2.0", "id": secrets.randbelow(1 << 30),
                "method": method, "params": [] if params is None else params}
-    request = Request(url, data=json.dumps(payload).encode(),
-                      headers={"Content-Type": "application/json"})
-    with urlopen(request, timeout=timeout) as response:
-        result = json.loads(response.read())
+    result = rpc_payload(url, payload, timeout)
     if not isinstance(result, dict) or result.get("error") is not None:
         raise RuntimeError(f"RPC {method} failed: {result!r}")
     return result.get("result")
+
+
+def rpc_payload(url: str, payload: Any, timeout: float = 5) -> Any:
+    request = Request(url, data=json.dumps(payload).encode(),
+                      headers={"Content-Type": "application/json"})
+    with urlopen(request, timeout=timeout) as response:
+        raw = response.read(1024 * 1024 + 1)
+    if len(raw) > 1024 * 1024:
+        raise RuntimeError("pool RPC acceptance response exceeded 1 MiB")
+    return json.loads(raw)
+
+
+def check_pool_policy(url: str) -> dict[str, Any]:
+    catalog = rpc(url, "rpc_methods")
+    methods = catalog.get("methods") if isinstance(catalog, dict) else None
+    if not isinstance(methods, list):
+        raise RuntimeError("pool RPC catalog is malformed")
+    required = {"hegemon_poolWork", "hegemon_submitPoolShare", "hegemon_blockReward",
+                "hegemon_poolStatus", "chain_getBlockHash", "chain_getHeader"}
+    if not required.issubset(methods):
+        raise RuntimeError("pool RPC catalog omits required mining/accounting methods")
+    forbidden = {"hegemon_submitAction", "hegemon_submitTransaction", "hegemon_startMining",
+                 "hegemon_stopMining", "da_submitCiphertexts", "da_submitProofs", "system_peers",
+                 "chain_getBlockActionsChunk", "hegemon_pendingActionChunk"}
+    if forbidden.intersection(methods):
+        raise RuntimeError("pool RPC catalog exposes methods outside the pool profile")
+    config = rpc(url, "hegemon_nodeConfig")
+    if config.get("rpcMethods") != "pool" or config.get("redacted") is not True:
+        raise RuntimeError("live node is not using the redacted pool profile")
+    for method in sorted(forbidden):
+        result = rpc_payload(url, {"jsonrpc": "2.0", "id": 1,
+                                   "method": method, "params": [{}]})
+        if not isinstance(result, dict) or result.get("error") is None:
+            raise RuntimeError(f"pool RPC accepted forbidden individual method {method}")
+        if "disabled by the pool policy" not in str(result["error"]):
+            raise RuntimeError(f"forbidden method {method} did not hit the policy guard")
+    mixed = rpc_payload(url, [
+        {"jsonrpc": "2.0", "id": 11, "method": "system_health", "params": []},
+        {"jsonrpc": "2.0", "id": 12, "method": "hegemon_submitAction", "params": [{}]},
+        {"jsonrpc": "2.0", "id": 13, "method": "hegemon_submitTransaction", "params": [{}]},
+    ])
+    if not isinstance(mixed, list) or len(mixed) != 3:
+        raise RuntimeError("pool mixed batch response is malformed")
+    rows = {row.get("id"): row for row in mixed if isinstance(row, dict)}
+    if rows.get(11, {}).get("result") is None:
+        raise RuntimeError("pool mixed batch rejected the allowed health request")
+    for ident in (12, 13):
+        if "disabled by the pool policy" not in str(rows.get(ident, {}).get("error")):
+            raise RuntimeError("pool mixed batch bypassed the spending policy guard")
+    if rpc(url, "hegemon_blockReward", ["0x" + "ff" * 32]) is not None:
+        raise RuntimeError("unknown block reward must return null")
+    return {"policy": "pool", "catalog_restricted": True,
+            "individual_denials": len(forbidden), "mixed_batch_denials": 2,
+            "unknown_reward_is_null": True}
+
+
+def reward_snapshot(url: str, height: int, block_hash: str) -> dict[str, Any]:
+    reward = rpc(url, "hegemon_blockReward", ["0x" + block_hash])
+    if not isinstance(reward, dict) or reward.get("schema") != "hegemon.block-reward.v1":
+        raise RuntimeError("accepted block reward observation is malformed")
+    if (reward.get("height") != height or reward.get("canonical") is not True
+            or reward.get("block_hash", "").removeprefix("0x") != block_hash
+            or reward.get("tip_height") != height
+            or reward.get("tip_hash", "").removeprefix("0x") != block_hash
+            or reward.get("confirmations") != 1 or reward.get("maturity_blocks") != 120):
+        raise RuntimeError("accepted reward canonical identity/tip/maturity disagrees with the node")
+    for field in ("scheduled_subsidy_atoms", "issued_subsidy_atoms", "fees_atoms",
+                  "miner_amount_atoms", "treasury_amount_atoms"):
+        value = reward.get(field)
+        if not isinstance(value, str) or not value.isascii() or not value.isdecimal() or str(int(value)) != value:
+            raise RuntimeError(f"{field} is not a canonical decimal atom string")
+    miner = int(reward["miner_amount_atoms"])
+    treasury = int(reward["treasury_amount_atoms"])
+    if reward.get("reward_present") is True:
+        if miner + treasury != int(reward["issued_subsidy_atoms"]) + int(reward["fees_atoms"]):
+            raise RuntimeError("reward split does not conserve the issued subsidy plus fees")
+        if reward.get("maturity_height") != height + 120 or reward.get("height_eligible_for_next_block") is not False:
+            raise RuntimeError("new reward has incorrect maturity or is immediately eligible")
+        for name, amount in (("miner", miner), ("treasury", treasury)):
+            note = reward.get(name)
+            if amount == 0 and note is None:
+                continue
+            if not isinstance(note, dict) or note.get("amount_atoms") != str(amount):
+                raise RuntimeError(f"{name} recipient record does not match the exact reward")
+            fields = ({"recipient_key_hex": 32, "authorization_key_hex": 32,
+                       "authorization_extension_hex": 24, "commitment_hex": 56}
+                      if "recipient_key_hex" in note else {"recipient_address_hex": None, "commitment_hex": 48})
+            for field, size in fields.items():
+                raw = note.get(field)
+                if not isinstance(raw, str) or not raw.startswith("0x"):
+                    raise RuntimeError(f"{name} {field} is missing")
+                decoded = bytes.fromhex(raw[2:])
+                if not decoded or (size is not None and len(decoded) != size):
+                    raise RuntimeError(f"{name} {field} has the wrong width")
+    elif reward.get("reward_present") is False:
+        # The legacy disposable harness has no authorized positive reward
+        # fixture. Verify forfeiture explicitly; do not claim a V8 treasury payout.
+        if (miner != 0 or treasury != 0 or reward["issued_subsidy_atoms"] != "0"
+                or reward.get("miner") is not None or reward.get("treasury") is not None
+                or reward.get("maturity_height") is not None
+                or reward.get("height_eligible_for_next_block") is not False):
+            raise RuntimeError("block without issuance acquired a reward or maturity record")
+    else:
+        raise RuntimeError("reward_present must be an explicit boolean")
+    return reward
 
 
 def status(url: str) -> tuple[int, str]:
@@ -108,7 +210,7 @@ def launch_node(binary: Path, base: Path, rpc_port: int, p2p_port: int,
                 name: str, seeds: str, log_path: Path) -> subprocess.Popen[bytes]:
     env = isolated_node_env(seeds)
     command = [str(binary), "--dev", "--base-path", str(base),
-               "--rpc-methods", "unsafe", "--rpc-port", str(rpc_port),
+               "--rpc-methods", "pool", "--rpc-port", str(rpc_port),
                "--listen-addr", f"127.0.0.1:{p2p_port}", "--name", name]
     with log_path.open("ab", buffering=0) as log:
         return subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL,
@@ -273,6 +375,8 @@ def run(node_bin: Path, timeout: int) -> dict[str, Any]:
         node_b = launch_node(node_bin, base_b, rpc_b, p2p_b, "asic-live-b",
                              f"127.0.0.1:{p2p_a}", Path(receipt["logs"]["source_b"]))
         wait_rpc(url_b, min(timeout_at, time.monotonic() + 40))
+        receipt["pool_profiles"] = {"source_a": check_pool_policy(url_a),
+                                    "source_b": check_pool_policy(url_b)}
         adapter_env = isolated_node_env("")
         adapter_env["HEGEMON_STRATUM_PASSWORD"] = secrets.token_urlsafe(24)
         adapter_log = Path(receipt["logs"]["adapter"]).open("ab", buffering=0)
@@ -367,10 +471,15 @@ def run(node_bin: Path, timeout: int) -> dict[str, Any]:
         submitted = client.response(submit_id, min(timeout_at, time.monotonic() + 20))
         if submitted.get("result") is not True or submitted.get("error") is not None:
             raise RuntimeError(f"adapter rejected independently solved network share: {submitted!r}")
+        accepted_tip = status(url_a)
+        accepted_reward = reward_snapshot(url_a, accepted_tip[0], accepted_tip[1])
         replay_id = client.send("mining.submit", ["miner.1", notify_job, ex2.hex(), notify[7], nonce])
         replay = client.response(replay_id, min(timeout_at, time.monotonic() + 10))
         if replay.get("result") is not False:
             raise RuntimeError(f"adapter accepted replayed share: {replay!r}")
+
+        if status(url_a) != accepted_tip or reward_snapshot(url_a, *accepted_tip) != accepted_reward:
+            raise RuntimeError("replayed share changed the canonical tip or reward observation")
 
         mined_deadline = min(timeout_at, time.monotonic() + 20)
         height_a, hash_a = genesis
@@ -390,6 +499,9 @@ def run(node_bin: Path, timeout: int) -> dict[str, Any]:
         sync_deadline = min(timeout_at, time.monotonic() + 40)
         height_b, hash_b = wait_status(url_b, height_a, hash_a, sync_deadline)
         peer_health = rpc(url_b, "system_health")
+        synced_reward = reward_snapshot(url_b, height_b, hash_b)
+        if synced_reward != accepted_reward:
+            raise RuntimeError("synced node reports different accepted reward data")
         receipt.update({
             "job_id": notify_job, "version": notify[5], "ntime": notify[7], "nbits": nbits,
             "target": f"{target:064x}", "extranonce1": extranonce1.hex(),
@@ -402,6 +514,9 @@ def run(node_bin: Path, timeout: int) -> dict[str, Any]:
             "source_b_peer_check": peer_health,
             "share_difficulty": share_difficulty,
             "mutated_ntime_rejected": True, "replay_rejected": True,
+            "reward_observation": accepted_reward,
+            "reward_coverage": "positive-issued-reward" if accepted_reward["reward_present"] else "known-block-without-issuance",
+            "reward_sync_identical": True, "replay_preserves_tip_and_reward": True,
             "adapter_submission": submitted, "adapter_mutated_ntime_response": bad_time,
             "adapter_replay_response": replay,
         })
@@ -416,7 +531,10 @@ def run(node_bin: Path, timeout: int) -> dict[str, Any]:
                              Path(receipt["logs"]["source_a"]))
         wait_rpc(url_a, min(timeout_at, time.monotonic() + 40))
         reopened = wait_status(url_a, height_a, hash_a, min(timeout_at, time.monotonic() + 20))
+        if reward_snapshot(url_a, *reopened) != accepted_reward:
+            raise RuntimeError("restart changed the accepted reward observation")
         receipt["source_a_restart"] = {"height": reopened[0], "block_hash": reopened[1], "same_tip": True}
+        receipt["reward_restart_identical"] = True
         receipt["status"] = "passed"
         return receipt
     except Exception as exc:

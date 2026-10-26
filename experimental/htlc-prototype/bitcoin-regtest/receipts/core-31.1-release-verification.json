@@ -1,0 +1,14 @@
+{
+  "version": "31.1",
+  "archive": "bitcoin-31.1-x86_64-linux-gnu.tar.gz",
+  "archive_sha256": "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e",
+  "valid_signature_subkey_fingerprint": "CFB16E21C950F67FA95E558F2EEB9F5CC09526C1",
+  "valid_signature_primary_fingerprint": "E777299FC265DD04793070EB944D35F9AC3DB76A",
+  "sha256_manifest_verified": true,
+  "source": "https://bitcoincore.org/bin/bitcoin-core-31.1/",
+  "verification_commands": [
+    "sha256sum --ignore-missing --check SHA256SUMS",
+    "gpg --homedir gnupg --status-fd 1 --verify SHA256SUMS.asc SHA256SUMS",
+    "sha256sum bitcoin-31.1-x86_64-linux-gnu.tar.gz"
+  ]
+}

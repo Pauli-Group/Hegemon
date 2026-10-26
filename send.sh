@@ -13,4 +13,4 @@ fi
 ./target/release/wallet node-send \
   --store ~/.hegemon-wallet \
   --recipients "$RECIPIENTS_FILE" \
-  --ws-url ws://127.0.0.1:9944
+  --ws-url http://127.0.0.1:9944

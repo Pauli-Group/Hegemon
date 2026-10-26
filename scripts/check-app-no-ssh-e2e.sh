@@ -26,6 +26,13 @@ if [[ -n "${HEGEMON_NODE_BIN:-}" || -n "${HEGEMON_WALLETD_BIN:-}" ]]; then
   exit 2
 fi
 
+# Run portable wallet transport regressions before building or launching E2E binaries.
+cargo test --locked -p wallet --test node_rpc
+cargo test --locked -p wallet --bin wallet rpc_argument_tests
+cargo test --locked -p wallet --lib node_rpc::tests
+npm --prefix hegemon-app test -- --no-cache --maxWorkers=1 --no-file-parallelism tests/connections.test.ts tests/rpcEndpoint.test.ts tests/walletSync.test.ts tests/walletdProtocol.test.ts
+npm --prefix hegemon-app run typecheck
+
 NODE_BIN="$ROOT/target/release/hegemon-node"
 WALLETD_BIN="$ROOT/target/release/walletd"
 MANIFEST="$ROOT/target/release/hegemon-app-no-ssh-e2e-artifacts.json"

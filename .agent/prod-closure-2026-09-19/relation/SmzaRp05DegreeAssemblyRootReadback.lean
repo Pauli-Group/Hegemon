@@ -46,8 +46,19 @@ theorem rootDegreeCheck_all (node : Nat) (bound : node < 818) :
       (by omega) (by omega)
   omega
 
+private theorem list_as_roots {α : Type} {count : Nat}
+    (fallback : α) (roots : List α) (shape : roots.length = count) :
+    roots = List.ofFn (fun slot : Fin count => roots.getD slot.val fallback) := by
+  apply List.ext_getElem (by simp [shape])
+  intro index leftBound rightBound
+  simp only [List.getElem_ofFn]
+  exact List.getElem_eq_getD (l := roots) (i := index) (h := leftBound) fallback
+
+private theorem roots_length : exactNonlinearRoots.length = 818 := by decide
+
 theorem rootsExact : exactNonlinearRoots = List.ofFn nonlinearRoot := by
-  decide
+  unfold nonlinearRoot
+  exact list_as_roots 0 exactNonlinearRoots roots_length
 
 theorem rootDegree (slot : Fin 818) : nodeDegree (nonlinearRoot slot) ≤ 8 := by
   have checked := rootDegreeCheck_all slot.val slot.isLt

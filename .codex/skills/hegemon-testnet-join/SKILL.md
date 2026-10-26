@@ -4,7 +4,7 @@ description: Join the Hegemon testnet using the native 0.10 launch profile, veri
 compatibility: Requires ./target/release/hegemon-node, network access to hegemon.pauli.group:30333, synchronized host time for mining, and ./target/release/walletd only when opening a wallet or exporting a mining address.
 metadata:
   repo: Reflexivity/Hegemon
-  version: "1.6"
+  version: "1.8"
 ---
 
 # Goal
@@ -12,7 +12,7 @@ Connect a Codex-assisted operator or end user to the public Hegemon 0.10 testnet
 
 # Defaults
 - Network name: `Hegemon`.
-- Approved public join seed list: `hegemon.pauli.group:30333`.
+- Checkout's configured bootstrap list: `hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333`, matching `APPROVED_PUBLIC_JOIN_SEEDS` in [native configuration](../../../node/src/native/mod.rs) and [Connecting External Nodes](../../../config/testnet/README.md#connecting-external-nodes). Before an actual join, verify the target release/profile, expected genesis, and any approved seed rotation against a current release/operator source. These local files establish intended configuration, not current remote approval or compatibility.
 - Native profile: `--dev` on the 0.10 release binary. Do not use removed 0.9 JSON chainspec files, `config/dev-chainspec.json`, or `--chain`.
 - Default role: relay node / full node. Use mining mode only for an authoring host with a deliberate shielded payout address.
 - RPC port: `9944` for CLI examples.
@@ -63,9 +63,14 @@ Connect a Codex-assisted operator or end user to the public Hegemon 0.10 testnet
 6. If height stalls, compare genesis with a trusted synced node:
    - `curl -s -H "Content-Type: application/json" -d '{"id":1,"jsonrpc":"2.0","method":"chain_getBlockHash","params":[0]}' http://127.0.0.1:9944 | jq`
    - The returned genesis must match the already-synced trusted node on the same native release/profile.
-7. Sync wallet notes against the local node RPC:
-   - `printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"ws://127.0.0.1:9944","force_rescan":false}}\n' "YOUR_PASSPHRASE" \`
+7. Sync wallet notes against the local HTTP node RPC:
+   - Keep the existing wallet store. In Bash, read its passphrase privately:
+   - `read -r -s -p "Wallet passphrase: " HEGEMON_WALLET_PASSPHRASE; printf '\n' >&2`
+   - `printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"http://127.0.0.1:9944","force_rescan":false}}\n' "$HEGEMON_WALLET_PASSPHRASE" \`
    - `  | ./target/release/walletd --store ~/.hegemon-wallet --mode open`
+   - `unset HEGEMON_WALLET_PASSPHRASE`
+   - `ws_url` is the compatibility field name. Use HTTP for the native node's one-shot JSON-RPC; explicit `ws://` or `wss://` remains available for genuine WebSocket providers. An HTTP 200 response to a WebSocket upgrade identifies an HTTP-only endpoint; choose its HTTP URL explicitly rather than relying on automatic fallback.
+   - Native RPC does not provide the subscriptions required by `wallet node-daemon`. Allow the first scan to finish before reading cached balances; do not reset the wallet or use `force_rescan` as a transport workaround.
 
 # Notes
 - The approved public 0.10 bootstrap list is `hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333`. Do not substitute legacy hostnames or raw IPs; peers learn additional public endpoints through P2P discovery.

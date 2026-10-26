@@ -1,7 +1,7 @@
 {
   "counts": {
-    "external_imports": 108,
-    "source_modules": 1471
+    "external_imports": 109,
+    "source_modules": 1472
   },
   "endpoint_source_pins": [
     {
@@ -121,6 +121,7 @@
     "Mathlib.Logic.Equiv.Fintype",
     "Mathlib.Logic.Equiv.Set",
     "Mathlib.NumberTheory.LucasPrimality",
+    "Mathlib.Order.Monotone.Basic",
     "Mathlib.Probability.ProbabilityMassFunction.Monad",
     "Mathlib.RingTheory.AdjoinRoot",
     "Mathlib.RingTheory.Coprime.Lemmas",
@@ -667,6 +668,12 @@
       "root": 9
     },
     {
+      "module": "Mathlib.Order.Monotone.Basic",
+      "olean_sha256": "c79a2b546ad518437f6e81a11acce34fb6fd2a8ee6ee89cb30268b31dc1b5330",
+      "relative_path": "Mathlib/Order/Monotone/Basic.olean",
+      "root": 9
+    },
+    {
       "module": "Mathlib.Probability.ProbabilityMassFunction.Monad",
       "olean_sha256": "a330e6c854518da0ea763c35a7be7134735e3de65daedea23ee86c7d128cd91b",
       "relative_path": "Mathlib/Probability/ProbabilityMassFunction/Monad.olean",
@@ -843,7 +850,7 @@
     },
     {
       "module": "Hegemon.Consensus.Supply",
-      "sha256": "0ff95a6302d17b520ef6d8b7781ae5ec4c4dc79f2f8e3d4f4950cf9a34dd4561",
+      "sha256": "9a611e10d92a1f35f29e669cf4c026392015ca3479d195312f60ff5a5c8bc051",
       "source": "formal/lean/Hegemon/Consensus/Supply.lean",
       "staged": "generated/Sources/Hegemon/Consensus/Supply.lean"
     },
@@ -1130,6 +1137,12 @@
       "staged": "generated/Sources/HegemonCrypto/Goldilocks.lean"
     },
     {
+      "module": "HegemonCrypto.NativeMonetaryCap",
+      "sha256": "7f4a40279250e3650a9fa1a7afabb73504252ccc9e0d77cbc7cf06165ab65e77",
+      "source": "formal/crypto/HegemonCrypto/NativeMonetaryCap.lean",
+      "staged": "generated/Sources/HegemonCrypto/NativeMonetaryCap.lean"
+    },
+    {
       "module": "HegemonCrypto.Poseidon2V8ExpressionRootSemantics",
       "sha256": "981d15c9e3844d424de5983494d448a7e3ca6f17863b72885752553c6f75c94b",
       "source": "formal/crypto/HegemonCrypto/Poseidon2V8ExpressionRootSemantics.lean",
@@ -1353,7 +1366,7 @@
     },
     {
       "module": "HegemonCrypto.SmallWoodProductionPolynomials",
-      "sha256": "3ec7eefd5076da44d9fe661a2d474962ad4a7e36d074c12c642925b57886f200",
+      "sha256": "48ec8b90a5cc24489d4a0b43de272107759e8f7bba73f77ff5231c5097199c4d",
       "source": "formal/crypto/HegemonCrypto/SmallWoodProductionPolynomials.lean",
       "staged": "generated/Sources/HegemonCrypto/SmallWoodProductionPolynomials.lean"
     },
@@ -1515,7 +1528,7 @@
     },
     {
       "module": "HegemonCrypto.SmallWoodV8Smz9CurrentProgramPiop",
-      "sha256": "ef1a466fd5ef47164a9923ec33dc8c1605489335d114fbe208ebebc70c8894ad",
+      "sha256": "7169c113a1e48be23dd552390ed9119f88be3a009719d5ed211c73810ca21464",
       "source": "formal/crypto/HegemonCrypto/SmallWoodV8Smz9CurrentProgramPiop.lean",
       "staged": "generated/Sources/HegemonCrypto/SmallWoodV8Smz9CurrentProgramPiop.lean"
     },
@@ -1587,7 +1600,7 @@
     },
     {
       "module": "HegemonCrypto.SmallWoodV8Smz9EagerSimulator",
-      "sha256": "851e691b592604e1b45610c77bddf58ada6d8af543ec5ef92613ecf8483e65d3",
+      "sha256": "811daa1658ae8ba5f0200cc785d7ec4f5dcb99e7cb8efb549553bb11330cdf3b",
       "source": "formal/crypto/HegemonCrypto/SmallWoodV8Smz9EagerSimulator.lean",
       "staged": "generated/Sources/HegemonCrypto/SmallWoodV8Smz9EagerSimulator.lean"
     },
@@ -1599,7 +1612,7 @@
     },
     {
       "module": "HegemonCrypto.SmallWoodV8Smz9HashDependencyCertificate",
-      "sha256": "2028c1e12fc762b501c846f699dfefc1ea31b4fcdbfb14ce5afdb68f88905775",
+      "sha256": "5583be511888d5d3e59ceefc0b5730cda4e0195ae0609f6784a4673b2cbf0d27",
       "source": "formal/crypto/HegemonCrypto/SmallWoodV8Smz9HashDependencyCertificate.lean",
       "staged": "generated/Sources/HegemonCrypto/SmallWoodV8Smz9HashDependencyCertificate.lean"
     },
@@ -2157,7 +2170,7 @@
     },
     {
       "module": "HegemonCrypto.SmallWoodV8Smz9ProgramPolynomials",
-      "sha256": "081feb728d8b60d04726aa3c331a2b6eb47e39f72671e7b4838b352b1dcfaec5",
+      "sha256": "99ab667d4d4306bdb3e8d70c13af124b8880b9b0aa8d5c4f246a31a440617a35",
       "source": "formal/crypto/HegemonCrypto/SmallWoodV8Smz9ProgramPolynomials.lean",
       "staged": "generated/Sources/HegemonCrypto/SmallWoodV8Smz9ProgramPolynomials.lean"
     },
@@ -2349,7 +2362,7 @@
     },
     {
       "module": "HegemonCrypto.SmallWoodV8Smz9WholeViewObservation",
-      "sha256": "32957bc165a9081afb51da7ddc2b9e8dcbd9d529b1de4070fdda00feca5f9dcc",
+      "sha256": "ec3e0045e2f43b9889ef3a88c0623070f7206cd3c2c3f2524e4ed15c75bf3f21",
       "source": "formal/crypto/HegemonCrypto/SmallWoodV8Smz9WholeViewObservation.lean",
       "staged": "generated/Sources/HegemonCrypto/SmallWoodV8Smz9WholeViewObservation.lean"
     },
@@ -2373,8 +2386,8 @@
     },
     {
       "module": "LifetimeIssuanceR2",
-      "sha256": "2922be16c37cabee9f95cec390d5e6aedf097cbe415a05fc72b2fa5ac8ccee60",
-      "source": ".agent/artifacts/smallwood-poseidon2-v8-smza/mathematical-closure-2026-09-14/issuance/LifetimeIssuanceR2.lean",
+      "sha256": "a5c7d02a228cd998b59335c117476e1237080a5fb8027728c94a4cc21e69ee3d",
+      "source": "formal/crypto/Hegemon/Consensus/LifetimeIssuanceR2.lean",
       "staged": "generated/Sources/LifetimeIssuanceR2.lean"
     },
     {
@@ -4599,13 +4612,13 @@
     },
     {
       "module": "SmzaRp05AuthorizationClosureSameNote",
-      "sha256": "c323d532c0ff72a0e60fbd9ca5afa680a1ec3d8e57ac22cae8f3b521bd79fa1a",
+      "sha256": "182644df14e807a22fb84699fcab33d3b478881810062969f965b93e2c97c028",
       "source": ".agent/prod-closure-2026-09-19/authorization/SmzaRp05AuthorizationClosureSameNote.lean",
       "staged": "generated/Sources/SmzaRp05AuthorizationClosureSameNote.lean"
     },
     {
       "module": "SmzaRp05AuthorizationClosureTags",
-      "sha256": "f7b00ba7e6a0b9676d62e7243fcb7d5b3ea51c3da4fa08400bdaa22979e5a939",
+      "sha256": "9f5a0c5ea7e3f26ca01c0c0ed0941bcf3c7f8d264614edc7ce9a03790f6c7660",
       "source": ".agent/prod-closure-2026-09-19/authorization/SmzaRp05AuthorizationClosureTags.lean",
       "staged": "generated/Sources/SmzaRp05AuthorizationClosureTags.lean"
     },
@@ -5553,7 +5566,7 @@
     },
     {
       "module": "SmzaRp05CurrentHistorySelectedRoleStateReplay",
-      "sha256": "ebbb6277c135b8d2e1fb21a898660b583668518664ed9a9c0fde1287a53d2f50",
+      "sha256": "65c0e3db78ba3ec22de1a22d8c96501b5094318faf428c223cc29cd2aa9d6200",
       "source": ".agent/prod-closure-2026-09-19/extraction/SmzaRp05CurrentHistorySelectedRoleStateReplay.lean",
       "staged": "generated/Sources/SmzaRp05CurrentHistorySelectedRoleStateReplay.lean"
     },
@@ -6201,7 +6214,7 @@
     },
     {
       "module": "SmzaRp05CurrentTwelveCalculated",
-      "sha256": "9ebc03b8e29d0270917264e5f9c297de6df1646ad9c582a7c3786370b1d48a6c",
+      "sha256": "4af5d1495166e071e308d20469129dbf9404a0c1d3bf1a979561c0944035c6ea",
       "source": ".agent/prod-closure-2026-09-19/extraction/SmzaRp05CurrentTwelveCalculated.lean",
       "staged": "generated/Sources/SmzaRp05CurrentTwelveCalculated.lean"
     },
@@ -6249,7 +6262,7 @@
     },
     {
       "module": "SmzaRp05DegreeAssemblyRootReadback",
-      "sha256": "3409d7af71d3de781dffbbe739220a4cd3b7bc105a3eb26de003255aa0c1786c",
+      "sha256": "eb125756fd5a8388353d7e564fd1df25c80d0c3ab34cc41bb28a268ac44b1c4c",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05DegreeAssemblyRootReadback.lean",
       "staged": "generated/Sources/SmzaRp05DegreeAssemblyRootReadback.lean"
     },
@@ -6279,13 +6292,13 @@
     },
     {
       "module": "SmzaRp05DegreeGroup0",
-      "sha256": "e2dc97ed0fa691779352805ebf441cfa71fd3f92a163d3dfffbe26dad339df6a",
+      "sha256": "54f2146925d54a53b3b047445aa618c0ba42c38c295283aa0e666c7301f50a65",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05DegreeGroup0.lean",
       "staged": "generated/Sources/SmzaRp05DegreeGroup0.lean"
     },
     {
       "module": "SmzaRp05DegreeGroup1",
-      "sha256": "e4b89b8d6f7b336fda060bda41d2298f540e9a05f39069dc11fea940a5eb48a2",
+      "sha256": "035d067c4f03b26d92f27b444433d5a9d2ac8b5aa25a53e30a0835dfa404c927",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05DegreeGroup1.lean",
       "staged": "generated/Sources/SmzaRp05DegreeGroup1.lean"
     },
@@ -6405,7 +6418,7 @@
     },
     {
       "module": "SmzaRp05DirectCsrCertificate",
-      "sha256": "6bd4934f625b3d367114d8767a35321c83232c07bb95ca0e585c0514e532e4c7",
+      "sha256": "518428ee7b0fb2f3a7f793766c128d55160a7c1d311660a29af20b0805bf8a6f",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05DirectCsrCertificate.lean",
       "staged": "generated/Sources/SmzaRp05DirectCsrCertificate.lean"
     },
@@ -6501,7 +6514,7 @@
     },
     {
       "module": "SmzaRp05ExecutablePcsClosureLvcsAlgebra",
-      "sha256": "3abbeb214f4cc252eabeb0e15d62b358baaae127cfcbfe9f7f92344be56ab763",
+      "sha256": "c092179b1ebd941547c45353d692a30298069eb4c7706dcc0c2a9577885c9cba",
       "source": ".agent/prod-closure-2026-09-19/extraction/SmzaRp05ExecutablePcsClosureLvcsAlgebra.lean",
       "staged": "generated/Sources/SmzaRp05ExecutablePcsClosureLvcsAlgebra.lean"
     },
@@ -6621,7 +6634,7 @@
     },
     {
       "module": "SmzaRp05FinalIntentFold",
-      "sha256": "088963eadc54ef108df0c90880bac9bea7cdce9a96da39aed07a3062e5748d31",
+      "sha256": "07ac137a4c66b0b5d32b3bb079b2d93e766300725cb7f5b6cccf8e089acd1ff7",
       "source": ".agent/prod-closure-2026-09-19/extraction/SmzaRp05FinalIntentFold.lean",
       "staged": "generated/Sources/SmzaRp05FinalIntentFold.lean"
     },
@@ -6897,13 +6910,13 @@
     },
     {
       "module": "SmzaRp05NullifierRootChunk01",
-      "sha256": "26912b44ae99f4b2509f51411de7bdcfdf3fc1329dc7e27cb6b19e0c535d91fc",
+      "sha256": "948bfa49b984dd52f700a8e94fcbb6aa6aed4133d764c558322203712eabba20",
       "source": ".agent/prod-closure-2026-09-19/relation/rp05-nullifier-export/SmzaRp05NullifierRootChunk01.lean",
       "staged": "generated/Sources/SmzaRp05NullifierRootChunk01.lean"
     },
     {
       "module": "SmzaRp05NullifierRootChunk02",
-      "sha256": "03dc392b5ff8c2ff38631ec24aa6a47599204a0fd68d5b4063e0c0450218c533",
+      "sha256": "be255703bb2568a2992fe5553fe8e24bc7622a5ae18abd450909ff02be29d7bc",
       "source": ".agent/prod-closure-2026-09-19/relation/rp05-nullifier-export/SmzaRp05NullifierRootChunk02.lean",
       "staged": "generated/Sources/SmzaRp05NullifierRootChunk02.lean"
     },
@@ -6939,19 +6952,19 @@
     },
     {
       "module": "SmzaRp05NullifierRootChunk08",
-      "sha256": "b759b732aa687ff172fbc811d02d2d82b3e2aec157ced0b5bd036efb63cf590c",
+      "sha256": "ccfce836dedfd10c54ae32f54f73ff0656af67be9b3af4255ca1b228fe1f906a",
       "source": ".agent/prod-closure-2026-09-19/relation/rp05-nullifier-export/SmzaRp05NullifierRootChunk08.lean",
       "staged": "generated/Sources/SmzaRp05NullifierRootChunk08.lean"
     },
     {
       "module": "SmzaRp05NullifierRootChunk09",
-      "sha256": "5f301ad428c02f796857c8e0d97bf7352942dff7485ea90383523f95010e988e",
+      "sha256": "48f1c9615c8ba6e30a3334f1e0631526865df4a1bd7d4765d932ca46372626a8",
       "source": ".agent/prod-closure-2026-09-19/relation/rp05-nullifier-export/SmzaRp05NullifierRootChunk09.lean",
       "staged": "generated/Sources/SmzaRp05NullifierRootChunk09.lean"
     },
     {
       "module": "SmzaRp05NullifierRootChunk10",
-      "sha256": "e536f84c1a86cf7c5e96f91373fbdfef37b4e746791fd725be85e1ae03f9dbeb",
+      "sha256": "aaf2e6d3609350d08d21bb3ce553b9ef4b3dd1b2d536f8e13923557dbd0428f9",
       "source": ".agent/prod-closure-2026-09-19/relation/rp05-nullifier-export/SmzaRp05NullifierRootChunk10.lean",
       "staged": "generated/Sources/SmzaRp05NullifierRootChunk10.lean"
     },
@@ -7059,7 +7072,7 @@
     },
     {
       "module": "SmzaRp05PairedDagHighBlock3002",
-      "sha256": "c151ddeb49dc8ceee8dad6225042a66afa0e36d4b8411c7e866c45baeb8bf574",
+      "sha256": "873d48969e985518d5aed8e7f9fa82d664d51d349c22b61dfa931b33ccd7ac32",
       "source": ".agent/prod-closure-2026-09-19/relation/rp05-nullifier-export/SmzaRp05PairedDagHighBlock3002.lean",
       "staged": "generated/Sources/SmzaRp05PairedDagHighBlock3002.lean"
     },
@@ -9105,13 +9118,13 @@
     },
     {
       "module": "SmzaRp05PairedDagHighChunk00",
-      "sha256": "9a9bee91c7e5bc70a18324943e6d2eed6acc658b71a4209bfd53edd06dea1ec9",
+      "sha256": "5ddc0a1b8e8d92ecff107ad0bd2e7305807df5f8e8693c61391f36d3bb855a0b",
       "source": ".agent/prod-closure-2026-09-19/relation/rp05-nullifier-export/SmzaRp05PairedDagHighChunk00.lean",
       "staged": "generated/Sources/SmzaRp05PairedDagHighChunk00.lean"
     },
     {
       "module": "SmzaRp05PairedDagHighChunk01",
-      "sha256": "ba4f6d88e3634f74e4efbac8e969c7c7261b99161467354f2f876ca03196cd12",
+      "sha256": "034e3146913011e47b06b4c77e775896b686a62d638b9940be8a74697ae34776",
       "source": ".agent/prod-closure-2026-09-19/relation/rp05-nullifier-export/SmzaRp05PairedDagHighChunk01.lean",
       "staged": "generated/Sources/SmzaRp05PairedDagHighChunk01.lean"
     },
@@ -9393,7 +9406,7 @@
     },
     {
       "module": "SmzaRp05SingleKeyPrfSourceCanonical",
-      "sha256": "dfc0334912115b8ab88cb254310a06a6d8989bdb376eebef5600cab4a4a79300",
+      "sha256": "1c5bb918ae5259618ea6ee174716c9a939d88009357569d44d2d0fc66de70cff",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05SingleKeyPrfSourceCanonical.lean",
       "staged": "generated/Sources/SmzaRp05SingleKeyPrfSourceCanonical.lean"
     },
@@ -9411,25 +9424,25 @@
     },
     {
       "module": "SmzaRp05SingleKeyPrfSourceMembers0",
-      "sha256": "56d89d3701820779fdedfaeaf5efbf3b78b240ee7b6503401b439cf76682fa64",
+      "sha256": "d6840b2c115f87c493cc05764936ffb1994b722fad7810efadb63f0c4b321ab3",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05SingleKeyPrfSourceMembers0.lean",
       "staged": "generated/Sources/SmzaRp05SingleKeyPrfSourceMembers0.lean"
     },
     {
       "module": "SmzaRp05SingleKeyPrfSourceMembers1",
-      "sha256": "5a0dd11d77544db47649b7968c035dff5e3d998a6cb781cd02203a3c15843adc",
+      "sha256": "e18d4fa743e6c52f48dad818b651cab68cda31a4e469a46e0120dfa28adc9cea",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05SingleKeyPrfSourceMembers1.lean",
       "staged": "generated/Sources/SmzaRp05SingleKeyPrfSourceMembers1.lean"
     },
     {
       "module": "SmzaRp05SingleKeyPrfSourceMembers2",
-      "sha256": "29fd14544ed33f0c87d31db178b166b511f68d6dda788e680a66e6afede3f040",
+      "sha256": "1cd7ee758a833f274d869a20405369a233b5bd0fba5184eeacf1986e9985ed2b",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05SingleKeyPrfSourceMembers2.lean",
       "staged": "generated/Sources/SmzaRp05SingleKeyPrfSourceMembers2.lean"
     },
     {
       "module": "SmzaRp05SingleKeyPrfSourceMembers3",
-      "sha256": "749dfa7a6129c489d1740d10f424f67556586dae91228f8ae5be3440d5450a15",
+      "sha256": "297382b77660b47b6b2d4f5d03c6ba58075cc0097d08f6fb10d8060316014383",
       "source": ".agent/prod-closure-2026-09-19/relation/SmzaRp05SingleKeyPrfSourceMembers3.lean",
       "staged": "generated/Sources/SmzaRp05SingleKeyPrfSourceMembers3.lean"
     },

@@ -1840,7 +1840,12 @@ mod tests {
                 &statement,
             )
             .expect("development adapter must bind to exact RP05 source and fixture");
-        assert!(SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(&statement).is_err());
+        assert!(!crate::smallwood_poseidon2_v8_program::SMALLWOOD_POSEIDON2_V8_PROGRAM_IDENTITY_REGENERATION_REQUIRED);
+        assert!(crate::smallwood_poseidon2_v8_program::smallwood_poseidon2_v8_program_digest_matches());
+        let current = SmallwoodPoseidon2V8ConstraintAdapter::from_public_statement(&statement)
+            .expect("current source identity admission is distinct from production authority");
+        assert_eq!(current.relation_digest(), relation.relation_digest());
+        assert_eq!(current.relation_digest(), &crate::smallwood_poseidon2_v8_program::SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST);
         assert!(!protocol_versioning::smallwood_poseidon2_production_authorized());
         let input = SmallwoodPoseidon2V8VerifierInput::from_relation(17, &relation);
         assert!(verify_smallwood_poseidon2_v8_smza_candidate_v1(&input, b"SMZA").is_err());

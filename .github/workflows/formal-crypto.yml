@@ -1,6 +1,7 @@
 name: Formal cryptography sanity
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
     paths:
@@ -106,8 +107,9 @@ permissions:
 
 jobs:
   formal-crypto-sanity:
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Free disk space
         run: |

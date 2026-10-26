@@ -11,32 +11,40 @@ use crate::types::{CoinbaseData, SupplyDigest};
 
 pub const COIN: u64 = 100_000_000;
 
+pub use protocol_versioning::{
+    coinbase_mature_in_block, coinbase_maturity_height, coinbase_release_height,
+    COINBASE_MATURITY, COINBASE_MATURITY_RULES_ID,
+};
+
 /// Seconds in a year (365 × 24 × 3,600)
 pub const T_YEAR: u64 = 31_536_000;
 
 /// Target block time in seconds (60 seconds / 1 minute)
 pub const T_BLOCK_SECONDS: u64 = 60;
 
-/// Duration of one issuance epoch in years
+/// Legacy calendar label retained for compatibility, not the issuance interval.
+/// An issuance epoch is BLOCKS_PER_EPOCH blocks, not four exact calendar years.
 pub const Y_EPOCH: u64 = 4;
 
-/// Epoch duration in seconds (Y_EPOCH × T_YEAR)
-pub const T_EPOCH_SECONDS: u64 = Y_EPOCH * T_YEAR;
+/// Blocks per issuance epoch, independently of calendar-year conventions.
+pub const BLOCKS_PER_EPOCH: u64 = 2_100_000;
 
-/// Blocks per epoch (4 years of 60s blocks = 2,102,400 blocks)
-pub const BLOCKS_PER_EPOCH: u64 = T_EPOCH_SECONDS / T_BLOCK_SECONDS;
+/// Target elapsed seconds per issuance epoch (2,100,000 × 60).
+pub const T_EPOCH_SECONDS: u64 = BLOCKS_PER_EPOCH * T_BLOCK_SECONDS;
 
 /// Maximum supply: 21 million coins
 pub const MAX_SUPPLY: u64 = 21_000_000 * COIN;
 
-/// Initial block reward R0 = (S_MAX × t_block) / (2 × Y_EPOCH × T_YEAR)
-/// For 60s blocks: R0 = (21,000,000 × 60) / (2 × 4 × 31,536,000) ≈ 4.98 HEG
-/// In base units: ~498,287,671 (~4.98 coins)
-pub const INITIAL_SUBSIDY: u64 =
-    (MAX_SUPPLY as u128 * T_BLOCK_SECONDS as u128 / (2 * Y_EPOCH as u128 * T_YEAR as u128)) as u64;
+/// Initial block subsidy: exactly five coins.
+pub const INITIAL_SUBSIDY: u64 = 5 * COIN;
 
 /// Halving interval derived from BLOCKS_PER_EPOCH
 pub const HALVING_INTERVAL: u64 = BLOCKS_PER_EPOCH;
+
+/// Consensus identity of the exact 21M-coin epoch-budget schedule.
+/// Any issuance-policy change requires a new identity and fresh genesis.
+pub const EMISSION_SCHEDULE_ID: &[u8] =
+    b"hegemon-native-emission-21m-atoms1e8-5hgn-epoch2100000-prefix-v1";
 
 /// Target block time in milliseconds (60 seconds / 1 minute).
 pub const TARGET_BLOCK_INTERVAL_MS: u64 = 60_000;
@@ -73,9 +81,42 @@ pub fn block_subsidy(height: u64) -> u64 {
     if height == 0 {
         return 0;
     }
-    let halvings = (height - 1) / HALVING_INTERVAL;
-    let shift = halvings.min(63);
-    INITIAL_SUBSIDY >> shift
+    let epoch = (height - 1) / HALVING_INTERVAL;
+    let slot = (height - 1) % HALVING_INTERVAL;
+    let budget = epoch_subsidy_budget(epoch) as u128;
+    let interval = HALVING_INTERVAL as u128;
+    let before = slot as u128 * budget / interval;
+    let after = (slot as u128 + 1) * budget / interval;
+    (after - before) as u64
+}
+
+/// Scheduled issuance still unallocated at the start of an epoch.
+/// Epochs beyond the u64 shift range have no remaining budget.
+pub fn remaining_subsidy_budget(epoch: u64) -> u64 {
+    if epoch >= u64::BITS as u64 {
+        0
+    } else {
+        MAX_SUPPLY >> epoch as u32
+    }
+}
+
+/// Exact atoms scheduled across all blocks of an epoch.
+pub fn epoch_subsidy_budget(epoch: u64) -> u64 {
+    if epoch >= u64::BITS as u64 {
+        return 0;
+    }
+    remaining_subsidy_budget(epoch) - remaining_subsidy_budget(epoch + 1)
+}
+
+/// Cumulative subsidy scheduled through height, including that block.
+/// This is the schedule ceiling; omitted coinbases do not mint these atoms.
+pub fn scheduled_subsidy(height: u64) -> u64 {
+    let epoch = height / HALVING_INTERVAL;
+    let slots = height % HALVING_INTERVAL;
+    let allocated = MAX_SUPPLY - remaining_subsidy_budget(epoch);
+    let partial =
+        slots as u128 * epoch_subsidy_budget(epoch) as u128 / HALVING_INTERVAL as u128;
+    allocated + partial as u64
 }
 
 pub fn adjusted_timespan(actual_ms: u64) -> u64 {
@@ -172,8 +213,11 @@ mod tests {
     #[serde(deny_unknown_fields)]
     struct LeanSupplyVectorFile {
         schema_version: u32,
+        emission_model: String,
         monetary_constants: LeanMonetaryConstants,
         subsidy_schedule_cases: Vec<LeanSubsidyScheduleCase>,
+        epoch_budget_cases: Vec<LeanEpochBudgetCase>,
+        slot_subsidy_cases: Vec<LeanSlotSubsidyCase>,
         consensus_supply_cases: Vec<LeanConsensusSupplyCase>,
         native_supply_cases: Vec<serde_json::Value>,
     }
@@ -192,6 +236,7 @@ mod tests {
         target_block_seconds: u64,
         year_seconds: u64,
         epoch_years: u64,
+        epoch_seconds: u64,
         halving_interval: u64,
         max_monetary_supply: String,
         initial_subsidy: u64,
@@ -203,6 +248,26 @@ mod tests {
         name: String,
         height: u64,
         expected_halving_epoch: u64,
+        expected_subsidy: u64,
+        expected_epoch_budget: u64,
+        expected_scheduled_subsidy: u64,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanEpochBudgetCase {
+        name: String,
+        epoch: u64,
+        expected_remaining_budget: u64,
+        expected_epoch_budget: u64,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSlotSubsidyCase {
+        name: String,
+        epoch: u64,
+        slot: u64,
         expected_subsidy: u64,
     }
 
@@ -238,10 +303,74 @@ mod tests {
 
     #[test]
     fn halving_schedule_matches_expectations() {
+        assert_eq!(MAX_SUPPLY, 2_100_000_000_000_000);
+        assert_eq!(HALVING_INTERVAL, 2_100_000);
+        assert_eq!(T_EPOCH_SECONDS, 126_000_000);
         assert_eq!(block_subsidy(0), 0);
         assert_eq!(block_subsidy(1), INITIAL_SUBSIDY);
         assert_eq!(block_subsidy(HALVING_INTERVAL), INITIAL_SUBSIDY);
         assert_eq!(block_subsidy(HALVING_INTERVAL + 1), INITIAL_SUBSIDY / 2);
+    }
+
+    #[test]
+    fn fractional_epoch_atoms_are_distributed_and_not_discarded() {
+        let first = 9 * HALVING_INTERVAL + 1;
+        assert_eq!(block_subsidy(first), 976_562);
+        assert_eq!(block_subsidy(first + 1), 976_563);
+        assert_eq!(block_subsidy(first + 2), 976_562);
+        assert_eq!(block_subsidy(10 * HALVING_INTERVAL), 976_563);
+        let total: u64 = (first..=10 * HALVING_INTERVAL).map(block_subsidy).sum();
+        assert_eq!(total, epoch_subsidy_budget(9));
+    }
+
+    #[test]
+    fn scheduled_prefix_matches_block_increments_and_epoch_budgets() {
+        assert_eq!(scheduled_subsidy(0), 0);
+        for epoch in 0..64 {
+            let start = epoch * HALVING_INTERVAL;
+            let end = start + HALVING_INTERVAL;
+            assert_eq!(
+                scheduled_subsidy(end) - scheduled_subsidy(start),
+                epoch_subsidy_budget(epoch)
+            );
+            for slot in [
+                0,
+                1,
+                HALVING_INTERVAL / 2,
+                HALVING_INTERVAL - 2,
+                HALVING_INTERVAL - 1,
+            ] {
+                let height = start + slot + 1;
+                assert_eq!(
+                    scheduled_subsidy(height) - scheduled_subsidy(height - 1),
+                    block_subsidy(height)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn final_atom_and_unbounded_height_extinction_are_exact() {
+        let first_zero = 29 * HALVING_INTERVAL + 1;
+        assert_eq!(first_zero, 60_900_001);
+        assert_eq!(block_subsidy(first_zero), 0);
+        assert_eq!(block_subsidy(first_zero + 1), 1);
+        assert_eq!(block_subsidy(30 * HALVING_INTERVAL), 1);
+        let last = 51 * HALVING_INTERVAL;
+        assert_eq!(last, 107_100_000);
+        assert_eq!(block_subsidy(last - 1), 0);
+        assert_eq!(block_subsidy(last), 1);
+        assert_eq!(scheduled_subsidy(last - 1), MAX_SUPPLY - 1);
+        assert_eq!(scheduled_subsidy(last), MAX_SUPPLY);
+        assert_eq!(block_subsidy(last + 1), 0);
+        assert_eq!(block_subsidy(u64::MAX), 0);
+        assert_eq!(scheduled_subsidy(u64::MAX), MAX_SUPPLY);
+        assert_eq!(remaining_subsidy_budget(64), 0);
+        assert_eq!(remaining_subsidy_budget(63), 0);
+        assert_eq!(epoch_subsidy_budget(63), 0);
+        assert_eq!(epoch_subsidy_budget(64), 0);
+        assert_eq!(remaining_subsidy_budget(u64::MAX), 0);
+        assert_eq!(epoch_subsidy_budget(u64::MAX), 0);
     }
 
     #[test]
@@ -262,17 +391,10 @@ mod tests {
     }
 
     #[test]
-    fn total_minted_is_bounded_by_max_supply() {
-        let mut subsidy = INITIAL_SUBSIDY as u128;
-        let mut total: u128 = 0;
-
-        while subsidy > 0 {
-            total += subsidy * HALVING_INTERVAL as u128;
-            subsidy >>= 1;
-        }
-
-        assert!(total <= MAX_SUPPLY as u128);
-        assert!(total >= (MAX_SUPPLY as u128) - (COIN as u128));
+    fn total_scheduled_is_exactly_max_supply() {
+        let total: u64 = (0..64).map(epoch_subsidy_budget).sum();
+        assert_eq!(total, MAX_SUPPLY);
+        assert_eq!(scheduled_subsidy(64 * HALVING_INTERVAL), MAX_SUPPLY);
     }
 
     #[test]
@@ -284,11 +406,20 @@ mod tests {
         let raw = std::fs::read_to_string(&path).expect("read generated Lean supply vectors");
         let vectors: LeanSupplyVectorFile =
             serde_json::from_str(&raw).expect("parse generated Lean supply vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
+        assert_eq!(vectors.emission_model, "epoch-budget-prefix-differences-v1");
         verify_lean_monetary_constants(&vectors.monetary_constants);
         assert!(
             !vectors.subsidy_schedule_cases.is_empty(),
             "Lean subsidy schedule cases must not be empty"
+        );
+        assert!(
+            !vectors.epoch_budget_cases.is_empty(),
+            "Lean epoch budget cases must not be empty"
+        );
+        assert!(
+            !vectors.slot_subsidy_cases.is_empty(),
+            "Lean slot subsidy cases must not be empty"
         );
         assert!(
             !vectors.consensus_supply_cases.is_empty(),
@@ -303,6 +434,41 @@ mod tests {
         for case in &vectors.subsidy_schedule_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_subsidy_schedule_case(case);
+        }
+        for case in &vectors.epoch_budget_cases {
+            assert!(names.insert(case.name.clone()));
+            assert_eq!(
+                remaining_subsidy_budget(case.epoch),
+                case.expected_remaining_budget,
+                "{} remaining budget",
+                case.name
+            );
+            assert_eq!(
+                epoch_subsidy_budget(case.epoch),
+                case.expected_epoch_budget,
+                "{} epoch budget",
+                case.name
+            );
+        }
+        for case in &vectors.slot_subsidy_cases {
+            assert!(names.insert(case.name.clone()));
+            assert!(
+                case.slot < HALVING_INTERVAL,
+                "{} slot is outside epoch",
+                case.name
+            );
+            let height = case
+                .epoch
+                .checked_mul(HALVING_INTERVAL)
+                .and_then(|start| start.checked_add(case.slot))
+                .and_then(|before| before.checked_add(1))
+                .expect("Lean slot vector must name a u64 block height");
+            assert_eq!(
+                block_subsidy(height),
+                case.expected_subsidy,
+                "{} slot subsidy",
+                case.name
+            );
         }
         for case in &vectors.consensus_supply_cases {
             assert!(names.insert(case.name.clone()));
@@ -372,6 +538,10 @@ mod tests {
             "Y_EPOCH drifted from Lean spec"
         );
         assert_eq!(
+            constants.epoch_seconds, T_EPOCH_SECONDS,
+            "T_EPOCH_SECONDS drifted from Lean spec"
+        );
+        assert_eq!(
             constants.halving_interval, HALVING_INTERVAL,
             "HALVING_INTERVAL drifted from Lean spec"
         );
@@ -390,7 +560,7 @@ mod tests {
         let actual_epoch = if case.height == 0 {
             0
         } else {
-            ((case.height - 1) / HALVING_INTERVAL).min(63)
+            (case.height - 1) / HALVING_INTERVAL
         };
         assert_eq!(
             actual_epoch, case.expected_halving_epoch,
@@ -401,6 +571,18 @@ mod tests {
             block_subsidy(case.height),
             case.expected_subsidy,
             "{} production subsidy schedule drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            epoch_subsidy_budget(actual_epoch),
+            case.expected_epoch_budget,
+            "{} production epoch budget drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            scheduled_subsidy(case.height),
+            case.expected_scheduled_subsidy,
+            "{} production cumulative schedule drifted from Lean spec",
             case.name
         );
     }

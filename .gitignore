@@ -75,6 +75,9 @@ out.txt
 # Local dev node logs
 hegemon-*-node*.log
 
+# Disposable live pool integration databases and local node identity keys
+/hegemon-bitcoin80-live-*/
+
 # Local LaTeX build artifacts (prover architecture doc)
 PROVER_ARCHITECTURE_CONSTRAINTS.pdf
 PROVER_ARCHITECTURE_CONSTRAINTS.aux

@@ -26,6 +26,8 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
+python3 -B "$ROOT/scripts/check_release_launcher_policy.py" --root "$ROOT" >/dev/null
+
 HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
 if [[ -z "$HOST_TRIPLE" ]]; then
   echo "could not determine rustc host triple" >&2
@@ -59,12 +61,16 @@ build_release() {
 }
 
 build_release -p hegemon-node --bin hegemon-node --no-default-features
-build_release -p wallet --bin wallet
+build_release -p wallet --bin wallet --bin private-spend --no-default-features --features rpc-client
 build_release -p walletd --bin walletd
 
-NODE_BIN="$RELEASE_DIR/hegemon-node$EXE_SUFFIX"
-WALLET_BIN="$RELEASE_DIR/wallet$EXE_SUFFIX"
-WALLETD_BIN="$RELEASE_DIR/walletd$EXE_SUFFIX"
+# Colon-delimited artifact specs are not reliably converted by MSYS. Resolve
+# repository-relative paths inside the native manifest reader instead.
+ARTIFACT_DIR="${RELEASE_DIR#"$ROOT"/}"
+NODE_BIN="$ARTIFACT_DIR/hegemon-node$EXE_SUFFIX"
+WALLET_BIN="$ARTIFACT_DIR/wallet$EXE_SUFFIX"
+WALLETD_BIN="$ARTIFACT_DIR/walletd$EXE_SUFFIX"
+PRIVATE_SPEND_BIN="$ARTIFACT_DIR/private-spend$EXE_SUFFIX"
 
 python3 "$ROOT/scripts/release_artifact_manifest.py" create \
   --output "$MANIFEST" \
@@ -72,12 +78,14 @@ python3 "$ROOT/scripts/release_artifact_manifest.py" create \
   --artifact "hegemon-node:hegemon-node:$NODE_BIN" \
   --artifact "wallet:wallet:$WALLET_BIN" \
   --artifact "walletd:walletd:$WALLETD_BIN" \
+  --artifact "wallet:private-spend:$PRIVATE_SPEND_BIN" \
   >/dev/null
 python3 "$ROOT/scripts/release_artifact_manifest.py" verify \
   --manifest "$MANIFEST" \
   --expect "hegemon-node:hegemon-node:$NODE_BIN" \
   --expect "wallet:wallet:$WALLET_BIN" \
   --expect "walletd:walletd:$WALLETD_BIN" \
+  --expect "wallet:private-spend:$PRIVATE_SPEND_BIN" \
   >/dev/null
 
 printf '%s\n' "$MANIFEST"

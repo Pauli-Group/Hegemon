@@ -140,6 +140,40 @@ private theorem fullRateFrame_word_canonical
     | exact modeBound
     | exact suiteBound
 
+private theorem final_intent_state_getD
+    (packed : List Nat) (block lane : Nat) (laneBound : lane < 16) :
+    (finalIntentState packed block).getD lane 0 =
+      if block = 0 then 0
+      else packed.getD (hashFinalIndex (81 + block - 1) lane) 0 := by
+  by_cases first : block = 0
+  · simp [finalIntentState, first, poseidon2V8InitialState,
+      List.getD_eq_getElem?_getD]
+  · simp only [finalIntentState, if_neg first]
+    exact final_intent_packed_final_state_getD packed _ lane laneBound
+
+private theorem final_intent_frame_getD
+    (publicWords packed : List Nat) (block lane : Nat) (laneBound : lane < 16) :
+    (finalIntentFrame publicWords packed block).getD lane 0 =
+      let previous := (finalIntentState packed block).getD lane 0
+      let seeded := if block = 0 then
+        if lane = 8 then currentIntentBindingDomain
+        else if lane = 9 then 104
+        else if lane = 10 then poseidon2V8SpongeModeMarker
+        else if lane = 15 then poseidon2V8SuiteMarker
+        else previous
+        else previous
+      let absorbed := if lane < 8 then
+        Poseidon2Width16Kernel.fieldAdd previous
+          ((finalIntentWords publicWords).getD (block * 8 + lane) 0)
+        else seeded
+      if block + 1 = 13 ∧ lane = 11 then
+        Poseidon2Width16Kernel.fieldAdd absorbed 1
+      else absorbed := by
+  unfold finalIntentFrame fullRateFrame
+  simp only [List.getD_eq_getElem?_getD, List.getElem?_map,
+    List.getElem?_range laneBound, Option.map_some, Option.getD_some,
+    final_intent_words_length]
+
 /-- Every one of the 208 initial-state cells in calls81--93 is the exact live
 full-rate frame cell.  Rate cells use the 104 finite absorbed-word CSR
 equations; capacity cells use the finite frame CSR equations. -/
@@ -180,18 +214,23 @@ theorem accepted_final_intent_frame_word
       (finalIntentWords publicWords) 13 (finalIntentState packed block)
       block lane laneBound domainBound inputsBound stateBound
   apply canonical_nat_cast_injective (packedCanonical _) expectedBound
+  simp only [packedWord]
+  have stateRead := final_intent_state_getD packed block lane laneBound
+  have frameRead := final_intent_frame_getD publicWords packed block lane laneBound
   by_cases active : lane < 8
   · let word : Fin 104 := ⟨block * 8 + lane, by omega⟩
+    have quotient : (block * 8 + lane) / 8 = block := by omega
+    have remainder : (block * 8 + lane) % 8 = lane := by omega
+    have noMarker : ¬ (block + 1 = 13 ∧ lane = 11) := by omega
     have equation := accepted_final_intent_absorbed_word absorbed accepted word
-    interval_cases block <;> interval_cases lane <;>
-      simp only [word, finalIntentFrame, fullRateFrame] at equation ⊢
-    all_goals norm_num [finalIntentState, finalIntentWord, packedFinalState,
-      packedWord, absorbedWord, intentForcedZero, intentOriginalIndex,
-      currentIntentBindingDomain, poseidon2V8InitialState,
-      Poseidon2Width16Kernel.width, poseidon2V8SpongeModeMarker,
-      poseidon2V8SuiteMarker,
-      V8Smz9Poseidon2TemplateRefinement.cast_fieldAdd] at active equation ⊢
-    all_goals linear_combination equation
+    simp only [absorbedWord, word, quotient, remainder] at equation
+    rw [frameRead]
+    simp only [if_neg noMarker, if_pos active, stateRead,
+      V8Smz9Poseidon2TemplateRefinement.cast_fieldAdd]
+    by_cases first : block = 0
+    · simpa only [if_pos first, sub_zero, Nat.cast_zero, zero_add] using equation
+    · simp only [if_neg first] at equation ⊢
+      linear_combination equation
   · let cell : CurrentFrameWord :=
       { family := .intent
         block := block
@@ -202,17 +241,34 @@ theorem accepted_final_intent_frame_word
           left
           exact Nat.le_of_not_gt active }
     have equation := accepted_current_frame_word frames accepted cell
-    interval_cases block <;> interval_cases lane <;>
-      simp only [cell, finalIntentFrame, fullRateFrame] at equation ⊢
-    all_goals norm_num [finalIntentState, finalIntentWord,
-        packedFinalState, packedWord, CurrentFrameWord.difference, CurrentFrameWord.expected,
-        CurrentSpongeFamily.firstCall, CurrentSpongeFamily.wordCount,
-        CurrentSpongeFamily.blockCount, CurrentSpongeFamily.domain,
-        currentIntentBindingDomain, spongeModeMarker, suiteMarker,
-        poseidon2V8InitialState, Poseidon2Width16Kernel.width,
-        poseidon2V8SpongeModeMarker, poseidon2V8SuiteMarker,
-        V8Smz9Poseidon2TemplateRefinement.cast_fieldAdd] at active equation ⊢
-    all_goals linear_combination equation
+    simp only [CurrentFrameWord.difference, cell,
+      CurrentSpongeFamily.firstCall] at equation
+    have frame :
+        ((finalIntentFrame publicWords packed block).getD lane 0 :
+          V8Smz9SemanticDenseRange.F) =
+        (if block = 0 then 0 else
+          (packed.getD (hashFinalIndex (81 + block - 1) lane) 0 :
+            V8Smz9SemanticDenseRange.F)) +
+          (cell.expected : V8Smz9SemanticDenseRange.F) := by
+      rw [frameRead]
+      simp only [if_neg active, stateRead]
+      by_cases first : block = 0
+      · subst block
+        simp [cell, CurrentFrameWord.expected, CurrentSpongeFamily.domain,
+          CurrentSpongeFamily.wordCount, CurrentSpongeFamily.blockCount,
+          currentIntentBindingDomain, spongeModeMarker, suiteMarker,
+          poseidon2V8SpongeModeMarker, poseidon2V8SuiteMarker]
+      · simp only [if_neg first, CurrentFrameWord.expected, cell,
+          CurrentSpongeFamily.blockCount]
+        by_cases last : block + 1 = 13 ∧ lane = 11
+        · have last' : lane = 11 ∧ block + 1 = 13 := ⟨last.2, last.1⟩
+          simp only [if_pos last, if_pos last',
+            V8Smz9Poseidon2TemplateRefinement.cast_fieldAdd, Nat.cast_one]
+        · have last' : ¬ (lane = 11 ∧ block + 1 = 13) := by omega
+          simp only [if_neg last, if_neg last',
+            Nat.cast_zero, add_zero]
+    rw [frame]
+    linear_combination equation
 
 theorem accepted_final_intent_initial_state
     {components : RelationProgramComponents}

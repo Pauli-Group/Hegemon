@@ -27,14 +27,16 @@ EOF
 }
 
 run_lint() {
-  cargo fmt --all -- --check
-  cargo fmt --manifest-path experimental/htlc-prototype/Cargo.toml --all -- --check
-  cargo fmt --manifest-path experimental/htlc-prototype/proof-backend/Cargo.toml --all -- --check
+  python3 -I -B scripts/test_check_qualified_formatting.py
+  python3 -I -B scripts/test_check_qualified_clippy.py
+  python3 -I -B scripts/check_qualified_formatting.py --manifest workspace
+  python3 -I -B scripts/check_qualified_formatting.py --manifest htlc
+  python3 -I -B scripts/check_qualified_formatting.py --manifest proof-backend
   python3 scripts/check_native_startup_policy.py
   python3 -B scripts/check_smallwood_v5_candidate_gate.py
   # Keep correctness and suspicious-code diagnostics blocking. Style and unused
   # experimental/replay helpers remain visible warnings, not protocol rewrites.
-  cargo clippy \
+  python3 -I -B scripts/check_qualified_clippy.py \
     -p hegemon-node \
     -p protocol-kernel \
     -p protocol-shielded-pool \
@@ -46,14 +48,14 @@ run_lint() {
     -p transaction-circuit \
     -p block-circuit \
     -p cashvm-bridge \
-    --all-targets -- -D clippy::correctness -D clippy::suspicious -D unused_must_use -D unsafe_op_in_unsafe_fn
-  cargo clippy \
+    --all-targets
+  python3 -I -B scripts/check_qualified_clippy.py \
     -p superneo-backend-lattice \
     -p superneo-hegemon \
     -p superneo-bench \
     -p native-backend-ref \
     -p native-backend-timing \
-    --all-targets -- -D clippy::correctness -D clippy::suspicious -D unused_must_use -D unsafe_op_in_unsafe_fn
+    --all-targets
 }
 
 prepare_test_environment() {
@@ -72,6 +74,9 @@ run_test_base() {
   cargo test -p protocol-shielded-pool
   cargo test -p cashvm-bridge
   cargo test --test security_pipeline -- --nocapture
+  python3 -B scripts/check_release_launcher_policy.py >/dev/null
+  python3 -B scripts/test_check_release_launcher_policy.py
+  python3 -B scripts/test_release_launcher_boundaries.py
   python3 -B scripts/test_release_artifact_manifest.py
   python3 -B scripts/test_check_release_crypto_profile.py
   python3 -B .agent/hardening/smallwood-pqc-zk/test_strict_profile.py
@@ -85,14 +90,29 @@ run_test_base() {
 
 run_test_transaction_lib() {
   prepare_test_environment
-  cargo test -p transaction-circuit --lib -- \
+  # Release allocator state between selected tests. Inactive asset/recovery and
+  # historical split-route qualifications remain separate coordinator runs;
+  # active HGN/policy/HTLC tests stay required. No deferred run is a pass.
+  python3 -I -B scripts/test_isolate_transaction_lib.py
+  python3 -I -B scripts/isolate_transaction_lib.py \
     --skip private_multisig_accumulator::tests::private_multisig_accumulator_matches_lean_vectors \
     --skip proof::tests::lean_generated_transaction_proof_wrapper_wire_vectors_match_production \
     --skip smallwood_frontend::tests::lean_generated_smallwood_candidate_wrapper_admission_vectors_match_production \
     --skip smallwood_frontend::tests::lean_generated_smallwood_production_constraint_maps_match_every_production_row \
     --skip smallwood_frontend::tests::lean_generated_legacy_level5_transcript_binding_vectors_match_runtime_codec \
+    --skip asset_recovery_capsule_v1::tests::actual_graph_rejects_wrong_secret_owner_commitment_and_ciphertext \
+    --skip asset_recovery_capsule_v1::tests::segment_graphs_repeat_opening_checks_and_cover_exact_chacha_stream \
+    --skip asset_recovery_chacha_v1::tests::four_block_240_byte_graph_matches_host_and_rejects_mutations \
+    --skip asset_recovery_geometry_v1::emit_exact_graph_costs \
+    --skip asset_spend_v1::tests::asset_spend_combined_graph_reuses_policy_for_all_operations \
+    --skip asset_spend_v1::tests::asset_spend_combined_policy_credentials_cover_entire_reference_window \
+    --skip asset_spend_v1::tests::asset_spend_credential_horizon_covers_later_policy_branch \
+    --skip asset_spend_v1::tests::asset_spend_policy_height_authority_and_release_are_mandatory \
+    --skip asset_spend_v1::tests::asset_spend_recovery_shares_nullifier_and_cannot_bypass_current_policy \
+    --skip asset_spend_v1::tests::asset_spend_policy_credentials_bind_full_owner_and_zero_change \
     --skip smallwood_frontend::tests::lean_generated_smallwood_verifier_statement_projection_vectors_match_production \
-    --skip smallwood_recursive::tests::lean_generated_smallwood_recursive_envelope_wire_vectors_match_production
+    --skip smallwood_recursive::tests::lean_generated_smallwood_recursive_envelope_wire_vectors_match_production \
+    --skip smallwood_htlc_transport::tests::strict_source_projection_stays_inside_independent_carrier_cap
   # Compile the isolated facade against the current native engine and check
   # public binding plus signed/durable host HTLC admission. Large experimental
   # proof generation remains an explicit qualification step, not a CI loop.

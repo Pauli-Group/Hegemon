@@ -1,8 +1,8 @@
 {
   "name": "hegemon-app",
   "private": true,
-  "version": "0.10.0",
-  "description": "Desktop wallet and node console for the Hegemon 0.10 network.",
+  "version": "0.11.0",
+  "description": "Desktop wallet and node console for the Hegemon v0.11 pre-mainnet network.",
   "author": "Hegemon",
   "type": "module",
   "main": "out/main/main.cjs",

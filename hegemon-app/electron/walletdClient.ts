@@ -147,7 +147,8 @@ export class WalletdClient {
     this.process.stdin.write(`${payload}\n`);
 
     const timeoutMs = resolveWalletdRequestTimeoutMs(
-      process.env.HEGEMON_WALLETD_REQUEST_TIMEOUT_MS
+      process.env.HEGEMON_WALLETD_REQUEST_TIMEOUT_MS,
+      method
     );
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {

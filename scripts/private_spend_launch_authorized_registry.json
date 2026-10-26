@@ -1,0 +1,187 @@
+{
+  "final_artifacts": [
+    {
+      "artifact_sha256": {
+        "hegemon-node": "7afd6dd6599249525217d8873de6792852640f2ac777ea4b723662dc512d8866",
+        "wallet": "5390071347d26a0956dfb088f7e1322d331ced15931983ff555037fc7731b44a",
+        "walletd": "dc1d418cf930e1e6dca7034ed3d1145233400c4de0cd42bf9639db545c305ebc"
+      },
+      "identity": {
+        "action": 15,
+        "activation_height": 1,
+        "backend": 2,
+        "chain_id": "67aaaf82f6374e4438dbee1ed3f5f66c0ffe122044f1f5ebb6c7fddfecff446a",
+        "circuit": 12,
+        "compression_mode": "hegemon-p2w16-compress14-left-feedforward-v1",
+        "crypto": 7,
+        "cryptographic_class": {
+          "attempt_bound": "external_conditional_hypothesis",
+          "attempts_include": [
+            "failed",
+            "unused",
+            "successful"
+          ],
+          "continuation_queries": "uniform_all_context",
+          "max_ordinary_oracle_queries": 36893488147419103232,
+          "max_total_oracle_queries": 55340232221128654848,
+          "max_total_proof_attempts": 549755813888,
+          "max_total_trace_attempts": 549755813888,
+          "max_total_verification_attempts": 549755813888
+        },
+        "deactivation_height_exclusive": null,
+        "domain_set": 8,
+        "emission_schedule": "hegemon-native-emission-21m-atoms1e8-5hgn-epoch2100000-prefix-v1",
+        "family": 1,
+        "genesis_hash": "8c3722c22b59a13c43ed9bf596bcd2bbd118c08a0ed4bf3714c8ac6a8d1711eb",
+        "kind": "PrivateSpend",
+        "manifest_digest": "bf3463141161d00165e1122eb066fa117d6b10423aa6ca0b71b4bed2552843bf3e6235932ed3b7394ce4c9b2d2097cf61d35cd916dbe62d671f05c2494dfeca0",
+        "max_proof_actions_per_block": 8,
+        "max_proof_bytes": 177632,
+        "max_total_proofs": null,
+        "network_profile": "pre-mainnet",
+        "note_genesis_root": [
+          3013021922057677145,
+          1646436993411294138,
+          17930985046722462302,
+          4040104963526763525,
+          8044768705513318970,
+          5501470279516072626,
+          9669143789627659081
+        ],
+        "profile": 12,
+        "public_words": 86,
+        "relation_digest": "cd747b8430b51faee6c4bf94d7b0c8f8dfdb7863c6b927db53e7cea67c7a20a49aaf3ceda5b9ba2947dc9b89d070e1ac5fe9ab1c77cba6d859285c2f324b56f5",
+        "relation_id": "Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4",
+        "schema": "hegemon.private-spend.native-launch-identity.v2",
+        "stablecoin_genesis_root": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "independent_review": {
+        "bytes": 6760,
+        "path": "release-evidence/retained/.agent/launchpad-2026-10-03/ongoing-hgn-20261022/proof-size-repair-20261022/composite-actual-stage/review/FINAL-INDEPENDENT-ARTIFACT-REVIEW.r2.json",
+        "sha256": "5987c8246ad2d90550d9f45241c4121308f01d0855745c94793155d537a5cf11"
+      },
+      "lifecycle": {
+        "bytes": 16019,
+        "path": "release-evidence/retained/.agent/launchpad-2026-10-03/ongoing-hgn-20261022/proof-size-repair-20261022/composite-actual-stage/candidate-r2/COMPOSITE-LIFECYCLE.json",
+        "sha256": "c8aaf8aa7a4b240207ac79d33524665ab6e50d1c04a735f75e9b0e6f430e4161"
+      },
+      "target_triple": "aarch64-apple-darwin"
+    }
+  ],
+  "release": {
+    "authority_sources": [
+      {
+        "bytes": 16330,
+        "path": "config/private-spend-launch-evidence-contract.json",
+        "sha256": "c2c5bee993ed87b5ab28c5f8ed058153db55748d869442ceae8d462fd05e405b"
+      },
+      {
+        "bytes": 90764,
+        "path": "scripts/check_ci_release_gate_policy.py",
+        "sha256": "a677a784a1047f61603dae213fa1f4ab136aa49cae4efc03b9a1f6f02200b459"
+      },
+      {
+        "bytes": 237766,
+        "path": "scripts/check_private_spend_launch_authorization.py",
+        "sha256": "6a0d9d0b6f1864160dd3f07adaa54f142a1ce513584f13d903e07265bee7e112"
+      },
+      {
+        "bytes": 35118,
+        "path": "scripts/release_artifact_manifest.py",
+        "sha256": "17137d83d092b98c246b0fd7125bbb2f8ad71aba342fdc4717a071128c4efb6a"
+      },
+      {
+        "bytes": 60241,
+        "path": "scripts/release_private_spend_lifecycle.py",
+        "sha256": "ce93d93885c1d25d7e61a0a9398eed91a30fd4dc4577bf3d5db757e65f620a2a"
+      },
+      {
+        "bytes": 6870,
+        "path": "scripts/release_private_spend_lifecycle_io.py",
+        "sha256": "bbeb85fa1f784ecdca6764222dfcb15376a2b5af8d1edba07ccf802850e7ebf4"
+      },
+      {
+        "bytes": 5808,
+        "path": "scripts/release_private_spend_progress_watchdog.py",
+        "sha256": "0389a3f7d4d3449d2acf6c35a30b834007546dc67922799fc829096ea7d55863"
+      }
+    ],
+    "binding": {
+      "bytes": 66966,
+      "path": "release-evidence/ongoing-hgn/compact-smzl/source-binding/FINAL-SOURCE-BINDING.v4.json",
+      "sha256": "6ada52fd2143a488e4c4782de20db6b17f27ac13f34bbb8eeec4bc027fda391d"
+    },
+    "identity": {
+      "action": 15,
+      "activation_height": 1,
+      "backend": 2,
+      "chain_id": "67aaaf82f6374e4438dbee1ed3f5f66c0ffe122044f1f5ebb6c7fddfecff446a",
+      "circuit": 12,
+      "compression_mode": "hegemon-p2w16-compress14-left-feedforward-v1",
+      "crypto": 7,
+      "cryptographic_class": {
+        "attempt_bound": "external_conditional_hypothesis",
+        "attempts_include": [
+          "failed",
+          "unused",
+          "successful"
+        ],
+        "continuation_queries": "uniform_all_context",
+        "max_ordinary_oracle_queries": 36893488147419103232,
+        "max_total_oracle_queries": 55340232221128654848,
+        "max_total_proof_attempts": 549755813888,
+        "max_total_trace_attempts": 549755813888,
+        "max_total_verification_attempts": 549755813888
+      },
+      "deactivation_height_exclusive": null,
+      "domain_set": 8,
+      "emission_schedule": "hegemon-native-emission-21m-atoms1e8-5hgn-epoch2100000-prefix-v1",
+      "family": 1,
+      "genesis_hash": "8c3722c22b59a13c43ed9bf596bcd2bbd118c08a0ed4bf3714c8ac6a8d1711eb",
+      "kind": "PrivateSpend",
+      "manifest_digest": "bf3463141161d00165e1122eb066fa117d6b10423aa6ca0b71b4bed2552843bf3e6235932ed3b7394ce4c9b2d2097cf61d35cd916dbe62d671f05c2494dfeca0",
+      "max_proof_actions_per_block": 8,
+      "max_proof_bytes": 177632,
+      "max_total_proofs": null,
+      "network_profile": "pre-mainnet",
+      "note_genesis_root": [
+        3013021922057677145,
+        1646436993411294138,
+        17930985046722462302,
+        4040104963526763525,
+        8044768705513318970,
+        5501470279516072626,
+        9669143789627659081
+      ],
+      "profile": 12,
+      "public_words": 86,
+      "relation_digest": "cd747b8430b51faee6c4bf94d7b0c8f8dfdb7863c6b927db53e7cea67c7a20a49aaf3ceda5b9ba2947dc9b89d070e1ac5fe9ab1c77cba6d859285c2f324b56f5",
+      "relation_id": "Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4",
+      "schema": "hegemon.private-spend.native-launch-identity.v2",
+      "stablecoin_genesis_root": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "independent_review": {
+      "bytes": 3390,
+      "path": "release-evidence/ongoing-hgn/compact-smzl/source-binding/INDEPENDENT-G7-REVIEW.json",
+      "sha256": "46e08448b8bf3ecaa9edf29b33277e1ddbd5f4714beea0d3b6620a4ec946e30c"
+    },
+    "workflow_sha256": "012d5fdbc0b07daf06864d0d7cb44db309fbe41ff8e52bbd2e4464d98fba8178"
+  },
+  "schema": "hegemon.private-spend.source-authorized-registry.v2"
+}

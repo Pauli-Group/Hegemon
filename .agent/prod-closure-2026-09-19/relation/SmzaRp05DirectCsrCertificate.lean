@@ -2,6 +2,7 @@ import SmzaRp05AuthSourceBridge
 import SmzaRp05Components
 import SmzaRp05SupplyClosureCsrChunks
 import HegemonCrypto.SmallWoodV8Smz9ProgramCanonicality
+import SmzaRp05CsrFinite
 
 /-!
 Source-exact HGV8RP05 direct AUTH copies. The 49 entries below are only the
@@ -58,8 +59,16 @@ def exactAttempt (word : CurrentDirectWord) : CsrExecutableAttempt :=
 private theorem csr_canonical :
     ({ expressions := program.csrExpressions, roots := [] } :
       ExpressionProgram).Canonical true := by
-  apply (checkExpressionProgram_eq_true _ _).mp
-  decide
+  have canonicalFalse :
+      ({ expressions := program.csrExpressions, roots := [] } :
+        ExpressionProgram).Canonical false := by
+    simpa [program] using
+      HegemonCrypto.SmallWood.SmzaRp05CsrFiniteData.csrProgramCanonical
+  constructor
+  · intro node expression found
+    exact HegemonCrypto.SmallWood.V8Smz9SemanticBinding.canonical_without_rows_allows_rows
+      (canonicalFalse.1 node expression found)
+  · simp
 
 private theorem attempt_member (word : CurrentDirectWord) :
     exactAttempt word ∈ program.csrAttempts := by

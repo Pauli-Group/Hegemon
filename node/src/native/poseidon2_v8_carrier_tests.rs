@@ -655,6 +655,18 @@ fn retained_carrier_cli_config_keeps_fixture_and_production_genesis_distinct() {
 fn retained_carrier_cli_guard_child() {
     let directory = tempfile::tempdir().expect("isolated CLI configuration fixture");
     let cli = crate::native::NativeCli {
+        network: None,
+        network_manifest: None,
+        #[cfg(feature = "development-candidate")]
+        development_candidate: false,
+        #[cfg(feature = "development-candidate")]
+        print_development_candidate_manifest: false,
+        #[cfg(feature = "development-candidate")]
+        development_funding_address: None,
+        #[cfg(feature = "development-candidate")]
+        development_assets_json: None,
+        #[cfg(feature = "development-candidate")]
+        development_recovery_json: None,
         print_crypto_profile: false,
         dev: true,
         tmp: false,
@@ -753,6 +765,18 @@ fn retained_rp03_socket_child() {
         .parse()
         .expect("numeric child P2P address");
     let cli = crate::native::NativeCli {
+        network: None,
+        network_manifest: None,
+        #[cfg(feature = "development-candidate")]
+        development_candidate: false,
+        #[cfg(feature = "development-candidate")]
+        print_development_candidate_manifest: false,
+        #[cfg(feature = "development-candidate")]
+        development_funding_address: None,
+        #[cfg(feature = "development-candidate")]
+        development_assets_json: None,
+        #[cfg(feature = "development-candidate")]
+        development_recovery_json: None,
         print_crypto_profile: false,
         dev: true,
         tmp: false,

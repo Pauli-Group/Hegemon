@@ -8,6 +8,7 @@ fn canonicality_test_config(
     miner_address: Option<String>,
 ) -> NativeConfig {
     NativeConfig {
+        network: NativeNetworkIdentity::legacy(),
         dev: true,
         tmp: false,
         base_path: temp.path().to_path_buf(),

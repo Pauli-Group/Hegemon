@@ -702,7 +702,43 @@ fn native_block_body_64_mib_action_boundary_serializes_hashes_and_reassembles_li
 }
 
 #[test]
-fn large_announce_and_multiblock_sync_use_small_locator_messages() {
+fn periodic_announce_uses_compact_tip_above_receiver_inline_body_limit() {
+    let oversized_for_inline = sample_meta(82, vec![vec![0x82; 1_500 * 1024]]);
+    let serialized_body_bytes = bincode::serialized_size(&oversized_for_inline)
+        .expect("serialized native announce body size");
+    assert!(serialized_body_bytes > MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES as u64);
+    assert!(serialized_body_bytes < MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES as u64);
+
+    let (payload, compact) =
+        encode_native_sync_announce_or_tip(&oversized_for_inline).expect("periodic announce");
+    assert!(
+        compact,
+        "an over-limit inline body must use an unverified compact tip"
+    );
+    assert!(
+        native_sync_protocol_frame_bytes(&payload).expect("compact announce frame")
+            <= MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES
+    );
+    assert!(matches!(
+        decode_sync_message(&payload).expect("decode compact announce"),
+        NativeSyncMessage::AnnounceTip(NativeSyncTipAnnouncement {
+            best_height: 82,
+            best_hash,
+        }) if best_hash == oversized_for_inline.hash
+    ));
+
+    let inline = sample_meta(83, Vec::new());
+    let inline_body_bytes = bincode::serialized_size(&inline).expect("inline body size");
+    assert!(inline_body_bytes <= MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES as u64);
+    let (_, compact) = encode_native_sync_announce_or_tip(&inline).expect("inline announce");
+    assert!(
+        !compact,
+        "small inline bodies should retain the existing fast path"
+    );
+}
+
+#[test]
+fn large_announce_and_locator_sync_responses_advance_one_body_at_a_time() {
     let large = sample_meta(
         80,
         vec![vec![0x80; MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES + 1]],
@@ -728,8 +764,24 @@ fn large_announce_and_multiblock_sync_use_small_locator_messages() {
     let NativeSyncMessage::ResponseLocators { blocks, .. } = &response else {
         panic!("large response must use locators");
     };
-    assert_eq!(blocks.len(), 2);
-    assert_eq!(blocks[1].parent_hash, blocks[0].block_hash);
+    assert_eq!(
+        blocks.len(),
+        1,
+        "exact locator carrier admits one body per request"
+    );
+    assert_eq!(blocks[0].height, 80);
+    let response_range = NativeSyncRange {
+        from_height: blocks[0].height,
+        to_height: blocks[0].height,
+    };
+    assert_eq!(
+        native_sync_follow_response_request_range(response_range, 100, 64),
+        Some(NativeSyncRange {
+            from_height: 81,
+            to_height: 100,
+        }),
+        "the next request advances from the imported body to the rest of the requested range"
+    );
     assert_eq!(
         NATIVE_BLOCK_BODY_SERIALIZE_INVOCATIONS.with(|count| count.get()),
         2
@@ -746,9 +798,310 @@ fn large_announce_and_multiblock_sync_use_small_locator_messages() {
 }
 
 #[test]
+fn completed_chunk_import_releases_peer_before_followup_body_admission() {
+    let (_temp, node) = transport_test_node("chunk-owner-announce-admission-test");
+    let peer = [0x81; 32];
+    let now = Instant::now();
+    let mut bodies = NativeBlockBodyTransport::default();
+    let mut imports = NativeSyncImportQueue::default();
+
+    let receive_range_body = |transport: &mut NativeBlockBodyTransport,
+                              meta: NativeBlockMeta,
+                              request: NativeCompletedSyncRequest| {
+        let (encoded, locator) =
+            native_block_body_bytes_and_locator(&meta).expect("encode range body");
+        transport
+            .enqueue_range(peer, 100, vec![locator.clone()], request)
+            .expect("register one-body response")
+            .expect("non-empty locator response");
+        transport
+            .start_next(peer, now)
+            .expect("start body request")
+            .expect("one active body");
+        let mut completed = None;
+        for index in 0..locator.chunk_count {
+            completed = transport
+                .push_chunk_for_test(
+                    peer,
+                    native_block_body_chunk(&locator, &encoded, index).expect("encode body chunk"),
+                    now,
+                )
+                .expect("reassemble body")
+                .or(completed);
+        }
+        completed.expect("complete requested body")
+    };
+    let work_from_body = |completed, origin| {
+        let NativeQueuedBlockBodyOrigin::Range {
+            best_height,
+            response_range,
+            final_pending_body,
+            response_tip_hash,
+            completed_request,
+        } = origin
+        else {
+            panic!("expected range origin");
+        };
+        NativeSyncImportWork::ChunkRange {
+            peer_id: peer,
+            best_height,
+            response_range,
+            final_pending_body,
+            response_tip_hash,
+            response_contains_completed_target: false,
+            completed_request,
+            completed,
+        }
+    };
+
+    let first_meta = sample_meta(80, Vec::new());
+    let first_request = NativeCompletedSyncRequest {
+        request_target: Some(peer),
+        range: NativeSyncRange {
+            from_height: first_meta.height,
+            to_height: 100,
+        },
+        context: NativeOutboundSyncRequestContext::default(),
+    };
+    let (encoded_first, first_locator) =
+        native_block_body_bytes_and_locator(&first_meta).expect("encode first body locator");
+    bodies
+        .enqueue_range(peer, 100, vec![first_locator.clone()], first_request)
+        .expect("queue first range response")
+        .expect("first response range");
+    bodies
+        .start_next(peer, now)
+        .expect("start first range body")
+        .expect("first body request");
+    assert!(native_sync_peer_has_pending_body_or_import(
+        peer, &bodies, &imports
+    ));
+    assert!(
+        !native_sync_peer_has_pending_body_or_import([0x82; 32], &bodies, &imports),
+        "a held response body must not globally block another peer"
+    );
+    let mut first_body = None;
+    for index in 0..first_locator.chunk_count {
+        first_body = bodies
+            .push_chunk_for_test(
+                peer,
+                native_block_body_chunk(&first_locator, &encoded_first, index)
+                    .expect("encode first response chunk"),
+                now,
+            )
+            .expect("reassemble first range body")
+            .or(first_body);
+    }
+    let (first_body, first_origin) = first_body.expect("complete first range body");
+    imports
+        .enqueue(work_from_body(first_body, first_origin))
+        .expect("queue first completed body import");
+    assert!(native_sync_peer_has_pending_body_or_import(
+        peer, &bodies, &imports
+    ));
+    let first_import = imports.pop_front().expect("start first async import");
+    assert_eq!(first_import.peer_id(), peer);
+    assert!(native_sync_peer_announce_admission_blocked(
+        node.as_ref(),
+        peer,
+        &bodies,
+        &imports
+    ));
+    assert!(
+        native_sync_peer_announce_admission_blocked(node.as_ref(), peer, &bodies, &imports),
+        "repeated inline and locator announcements share the same per-peer gate"
+    );
+    assert!(
+        !native_sync_peer_announce_admission_blocked(node.as_ref(), [0x82; 32], &bodies, &imports),
+        "an active import for one peer must not block another peer's announcement"
+    );
+    assert!(native_sync_peer_has_pending_body_or_import(
+        peer, &bodies, &imports
+    ));
+    drop(first_import);
+
+    let mut progress = NativeSyncResponseImportProgress::new(1);
+    assert!(progress.record(NativeSyncResponseImportOutcome::Imported));
+    let first_response_range = NativeSyncRange {
+        from_height: first_meta.height,
+        to_height: first_meta.height,
+    };
+    assert_eq!(
+        native_sync_follow_response_request_range(first_response_range, 100, 64),
+        Some(NativeSyncRange {
+            from_height: 81,
+            to_height: 100,
+        })
+    );
+    let completion = NativeSyncImportCompletion::ChunkRange {
+        peer_id: peer,
+        best_height: 100,
+        response_range: first_response_range,
+        final_pending_body: true,
+        response_tip_hash: Some(first_meta.hash),
+        response_contains_completed_target: false,
+        completed_request: first_request,
+        result: Ok(Some(NativeSyncImportReport {
+            progress,
+            failure: None,
+        })),
+    };
+    // The receive loop releases this async import owner before its completion
+    // handler can request the next body from the same peer.
+    finish_native_sync_import_owner(&mut imports, &completion);
+    assert!(!native_sync_peer_has_pending_body_or_import(
+        peer, &bodies, &imports
+    ));
+    assert!(
+        !native_sync_peer_announce_admission_blocked(node.as_ref(), peer, &bodies, &imports),
+        "a new announcement is admitted after the range import owner is released"
+    );
+
+    let second_meta = sample_meta(81, Vec::new());
+    assert_eq!(second_meta.parent_hash, first_meta.hash);
+    let second_request = NativeCompletedSyncRequest {
+        request_target: Some(peer),
+        range: NativeSyncRange {
+            from_height: second_meta.height,
+            to_height: 100,
+        },
+        context: NativeOutboundSyncRequestContext::default(),
+    };
+    let (second_body, second_origin) = receive_range_body(&mut bodies, second_meta, second_request);
+    imports
+        .enqueue(work_from_body(second_body, second_origin))
+        .expect("admit follow-up body after first import completion");
+    assert_eq!(imports.waiting_len(), 1);
+    assert_eq!(imports.active_peer(), None);
+    imports.pop_front().expect("start follow-up range import");
+    imports.finish(peer);
+
+    let logical_request_range = NativeSyncRange {
+        from_height: 82,
+        to_height: 100,
+    };
+    assert!(node.begin_outbound_sync_request(Some(peer), logical_request_range));
+    assert!(
+        native_sync_peer_announce_admission_blocked(node.as_ref(), peer, &bodies, &imports),
+        "an exact live range request retains same-peer admission ownership"
+    );
+    assert!(
+        !native_sync_peer_announce_admission_blocked(node.as_ref(), [0x82; 32], &bodies, &imports),
+        "a peer's live request does not block other peers"
+    );
+    node.complete_outbound_sync_request_target(Some(peer));
+    assert!(!native_sync_peer_announce_admission_blocked(
+        node.as_ref(),
+        peer,
+        &bodies,
+        &imports
+    ));
+}
+
+#[test]
+fn successful_partial_sync_import_resets_backfill_and_keeps_forward_cursor() {
+    let (_temp, node) = transport_test_node("partial-prefix-forward-cursor-test");
+    let peer = [0x84; 32];
+    let target_height = 24;
+    let target_hash = [0xa4; 32];
+    assert!(node.observe_pending_sync_peer_tip(Some(peer), target_height, Some(target_hash),));
+    let request_range = NativeSyncRange {
+        from_height: 1,
+        to_height: target_height,
+    };
+    node.set_sync_recovery_cursor(
+        Some(peer),
+        target_height,
+        Some(target_hash),
+        request_range,
+        None,
+    );
+    let completed_request = NativeCompletedSyncRequest {
+        request_target: Some(peer),
+        range: request_range,
+        context: NativeOutboundSyncRequestContext {
+            recovery_page: false,
+            expected_parent_hash: None,
+            target_tip: Some((target_height, target_hash)),
+        },
+    };
+    let response_range = NativeSyncRange {
+        from_height: 1,
+        to_height: 1,
+    };
+    let response_tip_hash = [0x51; 32];
+    let mut progress = NativeSyncResponseImportProgress::new(1);
+    assert!(progress.record(NativeSyncResponseImportOutcome::Imported));
+    let expanded_backfill = node.escalate_sync_reorg_backfill();
+    assert!(expanded_backfill > NATIVE_SYNC_REORG_BACKFILL_BLOCKS);
+
+    reset_sync_reorg_backfill_preserving_partial_prefix(
+        node.as_ref(),
+        peer,
+        completed_request,
+        Some(response_range),
+        Some(response_tip_hash),
+        progress,
+    );
+    assert_eq!(
+        node.sync_reorg_backfill_blocks(),
+        NATIVE_SYNC_REORG_BACKFILL_BLOCKS
+    );
+    let cursor = node
+        .sync_recovery_cursor_for_target(Some(peer), target_height, Some(target_hash))
+        .expect("forward cursor survives a successful partial-prefix reset");
+    assert_eq!(cursor.peer_id, Some(peer));
+    assert_eq!(cursor.range.from_height, 2);
+    assert_eq!(cursor.range.to_height, target_height);
+    assert_eq!(cursor.expected_parent_hash, Some(response_tip_hash));
+
+    let changed_target_hash = [0xa5; 32];
+    assert!(node.observe_pending_sync_peer_tip(
+        Some(peer),
+        target_height + 1,
+        Some(changed_target_hash),
+    ));
+    reset_sync_reorg_backfill_preserving_partial_prefix(
+        node.as_ref(),
+        peer,
+        completed_request,
+        Some(response_range),
+        Some(response_tip_hash),
+        progress,
+    );
+    assert!(
+        node.sync_recovery_cursor_for_target(
+            Some(peer),
+            target_height + 1,
+            Some(changed_target_hash)
+        )
+        .is_none(),
+        "a response for an old target must not install a stale forward cursor"
+    );
+
+    let mut missing_parent = NativeSyncResponseImportProgress::new(2);
+    assert!(missing_parent.record(NativeSyncResponseImportOutcome::Imported));
+    assert!(!missing_parent.record(NativeSyncResponseImportOutcome::MissingParent));
+    assert!(
+        native_sync_partial_prefix_recovery_cursor(
+            peer,
+            completed_request,
+            Some(response_range),
+            Some(response_tip_hash),
+            missing_parent,
+            (target_height, Some(peer), Some(target_hash)),
+            NATIVE_SYNC_REQUEST_BLOCKS,
+        )
+        .is_none(),
+        "missing-parent progress must remain on the existing backfill path"
+    );
+}
+
+#[test]
 fn withheld_unverified_locator_never_changes_native_mining_sync_gate() {
     let temp = tempfile::tempdir().expect("temp dir");
     let config = NativeConfig {
+        network: NativeNetworkIdentity::legacy(),
         dev: true,
         tmp: false,
         base_path: temp.path().to_path_buf(),
@@ -798,6 +1151,7 @@ fn withheld_unverified_locator_never_changes_native_mining_sync_gate() {
 fn known_taller_nonwinning_locator_never_closes_native_mining_sync_gate() {
     let temp = tempfile::tempdir().expect("temp dir");
     let config = NativeConfig {
+        network: NativeNetworkIdentity::legacy(),
         dev: true,
         tmp: false,
         base_path: temp.path().to_path_buf(),
@@ -944,6 +1298,7 @@ fn bounded_fair_sync_import_queue_preserves_waiting_peer_and_fails_closed() {
 fn transport_test_node(name: &str) -> (tempfile::TempDir, Arc<NativeNode>) {
     let temp = tempfile::tempdir().expect("temp dir");
     let config = NativeConfig {
+        network: NativeNetworkIdentity::legacy(),
         dev: true,
         tmp: false,
         base_path: temp.path().to_path_buf(),
@@ -2079,4 +2434,302 @@ async fn bounded_sync_range_loader_queue_caps_32_and_64_peer_materialization_and
     .await
     .expect("best announce must progress independently of range workers")
     .expect("encode best announce while range workers are bounded");
+}
+
+#[test]
+fn exact_target_peer_handoff_preserves_verified_chunk_cursor_without_canonical_progress() {
+    let (_temp, node) = transport_test_node("exact-target-body-completion-handoff");
+    let original_height = node.best_height();
+    let old_peer = [0x61; 32];
+    let new_peer = [0x62; 32];
+    let target_hash = [0x63; 32];
+    let returned_hash = [0x64; 32];
+    let range = NativeSyncRange {
+        from_height: 30,
+        to_height: 35,
+    };
+    let response = NativeSyncRange {
+        from_height: 30,
+        to_height: 30,
+    };
+    let context = NativeOutboundSyncRequestContext {
+        recovery_page: true,
+        expected_parent_hash: Some([0x60; 32]),
+        target_tip: Some((35, target_hash)),
+    };
+    assert!(node.observe_pending_sync_peer_tip(Some(old_peer), 35, Some(target_hash)));
+    node.set_sync_recovery_cursor(
+        Some(old_peer),
+        35,
+        Some(target_hash),
+        range,
+        context.expected_parent_hash,
+    );
+    assert!(node.begin_outbound_sync_request_with_context(Some(old_peer), range, context));
+    // Locator receipt releases the request before its body/import completes.
+    let completed = node
+        .complete_outbound_sync_response(old_peer, Some(response))
+        .expect("authorized locator");
+    node.observe_verified_sync_peer_tip(Some(new_peer), 35, Some(target_hash));
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (35, Some(new_peer), Some(target_hash))
+    );
+    for outcome in [
+        NativeSyncResponseImportOutcome::AlreadyKnown,
+        NativeSyncResponseImportOutcome::StoredNoncanonical,
+    ] {
+        node.set_sync_recovery_cursor(
+            Some(new_peer),
+            35,
+            Some(target_hash),
+            range,
+            context.expected_parent_hash,
+        );
+        let mut progress = NativeSyncResponseImportProgress::new(1);
+        assert!(progress.record(outcome));
+        assert_eq!(progress.imported_blocks, 0);
+        preserve_native_sync_partial_prefix_progress(
+            &node,
+            old_peer,
+            completed,
+            Some(response),
+            Some(returned_hash),
+            progress,
+        );
+        let cursor = node
+            .sync_recovery_cursor_for_target(Some(new_peer), 35, Some(target_hash))
+            .expect("cursor survives completion after handoff");
+        assert_eq!(cursor.range.from_height, 31);
+        assert_eq!(cursor.expected_parent_hash, Some(returned_hash));
+        assert_eq!(
+            node.best_height(),
+            original_height,
+            "traversal does not fabricate canonical progress"
+        );
+        node.set_sync_recovery_cursor(
+            Some(new_peer),
+            35,
+            Some(target_hash),
+            NativeSyncRange {
+                from_height: 32,
+                to_height: 35,
+            },
+            Some([0x65; 32]),
+        );
+        reset_sync_reorg_backfill_preserving_partial_prefix(
+            &node,
+            old_peer,
+            completed,
+            Some(response),
+            Some(returned_hash),
+            progress,
+        );
+        assert_eq!(
+            node.sync_recovery_cursor_for_target(Some(new_peer), 35, Some(target_hash))
+                .unwrap()
+                .range
+                .from_height,
+            32,
+            "late completion cannot rewind cursor"
+        );
+    }
+}
+
+#[test]
+fn handoff_cursor_rejects_unverified_skips_wrong_target_and_false_range_geometry() {
+    let peer = [0x71; 32];
+    let owner = [0x72; 32];
+    let hash = [0x73; 32];
+    let mut completed = NativeCompletedSyncRequest {
+        request_target: Some(peer),
+        range: NativeSyncRange {
+            from_height: 30,
+            to_height: 35,
+        },
+        context: NativeOutboundSyncRequestContext {
+            recovery_page: false,
+            expected_parent_hash: None,
+            target_tip: Some((35, hash)),
+        },
+    };
+    let one = NativeSyncRange {
+        from_height: 30,
+        to_height: 30,
+    };
+    let mut known = NativeSyncResponseImportProgress::new(1);
+    assert!(known.record(NativeSyncResponseImportOutcome::AlreadyKnown));
+    let target = (35, Some(owner), Some(hash));
+    assert!(
+        native_sync_partial_prefix_recovery_cursor(
+            peer,
+            completed,
+            Some(one),
+            Some([0x74; 32]),
+            known,
+            target,
+            64
+        )
+        .is_none(),
+        "ordinary stale skips are not durable prefix evidence"
+    );
+    completed.context.recovery_page = true;
+    assert!(native_sync_partial_prefix_recovery_cursor(
+        peer,
+        completed,
+        Some(one),
+        Some([0x74; 32]),
+        known,
+        (35, Some(owner), Some([0xff; 32])),
+        64
+    )
+    .is_none());
+    assert!(
+        native_sync_partial_prefix_recovery_cursor(
+            peer,
+            completed,
+            Some(NativeSyncRange {
+                from_height: 30,
+                to_height: 31
+            }),
+            Some([0x74; 32]),
+            known,
+            target,
+            64
+        )
+        .is_none(),
+        "one-block report cannot represent two-block prefix"
+    );
+    let mut missing = NativeSyncResponseImportProgress::new(1);
+    assert!(!missing.record(NativeSyncResponseImportOutcome::MissingParent));
+    assert!(native_sync_partial_prefix_recovery_cursor(
+        peer,
+        completed,
+        Some(one),
+        Some([0x74; 32]),
+        missing,
+        target,
+        64
+    )
+    .is_none());
+    let mut error = known;
+    error.record_terminal_error();
+    assert!(native_sync_partial_prefix_recovery_cursor(
+        peer,
+        completed,
+        Some(one),
+        Some([0x74; 32]),
+        error,
+        target,
+        64
+    )
+    .is_none());
+}
+
+#[test]
+fn exact_target_late_prefix_preserves_newer_cursor_and_rejects_foreign_completion() {
+    let (_temp, node) = transport_test_node("late-prefix-monotonic-cursor");
+    let peer = [0x81; 32];
+    let owner = [0x82; 32];
+    let hash = [0x83; 32];
+    node.observe_verified_sync_peer_tip(Some(owner), 35, Some(hash));
+    let newer = NativeSyncRange {
+        from_height: 32,
+        to_height: 35,
+    };
+    let newer_parent = [0x84; 32];
+    node.set_sync_recovery_cursor(Some(owner), 35, Some(hash), newer, Some(newer_parent));
+    let completed = NativeCompletedSyncRequest {
+        request_target: Some(peer),
+        range: NativeSyncRange {
+            from_height: 30,
+            to_height: 35,
+        },
+        context: NativeOutboundSyncRequestContext {
+            recovery_page: true,
+            expected_parent_hash: Some([0x85; 32]),
+            target_tip: Some((35, hash)),
+        },
+    };
+    let response = Some(NativeSyncRange {
+        from_height: 30,
+        to_height: 30,
+    });
+    let mut progress = NativeSyncResponseImportProgress::new(1);
+    assert!(progress.record(NativeSyncResponseImportOutcome::Imported));
+    reset_sync_reorg_backfill_preserving_partial_prefix(
+        node.as_ref(),
+        peer,
+        completed,
+        response,
+        Some([0x86; 32]),
+        progress,
+    );
+    let retained = node
+        .sync_recovery_cursor_for_target(Some(owner), 35, Some(hash))
+        .unwrap();
+    assert_eq!(retained.range, newer);
+    assert_eq!(retained.expected_parent_hash, Some(newer_parent));
+    assert!(
+        native_sync_partial_prefix_recovery_cursor(
+            [0xff; 32],
+            completed,
+            response,
+            Some([0x86; 32]),
+            progress,
+            node.sync_target_tip_snapshot(),
+            64
+        )
+        .is_none(),
+        "physical response ownership remains original request peer"
+    );
+    assert!(
+        native_sync_partial_prefix_recovery_cursor(
+            peer,
+            completed,
+            response,
+            Some([0x86; 32]),
+            progress,
+            (36, Some(owner), Some(hash)),
+            64
+        )
+        .is_none(),
+        "different target height cannot inherit completion"
+    );
+    assert!(
+        native_sync_partial_prefix_recovery_cursor(
+            peer,
+            completed,
+            response,
+            Some([0x86; 32]),
+            progress,
+            (35, None, Some(hash)),
+            64
+        )
+        .is_none(),
+        "unowned target cannot receive cursor"
+    );
+    let original_height = node.best_height();
+    let mut full = NativeSyncResponseImportProgress::new(6);
+    for _ in 0..6 {
+        assert!(full.record(NativeSyncResponseImportOutcome::Imported));
+    }
+    reset_sync_reorg_backfill_preserving_partial_prefix(
+        node.as_ref(),
+        peer,
+        completed,
+        Some(completed.range),
+        Some(hash),
+        full,
+    );
+    assert!(
+        node.sync_recovery_cursor_for_target(Some(owner), 35, Some(hash))
+            .is_none(),
+        "a successful full response clears the old partial recovery cursor"
+    );
+    assert_eq!(
+        node.best_height(),
+        original_height,
+        "cursor bookkeeping does not publish fabricated canonical state"
+    );
 }

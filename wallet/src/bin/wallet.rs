@@ -1,3 +1,6 @@
+#[path = "../../examples/launch_wallet_prepare.rs"]
+mod launch_wallet_prepare;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -32,7 +35,11 @@ use wallet::{
 };
 
 #[derive(Parser)]
-#[command(name = "wallet", version, about = "Synthetic currency wallet tooling")]
+#[command(
+    name = "wallet",
+    version = protocol_versioning::RELEASE_VERSION,
+    about = "Synthetic currency wallet tooling"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -43,6 +50,9 @@ enum Commands {
     /// Print the compiled production cryptographic profile as JSON.
     #[command(name = "print-crypto-profile")]
     PrintCryptoProfile,
+    /// Initialize, sync, and prepare payments for an exactly pinned launch chain.
+    #[command(name = "launch", subcommand)]
+    Launch(launch_wallet_prepare::LaunchCommands),
     Generate {
         #[arg(long, default_value_t = 1)]
         count: u32,
@@ -326,8 +336,8 @@ struct StablecoinBurnArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Stablecoin amount to burn
     #[arg(long)]
@@ -377,6 +387,7 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string(&profile)?);
             Ok(())
         }
+        Commands::Launch(command) => launch_wallet_prepare::run(command),
         Commands::Generate { count, out } => cmd_generate(count, out),
         Commands::Address { root, index } => cmd_address(&root, index),
         Commands::TxCraft {
@@ -2010,4 +2021,35 @@ struct NoteSummary {
 struct BalanceReport {
     totals: BTreeMap<u64, u64>,
     recovered: Vec<NoteSummary>,
+}
+
+#[cfg(test)]
+mod rpc_argument_tests {
+    use super::*;
+
+    #[test]
+    fn one_shot_rpc_defaults_are_http_and_ws_url_remains_compatible() {
+        let sync = NodeSyncArgs::try_parse_from(["node-sync", "--store", "unused.wallet"]).unwrap();
+        assert_eq!(sync.ws_url, "http://127.0.0.1:9944");
+        let burn = StablecoinBurnArgs::try_parse_from([
+            "stablecoin-burn",
+            "--store",
+            "unused.wallet",
+            "--amount",
+            "1",
+            "--asset-id",
+            "1",
+        ])
+        .unwrap();
+        assert_eq!(burn.ws_url, "http://127.0.0.1:9944");
+        let explicit_ws = NodeSyncArgs::try_parse_from([
+            "node-sync",
+            "--store",
+            "unused.wallet",
+            "--ws-url",
+            "ws://localhost:9955",
+        ])
+        .unwrap();
+        assert_eq!(explicit_ws.ws_url, "ws://localhost:9955");
+    }
 }

@@ -5,6 +5,18 @@ use protocol_shielded_pool::types::{
     ReceiptRootMetadata, ReceiptRootProofPayload, TxValidityReceipt,
 };
 
+/// Exercise the production HTTP body parser rather than bypassing it with Json.
+fn rpc_http_json_request(payload: Value) -> axum::extract::Request {
+    let body = serde_json::to_vec(&payload).expect("serialize RPC request");
+    axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CONTENT_LENGTH, body.len())
+        .body(axum::body::Body::from(body))
+        .expect("build RPC HTTP request")
+}
+
 #[test]
 fn receipt_root_candidate_mode_is_rejected_before_consensus_conversion() {
     let err = consensus_batch_mode(BlockProofMode::ReceiptRoot)
@@ -63,8 +75,11 @@ impl<'de> Deserialize<'de> for NormalizedBincodeByte {
 #[serde(deny_unknown_fields)]
 struct LeanSupplyVectorFile {
     schema_version: u32,
+    emission_model: String,
     monetary_constants: serde_json::Value,
     subsidy_schedule_cases: Vec<serde_json::Value>,
+    epoch_budget_cases: Vec<serde_json::Value>,
+    slot_subsidy_cases: Vec<serde_json::Value>,
     consensus_supply_cases: Vec<serde_json::Value>,
     native_supply_cases: Vec<LeanNativeSupplyCase>,
 }
@@ -3031,6 +3046,7 @@ fn parse_block_hash_height_params() {
 fn submit_action_returns_exact_rejection_response() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let config = NativeConfig {
+        network: NativeNetworkIdentity::legacy(),
         dev: true,
         tmp: false,
         base_path: tmp.path().to_path_buf(),
@@ -3066,6 +3082,7 @@ fn submit_action_rejects_invalid_shielded_transfer_before_persistence() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let test_pow_bits = 0x207f_ffff;
     let config = NativeConfig {
+        network: NativeNetworkIdentity::legacy(),
         dev: true,
         tmp: false,
         base_path: tmp.path().to_path_buf(),
@@ -3551,7 +3568,7 @@ fn concurrent_two_poseidon2_v8_group_is_atomic_while_production_capability_is_ab
         assert!(
             error
                 .to_string()
-                .contains("production capability is absent or not active"),
+                .contains("exact network has no active source-owned proof capability"),
             "unexpected V8 group error: {error}"
         );
     }
@@ -4983,6 +5000,7 @@ fn side_branch_with_more_work_reorganizes_canonical_chain() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let test_pow_bits = 0x207f_ffff;
     let config = NativeConfig {
+        network: NativeNetworkIdentity::legacy(),
         dev: true,
         tmp: false,
         base_path: tmp.path().to_path_buf(),
@@ -5768,19 +5786,23 @@ fn sync_response_missing_fork_parent_stops_suffix_then_recovers() {
     let test_pow_bits = 0x207f_ffff;
     let node =
         NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false)).expect("node");
+    let genesis = node.best_meta();
 
     let local_work = node.prepare_work().expect("prepare local fork work");
     let local_seal = strongest_test_seal(&local_work, 0..512);
-    let local_tip = node
+    let mut local_tip = node
         .import_mined_block(&local_work, local_seal)
         .expect("import local fork block")
         .expect("local fork block");
+    for _ in 2..=3 {
+        local_tip = mine_empty_native_block(&node);
+    }
 
     let peer_tmp = tempfile::tempdir().expect("peer tempdir");
     let peer_node = NativeNode::open(test_config(peer_tmp.path(), test_pow_bits, "unsafe", false))
         .expect("peer node");
     let mut peer_blocks = Vec::new();
-    for round in 1..=65 {
+    for round in 1..=67 {
         let work = peer_node.prepare_work().expect("prepare peer fork work");
         let seal = mine_native_round(work.clone(), round)
             .expect("peer fork work must seal within one deterministic round");
@@ -5793,15 +5815,39 @@ fn sync_response_missing_fork_parent_stops_suffix_then_recovers() {
     }
     assert_ne!(local_tip.hash, peer_blocks[0].hash);
 
-    // This is the shape observed live: the local and peer chains diverge at
-    // local-best height, while the 64-block response begins one height later.
-    let missing_parent_response = peer_blocks[1..65].to_vec();
+    let peer_tip = peer_blocks.last().expect("peer tip").clone();
+    let peer = [0x25; 32];
+    node.observe_pending_sync_peer_tip(Some(peer), peer_tip.height, Some(peer_tip.hash));
+
+    // Probe the first height beyond the local tip. A missing fork parent must
+    // stop import, trigger bounded backfill escalation, then recover through a
+    // valid ancestor page and the exact heavier target.
+    let initial_range = native_sync_observed_tip_request_range(
+        node.best_height(),
+        node.best_meta().hash,
+        peer_tip.height,
+        Some(peer_tip.hash),
+        NATIVE_SYNC_REQUEST_BLOCKS,
+        node.sync_reorg_backfill_blocks(),
+    )
+    .expect("initial higher-tip request");
+    assert_eq!(initial_range.from_height, local_tip.height + 1);
+    let response_count = usize::try_from(initial_range.to_height - initial_range.from_height + 1)
+        .expect("initial request count");
+    assert_eq!(
+        response_count, NATIVE_SYNC_REQUEST_BLOCKS as usize,
+        "the missing-parent probe must exercise a full 64-block response"
+    );
+    let missing_parent_response = peer_blocks[usize::try_from(initial_range.from_height - 1)
+        .expect("peer response offset")
+        ..=usize::try_from(initial_range.to_height - 1).expect("peer response end")]
+        .to_vec();
     node.reset_block_meta_load_counters();
     let report = import_native_sync_response_blocks(
         &node,
         missing_parent_response,
-        peer_blocks.last().expect("peer tip").height,
-        NativeSyncResponseImportProgress::new(64),
+        peer_tip.height,
+        NativeSyncResponseImportProgress::new(response_count),
         false,
     );
 
@@ -5817,17 +5863,71 @@ fn sync_response_missing_fork_parent_stops_suffix_then_recovers() {
         "missing-parent classification must stop before decoding the rest of the response: {block_meta_loads} loads"
     );
     assert!(
-        node.header_by_hash(&peer_blocks[1].hash)
+        node.header_by_hash(&peer_blocks[3].hash)
             .expect("missing child lookup")
             .is_none(),
         "a suffix whose fork parent is absent must not be persisted"
     );
 
+    assert!(native_sync_response_should_escalate_reorg_backfill(
+        report.progress,
+        node.best_height(),
+        peer_tip.height,
+    ));
+    assert_eq!(
+        node.escalate_sync_reorg_backfill(),
+        NATIVE_SYNC_REORG_BACKFILL_BLOCKS.saturating_mul(2),
+        "missing parent must escalate before ancestor recovery"
+    );
+    let ancestor_range = native_sync_recovery_request_range(
+        initial_range,
+        Some(initial_range),
+        None,
+        peer_tip.height,
+        NATIVE_SYNC_REQUEST_BLOCKS,
+        true,
+    )
+    .expect("missing parent must request a preceding ancestor page");
+    assert_eq!(
+        ancestor_range,
+        NativeSyncRange {
+            from_height: 0,
+            to_height: 3,
+        }
+    );
+    let ancestor_prefix = std::iter::once(genesis)
+        .chain(peer_blocks[..3].iter().cloned())
+        .collect::<Vec<_>>();
+    let ancestor_report = import_native_sync_response_blocks(
+        &node,
+        ancestor_prefix,
+        peer_tip.height,
+        NativeSyncResponseImportProgress::new(4),
+        true,
+    );
+    assert!(ancestor_report.failure.is_none());
+    assert!(!ancestor_report.progress.stopped_on_missing_parent);
+    assert!(!ancestor_report.progress.stopped_on_error);
+    assert_eq!(
+        node.header_by_hash(&peer_blocks[2].hash)
+            .expect("fork-parent record lookup"),
+        Some(peer_blocks[2].clone()),
+        "ancestor recovery must validate and retain the fork parent"
+    );
+    let forward_range = native_sync_follow_response_request_range(
+        ancestor_range,
+        peer_tip.height,
+        NATIVE_SYNC_REQUEST_BLOCKS,
+    )
+    .expect("connected ancestor page must resume forward");
+    assert_eq!(forward_range.from_height, 4);
+    assert_eq!(forward_range.to_height, peer_tip.height);
+
     let recovery = import_native_sync_response_blocks(
         &node,
-        peer_blocks.clone(),
-        peer_blocks.last().expect("peer tip").height,
-        NativeSyncResponseImportProgress::new(peer_blocks.len()),
+        peer_blocks[3..].to_vec(),
+        peer_tip.height,
+        NativeSyncResponseImportProgress::new(peer_blocks.len() - 3),
         true,
     );
     assert!(
@@ -5835,8 +5935,24 @@ fn sync_response_missing_fork_parent_stops_suffix_then_recovers() {
         "recovery import failed: {:?}",
         recovery.failure.as_ref().map(|failure| &failure.error)
     );
-    assert_eq!(node.best_meta().hash, peer_blocks.last().unwrap().hash);
-    assert_eq!(node.best_meta().height, 65);
+    assert_eq!(node.best_meta().hash, peer_tip.hash);
+    assert_eq!(node.best_meta().height, peer_tip.height);
+    let (target_height, target_peer, target_hash) = node.sync_target_tip_snapshot();
+    assert_eq!(target_height, peer_tip.height);
+    if let Some(target_peer) = target_peer {
+        assert_eq!(target_peer, peer);
+    }
+    if let Some(target_hash) = target_hash {
+        assert_eq!(target_hash, peer_tip.hash);
+    }
+    // Fork recovery and tip-extension batches may normalize the target at
+    // different points. Exact verified-tip evidence must always clear it.
+    node.observe_verified_sync_peer_tip(Some(peer), peer_tip.height, Some(peer_tip.hash));
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (peer_tip.height, None, None)
+    );
+    assert!(node.mining_sync_gate_allows_work());
 }
 
 #[test]
@@ -7662,23 +7778,14 @@ fn reorg_rejects_missing_old_canonical_chain_before_publish() {
         false,
     ))
     .expect("node");
-    let genesis = node.best_meta();
-
-    let canonical_work = node.prepare_work().expect("prepare canonical native work");
-    let canonical_seal = mine_native_round(canonical_work.clone(), 0).expect("canonical seal");
-    let canonical = node
-        .import_mined_block(&canonical_work, canonical_seal)
-        .expect("canonical import")
-        .expect("canonical block");
+    let (canonical_chain, side_chain) = mine_ordered_empty_native_fork(&node, test_pow_bits, 1);
+    let canonical = canonical_chain[1].clone();
+    let side_one = side_chain[1].clone();
     assert_eq!(node.best_meta().hash, canonical.hash);
     let old_height_one = node.hash_by_height(1).expect("height one before reorg");
     let old_pending_len = node.state.read().pending_actions.len();
     let old_state_root = node.state.read().commitment_tree.root();
 
-    let side_one = (1..128)
-        .map(|round| mined_empty_child(&genesis, 1, test_pow_bits, round))
-        .find(|candidate| !native_meta_better_than(candidate, &canonical))
-        .expect("side child that does not beat canonical tip");
     persist_block_record(&node.block_tree, &side_one).expect("persist side parent");
 
     node.block_tree
@@ -7840,8 +7947,9 @@ fn reorg_action_block_commit_reloads_canonical_sled_state() {
     let mut expected_note_state =
         poseidon2_v8_state::Poseidon2V8NoteTreeState::new_empty().expect("empty V8 note state");
     expected_note_state
-        .append(side_commitment)
-        .expect("append expected side V8 coinbase commitment");
+        .test_finish_block_rewards(2, side_two.hash, [Some(side_commitment), None])
+        .expect("schedule expected immature side reward");
+    assert_eq!(expected_note_state.leaf_count(), 0);
     let v8_store = test_poseidon2_v8_state_store(&reopened, production);
     assert_eq!(v8_store.tip().expect("reopened V8 tip").height(), 2);
     assert_eq!(
@@ -7873,13 +7981,14 @@ fn reorg_quarantines_inactive_pending_sidecar_even_when_staged_ciphertext_surviv
     .expect("node");
     let genesis = node.best_meta();
 
-    let canonical_work = node.prepare_work().expect("prepare canonical native work");
-    let canonical_seal = mine_native_round(canonical_work.clone(), 0).expect("canonical seal");
-    let canonical = node
-        .import_mined_block(&canonical_work, canonical_seal)
-        .expect("canonical import")
-        .expect("canonical block");
+    let (canonical_chain, side_chain) = mine_ordered_empty_native_fork(&node, test_pow_bits, 1);
+    let canonical = canonical_chain.last().expect("canonical sibling");
+    let side_one = side_chain.last().expect("losing sibling").clone();
     assert_eq!(node.best_meta().hash, canonical.hash);
+    assert!(
+        !native_meta_better_than(&side_one, canonical),
+        "selected side sibling must lose under canonical fork choice"
+    );
 
     let pending_template =
         test_sidecar_transfer_action(genesis.state_root, [82u8; 48], [83u8; 48], 0);
@@ -7896,10 +8005,6 @@ fn reorg_quarantines_inactive_pending_sidecar_even_when_staged_ciphertext_surviv
         .pending_actions
         .contains_key(&staged_pending.tx_hash));
 
-    let side_one = (1..128)
-        .map(|round| mined_empty_child(&genesis, 1, test_pow_bits, round))
-        .find(|candidate| !native_meta_better_than(candidate, &canonical))
-        .expect("side child that does not beat canonical tip");
     persist_block_record(&node.block_tree, &side_one).expect("persist side parent");
     let side_two = mined_empty_child(&side_one, 2, test_pow_bits, 129);
     assert!(
@@ -7943,9 +8048,7 @@ fn mixed_restart_reorg_rejects_inactive_sidecar_before_bridge_replay_and_publica
         admitted_poseidon2_v8_coinbase_commitment(&coinbase).expect("test V8 coinbase commitment");
     let mut expected_note_state =
         poseidon2_v8_state::Poseidon2V8NoteTreeState::new_empty().expect("empty V8 note state");
-    expected_note_state
-        .append(coinbase_commitment)
-        .expect("append expected V8 coinbase commitment");
+
     let _test_coinbase = poseidon2_v8_verifier::install_poseidon2_v8_test_coinbase(coinbase);
 
     let (canonical, side_one, old_archive_len) = {
@@ -7958,6 +8061,10 @@ fn mixed_restart_reorg_rejects_inactive_sidecar_before_bridge_replay_and_publica
             .import_mined_block(&canonical_work, canonical_seal)
             .expect("canonical import")
             .expect("canonical block");
+        expected_note_state
+            .test_finish_block_rewards(1, canonical.hash, [Some(coinbase_commitment), None])
+            .expect("schedule expected immature reward");
+        assert_eq!(expected_note_state.leaf_count(), 0);
         assert_eq!(node.best_meta().hash, canonical.hash);
         assert_eq!(node.ciphertext_archive_tree.len(), 0);
         assert_eq!(
@@ -8680,9 +8787,7 @@ fn reorg_rebuild_failure_preserves_canonical_indexes() {
         admitted_poseidon2_v8_coinbase_commitment(&coinbase).expect("test V8 coinbase commitment");
     let mut expected_note_state =
         poseidon2_v8_state::Poseidon2V8NoteTreeState::new_empty().expect("empty V8 note state");
-    expected_note_state
-        .append(coinbase_commitment)
-        .expect("append expected V8 coinbase commitment");
+
     let _test_coinbase = poseidon2_v8_verifier::install_poseidon2_v8_test_coinbase(coinbase);
 
     let canonical_work = node.prepare_work().expect("prepare canonical native work");
@@ -8721,6 +8826,10 @@ fn reorg_rebuild_failure_preserves_canonical_indexes() {
         .import_mined_block(&canonical_work, canonical_seal)
         .expect("canonical import")
         .expect("canonical block");
+    expected_note_state
+        .test_finish_block_rewards(1, canonical.hash, [Some(coinbase_commitment), None])
+        .expect("schedule expected immature reward");
+    assert_eq!(expected_note_state.leaf_count(), 0);
     assert_eq!(canonical.hash, canonical_tip.hash);
     assert_eq!(node.best_meta().hash, canonical.hash);
     assert_eq!(node.commitment_tree.len(), 0);
@@ -8882,6 +8991,7 @@ fn manual_coinbase_action_submission_is_rejected() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let test_pow_bits = 0x207f_ffff;
     let config = NativeConfig {
+        network: NativeNetworkIdentity::legacy(),
         dev: true,
         tmp: false,
         base_path: tmp.path().to_path_buf(),
@@ -9140,9 +9250,7 @@ fn startup_canonical_index_repair_clears_legacy_rows_and_preserves_v8_state_atom
         admitted_poseidon2_v8_coinbase_commitment(&coinbase).expect("test V8 coinbase commitment");
     let mut expected_note_state =
         poseidon2_v8_state::Poseidon2V8NoteTreeState::new_empty().expect("empty V8 note state");
-    expected_note_state
-        .append(coinbase_commitment)
-        .expect("append expected V8 coinbase commitment");
+
     let _test_coinbase = poseidon2_v8_verifier::install_poseidon2_v8_test_coinbase(coinbase);
 
     let imported = {
@@ -9153,6 +9261,10 @@ fn startup_canonical_index_repair_clears_legacy_rows_and_preserves_v8_state_atom
             .import_mined_block(&work, seal)
             .expect("V8 coinbase import")
             .expect("V8 coinbase block");
+        expected_note_state
+            .test_finish_block_rewards(1, imported.hash, [Some(coinbase_commitment), None])
+            .expect("schedule expected immature reward");
+        assert_eq!(expected_note_state.leaf_count(), 0);
         assert!(node.commitment_tree.is_empty());
         assert!(node.ciphertext_index_tree.is_empty());
         assert!(node.ciphertext_archive_tree.is_empty());
@@ -11620,6 +11732,15 @@ fn rpc_policy_gates_unsafe_methods() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let unsafe_node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false))
         .expect("unsafe node");
+    #[cfg(feature = "development-candidate")]
+    {
+        let catalog = dispatch_rpc_method(&unsafe_node, "rpc_methods", Value::Array(Vec::new()))
+            .expect("RPC method catalog");
+        assert!(!catalog["methods"]
+            .as_array()
+            .expect("method list")
+            .contains(&json!("hegemon_developmentPendingActionChunk")));
+    }
     let allowed = dispatch_rpc_method(
         &unsafe_node,
         "da_submitCiphertexts",
@@ -11717,12 +11838,20 @@ fn safe_node_config_redacts_local_paths_and_topology() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
     config.seeds.push("198.51.100.7:30333".to_string());
+    let expected_safe_manifest_digest = config
+        .network
+        .manifest_digest()
+        .map(|digest| hex64(&digest));
     let node = NativeNode::open(config).expect("node");
 
     let safe_snapshot = dispatch_rpc_method(&node, "hegemon_nodeConfig", Value::Array(Vec::new()))
         .expect("safe config snapshot");
     assert_eq!(safe_snapshot.get("redacted"), Some(&json!(true)));
     assert_eq!(safe_snapshot.get("chainSpecName"), Some(&json!("Hegemon")));
+    assert_eq!(
+        safe_snapshot.get("networkManifestDigest"),
+        Some(&json!(expected_safe_manifest_digest))
+    );
     assert_eq!(
         dispatch_rpc_method(&node, "system_chain", Value::Array(Vec::new())).expect("system chain"),
         json!("Hegemon")
@@ -11744,13 +11873,20 @@ fn safe_node_config_redacts_local_paths_and_topology() {
     }
 
     let unsafe_tmp = tempfile::tempdir().expect("tempdir");
-    let unsafe_node =
-        NativeNode::open(test_config(unsafe_tmp.path(), 0x207f_fffe, "unsafe", false))
-            .expect("unsafe node");
+    let unsafe_config = test_config(unsafe_tmp.path(), 0x207f_fffe, "unsafe", false);
+    let expected_unsafe_manifest_digest = unsafe_config
+        .network
+        .manifest_digest()
+        .map(|digest| hex64(&digest));
+    let unsafe_node = NativeNode::open(unsafe_config).expect("unsafe node");
     let unsafe_snapshot =
         dispatch_rpc_method(&unsafe_node, "hegemon_nodeConfig", Value::Array(Vec::new()))
             .expect("unsafe config snapshot");
     assert_eq!(unsafe_snapshot.get("redacted"), Some(&json!(false)));
+    assert_eq!(
+        unsafe_snapshot.get("networkManifestDigest"),
+        Some(&json!(expected_unsafe_manifest_digest))
+    );
     assert_eq!(
         unsafe_snapshot.get("chainSpecName"),
         Some(&json!("Hegemon"))
@@ -12129,7 +12265,7 @@ fn chain_get_block_actions_chunk_rpc_rejects_noncanonical_id_root_and_cap_drift(
     persist_block_record(&node.block_tree, &oversized).expect("persist oversized action fixture");
     let err = dispatch_rpc_method(&node, "chain_getBlockActionsChunk", params)
         .expect_err("oversized action must reject before serving");
-    assert!(err.to_string().contains("exceeds limit"), "{err}");
+    assert!(err.to_string().contains("finite route limit"), "{err}");
 
     persist_block_record(&node.block_tree, &block).expect("restore canonical block record");
     dispatch_rpc_method(
@@ -14919,7 +15055,7 @@ async fn rpc_handler_rejects_oversized_batches() {
             .collect(),
     );
 
-    let response = rpc_handler(State(node), Json(payload)).await;
+    let response = rpc_handler(State(node), rpc_http_json_request(payload)).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -18519,7 +18655,7 @@ fn native_block_meta_bincode_budget_rejects_unbounded_lengths_before_deserialize
         .expect_err("oversized action payload must reject before bincode decode");
     assert!(err
         .to_string()
-        .contains("action payload 0 exceeds limit before bincode decode"));
+        .contains("action payload 0 exceeds its finite route limit before bincode decode"));
 }
 
 #[test]
@@ -24743,7 +24879,7 @@ async fn verify_lean_rpc_batch_case(case: &LeanRpcBatchCase) {
             })
             .collect(),
     );
-    let response = rpc_handler(State(node), Json(payload)).await;
+    let response = rpc_handler(State(node), rpc_http_json_request(payload)).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -26550,50 +26686,88 @@ fn native_sync_ranges_fail_closed_when_cap_zero() {
 }
 
 #[test]
-fn native_sync_near_tip_request_backfills_reorg_window() {
-    let range = native_sync_missing_request_range_with_reorg_backfill(
-        NativeSyncMissingRequestInput {
-            best_height: 20592,
-            announced_height: 20618,
-            max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
-        },
+fn native_sync_higher_tip_starts_after_local_tip_until_backfill_escalates() {
+    let best_height = 20_592;
+    let range = native_sync_observed_tip_request_range(
+        best_height,
+        [0x11; 32],
+        20_618,
+        Some([0x22; 32]),
+        native_sync_request_max_blocks(NATIVE_SYNC_REORG_BACKFILL_BLOCKS),
         NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
     )
-    .expect("near-tip announced fork should request a bounded backfill range");
-    assert_eq!(range.from_height, 20561);
+    .expect("higher peer tip should probe the next block first");
+    assert_eq!(range.from_height, best_height + 1);
     assert_eq!(range.to_height, 20618);
 
-    let straight_sync = native_sync_missing_request_range_with_reorg_backfill(
-        NativeSyncMissingRequestInput {
-            best_height: 0,
-            announced_height: MAX_NATIVE_SYNC_RESPONSE_BLOCKS + 100,
-            max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
-        },
+    let straight_sync = native_sync_observed_tip_request_range(
+        44,
+        [0x33; 32],
+        1_000,
+        Some([0x44; 32]),
+        native_sync_request_max_blocks(NATIVE_SYNC_REORG_BACKFILL_BLOCKS),
         NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
     )
-    .expect("bulk sync should still start after local best");
-    assert_eq!(straight_sync.from_height, 1);
-    assert_eq!(straight_sync.to_height, MAX_NATIVE_SYNC_RESPONSE_BLOCKS);
+    .expect("large higher-tip gap should still start after local best");
+    assert_eq!(straight_sync.from_height, 45);
+    assert_eq!(straight_sync.to_height, 108);
+
+    let escalated = native_sync_observed_tip_request_range(
+        best_height,
+        [0x11; 32],
+        20_618,
+        Some([0x22; 32]),
+        native_sync_request_max_blocks(NATIVE_SYNC_REORG_BACKFILL_BLOCKS.saturating_mul(2)),
+        NATIVE_SYNC_REORG_BACKFILL_BLOCKS.saturating_mul(2),
+    )
+    .expect("an escalated higher-tip request should recover fork ancestry");
+    assert_eq!(escalated.from_height, best_height - 63);
+    assert_eq!(escalated.to_height, best_height + 1);
+
+    let genesis_sync = native_sync_observed_tip_request_range(
+        0,
+        [0; 32],
+        MAX_NATIVE_SYNC_RESPONSE_BLOCKS + 100,
+        Some([0x55; 32]),
+        native_sync_request_max_blocks(NATIVE_SYNC_REORG_BACKFILL_BLOCKS),
+        NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+    )
+    .expect("fresh public join should still start at genesis child");
+    assert_eq!(genesis_sync.from_height, 1);
+    assert_eq!(genesis_sync.to_height, NATIVE_SYNC_REQUEST_BLOCKS);
 }
 
 #[test]
-fn native_sync_large_gap_request_still_backfills_reorg_window() {
+fn native_sync_missing_range_backfill_helper_keeps_explicit_window_math() {
     let range = native_sync_missing_request_range_with_reorg_backfill(
         NativeSyncMissingRequestInput {
-            best_height: 4614,
-            announced_height: 4960,
+            best_height: 20_592,
+            announced_height: 20_618,
             max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
         },
         NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
     )
-    .expect("higher peer branch should request enough local prefix to find a fork point");
+    .expect("explicit backfill helper should retain its bounded ancestor window");
+    assert_eq!(range.from_height, 20_561);
+    assert_eq!(range.to_height, 20_618);
+}
 
-    let expected_from = 4583;
+#[test]
+fn native_sync_escalated_large_gap_request_backfills_reorg_window() {
+    let escalated_backfill = NATIVE_SYNC_REORG_BACKFILL_BLOCKS.saturating_mul(2);
+    let range = native_sync_observed_tip_request_range(
+        4_614,
+        [0x11; 32],
+        4_960,
+        Some([0x22; 32]),
+        native_sync_request_max_blocks(escalated_backfill),
+        escalated_backfill,
+    )
+    .expect("escalated higher peer branch should request fork ancestry");
+
+    let expected_from = 4_614 - 63;
     assert_eq!(range.from_height, expected_from);
-    assert_eq!(
-        range.to_height,
-        expected_from + MAX_NATIVE_SYNC_RESPONSE_BLOCKS - 1
-    );
+    assert_eq!(range.to_height, 4_615);
 }
 
 #[test]
@@ -27085,6 +27259,18 @@ fn live_mining_requires_shared_seeds_or_explicit_bootstrap_authoring() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let cli = |base_path: PathBuf| NativeCli {
+        network: None,
+        network_manifest: None,
+        #[cfg(feature = "development-candidate")]
+        development_candidate: false,
+        #[cfg(feature = "development-candidate")]
+        print_development_candidate_manifest: false,
+        #[cfg(feature = "development-candidate")]
+        development_funding_address: None,
+        #[cfg(feature = "development-candidate")]
+        development_assets_json: None,
+        #[cfg(feature = "development-candidate")]
+        development_recovery_json: None,
         print_crypto_profile: false,
         dev: false,
         tmp: false,
@@ -30321,7 +30507,7 @@ fn block_action_byte_budget_rejects_oversized_payload_before_decode() {
     let err = decode_block_actions(&block)
         .expect_err("oversized block action payload must reject before SCALE decode");
     let message = err.to_string();
-    assert!(message.contains("block action payload exceeds per-action limit"));
+    assert!(message.contains("payload exceeds route-specific limit"));
     assert!(!message.contains("decode native block action failed"));
 }
 
@@ -34581,9 +34767,7 @@ fn mined_commit_startup_replay_matches_canonical_publication_rows() {
         admitted_poseidon2_v8_coinbase_commitment(&coinbase).expect("test V8 coinbase commitment");
     let mut expected_note_state =
         poseidon2_v8_state::Poseidon2V8NoteTreeState::new_empty().expect("empty V8 note state");
-    expected_note_state
-        .append(coinbase_commitment)
-        .expect("append expected V8 coinbase commitment");
+
     let _test_coinbase =
         poseidon2_v8_verifier::install_poseidon2_v8_test_coinbase(coinbase.clone());
     let (imported, expected_plan) = {
@@ -34601,6 +34785,10 @@ fn mined_commit_startup_replay_matches_canonical_publication_rows() {
             .import_mined_block(&work, seal)
             .expect("coinbase import")
             .expect("coinbase block");
+        expected_note_state
+            .test_finish_block_rewards(1, imported.hash, [Some(coinbase_commitment), None])
+            .expect("schedule expected immature reward");
+        assert_eq!(expected_note_state.leaf_count(), 0);
         let decoded = decode_block_actions(&imported).expect("decode imported action bytes");
         assert_eq!(decoded.len(), 1);
         assert_pending_action_fields_eq(&decoded[0], &staged);
@@ -36677,6 +36865,54 @@ fn v8_post_retirement_restart_and_reorg_keep_empty_blocks_but_bound_proof_action
 }
 
 #[test]
+fn launch_reward_replay_and_mint_route_share_the_exact_source_lifetime() {
+    use protocol_versioning::launch_candidate::{ALLOCATED_REWARD_ACTION_ID, RP06_VERSION_BINDING};
+    let network = network_profile::NativeNetworkIdentity::development();
+    let startup = launch_v8_verifier::LaunchStartup::qualification_for_test(
+        &network,
+        [2; 32],
+        poseidon2_v8_state::Poseidon2V8Root::new([0; 7]).unwrap(),
+        10,
+        13,
+        10,
+    )
+    .unwrap();
+    let production = native_proof_binding::NativeProofBinding::Launch(startup);
+    let mut reward = test_empty_action(FAMILY_SHIELDED_POOL, ALLOCATED_REWARD_ACTION_ID, 0x54);
+    reward.binding = RP06_VERSION_BINDING.into();
+    reward.tx_hash = pending_action_hash(&reward);
+    // This tests replay classification and route lifetime, not reward payload
+    // validity, cryptographic acceptance, or installed production authority.
+    for height in [10, 11, 12] {
+        validate_poseidon2_v8_replay_window(production, height, std::slice::from_ref(&reward))
+            .expect("allocated rewards stay replayable inside source lifetime");
+        assert!(startup.authorizes_route(
+            height,
+            reward.binding,
+            reward.family_id,
+            reward.action_id,
+        ));
+    }
+    for height in [0, 9, 13, u64::MAX] {
+        validate_poseidon2_v8_replay_window(production, height, std::slice::from_ref(&reward))
+            .expect_err("allocated rewards must reject outside source lifetime");
+        assert!(!startup.authorizes_route(
+            height,
+            reward.binding,
+            reward.family_id,
+            reward.action_id,
+        ));
+        validate_poseidon2_v8_replay_window(production, height, &[])
+            .expect("forfeited empty blocks replay across source lifetime boundaries");
+    }
+    assert!(
+        native_proof_binding::NativeProofBinding::from_source_for_replay(&network, [2; 32])
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn bridge_messages_reject_malformed_outbound_payload() {
     let bad = malformed_outbound_bridge_action(b"malformed bridge message");
     let good = test_outbound_bridge_action(b"good bridge message after malformed one");
@@ -38157,6 +38393,7 @@ fn mined_child_with_actions_for_chain(
 
 fn test_config(path: &Path, pow_bits: u32, rpc_methods: &str, rpc_external: bool) -> NativeConfig {
     NativeConfig {
+        network: NativeNetworkIdentity::legacy(),
         dev: true,
         tmp: false,
         base_path: path.to_path_buf(),
@@ -39456,7 +39693,10 @@ fn lean_generated_native_supply_vectors_match_production() {
     let raw = std::fs::read_to_string(&path).expect("read generated Lean supply vectors");
     let vectors: LeanSupplyVectorFile =
         serde_json::from_str(&raw).expect("parse generated Lean supply vectors");
-    assert_eq!(vectors.schema_version, 1);
+    assert_eq!(vectors.schema_version, 2);
+    assert_eq!(vectors.emission_model, "epoch-budget-prefix-differences-v1");
+    assert_eq!(vectors.epoch_budget_cases.len(), 10);
+    assert_eq!(vectors.slot_subsidy_cases.len(), 7);
     assert!(
         vectors.monetary_constants.is_object(),
         "Lean monetary constants must be present"
@@ -39778,14 +40018,35 @@ fn verify_lean_native_supply_case(case: &LeanNativeSupplyCase) {
         ));
     }
     if case.has_coinbase {
-        let amount =
-            expected_delta.expect("Lean native coinbase case must expose a checked reward amount");
-        let amount = u64::try_from(amount).expect("Lean native reward amount fits u64");
+        // An overflow vector has no valid reward amount. Keep a real positive
+        // observed coinbase so the native accounting path must reject it.
+        let amount = expected_delta
+            .map(|amount| u64::try_from(amount).expect("Lean native reward amount fits u64"))
+            .unwrap_or(1);
         actions.push(test_coinbase_action(amount));
     }
 
-    validate_coinbase_accounting(&actions, case.height)
-        .expect("Lean native supply case should have valid coinbase accounting");
+    if expected_delta.is_none() {
+        assert!(
+            case.has_coinbase,
+            "{} overflow case requires a coinbase",
+            case.name
+        );
+        assert_eq!(
+            evaluate_native_coinbase_accounting_admission(
+                native_coinbase_accounting_admission_input(&actions, case.height)
+            ),
+            Err(NativeCoinbaseAccountingAdmissionRejection::RewardOverflow),
+            "{} native accounting must reject reward overflow",
+            case.name
+        );
+        let error = validate_coinbase_accounting(&actions, case.height)
+            .expect_err("Lean overflow case must reject native coinbase accounting");
+        assert_eq!(error.to_string(), "coinbase reward overflow");
+    } else {
+        validate_coinbase_accounting(&actions, case.height)
+            .expect("Lean native supply case should have valid coinbase accounting");
+    }
     assert_eq!(
         native_block_supply_delta(&actions, case.height)
             .ok()
@@ -39869,7 +40130,7 @@ fn protocol_v8_artifact_codec_matches_private_pending_action_v3_exactly() {
     assert_eq!(
         transaction_circuit::smallwood_poseidon2_v8_program::SMALLWOOD_POSEIDON2_V8_PROGRAM_DIGEST,
         transaction_circuit::smallwood_poseidon2_v8_program::smallwood_poseidon2_v8_program_digest_from_bytes(
-            include_bytes!("../../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp05.bin"),
+            include_bytes!("../../../testdata/formal_core_vectors/poseidon2_v8_relation_program_hgv8rp05_grammar4_compff01.bin"),
         ),
         "current RP05 relation digest must be pinned to its current program bytes"
     );
@@ -40005,4 +40266,115 @@ fn protocol_v8_artifact_codec_matches_private_pending_action_v3_exactly() {
         SMALLWOOD_POSEIDON2_V8_PENDING_ACTION_MUTATION_NAMES_V1
     );
     assert!(mutations.iter().all(|receipt| receipt.rejected));
+}
+
+#[test]
+fn emission_schedule_identity_separates_fresh_genesis() {
+    let genesis = genesis_meta(consensus::reward::GENESIS_BITS)
+        .expect("active fresh genesis should construct");
+    assert_eq!(
+        consensus::reward::EMISSION_SCHEDULE_ID,
+        b"hegemon-native-emission-21m-atoms1e8-5hgn-epoch2100000-prefix-v1"
+    );
+    let expected = hash32_with_parts(&[
+        b"hegemon-native-genesis-bitcoin80-v1",
+        consensus::reward::EMISSION_SCHEDULE_ID,
+        &genesis.chain_id,
+        &genesis.rules_hash,
+        &genesis.state_root,
+        &genesis.kernel_root,
+        &genesis.nullifier_root,
+        &genesis.extrinsics_root,
+        &genesis.message_root,
+        &genesis.pow_bits.to_le_bytes(),
+    ]);
+    let prior = hash32_with_parts(&[
+        b"hegemon-native-genesis-bitcoin80-v1",
+        &genesis.chain_id,
+        &genesis.rules_hash,
+        &genesis.state_root,
+        &genesis.kernel_root,
+        &genesis.nullifier_root,
+        &genesis.extrinsics_root,
+        &genesis.message_root,
+        &genesis.pow_bits.to_le_bytes(),
+    ]);
+    assert_eq!(genesis.hash, expected);
+    assert_eq!(genesis.work_hash, expected);
+    assert_ne!(genesis.hash, prior);
+    assert_eq!(genesis.height, 0);
+    assert_eq!(genesis.supply_digest, 0);
+    assert_eq!(genesis.tx_count, 0);
+    assert_eq!(genesis.message_count, 0);
+    assert!(genesis.action_bytes.is_empty());
+}
+
+#[test]
+fn lean_generated_genesis_monetary_policy_vectors_match_production() {
+    let Ok(path) = std::env::var("HEGEMON_LEAN_GENESIS_MONETARY_POLICY_VECTORS") else {
+        eprintln!(
+            "HEGEMON_LEAN_GENESIS_MONETARY_POLICY_VECTORS not set; skipping generated Lean vector check"
+        );
+        return;
+    };
+    let raw = std::fs::read_to_string(path).expect("read Lean genesis monetary vectors");
+    let vectors: serde_json::Value =
+        serde_json::from_str(&raw).expect("parse Lean genesis vectors");
+    assert_eq!(vectors["schema_version"], 1);
+    let cases = vectors["genesis_monetary_policy_cases"]
+        .as_array()
+        .expect("genesis cases");
+    assert!(!cases.is_empty());
+    let mut names = BTreeSet::new();
+    for case in cases {
+        assert!(names.insert(case["name"].as_str().expect("case name")));
+        let bits = u32::try_from(case["pow_bits"].as_u64().expect("PoW bits")).expect("u32 bits");
+        let genesis = genesis_meta(bits).expect("fresh native genesis");
+        assert_eq!(
+            genesis.height,
+            case["expected_height"].as_u64().expect("height")
+        );
+        assert_eq!(
+            genesis.supply_digest.to_string(),
+            case["expected_supply_digest"].as_str().expect("supply")
+        );
+        assert_eq!(
+            u64::from(genesis.tx_count),
+            case["expected_tx_count"].as_u64().expect("tx count")
+        );
+        assert_eq!(
+            u64::from(genesis.message_count),
+            case["expected_message_count"]
+                .as_u64()
+                .expect("message count")
+        );
+        assert_eq!(
+            genesis.action_bytes.len() as u64,
+            case["expected_action_bytes_len"]
+                .as_u64()
+                .expect("action length")
+        );
+        let commitments = CommitmentTreeState::default();
+        let nullifiers = NullifierAccumulator::new();
+        assert_eq!(
+            commitments.leaf_count(),
+            case["expected_funded_native_note_count"]
+                .as_u64()
+                .expect("note count")
+        );
+        assert_eq!(
+            nullifiers.leaf_count(),
+            case["expected_nullifier_count"]
+                .as_u64()
+                .expect("nullifier count")
+        );
+        assert_eq!(genesis.state_root, commitments.root());
+        assert_eq!(genesis.nullifier_root, nullifiers.root());
+        assert!(genesis.action_bytes.is_empty());
+        assert_eq!(case["expected_coinbase_allocation"].as_str(), Some("0"));
+        assert_eq!(
+            consensus::reward::block_subsidy(genesis.height).to_string(),
+            case["expected_genesis_subsidy"].as_str().expect("subsidy")
+        );
+    }
 }

@@ -21,12 +21,13 @@
     "sponge_mode_marker_hex": "0x53504f4e47455631"
   },
   "digests": {
-    "source_sha256": "7f298af6a9268d232b5723823d136c1cd68a5f702a25fad8316edcc3b8ff4daa",
+    "source_sha256": "18a9f3227e7fd46eca03a7963cb9998a777b00579b42843863eadeb9e2386b09",
     "round_constants_sha256": "52247f75c0c7ac08ec42845f962d4301db116a7a74362ef8000cb285790880ec",
     "internal_diagonal_sha256": "cc55ae3623f501aa05dee94a4741ab618362cbd6b80d459c4aa1533ad2a06529",
     "external_matrix_sha256": "b3618c4f255c84d136997225410fd7d8954890c05e21f20e93157088a39dbca4",
     "parameter_set_sha256": "114a4e7eb2684d293d13d306a756b03fc734f19edbfb80a07126ab1b2ad9e529",
-    "p3_reference_lock_sha256": "ce29197c80ed83a9436848129a86ae4d9cb849b49af57b80d71416a98b4a54d1"
+    "compression_mode_sha256": "5f62084be213c8b457e04f2eefe687220f131cedf7984f745abe18099005422f",
+    "p3_reference_lock_sha256": "1ec6cd1ff4bfb7acb04eb10aae6daef23f4e7a3d433312d0f2daf7f152c4506d"
   },
   "algebra": {
     "alpha_gcd": 1,
@@ -124,13 +125,13 @@
       "0x34a03056f44029ce"
     ],
     "compress14_sequential": [
-      "0xf1bb4ef4525eb582",
-      "0xcb8f0ea800acf13c",
-      "0xfc47d0a9543704df",
-      "0xc4145b9687e3db12",
-      "0xc28ced6376dac7ad",
-      "0x7808b4de83c4c6de",
-      "0xa24937bf2947a5ff"
+      "0xe7006f1f2c8e1e72",
+      "0x1d25610cbfcafc3f",
+      "0x887c159ff141dba6",
+      "0x8cd5fe8c86071978",
+      "0xf96376d230d4591a",
+      "0x71c3812b36e0f872",
+      "0xd0aaf5134c188f7a"
     ],
     "sponge_sequential": {
       "0": [
@@ -200,10 +201,15 @@
   },
   "modes": {
     "compress14": {
-      "state_layout": "left[0..7] || right[0..7] || domain || suite_marker",
+      "mode_id": "hegemon-p2w16-compress14-left-feedforward-v1",
+      "mode_marker_hex": "0x434f4d5046463031",
+      "permutation_parameter_set_id": "hegemon-p2w16-v1-114a4e7eb2684d29",
+      "permutation_parameter_set_sha256": "114a4e7eb2684d293d13d306a756b03fc734f19edbfb80a07126ab1b2ad9e529",
+      "state_layout": "left[0..7] || right[0..7] || domain || compression_mode_marker",
       "permutations": 1,
-      "feed_forward": false,
-      "output_lanes": "state[0..7]"
+      "feed_forward": true,
+      "feed_forward_operand": "left[0..7]",
+      "output_lanes": "permuted_state[0..7] + left[0..7] (mod field_modulus)"
     },
     "sponge": {
       "rate": 8,
@@ -235,7 +241,8 @@
     "p3_poseidon2_version": "0.6.3",
     "p3_poseidon2_crate_sha256": "43eb8a73a26d14becaed1c67c3e8a047e4311d7909b402383c82ca9643ba17c6",
     "p3_reference": "tools/poseidon2-width16-p3-reference",
-    "p3_divergence": "The positive reference instantiates p3-poseidon2 with Hegemon's M4_kron_P4 external layer and original Horizen diagonal. Stock p3-goldilocks 0.6.3 uses a different external orientation and diagonal, so its output is retained only as a required negative control."
+    "p3_divergence": "The positive reference instantiates p3-poseidon2 with Hegemon's M4_kron_P4 external layer and original Horizen diagonal. Stock p3-goldilocks 0.6.3 uses a different external orientation and diagonal, so its output is retained only as a required negative control.",
+    "compression_mode_canonical_serialization": "hash_words(compression-mode:<mode_id>, [marker,left_width,right_width,domain_lane,marker_lane,permutations,feed_forward,output_start,output_width] || unchanged_parameter_words); u64 little endian"
   },
   "cryptanalysis_screen": {
     "eprint_2026_306": {
@@ -254,7 +261,7 @@
       "url": "https://eprint.iacr.org/2026/1760.pdf",
       "family": "midpoint_reset",
       "disposition": "direct_attack_prerequisites_absent_pending_external_review",
-      "basis": "The fixed suite has distinct nonadaptive matrices, no feed-forward, and 15 two-round blocks imply 17 direct source images, exceeding width 16. This only excludes the paper's direct construction."
+      "basis": "The retained permutation has distinct nonadaptive matrices; 15 two-round blocks imply 17 direct source images, exceeding width 16. This structural count does not establish security of the new left feed-forward compression mode. Independent exact-parameter review remains required."
     }
   },
   "release_blockers": [
