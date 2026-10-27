@@ -300,10 +300,10 @@ def validate_replay(replay, node_sha, artifact_sha):
 
 # Exact current-source mode. Its distinct authorization kind deliberately cannot
 # satisfy the maintained full-network lifecycle harness's qualified_source_tuple.
-CURRENT_NEW_VERSION = '0.11.1'
+CURRENT_NEW_VERSION = '0.11.2'
 CURRENT_SCOPE = 'exact_current_source_current_binary_backend_and_h0'
 CURRENT_SOURCE_KIND = 'reviewed_source_successor_ci'
-CURRENT_CONFIG_SHA256 = '3068ff9cd186c2992bf95e6f89f31b69e130544e9f57cbae098acb5f77ee3eef'
+CURRENT_CONFIG_SHA256 = '9c453136f2f52c3eaa76300df0931da42ba30126f61f5816df0ae46c3581bcda'
 CURRENT_RUNNER_SHA256 = 'd2f0fae819828482093676f831a5d6c621013c02368cdddafcdf491d294eb2f2'
 CURRENT_FIXTURE_SHA256 = '50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c'
 CURRENT_NETWORK_MANIFEST_SHA256 = '386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754'
@@ -404,13 +404,13 @@ CURRENT_RUNTIME_DELTAS = {'Cargo.lock': ['bae447660a12610766620cb7e2afacb6b0ad92
  'protocol/versioning/src/launch_candidate.rs': ['2ce83547371d7f0904dfc318286e3ae0a17f3776f415518f49c0e22627913539',
                                                  'fab9c38631d069c2e778cf362f3fb63d02b4f29abe7cb20b8253364c24405107'],
  'protocol/versioning/src/lib.rs': ['150c5018a34fa6d92eba62f070692d10ccb77e477f2257ee6a4045b477c0f5ba',
-                                    '0f09d21a757892fc66fecbb89e7ae5e4885da1ac1ca65eb7cfde6d1b0d5c470b'],
+                                    '727071dde4afffb5c1c1e0b76ca9383889aaa7a4723e0c673f1bbded155f89aa'],
  'scripts/check_transaction_proof_successor_authorization.py': ['e01c8dfd9f8bd256c2b7de065986bf46b78d773e62017601a64937127ffba821',
                                                                 '13b4e38045f80b6425db94300c1d245c6a03a1b6e35651799b5fa07ad5b81639'],
  'scripts/hegemon_formal_core/src/lib.rs': ['33c1c47853fa7746d5f351db4e16b684590f2e6be568de6b9578e8fd9aa1bf1d',
                                             '4987f1a5634898eae53bcc0103af21e48b775546884af84488399923b87773d3'],
  'wallet/src/bin/private_spend.rs': ['f4fe101db48d477025437fae9e9eba93cba9c4c2dd197f71afe495760ab8bd5f',
-                                     'c17d7d8b5cbdfc1d717ae096f72ffa311bf41495138f306d41fdec7a7a6adb9e'],
+                                     '870b985a01a9e475e0eb8a46f8634dca4a82cf822cf54dd60f63c5dd2619a03b'],
  'wallet/src/bin/wallet.rs': ['df0b673176b10c730285d210f1c9ede4e6ba0b2621118ad63b325c4ffe64b024',
                               '73a50becdd346cedd7ed765c600a3ee70e591ff2fc60564ba6e7d3262ee18f1b'],
  'wallet/src/htlc_prepare.rs': ['54c2df105428a8b45074b0f92f10c16752d20324a0660ade670dc472fb242515',
@@ -421,10 +421,16 @@ CURRENT_RUNTIME_DELTAS = {'Cargo.lock': ['bae447660a12610766620cb7e2afacb6b0ad92
                                          '96078b0fbb7a945facf76c8e6fd8ef80d83d109ad62138dea7dc25884aed2dc5'],
  'wallet/src/poseidon2_v8_multisig.rs': ['34c134fa553343eab2c5134bea48400e84ff9410fdeb933e9eebb122bd4634ca',
                                          '6ce0854abce3ddba79ee80e26889d6f807f55d06fcdb9790c992f9260edf7e71'],
+ 'wallet/src/poseidon2_v8_sync.rs': ['bf82be1ecc885006d4fc11c68717637d14d099a4bdb7892750ae6d10bb624478',
+                                     'c167920399833648d7a0193d77ad6a78e3352a4888358b2cf10abec95c672a6d'],
  'wallet/src/rp06_transfer.rs': ['106f407bca70b1667e39e66ceff19fd8f023ee0bfbd976040df075d160b19203',
-                                 'd01dc7029703d08a404b87fd297cae3813708737e6c8a9838ee17d94436f72e3']}
+                                 'd01dc7029703d08a404b87fd297cae3813708737e6c8a9838ee17d94436f72e3'],
+ 'wallet/src/store.rs': ['9d80022194d56ef287732bb4839f07dbc56a742e533927bf8f30b0b048aa3ed3',
+                         'cc8785a6f1eac90dff9139c215e6cd6963ea4b63922e3f2efd7b948e371f411f']}
 CURRENT_SOURCE_ADDITIONS = {'node/src/native/asset_recovery_profile/geometry_catalog.rs': {'bytes': 41029,
-                                                                'sha256': '31175e46be0807ee25880070780417e0a6e26e6ba613a57ed5254449dec7ea6f'}}
+                                                                'sha256': '31175e46be0807ee25880070780417e0a6e26e6ba613a57ed5254449dec7ea6f'},
+ 'wallet/src/private_spend_balance.rs': {'bytes': 10268,
+                                         'sha256': '14f03f5237549e17795d04d9975e1b34e2e3677fb580b67b86ed6f6c83776b98'}}
 CURRENT_CASE_NAMES = ['ordinary', 'policy_create', 'absolute_height', 'policy_hash_release', 'htlc_release']
 CURRENT_NEGATIVE_NAMES = ['changed_statement', 'changed_proof', 'truncated_proof', 'oversize_proof', 'truncated_statement', 'oversize_statement']
 
