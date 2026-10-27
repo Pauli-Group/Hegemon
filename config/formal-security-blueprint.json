@@ -8,8 +8,8 @@
       "command": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
       "status": "passed",
       "exit_code": 0,
-      "executed_at": "2026-10-27T04:56:48Z",
-      "policy_inputs_blake3": "922770c4d99eee53345046c8e6d20f1de7b8c87c16592e4174071dc938256123",
+      "executed_at": "2026-10-27T04:59:06Z",
+      "policy_inputs_blake3": "94109ea4905258a2156a7687be6c14bc5806f894048739326ff6e4acc39efb9b",
       "report": {
         "passed": true,
         "test_filter": "governance_",
@@ -15366,7 +15366,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-10-27",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a release-blocking system-model evidence gate. It does not prove external environmental honesty; it fails closed if required monitoring categories or evidence are removed. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal v0.11.1 delta review (2026-10-27): reviewed startup reconstruction followed by mandatory forward canonical V8 verification, release-version metadata, and corresponding documentation changes in 54406f4b47; refreshed source-byte binding only. Existing needs_review status, theorem statements, conditional premises, and authority remain unchanged. This is not independent security review or production qualification.",
-        "content_blake3": "591658d60df04b01a420381341559e12992a585ac6cf04650c9d00bee0215b76"
+        "content_blake3": "f198e6614359286f4b670addfb3a00af560513ee108419bbba7bfc0ef4fee4a0"
       },
       "falsification_cases": [
         {
@@ -15466,7 +15466,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-10-27",
         "notes": "Pending final headless branch-diff review. Internal review rejected the first caller-populated row certificate and replaced it with an executable exact production-row decision before the conditional production-family reduction was credited; no production no-counterfeit closure was recorded. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. Internal v0.11.1 delta review (2026-10-27): reviewed startup reconstruction followed by mandatory forward canonical V8 verification, release-version metadata, and corresponding documentation changes in 54406f4b47; refreshed source-byte binding only. Existing needs_review status, theorem statements, conditional premises, and authority remain unchanged. This is not independent security review or production qualification.",
-        "content_blake3": "822c7508c177c1a521b3c3ac950e29fc0e90c54cde023aadbd1aadbeb5944a22"
+        "content_blake3": "b04c5bdde84aa2bf80b056a1fb9f0bbe42e8dc101f9539bc56d5d160b790b18a"
       },
       "falsification_cases": [
         {
