@@ -12,9 +12,9 @@ An existing v0.11 node should restart on its current database without repeatedly
 - [x] Confirmed the forward V8 scratch replay independently enforces proof validity and exact persisted-state equality.
 - [x] Implement startup-only reconstruction and progress logging; preserve standalone/full replay and import/reorg paths.
 - [x] Pass focused restart, malformed-proof, index/body integrity checks and measure the same retained database.
-- [ ] Freeze exact changed source/version pins; build and verify final platform assets through existing PR preparation.
+- [x] Freeze exact changed source/version pins; all four platform builds, executable proof checks and assembly passed in run 40434419105; PR #209 merged as bb3ad63e653c75a9a5eedc1684a392ea8243020a.
 - [ ] Publish v0.11.1 as Latest with compatible joining bundles; retain the v0.11 chain manifest and state directory.
-- [ ] Upgrade dev, verify identity/tip/mining, then upgrade OVH and verify cross-node agreement and public explorer.
+- [x] Upgrade dev (41.061 s) and OVH (39.417 s); both report 0.11.1, preserve data/identity/payouts, agree at H602 and keep advancing. Explorer fully indexed H603.
 
 ## Surprises & Discoveries
 
@@ -59,7 +59,7 @@ Baseline evidence is `/Users/pldd/Projects/Reflexivity/Hegemon/.agent/v011-cutov
 
 ## Outcomes & Retrospective
 
-Implementation and rollout are in progress. No corrected release or host upgrade is claimed until the steps above complete.
+Runtime correction is merged and both seeds run v0.11.1. Release publication and a clean public-download joining check remain. Both hosts retained chain data, launch manifest and payout settings; no reset or resync occurred.
 
 ## Interfaces and Dependencies
 
