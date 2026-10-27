@@ -129,7 +129,7 @@ def verify_bundle(root: Path, *, check_host: bool = True):
         fail("release record is not ready for public v0.11 joining")
     software_release = bundle.get("software_release", "v0.11")
     software_version = bundle.get("software_version", "0.11.0")
-    if {"v0.11": "0.11.0", "v0.11.1": "0.11.1"}.get(software_release) != software_version or release.get("software_release", "v0.11") != software_release or release.get("software_version", "0.11.0") != software_version:
+    if {"v0.11": "0.11.0", "v0.11.1": "0.11.1", "v0.11.2": "0.11.2"}.get(software_release) != software_version or release.get("software_release", "v0.11") != software_release or release.get("software_version", "0.11.0") != software_version:
         fail("bundle and release software identities disagree")
     if release.get("network_manifest_sha256") != NETWORK_SHA256 or digest_file(root, manifest_name) != NETWORK_SHA256 or release.get("seeds") != list(SEEDS):
         fail("frozen network identity/approved seeds mismatch")
