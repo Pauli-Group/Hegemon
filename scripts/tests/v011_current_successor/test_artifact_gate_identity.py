@@ -53,6 +53,7 @@ class FakeOwnedProcess:
 
 class ArtifactGateIdentityControls(unittest.TestCase):
     def exercise_gate(self, receipt, expected_identity):
+        release_version = '0.11.1' if receipt.get('authorization_kind') == CHECKER.CURRENT_SOURCE_KIND else '0.11.0'
         with tempfile.TemporaryDirectory(prefix='TEST_ONLY-artifact-gate-') as temporary:
             root = Path(temporary)
             (root / 'scripts').mkdir()
@@ -85,7 +86,7 @@ class ArtifactGateIdentityControls(unittest.TestCase):
                     self.assertEqual(params, [0])
                     return '0x' + expected_identity['genesis_hash']
                 if method == 'system_version':
-                    return 'Hegemon Native Node 0.11.0'
+                    return 'Hegemon Native Node '+release_version
                 if method == 'hegemon_privateSpendParameters':
                     return {'relation_id': expected_identity['relation_id'],
                         'relation_digest': expected_identity['relation_digest'], 'public_words': 86,
@@ -102,9 +103,9 @@ class ArtifactGateIdentityControls(unittest.TestCase):
                     self.assertEqual(command[command.index('--manifest') + 1], str(artifact_file))
                     return subprocess.CompletedProcess(command, 0, stdout=b'', stderr=b'')
                 if command == [str(root / 'target/wallet'), '--version']:
-                    return subprocess.CompletedProcess(command, 0, stdout=b'wallet 0.11.0\n', stderr=b'')
+                    return subprocess.CompletedProcess(command, 0, stdout=('wallet '+release_version+'\n').encode(), stderr=b'')
                 if command == [str(root / 'target/private-spend'), '--version']:
-                    return subprocess.CompletedProcess(command, 0, stdout=b'private-spend 0.11.0\n', stderr=b'')
+                    return subprocess.CompletedProcess(command, 0, stdout=('private-spend '+release_version+'\n').encode(), stderr=b'')
                 if '--network-manifest' in command:
                     wrong = Path(command[command.index('--network-manifest') + 1])
                     self.assertEqual(wrong.name, 'wrong-manifest.json')
@@ -133,7 +134,7 @@ class ArtifactGateIdentityControls(unittest.TestCase):
             self.assertEqual(result['identity_smoke']['genesis'], expected_identity['genesis_hash'])
             self.assertEqual(result['identity_smoke']['proof_parameters']['relation_digest'], expected_identity['relation_digest'])
             self.assertIs(result['identity_smoke']['owned_node_reaped'], True)
-            self.assertEqual(result['identity_smoke']['private_spend_cli_version'], 'private-spend 0.11.0')
+            self.assertEqual(result['identity_smoke']['private_spend_cli_version'], 'private-spend '+release_version)
             self.assertEqual(result['identity_smoke']['height'], 0)
             self.assertEqual(result['identity_smoke']['peers'], 0)
             self.assertEqual(result['artifact_sha256'], {row['binary']: row['sha256'] for row in artifacts})

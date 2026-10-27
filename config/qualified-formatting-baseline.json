@@ -215,7 +215,7 @@
     {
       "path": "node/src/native/node_impl.rs",
       "qualified_sha256": "05f84c22738c43c937201470a27649a3d73e4b8ce9dfbc87c7d6e95abd462e3c",
-      "postimage_sha256": "e6efec45d1a9d3b4c5dee02f1a9d0f38d300a755c711d29ff0120b49a7ec5d00",
+      "postimage_sha256": "5aa59dd107444416232f4889b5441801bd55a1a00a8dccfebc05d430b6016b8d",
       "scope": "reviewed-node-ci-regression-delta-only"
     },
     {

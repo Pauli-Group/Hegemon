@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha384};
 
 /// Product release label, independent of source-bound Cargo package metadata.
-pub const RELEASE_VERSION: &str = "0.11.0";
+pub const RELEASE_VERSION: &str = "0.11.1";
 
 pub type CircuitVersion = u16;
 pub type CryptoSuiteId = u16;

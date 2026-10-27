@@ -19,6 +19,9 @@ class SuccessorConsumer(unittest.TestCase):
     def check(self,r,m,g):return c.validate_private_launch_receipt(r,m,'aa'*32,g)
     def test_complete_synthetic_bounded_receipt_passes(self):
         r,m,g=self.fixture();self.assertEqual(self.check(r,m,g),r['identity'])
+    def test_legacy_mode_does_not_accept_hotfix_version(self):
+        r,m,g=self.fixture();r['new_version']='0.11.1'
+        with self.assertRaises(SystemExit):self.check(r,m,g)
     def test_each_missing_top_level_obligation_rejects(self):
         r,m,g=self.fixture()
         for key in r:

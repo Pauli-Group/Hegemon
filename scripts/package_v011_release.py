@@ -21,6 +21,8 @@ except ImportError:  # Direct script invocation.
     import v011_join as join
 
 RELEASE_SOURCE = "9e580878dc46053579607610a46c5865787d6033"
+SOFTWARE_RELEASE = "v0.11"
+SOFTWARE_VERSION = "0.11.0"
 BUILD_SOURCE = "46895bf8734ccedf1e7b31c44a43b9a7212597fc"
 BUILD_TREE = "3bfa87d491879734c0f1b69bea65fa374aad3c77"
 SOURCE_TREE_SHA256 = "ddd350af0f232b3bfdbe8ed56e51dccb689a4693b3101b436a6f945d6f1bc9fe"
@@ -112,7 +114,7 @@ def quickstart(selected):
     windows = selected.startswith("windows")
     command = "py -3 start.py" if windows else "python3 start.py"
     wallet = "bin\\private-spend.exe" if windows else "./bin/private-spend"
-    return f"""# Hegemon v0.11 pre-mainnet: {selected}
+    return f"""# Hegemon {SOFTWARE_RELEASE} software for v0.11 pre-mainnet: {selected}
 
 Install Python 3 (Windows: include the Python launcher), then verify the published
 archive SHA-256 before extracting. No Bash, PowerShell policy bypass, downloads,
@@ -175,6 +177,8 @@ def members(source, directory, selected, manifest_pair, packaging_commit):
     release = json.loads(entries["config/testnet/0.11/release.json"][0], object_pairs_hook=join.unique_object)
     if release.get("cutover_status") != "ready" or release.get("public_genesis_pending") is not False or release.get("network_manifest_sha256") != join.NETWORK_SHA256 or release.get("seeds") != list(join.SEEDS) or release.get("release") != "v0.11" or release.get("network") != "pre-mainnet" or release.get("schema") != "hegemon.pre-mainnet.release.v1":
         join.fail("public release metadata is not ready or does not match the approved network")
+    if release.get("software_release", "v0.11") != SOFTWARE_RELEASE or release.get("software_version", "0.11.0") != SOFTWARE_VERSION:
+        join.fail("software metadata does not match the selected exact artifact profile")
     if sha(entries["config/testnet/0.11/network-manifest.json"][0]) != join.NETWORK_SHA256:
         join.fail("network manifest differs from the approved deployment")
     entries["operator-guide.md"] = (join.checked_bytes(source, "config/testnet/0.11/README.md"), 0o644)
@@ -185,7 +189,7 @@ def members(source, directory, selected, manifest_pair, packaging_commit):
         entries["start.sh"] = (b'#!/bin/sh\nset -eu\nexec python3 "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/start.py" "$@"\n', 0o755)
     entries["QUICKSTART.md"] = (quickstart(selected), 0o644)
     entries[f"provenance/hegemon-release-assets-{selected}.json"] = (raw, 0o644)
-    record = {"schema": "hegemon.v011.join-bundle.v1", "release": "v0.11", "platform": selected, "release_binary_source_head": RELEASE_SOURCE, "packaging_source_commit": packaging_commit, "binary_build_source_head": BUILD_SOURCE, "binary_build_index_tree": BUILD_TREE, "original_manifest_sha256": sha(raw), "binaries": mapping, "packaging_inputs": {name: sha(join.checked_bytes(source, name)) for name in SOURCE_FILES}, "files": {name: {"size": len(data), "sha256": sha(data)} for name, (data, _) in sorted(entries.items())}}
+    record = {"schema": "hegemon.v011.join-bundle.v1", "release": "v0.11", "software_release": SOFTWARE_RELEASE, "software_version": SOFTWARE_VERSION, "platform": selected, "release_binary_source_head": RELEASE_SOURCE, "packaging_source_commit": packaging_commit, "binary_build_source_head": BUILD_SOURCE, "binary_build_index_tree": BUILD_TREE, "original_manifest_sha256": sha(raw), "binaries": mapping, "packaging_inputs": {name: sha(join.checked_bytes(source, name)) for name in SOURCE_FILES}, "files": {name: {"size": len(data), "sha256": sha(data)} for name, (data, _) in sorted(entries.items())}}
     entries["bundle.json"] = (encoded(record), 0o644)
     entries["SHA256SUMS"] = ("".join(f"{sha(data)}  {name}\n" for name, (data, _) in sorted(entries.items())).encode("ascii"), 0o644)
     return entries
@@ -233,7 +237,7 @@ def package(source, directory, output, commit):
         join.fail("output must be an empty regular directory; nothing is overwritten")
     sums = []
     for selected in PLATFORMS:
-        prefix = f"hegemon-v0.11-{selected}"
+        prefix = f"hegemon-{SOFTWARE_RELEASE}-{selected}"
         name = prefix + (".zip" if selected.startswith("windows") else ".tar.gz")
         entries = members(source, directory, selected, manifests[selected], commit)
         write_archive(output / name, prefix, entries, selected.startswith("windows"))

@@ -198,6 +198,7 @@ def stop_owned(process):
         raise SuccessorError('owned smoke node required forced termination')
 
 def artifact_gate(root, predecessor, manifest_file, receipt, manifest, min_free_gib):
+    release_version = CURRENT_NEW_VERSION if receipt.get('authorization_kind') == CURRENT_SOURCE_KIND else NEW_VERSION
     checker_path = safe_file(root, 'scripts/release_artifact_manifest.py')
     if receipt.get('authorization_kind') == CURRENT_SOURCE_KIND:
         require(digest_bytes(checker_path.read_bytes()) == CURRENT_ARTIFACT_HELPER_SHA256, 'current artifact-manifest helper differs before execution')
@@ -222,9 +223,9 @@ def artifact_gate(root, predecessor, manifest_file, receipt, manifest, min_free_
     environment.update(HEGEMON_MINE='0', HEGEMON_SEEDS='', HEGEMON_BOOTSTRAP_AUTHORING='0', RAYON_NUM_THREADS='2', HEGEMON_PQ_IDENTITY_SEED_PATH=str(scratch/'peer.seed'))
     bins = {row['binary']:safe_file(root,row['path']) for row in artifacts}
     version = subprocess.run([str(bins['wallet']), '--version'], capture_output=True, timeout=15, env=environment, check=False)
-    require(version.returncode == 0 and version.stdout.decode().strip() == 'wallet ' + NEW_VERSION, 'rebuilt wallet --version mismatch')
+    require(version.returncode == 0 and version.stdout.decode().strip() == 'wallet ' + release_version, 'rebuilt wallet --version mismatch')
     private_version = subprocess.run([str(bins['private-spend']), '--version'], capture_output=True, timeout=15, env=environment, check=False)
-    require(private_version.returncode == 0 and not private_version.stderr and private_version.stdout.decode().strip() == 'private-spend ' + NEW_VERSION, 'rebuilt private-spend --version mismatch')
+    require(private_version.returncode == 0 and not private_version.stderr and private_version.stdout.decode().strip() == 'private-spend ' + release_version, 'rebuilt private-spend --version mismatch')
     port, rpc_port = free_port(), free_port()
     while rpc_port == port:
         rpc_port = free_port()
@@ -244,7 +245,7 @@ def artifact_gate(root, predecessor, manifest_file, receipt, manifest, min_free_
         identity = receipt['identity'] if receipt.get('authorization_kind') == CURRENT_SOURCE_KIND else receipt['qualified_identity']
         require(cfg.get('networkProfile') == 'pre-mainnet' and cfg.get('networkManifest') == manifest and cfg.get('chainId') == '0x'+identity['chain_id'] and cfg.get('networkManifestDigest') == '0x'+identity['manifest_digest'], 'new binary network identity readback mismatch')
         require(rpc(rpc_port,'chain_getBlockHash',[0]) == '0x'+identity['genesis_hash'], 'new binary genesis differs')
-        require(rpc(rpc_port,'system_version') == 'Hegemon Native Node '+NEW_VERSION, 'new node RPC version differs')
+        require(rpc(rpc_port,'system_version') == 'Hegemon Native Node '+release_version, 'new node RPC version differs')
         params = rpc(rpc_port,'hegemon_privateSpendParameters')
         expected_profile = {'relation_id':identity['relation_id'], 'relation_digest':identity['relation_digest'], 'public_words':86, 'max_proof_bytes':171848, 'max_carrier_bytes':177632, 'input_slots':2, 'output_slots':2, 'production_authorized':False}
         require(all(params.get(k) == v for k,v in expected_profile.items()), 'new binary compact proof profile differs')
@@ -264,7 +265,7 @@ def artifact_gate(root, predecessor, manifest_file, receipt, manifest, min_free_
     require(digest_bytes(manifest_file.read_bytes()) == artifact_sha, 'artifact manifest changed during identity smoke')
     for row in artifacts:
         require(digest_bytes(safe_file(root, row['path']).read_bytes()) == row['sha256'], 'artifact changed during identity smoke')
-    receipt.update(status='PASS_PACKAGING_AND_IDENTITY_SMOKE_ONLY', artifact_manifest_sha256=artifact_sha, target_triple=artifact['target_triple'], artifact_sha256={r['binary']:r['sha256'] for r in artifacts}, identity_smoke={'scratch_directory':str(scratch), 'node_rpc_version':'Hegemon Native Node '+NEW_VERSION, 'wallet_cli_version':version.stdout.decode().strip(), 'private_spend_cli_version':private_version.stdout.decode().strip(), 'walletd_version_cli':'not implemented; artifact hash/source version checked', 'qualified_manifest':True, 'genesis':identity['genesis_hash'], 'proof_parameters':params, 'height':0, 'peers':0, 'wrong_compiled_rules_manifest_rejected':True, 'owned_node_reaped':True}, actual_new_binary_proof_verification=False)
+    receipt.update(status='PASS_PACKAGING_AND_IDENTITY_SMOKE_ONLY', artifact_manifest_sha256=artifact_sha, target_triple=artifact['target_triple'], artifact_sha256={r['binary']:r['sha256'] for r in artifacts}, identity_smoke={'scratch_directory':str(scratch), 'node_rpc_version':'Hegemon Native Node '+release_version, 'wallet_cli_version':version.stdout.decode().strip(), 'private_spend_cli_version':private_version.stdout.decode().strip(), 'walletd_version_cli':'not implemented; artifact hash/source version checked', 'qualified_manifest':True, 'genesis':identity['genesis_hash'], 'proof_parameters':params, 'height':0, 'peers':0, 'wrong_compiled_rules_manifest_rejected':True, 'owned_node_reaped':True}, actual_new_binary_proof_verification=False)
     return receipt
 
 def final_replay(root, artifact, receipt, min_free_gib):
@@ -299,9 +300,10 @@ def validate_replay(replay, node_sha, artifact_sha):
 
 # Exact current-source mode. Its distinct authorization kind deliberately cannot
 # satisfy the maintained full-network lifecycle harness's qualified_source_tuple.
+CURRENT_NEW_VERSION = '0.11.1'
 CURRENT_SCOPE = 'exact_current_source_current_binary_backend_and_h0'
 CURRENT_SOURCE_KIND = 'reviewed_source_successor_ci'
-CURRENT_CONFIG_SHA256 = '74183fc1eb1fed4bf2972fbc90e7211cb3b0ac6cf036b60928f46d130c8bc1ac'
+CURRENT_CONFIG_SHA256 = '3068ff9cd186c2992bf95e6f89f31b69e130544e9f57cbae098acb5f77ee3eef'
 CURRENT_RUNNER_SHA256 = 'd2f0fae819828482093676f831a5d6c621013c02368cdddafcdf491d294eb2f2'
 CURRENT_FIXTURE_SHA256 = '50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c'
 CURRENT_NETWORK_MANIFEST_SHA256 = '386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754'
@@ -384,11 +386,11 @@ CURRENT_RUNTIME_DELTAS = {'Cargo.lock': ['bae447660a12610766620cb7e2afacb6b0ad92
  'node/src/native/block_flow.rs': ['cc650ad4fd11d582c78382d1de2cf27289310ccc5719393dd5df6d750e7bdb95',
                                    '70c59140f1f51d09383276d7c2eabd0b0c4b990109c6403dffcef84e61fb96d8'],
  'node/src/native/mod.rs': ['6be69238c26189dd48d921a5a9c8b2aa2a9057af05060ba62edd9f7d8234bfa9',
-                            '60496dc754362a21286d247a55fe76fae197aa7b5611251aaca041c182cac973'],
+                            'b98f9c404570836faf3cace7f67b4528158c1f92667c844a5acd593721ddf409'],
  'node/src/native/network_profile.rs': ['d1f5276aa03bd5f591a8fcb185761ca2edc26515b60ee1104f94127c9db33a7c',
                                         'c90231a2c84bd18dca45c8b35aee568fd4f65e37b8807e54aa57f47f2e60479c'],
  'node/src/native/node_impl.rs': ['05f84c22738c43c937201470a27649a3d73e4b8ce9dfbc87c7d6e95abd462e3c',
-                                  'e6efec45d1a9d3b4c5dee02f1a9d0f38d300a755c711d29ff0120b49a7ec5d00'],
+                                  '5aa59dd107444416232f4889b5441801bd55a1a00a8dccfebc05d430b6016b8d'],
  'node/src/native/poseidon2_v8_pending.rs': ['95b7f63283c59cdf41f82485401afc9941e0a214bbc5538f51e5ae0363e393de',
                                              '8bbed7840590250121db5fa8ff26800d8f2f7af5d27debf2f2ee6f9559dcd07b'],
  'node/src/native/poseidon2_v8_state.rs': ['ae74b57b66c3fb1a0968767197eda87f4ebb23fbfcd3e3a1a74552e0ed85f838',
@@ -396,13 +398,13 @@ CURRENT_RUNTIME_DELTAS = {'Cargo.lock': ['bae447660a12610766620cb7e2afacb6b0ad92
  'node/src/native/rpc.rs': ['0250f8b5548f9e718d1f2b3fb60c39dc0c171fe31615442628c1af274cb8cd8c',
                             '74a599d7234621925bddbc9709ecdab37927b9d7e428eaa38590c428b7a435b0'],
  'node/src/native/tests.rs': ['9ce2b15b592f82403f451f9fc76974c98cc7bdf74f6c421c7bf91228bc1b0e31',
-                              '41452d1335f7c1dee128b8b726476422e60d7066314dd0acb9c4f56c80580094'],
+                              'ed9e6fd04eaa017f2875464a9753931aa6501bd190f7859d9874d519df31f155'],
  'node/src/native/util.rs': ['ccf0764d0059cff43f784171edf58819cabe9645ab2aa1c8f24592beee5e45b1',
                              '51b0333cb00513dc427f4e7cf552f9b3584ffd5133b7ea32b53224ddfed1bea2'],
  'protocol/versioning/src/launch_candidate.rs': ['2ce83547371d7f0904dfc318286e3ae0a17f3776f415518f49c0e22627913539',
                                                  'fab9c38631d069c2e778cf362f3fb63d02b4f29abe7cb20b8253364c24405107'],
  'protocol/versioning/src/lib.rs': ['150c5018a34fa6d92eba62f070692d10ccb77e477f2257ee6a4045b477c0f5ba',
-                                    '1b574f0b27635e0d33e42e16763300f2b732cacfe850953fc35f19028a58862d'],
+                                    '0f09d21a757892fc66fecbb89e7ae5e4885da1ac1ca65eb7cfde6d1b0d5c470b'],
  'scripts/check_transaction_proof_successor_authorization.py': ['e01c8dfd9f8bd256c2b7de065986bf46b78d773e62017601a64937127ffba821',
                                                                 '13b4e38045f80b6425db94300c1d245c6a03a1b6e35651799b5fa07ad5b81639'],
  'scripts/hegemon_formal_core/src/lib.rs': ['33c1c47853fa7746d5f351db4e16b684590f2e6be568de6b9578e8fd9aa1bf1d',
@@ -441,7 +443,7 @@ def current_source_gate(root, predecessor):
     require(digest_bytes(raw_config) == CURRENT_CONFIG_SHA256, 'reviewed current successor configuration differs or is not frozen')
     config = json.loads(raw_config)
     require(config['schema'] == 'hegemon.release.exact-source-successor.v2', 'current source schema differs')
-    require(config['new_version'] == NEW_VERSION and config['internal_cargo_version'] == OLD_VERSION, 'current release version boundary differs')
+    require(config['new_version'] == CURRENT_NEW_VERSION and config['internal_cargo_version'] == OLD_VERSION, 'current release version boundary differs')
     require(config['reviewed_runtime_deltas'] == {p:dict(zip(('before_sha256','after_sha256'), pair)) for p,pair in CURRENT_RUNTIME_DELTAS.items()}, 'current exact delta configuration differs')
     require(config['reviewed_source_additions'] == CURRENT_SOURCE_ADDITIONS, 'current exact source additions differ')
     for relative, sha in ((CHECKER, EXPECTED_CHECKER), (REGISTRY, EXPECTED_REGISTRY)):
@@ -508,7 +510,7 @@ def current_source_gate(root, predecessor):
         'changed_paths':sorted(changed), 'added_source_paths':sorted(CURRENT_SOURCE_ADDITIONS),
         'reviewed_runtime_deltas':config['reviewed_runtime_deltas'], 'reviewed_source_additions':CURRENT_SOURCE_ADDITIONS,
         'cargo_lock_sha256':CURRENT_CARGO_LOCK_SHA256, 'cargo_metadata_unchanged':False,
-        'proof_and_protocol_runtime_unchanged':False, 'new_version':NEW_VERSION,
+        'proof_and_protocol_runtime_unchanged':False, 'new_version':CURRENT_NEW_VERSION,
         'network_manifest_sha256':config['current_network_manifest_sha256'],
         'predecessor_source_gate':old_receipt, 'assumptions':old_receipt['assumptions'],
         'binding_sha256':old_receipt['binding_sha256'], 'g7_review_sha256':old_receipt['g7_review_sha256'],

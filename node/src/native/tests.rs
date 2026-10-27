@@ -10257,6 +10257,165 @@ fn persisted_verified_marker_cannot_skip_restart_smallwood_verification() {
 }
 
 #[test]
+fn startup_reward_replay_verifies_v8_once_without_historical_branch_plans() {
+    const BLOCKS: u64 = 4;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let config = test_mining_config(tmp.path(), pow_bits, "unsafe", false);
+    let production =
+        test_poseidon2_v8_binding_for_genesis(genesis_meta(pow_bits).expect("genesis").hash);
+    let _test_binding = poseidon2_v8_verifier::install_poseidon2_v8_test_binding(production);
+    let (expected_tip, expected_note_state) = {
+        let node = NativeNode::open(config.clone()).expect("node");
+        for height in 1..=BLOCKS {
+            let coinbase = test_poseidon2_v8_coinbase_action(
+                consensus::reward::block_subsidy(height),
+                0x33450 + height,
+            );
+            let _test_coinbase =
+                poseidon2_v8_verifier::install_poseidon2_v8_test_coinbase(coinbase);
+            let work = node.prepare_work().expect("prepare reward work");
+            assert_eq!(work.tx_count, 1);
+            let seal = mine_native_round(work.clone(), 0).expect("reward seal");
+            let imported = node
+                .import_mined_block(&work, seal)
+                .expect("import reward")
+                .expect("reward block");
+            assert_eq!(imported.height, height);
+        }
+        let store = test_poseidon2_v8_state_store(&node, production);
+        let expected_note_state = store.note_tip().expect("reward note state");
+        node.db.flush().expect("flush reward history");
+        (node.best_meta(), expected_note_state)
+    };
+
+    let reopened = NativeNode::open(config).expect("restart reward history");
+    assert_eq!(reopened.best_meta(), expected_tip);
+    assert_eq!(
+        reopened
+            .full_v8_block_replay_invocations
+            .load(Ordering::Relaxed),
+        0,
+        "startup must not invoke the historical branch verifier for each reward"
+    );
+    assert_eq!(
+        reopened
+            .startup_v8_scratch_block_replay_invocations
+            .load(Ordering::Relaxed),
+        BLOCKS,
+        "startup must still verify every canonical block in the forward scratch pass"
+    );
+    let store = test_poseidon2_v8_state_store(&reopened, production);
+    assert_eq!(store.tip().expect("reopened V8 tip").height(), BLOCKS);
+    assert_eq!(
+        store.note_tip().expect("reopened note state"),
+        expected_note_state
+    );
+
+    let chain = reopened
+        .chain_to_hash(expected_tip.hash)
+        .expect("canonical history");
+    let replayed = reopened
+        .replay_chain_state(&chain)
+        .expect("standalone full replay");
+    assert_eq!(replayed.best, expected_tip);
+    assert_eq!(
+        reopened
+            .full_v8_block_replay_invocations
+            .load(Ordering::Relaxed),
+        BLOCKS,
+        "standalone replay must retain full V8 verification"
+    );
+    assert_eq!(
+        reopened
+            .startup_v8_scratch_block_replay_invocations
+            .load(Ordering::Relaxed),
+        BLOCKS,
+        "standalone replay must not masquerade as startup scratch verification"
+    );
+}
+
+#[test]
+fn startup_forward_v8_replay_rejects_invalid_proof_with_matching_persisted_marker() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let pow_bits = 0x207f_ffff;
+    let config = test_config(tmp.path(), pow_bits, "safe", false);
+    let production =
+        test_poseidon2_v8_binding_for_genesis(genesis_meta(pow_bits).expect("genesis").hash);
+    let _test_binding = poseidon2_v8_verifier::install_poseidon2_v8_test_binding(production);
+    {
+        let node = NativeNode::open(config.clone()).expect("node");
+        let parent = node.best_meta();
+        let actions = vec![test_source_context_invalid_poseidon2_v8_action(
+            production, 1,
+        )];
+        let replay_state = test_state(parent.clone());
+        let planned =
+            plan_materialized_action_effects(&node.da_ciphertext_tree, &replay_state, &actions)
+                .expect("plan structurally valid V8 action");
+        let mut meta = mined_child_with_actions(&parent, 1, pow_bits, 0, actions.clone());
+        let checkpoint_rows = test_mined_checkpoint_rows(&parent, &mut meta, &actions, &planned);
+        super::block_flow::verify_native_legacy_block_artifacts_locked(
+            &node,
+            &replay_state,
+            &actions,
+            &meta,
+        )
+        .expect("legacy artifact validation must pass before the mandatory V8 verifier");
+        let full_error = node
+            .replay_chain_state(&[parent, meta.clone()])
+            .expect_err("standalone full replay must reject the invalid V8 proof");
+        assert!(
+            format!("{full_error:?}").contains("SMZ9 proof rejected"),
+            "standalone replay must reach the exact V8 verifier: {full_error:?}"
+        );
+
+        // Deliberately forge internally consistent local storage, including its
+        // diagnostic validity marker. Only replaying the exact proof can reject it.
+        assert!(actions[0].nullifiers.is_empty());
+        assert!(actions[0].commitments.is_empty());
+        persist_block_record(&node.block_tree, &meta).expect("persist invalid canonical body");
+        node.height_tree
+            .insert(height_key(meta.height), meta.hash.as_slice())
+            .expect("persist canonical height");
+        node.meta_tree
+            .insert(
+                META_BEST_KEY,
+                bincode::serialize(&meta).expect("encode best"),
+            )
+            .expect("persist canonical tip");
+        let (checkpoint_key, checkpoint_value, verified_key, verified_value) = checkpoint_rows;
+        node.meta_tree
+            .insert(checkpoint_key, checkpoint_value)
+            .expect("persist matching checkpoint");
+        node.meta_tree
+            .insert(verified_key.clone(), verified_value.clone())
+            .expect("persist matching proof-validity marker");
+        assert_eq!(
+            node.meta_tree
+                .get(verified_key)
+                .expect("read marker")
+                .as_deref(),
+            Some(verified_value.as_slice())
+        );
+        node.db
+            .flush()
+            .expect("flush self-consistent invalid V8 history");
+    }
+
+    let error = match NativeNode::open(config) {
+        Ok(_) => panic!("startup must reject an invalid V8 proof despite matching local markers"),
+        Err(error) => error,
+    };
+    let rendered = format!("{error:?}");
+    assert!(
+        rendered.contains("native V8 canonical replay state at height 1 rejected")
+            && rendered.contains("SMZ9 proof rejected"),
+        "startup must reject in the mandatory forward V8 proof pass: {rendered}"
+    );
+}
+
+#[test]
 fn same_process_verified_block_cache_cannot_skip_reorg_proof_verification() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let pow_bits = 0x207f_ffff;

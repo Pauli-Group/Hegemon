@@ -111,7 +111,7 @@
     "The current network identity and five dependency updates are explicitly different. Unchanged PR205/source/compiler/F1/primitive/QRO assumptions remain conditional.",
     "Fresh-network full lifecycle, current-network G8, production, public cutover and testnet shutdown are not authorized by this receipt."
   ],
-  "new_version": "0.11.0",
+  "new_version": "0.11.1",
   "predecessor_identity": {
     "action": 15,
     "activation_height": 1,
@@ -251,7 +251,7 @@
       "before_sha256": "cc650ad4fd11d582c78382d1de2cf27289310ccc5719393dd5df6d750e7bdb95"
     },
     "node/src/native/mod.rs": {
-      "after_sha256": "60496dc754362a21286d247a55fe76fae197aa7b5611251aaca041c182cac973",
+      "after_sha256": "b98f9c404570836faf3cace7f67b4528158c1f92667c844a5acd593721ddf409",
       "before_sha256": "6be69238c26189dd48d921a5a9c8b2aa2a9057af05060ba62edd9f7d8234bfa9"
     },
     "node/src/native/network_profile.rs": {
@@ -259,7 +259,7 @@
       "before_sha256": "d1f5276aa03bd5f591a8fcb185761ca2edc26515b60ee1104f94127c9db33a7c"
     },
     "node/src/native/node_impl.rs": {
-      "after_sha256": "e6efec45d1a9d3b4c5dee02f1a9d0f38d300a755c711d29ff0120b49a7ec5d00",
+      "after_sha256": "5aa59dd107444416232f4889b5441801bd55a1a00a8dccfebc05d430b6016b8d",
       "before_sha256": "05f84c22738c43c937201470a27649a3d73e4b8ce9dfbc87c7d6e95abd462e3c"
     },
     "node/src/native/poseidon2_v8_pending.rs": {
@@ -275,7 +275,7 @@
       "before_sha256": "0250f8b5548f9e718d1f2b3fb60c39dc0c171fe31615442628c1af274cb8cd8c"
     },
     "node/src/native/tests.rs": {
-      "after_sha256": "41452d1335f7c1dee128b8b726476422e60d7066314dd0acb9c4f56c80580094",
+      "after_sha256": "ed9e6fd04eaa017f2875464a9753931aa6501bd190f7859d9874d519df31f155",
       "before_sha256": "9ce2b15b592f82403f451f9fc76974c98cc7bdf74f6c421c7bf91228bc1b0e31"
     },
     "node/src/native/util.rs": {
@@ -287,7 +287,7 @@
       "before_sha256": "2ce83547371d7f0904dfc318286e3ae0a17f3776f415518f49c0e22627913539"
     },
     "protocol/versioning/src/lib.rs": {
-      "after_sha256": "1b574f0b27635e0d33e42e16763300f2b732cacfe850953fc35f19028a58862d",
+      "after_sha256": "0f09d21a757892fc66fecbb89e7ae5e4885da1ac1ca65eb7cfde6d1b0d5c470b",
       "before_sha256": "150c5018a34fa6d92eba62f070692d10ccb77e477f2257ee6a4045b477c0f5ba"
     },
     "scripts/check_transaction_proof_successor_authorization.py": {

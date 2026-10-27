@@ -278,7 +278,8 @@ PRIVATE_LAUNCH_ARTIFACTS = (("hegemon-node", "hegemon-node"), ("wallet", "wallet
 PRIVATE_LAUNCH_SCOPE = "source-owned-current86-private-spend-launch"
 
 
-V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': '74183fc1eb1fed4bf2972fbc90e7211cb3b0ac6cf036b60928f46d130c8bc1ac',
+CURRENT_NEW_VERSION = '0.11.1'
+V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': '3068ff9cd186c2992bf95e6f89f31b69e130544e9f57cbae098acb5f77ee3eef',
  'release-evidence/v0.11-current-proof-fixture/manifest.json': '50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c',
  'release-evidence/v0.11-predecessor/manifest.json': 'dbec7e35d7402e687c3a3aa19f70c45425a127a915c74185eb0054ed57aa76fc',
  'release-evidence/v0.11-public-chain-fixture/manifest.json': '16ce37d08a3bcfecca0f8dbe4c323f1f319d1da565ea5473d695a5c13c4676c0',
@@ -287,7 +288,7 @@ V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': '74183fc1eb1fed4b
  'scripts/check_release_launcher_policy.py': '51700e93ac457574f262bff05f48e5e55fa328e37da30f665721a312de9d826e',
  'scripts/check_v011_current_binary_proofs.py': 'd2f0fae819828482093676f831a5d6c621013c02368cdddafcdf491d294eb2f2',
  'scripts/check_v011_public_chain_replay.py': '29c6655f1d8ced3ffa5a042e3c66f0567fc0ef465eda70de473e7a35054159dc',
- 'scripts/check_v011_release_successor.py': '2f8ce7110eb687ad332bc1d6ceea689e9333d6a9140c3778ff233593bb4c3dd4',
+ 'scripts/check_v011_release_successor.py': '9a7589591413c64ece69018d85547ba16e4e6367984a111971134c34ee3c0275',
  'scripts/materialize_v011_predecessor.py': '0dc2b129332bf1276e5790a2db2682946e54f5af6b6850eaca50ca9e17b4dee5',
  'scripts/release_artifact_manifest.py': '0f41da8be0536335978ed42d2f93f930b2c9ee078f3ecbeb6293e44ce20c42cb',
  'scripts/security-audit.sh': 'd2e5f5d954ef2de1b11399bd16549982a301fa988a38951c364cb6709e81fdc0'}
@@ -349,7 +350,7 @@ def validate_v011_current_successor_receipt(receipt, manifest, manifest_digest, 
         'predecessor_checker_sha256':'6a0d9d0b6f1864160dd3f07adaa54f142a1ce513584f13d903e07265bee7e112',
         'predecessor_registry_sha256':'c37455302ad34f631df1938b0ee7980af8bb8a57930ba38c05a6fe86941c145f',
         'runtime_inventory_sha256':'dfd71b6a265e954261ed209c2ad3c34c97285016557f0f003f7f17f39ff541d0',
-        'runtime_files_compared':598, 'new_version':'0.11.0',
+        'runtime_files_compared':598, 'new_version':CURRENT_NEW_VERSION,
         'artifact_manifest_sha256':manifest_digest,
         'cargo_lock_sha256':config['reviewed_runtime_deltas']['Cargo.lock']['after_sha256'],
         'network_manifest_sha256':config['current_network_manifest_sha256'],
@@ -388,9 +389,9 @@ def validate_v011_current_successor_receipt(receipt, manifest, manifest_digest, 
     smoke = receipt.get('identity_smoke')
     expected_smoke = {'qualified_manifest':True, 'genesis':identity['genesis_hash'],
         'height':0, 'peers':0, 'wrong_compiled_rules_manifest_rejected':True,
-        'owned_node_reaped':True, 'node_rpc_version':'Hegemon Native Node 0.11.0',
-        'wallet_cli_version':'wallet 0.11.0',
-        'private_spend_cli_version':'private-spend 0.11.0'}
+        'owned_node_reaped':True, 'node_rpc_version':'Hegemon Native Node '+CURRENT_NEW_VERSION,
+        'wallet_cli_version':'wallet '+CURRENT_NEW_VERSION,
+        'private_spend_cli_version':'private-spend '+CURRENT_NEW_VERSION}
     if (not isinstance(smoke,dict) or not all(type(smoke.get(k)) is type(v) and smoke[k] == v for k,v in expected_smoke.items())
         or not isinstance(smoke.get('proof_parameters'),dict)
         or smoke['proof_parameters'].get('relation_digest') != identity['relation_digest']

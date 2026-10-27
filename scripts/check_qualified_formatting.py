@@ -17,12 +17,14 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = 'config/qualified-formatting-baseline.json'
-BASELINE_SHA256 = '243922b97a2a5d0a16b041f140f3aede1113ed67d1aa0b8cd5aaff4894e47ce7'
+BASELINE_SHA256 = '5c2f8bbd71e6940cad7ed64bc1ff00625b48956d3530b65a2c8cebcbb7017988'
 RUSTFMT_VERSION = 'rustfmt 1.8.0-stable (ed61e7d7e2 2025-11-07)'
 # Exact product-version labels only; no proof or protocol source waiver.
 VERSION_DISPLAY_MIGRATION = {'path': 'node/src/native/rpc.rs', 'qualified_sha256': '0250f8b5548f9e718d1f2b3fb60c39dc0c171fe31615442628c1af274cb8cd8c', 'postimage_sha256': '74a599d7234621925bddbc9709ecdab37927b9d7e428eaa38590c428b7a435b0', 'old': 'env!("CARGO_PKG_VERSION")', 'new': 'protocol_versioning::RELEASE_VERSION', 'replacement_count': 2}
 # Exact reviewed postimages; predecessor debt hashes below are never replaced.
-REVIEWED_SOURCE_MIGRATIONS = [{'path': 'node/src/native/asset_state.rs', 'qualified_sha256': 'ac98af4f5f6c13a65a4d2d90a7183121fc5f99d018d9e1a57d24c080f9fd59c9', 'postimage_sha256': 'aae89923687a2bd8e296f0bc2aaf4014e98895f2cfea0d9cf61eb34c8db9db56', 'scope': 'reviewed-node-ci-regression-delta-only'}, {'path': 'node/src/native/node_impl.rs', 'qualified_sha256': '05f84c22738c43c937201470a27649a3d73e4b8ce9dfbc87c7d6e95abd462e3c', 'postimage_sha256': 'e6efec45d1a9d3b4c5dee02f1a9d0f38d300a755c711d29ff0120b49a7ec5d00', 'scope': 'reviewed-node-ci-regression-delta-only'}, {'path': 'node/src/native/poseidon2_v8_state.rs', 'qualified_sha256': 'ae74b57b66c3fb1a0968767197eda87f4ebb23fbfcd3e3a1a74552e0ed85f838', 'postimage_sha256': 'eb65fc931e8623dc48751c54df47f096589aa65906889a59b4f4ec4bcdbc942c', 'scope': 'reviewed-node-ci-regression-delta-only'}]
+# The v0.11.1 node_impl successor retains the same 29 formatting-debt hunks;
+# only its reviewed hotfix postimage changes, with no additional exempt path.
+REVIEWED_SOURCE_MIGRATIONS = [{'path': 'node/src/native/asset_state.rs', 'qualified_sha256': 'ac98af4f5f6c13a65a4d2d90a7183121fc5f99d018d9e1a57d24c080f9fd59c9', 'postimage_sha256': 'aae89923687a2bd8e296f0bc2aaf4014e98895f2cfea0d9cf61eb34c8db9db56', 'scope': 'reviewed-node-ci-regression-delta-only'}, {'path': 'node/src/native/node_impl.rs', 'qualified_sha256': '05f84c22738c43c937201470a27649a3d73e4b8ce9dfbc87c7d6e95abd462e3c', 'postimage_sha256': '5aa59dd107444416232f4889b5441801bd55a1a00a8dccfebc05d430b6016b8d', 'scope': 'reviewed-node-ci-regression-delta-only'}, {'path': 'node/src/native/poseidon2_v8_state.rs', 'qualified_sha256': 'ae74b57b66c3fb1a0968767197eda87f4ebb23fbfcd3e3a1a74552e0ed85f838', 'postimage_sha256': 'eb65fc931e8623dc48751c54df47f096589aa65906889a59b4f4ec4bcdbc942c', 'scope': 'reviewed-node-ci-regression-delta-only'}]
 MANIFESTS = {'workspace': None, 'htlc': 'experimental/htlc-prototype/Cargo.toml',
              'proof-backend': 'experimental/htlc-prototype/proof-backend/Cargo.toml'}
 

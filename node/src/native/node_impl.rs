@@ -8,6 +8,16 @@ use rayon::prelude::*;
 // user-defined trait that can skip or defer the closure.
 extern crate sled as __hegemon_pinned_sled;
 
+// Startup reconstructs the legacy state first, then unconditionally verifies
+// the canonical V8 history forward from genesis before publishing any indexes.
+// Standalone replay retains the full branch-aware artifact verifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeChainReplayMode {
+    #[cfg(test)]
+    FullVerification,
+    StartupReconstruction,
+}
+
 const META_CANONICAL_UNDO_PREFIX: &[u8] = b"canonical_undo_v1/";
 const META_NONCANONICAL_FORK_PREFIX: &[u8] = b"noncanonical_fork_v1/";
 const NATIVE_CANONICAL_UNDO_SCHEMA_V1: u16 = 1;
@@ -2039,8 +2049,8 @@ impl NativeNode {
             startup_source,
         )?;
         info!(
-            startup_reload_elapsed_ms = startup_started.elapsed().as_millis(),
-            "native Hegemon node storage reload completed"
+            startup_rows_load_elapsed_ms = startup_started.elapsed().as_millis(),
+            "native Hegemon storage rows loaded; canonical verification pending"
         );
 
         let initial_mining_sync_gate_open = config.bootstrap_mining_authoring
@@ -2139,6 +2149,10 @@ impl NativeNode {
             #[cfg(test)]
             historical_block_proof_replay_invocations: AtomicU64::new(0),
             #[cfg(test)]
+            full_v8_block_replay_invocations: AtomicU64::new(0),
+            #[cfg(test)]
+            startup_v8_scratch_block_replay_invocations: AtomicU64::new(0),
+            #[cfg(test)]
             fail_next_canonical_readback: AtomicBool::new(false),
             #[cfg(test)]
             reorg_suffix_blocks_examined: AtomicU64::new(0),
@@ -2175,6 +2189,11 @@ impl NativeNode {
         )?;
         node.ensure_current_canonical_checkpoint()?;
         drop(canonical_chain);
+        info!(
+            height = node.state.read().best.height,
+            startup_elapsed_ms = startup_started.elapsed().as_millis(),
+            "native Hegemon node startup verification and reload completed"
+        );
         Ok(node)
     }
 
@@ -4934,6 +4953,12 @@ impl NativeNode {
     }
 
     fn reconcile_poseidon2_v8_canonical_history(&self, chain: &[NativeBlockMeta]) -> Result<()> {
+        let reconciliation_started = Instant::now();
+        let replay_blocks = chain.len().saturating_sub(1);
+        info!(
+            blocks = replay_blocks,
+            "native V8 canonical history verification started"
+        );
         let genesis = chain
             .first()
             .ok_or_else(|| anyhow!("native V8 startup reconciliation has no genesis"))?;
@@ -4983,9 +5008,27 @@ impl NativeNode {
 
         // This is the proof-verification pass. It always starts from genesis;
         // no durable checkpoint or record is trusted as an acceptance cache.
-        for meta in chain.iter().skip(1) {
+        let scratch_started = Instant::now();
+        for (index, meta) in chain.iter().enumerate().skip(1) {
+            #[cfg(test)]
+            self.startup_v8_scratch_block_replay_invocations
+                .fetch_add(1, Ordering::Relaxed);
             self.apply_poseidon2_v8_canonical_block_to_store(production, &scratch, meta)?;
+            if index % 100 == 0 || index == replay_blocks {
+                info!(
+                    height = meta.height,
+                    blocks_verified = index,
+                    total_blocks = replay_blocks,
+                    elapsed_ms = scratch_started.elapsed().as_millis(),
+                    "native V8 canonical scratch proof replay progress"
+                );
+            }
         }
+        info!(
+            blocks_verified = replay_blocks,
+            elapsed_ms = scratch_started.elapsed().as_millis(),
+            "native V8 canonical scratch proof replay completed"
+        );
 
         let durable = poseidon2_v8_state::Poseidon2V8StateStore::open_with_assets(
             &self.db,
@@ -5013,8 +5056,24 @@ impl NativeNode {
         // A fresh node or interrupted verified catch-up may safely resume from
         // its exact canonical typed tip. Every block was already verified in
         // the scratch pass and is verified again before durable application.
-        for meta in chain.iter().skip(durable_height.saturating_add(1)) {
+        let durable_started = Instant::now();
+        let missing_blocks = chain.len().saturating_sub(durable_height.saturating_add(1));
+        for (index, meta) in chain
+            .iter()
+            .skip(durable_height.saturating_add(1))
+            .enumerate()
+        {
             self.apply_poseidon2_v8_canonical_block_to_store(production, &durable, meta)?;
+            let applied = index + 1;
+            if applied % 100 == 0 || applied == missing_blocks {
+                info!(
+                    height = meta.height,
+                    blocks_applied = applied,
+                    total_blocks = missing_blocks,
+                    elapsed_ms = durable_started.elapsed().as_millis(),
+                    "native V8 durable canonical catch-up progress"
+                );
+            }
         }
         if !durable
             .exact_rows_equal(&scratch)
@@ -5024,6 +5083,12 @@ impl NativeNode {
                 "durable native V8 rows differ from exact source-verified canonical replay"
             ));
         }
+        info!(
+            blocks_verified = replay_blocks,
+            durable_blocks_applied = missing_blocks,
+            elapsed_ms = reconciliation_started.elapsed().as_millis(),
+            "native V8 canonical history reconciliation completed"
+        );
         Ok(())
     }
 
@@ -8858,6 +8923,7 @@ impl NativeNode {
         state: &mut NativeState,
         meta: NativeBlockMeta,
         expected_pow_bits: u32,
+        mode: NativeChainReplayMode,
     ) -> Result<()> {
         verify_native_block_meta_projection(Some(&state.best), &meta, Some(expected_pow_bits))
             .with_context(|| {
@@ -8908,7 +8974,21 @@ impl NativeNode {
                 meta.header_mmr_len == expected_header_mmr_len,
             ),
         )?;
-        verify_native_block_artifacts_locked(self, state, &actions, &meta)?;
+        match mode {
+            #[cfg(test)]
+            NativeChainReplayMode::FullVerification => {
+                #[cfg(test)]
+                self.full_v8_block_replay_invocations
+                    .fetch_add(1, Ordering::Relaxed);
+                verify_native_block_artifacts_locked(self, state, &actions, &meta)?;
+            }
+            NativeChainReplayMode::StartupReconstruction => {
+                // Policy, legacy proofs, DA and artifact checks remain active.
+                // The caller must complete the forward canonical V8 proof pass
+                // before this reconstructed state can authorize publication.
+                verify_native_legacy_block_artifacts_locked(self, state, &actions, &meta)?;
+            }
+        }
         apply_actions_to_memory_with_archive(
             &self.da_ciphertext_tree,
             Some(&self.ciphertext_archive_tree),
@@ -8920,7 +9000,24 @@ impl NativeNode {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn replay_chain_state(&self, chain: &[NativeBlockMeta]) -> Result<NativeState> {
+        self.replay_chain_state_with_mode(chain, NativeChainReplayMode::FullVerification)
+    }
+
+    fn replay_chain_state_with_mode(
+        &self,
+        chain: &[NativeBlockMeta],
+        mode: NativeChainReplayMode,
+    ) -> Result<NativeState> {
+        let reconstruction_started = Instant::now();
+        let replay_blocks = chain.len().saturating_sub(1);
+        if mode == NativeChainReplayMode::StartupReconstruction {
+            info!(
+                blocks = replay_blocks,
+                "native startup legacy state reconstruction started"
+            );
+        }
         let genesis = chain
             .first()
             .cloned()
@@ -8932,7 +9029,25 @@ impl NativeNode {
                 index - 1,
                 self.config.pow_bits,
             )?;
-            self.replay_block_into_state(&mut state, meta.clone(), expected_pow_bits)?;
+            self.replay_block_into_state(&mut state, meta.clone(), expected_pow_bits, mode)?;
+            if mode == NativeChainReplayMode::StartupReconstruction
+                && (index % 100 == 0 || index == replay_blocks)
+            {
+                info!(
+                    height = meta.height,
+                    blocks_reconstructed = index,
+                    total_blocks = replay_blocks,
+                    elapsed_ms = reconstruction_started.elapsed().as_millis(),
+                    "native startup legacy state reconstruction progress"
+                );
+            }
+        }
+        if mode == NativeChainReplayMode::StartupReconstruction {
+            info!(
+                blocks_reconstructed = replay_blocks,
+                elapsed_ms = reconstruction_started.elapsed().as_millis(),
+                "native startup legacy state reconstructed; V8 verification pending"
+            );
         }
         Ok(state)
     }
@@ -11574,15 +11689,25 @@ impl NativeNode {
         // historical SmallWood proofs; process-local entries populated by an
         // audit/import remain diagnostic only.
         let chain = canonical_chain.blocks();
-        let replayed_state = self.replay_chain_state(chain)?;
+        let validation_started = Instant::now();
+        // The startup-only reconstruction omits branch-local V8 replay, which
+        // would repeatedly reconstruct every earlier parent. The mandatory
+        // forward scratch pass below still verifies every canonical V8 block.
+        let replayed_state =
+            self.replay_chain_state_with_mode(chain, NativeChainReplayMode::StartupReconstruction)?;
         self.reconcile_poseidon2_v8_canonical_history(chain)?;
         self.validate_loaded_state_matches_replay(&replayed_state)?;
+        info!("native canonical history verified; validating canonical indexes");
         let canonical_index_plan = plan_canonical_index_rebuild(
             chain,
             &self.da_ciphertext_tree,
             Some(&self.ciphertext_archive_tree),
         )?;
         if self.canonical_index_matches_plan(&canonical_index_plan)? {
+            info!(
+                elapsed_ms = validation_started.elapsed().as_millis(),
+                "native canonical history and indexes verified"
+            );
             return Ok(());
         }
 
@@ -11595,6 +11720,10 @@ impl NativeNode {
             "rebuilding canonical native indexes after validated replay"
         );
         self.commit_canonical_index_repair_atomically(canonical_index_plan)?;
+        info!(
+            elapsed_ms = validation_started.elapsed().as_millis(),
+            "native canonical history verified and indexes repaired"
+        );
         Ok(())
     }
 
