@@ -8,8 +8,8 @@
       "command": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
       "status": "passed",
       "exit_code": 0,
-      "executed_at": "2026-10-27T04:50:34Z",
-      "policy_inputs_blake3": "63ea09d9f72c246a3d764de6ca0fe108932578155ac6f33b92bd6f8fa9acab64",
+      "executed_at": "2026-10-27T04:56:48Z",
+      "policy_inputs_blake3": "922770c4d99eee53345046c8e6d20f1de7b8c87c16592e4174071dc938256123",
       "report": {
         "passed": true,
         "test_filter": "governance_",
@@ -15309,7 +15309,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-10-27",
         "notes": "Pending independent review. Previous internal assessment: Accepted as a classification ratchet and roadmap. It does not discharge parser/native/proof/bridge residuals; it names them as mechanized work and prevents them from being hidden under broad cryptographic or infrastructure assumptions. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. Internal v0.11.1 delta review (2026-10-27): reviewed startup reconstruction followed by mandatory forward canonical V8 verification, release-version metadata, and corresponding documentation changes in 54406f4b47; refreshed source-byte binding only. Existing needs_review status, theorem statements, conditional premises, and authority remain unchanged. This is not independent security review or production qualification.",
-        "content_blake3": "efd6fcc98c68d17ff96a476c5ef9f06bde9a29ae375ab6039f1561d9f1e6e403"
+        "content_blake3": "49586f3d47db33ebc8e285f1d18c2d0d7a6eb9262ca8e49697d9dd3f795c459f"
       },
       "falsification_cases": [
         {
