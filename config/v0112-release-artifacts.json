@@ -1,18 +1,18 @@
 {
   "schema": "hegemon.v0112.release-artifacts.v1",
-  "status": "pending-ci-artifact-acceptance",
+  "status": "accepted",
   "network_release": "v0.11",
   "software_release": "v0.11.2",
   "software_version": "0.11.2",
-  "release_source_head": null,
-  "build_source_head": null,
-  "build_index_tree": null,
-  "source_tree_sha256": null,
-  "cargo_lock_sha256": null,
+  "release_source_head": "d86cb2ee898857e22a2e64a94956f39a0435679a",
+  "build_source_head": "38ecd61099cbabd83d629bdcf074e7f62e9d65cf",
+  "build_index_tree": "1e7c075c2536456341e7c399e3ff58cdee609447",
+  "source_tree_sha256": "a5843ff2f8c2fadce76f17d5b04ea69f3ffc36943fa427274152db043ad46f07",
+  "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
   "platform_manifests_sha256": {
-    "linux-x86_64": null,
-    "macos-arm64": null,
-    "macos-x86_64": null,
-    "windows-x86_64": null
+    "linux-x86_64": "233405336a66510c9ba4a1bf70f7dc69608be3abf46554a35de355eb9668ee77",
+    "macos-arm64": "091ce1ce482977121dd9d94890a86cc3a277d0b4bd4e4c281e8db4af6faa32ba",
+    "macos-x86_64": "2e9fd6d7a18ea43298da10e800b5645324f38c392dfba51b7dd7cbdfaf461aca",
+    "windows-x86_64": "90add239dcf749004f7f1dd4b04ca9ff7bc5a4f64629cb2e976f111469900ff2"
   }
 }

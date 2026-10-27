@@ -4,6 +4,9 @@ import copy
 import io
 import json
 from pathlib import Path
+import runpy
+import tarfile
+import zipfile
 import unittest
 from unittest import mock
 
@@ -60,6 +63,27 @@ class HotfixProfileTests(unittest.TestCase):
             base.package(self.source, self.assets, output, "f" * 40)
         archives = [path.name for path in output.iterdir() if path.name.endswith((".tar.gz", ".zip"))]
         self.assertEqual(set(archives), {f"hegemon-v0.11.2-{selected}" + (".zip" if selected.startswith("windows") else ".tar.gz") for selected in base.PLATFORMS})
+        for name in archives:
+            extracted = self.fixture.root / ("extracted-" + name)
+            extracted.mkdir()
+            if name.endswith(".zip"):
+                with zipfile.ZipFile(output / name) as archive:
+                    archive.extractall(extracted)
+            else:
+                with tarfile.open(output / name) as archive:
+                    archive.extractall(extracted, filter="data")
+            bundle_root = next(extracted.iterdir())
+            verify = runpy.run_path(str(bundle_root / "start.py"))["verify_bundle"]
+            self.assertTrue(verify(bundle_root, check_host=False).is_file())
+            original_read = verify.__globals__["read_json"]
+            def mismatched_release(root, selected_name):
+                value = original_read(root, selected_name)
+                if selected_name == "config/testnet/0.11/release.json":
+                    value["software_version"] = "0.11.1"
+                return value
+            with mock.patch.dict(verify.__globals__, read_json=mismatched_release):
+                with self.assertRaisesRegex(ValueError, "software identities disagree"):
+                    verify(bundle_root, check_host=False)
 
     def test_pending_partial_wrong_labels_and_null_pins_rejected(self):
         for key in self.profile:
