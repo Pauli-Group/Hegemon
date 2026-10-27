@@ -4670,6 +4670,10 @@ pub struct NativeNode {
     #[cfg(test)]
     historical_block_proof_replay_invocations: AtomicU64,
     #[cfg(test)]
+    full_v8_block_replay_invocations: AtomicU64,
+    #[cfg(test)]
+    startup_v8_scratch_block_replay_invocations: AtomicU64,
+    #[cfg(test)]
     fail_next_canonical_readback: AtomicBool,
     #[cfg(test)]
     reorg_suffix_blocks_examined: AtomicU64,

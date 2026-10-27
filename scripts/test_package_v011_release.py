@@ -37,7 +37,7 @@ class PackagingTests(unittest.TestCase):
             target.write_bytes((actual / name).read_bytes())
         release_path = self.source / "config/testnet/0.11/release.json"
         release = json.loads(release_path.read_text(encoding="utf-8"))
-        release.update(cutover_status="ready", public_genesis_pending=False)
+        release.update(cutover_status="ready", public_genesis_pending=False, software_release="v0.11", software_version="0.11.0")
         release_path.write_bytes(pack.encoded(release))
         pins = {}
         for selected, (triple, fmt) in pack.PLATFORMS.items():

@@ -31,6 +31,16 @@ class FinalConsumerControls(unittest.TestCase):
     def test_canonical_fixture_is_valid_before_mutations(self):
         self.validate(RECEIPT)
 
+    def test_current_mode_rejects_legacy_version_and_h0_labels(self):
+        value = copy.deepcopy(RECEIPT)
+        value['new_version'] = '0.11.0'
+        self.reject(value)
+        for field, label in (('node_rpc_version', 'Hegemon Native Node'), ('wallet_cli_version', 'wallet'), ('private_spend_cli_version', 'private-spend')):
+            with self.subTest(field=field):
+                value = copy.deepcopy(RECEIPT)
+                value['identity_smoke'][field] = label + ' 0.11.0'
+                self.reject(value)
+
     def test_source_only_and_h0_only_are_rejected(self):
         for status in ('PASS_REVIEWED_SOURCE_SUCCESSOR_CI', 'PASS_VERSION_AND_PLATFORM_SHUTDOWN_SOURCE_SUCCESSOR', 'PASS_PACKAGING_AND_IDENTITY_SMOKE_ONLY', 'PASS_CURRENT_BUILD_AND_H0_ONLY'):
             with self.subTest(status=status):

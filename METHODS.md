@@ -484,6 +484,19 @@ registries are empty.
 
 ### Independent transaction proofs and proof sidecars (product block path)
 
+#### Restart verification (v0.11.1)
+
+Startup reconstructs the ordinary canonical state without invoking V8 fork
+rollback planning for each historical block. It then verifies every canonical
+V8 block sequentially from genesis in an independent scratch store, and requires
+exact durable row equality before state validation, index repair or opening
+RPC/P2P. Standalone replay, live import and reorganization retain full verifier
+behavior. Persisted checkpoints and verified markers never authorize skipping
+historical proofs. Progress logs identify reconstruction and V8 verification
+separately. The startup regressions require zero historical branch-verifier calls,
+one forward V8 application per canonical block, and rejection of an invalid
+historical V8 proof despite a matching persisted marker.
+
 #### Ongoing native HGN correction (October22,2026)
 
 Use the explicit source-owned PrivateSpend mode with both expiry and accepted

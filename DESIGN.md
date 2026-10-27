@@ -149,6 +149,14 @@ policy and genuine unchanged-carrier lifecycle checks.
 
 ### 0.3 Native node cutover posture
 
+**v0.11.1 restart correction.** Canonical startup reconstructs ordinary state
+and performs one independent forward V8 proof-verification pass before exposing
+services. It does not reinterpret historical blocks as forks from the loaded
+final tip. Full fork verification remains on live import/reorganization and
+standalone replay. The correction changes startup work and diagnostics only;
+network identity, state formats, proof equations/bytes and monetary rules remain
+unchanged.
+
 **Ongoing native HGN admission (October22,2026).** The source-owned common
 PrivateSpend capability can explicitly omit both release expiry and cumulative
 accepted-proof quota. Only this exact HGN mode permits paired absence; partial

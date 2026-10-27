@@ -4,11 +4,15 @@ v0.11 is the fresh HGN-only pre-mainnet test network. It replaces v0.10.3;
 old balances and proofs do not migrate. Mainnet will use a separate v1.00
 launch and identity. Preserve old node data and wallet backups.
 
+The **v0.11.1** software hotfix stays on this same v0.11 network, with the same
+genesis, manifest, seeds and default `~/.hegemon-node-v0.11` directory. It repairs
+startup replay; it does not reset balances or require a new genesis. Preserve
+your existing v0.11 database and wallets when upgrading.
+
 ## Select the public chain first
 
-Use **tag `v0.11`** for source builds, or the platform archives from that release.
-The tag is `da7be324`; older source links to `9e580878` predate the final joining
-package. They do not identify a different public chain.
+Use **tag `v0.11.1`** for source builds or download its platform archive. The original `v0.11` tag is `da7be324`; older source links to `9e580878`
+predate that joining package. These software releases select the same public chain.
 
 **Building v0.11 does not select pre-mainnet automatically.** A bare
 `hegemon-node` defaults to the legacy profile. `--dev` and `--network development`
@@ -26,7 +30,7 @@ Do not mine a separate block 1 or delete old state.
 ## Install the release package
 
 Download the archive for your platform from the
-[v0.11 release](https://github.com/Pauli-Group/Hegemon/releases/tag/v0.11),
+[v0.11.1 release](https://github.com/Pauli-Group/Hegemon/releases/tag/v0.11.1),
 compare its SHA-256 checksum with the published release checksums, then extract
 it to a new directory. The packages contain `bin/` executables, launchers and
 `config/testnet/0.11/`. Run the following commands from that extracted directory.
@@ -34,16 +38,9 @@ Python 3 is required for the launcher's release-metadata checks. On Linux and
 macOS, make sure `bin/hegemon-node` is executable. The examples use `start.py`;
 `./start.sh` and Windows `start.cmd` are convenience wrappers.
 
-The bundle's product version is **0.11.0**; the release/tag is **v0.11**. Internal Cargo package
-versions are unchanged. The four platform packages reuse the 16 qualified
-binaries; they are not rebuilt by the final metadata and launcher update.
-Each archive includes `SHA256SUMS` for its contents and `bundle.json` for package
-provenance. Its `provenance/hegemon-release-assets-<platform>.json` preserves the
-original binary artifact manifest. The recorded binary source commit is
-`46895bf8734ccedf1e7b31c44a43b9a7212597fc`, tree
-`3bfa87d491879734c0f1b69bea65fa374aad3c77`. Preserve the included artifact
-manifests. The packaging source commit in `bundle.json` identifies the newer
-release metadata and launchers separately from that binary provenance.
+The software version is **0.11.1**; the network remains **v0.11**. Each archive
+includes `SHA256SUMS` and `bundle.json`, with the exact binary build provenance
+under `provenance/`.
 
 ## Network identity
 
@@ -119,8 +116,8 @@ source build, clone the release tag rather than an older commit or a moving
 branch:
 
 ```bash
-git clone --branch v0.11 --depth 1 https://github.com/Pauli-Group/Hegemon.git Hegemon-v0.11
-cd Hegemon-v0.11
+git clone --branch v0.11.1 --depth 1 https://github.com/Pauli-Group/Hegemon.git Hegemon-v0.11.1
+cd Hegemon-v0.11.1
 make setup
 make node
 ```
@@ -142,6 +139,11 @@ wait for the public chain to sync before mining. From this source checkout,
 restart with `HEGEMON_MINE=1 HEGEMON_MINER_ADDRESS='<your-full-V8-public-address>' ./start.sh`
 after creating and backing up your wallet. The `python3 start.py` examples in
 this guide apply to extracted release packages, not the source checkout.
+
+For an existing node already verified on this v0.11 genesis, upgrading to
+v0.11.1 is different from a first join: stop it cleanly, retain a coherent backup,
+replace the executable, and restart with its **same** data directory and manifest.
+Do not choose a fresh directory or delete state merely to install this hotfix.
 
 ## Create and back up your wallet
 
