@@ -1,0 +1,18 @@
+{
+  "schema": "hegemon.v0112.release-artifacts.v1",
+  "status": "pending-ci-artifact-acceptance",
+  "network_release": "v0.11",
+  "software_release": "v0.11.2",
+  "software_version": "0.11.2",
+  "release_source_head": null,
+  "build_source_head": null,
+  "build_index_tree": null,
+  "source_tree_sha256": null,
+  "cargo_lock_sha256": null,
+  "platform_manifests_sha256": {
+    "linux-x86_64": null,
+    "macos-arm64": null,
+    "macos-x86_64": null,
+    "windows-x86_64": null
+  }
+}
