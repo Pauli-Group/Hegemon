@@ -431,9 +431,9 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 
 ### Join the public v0.11 pre-mainnet
 
-Download the [v0.11 release](https://github.com/Pauli-Group/Hegemon/releases/tag/v0.11)
+Download the [v0.11.1 release](https://github.com/Pauli-Group/Hegemon/releases/tag/v0.11.1)
 and follow the [joining guide](config/testnet/0.11/README.md). For source builds,
-use tag `v0.11` and its `./start.sh`; release archives use `python3 start.py`.
+use tag `v0.11.1` and its `./start.sh`; release archives use `python3 start.py`.
 Both launchers select `--network pre-mainnet` and the frozen network manifest.
 A bare node or `--dev` selects a different chain, even with the public seeds.
 

@@ -2,8 +2,8 @@
 
 The public test network is **v0.11 pre-mainnet**, running from a fresh genesis.
 Use the [v0.11 joining guide](0.11/README.md) and
-[v0.11 release](https://github.com/Pauli-Group/Hegemon/releases/tag/v0.11).
-For source builds, check out **tag `v0.11`**. Mainnet will use a separate `v1.00`
+[v0.11.1 release](https://github.com/Pauli-Group/Hegemon/releases/tag/v0.11.1).
+For source builds, check out **tag `v0.11.1`**. Mainnet will use a separate `v1.00`
 launch; v0.10.3 balances and databases do not migrate.
 
 **The software version alone does not select the public chain.** A bare

@@ -53,7 +53,7 @@ class FakeOwnedProcess:
 
 class ArtifactGateIdentityControls(unittest.TestCase):
     def exercise_gate(self, receipt, expected_identity):
-        release_version = '0.11.1' if receipt.get('authorization_kind') == CHECKER.CURRENT_SOURCE_KIND else '0.11.0'
+        release_version = '0.11.2' if receipt.get('authorization_kind') == CHECKER.CURRENT_SOURCE_KIND else '0.11.0'
         with tempfile.TemporaryDirectory(prefix='TEST_ONLY-artifact-gate-') as temporary:
             root = Path(temporary)
             (root / 'scripts').mkdir()

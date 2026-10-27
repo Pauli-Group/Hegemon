@@ -1,8 +1,8 @@
 {
   "schema": "hegemon.pre-mainnet.release.v1",
   "release": "v0.11",
-  "software_release": "v0.11.1",
-  "software_version": "0.11.1",
+  "software_release": "v0.11.2",
+  "software_version": "0.11.2",
   "network": "pre-mainnet",
   "network_manifest_sha256": "386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754",
   "seeds": [

@@ -222,8 +222,8 @@ class CurrentBinaryProofChecks(unittest.TestCase):
 class RuntimePostimageChecks(unittest.TestCase):
     def test_current_hotfix_version_is_separate_from_legacy(self):
         self.assertEqual(CHECKER.NEW_VERSION, '0.11.0')
-        self.assertEqual(CHECKER.CURRENT_NEW_VERSION, '0.11.1')
-        self.assertEqual(SOURCE_CONFIG_DATA['new_version'], '0.11.1')
+        self.assertEqual(CHECKER.CURRENT_NEW_VERSION, '0.11.2')
+        self.assertEqual(SOURCE_CONFIG_DATA['new_version'], '0.11.2')
 
     @staticmethod
     def validate(relative, before, after):
@@ -243,7 +243,7 @@ class RuntimePostimageChecks(unittest.TestCase):
             self.validate('node/Cargo.toml', b'before', b'after')
 
     def test_a_reviewed_path_does_not_allow_an_arbitrary_postimage(self):
-        for relative in ('protocol/versioning/src/lib.rs', 'node/src/native/node_impl.rs', 'node/src/native/mod.rs', 'node/src/native/tests.rs', 'wallet/src/bin/private_spend.rs'):
+        for relative in ('protocol/versioning/src/lib.rs', 'node/src/native/node_impl.rs', 'node/src/native/mod.rs', 'node/src/native/tests.rs', 'wallet/src/bin/private_spend.rs', 'wallet/src/poseidon2_v8_sync.rs', 'wallet/src/store.rs'):
             with self.subTest(relative=relative):
                 before = (PREDECESSOR / relative).read_bytes()
                 after = (SOURCE_ROOT / relative).read_bytes()

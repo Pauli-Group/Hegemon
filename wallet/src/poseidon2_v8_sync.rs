@@ -732,6 +732,47 @@ impl Poseidon2V8WalletState {
         note_path_from_levels(&self.tree_levels, position)
     }
 
+    /// Read-only monetary inventory without constructing Merkle witnesses.
+    pub(crate) fn balance_notes(
+        &self,
+    ) -> Result<Vec<(u64, Poseidon2V8Digest, Poseidon2V8Digest, u64, u64, bool)>, WalletError> {
+        self.owned_notes
+            .iter()
+            .map(|note| {
+                let opening = words_to_opening(note.opening_words)?;
+                Ok((
+                    note.position,
+                    note.commitment,
+                    note.nullifier,
+                    opening.value,
+                    opening.asset_id,
+                    note.spent_by.is_some(),
+                ))
+            })
+            .collect()
+    }
+
+    /// Owned queued coinbases are not spendable leaves. Maturity is the first
+    /// eligible inclusion height, one block after the existing release event.
+    pub(crate) fn immature_owned_rewards(&self) -> Result<Vec<(u64, u64, u64)>, WalletError> {
+        let mut notes = Vec::new();
+        for reward in &self.pending_rewards {
+            let maturity = reward
+                .created_height
+                .checked_add(protocol_versioning::COINBASE_MATURITY)
+                .ok_or(WalletError::InvalidState(
+                    "V8 reward maturity height overflow",
+                ))?;
+            for note in &reward.notes {
+                if let Some((words, _)) = note.owned_opening {
+                    let opening = words_to_opening(words)?;
+                    notes.push((opening.value, opening.asset_id, maturity));
+                }
+            }
+        }
+        Ok(notes)
+    }
+
     pub(crate) fn owned_notes(&self) -> Result<Vec<Poseidon2V8OwnedNoteView>, WalletError> {
         self.validate_default_root()?;
         let anchor = current_note_root(&self.tree_levels)?;
@@ -1398,7 +1439,25 @@ impl Poseidon2V8WalletState {
             .tree_levels
             .first()
             .ok_or(WalletError::InvalidState("V8 commitment level missing"))?;
-        let (expected_levels, expected_root_log) = rebuild_note_tree(commitments)?;
+        let started = std::time::Instant::now();
+        eprintln!(
+            "wallet-progress stage=unlock current=0 target={} notes=0 elapsed_ms=0",
+            commitments.len()
+        );
+        let mut reported = started;
+        let (expected_levels, expected_root_log, prefix_roots) =
+            rebuild_note_tree_with_prefix_roots(commitments, |count| {
+                if reported.elapsed() >= std::time::Duration::from_secs(2)
+                    || count == commitments.len()
+                {
+                    eprintln!(
+                        "wallet-progress stage=unlock current={count} target={} notes=0 elapsed_ms={}",
+                        commitments.len(),
+                        started.elapsed().as_millis()
+                    );
+                    reported = std::time::Instant::now();
+                }
+            })?;
         if self.tree_levels != expected_levels || self.root_log != expected_root_log {
             return Err(WalletError::InvalidState(
                 "corrupt V8 note tree or root history",
@@ -1434,9 +1493,12 @@ impl Poseidon2V8WalletState {
                 .unwrap_or_else(|| u64::try_from(self.root_log.len()).unwrap_or(u64::MAX));
             let prefix_len = usize::try_from(leaf_count_after)
                 .map_err(|_| WalletError::InvalidState("V8 block leaf count overflow"))?;
-            let expected_block_root = note_root(commitments.get(..prefix_len).ok_or(
-                WalletError::InvalidState("V8 block leaf count exceeds tree"),
-            )?)?;
+            let expected_block_root =
+                *prefix_roots
+                    .get(prefix_len)
+                    .ok_or(WalletError::InvalidState(
+                        "V8 block leaf count exceeds tree",
+                    ))?;
             if block.released_rewards.len() > 1 {
                 return Err(WalletError::InvalidState(
                     "multiple V8 reward release origins",
@@ -2156,15 +2218,40 @@ fn rebuild_note_tree(
     if commitments.len() > (1usize << SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH) {
         return Err(WalletError::InvalidState("V8 wallet note tree is full"));
     }
+    let (levels, root_log, _) = rebuild_note_tree_with_prefix_roots(commitments, |_| {})?;
+    Ok((levels, root_log))
+}
+
+/// Reconstruct each leaf once and retain the exact root at every prefix length.
+/// Historical block checks must use prefix length, not the deduplicated root log.
+fn rebuild_note_tree_with_prefix_roots(
+    commitments: &[Poseidon2V8Digest],
+    mut appended: impl FnMut(usize),
+) -> Result<
+    (
+        Vec<Vec<Poseidon2V8Digest>>,
+        Vec<Poseidon2V8Digest>,
+        Vec<Poseidon2V8Digest>,
+    ),
+    WalletError,
+> {
+    if commitments.len() > (1usize << SMALLWOOD_POSEIDON2_V8_MERKLE_DEPTH) {
+        return Err(WalletError::InvalidState("V8 wallet note tree is full"));
+    }
     let mut levels = empty_tree_levels();
-    let mut root_log = vec![empty_note_root()];
-    for commitment in commitments {
+    let empty = empty_note_root();
+    let mut root_log = vec![empty];
+    let mut prefix_roots = Vec::with_capacity(commitments.len().saturating_add(1));
+    prefix_roots.push(empty);
+    for (index, commitment) in commitments.iter().enumerate() {
         let root = append_note_tree(&mut levels, *commitment)?;
         if root_log.last().copied() != Some(root) {
             root_log.push(root);
         }
+        prefix_roots.push(root);
+        appended(index + 1);
     }
-    Ok((levels, root_log))
+    Ok((levels, root_log, prefix_roots))
 }
 
 fn accepted_note_roots(root_log: &[Poseidon2V8Digest]) -> Vec<Poseidon2V8Digest> {
@@ -2230,6 +2317,7 @@ fn note_levels(
     Ok(levels)
 }
 
+#[cfg(test)]
 fn note_root(commitments: &[Poseidon2V8Digest]) -> Result<Poseidon2V8Digest, WalletError> {
     note_levels(commitments)?
         .last()
@@ -2657,13 +2745,37 @@ pub(crate) mod tests {
                 .is_empty());
         }
         assert!(store.poseidon2_v8_owned_notes().unwrap().is_empty());
+        let balance = store.private_spend_balance().unwrap();
+        assert_eq!(balance.synced_height, 119);
+        assert_eq!(
+            (
+                balance.immature_coinbase.atoms,
+                balance.immature_coinbase.notes
+            ),
+            (80, 1)
+        );
+        assert_eq!(balance.ordinary_available.atoms, 0);
+        assert_eq!(balance.next_maturity_height, Some(121));
+        assert_eq!(balance.blocks_until_next_maturity, Some(1));
         drop(store);
         let reopened = WalletStore::open(&path, PASSPHRASE).unwrap();
+        assert_eq!(reopened.private_spend_balance().unwrap(), balance);
         let release = canonical_block(120, hash_at(120), hash_at(119), vec![]);
         let delta = reopened
             .apply_poseidon2_v8_canonical_block(&release)
             .unwrap();
         assert_eq!((delta.commitments, delta.recovered), (2, 1));
+        let mature_balance = reopened.private_spend_balance().unwrap();
+        assert_eq!(mature_balance.synced_height, 120);
+        assert_eq!(
+            (
+                mature_balance.ordinary_available.atoms,
+                mature_balance.ordinary_available.notes
+            ),
+            (80, 1)
+        );
+        assert_eq!(mature_balance.immature_coinbase.atoms, 0);
+        assert_eq!(mature_balance.next_maturity_height, None);
         let miner_note = &reopened.poseidon2_v8_owned_notes().unwrap()[0];
         assert_eq!(
             (
@@ -2684,6 +2796,7 @@ pub(crate) mod tests {
             .rollback_poseidon2_v8_to(119, hash_at(119))
             .unwrap();
         assert!(reopened.poseidon2_v8_owned_notes().unwrap().is_empty());
+        assert_eq!(reopened.private_spend_balance().unwrap(), balance);
         assert!(reopened
             .poseidon2_v8_canonical_commitment_positions(funding.commitment)
             .unwrap()
@@ -2694,7 +2807,28 @@ pub(crate) mod tests {
             .apply_poseidon2_v8_canonical_block(&release)
             .unwrap();
         assert_eq!(reopened.poseidon2_v8_tip().unwrap(), released_tip);
+        assert_eq!(reopened.private_spend_balance().unwrap(), mature_balance);
+        reopened
+            .apply_poseidon2_v8_canonical_block(&canonical_block(
+                121,
+                hash_at(121),
+                hash_at(120),
+                vec![],
+            ))
+            .unwrap();
+        assert_eq!(
+            reopened.private_spend_balance().unwrap().ordinary_available,
+            mature_balance.ordinary_available
+        );
         reopened.rollback_poseidon2_v8_to(0, GENESIS).unwrap();
+        assert_eq!(
+            reopened
+                .private_spend_balance()
+                .unwrap()
+                .immature_coinbase
+                .atoms,
+            0
+        );
         assert!(reopened.poseidon2_v8_owned_notes().unwrap().is_empty());
         assert_eq!(reopened.poseidon2_v8_tip().unwrap().height, 0);
     }
@@ -3078,6 +3212,102 @@ pub(crate) mod tests {
             )
             .is_err());
         }
+    }
+
+    fn prefix_validation_fixture() -> Poseidon2V8WalletState {
+        let mut state = Poseidon2V8WalletState::default();
+        state
+            .ensure_genesis_for_test(GENESIS, TEST_STABLECOIN_ROOT)
+            .unwrap();
+        for height in 1..=8u64 {
+            let block = Poseidon2V8CanonicalBlock {
+                height,
+                hash: [height as u8 + 40; 32],
+                parent_hash: state.tip().unwrap().block_hash,
+                action_bytes: Vec::new(),
+            };
+            if height % 3 == 0 {
+                state.apply_block(&block, None).unwrap();
+            } else {
+                state
+                    .append_journal_test_commitment(&block, [height + 100; 7])
+                    .unwrap();
+            }
+        }
+        state
+    }
+
+    #[test]
+    fn wallet_prefix_validation_matches_independent_historical_roots() {
+        let state = prefix_validation_fixture();
+        let commitments = &state.tree_levels[0];
+        let (levels, log, roots) =
+            rebuild_note_tree_with_prefix_roots(commitments, |_| {}).unwrap();
+        assert_eq!(levels, state.tree_levels);
+        assert_eq!(log, state.root_log);
+        for (length, root) in roots.iter().enumerate() {
+            assert_eq!(*root, note_root(&commitments[..length]).unwrap());
+        }
+        state.validate().unwrap();
+    }
+
+    #[test]
+    fn wallet_prefix_validation_rejects_bad_intermediate_root_with_valid_tip() {
+        let mut state = prefix_validation_fixture();
+        let final_root = state.tip().unwrap().anchor;
+        state.blocks[1].root_after = [999; 7];
+        assert_eq!(state.tip().unwrap().anchor, final_root);
+        assert!(matches!(
+            state.validate(),
+            Err(WalletError::InvalidState("corrupt V8 block journal"))
+        ));
+    }
+
+    #[test]
+    fn wallet_prefix_validation_appends_each_commitment_exactly_once() {
+        let commitments: Vec<_> = (1..=32u64).map(|i| [i + 100; 7]).collect();
+        let mut append_calls = 0;
+        let (_, _, roots) = rebuild_note_tree_with_prefix_roots(&commitments, |count| {
+            append_calls += 1;
+            assert_eq!(count, append_calls);
+        })
+        .unwrap();
+        assert_eq!(append_calls, commitments.len());
+        assert_eq!(roots.len(), commitments.len() + 1);
+        assert_eq!(*roots.last().unwrap(), note_root(&commitments).unwrap());
+    }
+
+    #[test]
+    fn private_spend_balance_excludes_reserved_inputs_and_releases_them() {
+        let directory = tempdir().unwrap();
+        let root = RootSecret::from_bytes([0x51; 32]);
+        let store = WalletStore::create_from_root(
+            directory.path().join("balance.wallet"),
+            PASSPHRASE,
+            root.clone(),
+        )
+        .unwrap();
+        seed_two_owned_coinbases(&store, &root);
+        let initial = store.private_spend_balance().unwrap();
+        assert_eq!(
+            (
+                initial.ordinary_available.atoms,
+                initial.ordinary_available.notes
+            ),
+            (100, 2)
+        );
+        let reservation = store.reserve_poseidon2_v8_spend().unwrap();
+        let reserved = store.private_spend_balance().unwrap();
+        assert_eq!(reserved.ordinary_available.atoms, 0);
+        assert_eq!(
+            (
+                reserved.ordinary_reserved.atoms,
+                reserved.ordinary_reserved.notes
+            ),
+            (100, 2)
+        );
+        drop(reservation);
+        assert_eq!(store.private_spend_balance().unwrap(), initial);
     }
 
     #[test]
