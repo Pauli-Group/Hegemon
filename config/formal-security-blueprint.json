@@ -8,8 +8,8 @@
       "command": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
       "status": "passed",
       "exit_code": 0,
-      "executed_at": "2026-10-24T20:13:10Z",
-      "policy_inputs_blake3": "0de0975944aa1d5ec467f4b1f6a3a583444da7003bc22e9d3242078d36f9e5a4",
+      "executed_at": "2026-10-27T01:22:15Z",
+      "policy_inputs_blake3": "8ed0b07f0293499d77442b1078ba61a242beb5ce1759d9b46178189ce2328713",
       "report": {
         "passed": true,
         "test_filter": "governance_",
