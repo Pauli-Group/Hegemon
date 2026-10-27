@@ -55,6 +55,9 @@ pub use poseidon2_v8_reservations::{
     Poseidon2V8ReservationStatus, Poseidon2V8ReservationView, Poseidon2V8SpendReservation,
 };
 pub use private_spend_journal::{PrivateSpendAttemptStatus, PrivateSpendAttemptView};
+#[path = "private_spend_balance.rs"]
+mod private_spend_balance;
+pub use private_spend_balance::{BalanceAmount, PrivateSpendBalance};
 
 /// V13 added treasury state, V14 added RP06 candidates, and V15 stores private
 /// per-output encryption witnesses. Earlier positional bincode schemas remain frozen.

@@ -497,6 +497,24 @@ separately. The startup regressions require zero historical branch-verifier call
 one forward V8 application per canonical block, and rejection of an invalid
 historical V8 proof despite a matching persisted marker.
 
+#### Wallet balance and history status (v0.11.2 maintenance)
+
+`private-spend notes` and `status` report a read-only balance snapshot after
+normal authenticated synchronization. The view reuses the complete live input
+reservation union, excludes spent inputs, deduplicates equal note occurrences,
+and keeps immature rewards, conditional notes, accumulator bookkeeping and
+non-native assets separate from ordinary available HGN. Totals use integer
+atoms and eight decimal places per HGN. A watch-only store cannot establish a
+complete private spend balance and fails explicitly.
+
+Historical wallet validation reconstructs prefix roots in one append pass,
+then checks every stored block root and the complete final tree/root history.
+Focused regressions compare independent prefix roots, reject an altered
+intermediate root with a correct final tip, and cover reward maturity across
+restart/reorg, reservations and exact balance formatting. This maintenance
+reuses unchanged proof/formal evidence; it does not change proof verification,
+wallet serialization, encryption/KDF parameters or consensus.
+
 #### Ongoing native HGN correction (October22,2026)
 
 Use the explicit source-owned PrivateSpend mode with both expiry and accepted

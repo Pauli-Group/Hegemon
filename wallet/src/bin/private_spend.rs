@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::{
     fs,
-    io::{Read, Write},
+    io::{IsTerminal, Read, Write},
     path::{Path, PathBuf},
 };
 use synthetic_crypto::private_note_payload::NoteState;
@@ -18,6 +18,7 @@ use wallet::{
         TreasuryFinalTemplate,
     },
     private_spend_rpc::{prepare_submit_request, SourcePrivateSpendAuthority},
+    store::PrivateSpendBalance,
     DerivedKeys, ShieldedAddress, WalletStore,
 };
 use zeroize::Zeroizing;
@@ -57,17 +58,11 @@ impl SpendAuthority {
         &self,
         store: &WalletStore,
         block: &wallet::poseidon2_v8_sync::Poseidon2V8CanonicalBlock,
-    ) -> Result<()> {
+    ) -> Result<wallet::poseidon2_v8_sync::Poseidon2V8SyncDelta> {
         match self {
-            Self::Source(t) => {
-                store.apply_private_spend_source_block(block, t)?;
-                Ok(())
-            }
+            Self::Source(t) => Ok(store.apply_private_spend_source_block(block, t)?),
             #[cfg(feature = "private-spend-dev-artifacts")]
-            Self::Development(t) => {
-                store.apply_private_spend_development_block(block, t)?;
-                Ok(())
-            }
+            Self::Development(t) => Ok(store.apply_private_spend_development_block(block, t)?),
         }
     }
     fn prove(&self, prepared: &build::PreparedPrivateSpend) -> Result<Vec<u8>> {
@@ -206,6 +201,8 @@ enum Command {
     /// Create a new encrypted wallet and pin its exact private-only context.
     New,
     Sync,
+    /// Sync once and print height, unspent notes and attempts with one unlock.
+    Status,
     Address {
         #[arg(long)]
         index: Option<u32>,
@@ -602,12 +599,197 @@ async fn sync(
         s.rollback_poseidon2_v8_to(height, hash)?;
     }
     let end = node.latest_block().await?.height;
-    for height in s.poseidon2_v8_tip()?.height + 1..=end {
+    let start = s.poseidon2_v8_tip()?.height;
+    let started = std::time::Instant::now();
+    print_wallet_progress("sync", start, end, 0, 0);
+    let mut reported = started;
+    let mut recovered = 0usize;
+    for height in start + 1..=end {
         let b = node
             .canonical_block_actions(height)
             .await?
             .context("canonical block missing")?;
-        token.apply(s, &b)?;
+        let delta = token.apply(s, &b)?;
+        recovered = recovered.saturating_add(delta.recovered);
+        if height == end
+            || height % 25 == 0
+            || reported.elapsed() >= std::time::Duration::from_secs(2)
+        {
+            print_wallet_progress(
+                "sync",
+                height,
+                end,
+                recovered,
+                started.elapsed().as_millis(),
+            );
+            reported = std::time::Instant::now();
+        }
+    }
+    print_wallet_progress(
+        "done",
+        s.poseidon2_v8_tip()?.height,
+        end,
+        recovered,
+        started.elapsed().as_millis(),
+    );
+    Ok(())
+}
+
+fn print_wallet_progress(stage: &str, current: u64, target: u64, notes: usize, elapsed_ms: u128) {
+    if std::io::stderr().is_terminal() {
+        match stage {
+            "unlock" if target == 0 => eprintln!("Unlocking encrypted wallet…"),
+            "unlock" => eprintln!("Checking wallet history: {current}/{target}"),
+            "sync" => eprintln!("Syncing blocks: {current}/{target}; new notes {notes}"),
+            "done" => eprintln!("Sync complete at block {current}"),
+            _ => {}
+        }
+    } else {
+        // The pinned private operator tool consumes only this numeric schema.
+        eprintln!("wallet-progress stage={stage} current={current} target={target} notes={notes} elapsed_ms={elapsed_ms}");
+    }
+}
+
+fn hgn_amount(atoms: u128) -> String {
+    format!("{}.{:08}", atoms / 100_000_000, atoms % 100_000_000)
+}
+
+fn balance_summary(balance: &PrivateSpendBalance) -> String {
+    let next = balance
+        .next_maturity_height
+        .map_or_else(|| "none".into(), |value| value.to_string());
+    let remaining = balance
+        .blocks_until_next_maturity
+        .map_or_else(|| "none".into(), |value| value.to_string());
+    let mut lines = vec![format!(
+        "balance synced_height={} available_atoms={} available_notes={} reserved_atoms={} reserved_notes={} immature_atoms={} immature_notes={} next_maturity_height={} blocks_until_next_maturity={} htlc_atoms={} htlc_notes={} policy_atoms={} policy_notes={} treasury_value_atoms={} treasury_value_notes={} accumulator_notes={} watch_only={}",
+        balance.synced_height, balance.ordinary_available.atoms, balance.ordinary_available.notes,
+        balance.ordinary_reserved.atoms, balance.ordinary_reserved.notes,
+        balance.immature_coinbase.atoms, balance.immature_coinbase.notes, next, remaining,
+        balance.htlc.atoms, balance.htlc.notes, balance.policy.atoms, balance.policy.notes,
+        balance.treasury_value.atoms, balance.treasury_value.notes, balance.accumulator_notes, balance.watch_only
+    ), format!("Balance at synced block {}", balance.synced_height)];
+    for (label, amount) in [
+        ("Ordinary available", &balance.ordinary_available),
+        (
+            "Ordinary reserved by retained attempts",
+            &balance.ordinary_reserved,
+        ),
+        ("Immature rewards", &balance.immature_coinbase),
+    ] {
+        lines.push(format!(
+            "{label}: {} HGN ({} atoms; {} notes)",
+            hgn_amount(amount.atoms),
+            amount.atoms,
+            amount.notes
+        ));
+    }
+    if let Some(height) = balance.next_maturity_height {
+        lines.push(match balance.blocks_until_next_maturity {
+            Some(blocks) => {
+                format!("Next reward maturity: block {height} ({blocks} blocks remaining)")
+            }
+            None => format!("Next reward maturity: block {height}"),
+        });
+    }
+    for (label, amount) in [
+        ("HTLC (conditional; not ordinary available)", &balance.htlc),
+        (
+            "Policy (conditional; not ordinary available)",
+            &balance.policy,
+        ),
+        (
+            "Treasury value (controlled; not ordinary available)",
+            &balance.treasury_value,
+        ),
+    ] {
+        if amount.notes != 0 || amount.atoms != 0 {
+            lines.push(format!(
+                "{label}: {} HGN ({} atoms; {} notes)",
+                hgn_amount(amount.atoms),
+                amount.atoms,
+                amount.notes
+            ));
+        }
+    }
+    if balance.accumulator_notes != 0 {
+        lines.push(format!(
+            "Accumulator notes: {} (bookkeeping only; excluded from HGN totals)",
+            balance.accumulator_notes
+        ));
+    }
+    for (asset, amount) in &balance.non_native {
+        lines.push(format!(
+            "balance_asset asset_id={asset} atoms={} notes={}",
+            amount.atoms, amount.notes
+        ));
+        lines.push(format!(
+            "Other asset {asset}: {} atomic units ({} notes; not HGN)",
+            amount.atoms, amount.notes
+        ));
+    }
+    let no_notes = [
+        &balance.ordinary_available,
+        &balance.ordinary_reserved,
+        &balance.immature_coinbase,
+        &balance.htlc,
+        &balance.policy,
+        &balance.treasury_value,
+    ]
+    .iter()
+    .all(|amount| amount.atoms == 0 && amount.notes == 0)
+        && balance.accumulator_notes == 0
+        && balance
+            .non_native
+            .values()
+            .all(|amount| amount.atoms == 0 && amount.notes == 0);
+    if no_notes {
+        lines.push(format!(
+            "No unspent notes or pending rewards found at synced block {}.",
+            balance.synced_height
+        ));
+    }
+    if balance.watch_only {
+        lines.push("Watch-only wallet: these balances do not establish signing authority.".into());
+    }
+    lines.join("\n")
+}
+
+fn print_notes(store: &WalletStore) -> Result<()> {
+    let balance = store.private_spend_balance()?;
+    for n in store
+        .poseidon2_v8_owned_notes()?
+        .into_iter()
+        .filter(|n| !n.spent)
+    {
+        println!("ordinary position={} value={}", n.position, n.opening.value)
+    }
+    for n in store
+        .private_spend_notes()?
+        .into_iter()
+        .filter(|n| !n.spent)
+    {
+        let p = n.opening()?;
+        let kind = match &p.state {
+            NoteState::Ordinary { .. } => "ordinary",
+            NoteState::Htlc(_) => "htlc",
+            NoteState::Policy(_) => "policy",
+            NoteState::TreasuryValue(_) => "treasury-value",
+            NoteState::TreasuryAccumulator(_) => "accumulator",
+        };
+        println!("{} position={} value={}", kind, n.position, p.note.value)
+    }
+    println!("{}", balance_summary(&balance));
+    Ok(())
+}
+fn print_attempts(store: &WalletStore) -> Result<()> {
+    for a in store.private_spend_attempts()? {
+        println!(
+            "{} {:?} mined={:?}",
+            hex::encode(a.id),
+            a.status,
+            a.mined_in
+        )
     }
     Ok(())
 }
@@ -912,6 +1094,7 @@ async fn main() -> Result<()> {
     let node = wallet::node_rpc::NodeRpcClient::connect(&args.rpc).await?;
     let token = authority(&args, &node).await?;
     let phrase = Zeroizing::new(rpassword::prompt_password("Encrypted wallet passphrase: ")?);
+    print_wallet_progress("unlock", 0, 0, 0, 0);
     let store = if matches!(&args.command, Command::New) {
         WalletStore::create_full_if_missing(&args.wallet, &phrase)?
     } else {
@@ -937,39 +1120,12 @@ async fn main() -> Result<()> {
             eprintln!("local address index {}", address.diversifier_index);
             println!("{}", address.encode()?);
         }
-        Command::Notes => {
-            for n in store
-                .poseidon2_v8_owned_notes()?
-                .into_iter()
-                .filter(|n| !n.spent)
-            {
-                println!("ordinary position={} value={}", n.position, n.opening.value)
-            }
-            for n in store
-                .private_spend_notes()?
-                .into_iter()
-                .filter(|n| !n.spent)
-            {
-                let p = n.opening()?;
-                let kind = match &p.state {
-                    NoteState::Ordinary { .. } => "ordinary",
-                    NoteState::Htlc(_) => "htlc",
-                    NoteState::Policy(_) => "policy",
-                    NoteState::TreasuryValue(_) => "treasury-value",
-                    NoteState::TreasuryAccumulator(_) => "accumulator",
-                };
-                println!("{} position={} value={}", kind, n.position, p.note.value)
-            }
-        }
-        Command::Attempts => {
-            for a in store.private_spend_attempts()? {
-                println!(
-                    "{} {:?} mined={:?}",
-                    hex::encode(a.id),
-                    a.status,
-                    a.mined_in
-                )
-            }
+        Command::Notes => print_notes(&store)?,
+        Command::Attempts => print_attempts(&store)?,
+        Command::Status => {
+            println!("synced {}", r.parent_height);
+            print_notes(&store)?;
+            print_attempts(&store)?;
         }
         Command::Cancel { attempt } => store.cancel_private_spend_preparation(unhex(&attempt)?)?,
         Command::ExportRefundHandoff { attempt, path } => {
@@ -1381,6 +1537,126 @@ async fn main() -> Result<()> {
 }
 
 #[cfg(test)]
+mod balance_display_tests {
+    use super::*;
+    use wallet::store::BalanceAmount;
+
+    fn empty() -> PrivateSpendBalance {
+        let zero = || BalanceAmount { atoms: 0, notes: 0 };
+        PrivateSpendBalance {
+            synced_height: 120,
+            ordinary_available: zero(),
+            ordinary_reserved: zero(),
+            immature_coinbase: zero(),
+            next_maturity_height: None,
+            blocks_until_next_maturity: None,
+            htlc: zero(),
+            policy: zero(),
+            treasury_value: zero(),
+            accumulator_notes: 0,
+            non_native: std::collections::BTreeMap::new(),
+            watch_only: false,
+        }
+    }
+
+    #[test]
+    fn empty_balance_is_explicit_at_synced_height() {
+        let text = balance_summary(&empty());
+        assert!(text.contains("Ordinary available: 0.00000000 HGN (0 atoms; 0 notes)"));
+        assert!(text.contains("No unspent notes or pending rewards found at synced block 120."));
+        assert!(text.contains("next_maturity_height=none blocks_until_next_maturity=none"));
+    }
+
+    #[test]
+    fn immature_rewards_are_visible_without_claiming_availability() {
+        let mut balance = empty();
+        balance.immature_coinbase = BalanceAmount {
+            atoms: 500_000_000,
+            notes: 2,
+        };
+        balance.next_maturity_height = Some(240);
+        balance.blocks_until_next_maturity = Some(120);
+        let text = balance_summary(&balance);
+        assert!(text.contains("Immature rewards: 5.00000000 HGN (500000000 atoms; 2 notes)"));
+        assert!(text.contains("Next reward maturity: block 240 (120 blocks remaining)"));
+        assert!(text.contains("Ordinary available: 0.00000000 HGN"));
+        assert!(!text.contains("No unspent notes"));
+    }
+
+    #[test]
+    fn reserved_notes_remain_separate_from_available_notes() {
+        let mut balance = empty();
+        balance.ordinary_reserved = BalanceAmount {
+            atoms: 100_000,
+            notes: 1,
+        };
+        let text = balance_summary(&balance);
+        assert!(text.contains(
+            "Ordinary reserved by retained attempts: 0.00100000 HGN (100000 atoms; 1 notes)"
+        ));
+        assert!(text.contains(
+            "available_atoms=0 available_notes=0 reserved_atoms=100000 reserved_notes=1"
+        ));
+        assert!(!text.contains("No unspent notes"));
+    }
+
+    #[test]
+    fn conditional_and_other_asset_inventory_never_becomes_ordinary_hgn() {
+        let mut balance = empty();
+        balance.htlc = BalanceAmount {
+            atoms: 200_000_000,
+            notes: 1,
+        };
+        balance.policy = BalanceAmount {
+            atoms: 300_000_000,
+            notes: 1,
+        };
+        balance.treasury_value = BalanceAmount {
+            atoms: 400_000_000,
+            notes: 1,
+        };
+        balance.accumulator_notes = 2;
+        balance.non_native.insert(
+            7,
+            BalanceAmount {
+                atoms: 900_000_000,
+                notes: 1,
+            },
+        );
+        let text = balance_summary(&balance);
+        assert!(text.contains("HTLC (conditional; not ordinary available): 2.00000000 HGN"));
+        assert!(text.contains("Policy (conditional; not ordinary available): 3.00000000 HGN"));
+        assert!(
+            text.contains("Treasury value (controlled; not ordinary available): 4.00000000 HGN")
+        );
+        assert!(text.contains("Accumulator notes: 2 (bookkeeping only; excluded from HGN totals)"));
+        assert!(text.contains("balance_asset asset_id=7 atoms=900000000 notes=1"));
+        assert!(text.contains("Other asset 7: 900000000 atomic units (1 notes; not HGN)"));
+        assert!(!text.contains("9.00000000 HGN"));
+        assert!(!text.contains("No unspent notes"));
+    }
+
+    #[test]
+    fn hgn_formatting_preserves_every_atom_through_u128_maximum() {
+        assert_eq!(hgn_amount(0), "0.00000000");
+        assert_eq!(hgn_amount(1), "0.00000001");
+        assert_eq!(hgn_amount(100_000_000), "1.00000000");
+        assert_eq!(
+            hgn_amount(u128::MAX),
+            "3402823669209384634633746074317.68211455"
+        );
+        let mut balance = empty();
+        balance.ordinary_available = BalanceAmount {
+            atoms: u128::MAX,
+            notes: 2,
+        };
+        let text = balance_summary(&balance);
+        assert!(text.contains(&format!("{} atoms", u128::MAX)));
+        assert!(!text.contains("No unspent notes"));
+    }
+}
+
+#[cfg(test)]
 mod bootstrap_tests {
     use super::*;
 
@@ -1422,6 +1698,17 @@ mod bootstrap_tests {
     fn network_commands_still_require_launch_settings() {
         let args =
             Args::try_parse_from(["private-spend", "--wallet", "new.store", "sync"]).unwrap();
+        assert!(validate_network_args(&args)
+            .unwrap_err()
+            .to_string()
+            .contains("--manifest"));
+    }
+
+    #[test]
+    fn status_command_parses_and_keeps_network_authority_requirements() {
+        let args =
+            Args::try_parse_from(["private-spend", "--wallet", "new.store", "status"]).unwrap();
+        assert!(matches!(args.command, Command::Status));
         assert!(validate_network_args(&args)
             .unwrap_err()
             .to_string()
