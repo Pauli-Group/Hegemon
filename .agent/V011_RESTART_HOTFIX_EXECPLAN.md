@@ -13,7 +13,7 @@ An existing v0.11 node should restart on its current database without repeatedly
 - [x] Implement startup-only reconstruction and progress logging; preserve standalone/full replay and import/reorg paths.
 - [x] Pass focused restart, malformed-proof, index/body integrity checks and measure the same retained database.
 - [x] Freeze exact changed source/version pins; all four platform builds, executable proof checks and assembly passed in run 40434419105; PR #209 merged as bb3ad63e653c75a9a5eedc1684a392ea8243020a.
-- [ ] Publish v0.11.1 as Latest with compatible joining bundles; retain the v0.11 chain manifest and state directory.
+- [x] Publish v0.11.1 as Latest with 45 checksum-verified assets and four compatible joining bundles; retain the v0.11 chain manifest and state directory. Website and explorer links updated; anonymous download joined H613 in 35.915 s.
 - [x] Upgrade dev (41.061 s) and OVH (39.417 s); both report 0.11.1, preserve data/identity/payouts, agree at H602 and keep advancing. Explorer fully indexed H603.
 
 ## Surprises & Discoveries
@@ -59,7 +59,7 @@ Baseline evidence is `/Users/pldd/Projects/Reflexivity/Hegemon/.agent/v011-cutov
 
 ## Outcomes & Retrospective
 
-Runtime correction is merged and both seeds run v0.11.1. Release publication and a clean public-download joining check remain. Both hosts retained chain data, launch manifest and payout settings; no reset or resync occurred.
+Complete: PR #209 merged as bb3ad63e653c75a9a5eedc1684a392ea8243020a; v0.11.1 published as Latest at packaging commit 10d36ee516631d7a82dd6d19ff27342f3cd1d1ad. All 45 asset sizes and SHA-256 digests match. Both seeds run 0.11.1, agree at H613, have seven peers and mining active; explorer indexed all 614 blocks. Website/explorer links point to the new tag. An anonymous MacARM download passed bundle checks and synced the same chain in 35.915 s with mining disabled; the owned test process exited cleanly. Both hosts retained chain data, launch manifest and payout settings; no reset or resync occurred. Local free disk 17.79 GiB, dev 26.89 GiB and OVH 26.77 GiB at final check. Closeout receipt: /Users/pldd/Projects/Reflexivity/Hegemon/.agent/v011-cutover-20261026/restart-diagnosis/V0111-CLOSEOUT.json.
 
 ## Interfaces and Dependencies
 
