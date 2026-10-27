@@ -15,7 +15,7 @@ A miner checking a new wallet must see immature rewards and when they become usa
 - [x] Add read-only native balance snapshot covering reserved, immature and conditional funds; four focused regressions pass.
 - [x] Add compatible CLI summaries and explicit empty-state output; five exact formatting regressions pass.
 - [ ] Documentation is prepared. Exact v0.11.2 source/version binding transition is prepared and staged controls pass; application is pending explicit approval required by automatic review.
-- [ ] Run focused acceptance, commit and push the scoped changes, create review-ready public and private pull requests.
+- [x] Run focused acceptance and push the wallet changes in public PR #210 (ready for review) and the private companion PR #1. Release-binding application remains the separate approval-blocked step above.
 
 ## Context and Orientation
 
@@ -59,7 +59,7 @@ Use software version v0.11.2 for this compatible wallet patch; keep network iden
 
 ## Outcomes & Retrospective
 
-Fourteen focused native tests passed: four balance tests, one maturity/restart/reorg boundary test, five display tests, three historical-prefix tests, and one CLI authority test. Scoped rustfmt and diff checks pass. The private companion has 29 passing tests and is pushed ready for review. The prepared current-successor transition passed 25 scope and 16 consumer controls plus an authenticated 598-file source comparison; verification predicates and production authority remain unchanged. Its application awaits the explicit approval required by automatic review. Platform artifacts and exhaustive formal qualification are deferred; no new artifact acceptance is claimed. Existing compatible release build cache is reused with two jobs and approximately 17 GiB free. Public PR creation remains the final delivery step.
+Fourteen focused native tests passed: four balance tests, one maturity/restart/reorg boundary test, five display tests, three historical-prefix tests, and one CLI authority test. Scoped rustfmt and diff checks pass. The private companion has 29 passing tests and is pushed ready for review. The prepared current-successor transition passed 25 scope and 16 consumer controls plus an authenticated 598-file source comparison; verification predicates and production authority remain unchanged. Its application awaits the explicit approval required by automatic review. Platform artifacts and exhaustive formal qualification are deferred; no new artifact acceptance is claimed. Existing compatible release build cache is reused with two jobs and approximately 17 GiB free. The wallet implementation is pushed at `f81037dbed2329ec7e7717dd642e21053506fc69` in [PR #210](https://github.com/Pauli-Group/Hegemon/pull/210), open and ready for review. The shared software version and release source bindings deliberately remain unchanged pending approval of the exact prepared transition; hosted release-binding CI is not claimed green. No merge, tag, release or deployment was performed.
 
 ## Interfaces and Dependencies
 
