@@ -45,6 +45,9 @@ api.token
 /hegemon
 wallet.store
 wallet.pass
+# Generated on first run of tools/user-sim. Root secrets and wallet stores stay local.
+tools/user-sim/users.json
+tools/user-sim/.cache/
 key.pem
 .DS_Store
 

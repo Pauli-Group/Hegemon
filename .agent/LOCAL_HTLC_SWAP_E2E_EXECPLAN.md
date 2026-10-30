@@ -20,7 +20,8 @@ A passing run prints a JSON summary whose top-level `status` is `passed` and who
 - [x] Shared helpers live in `scripts/htlc_swap_lib.py`. The older rehearsal imports them, so `scripts/development_htlc_reorg_rehearsal.py` still imports those names from `scripts/development_atomic_swap_rehearsal.py`.
 - [x] `scripts/local_htlc_swap_e2e.py` builds or reuses binaries, caches verified Bitcoin Core 31.1, and runs the four scenarios.
 - [x] `make htlc-swap-e2e` invokes that script. `python3 scripts/test_local_htlc_swap_e2e.py` passes 9 daemon-free tests.
-- [ ] `make htlc-swap-e2e` passes all four scenarios. Not yet run.
+- [x] (2026-10-30) On this machine (`MemTotal` 32813140 kB), `python3 scripts/test_local_htlc_swap_e2e.py -v` passed 9 tests in 0.002s. The release node was rebuilt at `target/release/hegemon-node` (mtime 2026-10-30 13:05:57 -0400). `strings` on that binary contains `development candidate proof cap`. NTP was synchronized. Bitcoin Core 31.1 was fetched into `~/.cache/hegemon/bitcoin-core-31.1` and its pinned receipt verified.
+- [ ] `make htlc-swap-e2e` passes all four scenarios. One `--scenario happy --no-build` run was started after that build. The Hegemon lock proof finished. The Hegemon claim proof was OOM-killed. Stopped. Did not retry, and did not run `no_btc`, `both_refund`, `late_claim`, or `make htlc-swap-e2e`.
 - [x] METHODS.md, DESIGN.md, and `runbooks/pre_mainnet_rehearsal.md` name the command and its evidence boundary.
 
 ## Surprises & Discoveries
@@ -36,6 +37,12 @@ A passing run prints a JSON summary whose top-level `status` is `passed` and who
 
 - Observation: retarget happens every 10 blocks and can multiply difficulty by 4 when blocks are fast (`RETARGET_WINDOW` in `consensus/src/reward.rs`). A timeout hundreds of blocks ahead, which the 10-second versus 600-second assumption demands, cannot be mined on this local chain. The harness still uses `timeout_margin_holds`, the same inequality as `HtlcOffer::check_timeout_margin`, with local assumptions of 60s Hegemon blocks, 1s regtest Bitcoin blocks, and 200s of safety. That keeps Hegemon's remaining time strictly longer and the timeout only a few blocks ahead.
   Evidence: `LOCAL_HGN_BLOCK_SECONDS`, `LOCAL_BTC_BLOCK_SECONDS`, and `LOCAL_SAFETY_SECONDS` in `scripts/local_htlc_swap_e2e.py`. The daemon-free test `test_local_regtest_gap_stays_inside_one_retarget_stretch` requires a gap of 4 to 20 blocks.
+
+- Observation: 32 GB was not enough. The happy scenario on this machine got through wallet creation, a fresh Development node, mining to reward maturity, Bitcoin regtest, and the Hegemon lock proof. The kernel then OOM-killed `launch_wallet_prepare` during the Hegemon claim. anon-rss was 27992524 kB (26.7 GiB) and total-vm was 38301712 kB (36.5 GiB). It was a global OOM kill (`CONSTRAINT_NONE`), not a cgroup limit. Do not retry this proof on this machine. The next size that was recommended is a 64 GB Hetzner CCX43, not another 16 GB box.
+  Evidence: `journalctl -k` on 2026-10-30 13:44:08–13:44:09 local. `oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=user.slice,mems_allowed=0,global_oom,task=launch_wallet_p,pid=302673,uid=1000`. The kill line is `Out of memory: Killed process 302673 (launch_wallet_p) total-vm:38301712kB, anon-rss:27992524kB, file-rss:0kB, shmem-rss:0kB`. The harness had just printed `happy: proving Hegemon claim`. The receipt at `/tmp/hegemon-htlc-e2e/happy/receipt.json` says exit code -9, elapsed 1113.317 seconds, and the last wallet progress line was `stage=unlock current=7 target=7 notes=0 elapsed_ms=7`.
+
+- Observation: this machine's default `python3` imports `cryptography` 2.3 from the user site because `qrl` 4.0.5 pins that version. cryptography 2.3 has no compressed-point public format, so `rehearsal_bitcoin_key` cannot run under that interpreter. The happy attempt used a separate virtualenv at `/tmp/hegemon-htlc-py` with cryptography 50.0.2. The user-site package was put back to 2.3 afterward.
+  Evidence: `python3` reported `/home/william/.local/lib/python3.10/site-packages/cryptography` version 2.3, and `pip` reported `qrl 4.0.5 requires cryptography==2.3`.
 
 ## Decision Log
 
@@ -61,7 +68,23 @@ A passing run prints a JSON summary whose top-level `status` is `passed` and who
 
 ## Outcomes & Retrospective
 
-The harness and the daemon-free tests are in place. The four-scenario run has not finished yet, so there is no end-to-end receipt to cite. Update this section with the summary JSON when `make htlc-swap-e2e` completes.
+The harness and the daemon-free tests are in place. The four-scenario run has not passed. On 2026-10-30 the happy scenario was run once on this 32 GB machine (`MemTotal` 32813140 kB) from branch `htlc-wip` at `5e3f80655f6b6f7da326ed87767b5ecd7d52f4bf`. The lock proof completed. The claim proof was OOM-killed at 26.7 GiB anon-rss after 1113.317 seconds. 32 GB was not enough. There is no passing summary JSON. The failed summary printed by the harness was:
+
+    {
+      "scenarios": [
+        {
+          "elapsed_seconds": 1113.317,
+          "error": "wallet CLI failed with exit code -9: wallet-progress stage=unlock current=7 target=7 notes=0 elapsed_ms=7",
+          "production_authorized": false,
+          "scenario": "happy",
+          "schema": "hegemon-local-htlc-swap-e2e-v1",
+          "status": "failed"
+        }
+      ],
+      "status": "failed"
+    }
+
+The same attempt was not repeated. `no_btc`, `both_refund`, `late_claim`, and `make htlc-swap-e2e` were not run. The next machine that was recommended is a 64 GB Hetzner CCX43.
 
 What this must not be read as, even after a pass: production authority, a public network, or proof that a 10-minute Bitcoin assumption can be mined on this retarget schedule. The node is started with `HEGEMON_SEEDS=""`. Shared mining operators still use `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"` unless that list has been rotated, and they keep NTP or chrony enabled because future-skewed proof-of-work timestamps are rejected.
 
@@ -141,7 +164,7 @@ Daemon-free result:
     Ran 9 tests in 0.001s
     OK
 
-The full-run transcript belongs here after `make htlc-swap-e2e` finishes.
+32 GB happy attempt, 2026-10-30, stopped after one OOM kill. `journalctl -k` records pid 302673 `launch_wallet_p`, anon-rss 27992524 kB, constraint `CONSTRAINT_NONE`. The scenario directory was left at `/tmp/hegemon-htlc-e2e/happy/`. `hegemon-node.log` in that directory is empty; the node was started with `RUST_LOG=warn`. The full four-scenario transcript is still outstanding.
 
 ## Interfaces and Dependencies
 
@@ -163,4 +186,6 @@ The node binary must be built with features `development-candidate` and `poseido
 
 ## Revision note
 
-2026-10-30: Initial plan for the fresh-chain harness. The four-scenario run is still outstanding. The local timeout assumptions were narrowed so the refund height stays mineable under the 10-block retarget.
+2026-10-30: Initial plan for the fresh-chain harness. The local timeout assumptions were narrowed so the refund height stays mineable under the 10-block retarget.
+
+2026-10-30: Recorded the 32 GB happy-scenario attempt. The lock proof finished and the claim proof was OOM-killed at 26.7 GiB anon-rss. The run was not retried.

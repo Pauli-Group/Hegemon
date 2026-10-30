@@ -1,0 +1,27 @@
+[package]
+name = "user-sim"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Local multi-user shielded transfer simulator"
+publish = false
+
+[[bin]]
+name = "user-sim"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
+transaction-circuit = { path = "../../circuits/transaction", default-features = false }
+wallet = { path = "../../wallet", default-features = true, features = ["rpc-client"] }
+
+[lints]
+workspace = true
