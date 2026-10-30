@@ -91,4 +91,4 @@ config/testnet-config
 config/testnet-config
 
 # .cursor
-.cursor/
+# .cursor/
