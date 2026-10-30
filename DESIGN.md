@@ -380,7 +380,15 @@ the real RP06/SMZC verifiers and the exact source/reference window. During this
 prototype's Lock proof, development mining must pause so the required current
 parent remains fixed; that coordination requirement is not a general liveness
 claim. Real local Bitcoin Core regtest acceptance is a separate gate from
-formal or QROM evidence and from release approval.
+formal or QROM evidence and from release approval. `make htlc-swap-e2e` runs
+that gate from fresh Development and regtest chains: a successful swap, a
+Hegemon refund when Bitcoin was never funded, refunds on both chains, and a
+rejected Hegemon claim after the refund. The node uses an empty seed list only
+because the chain is local and isolated. Shared mining operators still set
+`HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"`
+unless that list has been rotated, and they keep NTP or chrony enabled because
+future-skewed PoW timestamps are rejected. This run grants no production
+authority.
 
 The operator path now includes `treasury-v8` notes, attempts,
 canonical-position, recovery, and guarded submit commands, plus a disposable

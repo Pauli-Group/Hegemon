@@ -89,3 +89,6 @@ PROVER_ARCHITECTURE_CONSTRAINTS.toc
 PROVER_ARCHITECTURE_CONSTRAINTS.synctex.gz
 config/testnet-config
 config/testnet-config
+
+# .cursor
+.cursor/

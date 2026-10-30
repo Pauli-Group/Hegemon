@@ -128,7 +128,20 @@ addresses, openings, preimages, or generated receipts.
    receipt records Development execution only. A completed disposable treasury run
    produced approvals at H20/H21 and a 50,000-base-unit final output at H22 in
    144.734 seconds; this is bounded runtime evidence, not a release gate.
-4. To exercise both cross-chain branches, prepare separate disposable Claim and
+4. For an unattended local run that creates the Hegemon chain, the Bitcoin
+   regtest chain, and the wallets itself, use `make htlc-swap-e2e`. It covers
+   the successful swap, a Hegemon refund when Bitcoin is never funded, refunds
+   on both chains, and a Hegemon claim rejected after that refund. Bitcoin Core
+   stays on regtest with no peers. The Hegemon node is started with
+   `HEGEMON_SEEDS=""` because this chain is isolated; that empty list must not
+   be copied onto a shared network. Shared mining operators set
+   `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"`
+   unless the approved list has been rotated, and they keep NTP or chrony
+   enabled because future-skewed PoW timestamps are rejected. A passed run is
+   not production authority.
+
+   To exercise both cross-chain branches against an already running Development
+   node, prepare separate disposable Claim and
    Refund wallets and run `scripts/development_atomic_swap_rehearsal.py` twice with
    `--scenario claim` and `--scenario timeout`. The helper starts an isolated
    loopback Bitcoin Core regtest instance in a new private root, creates the lock,

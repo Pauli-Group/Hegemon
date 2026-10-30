@@ -47,6 +47,8 @@ mod supported {
 
     #[derive(Subcommand)]
     pub enum LaunchCommands {
+        /// Create or open a wallet offline and print its V8 address. No RPC and no chain.
+        OfflineAddress(OfflineAddressArgs),
         /// Create or open a wallet and pin the exact launch genesis and source.
         Init(StoreArgs),
         /// Reconcile the canonical journal with the pinned trusted full node.
@@ -64,6 +66,15 @@ mod supported {
             #[command(subcommand)]
             command: HtlcCommands,
         },
+    }
+
+    #[derive(Args)]
+    pub struct OfflineAddressArgs {
+        #[arg(long)]
+        store: PathBuf,
+        /// Diversifier index. Mining payouts and HTLC offers use index 0.
+        #[arg(long, default_value_t = 0)]
+        index: u32,
     }
 
     #[derive(Args)]
@@ -638,11 +649,43 @@ mod supported {
         }
         Ok(())
     }
+    fn offline_address(args: OfflineAddressArgs) -> Result<()> {
+        // This runs before any node exists. The V8 address, not the legacy
+        // primary address, is the mining payout and the HTLC offer address.
+        let created = !args.store.exists();
+        let pass = secret(created)?;
+        let store = if created {
+            WalletStore::create_full_if_missing(&args.store, &pass)?
+        } else {
+            WalletStore::open(&args.store, &pass)?
+        };
+        let keys = store
+            .derived_keys()?
+            .ok_or_else(|| anyhow!("Offline wallet is watch-only"))?;
+        let address = keys
+            .poseidon2_v8_address(args.index)?
+            .shielded_address()
+            .encode()?;
+        let primary = store.primary_address()?.encode()?;
+        println!(
+            "{}",
+            json!({
+                "address": address,
+                "primary_address": primary,
+                "index": args.index,
+                "created": created,
+                "same_as_primary": address == primary,
+            })
+        );
+        Ok(())
+    }
+
     pub fn run(command: LaunchCommands) -> Result<()> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
         match command {
+            LaunchCommands::OfflineAddress(args) => offline_address(args),
             LaunchCommands::Init(args) => {
                 let (file, context) = ContextFile::load(&args.context, args.retained())?;
                 runtime.block_on(rpc_target(&args, context, Some(0)))?;

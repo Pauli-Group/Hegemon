@@ -925,6 +925,21 @@ checks that an orphaned Bitcoin witness is not treated as confirmed. A Developme
 receipt records this execution only; it does not substitute for formal or QROM
 evidence, native peer-chunk/reorg lifecycle validation, or release authorization.
 
+`make htlc-swap-e2e` is the local fresh-chain form of that rehearsal. It builds
+the Development node and wallet examples, reuses or fetches verified Bitcoin
+Core 31.1 under `~/.cache/hegemon` (no system install), and for each of
+`happy`, `no_btc`, `both_refund`, and `late_claim` creates a new Hegemon
+Development chain, a new regtest chain, and new wallets. Alice mines and locks
+HGN and claims BTC; Bob funds BTC and claims HGN. Refund scenarios return each
+asset after its own timeout, and the late claim checks that Bob cannot claim
+HGN after Alice's canonical refund. The node is started with `HEGEMON_SEEDS=""`
+because the chain is isolated and must not peer. That empty list is only for
+this local test. Shared mining operators still set
+`HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"`
+unless the approved list has been rotated, and mining hosts keep NTP or chrony
+enabled because future-skewed PoW timestamps are rejected. A passed run is
+Development and regtest evidence only and grants no production authority.
+
 The [native qualification report](formal/crypto/HegemonCrypto/NativeHtlcQualification.md)
 now records a conditional authenticated source-readback construction. It
 calculates a complete tree from unrestricted canonical leaf data, derives its

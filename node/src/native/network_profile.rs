@@ -469,8 +469,6 @@ impl NativeNetworkIdentity {
                         || source.max_proof_actions_per_block > 512
                         || source.max_total_proofs == 0
                         || source.max_proof_bytes == 0
-                        || source.max_proof_bytes
-                            > protocol_shielded_pool::private_spend_transport::MAX_CARRIER_BYTES
                         || source
                             .stablecoin_genesis_root
                             .iter()
@@ -479,6 +477,14 @@ impl NativeNetworkIdentity {
                     {
                         return Err(anyhow!(
                             "development candidate source bounds or roots rejected"
+                        ));
+                    }
+                    let proof_ceiling = protocol_shielded_pool::private_spend_transport::MAX_CARRIER_BYTES
+                        .max(transaction_circuit::smallwood_htlc_transport::MAX_CANDIDATE_CARRIER_BYTES);
+                    if source.max_proof_bytes > proof_ceiling {
+                        return Err(anyhow!(
+                            "development candidate proof cap {} exceeds {}",
+                            source.max_proof_bytes, proof_ceiling
                         ));
                     }
                     if (

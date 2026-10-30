@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: setup fmt lint test check bench wallet-demo quickstart node app-no-ssh-e2e
+.PHONY: setup fmt lint test check bench wallet-demo quickstart node app-no-ssh-e2e htlc-swap-e2e
 
 setup:
 	./scripts/dev-setup.sh
@@ -30,3 +30,8 @@ node:
 
 app-no-ssh-e2e:
 	./scripts/check-app-no-ssh-e2e.sh
+
+# Fresh local Development chain and Bitcoin Core regtest HTLC scenarios.
+# This grants no production authority. The node uses an empty seed list.
+htlc-swap-e2e:
+	python3 scripts/local_htlc_swap_e2e.py --scenario all
