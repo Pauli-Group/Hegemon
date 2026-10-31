@@ -1,4 +1,4 @@
----
+How ---
 title: What is taking up memory
 tags: [query, memory, gap]
 updated: 2026-10-30

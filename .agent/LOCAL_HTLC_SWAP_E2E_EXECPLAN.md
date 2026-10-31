@@ -21,7 +21,8 @@ A passing run prints a JSON summary whose top-level `status` is `passed` and who
 - [x] `scripts/local_htlc_swap_e2e.py` builds or reuses binaries, caches verified Bitcoin Core 31.1, and runs the four scenarios.
 - [x] `make htlc-swap-e2e` invokes that script. `python3 scripts/test_local_htlc_swap_e2e.py` passes 9 daemon-free tests.
 - [x] (2026-10-30) On this machine (`MemTotal` 32813140 kB), `python3 scripts/test_local_htlc_swap_e2e.py -v` passed 9 tests in 0.002s. The release node was rebuilt at `target/release/hegemon-node` (mtime 2026-10-30 13:05:57 -0400). `strings` on that binary contains `development candidate proof cap`. NTP was synchronized. Bitcoin Core 31.1 was fetched into `~/.cache/hegemon/bitcoin-core-31.1` and its pinned receipt verified.
-- [ ] `make htlc-swap-e2e` passes all four scenarios. One `--scenario happy --no-build` run was started after that build. The Hegemon lock proof finished. The Hegemon claim proof was OOM-killed. Stopped. Did not retry, and did not run `no_btc`, `both_refund`, `late_claim`, or `make htlc-swap-e2e`.
+- [ ] `make htlc-swap-e2e` passes all four scenarios. One `--scenario happy --no-build` run was started after that build. The Hegemon lock proof finished. The Hegemon claim proof was OOM-killed. Stopped. Did not retry that schedule, and did not run `no_btc`, `both_refund`, `late_claim`, or `make htlc-swap-e2e`.
+- [x] (2026-10-30) Low-RAM bounded-commit schedule. `HEGEMON_SMALLWOOD_LOW_RAM` is read by the shared Smallwood prover. The rehearsal wallet sets it to `1`. Engine fixtures for domains 64, 128, and 512 hash the same leaves and Merkle root on both schedules. The wallet examples and the node were rebuilt. Happy was the memory check. The Hegemon lock was accepted. The claim prover was OOM-killed again. Stopped. Did not retry, and did not run `no_btc`, `both_refund`, `late_claim`, or `make htlc-swap-e2e`.
 - [x] METHODS.md, DESIGN.md, and `runbooks/pre_mainnet_rehearsal.md` name the command and its evidence boundary.
 
 ## Surprises & Discoveries
@@ -43,6 +44,12 @@ A passing run prints a JSON summary whose top-level `status` is `passed` and who
 
 - Observation: this machine's default `python3` imports `cryptography` 2.3 from the user site because `qrl` 4.0.5 pins that version. cryptography 2.3 has no compressed-point public format, so `rehearsal_bitcoin_key` cannot run under that interpreter. The happy attempt used a separate virtualenv at `/tmp/hegemon-htlc-py` with cryptography 50.0.2. The user-site package was put back to 2.3 afterward.
   Evidence: `python3` reported `/home/william/.local/lib/python3.10/site-packages/cryptography` version 2.3, and `pip` reported `qrl 4.0.5 requires cryptography==2.3`.
+
+- Observation: `relation_digest()` hashes the bytes of `circuits/transaction/src/smallwood_engine.rs`. After the low-RAM schedule edit, a wallet built from the new source was rejected by the 13:05 node with "native action request route payload decode not exact: trailing bytes or non-canonical payload". That message is the node's collapsed form of every HTLC carrier decode error, including a relation-identity mismatch. Rebuilding `hegemon-node` from the same source, without editing `node/src`, made the lock acceptable. The following claim is the memory check.
+  Evidence: happy log `/tmp/hegemon-htlc-happy-lowram.log` first attempt, elapsed 145.708 seconds, then the rebuilt node reached `happy: proving Hegemon claim`.
+
+- Observation: the low-RAM schedule still does not fit this 32 GB machine. With `HEGEMON_SMALLWOOD_LOW_RAM=1`, the lock proof was accepted and the claim prover was OOM-killed at a higher resident set than the first attempt. anon-rss was 29526080 kB (28.2 GiB) and total-vm was 40982288 kB (39.1 GiB). A sample about 21 GiB into the claim, before the kill, was 22321508 kB. It was again a global OOM (`CONSTRAINT_NONE`). Do not retry this proof on this machine.
+  Evidence: `journalctl -k` on 2026-10-30 17:17:38–17:17:40 local. `oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=user.slice,mems_allowed=0,global_oom,task_memcg=/user.slice/user-1000.slice/user@1000.service/app.slice/app-cursor-7037.scope,task=launch_wallet_p,pid=314624,uid=1000`. The kill line is `Out of memory: Killed process 314624 (launch_wallet_p) total-vm:40982288kB, anon-rss:29526080kB, file-rss:0kB, shmem-rss:0kB, UID:1000 pgtables:80136kB oom_score_adj:0`. The harness had printed `happy: proving Hegemon claim`. The summary JSON elapsed 2510.56 seconds, status failed, `production_authorized` false. `MemTotal` is 32813140 kB.
 
 ## Decision Log
 
@@ -84,7 +91,25 @@ The harness and the daemon-free tests are in place. The four-scenario run has no
       "status": "failed"
     }
 
-The same attempt was not repeated. `no_btc`, `both_refund`, `late_claim`, and `make htlc-swap-e2e` were not run. The next machine that was recommended is a 64 GB Hetzner CCX43.
+The same full-RAM attempt was not repeated. `no_btc`, `both_refund`, `late_claim`, and `make htlc-swap-e2e` were not run. The next machine that was recommended is a 64 GB Hetzner CCX43.
+
+A later low-RAM schedule (`HEGEMON_SMALLWOOD_LOW_RAM=1` in the wallet) was checked once on the same machine (`MemTotal` 32813140 kB). The lock proof was accepted by a node rebuilt from the edited engine source. The claim prover was OOM-killed at 28.2 GiB anon-rss after 2510.56 seconds. That was not a pass. The failed summary was:
+
+    {
+      "scenarios": [
+        {
+          "elapsed_seconds": 2510.56,
+          "error": "wallet CLI failed with exit code -9: wallet-progress stage=unlock current=7 target=7 notes=0 elapsed_ms=7",
+          "production_authorized": false,
+          "scenario": "happy",
+          "schema": "hegemon-local-htlc-swap-e2e-v1",
+          "status": "failed"
+        }
+      ],
+      "status": "failed"
+    }
+
+That low-RAM claim was not retried. The other three scenarios and `make htlc-swap-e2e` were not run.
 
 What this must not be read as, even after a pass: production authority, a public network, or proof that a 10-minute Bitcoin assumption can be mined on this retarget schedule. The node is started with `HEGEMON_SEEDS=""`. Shared mining operators still use `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"` unless that list has been rotated, and they keep NTP or chrony enabled because future-skewed proof-of-work timestamps are rejected.
 
@@ -166,6 +191,8 @@ Daemon-free result:
 
 32 GB happy attempt, 2026-10-30, stopped after one OOM kill. `journalctl -k` records pid 302673 `launch_wallet_p`, anon-rss 27992524 kB, constraint `CONSTRAINT_NONE`. The scenario directory was left at `/tmp/hegemon-htlc-e2e/happy/`. `hegemon-node.log` in that directory is empty; the node was started with `RUST_LOG=warn`. The full four-scenario transcript is still outstanding.
 
+Low-RAM happy attempt, 2026-10-30, also stopped after one OOM kill. `journalctl -k` records pid 314624 `launch_wallet_p`, anon-rss 29526080 kB, total-vm 40982288 kB, constraint `CONSTRAINT_NONE`, at 17:17:38 local. Elapsed 2510.56 seconds. Machine `MemTotal` 32813140 kB. Not retried.
+
 ## Interfaces and Dependencies
 
 In `scripts/htlc_swap_lib.py`:
@@ -189,3 +216,5 @@ The node binary must be built with features `development-candidate` and `poseido
 2026-10-30: Initial plan for the fresh-chain harness. The local timeout assumptions were narrowed so the refund height stays mineable under the 10-block retarget.
 
 2026-10-30: Recorded the 32 GB happy-scenario attempt. The lock proof finished and the claim proof was OOM-killed at 26.7 GiB anon-rss. The run was not retried.
+
+2026-10-30: Recorded the low-RAM happy-scenario memory check. The lock was accepted. The claim was OOM-killed at 28.2 GiB anon-rss (pid 314624, total-vm 40982288 kB). The run was not retried.

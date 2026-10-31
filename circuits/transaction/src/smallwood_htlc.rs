@@ -730,3 +730,39 @@ pub fn prove_candidate_unchecked_for_qualification(
         SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
     )
 }
+
+#[cfg(test)]
+mod geometry_probe {
+    use super::*;
+    use crate::smallwood_semantics::SmallwoodConstraintAdapter;
+
+    #[test]
+    fn claim_geometry_sizes() {
+        let statement = HtlcStatement {
+            version: HTLC_STATEMENT_VERSION,
+            action: HtlcAction::Claim,
+            network_id: [1; 32],
+            parent_hash: [2; 32],
+            parent_height: 1,
+            merkle_root: [3; 7],
+            nullifier: [4; 7],
+            output_commitment: [5; 7],
+            ciphertext_commitment: [6; 48],
+            fee: 1,
+            revealed_secret: Some([7; 32]),
+        };
+        let mut adapter = HtlcAdapter::from_statement(&statement).expect("adapter");
+        adapter.use_smzc();
+        let rows = adapter.row_count();
+        let unstacked_cols = rows + 20;
+        let lvcs_cols = unstacked_cols.div_ceil(2);
+        let row_len = lvcs_cols + 58;
+        eprintln!(
+            "rows={rows} constraints={} linear={} row_len={row_len} witness_bytes={} extended_bytes={}",
+            adapter.constraint_count(),
+            adapter.linear_constraint_count(),
+            rows.saturating_mul(70).saturating_mul(8),
+            140usize.saturating_mul(row_len).saturating_mul(8),
+        );
+    }
+}

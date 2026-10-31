@@ -925,6 +925,16 @@ checks that an orphaned Bitcoin witness is not treated as confirmed. A Developme
 receipt records this execution only; it does not substitute for formal or QROM
 evidence, native peer-chunk/reorg lifecycle validation, or release authorization.
 
+`HEGEMON_SMALLWOOD_LOW_RAM` selects a prover schedule for every SHA-512
+disjoint-coset bounded commit in the shared Smallwood engine. That includes
+HTLC SMZC and the SMZ9, SMZA, SMZB, private-spend, and asset-spend profiles on
+the same path. Truthy values are `1` and `true`. When the variable is unset,
+provers keep the current schedule. The low-RAM schedule does not allocate a
+second full copy of the rotated row matrix, and it Fourier-transforms one
+polynomial at a time into a reused scratch buffer. Leaf values, leaf order, and
+the Merkle root stay the same. Verification, proof encoding, and node consensus
+are unchanged. A node that only checks a proof never enters this schedule.
+
 `make htlc-swap-e2e` is the local fresh-chain form of that rehearsal. It builds
 the Development node and wallet examples, reuses or fetches verified Bitcoin
 Core 31.1 under `~/.cache/hegemon` (no system install), and for each of
@@ -932,9 +942,10 @@ Core 31.1 under `~/.cache/hegemon` (no system install), and for each of
 Development chain, a new regtest chain, and new wallets. Alice mines and locks
 HGN and claims BTC; Bob funds BTC and claims HGN. Refund scenarios return each
 asset after its own timeout, and the late claim checks that Bob cannot claim
-HGN after Alice's canonical refund. The node is started with `HEGEMON_SEEDS=""`
-because the chain is isolated and must not peer. That empty list is only for
-this local test. Shared mining operators still set
+HGN after Alice's canonical refund. The rehearsal turns
+`HEGEMON_SMALLWOOD_LOW_RAM=1` on for the wallet process. The node is started
+with `HEGEMON_SEEDS=""` because the chain is isolated and must not peer. That
+empty list is only for this local test. Shared mining operators still set
 `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"`
 unless the approved list has been rotated, and mining hosts keep NTP or chrony
 enabled because future-skewed PoW timestamps are rejected. A passed run is

@@ -11796,6 +11796,36 @@ pub fn pcs_build_coefficients(cfg: &SmallwoodConfig, eval_points: &[u64], coeffs
     }
 }
 
+fn smallwood_low_ram_enabled() -> bool {
+    std::env::var("HEGEMON_SMALLWOOD_LOW_RAM")
+        .ok()
+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+}
+
+fn smallwood_sha512_oracle_overlay_active() -> bool {
+    SMALLWOOD_SHA512_ORACLE_OVERLAY_V1.with(|slot| slot.borrow().is_some())
+}
+
+fn strict_bounded_decs_commit(
+    transcript_backend: SmallwoodTranscriptBackend,
+    decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
+) -> bool {
+    matches!(
+        transcript_backend,
+        SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9
+            | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
+            | SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb
+            | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
+            | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
+            | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
+    ) && decs_evaluation_domain == SmallwoodDecsEvaluationDomain::Radix2DisjointCoset
+}
+
+/// Polynomials Fourier-transformed together on the low-RAM schedule.
+/// One scratch buffer is reused for the group, so a full-domain table is not
+/// retained for every polynomial.
+const SMALLWOOD_LOW_RAM_FFT_GROUP: usize = 1;
+
 fn lvcs_commit(
     cfg: &SmallwoodConfig,
     rows: &[Vec<u64>],
@@ -11828,24 +11858,46 @@ fn lvcs_commit(
         extended_rows[row][cfg.nb_lvcs_cols..].copy_from_slice(&rnd);
     }
     log_stage("extend_rows", &mut last);
-    let rotated_rows = extended_rows
-        .par_iter()
-        .map(|row| rotate_left_words(row, cfg.nb_lvcs_cols))
-        .collect::<Vec<_>>();
-    let decs_key = decs_commit(
-        cfg.nb_lvcs_rows,
-        cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals() - 1,
-        cfg.decs_eta(),
-        cfg.decs_challenge_format,
-        cfg.decs_nb_evals(),
-        &rotated_rows,
-        salt,
-        transcript_backend,
-        decs_evaluation_domain,
-        statement_binding,
-        leaf_statement_binding,
-        decs_leaf_tape_bytes,
-    )?;
+    let decs_key = if smallwood_low_ram_enabled()
+        && strict_bounded_decs_commit(transcript_backend, decs_evaluation_domain)
+    {
+        // Keep `extended_rows` for the opening key. Rotate one row into a
+        // reused buffer inside the bounded commit instead of retaining a
+        // second full copy of the matrix.
+        decs_commit_strict_bounded(
+            cfg.nb_lvcs_rows,
+            cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals() - 1,
+            cfg.decs_eta(),
+            cfg.decs_challenge_format,
+            cfg.decs_nb_evals(),
+            &extended_rows,
+            Some(cfg.nb_lvcs_cols),
+            salt,
+            statement_binding,
+            leaf_statement_binding,
+            decs_leaf_tape_bytes,
+            transcript_backend,
+        )?
+    } else {
+        let rotated_rows = extended_rows
+            .par_iter()
+            .map(|row| rotate_left_words(row, cfg.nb_lvcs_cols))
+            .collect::<Vec<_>>();
+        decs_commit(
+            cfg.nb_lvcs_rows,
+            cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals() - 1,
+            cfg.decs_eta(),
+            cfg.decs_challenge_format,
+            cfg.decs_nb_evals(),
+            &rotated_rows,
+            salt,
+            transcript_backend,
+            decs_evaluation_domain,
+            statement_binding,
+            leaf_statement_binding,
+            decs_leaf_tape_bytes,
+        )?
+    };
     log_stage("decs_commit", &mut last);
     Ok(LvcsKey {
         extended_rows,
@@ -12026,7 +12078,51 @@ pub fn lvcs_recompute_rows(
 /// Hashes are restored to their original leaf-index order before tree building.
 /// This uses the selected conventional full-SHA-512 backend: V6 and HX512
 /// retain their existing sequential, session-bound transcript paths.
-fn strict_coset_leaf_hashes_bounded(
+fn low_ram_leaf_hasher_template(
+    backend: SmallwoodTranscriptBackend,
+    statement_binding: &[u64],
+    salt: &[u8],
+    tape_len: usize,
+    committed_len: usize,
+    masking_len: usize,
+) -> Result<Sha512, TransactionCircuitError> {
+    if tape_len == 0 || !tape_len.is_multiple_of(8) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood strict-ZK DECS leaf tape must be non-empty and word aligned",
+        ));
+    }
+    let salt_words = bytes_to_words_unchecked(salt);
+    let word_count = statement_binding.len()
+        + salt_words.len()
+        + 1
+        + tape_len / 8
+        + 1
+        + committed_len
+        + 1
+        + masking_len;
+    let mut hasher = Sha512::new();
+    if let Some(profile_domain) = backend.sha512_profile_domain() {
+        hasher.update((profile_domain.len() as u64).to_le_bytes());
+        hasher.update(profile_domain);
+    }
+    let role_domain = strict_zk_merkle_leaf_domain(backend);
+    hasher.update((role_domain.len() as u64).to_le_bytes());
+    hasher.update(role_domain);
+    hasher.update((word_count as u64).to_le_bytes());
+    for word in statement_binding {
+        hasher.update(word.to_le_bytes());
+    }
+    for word in &salt_words {
+        hasher.update(word.to_le_bytes());
+    }
+    Ok(hasher)
+}
+
+/// Hash one coset stripe by transforming a small group of polynomials into a
+/// reused scratch buffer and folding each value into that leaf's SHA-512
+/// state. The digest bytes match `hash_strict_zk_merkle_leaf` when the
+/// SHA-512 oracle overlay is inactive.
+fn strict_coset_leaf_hashes_bounded_low_ram(
     committed: &[Vec<u64>],
     masking: &[Vec<u64>],
     leaf_tapes: &FixedWidthTapesV1,
@@ -12035,6 +12131,122 @@ fn strict_coset_leaf_hashes_bounded(
     backend: SmallwoodTranscriptBackend,
     leaf_statement_binding: &[u64],
 ) -> Result<Vec<[u8; DIGEST_BYTES]>, TransactionCircuitError> {
+    let leaf_statement_binding = strict_zk_leaf_statement_binding(backend, leaf_statement_binding)?;
+    let max_len = committed
+        .iter()
+        .chain(masking)
+        .map(Vec::len)
+        .max()
+        .unwrap_or(1);
+    let block_size =
+        max_len
+            .checked_next_power_of_two()
+            .ok_or(TransactionCircuitError::ConstraintViolation(
+                "smallwood DECS block size overflow",
+            ))?;
+    if block_size > domain.domain_size || leaf_tapes.len() != domain.domain_size {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood bounded DECS polynomial or leaf-tape shape mismatch",
+        ));
+    }
+    let stride = domain.domain_size / block_size;
+    let root = radix2_subgroup_generator(domain.domain_size)?;
+    let tape_len = leaf_tapes.get(0).map(<[u8]>::len).unwrap_or(0);
+    let template = low_ram_leaf_hasher_template(
+        backend,
+        leaf_statement_binding,
+        salt,
+        tape_len,
+        committed.len(),
+        masking.len(),
+    )?;
+    let mut scratch = vec![0u64; block_size];
+    let mut leaves = vec![[0u8; DIGEST_BYTES]; domain.domain_size];
+    let masking_len_bytes = (masking.len() as u64).to_le_bytes();
+    let committed_len_bytes = (committed.len() as u64).to_le_bytes();
+    for offset in 0..stride {
+        let shift = mul_mod(domain.shift, pow_mod(root, offset as u64));
+        let mut hashers = Vec::with_capacity(block_size);
+        for j in 0..block_size {
+            let index = offset + stride * j;
+            let tape = leaf_tapes.get(index).ok_or(
+                TransactionCircuitError::ConstraintViolation(
+                    "smallwood bounded DECS leaf-tape index is invalid",
+                ),
+            )?;
+            if tape.len() != tape_len {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "smallwood strict-ZK DECS leaf tape must be non-empty and word aligned",
+                ));
+            }
+            let leaf_index = u64::try_from(index).map_err(|_| {
+                TransactionCircuitError::ConstraintViolation(
+                    "smallwood strict-ZK DECS leaf index does not fit the transcript wire",
+                )
+            })?;
+            let mut hasher = template.clone();
+            hasher.update(leaf_index.to_le_bytes());
+            hasher.update(tape);
+            hasher.update(committed_len_bytes);
+            hashers.push(hasher);
+        }
+        for chunk in committed.chunks(SMALLWOOD_LOW_RAM_FFT_GROUP) {
+            for poly in chunk {
+                evaluate_poly_on_radix2_coset_into(poly, &mut scratch, shift)?;
+                for (hasher, value) in hashers.iter_mut().zip(scratch.iter()) {
+                    hasher.update(value.to_le_bytes());
+                }
+            }
+        }
+        for hasher in &mut hashers {
+            hasher.update(masking_len_bytes);
+        }
+        for chunk in masking.chunks(SMALLWOOD_LOW_RAM_FFT_GROUP) {
+            for poly in chunk {
+                evaluate_poly_on_radix2_coset_into(poly, &mut scratch, shift)?;
+                for (hasher, value) in hashers.iter_mut().zip(scratch.iter()) {
+                    hasher.update(value.to_le_bytes());
+                }
+            }
+        }
+        for (j, mut hasher) in hashers.into_iter().enumerate() {
+            hasher.update(0u64.to_le_bytes());
+            let raw = hasher.finalize();
+            let digest = observe_sha512_commitment(backend, raw.into());
+            update_verifier_operation_profile_v1(|profile| {
+                profile.merkle_leaf_hashes += 1;
+                profile.sha512_digest_calls += 1;
+            });
+            leaves[offset + stride * j] = digest;
+        }
+    }
+    Ok(leaves)
+}
+
+fn strict_coset_leaf_hashes_bounded(
+    committed: &[Vec<u64>],
+    masking: &[Vec<u64>],
+    leaf_tapes: &FixedWidthTapesV1,
+    salt: &[u8],
+    domain: SmallwoodDisjointCosetDescriptorV1,
+    backend: SmallwoodTranscriptBackend,
+    leaf_statement_binding: &[u64],
+    low_ram: bool,
+) -> Result<Vec<[u8; DIGEST_BYTES]>, TransactionCircuitError> {
+    if low_ram
+        && backend != SmallwoodTranscriptBackend::Hx512Candidate
+        && !smallwood_sha512_oracle_overlay_active()
+    {
+        return strict_coset_leaf_hashes_bounded_low_ram(
+            committed,
+            masking,
+            leaf_tapes,
+            salt,
+            domain,
+            backend,
+            leaf_statement_binding,
+        );
+    }
     let leaf_statement_binding = strict_zk_leaf_statement_binding(backend, leaf_statement_binding)?;
     let max_len = committed
         .iter()
@@ -12117,6 +12329,7 @@ fn smz9_coset_leaf_hashes_bounded(
         domain,
         SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9,
         &[],
+        false,
     )
 }
 
@@ -12128,6 +12341,7 @@ fn decs_commit_strict_bounded(
     decs_challenge_format: SmallwoodDecsChallengeFormat,
     decs_nb_evals: usize,
     initial_domain_evals: &[Vec<u64>],
+    unrotated_left_by: Option<usize>,
     salt: &[u8],
     statement_binding: &[u64],
     leaf_statement_binding: &[u64],
@@ -12143,10 +12357,20 @@ fn decs_commit_strict_bounded(
         .collect::<Result<Vec<_>, _>>()?;
     let initial_len = poly_degree + 1;
     let domain = SmallwoodDisjointCosetDescriptorV1::derive(decs_nb_evals, initial_len)?;
-    let committed = initial_domain_evals
-        .par_iter()
-        .map(|evals| interpolate_consecutive(evals))
-        .collect::<Result<Vec<_>, _>>()?;
+    let committed = if let Some(by) = unrotated_left_by {
+        let mut scratch = Vec::new();
+        let mut committed = Vec::with_capacity(initial_domain_evals.len());
+        for evals in initial_domain_evals {
+            rotate_left_into(evals, by, &mut scratch);
+            committed.push(interpolate_consecutive(&scratch)?);
+        }
+        committed
+    } else {
+        initial_domain_evals
+            .par_iter()
+            .map(|evals| interpolate_consecutive(evals))
+            .collect::<Result<Vec<_>, _>>()?
+    };
     let leaf_tapes = random_decs_leaf_tapes(decs_nb_evals, decs_leaf_tape_bytes)?;
     if trace_enabled {
         eprintln!(
@@ -12162,6 +12386,7 @@ fn decs_commit_strict_bounded(
         domain,
         backend,
         leaf_statement_binding,
+        smallwood_low_ram_enabled(),
     )?;
     let mut tree_levels = vec![leaves];
     let root = merkle_build_levels(&mut tree_levels, backend);
@@ -12175,14 +12400,26 @@ fn decs_commit_strict_bounded(
     let gamma_all =
         derive_decs_challenge(nb_polys, decs_eta, decs_challenge_format, &hash_mt, backend);
     let mut combined_domain_evals = vec![vec![0u64; initial_len]; decs_eta];
-    mat_mul(
-        &mut combined_domain_evals,
-        &gamma_all,
-        initial_domain_evals,
-        decs_eta,
-        nb_polys,
-        initial_len,
-    );
+    if let Some(by) = unrotated_left_by {
+        mat_mul_rotated_rows(
+            &mut combined_domain_evals,
+            &gamma_all,
+            initial_domain_evals,
+            by,
+            decs_eta,
+            nb_polys,
+            initial_len,
+        );
+    } else {
+        mat_mul(
+            &mut combined_domain_evals,
+            &gamma_all,
+            initial_domain_evals,
+            decs_eta,
+            nb_polys,
+            initial_len,
+        );
+    }
     let dec_polys = combined_domain_evals
         .par_iter()
         .enumerate()
@@ -12219,16 +12456,7 @@ fn decs_commit(
     leaf_statement_binding: &[u64],
     decs_leaf_tape_bytes: usize,
 ) -> Result<DecsKey, TransactionCircuitError> {
-    if matches!(
-        transcript_backend,
-        SmallwoodTranscriptBackend::Sha512Poseidon2V8Smz9
-            | SmallwoodTranscriptBackend::Sha512Poseidon2V8Smza
-            | SmallwoodTranscriptBackend::Sha512Poseidon2Rp06Smzb
-            | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
-            | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
-            | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
-    ) && decs_evaluation_domain == SmallwoodDecsEvaluationDomain::Radix2DisjointCoset
-    {
+    if strict_bounded_decs_commit(transcript_backend, decs_evaluation_domain) {
         return decs_commit_strict_bounded(
             nb_polys,
             poly_degree,
@@ -12236,6 +12464,7 @@ fn decs_commit(
             decs_challenge_format,
             decs_nb_evals,
             initial_domain_evals,
+            None,
             salt,
             statement_binding,
             leaf_statement_binding,
@@ -18226,6 +18455,40 @@ fn poly_add_assign_scaled(dst: &mut [u64], src: &[u64], scalar: u64) {
     }
 }
 
+fn rotate_left_into(values: &[u64], by: usize, out: &mut Vec<u64>) {
+    out.clear();
+    let n = values.len();
+    if n == 0 {
+        return;
+    }
+    let by = by % n;
+    out.extend_from_slice(&values[by..]);
+    out.extend_from_slice(&values[..by]);
+}
+
+fn mat_mul_rotated_rows(
+    c: &mut [Vec<u64>],
+    a: &[Vec<u64>],
+    rows: &[Vec<u64>],
+    rotate_by: usize,
+    m: usize,
+    n: usize,
+    p: usize,
+) {
+    for i in 0..m {
+        for k in 0..p {
+            let mut acc = 0u64;
+            for j in 0..n {
+                let row = &rows[j];
+                let len = row.len();
+                let value = row[(k + (rotate_by % len)) % len];
+                acc = add_mod(acc, mul_mod(a[i][j], value));
+            }
+            c[i][k] = acc;
+        }
+    }
+}
+
 fn mat_mul(c: &mut [Vec<u64>], a: &[Vec<u64>], b: &[Vec<u64>], m: usize, n: usize, p: usize) {
     for i in 0..m {
         for k in 0..p {
@@ -19416,20 +19679,42 @@ mod complete_zk_domain_tests {
                     )
                 })
                 .collect::<Vec<_>>();
+            let tapes = FixedWidthTapesV1::from_bytes(leaf_tapes.concat(), 64)
+                .expect("construct contiguous reference tapes");
             let bounded = strict_coset_leaf_hashes_bounded(
                 &committed,
                 &masking,
-                &FixedWidthTapesV1::from_bytes(leaf_tapes.concat(), 64)
-                    .expect("construct contiguous reference tapes"),
+                &tapes,
                 &salt,
                 domain,
                 backend,
                 &statement_binding,
+                false,
             )
             .expect("hash bounded full domain");
+            let low_ram = strict_coset_leaf_hashes_bounded(
+                &committed,
+                &masking,
+                &tapes,
+                &salt,
+                domain,
+                backend,
+                &statement_binding,
+                true,
+            )
+            .expect("hash bounded full domain in low RAM");
             assert_eq!(
                 bounded, reference,
                 "N={domain_size}, coefficients={coefficient_count}"
+            );
+            assert_eq!(
+                low_ram, reference,
+                "low-RAM N={domain_size}, coefficients={coefficient_count}"
+            );
+            assert_eq!(
+                merkle_build_levels(&mut vec![low_ram], backend),
+                merkle_build_levels(&mut vec![bounded.clone()], backend),
+                "low-RAM merkle root N={domain_size}"
             );
             assert_eq!(
                 merkle_build_levels(&mut vec![bounded], backend),

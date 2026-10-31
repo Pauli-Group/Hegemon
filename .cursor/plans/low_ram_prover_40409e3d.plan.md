@@ -4,19 +4,19 @@ overview: Add an opt-in schedule inside the shared Smallwood prover so any proof
 todos:
   - id: flag
     content: Read HEGEMON_SMALLWOOD_LOW_RAM inside the shared prover, and set it for the wallet process in run_wallet_cli
-    status: pending
+    status: completed
   - id: schedule
     content: When the flag is set, drop the full rotated-row copy and group the stripe FFTs for every bounded commit
-    status: pending
+    status: completed
   - id: tests
     content: Assert low-RAM and current schedulers hash the same leaves on the shared engine fixtures
-    status: pending
+    status: completed
   - id: docs
     content: Document the flag as a prover-wide schedule, including the HTLC rehearsal note in METHODS.md
-    status: pending
+    status: completed
   - id: rerun
     content: Rerun the HTLC happy scenario as the memory check; stop on another OOM
-    status: pending
+    status: completed
 isProject: false
 ---
 

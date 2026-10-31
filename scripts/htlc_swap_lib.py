@@ -275,6 +275,8 @@ def run_wallet_cli(binary: Path, args: list[str], passfiles: list[Path], approve
     # One prover thread keeps the resident set inside a 16 GiB machine.
     env["RAYON_NUM_THREADS"] = "1"
     env.setdefault("MALLOC_ARENA_MAX", "2")
+    # The shared bounded-commit prover drops the extra rotated-row matrix.
+    env["HEGEMON_SMALLWOOD_LOW_RAM"] = "1"
     proc = subprocess.Popen([str(binary), *args], stdin=slave, stdout=slave, stderr=slave,
                             close_fds=True, preexec_fn=attach_controlling_terminal, env=env)
     os.close(slave)
