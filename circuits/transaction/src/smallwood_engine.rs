@@ -3198,7 +3198,7 @@ fn decode_pcs_proof_v1(
     })
 }
 
-fn encode_smallwood_proof_bytes_v1(
+pub(crate) fn encode_smallwood_proof_bytes_v1(
     proof: &SmallwoodProof,
 ) -> Result<Vec<u8>, TransactionCircuitError> {
     let mut out = encode_smallwood_proof_payload_v1(proof)?;
@@ -5520,14 +5520,14 @@ pub(crate) fn prove_statement_with_transcript_backend_and_profile(
     )
 }
 
-pub(crate) fn prove_statement_with_transcript_backend_profile_and_domain(
+pub(crate) fn start_smallwood_prove(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
     witness_values: &[u64],
     binded_data: &[u8],
     profile: SmallwoodNoGrindingProfileV1,
     transcript_backend: SmallwoodTranscriptBackend,
     decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
-) -> Result<Vec<u8>, TransactionCircuitError> {
+) -> Result<SmallwoodProvePrefix, TransactionCircuitError> {
     ensure_transcript_backend_dispatch_available(transcript_backend)?;
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8 {
         ensure_poseidon2_v8_smz8_profile(statement, profile, decs_evaluation_domain)?;
@@ -5590,7 +5590,7 @@ pub(crate) fn prove_statement_with_transcript_backend_profile_and_domain(
         ));
     }
     let salt = random_bytes::<SALT_BYTES>()?;
-    let proof = prove_statement_core_with_transcript_backend_profile_and_domain(
+    begin_smallwood_prove(
         statement,
         witness_values,
         binded_data,
@@ -5602,12 +5602,72 @@ pub(crate) fn prove_statement_with_transcript_backend_profile_and_domain(
             .opened_leaf_tape_profile()
             .map_or(0, |tape_profile| tape_profile.1),
         wire_identity,
+    )
+}
+
+pub(crate) fn prove_statement_with_transcript_backend_profile_and_domain(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    witness_values: &[u64],
+    binded_data: &[u8],
+    profile: SmallwoodNoGrindingProfileV1,
+    transcript_backend: SmallwoodTranscriptBackend,
+    decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    let prefix = start_smallwood_prove(
+        statement,
+        witness_values,
+        binded_data,
+        profile,
+        transcript_backend,
+        decs_evaluation_domain,
     )?;
+    let committed = commit_smallwood_prove(prefix)?;
+    let proof = finish_smallwood_prove(statement, committed)?;
     encode_smallwood_proof_bytes_v1(&proof)
 }
 
+pub(crate) struct SmallwoodProvePrefix {
+    scope: SmallwoodSha512FieldXofScopeV1,
+    cfg: SmallwoodConfig,
+    witness_polys: Vec<Vec<u64>>,
+    mpol_ppoly: Vec<Vec<u64>>,
+    mpol_plin: Vec<Vec<u64>>,
+    binded_words: Vec<u64>,
+    leaf_statement_binding: Vec<u64>,
+    salt: Vec<u8>,
+    profile: SmallwoodNoGrindingProfileV1,
+    transcript_backend: SmallwoodTranscriptBackend,
+    decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
+    decs_leaf_tape_bytes: usize,
+    wire_identity: SmallwoodProofWireIdentityV1,
+    stage_started: Instant,
+    last_stage: Instant,
+    trace_enabled: bool,
+}
+
+impl SmallwoodProvePrefix {
+    fn log_stage(&mut self, label: &str) {
+        if !self.trace_enabled {
+            return;
+        }
+        let now = Instant::now();
+        eprintln!(
+            "[smallwood] {label}: +{:?} total={:?}",
+            now.duration_since(self.last_stage),
+            now.duration_since(self.stage_started)
+        );
+        self.last_stage = now;
+    }
+}
+
+pub(crate) struct SmallwoodProveCommitted {
+    prefix: SmallwoodProvePrefix,
+    pcs_key: PcsKey,
+    pcs_transcript_words: Vec<u64>,
+}
+
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn prove_statement_core_with_transcript_backend_profile_and_domain(
+pub(crate) fn begin_smallwood_prove(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
     witness_values: &[u64],
     binded_data: &[u8],
@@ -5617,7 +5677,7 @@ pub(crate) fn prove_statement_core_with_transcript_backend_profile_and_domain(
     salt: &[u8],
     decs_leaf_tape_bytes: usize,
     wire_identity: SmallwoodProofWireIdentityV1,
-) -> Result<SmallwoodProof, TransactionCircuitError> {
+) -> Result<SmallwoodProvePrefix, TransactionCircuitError> {
     let sha512_field_xof_scope = enter_smallwood_sha512_field_xof_scope_v1()?;
     ensure_transcript_backend_dispatch_available(transcript_backend)?;
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8 {
@@ -5759,62 +5819,125 @@ pub(crate) fn prove_statement_core_with_transcript_backend_profile_and_domain(
         )?);
     }
     log_stage("witness_polys", &mut last_stage);
-
-    let (pcs_key, pcs_transcript_words) = pcs_commit(
-        &cfg,
-        &witness_polys,
-        &mpol_ppoly,
-        &mpol_plin,
-        salt,
+    if smallwood_low_ram_enabled() {
+        let (rss, maxrss) = smallwood_memory_kib();
+        eprintln!(
+            "[smallwood/low-ram] before_commit rows={} constraints={} linear_constraints={} nb_polys={} nb_lvcs_rows={} nb_lvcs_cols={} rss_kib={rss} maxrss_kib={maxrss}",
+            cfg.row_count,
+            cfg.constraint_count,
+            cfg.linear_constraint_count,
+            cfg.nb_polys,
+            cfg.nb_lvcs_rows,
+            cfg.nb_lvcs_cols,
+        );
+    }
+    let _ = log_stage;
+    let leaf_statement_binding = leaf_statement_binding.to_vec();
+    Ok(SmallwoodProvePrefix {
+        scope: sha512_field_xof_scope,
+        cfg,
+        witness_polys,
+        mpol_ppoly,
+        mpol_plin,
+        binded_words,
+        leaf_statement_binding,
+        salt: salt.to_vec(),
+        profile,
         transcript_backend,
         decs_evaluation_domain,
-        &binded_words,
-        leaf_statement_binding,
         decs_leaf_tape_bytes,
+        wire_identity,
+        stage_started,
+        last_stage,
+        trace_enabled,
+    })
+}
+
+pub(crate) fn commit_smallwood_prove(
+    mut prefix: SmallwoodProvePrefix,
+) -> Result<SmallwoodProveCommitted, TransactionCircuitError> {
+    let (pcs_key, pcs_transcript_words) = pcs_commit(
+        &prefix.cfg,
+        &prefix.witness_polys,
+        &prefix.mpol_ppoly,
+        &prefix.mpol_plin,
+        &prefix.salt,
+        prefix.transcript_backend,
+        prefix.decs_evaluation_domain,
+        &prefix.binded_words,
+        &prefix.leaf_statement_binding,
+        prefix.decs_leaf_tape_bytes,
     )?;
-    log_stage("pcs_commit", &mut last_stage);
+    prefix.log_stage("pcs_commit");
+    log_low_ram_stage("after_commit");
+    Ok(SmallwoodProveCommitted {
+        prefix,
+        pcs_key,
+        pcs_transcript_words,
+    })
+}
+
+pub(crate) fn finish_smallwood_prove(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    committed: SmallwoodProveCommitted,
+) -> Result<SmallwoodProof, TransactionCircuitError> {
+    let SmallwoodProveCommitted {
+        mut prefix,
+        pcs_key,
+        pcs_transcript_words,
+    } = committed;
     let mut piop_input = pcs_transcript_words;
-    piop_input.extend_from_slice(&binded_words);
+    piop_input.extend_from_slice(&prefix.binded_words);
     let piop = piop_run(
-        &cfg,
+        &prefix.cfg,
         statement,
-        &witness_polys,
-        &mpol_ppoly,
-        &mpol_plin,
+        &prefix.witness_polys,
+        &prefix.mpol_ppoly,
+        &prefix.mpol_plin,
         &piop_input,
-        transcript_backend,
+        prefix.transcript_backend,
     )?;
-    log_stage("piop_run", &mut last_stage);
-    let h_piop = hash_piop_transcript(&piop.transcript_words, transcript_backend);
-    let (nonce, eval_points) = if transcript_backend == SmallwoodTranscriptBackend::Hx512Candidate {
+    prefix.log_stage("piop_run");
+    log_low_ram_stage("after_constraint_fold");
+    let h_piop = hash_piop_transcript(&piop.transcript_words, prefix.transcript_backend);
+    let (nonce, eval_points) = if prefix.transcript_backend
+        == SmallwoodTranscriptBackend::Hx512Candidate
+    {
         (
             [0u8; NONCE_BYTES],
-            sample_smallwood_hx512_piop_openings(&cfg.packing_points, cfg.nb_opened_evals())?,
+            sample_smallwood_hx512_piop_openings(
+                &prefix.cfg.packing_points,
+                prefix.cfg.nb_opened_evals(),
+            )?,
         )
     } else {
-        let nonce = choose_opening_nonce(&cfg, &h_piop, transcript_backend)?;
-        let eval_points =
-            xof_piop_opening_points_for_profile(&nonce, &h_piop, profile, transcript_backend);
+        let nonce = choose_opening_nonce(&prefix.cfg, &h_piop, prefix.transcript_backend)?;
+        let eval_points = xof_piop_opening_points_for_profile(
+            &nonce,
+            &h_piop,
+            prefix.profile,
+            prefix.transcript_backend,
+        );
         (nonce, eval_points)
     };
-    log_stage("opening_nonce", &mut last_stage);
+    prefix.log_stage("opening_nonce");
     let (pcs_proof, opened_witness) = pcs_open(
-        &cfg,
+        &prefix.cfg,
         &pcs_key,
-        &witness_polys,
-        &mpol_ppoly,
-        &mpol_plin,
+        &prefix.witness_polys,
+        &prefix.mpol_ppoly,
+        &prefix.mpol_plin,
         &eval_points,
         &h_piop,
-        transcript_backend,
-        decs_evaluation_domain,
+        prefix.transcript_backend,
+        prefix.decs_evaluation_domain,
     )?;
-    log_stage("pcs_open", &mut last_stage);
+    prefix.log_stage("pcs_open");
     let auxiliary_witness_words = statement.auxiliary_witness_words().to_vec();
     let auxiliary_witness_limb_count = statement
         .auxiliary_witness_limb_count()
         .unwrap_or(auxiliary_witness_words.len());
-    let hx512_prefix = if transcript_backend == SmallwoodTranscriptBackend::Hx512Candidate {
+    let hx512_prefix = if prefix.transcript_backend == SmallwoodTranscriptBackend::Hx512Candidate {
         Some(with_smallwood_hx512_transcript_driver(|driver| {
             driver.fresh_proof_prefix()
         })??)
@@ -5822,13 +5945,13 @@ pub(crate) fn prove_statement_core_with_transcript_backend_profile_and_domain(
         None
     };
     let proof = SmallwoodProof {
-        wire_identity,
-        digest_bytes: transcript_backend.digest_bytes(),
-        strict_zk_decs_leaf_hiding: decs_evaluation_domain
+        wire_identity: prefix.wire_identity,
+        digest_bytes: prefix.transcript_backend.digest_bytes(),
+        strict_zk_decs_leaf_hiding: prefix.decs_evaluation_domain
             == SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
-        hx512_decs_root: hx512_prefix.map(|prefix| prefix.0),
-        hx512_piop_input_digest: hx512_prefix.map(|prefix| prefix.1),
-        salt: salt.to_vec(),
+        hx512_decs_root: hx512_prefix.map(|item| item.0),
+        hx512_piop_input_digest: hx512_prefix.map(|item| item.1),
+        salt: prefix.salt,
         nonce,
         h_piop,
         piop: piop.proof,
@@ -5844,14 +5967,41 @@ pub(crate) fn prove_statement_core_with_transcript_backend_profile_and_domain(
             auxiliary_witness_limb_count,
         ),
     };
-    if trace_enabled {
+    if prefix.trace_enabled {
         eprintln!(
             "[smallwood] completed core proof total={:?}",
-            stage_started.elapsed()
+            prefix.stage_started.elapsed()
         );
     }
-    sha512_field_xof_scope.finish()?;
+    prefix.scope.finish()?;
     Ok(proof)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prove_statement_core_with_transcript_backend_profile_and_domain(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    witness_values: &[u64],
+    binded_data: &[u8],
+    profile: SmallwoodNoGrindingProfileV1,
+    transcript_backend: SmallwoodTranscriptBackend,
+    decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
+    salt: &[u8],
+    decs_leaf_tape_bytes: usize,
+    wire_identity: SmallwoodProofWireIdentityV1,
+) -> Result<SmallwoodProof, TransactionCircuitError> {
+    let prefix = begin_smallwood_prove(
+        statement,
+        witness_values,
+        binded_data,
+        profile,
+        transcript_backend,
+        decs_evaluation_domain,
+        salt,
+        decs_leaf_tape_bytes,
+        wire_identity,
+    )?;
+    let committed = commit_smallwood_prove(prefix)?;
+    finish_smallwood_prove(statement, committed)
 }
 
 pub(crate) fn verify_candidate(
@@ -10962,6 +11112,45 @@ fn ensure_smallwood_hx512_core_contract_v1(
     Ok(())
 }
 
+/// Dot each constraint sample into the `rho` gamma combinations, then interpolate
+/// those combinations. Interpolation is linear and the packing-root removal
+/// still runs on the sum, so the transcript matches `get_constraint_polynomials`.
+fn fold_low_ram_constraint_polynomials(
+    cfg: &SmallwoodConfig,
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    witness_polys: &[Vec<u64>],
+    gammas: &[Vec<u64>],
+) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
+    let nb_samples = cfg
+        .constraint_degree
+        .saturating_mul(cfg.wit_poly_degree)
+        .saturating_add(1);
+    let auxiliary_words = statement.auxiliary_witness_words();
+    let mut combined = vec![vec![0u64; nb_samples]; cfg.rho()];
+    let mut row_constraints = vec![0u64; cfg.constraint_count];
+    let mut witness_row = vec![0u64; witness_polys.len()];
+    for sample_idx in 0..nb_samples {
+        let point = sample_idx as u64;
+        for (slot, poly) in witness_row.iter_mut().zip(witness_polys.iter()) {
+            *slot = poly_eval(poly, point);
+        }
+        row_constraints.fill(0);
+        let view = statement.nonlinear_eval_view(point, &witness_row, auxiliary_words);
+        statement.compute_constraints_u64(view, &mut row_constraints)?;
+        for rep in 0..cfg.rho() {
+            let mut acc = 0u64;
+            for (&value, &scale) in row_constraints.iter().zip(gammas[rep].iter()) {
+                acc = add_mod(acc, mul_mod(value, scale));
+            }
+            combined[rep][sample_idx] = acc;
+        }
+    }
+    combined
+        .into_iter()
+        .map(|samples| interpolate_consecutive(&samples))
+        .collect()
+}
+
 fn piop_run(
     cfg: &SmallwoodConfig,
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
@@ -10988,7 +11177,22 @@ fn piop_run(
     let hash_fpp = hash_piop(binded_words, transcript_backend);
     let gammas = derive_gamma_prime(cfg, &hash_fpp, transcript_backend);
     log_stage("derive_gamma_prime", &mut last);
-    let in_ppol = get_constraint_polynomials(cfg, statement, witness_polys)?;
+    let low_ram = smallwood_low_ram_enabled();
+    let folded_ppol = if low_ram {
+        Some(fold_low_ram_constraint_polynomials(
+            cfg,
+            statement,
+            witness_polys,
+            &gammas,
+        )?)
+    } else {
+        None
+    };
+    let in_ppol = if low_ram {
+        None
+    } else {
+        Some(get_constraint_polynomials(cfg, statement, witness_polys)?)
+    };
     log_stage("constraint_polynomials", &mut last);
     let lagrange_basis = cached_lagrange_basis(cfg.packing_factor, &cfg.packing_points)?;
     let in_plin = get_constraint_linear_polynomials_batched(
@@ -11004,10 +11208,20 @@ fn piop_run(
     let mut ppol_highs = Vec::with_capacity(cfg.rho());
     let mut plin_highs = Vec::with_capacity(cfg.rho());
     for rep in 0..cfg.rho() {
-        let mut out_ppol = vec![0u64; cfg.mpol_poly_degree + cfg.packing_factor + 1];
-        for (poly, gamma) in in_ppol.iter().zip(gammas[rep].iter()) {
-            poly_add_assign_scaled(&mut out_ppol, poly, *gamma);
-        }
+        let mut out_ppol = if let Some(folded) = &folded_ppol {
+            folded[rep].clone()
+        } else {
+            let mut out_ppol = vec![0u64; cfg.mpol_poly_degree + cfg.packing_factor + 1];
+            let polynomials = in_ppol.as_ref().ok_or(
+                TransactionCircuitError::ConstraintViolation(
+                    "smallwood default schedule is missing constraint polynomials",
+                ),
+            )?;
+            for (poly, gamma) in polynomials.iter().zip(gammas[rep].iter()) {
+                poly_add_assign_scaled(&mut out_ppol, poly, *gamma);
+            }
+            out_ppol
+        };
         for root in &cfg.packing_points {
             out_ppol = poly_remove_one_degree_factor(&out_ppol, *root);
         }
@@ -11227,9 +11441,18 @@ fn pcs_commit(
         }
     }
     log_stage("stack_rows", &mut last);
+    let low_ram_bounded = smallwood_low_ram_enabled()
+        && strict_bounded_decs_commit(transcript_backend, decs_evaluation_domain);
+    let retained = if low_ram_bounded {
+        drop(polys);
+        drop(rows);
+        None
+    } else {
+        Some((polys, rows))
+    };
     let lvcs_key = lvcs_commit(
         cfg,
-        &stacked_rows,
+        stacked_rows,
         salt,
         transcript_backend,
         decs_evaluation_domain,
@@ -11237,6 +11460,7 @@ fn pcs_commit(
         leaf_statement_binding,
         decs_leaf_tape_bytes,
     )?;
+    drop(retained);
     log_stage("lvcs_commit", &mut last);
     let pcs_key = PcsKey { lvcs_key };
     let transcript_words = pcs_commit_transcript_words(
@@ -11796,10 +12020,40 @@ pub fn pcs_build_coefficients(cfg: &SmallwoodConfig, eval_points: &[u64], coeffs
     }
 }
 
-fn smallwood_low_ram_enabled() -> bool {
+pub(crate) fn smallwood_low_ram_enabled() -> bool {
     std::env::var("HEGEMON_SMALLWOOD_LOW_RAM")
         .ok()
         .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+}
+
+/// Current and peak resident set, in KiB. `VmHWM` is the Linux peak, the same
+/// quantity as `getrusage` `ru_maxrss`.
+fn smallwood_memory_kib() -> (u64, u64) {
+    let mut rss = 0u64;
+    let mut maxrss = 0u64;
+    if let Ok(text) = std::fs::read_to_string("/proc/self/status") {
+        for line in text.lines() {
+            let (slot, rest) = if let Some(rest) = line.strip_prefix("VmRSS:") {
+                (&mut rss, rest)
+            } else if let Some(rest) = line.strip_prefix("VmHWM:") {
+                (&mut maxrss, rest)
+            } else {
+                continue;
+            };
+            if let Some(value) = rest.split_whitespace().next() {
+                *slot = value.parse().unwrap_or(0);
+            }
+        }
+    }
+    (rss, maxrss)
+}
+
+pub(crate) fn log_low_ram_stage(stage: &str) {
+    if !smallwood_low_ram_enabled() {
+        return;
+    }
+    let (rss, maxrss) = smallwood_memory_kib();
+    eprintln!("[smallwood/low-ram] stage={stage} rss_kib={rss} maxrss_kib={maxrss}");
 }
 
 fn smallwood_sha512_oracle_overlay_active() -> bool {
@@ -11828,7 +12082,7 @@ const SMALLWOOD_LOW_RAM_FFT_GROUP: usize = 1;
 
 fn lvcs_commit(
     cfg: &SmallwoodConfig,
-    rows: &[Vec<u64>],
+    rows: Vec<Vec<u64>>,
     salt: &[u8],
     transcript_backend: SmallwoodTranscriptBackend,
     decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
@@ -11858,9 +12112,10 @@ fn lvcs_commit(
         extended_rows[row][cfg.nb_lvcs_cols..].copy_from_slice(&rnd);
     }
     log_stage("extend_rows", &mut last);
-    let decs_key = if smallwood_low_ram_enabled()
-        && strict_bounded_decs_commit(transcript_backend, decs_evaluation_domain)
-    {
+    let low_ram_bounded = smallwood_low_ram_enabled()
+        && strict_bounded_decs_commit(transcript_backend, decs_evaluation_domain);
+    let decs_key = if low_ram_bounded {
+        drop(rows);
         // Keep `extended_rows` for the opening key. Rotate one row into a
         // reused buffer inside the bounded commit instead of retaining a
         // second full copy of the matrix.
@@ -11883,7 +12138,7 @@ fn lvcs_commit(
             .par_iter()
             .map(|row| rotate_left_words(row, cfg.nb_lvcs_cols))
             .collect::<Vec<_>>();
-        decs_commit(
+        let key = decs_commit(
             cfg.nb_lvcs_rows,
             cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals() - 1,
             cfg.decs_eta(),
@@ -11896,7 +12151,9 @@ fn lvcs_commit(
             statement_binding,
             leaf_statement_binding,
             decs_leaf_tape_bytes,
-        )?
+        )?;
+        drop(rows);
+        key
     };
     log_stage("decs_commit", &mut last);
     Ok(LvcsKey {
@@ -21184,5 +21441,52 @@ mod native_private_spend_smzd_identity_tests {
         legacy_sized[..4].copy_from_slice(b"SMZD");
         assert!(decode_smallwood_proof_bytes_v1(&legacy_sized).is_err());
         assert!(decode_smallwood_proof_bytes_prefix_v1(&legacy_sized).is_err());
+    }
+}
+
+#[cfg(test)]
+mod low_ram_constraint_fold_tests {
+    use super::{add_mod, interpolate_consecutive, mul_mod, poly_add_assign_scaled};
+
+    #[test]
+    fn gamma_weighted_interpolation_matches_sample_fold() {
+        // Degree 2 and witness degree 69 produce the HTLC sample count.
+        let nb_samples = 2 * 69 + 1;
+        let constraints = 4usize;
+        let rho = 5usize;
+        let samples = (0..constraints)
+            .map(|constraint| {
+                (0..nb_samples)
+                    .map(|sample| ((constraint * 17 + sample * 3 + 1) % 1_000) as u64)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let gammas = (0..rho)
+            .map(|rep| {
+                (0..constraints + 2)
+                    .map(|index| ((rep * 9 + index * 5 + 2) % 1_000) as u64)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let polynomials = samples
+            .iter()
+            .map(|samples| interpolate_consecutive(samples).expect("interpolate constraint"))
+            .collect::<Vec<_>>();
+        for (rep, gamma) in gammas.iter().enumerate() {
+            let mut summed = vec![0u64; nb_samples];
+            for (poly, &scale) in polynomials.iter().zip(gamma.iter()) {
+                poly_add_assign_scaled(&mut summed, poly, scale);
+            }
+            let mut combined = vec![0u64; nb_samples];
+            for sample in 0..nb_samples {
+                let mut acc = 0u64;
+                for constraint in 0..constraints {
+                    acc = add_mod(acc, mul_mod(samples[constraint][sample], gamma[constraint]));
+                }
+                combined[sample] = acc;
+            }
+            let folded = interpolate_consecutive(&combined).expect("interpolate fold");
+            assert_eq!(folded, summed, "repetition {rep}");
+        }
     }
 }

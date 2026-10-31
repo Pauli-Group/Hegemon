@@ -931,8 +931,13 @@ HTLC SMZC and the SMZ9, SMZA, SMZB, private-spend, and asset-spend profiles on
 the same path. Truthy values are `1` and `true`. When the variable is unset,
 provers keep the current schedule. The low-RAM schedule does not allocate a
 second full copy of the rotated row matrix, and it Fourier-transforms one
-polynomial at a time into a reused scratch buffer. Leaf values, leaf order, and
-the Merkle root stay the same. Verification, proof encoding, and node consensus
+polynomial at a time into a reused scratch buffer. It also drops the polynomial
+clone, the unstacked rows, and the stacked rows before that Fourier stage.
+For an HTLC candidate the wallet drops the circuit during the commitment and
+rebuilds it for the constraint check. Constraint samples are dotted into the
+existing 5 gamma combinations and those 5 polynomials are interpolated, instead
+of retaining one polynomial per constraint. Leaf values, leaf order, and the
+Merkle root stay the same. Verification, proof encoding, and node consensus
 are unchanged. A node that only checks a proof never enters this schedule.
 
 `make htlc-swap-e2e` is the local fresh-chain form of that rehearsal. It builds

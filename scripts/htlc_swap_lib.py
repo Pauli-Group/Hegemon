@@ -18,6 +18,7 @@ import select
 import signal
 import stat
 import subprocess
+import sys
 import termios
 import time
 import urllib.parse
@@ -297,6 +298,9 @@ def run_wallet_cli(binary: Path, args: list[str], passfiles: list[Path], approve
                     chunk = b""
                 if chunk:
                     transcript.extend(chunk)
+                    for line in chunk.splitlines():
+                        if b"[smallwood/low-ram]" in line:
+                            print(line.decode("utf-8", "replace"), file=sys.stderr, flush=True)
                     if len(transcript) > 2 * 1024 * 1024:
                         raise RehearsalError("wallet CLI output exceeded 2 MiB")
             text = transcript.decode("utf-8", "ignore")

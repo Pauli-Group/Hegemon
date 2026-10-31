@@ -685,13 +685,35 @@ pub fn prove_candidate(
 ) -> Result<Vec<u8>, TransactionCircuitError> {
     let (mut adapter, packed) = compile(statement, witness)?;
     adapter.use_smzc();
+    let binding = statement.candidate_binding_bytes()?;
+    let profile = crate::smallwood_engine::NATIVE_HTLC_SMZC_SMALLWOOD_NO_GRINDING_PROFILE;
+    let backend = SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc;
+    let domain = SmallwoodDecsEvaluationDomain::Radix2DisjointCoset;
+    if crate::smallwood_engine::smallwood_low_ram_enabled() {
+        let prefix = crate::smallwood_engine::start_smallwood_prove(
+            &adapter,
+            &packed,
+            &binding,
+            profile,
+            backend,
+            domain,
+        )?;
+        drop(adapter);
+        crate::smallwood_engine::log_low_ram_stage("circuit_released");
+        let committed = crate::smallwood_engine::commit_smallwood_prove(prefix)?;
+        let mut adapter = HtlcAdapter::from_statement(statement)?;
+        adapter.use_smzc();
+        crate::smallwood_engine::log_low_ram_stage("circuit_rebuilt");
+        let proof = crate::smallwood_engine::finish_smallwood_prove(&adapter, committed)?;
+        return crate::smallwood_engine::encode_smallwood_proof_bytes_v1(&proof);
+    }
     prove_statement_with_transcript_backend_profile_and_domain(
         &adapter,
         &packed,
-        &statement.candidate_binding_bytes()?,
-        crate::smallwood_engine::NATIVE_HTLC_SMZC_SMALLWOOD_NO_GRINDING_PROFILE,
-        SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc,
-        SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
+        &binding,
+        profile,
+        backend,
+        domain,
     )
 }
 pub fn verify_candidate(
@@ -731,38 +753,3 @@ pub fn prove_candidate_unchecked_for_qualification(
     )
 }
 
-#[cfg(test)]
-mod geometry_probe {
-    use super::*;
-    use crate::smallwood_semantics::SmallwoodConstraintAdapter;
-
-    #[test]
-    fn claim_geometry_sizes() {
-        let statement = HtlcStatement {
-            version: HTLC_STATEMENT_VERSION,
-            action: HtlcAction::Claim,
-            network_id: [1; 32],
-            parent_hash: [2; 32],
-            parent_height: 1,
-            merkle_root: [3; 7],
-            nullifier: [4; 7],
-            output_commitment: [5; 7],
-            ciphertext_commitment: [6; 48],
-            fee: 1,
-            revealed_secret: Some([7; 32]),
-        };
-        let mut adapter = HtlcAdapter::from_statement(&statement).expect("adapter");
-        adapter.use_smzc();
-        let rows = adapter.row_count();
-        let unstacked_cols = rows + 20;
-        let lvcs_cols = unstacked_cols.div_ceil(2);
-        let row_len = lvcs_cols + 58;
-        eprintln!(
-            "rows={rows} constraints={} linear={} row_len={row_len} witness_bytes={} extended_bytes={}",
-            adapter.constraint_count(),
-            adapter.linear_constraint_count(),
-            rows.saturating_mul(70).saturating_mul(8),
-            140usize.saturating_mul(row_len).saturating_mul(8),
-        );
-    }
-}
