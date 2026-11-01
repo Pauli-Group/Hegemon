@@ -936,9 +936,14 @@ clone, the unstacked rows, and the stacked rows before that Fourier stage.
 For an HTLC candidate the wallet drops the circuit during the commitment and
 rebuilds it for the constraint check. Constraint samples are dotted into the
 existing 5 gamma combinations and those 5 polynomials are interpolated, instead
-of retaining one polynomial per constraint. Leaf values, leaf order, and the
-Merkle root stay the same. Verification, proof encoding, and node consensus
-are unchanged. A node that only checks a proof never enters this schedule.
+of retaining one polynomial per constraint. The claim preimage is a local
+degree-2 SHA-256 lowering: each gate is a retained wire, parity is two XOR
+gates, and majority is one AND plus `z = t + c(a + b - 2t)`. The commitment
+domain, openings, and this low-RAM schedule stay as they are. Verification of
+a proof from that schedule is unchanged. The HTLC relation digest covers
+`sha_lowering.rs`, `source_cse.rs`, `affine.rs`, and `boolean_guards.rs` along
+with the engine sources. A node that only checks a proof never enters this
+schedule.
 
 `make htlc-swap-e2e` is the local fresh-chain form of that rehearsal. It builds
 the Development node and wallet examples, reuses or fetches verified Bitcoin

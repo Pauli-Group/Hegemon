@@ -4,19 +4,19 @@ overview: Compile the HTLC claim preimage as local degree-2 SHA-256 gates so the
 todos:
   - id: quadratic-sha
     content: "Add sha256_quadratic: retained NOT, two-XOR parity, AND-plus-local-quadratic majority, degree 2 when no cubic kinds remain."
-    status: pending
+    status: completed
   - id: claim-call
     content: Call sha256_quadratic from the HTLC claim only. Leave sha() for asset-spend and recovery.
-    status: pending
+    status: completed
   - id: relation-digest
     content: Hash sha_lowering.rs, source_cse.rs, affine.rs, and boolean_guards.rs in relation_digest().
-    status: pending
+    status: completed
   - id: tests-docs
     content: Test truth tables, known SHA-256 digests, degree 2, and a 64-term form cap. Update METHODS.md.
-    status: pending
+    status: completed
   - id: rerun
     content: Rebuild node and wallet, run happy --no-build once. Stop and record RSS if OOM-killed; otherwise finish the other scenarios.
-    status: pending
+    status: completed
 isProject: false
 ---
 

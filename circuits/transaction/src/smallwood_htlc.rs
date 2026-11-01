@@ -314,6 +314,10 @@ pub fn relation_digest() -> [u8; 64] {
     hash.update(include_bytes!("smallwood_htlc.rs"));
     hash.update(include_bytes!("smallwood_htlc/circuit.rs"));
     hash.update(include_bytes!("smallwood_htlc/sha256.rs"));
+    hash.update(include_bytes!("smallwood_htlc/sha_lowering.rs"));
+    hash.update(include_bytes!("smallwood_htlc/source_cse.rs"));
+    hash.update(include_bytes!("smallwood_htlc/affine.rs"));
+    hash.update(include_bytes!("smallwood_htlc/boolean_guards.rs"));
     hash.update(include_bytes!(
         "../src/smallwood_poseidon2_v8_hash_schedule.rs"
     ));
@@ -401,7 +405,7 @@ impl HtlcAdapter {
                     } else {
                         equal(policy[40], Word::ZERO);
                     }
-                    let digest = sha(secret_bits);
+                    let digest = circuit::sha256_quadratic(secret_bits);
                     for (word, expected) in digest.into_iter().zip(policy[9..17].iter().copied()) {
                         equal(word, expected);
                     }

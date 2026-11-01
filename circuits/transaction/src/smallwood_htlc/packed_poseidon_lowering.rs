@@ -45,7 +45,7 @@ impl HtlcAdapter {
     fn packed_poseidon_row_base(&self) -> usize {
         self.affine.canonical_slots().div_ceil(PACKING)
             + self.ordinary_product_row_count()
-            + 4 * self.direct_batches.len()
+            + super::sha_lowering::packed_row_count(&self.graph.nodes)
     }
 
     pub(super) fn append_packed_poseidon_bindings(&mut self) {

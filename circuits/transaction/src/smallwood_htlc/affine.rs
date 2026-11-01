@@ -103,19 +103,7 @@ impl AffineMap {
         // Substitute complete authenticated trace forms for every representative,
         // including downstream linear forms that refer to a hash output.
         let product_rows = zero_rows + 3 * nonzero_count.div_ceil(PACKING);
-        let mut direct_counts = [0usize; 4];
-        for node in nodes {
-            if let Node::Boolean(gate) = node {
-                let kind = match gate.kind {
-                    sha_lowering::Kind::Xor => 0,
-                    sha_lowering::Kind::And => 1,
-                    sha_lowering::Kind::Parity => 2,
-                    sha_lowering::Kind::Majority => 3,
-                };
-                direct_counts[kind] += 1;
-            }
-        }
-        let direct_rows: usize = direct_counts.iter().map(|n| 4 * n.div_ceil(PACKING)).sum();
+        let direct_rows = sha_lowering::packed_row_count(nodes);
         let poseidon_start = map.canonical_slots().div_ceil(PACKING) + product_rows + direct_rows;
         let sha_start = poseidon_start
             + if graph.packed_poseidon_calls.is_empty() {
@@ -381,21 +369,20 @@ pub(super) fn reconstruct(graph: &Graph, actual: &AffineMap) -> Result<Vec<Form>
         )
         .ok_or("trace base overflow")?;
 
-    let mut direct = [0usize; 4];
+    let mut direct = [0usize; sha_lowering::Kind::ALL.len()];
     for node in nodes {
         if let Node::Boolean(gate) = node {
-            match gate.kind {
-                sha_lowering::Kind::Xor => direct[0] += 1,
-                sha_lowering::Kind::And => direct[1] += 1,
-                sha_lowering::Kind::Parity => direct[2] += 1,
-                sha_lowering::Kind::Majority => direct[3] += 1,
-            }
+            direct[gate.kind.index()] += 1;
         }
     }
-    for count in direct {
+    for (kind, count) in sha_lowering::Kind::ALL.iter().zip(direct) {
         let groups = count.checked_add(63).ok_or("trace direct overflow")? / 64;
         poseidon_base = poseidon_base
-            .checked_add(groups.checked_mul(4).ok_or("trace direct overflow")?)
+            .checked_add(
+                groups
+                    .checked_mul(kind.batch_rows())
+                    .ok_or("trace direct overflow")?,
+            )
             .ok_or("trace direct overflow")?;
     }
     let sha_base = poseidon_base

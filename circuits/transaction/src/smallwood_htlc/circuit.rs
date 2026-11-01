@@ -16,6 +16,7 @@ use std::{
 #[path = "sha_lowering.rs"]
 mod sha_lowering;
 pub(crate) use sha_lowering::sha256_direct;
+pub(crate) use sha_lowering::sha256_quadratic;
 use sha_lowering::{DirectBatch, DirectGate};
 #[path = "compact_sha256.rs"]
 mod compact_sha256;
@@ -389,10 +390,15 @@ impl HtlcAdapter {
             || !adapter.graph.compact_sha_calls.is_empty()
         {
             packed_poseidon::DEGREE
-        } else if adapter.direct_batches.is_empty() {
-            2
-        } else {
+        } else if adapter
+            .graph
+            .nodes
+            .iter()
+            .any(|node| matches!(node, Node::Boolean(gate) if gate.kind.is_cubic()))
+        {
             3
+        } else {
+            2
         };
         adapter.geometry.nonlinear_batches = adapter.affine.boolean_rows.len()
             + adapter.batches.len()
@@ -471,6 +477,7 @@ impl HtlcAdapter {
             .and_then(|r| r.checked_add(nonzero_batches.checked_mul(3)?))
             .ok_or("size overflow")?;
         let direct_count = self.direct_batch_count();
+        let direct_rows = sha_lowering::packed_row_count(&self.graph.nodes);
         let compact_sha_calls = self.graph.compact_sha_calls.len();
         if compact_sha_calls > 1 {
             return fail();
@@ -485,14 +492,19 @@ impl HtlcAdapter {
         let poseidon_constraints = if poseidon_calls == 0 { 0 } else { 332 };
         let degree = if poseidon_calls != 0 || compact_sha_calls != 0 {
             7
-        } else if direct_count == 0 {
-            2
-        } else {
+        } else if self
+            .graph
+            .nodes
+            .iter()
+            .any(|node| matches!(node, Node::Boolean(gate) if gate.kind.is_cubic()))
+        {
             3
+        } else {
+            2
         };
         let row_count = canonical_rows
             .checked_add(product_rows)
-            .and_then(|r| r.checked_add(direct_count.checked_mul(4)?))
+            .and_then(|r| r.checked_add(direct_rows))
             .and_then(|r| r.checked_add(poseidon_rows))
             .and_then(|r| r.checked_add(compact_sha_rows))
             .ok_or("size overflow")?;
@@ -689,11 +701,11 @@ impl HtlcAdapter {
             |slot, source| checked.copy(slot, source),
         )?;
         self.check_packed_poseidon_bindings(
-            canonical_rows + product_rows + 4 * direct_count,
+            canonical_rows + product_rows + direct_rows,
             |slot, source| checked.copy(slot, source),
         )?;
         self.check_compact_sha_bindings(
-            canonical_rows + product_rows + 4 * direct_count + poseidon_rows,
+            canonical_rows + product_rows + direct_rows + poseidon_rows,
             &mut checked,
         )?;
         for i in 0..N {
