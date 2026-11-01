@@ -263,3 +263,30 @@ from a mature mining reward to the existing treasury, its 0.00001 HGN fee and
 3.98999 HGN change, with canonical inclusion on OVH, dev and a local syncing node.
 Unchanged HTLC and exact 120-block boundary qualification retain their original
 lifecycle evidence. See the [release notes](https://github.com/Pauli-Group/Hegemon/blob/v0.11.2/docs/releases/v0.11.md).
+
+## HTLC command routing
+
+The v0.11 HTLC wallet is the separate `bin/private-spend` executable
+(`target/release/private-spend` in a source build). Use binaries from the same
+release and the manifest, genesis and trusted loopback RPC shown above. Its
+`lock`, `claim`, `refund` and `submit` commands use the current common
+`SMZL` proof and `HGPSLC02` carrier. Lock, claim and refund prepare retained
+attempts; `submit ATTEMPT` broadcasts a retained attempt separately. Run
+`./bin/private-spend --wallet '<encrypted-wallet>' lock --help` (or `claim`,
+`refund`, `submit`) for the exact arguments without opening a wallet.
+
+Claim and refund require a separate ordinary fee note. Claim prompts privately
+for the preimage. A separate refund wallet receives the encrypted locked-note
+handoff through `lock --refund-handoff` and `import-refund-handoff`. Public
+preimage release is an explicit `lock --release-secret` choice; see
+[HTLC disclosure and timeout semantics](../../../docs/BOUNDED_POLICIES.md#explicit-public-release-and-htlc-compatibility).
+
+`wallet launch htlc`, the `launch_wallet_prepare` example, and
+`scripts/development_atomic_swap_rehearsal.py` retain the historical standalone
+`SMZC`/`HGHTLC02` Development workflow. Their proof measurements and Bitcoin
+rehearsals do not measure the v0.11 circuit. They take different arguments and
+use different note handoff handling; replacing the executable name does not
+adapt those scripts. The current HGN lifecycle runner
+`scripts/release_private_spend_lifecycle.py` requires its pinned release inputs
+and disposable actor fixtures, and does not orchestrate Bitcoin. This guide
+does not provide a current one-command HGN/BTC swap harness.

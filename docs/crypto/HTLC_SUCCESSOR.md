@@ -1,4 +1,12 @@
-# Complete native HTLC successor candidate
+# Historical standalone native HTLC candidate
+
+This document describes the retained standalone `smallwood_htlc` Development
+route, including its `SMZC` / `HGHTLC02` successor. The released v0.11 wallet uses
+the shared `private_spend` circuit and `SMZL` / `HGPSLC02` carrier instead. Use
+the separate `private-spend` executable's `lock`, `claim`, `refund` and `submit`
+commands, as described in [HTLC command routing](../../config/testnet/0.11/README.md#htlc-command-routing).
+The historical measurements and qualification requirements below apply only to
+their named standalone profiles; they are not current v0.11 performance results.
 
 The additive `transaction_circuit::smallwood_htlc` module implements a complete one-input/one-output native-asset relation. It does not extend the unchanged RP05 program or authorize its production route. Its separately identified relation is `hegemon.native.htlc.HGV9HT01.v1`.
 
@@ -10,7 +18,7 @@ The prover specializes the public branch: Lock and Refund omit SHA and use canon
 
 The public `HtlcStatement` binds network, exact parent, state root, nullifier, output commitment, ciphertext hash, fee, branch and secret-release bytes before challenge sampling. The native route must also bind the ciphertext bytes to that hash with the existing canonical framed digest. The proof does not establish that arbitrary encrypted bytes were constructed honestly; this is the same recipient-recovery responsibility as the existing V8 construction. Private `HtlcWitness` and `HtlcPolicy` have no Debug or serde implementation.
 
-## Actual development qualification
+## Historical development qualification
 
 On 2026-10-04, the entire combined Claim relation produced a 1,243,002-byte strict-SMZ1 development proof. Proving took 30.073 seconds with two threads; verification took 0.687 seconds. A separate process reading only public statement and proof accepted in 0.712 seconds. An unchecked complete changed-secret arithmetic/SHA trace generated a proof in 29.023 seconds and the actual verifier rejected it. Changed network, parent, payout commitment and trailing proof byte also rejected. The honest-plus-negative command peaked at 2,001,027,072 bytes RSS.
 
@@ -22,7 +30,7 @@ Full scalar Lock/Claim/Refund tests passed 4/4 in 0.77 seconds before CSR canoni
 
 The source is intentionally factored into degree-two multiplication equations with constrained intermediate wires; this includes Poseidon x^7 and SHA parity/majority. It does not claim a degree-seven function has become degree two without intermediate constraints. The Claim graph has 486,276 canonical wires, 19,731 packed rows, 4,044 multiplication batches and 1,003,794 linear equations; Lock/Refund use approximately 4,103 rows.
 
-## Required launch qualification
+## Historical SMZC qualification requirements
 
 A dedicated SMZC successor wire/profile and exact public-statement inclusion in strict Merkle leaves are implemented. They require fresh exact-source artifacts, full relation/security review and any necessary formal acceptance evidence, route-specific byte bounds and unchanged self-contained carriers through wallet/RPC, relay, mempool, mining, block import, sync, restart, reorg and fresh nodes. The full successor remains failclosed until those production-authority obligations are complete. Neither this document nor the development proof opens a production route.
 

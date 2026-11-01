@@ -1,4 +1,10 @@
-# Pre-mainnet network rehearsal
+# Historical pre-mainnet network rehearsal
+
+This runbook preserves the earlier network preparation and split RP06/HTLC
+Development rehearsals. For the released v0.11 network, follow the
+[current operator guide](../config/testnet/0.11/README.md). Its manifest and genesis
+are already frozen: do not regenerate them from the schema below or bootstrap a
+replacement network using these historical instructions.
 
 The native binary selects a new network with `--network pre-mainnet --network-manifest PATH`. This is a fresh consensus identity. The public manifest contains the exact genesis parameters and funding recipient. Every peer, wallet and release artifact must agree on its resulting 32-byte chain ID. Network selection alone does not activate a proof family, authorize a release or qualify paid mining and swaps.
 
@@ -76,7 +82,15 @@ An advancing chain of empty blocks proves only network mechanics. Step 6 additio
 
 The integrated source at `d001d80fd` admits RP06, HTLC Claim and Refund only from a canonical block-end reference H to an inclusion parent P with `0 <= P-H <= 12`, giving inclusion heights H+1 through H+13. Reference checkpoints begin at activation minus one. Lock requires P=H. Block-end roots include transaction outputs and both final rewards. The source capability separately gates the exact proof route and actual inclusion height in `[activation, end)`; typed state replay permits empty blocks and trailing reward commitments across that interval's boundaries, while complete native reward actions retain their separate source activation/retirement gates. Typed state fixtures do not authorize reward routes. These are source rules requiring affected qualification. No production proof capability is installed, and this runbook is not release authorization.
 
-## Retained optional 2-of-3 treasury and atomic-swap rehearsal
+## Historical Development treasury and atomic-swap rehearsal
+
+The retained commands below use `launch_wallet_prepare` (also exposed through
+`wallet launch`) and the standalone `SMZC` / `HGHTLC02` HTLC route. Current v0.11
+HTLC operations use the separate `private-spend` executable with the shared
+`SMZL` / `HGPSLC02` circuit; see [HTLC command routing](../config/testnet/0.11/README.md#htlc-command-routing)
+for `lock`, `claim`, `refund` and `submit`. The historical Bitcoin rehearsal does
+not test that current circuit. Its wallet commands and note handling must be
+adapted before it can do so; substituting the executable name is insufficient.
 
 Run these steps only with an isolated Development manifest, synchronized disposable
 wallets, and private scratch directories. Use generic local placeholders below and
@@ -161,8 +175,8 @@ addresses, openings, preimages, or generated receipts.
    invocations create their own private Bitcoin Core regtest chain; the script
    accepts only a Development manifest and loopback Bitcoin RPC.
 
-The local treasury and Bitcoin/Hegemon claim/refund executions have passed for
-their recorded disposable inputs. A separate two-node Development run also
+The historical local treasury and Bitcoin/Hegemon claim/refund executions passed
+for their recorded disposable inputs and source identities. A separate two-node Development run also
 matched all 24 block-body bytes at H24; a higher-work fork orphaned the HTLC
 Claim, rolled back its input/nullifier state, replayed the unchanged carrier at
 H26 for 99,997 base units, and reconverged the original peer. An ordinary RP06
