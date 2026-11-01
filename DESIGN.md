@@ -1817,3 +1817,30 @@ disabled. Retained formal/protocol receipts keep their original identities;
 versioned final binaries require fresh artifact provenance and affected checks.
 See [the operator guide](config/testnet/0.11/README.md) and
 [release checklist](docs/releases/v0.11.md).
+
+
+## Local current private-spend / Bitcoin swap rehearsal
+
+`scripts/local_private_spend_swap.py` creates fresh isolated Hegemon Development
+and Bitcoin regtest chains and exercises the current `private-spend` lock, claim,
+refund and submit commands. It preserves the private-spend-only manifest source
+pin and leaves circuit and prover source unchanged. The harness checks exported
+actions against canonical block bytes, wallet mined status, confirmed Bitcoin
+spends and zero peers. It measures each wallet proof process with `wait4` peak
+RSS and wall time. Scenarios cover a successful swap, absent Bitcoin funding,
+refunds on both chains, and a late Hegemon claim rejected after refund.
+
+Run `python3 scripts/local_private_spend_swap.py --output /absolute/new/path`
+after building the Development-capable node and private-spend wallet. The Bitcoin
+Core binary path is selectable with `--bitcoind`. Output includes disposable
+encrypted wallets and private diagnostic logs; retain the directory privately.
+Hegemon seeds are empty only for these isolated chains. Shared mining operators
+use `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"`
+unless the approved seed list changes; miners share that list and enable NTP or
+chrony because future-skewed PoW timestamps are rejected. A passing rehearsal
+is functional Development/regtest evidence, not a cryptographic security review
+or production authorization.
+
+The local runner advances each chain explicitly. Its shortened deadlines test
+height-based claim/refund behavior; they do not validate production wall-clock
+timeout margins, public-chain confirmation policy, or counterparty liveness.

@@ -1,0 +1,199 @@
+{
+  "status": "passed",
+  "base_commit": "74910ff86514c2cbd93d7a7039e6b90b6e4600b6",
+  "proof_and_node_source_match_main": true,
+  "wallet_proof_threads": 2,
+  "measurement": "wait4 child peak RSS in KiB; wall time includes unlock and sync; some later proofs shared CPU",
+  "scenarios": [
+    {
+      "scenario": "happy",
+      "status": "passed",
+      "bitcoin_chain": "regtest",
+      "hegemon_seeds": "",
+      "production_authorized": false,
+      "proofs": {
+        "fund-bob": {
+          "seconds": 93.407,
+          "peak_rss_kib": 1734164,
+          "exit_code": 0
+        },
+        "lock": {
+          "seconds": 62.152,
+          "peak_rss_kib": 1735308,
+          "exit_code": 0
+        },
+        "claim": {
+          "seconds": 62.12,
+          "peak_rss_kib": 1736932,
+          "exit_code": 0
+        }
+      },
+      "checks": {
+        "fund-bob_canonical": true,
+        "lock_canonical": true,
+        "early_refund_rejected": true,
+        "bitcoin_claim_confirmed": true,
+        "claim_canonical": true,
+        "zero_peers": true
+      },
+      "source_commit": "74910ff86514c2cbd93d7a7039e6b90b6e4600b6",
+      "binary_sha256": {
+        "/workspace/Hegemon/target/release/hegemon-node": "7c1936f2f122cd3b008cf145ffd08551013a120373f933690a5dc671f7b6dbed",
+        "/workspace/Hegemon/target/release/private-spend": "b604d05b0263a671cd660c041c9f578d11902246efe949f7a59f127c7d5e7fde",
+        "/workspace/bitcoin-32.1/bin/bitcoind": "580ac61190154da31aac3f82d13c4254ef453d70e1bf2c39d338dac5129c92ac"
+      },
+      "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
+      "genesis": "0x298cccca986134efd58023a9eaaf9ec6c2fe4102cd0896f3d688df85deaf17fa",
+      "bitcoin_claim_txid": "83ee821cc1a593bf8e8c1ed86ee01a2a49bf0e12bdf231fa1a841cc26a948737",
+      "hegemon_final_height": 127,
+      "bitcoin_final_height": 103,
+      "owned_nodes_stopped": true
+    },
+    {
+      "scenario": "no_btc",
+      "status": "passed",
+      "bitcoin_chain": "regtest",
+      "hegemon_seeds": "",
+      "production_authorized": false,
+      "proofs": {
+        "fund-bob": {
+          "seconds": 72.402,
+          "peak_rss_kib": 1810784,
+          "exit_code": 0
+        },
+        "lock": {
+          "seconds": 78.744,
+          "peak_rss_kib": 1867996,
+          "exit_code": 0
+        },
+        "refund": {
+          "seconds": 62.84,
+          "peak_rss_kib": 1734932,
+          "exit_code": 0
+        }
+      },
+      "checks": {
+        "fund-bob_canonical": true,
+        "lock_canonical": true,
+        "early_refund_rejected": true,
+        "refund_canonical": true,
+        "zero_peers": true
+      },
+      "source_commit": "74910ff86514c2cbd93d7a7039e6b90b6e4600b6",
+      "binary_sha256": {
+        "/workspace/Hegemon/target/release/hegemon-node": "7c1936f2f122cd3b008cf145ffd08551013a120373f933690a5dc671f7b6dbed",
+        "/workspace/Hegemon/target/release/private-spend": "b604d05b0263a671cd660c041c9f578d11902246efe949f7a59f127c7d5e7fde",
+        "/workspace/bitcoin-32.1/bin/bitcoind": "580ac61190154da31aac3f82d13c4254ef453d70e1bf2c39d338dac5129c92ac"
+      },
+      "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
+      "genesis": "0x6607cccd9d55fcbe82ad0491b09ff175a3a937e33878b4b213867096fb2da4db",
+      "hegemon_final_height": 142,
+      "bitcoin_final_height": 101,
+      "owned_nodes_stopped": true
+    },
+    {
+      "scenario": "both_refund",
+      "status": "passed",
+      "bitcoin_chain": "regtest",
+      "hegemon_seeds": "",
+      "production_authorized": false,
+      "proofs": {
+        "fund-bob": {
+          "seconds": 92.291,
+          "peak_rss_kib": 1735052,
+          "exit_code": 0
+        },
+        "lock": {
+          "seconds": 89.467,
+          "peak_rss_kib": 1735272,
+          "exit_code": 0
+        },
+        "refund": {
+          "seconds": 179.049,
+          "peak_rss_kib": 2029640,
+          "exit_code": 0
+        }
+      },
+      "checks": {
+        "fund-bob_canonical": true,
+        "lock_canonical": true,
+        "early_refund_rejected": true,
+        "bitcoin_refund_confirmed": true,
+        "refund_canonical": true,
+        "zero_hegemon_peers": true,
+        "zero_peers": true
+      },
+      "source_commit": "74910ff86514c2cbd93d7a7039e6b90b6e4600b6",
+      "binary_sha256": {
+        "/workspace/Hegemon/target/release/hegemon-node": "7c1936f2f122cd3b008cf145ffd08551013a120373f933690a5dc671f7b6dbed",
+        "/workspace/Hegemon/target/release/private-spend": "b604d05b0263a671cd660c041c9f578d11902246efe949f7a59f127c7d5e7fde",
+        "/workspace/bitcoin-32.1/bin/bitcoind": "580ac61190154da31aac3f82d13c4254ef453d70e1bf2c39d338dac5129c92ac"
+      },
+      "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
+      "genesis": "0x5327423aedbb85e3ef54fe08a4a301ff38e11e13de72768dc5918c0d20783402",
+      "owned_nodes_stopped": true,
+      "resumed_after_mining_timeout": true,
+      "previous_error": "mining stalled",
+      "bitcoin_restart_check": {
+        "chain": "regtest",
+        "peers": 0,
+        "confirmed_refund_txids": [
+          "185ac5648b3743962685f94b7c0cdbb8438e1437e5f1c8b02cf6abbd159a4e7c"
+        ]
+      }
+    },
+    {
+      "scenario": "late_claim",
+      "status": "passed",
+      "bitcoin_chain": "regtest",
+      "hegemon_seeds": "",
+      "production_authorized": false,
+      "proofs": {
+        "fund-bob": {
+          "seconds": 156.639,
+          "peak_rss_kib": 1735792,
+          "exit_code": 0
+        },
+        "lock": {
+          "seconds": 111.333,
+          "peak_rss_kib": 1802996,
+          "exit_code": 0
+        },
+        "refund": {
+          "seconds": 96.79,
+          "peak_rss_kib": 1737852,
+          "exit_code": 0
+        }
+      },
+      "checks": {
+        "fund-bob_canonical": true,
+        "lock_canonical": true,
+        "early_refund_rejected": true,
+        "bitcoin_claim_confirmed": true,
+        "refund_canonical": true,
+        "late_claim_rejected": true,
+        "zero_peers": true
+      },
+      "source_commit": "74910ff86514c2cbd93d7a7039e6b90b6e4600b6",
+      "binary_sha256": {
+        "/workspace/Hegemon/target/release/hegemon-node": "7c1936f2f122cd3b008cf145ffd08551013a120373f933690a5dc671f7b6dbed",
+        "/workspace/Hegemon/target/release/private-spend": "b604d05b0263a671cd660c041c9f578d11902246efe949f7a59f127c7d5e7fde",
+        "/workspace/bitcoin-32.1/bin/bitcoind": "580ac61190154da31aac3f82d13c4254ef453d70e1bf2c39d338dac5129c92ac"
+      },
+      "wallet_proof_threads": 2,
+      "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
+      "genesis": "0x40b3df8cc004054f8e598bbd024431745914d98088a25752470f541cb9c58e1c",
+      "bitcoin_claim_txid": "caa12ca11a1bb29f5bd47b539693d7587b4174fd469fc6aeceb5c7dffea4161d",
+      "hegemon_final_height": 139,
+      "bitcoin_final_height": 103,
+      "owned_nodes_stopped": true
+    }
+  ],
+  "receipt_paths": [
+    "/workspace/private-spend-swap-run3/happy/receipt.json",
+    "/workspace/private-spend-swap-run3/no_btc/receipt.json",
+    "/workspace/private-spend-swap-run3/both_refund/receipt.json",
+    "/workspace/private-spend-late-claim/late_claim/receipt.json"
+  ],
+  "scope": "local Development and Bitcoin regtest functional scenarios; no public network sync; no public-chain timeout-margin or cryptographic security qualification"
+}
