@@ -19,7 +19,7 @@ todos:
     status: completed
   - id: rerun
     content: Rebuild the node and wallet, then run happy --no-build. Stop and record journalctl RSS if the claim is OOM-killed.
-    status: in_progress
+    status: completed
 isProject: false
 ---
 
