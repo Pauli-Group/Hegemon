@@ -1,0 +1,811 @@
+{
+  "status": "passed",
+  "scenarios_passed": 8,
+  "contract_tests_passed": 19,
+  "collected_utc": "2026-11-01T23:45:27.134217+00:00",
+  "harness_commit": "b0cffb76bf1be5a08dbdd62d26daeb9c6c846d79",
+  "hegemon_core_matches_main": true,
+  "hegemon_core_base_commit": "74910ff86514c2cbd93d7a7039e6b90b6e4600b6",
+  "source_sha256": {
+    "contracts/ethereum/HegemonHTLC.sol": "28d293ad37ace5b6864829fc413d3ca88b2c00f4a3df2d0732af662f46a90a5d",
+    "contracts/ethereum/foundry.toml": "3a8099b05c47f4417da40bc81e5cc48e1d793311a0995d206af23193bb46dd80",
+    "contracts/ethereum/test/HegemonHTLC.t.sol": "7b64df3e0885eb60dd15ef0e4f405f52e1e96ab25f274544e23990984a8d9092",
+    "contracts/cardano/validators/htlc.ak": "37ed7204acae1e42a0d214b53f7c3f2666f8866a210a48a7c81a10f124d87687",
+    "contracts/cardano/aiken.toml": "e2e0476b819847d6d1daaa216bd35b671ce898335360de08f4251d9e21caf1ec",
+    "contracts/cardano/aiken.lock": "88ea28f7520d83d207bae89c30e2f6a2d27b337e36eb19b59a5ef01edefb820b",
+    "contracts/cardano/plutus.json": "99a26a2c101cbe2b42d1cd139ed478592dc52330c3a491c624e8d1f7f85a5c64",
+    "scripts/htlc_counterpart.py": "af153c1184373bbb0e4b1f1b048e0d88cf393d9f1c44bcd58a683a887e6ee5d1",
+    "scripts/local_multichain_htlc_swap.py": "192830134ba5d5c8b5af7270396d0b78f76eb2775d50f7b8ddb6abfcb26baeac",
+    "scripts/setup_multichain_htlc_tools.py": "da47c85524d4863c26af4b9dcc814c1c83f03501d29dd6a0891f1e8517258c8f"
+  },
+  "tools": {
+    "foundry": {
+      "url": "https://github.com/foundry-rs/foundry/releases/download/v1.8.7/foundry_v1.8.7_linux_amd64.tar.gz",
+      "sha256": "ba470eb718e779e4b0e3f1520b5284231b1bf98e9a39de07fb8f77ed70525bcf",
+      "executable_sha256": {
+        "foundry/anvil": "a2b871bf01b45d755ee37380ed11e369639a4fd9963604ed40749e299390bb9b",
+        "foundry/cast": "2edb70a8b90ce0ed8ae3329dba1c8aeaad017f1a8d8c2e5b4131192c1d51fb96",
+        "foundry/forge": "36bff04fdffdcc04b13fed54fdad73bce10344057f48895024d22352934ef5aa"
+      }
+    },
+    "aiken": {
+      "url": "https://github.com/aiken-lang/aiken/releases/download/v1.1.24/aiken-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "c378acccdaf9533f3375ea623c948d3dcb21f7e8c5ecbb741162c53653470b13",
+      "executable_sha256": {
+        "aiken/aiken-x86_64-unknown-linux-musl/aiken": "4257cc8be37cbde5bf7b5dd111e43a1277f45352fb2433ad7a7e647209aa7677"
+      }
+    },
+    "cardano": {
+      "url": "https://github.com/IntersectMBO/cardano-node/releases/download/11.1.3/cardano-node-11.1.3-linux-amd64.tar.gz",
+      "sha256": "530fb99986fbdccc46f9ee0dd86cabb1393b015feac9173cb731d89fa748365f",
+      "executable_sha256": {
+        "cardano/bin/cardano-node": "ee396604345cc07c7169391ef3f5364886d4b7fe0d539aff6919b470e7a336c3",
+        "cardano/bin/cardano-cli": "0ac45e874599fac4ee6ca4fd9602c0ddb9854a62be5f365dfa425eff9f4bd0ed",
+        "cardano/bin/cardano-testnet": "124e10b604f2653ce8e736f46da2b104aa17325e0f23034cb7dbb5f96f95b149"
+      }
+    },
+    "solc": {
+      "url": "https://github.com/ethereum/solidity/releases/download/v0.8.30/solc-static-linux",
+      "sha256": "f3e987dc6ecebd4bd350c48edcbc320b46cf9e3109bd3fc3d88f1acaf4c428f7",
+      "executable_sha256": {}
+    }
+  },
+  "unit_tests": {
+    "ethereum": {
+      "test/HegemonHTLC.t.sol:HegemonHTLCTest": {
+        "duration": "1ms 231\u00b5s 657ns",
+        "test_results": {
+          "testClaimAfterRefundRejected()": {
+            "status": "Success",
+            "reason": null,
+            "counterexample": null,
+            "logs": [],
+            "decoded_logs": [],
+            "kind": {
+              "Unit": {
+                "gas": 92916
+              }
+            },
+            "traces": [],
+            "labeled_addresses": {},
+            "duration": "435\u00b5s 427ns",
+            "breakpoints": {},
+            "gas_snapshots": {}
+          },
+          "testClaimAtBoundaryRejected()": {
+            "status": "Success",
+            "reason": null,
+            "counterexample": null,
+            "logs": [],
+            "decoded_logs": [],
+            "kind": {
+              "Unit": {
+                "gas": 37958
+              }
+            },
+            "traces": [],
+            "labeled_addresses": {},
+            "duration": "51\u00b5s 521ns",
+            "breakpoints": {},
+            "gas_snapshots": {}
+          },
+          "testClaimPaysExactValue()": {
+            "status": "Success",
+            "reason": null,
+            "counterexample": null,
+            "logs": [],
+            "decoded_logs": [],
+            "kind": {
+              "Unit": {
+                "gas": 73942
+              }
+            },
+            "traces": [],
+            "labeled_addresses": {},
+            "duration": "51\u00b5s 896ns",
+            "breakpoints": {},
+            "gas_snapshots": {}
+          },
+          "testEarlyRefundRejected()": {
+            "status": "Success",
+            "reason": null,
+            "counterexample": null,
+            "logs": [],
+            "decoded_logs": [],
+            "kind": {
+              "Unit": {
+                "gas": 34299
+              }
+            },
+            "traces": [],
+            "labeled_addresses": {},
+            "duration": "30\u00b5s 753ns",
+            "breakpoints": {},
+            "gas_snapshots": {}
+          },
+          "testRefundBoundaryPaysOwner()": {
+            "status": "Success",
+            "reason": null,
+            "counterexample": null,
+            "logs": [],
+            "decoded_logs": [],
+            "kind": {
+              "Unit": {
+                "gas": 70773
+              }
+            },
+            "traces": [],
+            "labeled_addresses": {},
+            "duration": "63\u00b5s 809ns",
+            "breakpoints": {},
+            "gas_snapshots": {}
+          },
+          "testRepeatedClaimRejected()": {
+            "status": "Success",
+            "reason": null,
+            "counterexample": null,
+            "logs": [],
+            "decoded_logs": [],
+            "kind": {
+              "Unit": {
+                "gas": 86161
+              }
+            },
+            "traces": [],
+            "labeled_addresses": {},
+            "duration": "54\u00b5s 328ns",
+            "breakpoints": {},
+            "gas_snapshots": {}
+          },
+          "testUnauthorizedClaimRejected()": {
+            "status": "Success",
+            "reason": null,
+            "counterexample": null,
+            "logs": [],
+            "decoded_logs": [],
+            "kind": {
+              "Unit": {
+                "gas": 34419
+              }
+            },
+            "traces": [],
+            "labeled_addresses": {},
+            "duration": "25\u00b5s 985ns",
+            "breakpoints": {},
+            "gas_snapshots": {}
+          },
+          "testUnauthorizedRefundRejected()": {
+            "status": "Success",
+            "reason": null,
+            "counterexample": null,
+            "logs": [],
+            "decoded_logs": [],
+            "kind": {
+              "Unit": {
+                "gas": 37747
+              }
+            },
+            "traces": [],
+            "labeled_addresses": {},
+            "duration": "36\u00b5s 608ns",
+            "breakpoints": {},
+            "gas_snapshots": {}
+          },
+          "testWrongSecretRejected()": {
+            "status": "Success",
+            "reason": null,
+            "counterexample": null,
+            "logs": [],
+            "decoded_logs": [],
+            "kind": {
+              "Unit": {
+                "gas": 40487
+              }
+            },
+            "traces": [],
+            "labeled_addresses": {},
+            "duration": "39\u00b5s 47ns",
+            "breakpoints": {},
+            "gas_snapshots": {}
+          }
+        },
+        "warnings": []
+      }
+    },
+    "cardano": {
+      "seed": 1601321841,
+      "summary": {
+        "total": 10,
+        "passed": 10,
+        "failed": 0,
+        "kind": {
+          "unit": 10,
+          "property": 0
+        }
+      },
+      "modules": [
+        {
+          "name": "htlc",
+          "summary": {
+            "total": 10,
+            "passed": 10,
+            "failed": 0,
+            "kind": {
+              "unit": 10,
+              "property": 0
+            }
+          },
+          "tests": [
+            {
+              "title": "claim_before_expiry",
+              "status": "pass",
+              "on_failure": "fail_immediately",
+              "execution_units": {
+                "mem": 55870,
+                "cpu": 19043625
+              }
+            },
+            {
+              "title": "wrong_secret_rejected",
+              "status": "pass",
+              "on_failure": "fail_immediately",
+              "execution_units": {
+                "mem": 32943,
+                "cpu": 10575496
+              }
+            },
+            {
+              "title": "short_secret_rejected",
+              "status": "pass",
+              "on_failure": "fail_immediately",
+              "execution_units": {
+                "mem": 30709,
+                "cpu": 9503516
+              }
+            },
+            {
+              "title": "unauthorized_claim_rejected",
+              "status": "pass",
+              "on_failure": "fail_immediately",
+              "execution_units": {
+                "mem": 43982,
+                "cpu": 14217757
+              }
+            },
+            {
+              "title": "inclusive_expiry_claim_rejected",
+              "status": "pass",
+              "on_failure": "fail_immediately",
+              "execution_units": {
+                "mem": 56471,
+                "cpu": 19215674
+              }
+            },
+            {
+              "title": "crossing_expiry_claim_rejected",
+              "status": "pass",
+              "on_failure": "fail_immediately",
+              "execution_units": {
+                "mem": 56471,
+                "cpu": 19215674
+              }
+            },
+            {
+              "title": "unbounded_claim_rejected",
+              "status": "pass",
+              "on_failure": "fail_immediately",
+              "execution_units": {
+                "mem": 46636,
+                "cpu": 15872042
+              }
+            },
+            {
+              "title": "early_refund_rejected",
+              "status": "pass",
+              "on_failure": "fail_immediately",
+              "execution_units": {
+                "mem": 51699,
+                "cpu": 17440548
+              }
+            },
+            {
+              "title": "refund_at_expiry",
+              "status": "pass",
+              "on_failure": "fail_immediately",
+              "execution_units": {
+                "mem": 51098,
+                "cpu": 17268499
+              }
+            },
+            {
+              "title": "unauthorized_refund_rejected",
+              "status": "pass",
+              "on_failure": "fail_immediately",
+              "execution_units": {
+                "mem": 38708,
+                "cpu": 12261423
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "run_summaries": {
+    "ethereum": "/workspace/eth-htlc-run1/summary.json",
+    "cardano": "/workspace/ada-htlc-run1/summary.json"
+  },
+  "scenarios": {
+    "ethereum": [
+      {
+        "scenario": "happy",
+        "status": "passed",
+        "counterpart_chain": "ethereum",
+        "hegemon_seeds": "",
+        "production_authorized": false,
+        "proofs": {
+          "fund-bob": {
+            "seconds": 86.533,
+            "peak_rss_kib": 1810252,
+            "exit_code": 0
+          },
+          "lock": {
+            "seconds": 106.364,
+            "peak_rss_kib": 1801232,
+            "exit_code": 0
+          },
+          "claim": {
+            "seconds": 170.783,
+            "peak_rss_kib": 1735448,
+            "exit_code": 0
+          }
+        },
+        "checks": {
+          "fund-bob_canonical": true,
+          "lock_canonical": true,
+          "early_refund_rejected": true,
+          "claim_canonical": true,
+          "zero_peers": true
+        },
+        "source_commit": "de4a0c21695900c1c5b91b934f042e64d60b7f94",
+        "binary_sha256": {
+          "/workspace/Hegemon/target/release/hegemon-node": "7c1936f2f122cd3b008cf145ffd08551013a120373f933690a5dc671f7b6dbed",
+          "/workspace/Hegemon/target/release/private-spend": "b604d05b0263a671cd660c041c9f578d11902246efe949f7a59f127c7d5e7fde"
+        },
+        "wallet_proof_threads": 2,
+        "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
+        "genesis": "0x4ca389294d64ce63558da4d1fba499a70ff08eea3acf807fb3030ec146baadd5",
+        "counterpart": {
+          "chain": "ethereum",
+          "checks": {
+            "zero_peers": true,
+            "wrong_secret_rejected": true,
+            "unauthorized_claim_rejected": true,
+            "early_refund_rejected": true,
+            "claim_confirmed": true,
+            "repeat_claim_rejected": true
+          },
+          "transactions": {
+            "lock": "0xebfea05456d5dc4a204c4c078ddf8976fa090dd5d9fcd903366e545a7d9d165e",
+            "claim": "0xd13a02f2305d5da0914a40f8eed8e950c8c7992c7f5b3c3e2a0fcda2353a1b5e"
+          },
+          "creation_code_sha256": "f8768c06edf9fe0b371aa0fa5a6b0ccda5c6545c60f14f7071905b516fb46b2d",
+          "contract_address": "0x8464135c8f25da09e49bc8782676a84730c318bc"
+        },
+        "hegemon_final_height": 124,
+        "counterpart_data": "/workspace/eth-htlc-run1/happy/ethereum",
+        "owned_nodes_stopped": true
+      },
+      {
+        "scenario": "no_counterparty",
+        "status": "passed",
+        "counterpart_chain": "ethereum",
+        "hegemon_seeds": "",
+        "production_authorized": false,
+        "proofs": {
+          "fund-bob": {
+            "seconds": 141.622,
+            "peak_rss_kib": 1799580,
+            "exit_code": 0
+          },
+          "lock": {
+            "seconds": 110.705,
+            "peak_rss_kib": 1996940,
+            "exit_code": 0
+          },
+          "refund": {
+            "seconds": 137.481,
+            "peak_rss_kib": 1735048,
+            "exit_code": 0
+          }
+        },
+        "checks": {
+          "fund-bob_canonical": true,
+          "lock_canonical": true,
+          "early_refund_rejected": true,
+          "refund_canonical": true,
+          "zero_peers": true
+        },
+        "source_commit": "b0cffb76bf1be5a08dbdd62d26daeb9c6c846d79",
+        "binary_sha256": {
+          "/workspace/Hegemon/target/release/hegemon-node": "7c1936f2f122cd3b008cf145ffd08551013a120373f933690a5dc671f7b6dbed",
+          "/workspace/Hegemon/target/release/private-spend": "b604d05b0263a671cd660c041c9f578d11902246efe949f7a59f127c7d5e7fde"
+        },
+        "wallet_proof_threads": 2,
+        "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
+        "genesis": "0xff1d175f0c0efc42ba780a8b6d3ed4a77e426a295d7a07b74c2a41cf485e0ad8",
+        "counterpart": {
+          "chain": "ethereum",
+          "checks": {
+            "zero_peers": true
+          },
+          "transactions": {},
+          "creation_code_sha256": "f8768c06edf9fe0b371aa0fa5a6b0ccda5c6545c60f14f7071905b516fb46b2d"
+        },
+        "hegemon_final_height": 139,
+        "counterpart_data": "/workspace/eth-htlc-run1/no_counterparty/ethereum",
+        "owned_nodes_stopped": true
+      },
+      {
+        "scenario": "both_refund",
+        "status": "passed",
+        "counterpart_chain": "ethereum",
+        "hegemon_seeds": "",
+        "production_authorized": false,
+        "proofs": {
+          "fund-bob": {
+            "seconds": 156.928,
+            "peak_rss_kib": 1733472,
+            "exit_code": 0
+          },
+          "lock": {
+            "seconds": 129.532,
+            "peak_rss_kib": 1996636,
+            "exit_code": 0
+          },
+          "refund": {
+            "seconds": 91.739,
+            "peak_rss_kib": 1735220,
+            "exit_code": 0
+          }
+        },
+        "checks": {
+          "fund-bob_canonical": true,
+          "lock_canonical": true,
+          "early_refund_rejected": true,
+          "refund_canonical": true,
+          "zero_peers": true
+        },
+        "source_commit": "b0cffb76bf1be5a08dbdd62d26daeb9c6c846d79",
+        "binary_sha256": {
+          "/workspace/Hegemon/target/release/hegemon-node": "7c1936f2f122cd3b008cf145ffd08551013a120373f933690a5dc671f7b6dbed",
+          "/workspace/Hegemon/target/release/private-spend": "b604d05b0263a671cd660c041c9f578d11902246efe949f7a59f127c7d5e7fde"
+        },
+        "wallet_proof_threads": 2,
+        "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
+        "genesis": "0x0f526c2947d02719671238f5fa1ccc40e84435db595ca11ae1ead2bf8a29cbe4",
+        "counterpart": {
+          "chain": "ethereum",
+          "checks": {
+            "zero_peers": true,
+            "wrong_secret_rejected": true,
+            "unauthorized_claim_rejected": true,
+            "early_refund_rejected": true,
+            "refund_confirmed": true,
+            "unauthorized_refund_rejected": true,
+            "claim_after_refund_rejected": true
+          },
+          "transactions": {
+            "lock": "0x6fed5d4db532f3c2bb202e3264df67be383c536d0c71b215a73d9f5af311eaf4",
+            "refund": "0xbfbbdec05c161d8484bd8db649a9a5489d34edb9eb019618d388e84ea2deca32"
+          },
+          "creation_code_sha256": "f8768c06edf9fe0b371aa0fa5a6b0ccda5c6545c60f14f7071905b516fb46b2d",
+          "contract_address": "0x8464135c8f25da09e49bc8782676a84730c318bc"
+        },
+        "hegemon_final_height": 139,
+        "counterpart_data": "/workspace/eth-htlc-run1/both_refund/ethereum",
+        "owned_nodes_stopped": true
+      },
+      {
+        "scenario": "late_claim",
+        "status": "passed",
+        "counterpart_chain": "ethereum",
+        "hegemon_seeds": "",
+        "production_authorized": false,
+        "proofs": {
+          "fund-bob": {
+            "seconds": 139.741,
+            "peak_rss_kib": 1800160,
+            "exit_code": 0
+          },
+          "lock": {
+            "seconds": 141.759,
+            "peak_rss_kib": 1677880,
+            "exit_code": 0
+          },
+          "refund": {
+            "seconds": 144.325,
+            "peak_rss_kib": 1800652,
+            "exit_code": 0
+          }
+        },
+        "checks": {
+          "fund-bob_canonical": true,
+          "lock_canonical": true,
+          "early_refund_rejected": true,
+          "refund_canonical": true,
+          "late_claim_rejected": true,
+          "zero_peers": true
+        },
+        "source_commit": "b0cffb76bf1be5a08dbdd62d26daeb9c6c846d79",
+        "binary_sha256": {
+          "/workspace/Hegemon/target/release/hegemon-node": "7c1936f2f122cd3b008cf145ffd08551013a120373f933690a5dc671f7b6dbed",
+          "/workspace/Hegemon/target/release/private-spend": "b604d05b0263a671cd660c041c9f578d11902246efe949f7a59f127c7d5e7fde"
+        },
+        "wallet_proof_threads": 2,
+        "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
+        "genesis": "0x8ba8d9317a06efbebd2c66fd6dea30179cf2c5f20ded8f14f2d6055dbb280500",
+        "counterpart": {
+          "chain": "ethereum",
+          "checks": {
+            "zero_peers": true,
+            "wrong_secret_rejected": true,
+            "unauthorized_claim_rejected": true,
+            "early_refund_rejected": true,
+            "claim_confirmed": true,
+            "repeat_claim_rejected": true
+          },
+          "transactions": {
+            "lock": "0xfe0ed5c184d50356c09ff9bf5834182578dad295dc27bd950394a5cf76c1b495",
+            "claim": "0xa20c78106650b4ec9d4e959d91774a9a6c474ec28817ef612ceaac2924853a22"
+          },
+          "creation_code_sha256": "f8768c06edf9fe0b371aa0fa5a6b0ccda5c6545c60f14f7071905b516fb46b2d",
+          "contract_address": "0x8464135c8f25da09e49bc8782676a84730c318bc"
+        },
+        "hegemon_final_height": 139,
+        "counterpart_data": "/workspace/eth-htlc-run1/late_claim/ethereum",
+        "owned_nodes_stopped": true
+      }
+    ],
+    "cardano": [
+      {
+        "scenario": "happy",
+        "status": "passed",
+        "counterpart_chain": "cardano",
+        "hegemon_seeds": "",
+        "production_authorized": false,
+        "proofs": {
+          "fund-bob": {
+            "seconds": 174.281,
+            "peak_rss_kib": 1679788,
+            "exit_code": 0
+          },
+          "lock": {
+            "seconds": 125.734,
+            "peak_rss_kib": 2097060,
+            "exit_code": 0
+          },
+          "claim": {
+            "seconds": 128.537,
+            "peak_rss_kib": 1931460,
+            "exit_code": 0
+          }
+        },
+        "checks": {
+          "fund-bob_canonical": true,
+          "lock_canonical": true,
+          "early_refund_rejected": true,
+          "claim_canonical": true,
+          "zero_peers": true
+        },
+        "source_commit": "de4a0c21695900c1c5b91b934f042e64d60b7f94",
+        "binary_sha256": {
+          "/workspace/Hegemon/target/release/hegemon-node": "7c1936f2f122cd3b008cf145ffd08551013a120373f933690a5dc671f7b6dbed",
+          "/workspace/Hegemon/target/release/private-spend": "b604d05b0263a671cd660c041c9f578d11902246efe949f7a59f127c7d5e7fde"
+        },
+        "wallet_proof_threads": 2,
+        "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
+        "genesis": "0xef1ceda18bc21a6e52a3af65c3c05dc40253d8316ae78d343a84bf6aa7d2c93f",
+        "counterpart": {
+          "chain": "cardano",
+          "checks": {
+            "empty_topology": true,
+            "zero_peers": true,
+            "wrong_secret_rejected": true,
+            "unauthorized_claim_rejected": true,
+            "early_refund_rejected": true,
+            "claim_confirmed": true,
+            "confirmed_submitted_witness_preimage": true,
+            "repeat_claim_rejected": true
+          },
+          "transactions": {
+            "lock": "81045c807eaec88130378b70befda53731b0bb32587635238a6ae40054e9fafa",
+            "claim": "adda2940b3dc26863c3c7fc633bf355fcf21a6e781867fdaeddc21cd0d1bb689"
+          },
+          "script_sha256": "56297d7608973b2ed1a034f626d6786b903673d260692148ced220704a2eb03f",
+          "genesis_sha256": "c251fe7e06be8e79510c7c4c2d9546188da4e78d4fc585d5dd578e7533d3ddd1"
+        },
+        "hegemon_final_height": 124,
+        "counterpart_data": "/workspace/ada-htlc-run1/happy/cardano",
+        "owned_nodes_stopped": true
+      },
+      {
+        "scenario": "no_counterparty",
+        "status": "passed",
+        "counterpart_chain": "cardano",
+        "hegemon_seeds": "",
+        "production_authorized": false,
+        "proofs": {
+          "fund-bob": {
+            "seconds": 112.658,
+            "peak_rss_kib": 2090592,
+            "exit_code": 0
+          },
+          "lock": {
+            "seconds": 114.198,
+            "peak_rss_kib": 2080276,
+            "exit_code": 0
+          },
+          "refund": {
+            "seconds": 157.29,
+            "peak_rss_kib": 1902276,
+            "exit_code": 0
+          }
+        },
+        "checks": {
+          "fund-bob_canonical": true,
+          "lock_canonical": true,
+          "early_refund_rejected": true,
+          "refund_canonical": true,
+          "zero_peers": true
+        },
+        "source_commit": "b0cffb76bf1be5a08dbdd62d26daeb9c6c846d79",
+        "binary_sha256": {
+          "/workspace/Hegemon/target/release/hegemon-node": "7c1936f2f122cd3b008cf145ffd08551013a120373f933690a5dc671f7b6dbed",
+          "/workspace/Hegemon/target/release/private-spend": "b604d05b0263a671cd660c041c9f578d11902246efe949f7a59f127c7d5e7fde"
+        },
+        "wallet_proof_threads": 2,
+        "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
+        "genesis": "0xf733e30e04651929f545e185844c9af7312857ec0a8036569136a7ad14d98b8e",
+        "counterpart": {
+          "chain": "cardano",
+          "checks": {
+            "empty_topology": true,
+            "zero_peers": true
+          },
+          "transactions": {},
+          "script_sha256": "56297d7608973b2ed1a034f626d6786b903673d260692148ced220704a2eb03f",
+          "genesis_sha256": "77dfd02f73448ac775e3c447068323a75e82fed3970e9da0ec11079b736f21f3"
+        },
+        "hegemon_final_height": 139,
+        "counterpart_data": "/workspace/ada-htlc-run1/no_counterparty/cardano",
+        "owned_nodes_stopped": true
+      },
+      {
+        "scenario": "both_refund",
+        "status": "passed",
+        "counterpart_chain": "cardano",
+        "hegemon_seeds": "",
+        "production_authorized": false,
+        "proofs": {
+          "fund-bob": {
+            "seconds": 120.486,
+            "peak_rss_kib": 1865336,
+            "exit_code": 0
+          },
+          "lock": {
+            "seconds": 122.855,
+            "peak_rss_kib": 1931812,
+            "exit_code": 0
+          },
+          "refund": {
+            "seconds": 165.518,
+            "peak_rss_kib": 1733964,
+            "exit_code": 0
+          }
+        },
+        "checks": {
+          "fund-bob_canonical": true,
+          "lock_canonical": true,
+          "early_refund_rejected": true,
+          "refund_canonical": true,
+          "zero_peers": true
+        },
+        "source_commit": "b0cffb76bf1be5a08dbdd62d26daeb9c6c846d79",
+        "binary_sha256": {
+          "/workspace/Hegemon/target/release/hegemon-node": "7c1936f2f122cd3b008cf145ffd08551013a120373f933690a5dc671f7b6dbed",
+          "/workspace/Hegemon/target/release/private-spend": "b604d05b0263a671cd660c041c9f578d11902246efe949f7a59f127c7d5e7fde"
+        },
+        "wallet_proof_threads": 2,
+        "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
+        "genesis": "0x9418f0f2e3fd8afc401fb6abeeb0192f13869f2233aac0cb7adfeb5b02cf5f0e",
+        "counterpart": {
+          "chain": "cardano",
+          "checks": {
+            "empty_topology": true,
+            "zero_peers": true,
+            "wrong_secret_rejected": true,
+            "unauthorized_claim_rejected": true,
+            "early_refund_rejected": true,
+            "refund_confirmed": true,
+            "unauthorized_refund_rejected": true,
+            "expired_claim_rejected": true,
+            "repeat_refund_rejected": true
+          },
+          "transactions": {
+            "lock": "30da0a25eed559ec85caa14cdbabfefabd18dda8fdfb8fffef5dbcdedaaac149",
+            "refund": "6e35f050b744b0ed13a519b74c263d8d341a04c3a806834dec570e3819da8eb1"
+          },
+          "script_sha256": "56297d7608973b2ed1a034f626d6786b903673d260692148ced220704a2eb03f",
+          "genesis_sha256": "18bc05cde3ce9a4d71b878da64a5a6a9a57d050ed640e831b5a8b4ed9a1bdeed"
+        },
+        "hegemon_final_height": 139,
+        "counterpart_data": "/workspace/ada-htlc-run1/both_refund/cardano",
+        "owned_nodes_stopped": true
+      },
+      {
+        "scenario": "late_claim",
+        "status": "passed",
+        "counterpart_chain": "cardano",
+        "hegemon_seeds": "",
+        "production_authorized": false,
+        "proofs": {
+          "fund-bob": {
+            "seconds": 112.706,
+            "peak_rss_kib": 1997504,
+            "exit_code": 0
+          },
+          "lock": {
+            "seconds": 150.87,
+            "peak_rss_kib": 1679636,
+            "exit_code": 0
+          },
+          "refund": {
+            "seconds": 68.763,
+            "peak_rss_kib": 1802912,
+            "exit_code": 0
+          }
+        },
+        "checks": {
+          "fund-bob_canonical": true,
+          "lock_canonical": true,
+          "early_refund_rejected": true,
+          "refund_canonical": true,
+          "late_claim_rejected": true,
+          "zero_peers": true
+        },
+        "source_commit": "b0cffb76bf1be5a08dbdd62d26daeb9c6c846d79",
+        "binary_sha256": {
+          "/workspace/Hegemon/target/release/hegemon-node": "7c1936f2f122cd3b008cf145ffd08551013a120373f933690a5dc671f7b6dbed",
+          "/workspace/Hegemon/target/release/private-spend": "b604d05b0263a671cd660c041c9f578d11902246efe949f7a59f127c7d5e7fde"
+        },
+        "wallet_proof_threads": 2,
+        "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
+        "genesis": "0xb581e6bc7685d7fad2b1ae4a5b0522db5f3386173234b95fb07653bcd93c2f1e",
+        "counterpart": {
+          "chain": "cardano",
+          "checks": {
+            "empty_topology": true,
+            "zero_peers": true,
+            "wrong_secret_rejected": true,
+            "unauthorized_claim_rejected": true,
+            "early_refund_rejected": true,
+            "claim_confirmed": true,
+            "confirmed_submitted_witness_preimage": true,
+            "repeat_claim_rejected": true
+          },
+          "transactions": {
+            "lock": "8094ad184a46a740a1723c40bdd3439378b52845df7d0ab2017d5df48fb71ba3",
+            "claim": "cf735e0cc91e73a76997bff87d94556770dad0ea76ebdf9b3e7e03b573d6e01d"
+          },
+          "script_sha256": "56297d7608973b2ed1a034f626d6786b903673d260692148ced220704a2eb03f",
+          "genesis_sha256": "6c67b1527d8c3fdb26c4f555a8ad09bbde3cc9d204cbd34d5eb49b1a69dfd598"
+        },
+        "hegemon_final_height": 139,
+        "counterpart_data": "/workspace/ada-htlc-run1/late_claim/cardano",
+        "owned_nodes_stopped": true
+      }
+    ]
+  },
+  "scope": "Native ETH and ADA swaps on fresh local chains; no public peering or network sync; local functional tests without public-chain timing/finality or security qualification."
+}

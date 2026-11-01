@@ -11,8 +11,8 @@ Extend the current local private-spend Bitcoin test with native ETH and ADA legs
 - [x] Read repository instructions, current harness and design/method documentation; inspected environment.
 - [x] Install pinned Foundry 1.8.7, Solidity 0.8.30, Aiken 1.1.24, cardano-node 11.1.3 / CLI 11.2.3.0; checksum installer added.
 - [x] Solidity 9 tests and Aiken 10 tests pass; real local Ethereum and Cardano claim/refund smoke tests pass.
-- [ ] Add counterpart adapters and execute four fresh Hegemon scenarios per chain.
-- [ ] Retain receipts, resource measurements, reproducible commands and cleanup evidence; commit changes.
+- [x] Added both adapters and ran all eight scenarios successfully on fresh local chains.
+- [x] Retained public receipts and resource measurements in .agent/ETHEREUM_CARDANO_HTLC_RESULTS.json, reproduction/report in ETHEREUM_CARDANO_HTLC_RESULTS.md, implementation committed as b0cffb76.
 
 ## Milestones
 
@@ -22,7 +22,7 @@ Then create scripts/local_multichain_htlc_swap.py using the Hegemon setup and ex
 
 ## Validation and reproduction
 
-Record pinned tool versions and setup commands in the final report. Build and execute the Solidity and Aiken tests before Hegemon proving. Run python3 scripts/local_multichain_htlc_swap.py --chain ethereum|cardano --output /absolute/new/path, using the already built Development-capable node and private-spend binaries. Output paths must be new and private. Capture source and binary hashes, contract code hashes, transaction identifiers, balances, canonical confirmations, negative checks and Hegemon wait4 proof-process resource metrics. Fail visibly on unsupported tooling or failed acceptance. Stop and reap every owned node, including on errors.
+Record pinned tool versions and setup commands in the final report. Build and execute the Solidity and Aiken tests before Hegemon proving. Run `python3 scripts/local_multichain_htlc_swap.py --chain ethereum --output /workspace/new-ethereum-run` and `python3 scripts/local_multichain_htlc_swap.py --chain cardano --output /workspace/new-cardano-run`, using already built Development-capable node and private-spend binaries. Install prerequisites with `python3 -m pip install -r scripts/requirements-htlc-local.txt` and `python3 scripts/setup_multichain_htlc_tools.py`. A fresh Hegemon build uses `RUSTUP_TOOLCHAIN=1.91.1 cargo build --locked --release -p hegemon-node --bin hegemon-node --features development-candidate,wallet/private-spend-dev-artifacts -p wallet --bin private-spend`. Output paths must be new and private. Capture source and binary hashes, contract code hashes, transaction identifiers, balances, canonical confirmations, negative checks and Hegemon wait4 proof-process resource metrics. Fail visibly on unsupported tooling or failed acceptance. Stop and reap every owned node, including on errors.
 
 ## Decision Log
 
@@ -30,10 +30,12 @@ Retain the current branch local-private-spend-htlc so Bitcoin work remains avail
 
 ## Surprises & Discoveries
 
-The environment has about 3.6 GiB free disk, Docker, Python and Node.js but no Ethereum/Cardano CLI tools initially. Official prebuilt release archives are being installed under /workspace/chain-tools. Repository build outputs and Bitcoin data remain available.
+The environment has about 3.6 GiB free disk, Docker, Python and Node.js but no Ethereum/Cardano CLI tools initially. Official prebuilt release archives were installed under /workspace/chain-tools. Repository build outputs and Bitcoin data remain available.
 
 ## Outcomes & Retrospective
 
-Both counterparty implementations compile and pass unit tests plus actual local transaction smoke checks. Full Hegemon paired suites are running for Ethereum and Cardano.
+Both counterparty implementations pass their contract tests and actual local transaction smoke checks. All eight full Hegemon paired scenarios passed without interruption: success, missing counterpart funding, dual refund and late claim for each chain. Nineteen contract tests pass. Core Hegemon source remains identical to main. Observed proof processes took 68.763–174.281 seconds with about 1.60–2.00 GiB peak RSS while sharing CPU. All owned runtime nodes stopped. See ETHEREUM_CARDANO_HTLC_RESULTS.md for exact scope and commands.
 
 Cardano CLI reports evaluator rejection as "scripts have execution failures". Duplicate submission may be idempotently acknowledged, so repeat-spend tests construct a new transaction and require the consumed UTxO rejection instead. cardano-testnet create-env supplies keys but address files are produced only by its launcher; the adapter derives addresses directly and starts an owned loopback cardano-node process to ensure cleanup. Anvil has no P2P subsystem and does not implement net_peerCount in this release; isolation checks use the node process's established TCP sockets excluding its loopback RPC port. Cardano checks both empty topology and absence of established TCP connections.
+
+Completion update: validated all eight distinct Hegemon genesis identities, identical proof binaries/source relation, exact negative error paths, current SMZL carriers and stored counterpart confirmations. Recorded the local observer and timing limits to prevent treating functional passes as public-chain or security qualification.
