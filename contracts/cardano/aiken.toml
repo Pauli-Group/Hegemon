@@ -1,0 +1,11 @@
+name = "hegemon/htlc"
+version = "0.1.0"
+compiler = "v1.1.24"
+plutus = "v3"
+license = "MIT"
+description = "SHA-256 ADA escrow paired with a Hegemon HTLC"
+
+[[dependencies]]
+name = "aiken-lang/stdlib"
+version = "v3.1.0"
+source = "github"

@@ -1844,3 +1844,23 @@ or production authorization.
 The local runner advances each chain explicitly. Its shortened deadlines test
 height-based claim/refund behavior; they do not validate production wall-clock
 timeout margins, public-chain confirmation policy, or counterparty liveness.
+
+
+## Local Ethereum and Cardano HTLC counterparts
+
+`contracts/ethereum/HegemonHTLC.sol` escrows native ETH with claimant/refund
+authorization, SHA-256 and a timestamp deadline. `contracts/cardano/validators/htlc.ak`
+implements an ADA UTxO validator with the same 32-byte hash preimage, signer
+authorization and transaction validity intervals wholly before claim expiry or
+after refund eligibility. Cardano's ledger consumes each escrow UTxO once.
+
+`scripts/local_multichain_htlc_swap.py` pairs these contracts with the unchanged
+current Hegemon private-spend CLI on fresh isolated Development chains. It checks
+canonical Hegemon bytes, confirmed counterpart payouts and secret extraction,
+then exercises success, missing counterpart funding, refunds and late claims.
+Anvil supplies a local Ethereum execution chain. A single Cardano stake-pool
+node produces blocks on a fresh private genesis with empty topology. Ethereum
+confirmations are local block-depth checks; Cardano confirmations observe outputs
+for additional blocks and recover the preimage from the submitted transaction
+witness whose script-data hash is committed by the confirmed body. This does
+not implement a public-chain light client, reorg-resistant observer or bridge.

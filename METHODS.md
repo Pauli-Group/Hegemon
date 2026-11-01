@@ -2799,3 +2799,28 @@ or production authorization.
 The local runner advances each chain explicitly. Its shortened deadlines test
 height-based claim/refund behavior; they do not validate production wall-clock
 timeout margins, public-chain confirmation policy, or counterparty liveness.
+
+
+## Ethereum and Cardano local swap execution
+
+Install pinned Linux tools with `python3 scripts/setup_multichain_htlc_tools.py`
+and Python witness decoding with `python3 -m pip install -r scripts/requirements-htlc-local.txt`.
+The tool installer validates pinned SHA-256 release archive hashes and builds
+the Solidity and Aiken contracts; it does not start or sync a public node.
+Run `forge test --root contracts/ethereum --use /workspace/chain-tools/solc`
+using the installed Foundry executable and `aiken check contracts/cardano`
+using the installed Aiken executable. Run the full suite with
+`python3 scripts/local_multichain_htlc_swap.py --chain ethereum --output /absolute/new/path`
+and the same command with `--chain cardano` and a different new output path.
+
+Each scenario owns disposable private wallets, contract data, diagnostics and
+node processes. The output directory must be new; retries preserve previous
+receipts. Wallet proof metrics use Linux wait4 high-water RSS. Counterpart
+contracts test unauthorized/wrong-secret claims, early refunds and repeated
+spends; unit tests additionally check deadline boundaries and overlapping or
+unbounded Cardano intervals. Local timestamps and slots qualify functional
+claim/refund behavior only, not public-chain timeout margins or finality.
+Hegemon uses empty seeds only in these isolated tests. Shared miners use
+`HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"`
+unless rotated, share the approved seed list, and enable NTP/chrony because
+future-skewed PoW timestamps are rejected.

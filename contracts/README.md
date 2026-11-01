@@ -1,0 +1,62 @@
+# Local Hegemon HTLC counterparts
+
+These contracts escrow native ETH and ADA for swaps with the current Hegemon
+private-spend HTLC. Alice locks HGN for Bob; Bob locks ETH or ADA for Alice.
+Alice claims the counterpart asset with a 32-byte SHA-256 preimage. Bob obtains
+that preimage from the confirmed counterpart transaction and claims HGN.
+A timed-out leg can be refunded by its original owner.
+
+The implementation uses Solidity on a fresh Anvil execution chain and Aiken /
+Plutus V3 on a fresh single-node Cardano network. It does not change Hegemon's
+circuit, source identity, wallet, or consensus code. The Cardano validator checks
+the transaction's required signers and validity interval; a transaction spanning
+expiry cannot use the claim branch. Ledger input consumption prevents repeats.
+Ethereum uses an explicit spent flag before any external payment.
+
+## Install and build
+
+Linux x86_64, Python 3.12 and already-built Hegemon Development-capable binaries
+are required. From the repository root:
+
+    python3 -m pip install -r scripts/requirements-htlc-local.txt
+    python3 scripts/setup_multichain_htlc_tools.py
+
+The installer pins Foundry 1.8.7, solc 0.8.30, Aiken 1.1.24, cardano-node 11.1.3
+and its bundled cardano-cli 11.2.3.0. It validates release archive SHA-256 hashes,
+extracts only named binaries and builds both contracts. It uses
+`/workspace/chain-tools` by default; `--tools /other/path` selects another root.
+Cardano's stdlib v3.1.0 is pinned in `cardano/aiken.lock`.
+
+For a fresh Hegemon build:
+
+    cargo build --locked --release -p hegemon-node --bin hegemon-node --features development-candidate,wallet/private-spend-dev-artifacts -p wallet --bin private-spend
+
+## Tests
+
+    /workspace/chain-tools/foundry/forge test --root contracts/ethereum --use /workspace/chain-tools/solc -vv
+    /workspace/chain-tools/aiken/aiken-x86_64-unknown-linux-musl/aiken check contracts/cardano
+    python3 scripts/local_multichain_htlc_swap.py --chain ethereum --output /workspace/new-eth-run
+    python3 scripts/local_multichain_htlc_swap.py --chain cardano --output /workspace/new-ada-run
+
+Output directories must not already exist. `--scenario happy`,
+`no_counterparty`, `both_refund` or `late_claim` selects a single case; the default
+runs all four with separate wallets and chains. `--node`, `--wallet` and `--tools`
+select executable paths. Each output directory contains private disposable keys,
+passphrase files and diagnostics; keep it private. A failure preserves its
+receipt and logs, stops owned nodes, and returns a nonzero exit status.
+
+Tests check exact Hegemon action bytes in canonical blocks, mined wallet attempts,
+recipient note values, counterpart payments, negative contract execution and
+consumed inputs. Counterpart confirmation uses additional local blocks. Ethereum
+extracts the preimage from a canonical receipt event. Cardano extracts it from
+the exact submitted signed transaction after observing its outputs in the ledger;
+the confirmed body commits the redeemer with its script-data hash. This Cardano
+observer is not a historical-block indexer or a public-chain finality client.
+
+All nodes bind loopback. Hegemon has an empty seed list, Cardano has an empty
+P2P topology with ledger peer discovery disabled, and Anvil has no P2P network.
+The adapters check established TCP connections of their owned processes and
+Hegemon reports zero peers. Tests advance local deadlines and do not establish
+public-chain timeout margins, confirmation policy, reorg handling or release
+security approval. Shared Hegemon mining still uses the approved common seeds
+and NTP/chrony guidance in the operator runbooks.

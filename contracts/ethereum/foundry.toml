@@ -1,0 +1,8 @@
+[profile.default]
+src = "."
+test = "test"
+out = "out"
+libs = []
+solc = "0.8.30"
+evm_version = "cancun"
+optimizer = true
