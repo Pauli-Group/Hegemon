@@ -1899,6 +1899,10 @@ The offer board can compare two separately queried local escrow snapshots with a
 
 An additive public-testnet rehearsal is in progress for Bitcoin testnet4, Ethereum Sepolia and Cardano preview without a local full node. `scripts/public_testnet_probe.py` checks public service network identities and wallet balances, while `scripts/public_bitcoin_transactions.py` builds and signs testnet-compatible Bitcoin transactions locally. Its funding, claim and refund transactions have been checked against peerless regtest; no public swap or broadcast is established by those tests. Remote services remain trust and availability assumptions, and the local-only companion restrictions remain unchanged.
 
+The in-progress public testnet tooling also signs EIP-1559 transactions for Sepolia's chain ID and builds balanced Cardano transaction bodies offline. Local Anvil tests deployed and claimed ETH, ERC-20, ERC-721 and ERC-1155 fixtures, while a peerless Cardano test funded, claimed and refunded HTLCs containing fungible and one-of-one fixture assets using a conservative script budget and rejected an early refund. A private signed-transaction journal is prepared before the separate network-specific broadcast functions. These components have not established public-chain behavior or complete swap recovery.
+
+Node-free testnet drivers obtain UTxOs from public indexers and recover disclosed claim secrets by transaction ID. Bitcoin and Cardano UTxO readers were checked against real public-chain data; they trust the indexers and do not reserve outputs. These primitives are not a complete coordinated swap or a substitute for independently validated consensus.
+
 
 ## Local swap deadline watch and desktop entry
 

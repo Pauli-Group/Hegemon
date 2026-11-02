@@ -7,13 +7,16 @@ This living plan follows `.agent/PLANS.md`. The aim is to repeat the Bitcoin, Et
 - [x] (2026-11-02) Inspected the existing isolated rehearsal scripts and repository design. Confirmed Ethereum Sepolia, Cardano preview Koios and Bitcoin testnet4 public endpoints are reachable.
 - [x] (2026-11-02) Generated two disposable test participants under `/workspace/public-testnet-swap-20261102`, with private files restricted to the current user. Requested testnet faucet funds for the first participant. These private files must never be committed or used for real funds.
 - [x] (2026-11-02) Added read-only public testnet identity and balance probing, and local Bitcoin P2WPKH funding plus HTLC claim/refund construction. Tests validate Bitcoin signatures against a peerless local regtest node and reject wrong secrets, wrong signing keys and early refund.
+- [x] (2026-11-02) Added local EIP-1559 Sepolia-ID signing, verified by deploying and claiming ETH, ERC-20, ERC-721 and ERC-1155 fixtures on local Anvil. Added offline Cardano CLI balancing with exact native-asset change, verified by funding, claiming, rejecting an early refund, and refunding an ADA/fungible/NFT HTLC on an isolated local chain.
+- [x] (2026-11-02) Added a private, exclusive signed-transaction journal and testnet-specific submission functions. Mock tests exercise network rejection, a lost response without retry and the distinction between submission and confirmation.
+- [x] (2026-11-02) Added public UTxO and claim-preimage readers and local-signing drivers for the three test networks. Verified Bitcoin and Cardano UTxO response parsing with real public-chain outputs; the actors are still unfunded and no transaction has been broadcast.
 - [ ] Add independently checked remote public-testnet adapters and safe transaction building and submission, without weakening local companion safeguards.
 - [ ] Exercise BTC/ETH, BTC/Cardano, ETH/Cardano and both Ethereum and Cardano same-chain paths, including applicable fungible and NFT fixtures, claims, refunds and failure cases, subject to testnet funds, network confirmation times and service availability.
 - [ ] Record public transaction identifiers and observations, run regression tests, update architecture documentation and commit the work.
 
 ## Surprises & Discoveries
 
-The existing harness assumes its own peerless Bitcoin Core, Anvil and Cardano node and cannot be retargeted by changing an endpoint. Cardano script transactions require remote protocol parameters and execution evaluation. Koios exposes preview chain data and transaction submission but no execution-evaluation endpoint was found in its public specification. Public services are trusted sources and may be unavailable or inconsistent. The initial Ethereum wallet output is a two-column address/key record rather than labeled lines; the setup preserved the existing generated key and resumed safely. The first Bitcoin unit run exposed a test cleanup process-group configuration error; setting `start_new_session=True` fixed it and the subsequent actual consensus checks passed.
+The existing harness assumes its own peerless Bitcoin Core, Anvil and Cardano node and cannot be retargeted by changing an endpoint. Cardano script transactions require remote protocol parameters and an execution budget. Koios exposes preview chain data and transaction submission but no execution-evaluation endpoint was found in its public specification. An offline-built single-script claim succeeded locally when supplied a conservative budget, with correspondingly higher fees; the node still verifies the script. The first attempt reversed cardano-cli's `(steps,memory)` order and the local ledger rejected it as over budget; the corrected transaction was accepted. Public services are trusted sources and may be unavailable or inconsistent. The initial Ethereum wallet output is a two-column address/key record rather than labeled lines; the setup preserved the existing generated key and resumed safely. The first Bitcoin unit run exposed a test cleanup process-group configuration error; setting `start_new_session=True` fixed it and the subsequent actual consensus checks passed. The initial Ethereum test queried a receipt before local mining completed and now waits for the receipt. An initial token-contract deployment exhausted its local test gas limit, and the successful retry used a larger limit.
 
 ## Decision Log
 
@@ -23,7 +26,7 @@ Decision: use public network access only for these three networks, with no Hegem
 
 ## Outcomes & Retrospective
 
-Work is in progress. Public endpoint reachability and the local Bitcoin signature test do not establish that a public-testnet swap or any broadcast has succeeded. Testnet transactions are public and no test can establish production safety.
+Work is in progress. Public endpoint reachability and the local Bitcoin, Ethereum and Cardano transaction tests do not establish that a public-testnet swap or any broadcast has succeeded. Testnet transactions are public and no test can establish production safety.
 
 ## Context and Orientation
 
@@ -35,7 +38,7 @@ First implement testnet identity checks, locally controlled transaction signing,
 
 ## Concrete Steps
 
-From the repository root, run `python3 scripts/public_testnet_probe.py --addresses /workspace/public-testnet-swap-20261102/addresses.json` to check chain identities and balances. Run `PYTHONPATH=scripts:/workspace/chain-tools/public-test-python python3 -m unittest scripts/test_public_testnet_probe.py scripts/test_public_bitcoin_transactions.py -v` to test incorrect network/address rejection and offline signed Bitcoin funding, claim and refund against peerless regtest. The public script verifies Bitcoin testnet4 genesis, Sepolia genesis and chain ID, and preview network magic and start time. Test actors' public addresses are in the specified JSON file; the surrounding directory is private. Follow the test scripts and receipts added during implementation. Never put keys in command arguments, source files, public receipts or logs.
+From the repository root, run `python3 scripts/public_testnet_probe.py --addresses /workspace/public-testnet-swap-20261102/addresses.json` to check chain identities and balances. Run `PYTHONPATH=scripts:/workspace/chain-tools/public-test-python python3 -m unittest scripts/test_public_testnet_probe.py scripts/test_public_bitcoin_transactions.py scripts/test_public_bitcoin_driver.py scripts/test_public_ethereum_transactions.py scripts/test_public_sepolia_driver.py scripts/test_public_cardano_transactions.py scripts/test_public_swap_journal.py scripts/test_public_testnet_submit.py scripts/test_public_testnet_utxos.py scripts/test_public_testnet_observers.py -v` to exercise the public-testnet primitives and local fixture chains. The public script verifies Bitcoin testnet4 genesis, Sepolia genesis and chain ID, and preview network magic and start time. Test actors' public addresses are in the specified JSON file; the surrounding directory is private. Follow the test scripts and receipts added during implementation. Never put keys in command arguments, source files, public receipts or logs.
 
 ## Validation and Acceptance
 
@@ -52,3 +55,11 @@ Use local signing with Python `embit` for Bitcoin testnet4, Foundry tooling for 
 Revision 2026-11-02: created the plan after verifying public endpoints and generating disposable keys, before any public transaction or faucet funding.
 
 Revision 2026-11-02: added identity/balance probing and consensus-tested offline Bitcoin transaction builders. Public testnet funding and cross-chain execution are still pending.
+
+Revision 2026-11-02: added Sepolia-ID signing and an offline Cardano transaction builder. Local network tests exposed and fixed receipt timing and the Cardano CLI's execution-budget argument order; no public funding, swap or broadcast is asserted.
+
+Revision 2026-11-02: the offline Cardano path also passed early-refund rejection and mature refund for the token bundle on a fresh isolated chain. Added a private pre-submission journal and testnet network-identity checks, with mocked submission tests. No signed public transaction has been sent.
+
+Revision 2026-11-02: added remote UTxO and confirmed-preimage readers and node-free signing/submission drivers. The Bitcoin and Cardano readers also parsed real public-chain UTxOs, while both actors remained unfunded. The public tests and complete coordination remain unperformed.
+
+Revision 2026-11-02: extended the Sepolia-ID signed local rehearsal to ERC-20, ERC-721 and ERC-1155 claims. Public-network funding and cross-chain execution are still pending.

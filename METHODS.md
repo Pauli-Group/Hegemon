@@ -2859,6 +2859,10 @@ The local offer board can compare two independently rechecked escrow snapshots w
 
 An additive public-testnet rehearsal is being prepared for Bitcoin testnet4, Ethereum Sepolia and Cardano preview using public services instead of full-node synchronization. The probe checks Bitcoin and Ethereum genesis identities and Cardano preview network parameters, then reads disposable wallet balances. Bitcoin P2WPKH funding and HTLC claim/refund transactions are signed locally and have been verified against peerless regtest, including invalid and early spend rejection. These results do not establish a public-testnet broadcast, cross-chain coordination or production security; remote service data is trusted.
 
+The public-testnet preparation also has a Sepolia-ID EIP-1559 signer and an offline Cardano transaction-body builder that preserves native-asset quantities and calculates a conservative fee. Local tests deployed and claimed ETH and ERC-20/721/1155 fixtures on Anvil, and funded, claimed and refunded an ADA/fungible/NFT output on a peerless Cardano chain; an early refund failed. The Cardano caller must independently validate protocol parameters, inputs, collateral and execution budget. An exclusive private journal stores signed transaction bytes before testnet submission; a lost response requires chain inspection, not blind retry. Public transaction inclusion and pairwise execution are not established by these local tests.
+
+The experimental remote UTxO and claim-preimage readers use trusted public indexers and return snapshots rather than reservations or independently verified finality. Bitcoin and Cardano UTxO readers were exercised on existing public-chain outputs, but the disposable rehearsal wallets were still unfunded and no public rehearsal transaction was submitted.
+
 
 ## Local swap deadline watch and desktop entry
 
