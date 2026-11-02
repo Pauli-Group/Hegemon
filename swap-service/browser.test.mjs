@@ -91,6 +91,10 @@ test('two browser sessions create a private offer and exchange encrypted message
   try{await first.getByText('taker: hello from the public board').waitFor({timeout:10000});}catch{throw Error('owner chat status: '+await first.locator('#chat-status').textContent()+'; messages: '+await first.locator('#chat-list').textContent());}
   await first.locator('#chat-form input').fill('public reply');await first.getByRole('button',{name:'Send encrypted message'}).click();
   await first.getByText('owner: public reply').waitFor();await second.getByRole('button',{name:'Refresh messages'}).click();await second.getByText('owner: public reply').waitFor();
+  const ownerFingerprints=await first.locator('#chat-fingerprints').textContent(),takerFingerprints=await second.locator('#chat-fingerprints').textContent();assert.equal(ownerFingerprints,takerFingerprints);assert.match(ownerFingerprints,/Owner inbox SHA-256: [0-9a-f]{64} · Reservation key SHA-256: [0-9a-f]{64}/);
+  const offerRoute='**/offers/'+publicId;await first.route(offerRoute,async route=>{if(route.request().method()!=='GET')return route.continue();const response=await route.fetch(),value=await response.json();value.ownerPublicKey='04'+'0'.repeat(128);return route.fulfill({response,json:value});});
+  await first.getByRole('button',{name:'Refresh messages'}).click();await first.getByText('Offer inbox key changed. Verify the offer independently.').waitFor();assert.equal(await first.locator('#chat-form button').isDisabled(),true);
+  await first.unroute(offerRoute);await first.getByRole('button',{name:'Refresh messages'}).click();await first.getByText('taker: hello from the public board').waitFor();
   const publicKey=await second.evaluate(id=>localStorage.getItem('offer-message-key:'+id),publicId);
   assert.equal(publicBodies.some(body=>body.includes('hello from the public board')||body.includes('public reply')||body.includes(publicKey)),false);
   const sent=[];first.on('request',request=>{const body=request.postData();if(body)sent.push(body);});

@@ -1,10 +1,11 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {makeInboxKeyPair,sealPublicSession,openPublicSession,parsePublicSession} from './public-inbox.mjs';
+import {makeInboxKeyPair,inboxFingerprint,sealPublicSession,openPublicSession,parsePublicSession} from './public-inbox.mjs';
 
 test('public offer handshake protects the key and binds offer and reservation',async()=>{
  const owner=await makeInboxKeyPair(),other=await makeInboxKeyPair(),offer='a'.repeat(64),reservation='b'.repeat(64),key='c'.repeat(64);
  assert.equal(owner.privateKey.extractable,false);
+ assert.match(await inboxFingerprint(owner.publicKey),/^[0-9a-f]{64}$/);await assert.rejects(inboxFingerprint('invalid'));
  const sealed=await sealPublicSession(owner.publicKey,offer,reservation,key);assert.ok(parsePublicSession(sealed));assert.ok(!sealed.includes(key));
  assert.equal(await openPublicSession(owner.privateKey,owner.publicKey,offer,reservation,sealed),key);
  await assert.rejects(openPublicSession(other.privateKey,owner.publicKey,offer,reservation,sealed));

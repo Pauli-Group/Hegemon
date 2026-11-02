@@ -19,6 +19,7 @@ async function derive(privateKey,other,offer,reservation){
 function aad(offer,reservation,owner,ephemeral){return enc.encode(['hegemon.swap.public-inbox.v1',offer,reservation,owner,ephemeral].join(':'));}
 export async function makeInboxKeyPair(){const pair=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},false,['deriveBits']);
  const publicBytes=new Uint8Array(await crypto.subtle.exportKey('raw',pair.publicKey));return {publicKey:hex(publicBytes),privateKey:pair.privateKey};}
+export async function inboxFingerprint(value){if(!pub(value))throw Error('Invalid inbox public key.');return hex(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes(value))));}
 export async function sealPublicSession(owner,offer,reservation,sessionKey){
  checkIds(offer,reservation);if(!pub(owner)||!id(sessionKey))throw Error('Invalid public offer key.');
  const pair=await makeInboxKeyPair(),iv=crypto.getRandomValues(new Uint8Array(12)),plain=bytes(sessionKey);
