@@ -29,7 +29,7 @@ test('private and public offers, exclusive reservations, authenticated relay and
   }
   try {
     await start();
-    const page=await fetch(base+'/');assert.equal(page.status,200);assert.match(await page.text(),/Offer board only/);
+    const page=await fetch(base+'/');assert.equal(page.status,200);assert.match(await page.text(),/Offers and reservations do not lock assets/);
     assert.match(page.headers.get('content-security-policy'),/frame-ancestors 'none'/);
     assert.equal((await fetch(base+'/app.js')).status,200);
     assert.match((await fetch(base+'/crypto.mjs')).headers.get('content-type'),/javascript/);

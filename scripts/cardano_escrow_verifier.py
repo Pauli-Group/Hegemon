@@ -15,7 +15,7 @@ from htlc_counterpart import ROOT, TOOLS
 
 def verify_cardano_htlc(chain, *, outref, hashlock, claimant, refundee, expiry_ms,
                         expected_value, genesis_sha256, minimum_remaining_ms=1000,
-                        aiken=TOOLS/'aiken/aiken-x86_64-unknown-linux-musl/aiken'):
+                        aiken=TOOLS/'aiken/aiken-x86_64-unknown-linux-musl/aiken', allow_expired=False):
     if not isinstance(outref,str) or not re.fullmatch('[0-9a-f]{64}#(0|[1-9][0-9]*)',outref):raise ValueError('invalid output reference')
     if not isinstance(hashlock,str) or not re.fullmatch('[0-9a-f]{64}',hashlock):raise ValueError('invalid hashlock')
     if any(not isinstance(key,str) or not re.fullmatch('[0-9a-f]{56}',key) for key in (claimant,refundee)):raise ValueError('invalid payment key hash')
@@ -40,7 +40,7 @@ def verify_cardano_htlc(chain, *, outref, hashlock, claimant, refundee, expiry_m
     datum={'constructor':0,'fields':[{'bytes':hashlock},{'bytes':claimant},{'bytes':refundee},{'int':expiry_ms}]}
     for _ in range(8):
         before=chain.tip()
-        if expiry_ms-(start+before['slot']*slot_ms)<minimum_remaining_ms:raise ValueError('refund deadline too close')
+        if not allow_expired and expiry_ms-(start+before['slot']*slot_ms)<minimum_remaining_ms:raise ValueError('refund deadline too close')
         output=chain.utxos(expected_address).get(outref)
         after=chain.tip()
         if before.get('hash')!=after.get('hash'):

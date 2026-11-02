@@ -57,10 +57,10 @@ async function companion(path,token,body){
  const result=await response.json();if(!response.ok)throw Error(result.error||'Companion request failed');return result;
 }
 $('connect-companion').addEventListener('click',async()=>{
- const token=$('companion-token').value;$('companion-token').value='';companionToken=null;companionCapabilities=[];$('hegemon-actions').hidden=true;$('ethereum-actions').hidden=true;$('bitcoin-actions').hidden=true;
+ const token=$('companion-token').value;$('companion-token').value='';companionToken=null;companionCapabilities=[];$('hegemon-actions').hidden=true;$('ethereum-actions').hidden=true;$('bitcoin-actions').hidden=true;$('cardano-actions').hidden=true;
  try{if(!/^[0-9a-f]{64}$/.test(token))throw Error('Enter the 64-character pairing token.');
   const result=await companion('/health',token);if(!Array.isArray(result.capabilities)||!result.capabilities.length)throw Error('No local verifiers are available.');
-  companionToken=token;companionCapabilities=result.capabilities;$('hegemon-actions').hidden=!companionCapabilities.includes('hegemon-local-actions');$('ethereum-actions').hidden=!companionCapabilities.includes('ethereum-local-anchor');$('bitcoin-actions').hidden=!companionCapabilities.includes('bitcoin-regtest-actions');msg($('companion-status'),companionCapabilities.includes('hegemon-local-actions')?'Local companion connected with experimental Hegemon actions enabled.':companionCapabilities.includes('bitcoin-regtest-actions')?'Local companion connected with experimental Bitcoin actions enabled.':companionCapabilities.includes('ethereum-local-anchor')?'Local companion connected with an Ethereum test-chain anchor.':'Local read-only companion connected.');
+  companionToken=token;companionCapabilities=result.capabilities;$('hegemon-actions').hidden=!companionCapabilities.includes('hegemon-local-actions');$('ethereum-actions').hidden=!companionCapabilities.includes('ethereum-local-anchor');$('bitcoin-actions').hidden=!companionCapabilities.includes('bitcoin-regtest-actions');$('cardano-actions').hidden=!companionCapabilities.includes('cardano-local-actions');msg($('companion-status'),companionCapabilities.includes('hegemon-local-actions')?'Local companion connected with experimental Hegemon actions enabled.':companionCapabilities.includes('bitcoin-regtest-actions')?'Local companion connected with experimental Bitcoin actions enabled.':companionCapabilities.includes('cardano-local-actions')?'Local companion connected with experimental Cardano actions enabled.':companionCapabilities.includes('ethereum-local-anchor')?'Local companion connected with an Ethereum test-chain anchor.':'Local read-only companion connected.');
  }catch(e){msg($('companion-status'),e.message,true);}
 });
 const ethereumActionForm=$('ethereum-action-form');let ethereumActionBusy=false;
@@ -139,22 +139,39 @@ bitcoinActionForm.addEventListener('submit',async event=>{event.preventDefault()
   $('bitcoin-action-result').textContent=JSON.stringify(result,null,2);msg($('bitcoin-action-status'),'Bitcoin transaction submitted. Check its receipt and confirmations.');
  }catch(e){msg($('bitcoin-action-status'),e.message,true);}finally{button.disabled=false;}
 });
+function cardanoValue(data){const value={lovelace:String(data.get('lovelace')).trim()};
+  for(const line of String(data.get('assets')).split(/\r?\n/).map(x=>x.trim()).filter(Boolean)){
+   const match=line.match(/^([0-9a-f]{56})\.((?:[0-9a-f]{2}){0,32})=([1-9][0-9]{0,18})$/);
+   if(!match||BigInt(match[3])>=1n<<63n)throw Error('Invalid Cardano asset line.');
+   const [,policy,name,quantity]=match;value[policy]??={};
+   if(Object.hasOwn(value[policy],name))throw Error('Duplicate Cardano asset.');
+   value[policy][name]=quantity;
+  }
+  return value;
+}
 $('cardano-form').addEventListener('submit',async event=>{event.preventDefault();
  try{if(!companionToken||!companionCapabilities.includes('cardano-local-verify'))throw Error('Connect a companion configured for Cardano.');
   const data=new FormData(event.currentTarget),terms={};
   for(const name of ['outref','hashlock','claimant','refundee','expiry_ms','genesis_sha256'])terms[name]=String(data.get(name)).trim();
-  terms.expected_value={lovelace:String(data.get('lovelace')).trim()};
-  for(const line of String(data.get('assets')).split(/\r?\n/).map(x=>x.trim()).filter(Boolean)){
-   const match=line.match(/^([0-9a-f]{56})\.((?:[0-9a-f]{2}){0,32})=([1-9][0-9]{0,18})$/);
-   if(!match||BigInt(match[3])>=1n<<63n)throw Error('Invalid Cardano asset line.');
-   const [,policy,name,quantity]=match;terms.expected_value[policy]??={};
-   if(Object.hasOwn(terms.expected_value[policy],name))throw Error('Duplicate Cardano asset.');
-   terms.expected_value[policy][name]=quantity;
-  }
+  terms.expected_value=cardanoValue(data);
   const result=await companion('/cardano/verify',companionToken,terms);
   if(!result.verified||result.snapshot.confirmations!==null)throw Error('Cardano snapshot not verified.');
   msg($('cardano-status'),'Verified at local tip block '+result.snapshot.tip_block+'. Confirmation depth is unknown.');
  }catch(e){msg($('cardano-status'),e.message,true);}
+});
+const cardanoActionForm=$('cardano-action-form');
+function updateCardanoActionFields(){const lock=cardanoActionForm.elements.operation.value==='lock';for(const label of cardanoActionForm.querySelectorAll('[data-cardano-lock],[data-cardano-spend]')){const visible=label.hasAttribute('data-cardano-lock')?lock:!lock;label.hidden=!visible;for(const input of label.querySelectorAll('input')){input.disabled=!visible;input.required=visible;}}}
+cardanoActionForm.elements.operation.addEventListener('change',updateCardanoActionFields);updateCardanoActionFields();
+cardanoActionForm.addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button[type="submit"]');
+ try{if(!companionToken||!companionCapabilities.includes('cardano-local-actions'))throw Error('Connect a companion with experimental Cardano actions enabled.');
+  const data=new FormData(event.currentTarget),operation=String(data.get('operation')),request={operation,expected_value:cardanoValue(data)};
+  for(const name of ['hashlock','claimant','refundee','expiry_ms'])request[name]=String(data.get(name)).trim();
+  if(operation==='lock')request.inputs=String(data.get('inputs')).split(',').map(x=>x.trim());
+  else for(const name of ['outref','fee_input','collateral'])request[name]=String(data.get(name)).trim();
+  button.disabled=true;$('cardano-action-result').textContent='';msg($('cardano-action-status'),'Review and approve this request in the companion terminal.');
+  const result=await companion('/cardano/action',companionToken,request);if(result.completed!==true)throw Error('Action outcome uncertain. Check the transaction before retrying.');
+  $('cardano-action-result').textContent=JSON.stringify(result,null,2);msg($('cardano-action-status'),'Cardano transaction submitted. Check its inclusion and confirmations.');
+ }catch(e){msg($('cardano-action-status'),e.message,true);}finally{button.disabled=false;}
 });
 $('hegemon-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button[type="submit"]');
  try{if(!companionToken||!companionCapabilities.includes('hegemon-local-verify'))throw Error('Connect a companion configured for the Hegemon wallet.');

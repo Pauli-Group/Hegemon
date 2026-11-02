@@ -15,14 +15,15 @@ from local_private_spend_swap import port,require,stop
 
 
 class TestBitcoinActions:
-    def __init__(self,directory,*,url,cookie,wallet,genesis,wallet_phrase=None):
+    def __init__(self,directory,*,url,cookie,wallet,genesis,wallet_phrase=None,backup=None,backup_phrase=None):
         directory.mkdir(mode=0o700);self.port=port();token_file=directory/'token';self.master,slave=pty.openpty()
         attrs=termios.tcgetattr(slave);attrs[3]&=~termios.ECHO;termios.tcsetattr(slave,termios.TCSANOW,attrs)
         def ctty():os.setsid();fcntl.ioctl(0,termios.TIOCSCTTY,0)
-        self.process=subprocess.Popen([sys.executable,ROOT/'scripts/local_swap_companion.py','--bitcoin-rpc',url,'--bitcoin-cookie',cookie,
-            '--bitcoin-wallet',wallet,'--bitcoin-genesis',genesis,'--enable-bitcoin-actions','--token-file',token_file,'--port',str(self.port)],
-            stdin=slave,stdout=slave,stderr=slave,preexec_fn=ctty)
-        os.close(slave);self.wallet_phrase=wallet_phrase
+        command=[sys.executable,ROOT/'scripts/local_swap_companion.py','--bitcoin-rpc',url,'--bitcoin-cookie',cookie,
+            '--bitcoin-wallet',wallet,'--bitcoin-genesis',genesis,'--enable-bitcoin-actions','--token-file',token_file,'--port',str(self.port)]
+        if backup:command.extend(['--bitcoin-preimage-backup',backup])
+        self.process=subprocess.Popen(command,stdin=slave,stdout=slave,stderr=slave,preexec_fn=ctty)
+        os.close(slave);self.wallet_phrase=wallet_phrase;self.backup_phrase=backup_phrase
         try:
             self.token=wait_for(lambda:(v if len(v:=token_file.read_text().strip())==64 else None),'Bitcoin action companion token')
             wait_for(lambda:self.request('/health')[0]==200,'Bitcoin action companion server')
@@ -44,7 +45,7 @@ class TestBitcoinActions:
         thread=threading.Thread(target=invoke,daemon=True);thread.start();output=bytearray();sent=set();deadline=time.monotonic()+60
         prompts=[(b'Type APPROVE to continue this local Bitcoin action:',b'APPROVE' if approve else b'NO')]
         if self.wallet_phrase:prompts.append((b'Bitcoin wallet passphrase (local terminal only):',self.wallet_phrase))
-        if secret is not None:prompts.append((b'Claim preimage as 64 lowercase hexadecimal characters (local terminal only):',secret.hex().encode()))
+        if secret is not None:prompts.append((b'Encrypted preimage backup passphrase (local terminal only):',self.backup_phrase) if self.backup_phrase else (b'Claim preimage as 64 lowercase hexadecimal characters (local terminal only):',secret.hex().encode()))
         while thread.is_alive():
             require(time.monotonic()<deadline and self.process.poll() is None,'Bitcoin action companion timed out or exited')
             if select.select([self.master],[],[],.1)[0]:
@@ -68,4 +69,5 @@ class TestBitcoinActions:
         if expected and secret is not None:require(len(prompts)-1 in sent,'local Bitcoin preimage prompt missing')
         if secret is not None:require(secret.hex().encode() not in output,'Bitcoin action echoed a preimage')
         if self.wallet_phrase:require(self.wallet_phrase not in output,'Bitcoin action echoed a wallet passphrase')
+        if self.backup_phrase:require(self.backup_phrase not in output,'Bitcoin action echoed a backup passphrase')
         return body.get('result')

@@ -30,6 +30,7 @@ from hegemon_action_runner import run_hegemon_action
 from hegemon_local_actions import private_handoff_directory
 from ethereum_local_anchor import ethereum_local_head
 from bitcoin_local_actions import run_bitcoin_action
+from cardano_local_actions import run_cardano_action,local_node_identity,private_key,private_journal_directory
 from local_private_spend_swap import PASS, wallet
 from release_private_spend_lifecycle_io import rpc, json_line, public_v8_address_keys, height
 
@@ -95,6 +96,12 @@ def main():
     p.add_argument('--bitcoin-preimage-backup',type=Path,help='optional private exported browser backup for local claims')
     p.add_argument('--cardano-socket',type=Path)
     p.add_argument('--cardano-network-dir',type=Path,help='directory containing the trusted local Shelley genesis')
+    p.add_argument('--enable-cardano-actions',action='store_true',help='enable locally approved isolated Cardano actions')
+    p.add_argument('--cardano-node-pid',type=int,help='process ID of the local Cardano node owning the socket')
+    p.add_argument('--cardano-genesis',help='SHA-256 of the trusted local Shelley genesis')
+    p.add_argument('--cardano-signing-key',type=Path,help='private local payment signing key')
+    p.add_argument('--cardano-journal-dir',type=Path,help='private directory for durable public transaction records')
+    p.add_argument('--cardano-preimage-backup',type=Path,help='optional private exported browser backup for local claims')
     p.add_argument('--ethereum-rpc',help='non-forked Anvil RPC on loopback, chain ID 31337')
     p.add_argument('--cardano-cli',type=Path,default=TOOLS/'cardano/bin/cardano-cli')
     p.add_argument('--aiken',type=Path,default=TOOLS/'aiken/aiken-x86_64-unknown-linux-musl/aiken')
@@ -119,6 +126,11 @@ def main():
         if not os.isatty(0):p.error('Bitcoin actions require an interactive local terminal')
     elif args.bitcoin_wallet or args.bitcoin_genesis or args.bitcoin_preimage_backup:p.error('Bitcoin wallet options require Bitcoin actions')
     if bool(args.cardano_socket)!=bool(args.cardano_network_dir):p.error('Cardano socket and network directory must be supplied together')
+    if args.enable_cardano_actions:
+        if not args.cardano_socket or not args.cardano_node_pid or not args.cardano_genesis or not args.cardano_signing_key or not args.cardano_journal_dir:p.error('Cardano actions require the socket, network directory, node PID, genesis, signing key and journal directory')
+        if not os.isatty(0):p.error('Cardano actions require an interactive local terminal')
+        local_node_identity(args.cardano_node_pid,args.cardano_socket,args.cardano_network_dir,args.cardano_genesis);private_key(args.cardano_signing_key);private_journal_directory(args.cardano_journal_dir)
+    elif args.cardano_node_pid or args.cardano_genesis or args.cardano_signing_key or args.cardano_journal_dir or args.cardano_preimage_backup:p.error('Cardano wallet options require Cardano actions')
     hegemon_options=[args.hegemon_wallet,args.hegemon_manifest,args.hegemon_genesis,args.hegemon_rpc]
     if any(hegemon_options) and not all(hegemon_options):p.error('all Hegemon wallet, manifest, genesis and RPC options are required')
     if not args.bitcoin_rpc and not args.cardano_socket and not args.ethereum_rpc and not all(hegemon_options):p.error('configure at least one local node')
@@ -143,6 +155,8 @@ def main():
         class CardanoView:
             magic='424242'
             net=args.cardano_network_dir
+            socket=args.cardano_socket
+            aiken=args.aiken
             script=Path(scratch.name)/'validator.plutus'
             script.write_text(subprocess.check_output([str(args.aiken),'blueprint','convert',str(ROOT/'contracts/cardano')],text=True))
             def run(self,*values):
@@ -178,7 +192,7 @@ def main():
             if not self.authorized():return self.reply(403,{'error':'forbidden'})
             try:
                 if self.path=='/health':
-                    capabilities=(['bitcoin-regtest-verify'] if btc else [])+(['bitcoin-regtest-actions'] if args.enable_bitcoin_actions else [])+(['cardano-local-verify'] if cardano else [])+(['ethereum-local-anchor'] if args.ethereum_rpc else [])+(['hegemon-local-verify'] if all(hegemon_options) else [])+(['hegemon-local-actions'] if args.enable_hegemon_actions else [])
+                    capabilities=(['bitcoin-regtest-verify'] if btc else [])+(['bitcoin-regtest-actions'] if args.enable_bitcoin_actions else [])+(['cardano-local-verify'] if cardano else [])+(['cardano-local-actions'] if args.enable_cardano_actions else [])+(['ethereum-local-anchor'] if args.ethereum_rpc else [])+(['hegemon-local-verify'] if all(hegemon_options) else [])+(['hegemon-local-actions'] if args.enable_hegemon_actions else [])
                     return self.reply(200,{'status':'ok','capabilities':capabilities})
                 if self.path=='/bitcoin/head' and btc:
                     info=btc.call('getblockchaininfo')
@@ -203,7 +217,7 @@ def main():
                 return self.reply(502,{'error':'local node status unavailable'})
         def do_POST(self):
             if not self.authorized():return self.reply(403,{'error':'forbidden'})
-            if self.path not in ('/bitcoin/verify','/bitcoin/action','/cardano/verify','/hegemon/verify','/hegemon/action'):return self.reply(404,{'error':'not found'})
+            if self.path not in ('/bitcoin/verify','/bitcoin/action','/cardano/verify','/cardano/action','/hegemon/verify','/hegemon/action'):return self.reply(404,{'error':'not found'})
             if self.headers.get_content_type()!='application/json':return self.reply(400,{'error':'JSON required'})
             try:
                 length=int(self.headers.get('Content-Length','0'))
@@ -212,6 +226,10 @@ def main():
                 if self.path=='/bitcoin/action':
                     if not args.enable_bitcoin_actions:raise ValueError('Bitcoin actions are not enabled')
                     result=run_bitcoin_action(btc=btc,wallet=args.bitcoin_wallet,genesis=args.bitcoin_genesis,request=data,backup=args.bitcoin_preimage_backup)
+                    return self.reply(200,{'completed':True,'result':result})
+                if self.path=='/cardano/action':
+                    if not args.enable_cardano_actions:raise ValueError('Cardano actions are not enabled')
+                    result=run_cardano_action(chain=cardano,pid=args.cardano_node_pid,genesis_hash=args.cardano_genesis,signing_key=args.cardano_signing_key,journal_dir=args.cardano_journal_dir,request=data,backup=args.cardano_preimage_backup)
                     return self.reply(200,{'completed':True,'result':result})
                 if self.path=='/hegemon/action':
                     if not args.enable_hegemon_actions:raise ValueError('Hegemon actions are not enabled')

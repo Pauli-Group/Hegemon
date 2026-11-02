@@ -18,7 +18,10 @@ def main():
     p.add_argument('--bitcoind',type=Path,default=Path('/workspace/bitcoin-32.1/bin/bitcoind'))
     p.add_argument('--exercise-companion',action='store_true',help='run actions through locally approved companion terminals')
     p.add_argument('--encrypted-wallets',action='store_true',help='use encrypted disposable wallets')
-    a=p.parse_args();os.umask(0o077);out=a.output.resolve();out.mkdir(mode=0o700,exist_ok=False)
+    p.add_argument('--exercise-backup-claim',action='store_true',help='claim using a local encrypted preimage backup')
+    a=p.parse_args();os.umask(0o077)
+    if a.exercise_backup_claim and not a.exercise_companion:p.error('backup claim requires the companion')
+    out=a.output.resolve();out.mkdir(mode=0o700,exist_ok=False)
     data=out/'bitcoin';data.mkdir(mode=0o700);rpcport=port();process=None;clients={};receipt={'status':'failed','checks':{}}
     try:
         process=subprocess.Popen([a.bitcoind,'-regtest',f'-datadir={data}','-listen=0','-connect=0','-discover=0','-dnsseed=0',f'-rpcport={rpcport}','-fallbackfee=0.0002','-printtoconsole=0'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
@@ -47,6 +50,12 @@ def main():
             raise RuntimeError('invalid Bitcoin action succeeded')
         for scenario in ('claim','refund'):
             secret=os.urandom(32);digest=hashlib.sha256(secret).hexdigest();height=btc.call('getblockcount')+15
+            if scenario=='claim' and a.exercise_backup_claim:
+                from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+                backup_phrase=b'local disposable backup passphrase';salt=os.urandom(16);iv=os.urandom(12)
+                key=hashlib.pbkdf2_hmac('sha256',backup_phrase,salt,600000,32);ciphertext=AESGCM(key).encrypt(iv,secret,('hegemon.swap.secret.v1:'+digest).encode())
+                backup=out/'encrypted-preimage.json';backup.write_text(json.dumps({'label':'local fixture','envelope':{'version':1,'iterations':600000,'hashlock':digest,'salt':salt.hex(),'iv':iv.hex(),'ciphertext':ciphertext.hex()}}))
+                clients['claim'].close();clients['claim']=TestBitcoinActions(out/'claim-backup-companion',url=f'http://127.0.0.1:{rpcport}',cookie=data/'regtest/.cookie',wallet='claim',genesis=genesis,wallet_phrase=wallet_phrase.encode() if wallet_phrase else None,backup=backup,backup_phrase=backup_phrase)
             def desc(c,r):return f'wsh(or_i(and_v(v:sha256({digest}),pk({c})),and_v(v:after({height}),pk({r}))))'
             for name in ('claim','refund'):
                 if wallet_phrase:btc.call('walletpassphrase',wallet_phrase,120,wallet=name,sensitive=True)
@@ -67,6 +76,7 @@ def main():
                 fail(action,'refund');receipt['checks']['early_refund_rejected']=True
                 btc.call('generatetoaddress',height-btc.call('getblockcount')+1,miner)
             answer=act(action,scenario,secret=secret if scenario=='claim' else None)
+            if scenario=='claim' and a.exercise_backup_claim:receipt['checks']['encrypted_backup_claim']=True
             btc.call('generatetoaddress',1,miner)
             require(btc.call('gettxout',result['txid'],output['n'],True) is None,'Bitcoin output remained unspent')
             require(btc.call('gettransaction',answer['txid'],wallet=scenario)['confirmations']>=1,'spend not confirmed')

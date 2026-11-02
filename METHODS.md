@@ -2847,6 +2847,8 @@ The experimental browser board can query a separately started loopback companion
 
 An optional Bitcoin regtest action interface similarly requires a peerless node, a locally configured descriptor wallet and a terminal approval. Before funding it asks the wallet to sign a synthetic refund without broadcasting it, to check that the refund branch key is available. Claim and refund use a fixed local-test fee. This does not verify the other leg, establish public-chain confirmation or fee policy, or replace wallet backup and recovery.
 
+An experimental local Cardano action interface derives the payment identity from a configured private signing key, validates selected UTxOs and exact ADA/native-asset values, and signs a transaction using the pinned Plutus validator after terminal approval. It binds the process, socket, loopback configuration and peerless topology to a local genesis at each action. It does not yet provide CIP-30 signing, verify the other leg, establish confirmation depth, or make the signing key encrypted.
+
 
 ## Local swap deadline watch and desktop entry
 
