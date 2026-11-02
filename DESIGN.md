@@ -1889,6 +1889,10 @@ An optional Bitcoin regtest action interface similarly requires a peerless node,
 
 An experimental local Cardano action interface derives the payment identity from a configured private signing key, validates selected UTxOs and exact ADA/native-asset values, and signs a transaction using the pinned Plutus validator after terminal approval. It binds the process, socket, loopback configuration and peerless topology to a local genesis at each action. It does not yet provide CIP-30 signing, verify the other leg, establish confirmation depth, or make the signing key encrypted.
 
+Experimental local observers recover a released preimage from confirmed Bitcoin witnesses, Ethereum claim events, Hegemon private-spend action bytes, or Cardano transaction redeemers streamed from a loopback Ogmios process. They check the expected hash and relevant transaction or input binding, fail on observed chain changes and create encrypted browser-compatible backups. The nodes and local observer process remain trust assumptions; an observed preimage may remain public after rollback, and these components do not coordinate both legs or provide background monitoring.
+
+The browser action journal commits validated public terms before requesting a wallet action and records returned identifiers when available. Pending or uncertain records make no claim about submission or confirmation. It stores no keys or preimages, uses transactional IndexedDB and fail-closed imports, and remains a partial record rather than full swap recovery.
+
 
 ## Local swap deadline watch and desktop entry
 

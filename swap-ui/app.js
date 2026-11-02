@@ -1,10 +1,11 @@
 'use strict';
 import {newMessageKey,encryptMessage,decryptMessage} from './crypto.mjs';
 import {verifyTokenEscrow,verifyEtherEscrow} from './ethereum-escrow.mjs';
-import {submitLocalEscrowDeployment,submitLocalTokenFundingStep,submitLocalEscrowRefund,submitLocalEscrowClaim} from './ethereum-actions.mjs';
+import {submitLocalEscrowDeployment,submitLocalTokenFundingStep,submitLocalEscrowRefund,submitLocalEscrowClaim,observeLocalEthereumClaim} from './ethereum-actions.mjs';
 import {validateWatch,evaluateWatch} from './deadlines.mjs';
-import {createRecovery,unlockRecovery,validateRecoveryEnvelope} from './recovery.mjs';
+import {createRecovery,encryptRecovery,unlockRecovery,validateRecoveryEnvelope} from './recovery.mjs';
 import {vaultLabel,listVault,addVault,removeVault} from './vault-store.mjs';
+import {listActions,beginAction,finishAction,uncertainAction,removeAction,importActions} from './action-journal.mjs';
 const types=[['ethereum:eth','Ethereum · ETH'],['ethereum:erc20','Ethereum · ERC-20'],['ethereum:erc721','Ethereum · ERC-721'],['ethereum:erc1155','Ethereum · ERC-1155'],['cardano:ada','Cardano · ADA'],['cardano:native','Cardano · native token'],['bitcoin:btc','Bitcoin · BTC'],['hegemon:hgn','Hegemon · HGN']];
 const $=id=>document.getElementById(id);
 for(const name of ['give-type','receive-type']) for(const [value,label] of types) document.querySelector(`[name="${name}"]`).add(new Option(label,value));
@@ -19,6 +20,16 @@ async function api(path,options={}){
 }
 function describe(asset){return `${asset.amount} · ${asset.chain} ${asset.kind}${asset.id?' · '+asset.id:''}`;}
 function msg(element,value,error=false){element.textContent=value;element.className=error?'error':'';}
+const actionChannel=typeof BroadcastChannel==='function'?new BroadcastChannel('hegemon.local.action-journal.v1'):null;
+function refreshActionViews(){actionChannel?.postMessage('changed');renderActionJournal();}
+async function recordedAction(chain,operation,terms,action){
+ const id=await beginAction(chain,operation,terms);refreshActionViews();
+ try{const result=await action();if(!result||typeof result.submitted!=='boolean')throw Error('Action outcome uncertain. Check the wallet or transaction before retrying.');
+  const saved={submitted:result.submitted};for(const field of ['confirmed','txid','attempt','refund_handoff','journal_record'])if(field in result)saved[field]=result[field];
+  let warning='';try{await finishAction(id,saved);}catch{warning='Action returned a result, but the local journal could not be updated. Save the result and check the wallet before retrying.';}
+  refreshActionViews();return {result,warning};
+ }catch(e){try{await uncertainAction(id);}catch{}refreshActionViews();throw e;}
+}
 let observedEthereumProvider,activeEthereumProvider;
 const verifyForm=$('verify-form');
 function toggleTokenFields(){const native=verifyForm.elements.kind.value==='eth';for(const name of ['token','tokenId']){verifyForm.elements[name].disabled=native;verifyForm.elements[name].required=!native;}}
@@ -75,9 +86,9 @@ ethereumActionForm.addEventListener('submit',async event=>{event.preventDefault(
   const [anchor,response]=await Promise.all([companion('/ethereum/head',companionToken),fetch(terms.kind==='eth'?'/ether-escrow-template.json':'/token-escrow-template.json')]);
   if(!response.ok)throw Error('Escrow template unavailable.');const template=await response.json();
   const guarded={request:args=>{if(provider!==activeEthereumProvider)throw Error('Wallet changed. Reconnect and check wallet history before retrying.');return provider.request(args);}};
-  const result=await submitLocalEscrowDeployment(guarded,template,terms,anchor);
+  const {result,warning}=await recordedAction('ethereum','deploy',terms,()=>submitLocalEscrowDeployment(guarded,template,terms,anchor));
   $('ethereum-action-result').textContent=JSON.stringify(result,null,2);
-  msg($('ethereum-action-status'),terms.kind==='eth'?'Deployment submitted; check the receipt and confirmations.':'Deployment submitted, but the token escrow is not funded. Check the receipt and confirmations.');
+  msg($('ethereum-action-status'),warning||(terms.kind==='eth'?'Deployment submitted; check the receipt and confirmations.':'Deployment submitted, but the token escrow is not funded. Check the receipt and confirmations.'),!!warning);
  }catch(e){msg($('ethereum-action-status'),e.message,true);}finally{setEthereumActionBusy(false);}
 });
 async function ethereumTokenStep(step){if(ethereumActionBusy)return;
@@ -87,9 +98,9 @@ async function ethereumTokenStep(step){if(ethereumActionBusy)return;
   const [anchor,response]=await Promise.all([companion('/ethereum/head',companionToken),fetch('/token-escrow-template.json')]);
   if(!response.ok)throw Error('Escrow template unavailable.');const template=await response.json();
   const guarded={request:args=>{if(provider!==activeEthereumProvider)throw Error('Wallet changed. Reconnect and check wallet history before retrying.');return provider.request(args);}};
-  const result=await submitLocalTokenFundingStep(guarded,template,terms,anchor,step);
+  const {result,warning}=await recordedAction('ethereum',step,terms,()=>submitLocalTokenFundingStep(guarded,template,terms,anchor,step));
   $('ethereum-action-result').textContent=JSON.stringify(result,null,2);
-  msg($('ethereum-action-status'),step==='approve'?'Token approval submitted. Check its receipt before funding.':step==='revoke'?'Operator revocation submitted. Check its receipt.':'Funding submitted. Check its receipt and verify the funded escrow.');
+  msg($('ethereum-action-status'),warning||(step==='approve'?'Token approval submitted. Check its receipt before funding.':step==='revoke'?'Operator revocation submitted. Check its receipt.':'Funding submitted. Check its receipt and verify the funded escrow.'),!!warning);
  }catch(e){msg($('ethereum-action-status'),e.message,true);}finally{setEthereumActionBusy(false);}
 }
 $('ethereum-approve').addEventListener('click',()=>ethereumTokenStep('approve'));
@@ -101,8 +112,8 @@ $('ethereum-refund').addEventListener('click',async()=>{if(ethereumActionBusy)re
   const [anchor,response]=await Promise.all([companion('/ethereum/head',companionToken),fetch(terms.kind==='eth'?'/ether-escrow-template.json':'/token-escrow-template.json')]);
   if(!response.ok)throw Error('Escrow template unavailable.');const template=await response.json();
   const guarded={request:args=>{if(provider!==activeEthereumProvider)throw Error('Wallet changed. Reconnect and check wallet history before retrying.');return provider.request(args);}};
-  const result=await submitLocalEscrowRefund(guarded,template,terms,anchor);$('ethereum-action-result').textContent=JSON.stringify(result,null,2);
-  msg($('ethereum-action-status'),'Refund submitted. Check its receipt and confirmations.');
+  const {result,warning}=await recordedAction('ethereum','refund',terms,()=>submitLocalEscrowRefund(guarded,template,terms,anchor));$('ethereum-action-result').textContent=JSON.stringify(result,null,2);
+  msg($('ethereum-action-status'),warning||'Refund submitted. Check its receipt and confirmations.',!!warning);
  }catch(e){msg($('ethereum-action-status'),e.message,true);}finally{setEthereumActionBusy(false);}
 });
 $('ethereum-claim').addEventListener('click',async()=>{if(ethereumActionBusy)return;const phrase=$('ethereum-claim-passphrase').value;$('ethereum-claim-passphrase').value='';let secret;
@@ -115,8 +126,20 @@ $('ethereum-claim').addEventListener('click',async()=>{if(ethereumActionBusy)ret
   const [anchor,response]=await Promise.all([companion('/ethereum/head',companionToken),fetch(terms.kind==='eth'?'/ether-escrow-template.json':'/token-escrow-template.json')]);
   if(!response.ok)throw Error('Escrow template unavailable.');const template=await response.json();secret=await unlockRecovery(entry.envelope,phrase);
   const guarded={request:args=>{if(provider!==activeEthereumProvider)throw Error('Wallet changed. Reconnect and check wallet history before retrying.');return provider.request(args);}};
-  const result=await submitLocalEscrowClaim(guarded,template,terms,anchor,secret);$('ethereum-action-result').textContent=JSON.stringify(result,null,2);
-  msg($('ethereum-action-status'),'Claim submitted. The preimage is public; check the receipt and confirmations.');
+  const {result,warning}=await recordedAction('ethereum','claim',terms,()=>submitLocalEscrowClaim(guarded,template,terms,anchor,secret));$('ethereum-action-result').textContent=JSON.stringify(result,null,2);
+  msg($('ethereum-action-status'),warning||'Claim submitted. The preimage is public; check the receipt and confirmations.',!!warning);
+ }catch(e){msg($('ethereum-action-status'),e.message,true);}finally{secret?.fill(0);setEthereumActionBusy(false);}
+});
+$('ethereum-observe').addEventListener('click',async()=>{if(ethereumActionBusy)return;const phrase=$('ethereum-observe-passphrase').value,repeat=$('ethereum-observe-confirm').value;$('ethereum-observe-passphrase').value='';$('ethereum-observe-confirm').value='';let secret;
+ try{if(!ethereumActionForm.reportValidity())return;if(!activeEthereumProvider)throw Error('Connect an Ethereum wallet first.');if(!companionToken||!companionCapabilities.includes('ethereum-local-anchor'))throw Error('Connect a companion configured for local Anvil.');
+  if(phrase!==repeat||phrase.length<12||phrase.length>1024)throw Error('Backup passphrases must match and contain at least 12 characters.');const label=vaultLabel($('ethereum-observe-label').value),provider=activeEthereumProvider,terms=ethereumActionTerms();
+  setEthereumActionBusy(true);$('ethereum-action-result').textContent='';msg($('ethereum-action-status'),'Checking confirmed local claim events.');
+  const [anchor,response]=await Promise.all([companion('/ethereum/head',companionToken),fetch(terms.kind==='eth'?'/ether-escrow-template.json':'/token-escrow-template.json')]);
+  if(!response.ok)throw Error('Escrow template unavailable.');const template=await response.json();
+  const guarded={request:args=>{if(provider!==activeEthereumProvider)throw Error('Wallet changed. Reconnect and retry.');return provider.request(args);}};
+  const observed=await observeLocalEthereumClaim(guarded,template,terms,anchor,$('ethereum-observe-from').value.trim(),2);secret=observed.secret;
+  const envelope=await encryptRecovery(secret,phrase);await addVault({label,envelope});notifyVault();$('vault-backup').value=JSON.stringify({label,envelope});await renderVault();
+  $('ethereum-action-result').textContent=JSON.stringify(observed.snapshot,null,2);msg($('ethereum-action-status'),'Confirmed local claim observed. Encrypted secret backup saved; copy it from the backup section.');
  }catch(e){msg($('ethereum-action-status'),e.message,true);}finally{secret?.fill(0);setEthereumActionBusy(false);}
 });
 $('bitcoin-form').addEventListener('submit',async event=>{event.preventDefault();
@@ -135,8 +158,8 @@ bitcoinActionForm.addEventListener('submit',async event=>{event.preventDefault()
  try{if(!companionToken||!companionCapabilities.includes('bitcoin-regtest-actions'))throw Error('Connect a companion with experimental Bitcoin actions enabled.');
   const data=new FormData(event.currentTarget),request={};for(const [key,value] of data.entries())request[key]=String(value).trim();
   button.disabled=true;$('bitcoin-action-result').textContent='';msg($('bitcoin-action-status'),'Review and approve this request in the companion terminal.');
-  const result=await companion('/bitcoin/action',companionToken,request);if(result.completed!==true)throw Error('Action outcome uncertain. Check wallet history before retrying.');
-  $('bitcoin-action-result').textContent=JSON.stringify(result,null,2);msg($('bitcoin-action-status'),'Bitcoin transaction submitted. Check its receipt and confirmations.');
+  const {result,warning}=await recordedAction('bitcoin',request.operation,request,async()=>{const response=await companion('/bitcoin/action',companionToken,request);if(response.completed!==true)throw Error('Action outcome uncertain. Check wallet history before retrying.');return response.result;});
+  $('bitcoin-action-result').textContent=JSON.stringify(result,null,2);msg($('bitcoin-action-status'),warning||'Bitcoin transaction submitted. Check its receipt and confirmations.',!!warning);
  }catch(e){msg($('bitcoin-action-status'),e.message,true);}finally{button.disabled=false;}
 });
 function cardanoValue(data){const value={lovelace:String(data.get('lovelace')).trim()};
@@ -169,8 +192,8 @@ cardanoActionForm.addEventListener('submit',async event=>{event.preventDefault()
   if(operation==='lock')request.inputs=String(data.get('inputs')).split(',').map(x=>x.trim());
   else for(const name of ['outref','fee_input','collateral'])request[name]=String(data.get(name)).trim();
   button.disabled=true;$('cardano-action-result').textContent='';msg($('cardano-action-status'),'Review and approve this request in the companion terminal.');
-  const result=await companion('/cardano/action',companionToken,request);if(result.completed!==true)throw Error('Action outcome uncertain. Check the transaction before retrying.');
-  $('cardano-action-result').textContent=JSON.stringify(result,null,2);msg($('cardano-action-status'),'Cardano transaction submitted. Check its inclusion and confirmations.');
+  const {result,warning}=await recordedAction('cardano',operation,request,async()=>{const response=await companion('/cardano/action',companionToken,request);if(response.completed!==true)throw Error('Action outcome uncertain. Check the transaction before retrying.');return response.result;});
+  $('cardano-action-result').textContent=JSON.stringify(result,null,2);msg($('cardano-action-status'),warning||'Cardano transaction submitted. Check its inclusion and confirmations.',!!warning);
  }catch(e){msg($('cardano-action-status'),e.message,true);}finally{button.disabled=false;}
 });
 $('hegemon-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button[type="submit"]');
@@ -195,9 +218,9 @@ hegemonActionForm.addEventListener('submit',async event=>{event.preventDefault()
   if(!fields)throw Error('Unsupported action.');
   for(const field of fields){const value=String(data.get(field)).trim();request[field]=field==='inputs'?value.split(',').map(x=>x.trim()):value;}
   button.disabled=true;$('hegemon-action-result').textContent='';msg($('hegemon-action-status'),'Review and approve this request in the companion terminal.');
-  const result=await companion('/hegemon/action',companionToken,request);
-  if(result.completed!==true)throw Error('The local action did not complete. Check wallet status before retrying.');
-  $('hegemon-action-result').textContent=JSON.stringify(result,null,2);msg($('hegemon-action-status'),'Local action completed. Review the result before submitting anything.');
+  const invoke=async()=>{const response=await companion('/hegemon/action',companionToken,request);if(response.completed!==true)throw Error('The local action did not complete. Check wallet status before retrying.');return response.result;};
+  if(operation==='status'){const result=await invoke();$('hegemon-action-result').textContent=JSON.stringify(result,null,2);msg($('hegemon-action-status'),'Local action completed. Review the result before submitting anything.');}
+  else {const {result,warning}=await recordedAction('hegemon',operation,request,invoke);$('hegemon-action-result').textContent=JSON.stringify(result,null,2);msg($('hegemon-action-status'),warning||'Local action completed. Review the result before submitting anything.',!!warning);}
  }catch(e){msg($('hegemon-action-status'),e.message,true);}finally{button.disabled=false;}
 });
 function credential(id){return localStorage.getItem('offer-owner:'+id);}
@@ -274,6 +297,18 @@ $('watch-form').addEventListener('submit',async event=>{event.preventDefault();t
  }catch(e){msg($('watch-status'),e.message,true);}});
 $('watch-refresh').addEventListener('click',refreshWatches);
 setInterval(refreshWatches,15000);refreshWatches();
+let actionRenderVersion=0;
+async function renderActionJournal(){const version=++actionRenderVersion;try{const entries=await listActions();if(version!==actionRenderVersion)return;$('action-journal-list').replaceChildren();
+ if(!entries.length){$('action-journal-list').textContent='No saved actions.';return;}
+ for(const item of entries){const row=document.createElement('div');row.className='offer';const text=document.createElement('p');text.textContent=item.chain+' · '+item.operation+' · '+item.state+(item.receipt?.txid?' · '+item.receipt.txid:item.receipt?.attempt?' · '+item.receipt.attempt:'');
+  const show=document.createElement('button');show.type='button';show.textContent='Show record';show.addEventListener('click',()=>{$('action-journal-text').value=JSON.stringify({version:1,records:[item]});msg($('action-journal-status'),'Public action record ready to copy.');});
+  const remove=document.createElement('button');remove.type='button';remove.textContent='Delete record';remove.addEventListener('click',async()=>{if(!window.confirm('Delete this local record? Export it first and check the action outcome.'))return;try{await removeAction(item.id);refreshActionViews();msg($('action-journal-status'),'Local action record deleted.');}catch(e){msg($('action-journal-status'),e.message,true);}});
+  row.append(text,show,remove);$('action-journal-list').append(row);
+ }
+ }catch(e){if(version===actionRenderVersion){$('action-journal-list').replaceChildren();msg($('action-journal-status'),e.message,true);}}}
+$('action-journal-export').addEventListener('click',async()=>{try{const records=await listActions();$('action-journal-text').value=JSON.stringify({version:1,records});msg($('action-journal-status'),'Action records ready to copy and store privately.');}catch(e){msg($('action-journal-status'),e.message,true);}});
+$('action-journal-import').addEventListener('click',async()=>{try{const text=$('action-journal-text').value;if(text.length>4_000_000)throw Error('Action journal export is too large.');await importActions(JSON.parse(text));refreshActionViews();msg($('action-journal-status'),'Action records imported. Verify their outcomes independently.');}catch(e){msg($('action-journal-status'),e.message||'Invalid action journal export.',true);}});
+if(actionChannel)actionChannel.onmessage=()=>renderActionJournal();renderActionJournal();
 const VAULT_KEY='hegemon.local.encrypted-secrets.v1';
 const vaultChannel=typeof BroadcastChannel==='function'?new BroadcastChannel('hegemon.local.encrypted-secrets.v2'):null;
 function notifyVault(){vaultChannel?.postMessage('changed');}

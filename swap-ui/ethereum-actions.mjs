@@ -19,7 +19,7 @@ async function localAnchor(provider,anchor,from){
  if(!provider||typeof provider.request!=='function'||!anchor||!/^([0-9a-f]{64})$/.test(anchor.genesis||'')||!/^0x[0-9a-f]{64}$/i.test(anchor.tip_hash||'')||!/^(0|[1-9][0-9]*)$/.test(anchor.time_seconds||''))throw Error('invalid local chain anchor');
  const request=(method,params=[])=>provider.request({method,params});
  if(BigInt(await request('eth_chainId'))!==31337n)throw Error('wallet is not on the local Ethereum chain');
- const accounts=await request('eth_accounts');if(!Array.isArray(accounts)||!accounts.some(a=>typeof a==='string'&&a.toLowerCase()===from))throw Error('wallet does not control the required address');
+ if(from){const accounts=await request('eth_accounts');if(!Array.isArray(accounts)||!accounts.some(a=>typeof a==='string'&&a.toLowerCase()===from))throw Error('wallet does not control the required address');}
  const genesis=await request('eth_getBlockByNumber',['0x0',false]),head=await request('eth_getBlockByNumber',['latest',false]);
  if(!genesis||!head||String(genesis.hash).toLowerCase()!=='0x'+anchor.genesis||String(head.hash).toLowerCase()!==anchor.tip_hash.toLowerCase()||BigInt(head.timestamp)!==BigInt(anchor.time_seconds))throw Error('wallet and local node do not agree on the chain');
  return {request,head};
@@ -97,4 +97,33 @@ export async function submitLocalEscrowClaim(provider,template,terms,anchor,secr
  const {request}=await localAnchor(provider,anchor,from);
  const data='0xbd66528a'+Array.from(secret,b=>b.toString(16).padStart(2,'0')).join('');
  return {...await sendOnce(request,{from,to:contract,data,value:'0x0'}),step:'claim'};
+}
+/** Recover a confirmed claim secret locally. The provider and companion node
+ * are trusted; a chain reorganization can still disclose and later orphan it. */
+export async function observeLocalEthereumClaim(provider,template,terms,anchor,fromBlock,confirmations=2){
+ if(!terms||!['eth','0','1','2'].includes(terms.kind)||!Number.isSafeInteger(confirmations)||confirmations<1||confirmations>100||typeof fromBlock!=='string'||!/^(0|[1-9][0-9]{0,15})$/.test(fromBlock))throw Error('invalid observation terms');
+ const contract='0x'+addr(terms.contract).slice(24),expected=terms.kind==='eth'?expectedEtherRuntime(template,terms):expectedTokenRuntime(template,terms);
+ const {request,head}=await localAnchor(provider,anchor);
+ if(typeof head.number!=='string'||!/^0x[0-9a-f]+$/i.test(head.number))throw Error('invalid local head');
+ const latest=BigInt(head.number),start=BigInt(fromBlock);if(latest<BigInt(confirmations-1)||start>latest||latest-start>100000n)throw Error('invalid observation block range');
+ const finalBlock=latest-BigInt(confirmations-1);if(finalBlock<start)throw Error('not enough confirmations');
+ const code=await request('eth_getCode',[contract,head.number]);
+ if(typeof code!=='string'||code.toLowerCase()!==expected)throw Error('escrow bytecode or terms mismatch');
+ const spent=await request('eth_call',[{to:contract,data:'0x7ab71b7a'},head.number]);
+ if(typeof spent!=='string'||!/^0x[0-9a-f]{64}$/i.test(spent)||BigInt(spent)!==1n)throw Error('escrow has not been spent');
+ const topic=terms.kind==='eth'?'0x0508a8b4117d9a7b3d8f5895f6413e61b4f9a2df35afbfb41e78d0ecfff1843f':'0xeddf608ef698454af2fb41c1df7b7e5154ff0d46969f895e0f39c7dfe7e6380a';
+ const logs=await request('eth_getLogs',[{address:contract,topics:[topic],fromBlock:'0x'+start.toString(16),toBlock:'0x'+finalBlock.toString(16)}]);
+ if(!Array.isArray(logs)||logs.length!==1)throw Error('confirmed claim event not found or ambiguous');
+ const log=logs[0],topics=log?.topics;
+ if(log.removed!==false||String(log.address).toLowerCase()!==contract||!Array.isArray(topics)||String(topics[0]).toLowerCase()!==topic||topics.length!==(terms.kind==='eth'?2:1)||terms.kind==='eth'&&String(topics[1]).toLowerCase()!=='0x'+addr(terms.claimant)||typeof log.data!=='string'||!(terms.kind==='eth'?/^0x[0-9a-f]{128}$/i:/^0x[0-9a-f]{64}$/i).test(log.data)||!/^0x[0-9a-f]{64}$/i.test(log.blockHash||'')||!/^0x[0-9a-f]{64}$/i.test(log.transactionHash||'')||!/^0x[0-9a-f]+$/i.test(log.blockNumber||'')||!/^0x[0-9a-f]+$/i.test(log.logIndex||''))throw Error('invalid claim event');
+ if(BigInt(log.blockNumber)<start||BigInt(log.blockNumber)>finalBlock)throw Error('claim does not have enough confirmations');
+ const [block,receipt]=await Promise.all([request('eth_getBlockByNumber',[log.blockNumber,false]),request('eth_getTransactionReceipt',[log.transactionHash])]);
+ if(!block||String(block.hash).toLowerCase()!==log.blockHash.toLowerCase()||BigInt(block.number)!==BigInt(log.blockNumber)||!receipt||BigInt(receipt.status)!==1n||BigInt(receipt.blockNumber)!==BigInt(log.blockNumber)||String(receipt.blockHash).toLowerCase()!==log.blockHash.toLowerCase()||String(receipt.transactionHash).toLowerCase()!==log.transactionHash.toLowerCase()||!Array.isArray(receipt.logs)||!receipt.logs.some(item=>String(item.logIndex).toLowerCase()===log.logIndex.toLowerCase()&&String(item.address).toLowerCase()===contract&&String(item.data).toLowerCase()===log.data.toLowerCase()&&Array.isArray(item.topics)&&JSON.stringify(item.topics.map(x=>String(x).toLowerCase()))===JSON.stringify(topics.map(x=>String(x).toLowerCase()))))throw Error('claim receipt is not canonical');
+ const secret=Uint8Array.from(log.data.slice(2,66).match(/../g),s=>parseInt(s,16));
+ try{
+  const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',secret)),b=>b.toString(16).padStart(2,'0')).join('');
+  if(digest!==hash(terms.hashlock))throw Error('claim preimage does not match hashlock');
+  const again=await request('eth_getBlockByNumber',['latest',false]);if(!again||again.hash!==head.hash||BigInt(await request('eth_chainId'))!==31337n)throw Error('chain changed during observation');
+  return {secret,snapshot:{transaction:log.transactionHash.toLowerCase(),blockHash:log.blockHash.toLowerCase(),blockNumber:BigInt(log.blockNumber).toString(),confirmations:(latest-BigInt(log.blockNumber)+1n).toString()}};
+ }catch(e){secret.fill(0);throw e;}
 }

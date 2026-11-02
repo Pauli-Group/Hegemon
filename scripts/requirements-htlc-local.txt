@@ -1,2 +1,4 @@
 # Decode the exact confirmed Cardano transaction witness.
 cbor2==5.6.5
+# Observe the local Cardano chain through a loopback Ogmios WebSocket.
+websockets==16.0

@@ -21,12 +21,17 @@ export function validateRecoveryEnvelope(value){
  return {version:1,iterations:ITERATIONS,hashlock:value.hashlock,salt:value.salt,iv:value.iv,ciphertext:value.ciphertext};
 }
 export async function createRecovery(passphrase){
- const secret=crypto.getRandomValues(new Uint8Array(32)),salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12));
+ const secret=crypto.getRandomValues(new Uint8Array(32));
+ try{return await encryptRecovery(secret,passphrase);}finally{secret.fill(0);}
+}
+export async function encryptRecovery(secret,passphrase){
+ if(!(secret instanceof Uint8Array)||secret.length!==32)throw Error('Invalid preimage.');
+ const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12));
  try{
   const hashlock=toHex(new Uint8Array(await crypto.subtle.digest('SHA-256',secret)));
   const ciphertext=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:aad(hashlock)},await keyFor(passphrase,salt),secret));
   return {version:1,iterations:ITERATIONS,hashlock,salt:toHex(salt),iv:toHex(iv),ciphertext:toHex(ciphertext)};
- }finally{secret.fill(0);}
+ }finally{salt.fill(0);iv.fill(0);}
 }
 export async function unlockRecovery(value,passphrase){
  const envelope=validateRecoveryEnvelope(value),salt=fromHex(envelope.salt,16),iv=fromHex(envelope.iv,12),cipher=fromHex(envelope.ciphertext,48);

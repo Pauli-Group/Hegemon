@@ -8,6 +8,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import stat
 from pathlib import Path
 
@@ -39,3 +40,24 @@ def unlock_backup(path, password):
     if len(secret)!=32 or not hmac.compare_digest(hashlib.sha256(secret).hexdigest(),v['hashlock']):
         secret[:]=b'\0'*len(secret);raise ValueError('encrypted backup hash mismatch')
     return secret
+
+
+def save_recovered_backup(directory,secret,password,label='Observed Cardano claim'):
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    directory=Path(directory).resolve(strict=True);info=directory.stat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid!=os.getuid() or stat.S_IMODE(info.st_mode)&0o077:raise ValueError('backup directory must be user-owned and mode 0700')
+    if not isinstance(secret,(bytes,bytearray)) or len(secret)!=32 or not isinstance(password,(bytes,bytearray)) or not 12<=len(password)<=4096:raise ValueError('invalid recovered secret or passphrase')
+    if not isinstance(label,str) or not label.strip() or len(label)>80 or any(ord(c)<32 or ord(c)==127 for c in label):raise ValueError('invalid backup label')
+    label=label.strip()
+    salt=os.urandom(16);iv=os.urandom(12);digest=hashlib.sha256(secret).hexdigest()
+    key=bytearray(hashlib.pbkdf2_hmac('sha256',password,salt,600000,32))
+    try:cipher=AESGCM(bytes(key)).encrypt(iv,bytes(secret),('hegemon.swap.secret.v1:'+digest).encode())
+    finally:key[:]=b'\0'*len(key)
+    entry={'label':label,'envelope':{'version':1,'iterations':600000,'hashlock':digest,'salt':salt.hex(),'iv':iv.hex(),'ciphertext':cipher.hex()}}
+    path=directory/(secrets.token_hex(16)+'.json')
+    with os.fdopen(os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,'O_NOFOLLOW',0),0o600),'w') as handle:
+        json.dump(entry,handle,sort_keys=True);handle.write('\n');handle.flush();os.fsync(handle.fileno())
+    fd=os.open(directory,os.O_RDONLY|getattr(os,'O_DIRECTORY',0))
+    try:os.fsync(fd)
+    finally:os.close(fd)
+    return path

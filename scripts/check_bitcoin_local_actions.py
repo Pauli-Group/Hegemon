@@ -11,6 +11,9 @@ from bitcoin_local_actions import run_bitcoin_action
 from development_atomic_swap_rehearsal import BitcoinRPC,rehearsal_bitcoin_key
 from local_private_spend_swap import descriptor,port,require,stop
 from bitcoin_companion_actions_check import TestBitcoinActions
+from bitcoin_preimage_observer import observe_bitcoin_preimage
+from bitcoin_observer_cli_check import check_bitcoin_observer_cli
+from unlock_swap_backup import unlock_backup
 
 
 def main():
@@ -19,6 +22,7 @@ def main():
     p.add_argument('--exercise-companion',action='store_true',help='run actions through locally approved companion terminals')
     p.add_argument('--encrypted-wallets',action='store_true',help='use encrypted disposable wallets')
     p.add_argument('--exercise-backup-claim',action='store_true',help='claim using a local encrypted preimage backup')
+    p.add_argument('--exercise-observer',action='store_true',help='observe the confirmed claim and save an encrypted backup')
     a=p.parse_args();os.umask(0o077)
     if a.exercise_backup_claim and not a.exercise_companion:p.error('backup claim requires the companion')
     out=a.output.resolve();out.mkdir(mode=0o700,exist_ok=False)
@@ -49,7 +53,7 @@ def main():
             except ValueError:return
             raise RuntimeError('invalid Bitcoin action succeeded')
         for scenario in ('claim','refund'):
-            secret=os.urandom(32);digest=hashlib.sha256(secret).hexdigest();height=btc.call('getblockcount')+15
+            secret=os.urandom(32);digest=hashlib.sha256(secret).hexdigest();start_height=btc.call('getblockcount');height=start_height+15
             if scenario=='claim' and a.exercise_backup_claim:
                 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
                 backup_phrase=b'local disposable backup passphrase';salt=os.urandom(16);iv=os.urandom(12)
@@ -80,6 +84,16 @@ def main():
             btc.call('generatetoaddress',1,miner)
             require(btc.call('gettxout',result['txid'],output['n'],True) is None,'Bitcoin output remained unspent')
             require(btc.call('gettransaction',answer['txid'],wallet=scenario)['confirmations']>=1,'spend not confirmed')
+            if scenario=='claim' and a.exercise_observer:
+                btc.call('generatetoaddress',1,miner)
+                recovered,snapshot=observe_bitcoin_preimage(btc,genesis=genesis,txid=result['txid'],vout=output['n'],hashlock=digest,start_height=start_height,confirmations=2,timeout=30)
+                try:require(recovered==secret and snapshot['confirmations']>=2,'Bitcoin observed preimage mismatch')
+                finally:recovered[:]=b'\0'*len(recovered)
+                watched,phrase=check_bitcoin_observer_cli(url=f'http://127.0.0.1:{rpcport}',cookie=data/'regtest/.cookie',genesis=genesis,txid=result['txid'],vout=output['n'],hashlock=digest,start_height=start_height,output=out,secret=secret)
+                recovered=unlock_backup(watched['saved'],phrase)
+                try:require(recovered==secret,'Bitcoin observer backup mismatch')
+                finally:recovered[:]=b'\0'*len(recovered)
+                receipt['checks']['confirmed_preimage_observer_and_encrypted_backup']=True
             if wallet_phrase:require(btc.call('getwalletinfo',wallet=scenario)['unlocked_until']==0,'wallet remained unlocked')
             fail(action,scenario);receipt['checks'][scenario+'_confirmed']=True
         require(btc.call('getconnectioncount')==0,'Bitcoin acquired a peer');receipt['checks']['zero_peers']=True;receipt['status']='passed'
