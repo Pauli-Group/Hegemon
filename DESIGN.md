@@ -1885,6 +1885,8 @@ The experimental browser board can verify local ETH and token escrow runtime cod
 
 The experimental browser board can query a separately started loopback companion for Bitcoin regtest and isolated Cardano snapshots. Hegemon note verification additionally requires an interactive local terminal approval and wallet passphrase for each request; the browser and offer relay receive no passphrase. The companion is read-only by default, requires a private local pairing capability and an exact local browser origin, and checks Hegemon has no peers. Cardano confirmation depth is not established by its UTxO query. Optional typed local Hegemon actions require explicit startup configuration and a terminal approval for each operation; the local Ethereum deployment form requires a non-forked Anvil anchor and browser-wallet approval. These manual operations do not coordinate or verify a complete swap and are not a production security qualification.
 
+An optional Bitcoin regtest action interface similarly requires a peerless node, a locally configured descriptor wallet and a terminal approval. Before funding it asks the wallet to sign a synthetic refund without broadcasting it, to check that the refund branch key is available. Claim and refund use a fixed local-test fee. This does not verify the other leg, establish public-chain confirmation or fee policy, or replace wallet backup and recovery.
+
 
 ## Local swap deadline watch and desktop entry
 

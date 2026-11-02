@@ -33,7 +33,7 @@ test('two browser sessions create a private offer and exchange encrypted message
     const request=route.request(),headers={'access-control-allow-origin':base,'access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'authorization, content-type','content-type':'application/json'};
     if(request.method()==='OPTIONS')return route.fulfill({status:204,headers});
     companionRequests.push({url:request.url(),authorization:request.headers().authorization,body:request.postDataJSON()});
-    const payload=request.url().endsWith('/health')?{status:'ok',capabilities:['bitcoin-regtest-verify','cardano-local-verify','hegemon-local-verify','hegemon-local-actions']}:(request.url().endsWith('/bitcoin/head')?{genesis:'b'.repeat(64),height:'150'}:request.url().endsWith('/cardano/verify')?{verified:true,snapshot:{confirmations:null,tip_block:8}}:request.url().endsWith('/hegemon/verify')?{verified:true,snapshot:{verified:true,confirmations:'2',reference_height:'101'}}:request.url().endsWith('/hegemon/action')?{completed:true,result:{operation:'claim',attempt:'a'.repeat(64)}}:{verified:true,snapshot:{confirmations:2,block_height:101}});
+    const payload=request.url().endsWith('/health')?{status:'ok',capabilities:['bitcoin-regtest-verify','bitcoin-regtest-actions','cardano-local-verify','hegemon-local-verify','hegemon-local-actions']}:(request.url().endsWith('/bitcoin/head')?{genesis:'b'.repeat(64),height:'150'}:request.url().endsWith('/bitcoin/action')?{completed:true,result:{operation:'lock',txid:'a'.repeat(64),confirmed:false}}:request.url().endsWith('/cardano/verify')?{verified:true,snapshot:{confirmations:null,tip_block:8}}:request.url().endsWith('/hegemon/verify')?{verified:true,snapshot:{verified:true,confirmations:'2',reference_height:'101'}}:request.url().endsWith('/hegemon/action')?{completed:true,result:{operation:'claim',attempt:'a'.repeat(64)}}:{verified:true,snapshot:{confirmations:2,block_height:101}});
     return route.fulfill({status:200,headers,body:JSON.stringify(payload)});
   });
   await first.locator('#companion-token').fill('a'.repeat(64));await first.getByRole('button',{name:'Connect local companion'}).click();await first.getByText('Local companion connected with experimental Hegemon actions enabled.').waitFor();
@@ -53,6 +53,9 @@ test('two browser sessions create a private offer and exchange encrypted message
   for(const [name,value] of Object.entries({locked:'0',fee_input:'1',recipient:'shca1fixture',fee:'1'}))await first.locator(`#hegemon-action-form [name="${name}"]`).fill(value);
   await first.getByRole('button',{name:'Request local action'}).click();await first.getByText('Local action completed.',{exact:false}).waitFor();
   assert.deepEqual(Object.keys(companionRequests[4].body).sort(),['fee','fee_input','locked','operation','recipient']);
+  for(const [name,value] of Object.entries({hashlock:'c'.repeat(64),claimant_key:'02'+'d'.repeat(64),refund_key:'03'+'e'.repeat(64),refund_height:'200',amount_sats:'100000'}))await first.locator(`#bitcoin-action-form [name="${name}"]`).fill(value);
+  await first.getByRole('button',{name:'Request Bitcoin action'}).click();await first.getByText('Bitcoin transaction submitted.',{exact:false}).waitFor();
+  assert.deepEqual(Object.keys(companionRequests[5].body).sort(),['amount_sats','claimant_key','hashlock','operation','refund_height','refund_key']);
   await first.locator('[name="receive-type"]').selectOption('bitcoin:btc');await first.locator('[name="receive-amount"]').fill('50');
   await first.getByRole('button',{name:'Create offer'}).click();
   await first.locator('#share-link').waitFor({state:'visible'});const link=await first.locator('#share-link').inputValue();

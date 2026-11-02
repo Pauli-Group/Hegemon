@@ -29,6 +29,7 @@ from htlc_counterpart import ROOT, TOOLS
 from hegemon_action_runner import run_hegemon_action
 from hegemon_local_actions import private_handoff_directory
 from ethereum_local_anchor import ethereum_local_head
+from bitcoin_local_actions import run_bitcoin_action
 from local_private_spend_swap import PASS, wallet
 from release_private_spend_lifecycle_io import rpc, json_line, public_v8_address_keys, height
 
@@ -88,6 +89,10 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--bitcoin-rpc',help='Bitcoin Core regtest RPC on loopback')
     p.add_argument('--bitcoin-cookie',type=Path)
+    p.add_argument('--enable-bitcoin-actions',action='store_true',help='enable locally approved Bitcoin regtest wallet actions')
+    p.add_argument('--bitcoin-wallet',help='preloaded Bitcoin Core descriptor wallet name')
+    p.add_argument('--bitcoin-genesis',help='expected regtest genesis hash')
+    p.add_argument('--bitcoin-preimage-backup',type=Path,help='optional private exported browser backup for local claims')
     p.add_argument('--cardano-socket',type=Path)
     p.add_argument('--cardano-network-dir',type=Path,help='directory containing the trusted local Shelley genesis')
     p.add_argument('--ethereum-rpc',help='non-forked Anvil RPC on loopback, chain ID 31337')
@@ -109,6 +114,10 @@ def main():
     if origin.scheme!='http' or origin.hostname not in ('127.0.0.1','localhost') or not origin.port or origin.path or origin.query or origin.fragment or origin.username:raise ValueError('origin must be an explicit loopback HTTP origin')
     if not 1<=args.port<=65535:raise ValueError('invalid port')
     if bool(args.bitcoin_rpc)!=bool(args.bitcoin_cookie):p.error('Bitcoin RPC and cookie must be supplied together')
+    if args.enable_bitcoin_actions:
+        if not args.bitcoin_rpc or not args.bitcoin_wallet or not re.fullmatch('[A-Za-z0-9_-]{1,64}',args.bitcoin_wallet) or not re.fullmatch('[0-9a-f]{64}',args.bitcoin_genesis or ''):p.error('Bitcoin actions require a local RPC, cookie, wallet name and genesis')
+        if not os.isatty(0):p.error('Bitcoin actions require an interactive local terminal')
+    elif args.bitcoin_wallet or args.bitcoin_genesis or args.bitcoin_preimage_backup:p.error('Bitcoin wallet options require Bitcoin actions')
     if bool(args.cardano_socket)!=bool(args.cardano_network_dir):p.error('Cardano socket and network directory must be supplied together')
     hegemon_options=[args.hegemon_wallet,args.hegemon_manifest,args.hegemon_genesis,args.hegemon_rpc]
     if any(hegemon_options) and not all(hegemon_options):p.error('all Hegemon wallet, manifest, genesis and RPC options are required')
@@ -124,6 +133,9 @@ def main():
     if args.hegemon_preimage_backup and not args.enable_hegemon_actions:p.error('preimage backup requires Hegemon actions')
     token=private_token(args.token_file)
     btc=BitcoinRPC(args.bitcoin_rpc,args.bitcoin_cookie) if args.bitcoin_rpc else None
+    if args.enable_bitcoin_actions:
+        if btc.call('getblockchaininfo')['chain']!='regtest' or btc.call('getblockhash',0)!=args.bitcoin_genesis or btc.call('getconnectioncount')!=0:raise ValueError('Bitcoin requires the configured isolated regtest chain')
+        btc.call('getwalletinfo',wallet=args.bitcoin_wallet)
     scratch=tempfile.TemporaryDirectory(prefix='hegemon-local-companion-')
     cardano=None
     if args.cardano_socket:
@@ -166,7 +178,7 @@ def main():
             if not self.authorized():return self.reply(403,{'error':'forbidden'})
             try:
                 if self.path=='/health':
-                    capabilities=(['bitcoin-regtest-verify'] if btc else [])+(['cardano-local-verify'] if cardano else [])+(['ethereum-local-anchor'] if args.ethereum_rpc else [])+(['hegemon-local-verify'] if all(hegemon_options) else [])+(['hegemon-local-actions'] if args.enable_hegemon_actions else [])
+                    capabilities=(['bitcoin-regtest-verify'] if btc else [])+(['bitcoin-regtest-actions'] if args.enable_bitcoin_actions else [])+(['cardano-local-verify'] if cardano else [])+(['ethereum-local-anchor'] if args.ethereum_rpc else [])+(['hegemon-local-verify'] if all(hegemon_options) else [])+(['hegemon-local-actions'] if args.enable_hegemon_actions else [])
                     return self.reply(200,{'status':'ok','capabilities':capabilities})
                 if self.path=='/bitcoin/head' and btc:
                     info=btc.call('getblockchaininfo')
@@ -191,12 +203,16 @@ def main():
                 return self.reply(502,{'error':'local node status unavailable'})
         def do_POST(self):
             if not self.authorized():return self.reply(403,{'error':'forbidden'})
-            if self.path not in ('/bitcoin/verify','/cardano/verify','/hegemon/verify','/hegemon/action'):return self.reply(404,{'error':'not found'})
+            if self.path not in ('/bitcoin/verify','/bitcoin/action','/cardano/verify','/hegemon/verify','/hegemon/action'):return self.reply(404,{'error':'not found'})
             if self.headers.get_content_type()!='application/json':return self.reply(400,{'error':'JSON required'})
             try:
                 length=int(self.headers.get('Content-Length','0'))
                 if not 0<length<=16384:raise ValueError('invalid body size')
                 data=json.loads(self.rfile.read(length))
+                if self.path=='/bitcoin/action':
+                    if not args.enable_bitcoin_actions:raise ValueError('Bitcoin actions are not enabled')
+                    result=run_bitcoin_action(btc=btc,wallet=args.bitcoin_wallet,genesis=args.bitcoin_genesis,request=data,backup=args.bitcoin_preimage_backup)
+                    return self.reply(200,{'completed':True,'result':result})
                 if self.path=='/hegemon/action':
                     if not args.enable_hegemon_actions:raise ValueError('Hegemon actions are not enabled')
                     manifest=json.loads(args.hegemon_manifest.read_text())

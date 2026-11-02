@@ -57,10 +57,10 @@ async function companion(path,token,body){
  const result=await response.json();if(!response.ok)throw Error(result.error||'Companion request failed');return result;
 }
 $('connect-companion').addEventListener('click',async()=>{
- const token=$('companion-token').value;$('companion-token').value='';companionToken=null;companionCapabilities=[];$('hegemon-actions').hidden=true;$('ethereum-actions').hidden=true;
+ const token=$('companion-token').value;$('companion-token').value='';companionToken=null;companionCapabilities=[];$('hegemon-actions').hidden=true;$('ethereum-actions').hidden=true;$('bitcoin-actions').hidden=true;
  try{if(!/^[0-9a-f]{64}$/.test(token))throw Error('Enter the 64-character pairing token.');
   const result=await companion('/health',token);if(!Array.isArray(result.capabilities)||!result.capabilities.length)throw Error('No local verifiers are available.');
-  companionToken=token;companionCapabilities=result.capabilities;$('hegemon-actions').hidden=!companionCapabilities.includes('hegemon-local-actions');$('ethereum-actions').hidden=!companionCapabilities.includes('ethereum-local-anchor');msg($('companion-status'),companionCapabilities.includes('hegemon-local-actions')?'Local companion connected with experimental Hegemon actions enabled.':companionCapabilities.includes('ethereum-local-anchor')?'Local companion connected with an Ethereum test-chain anchor.':'Local read-only companion connected.');
+  companionToken=token;companionCapabilities=result.capabilities;$('hegemon-actions').hidden=!companionCapabilities.includes('hegemon-local-actions');$('ethereum-actions').hidden=!companionCapabilities.includes('ethereum-local-anchor');$('bitcoin-actions').hidden=!companionCapabilities.includes('bitcoin-regtest-actions');msg($('companion-status'),companionCapabilities.includes('hegemon-local-actions')?'Local companion connected with experimental Hegemon actions enabled.':companionCapabilities.includes('bitcoin-regtest-actions')?'Local companion connected with experimental Bitcoin actions enabled.':companionCapabilities.includes('ethereum-local-anchor')?'Local companion connected with an Ethereum test-chain anchor.':'Local read-only companion connected.');
  }catch(e){msg($('companion-status'),e.message,true);}
 });
 const ethereumActionForm=$('ethereum-action-form');let ethereumActionBusy=false;
@@ -127,6 +127,17 @@ $('bitcoin-form').addEventListener('submit',async event=>{event.preventDefault()
   if(!result.verified)throw Error('Escrow not verified.');
   msg($('bitcoin-status'),'Verified unspent with '+result.snapshot.confirmations+' confirmations at regtest block '+result.snapshot.block_height+'. The local node remains a trust assumption.');
  }catch(e){msg($('bitcoin-status'),e.message,true);}
+});
+const bitcoinActionForm=$('bitcoin-action-form');
+function updateBitcoinActionFields(){const spend=bitcoinActionForm.elements.operation.value!=='lock';for(const label of bitcoinActionForm.querySelectorAll('[data-spend]')){label.hidden=!spend;for(const input of label.querySelectorAll('input')){input.disabled=!spend;input.required=spend;}}}
+bitcoinActionForm.elements.operation.addEventListener('change',updateBitcoinActionFields);updateBitcoinActionFields();
+bitcoinActionForm.addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button[type="submit"]');
+ try{if(!companionToken||!companionCapabilities.includes('bitcoin-regtest-actions'))throw Error('Connect a companion with experimental Bitcoin actions enabled.');
+  const data=new FormData(event.currentTarget),request={};for(const [key,value] of data.entries())request[key]=String(value).trim();
+  button.disabled=true;$('bitcoin-action-result').textContent='';msg($('bitcoin-action-status'),'Review and approve this request in the companion terminal.');
+  const result=await companion('/bitcoin/action',companionToken,request);if(result.completed!==true)throw Error('Action outcome uncertain. Check wallet history before retrying.');
+  $('bitcoin-action-result').textContent=JSON.stringify(result,null,2);msg($('bitcoin-action-status'),'Bitcoin transaction submitted. Check its receipt and confirmations.');
+ }catch(e){msg($('bitcoin-action-status'),e.message,true);}finally{button.disabled=false;}
 });
 $('cardano-form').addEventListener('submit',async event=>{event.preventDefault();
  try{if(!companionToken||!companionCapabilities.includes('cardano-local-verify'))throw Error('Connect a companion configured for Cardano.');
