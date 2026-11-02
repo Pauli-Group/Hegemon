@@ -1,0 +1,7 @@
+# Experimental public-testnet rehearsal dependencies. Install in an isolated
+# environment; public key material must remain outside the source repository.
+embit==0.8.0
+pycardano==0.19.2
+# cbor2pure used by pycardano requires this API; cbor2 6.2.0 broke the import.
+cbor2==5.6.5
+eth-account==0.13.7

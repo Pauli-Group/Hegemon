@@ -1897,6 +1897,8 @@ The browser action journal commits validated public terms before requesting a wa
 
 The offer board can compare two separately queried local escrow snapshots with an offer's asset identifiers, amounts and common hashlock. This manual check does not establish participant identity, concurrent unspent state, safe timeout margins or finality, and the Cardano UTxO query does not provide confirmation depth. It is not a claim gate or swap coordinator.
 
+An additive public-testnet rehearsal is in progress for Bitcoin testnet4, Ethereum Sepolia and Cardano preview without a local full node. `scripts/public_testnet_probe.py` checks public service network identities and wallet balances, while `scripts/public_bitcoin_transactions.py` builds and signs testnet-compatible Bitcoin transactions locally. Its funding, claim and refund transactions have been checked against peerless regtest; no public swap or broadcast is established by those tests. Remote services remain trust and availability assumptions, and the local-only companion restrictions remain unchanged.
+
 
 ## Local swap deadline watch and desktop entry
 

@@ -2857,6 +2857,8 @@ The browser action journal commits validated public terms before requesting a wa
 
 The local offer board can compare two independently rechecked escrow snapshots with the selected offer's asset quantities, identifiers and common hashlock. The two reads are sequential and may become stale; participant identity, address ownership, safe timeout margins and finality are not established. Cardano's UTxO query does not establish confirmation depth. This is a manual review aid, not a claim gate or coordinator.
 
+An additive public-testnet rehearsal is being prepared for Bitcoin testnet4, Ethereum Sepolia and Cardano preview using public services instead of full-node synchronization. The probe checks Bitcoin and Ethereum genesis identities and Cardano preview network parameters, then reads disposable wallet balances. Bitcoin P2WPKH funding and HTLC claim/refund transactions are signed locally and have been verified against peerless regtest, including invalid and early spend rejection. These results do not establish a public-testnet broadcast, cross-chain coordination or production security; remote service data is trusted.
+
 
 ## Local swap deadline watch and desktop entry
 
