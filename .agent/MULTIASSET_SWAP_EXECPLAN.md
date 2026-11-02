@@ -11,7 +11,9 @@ This living plan follows `.agent/PLANS.md`. The objective is a noncustodial loca
 - [ ] Cover arbitrary user-selected assets, failure and recovery across every pairing, and connect the real wallet flows.
 - [x] (2026-11-02) Added local Cardano fixture minting, HTLC claim and refund for a fungible token and one-of-one token; both passed on fresh isolated nodes.
 - [ ] Generalize Cardano token inputs for real user-selected assets and add same-chain and Hegemon-linked end-to-end cases.
-- [ ] Implement resilient pairwise swap protocol, local companion, wallet integrations and monitoring.
+- [x] (2026-11-02) Implemented a source-pinned read-only local Ethereum escrow verifier for ETH and standard token kinds; tested on local Anvil and in Chromium.
+- [x] (2026-11-02) Added local Bitcoin script/UTxO verification with confirmation checks and Cardano pinned-validator/datum/value snapshot verification; altered and spent outputs were rejected. Cardano confirmation history is not available from the chosen UTxO query.
+- [ ] Complete and test the Hegemon wallet-side terms checker, then implement resilient pairwise swap protocol, local companion, wallet signing integrations and monitoring.
 - [x] (2026-11-02) Added a loopback TypeScript/SQLite prototype relay for public/private offers, exclusive reservations and opaque messages; HTTP/restart test passed.
 - [x] (2026-11-02) Added a local browser offer board and AES-GCM encrypted shared-link message prototype; crypto, HTTP and two-session Chromium tests pass.
 - [x] (2026-11-02) Added read-only Ethereum EIP-1193 and Cardano CIP-30 connection buttons and exercised them with mocked browser providers.
@@ -61,3 +63,7 @@ The token escrow exposes funding, claim and refund and immutable asset kind, tok
 Revision 2026-11-02: recorded local cross-chain and same-chain results, including the failed Cardano time-horizon attempt and the successful larger-epoch retry.
 
 Revision 2026-11-02: added a real-browser private-offer test and clarified that messaging identities, wallet flows and public discovery still need work.
+
+Revision 2026-11-02: added local Ethereum snapshot verification and recorded a browser fixture constructor-encoding mistake caught by that verifier. The remaining networks and end-to-end transaction UI are not implemented.
+
+Revision 2026-11-02: added Bitcoin and Cardano read-only local snapshot verification; Cardano confirmation depth remains an explicit missing capability.

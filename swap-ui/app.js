@@ -1,5 +1,6 @@
 'use strict';
 import {newMessageKey,encryptMessage,decryptMessage} from './crypto.mjs';
+import {verifyTokenEscrow,verifyEtherEscrow} from './ethereum-escrow.mjs';
 const types=[['ethereum:eth','Ethereum · ETH'],['ethereum:erc20','Ethereum · ERC-20'],['ethereum:erc721','Ethereum · ERC-721'],['ethereum:erc1155','Ethereum · ERC-1155'],['cardano:ada','Cardano · ADA'],['cardano:native','Cardano · native token'],['bitcoin:btc','Bitcoin · BTC'],['hegemon:hgn','Hegemon · HGN']];
 const $=id=>document.getElementById(id);
 for(const name of ['give-type','receive-type']) for(const [value,label] of types) document.querySelector(`[name="${name}"]`).add(new Option(label,value));
@@ -14,17 +15,31 @@ async function api(path,options={}){
 }
 function describe(asset){return `${asset.amount} · ${asset.chain} ${asset.kind}${asset.id?' · '+asset.id:''}`;}
 function msg(element,value,error=false){element.textContent=value;element.className=error?'error':'';}
-let observedEthereumProvider;
+let observedEthereumProvider,activeEthereumProvider;
+const verifyForm=$('verify-form');
+function toggleTokenFields(){const native=verifyForm.elements.kind.value==='eth';for(const name of ['token','tokenId']){verifyForm.elements[name].disabled=native;verifyForm.elements[name].required=!native;}}
+verifyForm.elements.kind.addEventListener('change',toggleTokenFields);toggleTokenFields();
 $('connect-ethereum').addEventListener('click',async()=>{
  try{const provider=window.ethereum;if(!provider||typeof provider.request!=='function')throw Error('No Ethereum browser wallet found.');
   const accounts=await provider.request({method:'eth_requestAccounts'}),chain=await provider.request({method:'eth_chainId'});
   if(!Array.isArray(accounts)||!/^0x[0-9a-fA-F]{40}$/.test(accounts[0])||typeof chain!=='string')throw Error('Wallet returned an invalid account or network.');
   if(provider!==observedEthereumProvider && typeof provider.on==='function'){
-   const changed=()=>msg($('wallet-status'),'Ethereum wallet changed. Reconnect to refresh the account and network.');
+   const changed=()=>{activeEthereumProvider=null;msg($('wallet-status'),'Ethereum wallet changed. Reconnect to refresh the account and network.');};
    provider.on('accountsChanged',changed);provider.on('chainChanged',changed);provider.on('disconnect',changed);observedEthereumProvider=provider;
   }
-  msg($('wallet-status'),'Ethereum connected: '+accounts[0]+' · chain '+chain+'. No transaction has been requested.');
+  activeEthereumProvider=provider;msg($('wallet-status'),'Ethereum connected: '+accounts[0]+' · chain '+chain+'. No transaction has been requested.');
  }catch(e){msg($('wallet-status'),e.message,true);}
+});
+$('verify-form').addEventListener('submit',async event=>{event.preventDefault();
+ try{if(!activeEthereumProvider)throw Error('Connect an Ethereum wallet first.');
+  const provider=activeEthereumProvider;
+  const data=new FormData(event.currentTarget),terms={chainId:'0x7a69'};
+  for(const name of ['contract','kind','token','tokenId','amount','hashlock','claimant','refundee','expiry'])terms[name]=String(data.get(name)).trim();
+  const native=terms.kind==='eth',response=await fetch(native?'/ether-escrow-template.json':'/token-escrow-template.json');if(!response.ok)throw Error('Escrow template unavailable.');
+  const result=await (native?verifyEtherEscrow(provider,await response.json(),terms,2):verifyTokenEscrow(provider,await response.json(),terms,2));
+  if(provider!==activeEthereumProvider)throw Error('Wallet changed during verification. Reconnect and retry.');
+  msg($('verify-status'),'Verified funded and unspent at block '+result.blockNumber+' ('+result.blockHash+'). The node and token issuer remain trust assumptions.');
+ }catch(e){msg($('verify-status'),e.message,true);}
 });
 $('connect-cardano').addEventListener('click',async()=>{
  try{const id=$('cardano-wallet').value,wallet=window.cardano?.[id];if(!wallet||typeof wallet.enable!=='function')throw Error('Select an available Cardano browser wallet.');

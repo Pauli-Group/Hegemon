@@ -85,3 +85,5 @@ Additional isolated pairing examples:
     python3 scripts/check_samechain_cardano_swap.py --output /workspace/new-same-cardano-run
 
 The recorded results and important limitations are in `MULTIASSET_LOCAL_RESULTS.md` at the repository root.
+
+The local pairing scripts also exercise read-only verification. `scripts/bitcoin_escrow_verifier.py` reconstructs the expected Bitcoin regtest script and checks its confirmed UTxO through a trusted local Bitcoin Core node. `scripts/cardano_escrow_verifier.py` checks a local UTxO's pinned validator, datum and exact assets. The Cardano UTxO query does not prove confirmation depth, and neither checker independently authenticates the counterparty's terms or the RPC provider.

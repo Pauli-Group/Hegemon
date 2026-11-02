@@ -1874,3 +1874,8 @@ The additive `contracts/ethereum/TokenHTLC.sol` escrow supports ERC-20, ERC-721 
 ## Local multi-asset swap prototype progress
 
 The isolated Cardano harness can mint disposable fungible and one-of-one native tokens under a fresh local policy and check their exact values through HTLC claim or refund. The local TypeScript/SQLite offer relay in `swap-service` stores public or private offers, expiring reservations and opaque messages; it does not sign transactions, verify on-chain state or encrypt messages. These are local prototype components, not a complete application or a production service.
+
+
+## Local Ethereum escrow verification
+
+The experimental browser board can verify local ETH and token escrow runtime code against a pinned compiler artifact with every expected immutable field inserted, then check the unspent state and holdings at a confirmed RPC snapshot. `scripts/export_token_escrow_template.py` and `--native` generate the two source-bound templates; `--check` detects drift. The caller must independently authenticate agreed terms and trust its RPC node. This read-only check does not verify the other swap leg, guarantee issuer behavior, authorize signing, or qualify public-chain finality.

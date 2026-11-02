@@ -10,6 +10,7 @@ from pathlib import Path
 from htlc_counterpart import Ethereum, Cardano, TOOLS
 from local_private_spend_swap import descriptor, port, stop, require
 from development_atomic_swap_rehearsal import BitcoinRPC, rehearsal_bitcoin_key, spend_contract, confirmed_bitcoin_preimage, wait_bitcoin_confirmations
+from bitcoin_escrow_verifier import verify_bitcoin_htlc
 
 
 def main():
@@ -44,12 +45,20 @@ def main():
         descriptor(btc,'alice',desc(alicekey,bobpub));descriptor(btc,'bob',desc(alicepub,bobkey))
         # Participant B funds the longer Bitcoin escrow first. Participant A
         # then funds the other chain; its alice is Bitcoin's bob.
-        tx=btc.call('sendtoaddress',contract,0.001,wallet='bob');btc.call('generatetoaddress',1,dest)
+        tx=btc.call('sendtoaddress',contract,0.001,wallet='bob');btc.call('generatetoaddress',2,dest)
         funding=btc.call('gettransaction',tx,wallet='bob')
         decoded=btc.call('getrawtransaction',tx,True,funding['blockhash'])
         vout=next(v for v in decoded['vout'] if v['scriptPubKey'].get('address')==contract)
         info=btc.call('getaddressinfo',contract,wallet='alice')
         witness=bytes.fromhex(info['hex']);script=bytes.fromhex(vout['scriptPubKey']['hex'])
+        terms={'txid':tx,'vout':vout['n'],'amount_sats':100000,'hashlock':digest.hex(),
+               'claimant_key':alicepub,'refund_key':bobpub,'refund_height':refund,'genesis_hash':btc.call('getblockhash',0)}
+        snapshot=verify_bitcoin_htlc(btc,**terms)
+        for bad in ({**terms,'amount_sats':99999},{**terms,'hashlock':'00'*32},
+                    {**terms,'claimant_key':bobpub},{**terms,'refund_height':refund+1}):
+            try:verify_bitcoin_htlc(btc,**bad)
+            except ValueError:pass
+            else:raise RuntimeError('Bitcoin verifier accepted altered terms')
         eth=(Ethereum(output/'eth',a.tools,test_token=a.ethereum_token) if a.counterpart=='ethereum'
              else Cardano(output/'ada',a.tools,test_tokens=True))
         eth.isolated();require(btc.call('getconnectioncount')==0,'Bitcoin acquired a peer')
@@ -60,8 +69,11 @@ def main():
         claim=spend_contract(btc,'alice',tx,vout['n'],100000,script,witness,target,0xffffffff,0,revealed)
         wait_bitcoin_confirmations(btc,claim,'alice',1,dest)
         require(confirmed_bitcoin_preimage(btc,claim,'alice',digest)==secret,'Bitcoin secret mismatch')
+        try:verify_bitcoin_htlc(btc,**terms)
+        except ValueError:pass
+        else:raise RuntimeError('Bitcoin verifier accepted spent escrow')
         require(btc.call('getconnectioncount')==0,'Bitcoin acquired a peer');eth.isolated()
-        receipt.update(status='passed',bitcoin={'chain':'regtest','funding_txid':tx,'claim_txid':claim,'peers':0},counterpart=eth.receipt)
+        receipt.update(status='passed',bitcoin={'chain':'regtest','funding_txid':tx,'claim_txid':claim,'peers':0,'verified_snapshot':snapshot},counterpart=eth.receipt)
     finally:
         if eth:eth.close()
         stop(bitcoin)
