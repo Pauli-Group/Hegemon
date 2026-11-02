@@ -32,7 +32,8 @@ This living plan follows `.agent/PLANS.md`. The objective is a noncustodial loca
 - [x] (2026-11-02) Added a local browser offer board and AES-GCM encrypted shared-link message prototype; crypto, HTTP and two-session Chromium tests pass.
 - [x] (2026-11-02) Added read-only Ethereum EIP-1193 and Cardano CIP-30 connection buttons and exercised them with mocked browser providers.
 - [x] (2026-11-02) Added an isolated Electron window for the local offer board; typecheck, build, sandbox policy tests and a virtual-display window test passed.
-- [ ] Implement authenticated counterparty identities, full wallet transaction interfaces and deployment hardening. Public-board users cannot yet initiate an encrypted conversation without the owner sharing a full private link.
+- [x] (2026-11-02) Enabled encrypted conversation setup for new public offers without a private link, using a per-offer non-extractable inbox key and reservation-bound ephemeral ECDH.
+- [ ] Implement authenticated counterparty identities, full wallet transaction interfaces and deployment hardening. The relay can substitute inbox keys or client code, and the inbox private key is not backed up.
 - [ ] Exercise local-network end-to-end swaps and document remaining limitations.
 
 ## Surprises & Discoveries
@@ -45,7 +46,7 @@ Use independent per-offer Ethereum token escrow instances, with exact ERC-20 bal
 
 ## Outcomes & Retrospective
 
-The independent Ethereum token escrow compiles and its 13 unit tests pass. Cardano fixture-token transactions and a local offer relay now work; user-selected token handling, desktop integration, authenticated public-offer messaging, wallet integration and the full swap protocol remain unfinished. The browser board does not execute swaps. Local fixture happy paths cover every pair of the four chains and both Ethereum and Cardano same-chain token swaps; the shared link has a message key but does not authenticate participants or protect against a malicious server delivering changed client code. No production readiness or deployment is asserted.
+The independent Ethereum token escrow and local Cardano fixture transactions work, and the browser board supports local manual wallet actions and encrypted offer messaging. Full coordinated swaps, authenticated participant identities, complete recovery and production deployment remain unfinished. Local fixture happy paths cover every pair of the four chains and both Ethereum and Cardano same-chain token swaps; public inbox and shared-link messages do not authenticate participants or protect against a malicious server delivering substituted keys or changed client code. No production readiness or deployment is asserted.
 
 ## Context and Orientation
 
@@ -110,3 +111,5 @@ Revision 2026-11-02: Cardano local CLI actions funded, claimed and refunded a bu
 Revision 2026-11-02: added local claim-preimage observers and encrypted recovery for Bitcoin (`/workspace/bobserve1/summary.json`), Ethereum (`/workspace/eobserve1/summary.json`), Cardano via a local Ogmios stream (`/workspace/owatch3/summary.json`) and Hegemon (`/workspace/hobserve2/summary.json`, a copy of the prior isolated chain). The first Hegemon observer attempt failed because canonical actions were bytearrays, and the corrected parser accepts and tests both byte buffer types. A fresh BTC/Cardano companion rehearsal (`/workspace/bcscomp1/summary.json`) verified both legs, observed a confirmed Cardano claim and used the resulting encrypted backup to claim BTC. This is a scripted manual rehearsal, not a complete pairwise coordinator or finality policy.
 
 Revision 2026-11-02: added a transactional browser journal of validated public action terms before wallet calls. It records returned IDs, retains uncertain outcomes, exports/imports without overwrites and blocks action submission when local journal storage is damaged. Concurrent tabs, interrupted responses and conflicting imports were exercised in Chromium; journal records do not contain keys, preimages or complete swap recovery.
+
+Revision 2026-11-02: new public offers carry an owner P-256 inbox public key. A reserving participant can encrypt a session key to it without a shared link; HKDF and AES-GCM bind the setup to the offer and reservation. A response-loss retry resends the same sealed setup, and the relay atomically rejects messages for a stale reservation. The non-extractable owner key is local to the browser and is not backed up; this channel does not authenticate wallet identities or defend against malicious relay code/key substitution.

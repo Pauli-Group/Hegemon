@@ -9,6 +9,8 @@ db.exec(`PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS offers (id TEXT PRIMARY KEY, owner_hash TEXT NOT NULL, public INTEGER NOT NULL, offer TEXT NOT NULL, expires INTEGER NOT NULL, closed INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS reservations (offer_id TEXT PRIMARY KEY REFERENCES offers(id), token_hash TEXT NOT NULL, expires INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, offer_id TEXT NOT NULL REFERENCES offers(id), sender TEXT NOT NULL, payload TEXT NOT NULL, created INTEGER NOT NULL);`);
+const reservationColumns=db.prepare('PRAGMA table_info(reservations)').all() as {name:string}[];
+if(!reservationColumns.some(column=>column.name==='reservation_id'))db.exec('ALTER TABLE reservations ADD COLUMN reservation_id TEXT');
 const token=()=>randomBytes(32).toString('hex');
 const digest=(s:string)=>createHash('sha256').update(s).digest('hex');
 const equals=(a:string,b:string)=>a.length===b.length && timingSafeEqual(Buffer.from(a),Buffer.from(b));
@@ -49,12 +51,15 @@ function participant(id:string,secret:string):string|null {
     return reservation && equals(hash,reservation.token_hash) ? 'taker' : null;
 }
 function getOffer(id:string) {return db.prepare('SELECT id,public,offer,expires,closed FROM offers WHERE id=?').get(id) as {id:string,public:number,offer:string,expires:number,closed:number}|undefined;}
-function present(row:NonNullable<ReturnType<typeof getOffer>>) {return {id:row.id,visibility:row.public?'public':'private',...JSON.parse(row.offer),expires:row.expires,closed:!!row.closed};}
+function present(row:NonNullable<ReturnType<typeof getOffer>>) {
+    const active=db.prepare('SELECT reservation_id FROM reservations WHERE offer_id=? AND expires>?').get(row.id,now()) as {reservation_id:string|null}|undefined;
+    return {id:row.id,visibility:row.public?'public':'private',...JSON.parse(row.offer),expires:row.expires,closed:!!row.closed,...(active?.reservation_id?{reservationId:active.reservation_id}:{})};
+}
 
 const server=createServer(async (req,res)=>{
     try {
         const url=new URL(req.url ?? '/', 'http://localhost');
-        if(req.method==='GET' && ['/', '/app.js', '/crypto.mjs', '/deadlines.mjs', '/recovery.mjs', '/vault-store.mjs', '/action-journal.mjs', '/ethereum-escrow.mjs', '/ethereum-actions.mjs', '/token-escrow-template.json', '/ether-escrow-template.json', '/style.css'].includes(url.pathname)) {
+        if(req.method==='GET' && ['/', '/app.js', '/crypto.mjs', '/public-inbox.mjs', '/deadlines.mjs', '/recovery.mjs', '/vault-store.mjs', '/action-journal.mjs', '/ethereum-escrow.mjs', '/ethereum-actions.mjs', '/token-escrow-template.json', '/ether-escrow-template.json', '/style.css'].includes(url.pathname)) {
             const file=url.pathname==='/'?'index.html':url.pathname.slice(1);
             const type=file.endsWith('.html')?'text/html':file.endsWith('.js')||file.endsWith('.mjs')?'text/javascript':file.endsWith('.json')?'application/json':'text/css';
             const content=readFileSync(new URL('../swap-ui/'+file,import.meta.url));
@@ -65,9 +70,9 @@ const server=createServer(async (req,res)=>{
         if(req.method==='GET' && url.pathname==='/health') return reply(res,200,{status:'ok'});
         if(req.method==='POST' && url.pathname==='/offers') {
             const data=await body(req);
-            if(!data || Object.keys(data).sort().join(',')!=='expires,give,receive,visibility' || !asset(data.give) || !asset(data.receive) || !['private','public'].includes(data.visibility) || !Number.isSafeInteger(data.expires) || data.expires<=now()+60 || data.expires>now()+604800) return reply(res,400,{error:'invalid offer'});
+            if(!data || !['expires,give,receive,visibility','expires,give,ownerPublicKey,receive,visibility'].includes(Object.keys(data).sort().join(',')) || ('ownerPublicKey' in data && (typeof data.ownerPublicKey!=='string'||!/^04[0-9a-f]{128}$/.test(data.ownerPublicKey))) || !asset(data.give) || !asset(data.receive) || !['private','public'].includes(data.visibility) || !Number.isSafeInteger(data.expires) || data.expires<=now()+60 || data.expires>now()+604800) return reply(res,400,{error:'invalid offer'});
             const id=token(),owner=token();
-            db.prepare('INSERT INTO offers(id,owner_hash,public,offer,expires) VALUES(?,?,?,?,?)').run(id,digest(owner),data.visibility==='public'?1:0,JSON.stringify({give:data.give,receive:data.receive}),data.expires);
+            db.prepare('INSERT INTO offers(id,owner_hash,public,offer,expires) VALUES(?,?,?,?,?)').run(id,digest(owner),data.visibility==='public'?1:0,JSON.stringify({give:data.give,receive:data.receive,...(data.ownerPublicKey?{ownerPublicKey:data.ownerPublicKey}:{})}),data.expires);
             return reply(res,201,{id,ownerToken:owner});
         }
         if(req.method==='GET' && url.pathname==='/offers') {
@@ -81,16 +86,16 @@ const server=createServer(async (req,res)=>{
         if(req.method==='GET' && !op) return reply(res,200,present(offer));
         if(req.method==='POST' && op==='reserve') {
             if(offer.closed || offer.expires<=now()) return reply(res,409,{error:'offer unavailable'});
-            const secret=token(), expiry=Math.min(now()+86400,offer.expires);
+            const secret=token(), reservationId=token(), expiry=Math.min(now()+86400,offer.expires);
             db.exec('BEGIN IMMEDIATE');
             try {
                 db.prepare('DELETE FROM reservations WHERE offer_id=? AND expires<=?').run(id,now());
-                const result=db.prepare('INSERT OR IGNORE INTO reservations(offer_id,token_hash,expires) VALUES(?,?,?)').run(id,digest(secret),expiry);
+                const result=db.prepare('INSERT OR IGNORE INTO reservations(offer_id,token_hash,expires,reservation_id) VALUES(?,?,?,?)').run(id,digest(secret),expiry,reservationId);
                 if(result.changes) db.prepare('DELETE FROM messages WHERE offer_id=?').run(id);
                 db.exec('COMMIT');
                 if(!result.changes) return reply(res,409,{error:'already reserved'});
             } catch(e) {db.exec('ROLLBACK');throw e;}
-            return reply(res,201,{reservationToken:secret,expires:expiry});
+            return reply(res,201,{reservationToken:secret,reservationId,expires:expiry});
         }
         const who=participant(id,credentials(req));
         if(!who) return reply(res,401,{error:'unauthorized'});
@@ -102,11 +107,20 @@ const server=createServer(async (req,res)=>{
         if(op==='messages' && req.method==='POST') {
             if(offer.expires<=now()) return reply(res,409,{error:'offer unavailable'});
             const data=await body(req);
-            if(!data || Object.keys(data).join(',')!=='ciphertext' || typeof data.ciphertext!=='string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(data.ciphertext) || data.ciphertext.length>8192) return reply(res,400,{error:'invalid ciphertext'});
-            const count=db.prepare('SELECT count(*) AS n FROM messages WHERE offer_id=?').get(id) as {n:number};
-            if(count.n>=100) return reply(res,429,{error:'message limit reached'});
-            const result=db.prepare('INSERT INTO messages(offer_id,sender,payload,created) VALUES(?,?,?,?)').run(id,who,data.ciphertext,now());
-            return reply(res,201,{id:Number(result.lastInsertRowid)});
+            const inbox=!!JSON.parse(offer.offer).ownerPublicKey;
+            if(!data || Object.keys(data).sort().join(',')!==(inbox?'ciphertext,reservationId':'ciphertext') || typeof data.ciphertext!=='string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(data.ciphertext) || data.ciphertext.length>8192 || inbox&&(typeof data.reservationId!=='string'||!/^[0-9a-f]{64}$/.test(data.reservationId))) return reply(res,400,{error:'invalid ciphertext or reservation'});
+            db.exec('BEGIN IMMEDIATE');
+            try {
+                const current=participant(id,credentials(req));
+                if(current!==who){db.exec('ROLLBACK');return reply(res,401,{error:'unauthorized'});}
+                if(inbox){const active=db.prepare('SELECT reservation_id FROM reservations WHERE offer_id=? AND expires>?').get(id,now()) as {reservation_id:string|null}|undefined;
+                    if(!active||active.reservation_id!==data.reservationId){db.exec('ROLLBACK');return reply(res,409,{error:'reservation changed'});}}
+                if(offer.expires<=now()){db.exec('ROLLBACK');return reply(res,409,{error:'offer unavailable'});}
+                const count=db.prepare('SELECT count(*) AS n FROM messages WHERE offer_id=?').get(id) as {n:number};
+                if(count.n>=100){db.exec('ROLLBACK');return reply(res,429,{error:'message limit reached'});}
+                const result=db.prepare('INSERT INTO messages(offer_id,sender,payload,created) VALUES(?,?,?,?)').run(id,who,data.ciphertext,now());
+                db.exec('COMMIT');return reply(res,201,{id:Number(result.lastInsertRowid)});
+            } catch(e) {db.exec('ROLLBACK');throw e;}
         }
         if(op==='messages' && req.method==='GET') {
             const after=Number(url.searchParams.get('after') ?? '0');

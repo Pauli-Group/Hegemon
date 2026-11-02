@@ -7,6 +7,7 @@ import {join,resolve} from 'node:path';
 import {createServer} from 'node:net';
 import {once} from 'node:events';
 import {newMessageKey,encryptMessage,decryptMessage} from '../swap-ui/crypto.mjs';
+import {makeInboxKeyPair} from '../swap-ui/public-inbox.mjs';
 
 async function availablePort() {
   const server=createServer();server.listen(0,'127.0.0.1');await once(server,'listening');
@@ -37,6 +38,13 @@ test('private and public offers, exclusive reservations, authenticated relay and
     let [status,priv]=await call('/offers',{method:'POST',data:terms});assert.equal(status,201);
     const [pubStatus,pub]=await call('/offers',{method:'POST',data:{...terms,visibility:'public'}});assert.equal(pubStatus,201);
     let [,listing]=await call('/offers');assert.deepEqual(listing.offers.map(x=>x.id),[pub.id]);
+    const inbox=await makeInboxKeyPair(),[inboxStatus,inboxOffer]=await call('/offers',{method:'POST',data:{...terms,visibility:'public',ownerPublicKey:inbox.publicKey}});assert.equal(inboxStatus,201);
+    const [inboxReserve,inboxReservation]=await call('/offers/'+inboxOffer.id+'/reserve',{method:'POST'});assert.equal(inboxReserve,201);assert.match(inboxReservation.reservationId,/^[0-9a-f]{64}$/);
+    const [,inboxRead]=await call('/offers/'+inboxOffer.id);assert.equal(inboxRead.ownerPublicKey,inbox.publicKey);assert.equal(inboxRead.reservationId,inboxReservation.reservationId);
+    assert.equal((await call('/offers/'+inboxOffer.id+'/messages',{method:'POST',token:inboxOffer.ownerToken,data:{ciphertext:'YWJj'}}))[0],400);
+    assert.equal((await call('/offers/'+inboxOffer.id+'/messages',{method:'POST',token:inboxOffer.ownerToken,data:{ciphertext:'YWJj',reservationId:'0'.repeat(64)}}))[0],409);
+    assert.equal((await call('/offers/'+inboxOffer.id+'/messages',{method:'POST',token:inboxReservation.reservationToken,data:{ciphertext:'YWJj',reservationId:inboxReservation.reservationId}}))[0],201);
+    assert.equal((await call('/offers',{method:'POST',data:{...terms,ownerPublicKey:'invalid'}}))[0],400);
     assert.equal((await call('/offers/'+priv.id))[0],200);
     assert.equal((await call('/offers',{method:'POST',data:{...terms,secret:'do not accept'}}))[0],400);
     assert.equal((await call('/offers',{method:'POST',data:{...terms,give:{chain:'ethereum',kind:'erc721',id:'0x1234567890123456789012345678901234567890:1',amount:'2'}}}))[0],400);
@@ -49,6 +57,7 @@ test('private and public offers, exclusive reservations, authenticated relay and
     assert.equal((await call('/offers/'+priv.id+'/close',{method:'POST',token:reservation.reservationToken}))[0],403);
     assert.equal((await call('/offers/'+priv.id+'/close',{method:'POST',token:priv.ownerToken}))[0],200);
     await stop();await start();
+    const [,inboxAfter]=await call('/offers/'+inboxOffer.id);assert.equal(inboxAfter.reservationId,inboxReservation.reservationId);assert.equal(inboxAfter.ownerPublicKey,inbox.publicKey);
     const [,after]=await call('/offers/'+priv.id+'/messages',{token:priv.ownerToken});assert.equal(after.messages.length,1);
     assert.equal((await call('/offers/'+priv.id+'/reserve',{method:'POST'}))[0],409);
   } finally {await stop();await rm(dir,{recursive:true,force:true});}

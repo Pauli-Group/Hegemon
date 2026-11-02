@@ -78,6 +78,21 @@ test('two browser sessions create a private offer and exchange encrypted message
   await first.getByRole('button',{name:'Refresh messages'}).click();await first.getByText('taker: hello from taker').waitFor();
   await first.locator('#chat-form input').fill('hello from owner');await first.getByRole('button',{name:'Send encrypted message'}).click();
   await second.getByRole('button',{name:'Refresh messages'}).click();await second.getByText('owner: hello from owner').waitFor();
+  const publicBodies=[];for(const page of [first,second])page.on('request',request=>{if(request.postData())publicBodies.push(request.postData());});
+  await first.locator('#offer-form [name="visibility"]').selectOption('public');await first.getByRole('button',{name:'Create offer'}).click();
+  await first.waitForFunction(old=>document.getElementById('share-link').value!==old,link);const publicLink=await first.locator('#share-link').inputValue(),publicId=publicLink.split('#')[1].split('.')[0];
+  await first.reload();await first.getByRole('button',{name:'Refresh messages'}).waitFor();await first.locator('#companion-token').fill('a'.repeat(64));await first.getByRole('button',{name:'Connect local companion'}).click();await first.getByText('Local companion connected with experimental Hegemon actions enabled.').waitFor();
+  await second.goto(base);let loseHandshakeResponse=true;await second.route('**/offers/*/messages',async route=>{if(loseHandshakeResponse&&route.request().method()==='POST'){loseHandshakeResponse=false;await route.fetch();return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'fixture response lost'})});}return route.continue();});
+  await second.getByRole('button',{name:'View offer'}).click();assert.equal(await second.evaluate(()=>location.hash),'#'+publicId);
+  await second.getByRole('button',{name:'Reserve offer'}).click();await second.getByText('No funds have been locked.',{exact:false}).waitFor();
+  await second.getByText('Conversation setup was not confirmed.',{exact:false}).waitFor();await second.getByRole('button',{name:'Retry conversation setup'}).click();
+  await second.locator('#chat-form input').fill('hello from the public board');await second.getByRole('button',{name:'Send encrypted message'}).click();
+  await second.getByText('taker: hello from the public board').waitFor();await first.getByRole('button',{name:'Refresh messages'}).click();
+  try{await first.getByText('taker: hello from the public board').waitFor({timeout:10000});}catch{throw Error('owner chat status: '+await first.locator('#chat-status').textContent()+'; messages: '+await first.locator('#chat-list').textContent());}
+  await first.locator('#chat-form input').fill('public reply');await first.getByRole('button',{name:'Send encrypted message'}).click();
+  await first.getByText('owner: public reply').waitFor();await second.getByRole('button',{name:'Refresh messages'}).click();await second.getByText('owner: public reply').waitFor();
+  const publicKey=await second.evaluate(id=>localStorage.getItem('offer-message-key:'+id),publicId);
+  assert.equal(publicBodies.some(body=>body.includes('hello from the public board')||body.includes('public reply')||body.includes(publicKey)),false);
   const sent=[];first.on('request',request=>{const body=request.postData();if(body)sent.push(body);});
   const backupPhrase='separate test backup passphrase';
   const third=await owner.newPage();await third.goto(base);
@@ -107,6 +122,7 @@ test('two browser sessions create a private offer and exchange encrypted message
   assert.notEqual(await legacy.evaluate(()=>localStorage.getItem('hegemon.local.encrypted-secrets.v1')),null);
   await migration.close();
   await first.evaluate(()=>new Promise((resolve,reject)=>{const open=indexedDB.open('hegemon.local.action-journal.v1',1);open.onerror=()=>reject(open.error);open.onsuccess=()=>{const db=open.result,tx=db.transaction('actions','readwrite');tx.objectStore('actions').add({id:'0'.repeat(32)});tx.oncomplete=()=>{db.close();resolve();};tx.onerror=()=>reject(tx.error);};}));
+  for(const [name,value] of Object.entries({hashlock:'c'.repeat(64),claimant_key:'02'+'d'.repeat(64),refund_key:'03'+'e'.repeat(64),refund_height:'200',amount_sats:'100000'}))await first.locator(`#bitcoin-action-form [name="${name}"]`).fill(value);
   const beforeCorrupt=companionRequests.length;await first.getByRole('button',{name:'Request Bitcoin action'}).click();await first.locator('#bitcoin-action-status').getByText('Invalid saved action journal.').waitFor();assert.equal(companionRequests.length,beforeCorrupt);
   await first.evaluate(()=>new Promise((resolve,reject)=>{const open=indexedDB.open('hegemon.local.action-journal.v1',1);open.onerror=()=>reject(open.error);open.onsuccess=()=>{const db=open.result,tx=db.transaction('actions','readwrite');tx.objectStore('actions').delete('0'.repeat(32));tx.oncomplete=()=>{db.close();resolve();};tx.onerror=()=>reject(tx.error);};}));
   const watch={label:'Watch BTC',chain:'bitcoin',deadline:'200',warning:'60',genesis:'b'.repeat(64)};

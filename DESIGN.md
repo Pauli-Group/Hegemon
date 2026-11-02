@@ -1875,6 +1875,8 @@ The additive `contracts/ethereum/TokenHTLC.sol` escrow supports ERC-20, ERC-721 
 
 The isolated Cardano harness can mint disposable fungible and one-of-one native tokens under a fresh local policy and check their exact values through HTLC claim or refund. The local TypeScript/SQLite offer relay in `swap-service` stores public or private offers, expiring reservations and opaque messages; it does not sign transactions, verify on-chain state or encrypt messages. These are local prototype components, not a complete application or a production service.
 
+New offers include an owner P-256 inbox public key. A reserving participant can establish an encrypted session without a shared link using an ephemeral ECDH handshake bound to the offer and reservation. The private inbox key is non-extractable and local to the owner's browser. This does not authenticate a wallet identity or defend against a malicious relay substituting keys or client code; losing browser storage loses the inbox key.
+
 
 ## Local Ethereum escrow verification
 

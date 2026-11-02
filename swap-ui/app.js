@@ -1,5 +1,6 @@
 'use strict';
 import {newMessageKey,encryptMessage,decryptMessage} from './crypto.mjs';
+import {createInbox,inboxPrivateKey,sealPublicSession,openPublicSession,parsePublicSession} from './public-inbox.mjs';
 import {verifyTokenEscrow,verifyEtherEscrow} from './ethereum-escrow.mjs';
 import {submitLocalEscrowDeployment,submitLocalTokenFundingStep,submitLocalEscrowRefund,submitLocalEscrowClaim,observeLocalEthereumClaim} from './ethereum-actions.mjs';
 import {validateWatch,evaluateWatch} from './deadlines.mjs';
@@ -226,14 +227,24 @@ hegemonActionForm.addEventListener('submit',async event=>{event.preventDefault()
 function credential(id){return localStorage.getItem('offer-owner:'+id);}
 function currentOffer(){return location.hash.slice(1).split('.')[0];}
 function messageKey(id){return localStorage.getItem('offer-message-key:'+id);}
+function sessionId(id){return localStorage.getItem('offer-session:'+id);}
 function participantToken(id){return credential(id)||localStorage.getItem('offer-reservation:'+id);}
 function selectOffer(id){location.hash=id;return loadSelected();}
-function updateChat(id){$('chat').hidden=!(messageKey(id)&&participantToken(id));if(!$('chat').hidden)refreshChat();}
-async function refreshChat(){const id=currentOffer(),key=messageKey(id),token=participantToken(id);if(!key||!token)return;
- try{const {messages}=await api('/offers/'+id+'/messages',{headers:{authorization:'Bearer '+token}});$('chat-list').replaceChildren();
-  for(const item of messages){const p=document.createElement('p');try{p.textContent=item.sender+': '+await decryptMessage(key,id,item.ciphertext);}catch{p.textContent=item.sender+': [unable to decrypt message]';} $('chat-list').append(p);}
-  msg($('chat-status'),messages.length?'':'No messages yet.');
- }catch(e){msg($('chat-status'),e.message,true);}}
+let chatRenderVersion=0;
+function updateChat(id){$('chat').hidden=!participantToken(id);if(!$('chat').hidden)refreshChat();else chatRenderVersion++;}
+async function refreshChat(){const version=++chatRenderVersion,id=currentOffer(),token=participantToken(id);if(!token)return;
+ try{const offer=await api('/offers/'+id),{messages}=await api('/offers/'+id+'/messages',{headers:{authorization:'Bearer '+token}});if(version!==chatRenderVersion||id!==currentOffer())return;
+  let key=messageKey(id),bound=sessionId(id);const reservation=offer.reservationId;
+  if(credential(id)&&offer.ownerPublicKey&&reservation&&bound!==reservation){
+   const handshake=messages.find(item=>item.sender==='taker'&&parsePublicSession(item.ciphertext)?.reservation===reservation);
+   if(handshake){const privateKey=await inboxPrivateKey(offer.ownerPublicKey);key=await openPublicSession(privateKey,offer.ownerPublicKey,id,reservation,handshake.ciphertext);localStorage.setItem('offer-message-key:'+id,key);localStorage.setItem('offer-session:'+id,reservation);bound=reservation;}
+  }
+  if(version!==chatRenderVersion||id!==currentOffer())return;
+  const ready=!!key&&(!offer.ownerPublicKey||(!!reservation&&bound===reservation)),readable=ready||!!(key&&offer.ownerPublicKey&&!reservation&&bound);$('chat-form').querySelector('button').disabled=!ready;$('chat-form').elements.message.disabled=!ready;$('chat-list').replaceChildren();
+  for(const item of messages){if(parsePublicSession(item.ciphertext))continue;const p=document.createElement('p');try{if(!readable)throw Error();p.textContent=item.sender+': '+await decryptMessage(key,id,item.ciphertext);}catch{p.textContent=item.sender+': [unable to decrypt message]';}if(version!==chatRenderVersion||id!==currentOffer())return;$('chat-list').append(p);}
+  $('retry-handshake').hidden=!localStorage.getItem('offer-handshake:'+id);
+  msg($('chat-status'),ready?(messages.length?'':'No messages yet.'):readable?'Reservation expired; retained messages remain available.':'Waiting for a reserved participant to establish the encrypted conversation.');
+ }catch(e){if(version===chatRenderVersion&&id===currentOffer())msg($('chat-status'),e.message,true);}}
 async function loadSelected(){
  const [id,key]=location.hash.slice(1).split('.');if(!/^[0-9a-f]{64}$/.test(id)){$('selected').hidden=true;$('chat').hidden=true;return;}
  if(key&&/^[0-9a-f]{64}$/.test(key))localStorage.setItem('offer-message-key:'+id,key);
@@ -247,16 +258,29 @@ async function refresh(){try{const {offers}=await api('/offers');$('board').repl
  catch(e){msg($('board'),e.message,true);}}
 $('offer-form').addEventListener('submit',async event=>{event.preventDefault();const data=new FormData(event.currentTarget);
  const read=side=>{const [chain,kind]=String(data.get(side+'-type')).split(':');return {chain,kind,id:String(data.get(side+'-id')).trim(),amount:String(data.get(side+'-amount')).trim()};};
- try{const result=await api('/offers',{method:'POST',body:JSON.stringify({give:read('give'),receive:read('receive'),visibility:data.get('visibility'),expires:Math.floor(Date.now()/1000)+Number(data.get('lifetime'))})});
+ try{const ownerPublicKey=await createInbox();const result=await api('/offers',{method:'POST',body:JSON.stringify({give:read('give'),receive:read('receive'),visibility:data.get('visibility'),expires:Math.floor(Date.now()/1000)+Number(data.get('lifetime')),ownerPublicKey})});
   localStorage.setItem('offer-owner:'+result.id,result.ownerToken);const key=newMessageKey();localStorage.setItem('offer-message-key:'+result.id,key);$('share-link').value=location.origin+'/#'+result.id+'.'+key;$('share').hidden=false;msg($('create-result'),'Offer created.');await refresh();await selectOffer(result.id);
  }catch(e){msg($('create-result'),e.message,true);}});
 $('copy-link').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('share-link').value);msg($('create-result'),'Link copied.');}catch{msg($('create-result'),'Select and copy the link above.');}});
 $('refresh').addEventListener('click',refresh);
-$('reserve').addEventListener('click',async()=>{const id=currentOffer();try{const result=await api('/offers/'+id+'/reserve',{method:'POST'});localStorage.setItem('offer-reservation:'+id,result.reservationToken);msg($('detail-status'),'Reserved until '+new Date(result.expires*1000).toLocaleString()+'. No funds have been locked.');$('reserve').disabled=true;updateChat(id);}catch(e){msg($('detail-status'),e.message,true);}});
+async function sendPendingHandshake(id){const raw=localStorage.getItem('offer-handshake:'+id);if(!raw)throw Error('No pending conversation setup.');const item=JSON.parse(raw),token=localStorage.getItem('offer-reservation:'+id),offer=await api('/offers/'+id);
+ if(!token||!item||item.reservation!==offer.reservationId||item.ownerPublicKey!==offer.ownerPublicKey)throw Error('Reservation or inbox key changed; this conversation setup is no longer valid.');
+ if(!item.ciphertext){item.ciphertext=await sealPublicSession(item.ownerPublicKey,id,item.reservation,messageKey(id));localStorage.setItem('offer-handshake:'+id,JSON.stringify(item));}
+ if(!parsePublicSession(item.ciphertext))throw Error('Invalid pending conversation setup.');
+ await api('/offers/'+id+'/messages',{method:'POST',headers:{authorization:'Bearer '+token},body:JSON.stringify({ciphertext:item.ciphertext,reservationId:item.reservation})});
+ localStorage.setItem('offer-session:'+id,item.reservation);localStorage.removeItem('offer-handshake:'+id);await refreshChat();}
+$('reserve').addEventListener('click',async()=>{const id=currentOffer();try{const offer=await api('/offers/'+id),result=await api('/offers/'+id+'/reserve',{method:'POST'});localStorage.setItem('offer-reservation:'+id,result.reservationToken);msg($('detail-status'),'Reserved until '+new Date(result.expires*1000).toLocaleString()+'. No funds have been locked.');$('reserve').disabled=true;
+  if(offer.ownerPublicKey){const fragment=location.hash.slice(1).split('.')[1],key=/^[0-9a-f]{64}$/.test(fragment||'')?fragment:newMessageKey();localStorage.setItem('offer-message-key:'+id,key);localStorage.removeItem('offer-session:'+id);
+   localStorage.setItem('offer-handshake:'+id,JSON.stringify({reservation:result.reservationId,ownerPublicKey:offer.ownerPublicKey,ciphertext:null}));updateChat(id);
+   try{await sendPendingHandshake(id);}catch{await refreshChat();msg($('chat-status'),'Conversation setup was not confirmed. Use retry; the reservation remains active.',true);$('retry-handshake').hidden=false;}
+  }else updateChat(id);
+ }catch(e){msg($('detail-status'),e.message,true);}});
+$('retry-handshake').addEventListener('click',async()=>{try{await sendPendingHandshake(currentOffer());}catch(e){msg($('chat-status'),e.message,true);}});
 $('close').addEventListener('click',async()=>{const id=currentOffer();try{await api('/offers/'+id+'/close',{method:'POST',headers:{authorization:'Bearer '+credential(id)}});await loadSelected();await refresh();msg($('detail-status'),'Offer closed.');}catch(e){msg($('detail-status'),e.message,true);}});
 $('chat-refresh').addEventListener('click',refreshChat);
 $('chat-form').addEventListener('submit',async event=>{event.preventDefault();const id=currentOffer(),key=messageKey(id),token=participantToken(id),field=event.currentTarget.elements.message;
- try{const ciphertext=await encryptMessage(key,id,field.value);await api('/offers/'+id+'/messages',{method:'POST',headers:{authorization:'Bearer '+token},body:JSON.stringify({ciphertext})});field.value='';await refreshChat();}catch(e){msg($('chat-status'),e.message,true);}});
+ try{const offer=await api('/offers/'+id);if(id!==currentOffer()||token!==participantToken(id)||key!==messageKey(id)||!key||offer.ownerPublicKey&&(!offer.reservationId||sessionId(id)!==offer.reservationId))throw Error('Conversation session changed. Refresh messages before sending.');
+  const ciphertext=await encryptMessage(key,id,field.value);await api('/offers/'+id+'/messages',{method:'POST',headers:{authorization:'Bearer '+token},body:JSON.stringify({ciphertext,...(offer.ownerPublicKey?{reservationId:offer.reservationId}:{})})});field.value='';await refreshChat();}catch(e){msg($('chat-status'),e.message,true);}});
 const WATCH_KEY='hegemon.local.deadline-watches.v1';
 async function withStorageLock(key,action){if(!navigator.locks?.request)throw Error('Browser storage locking is unavailable; local records were not changed.');return navigator.locks.request(key,{mode:'exclusive'},action);}
 function readWatches(){try{const values=JSON.parse(localStorage.getItem(WATCH_KEY)||'[]');if(!Array.isArray(values)||values.length>30)throw Error();
