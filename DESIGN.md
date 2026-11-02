@@ -1895,6 +1895,8 @@ Experimental local observers recover a released preimage from confirmed Bitcoin 
 
 The browser action journal commits validated public terms before requesting a wallet action and records returned identifiers when available. Pending or uncertain records make no claim about submission or confirmation. It stores no keys or preimages, uses transactional IndexedDB and fail-closed imports, and remains a partial record rather than full swap recovery.
 
+The offer board can compare two separately queried local escrow snapshots with an offer's asset identifiers, amounts and common hashlock. This manual check does not establish participant identity, concurrent unspent state, safe timeout margins or finality, and the Cardano UTxO query does not provide confirmation depth. It is not a claim gate or swap coordinator.
+
 
 ## Local swap deadline watch and desktop entry
 

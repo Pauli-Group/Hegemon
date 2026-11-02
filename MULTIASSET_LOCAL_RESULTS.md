@@ -56,3 +56,5 @@ New public offers can establish encrypted conversations without a private link u
 The participants see matching SHA-256 fingerprints for the owner inbox and reservation key; a browser test also substituted the owner's inbox key and confirmed that the owner stopped sending. Fingerprints require comparison through a separate trusted channel and do not themselves authenticate a wallet identity. A relay serving modified JavaScript can bypass these client-side checks.
 
 The updated desktop bundle passed typechecking and build, and a temporary virtual-display test opened the current local board in its isolated Electron window with dummy node executables. It checked that the browser modules initialized and that the desktop wallet API was not exposed to that window.
+
+The paired-leg browser test compares a BTC/Cardano offer with two mocked local snapshots and rejects a changed hashlock before querying either leg. It checks that Cardano's unavailable confirmation depth is displayed. This is a browser integration test with a substituted companion, not a fresh real-chain swap or evidence of safe timeout margins.

@@ -7,6 +7,7 @@ import {validateWatch,evaluateWatch} from './deadlines.mjs';
 import {createRecovery,encryptRecovery,unlockRecovery,validateRecoveryEnvelope} from './recovery.mjs';
 import {vaultLabel,listVault,addVault,removeVault} from './vault-store.mjs';
 import {listActions,beginAction,finishAction,uncertainAction,removeAction,importActions} from './action-journal.mjs';
+import {comparePair} from './pair-check.mjs';
 const types=[['ethereum:eth','Ethereum · ETH'],['ethereum:erc20','Ethereum · ERC-20'],['ethereum:erc721','Ethereum · ERC-721'],['ethereum:erc1155','Ethereum · ERC-1155'],['cardano:ada','Cardano · ADA'],['cardano:native','Cardano · native token'],['bitcoin:btc','Bitcoin · BTC'],['hegemon:hgn','Hegemon · HGN']];
 const $=id=>document.getElementById(id);
 for(const name of ['give-type','receive-type']) for(const [value,label] of types) document.querySelector(`[name="${name}"]`).add(new Option(label,value));
@@ -224,6 +225,7 @@ hegemonActionForm.addEventListener('submit',async event=>{event.preventDefault()
   else {const {result,warning}=await recordedAction('hegemon',operation,request,invoke);$('hegemon-action-result').textContent=JSON.stringify(result,null,2);msg($('hegemon-action-status'),warning||'Local action completed. Review the result before submitting anything.',!!warning);}
  }catch(e){msg($('hegemon-action-status'),e.message,true);}finally{button.disabled=false;}
 });
+let pairContext=null,pairLegs={give:null,receive:null},pairBusy=false;
 function credential(id){return localStorage.getItem('offer-owner:'+id);}
 function currentOffer(){return location.hash.slice(1).split('.')[0];}
 function messageKey(id){return localStorage.getItem('offer-message-key:'+id);}
@@ -231,7 +233,7 @@ function sessionId(id){return localStorage.getItem('offer-session:'+id);}
 function checkOwnerInbox(id,offer){const known=localStorage.getItem('offer-inbox:'+id);if(credential(id)&&known&&known!==offer.ownerPublicKey)throw Error('Offer inbox key changed. Verify the offer independently.');}
 function participantToken(id){return credential(id)||localStorage.getItem('offer-reservation:'+id);}
 function selectOffer(id){location.hash=id;return loadSelected();}
-let chatRenderVersion=0;
+let chatRenderVersion=0,selectionVersion=0;
 function updateChat(id){$('chat').hidden=!participantToken(id);if(!$('chat').hidden)refreshChat();else chatRenderVersion++;}
 async function refreshChat(){const version=++chatRenderVersion,id=currentOffer(),token=participantToken(id);if(!token)return;
  try{const offer=await api('/offers/'+id),{messages}=await api('/offers/'+id+'/messages',{headers:{authorization:'Bearer '+token}});if(version!==chatRenderVersion||id!==currentOffer())return;checkOwnerInbox(id,offer);
@@ -249,20 +251,69 @@ async function refreshChat(){const version=++chatRenderVersion,id=currentOffer()
   msg($('chat-status'),ready?(messages.length?'':'No messages yet.'):readable?'Reservation expired; retained messages remain available.':'Waiting for a reserved participant to establish the encrypted conversation.');
  }catch(e){if(version===chatRenderVersion&&id===currentOffer()){$('chat-form').querySelector('button').disabled=true;$('chat-form').elements.message.disabled=true;msg($('chat-status'),e.message,true);}}}
 async function loadSelected(){
- const [id,key]=location.hash.slice(1).split('.');if(!/^[0-9a-f]{64}$/.test(id)){$('selected').hidden=true;$('chat').hidden=true;return;}
+ const version=++selectionVersion,[id,key]=location.hash.slice(1).split('.');if(!/^[0-9a-f]{64}$/.test(id)){$('selected').hidden=true;$('chat').hidden=true;return;}
  if(key&&/^[0-9a-f]{64}$/.test(key))localStorage.setItem('offer-message-key:'+id,key);
- try{const offer=await api('/offers/'+id);checkOwnerInbox(id,offer);$('selected').hidden=false;$('details').replaceChildren();
+ try{const offer=await api('/offers/'+id);if(version!==selectionVersion||currentOffer()!==id)return;checkOwnerInbox(id,offer);$('selected').hidden=false;$('details').replaceChildren();
+  if(pairContext?.id!==id){pairContext={id,give:structuredClone(offer.give),receive:structuredClone(offer.receive)};pairLegs={give:null,receive:null};$('pair-result').textContent='';msg($('pair-status'),'Capture both escrow terms from the verification forms.');}
   for(const line of ['Give: '+describe(offer.give),'Receive: '+describe(offer.receive),'Expires: '+new Date(offer.expires*1000).toLocaleString(),offer.closed?'Closed':'Open']){const p=document.createElement('p');p.textContent=line;$('details').append(p);}
   $('reserve').disabled=offer.closed||offer.expires*1000<=Date.now();$('close').hidden=!credential(id)||offer.closed;msg($('detail-status'),'');updateChat(id);
- }catch(e){chatRenderVersion++;$('selected').hidden=false;msg($('details'),e.message,true);$('reserve').disabled=true;$('close').hidden=true;$('chat').hidden=true;}
+ }catch(e){if(version!==selectionVersion||currentOffer()!==id)return;chatRenderVersion++;pairContext=null;pairLegs={give:null,receive:null};$('pair-result').textContent='';$('selected').hidden=false;msg($('details'),e.message,true);$('reserve').disabled=true;$('close').hidden=true;$('chat').hidden=true;}
 }
+function capturedPairTerms(chain){
+ const form={ethereum:$('verify-form'),bitcoin:$('bitcoin-form'),cardano:$('cardano-form'),hegemon:$('hegemon-form')}[chain];
+ if(!form||!form.reportValidity())throw Error('Complete the '+chain+' verification form first.');const data=new FormData(form),terms={};
+ const fields={ethereum:['contract','kind','token','tokenId','amount','hashlock','claimant','refundee','expiry'],bitcoin:['txid','vout','amount_sats','genesis_hash','hashlock','claimant_key','refund_key','refund_height'],cardano:['outref','hashlock','claimant','refundee','expiry_ms','genesis_sha256'],hegemon:['locked','claim','refund','hashlock','timeout','amount','min_confirmations','min_remaining_blocks']}[chain];
+ for(const name of fields)terms[name]=String(data.get(name)||'').trim();if(chain==='cardano')terms.expected_value=cardanoValue(data);return terms;
+}
+for(const side of ['give','receive'])$('pair-capture-'+side).addEventListener('click',()=>{try{if(pairBusy||!pairContext||currentOffer()!==pairContext.id)throw Error('Select an offer first.');const chain=pairContext[side].chain;pairLegs[side]={chain,terms:capturedPairTerms(chain)};$('pair-result').textContent='';msg($('pair-status'),'Captured '+side+'-side '+chain+' terms. Capture the other side, then check both.');}catch(e){msg($('pair-status'),e.message,true);}});
+async function checkPairLeg(leg){
+ const t=leg.terms;if(!companionToken)throw Error('Connect the configured local companion.');
+ if(leg.chain==='ethereum'){
+  if(!activeEthereumProvider||!companionCapabilities.includes('ethereum-local-anchor'))throw Error('Connect an Ethereum wallet and a companion configured for local Anvil.');
+  const provider=activeEthereumProvider,anchor=await companion('/ethereum/head',companionToken),response=await fetch(t.kind==='eth'?'/ether-escrow-template.json':'/token-escrow-template.json');if(!response.ok)throw Error('Escrow template unavailable.');
+  const template=await response.json(),terms={...t,chainId:'0x7a69'};const snapshot=await (t.kind==='eth'?verifyEtherEscrow(provider,template,terms,2):verifyTokenEscrow(provider,template,terms,2));
+  const [genesis,head]=await Promise.all([provider.request({method:'eth_getBlockByNumber',params:['0x0',false]}),provider.request({method:'eth_getBlockByNumber',params:['latest',false]})]);
+  if(provider!==activeEthereumProvider||String(genesis?.hash).toLowerCase()!=='0x'+anchor.genesis||String(head?.hash).toLowerCase()!==anchor.tip_hash||BigInt(head.timestamp)!==BigInt(anchor.time_seconds))throw Error('Ethereum wallet and local node do not agree.');
+  return {chain:leg.chain,genesis:anchor.genesis,remaining:(BigInt(t.expiry)-BigInt(anchor.time_seconds)).toString(),unit:'seconds',snapshot};
+ }
+ if(leg.chain==='bitcoin'){
+  if(!companionCapabilities.includes('bitcoin-regtest-verify'))throw Error('Connect a companion configured for Bitcoin.');const request={...t};
+  for(const name of ['vout','amount_sats','refund_height']){request[name]=Number(t[name]);if(!Number.isSafeInteger(request[name]))throw Error('Invalid Bitcoin amount or height.');}
+  const result=await companion('/bitcoin/verify',companionToken,request),head=await companion('/bitcoin/head',companionToken);if(result.verified!==true||head.genesis!==t.genesis_hash||head.tip_hash!==result.snapshot?.block_hash)throw Error('Bitcoin snapshot changed; check again.');
+  return {chain:leg.chain,genesis:head.genesis,remaining:(BigInt(t.refund_height)-BigInt(head.height)).toString(),unit:'blocks',snapshot:result.snapshot};
+ }
+ if(leg.chain==='cardano'){
+  if(!companionCapabilities.includes('cardano-local-verify'))throw Error('Connect a companion configured for Cardano.');
+  const result=await companion('/cardano/verify',companionToken,t),head=await companion('/cardano/head',companionToken);if(result.verified!==true||result.snapshot?.confirmations!==null||head.genesis!==t.genesis_sha256)throw Error('Cardano snapshot unavailable.');
+  return {chain:leg.chain,genesis:head.genesis,remaining:(BigInt(t.expiry_ms)-BigInt(head.time_ms)).toString(),unit:'milliseconds',snapshot:result.snapshot};
+ }
+ if(leg.chain==='hegemon'){
+  if(!companionCapabilities.includes('hegemon-local-verify'))throw Error('Connect a companion configured for the Hegemon wallet.');msg($('pair-status'),'Approve the Hegemon wallet read in the local companion terminal.');
+  const result=await companion('/hegemon/verify',companionToken,t),head=await companion('/hegemon/head',companionToken);if(result.verified!==true||result.snapshot?.verified!==true)throw Error('Hegemon note was not verified.');
+  return {chain:leg.chain,genesis:head.genesis,remaining:(BigInt(t.timeout)-BigInt(head.height)).toString(),unit:'blocks',snapshot:result.snapshot};
+ }
+ throw Error('Unsupported chain.');
+}
+$('pair-verify').addEventListener('click',async()=>{if(pairBusy)return;pairBusy=true;for(const button of document.querySelectorAll('#pair-check button'))button.disabled=true;
+ try{if(!pairContext||!pairLegs.give||!pairLegs.receive||currentOffer()!==pairContext.id)throw Error('Capture both escrow terms for the selected offer.');
+  const context=structuredClone(pairContext),legs=structuredClone(pairLegs),before=await api('/offers/'+context.id);checkOwnerInbox(context.id,before);
+  if(JSON.stringify(before.give)!==JSON.stringify(context.give)||JSON.stringify(before.receive)!==JSON.stringify(context.receive))throw Error('Offer terms changed. Select it again.');
+  const comparison=comparePair(context,legs.give,legs.receive);msg($('pair-status'),'Checking the two local escrow snapshots.');
+  const give=await checkPairLeg(legs.give),receive=await checkPairLeg(legs.receive),after=await api('/offers/'+context.id);checkOwnerInbox(context.id,after);
+  if(currentOffer()!==context.id||JSON.stringify(after.give)!==JSON.stringify(context.give)||JSON.stringify(after.receive)!==JSON.stringify(context.receive))throw Error('Offer changed during verification.');
+  if(give.chain===receive.chain&&give.genesis!==receive.genesis)throw Error('Same-chain legs have different network identities.');
+  if(BigInt(give.remaining)<=0n||BigInt(receive.remaining)<=0n)throw Error('An escrow deadline has passed.');
+  $('pair-result').textContent=JSON.stringify({hashlock:comparison.hashlock,give,receive},null,2);
+  msg($('pair-status'),'Both escrow terms match the offer at separate local snapshots. This does not establish safe cross-chain timing or finality; Cardano confirmation depth may be unknown.');
+ }catch(e){$('pair-result').textContent='';msg($('pair-status'),e.message,true);}finally{pairBusy=false;for(const button of document.querySelectorAll('#pair-check button'))button.disabled=false;}
+});
 async function refresh(){try{const {offers}=await api('/offers');$('board').replaceChildren();if(!offers.length){$('board').textContent='No public offers right now.';return;}
  for(const offer of offers){const row=document.createElement('div');row.className='offer';const text=document.createElement('p');text.textContent=describe(offer.give)+' → '+describe(offer.receive);const button=document.createElement('button');button.type='button';button.textContent='View offer';button.addEventListener('click',()=>selectOffer(offer.id));row.append(text,button);$('board').append(row);}}
  catch(e){msg($('board'),e.message,true);}}
 $('offer-form').addEventListener('submit',async event=>{event.preventDefault();const data=new FormData(event.currentTarget);
  const read=side=>{const [chain,kind]=String(data.get(side+'-type')).split(':');return {chain,kind,id:String(data.get(side+'-id')).trim(),amount:String(data.get(side+'-amount')).trim()};};
  try{const ownerPublicKey=await createInbox();const result=await api('/offers',{method:'POST',body:JSON.stringify({give:read('give'),receive:read('receive'),visibility:data.get('visibility'),expires:Math.floor(Date.now()/1000)+Number(data.get('lifetime')),ownerPublicKey})});
-  localStorage.setItem('offer-owner:'+result.id,result.ownerToken);localStorage.setItem('offer-inbox:'+result.id,ownerPublicKey);const key=newMessageKey();localStorage.setItem('offer-message-key:'+result.id,key);$('share-link').value=location.origin+'/#'+result.id+'.'+key;$('share').hidden=false;msg($('create-result'),'Offer created.');await refresh();await selectOffer(result.id);
+  localStorage.setItem('offer-owner:'+result.id,result.ownerToken);localStorage.setItem('offer-inbox:'+result.id,ownerPublicKey);const key=newMessageKey();localStorage.setItem('offer-message-key:'+result.id,key);await refresh();await selectOffer(result.id);$('share-link').value=location.origin+'/#'+result.id+'.'+key;$('share').hidden=false;msg($('create-result'),'Offer created.');
  }catch(e){msg($('create-result'),e.message,true);}});
 $('copy-link').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('share-link').value);msg($('create-result'),'Link copied.');}catch{msg($('create-result'),'Select and copy the link above.');}});
 $('refresh').addEventListener('click',refresh);

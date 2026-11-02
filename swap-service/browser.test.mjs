@@ -261,3 +261,36 @@ test('browser verifies real local Ethereum token escrow and rejects changed term
   await rm(dir,{recursive:true,force:true});
  }
 });
+
+test('browser checks both local escrow legs against an offer',{timeout:60000},async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'swap-pair-')),n=await port(),base=`http://127.0.0.1:${n}`;
+ const server=spawn(process.execPath,[resolve('swap-service/server.ts')],{env:{...process.env,SWAP_DB:join(dir,'offers.db'),SWAP_PORT:String(n)},stdio:'ignore'});let browser;
+ try{
+  let ready=false;for(let i=0;i<100;i++){try{if((await fetch(base+'/health')).ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,50));}assert.ok(ready);
+  browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||'/usr/bin/chromium',headless:true,args:['--no-sandbox','--disable-gpu','--disable-background-networking']});
+  const page=await browser.newPage(),requests=[];
+  await page.route('http://127.0.0.1:8788/**',async route=>{const request=route.request(),headers={'access-control-allow-origin':base,'access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'authorization, content-type','content-type':'application/json'};
+   if(request.method()==='OPTIONS')return route.fulfill({status:204,headers});requests.push(request.url());
+   const payload=request.url().endsWith('/health')?{status:'ok',capabilities:['bitcoin-regtest-verify','cardano-local-verify']}:
+    request.url().endsWith('/bitcoin/head')?{genesis:'a'.repeat(64),height:'100',tip_hash:'e'.repeat(64)}:
+    request.url().endsWith('/bitcoin/verify')?{verified:true,snapshot:{block_hash:'e'.repeat(64),block_height:100,confirmations:2}}:
+    request.url().endsWith('/cardano/head')?{genesis:'b'.repeat(64),time_ms:'1000000',tip_hash:'f'.repeat(64)}:
+    {verified:true,snapshot:{confirmations:null,tip_block:8,tip_hash:'f'.repeat(64)}};
+   return route.fulfill({status:200,headers,body:JSON.stringify(payload)});
+  });
+  await page.goto(base);await page.locator('#companion-token').fill('a'.repeat(64));await page.getByRole('button',{name:'Connect local companion'}).click();await page.getByText('Local read-only companion connected.').waitFor();
+  const policy='d'.repeat(56);await page.locator('[name="give-type"]').selectOption('bitcoin:btc');await page.locator('[name="give-amount"]').fill('100000');
+  await page.locator('[name="receive-type"]').selectOption('cardano:native');await page.locator('[name="receive-id"]').fill(policy+'.00');await page.locator('[name="receive-amount"]').fill('5');
+  await page.getByRole('button',{name:'Create offer'}).click();await page.locator('#selected').waitFor({state:'visible'});
+  const bitcoin={txid:'1'.repeat(64),vout:'0',amount_sats:'100000',genesis_hash:'a'.repeat(64),hashlock:'c'.repeat(64),claimant_key:'02'+'4'.repeat(64),refund_key:'03'+'5'.repeat(64),refund_height:'200'};
+  for(const [name,value] of Object.entries(bitcoin))await page.locator(`#bitcoin-form [name="${name}"]`).fill(value);
+  await page.getByRole('button',{name:'Capture owner-gives leg'}).click();
+  const cardano={outref:'2'.repeat(64)+'#0',lovelace:'10000000',assets:policy+'.00=5',genesis_sha256:'b'.repeat(64),hashlock:'c'.repeat(64),claimant:'4'.repeat(56),refundee:'5'.repeat(56),expiry_ms:'2000000'};
+  for(const [name,value] of Object.entries(cardano))await page.locator(`#cardano-form [name="${name}"]`).fill(value);
+  await page.getByRole('button',{name:'Capture owner-receives leg'}).click();await page.getByRole('button',{name:'Check both escrow legs'}).click();
+  await page.getByText('Both escrow terms match the offer',{exact:false}).waitFor();const checked=JSON.parse(await page.locator('#pair-result').textContent());
+  assert.equal(checked.give.remaining,'100');assert.equal(checked.receive.snapshot.confirmations,null);
+  const count=requests.length;await page.locator('#cardano-form [name="hashlock"]').fill('f'.repeat(64));await page.getByRole('button',{name:'Capture owner-receives leg'}).click();await page.getByRole('button',{name:'Check both escrow legs'}).click();
+  await page.getByText('Both escrow hashlocks must match.').waitFor();assert.equal(requests.length,count);
+ }finally{if(browser)await browser.close();if(server.exitCode===null){server.kill('SIGTERM');await once(server,'exit');}await rm(dir,{recursive:true,force:true});}
+});

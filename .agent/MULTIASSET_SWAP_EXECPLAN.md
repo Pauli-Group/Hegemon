@@ -26,6 +26,7 @@ This living plan follows `.agent/PLANS.md`. The objective is a noncustodial loca
 - [x] (2026-11-02) Added manual local preimage observers for Bitcoin, Ethereum, Cardano and Hegemon with encrypted browser-compatible backups; local chain tests passed.
 - [x] (2026-11-02) A BTC/Cardano fixture swap used local companion actions and recovered the Cardano claim preimage from confirmed block data before claiming BTC.
 - [x] (2026-11-02) Added a public-term browser action journal before wallet requests, with uncertain outcomes, export/import and fail-closed transactional storage; it does not contain wallet recovery material.
+- [x] (2026-11-02) Added a manual two-leg offer comparison against independently queried local escrow snapshots, with explicit limitations on timing, participant identity and Cardano confirmation depth.
 - [ ] Implement a complete cross-chain coordinator and end-to-end recovery. These manual actions do not coordinate a swap.
 - [ ] Implement a resilient pairwise transaction protocol, wallet signing, actual spend monitoring and full swap recovery.
 - [x] (2026-11-02) Added a loopback TypeScript/SQLite prototype relay for public/private offers, exclusive reservations and opaque messages; HTTP/restart test passed.
@@ -117,3 +118,5 @@ Revision 2026-11-02: new public offers carry an owner P-256 inbox public key. A 
 Revision 2026-11-02: the conversation UI displays full owner and reservation-key fingerprints for comparison over a separate trusted channel. The owner rejects a changed inbox key against its locally saved offer association; the browser test exercises both matching fingerprints and a substituted key. These checks do not authenticate wallet identities and cannot defend against modified client code served by the relay.
 
 Revision 2026-11-02: rebuilt and typechecked the Electron app, then rechecked its isolated local-board window with dummy node executables and a temporary virtual display. The updated test confirms the current browser modules initialize and the desktop wallet API is unavailable in that window.
+
+Revision 2026-11-02: added a two-leg comparison for local snapshots and an offer-selection race guard. The pair check does not gate claims or establish participant identity, safe deadlines, simultaneous unspent state or finality; Cardano confirmation depth is unknown.
