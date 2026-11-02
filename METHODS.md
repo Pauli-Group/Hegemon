@@ -2865,6 +2865,8 @@ The experimental remote UTxO and claim-preimage readers use trusted public index
 
 The experimental staged native BTC/ETH testnet rehearsal records an inflight phase before each action and refuses to retry uncertain submissions automatically. It checks the exact Bitcoin script and pinned Ethereum runtime, and obtains the preimage from a confirmed Ethereum claim before claiming Bitcoin. An end-to-end run of these stages passed on peerless local Bitcoin/Anvil with public-service adapters redirected to those nodes; it is not yet a public-chain result. Offline Cardano native-token minting passed on an isolated chain, and preview escrow verification checks the pinned script, exact datum, assets and provider-reported depth. These checks do not establish public-chain finality or safe timeout margins.
 
+A staged native ETH/ADA claim path completed on public Sepolia and Cardano preview: the Cardano claim revealed the preimage and the Ethereum claim used the value observed from that confirmed Cardano transaction. A Sepolia ERC-20/ERC-721 fixture swap also completed. Exact public transaction identifiers and limitations are in `PUBLIC_TESTNET_RESULTS.md`; other testnet combinations and refunds remain separate checks.
+
 
 ## Local swap deadline watch and desktop entry
 

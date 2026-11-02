@@ -22,7 +22,7 @@ def sign_transaction(private_key,expected_sender,*,nonce,to,value,data,gas,max_f
     if account.address.lower()!=expected_sender.lower():raise ValueError('Ethereum signing key does not match sender')
     if to is not None and (not isinstance(to,str) or not re.fullmatch(r'0x[0-9a-fA-F]{40}',to)):raise ValueError('Invalid Ethereum recipient')
     if not isinstance(data,bytes) or len(data)>100000:raise ValueError('Invalid Ethereum transaction data')
-    _number(nonce,2**64-1);_number(value,10**18);_number(gas,10_000_000,21000)
+    _number(nonce,2**64-1);_number(value,10**18);_number(gas,30_000_000,21000)
     _number(max_fee,100_000_000_000,1);_number(priority_fee,max_fee)
     if gas*max_fee+value>10**18:raise ValueError('Ethereum transaction exceeds test budget')
     tx={'type':2,'chainId':SEPOLIA_CHAIN_ID,'nonce':nonce,'value':value,'data':data,'gas':gas,'maxFeePerGas':max_fee,'maxPriorityFeePerGas':priority_fee}

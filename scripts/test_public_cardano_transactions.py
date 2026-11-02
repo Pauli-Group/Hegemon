@@ -39,7 +39,7 @@ class PublicCardanoTransactionsTest(unittest.TestCase):
                 available=chain.utxos(alice['address']);fee_ref=chain.fee_input('alice');ada,existing=value(available[fee_ref]);body,signed=chain.files('offline-mint')
                 build_balanced(inputs=[{'outref':fee_ref,'lovelace':ada,'assets':existing}],outputs=[{'address':alice['address'],'lovelace':5_000_000,'assets':minted}],change_address=alice['address'],params=params,body=body,mint=minted,mint_script=policy_file)
                 _,mint_out=chain.submit(body,signed,'alice',alice['address'])
-                self.assertTrue(any(out['value'].get(policy,{}).get('46554e47')==11 and out['value'].get(policy,{}).get('4e4654')==1 for out in mint_out.values()))
+                mint_ref=next(ref for ref,out in mint_out.items() if out['value'].get(policy,{}).get('46554e47')==11 and out['value'].get(policy,{}).get('4e4654')==1)
                 terms={'constructor':0,'fields':[{'bytes':hashlib.sha256(secret).hexdigest()},{'bytes':alice['hash']},{'bytes':bob['hash']},{'int':chain.start_ms+expiry_slot*chain.slot_ms}]}
                 datum=chain.d/'raw-datum.json';datum.write_text(json.dumps(terms));redeemer=chain.d/'raw-redeemer.json';redeemer.write_text(json.dumps({'constructor':0,'fields':[{'bytes':secret.hex()}]}))
                 available=chain.utxos(bob['address']);fee_input=chain.fee_input('bob');token_input=chain.token_input
@@ -57,12 +57,13 @@ class PublicCardanoTransactionsTest(unittest.TestCase):
                 txid,found=chain.submit(body,signed,'bob',chain.address)
                 self.assertEqual(prepared['txid'],txid)
                 locked=next(ref for ref,out in found.items() if out['value']['lovelace']==chain.amount and chain.has_tokens(out))
-                alice_utxos=chain.utxos(alice['address']);fee_ref=chain.fee_input('alice')
+                alice_utxos=chain.utxos(alice['address']);fee_ref=mint_ref
                 script_input={'outref':locked,'lovelace':chain.amount,'assets':native,'script':chain.script,'redeemer':redeemer,'execution_units':(10_000_000,10_000_000_000)}
                 body,signed=chain.files('offline-claim')
                 fee=build_balanced(inputs=[script_input,make_input(fee_ref,alice_utxos)],outputs=[{'address':alice['address'],'lovelace':chain.amount,'assets':native}],change_address=alice['address'],params=params,body=body,collateral=alice['collateral'],required_signer=alice['hash'],invalid_hereafter=expiry_slot)
                 self.assertGreater(fee,0);_,received=chain.submit(body,signed,'alice',alice['address'])
                 self.assertTrue(any(chain.has_tokens(out) for out in received.values()))
+                self.assertTrue(any(out['value'].get(policy,{}).get('46554e47')==11 and out['value'].get(policy,{}).get('4e4654')==1 for out in received.values()))
                 self.assertNotIn(locked,chain.utxos(chain.address))
                 # Fund a second output and check both early and mature refund.
                 token_ref=next(ref for ref,out in received.items() if chain.has_tokens(out))

@@ -12,6 +12,9 @@ This living plan follows `.agent/PLANS.md`. The aim is to repeat the Bitcoin, Et
 - [x] (2026-11-02) Added public UTxO and claim-preimage readers and local-signing drivers for the three test networks. Verified Bitcoin and Cardano UTxO response parsing with real public-chain outputs; the actors are still unfunded and no transaction has been broadcast.
 - [x] (2026-11-02) Added a restartable BTC/ETH native-asset scenario. A real two-chain local integration run completed through its public-style drivers; its network and submission functions were redirected to fresh peerless local nodes. A mock loss of response leaves an inflight state and prevents automatic retry.
 - [x] (2026-11-02) Added native Cardano fixture minting to offline transaction construction and verified it on the isolated local chain. Added a public-preview script, datum, asset and provider-reported confirmation snapshot verifier with mocked-provider tests.
+- [x] (2026-11-02) Funded the disposable participants and completed the native ETH/ADA claim path on Sepolia and Cardano preview. Provider-reported confirmed transaction identifiers and payout evidence are in `PUBLIC_TESTNET_RESULTS.md`.
+- [x] (2026-11-02) Completed a Sepolia ERC-20/ERC-721 same-chain swap, verifying fixture payouts; its public transaction identifiers are being added to the results.
+- [ ] Finish the in-progress Cardano fungible/NFT, Sepolia ERC-1155/ERC-20, ETH refund, and cross-chain token cases; verify actual public outcomes and record them.
 - [ ] Add independently checked remote public-testnet adapters and safe transaction building and submission, without weakening local companion safeguards.
 - [ ] Exercise BTC/ETH, BTC/Cardano, ETH/Cardano and both Ethereum and Cardano same-chain paths, including applicable fungible and NFT fixtures, claims, refunds and failure cases, subject to testnet funds, network confirmation times and service availability.
 - [ ] Record public transaction identifiers and observations, run regression tests, update architecture documentation and commit the work.
@@ -28,7 +31,7 @@ Decision: use public network access only for these three networks, with no Hegem
 
 ## Outcomes & Retrospective
 
-Work is in progress. Public endpoint reachability and the local Bitcoin, Ethereum and Cardano transaction tests do not establish that a public-testnet swap or any broadcast has succeeded. Testnet transactions are public and no test can establish production safety.
+Work is in progress. The native Sepolia/preview ETH–ADA swap and the Sepolia ERC-20/ERC-721 same-chain swap completed on public testnets. They do not establish that the remaining combinations, refunds or Bitcoin cases succeeded. Testnet transactions are public and no test can establish production safety.
 
 ## Context and Orientation
 
@@ -67,3 +70,5 @@ Revision 2026-11-02: added remote UTxO and confirmed-preimage readers and node-f
 Revision 2026-11-02: extended the Sepolia-ID signed local rehearsal to ERC-20, ERC-721 and ERC-1155 claims. Public-network funding and cross-chain execution are still pending.
 
 Revision 2026-11-02: implemented a restartable BTC/ETH native scenario with inflight records and full real local-chain integration, added offline Cardano native-asset minting and a provider-backed escrow verifier. BTC/Cardano, ETH/Cardano and same-chain public coordinators and all public transactions remain unfinished.
+
+Revision 2026-11-02: completed a real native ETH/ADA swap across Sepolia and Cardano preview and a real Sepolia ERC-20/ERC-721 swap. The ETH token escrow RPC gas estimate exceeded the original 10-million gas cap on two providers; no signed transaction existed, and after confirming no pending sender nonce the pre-signing state was safely reset and the bounded cap raised to 30 million. The Cardano token/NFT, second Sepolia token swap, ETH refund and cross-chain token scenarios remain in progress. Bitcoin must be checked after those cases as requested.

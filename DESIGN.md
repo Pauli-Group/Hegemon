@@ -1905,6 +1905,8 @@ Node-free testnet drivers obtain UTxOs from public indexers and recover disclose
 
 An experimental native BTC/ETH public-testnet scenario records each inflight action before submission, checks both escrow snapshots and observes the Ethereum claim preimage before claiming Bitcoin. Its full flow has passed only against peerless local fixture nodes using adapters; its confirmation thresholds and timeouts are test choices, not a public-chain safety policy. The Cardano preparation can mint local fungible and one-of-one native fixtures offline, and a separate preview verifier compares the script, exact datum and assets with provider-reported confirmations.
 
+The native ETH/ADA staged claim path has now completed across public Sepolia and Cardano preview using provider-reported chain snapshots, and a same-chain ERC-20/ERC-721 fixture swap completed on Sepolia. These public tests are not a production security review or proof of the remaining cases. Public transaction identifiers and observed payout facts are recorded in `PUBLIC_TESTNET_RESULTS.md`.
+
 
 ## Local swap deadline watch and desktop entry
 

@@ -13,8 +13,14 @@ from eth_utils import keccak
 from local_private_spend_swap import port,stop
 from public_ethereum_transactions import sign_transaction
 from public_ethereum_verify import verify_native
+from public_ethereum_token_verify import verify_token
 
 class PublicEthereumTransactionsTest(unittest.TestCase):
+    def test_large_bounded_public_estimate_is_signable(self):
+        key=b'\x11'*32;sender=Account.from_key(key).address
+        raw,_=sign_transaction(key,sender,nonce=0,to=None,value=0,data=b'fixture',gas=20_000_000,max_fee=2_000_000_000,priority_fee=1_000_000_000)
+        self.assertEqual(Account.recover_transaction(raw),sender)
+        with self.assertRaises(ValueError):sign_transaction(key,sender,nonce=0,to=None,value=0,data=b'',gas=30_000_001,max_fee=1,priority_fee=1)
     def test_local_sepolia_chainid_escrow_claim(self):
         n=port();node=subprocess.Popen(['/workspace/chain-tools/foundry/anvil','--host','127.0.0.1','--port',str(n),'--chain-id','11155111','--silent'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
         def rpc(method,params):
@@ -92,7 +98,10 @@ class PublicEthereumTransactionsTest(unittest.TestCase):
                 deploy=code('contracts/ethereum/out/TokenHTLC.sol/TokenHTLC.json')+encode(['uint8','address','uint256','uint256','bytes32','address','uint256'],[kind,token,token_id,amount,digest,alice,expiry])
                 escrow=send(bobkey,bob,None,deploy)['contractAddress']
                 approval=calldata('setApprovalForAll(address,bool)',['address','bool'],[escrow,True]) if kind==2 else calldata('approve(address,uint256)',['address','uint256'],[escrow,amount if kind==0 else token_id])
-                send(bobkey,bob,token,approval);send(bobkey,bob,escrow,calldata('fund()',[],[]));send(alicekey,alice,escrow,calldata('claim(bytes32)',['bytes32'],[secret]))
+                send(bobkey,bob,token,approval);send(bobkey,bob,escrow,calldata('fund()',[],[]));rpc('evm_mine',[])
+                with patch('public_ethereum_token_verify.verify_network'),patch('public_ethereum_token_verify.rpc',side_effect=rpc):
+                    self.assertEqual(verify_token(escrow,kind,token,token_id,amount,digest.hex(),alice,bob,expiry)['confirmations'],2)
+                send(alicekey,alice,escrow,calldata('claim(bytes32)',['bytes32'],[secret]))
                 query=calldata('balanceOf(address,uint256)',['address','uint256'],[alice,token_id]) if kind==2 else calldata('ownerOf(uint256)',['uint256'],[token_id]) if kind==1 else calldata('balanceOf(address)',['address'],[alice])
                 result=rpc('eth_call',[{'to':token,'data':'0x'+query.hex()},'latest']);value=decode(['address' if kind==1 else 'uint256'],bytes.fromhex(result[2:]))[0]
                 if kind==1:self.assertEqual(value.lower(),alice.lower())
