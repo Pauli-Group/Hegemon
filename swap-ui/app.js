@@ -1,7 +1,7 @@
 'use strict';
 import {newMessageKey,encryptMessage,decryptMessage} from './crypto.mjs';
 import {verifyTokenEscrow,verifyEtherEscrow} from './ethereum-escrow.mjs';
-import {submitLocalEscrowDeployment,submitLocalTokenFundingStep} from './ethereum-actions.mjs';
+import {submitLocalEscrowDeployment,submitLocalTokenFundingStep,submitLocalEscrowRefund} from './ethereum-actions.mjs';
 import {validateWatch,evaluateWatch} from './deadlines.mjs';
 import {createRecovery,unlockRecovery,validateRecoveryEnvelope} from './recovery.mjs';
 import {vaultLabel,listVault,addVault,removeVault} from './vault-store.mjs';
@@ -95,6 +95,16 @@ async function ethereumTokenStep(step){if(ethereumActionBusy)return;
 $('ethereum-approve').addEventListener('click',()=>ethereumTokenStep('approve'));
 $('ethereum-fund').addEventListener('click',()=>ethereumTokenStep('fund'));
 $('ethereum-revoke').addEventListener('click',()=>ethereumTokenStep('revoke'));
+$('ethereum-refund').addEventListener('click',async()=>{if(ethereumActionBusy)return;
+ try{if(!ethereumActionForm.reportValidity())return;if(!activeEthereumProvider)throw Error('Connect an Ethereum wallet first.');if(!companionToken||!companionCapabilities.includes('ethereum-local-anchor'))throw Error('Connect a companion configured for local Anvil.');
+  const provider=activeEthereumProvider,terms=ethereumActionTerms();setEthereumActionBusy(true);$('ethereum-action-result').textContent='';msg($('ethereum-action-status'),'Checking the expired local escrow and requesting wallet approval.');
+  const [anchor,response]=await Promise.all([companion('/ethereum/head',companionToken),fetch(terms.kind==='eth'?'/ether-escrow-template.json':'/token-escrow-template.json')]);
+  if(!response.ok)throw Error('Escrow template unavailable.');const template=await response.json();
+  const guarded={request:args=>{if(provider!==activeEthereumProvider)throw Error('Wallet changed. Reconnect and check wallet history before retrying.');return provider.request(args);}};
+  const result=await submitLocalEscrowRefund(guarded,template,terms,anchor);$('ethereum-action-result').textContent=JSON.stringify(result,null,2);
+  msg($('ethereum-action-status'),'Refund submitted. Check its receipt and confirmations.');
+ }catch(e){msg($('ethereum-action-status'),e.message,true);}finally{setEthereumActionBusy(false);}
+});
 $('bitcoin-form').addEventListener('submit',async event=>{event.preventDefault();
  try{if(!companionToken||!companionCapabilities.includes('bitcoin-regtest-verify'))throw Error('Connect a companion configured for Bitcoin.');const data=new FormData(event.currentTarget),terms={};
   for(const name of ['txid','hashlock','claimant_key','refund_key','genesis_hash'])terms[name]=String(data.get(name)).trim();

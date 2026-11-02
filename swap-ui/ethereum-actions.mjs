@@ -2,7 +2,7 @@
  * swap or verify the other leg. The provider must be user-approved; the trusted
  * companion supplies the non-forked local Anvil anchor. Never auto-retry a send.
  */
-import {expectedTokenRuntime} from './ethereum-escrow.mjs';
+import {expectedEtherRuntime,expectedTokenRuntime} from './ethereum-escrow.mjs';
 function addr(value){if(typeof value!=='string'||!/^0x[0-9a-fA-F]{40}$/.test(value)||/^0x0{40}$/i.test(value))throw Error('invalid address');return value.slice(2).toLowerCase().padStart(64,'0');}
 function uint(value){if(typeof value!=='string'||!/^(0|[1-9][0-9]{0,77})$/.test(value)||BigInt(value)>=1n<<256n)throw Error('invalid integer');return BigInt(value).toString(16).padStart(64,'0');}
 function hash(value){if(typeof value!=='string'||!/^0x[0-9a-fA-F]{64}$/.test(value))throw Error('invalid hashlock');return value.slice(2).toLowerCase();}
@@ -62,4 +62,25 @@ export async function submitLocalTokenFundingStep(provider,template,terms,anchor
  const latest=await request('eth_getBlockByNumber',['latest',false]);
  if(!latest||latest.hash!==head.hash||BigInt(await request('eth_chainId'))!==31337n)throw Error('chain changed before submission');
  return {...await sendOnce(request,tx),step};
+}
+/** Refund only after expiry, with the original source-pinned terms and state. */
+export async function submitLocalEscrowRefund(provider,template,terms,anchor){
+ if(!terms||!['eth','0','1','2'].includes(terms.kind))throw Error('invalid escrow type');
+ const contract='0x'+addr(terms.contract).slice(24),from='0x'+addr(terms.refundee).slice(24);
+ const expected=terms.kind==='eth'?expectedEtherRuntime(template,terms):expectedTokenRuntime(template,terms);
+ const {request,head}=await localAnchor(provider,anchor,from);
+ if(typeof head.number!=='string'||!/^0x[0-9a-f]+$/i.test(head.number))throw Error('invalid local head');
+ if(BigInt(head.timestamp)<BigInt(terms.expiry))throw Error('refund is not yet available');
+ const code=await request('eth_getCode',[contract,head.number]);
+ if(typeof code!=='string'||code.toLowerCase()!==expected)throw Error('escrow bytecode or terms mismatch');
+ const call=async(data)=>{const value=await request('eth_call',[{to:contract,data},head.number]);
+  if(typeof value!=='string'||!/^0x[0-9a-fA-F]{64}$/.test(value))throw Error('invalid escrow state');return BigInt(value);};
+ if(await call('0x7ab71b7a')!==0n||(terms.kind!=='eth'&&await call('0xf3a504f2')!==1n))throw Error('escrow is not funded and unspent');
+ if(terms.kind==='eth'&&BigInt(await request('eth_getBalance',[contract,head.number]))!==BigInt(terms.amount))throw Error('escrow balance mismatch');
+ const tx={from,to:contract,data:'0x590e1ae3',value:'0x0'};
+ const simulation=await request('eth_call',[tx,head.number]);
+ if(typeof simulation!=='string'||!/^0x(?:[0-9a-fA-F]{2})*$/.test(simulation))throw Error('refund simulation failed');
+ const latest=await request('eth_getBlockByNumber',['latest',false]);
+ if(!latest||latest.hash!==head.hash||BigInt(await request('eth_chainId'))!==31337n)throw Error('chain changed before submission');
+ return {...await sendOnce(request,tx),step:'refund'};
 }

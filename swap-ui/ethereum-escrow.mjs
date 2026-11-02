@@ -40,6 +40,12 @@ export function expectedTokenRuntime(template,terms){
   if(BigInt(terms.amount)===0n||(terms.kind==='0'&&terms.tokenId!=='0')||(terms.kind==='1'&&terms.amount!=='1'))throw Error('invalid asset quantity');
   return patchRuntime(template,words);
 }
+export function expectedEtherRuntime(template,terms){
+  if(!terms)throw Error('invalid escrow terms');
+  const words={hashlock:hash(terms.hashlock),claimant:address(terms.claimant),refundee:address(terms.refundee),expiry:number(terms.expiry)};
+  number(terms.amount);if(BigInt(terms.amount)===0n)throw Error('invalid asset quantity');
+  return patchRuntime(template,words);
+}
 export async function verifyEtherEscrow(provider,template,terms,confirmations=2,minimumRemainingSeconds=60){
   if(!provider||typeof provider.request!=='function'||!Number.isSafeInteger(confirmations)||confirmations<1||confirmations>10000||!Number.isSafeInteger(minimumRemainingSeconds)||minimumRemainingSeconds<1)throw Error('invalid provider or verification limits');
   if(!terms||typeof terms.chainId!=='string'||!/^0x[0-9a-f]{1,64}$/i.test(terms.chainId))throw Error('invalid chain');

@@ -179,6 +179,10 @@ test('browser verifies real local Ethereum token escrow and rejects changed term
   await page.locator('#verify-form [name="kind"]').selectOption('0');
   for(const [name,value] of Object.entries({contract:tokenReceipt.contractAddress,token,tokenId:'0',amount:'100'}))await page.locator(`#verify-form [name="${name}"]`).fill(value);
   await page.getByRole('button',{name:'Verify escrow'}).click();await page.getByText('Verified funded and unspent at block',{exact:false}).waitFor();
+  await page.getByRole('button',{name:'Refund expired escrow'}).click();await page.getByText('refund is not yet available').waitFor();
+  await rpc('evm_setNextBlockTimestamp',[Number(expiry)]);await rpc('evm_mine');
+  await page.getByRole('button',{name:'Refund expired escrow'}).click();await page.getByText('Refund submitted.',{exact:false}).waitFor();
+  const refund=JSON.parse(await page.locator('#ethereum-action-result').textContent());assert.equal((await rpc('eth_getTransactionReceipt',[refund.txid])).status,'0x1');
   await context.close();
  }finally{
   if(browser)await browser.close();
