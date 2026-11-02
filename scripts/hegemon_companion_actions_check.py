@@ -16,17 +16,18 @@ from local_private_spend_swap import port, require, stop
 
 
 class TestHegemonActions:
-    def __init__(self,directory,*,binary,wallet_path,manifest,genesis,rpc_url,phrase,handoff_phrase):
+    def __init__(self,directory,*,binary,wallet_path,manifest,genesis,rpc_url,phrase,handoff_phrase,backup=None,backup_phrase=None):
         self.directory=directory;directory.mkdir(mode=0o700)
         self.handoffs=directory/'handoffs';self.handoffs.mkdir(mode=0o700)
         self.port=port();token_file=directory/'token';self.master,slave=pty.openpty()
         attrs=termios.tcgetattr(slave);attrs[3]&=~termios.ECHO;termios.tcsetattr(slave,termios.TCSANOW,attrs)
         def ctty():os.setsid();fcntl.ioctl(0,termios.TIOCSCTTY,0)
-        self.process=subprocess.Popen([sys.executable,ROOT/'scripts/local_swap_companion.py','--hegemon-wallet',wallet_path,
+        command=[sys.executable,ROOT/'scripts/local_swap_companion.py','--hegemon-wallet',wallet_path,
             '--hegemon-manifest',manifest,'--hegemon-genesis',genesis,'--hegemon-rpc',rpc_url,'--private-spend',binary,
-            '--token-file',token_file,'--port',str(self.port),'--enable-hegemon-actions','--hegemon-handoff-dir',self.handoffs],
-            stdin=slave,stdout=slave,stderr=slave,preexec_fn=ctty)
-        os.close(slave);self.phrase=phrase;self.handoff_phrase=handoff_phrase
+            '--token-file',token_file,'--port',str(self.port),'--enable-hegemon-actions','--hegemon-handoff-dir',self.handoffs]
+        if backup:command.extend(['--hegemon-preimage-backup',backup])
+        self.process=subprocess.Popen(command,stdin=slave,stdout=slave,stderr=slave,preexec_fn=ctty)
+        os.close(slave);self.phrase=phrase;self.handoff_phrase=handoff_phrase;self.backup_phrase=backup_phrase
         try:
             self.token=wait_for(lambda:(v if len(v:=token_file.read_text().strip())==64 else None),'action companion token')
             wait_for(lambda:self.request('/health')[0]==200,'action companion server')
@@ -52,7 +53,7 @@ class TestHegemonActions:
                  (b'Hegemon encrypted wallet passphrase (local terminal only):',self.phrase),
                  (b'New encrypted refund handoff passphrase (local terminal only):',self.handoff_phrase),
                  (b'Repeat refund handoff passphrase (local terminal only):',self.handoff_phrase)]
-        if secret is not None:prompts.append((b'Claim preimage as 64 lowercase hexadecimal characters (local terminal only):',secret.hex().encode()))
+        if secret is not None:prompts.append((b'Encrypted preimage backup passphrase (local terminal only):',self.backup_phrase) if self.backup_phrase else (b'Claim preimage as 64 lowercase hexadecimal characters (local terminal only):',secret.hex().encode()))
         while thread.is_alive():
             require(time.monotonic()<deadline,'Hegemon action companion timed out')
             require(self.process.poll() is None,'Hegemon action companion exited')
@@ -78,6 +79,6 @@ class TestHegemonActions:
         else:require(1 in sent,'local wallet passphrase prompt missing')
         if expected and data.get('operation')=='lock':require(2 in sent and 3 in sent,'handoff passphrase confirmation missing')
         if expected and data.get('operation')=='claim':require(4 in sent,'claim preimage prompt missing')
-        for value in (self.phrase,self.handoff_phrase,secret.hex().encode() if secret else b''):
+        for value in (self.phrase,self.handoff_phrase,self.backup_phrase,secret.hex().encode() if secret else b''):
             if value:require(value not in output,'local action echoed a secret')
         return body.get('result')

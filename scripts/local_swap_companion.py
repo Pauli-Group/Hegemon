@@ -100,6 +100,7 @@ def main():
     p.add_argument('--private-spend',type=Path,default=ROOT/'target/release/private-spend')
     p.add_argument('--enable-hegemon-actions',action='store_true',help='enable locally approved Development-only wallet actions')
     p.add_argument('--hegemon-handoff-dir',type=Path,help='private directory for encrypted refund handoffs')
+    p.add_argument('--hegemon-preimage-backup',type=Path,help='optional private exported browser backup for local claims')
     p.add_argument('--token-file',type=Path,required=True,help='0600 file inside a user-owned 0700 directory')
     p.add_argument('--origin',default='http://127.0.0.1:8787')
     p.add_argument('--port',type=int,default=8788)
@@ -120,6 +121,7 @@ def main():
     if args.enable_hegemon_actions:
         if not all(hegemon_options):p.error('Hegemon actions require all Hegemon options')
         private_handoff_directory(args.hegemon_handoff_dir)
+    if args.hegemon_preimage_backup and not args.enable_hegemon_actions:p.error('preimage backup requires Hegemon actions')
     token=private_token(args.token_file)
     btc=BitcoinRPC(args.bitcoin_rpc,args.bitcoin_cookie) if args.bitcoin_rpc else None
     scratch=tempfile.TemporaryDirectory(prefix='hegemon-local-companion-')
@@ -201,7 +203,7 @@ def main():
                     if manifest.get('profile')!='development' or manifest.get('development_candidate',{}).get('private_spend_only') is not True:raise ValueError('actions require a private-spend Development manifest')
                     if rpc(args.hegemon_rpc,'system_health')['peers']!=0 or str(rpc(args.hegemon_rpc,'chain_getBlockHash',[0])).removeprefix('0x')!=args.hegemon_genesis.removeprefix('0x'):raise ValueError('Hegemon node is not the configured isolated chain')
                     base=['--wallet',args.hegemon_wallet,'--manifest',args.hegemon_manifest,'--genesis',args.hegemon_genesis,'--rpc',args.hegemon_rpc,'--development-local-candidate']
-                    result=run_hegemon_action(binary=args.private_spend,base_args=base,scratch=scratch.name,request=data,handoff_dir=args.hegemon_handoff_dir)
+                    result=run_hegemon_action(binary=args.private_spend,base_args=base,scratch=scratch.name,request=data,handoff_dir=args.hegemon_handoff_dir,preimage_backup=args.hegemon_preimage_backup)
                     if rpc(args.hegemon_rpc,'system_health')['peers']!=0 or str(rpc(args.hegemon_rpc,'chain_getBlockHash',[0])).removeprefix('0x')!=args.hegemon_genesis.removeprefix('0x'):raise ValueError('Node changed; action outcome may be uncertain. Check wallet status.')
                     return self.reply(200,{'completed':True,'result':result})
                 expected=({'txid','vout','amount_sats','hashlock','claimant_key','refund_key','refund_height','genesis_hash'} if self.path=='/bitcoin/verify'

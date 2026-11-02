@@ -20,7 +20,7 @@ def scenario(a, name):
     rec['binary_sha256']={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in (a.node,a.wallet)}
     sources=[ROOT/'scripts/local_multichain_htlc_swap.py',ROOT/'scripts/htlc_counterpart.py',
              ROOT/'scripts/hegemon_companion_check.py',ROOT/'scripts/local_swap_companion.py',
-             ROOT/'scripts/hegemon_companion_actions_check.py',ROOT/'scripts/hegemon_action_runner.py',ROOT/'scripts/hegemon_local_actions.py',
+             ROOT/'scripts/hegemon_companion_actions_check.py',ROOT/'scripts/hegemon_action_runner.py',ROOT/'scripts/hegemon_local_actions.py',ROOT/'scripts/unlock_swap_backup.py',
              ROOT/'wallet/src/bin/private_spend.rs',ROOT/'wallet/src/private_spend_build.rs']
     if a.chain=='cardano':sources.append(ROOT/'contracts/cardano/validators/htlc.ak')
     elif a.ethereum_test_token:sources.extend([ROOT/'contracts/ethereum/TokenHTLC.sol',ROOT/'contracts/ethereum/test/TokenHTLC.t.sol'])
@@ -148,12 +148,20 @@ def scenario(a, name):
         if name=='happy':
             fee_input=str(notes('bob')[0][0])
             if a.exercise_hegemon_actions:
-                actions=TestHegemonActions(d/'bob-actions',binary=a.wallet,wallet_path=wallets['bob'],manifest=d/'manifest.json',genesis=genesis,rpc_url=url,phrase=phrase,handoff_phrase=hp)
+                backup=None;backup_phrase=None
+                if a.exercise_backup_claim:
+                    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+                    backup_phrase=b'local disposable backup passphrase';salt=os.urandom(16);iv=os.urandom(12)
+                    key=hashlib.pbkdf2_hmac('sha256',backup_phrase,salt,600000,32)
+                    ciphertext=AESGCM(key).encrypt(iv,secret,('hegemon.swap.secret.v1:'+hashed).encode())
+                    backup=d/'encrypted-preimage.json';backup.write_text(json.dumps({'label':'local fixture','envelope':{'version':1,'iterations':600000,'hashlock':hashed,'salt':salt.hex(),'iv':iv.hex(),'ciphertext':ciphertext.hex()}}))
+                actions=TestHegemonActions(d/'bob-actions',binary=a.wallet,wallet_path=wallets['bob'],manifest=d/'manifest.json',genesis=genesis,rpc_url=url,phrase=phrase,handoff_phrase=hp,backup=backup,backup_phrase=backup_phrase)
                 print(name+': proving claim through local companion',flush=True)
                 candidate=actions.action({'operation':'claim','locked':str(locked),'fee_input':fee_input,'recipient':addresses['bob'],'fee':'1'},secret=revealed)
                 require(not candidate['submitted'],'claim unexpectedly submitted')
                 include('bob',candidate['attempt'],'claim',candidate['metrics'],actions)
                 rec['checks']['companion_claim_and_submission']=True
+                if backup:rec['checks']['encrypted_backup_claim']=True
                 actions.close();actions=None
             else:prepare('bob',['claim','--locked',str(locked),'--fee-input',fee_input,'--recipient',addresses['bob'],'--fee','1'],[(SECRET,revealed.hex().encode())])
             require(any(v==100000 for p,v in notes('bob')), 'Bob did not receive locked HGN')
@@ -204,12 +212,14 @@ def main():
     p.add_argument('--cardano-test-tokens',action='store_true',help='mint disposable fungible and NFT fixtures on the isolated Cardano chain')
     p.add_argument('--ethereum-test-token',choices=['erc20','erc721','erc1155'],help='use a disposable token fixture on the isolated Ethereum chain')
     p.add_argument('--exercise-hegemon-actions',action='store_true',help='prepare and submit Hegemon HTLC actions through locally approved companion terminals')
+    p.add_argument('--exercise-backup-claim',action='store_true',help='unlock an encrypted preimage backup for the local Hegemon claim')
     p.add_argument('--node',type=Path,default=ROOT/'target/release/hegemon-node')
     p.add_argument('--wallet',type=Path,default=ROOT/'target/release/private-spend')
     p.add_argument('--tools',type=Path,default=TOOLS)
     a=p.parse_args();a.output=a.output.resolve();os.umask(0o077)
     if a.cardano_test_tokens and a.chain!='cardano':p.error('--cardano-test-tokens requires --chain cardano')
     if a.ethereum_test_token and a.chain!='ethereum':p.error('--ethereum-test-token requires --chain ethereum')
+    if a.exercise_backup_claim and not a.exercise_hegemon_actions:p.error('--exercise-backup-claim requires --exercise-hegemon-actions')
     a.output.mkdir(mode=0o700,exist_ok=False)
     cases=['happy','no_counterparty','both_refund','late_claim'] if a.scenario=='all' else [a.scenario]
     results=[]

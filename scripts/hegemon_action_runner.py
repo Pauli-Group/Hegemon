@@ -11,10 +11,11 @@ import re
 from pathlib import Path
 from hegemon_local_actions import build_action
 from local_private_spend_swap import PASS, HANDOFF, SECRET, wallet
+from unlock_swap_backup import unlock_backup
 
 
 def run_hegemon_action(*, binary, base_args, scratch, request, handoff_dir,
-                        confirm=input, password=getpass.getpass):
+                        confirm=input, password=getpass.getpass, preimage_backup=None):
     argv,handoff=build_action(request,handoff_dir)
     op=request['operation']
     print('\nHegemon local Development action (not an atomic swap):\n'+json.dumps(request,indent=2),flush=True)
@@ -31,7 +32,11 @@ def run_hegemon_action(*, binary, base_args, scratch, request, handoff_dir,
         phrase=prompt('Hegemon encrypted wallet passphrase (local terminal only): ')
         prompts=[(PASS,phrase)]
         if op=='claim':
-            secret=prompt('Claim preimage as 64 lowercase hexadecimal characters (local terminal only): ')
+            if preimage_backup:
+                backup_phrase=prompt('Encrypted preimage backup passphrase (local terminal only): ')
+                recovered=unlock_backup(preimage_backup,backup_phrase);buffers.append(recovered)
+                secret=bytearray(recovered.hex().encode());buffers.append(secret)
+            else:secret=prompt('Claim preimage as 64 lowercase hexadecimal characters (local terminal only): ')
             if not re.fullmatch(b'[0-9a-f]{64}',secret):raise ValueError('invalid claim preimage')
             prompts.append((SECRET,secret))
         if op=='lock':

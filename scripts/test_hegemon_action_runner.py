@@ -48,5 +48,15 @@ class HegemonActionRunnerTest(unittest.TestCase):
         with patch('hegemon_action_runner.wallet',return_value=('unexpected output',{})):
             with self.assertRaisesRegex(ValueError,'check wallet status before retrying'):
                 self.call({'operation':'submit','attempt':'a'*64},confirm=lambda _: 'APPROVE',password=lambda _: 'wallet passphrase')
+    def test_claim_can_unlock_local_backup_without_sending_it_to_client(self):
+        data={'operation':'claim','locked':'1','fee_input':'2','recipient':'claim','fee':'1'}
+        supplied=iter(['wallet passphrase','separate backup passphrase']);captured=[];recovered=bytearray(b'\x03'*32)
+        def fake_wallet(_binary,_args,prompts,_scratch,_label):
+            captured.extend(value for _,value in prompts)
+            self.assertEqual(prompts[-1][1],b'03'*32)
+            return 'candidate '+'b'*64,{}
+        with patch('hegemon_action_runner.wallet',side_effect=fake_wallet),patch('hegemon_action_runner.unlock_backup',return_value=recovered):
+            result=self.call(data,confirm=lambda _: 'APPROVE',password=lambda _:next(supplied),preimage_backup=self.path/'backup')
+        self.assertNotIn('03'*32,str(result));self.assertTrue(all(not any(value) for value in captured));self.assertFalse(any(recovered))
 
 if __name__=='__main__':unittest.main()
