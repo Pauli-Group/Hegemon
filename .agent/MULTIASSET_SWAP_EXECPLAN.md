@@ -17,10 +17,11 @@ This living plan follows `.agent/PLANS.md`. The objective is a noncustodial loca
 - [x] (2026-11-02) Added a local deadline-only watch with persisted metadata and per-chain genesis binding; it does not monitor spends or act on behalf of users.
 - [x] (2026-11-02) Added a browser-local encrypted preimage backup with explicit import/export, passphrase verification, corrupt-storage protection and cross-tab serialization. This is not a complete swap recovery record.
 - [x] (2026-11-02) Built and exercised local Anvil deployment primitives for native ETH, ERC-20, ERC-721 and ERC-1155. The companion checks a non-forked local chain anchor; deployment returns an unconfirmed transaction ID. Token contracts need separate approval and funding.
-- [ ] Complete and test the experimental manual Hegemon actions through a locally approved companion, including ordinary transfer, lock, submit, claim and refund; fresh isolated claim and refund rehearsals are in progress.
+- [x] (2026-11-02) Tested experimental manual Hegemon actions through a locally approved companion, including ordinary transfer, lock, submit, claim and refund on fresh isolated chains.
 - [x] (2026-11-02) Implemented separate local token approval and funding actions with pinned runtime and term checks, call simulation, stale-head rejection and distinct transaction confirmations. Exercised all three fixture token kinds and the ERC-20 browser path.
 - [x] (2026-11-02) Added a manually approved local Ethereum refund after expiry; fresh ETH and token fixture rehearsals reject early and repeated refunds.
-- [ ] Implement browser Ethereum claims and a complete cross-chain coordinator. These manual actions do not coordinate a swap.
+- [x] (2026-11-02) Added local Ethereum claims using an encrypted preimage backup, with an explicit warning before the wallet receives the preimage; the other leg is not automatically verified.
+- [ ] Implement a complete cross-chain coordinator and end-to-end recovery. These manual actions do not coordinate a swap.
 - [ ] Implement a resilient pairwise transaction protocol, wallet signing, actual spend monitoring and full swap recovery.
 - [x] (2026-11-02) Added a loopback TypeScript/SQLite prototype relay for public/private offers, exclusive reservations and opaque messages; HTTP/restart test passed.
 - [x] (2026-11-02) Added a local browser offer board and AES-GCM encrypted shared-link message prototype; crypto, HTTP and two-session Chromium tests pass.
@@ -93,4 +94,6 @@ Revision 2026-11-02: separate local ERC-20/721/1155 approval and funding, ERC-11
 
 Revision 2026-11-02: a companion can optionally unlock a browser-exported encrypted preimage backup for a local Hegemon claim, with the backup file configured on startup and its passphrase entered only at the terminal. A Python/JavaScript interoperability and error-handling test passes; the full fresh Hegemon backup-claim rehearsal `/workspace/hbackup1` is in progress. The backup is not a complete recovery record.
 
-Revision 2026-11-02: `/workspace/hact2/summary.json` passed the local Hegemon/ERC-20 claim path through terminal-approved companion actions, including canonical submission checks, altered terms and zero peers. Native ETH and three token refund transactions passed on fresh Anvil (`/workspace/erefund1/summary.json`), including early and repeat rejection. The local Hegemon refund and encrypted-backup claim rehearsals remain in progress.
+Revision 2026-11-02: `/workspace/hact2/summary.json` and `/workspace/hact3/summary.json` passed the local Hegemon/ERC-20 claim and refund paths through terminal-approved companion actions, including canonical submission checks, altered terms and zero peers. Native ETH and three token refund transactions passed on fresh Anvil (`/workspace/erefund1/summary.json`), including early and repeat rejection. The encrypted-backup Hegemon claim rehearsal remains in progress.
+
+Revision 2026-11-02: manual Ethereum claims passed for ETH and the three token fixture kinds on fresh Anvil (`/workspace/eclaim1/summary.json`), rejecting a wrong preimage before wallet access. Chromium unlocked a generated backup and submitted a real local ETH claim through a test provider; a wrong backup passphrase was rejected. No claim of counterparty-leg verification or full swap execution is made.

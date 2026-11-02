@@ -1,7 +1,7 @@
 'use strict';
 import {newMessageKey,encryptMessage,decryptMessage} from './crypto.mjs';
 import {verifyTokenEscrow,verifyEtherEscrow} from './ethereum-escrow.mjs';
-import {submitLocalEscrowDeployment,submitLocalTokenFundingStep,submitLocalEscrowRefund} from './ethereum-actions.mjs';
+import {submitLocalEscrowDeployment,submitLocalTokenFundingStep,submitLocalEscrowRefund,submitLocalEscrowClaim} from './ethereum-actions.mjs';
 import {validateWatch,evaluateWatch} from './deadlines.mjs';
 import {createRecovery,unlockRecovery,validateRecoveryEnvelope} from './recovery.mjs';
 import {vaultLabel,listVault,addVault,removeVault} from './vault-store.mjs';
@@ -104,6 +104,20 @@ $('ethereum-refund').addEventListener('click',async()=>{if(ethereumActionBusy)re
   const result=await submitLocalEscrowRefund(guarded,template,terms,anchor);$('ethereum-action-result').textContent=JSON.stringify(result,null,2);
   msg($('ethereum-action-status'),'Refund submitted. Check its receipt and confirmations.');
  }catch(e){msg($('ethereum-action-status'),e.message,true);}finally{setEthereumActionBusy(false);}
+});
+$('ethereum-claim').addEventListener('click',async()=>{if(ethereumActionBusy)return;const phrase=$('ethereum-claim-passphrase').value;$('ethereum-claim-passphrase').value='';let secret;
+ try{if(!ethereumActionForm.reportValidity())return;if(!activeEthereumProvider)throw Error('Connect an Ethereum wallet first.');if(!companionToken||!companionCapabilities.includes('ethereum-local-anchor'))throw Error('Connect a companion configured for local Anvil.');
+  const provider=activeEthereumProvider,terms=ethereumActionTerms(),selected=$('ethereum-claim-backup').value;
+  if(!selected||!phrase)throw Error('Select an encrypted backup and enter its passphrase.');
+  if(!window.confirm('This manual local claim does not verify the other swap leg. The wallet receives the preimage even if you reject its transaction request. Continue only after verifying the other leg and its deadlines.'))return;
+  setEthereumActionBusy(true);$('ethereum-action-result').textContent='';msg($('ethereum-action-status'),'Unlocking the backup and checking the local escrow.');
+  const entries=await listVault(),entry=entries.find(item=>item.envelope.hashlock===selected);if(!entry)throw Error('Encrypted backup not found.');
+  const [anchor,response]=await Promise.all([companion('/ethereum/head',companionToken),fetch(terms.kind==='eth'?'/ether-escrow-template.json':'/token-escrow-template.json')]);
+  if(!response.ok)throw Error('Escrow template unavailable.');const template=await response.json();secret=await unlockRecovery(entry.envelope,phrase);
+  const guarded={request:args=>{if(provider!==activeEthereumProvider)throw Error('Wallet changed. Reconnect and check wallet history before retrying.');return provider.request(args);}};
+  const result=await submitLocalEscrowClaim(guarded,template,terms,anchor,secret);$('ethereum-action-result').textContent=JSON.stringify(result,null,2);
+  msg($('ethereum-action-status'),'Claim submitted. The preimage is public; check the receipt and confirmations.');
+ }catch(e){msg($('ethereum-action-status'),e.message,true);}finally{secret?.fill(0);setEthereumActionBusy(false);}
 });
 $('bitcoin-form').addEventListener('submit',async event=>{event.preventDefault();
  try{if(!companionToken||!companionCapabilities.includes('bitcoin-regtest-verify'))throw Error('Connect a companion configured for Bitcoin.');const data=new FormData(event.currentTarget),terms={};
@@ -238,7 +252,8 @@ function notifyVault(){vaultChannel?.postMessage('changed');}
 let vaultRenderVersion=0;
 async function renderVault(){const version=++vaultRenderVersion;let entries;
  try{entries=await listVault();}catch(e){if(version===vaultRenderVersion){$('vault-list').replaceChildren();msg($('vault-status'),e.message,true);}return;}
- if(version!==vaultRenderVersion)return;$('vault-list').replaceChildren();if(!entries.length){$('vault-list').textContent='No encrypted secrets saved.';return;}
+ if(version!==vaultRenderVersion)return;const choice=$('ethereum-claim-backup'),previous=choice.value;choice.replaceChildren(new Option('Select encrypted backup',''));for(const entry of entries)choice.add(new Option(entry.label+' · '+entry.envelope.hashlock,entry.envelope.hashlock));choice.value=Array.from(choice.options).some(option=>option.value===previous)?previous:'';
+ $('vault-list').replaceChildren();if(!entries.length){$('vault-list').textContent='No encrypted secrets saved.';return;}
  for(const entry of entries){const row=document.createElement('div');row.className='offer';const text=document.createElement('p');text.textContent=entry.label+' · hashlock '+entry.envelope.hashlock;
   const exportButton=document.createElement('button');exportButton.type='button';exportButton.textContent='Show encrypted backup';exportButton.addEventListener('click',()=>{$('vault-backup').value=JSON.stringify(entry);msg($('vault-status'),'Encrypted backup ready to copy and save.');});
   const testButton=document.createElement('button');testButton.type='button';testButton.textContent='Test unlock';testButton.addEventListener('click',async()=>{const phrase=$('vault-unlock').value;$('vault-unlock').value='';testButton.disabled=true;let secret;

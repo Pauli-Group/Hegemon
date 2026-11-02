@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {buildLocalEscrowDeployment,submitLocalEscrowDeployment,submitLocalTokenFundingStep} from './ethereum-actions.mjs';
+import {buildLocalEscrowDeployment,submitLocalEscrowDeployment,submitLocalTokenFundingStep,submitLocalEscrowClaim} from './ethereum-actions.mjs';
 import {expectedTokenRuntime} from './ethereum-escrow.mjs';
 const account='0x'+'1'.repeat(40),claimant='0x'+'2'.repeat(40),token='0x'+'3'.repeat(40);
 const terms={kind:'0',token,tokenId:'0',amount:'100',claimant,refundee:account,hashlock:'0x'+'a'.repeat(64),expiry:'1000'};
@@ -35,4 +35,10 @@ test('funding requires exact escrow terms and a stable local head',async()=>{
   if(mode==='ok'){const result=await submitLocalTokenFundingStep(p,artifact,t,anchor,'fund');assert.equal(result.confirmed,false);assert.equal(sends,1);}
   else {await assert.rejects(submitLocalTokenFundingStep(p,artifact,t,anchor,'fund'),mode==='wrong-code'?/bytecode/:/chain changed/);assert.equal(sends,0);}
  }
+});
+test('a mismatched preimage never reaches the wallet provider',async()=>{
+ let requests=0;const p={request:async()=>{requests++;throw Error('must not be called');}};
+ const secret=new Uint8Array(32).fill(7);
+ await assert.rejects(submitLocalEscrowClaim(p,{}, {...terms,kind:'eth'},anchor,secret),/does not match/);
+ assert.equal(requests,0);secret.fill(0);
 });

@@ -183,6 +183,24 @@ test('browser verifies real local Ethereum token escrow and rejects changed term
   await rpc('evm_setNextBlockTimestamp',[Number(expiry)]);await rpc('evm_mine');
   await page.getByRole('button',{name:'Refund expired escrow'}).click();await page.getByText('Refund submitted.',{exact:false}).waitFor();
   const refund=JSON.parse(await page.locator('#ethereum-action-result').textContent());assert.equal((await rpc('eth_getTransactionReceipt',[refund.txid])).status,'0x1');
+  // A fresh browser backup supplies the preimage for a separate local claim.
+  const backupPhrase='different local backup passphrase';
+  await page.locator('#vault-create [name="label"]').fill('Claim fixture');
+  await page.locator('#vault-create [name="passphrase"]').fill(backupPhrase);await page.locator('#vault-create [name="confirm"]').fill(backupPhrase);
+  await page.getByRole('button',{name:'Create encrypted secret'}).click();await page.getByText('Encrypted secret created.',{exact:false}).waitFor();
+  const backup=JSON.parse(await page.locator('#vault-backup').inputValue()),claimHash=backup.envelope.hashlock;
+  const claimExpiry=(BigInt((await rpc('eth_getBlockByNumber',['latest',false])).timestamp)+600n).toString();
+  await page.locator('#ethereum-action-form [name="kind"]').selectOption('eth');
+  for(const [name,value] of Object.entries({hashlock:'0x'+claimHash,expiry:claimExpiry,amount:'1000000'}))await page.locator(`#ethereum-action-form [name="${name}"]`).fill(value);
+  await page.getByRole('button',{name:'Deploy local escrow'}).click();await page.getByText('Deployment submitted; check the receipt and confirmations.').waitFor();
+  const claimDeploy=JSON.parse(await page.locator('#ethereum-action-result').textContent());const claimReceipt=await rpc('eth_getTransactionReceipt',[claimDeploy.txid]);assert.equal(claimReceipt.status,'0x1');
+  await rpc('evm_mine');await rpc('evm_mine');await page.locator('#ethereum-action-form [name="contract"]').fill(claimReceipt.contractAddress);
+  await page.locator('#ethereum-claim-backup').selectOption(claimHash);await page.locator('#ethereum-claim-passphrase').fill('wrong backup passphrase');
+  page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Claim local escrow'}).click();await page.getByText('Could not unlock encrypted backup.').waitFor();
+  await page.locator('#ethereum-claim-passphrase').fill(backupPhrase);page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Claim local escrow'}).click();
+  await page.getByText('Claim submitted. The preimage is public;',{exact:false}).waitFor();
+  const claim=JSON.parse(await page.locator('#ethereum-action-result').textContent()),claimResult=await rpc('eth_getTransactionReceipt',[claim.txid]);assert.equal(claimResult.status,'0x1');
+  const claimTx=await rpc('eth_getTransactionByHash',[claim.txid]);assert.equal(createHash('sha256').update(Buffer.from(claimTx.input.slice(10),'hex')).digest('hex'),claimHash);
   await context.close();
  }finally{
   if(browser)await browser.close();

@@ -2,7 +2,7 @@
  * swap or verify the other leg. The provider must be user-approved; the trusted
  * companion supplies the non-forked local Anvil anchor. Never auto-retry a send.
  */
-import {expectedEtherRuntime,expectedTokenRuntime} from './ethereum-escrow.mjs';
+import {expectedEtherRuntime,expectedTokenRuntime,verifyEtherEscrow,verifyTokenEscrow} from './ethereum-escrow.mjs';
 function addr(value){if(typeof value!=='string'||!/^0x[0-9a-fA-F]{40}$/.test(value)||/^0x0{40}$/i.test(value))throw Error('invalid address');return value.slice(2).toLowerCase().padStart(64,'0');}
 function uint(value){if(typeof value!=='string'||!/^(0|[1-9][0-9]{0,77})$/.test(value)||BigInt(value)>=1n<<256n)throw Error('invalid integer');return BigInt(value).toString(16).padStart(64,'0');}
 function hash(value){if(typeof value!=='string'||!/^0x[0-9a-fA-F]{64}$/.test(value))throw Error('invalid hashlock');return value.slice(2).toLowerCase();}
@@ -19,7 +19,7 @@ async function localAnchor(provider,anchor,from){
  if(!provider||typeof provider.request!=='function'||!anchor||!/^([0-9a-f]{64})$/.test(anchor.genesis||'')||!/^0x[0-9a-f]{64}$/i.test(anchor.tip_hash||'')||!/^(0|[1-9][0-9]*)$/.test(anchor.time_seconds||''))throw Error('invalid local chain anchor');
  const request=(method,params=[])=>provider.request({method,params});
  if(BigInt(await request('eth_chainId'))!==31337n)throw Error('wallet is not on the local Ethereum chain');
- const accounts=await request('eth_accounts');if(!Array.isArray(accounts)||!accounts.some(a=>typeof a==='string'&&a.toLowerCase()===from))throw Error('wallet does not control the refund address');
+ const accounts=await request('eth_accounts');if(!Array.isArray(accounts)||!accounts.some(a=>typeof a==='string'&&a.toLowerCase()===from))throw Error('wallet does not control the required address');
  const genesis=await request('eth_getBlockByNumber',['0x0',false]),head=await request('eth_getBlockByNumber',['latest',false]);
  if(!genesis||!head||String(genesis.hash).toLowerCase()!=='0x'+anchor.genesis||String(head.hash).toLowerCase()!==anchor.tip_hash.toLowerCase()||BigInt(head.timestamp)!==BigInt(anchor.time_seconds))throw Error('wallet and local node do not agree on the chain');
  return {request,head};
@@ -83,4 +83,18 @@ export async function submitLocalEscrowRefund(provider,template,terms,anchor){
  const latest=await request('eth_getBlockByNumber',['latest',false]);
  if(!latest||latest.hash!==head.hash||BigInt(await request('eth_chainId'))!==31337n)throw Error('chain changed before submission');
  return {...await sendOnce(request,tx),step:'refund'};
+}
+/** Manual local claim. Calling the wallet exposes the preimage to that wallet,
+ * even if the user later rejects the transaction; a submitted claim is public.
+ * This verifies only this escrow and does not verify the counterparty leg. */
+export async function submitLocalEscrowClaim(provider,template,terms,anchor,secret){
+ if(!terms||!['eth','0','1','2'].includes(terms.kind)||!(secret instanceof Uint8Array)||secret.length!==32)throw Error('invalid claim');
+ const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',secret)),b=>b.toString(16).padStart(2,'0')).join('');
+ if(digest!==hash(terms.hashlock))throw Error('backup does not match the escrow hashlock');
+ const contract='0x'+addr(terms.contract).slice(24),from='0x'+addr(terms.claimant).slice(24);
+ const verifyTerms={...terms,chainId:'0x7a69'};
+ await (terms.kind==='eth'?verifyEtherEscrow(provider,template,verifyTerms,2):verifyTokenEscrow(provider,template,verifyTerms,2));
+ const {request}=await localAnchor(provider,anchor,from);
+ const data='0xbd66528a'+Array.from(secret,b=>b.toString(16).padStart(2,'0')).join('');
+ return {...await sendOnce(request,{from,to:contract,data,value:'0x0'}),step:'claim'};
 }

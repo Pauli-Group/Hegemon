@@ -32,8 +32,8 @@ def main():
     terms={'kind':'eth' if kind=='eth' else str(c.token_kind),'claimant':c.alice,'refundee':c.bob,'hashlock':'0x'+digest,
            'expiry':str(int(anchor['time_seconds'])+600),'amount':str(c.amount if kind=='eth' else c.token_amount)}
     if kind!='eth':terms.update(token=c.token,tokenId=str(c.token_id))
-    def submit(anchor_value,expected,step=None,terms_value=None):
-     run=subprocess.run(['node',ROOT/'scripts/submit_ethereum_deployment.mjs'],input=json.dumps({'url':c.url,'terms':terms_value or terms,'anchor':anchor_value,'step':step}),text=True,capture_output=True,timeout=30)
+    def submit(anchor_value,expected,step=None,terms_value=None,secret_value=None):
+     run=subprocess.run(['node',ROOT/'scripts/submit_ethereum_deployment.mjs'],input=json.dumps({'url':c.url,'terms':terms_value or terms,'anchor':anchor_value,'step':step,'secret':secret_value}),text=True,capture_output=True,timeout=30)
      require((run.returncode==0)==expected,'deployment returned unexpected status: '+run.stderr[-500:]);return run
     nonce=rpc(c.url,'eth_getTransactionCount',[c.bob,'latest'])
     submit({**anchor,'genesis':'00'*32},False)
@@ -67,7 +67,7 @@ def main():
     verify_terms={'chainId':'0x7a69','contract':c.contract,**terms}
     check=subprocess.run(['node',ROOT/'scripts/verify_ethereum_escrow.mjs'],input=json.dumps({'url':c.url,'terms':verify_terms}),text=True,capture_output=True,timeout=30)
     require(check.returncode==0,'deployed escrow did not verify: '+check.stderr[-500:])
-    refund_terms={**terms,'contract':c.contract};nonce=rpc(c.url,'eth_getTransactionCount',[c.bob,'latest'])
+    snapshot=rpc(c.url,'evm_snapshot');refund_terms={**terms,'contract':c.contract};nonce=rpc(c.url,'eth_getTransactionCount',[c.bob,'latest'])
     submit(ethereum_local_head(c.url),False,'refund',refund_terms)
     require(rpc(c.url,'eth_getTransactionCount',[c.bob,'latest'])==nonce,'early refund was submitted')
     rpc(c.url,'evm_setNextBlockTimestamp',[c.expiry]);rpc(c.url,'evm_mine')
@@ -79,6 +79,15 @@ def main():
     nonce=rpc(c.url,'eth_getTransactionCount',[c.bob,'latest'])
     submit(ethereum_local_head(c.url),False,'refund',refund_terms)
     require(rpc(c.url,'eth_getTransactionCount',[c.bob,'latest'])==nonce,'repeated refund was submitted')
+    require(rpc(c.url,'evm_revert',[snapshot]),'failed to restore funded local escrow for claim test')
+    nonce=rpc(c.url,'eth_getTransactionCount',[c.alice,'latest'])
+    submit(ethereum_local_head(c.url),False,'claim',refund_terms,'00'*32)
+    require(rpc(c.url,'eth_getTransactionCount',[c.alice,'latest'])==nonce,'wrong preimage caused claim submission')
+    result=json.loads(submit(ethereum_local_head(c.url),True,'claim',refund_terms,secret.hex()).stdout)
+    claim_receipt=wait_for(lambda:rpc(c.url,'eth_getTransactionReceipt',[result['txid']]),'claim receipt')
+    require(int(claim_receipt['status'],16)==1,'claim transaction failed')
+    spent=rpc(c.url,'eth_call',[{'to':c.contract,'data':'0x7ab71b7a'},'latest'])
+    require(int(spent,16)==1,'claim did not mark escrow spent')
     c.isolated();results.append({'kind':kind,'status':'passed','transaction':response['txid'],'contract':c.contract})
     print(kind,'passed',flush=True)
    finally:stop(companion_proc);c.close()

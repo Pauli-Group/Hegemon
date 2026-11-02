@@ -21,7 +21,9 @@ def unlock_backup(path, password):
         info=os.fstat(handle.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or stat.S_IMODE(info.st_mode)&0o077 or info.st_size>4096:
             raise ValueError('backup must be a user-owned private file of at most 4096 bytes')
-        try:entry=json.load(handle)
+        raw=handle.read(4097)
+        if len(raw)>4096:raise ValueError('invalid encrypted backup')
+        try:entry=json.loads(raw)
         except (ValueError,UnicodeError) as e:raise ValueError('invalid encrypted backup') from e
     if not isinstance(entry,dict) or set(entry)!={'label','envelope'} or not isinstance(entry['label'],str):raise ValueError('invalid encrypted backup')
     v=entry['envelope']
