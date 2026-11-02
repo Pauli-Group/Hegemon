@@ -32,7 +32,7 @@ def no_tcp_peers(proc, rpc_port=None):
 
 class Ethereum:
     amount=10**18
-    def __init__(self, directory, tools=TOOLS):
+    def __init__(self, directory, tools=TOOLS, test_token=None):
         self.d=directory; self.d.mkdir(mode=0o700)
         self.receipt={'chain':'ethereum','checks':{},'transactions':{}}
         self.log=(self.d/'anvil.log').open('wb')
@@ -43,6 +43,16 @@ class Ethereum:
             wait_for(lambda:rpc(self.url,'eth_chainId')=='0x7a69','Anvil RPC')
             self.alice,self.bob,self.outsider=rpc(self.url,'eth_accounts')[:3]
             self.artifact=json.loads((ROOT/'contracts/ethereum/out/HegemonHTLC.sol/HegemonHTLC.json').read_text())
+            self.test_token=test_token
+            if test_token:
+                fixture={'erc20':('Sample20',0,100),'erc721':('Sample721',42,1),'erc1155':('Sample1155',7,30)}[test_token]
+                self.token_kind={'erc20':0,'erc721':1,'erc1155':2}[test_token]
+                self.token_id,self.token_amount=fixture[1:]
+                self.token_artifact=json.loads((ROOT/'contracts/ethereum/out/TokenHTLC.t.sol'/(fixture[0]+'.json')).read_text())
+                token_code=self.token_artifact['bytecode']['object']+self.word_address(self.bob)
+                self.token=self.send(self.bob,token_code)['contractAddress']
+                self.artifact=json.loads((ROOT/'contracts/ethereum/out/TokenHTLC.sol/TokenHTLC.json').read_text())
+                self.receipt['test_token']={'kind':test_token,'address':self.token,'id':self.token_id,'amount':self.token_amount}
             self.receipt['creation_code_sha256']=hashlib.sha256(bytes.fromhex(self.artifact['bytecode']['object'].removeprefix('0x'))).hexdigest()
         except BaseException:self.close();raise
     def send(self, sender, data, to=None, value=0, succeeds=True):
@@ -57,29 +67,60 @@ class Ethereum:
         (self.d/(ident+'.json')).write_text(json.dumps(receipt,indent=2))
         return receipt
     def balance(self, account):return int(rpc(self.url,'eth_getBalance',[account,'latest']),16)
+    @staticmethod
+    def word_address(address):return address[2:].rjust(64,'0')
+    @staticmethod
+    def word_number(number):return format(number,'064x')
+    def token_data(self,signature,suffix=''):
+        return '0x'+self.token_artifact['methodIdentifiers'][signature]+suffix
+    def token_balance(self,address):
+        if self.test_token=='erc721':
+            data=self.token_data('ownerOf(uint256)',self.word_number(self.token_id))
+            owner=rpc(self.url,'eth_call',[{'to':self.token,'data':data},'latest'])[-40:]
+            return int(owner.lower()==address[2:].lower())
+        signature='balanceOf(address)' if self.test_token=='erc20' else 'balanceOf(address,uint256)'
+        suffix=self.word_address(address)+(self.word_number(self.token_id) if self.test_token=='erc1155' else '')
+        return int(rpc(self.url,'eth_call',[{'to':self.token,'data':self.token_data(signature,suffix)},'latest']),16)
     def data(self, signature, suffix=''):return '0x'+self.artifact['methodIdentifiers'][signature]+suffix
     def lock(self, hashlock):
         self.expiry=int(rpc(self.url,'eth_getBlockByNumber',['latest',False])['timestamp'],16)+600
         code=self.artifact['bytecode']['object']
-        args=hashlock.hex()+self.alice[2:].rjust(64,'0')+format(self.expiry,'064x')
-        r=self.send(self.bob,code+args,value=self.amount)
-        self.contract=r['contractAddress']
-        require(self.balance(self.contract)==self.amount,'ETH escrow amount mismatch')
+        if self.test_token:
+            args=(self.word_number(self.token_kind)+self.word_address(self.token)+self.word_number(self.token_id)+self.word_number(self.token_amount)+hashlock.hex()+self.word_address(self.alice)+self.word_number(self.expiry))
+            r=self.send(self.bob,code+args)
+            self.contract=r['contractAddress']
+            if self.test_token=='erc20':
+                approve=self.token_data('approve(address,uint256)',self.word_address(self.contract)+self.word_number(self.token_amount))
+            elif self.test_token=='erc721':
+                approve=self.token_data('approve(address,uint256)',self.word_address(self.contract)+self.word_number(self.token_id))
+            else:
+                approve=self.token_data('setApprovalForAll(address,bool)',self.word_address(self.contract)+self.word_number(1))
+            self.send(self.bob,approve,self.token)
+            r=self.send(self.bob,self.data('fund()'),self.contract)
+            require(self.token_balance(self.contract)==self.token_amount,'token escrow amount mismatch')
+        else:
+            args=hashlock.hex()+self.alice[2:].rjust(64,'0')+format(self.expiry,'064x')
+            r=self.send(self.bob,code+args,value=self.amount)
+        if not self.test_token:
+            self.contract=r['contractAddress']
+            require(self.balance(self.contract)==self.amount,'ETH escrow amount mismatch')
         self.receipt['transactions']['lock']=r['transactionHash']
         for label,sender,data in [
             ('wrong_secret',self.alice,self.data('claim(bytes32)','00'*32)),
             ('unauthorized_claim',self.outsider,self.data('claim(bytes32)','00'*32)),
             ('early_refund',self.bob,self.data('refund()'))]:
             self.send(sender,data,self.contract,succeeds=False)
-            require(self.balance(self.contract)==self.amount,'rejected call changed ETH escrow')
+            require((self.token_balance(self.contract)==self.token_amount) if self.test_token else (self.balance(self.contract)==self.amount),'rejected call changed escrow')
             self.receipt['checks'][label+'_rejected']=True
     def claim(self, secret):
-        before=self.balance(self.alice)
+        before=self.token_balance(self.alice) if self.test_token else self.balance(self.alice)
         r=self.send(self.alice,self.data('claim(bytes32)',secret.hex()),self.contract)
         cost=int(r['gasUsed'],16)*int(r['effectiveGasPrice'],16)
-        require(self.balance(self.alice)==before+self.amount-cost and self.balance(self.contract)==0,'ETH claim payment mismatch')
-        require(len(r['logs'])==1,'missing claim event')
-        revealed=bytes.fromhex(r['logs'][0]['data'][2:66])
+        if self.test_token:require(self.token_balance(self.alice)==before+self.token_amount and self.token_balance(self.contract)==0,'token claim payment mismatch')
+        else:require(self.balance(self.alice)==before+self.amount-cost and self.balance(self.contract)==0,'ETH claim payment mismatch')
+        logs=[log for log in r['logs'] if log['address'].lower()==self.contract.lower()]
+        require(len(logs)==1,'missing claim event')
+        revealed=bytes.fromhex(logs[0]['data'][2:66])
         require(hashlib.sha256(revealed).digest()==hashlib.sha256(secret).digest(),'Ethereum confirmed preimage mismatch')
         self.receipt['transactions']['claim']=r['transactionHash']; self.receipt['checks']['claim_confirmed']=True
         self.send(self.alice,self.data('claim(bytes32)',secret.hex()),self.contract,succeeds=False)
@@ -88,10 +129,11 @@ class Ethereum:
     def refund(self):
         rpc(self.url,'evm_setNextBlockTimestamp',[self.expiry]);rpc(self.url,'evm_mine')
         self.send(self.alice,self.data('refund()'),self.contract,succeeds=False)
-        before=self.balance(self.bob)
+        before=self.token_balance(self.bob) if self.test_token else self.balance(self.bob)
         r=self.send(self.bob,self.data('refund()'),self.contract)
         cost=int(r['gasUsed'],16)*int(r['effectiveGasPrice'],16)
-        require(self.balance(self.bob)==before+self.amount-cost and self.balance(self.contract)==0,'ETH refund payment mismatch')
+        if self.test_token:require(self.token_balance(self.bob)==before+self.token_amount and self.token_balance(self.contract)==0,'token refund payment mismatch')
+        else:require(self.balance(self.bob)==before+self.amount-cost and self.balance(self.contract)==0,'ETH refund payment mismatch')
         self.send(self.alice,self.data('claim(bytes32)','00'*32),self.contract,succeeds=False)
         self.receipt['transactions']['refund']=r['transactionHash']
         self.receipt['checks'].update(refund_confirmed=True,unauthorized_refund_rejected=True,claim_after_refund_rejected=True)
@@ -106,7 +148,7 @@ class Ethereum:
 class Cardano:
     amount=10_000_000
     magic='424242'
-    def __init__(self, directory, tools=TOOLS, existing=None):
+    def __init__(self, directory, tools=TOOLS, existing=None, test_tokens=False, epoch_length=500):
         self.d=directory;self.d.mkdir(mode=0o700)
         self.cli=tools/'cardano/bin/cardano-cli';self.nodebin=tools/'cardano/bin/cardano-node'
         self.receipt={'chain':'cardano','checks':{},'transactions':{}}
@@ -115,7 +157,7 @@ class Cardano:
             self.net=existing or self.d/'network'
             if not existing:
                 env=dict(os.environ,CARDANO_CLI=str(self.cli),CARDANO_NODE=str(self.nodebin))
-                subprocess.run([tools/'cardano/bin/cardano-testnet','create-env','--num-pool-nodes','1','--num-dreps','0','--slot-length','0.2','--active-slots-coeff','0.5','--epoch-length','500','--testnet-magic',self.magic,'--output',self.net],env=env,check=True,stdout=self.log,stderr=self.log)
+                subprocess.run([tools/'cardano/bin/cardano-testnet','create-env','--num-pool-nodes','1','--num-dreps','0','--slot-length','0.2','--active-slots-coeff','0.5','--epoch-length',str(epoch_length),'--testnet-magic',self.magic,'--output',self.net],env=env,check=True,stdout=self.log,stderr=self.log)
                 start=int(time.time())+2
                 for era in ('shelley','byron'):
                     path=self.net/(era+'-genesis.json');gen=json.loads(path.read_text())
@@ -142,6 +184,8 @@ class Cardano:
             self.address=self.run('address','build','--payment-script-file',self.script,'--testnet-magic',self.magic).strip()
             self.receipt['script_sha256']=hashlib.sha256(self.script.read_bytes()).hexdigest()
             for name in self.actors:self.split(name)
+            self.tokens={}
+            if test_tokens:self.mint_test_tokens()
         except BaseException:self.close();raise
     def run(self,*args,check=True):
         p=subprocess.run([str(self.cli),'conway',*map(str,args)],capture_output=True,text=True,timeout=60)
@@ -182,16 +226,39 @@ class Cardano:
         self.actors[name]['collateral']=next(k for k,v in out.items() if v['value'].get('lovelace')==20_000_000)
     def fee_input(self,name):
         out=self.utxos(self.actors[name]['address'])
-        return max((k for k in out if k!=self.actors[name]['collateral']),key=lambda k:out[k]['value'].get('lovelace',0))
-    def lock(self,hashlock):
-        self.expiry_slot=self.tip()['slot']+300 # sixty local seconds, no public network timing claim
+        return max((k for k in out if k!=self.actors[name]['collateral'] and len(out[k]['value'])==1),key=lambda k:out[k]['value'].get('lovelace',0))
+    def mint_test_tokens(self):
+        # A local signature policy mints both a fungible asset and a one-of-one
+        # token. These disposable fixtures are not representations of real assets.
+        policy_file=self.d/'test-policy.json'
+        policy_file.write_text(json.dumps({'type':'sig','keyHash':self.actors['bob']['hash']}))
+        policy=self.run('transaction','policyid','--script-file',policy_file).strip()
+        self.tokens={policy:{'46554e47':11,'4e4654':1}}
+        body,signed=self.files('mint-test-assets')
+        assets=self.token_value()
+        self.build(['--tx-in',self.fee_input('bob'),'--tx-out',self.actors['bob']['address']+'+30000000'+assets,
+                    '--change-address',self.actors['bob']['address'],'--mint',assets[1:],
+                    '--mint-script-file',policy_file],body)
+        ident,out=self.submit(body,signed,'bob',self.actors['bob']['address'])
+        self.token_input=next(k for k,v in out.items() if self.has_tokens(v))
+        self.receipt['transactions']['mint_test_assets']=ident
+        self.receipt['test_tokens']=self.tokens
+    def token_value(self):
+        return ''.join('+'+str(quantity)+' '+policy+'.'+name for policy,assets in self.tokens.items() for name,quantity in assets.items())
+    def has_tokens(self,output):
+        value=output['value']
+        return all(value.get(policy,{}).get(name)==quantity for policy,assets in self.tokens.items() for name,quantity in assets.items())
+    def lock(self,hashlock,ttl_slots=300):
+        self.expiry_slot=self.tip()['slot']+ttl_slots # local slots; no public network timing claim
         self.expiry_ms=self.start_ms+self.expiry_slot*self.slot_ms
         datum={'constructor':0,'fields':[{'bytes':hashlock.hex()},{'bytes':self.actors['alice']['hash']},{'bytes':self.actors['bob']['hash']},{'int':self.expiry_ms}]}
         self.datum=self.d/'terms.json';self.datum.write_text(json.dumps(datum))
         body,signed=self.files('lock')
-        self.build(['--tx-in',self.fee_input('bob'),'--tx-out',self.address+'+'+str(self.amount),'--tx-out-inline-datum-file',self.datum,'--change-address',self.actors['bob']['address']],body)
+        inputs=['--tx-in',self.fee_input('bob')]
+        if self.tokens:inputs+=['--tx-in',self.token_input]
+        self.build([*inputs,'--tx-out',self.address+'+'+str(self.amount)+self.token_value(),'--tx-out-inline-datum-file',self.datum,'--change-address',self.actors['bob']['address']],body)
         ident,out=self.submit(body,signed,'bob',self.address)
-        self.locked=next(k for k,v in out.items() if v['value'].get('lovelace')==self.amount)
+        self.locked=next(k for k,v in out.items() if v['value'].get('lovelace')==self.amount and self.has_tokens(v))
         self.receipt['transactions']['lock']=ident
         self.spend('alice',b'\0'*32,expected=False,label='wrong-secret')
         self.spend('outsider',b'\0'*32,expected=False,label='unauthorized-claim')
@@ -202,7 +269,7 @@ class Cardano:
         redeemer=self.d/(label+'-redeemer.json')
         redeemer.write_text(json.dumps({'constructor':0,'fields':[{'bytes':secret.hex()}]} if claim else {'constructor':1,'fields':[]}))
         body,signed=self.files(label)
-        args=['--tx-in',self.locked,'--tx-in-script-file',self.script,'--tx-in-inline-datum-present','--tx-in-redeemer-file',redeemer,'--tx-in',self.fee_input(name),'--tx-in-collateral',self.actors[name]['collateral'],'--required-signer-hash',self.actors[name]['hash'],'--tx-out',self.actors[name]['address']+'+'+str(self.amount),'--change-address',self.actors[name]['address']]
+        args=['--tx-in',self.locked,'--tx-in-script-file',self.script,'--tx-in-inline-datum-present','--tx-in-redeemer-file',redeemer,'--tx-in',self.fee_input(name),'--tx-in-collateral',self.actors[name]['collateral'],'--required-signer-hash',self.actors[name]['hash'],'--tx-out',self.actors[name]['address']+'+'+str(self.amount)+self.token_value(),'--change-address',self.actors[name]['address']]
         if claim:
             args+=['--invalid-hereafter',str(self.expiry_slot+(10 if late else 0))]
         else:
@@ -210,7 +277,7 @@ class Cardano:
         if not self.build(args,body,expected,spent):return None
         ident,out=self.submit(body,signed,name,self.actors[name]['address'])
         require(self.locked not in self.utxos(self.address),'Cardano escrow input remains unspent')
-        require(any(v['value'].get('lovelace')==self.amount for v in out.values()),'ADA payout amount mismatch')
+        require(any(v['value'].get('lovelace')==self.amount and self.has_tokens(v) for v in out.values()),'Cardano payout value mismatch')
         self.receipt['transactions'][label]=ident
         self.receipt['checks'][label+'_confirmed']=True
         return signed

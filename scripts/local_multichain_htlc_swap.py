@@ -16,6 +16,11 @@ def scenario(a, name):
     (d/'handoff.pass').write_bytes(hp+b'\n')
     rec['source_commit']=subprocess.check_output(['git','-C',ROOT,'rev-parse','HEAD'],text=True).strip()
     rec['binary_sha256']={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in (a.node,a.wallet)}
+    sources=[ROOT/'scripts/local_multichain_htlc_swap.py',ROOT/'scripts/htlc_counterpart.py']
+    if a.chain=='cardano':sources.append(ROOT/'contracts/cardano/validators/htlc.ak')
+    elif a.ethereum_test_token:sources.extend([ROOT/'contracts/ethereum/TokenHTLC.sol',ROOT/'contracts/ethereum/test/TokenHTLC.t.sol'])
+    else:sources.append(ROOT/'contracts/ethereum/HegemonHTLC.sol')
+    rec['source_sha256']={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
     wallets={n:d/(n+'.store') for n in ('alice','bob','treasury')}
     def call(n, command, extra=(), label=None, expected=True, offline=False):
         argv=['--wallet',wallets[n]]
@@ -75,7 +80,10 @@ def scenario(a, name):
         call('alice',['refund','--locked',str(locked),'--fee-input',str(notes('alice')[0][0]),'--recipient',addresses['alice'],'--fee','1'],label='early-refund',expected=False)
         rec['checks']['early_refund_rejected']=True
         print(name+': starting fresh '+a.chain+' chain',flush=True)
-        counterpart=({'ethereum':Ethereum,'cardano':Cardano}[a.chain])(d/a.chain,a.tools)
+        if a.chain=='cardano':
+            counterpart=Cardano(d/a.chain,a.tools,test_tokens=a.cardano_test_tokens)
+        else:
+            counterpart=Ethereum(d/a.chain,a.tools,test_token=a.ethereum_test_token)
         counterpart.isolated()
         revealed=None
         if name!='no_counterparty':
@@ -119,10 +127,14 @@ def main():
     p.add_argument('--chain',choices=['ethereum','cardano'],required=True)
     p.add_argument('--output',type=Path,required=True)
     p.add_argument('--scenario',choices=['all','happy','no_counterparty','both_refund','late_claim'],default='all')
+    p.add_argument('--cardano-test-tokens',action='store_true',help='mint disposable fungible and NFT fixtures on the isolated Cardano chain')
+    p.add_argument('--ethereum-test-token',choices=['erc20','erc721','erc1155'],help='use a disposable token fixture on the isolated Ethereum chain')
     p.add_argument('--node',type=Path,default=ROOT/'target/release/hegemon-node')
     p.add_argument('--wallet',type=Path,default=ROOT/'target/release/private-spend')
     p.add_argument('--tools',type=Path,default=TOOLS)
     a=p.parse_args();a.output=a.output.resolve();os.umask(0o077)
+    if a.cardano_test_tokens and a.chain!='cardano':p.error('--cardano-test-tokens requires --chain cardano')
+    if a.ethereum_test_token and a.chain!='ethereum':p.error('--ethereum-test-token requires --chain ethereum')
     a.output.mkdir(mode=0o700,exist_ok=False)
     cases=['happy','no_counterparty','both_refund','late_claim'] if a.scenario=='all' else [a.scenario]
     results=[]

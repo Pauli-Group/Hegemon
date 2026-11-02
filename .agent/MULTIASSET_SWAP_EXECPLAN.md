@@ -6,10 +6,16 @@ This living plan follows `.agent/PLANS.md`. The objective is a noncustodial loca
 
 - [x] (2026-11-02) Inspected existing contracts, local harness, wallet architecture and repository instructions.
 - [x] (2026-11-02) Implemented ERC-20, ERC-721 and ERC-1155 token escrow and 11 local fixture tests; the existing 9 native ETH tests also pass.
-- [ ] Add adversarial callback coverage and real local-chain token swap integration.
-- [ ] Implement Cardano native-token transactions and tests.
+- [x] (2026-11-02) Added receiver interface and reentrant funding tests. All six Ethereum token fixture claim/refund local-chain paths passed. A direct ERC-20/Cardano-native-token swap passed on isolated nodes.
+- [x] (2026-11-02) Hegemon/ERC-20 and Hegemon/Cardano-token local happy paths passed; additional local happy paths passed for BTC/ERC-20, BTC/Cardano tokens, ERC-20/Cardano tokens, and same-chain token swaps on Ethereum and Cardano.
+- [ ] Cover arbitrary user-selected assets, failure and recovery across every pairing, and connect the real wallet flows.
+- [x] (2026-11-02) Added local Cardano fixture minting, HTLC claim and refund for a fungible token and one-of-one token; both passed on fresh isolated nodes.
+- [ ] Generalize Cardano token inputs for real user-selected assets and add same-chain and Hegemon-linked end-to-end cases.
 - [ ] Implement resilient pairwise swap protocol, local companion, wallet integrations and monitoring.
-- [ ] Implement noncustodial offer service and desktop/browser interfaces.
+- [x] (2026-11-02) Added a loopback TypeScript/SQLite prototype relay for public/private offers, exclusive reservations and opaque messages; HTTP/restart test passed.
+- [x] (2026-11-02) Added a local browser offer board and AES-GCM encrypted shared-link message prototype; crypto, HTTP and two-session Chromium tests pass.
+- [x] (2026-11-02) Added read-only Ethereum EIP-1193 and Cardano CIP-30 connection buttons and exercised them with mocked browser providers.
+- [ ] Implement authenticated counterparty identities, desktop integration, full wallet transaction interfaces and deployment hardening. Public-board users cannot yet initiate an encrypted conversation without the owner sharing a full private link.
 - [ ] Exercise local-network end-to-end swaps and document remaining limitations.
 
 ## Surprises & Discoveries
@@ -22,7 +28,7 @@ Use independent per-offer Ethereum token escrow instances, with exact ERC-20 bal
 
 ## Outcomes & Retrospective
 
-The independent Ethereum token escrow compiles and its 11 unit tests pass. Cardano token handling, the service, UI, wallet integration and full swap protocol remain unfinished. No production readiness or deployment is asserted.
+The independent Ethereum token escrow compiles and its 13 unit tests pass. Cardano fixture-token transactions and a local offer relay now work; user-selected token handling, desktop integration, authenticated public-offer messaging, wallet integration and the full swap protocol remain unfinished. The browser board does not execute swaps. Local fixture happy paths cover every pair of the four chains and both Ethereum and Cardano same-chain token swaps; the shared link has a message key but does not authenticate participants or protect against a malicious server delivering changed client code. No production readiness or deployment is asserted.
 
 ## Context and Orientation
 
@@ -34,7 +40,7 @@ First add a separate Ethereum token escrow for standard fungible and nonfungible
 
 ## Concrete Steps
 
-From the repo root run `/workspace/chain-tools/foundry/forge test --root contracts/ethereum --use /workspace/chain-tools/solc -vv` and expect all tests to pass. Run the Aiken tests using `/workspace/chain-tools/aiken/aiken-x86_64-unknown-linux-musl/aiken check contracts/cardano`. Later milestones must add runnable commands and exact acceptance evidence here.
+From the repo root run `/workspace/chain-tools/foundry/forge test --root contracts/ethereum --use /workspace/chain-tools/solc -vv` and expect all tests to pass. Run the Aiken tests using `/workspace/chain-tools/aiken/aiken-x86_64-unknown-linux-musl/aiken check contracts/cardano`. Run `python3 scripts/check_cardano_token_htlc.py --output /absolute/new/short-path` for actual token claim and refund; its two scenarios must pass with no peers. Run `node --test swap-service/server.test.mjs` for offer persistence and access checks. Run `python3 scripts/check_ethereum_token_htlc.py --output /absolute/new/path` for all three Ethereum token fixture claim and refund paths. Later milestones must add runnable commands and exact acceptance evidence here.
 
 ## Validation and Acceptance
 
@@ -51,3 +57,7 @@ The retained prior local test report is `ETHEREUM_CARDANO_HTLC_RESULTS.md`; it d
 ## Interfaces and Dependencies
 
 The token escrow exposes funding, claim and refund and immutable asset kind, token address, token ID, amount, claimant, refundee, hashlock and expiry. Ethereum uses Solidity 0.8.30 and Foundry; Cardano uses Aiken and Plutus V3. The application service and companion APIs remain to be specified as implementation discovers wallet constraints.
+
+Revision 2026-11-02: recorded local cross-chain and same-chain results, including the failed Cardano time-horizon attempt and the successful larger-epoch retry.
+
+Revision 2026-11-02: added a real-browser private-offer test and clarified that messaging identities, wallet flows and public discovery still need work.

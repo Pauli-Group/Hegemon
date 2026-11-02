@@ -120,4 +120,12 @@ contract TokenHTLC {
         require(receiving && kind == Kind.ERC1155 && msg.sender == token && operator == address(this) && from == refundee && id == tokenId && value == amount, "unexpected token");
         return this.onERC1155Received.selector;
     }
+
+    function onERC1155BatchReceived(address, address, uint256[] calldata, uint256[] calldata, bytes calldata) external pure returns (bytes4) {
+        revert("batch unsupported");
+    }
+
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        return interfaceId == 0x01ffc9a7 || interfaceId == 0x4e2312e0;
+    }
 }

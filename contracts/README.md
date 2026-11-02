@@ -64,3 +64,24 @@ and NTP/chrony guidance in the operator runbooks.
 ## Experimental Ethereum token escrow
 
 `TokenHTLC.sol` adds a separately funded escrow for ERC-20, ERC-721 and ERC-1155 tokens. The refundee approves and funds the instance before expiry; the claimant supplies the same 32-byte SHA-256 preimage, or the refundee recovers the asset at expiry. Exact balance changes are required for ERC-20 and ERC-1155 transfers. Tokens with transfer fees or changed balances may therefore reject funding or payout. Token issuers can freeze, upgrade or otherwise prevent transfers, including after funding. The contract and fixture tests are experimental: the local swap harness and application do not yet support this escrow, and no security review or deployment qualification is implied.
+
+## Local token fixture rehearsals
+
+The local harness can mint disposable Cardano native assets and deploy disposable Ethereum token fixtures. It is not a general wallet transaction builder. From the repository root, after compiling the contracts and installing the tools described above, run:
+
+    python3 scripts/check_ethereum_token_htlc.py --output /workspace/new-ethereum-token-run
+    python3 scripts/check_cardano_token_htlc.py --output /workspace/new-cardano-token-run
+    python3 scripts/check_ethereum_cardano_swap.py --output /workspace/new-eth-cardano-run
+    python3 scripts/local_multichain_htlc_swap.py --chain cardano --cardano-test-tokens --scenario happy --output /workspace/new-hgn-cardano-token-run
+    python3 scripts/local_multichain_htlc_swap.py --chain ethereum --ethereum-test-token erc20 --scenario happy --output /workspace/new-hgn-erc20-run
+
+Each output path must not exist and contains disposable keys and logs; protect it as private data. The Cardano path must be short enough for a Unix socket. Ethereum token choices are `erc20`, `erc721`, and `erc1155`. These fixtures do not exercise arbitrary issued tokens, public-chain confirmation policy, issuer controls, or security review.
+
+Additional isolated pairing examples:
+
+    python3 scripts/check_bitcoin_ethereum_swap.py --output /workspace/new-btc-eth-run
+    python3 scripts/check_bitcoin_ethereum_swap.py --counterpart cardano --output /workspace/new-btc-cardano-run
+    python3 scripts/check_samechain_ethereum_swap.py --output /workspace/new-same-ethereum-run
+    python3 scripts/check_samechain_cardano_swap.py --output /workspace/new-same-cardano-run
+
+The recorded results and important limitations are in `MULTIASSET_LOCAL_RESULTS.md` at the repository root.

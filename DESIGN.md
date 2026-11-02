@@ -1869,3 +1869,8 @@ not implement a public-chain light client, reorg-resistant observer or bridge.
 ## Experimental Ethereum token escrow
 
 The additive `contracts/ethereum/TokenHTLC.sol` escrow supports ERC-20, ERC-721 and ERC-1155 with explicit funding, a SHA-256 preimage, a claimant and a deadline-based refund. ERC-20 and ERC-1155 require exact balance changes. The escrow is not yet integrated into the local swap harness or user interface. Unit fixtures exercise claims, refunds and fee-changing transfers; these do not establish issuer trust, public-network timing or production security. Run `/workspace/chain-tools/foundry/forge test --root contracts/ethereum --use /workspace/chain-tools/solc -vv` from the repository root.
+
+
+## Local multi-asset swap prototype progress
+
+The isolated Cardano harness can mint disposable fungible and one-of-one native tokens under a fresh local policy and check their exact values through HTLC claim or refund. The local TypeScript/SQLite offer relay in `swap-service` stores public or private offers, expiring reservations and opaque messages; it does not sign transactions, verify on-chain state or encrypt messages. These are local prototype components, not a complete application or a production service.
