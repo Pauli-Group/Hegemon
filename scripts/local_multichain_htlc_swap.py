@@ -5,6 +5,7 @@ from pathlib import Path
 from local_private_spend_swap import ROOT, PASS, HANDOFF, SECRET, wallet, mine, port, stop, require
 from release_private_spend_lifecycle_io import rpc, height, chunks
 from htlc_counterpart import Ethereum, Cardano, TOOLS
+from hegemon_companion_check import check_hegemon_companion
 
 def scenario(a, name):
     d=a.output/name; d.mkdir(mode=0o700)
@@ -16,7 +17,9 @@ def scenario(a, name):
     (d/'handoff.pass').write_bytes(hp+b'\n')
     rec['source_commit']=subprocess.check_output(['git','-C',ROOT,'rev-parse','HEAD'],text=True).strip()
     rec['binary_sha256']={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in (a.node,a.wallet)}
-    sources=[ROOT/'scripts/local_multichain_htlc_swap.py',ROOT/'scripts/htlc_counterpart.py']
+    sources=[ROOT/'scripts/local_multichain_htlc_swap.py',ROOT/'scripts/htlc_counterpart.py',
+             ROOT/'scripts/hegemon_companion_check.py',ROOT/'scripts/local_swap_companion.py',
+             ROOT/'wallet/src/bin/private_spend.rs',ROOT/'wallet/src/private_spend_build.rs']
     if a.chain=='cardano':sources.append(ROOT/'contracts/cardano/validators/htlc.ak')
     elif a.ethereum_test_token:sources.extend([ROOT/'contracts/ethereum/TokenHTLC.sol',ROOT/'contracts/ethereum/test/TokenHTLC.t.sol'])
     else:sources.append(ROOT/'contracts/ethereum/HegemonHTLC.sol')
@@ -76,7 +79,25 @@ def scenario(a, name):
         timeout=height(url)+16; secret=os.urandom(32); hashed=hashlib.sha256(secret).hexdigest()
         lock_height=prepare('alice',['lock','--inputs',str(notes('alice')[0][0]),'--claim',addresses['bob'],'--refund',addresses['alice'],'--hashlock',hashed,'--timeout',str(timeout),'--amount','100000','--fee','1','--release-secret','--refund-handoff',d/'refund.bin'],[(HANDOFF,hp)])
         call('alice',['import-refund-handoff',d/'refund.bin','--block-height',str(lock_height),'--refund-index','0'],[(HANDOFF,hp)])
+        mine(url,lock_height+1)
         locked=notes('bob','htlc')[0][0]
+        verify=['verify-htlc','--locked',str(locked),'--claim',addresses['bob'],'--refund',addresses['alice'],
+                '--hashlock',hashed,'--timeout',str(timeout),'--amount','100000']
+        verified,_=call('bob',verify,label='verify-htlc')
+        require(json.loads(verified.splitlines()[-1])['verified'] is True,'Hegemon terms not verified')
+        for flag,value in [('--hashlock','00'*32),('--claim',addresses['treasury']),('--amount','99999'),('--timeout',str(timeout+1))]:
+            bad=verify.copy();bad[bad.index(flag)+1]=value
+            denied,_=call('bob',bad,label='verify-bad-'+flag[2:],expected=False)
+            require('HTLC terms mismatch' in denied,'Hegemon verifier failed for an unexpected reason')
+        for flag,value,reason in [('--min-confirmations','1000000','insufficient confirmations'),('--min-remaining-blocks','1000000','HTLC deadline too close')]:
+            denied,_=call('bob',[*verify,flag,value],label='verify-bad-'+flag[2:],expected=False)
+            require(reason in denied,'Hegemon verification limit failed for an unexpected reason')
+        rec['hegemon_companion']=check_hegemon_companion(d/'companion',binary=a.wallet,wallet_path=wallets['bob'],
+            manifest=d/'manifest.json',genesis=genesis,rpc_url=url,phrase=phrase,
+            terms={'locked':str(locked),'claim':addresses['bob'],'refund':addresses['alice'],
+                   'hashlock':hashed,'timeout':str(timeout),'amount':'100000',
+                   'min_confirmations':'2','min_remaining_blocks':'2'})
+        rec['checks']['hegemon_terms_verified']=True
         call('alice',['refund','--locked',str(locked),'--fee-input',str(notes('alice')[0][0]),'--recipient',addresses['alice'],'--fee','1'],label='early-refund',expected=False)
         rec['checks']['early_refund_rejected']=True
         print(name+': starting fresh '+a.chain+' chain',flush=True)
@@ -103,6 +124,9 @@ def scenario(a, name):
             if name=='late_claim':
                 call('bob',['claim','--locked',str(locked),'--fee-input',str(notes('bob')[0][0]),'--recipient',addresses['bob'],'--fee','1'],[(SECRET,revealed.hex().encode())],label='late-claim',expected=False)
                 rec['checks']['late_claim_rejected']=True
+        denied,_=call('bob',verify,label='verify-spent',expected=False)
+        require('unspent private note absent' in denied,'Hegemon spent check failed for an unexpected reason')
+        rec['checks']['hegemon_spent_rejected']=True
         counterpart.isolated()
         rec['counterpart']=counterpart.receipt
         require(rpc(url,'system_health')['peers']==0,'Hegemon acquired a peer')

@@ -209,6 +209,25 @@ enum Command {
     },
     /// Print local positions and values, never private openings or policies.
     Notes,
+    /// Verify an unspent local HTLC against independently agreed terms without revealing its opening.
+    VerifyHtlc {
+        #[arg(long)]
+        locked: u64,
+        #[arg(long)]
+        claim: String,
+        #[arg(long)]
+        refund: String,
+        #[arg(long)]
+        hashlock: String,
+        #[arg(long)]
+        timeout: u64,
+        #[arg(long)]
+        amount: u64,
+        #[arg(long, default_value_t = 2)]
+        min_confirmations: u64,
+        #[arg(long, default_value_t = 2)]
+        min_remaining_blocks: u64,
+    },
     Attempts,
     Cancel {
         attempt: String,
@@ -1121,6 +1140,77 @@ async fn main() -> Result<()> {
             println!("{}", address.encode()?);
         }
         Command::Notes => print_notes(&store)?,
+        Command::VerifyHtlc {
+            locked,
+            claim,
+            refund,
+            hashlock,
+            timeout,
+            amount,
+            min_confirmations,
+            min_remaining_blocks,
+        } => {
+            ensure!(
+                min_confirmations > 0 && min_remaining_blocks > 0 && amount > 0,
+                "invalid verification limits"
+            );
+            let note = private_note(&store, locked)?;
+            ensure!(
+                node.block_hash(note.created_height).await? == Some(note.created_block_hash),
+                "HTLC creation block is not canonical"
+            );
+            let confirmations = r
+                .parent_height
+                .checked_sub(note.created_height)
+                .and_then(|n| n.checked_add(1))
+                .context("note is newer than the synced tip")?;
+            ensure!(
+                confirmations >= min_confirmations,
+                "insufficient confirmations"
+            );
+            ensure!(
+                timeout
+                    .checked_sub(r.parent_height)
+                    .is_some_and(|n| n >= min_remaining_blocks),
+                "HTLC deadline too close"
+            );
+            let path = store
+                .poseidon2_v8_canonical_note_witness_at(note.commitment, note.position)?
+                .context("canonical membership absent")?;
+            ensure!(path.anchor == r.merkle_root, "stale membership");
+            let payload = note.opening()?;
+            let NoteState::Htlc(policy) = &payload.state else {
+                bail!("not an HTLC note")
+            };
+            let (claim_recipient, claim_authority) =
+                build::htlc_address_components(&ShieldedAddress::decode(&claim)?)?;
+            let (refund_recipient, refund_authority) =
+                build::htlc_address_components(&ShieldedAddress::decode(&refund)?)?;
+            ensure!(
+                payload.note.asset_id == 0
+                    && payload.note.value == amount
+                    && policy.hashlock == unhex(&hashlock)?
+                    && policy.timeout == timeout
+                    && policy.claim_recipient == claim_recipient
+                    && policy.claim_authority == claim_authority
+                    && policy.refund_recipient == refund_recipient
+                    && policy.refund_authority == refund_authority
+                    && policy.release_secret == 1,
+                "HTLC terms mismatch"
+            );
+            let tip = node.latest_block().await?;
+            ensure!(
+                tip.height == r.parent_height
+                    && node.block_hash(r.parent_height).await? == Some(r.parent_hash),
+                "chain changed during HTLC verification"
+            );
+            println!(
+                "{}",
+                serde_json::json!({"verified": true, "position": locked,
+                "created_height": note.created_height, "reference_height": r.parent_height,
+                "confirmations": confirmations})
+            );
+        }
         Command::Attempts => print_attempts(&store)?,
         Command::Status => {
             println!("synced {}", r.parent_height);

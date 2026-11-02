@@ -56,7 +56,7 @@ class Ethereum:
             self.receipt['creation_code_sha256']=hashlib.sha256(bytes.fromhex(self.artifact['bytecode']['object'].removeprefix('0x'))).hexdigest()
         except BaseException:self.close();raise
     def send(self, sender, data, to=None, value=0, succeeds=True):
-        tx={'from':sender,'data':data,'value':hex(value),'gas':hex(2_000_000)}
+        tx={'from':sender,'data':data,'value':hex(value),'gas':hex(4_000_000)}
         if to:tx['to']=to
         ident=rpc(self.url,'eth_sendTransaction',[tx])
         receipt=wait_for(lambda:rpc(self.url,'eth_getTransactionReceipt',[ident]),'Ethereum receipt')

@@ -11,6 +11,9 @@ import type {
 } from '../src/types';
 
 contextBridge.exposeInMainWorld('hegemon', {
+  swap: {
+    openBoard: () => ipcRenderer.invoke('swap:openBoard') as Promise<void>
+  },
   node: {
     start: (options: NodeStartOptions) => ipcRenderer.invoke('node:start', options),
     stop: () => ipcRenderer.invoke('node:stop'),

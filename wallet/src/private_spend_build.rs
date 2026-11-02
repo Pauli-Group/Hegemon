@@ -277,6 +277,14 @@ fn recipient(a: &ShieldedAddress) -> Result<([u64; 4], relation::Digest), Wallet
     }
     Ok((r, auth))
 }
+
+/// Resolve a full native address to the recipient and authority components
+/// used by private HTLCs, without generating or exposing a note opening.
+pub fn htlc_address_components(
+    address: &ShieldedAddress,
+) -> Result<([u64; 4], relation::Digest), WalletError> {
+    recipient(address)
+}
 fn treasury_payload(
     t: &relation::TreasuryOpening,
 ) -> Result<payload::TreasuryOpening, WalletError> {

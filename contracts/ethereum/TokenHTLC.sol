@@ -55,15 +55,17 @@ contract TokenHTLC {
         receiving = true;
         if (kind == Kind.ERC20) {
             uint256 beforeBalance = IERC20HTLC(token).balanceOf(address(this));
+            uint256 beforeSender = IERC20HTLC(token).balanceOf(refundee);
             _erc20(abi.encodeWithSignature("transferFrom(address,address,uint256)", refundee, address(this), amount));
-            require(IERC20HTLC(token).balanceOf(address(this)) == beforeBalance + amount, "inexact funding");
+            require(IERC20HTLC(token).balanceOf(address(this)) == beforeBalance + amount && IERC20HTLC(token).balanceOf(refundee) + amount == beforeSender, "inexact funding");
         } else if (kind == Kind.ERC721) {
             IERC721HTLC(token).safeTransferFrom(refundee, address(this), tokenId);
             require(IERC721HTLC(token).ownerOf(tokenId) == address(this), "not escrowed");
         } else {
             uint256 beforeBalance = IERC1155HTLC(token).balanceOf(address(this), tokenId);
+            uint256 beforeSender = IERC1155HTLC(token).balanceOf(refundee, tokenId);
             IERC1155HTLC(token).safeTransferFrom(refundee, address(this), tokenId, amount, "");
-            require(IERC1155HTLC(token).balanceOf(address(this), tokenId) == beforeBalance + amount, "inexact funding");
+            require(IERC1155HTLC(token).balanceOf(address(this), tokenId) == beforeBalance + amount && IERC1155HTLC(token).balanceOf(refundee, tokenId) + amount == beforeSender, "inexact funding");
         }
         receiving = false;
         funded = true;

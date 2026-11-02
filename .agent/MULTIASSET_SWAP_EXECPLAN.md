@@ -13,11 +13,15 @@ This living plan follows `.agent/PLANS.md`. The objective is a noncustodial loca
 - [ ] Generalize Cardano token inputs for real user-selected assets and add same-chain and Hegemon-linked end-to-end cases.
 - [x] (2026-11-02) Implemented a source-pinned read-only local Ethereum escrow verifier for ETH and standard token kinds; tested on local Anvil and in Chromium.
 - [x] (2026-11-02) Added local Bitcoin script/UTxO verification with confirmation checks and Cardano pinned-validator/datum/value snapshot verification; altered and spent outputs were rejected. Cardano confirmation history is not available from the chosen UTxO query.
-- [ ] Complete and test the Hegemon wallet-side terms checker, then implement resilient pairwise swap protocol, local companion, wallet signing integrations and monitoring.
+- [x] (2026-11-02) Added and exercised the Hegemon wallet-side terms checker and read-only companion with terminal approval, including a declined request.
+- [x] (2026-11-02) Added a local deadline-only watch with persisted metadata and per-chain genesis binding; it does not monitor spends or act on behalf of users.
+- [x] (2026-11-02) Added a browser-local encrypted preimage backup with explicit import/export, passphrase verification, corrupt-storage protection and cross-tab serialization. This is not a complete swap recovery record.
+- [ ] Implement a resilient pairwise transaction protocol, wallet signing, actual spend monitoring and full swap recovery.
 - [x] (2026-11-02) Added a loopback TypeScript/SQLite prototype relay for public/private offers, exclusive reservations and opaque messages; HTTP/restart test passed.
 - [x] (2026-11-02) Added a local browser offer board and AES-GCM encrypted shared-link message prototype; crypto, HTTP and two-session Chromium tests pass.
 - [x] (2026-11-02) Added read-only Ethereum EIP-1193 and Cardano CIP-30 connection buttons and exercised them with mocked browser providers.
-- [ ] Implement authenticated counterparty identities, desktop integration, full wallet transaction interfaces and deployment hardening. Public-board users cannot yet initiate an encrypted conversation without the owner sharing a full private link.
+- [x] (2026-11-02) Added an isolated Electron window for the local offer board; typecheck, build, sandbox policy tests and a virtual-display window test passed.
+- [ ] Implement authenticated counterparty identities, full wallet transaction interfaces and deployment hardening. Public-board users cannot yet initiate an encrypted conversation without the owner sharing a full private link.
 - [ ] Exercise local-network end-to-end swaps and document remaining limitations.
 
 ## Surprises & Discoveries
@@ -67,3 +71,13 @@ Revision 2026-11-02: added a real-browser private-offer test and clarified that 
 Revision 2026-11-02: added local Ethereum snapshot verification and recorded a browser fixture constructor-encoding mistake caught by that verifier. The remaining networks and end-to-end transaction UI are not implemented.
 
 Revision 2026-11-02: added Bitcoin and Cardano read-only local snapshot verification; Cardano confirmation depth remains an explicit missing capability.
+
+Revision 2026-11-02: added a loopback-only read-only companion for Bitcoin, Cardano and Hegemon. Hegemon access requires a terminal approval and passphrase; its full integrated test is in progress. The companion does not sign or submit swaps.
+
+Revision 2026-11-02: recorded the verified local Hegemon read, separate sandboxed desktop entry point, and limited deadline watch. Swap signing, automatic claim detection and recovery remain unfinished.
+
+Revision 2026-11-02: added encrypted local preimage backup and tested simultaneous tabs and corrupted storage. This is a prerequisite, not an end-to-end claim or complete swap recovery.
+
+Revision 2026-11-02: one cross-tab browser test observed a missing local-storage backup under load. Replaced the shared array with transactional IndexedDB records and added fail-closed migration from the earlier encrypted format; concurrent creation and migration tests are being repeated.
+
+Revision 2026-11-02: strengthened token funding to reject extra sender debits, regenerated the pinned runtime template, and replaced the backup array with transactional IndexedDB. The full fresh Hegemon/token rehearsal against the updated token contract is still running.

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { NodeManager } from './nodeManager';
 import { WalletdClient } from './walletdClient';
 import { normalizeLoopbackWalletOneShotRpcEndpoint } from './rpcEndpoint';
+import { SWAP_BOARD_ORIGIN, allowSwapBoardNavigation, allowSwapBoardRequest } from './swapBoardPolicy';
 import type {
   NodeMiningRequest,
   NodeStartOptions,
@@ -36,6 +37,7 @@ const privateDirectoryMode = 0o700;
 const privateFileMode = 0o600;
 let contactsWriteQueue: Promise<void> = Promise.resolve();
 let shutdownInProgress = false;
+let swapBoardWindow: BrowserWindow | null = null;
 const DEFAULT_UNLOCK_TTL_MS = 5 * 60 * 1000;
 const MIN_UNLOCK_TTL_MS = 30 * 1000;
 const walletUnlockTtlMs = (() => {
@@ -240,6 +242,66 @@ const createWindow = () => {
   }
 };
 
+const openSwapBoard = async (parent: BrowserWindow) => {
+  if (swapBoardWindow && !swapBoardWindow.isDestroyed()) {
+    swapBoardWindow.focus();
+    return;
+  }
+  try {
+    const response = await fetch(`${SWAP_BOARD_ORIGIN}/health`, {
+      signal: AbortSignal.timeout(3000),
+      redirect: 'error'
+    });
+    if (!response.ok || (await response.json()).status !== 'ok') throw new Error('unavailable');
+  } catch {
+    throw new Error('Start the local swap offer relay at 127.0.0.1:8787, then try again.');
+  }
+  const boardSession = session.fromPartition('persist:hegemon-local-swap-board');
+  boardSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  boardSession.setPermissionCheckHandler(() => false);
+  boardSession.webRequest.onBeforeRequest((details, callback) => {
+    callback({ cancel: !allowSwapBoardRequest(details.url) });
+  });
+  boardSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({ responseHeaders: {
+      ...details.responseHeaders,
+      'Content-Security-Policy': ["default-src 'self'; connect-src 'self' http://127.0.0.1:8788; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"]
+    } });
+  });
+  const board = new BrowserWindow({
+    parent,
+    width: 1100,
+    height: 800,
+    show: false,
+    backgroundColor: '#0E1C36',
+    webPreferences: {
+      session: boardSession,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false
+    }
+  });
+  swapBoardWindow = board;
+  board.once('closed', () => { if (swapBoardWindow === board) swapBoardWindow = null; });
+  board.once('ready-to-show', () => board.show());
+  board.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  board.webContents.on('will-navigate', (event, url) => {
+    if (!allowSwapBoardNavigation(url)) event.preventDefault();
+  });
+  board.webContents.on('will-redirect', (event, url) => {
+    if (!allowSwapBoardNavigation(url)) event.preventDefault();
+  });
+  board.webContents.on('will-attach-webview', (event) => event.preventDefault());
+  try {
+    await board.loadURL(`${SWAP_BOARD_ORIGIN}/`);
+  } catch {
+    board.destroy();
+    throw new Error('The local swap offer board could not be loaded.');
+  }
+};
+
 const stopManagedServices = async () => {
   walletUnlockState = null;
   await Promise.allSettled([nodeManager.stopNode(), walletdClient.stop()]);
@@ -388,6 +450,14 @@ ipcMain.handle('node:setMining', async (_event, request: NodeMiningRequest) => {
 });
 
 ipcMain.handle('node:logs', async () => nodeManager.getLogs());
+
+ipcMain.handle('swap:openBoard', async (event) => {
+  const parent = BrowserWindow.fromWebContents(event.sender);
+  if (!parent || parent.isDestroyed() || parent === swapBoardWindow) {
+    throw new Error('The local swap board must be opened from the desktop wallet.');
+  }
+  await openSwapBoard(parent);
+});
 
 ipcMain.handle('clipboard:writeText', async (_event, text: string) => {
   if (typeof text !== 'string' || text.length === 0) {

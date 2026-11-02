@@ -63,7 +63,7 @@ and NTP/chrony guidance in the operator runbooks.
 
 ## Experimental Ethereum token escrow
 
-`TokenHTLC.sol` adds a separately funded escrow for ERC-20, ERC-721 and ERC-1155 tokens. The refundee approves and funds the instance before expiry; the claimant supplies the same 32-byte SHA-256 preimage, or the refundee recovers the asset at expiry. Exact balance changes are required for ERC-20 and ERC-1155 transfers. Tokens with transfer fees or changed balances may therefore reject funding or payout. Token issuers can freeze, upgrade or otherwise prevent transfers, including after funding. The contract and fixture tests are experimental: the local swap harness and application do not yet support this escrow, and no security review or deployment qualification is implied.
+`TokenHTLC.sol` adds a separately funded escrow for ERC-20, ERC-721 and ERC-1155 tokens. The refundee approves and funds the instance before expiry; the claimant supplies the same 32-byte SHA-256 preimage, or the refundee recovers the asset at expiry. Exact sender debits and escrow credits are required when funding ERC-20 and ERC-1155 transfers; payouts must also move the exact amount. Tokens with transfer fees or changed balances may therefore reject funding or payout. Token issuers can freeze, upgrade or otherwise prevent transfers, including after funding. The contract and fixture tests are experimental: the local swap harness and application do not yet support this escrow, and no security review or deployment qualification is implied.
 
 ## Local token fixture rehearsals
 
@@ -87,3 +87,5 @@ Additional isolated pairing examples:
 The recorded results and important limitations are in `MULTIASSET_LOCAL_RESULTS.md` at the repository root.
 
 The local pairing scripts also exercise read-only verification. `scripts/bitcoin_escrow_verifier.py` reconstructs the expected Bitcoin regtest script and checks its confirmed UTxO through a trusted local Bitcoin Core node. `scripts/cardano_escrow_verifier.py` checks a local UTxO's pinned validator, datum and exact assets. The Cardano UTxO query does not prove confirmation depth, and neither checker independently authenticates the counterparty's terms or the RPC provider.
+
+The current `private-spend verify-htlc` command verifies an unspent HGN note against supplied claim/refund addresses, hashlock, timeout and amount, requires the public secret-release flag, and checks local canonical membership, confirmation count and remaining blocks. It prints a result and heights rather than the decrypted opening. It depends on the configured wallet and trusted synchronized node and does not establish other-chain funding or public-network finality. The local companion adds a terminal approval and terminal-only passphrase prompt around this read.

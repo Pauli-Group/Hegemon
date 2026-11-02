@@ -17,6 +17,7 @@ import type {
 import blockMinedAudio from './assets/sounds/block-mined.wav';
 import blockReceivedAudio from './assets/sounds/block-received.wav';
 import { computeNodeDisplayState, legacyContactWarning } from './appGuards';
+import { SwapWorkspace } from './components/SwapWorkspace';
 
 
 import {
@@ -2135,6 +2136,12 @@ export default function App() {
       statusTone: sendNavTone
     },
     {
+      path: '/swaps',
+      icon: 'send',
+      label: 'Swaps',
+      description: 'Local prototype'
+    },
+    {
       path: '/disclosure',
       icon: 'disclosure',
       label: 'Disclosure',
@@ -4229,6 +4236,7 @@ export default function App() {
               <Route path="/node" element={NodeWorkspace} />
               <Route path="/wallet" element={WalletWorkspace} />
               <Route path="/send" element={SendWorkspace} />
+              <Route path="/swaps" element={<SwapWorkspace />} />
               <Route path="/disclosure" element={DisclosureWorkspace} />
               <Route path="/console" element={ConsoleWorkspace} />
               <Route path="*" element={<Navigate to="/overview" replace />} />

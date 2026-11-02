@@ -1879,3 +1879,18 @@ The isolated Cardano harness can mint disposable fungible and one-of-one native 
 ## Local Ethereum escrow verification
 
 The experimental browser board can verify local ETH and token escrow runtime code against a pinned compiler artifact with every expected immutable field inserted, then check the unspent state and holdings at a confirmed RPC snapshot. `scripts/export_token_escrow_template.py` and `--native` generate the two source-bound templates; `--check` detects drift. The caller must independently authenticate agreed terms and trust its RPC node. This read-only check does not verify the other swap leg, guarantee issuer behavior, authorize signing, or qualify public-chain finality.
+
+
+## Local read-only swap companion
+
+The experimental browser board can query a separately started loopback companion for Bitcoin regtest and isolated Cardano snapshots. Hegemon note verification additionally requires an interactive local terminal approval and wallet passphrase for each request; the browser and offer relay receive no passphrase. The companion only exposes fixed read-only operations, requires a private local pairing capability and an exact local browser origin, and checks Hegemon has no peers. Cardano confirmation depth is not established by its UTxO query. This is not a transaction-signing interface or a production security qualification.
+
+
+## Local swap deadline watch and desktop entry
+
+The prototype stores user-entered chain deadlines and genesis hashes in local browser storage and checks the last reported local tip only while the window is open. It does not detect all spends or sign, claim, refund, or notify while closed. The desktop wallet opens the local offer board in a separate sandboxed Electron window, without the desktop wallet preload API and with requests restricted to the fixed loopback relay and companion. Browser wallet extensions are not installed in that window.
+
+
+## Token funding and encrypted backup hardening
+
+The experimental ERC-20 and ERC-1155 funding paths check the exact sender debit and escrow credit, as well as exact payouts. The user-side preimage backup uses passphrase-derived AES-GCM and transactional IndexedDB records; older local-storage entries migrate only after validation and a successful transaction. These checks do not prevent malicious issuers from lying or changing behavior, replace independently stored backups, or authorize a complete swap.

@@ -19,6 +19,9 @@ import type {
 } from './types';
 
 export type HegemonApi = {
+  swap: {
+    openBoard: () => Promise<void>;
+  };
   node: {
     start: (options: NodeStartOptions) => Promise<void>;
     stop: () => Promise<void>;
