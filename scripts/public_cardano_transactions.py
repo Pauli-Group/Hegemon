@@ -54,7 +54,7 @@ def _minimum_output(cli,params,address,amount,assets,datum=None):
     if amount<int(match.group(1)):raise ValueError('Cardano output below minimum lovelace')
 
 
-def build_balanced(*,inputs,outputs,change_address,params,body,collateral=None,required_signer=None,invalid_before=None,invalid_hereafter=None,cli=CLI):
+def build_balanced(*,inputs,outputs,change_address,params,body,collateral=None,required_signer=None,invalid_before=None,invalid_hereafter=None,mint=None,mint_script=None,cli=CLI):
     """Build a balanced body and return its conservative fee in lovelace.
 
     Inputs have outref, lovelace and assets; a script input additionally has
@@ -81,6 +81,14 @@ def build_balanced(*,inputs,outputs,change_address,params,body,collateral=None,r
             if not Path(item['script']).is_file() or not Path(item['redeemer']).is_file():raise ValueError('Missing script or redeemer')
             # cardano-cli expects (steps,memory), opposite the input tuple.
             args+=['--tx-in-script-file',item['script'],'--tx-in-inline-datum-present','--tx-in-redeemer-file',item['redeemer'],'--tx-in-execution-units',f'({steps},{memory})']
+    if mint is not None or mint_script is not None:
+        if mint is None or mint_script is None or not Path(mint_script).is_file():raise ValueError('Native mint assets and script are both required')
+        minted=_assets(mint)
+        if not minted:raise ValueError('Native mint must contain assets')
+        policy=_run(cli,['policyid','--script-file',mint_script])
+        if not re.fullmatch('[0-9a-f]{56}',policy) or any(not name.startswith(policy+'.') for name in minted):raise ValueError('Mint policy does not match assets')
+        for name,quantity in minted.items():assets[name]=assets.get(name,0)+quantity
+        args+=['--mint','+'.join(str(qty)+' '+name for name,qty in sorted(minted.items())),'--mint-script-file',mint_script]
     if scripts:
         if scripts!=1 or collateral is None or not isinstance(required_signer,str) or not re.fullmatch('[0-9a-f]{56}',required_signer):raise ValueError('One script, collateral and signer are required')
         collateral=_ref(collateral)

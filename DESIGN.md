@@ -1903,6 +1903,8 @@ The in-progress public testnet tooling also signs EIP-1559 transactions for Sepo
 
 Node-free testnet drivers obtain UTxOs from public indexers and recover disclosed claim secrets by transaction ID. Bitcoin and Cardano UTxO readers were checked against real public-chain data; they trust the indexers and do not reserve outputs. These primitives are not a complete coordinated swap or a substitute for independently validated consensus.
 
+An experimental native BTC/ETH public-testnet scenario records each inflight action before submission, checks both escrow snapshots and observes the Ethereum claim preimage before claiming Bitcoin. Its full flow has passed only against peerless local fixture nodes using adapters; its confirmation thresholds and timeouts are test choices, not a public-chain safety policy. The Cardano preparation can mint local fungible and one-of-one native fixtures offline, and a separate preview verifier compares the script, exact datum and assets with provider-reported confirmations.
+
 
 ## Local swap deadline watch and desktop entry
 

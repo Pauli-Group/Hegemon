@@ -2863,6 +2863,8 @@ The public-testnet preparation also has a Sepolia-ID EIP-1559 signer and an offl
 
 The experimental remote UTxO and claim-preimage readers use trusted public indexers and return snapshots rather than reservations or independently verified finality. Bitcoin and Cardano UTxO readers were exercised on existing public-chain outputs, but the disposable rehearsal wallets were still unfunded and no public rehearsal transaction was submitted.
 
+The experimental staged native BTC/ETH testnet rehearsal records an inflight phase before each action and refuses to retry uncertain submissions automatically. It checks the exact Bitcoin script and pinned Ethereum runtime, and obtains the preimage from a confirmed Ethereum claim before claiming Bitcoin. An end-to-end run of these stages passed on peerless local Bitcoin/Anvil with public-service adapters redirected to those nodes; it is not yet a public-chain result. Offline Cardano native-token minting passed on an isolated chain, and preview escrow verification checks the pinned script, exact datum, assets and provider-reported depth. These checks do not establish public-chain finality or safe timeout margins.
+
 
 ## Local swap deadline watch and desktop entry
 

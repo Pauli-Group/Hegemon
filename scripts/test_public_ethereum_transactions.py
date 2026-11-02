@@ -6,11 +6,13 @@ import time
 import unittest
 import urllib.request
 from pathlib import Path
+from unittest.mock import patch
 from eth_abi import encode,decode
 from eth_account import Account
 from eth_utils import keccak
 from local_private_spend_swap import port,stop
 from public_ethereum_transactions import sign_transaction
+from public_ethereum_verify import verify_native
 
 class PublicEthereumTransactionsTest(unittest.TestCase):
     def test_local_sepolia_chainid_escrow_claim(self):
@@ -44,6 +46,11 @@ class PublicEthereumTransactionsTest(unittest.TestCase):
             raw,txid=sign_transaction(alicekey,alice,**kwargs);self.assertEqual(Account.recover_transaction(raw),alice)
             self.assertEqual(rpc('eth_sendRawTransaction',['0x'+raw.hex()]),txid)
             deployed=receipt(txid);self.assertEqual(deployed['status'],'0x1');contract=deployed['contractAddress']
+            rpc('evm_mine',[])
+            with patch('public_ethereum_verify.verify_network'),patch('public_ethereum_verify.rpc',side_effect=rpc):
+                snapshot=verify_native(contract,digest.hex(),bob,alice,expiry,10**15)
+                self.assertEqual(snapshot['confirmations'],2)
+                with self.assertRaisesRegex(ValueError,'code or terms'):verify_native(contract,digest.hex(),bob,alice,expiry+1,10**15)
             calldata=keccak(text='claim(bytes32)')[:4]+encode(['bytes32'],[preimage])
             raw,claimid=sign_transaction(bobkey,bob,nonce=0,to=contract,value=0,data=calldata,gas=100000,max_fee=2_000_000_000,priority_fee=1_000_000_000)
             self.assertEqual(rpc('eth_sendRawTransaction',['0x'+raw.hex()]),claimid);self.assertEqual(receipt(claimid)['status'],'0x1')

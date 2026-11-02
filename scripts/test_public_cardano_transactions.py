@@ -32,6 +32,14 @@ class PublicCardanoTransactionsTest(unittest.TestCase):
             try:
                 chain.isolated();params=chain.d/'protocol-params.json';params.write_text(json.dumps(chain.query('protocol-parameters')))
                 alice=chain.actors['alice'];bob=chain.actors['bob'];secret=b'\x77'*32;expiry_slot=chain.tip()['slot']+900
+                # A locally signed native policy produces an independent fungible
+                # token and one-of-one test token without asking a node to build.
+                policy_file=chain.d/'offline-policy.json';policy_file.write_text(json.dumps({'type':'sig','keyHash':alice['hash']}))
+                policy=chain.run('transaction','policyid','--script-file',policy_file).strip();minted={policy+'.46554e47':11,policy+'.4e4654':1}
+                available=chain.utxos(alice['address']);fee_ref=chain.fee_input('alice');ada,existing=value(available[fee_ref]);body,signed=chain.files('offline-mint')
+                build_balanced(inputs=[{'outref':fee_ref,'lovelace':ada,'assets':existing}],outputs=[{'address':alice['address'],'lovelace':5_000_000,'assets':minted}],change_address=alice['address'],params=params,body=body,mint=minted,mint_script=policy_file)
+                _,mint_out=chain.submit(body,signed,'alice',alice['address'])
+                self.assertTrue(any(out['value'].get(policy,{}).get('46554e47')==11 and out['value'].get(policy,{}).get('4e4654')==1 for out in mint_out.values()))
                 terms={'constructor':0,'fields':[{'bytes':hashlib.sha256(secret).hexdigest()},{'bytes':alice['hash']},{'bytes':bob['hash']},{'int':chain.start_ms+expiry_slot*chain.slot_ms}]}
                 datum=chain.d/'raw-datum.json';datum.write_text(json.dumps(terms));redeemer=chain.d/'raw-redeemer.json';redeemer.write_text(json.dumps({'constructor':0,'fields':[{'bytes':secret.hex()}]}))
                 available=chain.utxos(bob['address']);fee_input=chain.fee_input('bob');token_input=chain.token_input
