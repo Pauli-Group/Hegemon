@@ -60,3 +60,7 @@ Hegemon reports zero peers. Tests advance local deadlines and do not establish
 public-chain timeout margins, confirmation policy, reorg handling or release
 security approval. Shared Hegemon mining still uses the approved common seeds
 and NTP/chrony guidance in the operator runbooks.
+
+## Experimental Ethereum token escrow
+
+`TokenHTLC.sol` adds a separately funded escrow for ERC-20, ERC-721 and ERC-1155 tokens. The refundee approves and funds the instance before expiry; the claimant supplies the same 32-byte SHA-256 preimage, or the refundee recovers the asset at expiry. Exact balance changes are required for ERC-20 and ERC-1155 transfers. Tokens with transfer fees or changed balances may therefore reject funding or payout. Token issuers can freeze, upgrade or otherwise prevent transfers, including after funding. The contract and fixture tests are experimental: the local swap harness and application do not yet support this escrow, and no security review or deployment qualification is implied.

@@ -2824,3 +2824,8 @@ Hegemon uses empty seeds only in these isolated tests. Shared miners use
 `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"`
 unless rotated, share the approved seed list, and enable NTP/chrony because
 future-skewed PoW timestamps are rejected.
+
+
+## Experimental Ethereum token escrow tests
+
+The additive `contracts/ethereum/TokenHTLC.sol` escrow supports ERC-20, ERC-721 and ERC-1155 with explicit funding, a SHA-256 preimage, a claimant and a deadline-based refund. ERC-20 and ERC-1155 require exact balance changes. The escrow is not yet integrated into the local swap harness or user interface. Unit fixtures exercise claims, refunds and fee-changing transfers; these do not establish issuer trust, public-network timing or production security. Run `/workspace/chain-tools/foundry/forge test --root contracts/ethereum --use /workspace/chain-tools/solc -vv` from the repository root.

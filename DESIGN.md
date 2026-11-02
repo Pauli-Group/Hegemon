@@ -1864,3 +1864,8 @@ confirmations are local block-depth checks; Cardano confirmations observe output
 for additional blocks and recover the preimage from the submitted transaction
 witness whose script-data hash is committed by the confirmed body. This does
 not implement a public-chain light client, reorg-resistant observer or bridge.
+
+
+## Experimental Ethereum token escrow
+
+The additive `contracts/ethereum/TokenHTLC.sol` escrow supports ERC-20, ERC-721 and ERC-1155 with explicit funding, a SHA-256 preimage, a claimant and a deadline-based refund. ERC-20 and ERC-1155 require exact balance changes. The escrow is not yet integrated into the local swap harness or user interface. Unit fixtures exercise claims, refunds and fee-changing transfers; these do not establish issuer trust, public-network timing or production security. Run `/workspace/chain-tools/foundry/forge test --root contracts/ethereum --use /workspace/chain-tools/solc -vv` from the repository root.
