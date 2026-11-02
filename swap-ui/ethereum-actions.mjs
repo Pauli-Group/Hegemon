@@ -1,7 +1,8 @@
-/** Explicit local-Anvil deployment primitives. These do not implement an atomic
+/** Explicit local-Anvil transaction primitives. These do not implement an atomic
  * swap or verify the other leg. The provider must be user-approved; the trusted
  * companion supplies the non-forked local Anvil anchor. Never auto-retry a send.
  */
+import {expectedTokenRuntime} from './ethereum-escrow.mjs';
 function addr(value){if(typeof value!=='string'||!/^0x[0-9a-fA-F]{40}$/.test(value)||/^0x0{40}$/i.test(value))throw Error('invalid address');return value.slice(2).toLowerCase().padStart(64,'0');}
 function uint(value){if(typeof value!=='string'||!/^(0|[1-9][0-9]{0,77})$/.test(value)||BigInt(value)>=1n<<256n)throw Error('invalid integer');return BigInt(value).toString(16).padStart(64,'0');}
 function hash(value){if(typeof value!=='string'||!/^0x[0-9a-fA-F]{64}$/.test(value))throw Error('invalid hashlock');return value.slice(2).toLowerCase();}
@@ -14,17 +15,51 @@ export function buildLocalEscrowDeployment(template,terms){
  if((terms.kind==='0'&&terms.tokenId!=='0')||(terms.kind==='1'&&terms.amount!=='1'))throw Error('invalid token quantity');
  return {from:sender,data:'0x'+template.creation+uint(terms.kind)+token+id+amount+digest+recipient+expiry,value:'0x0'};
 }
-export async function submitLocalEscrowDeployment(provider,template,terms,anchor){
+async function localAnchor(provider,anchor,from){
  if(!provider||typeof provider.request!=='function'||!anchor||!/^([0-9a-f]{64})$/.test(anchor.genesis||'')||!/^0x[0-9a-f]{64}$/i.test(anchor.tip_hash||'')||!/^(0|[1-9][0-9]*)$/.test(anchor.time_seconds||''))throw Error('invalid local chain anchor');
- const tx=buildLocalEscrowDeployment(template,terms),request=(method,params=[])=>provider.request({method,params});
+ const request=(method,params=[])=>provider.request({method,params});
  if(BigInt(await request('eth_chainId'))!==31337n)throw Error('wallet is not on the local Ethereum chain');
- const accounts=await request('eth_accounts');if(!Array.isArray(accounts)||!accounts.some(a=>typeof a==='string'&&a.toLowerCase()===tx.from))throw Error('wallet does not control the refund address');
+ const accounts=await request('eth_accounts');if(!Array.isArray(accounts)||!accounts.some(a=>typeof a==='string'&&a.toLowerCase()===from))throw Error('wallet does not control the refund address');
  const genesis=await request('eth_getBlockByNumber',['0x0',false]),head=await request('eth_getBlockByNumber',['latest',false]);
  if(!genesis||!head||String(genesis.hash).toLowerCase()!=='0x'+anchor.genesis||String(head.hash).toLowerCase()!==anchor.tip_hash.toLowerCase()||BigInt(head.timestamp)!==BigInt(anchor.time_seconds))throw Error('wallet and local node do not agree on the chain');
- if(BigInt(terms.expiry)-BigInt(head.timestamp)<60n)throw Error('escrow deadline too close');
+ return {request,head};
+}
+async function sendOnce(request,tx){
  let txid;
  try{txid=await request('eth_sendTransaction',[tx]);}
  catch{throw Error('Wallet submission was not confirmed. Check wallet history before retrying.');}
  if(typeof txid!=='string'||!/^0x[0-9a-fA-F]{64}$/.test(txid))throw Error('Wallet returned no usable transaction ID. Check wallet history before retrying.');
  return {txid:txid.toLowerCase(),submitted:true,confirmed:false,from:tx.from};
+}
+export async function submitLocalEscrowDeployment(provider,template,terms,anchor){
+ const tx=buildLocalEscrowDeployment(template,terms),{request,head}=await localAnchor(provider,anchor,tx.from);
+ if(BigInt(terms.expiry)-BigInt(head.timestamp)<60n)throw Error('escrow deadline too close');
+ return sendOnce(request,tx);
+}
+/** One approval or funding operation; callers must separately confirm receipts.
+ * ERC-1155 approval authorizes the escrow as operator for all of that token's
+ * IDs until revoked. Never call this before independently agreeing the terms.
+ */
+export async function submitLocalTokenFundingStep(provider,template,terms,anchor,step){
+ if(!['approve','fund','revoke'].includes(step)||(step==='revoke'&&terms.kind!=='2'))throw Error('invalid funding step');
+ const contract='0x'+addr(terms.contract).slice(24),token='0x'+addr(terms.token).slice(24),from='0x'+addr(terms.refundee).slice(24);
+ const expected=expectedTokenRuntime(template,terms),{request,head}=await localAnchor(provider,anchor,from);
+ if(typeof head.number!=='string'||!/^0x[0-9a-f]+$/i.test(head.number))throw Error('invalid local head');
+ if(step!=='revoke'&&BigInt(terms.expiry)-BigInt(head.timestamp)<60n)throw Error('escrow deadline too close');
+ const code=await request('eth_getCode',[contract,head.number]);
+ if(typeof code!=='string'||code.toLowerCase()!==expected)throw Error('escrow bytecode or terms mismatch');
+ for(const selector of step==='revoke'?[]:['f3a504f2','7ab71b7a']){
+  const state=await request('eth_call',[{to:contract,data:'0x'+selector},head.number]);
+  if(typeof state!=='string'||!/^0x[0-9a-fA-F]{64}$/.test(state)||BigInt(state)!==0n)throw Error('escrow is already funded or spent');
+ }
+ let data;
+ if(step==='fund')data='0xb60d4288';
+ else if(terms.kind==='2')data='0xa22cb465'+addr(contract)+uint(step==='revoke'?'0':'1');
+ else data='0x095ea7b3'+addr(contract)+uint(terms.kind==='0'?terms.amount:terms.tokenId);
+ const tx={from,to:step==='fund'?contract:token,data,value:'0x0'};
+ const simulation=await request('eth_call',[tx,head.number]);
+ if(typeof simulation!=='string'||!/^0x(?:[0-9a-fA-F]{2})*$/.test(simulation)||(step==='approve'&&terms.kind==='0'&&simulation!=='0x'&&(!/^0x[0-9a-fA-F]{64}$/.test(simulation)||BigInt(simulation)!==1n)))throw Error('transaction simulation failed');
+ const latest=await request('eth_getBlockByNumber',['latest',false]);
+ if(!latest||latest.hash!==head.hash||BigInt(await request('eth_chainId'))!==31337n)throw Error('chain changed before submission');
+ return {...await sendOnce(request,tx),step};
 }

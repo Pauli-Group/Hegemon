@@ -34,6 +34,12 @@ function patchRuntime(template,words) {
   }
   return '0x'+code.join('');
 }
+export function expectedTokenRuntime(template,terms){
+  if(!terms||!['0','1','2'].includes(terms.kind))throw Error('invalid token kind');
+  const words={kind:number(terms.kind),token:address(terms.token),tokenId:number(terms.tokenId),amount:number(terms.amount),hashlock:hash(terms.hashlock),claimant:address(terms.claimant),refundee:address(terms.refundee),expiry:number(terms.expiry)};
+  if(BigInt(terms.amount)===0n||(terms.kind==='0'&&terms.tokenId!=='0')||(terms.kind==='1'&&terms.amount!=='1'))throw Error('invalid asset quantity');
+  return patchRuntime(template,words);
+}
 export async function verifyEtherEscrow(provider,template,terms,confirmations=2,minimumRemainingSeconds=60){
   if(!provider||typeof provider.request!=='function'||!Number.isSafeInteger(confirmations)||confirmations<1||confirmations>10000||!Number.isSafeInteger(minimumRemainingSeconds)||minimumRemainingSeconds<1)throw Error('invalid provider or verification limits');
   if(!terms||typeof terms.chainId!=='string'||!/^0x[0-9a-f]{1,64}$/i.test(terms.chainId))throw Error('invalid chain');

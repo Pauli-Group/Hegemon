@@ -165,10 +165,20 @@ test('browser verifies real local Ethereum token escrow and rejects changed term
   assert.equal(receipt.status,'0x1');assert.ok(receipt.contractAddress);
   await page.locator('#ethereum-action-form [name="kind"]').selectOption('0');
   await page.locator('#ethereum-action-form [name="token"]').fill(token);await page.locator('#ethereum-action-form [name="tokenId"]').fill('0');
+  await page.locator('#ethereum-action-form [name="amount"]').fill('100');
   await page.getByRole('button',{name:'Deploy local escrow'}).click();
   await page.getByText('Deployment submitted, but the token escrow is not funded.',{exact:false}).waitFor();
   const tokenSubmission=JSON.parse(await page.locator('#ethereum-action-result').textContent());
   const tokenReceipt=await rpc('eth_getTransactionReceipt',[tokenSubmission.txid]);assert.equal(tokenReceipt.status,'0x1');assert.ok(tokenReceipt.contractAddress);
+  await page.locator('#ethereum-action-form [name="contract"]').fill(tokenReceipt.contractAddress);
+  await page.getByRole('button',{name:'Approve token for escrow'}).click();await page.getByText('Token approval submitted.',{exact:false}).waitFor();
+  const approval=JSON.parse(await page.locator('#ethereum-action-result').textContent());assert.equal((await rpc('eth_getTransactionReceipt',[approval.txid])).status,'0x1');
+  await page.getByRole('button',{name:'Fund token escrow'}).click();await page.getByText('Funding submitted.',{exact:false}).waitFor();
+  const funding=JSON.parse(await page.locator('#ethereum-action-result').textContent());assert.equal((await rpc('eth_getTransactionReceipt',[funding.txid])).status,'0x1');
+  await rpc('evm_mine');await rpc('evm_mine');
+  await page.locator('#verify-form [name="kind"]').selectOption('0');
+  for(const [name,value] of Object.entries({contract:tokenReceipt.contractAddress,token,tokenId:'0',amount:'100'}))await page.locator(`#verify-form [name="${name}"]`).fill(value);
+  await page.getByRole('button',{name:'Verify escrow'}).click();await page.getByText('Verified funded and unspent at block',{exact:false}).waitFor();
   await context.close();
  }finally{
   if(browser)await browser.close();

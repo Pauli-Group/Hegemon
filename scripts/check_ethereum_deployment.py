@@ -32,8 +32,8 @@ def main():
     terms={'kind':'eth' if kind=='eth' else str(c.token_kind),'claimant':c.alice,'refundee':c.bob,'hashlock':'0x'+digest,
            'expiry':str(int(anchor['time_seconds'])+600),'amount':str(c.amount if kind=='eth' else c.token_amount)}
     if kind!='eth':terms.update(token=c.token,tokenId=str(c.token_id))
-    def submit(anchor_value,expected):
-     run=subprocess.run(['node',ROOT/'scripts/submit_ethereum_deployment.mjs'],input=json.dumps({'url':c.url,'terms':terms,'anchor':anchor_value}),text=True,capture_output=True,timeout=30)
+    def submit(anchor_value,expected,step=None,terms_value=None):
+     run=subprocess.run(['node',ROOT/'scripts/submit_ethereum_deployment.mjs'],input=json.dumps({'url':c.url,'terms':terms_value or terms,'anchor':anchor_value,'step':step}),text=True,capture_output=True,timeout=30)
      require((run.returncode==0)==expected,'deployment returned unexpected status: '+run.stderr[-500:]);return run
     nonce=rpc(c.url,'eth_getTransactionCount',[c.bob,'latest'])
     submit({**anchor,'genesis':'00'*32},False)
@@ -45,10 +45,24 @@ def main():
     require(rpc(c.url,'eth_getTransactionCount',[c.bob,'latest'])==nonce,'stale anchor caused a second transaction')
     c.contract=receipt['contractAddress'];c.expiry=int(terms['expiry'])
     if kind!='eth':
-     if kind=='erc20':approve=c.token_data('approve(address,uint256)',c.word_address(c.contract)+c.word_number(c.token_amount))
-     elif kind=='erc721':approve=c.token_data('approve(address,uint256)',c.word_address(c.contract)+c.word_number(c.token_id))
-     else:approve=c.token_data('setApprovalForAll(address,bool)',c.word_address(c.contract)+c.word_number(1))
-     c.send(c.bob,approve,c.token);c.send(c.bob,c.data('fund()'),c.contract)
+     funding_terms={**terms,'contract':c.contract};nonce=rpc(c.url,'eth_getTransactionCount',[c.bob,'latest'])
+     submit(ethereum_local_head(c.url),False,'approve',{**funding_terms,'amount':str(int(terms['amount'])+1)})
+     require(rpc(c.url,'eth_getTransactionCount',[c.bob,'latest'])==nonce,'changed terms caused token approval')
+     for step in ('approve','fund'):
+      result=json.loads(submit(ethereum_local_head(c.url),True,step,funding_terms).stdout)
+      confirmed=wait_for(lambda:rpc(c.url,'eth_getTransactionReceipt',[result['txid']]),step+' receipt')
+      require(int(confirmed['status'],16)==1,step+' transaction failed')
+     nonce=rpc(c.url,'eth_getTransactionCount',[c.bob,'latest'])
+     submit(ethereum_local_head(c.url),False,'fund',funding_terms)
+     require(rpc(c.url,'eth_getTransactionCount',[c.bob,'latest'])==nonce,'funded escrow caused a second funding transaction')
+     if kind=='erc1155':
+      revoked=json.loads(submit(ethereum_local_head(c.url),True,'revoke',funding_terms).stdout)
+      confirmed=wait_for(lambda:rpc(c.url,'eth_getTransactionReceipt',[revoked['txid']]),'revoke receipt')
+      require(int(confirmed['status'],16)==1,'operator revocation failed')
+      # The disposable Sample1155 exposes its operator map as approved().
+      state=rpc(c.url,'eth_call',[{'to':c.token,'data':'0xf4b16045'+c.word_address(c.bob)+c.word_address(c.contract)},'latest'])
+      require(int(state,16)==0,'operator remained approved')
+     rpc(c.url,'evm_mine');rpc(c.url,'evm_mine')
     else:rpc(c.url,'evm_mine');rpc(c.url,'evm_mine')
     verify_terms={'chainId':'0x7a69','contract':c.contract,**terms}
     check=subprocess.run(['node',ROOT/'scripts/verify_ethereum_escrow.mjs'],input=json.dumps({'url':c.url,'terms':verify_terms}),text=True,capture_output=True,timeout=30)
