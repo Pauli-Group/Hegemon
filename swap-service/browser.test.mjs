@@ -33,10 +33,10 @@ test('two browser sessions create a private offer and exchange encrypted message
     const request=route.request(),headers={'access-control-allow-origin':base,'access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'authorization, content-type','content-type':'application/json'};
     if(request.method()==='OPTIONS')return route.fulfill({status:204,headers});
     companionRequests.push({url:request.url(),authorization:request.headers().authorization,body:request.postDataJSON()});
-    const payload=request.url().endsWith('/health')?{status:'ok',capabilities:['bitcoin-regtest-verify','cardano-local-verify','hegemon-local-verify']}:(request.url().endsWith('/bitcoin/head')?{genesis:'b'.repeat(64),height:'150'}:request.url().endsWith('/cardano/verify')?{verified:true,snapshot:{confirmations:null,tip_block:8}}:request.url().endsWith('/hegemon/verify')?{verified:true,snapshot:{verified:true,confirmations:'2',reference_height:'101'}}:{verified:true,snapshot:{confirmations:2,block_height:101}});
+    const payload=request.url().endsWith('/health')?{status:'ok',capabilities:['bitcoin-regtest-verify','cardano-local-verify','hegemon-local-verify','hegemon-local-actions']}:(request.url().endsWith('/bitcoin/head')?{genesis:'b'.repeat(64),height:'150'}:request.url().endsWith('/cardano/verify')?{verified:true,snapshot:{confirmations:null,tip_block:8}}:request.url().endsWith('/hegemon/verify')?{verified:true,snapshot:{verified:true,confirmations:'2',reference_height:'101'}}:request.url().endsWith('/hegemon/action')?{completed:true,result:{operation:'claim',attempt:'a'.repeat(64)}}:{verified:true,snapshot:{confirmations:2,block_height:101}});
     return route.fulfill({status:200,headers,body:JSON.stringify(payload)});
   });
-  await first.locator('#companion-token').fill('a'.repeat(64));await first.getByRole('button',{name:'Connect local companion'}).click();await first.getByText('Local read-only companion connected.').waitFor();
+  await first.locator('#companion-token').fill('a'.repeat(64));await first.getByRole('button',{name:'Connect local companion'}).click();await first.getByText('Local companion connected with experimental Hegemon actions enabled.').waitFor();
   const bitcoinTerms={txid:'a'.repeat(64),vout:'0',amount_sats:'100000',genesis_hash:'b'.repeat(64),hashlock:'c'.repeat(64),claimant_key:'02'+'d'.repeat(64),refund_key:'03'+'e'.repeat(64),refund_height:'200'};
   for(const [name,value] of Object.entries(bitcoinTerms))await first.locator(`#bitcoin-form [name="${name}"]`).fill(value);
   await first.getByRole('button',{name:'Verify Bitcoin escrow'}).click();await first.getByText('Verified unspent with 2 confirmations',{exact:false}).waitFor();
@@ -49,6 +49,10 @@ test('two browser sessions create a private offer and exchange encrypted message
   for(const [name,value] of Object.entries(hegemonTerms))await first.locator(`#hegemon-form [name="${name}"]`).fill(value);
   await first.getByRole('button',{name:'Verify Hegemon escrow'}).click();await first.getByText('Verified unspent with 2 confirmations at local height 101.').waitFor();
   assert.equal(companionRequests[3].body.timeout,'9007199254740993');
+  await first.locator('#hegemon-action-form [name="operation"]').selectOption('claim');
+  for(const [name,value] of Object.entries({locked:'0',fee_input:'1',recipient:'shca1fixture',fee:'1'}))await first.locator(`#hegemon-action-form [name="${name}"]`).fill(value);
+  await first.getByRole('button',{name:'Request local action'}).click();await first.getByText('Local action completed.',{exact:false}).waitFor();
+  assert.deepEqual(Object.keys(companionRequests[4].body).sort(),['fee','fee_input','locked','operation','recipient']);
   await first.locator('[name="receive-type"]').selectOption('bitcoin:btc');await first.locator('[name="receive-amount"]').fill('50');
   await first.getByRole('button',{name:'Create offer'}).click();
   await first.locator('#share-link').waitFor({state:'visible'});const link=await first.locator('#share-link').inputValue();
@@ -141,6 +145,30 @@ test('browser verifies real local Ethereum token escrow and rejects changed term
   await page.locator('#verify-form [name="contract"]').fill(native);await page.locator('#verify-form [name="amount"]').fill('1000000000000000000');
   assert.equal(await page.locator('#verify-form [name="token"]').isDisabled(),true);
   await page.getByRole('button',{name:'Verify escrow'}).click();await page.getByText('Verified funded and unspent at block',{exact:false}).waitFor();
+  // The browser uses the real isolated Anvil chain; only the companion's HTTP
+  // transport is substituted here (its actual endpoint is tested separately).
+  await page.route('http://127.0.0.1:8788/**',async route=>{
+   const headers={'access-control-allow-origin':base,'access-control-allow-methods':'GET, POST, OPTIONS','access-control-allow-headers':'authorization, content-type','content-type':'application/json'};
+   if(route.request().method()==='OPTIONS')return route.fulfill({status:204,headers});
+   let result={status:'ok',capabilities:['ethereum-local-anchor']};
+   if(route.request().url().endsWith('/ethereum/head')){const genesis=await rpc('eth_getBlockByNumber',['0x0',false]),head=await rpc('eth_getBlockByNumber',['latest',false]);result={genesis:genesis.hash.slice(2),tip_hash:head.hash,time_seconds:BigInt(head.timestamp).toString()};}
+   return route.fulfill({status:200,headers,body:JSON.stringify(result)});
+  });
+  await page.locator('#companion-token').fill('a'.repeat(64));await page.getByRole('button',{name:'Connect local companion'}).click();
+  await page.locator('#ethereum-actions').waitFor({state:'visible'});
+  const deployment={amount:'1000000',hashlock:'0x'+hashlock,claimant,refundee,expiry:expiry.toString()};
+  for(const [name,value] of Object.entries(deployment))await page.locator(`#ethereum-action-form [name="${name}"]`).fill(value);
+  await page.getByRole('button',{name:'Deploy local escrow'}).click();
+  await page.getByText('Deployment submitted; check the receipt and confirmations.').waitFor();
+  const submitted=JSON.parse(await page.locator('#ethereum-action-result').textContent());
+  assert.equal(submitted.confirmed,false);const receipt=await rpc('eth_getTransactionReceipt',[submitted.txid]);
+  assert.equal(receipt.status,'0x1');assert.ok(receipt.contractAddress);
+  await page.locator('#ethereum-action-form [name="kind"]').selectOption('0');
+  await page.locator('#ethereum-action-form [name="token"]').fill(token);await page.locator('#ethereum-action-form [name="tokenId"]').fill('0');
+  await page.getByRole('button',{name:'Deploy local escrow'}).click();
+  await page.getByText('Deployment submitted, but the token escrow is not funded.',{exact:false}).waitFor();
+  const tokenSubmission=JSON.parse(await page.locator('#ethereum-action-result').textContent());
+  const tokenReceipt=await rpc('eth_getTransactionReceipt',[tokenSubmission.txid]);assert.equal(tokenReceipt.status,'0x1');assert.ok(tokenReceipt.contractAddress);
   await context.close();
  }finally{
   if(browser)await browser.close();

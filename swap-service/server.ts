@@ -54,7 +54,7 @@ function present(row:NonNullable<ReturnType<typeof getOffer>>) {return {id:row.i
 const server=createServer(async (req,res)=>{
     try {
         const url=new URL(req.url ?? '/', 'http://localhost');
-        if(req.method==='GET' && ['/', '/app.js', '/crypto.mjs', '/deadlines.mjs', '/recovery.mjs', '/vault-store.mjs', '/ethereum-escrow.mjs', '/token-escrow-template.json', '/ether-escrow-template.json', '/style.css'].includes(url.pathname)) {
+        if(req.method==='GET' && ['/', '/app.js', '/crypto.mjs', '/deadlines.mjs', '/recovery.mjs', '/vault-store.mjs', '/ethereum-escrow.mjs', '/ethereum-actions.mjs', '/token-escrow-template.json', '/ether-escrow-template.json', '/style.css'].includes(url.pathname)) {
             const file=url.pathname==='/'?'index.html':url.pathname.slice(1);
             const type=file.endsWith('.html')?'text/html':file.endsWith('.js')||file.endsWith('.mjs')?'text/javascript':file.endsWith('.json')?'application/json':'text/css';
             const content=readFileSync(new URL('../swap-ui/'+file,import.meta.url));

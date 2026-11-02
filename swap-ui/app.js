@@ -1,6 +1,7 @@
 'use strict';
 import {newMessageKey,encryptMessage,decryptMessage} from './crypto.mjs';
 import {verifyTokenEscrow,verifyEtherEscrow} from './ethereum-escrow.mjs';
+import {submitLocalEscrowDeployment} from './ethereum-actions.mjs';
 import {validateWatch,evaluateWatch} from './deadlines.mjs';
 import {createRecovery,unlockRecovery,validateRecoveryEnvelope} from './recovery.mjs';
 import {vaultLabel,listVault,addVault,removeVault} from './vault-store.mjs';
@@ -56,11 +57,27 @@ async function companion(path,token,body){
  const result=await response.json();if(!response.ok)throw Error(result.error||'Companion request failed');return result;
 }
 $('connect-companion').addEventListener('click',async()=>{
- const token=$('companion-token').value;$('companion-token').value='';companionToken=null;companionCapabilities=[];
+ const token=$('companion-token').value;$('companion-token').value='';companionToken=null;companionCapabilities=[];$('hegemon-actions').hidden=true;$('ethereum-actions').hidden=true;
  try{if(!/^[0-9a-f]{64}$/.test(token))throw Error('Enter the 64-character pairing token.');
   const result=await companion('/health',token);if(!Array.isArray(result.capabilities)||!result.capabilities.length)throw Error('No local verifiers are available.');
-  companionToken=token;companionCapabilities=result.capabilities;msg($('companion-status'),'Local read-only companion connected.');
+  companionToken=token;companionCapabilities=result.capabilities;$('hegemon-actions').hidden=!companionCapabilities.includes('hegemon-local-actions');$('ethereum-actions').hidden=!companionCapabilities.includes('ethereum-local-anchor');msg($('companion-status'),companionCapabilities.includes('hegemon-local-actions')?'Local companion connected with experimental Hegemon actions enabled.':'Local read-only companion connected.');
  }catch(e){msg($('companion-status'),e.message,true);}
+});
+const ethereumActionForm=$('ethereum-action-form');
+function toggleEthereumActionFields(){const native=ethereumActionForm.elements.kind.value==='eth';for(const name of ['token','tokenId']){ethereumActionForm.elements[name].disabled=native;ethereumActionForm.elements[name].required=!native;}}
+ethereumActionForm.elements.kind.addEventListener('change',toggleEthereumActionFields);toggleEthereumActionFields();
+ethereumActionForm.addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button[type="submit"]');
+ try{if(!activeEthereumProvider)throw Error('Connect an Ethereum wallet first.');if(!companionToken||!companionCapabilities.includes('ethereum-local-anchor'))throw Error('Connect a companion configured for local Anvil.');
+  const provider=activeEthereumProvider,data=new FormData(event.currentTarget),terms={};
+  for(const name of ['kind','token','tokenId','amount','hashlock','claimant','refundee','expiry'])terms[name]=String(data.get(name)||'').trim();
+  button.disabled=true;$('ethereum-action-result').textContent='';msg($('ethereum-action-status'),'Checking the local chain and requesting wallet approval.');
+  const [anchor,response]=await Promise.all([companion('/ethereum/head',companionToken),fetch(terms.kind==='eth'?'/ether-escrow-template.json':'/token-escrow-template.json')]);
+  if(!response.ok)throw Error('Escrow template unavailable.');const template=await response.json();
+  const guarded={request:args=>{if(provider!==activeEthereumProvider)throw Error('Wallet changed. Reconnect and check wallet history before retrying.');return provider.request(args);}};
+  const result=await submitLocalEscrowDeployment(guarded,template,terms,anchor);
+  $('ethereum-action-result').textContent=JSON.stringify(result,null,2);
+  msg($('ethereum-action-status'),terms.kind==='eth'?'Deployment submitted; check the receipt and confirmations.':'Deployment submitted, but the token escrow is not funded. Check the receipt and confirmations.');
+ }catch(e){msg($('ethereum-action-status'),e.message,true);}finally{button.disabled=false;}
 });
 $('bitcoin-form').addEventListener('submit',async event=>{event.preventDefault();
  try{if(!companionToken||!companionCapabilities.includes('bitcoin-regtest-verify'))throw Error('Connect a companion configured for Bitcoin.');const data=new FormData(event.currentTarget),terms={};
@@ -97,6 +114,23 @@ $('hegemon-form').addEventListener('submit',async event=>{event.preventDefault()
   if(!result.verified||result.snapshot?.verified!==true)throw Error('Hegemon note not verified.');
   msg($('hegemon-status'),'Verified unspent with '+result.snapshot.confirmations+' confirmations at local height '+result.snapshot.reference_height+'.');
  }catch(e){msg($('hegemon-status'),e.message,true);}finally{button.disabled=false;}
+});
+const hegemonActionForm=$('hegemon-action-form');
+function updateHegemonActionFields(){const op=hegemonActionForm.elements.operation.value;
+ for(const label of hegemonActionForm.querySelectorAll('[data-ops]')){const visible=label.dataset.ops.split(' ').includes(op);label.hidden=!visible;for(const field of label.querySelectorAll('input,textarea,select')){field.disabled=!visible;field.required=visible;}}
+}
+hegemonActionForm.elements.operation.addEventListener('change',updateHegemonActionFields);updateHegemonActionFields();
+hegemonActionForm.addEventListener('submit',async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button[type="submit"]');
+ try{if(!companionToken||!companionCapabilities.includes('hegemon-local-actions'))throw Error('Connect a companion with experimental Hegemon actions enabled.');
+  const data=new FormData(event.currentTarget),operation=String(data.get('operation')),request={operation};
+  const fields={status:[],ordinary:['inputs','recipient','amount','fee'],lock:['inputs','claim','refund','hashlock','timeout','amount','fee'],claim:['locked','fee_input','recipient','fee'],refund:['locked','fee_input','recipient','fee'],submit:['attempt']}[operation];
+  if(!fields)throw Error('Unsupported action.');
+  for(const field of fields){const value=String(data.get(field)).trim();request[field]=field==='inputs'?value.split(',').map(x=>x.trim()):value;}
+  button.disabled=true;$('hegemon-action-result').textContent='';msg($('hegemon-action-status'),'Review and approve this request in the companion terminal.');
+  const result=await companion('/hegemon/action',companionToken,request);
+  if(result.completed!==true)throw Error('The local action did not complete. Check wallet status before retrying.');
+  $('hegemon-action-result').textContent=JSON.stringify(result,null,2);msg($('hegemon-action-status'),'Local action completed. Review the result before submitting anything.');
+ }catch(e){msg($('hegemon-action-status'),e.message,true);}finally{button.disabled=false;}
 });
 function credential(id){return localStorage.getItem('offer-owner:'+id);}
 function currentOffer(){return location.hash.slice(1).split('.')[0];}

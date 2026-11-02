@@ -32,7 +32,9 @@ def main():
     if set(refs)!=expected:raise RuntimeError('artifact immutable references do not match source AST; rebuild with pinned solc')
     code=deployed['object'].removeprefix('0x')
     if any(x['length']!=32 or code[x['start']*2:(x['start']+32)*2]!='0'*64 for ranges in refs.values() for x in ranges):raise RuntimeError('unexpected immutable template')
-    payload={'source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'runtime':code,'immutableReferences':refs,'methods':artifact['methodIdentifiers']}
+    creation=artifact['bytecode']['object'].removeprefix('0x')
+    if not creation or any(c not in '0123456789abcdef' for c in creation):raise RuntimeError('invalid or unlinked creation bytecode')
+    payload={'source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'creation':creation,'runtime':code,'immutableReferences':refs,'methods':artifact['methodIdentifiers']}
     result=json.dumps(payload,sort_keys=True,separators=(',',':'))+'\n'
     if args.check:
         if not output.exists() or output.read_text()!=result:raise SystemExit('runtime template is stale')
