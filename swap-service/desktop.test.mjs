@@ -21,7 +21,8 @@ test('desktop opens isolated local offer board without a real node',{timeout:600
   application=await _electron.launch({executablePath:resolve('hegemon-app/node_modules/electron/dist/electron'),args:['--no-sandbox','--disable-gpu','--disable-background-networking',...displayArgs,`--user-data-dir=${join(dir,'user-data')}`,resolve('hegemon-app/out/main/main.cjs')],env,timeout:30000});
   const main=await application.firstWindow();await main.getByRole('link',{name:/Swaps/}).click();
   const [board]=await Promise.all([application.waitForEvent('window'),main.getByRole('button',{name:'Open local offer board'}).click()]);
-  await board.getByText('Offer board only.',{exact:false}).waitFor();
+  await board.getByText('Offers and reservations do not lock assets.',{exact:false}).waitFor();
+  await board.waitForFunction(()=>document.querySelectorAll('[name="give-type"] option').length>0);
   assert.equal(new URL(board.url()).origin,'http://127.0.0.1:8787');
   assert.equal(await board.evaluate(()=>typeof window.hegemon),'undefined');
   await board.close();
