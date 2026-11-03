@@ -43,6 +43,12 @@ class PublicTestnetProbeTest(unittest.TestCase):
             def read(self,_limit):return b'wrong'
         with patch.object(probe_module,'_bitcoin_fallback_until',0),patch.object(probe_module,'_bitcoin_fallback_verified_until',0),patch('public_testnet_probe.urllib.request.urlopen',side_effect=[error,Response()]):
             with self.assertRaisesRegex(ValueError,'not testnet4'):probe_module.request(BITCOIN+'/blocks/tip/height')
+    def test_submission_service_selected_before_send_and_rechecks_network(self):
+        import public_testnet_probe as probe_module
+        with patch.object(probe_module,'_bitcoin_fallback_until',float('inf')),patch.object(probe_module,'_fallback_read',return_value=BITCOIN_GENESIS.encode()):
+            self.assertEqual(probe_module.bitcoin_submission_url(),probe_module.BITCOIN_FALLBACK+'/tx')
+        with patch.object(probe_module,'_bitcoin_fallback_until',float('inf')),patch.object(probe_module,'_fallback_read',return_value=b'wrong'):
+            with self.assertRaisesRegex(ValueError,'not testnet4'):probe_module.bitcoin_submission_url()
     def test_only_read_operations_retry_transient_http_errors(self):
         from public_testnet_probe import request,ETHEREUM
         error=urllib.error.HTTPError(ETHEREUM,503,'unavailable',{},None)

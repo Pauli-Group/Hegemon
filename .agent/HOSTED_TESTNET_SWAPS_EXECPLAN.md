@@ -7,10 +7,11 @@ This living plan follows `.agent/PLANS.md`. It records the work needed for two u
 - [x] Read the existing public testnet plan, local relay, wallet restrictions and network instructions. The BTC/ETH public swap and multiple Ethereum/Cardano swaps are complete. The remaining Bitcoin cases have been submitted and the session-bound runner is active.
 - [x] Confirm the authorized Cloudflare account is reachable with Workers and D1 access; no D1 databases existed at inspection.
 - [x] Implement and verify a Cloudflare Workers/D1 offer relay with the existing browser protocol and safe concurrent reservation handling. Published the clearly labeled offer-board prototype at https://hegemon-swap-testnet.willdoyle422.workers.dev; it does not execute swaps.
-- [x] Add a read-only hosted Sepolia escrow verifier. A browser using a test provider backed by public RPC checked a funded Sepolia fixture without requesting a transaction; the temporary fixture is awaiting its refund deadline.
-- [ ] Add a read-only hosted Bitcoin testnet4 escrow verifier (completed: script reconstruction, canary and live spent/unconfirmed rejection; remaining: verify a confirmed unspent public escrow when one becomes available).
-- [ ] Add a read-only hosted Cardano preview escrow verifier (completed: pinned address, value and datum verification, simulated unspent and real spent checks; remaining: verify a confirmed unspent public escrow when one becomes available).
+- [x] Add a read-only hosted Sepolia escrow verifier. A browser using a test provider backed by public RPC checked a funded Sepolia fixture without requesting a transaction; its subsequent refund confirmed.
+- [x] Add a read-only hosted Bitcoin testnet4 escrow verifier and check a confirmed, unspent public BTC/ADA escrow.
+- [x] Add a read-only hosted Cardano preview escrow verifier and check the confirmed, unspent ADA leg of that public swap.
 - [x] Add read-only hosted pair comparison for Ethereum, Bitcoin and Cardano, including exact offer assets and hashlock; validate it with mocked browser snapshots. This does not authorize claims or establish safe deadlines.
+- [x] Recheck the confirmed public BTC/ADA escrows against a hosted offer and common hashlock. The actual swap claims remain in progress.
 - [ ] Complete public Bitcoin/Cardano, Bitcoin/ERC-20, Bitcoin/Cardano-token and Bitcoin refund cases; record transaction identifiers and recovery outcomes.
 - [ ] Determine public Hegemon testnet identity, available remote or checkpoint-backed wallet access and current private-spend support; arrange test HGN and execute Hegemon swaps where possible.
 - [ ] Obtain suitable persistent storage and outbound TCP access to the release seed nodes before starting a public Hegemon node. Inspection found 243 MB free on the persistent workspace, no TCP destinations configured, and only memory-backed temporary storage; the current chain size is not known.

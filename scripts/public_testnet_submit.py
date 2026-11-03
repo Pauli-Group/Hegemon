@@ -7,7 +7,7 @@ import json
 import re
 import urllib.request
 from public_swap_journal import prepare
-from public_testnet_probe import BITCOIN,BITCOIN_GENESIS,CARDANO,ETHEREUM,ETHEREUM_GENESIS,request,rpc
+from public_testnet_probe import BITCOIN,BITCOIN_GENESIS,CARDANO,ETHEREUM,ETHEREUM_GENESIS,bitcoin_submission_url,request,rpc
 
 
 def verify_network(chain):
@@ -31,11 +31,12 @@ def _broadcast(url,raw,content_type):
 
 def submit(directory,chain,raw):
     verify_network(chain)
+    bitcoin_url=bitcoin_submission_url() if chain=='bitcoin-testnet4' else None
     record=prepare(directory,chain,raw)
     # From this point, any failure may mean the transaction was sent. Do not
     # retry blindly: inspect this transaction ID and the chain first.
     if chain=='bitcoin-testnet4':
-        returned=_broadcast(BITCOIN+'/tx',raw.hex().encode(),'text/plain').decode().strip()
+        returned=_broadcast(bitcoin_url,raw.hex().encode(),'text/plain').decode().strip()
     elif chain=='ethereum-sepolia':
         payload=json.dumps({'jsonrpc':'2.0','id':1,'method':'eth_sendRawTransaction','params':['0x'+raw.hex()]},separators=(',',':')).encode()
         response=json.loads(_broadcast(ETHEREUM,payload,'application/json'))

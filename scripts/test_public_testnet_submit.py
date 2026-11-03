@@ -9,6 +9,11 @@ from public_testnet_probe import BITCOIN_GENESIS, ETHEREUM_GENESIS
 from public_testnet_submit import submit,verify_network
 
 class PublicTestnetSubmitTest(unittest.TestCase):
+    def test_bitcoin_service_is_selected_before_journal_and_broadcast_once(self):
+        events=[];ident='a'*64
+        with patch('public_testnet_submit.verify_network'),patch('public_testnet_submit.bitcoin_submission_url',side_effect=lambda:events.append('choose') or 'https://testnet.invalid/tx'),patch('public_testnet_submit.prepare',side_effect=lambda *_:events.append('journal') or {'txid':ident}),patch('public_testnet_submit._broadcast',side_effect=lambda *_:events.append('send') or ident.encode()):
+            self.assertEqual(submit('/unused','bitcoin-testnet4',b'signed')['txid'],ident)
+        self.assertEqual(events,['choose','journal','send'])
     def test_journal_exists_before_broadcast_and_no_retry_after_lost_response(self):
         key=b'\x66'*32;sender=Account.from_key(key).address
         raw,txid=sign_transaction(key,sender,nonce=0,to='0x'+'1'*40,value=1,data=b'',gas=21000,max_fee=100,priority_fee=1)

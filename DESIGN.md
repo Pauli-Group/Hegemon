@@ -1923,7 +1923,7 @@ The hosted offer preview can capture two public-testnet escrow terms, compare th
 
 The public Bitcoin rehearsal runner avoids rescanning wallet outputs after all cases are funded and backs off on transient provider failures. It checks every persisted scenario for an uncertain submission before a retry; it does not rebroadcast a signed transaction automatically.
 
-Selected Bitcoin testnet4 indexer reads can fall back from Blockstream to a genesis-checked mempool.space endpoint after a temporary primary failure. The fallback permits only fixed read paths and does not submit transactions; both services remain trusted snapshots and can disagree or reorganize.
+Selected Bitcoin testnet4 indexer reads can fall back from Blockstream to a genesis-checked mempool.space endpoint after a temporary primary failure. The fallback permits only fixed read paths; when the primary is in cooldown, the sender may choose the verified secondary before journaling and submitting exactly once. A failed broadcast is never retried automatically. Both services remain trusted snapshots and can disagree or reorganize.
 
 
 ## Local swap deadline watch and desktop entry

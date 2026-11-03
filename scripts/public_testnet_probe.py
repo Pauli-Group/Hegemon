@@ -38,6 +38,14 @@ def _fallback_read(path):
     return request(BITCOIN_FALLBACK+path)
 
 
+def bitcoin_submission_url():
+    """Choose a verified service before journaling; never retry a submission."""
+    if time.monotonic()<_bitcoin_fallback_until:
+        if _fallback_read('/block-height/0').decode().strip()!=BITCOIN_GENESIS:raise ValueError('Fallback Bitcoin provider is not testnet4')
+        return BITCOIN_FALLBACK+'/tx'
+    return BITCOIN+'/tx'
+
+
 def request(url, body=None):
     global _bitcoin_fallback_until
     fallback=_bitcoin_fallback_path(url,body)
