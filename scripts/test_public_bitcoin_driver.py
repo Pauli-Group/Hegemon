@@ -4,9 +4,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from embit import ec,transaction
-from public_bitcoin_driver import fund,spend_contract
+from public_bitcoin_driver import _fee,fund,spend_contract
+from public_testnet_probe import BITCOIN_GENESIS
 
 class PublicBitcoinDriverTest(unittest.TestCase):
+    def test_missing_six_block_estimate_uses_verified_second_provider(self):
+        responses=[b'{"144":2.003}',BITCOIN_GENESIS.encode(),b'{"fastestFee":1}']
+        with patch('public_bitcoin_driver.request',side_effect=responses):self.assertEqual(_fee(),501)
+    def test_missing_estimate_rejects_wrong_network(self):
+        with patch('public_bitcoin_driver.request',side_effect=[b'{}',b'wrong']):
+            with self.assertRaisesRegex(ValueError,'not testnet4'):_fee()
     def test_funds_with_confirmed_utxo_and_local_key(self):
         claimant=ec.PrivateKey(b'\x11'*32).get_public_key().sec().hex();refund=ec.PrivateKey(b'\x22'*32)
         with tempfile.TemporaryDirectory() as d:

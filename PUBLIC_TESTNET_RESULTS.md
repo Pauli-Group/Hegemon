@@ -13,7 +13,7 @@ The staged two-party claim path completed on Ethereum Sepolia and Cardano previe
 | ADA claim | Preview | `013e52bd4c22499ff148ab67561e3fcd75c4aea5e156b7eed475d16ffe67b420` | 13 confirmations at inspection |
 | ETH claim | Sepolia | `21616ed433a988c6bd8838da08be1fb003117d43b00536fe3d26d6154c9aafa9` | Success, block 12051447 |
 
-The setup transaction `f1710647c8dd9510d58a931993cb65a7eb935977c8ea8b87b51abf6ff039cd4a` also minted a disposable Cardano fungible fixture and one-of-one fixture and created fee and collateral outputs. Other token combinations, refund scenarios and Bitcoin cases are separate tests and are not established by this result.
+The setup transaction `f1710647c8dd9510d58a931993cb65a7eb935977c8ea8b87b51abf6ff039cd4a` also minted a disposable Cardano fungible fixture and one-of-one fixture and created fee and collateral outputs. Other token combinations and refund scenarios are reported separately below.
 
 ## Sepolia ERC-721 and Cardano preview NFT
 
@@ -46,3 +46,9 @@ A same-chain fixture swap completed between 10 fungible units and the one-of-one
 ## Cardano preview ADA refund
 
 The ADA escrow funded in transaction `8e3f76a71a0712ff655d3e7a4000dcbc2557f203b07aaadac742aa3e636b0798` was refunded after its deadline in transaction `9250345efe80619223d24e8de6b6fb3b63b16f099163a5132ec6c4415d1cd33e`. Provider-reported confirmation, consumption of the locked output, and the 4 ADA payout to the refund wallet were checked. Early refund rejection was tested on the isolated Cardano chain, not submitted as a public negative test.
+
+The separate NFT escrow funded in transaction `46af5de02bf2fbce66729940b5a6f6415626a88cd60e7a2b308009308d23edc9` was refunded after its deadline in transaction `ad1e014a985b4d637c57ae2aca46d088ae7f94b068ebd872a8a8465d0220e1ac`. Provider-reported confirmations, consumption of the locked output and the NFT's return to the intended wallet were checked.
+
+## Bitcoin testnet4 and Sepolia ETH (in progress)
+
+The Bitcoin escrow funding transaction `cdeecb1da3ea00b1a7e5e4981eb073a656526073da61fe201c98c1de8e85bd8a` was submitted. Confirmation and the subsequent swap have not yet been established. Blockstream did not provide a six-block testnet4 fee estimate; the driver falls back to a second, genesis-checked testnet4 service and retains the more conservative available estimate. The reported provider observations remain trusted rather than independently verified.

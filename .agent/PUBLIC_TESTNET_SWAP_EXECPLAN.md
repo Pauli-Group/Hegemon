@@ -17,7 +17,8 @@ This living plan follows `.agent/PLANS.md`. The aim is to repeat the Bitcoin, Et
 - [x] (2026-11-02) Completed a Sepolia ERC-1155/ERC-20 same-chain swap with operator approval revoked, a Cardano preview fungible/NFT same-chain swap, and a native Sepolia refund including an exact early-refund rejection. Public IDs are recorded in `PUBLIC_TESTNET_RESULTS.md`.
 - [x] (2026-11-03) Completed a Cardano preview native-ADA refund and public cross-chain ERC-721/NFT and ERC-20/Cardano fungible-token swaps. The Cardano funding/claim and Ethereum claim transaction IDs are recorded in `PUBLIC_TESTNET_RESULTS.md`.
 - [x] (2026-11-03) Completed the ERC-1155/Cardano native-token swap and the Sepolia ERC-721 refund; verified recipients and recorded the public transaction identifiers.
-- [ ] Finish the in-progress Cardano preview NFT refund, then check Bitcoin testnet4 funding and run the authorized Bitcoin cases if available.
+- [x] Finish the Cardano preview NFT refund and check Bitcoin testnet4 funding.
+- [ ] Confirm the submitted BTC/ETH escrow and complete the swap; execute further Bitcoin cases as funds permit.
 - [ ] Add independently checked remote public-testnet adapters and safe transaction building and submission, without weakening local companion safeguards.
 - [ ] Exercise BTC/ETH, BTC/Cardano, ETH/Cardano and both Ethereum and Cardano same-chain paths, including applicable fungible and NFT fixtures, claims, refunds and failure cases, subject to testnet funds, network confirmation times and service availability.
 - [ ] Record public transaction identifiers and observations, run regression tests, update architecture documentation and commit the work.
@@ -81,3 +82,5 @@ Revision 2026-11-02: the Cardano fungible/NFT and Sepolia ERC-1155/ERC-20 same-c
 Revision 2026-11-03: the Cardano ADA refund, cross-chain NFT swap and cross-chain ERC-20/Cardano fungible swap completed. The ERC-1155/Cardano cross-chain claim and an ERC-721 refund are in progress; Bitcoin is still deferred until Ethereum and Cardano cases finish.
 
 Revision 2026-11-03: the ERC-1155/Cardano fungible swap and Sepolia ERC-721 refund completed. A transient RPC error interrupted the NFT refund during gas estimation, before signing; the private journal, sender nonce and NFT escrow state established that no refund transaction existed before the pre-signing phase was safely resumed. A Cardano NFT refund remains in progress. Read-only requests now retry bounded transient provider errors; signed submissions still do not retry automatically.
+
+Revision 2026-11-03: the Cardano NFT refund completed. The Bitcoin testnet4 wallet had 3,000 confirmed sats, and the BTC/ETH funding transaction was submitted; the remaining swap is pending. The primary Bitcoin service omitted its six-block estimate, so a tested second-provider fallback verifies the network genesis and retains the most conservative available estimate. Additional testnet4 funds were requested for the other Bitcoin cases.

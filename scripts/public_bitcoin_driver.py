@@ -11,7 +11,7 @@ import stat
 from pathlib import Path
 from embit import ec,networks,script
 from public_bitcoin_transactions import contract,funding,spend
-from public_testnet_probe import BITCOIN,request
+from public_testnet_probe import BITCOIN,BITCOIN_GENESIS,request
 from public_testnet_submit import submit,verify_network
 from public_testnet_utxos import bitcoin_utxos
 
@@ -28,6 +28,16 @@ def load_test_key(path):
 
 def _fee():
     estimates=json.loads(request(BITCOIN+'/fee-estimates'));rate=estimates.get('6')
+    if rate is None:
+        # Some testnet4 nodes have too little recent data for a six-block
+        # estimate. Consult a second testnet4 service and conservatively
+        # retain any longer-horizon estimate returned by the first service.
+        alternate='https://mempool.space/testnet4/api'
+        if request(alternate+'/block-height/0').decode().strip()!=BITCOIN_GENESIS:raise ValueError('Bitcoin fee service is not testnet4')
+        rate=json.loads(request(alternate+'/v1/fees/recommended')).get('fastestFee')
+        if type(rate) in (int,float) and math.isfinite(rate) and 0<rate<=100:
+            longer=[value for value in estimates.values() if type(value) in (int,float) and math.isfinite(value) and 0<value<=100]
+            rate=max([rate]+longer)
     if type(rate) not in (int,float) or not math.isfinite(rate) or not 0<rate<=100:raise ValueError('Bitcoin testnet fee estimate unavailable or excessive')
     # 250 vbytes bounds these single-input, two-output P2WPKH/P2WSH fixtures.
     return math.ceil(max(rate,1)*250)
