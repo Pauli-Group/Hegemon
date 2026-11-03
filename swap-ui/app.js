@@ -4,6 +4,7 @@ import {createInbox,inboxPrivateKey,inboxFingerprint,sealPublicSession,openPubli
 import {verifyTokenEscrow,verifyEtherEscrow} from './ethereum-escrow.mjs';
 import {verifySepoliaEscrow} from './sepolia-verifier.mjs';
 import {verifyBitcoinTestnetEscrow} from './bitcoin-testnet-verifier.mjs';
+import {verifyCardanoPreviewEscrow} from './cardano-preview-verifier.mjs';
 import {submitLocalEscrowDeployment,submitLocalTokenFundingStep,submitLocalEscrowRefund,submitLocalEscrowClaim,observeLocalEthereumClaim} from './ethereum-actions.mjs';
 import {validateWatch,evaluateWatch} from './deadlines.mjs';
 import {createRecovery,encryptRecovery,unlockRecovery,validateRecoveryEnvelope} from './recovery.mjs';
@@ -52,6 +53,12 @@ $('bitcoin-testnet-form').addEventListener('submit',async event=>{event.preventD
   const read=async(txid,vout)=>{const response=await fetch('/bitcoin-testnet4/escrow?'+new URLSearchParams({txid,vout:String(vout)}));const value=await response.json();if(!response.ok)throw Error(value.error||'Bitcoin testnet service unavailable.');return value;};
   const result=await verifyBitcoinTestnetEscrow(terms,read);msg($('bitcoin-testnet-status'),'Matched unspent Bitcoin testnet4 escrow with '+result.confirmations+' confirmations at height '+result.block_height+'. This checks only the Bitcoin leg and trusts the public service.');
  }catch(e){msg($('bitcoin-testnet-status'),e.message,true);}
+});
+$('cardano-preview-form').addEventListener('submit',async event=>{event.preventDefault();
+ try{const data=new FormData(event.currentTarget),terms={};for(const name of ['outref','lovelace','assets','hashlock','claimant','refundee'])terms[name]=String(data.get(name)||'').trim();terms.expiry_ms=Number(data.get('expiry_ms'));
+  const read=async(outref)=>{const response=await fetch('/cardano-preview/escrow?'+new URLSearchParams({outref}));const value=await response.json();if(!response.ok)throw Error(value.error||'Cardano preview service unavailable.');return value;};
+  const result=await verifyCardanoPreviewEscrow(terms,read);msg($('cardano-preview-status'),'Matched unspent Cardano preview escrow with '+result.confirmations+' confirmations at slot '+result.slot+'. This checks only the Cardano leg and trusts the public service.');
+ }catch(e){msg($('cardano-preview-status'),e.message,true);}
 });
 const verifyForm=$('verify-form');
 function toggleTokenFields(){const native=verifyForm.elements.kind.value==='eth';for(const name of ['token','tokenId']){verifyForm.elements[name].disabled=native;verifyForm.elements[name].required=!native;}}

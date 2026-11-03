@@ -1917,6 +1917,8 @@ The hosted preview offers read-only Sepolia escrow verification through the conn
 
 The preview also offers read-only Bitcoin testnet4 escrow verification. A fixed Worker endpoint queries the Blockstream testnet4 indexer for the network genesis, transaction, canonical block and outspend; the browser independently reconstructs the SHA-256 HTLC P2WSH script from the agreed keys, hash and height. This trusts the indexer and Worker and uses experimental confirmation and timeout thresholds; it is not a Bitcoin light client or a cross-chain claim gate.
 
+The read-only Cardano preview checker queries Koios through a fixed Worker endpoint and compares a twice-observed output with the Aiken validator's pinned preview address, complete value bundle and both decoded and raw inline datum. `scripts/check_cardano_preview_address.py` compares the browser address to the compiled source. Koios confirmations, network identity and output state remain trusted indexer observations, and this is not a two-leg verification or claim gate.
+
 
 ## Local swap deadline watch and desktop entry
 

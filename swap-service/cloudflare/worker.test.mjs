@@ -62,3 +62,18 @@ test('Bitcoin testnet snapshot checks the fixed network, canonical block and cur
     assert.equal((await call('/bitcoin-testnet4/escrow?txid='+txid+'&vout=0&host=example.com'))[0],400);
   }finally{globalThis.fetch=original;db.raw.close();}
 });
+
+test('Cardano preview snapshot checks network, confirmations and repeat output',async()=>{
+  const db=database(),call=client(db),original=globalThis.fetch,txid='3'.repeat(64),ref=txid+'#0';let calls=0,changed=false;
+  globalThis.fetch=async(input,options)=>{
+    const url=String(input);assert.ok(url.startsWith('https://preview.koios.rest/api/v1/'));
+    if(url.endsWith('/genesis'))return Response.json([{networkmagic:'2',networkid:'Testnet',systemstart:1666656000}]);
+    if(url.endsWith('/tip'))return Response.json([{abs_slot:1000}]);
+    if(url.endsWith('/tx_status'))return Response.json([{tx_hash:txid,num_confirmations:3}]);
+    if(url.endsWith('/utxo_info')){assert.deepEqual(JSON.parse(options.body)._utxo_refs,[ref]);calls++;return Response.json([{tx_hash:txid,tx_index:0,is_spent:changed&&calls%2===0}]);}
+    throw Error('unexpected provider request');
+  };
+  try{const path='/cardano-preview/escrow?'+new URLSearchParams({outref:ref});const [status,s]=await call(path);assert.equal(status,200);assert.equal(s.confirmations,3);assert.equal(s.output.is_spent,false);assert.equal(calls,2);
+    changed=true;assert.equal((await call(path))[0],502);assert.equal((await call('/cardano-preview/escrow?outref=notvalid'))[0],400);
+  }finally{globalThis.fetch=original;db.raw.close();}
+});

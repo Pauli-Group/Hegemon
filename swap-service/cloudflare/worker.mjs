@@ -61,6 +61,27 @@ async function bitcoinEscrow(url){
   if(canonical.trim()!==hash||JSON.parse(again).spent!==outspend.spent)throw Error('Bitcoin chain or output changed');
   return reply(200,{genesis:BITCOIN_GENESIS,txid,vout,tip,confirmed:true,confirmations:tip-height+1,block_height:height,block_hash:hash,spent:outspend.spent,amount_sats:output.value,script:output.scriptpubkey});
 }
+const CARDANO_API='https://preview.koios.rest/api/v1';
+async function cardanoRead(path,body){
+  const response=await fetch(CARDANO_API+path,{method:body?'POST':'GET',headers:{accept:'application/json',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(12000)});
+  if(!response.ok||!response.body)throw Error('Cardano preview provider unavailable');
+  const reader=response.body.getReader(),chunks=[];let size=0;
+  for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>1024*1024){await reader.cancel();throw Error('Cardano response too large');}chunks.push(value);}
+  const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+async function cardanoEscrow(url){
+  const ref=url.searchParams.get('outref');
+  if(typeof ref!=='string'||!/^[0-9a-f]{64}#(0|[1-9][0-9]{0,9})$/.test(ref)||url.searchParams.size!==1)return reply(400,{error:'invalid Cardano output'});
+  const [txid,indexText]=ref.split('#'),index=Number(indexText);if(index>0xffffffff)return reply(400,{error:'invalid Cardano output'});
+  const query={'_utxo_refs':[ref],'_extended':true},statusQuery={'_tx_hashes':[txid]};
+  const [genesis,tip,status,rows]=await Promise.all([cardanoRead('/genesis'),cardanoRead('/tip'),cardanoRead('/tx_status',statusQuery),cardanoRead('/utxo_info',query)]);
+  if(!Array.isArray(genesis)||genesis.length!==1||genesis[0]?.networkmagic!=='2'||genesis[0]?.networkid!=='Testnet'||genesis[0]?.systemstart!==1666656000||!Array.isArray(tip)||tip.length!==1||!Number.isSafeInteger(tip[0]?.abs_slot)||!Array.isArray(status)||status.length!==1||status[0]?.tx_hash!==txid||!Number.isSafeInteger(status[0]?.num_confirmations)||!Array.isArray(rows)||rows.length!==1)throw Error('Cardano provider returned inconsistent data');
+  const row=rows[0];if(row.tx_hash!==txid||row.tx_index!==index||typeof row.is_spent!=='boolean')throw Error('Cardano provider returned a different output');
+  const [again,againStatus]=await Promise.all([cardanoRead('/utxo_info',query),cardanoRead('/tx_status',statusQuery)]);
+  if(!Array.isArray(again)||again.length!==1||JSON.stringify(again[0])!==JSON.stringify(row)||!Array.isArray(againStatus)||againStatus.length!==1||againStatus[0]?.tx_hash!==txid||!Number.isSafeInteger(againStatus[0]?.num_confirmations))throw Error('Cardano escrow changed during observation');
+  return reply(200,{network:'preview',magic:2,system_start:1666656000,slot:tip[0].abs_slot,confirmations:Math.min(status[0].num_confirmations,againStatus[0].num_confirmations),output:row});
+}
 async function api(req,env){
   const url=new URL(req.url),t=now(),db=env.DB,origin=req.headers.get('origin');
   if(origin&&origin!==url.origin)return reply(403,{error:'cross-origin request denied'});
@@ -78,6 +99,9 @@ async function api(req,env){
   if(req.method==='GET'&&url.pathname==='/health')return reply(200,{status:'ok'});
   if(req.method==='GET'&&url.pathname==='/bitcoin-testnet4/escrow'){
     try{return await bitcoinEscrow(url);}catch{console.error('Bitcoin testnet provider unavailable or inconsistent');return reply(502,{error:'Bitcoin testnet service unavailable or inconsistent'});}
+  }
+  if(req.method==='GET'&&url.pathname==='/cardano-preview/escrow'){
+    try{return await cardanoEscrow(url);}catch{console.error('Cardano preview provider unavailable or inconsistent');return reply(502,{error:'Cardano preview service unavailable or inconsistent'});}
   }
   if(req.method==='POST'&&url.pathname==='/offers'){
     const d=await body(req),k=keys(d);
@@ -131,7 +155,7 @@ async function api(req,env){
 export default {async fetch(req,env){
   try{
     const url=new URL(req.url);
-    if(url.pathname==='/health'||url.pathname==='/offers'||url.pathname.startsWith('/offers/')||url.pathname==='/bitcoin-testnet4/escrow')return await api(req,env);
+    if(url.pathname==='/health'||url.pathname==='/offers'||url.pathname.startsWith('/offers/')||url.pathname==='/bitcoin-testnet4/escrow'||url.pathname==='/cardano-preview/escrow')return await api(req,env);
     if(req.method!=='GET'&&req.method!=='HEAD')return reply(404,{error:'not found'});
     const result=await env.ASSETS.fetch(req),h=new Headers(result.headers);
     h.set('cache-control','no-store');h.set('x-content-type-options','nosniff');h.set('referrer-policy','no-referrer');
@@ -145,7 +169,8 @@ export default {async fetch(req,env){
         .on('main > aside',{element(e){e.setInnerContent('Testnet offer preview. Offers and messages do not lock assets or execute swaps. Wallet execution and recovery are still being built.');}})
         .on('#pair-check',{element(e){e.setAttribute('hidden','');}})
         .on('#sepolia-section',{element(e){e.removeAttribute('hidden');}})
-        .on('#bitcoin-testnet-section',{element(e){e.removeAttribute('hidden');}});
+        .on('#bitcoin-testnet-section',{element(e){e.removeAttribute('hidden');}})
+        .on('#cardano-preview-section',{element(e){e.removeAttribute('hidden');}});
       for(const id of hidden)rewrite=rewrite.on(`section[aria-labelledby="${id}"]`,{element(e){e.setAttribute('hidden','');}});
       response=rewrite.transform(response);
     }

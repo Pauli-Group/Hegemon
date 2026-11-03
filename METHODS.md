@@ -2877,6 +2877,8 @@ The hosted Sepolia checker passed positive and negative provider tests and a Chr
 
 The hosted Bitcoin testnet4 check matches the P2WSH output reconstructed from a Core-compatible fixture vector and rejects changed values, wrong networks, spent outputs and insufficient confirmation. A Cloudflare canary and Chromium rejected the actual spent BTC/ETH funding output and an unconfirmed BTC/Cardano funding output. Its successful unspent case currently uses a mocked provider snapshot and must be repeated against the public chain after a fixture confirms. The Worker's local runtime could not reach the external Bitcoin provider in this environment; the deployed Cloudflare canary did reach it.
 
+The Cardano preview checker compares JSON and CBOR datum fields and an exact ADA/native-asset bundle. Its pinned validator address matched freshly compiled Aiken output. Unit and browser fixtures accepted a matching unspent output, and the deployed canary's Koios-backed browser rejected an actual spent Cardano NFT escrow. A matching unspent public output still needs a hosted end-to-end check once the pending BTC/Cardano funding is available. Neither the indexer data nor test confirmation thresholds establish finality.
+
 
 ## Local swap deadline watch and desktop entry
 
