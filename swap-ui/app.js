@@ -3,6 +3,7 @@ import {newMessageKey,encryptMessage,decryptMessage} from './crypto.mjs';
 import {createInbox,inboxPrivateKey,inboxFingerprint,sealPublicSession,openPublicSession,parsePublicSession} from './public-inbox.mjs';
 import {verifyTokenEscrow,verifyEtherEscrow} from './ethereum-escrow.mjs';
 import {verifySepoliaEscrow} from './sepolia-verifier.mjs';
+import {deploySepoliaEscrow,tokenSepoliaStep,refundSepoliaEscrow} from './sepolia-actions.mjs';
 import {verifyBitcoinTestnetEscrow} from './bitcoin-testnet-verifier.mjs';
 import {verifyCardanoPreviewEscrow} from './cardano-preview-verifier.mjs';
 import {submitLocalEscrowDeployment,submitLocalTokenFundingStep,submitLocalEscrowRefund,submitLocalEscrowClaim,observeLocalEthereumClaim} from './ethereum-actions.mjs';
@@ -48,6 +49,24 @@ sepoliaForm.addEventListener('submit',async event=>{event.preventDefault();
   msg($('sepolia-status'),'Matched funded and unspent Sepolia escrow at block '+BigInt(result.blockNumber).toString()+'. This checks only the Ethereum leg and trusts your wallet provider.');
  }catch(e){msg($('sepolia-status'),e.message,true);}
 });
+const sepoliaActionForm=$('sepolia-action-form');let sepoliaActionBusy=false;
+function toggleSepoliaActionFields(){const kind=sepoliaActionForm.elements.kind.value,native=kind==='eth';for(const name of ['token','tokenId']){sepoliaActionForm.elements[name].disabled=native;sepoliaActionForm.elements[name].required=!native;}$('sepolia-approve').hidden=native;$('sepolia-fund').hidden=native;$('sepolia-revoke').hidden=kind!=='2';}
+sepoliaActionForm.elements.kind.addEventListener('change',toggleSepoliaActionFields);toggleSepoliaActionFields();
+async function sepoliaAction(operation){
+ if(sepoliaActionBusy)return;
+ try{if(!sepoliaActionForm.reportValidity())return;if(!activeEthereumProvider)throw Error('Connect an Ethereum wallet first.');
+  const data=new FormData(sepoliaActionForm),terms={};for(const name of ['kind','contract','token','tokenId','amount','hashlock','claimant','refundee','expiry'])terms[name]=String(data.get(name)||'').trim();
+  if(operation!=='deploy'&&!/^0x[0-9a-fA-F]{40}$/.test(terms.contract))throw Error('Enter the deployed escrow address.');
+  const provider=activeEthereumProvider,guarded={request:args=>{if(provider!==activeEthereumProvider)throw Error('Wallet changed. Reconnect and check wallet history before retrying.');return provider.request(args);}};
+  sepoliaActionBusy=true;for(const button of sepoliaActionForm.querySelectorAll('button'))button.disabled=true;$('sepolia-action-result').textContent='';msg($('sepolia-action-status'),'Checking Sepolia and requesting wallet approval.');
+  const response=await fetch(terms.kind==='eth'?'/ether-escrow-template.json':'/token-escrow-template.json');if(!response.ok)throw Error('Escrow template unavailable.');const template=await response.json();
+  const action=()=>operation==='deploy'?deploySepoliaEscrow(guarded,template,terms):operation==='refund'?refundSepoliaEscrow(guarded,template,terms):tokenSepoliaStep(guarded,template,terms,operation);
+  const {result,warning}=await recordedAction('ethereum',operation,terms,action);$('sepolia-action-result').textContent=JSON.stringify(result,null,2);
+  msg($('sepolia-action-status'),warning||(operation==='deploy'&&terms.kind!=='eth'?'Deployment submitted. Check its receipt, then approve and fund the token escrow.':'Transaction submitted. Check its receipt and confirmations.'),!!warning);
+ }catch(e){msg($('sepolia-action-status'),e.message,true);}finally{sepoliaActionBusy=false;for(const button of sepoliaActionForm.querySelectorAll('button'))button.disabled=false;}
+}
+sepoliaActionForm.addEventListener('submit',event=>{event.preventDefault();sepoliaAction('deploy');});
+for(const operation of ['approve','fund','revoke','refund'])$('sepolia-'+operation).addEventListener('click',()=>sepoliaAction(operation));
 async function readBitcoinTestnet(txid,vout){const response=await fetch('/bitcoin-testnet4/escrow?'+new URLSearchParams({txid,vout:String(vout)}));const value=await response.json();if(!response.ok)throw Error(value.error||'Bitcoin testnet service unavailable.');return value;}
 async function readCardanoPreview(outref){const response=await fetch('/cardano-preview/escrow?'+new URLSearchParams({outref}));const value=await response.json();if(!response.ok)throw Error(value.error||'Cardano preview service unavailable.');return value;}
 $('bitcoin-testnet-form').addEventListener('submit',async event=>{event.preventDefault();

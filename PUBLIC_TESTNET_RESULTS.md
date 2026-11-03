@@ -62,3 +62,5 @@ The separate Bitcoin refund funding output was confirmed in transaction `1e8a4ff
 ## Hosted Sepolia verification fixture
 
 A temporary native ETH escrow funded in transaction `e982e20a759719a6b8ae05d0fd308e6d0c0ac731599992229bc7cba8687a4380` at `0x2e30a4a829edcd7aae3580b1ed77ed6d009c883f` was matched by the hosted read-only verifier through a Chromium test wallet adapter backed by public Sepolia RPC. The browser made no transaction request. Refund transaction `f32252cecebaf95c5a247c8fe056e193a26c091abeda829c7d5f38b3373d833d` later confirmed, and the escrow balance was zero. This is a verification fixture, not a two-party swap.
+
+The hosted manual-action form subsequently requested one wallet transaction through an injected disposable test signer, which independently checked the terms and submitted confirmed Sepolia funding transaction `fb803ab4b1e9e68ca90804e7f97a1c2036b341b5e8dfb58fe77c11db1cfe6bb8` for escrow `0x25b3e3f95ccd58ba022e6c00271f8a1f7cf4737d`. Its separate test fixture is waiting for its refund deadline. This exercised the browser action path, but not a real browser wallet extension or a complete swap.

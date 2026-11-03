@@ -12,6 +12,8 @@ This living plan follows `.agent/PLANS.md`. It records the work needed for two u
 - [x] Add a read-only hosted Cardano preview escrow verifier and check the confirmed, unspent ADA leg of that public swap.
 - [x] Add read-only hosted pair comparison for Ethereum, Bitcoin and Cardano, including exact offer assets and hashlock; validate it with mocked browser snapshots. This does not authorize claims or establish safe deadlines.
 - [x] Recheck the confirmed public BTC/ADA escrows against a hosted offer and common hashlock. The actual swap claims remain in progress.
+- [ ] Add public wallet and transaction integrations (completed: manual Sepolia deploy, token approval/funding, ERC-1155 revocation and refund; remaining: actual wallet-extension qualification, claims with full recovery and the other chains).
+- [ ] Refund the disposable browser-originated Sepolia escrow after expiry and record confirmation; funding transaction `fb803ab4b1e9e68ca90804e7f97a1c2036b341b5e8dfb58fe77c11db1cfe6bb8` is confirmed.
 - [ ] Complete public Bitcoin/Cardano, Bitcoin/ERC-20, Bitcoin/Cardano-token and Bitcoin refund cases; record transaction identifiers and recovery outcomes.
 - [ ] Determine public Hegemon testnet identity, available remote or checkpoint-backed wallet access and current private-spend support; arrange test HGN and execute Hegemon swaps where possible.
 - [ ] Obtain suitable persistent storage and outbound TCP access to the release seed nodes before starting a public Hegemon node. Inspection found 243 MB free on the persistent workspace, no TCP destinations configured, and only memory-backed temporary storage; the current chain size is not known.

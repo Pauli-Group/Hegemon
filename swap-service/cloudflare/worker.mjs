@@ -162,14 +162,16 @@ export default {async fetch(req,env){
     h.set('content-security-policy',"default-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     let response=new Response(result.body,{status:result.status,headers:h});
     if(url.pathname==='/'||url.pathname==='/index.html'){
-      const hidden=['verify-title','companion-title','ethereum-actions-title','bitcoin-title','bitcoin-actions-title','cardano-title','cardano-actions-title','hegemon-title','hegemon-actions-title','action-journal-title','vault-title','watch-title'];
+      const hidden=['verify-title','companion-title','ethereum-actions-title','bitcoin-title','bitcoin-actions-title','cardano-title','cardano-actions-title','hegemon-title','hegemon-actions-title','watch-title'];
       let rewrite=new HTMLRewriter()
         .on('html',{element(e){e.setAttribute('data-hosted-testnet','');}})
         .on('title',{element(e){e.setInnerContent('Hegemon Swap · Testnet offer preview');}})
         .on('header .eyebrow',{element(e){e.setInnerContent('Hegemon · testnet offer preview');}})
-        .on('main > aside',{element(e){e.setInnerContent('Testnet offer preview. Offers and messages do not lock assets or execute swaps. Wallet execution and recovery are still being built.');}})
+        .on('main > aside',{element(e){e.setInnerContent('Testnet preview. Manual Sepolia escrow actions are available; complete swaps and recovery are still being built.');}})
+        .on('#vault-description',{element(e){e.setInnerContent('Create a random secret and its public hashlock locally. Export the encrypted backup and protect its separate passphrase. This backup stores the secret only, not wallet keys or the complete swap.');}})
         .on('#pair-check',{element(e){e.setAttribute('hidden','');}})
         .on('#sepolia-section',{element(e){e.removeAttribute('hidden');}})
+        .on('#sepolia-action-section',{element(e){e.removeAttribute('hidden');}})
         .on('#bitcoin-testnet-section',{element(e){e.removeAttribute('hidden');}})
         .on('#cardano-preview-section',{element(e){e.removeAttribute('hidden');}});
       for(const id of hidden)rewrite=rewrite.on(`section[aria-labelledby="${id}"]`,{element(e){e.setAttribute('hidden','');}});

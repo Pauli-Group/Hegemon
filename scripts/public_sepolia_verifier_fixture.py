@@ -24,8 +24,9 @@ def initialize(root):
     state={'version':1,'scenario':'sepolia-ui-fixture','phase':'deploy','hashlock':hashlib.sha256(secrets.token_bytes(32)).hexdigest(),'refundee':alice,'claimant':bob,'amount':str(AMOUNT)}
     save(work,state,True);return {'phase':'deploy'}
 
-def advance(root):
-    root=_directory(root);work=_directory(root/'sepolia-ui-fixture');s=json.loads((work/'state.json').read_text());phase=s.get('phase')
+def advance(root,fixture='sepolia-ui-fixture'):
+    if fixture not in ('sepolia-ui-fixture','sepolia-ui-action-fixture'):raise ValueError('Invalid fixture name')
+    root=_directory(root);work=_directory(root/fixture);s=json.loads((work/'state.json').read_text());phase=s.get('phase')
     if s.get('version')!=1 or s.get('scenario')!='sepolia-ui-fixture' or not isinstance(phase,str):raise ValueError('Invalid fixture state')
     if phase.endswith('_inflight'):raise ValueError('Uncertain fixture submission: inspect its journal and chain')
     _,alice=load_test_wallet(root/'alice/ethereum-sepolia.key');_,bob=load_test_wallet(root/'bob/ethereum-sepolia.key')
