@@ -13,13 +13,15 @@ This living plan follows `.agent/PLANS.md`. It records the work needed for two u
 - [x] Add read-only hosted pair comparison for Ethereum, Bitcoin and Cardano, including exact offer assets and hashlock; validate it with mocked browser snapshots. This does not authorize claims or establish safe deadlines.
 - [x] Recheck the confirmed public BTC/ADA escrows against a hosted offer and common hashlock. The actual swap claims remain in progress.
 - [ ] Add public wallet and transaction integrations (completed: manual Sepolia deploy, token approval/funding, ERC-1155 revocation and refund; remaining: actual wallet-extension qualification, claims with full recovery and the other chains).
-- [ ] Refund the disposable browser-originated Sepolia escrow after expiry and record confirmation; funding transaction `fb803ab4b1e9e68ca90804e7f97a1c2036b341b5e8dfb58fe77c11db1cfe6bb8` is confirmed.
+- [x] Refund the disposable browser-originated Sepolia escrow after expiry and record confirmation; refund transaction `94f5bfa945ab4fbecea24a08b54b5f87c58c98ea00c437d43f892981a03fdca7` succeeded and the escrow balance was zero.
 - [ ] Complete public Bitcoin/Cardano, Bitcoin/ERC-20, Bitcoin/Cardano-token and Bitcoin refund cases; record transaction identifiers and recovery outcomes.
 - [ ] Determine public Hegemon testnet identity, available remote or checkpoint-backed wallet access and current private-spend support; arrange test HGN and execute Hegemon swaps where possible.
 - [x] Identify the public Hegemon seed and read-only explorer and prepare a tested, read-only check for an authorized private wallet-RPC tunnel. Neither the seed nor the explorer supplies a documented wallet submission endpoint.
 - [ ] Obtain suitable persistent storage and outbound TCP access to the release seed nodes before starting a public Hegemon node. Inspection found 243 MB free on the persistent workspace, no TCP destinations configured, and only memory-backed temporary storage; the current chain size is not known.
 - [ ] Add wallet and transaction integrations for public testnets, a guided two-party swap workflow, durable recovery and chain observation; retain explicit limitations until independently tested.
 - [ ] Test the hosted interface with two real wallet sessions, claims and refunds; document all remaining limitations.
+- [ ] Support an explicitly selected v0.11 pre-mainnet node in the desktop application without reusing legacy chain data; replace the stale 0.10 checkpoint presentation with pinned v0.11 identity checks.
+- [ ] Integrate the actual current Hegemon private-spend wallet and guided swap workflow into the desktop application, with separate user approval, durable recovery and live testnet qualification.
 
 ## Surprises & Discoveries
 
@@ -27,9 +29,13 @@ The public-testnet swap scripts sign locally and journal each uncertain action, 
 
 The public explorer reports the same pre-mainnet genesis, chain ID and v0.11.2 release as the pinned manifest. Its service is read-only; `hegemon.pauli.group:30333` is a P2P seed, not a documented wallet endpoint. The wallet can use a trusted operator's node, but this workspace still needs an authorized private connection. The hosted offer relay does not itself need a full node; future Hegemon users could share a provider instead of each syncing, subject to wallet integration and provider trust.
 
+The desktop app already has local node controls and opens a separately started isolated local swap board, but neither constitutes integrated public-testnet swaps. Its managed node start does not pass the explicit v0.11 `--network pre-mainnet` and `--network-manifest` arguments, and the hard-coded checkpoint hashes at heights 2048 and 4096 differ from the public v0.11 explorer. Existing `~/.hegemon-node-native-010-dev` and other user-selected paths can contain valuable legacy data and must never be silently reused, reset or deleted for v0.11. The renderer advertises an old 0.10 network label and the walletd GUI is not qualified for funded v0.11 sends. Use the current `private-spend` executable and a separate v0.11 wallet, and independently validate genesis and manifest before any real wallet operation.
+
 ## Decision Log
 
 Keep the existing local relay and isolated-chain guards intact. Add a separate Worker and D1 schema for hosted offer discovery, preserving the API while using single SQL statements for reservation and message authorization so concurrent requests cannot cross reservations. The relay must not hold wallet keys or hashlock secrets. A hosted offer board is only an early milestone, not a working four-chain swap. Use the existing Cloudflare account and a new, project-specific testnet D1 database; do not modify unrelated resources.
+
+The user now prefers to run their own Hegemon node and is considering a desktop-first product in which participants run their own Hegemon nodes. Continue using Cloudflare for optional offer discovery; do not treat a shared public wallet RPC as required. Introduce a clearly identified and explicitly selected public pre-mainnet profile in the existing desktop wallet without changing existing profiles or data directories. Keep local isolated-chain functionality and do not claim public Hegemon swaps until a real node, funded private-spend wallet and recovery workflow have passed testnet qualification.
 
 ## Outcomes & Retrospective
 
