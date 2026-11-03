@@ -2867,6 +2867,10 @@ The experimental staged native BTC/ETH testnet rehearsal records an inflight pha
 
 A staged native ETH/ADA claim path completed on public Sepolia and Cardano preview: the Cardano claim revealed the preimage and the Ethereum claim used the value observed from that confirmed Cardano transaction. A Sepolia ERC-20/ERC-721 fixture swap also completed. Exact public transaction identifiers and limitations are in `PUBLIC_TESTNET_RESULTS.md`; other testnet combinations and refunds remain separate checks.
 
+Additional public tests completed a Cardano fungible/NFT same-chain swap, a Sepolia ERC-1155/ERC-20 same-chain swap, cross-chain ERC-721/Cardano NFT and ERC-20/Cardano fungible swaps, and native ETH and ADA refunds. Cardano claim fees were funded from an output containing unrelated tokens; the builder preserved them in change, as confirmed in the test. Public-provider data remains a trust assumption, and outstanding cases are not implied by these results.
+
+The ERC-1155/Cardano fungible test and Sepolia ERC-721 refund also completed. The first NFT refund attempt stopped on a provider error during gas estimation before signing; journal, nonce and escrow checks preceded resumption. Bounded retries apply to read-only provider queries, not transaction submission. Cardano NFT refund and Bitcoin results are still pending.
+
 
 ## Local swap deadline watch and desktop entry
 

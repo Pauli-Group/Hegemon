@@ -121,7 +121,13 @@ def advance(root,case):
         if not stat.S_ISREG(st.st_mode) or st.st_uid!=os.getuid() or stat.S_IMODE(st.st_mode)&0o077:raise ValueError('Secret backup must be private')
         secret=path.read_bytes()
         if len(secret)!=32 or hashlib.sha256(secret).hexdigest()!=state['hashlock']:raise ValueError('Secret backup mismatch')
-        rows=cardano_utxos(actors['ada_claim_address']);fee=_choose(rows,5_000_000,(state['bob_collateral'],))
+        rows=cardano_utxos(actors['ada_claim_address']);reserved=[]
+        refund_state=root/'cardano-refund/state.json'
+        if refund_state.exists():
+            pending_refund=json.loads(refund_state.read_text())
+            if str(pending_refund.get('phase','')).endswith('_inflight'):raise ValueError('Cardano refund submission is uncertain; resolve it before selecting a fee input')
+            if pending_refund.get('phase')!='complete' and pending_refund.get('lock'):reserved.append(pending_refund['lock']+'#1')
+        fee=_choose(rows,5_000_000,(state['bob_collateral'],*reserved))
         if not any(x['outref']==state['bob_collateral'] and not x['assets'] for x in rows):raise ValueError('Cardano collateral unavailable')
         redeemer=work/'redeemer.json';_write(redeemer,(json.dumps({'constructor':0,'fields':[{'bytes':secret.hex()}]})+'\n').encode(),True)
         locked={'outref':state['ada_lock']+'#0','lovelace':ADA_AMOUNT,'assets':{state['ada_asset']:state['ada_quantity']},'script':work/'validator.plutus','redeemer':redeemer,'execution_units':(10_000_000,10_000_000_000)}

@@ -25,5 +25,11 @@ class PublicCardanoVerifyTest(unittest.TestCase):
             changed=dict(row,inline_datum={'value':value,'bytes':'01'})
             with patch('public_cardano_verify.cardano_utxos',return_value=[changed]):
                 with self.assertRaisesRegex(ValueError,'datum bytes'):verify_preview(*args)
+            def expired(url,body=None):
+                if url==CARDANO+'/tip':return b'[{"abs_slot":1001}]'
+                return request(url,body)
+            with patch('public_cardano_verify.request',side_effect=expired):
+                with self.assertRaisesRegex(ValueError,'deadline'):verify_preview(*args)
+                self.assertEqual(verify_preview(*args,allow_expired=True)['confirmations'],2)
 
 if __name__=='__main__':unittest.main()

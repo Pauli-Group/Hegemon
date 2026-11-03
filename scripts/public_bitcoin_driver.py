@@ -38,7 +38,9 @@ def fund(journal,key_file,hashlock,claimant,refund_height,amount):
     key=load_test_key(key_file);refund=key.get_public_key().sec().hex();_,output=contract(hashlock,claimant,refund,refund_height)
     verify_network('bitcoin-testnet4');height=int(request(BITCOIN+'/blocks/tip/height'))
     if type(refund_height) is not int or refund_height-height<6:raise ValueError('Bitcoin refund height too close')
-    fee=_fee();address=script.p2wpkh(key.get_public_key()).address(networks.NETWORKS['test'])
+    fee=_fee()
+    if amount-fee<546:raise ValueError('Bitcoin escrow would be dust after the current spend fee')
+    address=script.p2wpkh(key.get_public_key()).address(networks.NETWORKS['test'])
     coins=bitcoin_utxos(address)
     eligible=[x for x in coins if x['amount_sats']>=amount+fee and (x['amount_sats']==amount+fee or x['amount_sats']>=amount+fee+546)]
     if not eligible:raise ValueError('No confirmed Bitcoin testnet UTxO can fund this escrow')

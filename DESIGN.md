@@ -1907,6 +1907,10 @@ An experimental native BTC/ETH public-testnet scenario records each inflight act
 
 The native ETH/ADA staged claim path has now completed across public Sepolia and Cardano preview using provider-reported chain snapshots, and a same-chain ERC-20/ERC-721 fixture swap completed on Sepolia. These public tests are not a production security review or proof of the remaining cases. Public transaction identifiers and observed payout facts are recorded in `PUBLIC_TESTNET_RESULTS.md`.
 
+Further public tests completed a Cardano fungible/NFT same-chain swap, a Sepolia ERC-1155/ERC-20 same-chain swap, ERC-721/Cardano NFT and ERC-20/Cardano fungible cross-chain swaps, and native ETH and ADA refunds. They use disposable test assets and trusted public services; the ERC-1155 cross-chain case and other scenarios remain separate checks.
+
+The ERC-1155/Cardano fungible cross-chain swap and Sepolia ERC-721 refund have also completed on public testnets. Transient provider failures are retried only for explicitly identified read operations; signed transaction submission is not retried automatically. The remaining Cardano NFT refund and Bitcoin cases are separate checks.
+
 
 ## Local swap deadline watch and desktop entry
 

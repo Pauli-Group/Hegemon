@@ -11,6 +11,7 @@ from embit import ec,networks,script
 from development_atomic_swap_rehearsal import BitcoinRPC
 from local_private_spend_swap import port,stop
 from public_btc_eth_rehearsal import initialize,advance
+from public_bitcoin_refund_rehearsal import initialize as initialize_refund,advance as advance_refund
 from public_swap_journal import prepare
 from public_testnet_probe import BITCOIN
 from test_public_btc_eth_rehearsal import wallets
@@ -64,8 +65,8 @@ class PublicBtcEthIntegrationTest(unittest.TestCase):
                             time.sleep(.05)
                         eth('evm_mine',[])
                     self.assertEqual(ident,record['txid']);return {'txid':ident,'confirmed':False}
-                patches=[patch(name) for name in ('public_btc_eth_rehearsal.verify_network','public_bitcoin_driver.verify_network','public_sepolia_driver.verify_network','public_ethereum_verify.verify_network','public_testnet_observers.verify_network')]
-                patches += [patch(name,side_effect=read) for name in ('public_btc_eth_rehearsal.request','public_bitcoin_driver.request','public_testnet_observers.request')]
+                patches=[patch(name) for name in ('public_btc_eth_rehearsal.verify_network','public_bitcoin_refund_rehearsal.verify_network','public_bitcoin_driver.verify_network','public_sepolia_driver.verify_network','public_ethereum_verify.verify_network','public_testnet_observers.verify_network')]
+                patches += [patch(name,side_effect=read) for name in ('public_btc_eth_rehearsal.request','public_bitcoin_refund_rehearsal.request','public_bitcoin_driver.request','public_testnet_observers.request')]
                 patches += [patch(name,side_effect=eth) for name in ('public_btc_eth_rehearsal.rpc','public_sepolia_driver.rpc','public_ethereum_verify.rpc','public_testnet_observers.rpc')]
                 patches += [patch('public_bitcoin_driver.bitcoin_utxos',return_value=[{'txid':deposit,'vout':index,'amount_sats':10000}]),patch('public_bitcoin_driver.submit',side_effect=broadcast),patch('public_sepolia_driver.submit',side_effect=broadcast)]
                 for item in patches:item.start()
@@ -75,6 +76,15 @@ class PublicBtcEthIntegrationTest(unittest.TestCase):
                         state=advance(root);phases.append(state['phase'])
                         if state['phase']=='complete':break
                     self.assertEqual(phases[-1],'complete');self.assertIn('both_verified',phases);self.assertEqual(btc.call('getconnectioncount'),0)
+                    # The BTC lock's change is a fresh confirmed Alice output.
+                    first=json.loads((root/'btc-eth-state.json').read_text());lock=btc.call('getrawtransaction',first['btc_lock'],True)
+                    change=round(lock['vout'][1]['value']*100_000_000)
+                    with patch('public_bitcoin_driver.bitcoin_utxos',return_value=[{'txid':first['btc_lock'],'vout':1,'amount_sats':change}]):
+                        initialize_refund(root);self.assertEqual(advance_refund(root)['phase'],'lock_submitted');self.assertEqual(advance_refund(root)['phase'],'wait_refund')
+                        self.assertEqual(advance_refund(root)['phase'],'wait_refund')
+                        refund_state=json.loads((root/'bitcoin-refund/state.json').read_text());self.assertTrue(refund_state['early_refund_rejected'])
+                        btc.call('generatetoaddress',refund_state['btc_refund_height']-btc.call('getblockcount'),miner)
+                        self.assertEqual(advance_refund(root)['phase'],'refund_submitted');self.assertEqual(advance_refund(root)['phase'],'complete')
                 finally:
                     for item in reversed(patches):item.stop()
             finally:stop(eth_node);stop(btc_node)

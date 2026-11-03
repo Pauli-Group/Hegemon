@@ -1,5 +1,6 @@
 import json
 import unittest
+import urllib.error
 from unittest.mock import patch
 from public_testnet_probe import probe, BITCOIN_GENESIS, ETHEREUM_GENESIS, BITCOIN, CARDANO
 
@@ -19,6 +20,18 @@ def fake_rpc(method,params):
     return {'eth_chainId':'0xaa36a7','eth_getBlockByNumber':{'hash':ETHEREUM_GENESIS},'eth_blockNumber':'0x10','eth_getBalance':'0x12'}[method]
 
 class PublicTestnetProbeTest(unittest.TestCase):
+    def test_only_read_operations_retry_transient_http_errors(self):
+        from public_testnet_probe import request,ETHEREUM
+        error=urllib.error.HTTPError(ETHEREUM,503,'unavailable',{},None)
+        class Response:
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def read(self,_limit):return b'{}'
+        with patch('public_testnet_probe.time.sleep'),patch('public_testnet_probe.urllib.request.urlopen',side_effect=[error,Response()]) as opened:
+            self.assertEqual(request(ETHEREUM,{'method':'eth_getBalance'}),b'{}');self.assertEqual(opened.call_count,2)
+        with patch('public_testnet_probe.time.sleep'),patch('public_testnet_probe.urllib.request.urlopen',side_effect=error) as opened:
+            with self.assertRaises(urllib.error.HTTPError):request(ETHEREUM,{'method':'eth_sendRawTransaction'})
+            self.assertEqual(opened.call_count,1)
     @patch('public_testnet_probe.rpc',side_effect=fake_rpc)
     @patch('public_testnet_probe.request',side_effect=fake_request)
     def test_checks_networks_and_reports_balances(self,_req,_rpc):

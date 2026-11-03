@@ -9,6 +9,10 @@ from unittest.mock import patch
 from local_private_spend_swap import port,stop
 from public_ethereum_setup import initialize,advance
 from public_samechain_ethereum_rehearsal import initialize as initialize_swap,advance as advance_swap
+from public_ethereum_nft_refund import initialize as initialize_refund,advance as advance_refund
+from public_sepolia_driver import send
+from eth_abi import encode
+from eth_utils import keccak
 from public_swap_journal import prepare
 from test_public_btc_eth_rehearsal import wallets
 
@@ -36,7 +40,7 @@ class PublicEthereumSetupTest(unittest.TestCase):
                         if time.monotonic()>deadline:raise RuntimeError('Local transaction not mined')
                         time.sleep(.05)
                     rpc('evm_mine',[]);self.assertEqual(record['txid'],ident);return {'txid':ident,'confirmed':False}
-                patches=[patch('public_ethereum_setup.verify_network'),patch('public_sepolia_driver.verify_network'),patch('public_btc_eth_rehearsal.verify_network'),patch('public_samechain_ethereum_rehearsal.verify_network'),patch('public_ethereum_token_verify.verify_network'),patch('public_testnet_observers.verify_network'),patch('public_ethereum_setup.rpc',side_effect=rpc),patch('public_sepolia_driver.rpc',side_effect=rpc),patch('public_btc_eth_rehearsal.rpc',side_effect=rpc),patch('public_samechain_ethereum_rehearsal.rpc',side_effect=rpc),patch('public_ethereum_token_verify.rpc',side_effect=rpc),patch('public_testnet_observers.rpc',side_effect=rpc),patch('public_sepolia_driver.submit',side_effect=broadcast)]
+                patches=[patch('public_ethereum_setup.verify_network'),patch('public_sepolia_driver.verify_network'),patch('public_btc_eth_rehearsal.verify_network'),patch('public_samechain_ethereum_rehearsal.verify_network'),patch('public_ethereum_nft_refund.verify_network'),patch('public_ethereum_nft_refund._early_refund_rejected'),patch('public_ethereum_token_verify.verify_network'),patch('public_testnet_observers.verify_network'),patch('public_ethereum_setup.rpc',side_effect=rpc),patch('public_ethereum_nft_refund.rpc',side_effect=rpc),patch('public_sepolia_driver.rpc',side_effect=rpc),patch('public_btc_eth_rehearsal.rpc',side_effect=rpc),patch('public_samechain_ethereum_rehearsal.rpc',side_effect=rpc),patch('public_ethereum_token_verify.rpc',side_effect=rpc),patch('public_testnet_observers.rpc',side_effect=rpc),patch('public_sepolia_driver.submit',side_effect=broadcast)]
                 for item in patches:item.start()
                 try:
                     initialize(root)
@@ -50,6 +54,17 @@ class PublicEthereumSetupTest(unittest.TestCase):
                             result=advance_swap(root,case)
                             if result['phase']=='complete':break
                         self.assertEqual(result['phase'],'complete')
+                    # Emulate the completed cross-chain NFT payout to Bob.
+                    token=json.loads((root/'ethereum-setup/state.json').read_text())['contracts']['erc721']['address'];alice=addresses['alice']['ethereum_sepolia'];bob=addresses['bob']['ethereum_sepolia']
+                    data=keccak(text='safeTransferFrom(address,address,uint256)')[:4]+encode(['address','address','uint256'],[alice,bob,42]);send(root,root/'alice/ethereum-sepolia.key',token,0,data)
+                    (root/'eth-cardano-erc721-nft').mkdir();(root/'eth-cardano-erc721-nft/state.json').write_text('{"phase":"complete"}')
+                    initialize_refund(root)
+                    for _ in range(20):
+                        result=advance_refund(root)
+                        if result['phase']=='wait_refund':
+                            state=json.loads((root/'ethereum-nft-refund/state.json').read_text());rpc('evm_setNextBlockTimestamp',[state['expiry']]);rpc('evm_mine',[])
+                        if result['phase']=='complete':break
+                    self.assertEqual(result['phase'],'complete')
                 finally:
                     for item in reversed(patches):item.stop()
             finally:stop(node)

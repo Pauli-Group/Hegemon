@@ -7,6 +7,8 @@ No private keys, transactions or unrevealed preimages are sent by this program.
 import argparse
 import json
 import re
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -21,8 +23,18 @@ def request(url, body=None):
     data=None if body is None else json.dumps(body,separators=(',',':')).encode()
     headers={'User-Agent':'Mozilla/5.0','Accept':'application/json'}
     if body is not None:headers['Content-Type']='application/json'
-    with urllib.request.urlopen(urllib.request.Request(url,data=data,headers=headers),timeout=20) as response:
-        raw=response.read(4*1024*1024+1)
+    cardano_reads={'/genesis','/tip','/address_info','/address_utxos','/tx_status','/tx_cbor','/tx_info','/cli_protocol_params'}
+    ethereum_reads={'eth_chainId','eth_getBlockByNumber','eth_blockNumber','eth_getBalance','eth_getTransactionCount','eth_maxPriorityFeePerGas','eth_estimateGas','eth_getTransactionReceipt','eth_getTransactionByHash','eth_getCode','eth_call'}
+    retryable=data is None or (url.startswith(CARDANO) and url[len(CARDANO):].split('?',1)[0] in cardano_reads) or (url==ETHEREUM and isinstance(body,dict) and body.get('method') in ethereum_reads)
+    for attempt in range(3 if retryable else 1):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url,data=data,headers=headers),timeout=15) as response:raw=response.read(4*1024*1024+1)
+            break
+        except urllib.error.HTTPError as error:
+            if not retryable or error.code not in (429,500,502,503,504) or attempt==2:raise
+        except (urllib.error.URLError,TimeoutError):
+            if not retryable or attempt==2:raise
+        time.sleep(1<<attempt)
     if len(raw)>4*1024*1024:raise ValueError('Public service response too large')
     return raw
 

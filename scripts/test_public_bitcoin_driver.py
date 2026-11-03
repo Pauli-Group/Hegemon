@@ -24,5 +24,12 @@ class PublicBitcoinDriverTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'not yet eligible'):
                     spend_contract(d,key,'33'*32,0,30000,'44'*32,alice.get_public_key().sec().hex(),bob.get_public_key().sec().hex(),200)
                 sent.assert_not_called()
+    def test_refuses_funding_if_spend_would_be_dust(self):
+        alice=ec.PrivateKey(b'\x11'*32);bob=ec.PrivateKey(b'\x22'*32)
+        with tempfile.TemporaryDirectory() as d:
+            key=Path(d)/'key';key.write_text(bob.secret.hex());os.chmod(key,0o600)
+            with patch('public_bitcoin_driver.verify_network'),patch('public_bitcoin_driver.request',return_value=b'100'),patch('public_bitcoin_driver._fee',return_value=1000),patch('public_bitcoin_driver.submit') as sent:
+                with self.assertRaisesRegex(ValueError,'dust'):fund(d,key,'44'*32,alice.get_public_key().sec().hex(),200,1500)
+                sent.assert_not_called()
 
 if __name__=='__main__':unittest.main()
