@@ -59,6 +59,18 @@ def funding(txid,vout,input_amount,key,output_script,amount,fee):
     return tx
 
 
+def split(txid,vout,input_amount,key,amounts,fee):
+    """Split one wallet output into independently spendable wallet outputs."""
+    key=_key(key);_amount(input_amount);_uint(fee,100000)
+    if not isinstance(amounts,list) or not 2<=len(amounts)<=5:raise ValueError('Invalid split output count')
+    for amount in amounts:_amount(amount)
+    if fee<1 or sum(amounts)+fee!=input_amount:raise ValueError('Split amounts and fee do not match input')
+    pub=key.get_public_key();destination=script.p2wpkh(pub)
+    tx=transaction.Transaction(vin=[_outpoint(txid,vout)],vout=[transaction.TransactionOutput(amount,destination) for amount in amounts])
+    tx.vin[0].witness=transaction.Witness([key.sign(tx.sighash_segwit(0,script.p2pkh(pub),input_amount)).serialize()+b'\x01',pub.sec()])
+    return tx
+
+
 def spend(txid,vout,input_amount,key,witness_script,destination,fee,*,hashlock,claimant,refund,contract_refund_height,preimage=None):
     key=_key(key);_amount(input_amount);_uint(fee,100000)
     if fee<1 or fee>=input_amount:raise ValueError('Invalid Bitcoin fee')

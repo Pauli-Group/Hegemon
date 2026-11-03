@@ -8,7 +8,7 @@ from pathlib import Path
 from embit import ec,networks,script
 from development_atomic_swap_rehearsal import BitcoinRPC
 from local_private_spend_swap import port,stop
-from public_bitcoin_transactions import contract,funding,spend
+from public_bitcoin_transactions import contract,funding,spend,split
 
 
 class PublicBitcoinTransactionsTest(unittest.TestCase):
@@ -30,6 +30,9 @@ class PublicBitcoinTransactionsTest(unittest.TestCase):
                 deposit=rpc.call('sendtoaddress',addr,0.0012,wallet='fixtures');rpc.call('generatetoaddress',1,miner)
                 info=rpc.call('gettransaction',deposit,wallet='fixtures');decoded=rpc.call('getrawtransaction',deposit,True,info['blockhash'])
                 index=next(v['n'] for v in decoded['vout'] if v['scriptPubKey'].get('address')==addr)
+                divided=split(deposit,index,120000,bob,[30000,30000,30000,29000],1000)
+                self.assertTrue(rpc.call('testmempoolaccept',[divided.serialize().hex()])[0]['allowed'])
+                self.assertEqual([v.value for v in divided.vout],[30000,30000,30000,29000])
                 preimage=b'\x44'*32;digest=hashlib.sha256(preimage).hexdigest();height=rpc.call('getblockcount')+5
                 claimant=alice.get_public_key().sec().hex();refund=bob.get_public_key().sec().hex();witness,output=contract(digest,claimant,refund,height)
                 lock=funding(deposit,index,120000,bob,output,60000,1000)
