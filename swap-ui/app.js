@@ -234,7 +234,7 @@ function checkOwnerInbox(id,offer){const known=localStorage.getItem('offer-inbox
 function participantToken(id){return credential(id)||localStorage.getItem('offer-reservation:'+id);}
 function selectOffer(id){location.hash=id;return loadSelected();}
 let chatRenderVersion=0,selectionVersion=0;
-function updateChat(id){$('chat').hidden=!participantToken(id);if(!$('chat').hidden)refreshChat();else chatRenderVersion++;}
+function updateChat(id){$('chat').hidden=!participantToken(id);$('chat-form').querySelector('button').disabled=true;$('chat-form').elements.message.disabled=true;if(!$('chat').hidden)refreshChat();else chatRenderVersion++;}
 async function refreshChat(){const version=++chatRenderVersion,id=currentOffer(),token=participantToken(id);if(!token)return;
  try{const offer=await api('/offers/'+id),{messages}=await api('/offers/'+id+'/messages',{headers:{authorization:'Bearer '+token}});if(version!==chatRenderVersion||id!==currentOffer())return;checkOwnerInbox(id,offer);
   let key=messageKey(id),bound=sessionId(id);const reservation=offer.reservationId;

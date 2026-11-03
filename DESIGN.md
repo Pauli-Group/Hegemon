@@ -1911,6 +1911,8 @@ Further public tests completed a Cardano fungible/NFT same-chain swap, a Sepolia
 
 The ERC-1155/Cardano fungible cross-chain swap, Sepolia ERC-721 refund and Cardano NFT refund have also completed on public testnets. Transient provider failures are retried only for explicitly identified read operations; signed transaction submission is not retried automatically. The staged BTC/ETH public-testnet swap later completed, including a confirmed Bitcoin payout; other Bitcoin scenarios remain separate checks.
 
+The hosted testnet offer preview uses a separate Cloudflare Worker and D1 database, with atomic reservation updates and messages bound to the current reservation. It preserves the local relay's offer interface while hiding local-only wallet and node controls. The hosted page does not execute or recover swaps. A per-IP request budget and bounded opportunistic retention reduce load but do not eliminate distributed abuse or provider cost; the operator can serve modified client code and remains a trust boundary.
+
 
 ## Local swap deadline watch and desktop entry
 

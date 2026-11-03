@@ -2871,6 +2871,8 @@ Additional public tests completed a Cardano fungible/NFT same-chain swap, a Sepo
 
 The ERC-1155/Cardano fungible test and Sepolia ERC-721 and Cardano NFT refunds also completed. The first Ethereum NFT refund attempt stopped on a provider error during gas estimation before signing; journal, nonce and escrow checks preceded resumption. Bounded retries apply to read-only provider queries, not transaction submission. The Bitcoin/ETH swap later completed, including a confirmed payout to the intended Bitcoin recipient. The remaining Bitcoin scenarios are in progress.
 
+The Cloudflare offer-preview Worker was checked with a SQLite-backed unit adapter, Wrangler's local Workers/D1 runtime, concurrent reservation requests, and two real Chromium contexts against the deployed test service. The hosted run created and reserved a test offer, exchanged an encrypted message and closed the offer. An early browser run exposed that the message form could be enabled before the session handshake finished; the board now disables it until the current session check succeeds. This validates offer and message behavior only, not public wallet signing or a complete swap.
+
 
 ## Local swap deadline watch and desktop entry
 

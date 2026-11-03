@@ -1,5 +1,13 @@
 # Local offer relay prototype
 
+## Hosted testnet offer preview
+
+The separate Cloudflare Workers/D1 offer preview is deployed at https://hegemon-swap-testnet.willdoyle422.workers.dev. It supports offers, reservations and encrypted browser messages using the API below. The hosted page hides local-node controls; it does not execute, monitor or recover swaps. The operator supplying browser code can replace it or substitute keys, so participants must authenticate counterparties and must not send wallet keys or swap preimages to the service. A testnet label does not restrict the kinds of offers a visitor can type.
+
+The Worker source and schema are `swap-service/cloudflare/worker.mjs` and `swap-service/cloudflare/schema.sql`. `swap-service/cloudflare/wrangler.jsonc` binds the dedicated `hegemon-swap-testnet` D1 database (ID `bc34dcb0-7983-4413-98c9-a08ba6dce311`). The database was created for this preview; do not execute destructive changes without a backup. Apply the idempotent schema with `node /workspace/chain-tools/cloudflare-cli/node_modules/wrangler/bin/wrangler.js d1 execute hegemon-swap-testnet --remote --config swap-service/cloudflare/wrangler.jsonc --file swap-service/cloudflare/schema.sql`, then deploy with the same executable and `deploy --config swap-service/cloudflare/wrangler.jsonc`. The D1 binding is account-specific. `node --test swap-service/cloudflare/worker.test.mjs` checks the hosted API with an in-memory SQLite adapter; `wrangler dev --local` checks it in the Workers runtime. Do not assume a successful deployment proves real wallet execution.
+
+Reservations are claimed by an atomic database update and messages are bound to the active reservation. A per-IP, per-minute request budget reduces accidental load but does not prevent distributed abuse. Cloudflare supplies the IP address; the Worker stores a time-windowed hash rather than the raw address. Opportunistic cleanup removes old quota entries and messages and offers seven days after offer expiry. There is no guarantee cleanup runs while the service is idle. Monitor D1 usage and Cloudflare billing/limits; the free tier and access availability can change. Avoid including sensitive information in offers.
+
 This is a local, noncustodial offer directory and opaque message relay. It has no wallet, keys, on-chain validation, matching engine, or swap execution. Offers and reservation credentials do not authorize any transaction. Clients must verify all chain data, maintain their own recovery records, and never send private keys or hashlock preimages to this service.
 
 Run with Node.js 24 or later from the repository root:
