@@ -46,3 +46,19 @@ test('rejects invalid tokens, cross-origin actions, oversized bodies and excessi
   let status;for(let i=0;i<45;i++)[status]=await call('/offers/'+a.id+'/reserve',{method:'POST',ip:'192.0.2.9'});
   assert.equal(status,429);db.raw.close();
 });
+
+test('Bitcoin testnet snapshot checks the fixed network, canonical block and current outspend',async()=>{
+  const db=database(),call=client(db),original=globalThis.fetch,txid='1'.repeat(64),block='2'.repeat(64),genesis='00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043';let outspends=0;
+  globalThis.fetch=async input=>{
+    const url=String(input);assert.ok(url.startsWith('https://blockstream.info/testnet4/api/'));
+    if(url.endsWith('/block-height/0'))return new Response(genesis);
+    if(url.endsWith('/blocks/tip/height'))return new Response('100');
+    if(url.endsWith('/block-height/99'))return new Response(block);
+    if(url.endsWith('/outspend/0')){outspends++;return Response.json({spent:false});}
+    if(url.endsWith('/tx/'+txid))return Response.json({txid,status:{confirmed:true,block_height:99,block_hash:block},vout:[{value:1500,scriptpubkey:'0020'+'a'.repeat(64)}]});
+    throw Error('unexpected provider request');
+  };
+  try{const [status,s]=await call('/bitcoin-testnet4/escrow?txid='+txid+'&vout=0');assert.equal(status,200);assert.equal(s.confirmations,2);assert.equal(s.spent,false);assert.equal(outspends,2);
+    assert.equal((await call('/bitcoin-testnet4/escrow?txid='+txid+'&vout=0&host=example.com'))[0],400);
+  }finally{globalThis.fetch=original;db.raw.close();}
+});

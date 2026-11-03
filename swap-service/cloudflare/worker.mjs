@@ -35,6 +35,32 @@ async function quota(req,env,t){
   const row=await env.DB.prepare('INSERT INTO quotas(key,window,count) VALUES(?,?,1) ON CONFLICT(key) DO UPDATE SET count=count+1 WHERE count<? RETURNING count').bind(key,window,limit).first();
   return !!row;
 }
+const BITCOIN_API='https://blockstream.info/testnet4/api';
+const BITCOIN_GENESIS='00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043';
+async function bitcoinRead(path){
+  const response=await fetch(BITCOIN_API+path,{headers:{accept:'application/json'},signal:AbortSignal.timeout(12000)});
+  if(!response.ok||!response.body)throw Error('Bitcoin testnet provider unavailable');
+  const reader=response.body.getReader(),chunks=[];let size=0;
+  for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>1024*1024){await reader.cancel();throw Error('Bitcoin provider response too large');}chunks.push(value);}
+  const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
+  return new TextDecoder().decode(bytes);
+}
+async function bitcoinEscrow(url){
+  const txid=url.searchParams.get('txid'),voutText=url.searchParams.get('vout');
+  if(!hex.test(txid||'')||!/^(0|[1-9][0-9]{0,4})$/.test(voutText||'')||url.searchParams.size!==2)return reply(400,{error:'invalid Bitcoin output'});
+  const vout=Number(voutText);
+  const [genesis,tipText,txText,outText]=await Promise.all([bitcoinRead('/block-height/0'),bitcoinRead('/blocks/tip/height'),bitcoinRead('/tx/'+txid),bitcoinRead('/tx/'+txid+'/outspend/'+vout)]);
+  const tip=Number(tipText.trim()),tx=JSON.parse(txText),outspend=JSON.parse(outText),status=tx?.status;
+  if(genesis.trim()!==BITCOIN_GENESIS||!Number.isSafeInteger(tip)||tip<0||tx?.txid!==txid||!Array.isArray(tx.vout)||vout>=tx.vout.length||typeof outspend.spent!=='boolean')throw Error('Bitcoin provider returned inconsistent data');
+  const output=tx.vout[vout];
+  if(!Number.isSafeInteger(output.value)||output.value<0||typeof output.scriptpubkey!=='string'||!/^[0-9a-f]*$/.test(output.scriptpubkey))throw Error('Invalid Bitcoin output');
+  if(status?.confirmed!==true)return reply(200,{genesis:BITCOIN_GENESIS,txid,vout,tip,confirmed:false,spent:outspend.spent,amount_sats:output.value,script:output.scriptpubkey});
+  const height=status.block_height,hash=status.block_hash;
+  if(!Number.isSafeInteger(height)||height<0||height>tip||!hex.test(hash||''))throw Error('Invalid Bitcoin confirmation');
+  const [canonical,again]=await Promise.all([bitcoinRead('/block-height/'+height),bitcoinRead('/tx/'+txid+'/outspend/'+vout)]);
+  if(canonical.trim()!==hash||JSON.parse(again).spent!==outspend.spent)throw Error('Bitcoin chain or output changed');
+  return reply(200,{genesis:BITCOIN_GENESIS,txid,vout,tip,confirmed:true,confirmations:tip-height+1,block_height:height,block_hash:hash,spent:outspend.spent,amount_sats:output.value,script:output.scriptpubkey});
+}
 async function api(req,env){
   const url=new URL(req.url),t=now(),db=env.DB,origin=req.headers.get('origin');
   if(origin&&origin!==url.origin)return reply(403,{error:'cross-origin request denied'});
@@ -50,6 +76,9 @@ async function api(req,env){
   }
   const match=url.pathname.match(/^\/offers\/([0-9a-f]{64})(?:\/(reserve|messages|close))?$/);
   if(req.method==='GET'&&url.pathname==='/health')return reply(200,{status:'ok'});
+  if(req.method==='GET'&&url.pathname==='/bitcoin-testnet4/escrow'){
+    try{return await bitcoinEscrow(url);}catch{console.error('Bitcoin testnet provider unavailable or inconsistent');return reply(502,{error:'Bitcoin testnet service unavailable or inconsistent'});}
+  }
   if(req.method==='POST'&&url.pathname==='/offers'){
     const d=await body(req),k=keys(d);
     if(!['expires,give,receive,visibility','expires,give,ownerPublicKey,receive,visibility'].includes(k)||('ownerPublicKey'in d&&(typeof d.ownerPublicKey!=='string'||!/^04[0-9a-f]{128}$/.test(d.ownerPublicKey)))||!asset(d.give)||!asset(d.receive)||!['private','public'].includes(d.visibility)||!Number.isSafeInteger(d.expires)||d.expires<=t+60||d.expires>t+604800)return reply(400,{error:'invalid offer'});
@@ -102,7 +131,7 @@ async function api(req,env){
 export default {async fetch(req,env){
   try{
     const url=new URL(req.url);
-    if(url.pathname==='/health'||url.pathname==='/offers'||url.pathname.startsWith('/offers/'))return await api(req,env);
+    if(url.pathname==='/health'||url.pathname==='/offers'||url.pathname.startsWith('/offers/')||url.pathname==='/bitcoin-testnet4/escrow')return await api(req,env);
     if(req.method!=='GET'&&req.method!=='HEAD')return reply(404,{error:'not found'});
     const result=await env.ASSETS.fetch(req),h=new Headers(result.headers);
     h.set('cache-control','no-store');h.set('x-content-type-options','nosniff');h.set('referrer-policy','no-referrer');
@@ -115,7 +144,8 @@ export default {async fetch(req,env){
         .on('header .eyebrow',{element(e){e.setInnerContent('Hegemon · testnet offer preview');}})
         .on('main > aside',{element(e){e.setInnerContent('Testnet offer preview. Offers and messages do not lock assets or execute swaps. Wallet execution and recovery are still being built.');}})
         .on('#pair-check',{element(e){e.setAttribute('hidden','');}})
-        .on('#sepolia-section',{element(e){e.removeAttribute('hidden');}});
+        .on('#sepolia-section',{element(e){e.removeAttribute('hidden');}})
+        .on('#bitcoin-testnet-section',{element(e){e.removeAttribute('hidden');}});
       for(const id of hidden)rewrite=rewrite.on(`section[aria-labelledby="${id}"]`,{element(e){e.setAttribute('hidden','');}});
       response=rewrite.transform(response);
     }

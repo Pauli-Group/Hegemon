@@ -1915,6 +1915,8 @@ The hosted testnet offer preview uses a separate Cloudflare Worker and D1 databa
 
 The hosted preview offers read-only Sepolia escrow verification through the connected Ethereum wallet provider. It pins Sepolia's chain ID and genesis, reconstructs the expected runtime from the bundled artifact and agreed terms, and checks confirmed and current funded/unspent state. A short bounded retry handles changed heads and transient provider indexing lag without sending transactions. It does not authenticate the provider, verify the other leg or determine safe swap deadlines.
 
+The preview also offers read-only Bitcoin testnet4 escrow verification. A fixed Worker endpoint queries the Blockstream testnet4 indexer for the network genesis, transaction, canonical block and outspend; the browser independently reconstructs the SHA-256 HTLC P2WSH script from the agreed keys, hash and height. This trusts the indexer and Worker and uses experimental confirmation and timeout thresholds; it is not a Bitcoin light client or a cross-chain claim gate.
+
 
 ## Local swap deadline watch and desktop entry
 

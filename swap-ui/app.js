@@ -3,6 +3,7 @@ import {newMessageKey,encryptMessage,decryptMessage} from './crypto.mjs';
 import {createInbox,inboxPrivateKey,inboxFingerprint,sealPublicSession,openPublicSession,parsePublicSession} from './public-inbox.mjs';
 import {verifyTokenEscrow,verifyEtherEscrow} from './ethereum-escrow.mjs';
 import {verifySepoliaEscrow} from './sepolia-verifier.mjs';
+import {verifyBitcoinTestnetEscrow} from './bitcoin-testnet-verifier.mjs';
 import {submitLocalEscrowDeployment,submitLocalTokenFundingStep,submitLocalEscrowRefund,submitLocalEscrowClaim,observeLocalEthereumClaim} from './ethereum-actions.mjs';
 import {validateWatch,evaluateWatch} from './deadlines.mjs';
 import {createRecovery,encryptRecovery,unlockRecovery,validateRecoveryEnvelope} from './recovery.mjs';
@@ -44,6 +45,13 @@ sepoliaForm.addEventListener('submit',async event=>{event.preventDefault();
   const result=await verifySepoliaEscrow(provider,await response.json(),terms);if(provider!==activeEthereumProvider)throw Error('Wallet changed during verification. Reconnect and retry.');
   msg($('sepolia-status'),'Matched funded and unspent Sepolia escrow at block '+BigInt(result.blockNumber).toString()+'. This checks only the Ethereum leg and trusts your wallet provider.');
  }catch(e){msg($('sepolia-status'),e.message,true);}
+});
+$('bitcoin-testnet-form').addEventListener('submit',async event=>{event.preventDefault();
+ try{const data=new FormData(event.currentTarget),terms={};for(const name of ['txid','hashlock','claimant_key','refund_key'])terms[name]=String(data.get(name)||'').trim();
+  for(const name of ['vout','amount_sats','refund_height'])terms[name]=Number(data.get(name));
+  const read=async(txid,vout)=>{const response=await fetch('/bitcoin-testnet4/escrow?'+new URLSearchParams({txid,vout:String(vout)}));const value=await response.json();if(!response.ok)throw Error(value.error||'Bitcoin testnet service unavailable.');return value;};
+  const result=await verifyBitcoinTestnetEscrow(terms,read);msg($('bitcoin-testnet-status'),'Matched unspent Bitcoin testnet4 escrow with '+result.confirmations+' confirmations at height '+result.block_height+'. This checks only the Bitcoin leg and trusts the public service.');
+ }catch(e){msg($('bitcoin-testnet-status'),e.message,true);}
 });
 const verifyForm=$('verify-form');
 function toggleTokenFields(){const native=verifyForm.elements.kind.value==='eth';for(const name of ['token','tokenId']){verifyForm.elements[name].disabled=native;verifyForm.elements[name].required=!native;}}

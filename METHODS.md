@@ -2875,6 +2875,8 @@ The Cloudflare offer-preview Worker was checked with a SQLite-backed unit adapte
 
 The hosted Sepolia checker passed positive and negative provider tests and a Chromium check against a funded real Sepolia escrow, using an injected test wallet provider backed by a public RPC. No browser transaction was requested. The fixture records its submission privately and is scheduled for a refund after expiry; its funding ID is `e982e20a759719a6b8ae05d0fd308e6d0c0ac731599992229bc7cba8687a4380`. The check remains read-only and does not establish a two-chain swap.
 
+The hosted Bitcoin testnet4 check matches the P2WSH output reconstructed from a Core-compatible fixture vector and rejects changed values, wrong networks, spent outputs and insufficient confirmation. A Cloudflare canary and Chromium rejected the actual spent BTC/ETH funding output and an unconfirmed BTC/Cardano funding output. Its successful unspent case currently uses a mocked provider snapshot and must be repeated against the public chain after a fixture confirms. The Worker's local runtime could not reach the external Bitcoin provider in this environment; the deployed Cloudflare canary did reach it.
+
 
 ## Local swap deadline watch and desktop entry
 
