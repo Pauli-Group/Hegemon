@@ -18,7 +18,8 @@ This living plan follows `.agent/PLANS.md`. The aim is to repeat the Bitcoin, Et
 - [x] (2026-11-03) Completed a Cardano preview native-ADA refund and public cross-chain ERC-721/NFT and ERC-20/Cardano fungible-token swaps. The Cardano funding/claim and Ethereum claim transaction IDs are recorded in `PUBLIC_TESTNET_RESULTS.md`.
 - [x] (2026-11-03) Completed the ERC-1155/Cardano native-token swap and the Sepolia ERC-721 refund; verified recipients and recorded the public transaction identifiers.
 - [x] Finish the Cardano preview NFT refund and check Bitcoin testnet4 funding.
-- [ ] Confirm the submitted BTC/ETH escrow and complete the swap; execute further Bitcoin cases as funds permit.
+- [x] Confirm the BTC/ETH escrow and complete the swap.
+- [ ] Complete the resumed Bitcoin/Cardano, Bitcoin/ERC-20, Bitcoin/Cardano token and Bitcoin refund cases.
 - [ ] Add independently checked remote public-testnet adapters and safe transaction building and submission, without weakening local companion safeguards.
 - [ ] Exercise BTC/ETH, BTC/Cardano, ETH/Cardano and both Ethereum and Cardano same-chain paths, including applicable fungible and NFT fixtures, claims, refunds and failure cases, subject to testnet funds, network confirmation times and service availability.
 - [ ] Record public transaction identifiers and observations, run regression tests, update architecture documentation and commit the work.
@@ -88,3 +89,5 @@ Revision 2026-11-03: the Cardano NFT refund completed. The Bitcoin testnet4 wall
 Revision 2026-11-03: the BTC/ETH Bitcoin lock confirmed, the Sepolia leg was claimed, and the Bitcoin claim was submitted but remains unconfirmed. Another 50,000 sats arrived with one confirmation. A journaled wallet split was prepared and its signed transaction passed local Bitcoin Core mempool acceptance; it awaits the funding's second confirmation before submission. Subsequent scenarios still require independent confirmation and payout checks.
 
 Revision 2026-11-03: added a bounded-action runner for the four prepared Bitcoin cases. It waits for confirmed split outputs, funds at most one new case per pass, serializes the shared Cardano wallets, and stops on uncertain actions. Unit tests exercise scheduling and refusal of inflight states. The runner is session-bound, not a durable service; its existence does not establish that any remaining public swap has completed.
+
+Revision 2026-11-03: the BTC/ETH claim confirmed and paid the intended Bitcoin recipient. The wallet split also confirmed. The previous runner was no longer running, and all four split inputs were verified unspent before restarting it; the BTC/Cardano lock has been submitted. No other Bitcoin cases are reported complete.

@@ -2869,7 +2869,7 @@ A staged native ETH/ADA claim path completed on public Sepolia and Cardano previ
 
 Additional public tests completed a Cardano fungible/NFT same-chain swap, a Sepolia ERC-1155/ERC-20 same-chain swap, cross-chain ERC-721/Cardano NFT and ERC-20/Cardano fungible swaps, and native ETH and ADA refunds. Cardano claim fees were funded from an output containing unrelated tokens; the builder preserved them in change, as confirmed in the test. Public-provider data remains a trust assumption, and outstanding cases are not implied by these results.
 
-The ERC-1155/Cardano fungible test and Sepolia ERC-721 and Cardano NFT refunds also completed. The first Ethereum NFT refund attempt stopped on a provider error during gas estimation before signing; journal, nonce and escrow checks preceded resumption. Bounded retries apply to read-only provider queries, not transaction submission. A Bitcoin/ETH funding transaction has been submitted and the swap remains pending.
+The ERC-1155/Cardano fungible test and Sepolia ERC-721 and Cardano NFT refunds also completed. The first Ethereum NFT refund attempt stopped on a provider error during gas estimation before signing; journal, nonce and escrow checks preceded resumption. Bounded retries apply to read-only provider queries, not transaction submission. The Bitcoin/ETH swap later completed, including a confirmed payout to the intended Bitcoin recipient. The remaining Bitcoin scenarios are in progress.
 
 
 ## Local swap deadline watch and desktop entry

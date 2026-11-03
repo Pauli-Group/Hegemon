@@ -1909,7 +1909,7 @@ The native ETH/ADA staged claim path has now completed across public Sepolia and
 
 Further public tests completed a Cardano fungible/NFT same-chain swap, a Sepolia ERC-1155/ERC-20 same-chain swap, ERC-721/Cardano NFT and ERC-20/Cardano fungible cross-chain swaps, and native ETH and ADA refunds. They use disposable test assets and trusted public services; the ERC-1155 cross-chain case and other scenarios remain separate checks.
 
-The ERC-1155/Cardano fungible cross-chain swap, Sepolia ERC-721 refund and Cardano NFT refund have also completed on public testnets. Transient provider failures are retried only for explicitly identified read operations; signed transaction submission is not retried automatically. A BTC/ETH escrow is submitted but the swap is not yet confirmed complete.
+The ERC-1155/Cardano fungible cross-chain swap, Sepolia ERC-721 refund and Cardano NFT refund have also completed on public testnets. Transient provider failures are retried only for explicitly identified read operations; signed transaction submission is not retried automatically. The staged BTC/ETH public-testnet swap later completed, including a confirmed Bitcoin payout; other Bitcoin scenarios remain separate checks.
 
 
 ## Local swap deadline watch and desktop entry
