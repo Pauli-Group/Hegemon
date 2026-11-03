@@ -8,6 +8,7 @@ a production swap coordinator.
 import argparse
 import json
 import time
+import urllib.error
 from pathlib import Path
 from embit import networks,script
 from public_bitcoin_driver import load_test_key
@@ -28,14 +29,23 @@ def states(root):
     return result
 
 
+def check_retry_safe(root):
+    states(root)
+    for path in (root/'btc-eth-state.json',root/'bitcoin-split/state.json'):
+        phase=json.loads(path.read_text()).get('phase')
+        if not isinstance(phase,str) or phase.endswith('_inflight') or phase=='inflight':raise ValueError('Uncertain action; inspect the private journal and chain')
+
+
 def step(root):
     root=_directory(root);eth=eth_advance(root)
     with _locked(root):
         split=split_advance(root);current=states(root)
         if split['phase']!='submitted':return {'btc_eth':eth['phase'],'split':split['phase'],**{n:s['phase'] for n,s in current.items()}}
-        key=load_test_key(root/'alice/bitcoin-testnet4.key');address=script.p2wpkh(key.get_public_key()).address(networks.NETWORKS['test'])
-        available=bitcoin_utxos(address)
-        split_inputs={(x['txid'],x['vout']) for x in available if x['txid']==split['txid'] and x['vout']<4 and x['amount_sats']==7000}
+        split_inputs=set()
+        if any(current[name]['phase']==initial for name,initial in CASES):
+            key=load_test_key(root/'alice/bitcoin-testnet4.key');address=script.p2wpkh(key.get_public_key()).address(networks.NETWORKS['test'])
+            available=bitcoin_utxos(address)
+            split_inputs={(x['txid'],x['vout']) for x in available if x['txid']==split['txid'] and x['vout']<4 and x['amount_sats']==7000}
         for name,initial in CASES:
             state=current[name];phase=state['phase']
             if phase=='complete':continue
@@ -62,10 +72,18 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--directory',type=Path,required=True);parser.add_argument('--once',action='store_true');args=parser.parse_args()
     last=None
     while True:
-        result=step(args.directory)
+        try:result=step(args.directory)
+        except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError) as error:
+            if isinstance(error,urllib.error.HTTPError) and error.code not in (429,500,502,503,504):raise
+            # No retry if any submission might have been signed or sent.
+            with _locked(args.directory) as root:
+                check_retry_safe(root)
+            if args.once:raise
+            print('Public provider temporarily unavailable; will recheck recorded states.',flush=True)
+            time.sleep(60);continue
         if result!=last:print(json.dumps(result,sort_keys=True),flush=True);last=result
         if args.once or all(result.get(name)=='complete' for name in ('btc_eth',*(n for n,_ in CASES))):return
-        time.sleep(30)
+        time.sleep(60)
 
 
 if __name__=='__main__':main()

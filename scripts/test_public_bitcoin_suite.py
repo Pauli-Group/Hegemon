@@ -5,10 +5,28 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from embit import ec
-from public_bitcoin_suite import step,CASES
+from public_bitcoin_suite import step,CASES,check_retry_safe
 
 
 class BitcoinSuiteTest(unittest.TestCase):
+    def test_transient_retry_refuses_uncertain_split_or_claim(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);os.chmod(root,0o700)
+            for name,phase in CASES:
+                work=root/name;work.mkdir();(work/'state.json').write_text(json.dumps({'phase':phase}))
+            (root/'bitcoin-split').mkdir();split=root/'bitcoin-split/state.json';eth=root/'btc-eth-state.json'
+            split.write_text('{"phase":"submitted"}');eth.write_text('{"phase":"complete"}');check_retry_safe(root)
+            split.write_text('{"phase":"inflight"}')
+            with self.assertRaisesRegex(ValueError,'Uncertain'):check_retry_safe(root)
+            split.write_text('{"phase":"submitted"}');eth.write_text('{"phase":"btc_claim_inflight"}')
+            with self.assertRaisesRegex(ValueError,'Uncertain'):check_retry_safe(root)
+    def test_no_wallet_utxo_scan_after_all_cases_are_submitted(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);os.chmod(root,0o700)
+            for name,_ in CASES:
+                work=root/name;work.mkdir();(work/'state.json').write_text(json.dumps({'phase':'btc_lock_submitted' if name!='bitcoin-refund' else 'lock_submitted'}))
+            with patch('public_bitcoin_suite.eth_advance',return_value={'phase':'complete'}),patch('public_bitcoin_suite.split_advance',return_value={'phase':'submitted','txid':'12'*32}),patch('public_bitcoin_suite.bitcoin_utxos') as utxos,patch('public_bitcoin_suite.cardano_advance'),patch('public_bitcoin_suite.erc20_advance'),patch('public_bitcoin_suite.refund_advance'):
+                step(root);utxos.assert_not_called()
     def test_waits_for_split_then_funds_only_one_new_case_per_pass(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);os.chmod(root,0o700)

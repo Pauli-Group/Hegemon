@@ -1919,6 +1919,8 @@ The preview also offers read-only Bitcoin testnet4 escrow verification. A fixed 
 
 The read-only Cardano preview checker queries Koios through a fixed Worker endpoint and compares a twice-observed output with the Aiken validator's pinned preview address, complete value bundle and both decoded and raw inline datum. `scripts/check_cardano_preview_address.py` compares the browser address to the compiled source. Koios confirmations, network identity and output state remain trusted indexer observations, and this is not a two-leg verification or claim gate.
 
+The public Bitcoin rehearsal runner avoids rescanning wallet outputs after all cases are funded and backs off on transient provider failures. It checks every persisted scenario for an uncertain submission before a retry; it does not rebroadcast a signed transaction automatically.
+
 
 ## Local swap deadline watch and desktop entry
 

@@ -2879,6 +2879,8 @@ The hosted Bitcoin testnet4 check matches the P2WSH output reconstructed from a 
 
 The Cardano preview checker compares JSON and CBOR datum fields and an exact ADA/native-asset bundle. Its pinned validator address matched freshly compiled Aiken output. Unit and browser fixtures accepted a matching unspent output, and the deployed canary's Koios-backed browser rejected an actual spent Cardano NFT escrow. A matching unspent public output still needs a hosted end-to-end check once the pending BTC/Cardano funding is available. Neither the indexer data nor test confirmation thresholds establish finality.
 
+The public Bitcoin runner no longer scans all wallet UTxOs after all funded cases have started. After the Blockstream provider returned HTTP 429, it was restarted with slower polling and a bounded-action recovery rule that examines all scenario and submission states before retrying a transient read. An inflight transaction still requires manual journal and chain inspection. Unit tests exercise both the reduced scan and the inflight refusal.
+
 
 ## Local swap deadline watch and desktop entry
 
