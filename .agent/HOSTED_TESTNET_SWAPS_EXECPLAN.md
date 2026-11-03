@@ -10,8 +10,10 @@ This living plan follows `.agent/PLANS.md`. It records the work needed for two u
 - [x] Add a read-only hosted Sepolia escrow verifier. A browser using a test provider backed by public RPC checked a funded Sepolia fixture without requesting a transaction; the temporary fixture is awaiting its refund deadline.
 - [ ] Add a read-only hosted Bitcoin testnet4 escrow verifier (completed: script reconstruction, canary and live spent/unconfirmed rejection; remaining: verify a confirmed unspent public escrow when one becomes available).
 - [ ] Add a read-only hosted Cardano preview escrow verifier (completed: pinned address, value and datum verification, simulated unspent and real spent checks; remaining: verify a confirmed unspent public escrow when one becomes available).
+- [x] Add read-only hosted pair comparison for Ethereum, Bitcoin and Cardano, including exact offer assets and hashlock; validate it with mocked browser snapshots. This does not authorize claims or establish safe deadlines.
 - [ ] Complete public Bitcoin/Cardano, Bitcoin/ERC-20, Bitcoin/Cardano-token and Bitcoin refund cases; record transaction identifiers and recovery outcomes.
 - [ ] Determine public Hegemon testnet identity, available remote or checkpoint-backed wallet access and current private-spend support; arrange test HGN and execute Hegemon swaps where possible.
+- [ ] Obtain suitable persistent storage and outbound TCP access to the release seed nodes before starting a public Hegemon node. Inspection found 243 MB free on the persistent workspace, no TCP destinations configured, and only memory-backed temporary storage; the current chain size is not known.
 - [ ] Add wallet and transaction integrations for public testnets, a guided two-party swap workflow, durable recovery and chain observation; retain explicit limitations until independently tested.
 - [ ] Test the hosted interface with two real wallet sessions, claims and refunds; document all remaining limitations.
 

@@ -59,7 +59,7 @@ function present(row:NonNullable<ReturnType<typeof getOffer>>) {
 const server=createServer(async (req,res)=>{
     try {
         const url=new URL(req.url ?? '/', 'http://localhost');
-        if(req.method==='GET' && ['/', '/app.js', '/crypto.mjs', '/public-inbox.mjs', '/pair-check.mjs', '/deadlines.mjs', '/recovery.mjs', '/vault-store.mjs', '/action-journal.mjs', '/ethereum-escrow.mjs', '/ethereum-actions.mjs', '/sepolia-verifier.mjs', '/bitcoin-testnet-verifier.mjs', '/cardano-preview-verifier.mjs', '/token-escrow-template.json', '/ether-escrow-template.json', '/style.css'].includes(url.pathname)) {
+        if(req.method==='GET' && ['/', '/app.js', '/crypto.mjs', '/public-inbox.mjs', '/pair-check.mjs', '/public-pair.mjs', '/deadlines.mjs', '/recovery.mjs', '/vault-store.mjs', '/action-journal.mjs', '/ethereum-escrow.mjs', '/ethereum-actions.mjs', '/sepolia-verifier.mjs', '/bitcoin-testnet-verifier.mjs', '/cardano-preview-verifier.mjs', '/token-escrow-template.json', '/ether-escrow-template.json', '/style.css'].includes(url.pathname)) {
             const file=url.pathname==='/'?'index.html':url.pathname.slice(1);
             const type=file.endsWith('.html')?'text/html':file.endsWith('.js')||file.endsWith('.mjs')?'text/javascript':file.endsWith('.json')?'application/json':'text/css';
             const content=readFileSync(new URL('../swap-ui/'+file,import.meta.url));

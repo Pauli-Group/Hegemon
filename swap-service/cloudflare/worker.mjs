@@ -164,6 +164,7 @@ export default {async fetch(req,env){
     if(url.pathname==='/'||url.pathname==='/index.html'){
       const hidden=['verify-title','companion-title','ethereum-actions-title','bitcoin-title','bitcoin-actions-title','cardano-title','cardano-actions-title','hegemon-title','hegemon-actions-title','action-journal-title','vault-title','watch-title'];
       let rewrite=new HTMLRewriter()
+        .on('html',{element(e){e.setAttribute('data-hosted-testnet','');}})
         .on('title',{element(e){e.setInnerContent('Hegemon Swap · Testnet offer preview');}})
         .on('header .eyebrow',{element(e){e.setInnerContent('Hegemon · testnet offer preview');}})
         .on('main > aside',{element(e){e.setInnerContent('Testnet offer preview. Offers and messages do not lock assets or execute swaps. Wallet execution and recovery are still being built.');}})
