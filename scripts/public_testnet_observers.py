@@ -13,6 +13,10 @@ from public_testnet_probe import BITCOIN,CARDANO,request,rpc
 from public_testnet_submit import verify_network
 
 
+class IndexerDataPending(RuntimeError):
+    """A confirmed transaction has not yet appeared in the indexer's data."""
+
+
 def _hash(value):
     if not isinstance(value,str) or not re.fullmatch('[0-9a-f]{64}',value):raise ValueError('Invalid hash')
     return value
@@ -65,7 +69,8 @@ def cardano_claim(txid,outref,hashlock,confirmations=2):
     status=json.loads(request(CARDANO+'/tx_status',query))
     if len(status)!=1 or status[0].get('tx_hash')!=txid or type(status[0].get('num_confirmations')) is not int or status[0]['num_confirmations']<confirmations:raise ValueError('Cardano claim lacks confirmations')
     rows=json.loads(request(CARDANO+'/tx_cbor',query))
-    if len(rows)!=1 or rows[0].get('tx_hash')!=txid or rows[0].get('valid_contract') is not True:raise ValueError('Cardano claim transaction unavailable or invalid')
+    if rows==[]:raise IndexerDataPending('Confirmed Cardano claim bytes are not indexed yet')
+    if len(rows)!=1 or rows[0].get('tx_hash')!=txid or rows[0].get('valid_contract') is not True:raise ValueError('Cardano claim transaction invalid')
     secret=claim_preimage(txid,rows[0].get('cbor'),outref,hashlock)
     if secret is None:raise ValueError('Matching Cardano claim preimage not found')
     again=json.loads(request(CARDANO+'/tx_status',query))

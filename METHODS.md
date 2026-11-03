@@ -2887,6 +2887,8 @@ Persistent primary Bitcoin indexer rate limiting led to a fixed-path, read-only 
 
 The hosted BTC and Cardano checkers accepted their respective confirmed, unspent public BTC/ADA rehearsal escrows, and the hosted pair review matched both to the offer and shared hashlock. This verifies separate provider snapshots before claims, not swap completion or real-fund timeout safety.
 
+When the BTC/ADA Cardano claim was confirmed, Koios briefly returned an empty transaction-CBOR result. A later read returned data that matched the expected input and hashlock; the runner submitted the Bitcoin claim. The observer treats only an empty indexed result as pending and still rejects an invalid contract; the runner checks all journals before retrying. The Bitcoin claim is not yet reported confirmed.
+
 The hosted Sepolia manual-action path was exercised in Chromium using an injected disposable wallet signer against a real Sepolia RPC. The browser requested exactly one transaction and the test signer checked its exact creation data and terms, journaled and submitted it; funding transaction `fb803ab4b1e9e68ca90804e7f97a1c2036b341b5e8dfb58fe77c11db1cfe6bb8` confirmed. The test escrow is waiting for its refund deadline. Browser tests also checked action-journal persistence; unit tests covered network and account guards, token funding, early refund and uncertain responses. This is not an end-to-end user swap or a real wallet-extension qualification.
 
 

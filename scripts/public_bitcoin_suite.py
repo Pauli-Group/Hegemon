@@ -18,6 +18,7 @@ from public_btc_cardano_rehearsal import advance as cardano_advance
 from public_btc_erc20_rehearsal import advance as erc20_advance
 from public_bitcoin_refund_rehearsal import advance as refund_advance
 from public_testnet_utxos import bitcoin_utxos
+from public_testnet_observers import IndexerDataPending
 
 CASES=(('btc-cardano','created'),('btc-cardano-token','created'),('btc-erc20','btc_lock'),('bitcoin-refund','lock'))
 
@@ -73,7 +74,7 @@ def main():
     last=None
     while True:
         try:result=step(args.directory)
-        except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError) as error:
+        except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError,IndexerDataPending) as error:
             if isinstance(error,urllib.error.HTTPError) and error.code not in (429,500,502,503,504):raise
             # No retry if any submission might have been signed or sent.
             with _locked(args.directory) as root:

@@ -3,7 +3,7 @@ import json
 import unittest
 from unittest.mock import patch
 from eth_utils import keccak
-from public_testnet_observers import bitcoin_claim,ethereum_claim,cardano_claim
+from public_testnet_observers import bitcoin_claim,ethereum_claim,cardano_claim,IndexerDataPending
 from public_testnet_probe import BITCOIN,CARDANO
 from test_cardano_preimage_observer import fixture
 
@@ -38,5 +38,18 @@ class PublicTestnetObserversTest(unittest.TestCase):
         with patch('public_testnet_observers.request',side_effect=get):
             observed,snapshot=cardano_claim(txid,outref,digest);self.assertEqual(hashlib.sha256(observed).hexdigest(),digest);self.assertEqual(snapshot['block_hash'],block)
             with self.assertRaisesRegex(ValueError,'not found'):cardano_claim(txid,'bb'*32+'#0',digest)
+    @patch('public_testnet_observers.verify_network')
+    def test_cardano_missing_indexed_bytes_are_pending_but_invalid_contract_is_not(self,_network):
+        txid,_,digest=fixture();outref='aa'*32+'#1'
+        def read(url,body):
+            if url==CARDANO+'/tx_status':return json.dumps([{'tx_hash':txid,'num_confirmations':2}]).encode()
+            return b'[]'
+        with patch('public_testnet_observers.request',side_effect=read):
+            with self.assertRaises(IndexerDataPending):cardano_claim(txid,outref,digest)
+        def invalid(url,body):
+            if url==CARDANO+'/tx_status':return json.dumps([{'tx_hash':txid,'num_confirmations':2}]).encode()
+            return json.dumps([{'tx_hash':txid,'valid_contract':False}]).encode()
+        with patch('public_testnet_observers.request',side_effect=invalid):
+            with self.assertRaisesRegex(ValueError,'invalid'):cardano_claim(txid,outref,digest)
 
 if __name__=='__main__':unittest.main()
