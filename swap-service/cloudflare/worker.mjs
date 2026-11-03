@@ -109,12 +109,13 @@ export default {async fetch(req,env){
     h.set('content-security-policy',"default-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     let response=new Response(result.body,{status:result.status,headers:h});
     if(url.pathname==='/'||url.pathname==='/index.html'){
-      const hidden=['wallet-title','verify-title','companion-title','ethereum-actions-title','bitcoin-title','bitcoin-actions-title','cardano-title','cardano-actions-title','hegemon-title','hegemon-actions-title','action-journal-title','vault-title','watch-title'];
+      const hidden=['verify-title','companion-title','ethereum-actions-title','bitcoin-title','bitcoin-actions-title','cardano-title','cardano-actions-title','hegemon-title','hegemon-actions-title','action-journal-title','vault-title','watch-title'];
       let rewrite=new HTMLRewriter()
         .on('title',{element(e){e.setInnerContent('Hegemon Swap · Testnet offer preview');}})
         .on('header .eyebrow',{element(e){e.setInnerContent('Hegemon · testnet offer preview');}})
         .on('main > aside',{element(e){e.setInnerContent('Testnet offer preview. Offers and messages do not lock assets or execute swaps. Wallet execution and recovery are still being built.');}})
-        .on('#pair-check',{element(e){e.setAttribute('hidden','');}});
+        .on('#pair-check',{element(e){e.setAttribute('hidden','');}})
+        .on('#sepolia-section',{element(e){e.removeAttribute('hidden');}});
       for(const id of hidden)rewrite=rewrite.on(`section[aria-labelledby="${id}"]`,{element(e){e.setAttribute('hidden','');}});
       response=rewrite.transform(response);
     }

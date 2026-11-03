@@ -1913,6 +1913,8 @@ The ERC-1155/Cardano fungible cross-chain swap, Sepolia ERC-721 refund and Carda
 
 The hosted testnet offer preview uses a separate Cloudflare Worker and D1 database, with atomic reservation updates and messages bound to the current reservation. It preserves the local relay's offer interface while hiding local-only wallet and node controls. The hosted page does not execute or recover swaps. A per-IP request budget and bounded opportunistic retention reduce load but do not eliminate distributed abuse or provider cost; the operator can serve modified client code and remains a trust boundary.
 
+The hosted preview offers read-only Sepolia escrow verification through the connected Ethereum wallet provider. It pins Sepolia's chain ID and genesis, reconstructs the expected runtime from the bundled artifact and agreed terms, and checks confirmed and current funded/unspent state. A short bounded retry handles changed heads and transient provider indexing lag without sending transactions. It does not authenticate the provider, verify the other leg or determine safe swap deadlines.
+
 
 ## Local swap deadline watch and desktop entry
 

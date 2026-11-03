@@ -2,6 +2,7 @@
 import {newMessageKey,encryptMessage,decryptMessage} from './crypto.mjs';
 import {createInbox,inboxPrivateKey,inboxFingerprint,sealPublicSession,openPublicSession,parsePublicSession} from './public-inbox.mjs';
 import {verifyTokenEscrow,verifyEtherEscrow} from './ethereum-escrow.mjs';
+import {verifySepoliaEscrow} from './sepolia-verifier.mjs';
 import {submitLocalEscrowDeployment,submitLocalTokenFundingStep,submitLocalEscrowRefund,submitLocalEscrowClaim,observeLocalEthereumClaim} from './ethereum-actions.mjs';
 import {validateWatch,evaluateWatch} from './deadlines.mjs';
 import {createRecovery,encryptRecovery,unlockRecovery,validateRecoveryEnvelope} from './recovery.mjs';
@@ -33,6 +34,17 @@ async function recordedAction(chain,operation,terms,action){
  }catch(e){try{await uncertainAction(id);}catch{}refreshActionViews();throw e;}
 }
 let observedEthereumProvider,activeEthereumProvider;
+const sepoliaForm=$('sepolia-form');
+function toggleSepoliaTokenFields(){const native=sepoliaForm.elements.kind.value==='eth';for(const name of ['token','tokenId']){sepoliaForm.elements[name].disabled=native;sepoliaForm.elements[name].required=!native;}}
+sepoliaForm.elements.kind.addEventListener('change',toggleSepoliaTokenFields);toggleSepoliaTokenFields();
+sepoliaForm.addEventListener('submit',async event=>{event.preventDefault();
+ try{if(!activeEthereumProvider)throw Error('Connect an Ethereum wallet first.');const provider=activeEthereumProvider,data=new FormData(sepoliaForm),terms={};
+  for(const name of ['contract','kind','token','tokenId','amount','hashlock','claimant','refundee','expiry'])terms[name]=String(data.get(name)||'').trim();
+  const response=await fetch(terms.kind==='eth'?'/ether-escrow-template.json':'/token-escrow-template.json');if(!response.ok)throw Error('Escrow template unavailable.');
+  const result=await verifySepoliaEscrow(provider,await response.json(),terms);if(provider!==activeEthereumProvider)throw Error('Wallet changed during verification. Reconnect and retry.');
+  msg($('sepolia-status'),'Matched funded and unspent Sepolia escrow at block '+BigInt(result.blockNumber).toString()+'. This checks only the Ethereum leg and trusts your wallet provider.');
+ }catch(e){msg($('sepolia-status'),e.message,true);}
+});
 const verifyForm=$('verify-form');
 function toggleTokenFields(){const native=verifyForm.elements.kind.value==='eth';for(const name of ['token','tokenId']){verifyForm.elements[name].disabled=native;verifyForm.elements[name].required=!native;}}
 verifyForm.elements.kind.addEventListener('change',toggleTokenFields);toggleTokenFields();

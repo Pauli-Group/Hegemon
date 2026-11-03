@@ -2873,6 +2873,8 @@ The ERC-1155/Cardano fungible test and Sepolia ERC-721 and Cardano NFT refunds a
 
 The Cloudflare offer-preview Worker was checked with a SQLite-backed unit adapter, Wrangler's local Workers/D1 runtime, concurrent reservation requests, and two real Chromium contexts against the deployed test service. The hosted run created and reserved a test offer, exchanged an encrypted message and closed the offer. An early browser run exposed that the message form could be enabled before the session handshake finished; the board now disables it until the current session check succeeds. This validates offer and message behavior only, not public wallet signing or a complete swap.
 
+The hosted Sepolia checker passed positive and negative provider tests and a Chromium check against a funded real Sepolia escrow, using an injected test wallet provider backed by a public RPC. No browser transaction was requested. The fixture records its submission privately and is scheduled for a refund after expiry; its funding ID is `e982e20a759719a6b8ae05d0fd308e6d0c0ac731599992229bc7cba8687a4380`. The check remains read-only and does not establish a two-chain swap.
+
 
 ## Local swap deadline watch and desktop entry
 
