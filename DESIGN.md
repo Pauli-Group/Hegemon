@@ -1929,6 +1929,8 @@ The hosted preview exposes explicit single-leg Sepolia deployment, token approva
 
 The public Bitcoin rehearsal runner avoids rescanning wallet outputs after all cases are funded and backs off on transient provider failures. It checks every persisted scenario for an uncertain submission before a retry; it does not rebroadcast a signed transaction automatically.
 
+The public BTC/ADA, BTC/Cardano native-token and BTC/ERC-20 claim scenarios and the Bitcoin refund scenario have now completed using provider-reported testnet state. The two Bitcoin indexers briefly disagreed about the chain, so completion was paused until their views converged. Their later observations agreed on all four containing blocks and expected Bitcoin recipient outputs; this is not independent consensus verification or a guarantee against reorganization.
+
 Selected Bitcoin testnet4 indexer reads can fall back from Blockstream to a genesis-checked mempool.space endpoint after a temporary primary failure. The fallback permits only fixed read paths; when the primary is in cooldown, the sender may choose the verified secondary before journaling and submitting exactly once. A failed broadcast is never retried automatically. Both services remain trusted snapshots and can disagree or reorganize.
 
 

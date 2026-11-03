@@ -4,18 +4,18 @@ This living plan follows `.agent/PLANS.md`. It records the work needed for two u
 
 ## Progress
 
-- [x] Read the existing public testnet plan, local relay, wallet restrictions and network instructions. The BTC/ETH public swap and multiple Ethereum/Cardano swaps are complete. The remaining Bitcoin cases have been submitted and the session-bound runner is active.
+- [x] Read the existing public testnet plan, local relay, wallet restrictions and network instructions. Public Bitcoin/ETH, Bitcoin/ERC-20, Bitcoin/ADA and Bitcoin/Cardano-token swaps and the Bitcoin refund have completed using trusted providers.
 - [x] Confirm the authorized Cloudflare account is reachable with Workers and D1 access; no D1 databases existed at inspection.
 - [x] Implement and verify a Cloudflare Workers/D1 offer relay with the existing browser protocol and safe concurrent reservation handling. Published the clearly labeled offer-board prototype at https://hegemon-swap-testnet.willdoyle422.workers.dev; it does not execute swaps.
 - [x] Add a read-only hosted Sepolia escrow verifier. A browser using a test provider backed by public RPC checked a funded Sepolia fixture without requesting a transaction; its subsequent refund confirmed.
 - [x] Add a read-only hosted Bitcoin testnet4 escrow verifier and check a confirmed, unspent public BTC/ADA escrow.
 - [x] Add a read-only hosted Cardano preview escrow verifier and check the confirmed, unspent ADA leg of that public swap.
 - [x] Add read-only hosted pair comparison for Ethereum, Bitcoin and Cardano, including exact offer assets and hashlock; validate it with mocked browser snapshots. This does not authorize claims or establish safe deadlines.
-- [x] Recheck the confirmed public BTC/ADA escrows against a hosted offer and common hashlock. The actual swap claims remain in progress.
+- [x] Recheck the public BTC/ADA escrows against a hosted offer and common hashlock; both swap claims later confirmed.
 - [ ] Add public wallet and transaction integrations (completed: manual Sepolia deploy, token approval/funding, ERC-1155 revocation and refund; remaining: actual wallet-extension qualification, claims with full recovery and the other chains).
 - [x] Refund the disposable browser-originated Sepolia escrow after expiry and record confirmation; refund transaction `94f5bfa945ab4fbecea24a08b54b5f87c58c98ea00c437d43f892981a03fdca7` succeeded and the escrow balance was zero.
-- [ ] Complete public Bitcoin/Cardano, Bitcoin/ERC-20, Bitcoin/Cardano-token and Bitcoin refund cases; record transaction identifiers and recovery outcomes.
-- [ ] Reconcile the four Bitcoin claims/refund: at tip 158795 the two testnet4 providers reported different hashes at height 158793. The secondary reported the transactions confirmed on its view, while the primary reported them unconfirmed. Intended Bitcoin inputs and 1,250-sat payout scripts match the primary's transaction data. The automatic completion runner is paused until views converge; then require two confirmations and independently inspect all payouts.
+- [x] Complete public Bitcoin/Cardano, Bitcoin/ERC-20, Bitcoin/Cardano-token and Bitcoin refund cases; record transaction identifiers and recovery outcomes.
+- [x] Reconcile the temporarily divergent Bitcoin providers. At tip 158819 they agreed on the chain and all four transactions had 23 confirmations; both showed each expected escrow input and 1,250-sat recipient payout. Cardano recipient outputs and Ethereum fixture-token balance changes were also checked.
 - [ ] Determine public Hegemon testnet identity, available remote or checkpoint-backed wallet access and current private-spend support; arrange test HGN and execute Hegemon swaps where possible.
 - [x] Identify the public Hegemon seed and read-only explorer and prepare a tested, read-only check for an authorized private wallet-RPC tunnel. Neither the seed nor the explorer supplies a documented wallet submission endpoint.
 - [ ] Obtain suitable persistent storage and outbound TCP access to the release seed nodes before starting a public Hegemon node. Inspection found 243 MB free on the persistent workspace, no TCP destinations configured, and only memory-backed temporary storage; the current chain size is not known.
