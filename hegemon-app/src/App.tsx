@@ -87,6 +87,7 @@ import {
 import {
   buildDefaultConnection,
   buildDefaultConnections,
+  buildPreMainnetConnection,
   canonicalizeSeedEntry,
   deriveHttpUrl,
   findDefaultManagedConnection,
@@ -779,6 +780,7 @@ export default function App() {
       }
       await window.hegemon.node.start({
         connectionId: normalizedConnection.id,
+        networkProfile: normalizedConnection.networkProfile,
         basePath: normalizedConnection.basePath || undefined,
         dev: normalizedConnection.dev,
         tmp: normalizedConnection.tmp,
@@ -829,6 +831,9 @@ export default function App() {
 
   useEffect(() => {
     if (!activeConnection || activeSummary?.reachable !== false) {
+      return;
+    }
+    if (activeConnection.networkProfile === 'pre-mainnet') {
       return;
     }
     if (shouldAutoStartDefaultProfile(activeConnection)) {
@@ -1507,6 +1512,17 @@ export default function App() {
     setActiveConnectionId(next.id);
   };
 
+  const handleAddPreMainnetConnection = () => {
+    const existing = connections.find((connection) => connection.networkProfile === 'pre-mainnet');
+    if (existing) {
+      setActiveConnectionId(existing.id);
+      return;
+    }
+    const next = buildPreMainnetConnection();
+    setConnections((prev) => [next, ...prev]);
+    setActiveConnectionId(next.id);
+  };
+
   const handleRemoveConnection = () => {
     if (!activeConnection || connections.length <= 1) {
       return;
@@ -1579,11 +1595,13 @@ export default function App() {
     nodeStartupPending
       ? 'Starting'
       : activeCanonicalStatus === 'mismatch'
-        ? 'Fork mismatch'
+        ? 'Wrong network'
         : activeCanonicalStatus === 'pending'
-          ? 'Checkpoint pending'
+          ? 'Checking network'
           : activeCanonicalStatus === 'unavailable'
-            ? 'Checkpoint unknown'
+            ? 'Network unknown'
+      : activePeerCount === 0
+        ? 'No peers'
       : activeHeightRelation === 'syncing'
         ? `Syncing to ${formatNumber(activeDisplaySyncTargetHeight)}`
         : activeHeightRelation === 'aligned'
@@ -1647,17 +1665,19 @@ export default function App() {
     walletSummary?.reachable === true ? 'Online' : walletSummary?.reachable === false ? 'Offline' : 'Unknown';
   const walletTone = walletError ? 'error' : walletReady ? 'ok' : 'warn';
   const walletStateLabel = walletError ? 'Error' : walletReady ? 'Ready' : walletUnlocked ? 'Unlocked' : 'Locked';
-  const chainTone = genesisMismatch
+  const chainTone = genesisMismatch || activeCanonicalStatus === 'mismatch'
     ? 'error'
     : activeNodeLive
-      ? 'ok'
+      ? healthTone === 'ok' ? 'ok' : 'warn'
       : walletGenesis
         ? 'warn'
         : 'neutral';
   const chainLabel = genesisMismatch
     ? 'Mismatch'
+    : activeCanonicalStatus === 'mismatch'
+      ? 'Wrong network'
     : activeNodeLive
-      ? 'Live'
+      ? healthTone === 'ok' ? 'Live' : healthLabel
       : walletGenesis
         ? 'Wallet set'
         : 'Unknown';
@@ -2208,7 +2228,7 @@ export default function App() {
           <div className="command-focus">
             <span className={`status-dot ${displayedChainTone}`} />
             <div className="min-w-0">
-              <h1>{activeNodeLive ? (overviewWarningCount ? 'Review needed' : 'Ready') : 'Offline'}</h1>
+              <h1>{activeNodeLive ? (overviewWarningCount || healthTone !== 'ok' ? 'Review needed' : 'Ready') : 'Offline'}</h1>
               <p>
                 Height {activeHeightLabel}
                 {activeDisplaySyncTargetHeight ? ` / ${formatNumber(activeDisplaySyncTargetHeight)}` : ''} · {peerEvidenceLabel}
@@ -2270,9 +2290,9 @@ export default function App() {
           <summary>
             <strong>
               {activeCanonicalStatus === 'verified'
-                ? 'Checkpoint verified'
+                ? 'Network identity matches'
                 : activeCanonicalStatus === 'mismatch'
-                  ? 'Fork mismatch'
+                  ? 'Wrong network'
                   : firstActivePeer
                     ? 'Peer connected'
                     : 'Seed configured'}
@@ -2291,13 +2311,11 @@ export default function App() {
               <em>approved seed</em>
             </div>
             <div className="proof-row">
-              <span>Checkpoint</span>
+              <span>Network identity</span>
               <strong className="mono" title={activeSummary?.canonicalCheckpoint?.actualHash ?? ''}>
-                {activeSummary?.canonicalCheckpoint?.height
-                  ? `${formatNumber(activeSummary.canonicalCheckpoint.height)} · ${activeCanonicalStatus}`
-                  : activeCanonicalStatus}
+                {activeCanonicalStatus}
               </strong>
-              <em>{activeSummary?.canonicalCheckpoint?.detail ?? 'No checkpoint data yet'}</em>
+              <em>{activeSummary?.canonicalCheckpoint?.detail ?? 'No network identity data yet'}</em>
             </div>
             <div className="proof-row">
               <span>Peer</span>
@@ -2307,7 +2325,7 @@ export default function App() {
             <div className="proof-row">
               <span>Genesis</span>
               <strong className="mono" title={displayedNodeGenesis ?? ''}>{formatHash(displayedNodeGenesis)}</strong>
-              <em>0.10 identity</em>
+              <em>network genesis</em>
             </div>
           </div>
         </details>
@@ -2328,6 +2346,7 @@ export default function App() {
 
       <div className="space-y-8">
         <div className="flex justify-end gap-2">
+          <button className="secondary text-sm" onClick={handleAddPreMainnetConnection}>Add v0.11 testnet node</button>
           <button className="secondary text-sm" onClick={handleAddConnection}>Add connection</button>
           <button className="danger text-sm" onClick={handleRemoveConnection} disabled={connections.length <= 1}>Remove</button>
         </div>
@@ -2376,7 +2395,7 @@ export default function App() {
             }}
           >
             <option value="full_node">Relay node</option>
-            <option value="authoring_pool">Mining node</option>
+            <option value="authoring_pool" disabled={activeConnection?.networkProfile === 'pre-mainnet'}>Mining node</option>
           </select>
         </label>
         <label className="space-y-2">
@@ -2418,6 +2437,12 @@ export default function App() {
       {activeConnection?.mode === 'remote' ? (
         <p className="text-sm text-surfaceMuted">
           Desktop RPC must stay on localhost. Run a local Hegemon P2P relay node for remote network access; direct public RPC is rejected.
+        </p>
+      ) : null}
+      {activeConnection?.networkProfile === 'pre-mainnet' ? (
+        <p className="text-sm text-surfaceMuted">
+          This relay uses the v0.11 pre-mainnet release manifest and a separate node data directory.
+          Stop another managed node before starting it. Funded v0.11 wallet and swap actions are not yet integrated into this desktop app.
         </p>
       ) : null}
 
@@ -2515,6 +2540,7 @@ export default function App() {
                 <input
                   type="checkbox"
                   checked={Boolean(activeConnection.rpcExternal)}
+                  disabled={activeConnection.networkProfile === 'pre-mainnet'}
                   onChange={(event) => updateActiveConnection({ rpcExternal: event.target.checked })}
                 />
                 RPC external (exposes HTTP to network)
@@ -2646,6 +2672,7 @@ export default function App() {
                   <input
                     type="checkbox"
                     checked={Boolean(activeConnection.dev)}
+                    disabled={activeConnection.networkProfile === 'pre-mainnet'}
                     onChange={(event) => updateActiveConnection({ dev: event.target.checked })}
                   />
                   Dev mode
@@ -2654,6 +2681,7 @@ export default function App() {
                   <input
                     type="checkbox"
                     checked={Boolean(activeConnection.tmp)}
+                    disabled={activeConnection.networkProfile === 'pre-mainnet'}
                     onChange={(event) => updateActiveConnection({ tmp: event.target.checked })}
                   />
                   Temp storage
@@ -2672,6 +2700,7 @@ export default function App() {
                   <input
                     type="checkbox"
                     checked={Boolean(activeConnection.rpcCorsAll)}
+                    disabled={activeConnection.networkProfile === 'pre-mainnet'}
                     onChange={(event) => updateActiveConnection({ rpcCorsAll: event.target.checked })}
                   />
                   Enable RPC CORS

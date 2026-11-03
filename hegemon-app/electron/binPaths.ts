@@ -1,6 +1,7 @@
 import { app } from 'electron';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { requirePreMainnetManifest } from './preMainnetIdentity';
 
 const binaryNames = (binary: string) => (process.platform === 'win32' ? [`${binary}.exe`, binary] : [binary]);
 
@@ -68,4 +69,16 @@ export const resolveBinaryPath = (binary: string) => {
   throw new Error(
     `Binary "${binary}" not found. Build it with "cargo build -p ${binary} --release" (or --debug) and retry. Expected build output at ${fallback}`
   );
+};
+
+export const resolvePreMainnetManifestPath = (): string => {
+  const suffix = ['config', 'testnet', '0.11', 'network-manifest.json'];
+  const candidates = app.isPackaged
+    ? [join(process.resourcesPath, ...suffix)]
+    : [resolve(process.cwd(), ...suffix), resolve(process.cwd(), '..', ...suffix),
+       resolve(app.getAppPath(), ...suffix), resolve(app.getAppPath(), '..', ...suffix),
+       resolve(app.getAppPath(), '..', '..', ...suffix)];
+  const candidate = candidates.find((path) => existsSync(path));
+  if (!candidate) throw new Error('The v0.11 pre-mainnet network manifest is missing.');
+  return requirePreMainnetManifest(candidate);
 };

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildDefaultConnection,
+  buildPreMainnetConnection,
   deriveHttpUrl,
   isLoopbackRpcEndpoint,
   normalizeConnection,
@@ -17,6 +18,17 @@ const local = (overrides: Partial<NodeConnection> = {}): NodeConnection => ({
 });
 
 describe('native desktop HTTP defaults', () => {
+  it('creates an opt-in public testnet profile using separate persistent data', () => {
+    const profile = buildPreMainnetConnection();
+    expect(profile.networkProfile).toBe('pre-mainnet');
+    expect(profile.basePath).toBe('~/.hegemon-node-v0.11');
+    expect(profile.dev).toBe(false);
+    expect(profile.tmp).toBe(false);
+    expect(profile.miningIntent).toBe(false);
+    expect(profile.rpcExternal).not.toBe(true);
+    expect(shouldAutoStartDefaultProfile(profile)).toBe(false);
+    expect(normalizeConnection(profile).basePath).toBe(profile.basePath);
+  });
   it('creates an HTTP managed profile that can still auto-start', () => {
     const connection = buildDefaultConnection();
     expect(defaultRpcUrl).toBe(`http://127.0.0.1:${defaultRpcPort}`);

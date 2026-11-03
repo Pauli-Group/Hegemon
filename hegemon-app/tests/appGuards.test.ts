@@ -73,11 +73,11 @@ describe('computeNodeDisplayState', () => {
     expect(state.heightDelta).toBe(0);
   });
 
-  it('reports forked on canonical mismatch', () => {
+  it('reports a wrong network when the network identity mismatches', () => {
     const state = computeNodeDisplayState(
       summary({ canonicalCheckpoint: { status: 'mismatch' } as NodeSummary['canonicalCheckpoint'] })
     );
-    expect(state.healthLabel).toBe('Forked');
+    expect(state.healthLabel).toBe('Wrong network');
     expect(state.healthTone).toBe('error');
   });
 
@@ -111,6 +111,12 @@ describe('computeNodeDisplayState', () => {
     const state = computeNodeDisplayState(
       summary({ canonicalCheckpoint: { status: 'pending' } as NodeSummary['canonicalCheckpoint'] })
     );
+    expect(state.healthLabel).toBe('Checking');
+    expect(state.healthTone).toBe('warn');
+  });
+
+  it('does not report a node without peers as healthy', () => {
+    const state = computeNodeDisplayState(summary({ peers: 0 }));
     expect(state.healthLabel).toBe('Checking');
     expect(state.healthTone).toBe('warn');
   });

@@ -122,7 +122,7 @@ assert.equal(localMinerAhead.miningGateBlocked, false);
 assert.equal(localMinerAhead.healthLabel, 'Healthy');
 assert.equal(localMinerAhead.healthTone, 'ok');
 
-const forkedSameHeight = computeNodeDisplayState({
+const wrongNetworkSameHeight = computeNodeDisplayState({
   reachable: true,
   peers: 2,
   isSyncing: false,
@@ -132,9 +132,9 @@ const forkedSameHeight = computeNodeDisplayState({
   miningSyncGateOpen: null,
   canonicalCheckpoint: { status: 'mismatch' }
 });
-assert.equal(forkedSameHeight.heightRelation, 'aligned');
-assert.equal(forkedSameHeight.healthLabel, 'Forked');
-assert.equal(forkedSameHeight.healthTone, 'error');
+assert.equal(wrongNetworkSameHeight.heightRelation, 'aligned');
+assert.equal(wrongNetworkSameHeight.healthLabel, 'Wrong network');
+assert.equal(wrongNetworkSameHeight.healthTone, 'error');
 
 const offline = computeNodeDisplayState({
   reachable: false,

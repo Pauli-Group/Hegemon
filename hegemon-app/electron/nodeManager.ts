@@ -1,33 +1,22 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type {
-  CanonicalCheckpointStatus,
   NodePeerSnapshot,
   NodeStartOptions,
   NodeSummary,
   NodeSummaryRequest
 } from '../src/types';
-import { resolveBinaryPath } from './binPaths';
+import { resolveBinaryPath, resolvePreMainnetManifestPath } from './binPaths';
 import { applyEnvDefaults, copyParentEnv, createBaseChildEnv, setEnvValue } from './childProcessEnv';
+import { preMainnetIdentity } from './preMainnetIdentity';
 
 const DEFAULT_RPC_PORT = 9955;
 const CANONICAL_TESTNET_P2P_PORT = 30333;
 const LEGACY_TESTNET_P2P_PORT = 31333;
 const APPROVED_SEED_ENTRIES = ['hegemon.pauli.group:30333', 'devnet.hegemonprotocol.com:30333'] as const;
 const APPROVED_SEEDS = APPROVED_SEED_ENTRIES.join(',');
-const PUBLIC_TESTNET_NAME = 'Hegemon';
-const CANONICAL_TESTNET_CHECKPOINTS = [
-  {
-    height: 2048,
-    hash: '0x00000000e930672262cba74a26750c0540a1e2aa54e7ad27ffc1e6fbd055bc4e'
-  },
-  {
-    height: 4096,
-    hash: '0x0000001891cd8a0b45add76b6b0ebe6bc50f6f1dc60879f9f000a71cf22ad5de'
-  }
-] as const;
 const LEGACY_SEED_ALIASES: Record<string, string> = {
   'hegemon.pauli.group:31333': APPROVED_SEEDS,
   'hegemon.pauli.group:30333': APPROVED_SEEDS,
@@ -174,6 +163,7 @@ export class NodeManager extends EventEmitter {
   private requestId = 0;
   private managedConnectionId: string | null = null;
   private managedMinerAddress: string | null = null;
+  private managedPreMainnetRelay = false;
   private stopping = false;
 
   getLogs(): string[] {
@@ -195,6 +185,9 @@ export class NodeManager extends EventEmitter {
 
   async startNode(options: NodeStartOptions): Promise<void> {
     if (this.process) {
+      if (this.managedConnectionId !== (options.connectionId ?? null)) {
+        throw new Error('Stop the node started by the other connection profile before starting this one.');
+      }
       return;
     }
 
@@ -202,6 +195,28 @@ export class NodeManager extends EventEmitter {
     const nodePath = resolveBinaryPath('hegemon-node');
     const args: string[] = [];
     const basePath = expandHomePath(normalizedOptions.basePath);
+
+    if (normalizedOptions.networkProfile !== undefined && normalizedOptions.networkProfile !== 'pre-mainnet') {
+      throw new Error('Unsupported managed node network.');
+    }
+    if (normalizedOptions.networkProfile === 'pre-mainnet') {
+      if (normalizedOptions.dev || normalizedOptions.tmp || normalizedOptions.rpcExternal || normalizedOptions.rpcCorsAll) {
+        throw new Error('The v0.11 relay requires persistent storage and private loopback RPC without CORS.');
+      }
+      if (normalizedOptions.mineOnStart) {
+        throw new Error('The v0.11 wallet relay profile does not enable mining.');
+      }
+      if (!basePath) throw new Error('Choose a separate v0.11 node data directory.');
+      const oldPaths = [DEFAULT_LOCAL_BASE_PATH, DEFAULT_DEV_010_BASE_PATH, DEFAULT_TESTNET_BASE_PATH]
+        .map((path) => resolve(expandHomePath(path)!));
+      if (oldPaths.includes(resolve(basePath))) {
+        throw new Error('Choose a separate v0.11 data directory; preserve existing legacy node data.');
+      }
+      if (normalizeSeedList(normalizedOptions.seeds) !== APPROVED_SEEDS) {
+        throw new Error('The v0.11 relay profile requires the approved testnet seed list.');
+      }
+      args.push('--network', 'pre-mainnet', '--network-manifest', resolvePreMainnetManifestPath());
+    }
 
     if (normalizedOptions.dev) {
       args.push('--dev');
@@ -311,6 +326,7 @@ export class NodeManager extends EventEmitter {
     this.process = spawn(nodePath, args, { env });
     this.managedConnectionId = normalizedOptions.connectionId ?? null;
     this.managedMinerAddress = effectiveMinerAddress;
+    this.managedPreMainnetRelay = normalizedOptions.networkProfile === 'pre-mainnet';
 
     this.process.stdout.on('data', (data) => this.appendLogs(data.toString()));
     this.process.stderr.on('data', (data) => this.appendLogs(data.toString()));
@@ -323,12 +339,14 @@ export class NodeManager extends EventEmitter {
       this.process = null;
       this.managedConnectionId = null;
       this.managedMinerAddress = null;
+      this.managedPreMainnetRelay = false;
     });
     this.process.on('exit', (code) => {
       this.appendLogs(`Node exited with code ${code ?? 'unknown'}`);
       this.process = null;
       this.managedConnectionId = null;
       this.managedMinerAddress = null;
+      this.managedPreMainnetRelay = false;
     });
   }
 
@@ -465,7 +483,7 @@ export class NodeManager extends EventEmitter {
     const pendingExtrinsics = await this.safeRpcCall('author_pendingExtrinsics', [], httpUrl);
     const peerList = await this.safeRpcCall('hegemon_peerList', [], httpUrl);
     const bestNumber = finiteNumberOrNull(consensus?.height);
-    const canonicalCheckpoint = await this.readCanonicalCheckpoint(httpUrl, bestNumber);
+    const canonicalCheckpoint = preMainnetIdentity(genesisHash, nodeConfig);
     const consensusSyncTarget = finiteNumberOrNull(consensus?.sync_target_height ?? consensus?.syncTargetHeight);
     const miningSyncTarget = finiteNumberOrNull(mining?.sync_target_height ?? mining?.syncTargetHeight);
     const syncTargetHeight =
@@ -556,76 +574,10 @@ export class NodeManager extends EventEmitter {
     };
   }
 
-  private async readCanonicalCheckpoint(
-    httpUrl: string,
-    bestNumber: number | null
-  ): Promise<CanonicalCheckpointStatus> {
-    if (bestNumber === null) {
-      return {
-        network: PUBLIC_TESTNET_NAME,
-        seed: APPROVED_SEEDS,
-        status: 'unavailable',
-        height: null,
-        expectedHash: null,
-        actualHash: null,
-        detail: 'No local height is available yet.'
-      };
-    }
-
-    const checkpoint = [...CANONICAL_TESTNET_CHECKPOINTS]
-      .reverse()
-      .find((candidate) => bestNumber >= candidate.height);
-    if (!checkpoint) {
-      return {
-        network: PUBLIC_TESTNET_NAME,
-        seed: APPROVED_SEEDS,
-        status: 'pending',
-        height: CANONICAL_TESTNET_CHECKPOINTS[0].height,
-        expectedHash: CANONICAL_TESTNET_CHECKPOINTS[0].hash,
-        actualHash: null,
-        detail: `Waiting to reach checkpoint height ${CANONICAL_TESTNET_CHECKPOINTS[0].height}.`
-      };
-    }
-
-    const actualHash = await this.safeRpcCall('chain_getBlockHash', [checkpoint.height], httpUrl);
-    const actualHashString = typeof actualHash === 'string' ? actualHash.toLowerCase() : null;
-    const expectedHashString = checkpoint.hash.toLowerCase();
-    if (!actualHashString) {
-      return {
-        network: PUBLIC_TESTNET_NAME,
-        seed: APPROVED_SEEDS,
-        status: 'unavailable',
-        height: checkpoint.height,
-        expectedHash: checkpoint.hash,
-        actualHash: null,
-        detail: `Could not read block hash at checkpoint height ${checkpoint.height}.`
-      };
-    }
-
-    if (actualHashString !== expectedHashString) {
-      return {
-        network: PUBLIC_TESTNET_NAME,
-        seed: APPROVED_SEEDS,
-        status: 'mismatch',
-        height: checkpoint.height,
-        expectedHash: checkpoint.hash,
-        actualHash: String(actualHash),
-        detail: `Local chain does not match the Hegemon testnet checkpoint at height ${checkpoint.height}.`
-      };
-    }
-
-    return {
-      network: PUBLIC_TESTNET_NAME,
-      seed: APPROVED_SEEDS,
-      status: 'verified',
-      height: checkpoint.height,
-      expectedHash: checkpoint.hash,
-      actualHash: String(actualHash),
-      detail: `Matched the Hegemon testnet checkpoint at height ${checkpoint.height}.`
-    };
-  }
-
   async setMiningEnabled(enabled: boolean, threads: number | undefined, httpUrl?: string): Promise<void> {
+    if (enabled && this.managedPreMainnetRelay) {
+      throw new Error('The v0.11 wallet relay profile does not enable mining.');
+    }
     const authToken = process.env.HEGEMON_MINING_RPC_TOKEN?.trim();
     const endpoint = this.resolveMiningRpcEndpoint(httpUrl, Boolean(authToken));
     if (enabled) {

@@ -20,6 +20,7 @@ export const legacyHegemonConnectionLabels = new Set([
   'Native 0.10 devnet'
 ]);
 export const defaultDevBasePath = '~/.hegemon-node-native-010-dev';
+export const preMainnetBasePath = '~/.hegemon-node-v0.11';
 export const legacyDesktopRpcPort = 9944;
 export const legacySeedAliases: Record<string, string> = {
   'hegemon.pauli.group:31333': approvedSeeds,

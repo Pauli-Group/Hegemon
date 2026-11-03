@@ -14,7 +14,8 @@ import {
   legacyDesktopRpcPort,
   legacyHegemonConnectionLabels,
   legacySeedAliases,
-  maxDesktopMineThreads
+  maxDesktopMineThreads,
+  preMainnetBasePath
 } from './config';
 import { makeId, validateShieldedAddressInput } from './format';
 
@@ -294,6 +295,17 @@ export const buildDefaultConnection = (): NodeConnection => ({
 });
 
 export const buildDefaultConnections = () => [buildDefaultConnection()];
+
+/** Opt-in v0.11 profile, separate from existing legacy and development data. */
+export const buildPreMainnetConnection = (): NodeConnection => ({
+  ...buildDefaultConnection(),
+  label: 'v0.11 pre-mainnet',
+  networkProfile: 'pre-mainnet',
+  dev: false,
+  tmp: false,
+  basePath: preMainnetBasePath,
+  miningIntent: false
+});
 
 export const normalizeRpcControlPlane = (connection: NodeConnection): NodeConnection => {
   if (connection.mode !== 'local') {

@@ -6,6 +6,7 @@ export type NodeConnection = {
   label: string;
   mode: NodeConnectionMode;
   participationRole?: NodeParticipationRole;
+  networkProfile?: 'pre-mainnet';
   wsUrl: string;
   httpUrl?: string;
   dev?: boolean;
@@ -330,6 +331,7 @@ export type Contact = {
 
 export type NodeStartOptions = {
   connectionId?: string;
+  networkProfile?: 'pre-mainnet';
   dev?: boolean;
   tmp?: boolean;
   basePath?: string;

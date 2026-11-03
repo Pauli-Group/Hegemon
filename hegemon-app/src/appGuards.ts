@@ -11,7 +11,7 @@ export type NodeDisplayState = {
   heightRelation: 'unknown' | 'syncing' | 'aligned' | 'local_ahead' | 'network_ahead';
   miningGateBlocked: boolean;
   canonicalStatus: 'verified' | 'pending' | 'mismatch' | 'unavailable';
-  healthLabel: 'Unknown' | 'Offline' | 'Forked' | 'Mining gated' | 'Syncing' | 'Checking' | 'Healthy';
+  healthLabel: 'Unknown' | 'Offline' | 'Wrong network' | 'Mining gated' | 'Syncing' | 'Checking' | 'Healthy';
   healthTone: StatusTone;
 };
 
@@ -68,12 +68,12 @@ export const computeNodeDisplayState = (summary: NodeSummary | null | undefined)
       : !summary.reachable
         ? 'Offline'
         : canonicalStatus === 'mismatch'
-          ? 'Forked'
+          ? 'Wrong network'
           : miningGateBlocked
           ? 'Mining gated'
           : isSyncing
             ? 'Syncing'
-            : canonicalStatus === 'pending' || canonicalStatus === 'unavailable'
+            : canonicalStatus === 'pending' || canonicalStatus === 'unavailable' || peerCount === 0
               ? 'Checking'
               : 'Healthy';
   const healthTone: StatusTone =
@@ -83,7 +83,7 @@ export const computeNodeDisplayState = (summary: NodeSummary | null | undefined)
         ? 'error'
         : canonicalStatus === 'mismatch'
           ? 'error'
-        : miningGateBlocked || isSyncing || canonicalStatus === 'pending' || canonicalStatus === 'unavailable'
+        : miningGateBlocked || isSyncing || canonicalStatus === 'pending' || canonicalStatus === 'unavailable' || peerCount === 0
           ? 'warn'
           : 'ok';
 

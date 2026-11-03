@@ -56,6 +56,10 @@
     ],
     "extraResources": [
       {
+        "from": "../config/testnet/0.11/network-manifest.json",
+        "to": "config/testnet/0.11/network-manifest.json"
+      },
+      {
         "from": "../target/release/hegemon-node",
         "to": "bin/hegemon-node"
       },
