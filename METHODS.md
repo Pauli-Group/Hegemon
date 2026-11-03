@@ -2883,6 +2883,8 @@ The hosted pair review captures terms from the three public-network forms, check
 
 The public Bitcoin runner no longer scans all wallet UTxOs after all funded cases have started. After the Blockstream provider returned HTTP 429, it was restarted with slower polling and a bounded-action recovery rule that examines all scenario and submission states before retrying a transient read. An inflight transaction still requires manual journal and chain inspection. Unit tests exercise both the reduced scan and the inflight refusal.
 
+Persistent primary Bitcoin indexer rate limiting led to a fixed-path, read-only mempool.space testnet4 fallback, which checks genesis before use and temporarily cools down the primary. Unit tests reject a mismatched fallback network and confirm that transaction submissions do not enter the fallback. A live height read succeeded through the fallback. The in-progress transaction runner was stopped under its action lock and restarted using the new reader.
+
 
 ## Local swap deadline watch and desktop entry
 

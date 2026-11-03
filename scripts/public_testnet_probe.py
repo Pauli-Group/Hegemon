@@ -13,13 +13,35 @@ import urllib.request
 from pathlib import Path
 
 BITCOIN = 'https://blockstream.info/testnet4/api'
+BITCOIN_FALLBACK = 'https://mempool.space/testnet4/api'
 ETHEREUM = 'https://ethereum-sepolia-rpc.publicnode.com'
 CARDANO = 'https://preview.koios.rest/api/v1'
 BITCOIN_GENESIS = '00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043'
 ETHEREUM_GENESIS = '0x25a5cc106eea7138acab33231d7160d69cb777ee0c2c553fcddf5138993e6dd9'
+_bitcoin_fallback_until=0.0
+_bitcoin_fallback_verified_until=0.0
+
+
+def _bitcoin_fallback_path(url,body):
+    if body is not None or not url.startswith(BITCOIN+'/'):return None
+    path=url[len(BITCOIN):]
+    allowed=(r'/block-height/[0-9]{1,10}',r'/blocks/tip/height',r'/fee-estimates',r'/tx/[0-9a-f]{64}(?:/outspend/[0-9]{1,10}|/status)?',r'/address/tb1q[ac-hj-np-z02-9]{38}(?:/utxo|/txs/mempool)?')
+    return path if any(re.fullmatch(pattern,path) for pattern in allowed) else None
+
+
+def _fallback_read(path):
+    global _bitcoin_fallback_verified_until
+    if time.monotonic()>=_bitcoin_fallback_verified_until:
+        genesis=request(BITCOIN_FALLBACK+'/block-height/0').decode().strip()
+        if genesis!=BITCOIN_GENESIS:raise ValueError('Fallback Bitcoin provider is not testnet4')
+        _bitcoin_fallback_verified_until=time.monotonic()+60
+    return request(BITCOIN_FALLBACK+path)
 
 
 def request(url, body=None):
+    global _bitcoin_fallback_until
+    fallback=_bitcoin_fallback_path(url,body)
+    if fallback is not None and time.monotonic()<_bitcoin_fallback_until:return _fallback_read(fallback)
     data=None if body is None else json.dumps(body,separators=(',',':')).encode()
     headers={'User-Agent':'Mozilla/5.0','Accept':'application/json'}
     if body is not None:headers['Content-Type']='application/json'
@@ -31,6 +53,9 @@ def request(url, body=None):
             with urllib.request.urlopen(urllib.request.Request(url,data=data,headers=headers),timeout=15) as response:raw=response.read(4*1024*1024+1)
             break
         except urllib.error.HTTPError as error:
+            if fallback is not None and error.code in (429,500,502,503,504):
+                _bitcoin_fallback_until=time.monotonic()+300
+                return _fallback_read(fallback)
             if not retryable or error.code not in (429,500,502,503,504) or attempt==2:raise
         except (urllib.error.URLError,TimeoutError):
             if not retryable or attempt==2:raise
