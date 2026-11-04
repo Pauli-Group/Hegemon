@@ -33,6 +33,12 @@ public path must therefore be additive.
 The current wallet verifies an HTLC note internally but does not export its
 nullifier through the existing `verify-htlc` command. A matching action ID and
 hashlock do not by themselves establish that action consumed that exact note.
+The encrypted wallet's `StoredPrivateSpendNote` retains a note's derived
+nullifier, and the v0.11 public action carrier includes two nullifiers. A future
+wallet-integrated check could compare the appropriate input locally while also
+validating the agreed terms and canonical chain. This requires careful slot,
+rollback, privacy, and release-mode checks; it is not implemented here. Do not
+publish or log a note's nullifier before its corresponding spend is public.
 
 ## Decision Log
 
