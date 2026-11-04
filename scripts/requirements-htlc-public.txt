@@ -5,3 +5,5 @@ pycardano==0.19.2
 # cbor2pure used by pycardano requires this API; cbor2 6.2.0 broke the import.
 cbor2==5.6.5
 eth-account==0.13.7
+# Encrypt observed preimage backups locally.
+cryptography==50.0.2
