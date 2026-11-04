@@ -202,10 +202,16 @@ must keep the approved seed list and synchronized clocks.
 ## Sync and spend with the native CLI
 
 For funded wallet operations, stop your local relay and restart the package
-with the explicit wallet-RPC option:
+with the explicit wallet-RPC option, using the same data directory and manifest:
 
 ```bash
 HEGEMON_MINE=0 HEGEMON_MINER_ADDRESS= python3 start.py --wallet-rpc
+```
+
+For a source checkout, use the source launcher instead:
+
+```bash
+HEGEMON_MINE=0 HEGEMON_MINER_ADDRESS= bash ./start.sh --wallet-rpc
 ```
 
 On Windows PowerShell:

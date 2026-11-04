@@ -4,8 +4,11 @@
 # No wallet is created, opened or deleted. Keep NTP/chrony enabled.
 set -euo pipefail
 
-if [[ "$#" -ne 0 ]]; then
-  echo "Usage: ./start.sh (configure mining through HEGEMON_MINE and HEGEMON_MINER_ADDRESS)" >&2
+RPC_METHODS=safe
+if [[ "$#" -eq 1 && "$1" == "--wallet-rpc" ]]; then
+  RPC_METHODS=unsafe
+elif [[ "$#" -ne 0 ]]; then
+  echo "Usage: ./start.sh [--wallet-rpc] (configure mining through HEGEMON_MINE and HEGEMON_MINER_ADDRESS)" >&2
   exit 64
 fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -79,5 +82,5 @@ exec "$HEGEMON_NODE_BIN" \
   --network-manifest "$RELEASE_DIR/network-manifest.json" \
   --base-path "$HEGEMON_NODE_PATH" \
   --rpc-port 9944 \
-  --rpc-methods safe \
+  --rpc-methods "$RPC_METHODS" \
   --name "Hegemon-v0.11"

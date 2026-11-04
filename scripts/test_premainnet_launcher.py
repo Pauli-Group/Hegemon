@@ -82,6 +82,31 @@ class PreMainnetLauncherTests(unittest.TestCase):
             "HEGEMON_BOOTSTRAP_AUTHORING": "0",
         })
 
+    def test_wallet_rpc_requires_explicit_opt_in_and_stays_loopback_only(self):
+        state = self.home / ".hegemon-node-v0.11"
+        state.mkdir()
+        marker = state / "existing-data"
+        marker.write_bytes(b"keep existing state\x00\xff")
+        result = self.success(self.launch(arguments=("--wallet-rpc",)))
+        args = result["argv"]
+        self.assertEqual(args[args.index("--rpc-methods") + 1], "unsafe")
+        self.assertEqual(args[args.index("--rpc-port") + 1], "9944")
+        self.assertEqual(args[args.index("--network-manifest") + 1], str(self.manifest))
+        self.assertEqual(args[args.index("--base-path") + 1],
+                         str(state))
+        self.assertNotIn("--rpc-external", args)
+        self.assertEqual(marker.read_bytes(), b"keep existing state\x00\xff")
+        for arguments in (("--wallet-rpc", "--rpc-external"),
+                          ("--rpc-external", "--wallet-rpc"),
+                          ("--wallet-rpc", "--wallet-rpc")):
+            with self.subTest(arguments=arguments):
+                self.rejected(self.launch(arguments=arguments), "Usage:")
+
+    def test_wallet_rpc_does_not_bypass_manifest_verification(self):
+        self.manifest.write_text('{"profile":"pre-mainnet","changed":true}\n')
+        self.rejected(self.launch(arguments=("--wallet-rpc",)),
+                      "network-manifest SHA-256 mismatch")
+
     def test_mining_requires_explicit_public_recipient(self):
         result = self.success(self.launch({
             "HEGEMON_MINE": "1", "HEGEMON_MINER_ADDRESS": "public-test-recipient",
