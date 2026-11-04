@@ -2,12 +2,15 @@
 """Read-only checks for a trusted Hegemon v0.11.2 node over a private tunnel.
 
 This does not open a tunnel, validate consensus, create a wallet or submit a
-transaction. A successful report does not replace the wallet's own checks.
+transaction. The optional public-tip check trusts the project's explorer as a
+second observation; it is not an independent consensus or finality check.
 """
 import argparse
+import datetime
 import hashlib
 import json
 import re
+import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -24,6 +27,11 @@ MANIFEST_FIELDS = ('schema', 'profile', 'genesis_timestamp_ms', 'pow_bits',
 # The CLI fetches canonical action chunks when synchronizing its encrypted wallet.
 REQUIRED = ('chain_getBlockHash', 'chain_getBlockActionsChunk', 'hegemon_latestBlock',
             'hegemon_nodeConfig', 'hegemon_privateSpendParameters', 'hegemon_submitAction')
+PUBLIC_EXPLORER = 'https://hegemonprotocol.com'
+MAX_TIP_GAP = 12
+MAX_REFERENCE_AGE = 120
+MAX_REFERENCE_FUTURE = 30
+HASH32 = re.compile(r'0x[0-9a-fA-F]{64}\Z')
 
 
 def endpoint(url):
@@ -44,6 +52,89 @@ def endpoint(url):
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+def public_json(path):
+    """Read only a fixed explorer path through the configured HTTPS proxy."""
+    if path != '/testnet/status.json' and not re.fullmatch(
+            r'/testnet-api/v1/block/[0-9]{1,15}\?limit=1', path):
+        raise ValueError('Invalid public explorer path')
+    request = urllib.request.Request(PUBLIC_EXPLORER + path,
+                                     headers={'accept': 'application/json'})
+    # Keep the inherited HTTPS proxy and certificate verification; reject redirects.
+    opener = urllib.request.build_opener(NoRedirect())
+    with opener.open(request, timeout=15) as response:
+        raw = response.read(1024 * 1024 + 1)
+    if len(raw) > 1024 * 1024:
+        raise ValueError('Public explorer response too large')
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError('Invalid public explorer response')
+    return value
+
+
+def compare_public_tip(url, node, read=None, fetch=public_json, now=None):
+    """Compare one local-node snapshot with the trusted public testnet explorer.
+
+    Both sources are trusted; a matching block does not independently validate
+    consensus or guarantee finality. No wallet or transaction data are sent.
+    """
+    if read is None:
+        read = rpc
+    url = endpoint(url)
+    release = json.loads(RELEASE.read_text())
+    if (not isinstance(node, dict) or type(node.get('height')) is not int or node['height'] < 1
+            or node.get('genesis') != release.get('genesis_hash')
+            or node.get('chain_id') != release.get('chain_id')):
+        raise ValueError('Invalid local node height or network identity')
+    status = fetch('/testnet/status.json')
+    if (not isinstance(status, dict) or status.get('network') != 'pre-mainnet-v0.11'
+            or status.get('genesis_hash') != node.get('genesis')
+            or status.get('chain_id') != node.get('chain_id')
+            or status.get('available') is not True or status.get('syncing') is not False
+            or status.get('error') is not None or type(status.get('peers')) is not int
+            or status['peers'] < 1):
+        raise ValueError('Public explorer is unavailable or reports the wrong network')
+    height = status.get('height')
+    reference_hash = status.get('hash')
+    if (type(height) is not int or not 1 <= height < 10**15
+            or not isinstance(reference_hash, str) or not HASH32.fullmatch(reference_hash)):
+        raise ValueError('Invalid public explorer tip')
+    updated = status.get('updated_at')
+    try:
+        if not isinstance(updated, str) or len(updated) > 64:
+            raise ValueError
+        stamp = datetime.datetime.fromisoformat(updated.replace('Z', '+00:00'))
+        if stamp.tzinfo is None:
+            raise ValueError
+        age = (time.time() if now is None else now) - stamp.timestamp()
+    except (ValueError, OverflowError, OSError):
+        raise ValueError('Invalid public explorer update time') from None
+    if not -MAX_REFERENCE_FUTURE <= age <= MAX_REFERENCE_AGE:
+        raise ValueError('Public explorer status is stale or has a future timestamp')
+    gap = node['height'] - height
+    if abs(gap) > MAX_TIP_GAP:
+        raise ValueError(f'Node and public explorer differ by {abs(gap)} blocks')
+    common = min(node['height'], height)
+    local_hash = read(url, 'chain_getBlockHash', [common])
+    block = fetch(f'/testnet-api/v1/block/{common}?limit=1').get('block')
+    if (not isinstance(local_hash, str) or not HASH32.fullmatch(local_hash)
+            or not isinstance(block, dict) or type(block.get('height')) is not int
+            or block['height'] != common or not isinstance(block.get('hash'), str)
+            or not HASH32.fullmatch(block['hash'])):
+        raise ValueError('Invalid common-height block response')
+    if local_hash.lower() != block['hash'].lower():
+        raise ValueError('Node and public explorer disagree on the common block hash')
+    if common == height and reference_hash.lower() != block['hash'].lower():
+        raise ValueError('Public explorer tip changed during comparison')
+    after = read(url, 'chain_getBlockHash', [common])
+    if not isinstance(after, str) or after.lower() != local_hash.lower():
+        raise ValueError('Local node reorganized during comparison')
+    return {'checked': True, 'matches': True, 'node_height': node['height'],
+            'reference_height': height, 'height_difference': gap,
+            'common_height': common, 'common_hash': local_hash.lower(),
+            'reference_updated_at': updated, 'max_tip_gap': MAX_TIP_GAP,
+            'source': PUBLIC_EXPLORER}
 
 
 def rpc(url, method, params):
@@ -128,9 +219,23 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--rpc', required=True,
                         help='private tunnel endpoint, e.g. http://127.0.0.1:19944')
-    report = probe(parser.parse_args().rpc)
+    parser.add_argument('--check-public-tip', action='store_true',
+                        help='compare height and a block hash with the trusted public explorer')
+    args = parser.parse_args()
+    report = probe(args.rpc)
+    if args.check_public_tip:
+        try:
+            report['public_reference'] = compare_public_tip(args.rpc, report)
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            report['public_reference'] = {'checked': True, 'matches': False,
+                                          'error': str(error)[:300]}
+        report['public_testnet_ready'] = (report['basic_wallet_checks_passed']
+                                          and report['public_reference']['matches'])
+        report['limitation'] += (' The public explorer is a second trusted observation; '
+                                 'matching snapshots do not prove consensus or finality.')
     print(json.dumps(report, indent=2))
-    return 0 if report['basic_wallet_checks_passed'] else 1
+    passed = report['public_testnet_ready'] if args.check_public_tip else report['basic_wallet_checks_passed']
+    return 0 if passed else 1
 
 
 if __name__ == '__main__':

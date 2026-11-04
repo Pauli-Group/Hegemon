@@ -2887,7 +2887,7 @@ Persistent primary Bitcoin indexer rate limiting led to a fixed-path, read-only 
 
 The hosted BTC and Cardano checkers accepted their respective confirmed, unspent public BTC/ADA rehearsal escrows, and the hosted pair review matched both to the offer and shared hashlock. This verifies separate provider snapshots before claims, not swap completion or real-fund timeout safety.
 
-The read-only Hegemon tunnel probe is tested with a loopback HTTP fixture and with mismatched genesis, chain ID, manifest, relation, health and wallet method lists. The tests ensure it never calls the submission method and rejects remote URL targets. They do not establish access to an actual public-testnet wallet RPC, network freshness or Hegemon swap execution.
+The read-only Hegemon tunnel probe is tested with a loopback HTTP fixture and with mismatched genesis, chain ID, manifest, relation, health and wallet method lists. The optional public-tip comparison is tested for the observed 812-block stale-node case, wrong or stale explorer identity, forked hashes, local reorganization and an unavailable reference; a live explorer response was checked against a synthetic local RPC view. The tests ensure the probe never calls the submission method and rejects remote URL targets. These checks trust both node and explorer; they do not establish independent consensus, finality, actual public-testnet wallet operation or Hegemon swap execution.
 
 The source pre-mainnet launcher tests use a fake node to verify that RPC is safe by default, `--wallet-rpc` explicitly selects unsafe methods without external RPC, arbitrary options remain rejected, and release-manifest verification still applies. They do not establish actual network binding or transaction submission.
 
