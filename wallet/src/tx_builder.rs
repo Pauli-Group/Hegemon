@@ -2203,7 +2203,10 @@ mod tests {
     }
 
     fn test_multisig_record(store: &WalletStore) -> MultisigAccountRecord {
-        let local_signer = store.local_multisig_signer_tag().unwrap();
+        // Retained legacy fixture; production wallet-root export is disabled.
+        let local_signer = crate::multisig::signer_tag_from_spend_key(
+            &store.derived_keys().unwrap().unwrap().spend.to_bytes(),
+        );
         let other_signer = crate::multisig::signer_tag_from_spend_key(&[91u8; 32]);
         let public = store
             .create_multisig_account(1, vec![local_signer, other_signer])

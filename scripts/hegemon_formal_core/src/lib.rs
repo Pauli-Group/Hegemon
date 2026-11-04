@@ -174,7 +174,7 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
 const EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3: &str =
     "51512c473f20c40c3a88b9f2a1ba0d2e81b9a25a6591c025967b306121801657";
 const EXPECTED_FORMAL_SOURCE_TREE_BLAKE3: &str =
-    "7db8137812a35929fd2df93ad0ff780c485f212f48a333720f6cbe855cc2eb92";
+    "759d2c9a886f820fd1d39f63c243671829adf13f0a910e722c1c0ad05d11e50c";
 const PROGRESS_PERCENT_EPSILON: f64 = 0.0001;
 const CLAIMS_SCHEMA_VERSION: u32 = 2;
 const BLUEPRINT_SCHEMA_VERSION: u32 = 2;
@@ -184,6 +184,19 @@ const EXPECTED_CLAIM_BASELINE_BLAKE3: &str =
     "c27b47f4d9e82a86ad82b1a0b0d116586a35b7af47ea5755d98fd9e440d4841d";
 const CONDITIONAL_SMALLWOOD_CLAIM_ID: &str =
     "formal.deployed-smallwood-no-counterfeit-critical-path";
+// These source-compatible historical implications use absolute injectivity,
+// not computational collision resistance. Never restore their security credit
+// by moving them to another claim; use explicit collision-certificate reductions.
+const RETIRED_INJECTIVITY_SECURITY_ROOTS: &[&str] = &[
+    "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_hash_collision_resistance_binds_canonical_output_value_and_asset",
+    "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_poseidon2_no_collision_binds_accepted_output_value_and_asset",
+    "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_row_hash_binding_rejects_opening_substitution",
+    "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_row_hash_binding_preserves_canonical_value_and_asset",
+    "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_opening_bindings_are_unique",
+    "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_deployed_smallwood_block_of_assumed_transaction_relations_and_poseidon_boundaries_yields_no_counterfeit_critical_path",
+    "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_deployed_smallwood_block_under_explicit_semantic_and_poseidon_boundaries_yields_no_counterfeit_critical_path",
+    "HegemonCrypto.SmallWood.ProductionSupplyChain.accepted_block_given_caller_extraction_semantic_refinement_and_output_security_yields_no_counterfeit",
+];
 const REQUIRED_GOVERNANCE_GATE_ID: &str = "formal-governance-focused-tests";
 const REQUIRED_GOVERNANCE_GATE_COMMAND: &str =
     "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_";
@@ -2571,6 +2584,14 @@ fn validate_conditional_smallwood_claim(claim: &SecurityClaim) -> Result<()> {
 }
 
 fn validate_lean_theorem_evidence(root: &Path, claim: &SecurityClaim) -> Result<BTreeSet<String>> {
+    for theorem in &claim.lean_theorems {
+        ensure!(
+            !RETIRED_INJECTIVITY_SECURITY_ROOTS.contains(&theorem.as_str()),
+            "{} lists retired absolute-injectivity root {}; use a pair-specific collision reduction",
+            claim.id,
+            theorem
+        );
+    }
     if claim.claim_class != "lean_theorem" {
         ensure!(
             claim.lean_theorems.is_empty(),
@@ -18482,6 +18503,23 @@ mod tests {
         assert!(err
             .to_string()
             .contains("caller import_mined_block is missing from non-test Rust code"));
+    }
+
+    #[test]
+    fn claims_reject_retired_injectivity_roots_in_any_claim() {
+        for theorem in RETIRED_INJECTIVITY_SECURITY_ROOTS {
+            let fixture = lean_claims_fixture(
+                &["formal/lean/Hegemon/Transaction/Balance.lean"],
+                &[*theorem],
+            );
+            let mut claim: SecurityClaim =
+                serde_json::from_value(fixture["claims"][0].clone()).expect("fixture claim");
+            for claim_id in [CONDITIONAL_SMALLWOOD_CLAIM_ID, "unrelated.claim"] {
+                claim.id = claim_id.to_owned();
+                let err = validate_lean_theorem_evidence(Path::new("."), &claim).unwrap_err();
+                assert!(format!("{err:#}").contains("retired absolute-injectivity root"));
+            }
+        }
     }
 
     #[test]

@@ -25,8 +25,7 @@ use crate::address::ShieldedAddress;
 use crate::error::WalletError;
 use crate::keys::{DerivedKeys, RootSecret};
 use crate::multisig::{
-    create_account_record, signer_tag_from_spend_key, validate_account_record,
-    MultisigAccountPublic, MultisigAccountRecord,
+    create_account_record, validate_account_record, MultisigAccountPublic, MultisigAccountRecord,
 };
 use crate::notes::MemoPlaintext;
 use crate::poseidon2_v8_sync::{
@@ -600,12 +599,15 @@ impl WalletStore {
         self.with_state(|state| Ok(state.outgoing.clone()))
     }
 
+    /// Retained API that refuses to export the legacy personal nullifier key.
     pub fn local_multisig_signer_tag(
         &self,
     ) -> Result<transaction_circuit::SmallwoodSignerTag, WalletError> {
         self.with_state(|state| {
-            let derived = state.derived.as_ref().ok_or(WalletError::WatchOnly)?;
-            Ok(signer_tag_from_spend_key(&derived.spend.to_bytes()))
+            state.derived.as_ref().ok_or(WalletError::WatchOnly)?;
+            Err(WalletError::InvalidState(
+                crate::multisig::LEGACY_SIGNER_TAG_EXPORT_DISABLED,
+            ))
         })
     }
 
@@ -5235,11 +5237,43 @@ mod tests {
     }
 
     #[test]
+    fn legacy_multisig_signer_export_is_disabled_after_reopen() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        assert!(matches!(
+            store.local_multisig_signer_tag(),
+            Err(WalletError::InvalidState(
+                crate::multisig::LEGACY_SIGNER_TAG_EXPORT_DISABLED
+            ))
+        ));
+        let keys = store.derived_keys().unwrap().unwrap();
+        let modern_tag = crate::poseidon2_v8_multisig::v8_treasury_signer_tag(&keys).unwrap();
+        assert_eq!(
+            modern_tag,
+            transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_single_key_authorization_digest(
+                keys.spend.poseidon2_v8_words().unwrap()
+            )
+            .unwrap()
+        );
+        drop(store);
+        let reopened = WalletStore::open(&path, "passphrase").unwrap();
+        assert!(reopened.local_multisig_signer_tag().is_err());
+        assert_eq!(
+            crate::poseidon2_v8_multisig::v8_treasury_signer_tag(
+                &reopened.derived_keys().unwrap().unwrap()
+            )
+            .unwrap(),
+            modern_tag
+        );
+    }
+
+    #[test]
     fn multisig_account_public_projection_hides_policy_shape() {
         let temp = tempdir().unwrap();
         let path = temp.path().join("wallet.dat");
         let store = WalletStore::create_full(&path, "passphrase").unwrap();
-        let local_signer = store.local_multisig_signer_tag().unwrap();
+        let local_signer = crate::multisig::signer_tag_from_spend_key(&[37; 32]);
         let other_signer = crate::multisig::signer_tag_from_spend_key(&[9u8; 32]);
         let public = store
             .create_multisig_account(2, vec![local_signer, other_signer])
@@ -5648,7 +5682,7 @@ mod tests {
         let temp = tempdir().unwrap();
         let path = temp.path().join("wallet.dat");
         let store = WalletStore::create_full(&path, "passphrase").unwrap();
-        let local_signer = store.local_multisig_signer_tag().unwrap();
+        let local_signer = crate::multisig::signer_tag_from_spend_key(&[37; 32]);
         let account = store
             .create_multisig_account(1, vec![local_signer])
             .unwrap();
@@ -6810,7 +6844,7 @@ mod legacy_v17_recovery_tests {
         let address = store.private_spend_address(37).unwrap();
         let tags = (1..=3)
             .map(|i| {
-                signer_tag_from_spend_key(
+                crate::multisig::signer_tag_from_spend_key(
                     &RootSecret::from_bytes([i; 32]).derive().spend.to_bytes(),
                 )
             })
@@ -6824,6 +6858,7 @@ mod legacy_v17_recovery_tests {
         assert!(readonly.is_legacy_read_only());
         assert_eq!(readonly.signing_seed().unwrap(), old_seed);
         assert_eq!(readonly.multisig_accounts().unwrap(), vec![account.clone()]);
+        assert!(readonly.local_multisig_signer_tag().is_err());
         assert!(readonly.next_private_spend_address().is_err());
         assert!(WalletStore::open(&source, "old-test-only").is_err());
         assert_eq!(fs::read(&source).unwrap(), source_bytes);
@@ -6839,6 +6874,7 @@ mod legacy_v17_recovery_tests {
         assert_eq!(recovered.signing_seed().unwrap(), old_seed);
         assert_eq!(recovered.private_spend_address(37).unwrap(), address);
         assert_eq!(recovered.multisig_accounts().unwrap(), vec![account]);
+        assert!(recovered.local_multisig_signer_tag().is_err());
         assert_eq!(recovered.genesis_hash().unwrap(), None);
         assert!(recovered.launch_context().is_err());
         assert!(recovered

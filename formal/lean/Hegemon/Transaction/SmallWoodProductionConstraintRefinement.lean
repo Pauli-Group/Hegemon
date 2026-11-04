@@ -478,6 +478,11 @@ def productionNoteHash (opening : ProductionNoteOpening) : Digest :=
   productionPoseidon2DigestEncoding
     (productionPoseidon2Sponge 1 (productionNotePreimage opening))
 
+/-- Retired historical compatibility predicate: this asserts absolute injectivity,
+not computational collision resistance. The full 18-word input space cannot
+inject into six output limbs. Do not use this premise as security evidence.
+Use `production_canonical_output_value_and_asset_equal_or_hash_collision`
+to obtain an explicit collision for the particular openings instead. -/
 def ProductionHashCollisionResistance (spec : ProductionNoteHashSpec) : Prop :=
   deployedProductionNoteHashSpecAccepts spec = true
     ∧ ∀ left right,
@@ -503,6 +508,29 @@ theorem canonical_note_preimage_equality_binds_value_and_asset
   · simpa [productionNotePreimage, fieldValue,
       Nat.mod_eq_of_lt leftCanonical.assetBelowFieldModulus,
       Nat.mod_eq_of_lt rightCanonical.assetBelowFieldModulus] using secondEqual
+
+/-- A concrete, pair-specific collision certificate. This does not claim that
+collisions are impossible or that an attacker can efficiently find one. -/
+structure ProductionNoteHashCollision
+    (left right : ProductionNoteOpening) : Prop where
+  preimagesDistinct : productionNotePreimage left ≠ productionNotePreimage right
+  hashesEqual : productionNoteHash left = productionNoteHash right
+
+/-- Canonical openings for the same commitment agree on value and asset, or
+the supplied openings exhibit a collision. No universal no-collision premise
+is assumed; a computational security argument must bound the collision event. -/
+theorem production_canonical_output_value_and_asset_equal_or_hash_collision
+    {left right : ProductionNoteOpening}
+    (leftCanonical : ProductionValueAssetCanonical left)
+    (rightCanonical : ProductionValueAssetCanonical right)
+    (hashesEqual : productionNoteHash left = productionNoteHash right) :
+    (left.value = right.value ∧ left.assetId = right.assetId)
+      ∨ ProductionNoteHashCollision left right := by
+  classical
+  by_cases preimagesEqual : productionNotePreimage left = productionNotePreimage right
+  · exact Or.inl (canonical_note_preimage_equality_binds_value_and_asset
+      leftCanonical rightCanonical preimagesEqual)
+  · exact Or.inr ⟨preimagesEqual, hashesEqual⟩
 
 def ProductionCanonicalOutputCommitmentBinding
     (spec : ProductionNoteHashSpec) : Prop :=
@@ -2169,6 +2197,12 @@ def ProductionPoseidon2ConstraintDigestRefinementAssumption
     ProductionAcceptedOutputHashImage map witnessValues output →
       ProductionAcceptedOutputHashDigestBinding spec map witnessValues output
 
+/-- Retired historical compatibility predicate. Despite its name, this is a
+universal injectivity condition over all accepted witness pairs, not a
+computational collision-resistance game or a premise for just one supplied
+pair. Digest refinement plus honest completeness must not be replaced by this
+condition. The credited replacement is
+`production_accepted_output_value_and_asset_equal_or_poseidon2_collision`. -/
 def ProductionPoseidon2AcceptedOutputNoCollisionAssumption
     (spec : ProductionNoteHashSpec) : Prop :=
   ∀ map leftWitness rightWitness output,
@@ -2178,6 +2212,8 @@ def ProductionPoseidon2AcceptedOutputNoCollisionAssumption
           (productionOutputHashPreimage map leftWitness output)
           (productionOutputHashPreimage map rightWitness output)
 
+/-- Retired historical bundle used by source-compatible V4 theorems. Its
+absolute no-collision field is not credited cryptographic security evidence. -/
 structure ProductionPoseidon2OutputSecurityAssumptions
     (spec : ProductionNoteHashSpec) : Prop where
   constraintDigestRefinement : ProductionPoseidon2ConstraintDigestRefinementAssumption spec
@@ -2219,6 +2255,49 @@ theorem production_output_hash_preimage_equality_binds_value_and_asset
   · simpa [productionOutputHashPreimage] using firstEqual
   · simpa [productionOutputHashPreimage] using secondEqual
 
+/-- An explicit collision in the exact historical Poseidon2 digest function. -/
+structure ProductionPoseidon2Collision
+    (spec : ProductionNoteHashSpec)
+    (leftPreimage rightPreimage : List Nat) : Prop where
+  preimagesDistinct : leftPreimage ≠ rightPreimage
+  digestsEqual : productionDeployedPoseidon2Digest spec leftPreimage =
+    productionDeployedPoseidon2Digest spec rightPreimage
+
+/-- Accepted output pairs agree on value and asset, or those exact witnesses
+produce a Poseidon2 collision. Only digest correspondence is assumed. This
+reduction does not assert absolute injectivity or discharge the remaining
+constraint-to-digest implementation-refinement boundary. -/
+theorem production_accepted_output_value_and_asset_equal_or_poseidon2_collision
+    {spec : ProductionNoteHashSpec}
+    (refinement : ProductionPoseidon2ConstraintDigestRefinementAssumption spec)
+    {map : ProductionConstraintMap}
+    {leftWitness rightWitness : List Nat}
+    {output : Nat}
+    (leftImage : ProductionAcceptedOutputHashImage map leftWitness output)
+    (rightImage : ProductionAcceptedOutputHashImage map rightWitness output) :
+    (productionOutputValue map leftWitness
+        (productionOutputCommitmentLane map output 0) output =
+          productionOutputValue map rightWitness
+            (productionOutputCommitmentLane map output 0) output
+      ∧ productionOutputAsset map leftWitness
+        (productionOutputCommitmentLane map output 0) output =
+          productionOutputAsset map rightWitness
+            (productionOutputCommitmentLane map output 0) output)
+      ∨ ProductionPoseidon2Collision spec
+        (productionOutputHashPreimage map leftWitness output)
+        (productionOutputHashPreimage map rightWitness output) := by
+  classical
+  have digestsEqual := production_accepted_output_hash_digest_bindings_have_equal_deployed_digest
+    (refinement map leftWitness output leftImage)
+    (refinement map rightWitness output rightImage)
+  by_cases preimagesEqual : productionOutputHashPreimage map leftWitness output =
+      productionOutputHashPreimage map rightWitness output
+  · exact Or.inl (production_output_hash_preimage_equality_binds_value_and_asset preimagesEqual)
+  · exact Or.inr ⟨preimagesEqual, digestsEqual⟩
+
+/-- Archived V4 implication, retained for source compatibility only. The
+universal injectivity premise is not computational collision resistance and
+this theorem is excluded from the credited security roots. -/
 theorem production_poseidon2_no_collision_binds_accepted_output_value_and_asset
     {spec : ProductionNoteHashSpec}
     (security : ProductionPoseidon2OutputSecurityAssumptions spec)

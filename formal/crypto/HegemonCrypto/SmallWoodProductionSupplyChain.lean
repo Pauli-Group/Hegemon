@@ -17,11 +17,18 @@ This module contains two deliberately separate conditional paths:
   transaction relation used by block composition.
 
 The second path does not consume the first path or its collision-freedom premise. The
-credited block theorem therefore names its actual assumptions: per-transaction
+archived block theorem names its actual assumptions: per-transaction
 extraction success, semantic refinement, and separate Poseidon2 output-security
 assumptions. This module neither
 proves that compiled-Rust acceptance constructs the evidence nor derives extraction
 success from the ideal-QROM probability theorem.
+
+The historical V4 output-security bundle asserts universal accepted-output
+injectivity, not computational collision resistance. Its no-counterfeit
+implication is retained for source compatibility but withdrawn from security
+credit. The pair-specific collision reductions in
+`SmallWoodProductionConstraintRefinement` and later RP05 conservation reduction
+are separate results; neither supplies current-release authority.
 -/
 
 namespace HegemonCrypto.SmallWood.ProductionSupplyChain
@@ -280,10 +287,11 @@ def AcceptedBlockCallerSuppliedConditionalEvidence
       CallerSuppliedTransactionConditionalEvidence proof
 
 /--
-Conditional supply-composition theorem. Its hypotheses explicitly assume, for
+Archived conditional supply-composition theorem, not a credited security root.
+Its hypotheses explicitly assume, for
 every accepted transaction, caller-supplied modeled-verifier evidence, the
 negation of `NoValidExtraction`, and canonical semantic refinement, plus separate
-Poseidon2 output-security assumptions. It is not a deployed end-to-end soundness
+Poseidon2 output-security assumptions, including universal injectivity. It is not a deployed end-to-end soundness
 theorem.
 -/
 theorem accepted_block_given_caller_extraction_semantic_refinement_and_output_security_yields_no_counterfeit

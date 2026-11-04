@@ -757,12 +757,11 @@
         "Hegemon.Transaction.SmallWoodSemanticClosure.output_constraints_imply_slots_valid",
         "Hegemon.Transaction.SmallWoodSemanticClosure.active_output_constraint_binds_note_opening",
         "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_rows_bind_every_active_opening",
-        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_opening_bindings_are_unique",
         "Hegemon.Transaction.SmallWoodSemanticClosure.semantic_constraints_imply_public_shape_valid",
         "Hegemon.Transaction.SmallWoodSemanticClosure.semantic_constraints_imply_spend_authorized"
       ],
       "assumptions": [
-        "The legacy executable Lean spend model uses abstract digest arithmetic for spend-authority keys, nullifiers, and Merkle nodes. The production output-opening theorem uses the canonical 18-field preimage and keeps production hash collision resistance explicit; it does not prove primitive hash security.",
+        "The legacy executable Lean spend model uses abstract digest arithmetic for spend-authority keys, nullifiers, and Merkle nodes. The credited output-row theorem binds the executed opening to its public commitment; it does not assert opening uniqueness. The former uniqueness implication assumes impossible universal hash injectivity and is withdrawn from security credit. Pair-specific collision reductions are tracked by the historical V4 claim.",
         "The theorem `accepted_wrapper_implies_spend_authorization` is conditional on `SpendAuthorizationSoundnessAssumption`: accepted proof-wrapper verification must imply the modeled authorization relation for the exact public input shape and root.",
         "`authorizeInputSlots_lengths_match` and `transactionSpendAuthorized_witnesses_align_with_public_inputs` prove that successful authorization cannot be derived over mismatched public flag/nullifier vectors or mismatched private witness vectors.",
         "The indexed theorem `authorizeInputSlots_active_input_facts_at` lifts authorization facts for any active input slot in aligned flag/nullifier/witness vectors, not only the head slot.",
@@ -3019,7 +3018,7 @@
       "id": "consensus.supply-chain-invariant",
       "component": "PoW accepted-chain supply accounting",
       "claim_class": "lean_theorem",
-      "summary": "The Lean supply-chain invariant kernel proves modeled claimed-supply steps replay to the executable expected-delta sequence, and AcceptedSmallWoodBlockComposition proves the same-block fee, empty independent-burn, coinbase, parent-supply, height, and claimed-supply projection. Turning those modeled facts into an accepted-block no-counterfeit result remains conditional on caller-supplied SmallWood knowledge-soundness, canonical-semantic-refinement, and Poseidon2 output-security evidence. Lean-generated identity, active-version, and supply mutations are checked against the consensus identity projection and native supply-composition helper, but those bounded checks do not construct the required evidence from shipped verifier acceptance. The production consensus manifest authorizes active V4/Gamma only, while formal security/release authority remains false.",
+      "summary": "The Lean supply-chain invariant kernel proves modeled claimed-supply steps replay to the executable expected-delta sequence, and AcceptedSmallWoodBlockComposition proves the same-block fee, empty independent-burn, coinbase, parent-supply, height, and claimed-supply projection. These accounting facts concern the gross fee-inclusive supply digest, not circulating wealth or proof-system soundness. The historical V4/Gamma no-counterfeit implication is withdrawn from this claim because its universal output no-collision premise is not a computational assumption. Current PrivateSpend conservation and release qualification are separate. Lean-generated identity, active-version, and supply mutations remain bounded conformance evidence rather than universal Rust refinement.",
       "status": "research_only",
       "proof_model": "lean4_conditional_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": false,
@@ -3059,15 +3058,14 @@
         "Hegemon.Native.CoinbaseSupplyConservation.accepted_no_coinbase_accounting_yields_supply_certificate",
         "Hegemon.Native.CoinbaseSupplyConservation.accepted_one_coinbase_accounting_and_canonical_boundary_yields_supply_integrity_certificate",
         "Hegemon.Native.CoinbaseSupplyConservation.accepted_no_coinbase_accounting_and_canonical_boundary_yields_supply_integrity_certificate",
-        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.consensus_accepted_chain_supply_composition",
-        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_deployed_smallwood_block_under_explicit_semantic_and_poseidon_boundaries_yields_no_counterfeit_critical_path"
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.consensus_accepted_chain_supply_composition"
       ],
       "assumptions": [
         "The Lean model represents a chain prefix as an ordered list of claimed supply steps carrying minted amount, signed fees, burns, and the claimed post-block supply digest.",
         "Generated Lean conformance vectors cover valid multi-step replay, claimed-supply counterfeiting, burn underflow, and supply overflow rejection.",
         "The deployed native action grammar has no independent burn action, so the exact accepted burn projection is the empty list; no-coinbase fees remain unminted under the existing supply helper.",
-        "The accepted-block no-counterfeit theorem requires `DeployedSmallWoodBlockKnowledgeSoundnessEvidence`, `DeployedSmallWoodBlockCanonicalSemanticRefinementEvidence`, and `DeployedSmallWoodBlockPoseidon2OutputSecurityAssumptions`; it does not construct those premises from shipped Rust acceptance. Fee linkage, coinbase linkage, burn linkage, transaction ordering, and claimed-supply equality are modeled directly.",
-        "The conditional composed theorem is scoped to the V4/Gamma acceptance predicate, which the production consensus manifest authorizes as the sole active tuple; formal security/release authority nevertheless remains false. Historical V2/Beta and V3/Beta formats are decoder compatibility only, the historical and recursive authorization ranges are empty, and any activation requires an explicit bounded policy.",
+        "The credited composition theorem covers deterministic accounting. The archived accepted-block no-counterfeit implications retain caller-supplied knowledge-soundness, semantic-refinement and universal injectivity hypotheses for source compatibility only; they are excluded from credited roots. No cryptographic security conclusion follows merely from the accounting theorem.",
+        "The retained composition uses historical V4/Gamma statements. Current circuit-12 PrivateSpend and its exact source/release identity are separate; no historical theorem or decoder activates a current proof route.",
         "Primitive cryptographic security, privacy, monetary-policy economics beyond the current subsidy helper, and complete arbitrary native-node refinement remain outside this claim."
       ],
       "evidence_paths": [
@@ -7938,9 +7936,9 @@
     },
     {
       "id": "formal.deployed-smallwood-no-counterfeit-critical-path",
-      "component": "conditional SmallWood accepted-block no-counterfeit reduction",
+      "component": "historical V4 accounting and pair-specific collision reductions",
       "claim_class": "lean_theorem",
-      "summary": "The Lean declarations provide a conditional reduction for active circuit version 4 and crypto suite Gamma. The final block theorem requires three caller-supplied evidence bundles for every accepted proof: `DeployedSmallWoodBlockKnowledgeSoundnessEvidence`, `DeployedSmallWoodBlockCanonicalSemanticRefinementEvidence`, and `DeployedSmallWoodBlockPoseidon2OutputSecurityAssumptions`. Under those premises, the modeled exact constraint-map, canonical transaction, ordered identity, fee, coinbase, and claimed-supply relations compose. The exact-map-to-canonical-semantic bridge is an explicit assumption, not a proved closure. This claim also does not prove that shipped Rust acceptance constructs the required evidence, compose the finite-QROM failure theorem into the block theorem, bound deployed SHA-512 instantiation loss, or establish a deployed 128-bit post-quantum soundness guarantee.",
+      "summary": "Historical V4/Gamma evidence is retained for compatibility, but the former no-counterfeit roots are withdrawn from security credit because their universal no-collision premises assert absolute injectivity rather than computational collision resistance. The credited conditional output-binding reductions instead conclude value/asset agreement or an explicit collision for the supplied pair. The exact-map-to-canonical-semantic bridge is an explicit assumption. This claim does not establish a current PrivateSpend supply theorem, compiled Rust refinement, deployed hash bounds, or a 128-bit security guarantee. The pinned authority-assumption names describe the archived implications only; they do not become premises of the new collision reductions or grant release authority.",
       "status": "research_only",
       "proof_model": "conditional_lean_reduction_with_explicit_knowledge_soundness_semantic_refinement_and_poseidon_assumptions",
       "production_eligible": false,
@@ -7979,13 +7977,10 @@
         "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_monetary_reconstruction_required_linear_binding_executes",
         "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_hash_preimage_has_exact_deployed_word_count",
         "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_concrete_output_yields_accepted_hash_image",
-        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_poseidon2_no_collision_binds_accepted_output_value_and_asset",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_independent_cross_object_identity_refines_one_canonical_block",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.consensus_accepted_chain_supply_composition",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.deployed_smallwood_proof_under_canonical_semantic_refinement_yields_transaction_relation",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.active_smallwood_version_accepts_iff",
-        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_deployed_smallwood_block_of_assumed_transaction_relations_and_poseidon_boundaries_yields_no_counterfeit_critical_path",
-        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_deployed_smallwood_block_under_explicit_semantic_and_poseidon_boundaries_yields_no_counterfeit_critical_path",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.production_composition_field_map_is_complete",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.omitted_claim_rejects",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.reordered_claim_rejects",
@@ -7996,16 +7991,18 @@
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.mismatched_da_identity_rejects",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.mismatched_fee_order_rejects",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.mismatched_coinbase_amount_rejects",
-        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.mismatched_claimed_supply_rejects"
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.mismatched_claimed_supply_rejects",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_canonical_output_value_and_asset_equal_or_hash_collision",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_accepted_output_value_and_asset_equal_or_poseidon2_collision"
       ],
       "assumptions": [
         "`DeployedSmallWoodBlockKnowledgeSoundnessEvidence` supplies `DeployedSmallWoodKnowledgeSoundnessEvidence` per proof. That evidence contains the abstract protocol model and reductions, the production-verifier refinement-or-implementation-mismatch boundary, the protocol-relation-to-exact-map refinement, and a proof that no named implementation or primitive soundness failure occurred; the checked Lean theorem does not construct it from shipped verifier acceptance.",
         "`DeployedSmallWoodBlockCanonicalSemanticRefinementEvidence` supplies `ProductionSmallWoodCanonicalSemanticRefinementAssumption` per proof. Its projection and `exactRowsRefine` field bridge the exact production-family constraint record to canonical transaction semantics; this bridge is an explicit premise, not a derived result.",
-        "`DeployedSmallWoodBlockPoseidon2OutputSecurityAssumptions` supplies `ProductionPoseidon2OutputSecurityAssumptions` per proof, including separate `ProductionPoseidon2ConstraintDigestRefinementAssumption` and pair-local `ProductionPoseidon2AcceptedOutputNoCollisionAssumption` premises. Lean does not prove deployed Poseidon2 digest refinement or collision resistance from the constraint rows.",
+        "The archived `DeployedSmallWoodBlockPoseidon2OutputSecurityAssumptions` bundle contains a globally quantified accepted-output injectivity condition, not a pair-local computational assumption. The archived no-counterfeit implications are not credited security roots. The replacement accepted-output reduction assumes only `ProductionPoseidon2ConstraintDigestRefinementAssumption` and emits an explicit distinct-preimage/equal-digest collision when the supplied outputs disagree on value or asset. Concrete bounds on the attacker-produced collision event remain separate.",
         "The exact-table BLAKE3 digest is audit-only conformance metadata. The accepted-proof theorem reconstructs the complete semantic map from canonical public values and does not accept a candidate digest.",
         "The compiled Rust runtime contract is generated from the reviewed 16-mask map templates and enforced against every actual V4 public vector. Its complete structure digest and normalized-target digest convert unsupported value-dependent builder behavior into verifier rejection rather than extrapolating finite probes into a universal equivalence claim.",
         "The production identity functions are instantiated by the shipped transaction, statement, proof, public-input, statement-commitment, DA-root, and DA-chunk-count helpers; their primitive collision resistance remains a cryptographic assumption rather than a Lean theorem.",
-        "The conditional `DeployedSmallWoodProofAccepted` predicate requires circuit version 4 and crypto suite Gamma (numeric suite 3), and generated scope vectors bind those constants to the production consensus manifest's sole active SmallWood tuple. The V2/V3 and recursive historical authorization ranges are empty. Formal security/release authority for active V4/Gamma remains false, and historical decoder-compatible formats acquire no consensus authority without explicit bounded activation.",
+        "The retained historical composition uses circuit version 4 and crypto suite Gamma (numeric suite 3). It is not the current circuit-12 PrivateSpend relation or release identity. Historical decoder compatibility and the pinned archived authority metadata do not grant consensus or release authority.",
         "The current native action grammar has no independent burn action, so the accepted burn list is exactly empty. A future burn action requires extending both the production projection and this theorem before admission.",
         "Complete arbitrary Rust compiler semantics and whole-node refinement remain outside this bounded theorem; generated vectors and mutation gates bind the exact shipped projection helpers used on the accepted path."
       ],
@@ -8059,9 +8056,15 @@
         },
         {
           "id": "smallwood-historical-replay-outside-closure",
-          "description": "The conditional no-counterfeit theorem is scoped to the production consensus manifest's sole active V4/Gamma tuple, but formal security/release authority remains false. Historical V2/Beta and V3/Beta formats are decoder-compatibility surfaces only, with empty historical and recursive authorization ranges; any future historical consensus authority requires explicit bounded activation.",
+          "description": "The archived no-counterfeit wrappers model the historical V4/Gamma tuple and are withdrawn from security credit because of their universal accepted-output injectivity premise. They do not qualify the current circuit-12 PrivateSpend route, whose exact-source qualification and release authority are separate. Historical V2/Beta and V3/Beta formats remain decoder-compatibility surfaces; any future historical consensus authority requires explicit bounded activation.",
           "status": "open",
           "tracking": ".agent/DEPLOYED_SMALLWOOD_NO_COUNTERFEIT_CLOSURE_EXECPLAN.md"
+        },
+        {
+          "id": "historical-absolute-injectivity-withdrawn",
+          "description": "The historical universal hash injectivity premise is not computational collision resistance. The accepted-output version also requires honest-completeness and digest-refinement analysis. Old implication declarations remain for source compatibility only and may not be credited as security roots; the replacement reductions produce concrete collision certificates without assuming collisions cannot exist.",
+          "status": "open",
+          "tracking": "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintRefinement.lean"
         }
       ]
     },

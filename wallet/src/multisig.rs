@@ -129,6 +129,13 @@ pub struct VerifiedApproval {
     pub duplicate_tag: [u8; 48],
 }
 
+/// Legacy tags contain the nullifier PRF key. Do not export tags derived from
+/// personal wallet keys; current treasury signers use `v8_treasury_signer_tag`.
+pub const LEGACY_SIGNER_TAG_EXPORT_DISABLED: &str =
+    "legacy multisig signer-tag export is disabled because it exposes the nullifier key; use the current treasury/private-spend workflow";
+
+/// Historical circuit helper. The returned tag is secret-bearing and is not a
+/// safe public signer identifier. Retained for historical relation compatibility.
 pub fn signer_tag_from_spend_key(spend_key: &[u8; 32]) -> SmallwoodSignerTag {
     smallwood_signer_tag_from_spend_key(spend_key)
 }

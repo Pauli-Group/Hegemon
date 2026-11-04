@@ -58,6 +58,20 @@ def expect_authorization_rejected(name: str, document: object, expected: str) ->
 
 
 def main() -> None:
+    # The separate full cryptography audit also has a credited-root inventory.
+    # Removing an archived implication only from the claim ledger is incomplete.
+    retired_wrapper = (
+        "HegemonCrypto.SmallWood.ProductionSupplyChain."
+        "accepted_block_given_caller_extraction_semantic_refinement_and_output_security_yields_no_counterfeit"
+    )
+    credited_crypto = {
+        line.strip()
+        for line in (ROOT / "formal/crypto/credited-declarations.txt").read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    if retired_wrapper in credited_crypto:
+        raise SystemExit("retired universal-injectivity wrapper regained cryptography credit")
+
     fixture = historical_fixture()
     authorization.check_historical_claim_document(fixture)
     expect_authorization_rejected(

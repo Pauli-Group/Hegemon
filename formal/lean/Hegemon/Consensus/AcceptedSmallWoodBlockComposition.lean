@@ -772,6 +772,11 @@ structure DeployedNoCounterfeitCriticalPathCertificate
         proof.statementFields.circuitVersion = activeSmallWoodCircuitVersion
           ∧ proof.statementFields.cryptoSuite = activeSmallWoodCryptoSuite
 
+/-- Archived V4 implication retained for source compatibility. Its global
+accepted-output injectivity premise is not computational collision resistance;
+this declaration is excluded from credited security roots. The deterministic
+accounting theorem `consensus_accepted_chain_supply_composition` remains
+independent of that premise. -/
 theorem accepted_deployed_smallwood_block_of_assumed_transaction_relations_and_poseidon_boundaries_yields_no_counterfeit_critical_path
     {hashes : ProductionIdentityFunctions}
     {codec : ProductionActionCodec DeployedSmallWoodProof}
@@ -825,6 +830,8 @@ theorem accepted_deployed_smallwood_block_of_assumed_transaction_relations_and_p
     let proofAccepted := accepted.decodedProofsAccepted actions decoded proof membership
     exact ⟨proofAccepted.activeCircuitVersion, proofAccepted.activeCryptoSuite⟩
 
+/-- Archived wrapper of the preceding V4 implication, excluded from credited
+security roots for the same absolute-injectivity premise. -/
 theorem accepted_deployed_smallwood_block_under_explicit_semantic_and_poseidon_boundaries_yields_no_counterfeit_critical_path
     {hashes : ProductionIdentityFunctions}
     {codec : ProductionActionCodec DeployedSmallWoodProof}

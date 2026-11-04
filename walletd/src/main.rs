@@ -1336,22 +1336,15 @@ fn multisig_account_create(
 }
 
 fn multisig_account_export_private(
-    store: &Arc<WalletStore>,
-    params: MultisigAccountExportPrivateParams,
+    _store: &Arc<WalletStore>,
+    _params: MultisigAccountExportPrivateParams,
 ) -> WalletdResult<MultisigAccountExportPrivateResponse> {
-    let account_id = parse_hex_32(&params.account_id)?;
-    let record = store
-        .multisig_account_record(&account_id)
-        .map_err(WalletdError::internal)?
-        .ok_or_else(|| {
-            WalletdError::new(
-                WalletdErrorCode::InvalidParams,
-                "unknown multisig account id",
-            )
-        })?;
-    Ok(MultisigAccountExportPrivateResponse {
-        descriptor: encode_private_payload(&record)?,
-    })
+    // Existing descriptors can contain tags derived before the derivation gate.
+    // Keep private import/recovery available, but never re-export those tags.
+    Err(WalletdError::new(
+        WalletdErrorCode::InvalidRequest,
+        wallet::multisig::LEGACY_SIGNER_TAG_EXPORT_DISABLED,
+    ))
 }
 
 fn multisig_account_import_private(
@@ -1456,7 +1449,7 @@ fn multisig_local_signer_tag(
     }
     let signer_tag = store
         .local_multisig_signer_tag()
-        .map_err(WalletdError::internal)?;
+        .map_err(|err| WalletdError::new(WalletdErrorCode::InvalidRequest, err.to_string()))?;
     Ok(MultisigLocalSignerResponse {
         signer_tag: WalletdSmallwoodSignerTag(signer_tag),
     })
@@ -3454,7 +3447,7 @@ mod tests {
     }
 
     #[test]
-    fn walletd_multisig_private_account_descriptor_round_trips() {
+    fn walletd_multisig_legacy_exports_fail_closed_and_import_is_preserved() {
         let runtime = RuntimeBuilder::new_current_thread()
             .enable_all()
             .build()
@@ -3484,10 +3477,16 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string();
+        // Simulate a descriptor retained before the export gate was installed.
+        let record = store_a
+            .multisig_account_record(&parse_hex_32(&account_id).unwrap())
+            .unwrap()
+            .unwrap();
+        let descriptor = encode_private_payload(&record).unwrap();
         let export = handle_request(
             &runtime,
-            store_a,
-            cache,
+            store_a.clone(),
+            cache.clone(),
             &store_a_path,
             RequestEnvelope {
                 id: json!(2),
@@ -3495,11 +3494,45 @@ mod tests {
                 params: json!({ "accountId": account_id }),
             },
         );
-        assert!(export.ok, "{:?}", export.error);
-        let descriptor = export.result.unwrap()["descriptor"]
-            .as_str()
-            .unwrap()
-            .to_string();
+        assert!(!export.ok);
+        assert!(export.result.is_none());
+        assert!(matches!(
+            export.error_code,
+            Some(WalletdErrorCode::InvalidRequest)
+        ));
+        assert!(export.error.unwrap().contains("nullifier key"));
+        // Retired exports must never return secret-bearing results, including
+        // an account ID that is malformed or absent from the local registry.
+        for (method, params) in [
+            ("multisig.localSignerTag", json!({})),
+            (
+                "multisig.accountExportPrivate",
+                json!({"accountId": "0x00"}),
+            ),
+            (
+                "multisig.accountExportPrivate",
+                json!({"accountId": format!("0x{}", "ff".repeat(32))}),
+            ),
+        ] {
+            let response = handle_request(
+                &runtime,
+                store_a.clone(),
+                cache.clone(),
+                &store_a_path,
+                RequestEnvelope {
+                    id: json!(4),
+                    method: method.to_string(),
+                    params,
+                },
+            );
+            assert!(!response.ok);
+            assert!(response.result.is_none());
+            assert!(matches!(
+                response.error_code,
+                Some(WalletdErrorCode::InvalidRequest)
+            ));
+            assert!(response.error.unwrap().contains("nullifier key"));
+        }
 
         let (store_b, store_b_path) = temp_store();
         let import = handle_request(

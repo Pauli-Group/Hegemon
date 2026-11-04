@@ -10,132 +10,128 @@ We will acknowledge receipt within 48 hours and provide a detailed response with
 
 ## Block Validity Architecture
 
-Any production-authorized shielded route must enforce **independent transaction
-proofs plus deterministic consensus replay**:
+Shielded validity uses **independent transaction proofs plus deterministic
+consensus replay**. Every carried proof is verified in block order; a cache,
+sidecar, receipt or historical decoder cannot replace that verification.
 
-1. **Transaction proofs**: The current candidate is one canonical SMZ9 proof of
-   the 853,429-byte Poseidon2 V8 relation per shielded transfer. Its program has
-   SHA-512
-   `7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d057ae0bb12e4def00ec52765245cf9e17`
-   and relation id
-   `7e50eba07d84433a53a6c85ed2b3efecbeff103ca402bb931831e1598e6c9ab8fa138c9b2f0cb9d21bf2bf044b50d4d0`.
-   `HGV8RP03` is its eight-byte format magic and lineage marker, not its relation
-   identity. Import must verify every proof independently in block order. The
-   production capability registry currently returns `None`, so the route is not
-   active.
-2. **Block commitments**: The header binds the ordered action body, state roots,
-   supply transition, and DA fields. Consensus recomputes those values while
-   replaying the block.
-3. **Ciphertext-DA commitment**: Full nodes receive the complete canonical
-   block body, deterministically rebuild the erasure encoding of transfer
-   ciphertext bytes, and require its exact metadata and Merkle root to match
-   the PoW-bound header. `da_getChunk` serves an explicitly requested shard and
-   opening, but the shipped node does not yet run an automatic randomized
-   sampling protocol. Transaction-proof/action bytes are authenticated by the
-   block-body locator and action root, not covered by this ciphertext-only
-   erasure code.
+The selected release route is circuit 12,
+`Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4`: 86 public words,
+SMZL/q38, and the `HGPSLC02` common carrier for ordinary, treasury,
+bounded-policy and HTLC spends. The exact source identity and network tuple are
+recorded in [the v0.11 successor configuration](config/v011-release-successor.json)
+and enforced by the source-owned registry in
+[`protocol/versioning/src/launch_candidate.rs`](protocol/versioning/src/launch_candidate.rs).
+That registry contains an exact **pre-mainnet** capability. A changed network,
+genesis, manifest, relation or route must obtain its own matching authority.
+The old `smallwood_poseidon2_production_capability()` returning `None` concerns
+the separate historical RP03/SMZ9 route, not the current PrivateSpend registry.
 
-The retained primary and independent proofs measure 122,735 and 122,607 bytes.
-They are historical evidence for the pre-repair 852,305-byte HGV8RP03-format
-program at SHA-512
-`8477896dc765c3776fefc93bb74fb0c7668a677abdc60697b0c216bc9b4363e46a8b7cadc557dba4a1e4ccdfe572e5b2833879dd465079b12b6044a51a5612c3`.
-Both cryptographically verify from their frozen 830-file source inventory and
-survive the exact RPC, relay, mempool, mining, import, restart, reorganization,
-and fresh-node replay fixture without changing proof bytes. They neither verify
-nor bind the current repaired program. No proof or lifecycle receipt is retained
-for the current relation id. This is historical implementation evidence, not
-release authority; the source capability and successor registry remain empty.
+The successor configuration limits its evidence to the exact reviewed source,
+final-artifact cryptographic backend verification and isolated height-zero
+startup. Its predecessor G8 lifecycle remains historical evidence. It does not
+establish a fresh-network full lifecycle or authorize mainnet deployment.
+Mainnet qualification must bind the actual source, proof identity, produced
+binaries, manifest and unchanged-proof lifecycle; documentation and local test
+success cannot grant release authority.
 
-The old commitment-proof and recursive/aggregate authoring backends are not
-executable. Retained recursive decoders have no production block-validity
-authority. A coordinated release may authorize an exact inclusive historical
-height range, but the production manifest currently authorizes none.
+The header binds the ordered action body, state roots, supply transition and
+DA fields. Full nodes replay those transitions and compare their results with
+the header. Ciphertext data availability is checked by rebuilding the canonical
+erasure encoding, metadata and Merkle root from the full body. `da_getChunk`
+serves requested shards and openings; the shipped node does not run an automatic
+randomized sampling protocol. The ciphertext erasure code does not cover
+transaction-proof/action bytes, which are authenticated by the body locator
+and action root.
 
 ## Known Security Limitations
 
-### Deterministic State Replay
+### State Replay and Supply Accounting
 
-- **State transition scope**: Note-tree updates, nullifier uniqueness, supply,
-  and block-body commitments are deterministic consensus computations outside
-  each transaction proof. The formal supply chain binds accepted transaction
-  relations to the ordered block transition, while arbitrary compiled
-  native-node refinement remains an explicit assumption.
-- **Coinbase-only blocks**: Blocks with no shielded transactions are validated
-  directly by the ordinary consensus and supply rules. The selected V8
-  positive-value source is miner-local coinbase action `11`, which is valid
-  only as the unique final block action after V8 activation and is rejected
-  from RPC, peer relay, and the mempool. It remains inactive with the V8
-  capability.
+Note-tree updates, nullifier uniqueness, reward issuance and header commitments
+are checked by deterministic consensus replay in addition to transaction proof
+verification. The current proof relation enforces input value = output value +
+fee. Miner and funding rewards recycle the fee and add the scheduled subsidy.
 
-### Historical Recursive Proofs
+The header and RPC field `supply_digest` is a **gross fee-inclusive accounting
+counter**. With a coinbase it advances by subsidy + included fees; without a
+coinbase it does not advance. It is not circulating supply and must not be
+compared with the 21M monetary cap as though it were. Fees can be counted again
+each time existing value is spent and paid in coinbase. The schedule cap, actual
+subsidy issuance and spendable-wealth conservation are distinct claims; see
+[native supply accounting](docs/NATIVE_SUPPLY_ACCOUNTING.md). This documents the
+existing checked arithmetic and changes no consensus rule or RPC field.
 
-Fresh blocks currently authorize no shielded-transfer proof profile. V4/Gamma
-is historical only, and the SMZ9 Poseidon2 V8 route remains fail closed. If V8
-is activated, each transfer will carry one independently verified proof and no
-recursive, accumulated, receipt-root, or aggregate authoring artifact. The
-historical `recursive_block_v2` decoder/verifier remains compatibility code;
-native import cannot reach it without a separate release-owned height range,
-and the production manifest contains no such range.
-Plonky3 authoring crates, source modules, workspace members, and locked
-dependencies have been removed. `scripts/check_native_runtime_dependencies.sh`
-also fails if a Plonky3 package is reintroduced into a shipped binary graph.
+### Historical Proof Paths
 
-### PQ Security Margins
+V4/Gamma, RP03/SMZ9 and the retained recursive relations have separate historical
+identities. Their proof measurements, vectors and theorem scopes do not qualify
+the selected circuit-12 relation. Old SMZ9 diagnostics and its published
+extraction-bound limitation describe that profile, not the current SMZL/q38
+analysis.
 
-- Note encryption and PQ transport handshake use ML-KEM-1024 (NIST Level 5) with 32-byte shared secrets.
-- V8 ciphertext commitments use conventional BLAKE2b-384. Its note
-  commitments, nullifiers, and Merkle roots are seven canonical Goldilocks
-  limbs produced by the exact width-16 Poseidon2 relation. Concrete hash
-  reductions for the shipped domains remain release blockers.
-- The inactive SMZ9 V8 profile fixes `rho = 5`, six PIOP openings, `beta = 2`,
-  a `2^23` DECS domain, twenty DECS openings, twenty independent 64-byte tapes,
-  and `eta = 5`. Its exact maximum-shape proof projection is 122,863 bytes.
-  V4/Gamma, V2/Beta, and V3/Beta remain historical; production configures no
-  proof capability.
+Native V3 rejects historical candidate-artifact actions, the production manifest
+contains no historical recursive authorization range, and fresh launch
+capabilities reject recursive-block authority. The V1 predecessor-descriptor
+and BaseA defects must be repaired before any reuse; separate V2 descriptor
+checks do not repair V1. An independent-transaction-proof launch does not rely
+on either recursive authoring path. Plonky3 authoring crates and dependencies
+are excluded from shipped binaries by
+`scripts/check_native_runtime_dependencies.sh`.
 
-### Soundness Accounting (Engineering Estimate)
+Historical Lean statements that assume absolute hash injectivity do not express
+computational collision resistance. Standard-axiom kernel checking does not make
+an impossible premise usable. Mainnet security claims must use the applicable
+collision-producing reductions and exact source qualification, rather than
+crediting the historical V4 no-counterfeit premise as deployed security.
 
-For this repository we track soundness as the minimum of (a) hash-based binding
-security for the exact commitment and Fiat-Shamir domains and (b) the SmallWood
-PCS/PIOP/DECS soundness terms for the exact candidate statement geometry.
+### Conditional Formal Guarantees and Implementation Trust
 
-The deterministic 136,119-byte current-source security diagnostic has SHA-512
-`5346d68e30c7ec99d197669679159af777ae7663029e22fc84da8fbf5e353b1829b4f4368b6449510b25bbf1e1022281891a114f51783148e2423c538e0b5110`.
-It is bound to the current program digest above. Under its uninstantiated
-assumptions it records a 288-bit interactive floor and a conditional 157-bit
-soundness/composition screen for one global `2^64` quantum-query budget. Its
-4,096-block and 2,097,152-accepted-proof arithmetic is a finite diagnostic, not a
-cryptographic reset or a protocol-lifetime bound. Required refinement,
-primitive, whole-view, history, budget-binding, and independent-review receipts
-remain absent. The report explicitly records `production_eligible=false`, no
-deployed composed floor, and no production authority.
+The maintained [RP05 conservation endpoint](formal/rp05/Rp05/Conservation.lean)
+bounds accepted initialized-history conservation failure by an extraction-loss
+term plus six actual primitive-game advantage terms. Its authorization,
+soundness and zero-knowledge endpoints are conditional model theorems; they are
+more than honest-witness fixtures, but do not automatically cover a changed
+relation or arbitrary compiled Rust execution. Current compact-source reuse
+must bind the exact relation, source inputs, roles, public schema and accounting.
 
-The deterministic 4,230-byte executable zero-knowledge refinement diagnostic
-has SHA-512
-`e89ff29b047d85c6121689c4d298f031141d2dac6452f182d5d8d53cdd4ef7694c8616909ade6be95bcf1b1e06e98dd25b13df79bd7372be9a5af0500fe9015b`.
-It is bound to the same current relation id and verifies exact executable ROM
-replay and honest-map dimensions without using witness words. It records
-`production_eligible=false` and no executable whole-view refinement. It is
-diagnostic refinement evidence, not the missing adaptive repeated-proof
-zero-knowledge theorem, global SHA-512 QROM lifetime theorem, or production
-authorization.
+The [independent-review disposition](docs/crypto/RP05_INDEPENDENT_REVIEW_RESOLUTIONS.md)
+and [implementation boundary](docs/crypto/RP05_IMPLEMENTATION_BOUNDARY.md) retain
+explicit trust in Rust implementation, serialization interpretation, compiler
+and platform behavior. Finite correspondence tests and source-pinned reviews
+are not universal Rust-to-Lean refinement. The launch qualification contract
+uses that disclosed implementation boundary; it does not claim universal Rust
+equivalence. Efficient extraction remains an inherited open boundary recorded
+in [the design](DESIGN.md#03-native-node-cutover-posture).
 
-The Lean cryptography package proves an exact finite-QROM extraction statement
-for an ideal logical-oracle game. Its block-supply theorem is separate and
-requires caller-supplied per-proof extraction success, exact-map-to-canonical
-semantic refinement, and Poseidon2 constraint-digest/no-collision evidence.
-No theorem constructs those premises from arbitrary compiled Rust acceptance
-or transfers the ideal bound to deployed domain-separated SHA-512. The indexed
-formal authority API therefore has no deployed-end-to-end constructor. This is
-strong internal evidence, not production authorization, an independent
-cryptographic review, or permission to claim a NIST level from the interactive
-floor alone.
+Primitive-game bounds, the ideal SHA-512 quantum random oracle, independent
+coins, adaptive reprogramming and the inclusive query/attempt budgets remain
+explicit hypotheses. Failed, partial and unused prover/verifier/trace attempts
+must be charged to the same initialized experiment. Ongoing HGN has no accepted
+proof quota or release expiry; this does not remove the mathematical resource
+hypotheses or turn them into runtime-enforced limits. Separate soundness and
+privacy bounds do not establish an unconditional or joint 128-bit product claim.
 
-Every PR/main release aggregate and every tag release runs the research-package
-isolation check, the complete `formal/crypto` kernel/axiom gate, the exact
-Lean-generated proof-wire regression, and the production-verifier evidence
-regression. These gates prevent silent drift; they do not discharge the named
-semantic, hash-instantiation, or universal compiled-execution assumptions.
+### Primitive and Product Security
+
+Note encryption and PQ transport use ML-KEM-1024 with 32-byte shared secrets.
+Their confidentiality, ML-DSA authentication, symmetric encryption/KDFs and OS
+randomness have separate implementation and cryptographic assumptions from the
+transaction-proof theorem.
+
+The current note commitment, nullifier and Merkle outputs use seven canonical
+Goldilocks limbs from width-16 Poseidon2. Security analysis must cover the exact
+current domains, feed-forward compression construction and adversarial budgets;
+historical raw-compression results or generic digest-width arithmetic are
+insufficient. Ciphertext binding separately requires the exact framed
+BLAKE2b-384 function after six digest chunks are reduced modulo the field.
+Raw BLAKE2b collision resistance alone does not bound collisions introduced by
+that projection. Primitive correctness/interpretation is a separate trust
+boundary from binding advantage.
+
+Lean kernel/axiom, source-isolation and implementation regression gates prevent
+silent drift within their declared scopes. They do not discharge these
+primitive, oracle, randomness, efficient-extraction or implementation hypotheses,
+and do not grant production authorization.
 
 ### References (Starting Point)
 

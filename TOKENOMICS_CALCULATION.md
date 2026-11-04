@@ -1,3 +1,13 @@
+# Tokenomics calculations and current native accounting
+
+The selected native HGN implementation uses the fixed, height-based epoch-budget
+schedule described in [the current snapshot](#8-current-native-implementation-snapshot)
+and [native supply accounting](docs/NATIVE_SUPPLY_ACCOUNTING.md). Sections 1-7
+below retain the historical parameterized design discussion; optional tail
+emission, burns, timestamp-selected epochs, genesis allocations and three-way
+reward splits there are not authority for the current native route. The old
+Substrate pallet implementation is not the native node's monetary policy.
+
 ## 1. Parameter Summary
 
 Hegemon’s monetary policy is defined in *time* rather than raw block height, so that changing the block time target does not change the overall shape of the supply curve.
@@ -287,37 +297,36 @@ blocks_per_epoch = (Y_epoch × 31,536,000) / t_block_mainnet
 
 ---
 
-## 8. Current implementation snapshot
+## 8. Current native implementation snapshot
 
-The runtime now implements the parameterized tokenomics model described above:
+The executable policy is in [consensus/src/reward.rs](consensus/src/reward.rs),
+with the exact epoch-budget theorem in
+[NativeMonetaryCap.lean](formal/crypto/HegemonCrypto/NativeMonetaryCap.lean).
+It uses 100,000,000 atoms per HGN, a 21,000,000 HGN scheduled cap, 2,100,000-block
+epochs and an initial 5 HGN subsidy. Height zero issues nothing. The 60-second
+block target does not select epochs from timestamps, and the retained four-year
+label is not used to divide the schedule.
 
-* **Time-normalized block rewards** – The pallet computes rewards using the formula `R0 = (S_MAX × T_BLOCK_SECONDS) / (2 × Y_EPOCH × T_YEAR)`. With a 60-second target block time, the initial reward is approximately **4.98 HEG per block**. Halving occurs every `BLOCKS_PER_EPOCH = 2,102,400 blocks` (4 years at 1-minute blocks). [pallets/coinbase/src/lib.rs]
+The remaining scheduled budget for epoch `e` is `MAX_SUPPLY >> e` while
+`e < 64`, otherwise zero. The epoch budget is the difference between consecutive
+remaining budgets. The subsidy at a slot is the difference between consecutive
+integer floor allocations of that epoch budget across its 2,100,000 slots.
+Consequently late-epoch slot rewards may differ by one atom, and the complete
+epoch budget is distributed exactly rather than losing division dust.
 
-* **Multi-party reward distribution** – Each coinbase is split according to configurable shares:
-  - `MinerShare` (α_m = 80%): paid to the miner who found the block
-  - `TreasuryShare` (α_f = 10%): paid to the protocol treasury account
-  - `CommunityShare` (α_c = 10%): paid to a community/ecosystem pool account
-  
-  The shares are configured via `Permill` types in `runtime/src/lib.rs` and can be adjusted via governance. [pallets/coinbase/src/lib.rs, runtime/src/lib.rs]
+Current rewards assign `floor(subsidy / 5)` to the configured funding recipient
+and the remainder plus all included fees to the miner. There is no separate
+community reward output, native burn action or tail-emission parameter in this
+selected HGN policy. Miner and funding rewards have 120-block maturity. The
+selected network has an empty genesis note tree. These are implementation facts,
+not mainnet deployment authority.
 
-* **Fee burning support** – The fee model pallet now supports a `BurnShare` parameter (β_burn) that controls what fraction of transaction fees are burned. At launch this is set to 0% (all fees go to the fee collector), but can be increased to implement EIP-1559-style fee burning. Burned fees are tracked in `TotalBurned` storage and emitted via `FeeBurned` events. [pallets/fee-model/src/lib.rs]
-
-* **Tail emission support** – The pallet includes `K_TAIL` and `R_TAIL` constants for optional perpetual tail emission after a configurable number of epochs. Currently set to 0 for a strict 21M hard cap, but can be enabled to provide low, perpetual security rewards. [pallets/coinbase/src/lib.rs]
-
-* **Target block time** – Consensus now targets a **60-second block time** (`TARGET_BLOCK_TIME_MS = 60_000`). Genesis difficulty is set to `20,040,000` (12× the previous 5-second value) to maintain the same hash rate requirement per block. Retarget interval is `10 blocks` (10 minutes between adjustments). [pallets/difficulty/src/lib.rs, node/src/substrate/service.rs]
-
-### Calculated values for mainnet
-
-| Parameter | Value |
-|-----------|-------|
-| `t_block` | 60 seconds |
-| `S_max` | 21,000,000 HEG |
-| `Y_epoch` | 4 years |
-| `R0` (initial reward) | ~4.98 HEG/block |
-| `blocks_per_epoch` | 2,102,400 |
-| `α_m` (miner share) | 80% |
-| `α_f` (treasury share) | 10% |
-| `α_c` (community share) | 10% |
-| `β_burn` (fee burn) | 0% (adjustable) |
-| `K_tail` | 0 (no tail emission) |
-| `GENESIS_DIFFICULTY` | 20,040,000 |
+The header and RPC field `supply_digest` adds **subsidy plus recycled fees** for
+a block with coinbase and remains unchanged without coinbase. It is gross
+coinbase accounting, not circulating supply, and can exceed 21M after enough
+fee recycling without proving a monetary-cap violation. The schedule prefix
+`scheduled_subsidy(height)` is also not actual issuance: omitted coinbases
+forfeit their subsidy. See [native supply accounting](docs/NATIVE_SUPPLY_ACCOUNTING.md)
+for the distinction between the counter, schedule ceiling, actual subsidy issuance
+and spendable-wealth conservation. No monetary or consensus rule changes are
+introduced by this clarification.
