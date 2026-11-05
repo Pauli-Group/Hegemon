@@ -2564,6 +2564,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "protocol-reward-accounts"
+version = "0.1.0"
+dependencies = [
+ "bech32",
+ "parity-scale-codec",
+ "proptest",
+ "protocol-versioning",
+ "serde",
+ "serde_json",
+ "synthetic-crypto",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "protocol-shielded-pool"
 version = "0.1.0"
 dependencies = [
@@ -4238,6 +4252,7 @@ dependencies = [
  "predicates",
  "proptest",
  "protocol-kernel",
+ "protocol-reward-accounts",
  "protocol-shielded-pool",
  "protocol-versioning",
  "rand 0.8.7",

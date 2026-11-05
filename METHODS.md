@@ -10,7 +10,10 @@ must equal genesis allocation plus cumulative mining issuance, within 21 million
 HGN. Network-aware Bech32m codecs check type, HRP and binary class/discriminator
 for both account and shielded addresses. Existing v4 proofs and context-free
 `shca` decoding do not establish these new methods. They remain implementation
-and qualification obligations; current legacy behavior below is unchanged.
+and qualification obligations. Shared accounting and authorization code plus the
+typed network codec now have foundation tests; fixture proof callbacks in ledger
+unit tests supply no proof-security evidence. Current legacy behavior below is
+unchanged.
 
 Moving-chain native asset integration uses a finite Development qualification. The spend relation
 has a fresh v3 source identity; its 134-word public schema, the administrator

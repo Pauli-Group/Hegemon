@@ -1,0 +1,19 @@
+[package]
+name = "protocol-reward-accounts"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bech32 = "0.9"
+codec = { workspace = true }
+crypto = { package = "synthetic-crypto", path = "../../crypto", features = ["hash384-codec", "hash384-serde"] }
+protocol-versioning = { path = "../versioning" }
+serde = { version = "1", features = ["derive"] }
+thiserror = "1"
+
+[dev-dependencies]
+serde_json = "1"
+proptest = "1"
+
+[lints]
+workspace = true

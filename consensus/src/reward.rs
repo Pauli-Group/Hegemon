@@ -9,7 +9,7 @@ use crate::types::{CoinbaseData, SupplyDigest};
 // See TOKENOMICS_CALCULATION.md for the derivation of these parameters.
 // =============================================================================
 
-pub const COIN: u64 = 100_000_000;
+pub use protocol_versioning::NATIVE_COIN as COIN;
 
 pub use protocol_versioning::{
     coinbase_mature_in_block, coinbase_maturity_height, coinbase_release_height,
@@ -27,13 +27,13 @@ pub const T_BLOCK_SECONDS: u64 = 60;
 pub const Y_EPOCH: u64 = 4;
 
 /// Blocks per issuance epoch, independently of calendar-year conventions.
-pub const BLOCKS_PER_EPOCH: u64 = 2_100_000;
+pub use protocol_versioning::NATIVE_ISSUANCE_ERA_BLOCKS as BLOCKS_PER_EPOCH;
 
 /// Target elapsed seconds per issuance epoch (2,100,000 × 60).
 pub const T_EPOCH_SECONDS: u64 = BLOCKS_PER_EPOCH * T_BLOCK_SECONDS;
 
 /// Maximum supply: 21 million coins
-pub const MAX_SUPPLY: u64 = 21_000_000 * COIN;
+pub use protocol_versioning::NATIVE_MAX_SUPPLY as MAX_SUPPLY;
 
 /// Initial block subsidy: exactly five coins.
 pub const INITIAL_SUBSIDY: u64 = 5 * COIN;

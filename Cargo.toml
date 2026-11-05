@@ -14,6 +14,7 @@ members = [
     "consensus-light-client",
     "consensus",
     "protocol/versioning",
+    "protocol/reward-accounts",
     "protocol/kernel",
     "protocol/shielded-pool",
     "network",

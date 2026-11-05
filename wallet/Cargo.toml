@@ -36,6 +36,7 @@ hegemon-field = { workspace = true }
 superneo-hegemon = { path = "../circuits/superneo-hegemon" }
 synthetic-crypto = { path = "../crypto" }
 protocol-versioning = { path = "../protocol/versioning" }
+protocol-reward-accounts = { path = "../protocol/reward-accounts" }
 consensus-light-client = { path = "../consensus-light-client", optional = true }
 protocol-kernel = { path = "../protocol/kernel" }
 protocol-shielded-pool = { path = "../protocol/shielded-pool" }
@@ -83,8 +84,13 @@ workspace = true
 [[bin]]
 name = "treasury-v8"
 path = "src/bin/treasury_v8.rs"
+required-features = ["rpc-client"]
 
 [[bin]]
 name = "private-spend"
 path = "src/bin/private_spend.rs"
 required-features = ["rpc-client"]
+
+[[bin]]
+name = "reward-account"
+path = "src/bin/reward_account.rs"

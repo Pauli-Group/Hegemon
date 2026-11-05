@@ -17,6 +17,12 @@ use sha2::{Digest, Sha384};
 /// Product release label, independent of source-bound Cargo package metadata.
 pub const RELEASE_VERSION: &str = "0.11.2";
 
+/// Native monetary units and issuance era, shared by legacy and reset schedules.
+/// Reset genesis allocations reduce the mining budget, never this maximum.
+pub const NATIVE_COIN: u64 = 100_000_000;
+pub const NATIVE_MAX_SUPPLY: u64 = 21_000_000 * NATIVE_COIN;
+pub const NATIVE_ISSUANCE_ERA_BLOCKS: u64 = 2_100_000;
+
 pub type CircuitVersion = u16;
 pub type CryptoSuiteId = u16;
 

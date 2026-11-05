@@ -20,8 +20,8 @@ An operator will inspect pending/available balances, donate with a public memo,
 claim available rewards and obtain offline treasury quorum signatures. A fresh
 node will derive the same accounts, supply, epoch releases and policy by replay.
 The branch is not a working protocol until the real-proof and two-node lifecycle
-passes. The currently authorized revision updates documentation only; runtime
-implementation, deployment and reset are subsequent milestones.
+passes. Runtime implementation is now authorized by the user. Deployment and the live
+chain reset remain separate later operator actions.
 
 ## Progress
 
@@ -40,11 +40,24 @@ implementation, deployment and reset are subsequent milestones.
   paths, whitespace, boundary arithmetic and allocation/supply equations.
 - [x] (2026-11-05 UTC) Publish revised documentation in eedd8da6 and verify
   the network-aware address specification through GitHub readback.
-- [ ] Implement genesis identities, addresses, allocations and adjusted issuance.
-- [ ] Implement account transitions, reward epochs and real ML-DSA authorization.
+- [x] (2026-11-05 UTC) Install the pinned workspace-local Rust toolchain;
+  baseline make node and existing maturity boundary test pass.
+- [x] (2026-11-05 UTC) Add shared genesis validation, exact allocation-adjusted
+  issuance, policy hashes/quorum verification, and network-aware account codecs.
+- [x] (2026-11-05 UTC) Add typed network-aware full-length shielded address codec.
+- [ ] Integrate genesis and typed codecs into native manifests and all operational
+  callsites (shared library and wallet codec completed; node activation pending).
+- [x] (2026-11-05 UTC) Implement candidate account transitions, lazy epoch
+  availability, partial claims, deferred donations and real ML-DSA approvals.
+- [ ] Integrate account state with real proof verification and node persistence
+  (pure accounting fixture tests do not qualify proofs or running-chain behavior).
 - [ ] Implement and qualify donation and account-claim proofs/carriers.
 - [ ] Integrate rewards, authenticated storage, replay, startup, sync and reorg.
-- [ ] Implement certified treasury forks, offline signing, RPC/CLI and dev tools.
+- [x] (2026-11-05 UTC) Build offline reward-account genesis/address CLI and
+  verify funded disposable genesis, supply budget, quorum, network rejection
+  and exclusive file creation.
+- [ ] Implement certified treasury forks, offline signing, node RPC/claims and
+  running-chain development tooling.
 - [ ] Run property, adversarial, real-proof and two-node qualification.
 - [ ] Publish tested runtime implementation on this branch.
 
@@ -138,9 +151,10 @@ Date/Author: 2026-11-05 UTC, scope recorded by Codex.
 
 The initial design is already published. This revision replaces its maturity,
 miner-note and zero-genesis assumptions and adds network-aware public/shielded
-addresses. No runtime, proof or codec implementation has changed. Subsequent
-milestones remain outstanding, and no build, node lifecycle or chain reset is
-claimed for a documentation revision. Documentation checks passed: relative links, required headings and six milestones,
+addresses. The initial documentation revision changed no runtime. Runtime work now adds
+the shared protocol-reward-accounts crate and typed wallet address codec.
+Native reward routes, shared-note proof integration, runtime deployment and
+the chain reset are not yet implemented or claimed. Documentation checks passed: relative links, required headings and six milestones,
 source paths, terminology, README structure, release examples, exact supply
 budgets and completed-block conservation arithmetic. Runtime tests were not run
 for these documentation-only edits. Revision eedd8da6 was pushed successfully;
@@ -421,9 +435,12 @@ duplicate payments. Legacy address inspection never silently converts networks.
 
 The principal artifacts are this ExecPlan and
 `docs/PROTOCOL_TREASURY_DESIGN.md`, with proposal references in DESIGN.md,
-METHODS.md and the README whitepaper. This revision implements the documentation
-plan and Bech32 network-label amendment only. No runtime code, proofs, addresses
-in deployed configuration, running services or chain data are modified.
+METHODS.md and the README whitepaper. The original revision implemented only
+documentation. Current runtime work adds the shared protocol and typed wallet
+codec, without changing deployed configuration, running services or chain data.
+The actual initial foundation checks are six protocol foundation tests, three
+accounting tests with explicitly marked fixture proof callbacks and one full-size
+wallet codec test. Real circuit proofs and node lifecycle acceptance are pending.
 
 Documentation validation observed:
 
@@ -467,3 +484,31 @@ future scope; only documentation is implemented in this revision.
 
 Revision note (2026-11-05 UTC): recorded completed documentation validation and
 successful publication/readback of eedd8da6. Runtime milestones remain unchecked.
+
+Revision note (2026-11-05 UTC): runtime implementation authorized. Added shared
+protocol crate to avoid node/wallet dependency cycles; moved unchanged native
+monetary constants into protocol-versioning and re-exported them from consensus.
+Six foundation tests pass, including real 5-of-7 signatures and supply properties;
+three ledger accounting tests pass using explicitly named fixture proof callbacks.
+The full-size shielded codec test passes. These are foundation checks, not
+real-proof, node, or reorg acceptance. Candidate-ledger cloning and full snapshot
+validation/root generation must be replaced or bounded before scalable node
+integration; they are not evidence of constant per-block work.
+
+Runtime foundation evidence (2026-11-05 UTC): release protocol tests pass (6
+foundation/property/signature cases and 3 pure accounting cases); typed wallet
+codec test passes; all 9 selected legacy reward tests pass, with optional Lean
+vector checks retaining their existing environment-dependent behavior. Targeted
+Clippy with --no-deps and warnings denied passes after local fixes; the initial
+dependency-inclusive run encountered an existing manual_contains lint in crypto.
+The real reward-account CLI successfully generated and inspected disposable
+funded genesis and rejected a different network and an existing output file.
+Use the installed /workspace/toolchains/env.sh before Cargo commands in this
+environment. No node source route, proof qualification or launch is claimed.
+
+Discovery (2026-11-05 UTC): offline wallet integration tests exposed that the
+existing treasury-v8 binary unconditionally imports RPC crates but lacked its
+required-features declaration. Added required-features=[rpc-client], matching
+its actual requirements and the other RPC binaries. The offline reward-account
+CLI integration suite then passes (2 tests). Its source is force-added because
+the repository's generic bin/ ignore rule otherwise hides new Rust entrypoints.

@@ -1,4 +1,5 @@
 pub mod address;
+pub mod network_address;
 #[cfg(feature = "rpc-client")]
 pub mod async_sync;
 #[cfg(feature = "rpc-client")]
@@ -46,6 +47,8 @@ pub mod tx_builder;
 pub mod viewing;
 
 pub use address::ShieldedAddress;
+pub use network_address::NetworkShieldedAddress;
+pub use protocol_reward_accounts::{AddressNetwork, NetworkClass, PublicAccountAddress};
 #[cfg(feature = "rpc-client")]
 pub use async_sync::{AsyncWalletSyncEngine, SharedSyncEngine};
 #[cfg(feature = "rpc-client")]

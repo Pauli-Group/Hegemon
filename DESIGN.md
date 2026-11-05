@@ -10,7 +10,9 @@ genesis-configured quorum and quorum-certified hard-fork signer replacement are
 explicit. Bech32m account prefixes are `heg`/`heg_test`; shielded prefixes are
 `heg_shield`/`heg_shield_test`, with binary network/type validation. This proposal
 replaces rolling 120-block maturity and per-block reward notes only on the reset
-network; current legacy behavior below remains unmodified. Track implementation in
+network. The shared `protocol/reward-accounts` foundation and typed wallet codec
+are implemented and unit-tested; node admission and proof integration remain
+outstanding. Current legacy behavior below remains unmodified. Track progress in
 [the treasury execution plan](.agent/PROTOCOL_TREASURY_GOVERNANCE_EXECPLAN.md).
 
 The controlled-asset Development integration uses the existing V8 note tree,

@@ -1,10 +1,11 @@
 # Protocol treasury, reward accounts and genesis allocations
 
-Status: revised design for implementation, not implemented or activated. This
+Status: implementation in progress; node routes are not activated. This
 fresh-genesis successor is developed on `codex/protocol-treasury-governance`,
 based on main commit `74910ff86514c2cbd93d7a7039e6b90b6e4600b6`. Follow the
 [execution plan](../.agent/PROTOCOL_TREASURY_GOVERNANCE_EXECPLAN.md) for runtime
-implementation and qualification. This revision changes documentation only.
+implementation and qualification. Shared protocol/accounting rules and the typed
+wallet address codec are implemented; proof/node integration remains pending.
 
 ## Purpose and agreed scope
 
@@ -365,6 +366,25 @@ including the fixed 1/5 allocation. Reject old manifest/database identities;
 do not reinterpret historical roots, notes or proof fixtures. Preserve v4 and
 120-block evidence for their historical source identities only.
 
+## Available foundation tooling
+
+The `reward-account` wallet binary implements offline development-genesis,
+genesis-check, address-from-policy and address-check commands. These validate
+the shared protocol format; the output is not yet an activated native node
+manifest. Example commands from the repository root, using a new output path:
+
+    mkdir -p /workspace/work/reward-account-demo
+    cargo run -p wallet --release --no-default-features --bin reward-account -- development-genesis --out /workspace/work/reward-account-demo/genesis.json --reward-epoch-blocks 2
+    cargo run -p wallet --release --no-default-features --bin reward-account -- genesis-check --genesis /workspace/work/reward-account-demo/genesis.json
+
+Development generation uses clearly labeled known fixture keys, random test
+network discrimination, two immediately funded accounts and 5-of-7 treasury
+policy. It never overwrites an existing file and must not be used for real
+funds. Genesis-check reports the exact allocation/mining budgets and first
+release height. Address-check rejects an account or shielded recipient from a
+different selected genesis network. Node configuration and claim submission
+remain subsequent integration milestones.
+
 ## Wallet, operator surface and acceptance
 
 Provide network-aware address generation/inspection, canonical supply readback,
@@ -390,6 +410,6 @@ round-trips and cross-network/type rejection, memo mutation, partial claims,
 replay and failed-block atomicity. Two nodes and a fresh syncing node must agree
 through claims, restart, reorg and certified signer replacement. Full-length
 shielded address tooling must be exercised. A demo or foundation-only module is
-not completion. Until those milestones pass, this branch is documentation for
-an unimplemented successor; no runtime tests or launch are implied by this
-revision.
+not completion. Until those milestones pass, the shared accounting and codec implementation
+is a foundation for the successor, not an activated or qualified node route.
+Foundation unit tests do not imply running-chain acceptance or launch readiness.

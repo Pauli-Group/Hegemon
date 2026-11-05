@@ -24,8 +24,9 @@ governance keys. Rewards earned in epoch N become available at N+2, using
 genesis-configured 1,440-block epochs. Optional genesis allocations reduce future
 mining issuance within the 21-million-HGN cap. Policy-hash account addresses use
 Bech32m `heg`/`heg_test`; shielded addresses use `heg_shield`/`heg_shield_test`,
-with binary network checks. This fresh-genesis design is not implemented yet;
-the following describes the existing implementation.
+with binary network checks. Shared accounting and typed codecs are implemented
+and unit-tested; node/proof integration remains in progress. The following
+describes the existing network implementation.
 
 The HGN protocol consists of four tightly-coupled subsystems:
 
