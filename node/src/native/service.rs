@@ -6319,7 +6319,15 @@ pub(crate) async fn queue_missing_blocks_from_sync_target_avoiding(
         }
         return;
     };
-    let recovery_page = current_request.is_some() || persisted_recovery_cursor.is_some();
+    // An equal-height fork starts with an ancestor window. Its first bounded
+    // prefix may be entirely known and end before the target; it still needs
+    // recovery admission so verification can establish the next page cursor.
+    let initial_equal_height_recovery = target == best_height
+        && target_hash.is_some_and(|hash| hash != best_hash)
+        && range.from_height <= best_height;
+    let recovery_page = current_request.is_some()
+        || persisted_recovery_cursor.is_some()
+        || initial_equal_height_recovery;
     let request_peer = target_peer
         .or_else(|| persisted_recovery_cursor.and_then(|cursor| cursor.peer_id))
         .or(response_peer);
@@ -6423,6 +6431,31 @@ pub(crate) async fn request_missing_blocks(
         );
         return;
     }
+    if let Some(announced_hash) = announced_hash {
+        // A compact hint supplies no validity evidence. The exact block may,
+        // however, already have been validated and stored locally. Resolve
+        // only that durable non-winning row and only its still-current target.
+        match node.clear_stored_nonwinning_sync_target_to_local_tip(
+            announced_height,
+            (announced_height, announced_hash),
+        ) {
+            Ok(true) => {
+                node.reset_sync_reorg_backfill();
+                return;
+            }
+            Ok(false) => {}
+            Err(err) => {
+                warn!(
+                    peer = %hex32(&peer_id),
+                    target_height = announced_height,
+                    target_hash = %hex32(&announced_hash),
+                    error = %err,
+                    "failed to resolve announced native sync target from durable storage"
+                );
+                return;
+            }
+        }
+    }
     if node.sync_import_in_flight() {
         if unverified_peer_hint {
             if let Some(announced_hash) = announced_hash {
@@ -6475,8 +6508,11 @@ pub(crate) async fn request_missing_blocks(
     ) else {
         return;
     };
+    let initial_equal_height_recovery = announced_height == best_height
+        && anchored_target_hash.is_some_and(|hash| hash != best_hash)
+        && range.from_height <= best_height;
     let request_context = NativeOutboundSyncRequestContext {
-        recovery_page: persisted_recovery_cursor.is_some(),
+        recovery_page: persisted_recovery_cursor.is_some() || initial_equal_height_recovery,
         expected_parent_hash: persisted_recovery_cursor
             .and_then(|cursor| cursor.expected_parent_hash),
         target_tip: anchored_target_hash.map(|hash| (announced_height, hash)),
@@ -6686,7 +6722,10 @@ pub(crate) async fn process_authorized_native_sync_response(
     let progress = NativeSyncResponseImportProgress::new(blocks.len());
     let recovery_page = completed_request.context.recovery_page;
     let import_node = Arc::clone(node);
+    let bridge_test_authority =
+        outbound_bridge_test_authority_allows(FAMILY_BRIDGE, ACTION_BRIDGE_OUTBOUND);
     let report = match tokio::task::spawn_blocking(move || {
+        let _bridge_authority = bridge_test_authority.then(install_outbound_bridge_test_authority);
         import_native_sync_response_blocks(
             &import_node,
             blocks,
@@ -6890,43 +6929,62 @@ pub(crate) async fn send_sync_response_with_sender(
     best_height: u64,
     blocks: Vec<NativeBlockMeta>,
 ) {
-    let from_height = blocks.first().map(|block| block.height);
-    let to_height = blocks.last().map(|block| block.height);
-    let block_count = blocks.len();
     let encode_node = Arc::clone(node);
-    let payload = match tokio::task::spawn_blocking(move || {
-        let encoded = {
-            let mut cache = encode_node.block_body_send_cache.lock();
-            blocks
-                .iter()
-                .map(|block| {
-                    let encoded = cache.encode_meta(block)?;
-                    Ok((encoded.bytes.len(), encoded.locator.clone()))
-                })
-                .collect::<Result<Vec<_>>>()?
+    let (payload, response_kind, block_count, from_height, to_height) =
+        match tokio::task::spawn_blocking(move || {
+            let encoded = {
+                let mut cache = encode_node.block_body_send_cache.lock();
+                blocks
+                    .iter()
+                    .map(|block| {
+                        let encoded = cache.encode_meta(block)?;
+                        Ok((encoded.bytes.len(), encoded.locator.clone()))
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            };
+            let response = native_sync_response_message_from_encoded(best_height, blocks, encoded)?;
+            // The transport may retain only a small inline prefix or one locator.
+            // Report that actual message rather than the pre-truncation input.
+            let (block_count, from_height, to_height) = match &response {
+                NativeSyncMessage::Response { blocks, .. } => (
+                    blocks.len(),
+                    blocks.first().map(|block| block.height),
+                    blocks.last().map(|block| block.height),
+                ),
+                NativeSyncMessage::ResponseLocators { blocks, .. } => (
+                    blocks.len(),
+                    blocks.first().map(|block| block.height),
+                    blocks.last().map(|block| block.height),
+                ),
+                _ => return Err(anyhow!("unexpected native sync response transport kind")),
+            };
+            Ok((
+                encode_sync_message(&response)?,
+                native_sync_message_label(&response),
+                block_count,
+                from_height,
+                to_height,
+            ))
+        })
+        .await
+        {
+            Ok(Ok(payload)) => payload,
+            Ok(Err(err)) => {
+                warn!(
+                    max_bytes = MAX_NATIVE_BLOCK_META_BYTES,
+                    error = %err,
+                    "failed to build admitted native sync response transport"
+                );
+                return;
+            }
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    "native sync response transport worker failed"
+                );
+                return;
+            }
         };
-        let response = native_sync_response_message_from_encoded(best_height, blocks, encoded)?;
-        encode_sync_message(&response)
-    })
-    .await
-    {
-        Ok(Ok(payload)) => payload,
-        Ok(Err(err)) => {
-            warn!(
-                max_bytes = MAX_NATIVE_BLOCK_META_BYTES,
-                error = %err,
-                "failed to build admitted native sync response transport"
-            );
-            return;
-        }
-        Err(err) => {
-            warn!(
-                error = %err,
-                "native sync response transport worker failed"
-            );
-            return;
-        }
-    };
     let message = DirectedProtocolMessage {
         target: Some(peer_id),
         message: ProtocolMessage {
@@ -6943,6 +7001,7 @@ pub(crate) async fn send_sync_response_with_sender(
         info!(
             peer = %hex32(&peer_id),
             best_height,
+            response_kind,
             block_count,
             from_height = ?from_height,
             to_height = ?to_height,

@@ -1,6 +1,8 @@
 use super::node_impl::load_native_sync_response_prefix_with;
 use super::node_impl::validate_poseidon2_v8_replay_window;
 use super::*;
+#[path = "sync_liveness_tests.rs"]
+mod sync_liveness_tests;
 use protocol_shielded_pool::types::{
     ReceiptRootMetadata, ReceiptRootProofPayload, TxValidityReceipt,
 };

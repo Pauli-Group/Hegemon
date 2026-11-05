@@ -303,7 +303,7 @@ def validate_replay(replay, node_sha, artifact_sha):
 CURRENT_NEW_VERSION = '0.11.2'
 CURRENT_SCOPE = 'exact_current_source_current_binary_backend_and_h0'
 CURRENT_SOURCE_KIND = 'reviewed_source_successor_ci'
-CURRENT_CONFIG_SHA256 = '9c453136f2f52c3eaa76300df0931da42ba30126f61f5816df0ae46c3581bcda'
+CURRENT_CONFIG_SHA256 = '2c33e22ced0b067cf9fb5a69829891b7c6bf34828338796ca0f7094de3ac7385'
 CURRENT_RUNNER_SHA256 = 'd2f0fae819828482093676f831a5d6c621013c02368cdddafcdf491d294eb2f2'
 CURRENT_FIXTURE_SHA256 = '50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c'
 CURRENT_NETWORK_MANIFEST_SHA256 = '386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754'
@@ -397,8 +397,10 @@ CURRENT_RUNTIME_DELTAS = {'Cargo.lock': ['bae447660a12610766620cb7e2afacb6b0ad92
                                            'eb65fc931e8623dc48751c54df47f096589aa65906889a59b4f4ec4bcdbc942c'],
  'node/src/native/rpc.rs': ['0250f8b5548f9e718d1f2b3fb60c39dc0c171fe31615442628c1af274cb8cd8c',
                             '74a599d7234621925bddbc9709ecdab37927b9d7e428eaa38590c428b7a435b0'],
+ 'node/src/native/service.rs': ['6a495fc0d0adb765800df9b3ee5d84b0be362843f0e03ef816bff6dd78dd55e0',
+                                 'd1ff8b44736d420765eca69e18d141b819d2185a82596f31767ffc697364025b'],
  'node/src/native/tests.rs': ['9ce2b15b592f82403f451f9fc76974c98cc7bdf74f6c421c7bf91228bc1b0e31',
-                              'ed9e6fd04eaa017f2875464a9753931aa6501bd190f7859d9874d519df31f155'],
+                              'ea434fe24dcc7c13b0a6b8b690cecf178ff994d4d3f960e0853f9de556a1a16c'],
  'node/src/native/util.rs': ['ccf0764d0059cff43f784171edf58819cabe9645ab2aa1c8f24592beee5e45b1',
                              '51b0333cb00513dc427f4e7cf552f9b3584ffd5133b7ea32b53224ddfed1bea2'],
  'protocol/versioning/src/launch_candidate.rs': ['2ce83547371d7f0904dfc318286e3ae0a17f3776f415518f49c0e22627913539',
@@ -429,6 +431,8 @@ CURRENT_RUNTIME_DELTAS = {'Cargo.lock': ['bae447660a12610766620cb7e2afacb6b0ad92
                          'cc8785a6f1eac90dff9139c215e6cd6963ea4b63922e3f2efd7b948e371f411f']}
 CURRENT_SOURCE_ADDITIONS = {'node/src/native/asset_recovery_profile/geometry_catalog.rs': {'bytes': 41029,
                                                                 'sha256': '31175e46be0807ee25880070780417e0a6e26e6ba613a57ed5254449dec7ea6f'},
+ 'node/src/native/sync_liveness_tests.rs': {'bytes': 16321,
+                                             'sha256': '1b7efdcc135ca16754365412e122c0ce36663b62126c58d4a7c45d1cc2213577'},
  'wallet/src/private_spend_balance.rs': {'bytes': 10268,
                                          'sha256': '14f03f5237549e17795d04d9975e1b34e2e3677fb580b67b86ed6f6c83776b98'}}
 CURRENT_CASE_NAMES = ['ordinary', 'policy_create', 'absolute_height', 'policy_hash_release', 'htlc_release']

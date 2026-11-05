@@ -274,8 +274,12 @@
       "after_sha256": "74a599d7234621925bddbc9709ecdab37927b9d7e428eaa38590c428b7a435b0",
       "before_sha256": "0250f8b5548f9e718d1f2b3fb60c39dc0c171fe31615442628c1af274cb8cd8c"
     },
+    "node/src/native/service.rs": {
+      "after_sha256": "d1ff8b44736d420765eca69e18d141b819d2185a82596f31767ffc697364025b",
+      "before_sha256": "6a495fc0d0adb765800df9b3ee5d84b0be362843f0e03ef816bff6dd78dd55e0"
+    },
     "node/src/native/tests.rs": {
-      "after_sha256": "ed9e6fd04eaa017f2875464a9753931aa6501bd190f7859d9874d519df31f155",
+      "after_sha256": "ea434fe24dcc7c13b0a6b8b690cecf178ff994d4d3f960e0853f9de556a1a16c",
       "before_sha256": "9ce2b15b592f82403f451f9fc76974c98cc7bdf74f6c421c7bf91228bc1b0e31"
     },
     "node/src/native/util.rs": {
@@ -339,6 +343,10 @@
     "node/src/native/asset_recovery_profile/geometry_catalog.rs": {
       "bytes": 41029,
       "sha256": "31175e46be0807ee25880070780417e0a6e26e6ba613a57ed5254449dec7ea6f"
+    },
+    "node/src/native/sync_liveness_tests.rs": {
+      "bytes": 16321,
+      "sha256": "1b7efdcc135ca16754365412e122c0ce36663b62126c58d4a7c45d1cc2213577"
     },
     "wallet/src/private_spend_balance.rs": {
       "bytes": 10268,
