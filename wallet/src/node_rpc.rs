@@ -724,6 +724,32 @@ impl NodeRpcClient {
             .map_err(|error| WalletError::Rpc(format!("hegemon_nodeConfig failed: {error}")))
     }
 
+    /// Closed, read-only transport for the account UX. Callers verify identities.
+    pub async fn reward_accounts_read(
+        &self,
+        method: &str,
+        query: serde_json::Value,
+    ) -> Result<serde_json::Value, WalletError> {
+        if !matches!(
+            method,
+            "hegemon_rewardAccountsStatus"
+                | "hegemon_rewardAccount"
+                | "hegemon_rewardAccountsGenesis"
+                | "hegemon_rewardAccountsActivity"
+        ) {
+            return Err(WalletError::InvalidArgument(
+                "unsupported reward read method",
+            ));
+        }
+        self.ensure_connected().await?;
+        self.client
+            .read()
+            .await
+            .request(method, rpc_params![query])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("{method} failed: {e}")))
+    }
+
     /// Read the native private-spend descriptor for verified wallet sync.
     /// Callers must bind this public readback to their selected network authority.
     pub async fn private_spend_parameters(&self) -> Result<serde_json::Value, WalletError> {

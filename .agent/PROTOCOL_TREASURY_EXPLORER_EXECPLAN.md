@@ -35,9 +35,10 @@ a prerequisite in the parent implementation plan.
 - [x] (2026-11-05 UTC) Test exact integer/root encoding, epoch release, network
   checks, unavailable-state HTTP behavior without writes, genesis/history
   pagination and committed body/context binding. Thirty-three selected tests pass.
-- [ ] Paused by user (2026-11-05 UTC): integrate the existing explorer's client,
-  indexer and views after Pierre supplies its source. Preserve existing block
-  and legacy reward views.
+- [x] (2026-11-05 ET) Locate the user-supplied `hegemon-website` repository;
+  clone its `main` and create new branch `codex/explorer-treasury-rewards`.
+- [ ] Integrate that explorer's client, indexer and views, preserving existing
+  block and legacy reward views.
 - [ ] Qualify the explorer against an activated disposable node, including a
   boundary reorg, restart and fresh synchronization; parent runtime work is open.
 - [x] (2026-11-05 UTC) Commit/push backend preparation as a58b2757 and verify
@@ -276,3 +277,11 @@ is the tested backend/API commit. GitHub's branch head matched that exact hash;
 immutable API-contract readback confirmed all four method names and the paused
 UI integration. This follow-up records completed publication only and changes
 no runtime source or validation claims.
+
+
+Revision (2026-11-05 ET): The user supplied
+`https://github.com/Pauli-Group/hegemon-website` and required a new branch for
+any changes there. Source is now cloned at `/workspace/hegemon-website`, based
+on `main` commit `c40a2b5`, with branch `codex/explorer-treasury-rewards`.
+This resumes the paused UI/indexer phase; no deployment or native activation
+is implied. The website repository will carry its own implementation/check log.

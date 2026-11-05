@@ -86,9 +86,14 @@ chain reset remain separate later operator actions.
   RPCs for status/accounts, genesis and canonical public activity; document the
   [API contract](../docs/PROTOCOL_TREASURY_EXPLORER_API.md). Active data still
   requires the outstanding canonical account integration.
-- [ ] Paused by user pending Pierre's source location: existing explorer UI and
-  indexer integration, followed by canonical reorg qualification, as specified
-  in the [explorer plan](PROTOCOL_TREASURY_EXPLORER_EXECPLAN.md).
+- [ ] Resume explorer UI/indexer integration in the user-supplied
+  [hegemon-website](https://github.com/Pauli-Group/hegemon-website) repository
+  on new branch `codex/explorer-treasury-rewards`, then qualify canonical reorg
+  handling, as specified in the [explorer plan](PROTOCOL_TREASURY_EXPLORER_EXECPLAN.md).
+- [x] (2026-11-05 ET) Add desktop reward/treasury and genesis views, strict typed
+  address/amount entry, root-derived identities/recovery, real claim preparation
+  and verified offline approvals; see the [desktop plan](PROTOCOL_TREASURY_DESKTOP_EXECPLAN.md).
+  These export/review paths do not supply native account submission.
 - [ ] Run property, adversarial, real-proof and two-node qualification.
 - [ ] Publish tested runtime implementation on this branch.
 
@@ -967,3 +972,8 @@ heights, epochs, amounts and sequences are encoded without JavaScript integer
 rounding. Active account/note publication, actual chain qualification and the
 user-deferred existing explorer UI/indexer remain outstanding. The companion
 explorer plan contains exact commands and acceptance boundaries.
+
+Desktop UX extension (2026-11-05 ET): the user authorized address, reward, mining,
+treasury, recovery and precision UX changes in this repository. The companion
+[desktop plan](PROTOCOL_TREASURY_DESKTOP_EXECPLAN.md) tracks actual implementation
+and capability-gated operation. Existing explorer work remains paused.

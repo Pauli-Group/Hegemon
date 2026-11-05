@@ -28,6 +28,7 @@ use wallet::{
 
 mod asset;
 mod recovery;
+mod reward;
 #[cfg(feature = "development-assets")]
 mod recovery_archive_process;
 
@@ -221,6 +222,9 @@ struct WalletCapabilities {
     note_details: bool,
     error_codes: bool,
     private_multisig: bool,
+    reward_accounts: bool,
+    reward_claim_preparation: bool,
+    reward_submission: bool,
 }
 
 #[derive(Serialize)]
@@ -648,9 +652,10 @@ fn main() -> Result<()> {
     }
     if std::env::args().skip(1).eq(["--asset-help"])
         || std::env::args().skip(1).eq(["--recovery-help"])
+        || std::env::args().skip(1).eq(["--reward-help"])
         || std::env::args().skip(1).eq(["--help"])
     {
-        println!("{}\n{}", asset::HELP, recovery::HELP);
+        println!("{}\n{}\n{}", asset::HELP, recovery::HELP, reward::HELP);
         return Ok(());
     }
     if std::env::args().skip(1).eq(["--print-crypto-profile"]) {
@@ -877,6 +882,9 @@ fn handle_request(
                 let params: SyncParams = parse_params(request.params)?;
                 to_json(sync_once(runtime, store, params)?)
             }
+            method if method.starts_with("reward.") => {
+                reward::handle(runtime, store, method, request.params)
+            }
             method if method.starts_with("recovery.") => {
                 recovery::handle(runtime, store, method, request.params)
             }
@@ -1102,6 +1110,9 @@ fn status_get(store: &Arc<WalletStore>, store_path: &str) -> WalletdResult<Walle
             note_details: true,
             error_codes: true,
             private_multisig: true,
+            reward_accounts: true,
+            reward_claim_preparation: true,
+            reward_submission: false,
         },
         wallet_mode: match mode {
             WalletMode::Full => WalletModeLabel::Full,

@@ -1,10 +1,7 @@
+import { addressError, cleanAddress, type AddressNetwork } from './addresses';
+import { parseHgn, hgn } from './rewardAccounts';
 import type { ActivityStatus, BlockAlertStep, BlockAlertTone } from './appTypes';
-import {
-  shieldedAddressDataCharset,
-  shieldedAddressLength,
-  shieldedAddressPrefix,
-  shieldedAddressSeparatorPattern
-} from './config';
+
 
 export const normalizeTxId = (value: string | null | undefined) => {
   if (!value) {
@@ -39,11 +36,8 @@ export const isWalletSessionClosedError = (message: string) => {
 };
 
 export const toBaseUnits = (value: string) => {
-  const parsed = Number.parseFloat(value);
-  if (Number.isNaN(parsed) || !Number.isFinite(parsed)) {
-    return null;
-  }
-  return Math.round(parsed * 100_000_000);
+  const parsed = parseHgn(value);
+  return parsed === null ? null : Number(parsed);
 };
 
 export const formatNumber = (value: number | null | undefined) => {
@@ -53,30 +47,13 @@ export const formatNumber = (value: number | null | undefined) => {
   return value.toLocaleString();
 };
 
-export const formatHgm = (value: number) => `${(value / 100_000_000).toFixed(8)} HGM`;
+export const formatHgm = (value: number) => Number.isSafeInteger(value) && value >= 0 ? hgn(String(value)) : 'Unavailable';
 
 export const formatBlockCount = (value: number) => `${formatNumber(value)} ${value === 1 ? 'block' : 'blocks'}`;
 
-export const normalizeShieldedAddressInput = (value: string) =>
-  value.replace(shieldedAddressSeparatorPattern, '').trim().toLowerCase();
-
-export const validateShieldedAddressInput = (value: string, label = 'Address') => {
-  const normalized = normalizeShieldedAddressInput(value);
-  if (!normalized) {
-    return `${label} is required.`;
-  }
-  if (!normalized.startsWith(shieldedAddressPrefix)) {
-    return `${label} must start with ${shieldedAddressPrefix}.`;
-  }
-  if (normalized.length !== shieldedAddressLength) {
-    return `${label} looks truncated or corrupt. Expected ${shieldedAddressLength} chars, got ${normalized.length}.`;
-  }
-  const payload = normalized.slice(shieldedAddressPrefix.length);
-  if (!shieldedAddressDataCharset.test(payload)) {
-    return `${label} contains unsupported bech32 characters.`;
-  }
-  return null;
-};
+export const normalizeShieldedAddressInput = cleanAddress;
+export const validateShieldedAddressInput = (value: string, label = 'Address', network: AddressNetwork | null = null) =>
+  addressError(value, 'shielded', network, label);
 
 export const formatAddress = (address: string) => {
   const normalized = normalizeShieldedAddressInput(address);

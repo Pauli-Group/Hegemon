@@ -100,7 +100,26 @@ pub fn prepare_account_claim(
     context
         .validate(genesis)
         .map_err(|_| invalid("claim genesis context"))?;
-    if request.recipient.network() != genesis.network
+    prepare_account_claim_for_network(genesis.network, context, reference, request)
+}
+/// The caller authenticates the selected network and complete chain context.
+/// This builds a payout proof; it grants no ledger credit or source authority.
+pub fn prepare_account_claim_for_network(
+    network: AddressNetwork,
+    context: AccountChainContext,
+    reference: SpendReference,
+    request: AccountClaimRequest,
+) -> Result<PreparedAccountClaim, WalletError> {
+    network
+        .validate()
+        .map_err(|_| invalid("invalid claim network"))?;
+    if context.chain_id == [0; 32]
+        || context.genesis_hash == [0; 32]
+        || context.genesis_config_hash == synthetic_crypto::hash384::RulesHash48::ZERO
+    {
+        return Err(invalid("empty claim context"));
+    }
+    if request.recipient.network() != network
         || reference.chain_id != context.chain_id
         || request.account == AccountPolicyId48::ZERO
         || request.amount == 0
@@ -633,4 +652,11 @@ mod tests {
         );
         ledger.validate().unwrap();
     }
+}
+
+/// Public recipient binding shared by offline approval review and proof builders.
+pub fn claim_recipient_binding(
+    a: &crate::ShieldedAddress,
+) -> Result<([u64; 4], private::Digest), WalletError> {
+    build::recipient(a)
 }

@@ -1,6 +1,7 @@
 pub mod address;
 pub mod network_address;
 pub mod reward_spend;
+pub mod reward_identity;
 #[cfg(feature = "rpc-client")]
 pub mod async_sync;
 #[cfg(feature = "rpc-client")]

@@ -253,6 +253,9 @@ export type WalletStatus = {
     noteDetails?: boolean;
     errorCodes: boolean;
     privateMultisig?: boolean;
+    rewardAccounts?: boolean;
+    rewardClaimPreparation?: boolean;
+    rewardSubmission?: boolean;
   };
   walletMode?: 'full' | 'watch_only';
   storePath?: string;

@@ -1351,3 +1351,14 @@ label.space-y-2 > span.label {
     animation: none;
   }
 }
+
+/* Public accounts retain the shared dark, cyan and amber brand palette. */
+.reward-metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); gap:16px; }
+.reward-metric { padding:16px; border:1px solid rgb(27 231 255 / .18); border-radius:8px; min-width:0; background:rgb(14 28 54 / .6); }
+.reward-metric strong { display:block; overflow-wrap:anywhere; margin-top:8px; }
+.reward-tabs { display:flex; flex-wrap:wrap; gap:8px; }
+.reward-table { width:100%; border-collapse:collapse; text-align:left; table-layout:fixed; }
+.reward-table th,.reward-table td { padding:12px 8px; vertical-align:top; border-bottom:1px solid rgb(255 255 255 / .12); overflow-wrap:anywhere; }
+.reward-notice { border-left:3px solid #F5A623; padding:12px 16px; background:rgb(245 166 35 / .08); }
+.reward-json { max-height:400px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; padding:16px; background:#0E1C36; border-radius:8px; font-size:12px; }
+.reward-signers { font-size:12px; overflow-wrap:anywhere; }

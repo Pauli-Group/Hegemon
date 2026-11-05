@@ -1,3 +1,4 @@
+import type { RewardReadMethod, RewardQuery } from '../src/lib/rewardAccounts';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   Contact,
@@ -12,6 +13,7 @@ import type {
 
 contextBridge.exposeInMainWorld('hegemon', {
   node: {
+    rewardRead: (url: string, method: RewardReadMethod, query?: RewardQuery) => ipcRenderer.invoke('node:rewardRead', url, method, query ?? {}),
     start: (options: NodeStartOptions) => ipcRenderer.invoke('node:start', options),
     stop: () => ipcRenderer.invoke('node:stop'),
     summary: (request: NodeSummaryRequest) => ipcRenderer.invoke('node:summary', request),
@@ -20,6 +22,7 @@ contextBridge.exposeInMainWorld('hegemon', {
     managedStatus: () => ipcRenderer.invoke('node:managedStatus') as Promise<NodeManagedStatus>
   },
   wallet: {
+    reward: (storePath: string, unlockToken: string, method: string, params: Record<string, unknown>) => ipcRenderer.invoke('wallet:reward', storePath, unlockToken, method, params),
     init: (storePath: string, passphrase: string) => ipcRenderer.invoke('wallet:init', storePath, passphrase),
     restore: (storePath: string, passphrase: string) => ipcRenderer.invoke('wallet:restore', storePath, passphrase),
     status: (storePath: string, unlockToken: string, noSync?: boolean) =>

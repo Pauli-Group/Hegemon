@@ -1,3 +1,6 @@
+import { useRewardAccounts } from './lib/useRewardAccounts';
+import { RewardWorkspace } from './components/RewardWorkspace';
+import { addressError } from './lib/addresses';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HashRouter, Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import type {
@@ -45,10 +48,6 @@ import {
   minWalletPassphraseLength,
   participationRoleLabels,
   participationRoleMeta,
-  shieldedAddressDataCharset,
-  shieldedAddressLength,
-  shieldedAddressPrefix,
-  shieldedAddressSeparatorPattern,
   walletAutoLockEnabledKey,
   walletAutoLockMinutesKey,
   walletConnectionKey,
@@ -472,6 +471,59 @@ export default function App() {
   }, [openDialogPath, storePath]);
 
   const activeSummary = activeConnection ? nodeSummaries[activeConnection.id] : null;
+  const rewardWalletToken =
+    walletStatus?.walletMode === 'watch_only' ? null : activeUnlockToken;
+  const walletRewards = useRewardAccounts(
+    deriveHttpUrl(wsUrl, walletConnection?.httpUrl) || '',
+    walletConnection
+      ? (nodeSummaries[walletConnection.id]?.genesisHash ?? null)
+      : null,
+    storePath,
+    rewardWalletToken,
+  );
+  const miningRewards = useRewardAccounts(
+    activeConnection?.httpUrl ?? '',
+    activeSummary?.genesisHash ?? null,
+    storePath,
+    rewardWalletToken,
+  );
+  const selectedAddressNetwork =
+    walletRewards.mode === 'accounts'
+      ? (walletRewards.status?.parameters?.network ?? null)
+      : null;
+  const effectiveReceivingAddress =
+    walletRewards.mode === 'legacy'
+      ? (walletStatus?.primaryAddress ?? '')
+      : walletRewards.mode === 'accounts'
+        ? (walletRewards.identity?.shieldedAddress ?? '')
+        : '';
+  const effectiveMiningAddress =
+    miningRewards.mode === 'accounts'
+      ? (miningRewards.identity?.accountAddress ?? '')
+      : miningRewards.mode === 'legacy'
+        ? (walletStatus?.primaryAddress ?? '')
+        : '';
+  const validateContactAddress = (value: string) =>
+    selectedAddressNetwork &&
+    !addressError(value, 'account', selectedAddressNetwork)
+      ? null
+      : validateShieldedAddressInput(
+          value,
+          'Contact address',
+          selectedAddressNetwork,
+        );
+  const validateMinerAddress = (value: string) =>
+    miningRewards.mode === 'accounts'
+      ? miningRewards.status?.parameters
+        ? addressError(
+            value,
+            'account',
+            miningRewards.status.parameters.network,
+            'Miner reward account',
+          )
+        : 'Wait for the selected mining network identity.'
+      : validateShieldedAddressInput(value, 'Miner address');
+
   const activeParticipationRole = activeConnection ? inferParticipationRole(activeConnection) : 'full_node';
   const activeParticipationMeta = participationRoleMeta[activeParticipationRole];
   const roleAllowsLocalMining = activeParticipationRole === 'authoring_pool';
@@ -742,7 +794,7 @@ export default function App() {
       return;
     }
     if (normalizedRole === 'authoring_pool' && normalizedMinerAddress) {
-      const validationError = validateShieldedAddressInput(normalizedMinerAddress, 'Miner address');
+      const validationError = validateMinerAddress(normalizedMinerAddress);
       if (validationError) {
         setNodeError(validationError);
         return;
@@ -1094,12 +1146,12 @@ export default function App() {
 
   const handleCopyAddress = async () => {
     setAddressCopyError(null);
-    if (!walletStatus?.primaryAddress) {
+    if (!effectiveReceivingAddress) {
       setAddressCopyError('Open or sync a wallet before copying the address.');
       return;
     }
     try {
-      await window.hegemon.clipboard.writeText(walletStatus.primaryAddress);
+      await window.hegemon.clipboard.writeText(effectiveReceivingAddress);
       setAddressCopied(true);
       window.setTimeout(() => setAddressCopied(false), 2000);
     } catch {
@@ -1123,10 +1175,10 @@ export default function App() {
   };
 
   const handleUseWalletAddressForMining = () => {
-    if (!activeConnection || !walletStatus?.primaryAddress) {
+    if (!activeConnection || !effectiveMiningAddress) {
       return;
     }
-    const payoutAddress = normalizeShieldedAddressInput(walletStatus.primaryAddress);
+    const payoutAddress = normalizeShieldedAddressInput(effectiveMiningAddress).toLowerCase();
     updateActiveConnection((connection) => ({
       participationRole: 'authoring_pool',
       minerAddress: payoutAddress,
@@ -1223,15 +1275,16 @@ export default function App() {
     let attemptId: string | null = null;
     setWalletError(null);
     try {
+      if (walletRewards.mode !== 'legacy') throw new Error('Shielded send submission for reward-account networks is not available yet.');
       const normalizedRecipientAddress = normalizeShieldedAddressInput(recipientAddress);
-      const recipientAddressError = validateShieldedAddressInput(normalizedRecipientAddress, 'Recipient address');
+      const recipientAddressError = validateShieldedAddressInput(normalizedRecipientAddress, 'Recipient address', selectedAddressNetwork);
       if (recipientAddressError) {
         throw new Error(recipientAddressError);
       }
       const amount = toBaseUnits(sendAmount);
       const fee = toBaseUnits(sendFee);
       if (amount === null || fee === null) {
-        throw new Error('Amount and miner tip must be valid numbers.');
+        throw new Error('Amount and miner tip must be exact HGN values with up to eight decimal places.');
       }
       if (amount <= 0) {
         throw new Error('Amount must be greater than 0.');
@@ -1385,7 +1438,7 @@ export default function App() {
       return;
     }
     const normalizedContactAddress = normalizeShieldedAddressInput(newContactAddress);
-    const contactAddressError = validateShieldedAddressInput(normalizedContactAddress, 'Contact address');
+    const contactAddressError = validateContactAddress(normalizedContactAddress);
     if (contactAddressError) {
       setContactsError(contactAddressError);
       return;
@@ -1393,7 +1446,7 @@ export default function App() {
     const newEntry: Contact = {
       id: makeId(),
       name: newContactName,
-      address: normalizedContactAddress,
+      address: normalizedContactAddress.toLowerCase(),
       verified: newContactVerified,
       notes: newContactNotes || undefined,
       lastUsed: undefined,
@@ -1680,11 +1733,11 @@ export default function App() {
   const maxInputsLine = walletReady
     ? `Max ${formatNumber(walletStatus?.notes?.maxInputs)} inputs/tx`
     : 'Open wallet to inspect inputs';
-  const primaryAddress = walletStatus?.primaryAddress ?? '';
+  const primaryAddress = effectiveReceivingAddress;
   const primaryAddressLabel = primaryAddress ? formatAddress(primaryAddress) : walletReady ? 'N/A' : 'Locked';
-  const normalizedPrimaryAddress = normalizeShieldedAddressInput(primaryAddress);
-  const runningMinerAddress = normalizeShieldedAddressInput(activeSummary?.minerAddress ?? '');
-  const savedMinerAddress = normalizeShieldedAddressInput(activeConnection?.minerAddress ?? '');
+  const normalizedWalletMiningAddress = normalizeShieldedAddressInput(effectiveMiningAddress).toLowerCase();
+  const runningMinerAddress = normalizeShieldedAddressInput(activeSummary?.minerAddress ?? '').toLowerCase();
+  const savedMinerAddress = normalizeShieldedAddressInput(activeConnection?.minerAddress ?? '').toLowerCase();
   const effectiveMinerPayoutAddress = runningMinerAddress || savedMinerAddress;
   const effectiveMinerPayoutLabel = effectiveMinerPayoutAddress
     ? formatAddress(effectiveMinerPayoutAddress)
@@ -1694,12 +1747,12 @@ export default function App() {
   const savedMinerPayoutLabel = savedMinerAddress ? formatAddress(savedMinerAddress) : 'Not set';
   const miningPayoutMatchesWallet = Boolean(
     walletReady &&
-      normalizedPrimaryAddress &&
+      normalizedWalletMiningAddress &&
       effectiveMinerPayoutAddress &&
-      normalizedPrimaryAddress === effectiveMinerPayoutAddress
+      normalizedWalletMiningAddress === effectiveMinerPayoutAddress
   );
   const savedMiningPayoutMatchesWallet = Boolean(
-    walletReady && normalizedPrimaryAddress && savedMinerAddress && normalizedPrimaryAddress === savedMinerAddress
+    walletReady && normalizedWalletMiningAddress && savedMinerAddress && normalizedWalletMiningAddress === savedMinerAddress
   );
   const miningPayoutPendingRestart = Boolean(
     runningMinerAddress && savedMinerAddress && runningMinerAddress !== savedMinerAddress
@@ -1733,41 +1786,41 @@ export default function App() {
   const miningPayoutDetail = miningPayoutMissing
     ? 'Mining is active, but the app cannot see a payout address.'
     : miningPayoutMismatch
-      ? 'Local block rewards are not going to the displayed receiving address.'
+      ? 'Local block rewards are not going to the wallet’s mining payout account.'
       : activeSummary?.mining === true && miningPayoutMatchesWallet
-        ? 'Local block rewards pay the wallet address shown above.'
+        ? 'Local block rewards pay the wallet’s mining payout account.'
         : activeSummary?.mining === true && effectiveMinerPayoutAddress
-          ? 'Mining is active. Unlock the wallet to compare this payout with the receiving address.'
+          ? 'Mining is active. Unlock the wallet to compare its payout account.'
         : savedMinerAddress
           ? 'This address will be used when local mining starts.'
-          : 'Set this wallet address before enabling local mining.';
+          : 'Set the wallet mining payout before enabling local mining.';
   const recipientAddressError = recipientAddress
-    ? validateShieldedAddressInput(recipientAddress, 'Recipient address')
+    ? validateShieldedAddressInput(recipientAddress, 'Recipient address', selectedAddressNetwork)
     : null;
   const normalizedRecipientAddress = normalizeShieldedAddressInput(recipientAddress);
-  const recipientAddressLengthLabel = `${normalizedRecipientAddress.length}/${shieldedAddressLength}`;
+  const recipientAddressLengthLabel = `${normalizedRecipientAddress.length} characters`;
   const recipientAddressTone = recipientAddressError
     ? 'text-guard'
     : normalizedRecipientAddress
       ? 'text-proof'
       : 'text-surfaceMuted/70';
   const newContactAddressError = newContactAddress
-    ? validateShieldedAddressInput(newContactAddress, 'Contact address')
+    ? validateContactAddress(newContactAddress)
     : null;
   const minerAddressError =
     roleAllowsLocalMining && activeConnection?.minerAddress
-      ? validateShieldedAddressInput(activeConnection.minerAddress, 'Miner address')
+      ? validateMinerAddress(activeConnection.minerAddress)
       : null;
   const contactAddressErrors = useMemo(() => {
     const errors = new Map<string, string>();
     contacts.forEach((contact) => {
-      const error = validateShieldedAddressInput(contact.address, 'Contact address');
+      const error = validateShieldedAddressInput(contact.address, 'Contact address', selectedAddressNetwork);
       if (error) {
         errors.set(contact.id, error);
       }
     });
     return errors;
-  }, [contacts]);
+  }, [contacts, selectedAddressNetwork]);
   const contactWarnings = useMemo(() => {
     const warnings = new Map<string, string>();
     contacts.forEach((contact) => {
@@ -1777,20 +1830,20 @@ export default function App() {
       }
     });
     return warnings;
-  }, [contacts]);
+  }, [contacts, selectedAddressNetwork]);
   const contactsByAddress = useMemo(() => {
     const map = new Map<string, Contact>();
     contacts.forEach((contact) => {
-      const normalized = normalizeShieldedAddressInput(contact.address);
+      const normalized = normalizeShieldedAddressInput(contact.address).toLowerCase();
       if (normalized) {
         map.set(normalized, contact);
       }
     });
     return map;
-  }, [contacts]);
+  }, [contacts, selectedAddressNetwork]);
   const getContactForAddress = useCallback(
     (address: string | null | undefined) => {
-      const normalized = normalizeShieldedAddressInput(address ?? '');
+      const normalized = normalizeShieldedAddressInput(address ?? '').toLowerCase();
       return normalized ? contactsByAddress.get(normalized) ?? null : null;
     },
     [contactsByAddress]
@@ -1799,9 +1852,11 @@ export default function App() {
   const effectiveMinerPayoutContact = getContactForAddress(effectiveMinerPayoutAddress);
   const savedMinerAddressContact = getContactForAddress(savedMinerAddress);
   const configuredMinerAddressContact = getContactForAddress(activeConnection?.minerAddress);
-  const configuredMinerAddressNormalized = normalizeShieldedAddressInput(activeConnection?.minerAddress ?? '');
+  const configuredMinerAddressNormalized = normalizeShieldedAddressInput(activeConnection?.minerAddress ?? '').toLowerCase();
   const sendBlockedReason = !walletReady
     ? 'Open or init a wallet to send funds.'
+    : walletRewards.mode !== 'legacy'
+      ? walletRewards.mode === 'accounts' ? 'Shielded send submission for reward-account networks is not available yet.' : 'Waiting for the selected network identity.'
     : walletSummary?.reachable === false
       ? 'Wallet connection is offline. Select a reachable node or fix the RPC endpoint.'
       : genesisMismatch
@@ -2126,6 +2181,7 @@ export default function App() {
       statusLabel: walletNavLabel,
       statusTone: walletNavTone
     },
+    { path: '/rewards', icon: 'mining', label: 'Rewards & treasury', description: 'Accounts, epochs and approvals' },
     {
       path: '/send',
       icon: 'send',
@@ -2569,7 +2625,7 @@ export default function App() {
                       rows={5}
                       value={activeConnection.minerAddress ?? ''}
                       onChange={(event) => updateActiveConnection({ minerAddress: event.target.value })}
-                      placeholder="shca1..."
+                      placeholder={miningRewards.mode === 'accounts' ? miningRewards.status?.parameters?.network.class === 'mainnet' ? 'heg1…' : 'heg_test1…' : 'shca1…'}
                       spellCheck={false}
                     />
                     {minerAddressError ? <p className="text-xs text-guard">{minerAddressError}</p> : null}
@@ -3250,7 +3306,7 @@ export default function App() {
         <div className="wallet-identity">
           <div className="wallet-identity-header">
             <div className="min-w-0">
-              <p className="label">Balance</p>
+              <p className="label">Shielded balance</p>
               <h2>{walletBalanceDisplay}</h2>
               <p>
                 {walletReady
@@ -3284,7 +3340,7 @@ export default function App() {
             </div>
           </div>
           <div className="wallet-address-row">
-            <span>Receiving address</span>
+            <span>Shielded receiving address{selectedAddressNetwork ? selectedAddressNetwork.class === 'mainnet' ? ' · Mainnet' : ' · Testnet' : walletRewards.mode === 'legacy' ? ' · Legacy' : ''}</span>
             <p className="address-display" title={primaryAddress}>
               {primaryAddressLabel}
             </p>
@@ -3301,6 +3357,7 @@ export default function App() {
           {addressCopyError ? <p className="wallet-inline-error">{addressCopyError}</p> : null}
         </div>
 
+        <p className="text-sm text-surfaceMuted">Shielded notes are separate from public account balances. <Link to="/rewards" className="text-ionosphere">View rewards, treasury and epoch availability</Link>.</p>
         <div className="wallet-history-panel">
           <div className="wallet-history-header">
             <div>
@@ -3486,8 +3543,8 @@ export default function App() {
           {miningPayoutTone !== 'ok' || miningPayoutPendingRestart ? (
             <div className="mining-payout-grid">
               <div>
-                <span>Wallet address</span>
-                <strong title={primaryAddress}>{primaryAddressLabel}</strong>
+                <span>Wallet mining payout</span>
+                <strong title={effectiveMiningAddress}>{effectiveMiningAddress ? formatAddress(effectiveMiningAddress) : 'Unavailable'}</strong>
                 {primaryAddressContact ? (
                   <em>
                     {primaryAddressContact.name}
@@ -3518,9 +3575,9 @@ export default function App() {
               className="secondary"
               type="button"
               onClick={handleUseWalletAddressForMining}
-              disabled={!primaryAddress || savedMiningPayoutMatchesWallet}
+              disabled={!effectiveMiningAddress || savedMiningPayoutMatchesWallet}
             >
-              Use wallet address
+              {miningRewards.mode === 'accounts' ? 'Use wallet reward account' : 'Use wallet address'}
             </button>
             <span>
               {miningPayoutPendingRestart
@@ -3670,7 +3727,7 @@ export default function App() {
                 ? recipientAddressError
                   ? `Invalid ${recipientAddressLengthLabel}`
                   : `Valid ${recipientAddressLengthLabel}`
-                : `0/${shieldedAddressLength}`}
+                : '0 characters'}
             </span>
           </span>
           <textarea
@@ -3678,7 +3735,7 @@ export default function App() {
             rows={5}
             value={recipientAddress}
             onChange={(event) => setRecipientAddress(event.target.value)}
-            placeholder="shca1..."
+            placeholder={selectedAddressNetwork ? selectedAddressNetwork.class === 'mainnet' ? 'heg_shield1…' : 'heg_shield_test1…' : 'shca1…'}
             spellCheck={false}
           />
           {recipientAddressError ? <p className="text-xs text-guard">{recipientAddressError}</p> : null}
@@ -3711,11 +3768,11 @@ export default function App() {
         )}
         <div className="grid gap-4 md:grid-cols-2">
           <label className="space-y-2">
-            <span className="label">Amount (HGM)</span>
+            <span className="label">Amount (HGN)</span>
             <input value={sendAmount} onChange={(event) => setSendAmount(event.target.value)} placeholder="0.50" />
           </label>
           <label className="space-y-2">
-            <span className="label">Miner tip (optional, HGM)</span>
+            <span className="label">Miner tip (optional, HGN)</span>
             <input value={sendFee} onChange={(event) => setSendFee(event.target.value)} placeholder="0" />
           </label>
         </div>
@@ -3900,7 +3957,7 @@ export default function App() {
         </label>
         <label className="space-y-2">
           <span className="label">Address</span>
-          <input value={newContactAddress} onChange={(event) => setNewContactAddress(event.target.value)} placeholder="shca1..." />
+          <input value={newContactAddress} onChange={(event) => setNewContactAddress(event.target.value)} placeholder={selectedAddressNetwork ? selectedAddressNetwork.class === 'mainnet' ? 'heg_shield1…' : 'heg_shield_test1…' : 'shca1…'} />
           {newContactAddressError ? <p className="text-xs text-guard">{newContactAddressError}</p> : null}
         </label>
         <label className="space-y-2">
@@ -3936,7 +3993,7 @@ export default function App() {
           </div>
         )}
         {contacts.map((contact) => {
-          const contactAddressError = contactAddressErrors.get(contact.id);
+          const contactAddressError = validateContactAddress(contact.address);
           const contactWarning = contactWarnings.get(contact.id);
           return (
             <div
@@ -4041,7 +4098,7 @@ export default function App() {
                         <div className="text-right">
                           <p className="text-sm font-medium">{formatHgm(record.value)}</p>
                           <p className="text-xs text-surfaceMuted">
-                            {record.assetId === 0 ? 'HGM' : `Asset ${record.assetId}`}
+                            {record.assetId === 0 ? 'HGN' : `Asset ${record.assetId}`}
                           </p>
                         </div>
                       </div>
@@ -4228,6 +4285,7 @@ export default function App() {
               <Route path="/overview" element={OverviewWorkspace} />
               <Route path="/node" element={NodeWorkspace} />
               <Route path="/wallet" element={WalletWorkspace} />
+              <Route path="/rewards" element={<RewardWorkspace state={walletRewards} url={deriveHttpUrl(wsUrl, walletConnection?.httpUrl) || ''} storePath={storePath} token={rewardWalletToken} />} />
               <Route path="/send" element={SendWorkspace} />
               <Route path="/disclosure" element={DisclosureWorkspace} />
               <Route path="/console" element={ConsoleWorkspace} />

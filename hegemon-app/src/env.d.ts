@@ -1,3 +1,4 @@
+import type { RewardReadMethod, RewardQuery } from './lib/rewardAccounts';
 import type {
   DialogOpenOptions,
   NodeMiningRequest,
@@ -20,6 +21,7 @@ import type {
 
 export type HegemonApi = {
   node: {
+    rewardRead: (url: string, method: RewardReadMethod, query?: RewardQuery) => Promise<unknown>;
     start: (options: NodeStartOptions) => Promise<void>;
     stop: () => Promise<void>;
     summary: (request: NodeSummaryRequest) => Promise<NodeSummary>;
@@ -28,6 +30,7 @@ export type HegemonApi = {
     managedStatus: () => Promise<NodeManagedStatus>;
   };
   wallet: {
+    reward: (storePath: string, unlockToken: string, method: string, params: Record<string, unknown>) => Promise<unknown>;
     init: (storePath: string, passphrase: string) => Promise<WalletUnlockSession>;
     restore: (storePath: string, passphrase: string) => Promise<WalletUnlockSession>;
     status: (storePath: string, unlockToken: string, noSync?: boolean) => Promise<WalletStatus>;

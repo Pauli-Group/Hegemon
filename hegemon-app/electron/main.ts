@@ -1,3 +1,5 @@
+import { readRewardRpc } from './rewardRpc';
+import type { RewardReadMethod, RewardQuery } from '../src/lib/rewardAccounts';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, session } from 'electron';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -395,6 +397,45 @@ ipcMain.handle('clipboard:writeText', async (_event, text: string) => {
   }
   clipboard.writeText(text);
 });
+
+ipcMain.handle(
+  'node:rewardRead',
+  async (_event, url: string, method: RewardReadMethod, query: RewardQuery) =>
+    readRewardRpc(url, method, query),
+);
+ipcMain.handle(
+  'wallet:reward',
+  async (
+    _event,
+    storePath: string,
+    token: string,
+    method: string,
+    params: Record<string, unknown>,
+  ) => {
+    requireWalletUnlock(storePath, token);
+    if (
+      ![
+        'identity',
+        'prepareClaim',
+        'reviewDonation',
+        'reviewIntent',
+        'signIntent',
+        'recover',
+      ].includes(method)
+    )
+      throw Error('Unsupported reward wallet operation');
+    const admitted = { ...params };
+    if (method === 'prepareClaim' || method === 'reviewDonation')
+      admitted.wsUrl = normalizeLoopbackWalletOneShotRpcEndpoint(
+        String(params.wsUrl ?? ''),
+      );
+    if (method === 'recover')
+      admitted.destination = resolveStorePathForSession(
+        String(params.destination ?? ''),
+      );
+    return walletdClient.reward(method, admitted);
+  },
+);
 
 ipcMain.handle('wallet:init', async (_event, storePath: string, passphrase: string) => {
   const resolvedStorePath = resolveStorePathForSession(storePath);

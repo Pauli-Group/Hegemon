@@ -19,7 +19,10 @@ export const MIN_WALLETD_REQUEST_TIMEOUT_MS = 1_000;
 export function resolveWalletdRequestTimeoutMs(raw: string | undefined, method?: string): number {
   const parsed = raw ? Number.parseInt(raw, 10) : NaN;
   if (!Number.isFinite(parsed) || parsed < MIN_WALLETD_REQUEST_TIMEOUT_MS) {
-    return method === 'sync.once' ? NATIVE_WALLET_SYNC_TIMEOUT_MS : DEFAULT_WALLETD_REQUEST_TIMEOUT_MS;
+    const provesOrReviewsClaim = ['reward.prepareClaim', 'reward.reviewIntent', 'reward.signIntent'].includes(method ?? '');
+    return method === 'sync.once' || provesOrReviewsClaim
+      ? NATIVE_WALLET_SYNC_TIMEOUT_MS
+      : DEFAULT_WALLETD_REQUEST_TIMEOUT_MS;
   }
   return parsed;
 }

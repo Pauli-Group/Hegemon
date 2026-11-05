@@ -4299,11 +4299,15 @@ dependencies = [
  "bincode",
  "chrono",
  "hex",
+ "parity-scale-codec",
+ "protocol-reward-accounts",
  "serde",
  "serde_json",
+ "synthetic-crypto",
  "tokio",
  "transaction-circuit",
  "wallet",
+ "zeroize",
 ]
 
 [[package]]

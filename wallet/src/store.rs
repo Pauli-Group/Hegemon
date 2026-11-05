@@ -545,7 +545,25 @@ impl WalletStore {
             return Err(WalletError::StoreAlreadyExists);
         }
         let original = Self::open_read_only(source, source_passphrase)?;
-        let mut recovered = original.with_state(|state| Ok(state.clone()))?;
+        original.recover_unlocked_keys_to_fresh_wallet(destination, destination_passphrase)
+    }
+
+    /// Recover keys/issued-address registry from this unlocked wallet into a
+    /// separate encrypted file, retaining the source and no historical state.
+    pub fn recover_unlocked_keys_to_fresh_wallet<P: AsRef<Path>>(
+        &self,
+        destination: P,
+        destination_passphrase: &str,
+    ) -> Result<Self, WalletError> {
+        if destination_passphrase.is_empty() {
+            return Err(WalletError::InvalidArgument(
+                "new encrypted wallet passphrase must not be empty",
+            ));
+        }
+        if fs::symlink_metadata(destination.as_ref()).is_ok() {
+            return Err(WalletError::StoreAlreadyExists);
+        }
+        let mut recovered = self.with_state(|state| Ok(state.clone()))?;
         validate_legacy_wallet_key_material(&recovered)?;
         reset_legacy_sync_fields(&mut recovered, true);
         recovered.outgoing_disclosures.clear();

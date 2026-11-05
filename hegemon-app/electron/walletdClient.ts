@@ -73,6 +73,10 @@ export class WalletdClient {
   private mode: WalletdMode | null = null;
   private stderrBuffer: string[] = [];
 
+  async reward(method: string, params: object): Promise<unknown> {
+    return this.request(`reward.${method}`, params);
+  }
+
   async status(): Promise<WalletStatus> {
     return this.request('status.get', {});
   }

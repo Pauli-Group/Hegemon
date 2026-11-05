@@ -2,10 +2,6 @@ import type { NodeConnection, NodeConnectionMode, NodeParticipationRole } from '
 
 export const defaultStorePath = '~/.hegemon-wallet-010';
 export const canonicalTestnetP2pPort = 30333;
-export const shieldedAddressPrefix = 'shca1';
-export const shieldedAddressLength = 2634;
-export const shieldedAddressDataCharset = /^[023456789acdefghjklmnpqrstuvwxyz]+$/;
-export const shieldedAddressSeparatorPattern = /[\s\u200B\u200C\u200D\uFEFF]+/g;
 export const approvedSeedEntries = ['hegemon.pauli.group:30333', 'devnet.hegemonprotocol.com:30333'] as const;
 export const approvedSeeds = approvedSeedEntries.join(',');
 export const hegemonNetworkName = 'Hegemon';
