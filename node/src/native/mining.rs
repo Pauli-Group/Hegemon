@@ -53,6 +53,12 @@ pub(crate) async fn mining_loop(node: Arc<NativeNode>) {
                 let import_node = Arc::clone(&node);
                 let imported = tokio::task::spawn_blocking(move || {
                     let _permit = import_permit;
+                    // Sync may become unresolved while solved work waits for
+                    // the import slot or this blocking worker to run.
+                    import_node.refresh_mining_sync_gate();
+                    if !import_node.mining_sync_gate_allows_work() {
+                        return Ok(None);
+                    }
                     import_node.import_mined_block(&work, seal)
                 })
                 .await;

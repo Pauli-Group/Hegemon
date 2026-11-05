@@ -2545,6 +2545,23 @@ Validated sync response prefixes retain their forward recovery cursor across a p
 
 Persistence is batch-shaped only after replay acceptance. For a connected nonwinning response, replay all supplied blocks in order against carried candidate state first; only then evaluate one count-parameterized noncanonical manifest whose declared block-record writes equal the exact classified-missing count, apply one sled `Batch` containing only those missing records, and require the durability barrier before returning the stored count. For a contiguous canonical tip extension, replay each block against carried candidate state first; then evaluate one `TipExtensionBatchCommit` manifest, commit the chunk with one sled transaction, and require the durability barrier before verifying/publishing the new canonical state. The zero-missing case performs no block-record mutation and requires no new-row durability claim. These gates establish the modeled admission, ordering, and fail-closed wiring. They do not establish sled batch/transaction atomicity, operating-system fsync semantics, hash-key uniqueness, arbitrary raw block-replay soundness, or convergence for an arbitrary deep fork.
 
+### CPU mining readiness during recovery
+
+Exercise the actual CPU mining loop with an easy valid proof-of-work target,
+hold the sole block-import permit until a solution is waiting, discover an
+unresolved competing target, and then release the permit. A queued worker must
+refresh readiness immediately before import, discard the solution while the
+gate is closed, and leave the canonical tip unchanged. Fence the observation
+with a subsequent permit acquisition instead of treating a fixed sleep as proof
+that the waiting attempt finished. Keep mining enabled until that observation;
+the public stop operation also aborts tracked asynchronous mining tasks and is
+a separate control path. Pair the regression with open-gate CPU progress, ASIC
+stale-work rejection, stored-fork adoption, exact-target replacement, large-body
+and live import-queue cases, and reopen checks. These finite schedules cover
+their exercised interleavings; they do not prove atomic gate-to-commit exclusion
+or universal fork convergence. Empty-block process restarts do not qualify
+interrupted writes or rollback of nonempty shielded state.
+
 ### Memory evidence and controlled validation
 
 Report memory evidence in separate categories:

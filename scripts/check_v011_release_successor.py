@@ -303,7 +303,7 @@ def validate_replay(replay, node_sha, artifact_sha):
 CURRENT_NEW_VERSION = '0.11.2'
 CURRENT_SCOPE = 'exact_current_source_current_binary_backend_and_h0'
 CURRENT_SOURCE_KIND = 'reviewed_source_successor_ci'
-CURRENT_CONFIG_SHA256 = '2c33e22ced0b067cf9fb5a69829891b7c6bf34828338796ca0f7094de3ac7385'
+CURRENT_CONFIG_SHA256 = '2e9e14aa8c78f505d165907600e503c6f68a41ee48ac5ed6a72fe0fecd2d115e'
 CURRENT_RUNNER_SHA256 = 'd2f0fae819828482093676f831a5d6c621013c02368cdddafcdf491d294eb2f2'
 CURRENT_FIXTURE_SHA256 = '50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c'
 CURRENT_NETWORK_MANIFEST_SHA256 = '386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754'
@@ -385,6 +385,8 @@ CURRENT_RUNTIME_DELTAS = {'Cargo.lock': ['bae447660a12610766620cb7e2afacb6b0ad92
                                     'aae89923687a2bd8e296f0bc2aaf4014e98895f2cfea0d9cf61eb34c8db9db56'],
  'node/src/native/block_flow.rs': ['cc650ad4fd11d582c78382d1de2cf27289310ccc5719393dd5df6d750e7bdb95',
                                    '70c59140f1f51d09383276d7c2eabd0b0c4b990109c6403dffcef84e61fb96d8'],
+ 'node/src/native/mining.rs': ['2442d53d868de9c4e24bee24fd43b331f9ffa2bdcb65883aea0adb0f84deaf1b',
+                                '2432be6e8e4c49d3f3c29945d6596d263a748d8e3f712227fba00479e36af93d'],
  'node/src/native/mod.rs': ['6be69238c26189dd48d921a5a9c8b2aa2a9057af05060ba62edd9f7d8234bfa9',
                             'b98f9c404570836faf3cace7f67b4528158c1f92667c844a5acd593721ddf409'],
  'node/src/native/network_profile.rs': ['d1f5276aa03bd5f591a8fcb185761ca2edc26515b60ee1104f94127c9db33a7c',
@@ -398,9 +400,9 @@ CURRENT_RUNTIME_DELTAS = {'Cargo.lock': ['bae447660a12610766620cb7e2afacb6b0ad92
  'node/src/native/rpc.rs': ['0250f8b5548f9e718d1f2b3fb60c39dc0c171fe31615442628c1af274cb8cd8c',
                             '74a599d7234621925bddbc9709ecdab37927b9d7e428eaa38590c428b7a435b0'],
  'node/src/native/service.rs': ['6a495fc0d0adb765800df9b3ee5d84b0be362843f0e03ef816bff6dd78dd55e0',
-                                 'd1ff8b44736d420765eca69e18d141b819d2185a82596f31767ffc697364025b'],
+                                 '625b162c864ab0a8e63b3a178e62c34c43ccd862a19f726108cae66b57ea505a'],
  'node/src/native/tests.rs': ['9ce2b15b592f82403f451f9fc76974c98cc7bdf74f6c421c7bf91228bc1b0e31',
-                              'ea434fe24dcc7c13b0a6b8b690cecf178ff994d4d3f960e0853f9de556a1a16c'],
+                              '87d7cc3f27d285ae547a05ba0fe96d589e1adc9f640ab88e7a71f13f05d02f19'],
  'node/src/native/util.rs': ['ccf0764d0059cff43f784171edf58819cabe9645ab2aa1c8f24592beee5e45b1',
                              '51b0333cb00513dc427f4e7cf552f9b3584ffd5133b7ea32b53224ddfed1bea2'],
  'protocol/versioning/src/launch_candidate.rs': ['2ce83547371d7f0904dfc318286e3ae0a17f3776f415518f49c0e22627913539',
@@ -431,6 +433,12 @@ CURRENT_RUNTIME_DELTAS = {'Cargo.lock': ['bae447660a12610766620cb7e2afacb6b0ad92
                          'cc8785a6f1eac90dff9139c215e6cd6963ea4b63922e3f2efd7b948e371f411f']}
 CURRENT_SOURCE_ADDITIONS = {'node/src/native/asset_recovery_profile/geometry_catalog.rs': {'bytes': 41029,
                                                                 'sha256': '31175e46be0807ee25880070780417e0a6e26e6ba613a57ed5254449dec7ea6f'},
+ 'node/src/native/fork_recovery_qualification_tests.rs': {'bytes': 12180,
+                                                        'sha256': 'd17db4c80a6d195745e92d695fb6db9fa7eead48fc955fda63a9ba4125dd0f45'},
+ 'node/src/native/mining_recovery_qualification_tests.rs': {'bytes': 18480,
+                                                        'sha256': 'e3439137080b1e22727044ffbac838c34b37e581203a1bd2e7f23b944a25a247'},
+ 'node/src/native/sync_queue_qualification_tests.rs': {'bytes': 13570,
+                                                        'sha256': 'f92f65e53cec13459bcd213e87d0dec41d098334b953d083c644022dc08ec523'},
  'node/src/native/sync_liveness_tests.rs': {'bytes': 16321,
                                              'sha256': '1b7efdcc135ca16754365412e122c0ce36663b62126c58d4a7c45d1cc2213577'},
  'wallet/src/private_spend_balance.rs': {'bytes': 10268,

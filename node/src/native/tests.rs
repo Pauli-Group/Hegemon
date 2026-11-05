@@ -1,6 +1,10 @@
 use super::node_impl::load_native_sync_response_prefix_with;
 use super::node_impl::validate_poseidon2_v8_replay_window;
 use super::*;
+#[path = "fork_recovery_qualification_tests.rs"]
+mod fork_recovery_qualification_tests;
+#[path = "mining_recovery_qualification_tests.rs"]
+mod mining_recovery_qualification_tests;
 #[path = "sync_liveness_tests.rs"]
 mod sync_liveness_tests;
 use protocol_shielded_pool::types::{
@@ -38552,7 +38556,12 @@ fn mined_child_with_actions_for_chain(
     })
 }
 
-fn test_config(path: &Path, pow_bits: u32, rpc_methods: &str, rpc_external: bool) -> NativeConfig {
+pub(super) fn test_config(
+    path: &Path,
+    pow_bits: u32,
+    rpc_methods: &str,
+    rpc_external: bool,
+) -> NativeConfig {
     NativeConfig {
         network: NativeNetworkIdentity::legacy(),
         dev: true,
@@ -38623,7 +38632,7 @@ fn mine_empty_native_block(node: &NativeNode) -> NativeBlockMeta {
 /// header is probabilistic: the canonical hash can rank last in that sample.
 /// Ordering two valid forks guarantees a distinct losing sibling without
 /// changing work, fabricating hashes, or altering the production comparator.
-fn mine_ordered_empty_native_fork(
+pub(super) fn mine_ordered_empty_native_fork(
     node: &NativeNode,
     pow_bits: u32,
     depth: usize,

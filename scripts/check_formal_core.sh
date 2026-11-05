@@ -901,6 +901,71 @@ run_exact_lib_test \
   hegemon-node \
   native::tests::all_known_winning_sync_corrupt_parent_cycle_is_terminal \
   --no-default-features
+# Require the surrounding fork, mining and live-queue recovery regressions.
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::fork_recovery_qualification_tests::restart_after_short_known_prefix_recovers_large_winning_tip \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::fork_recovery_qualification_tests::restart_after_short_known_prefix_preserves_large_losing_tip \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::fork_recovery_qualification_tests::restart_after_durable_noncanonical_page_reuses_exact_rows_and_finishes \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::fork_recovery_qualification_tests::old_valid_prefix_preserves_a_growing_same_peer_target \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::fork_recovery_qualification_tests::old_wrong_parent_prefix_cannot_evict_a_newer_target \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::fork_recovery_qualification_tests::wrong_peer_cannot_consume_a_request_but_right_peer_can_finish \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::mining_recovery_qualification_tests::asic_cached_solution_rejects_closed_gate_then_survives_durable_loser_resolution \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::mining_recovery_qualification_tests::asic_equal_height_reorg_rejects_old_valid_solution_then_accepts_new_parent_work \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::mining_recovery_qualification_tests::asic_restart_discards_jobs_and_waits_for_durable_verified_recovery \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::mining_recovery_qualification_tests::asic_import_busy_preserves_solved_job_for_retry_after_recovery \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::mining_recovery_qualification_tests::delayed_loser_resolution_cannot_authorize_work_for_a_newer_unresolved_tip \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::mining_recovery_qualification_tests::cpu_loop_does_no_hashing_until_durable_loser_resolution_then_mines \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::mining_recovery_qualification_tests::cpu_solved_work_waiting_for_import_must_recheck_a_newly_closed_sync_gate \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::mining_recovery_qualification_tests::resolved_canonical_target_allows_better_equal_height_discovery_and_mining \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::service::sync_queue_qualification_tests::live_queue_known_prefix_pages_finish_winning_and_losing_competing_tips \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::service::sync_queue_qualification_tests::live_blocked_queue_old_completion_preserves_new_target_and_continues \
+  --no-default-features
 HEGEMON_LEAN_SYNC_BLOCK_RANGE_PUBLICATION_ADMISSION_VECTORS="$LEAN_SYNC_BLOCK_RANGE_PUBLICATION_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_sync_block_range_publication_admission_vectors_match_production --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node native_sync_response_count_uses_bounded_request_item_gate --lib --no-default-features -- --nocapture

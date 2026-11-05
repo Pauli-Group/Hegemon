@@ -1,6 +1,10 @@
 //! Native service entry point, P2P startup, and sync loop.
 
 use super::*;
+#[cfg(test)]
+mod sync_queue_qualification_tests {
+    include!("sync_queue_qualification_tests.rs");
+}
 
 pub async fn run(cli: NativeCli) -> Result<()> {
     #[cfg(feature = "development-candidate")]

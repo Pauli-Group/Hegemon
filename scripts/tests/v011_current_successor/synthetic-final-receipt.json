@@ -2,7 +2,10 @@
   "actual_new_binary_proof_verification": true,
   "added_source_paths": [
     "node/src/native/asset_recovery_profile/geometry_catalog.rs",
+    "node/src/native/fork_recovery_qualification_tests.rs",
+    "node/src/native/mining_recovery_qualification_tests.rs",
     "node/src/native/sync_liveness_tests.rs",
+    "node/src/native/sync_queue_qualification_tests.rs",
     "wallet/src/private_spend_balance.rs"
   ],
   "affected_lifecycle_verified": false,
@@ -37,6 +40,7 @@
     "node/src/native/asset_recovery_profile.rs",
     "node/src/native/asset_state.rs",
     "node/src/native/block_flow.rs",
+    "node/src/native/mining.rs",
     "node/src/native/mod.rs",
     "node/src/native/network_profile.rs",
     "node/src/native/node_impl.rs",
@@ -562,6 +566,10 @@
       "after_sha256": "70c59140f1f51d09383276d7c2eabd0b0c4b990109c6403dffcef84e61fb96d8",
       "before_sha256": "cc650ad4fd11d582c78382d1de2cf27289310ccc5719393dd5df6d750e7bdb95"
     },
+    "node/src/native/mining.rs": {
+      "after_sha256": "2432be6e8e4c49d3f3c29945d6596d263a748d8e3f712227fba00479e36af93d",
+      "before_sha256": "2442d53d868de9c4e24bee24fd43b331f9ffa2bdcb65883aea0adb0f84deaf1b"
+    },
     "node/src/native/mod.rs": {
       "after_sha256": "b98f9c404570836faf3cace7f67b4528158c1f92667c844a5acd593721ddf409",
       "before_sha256": "6be69238c26189dd48d921a5a9c8b2aa2a9057af05060ba62edd9f7d8234bfa9"
@@ -587,11 +595,11 @@
       "before_sha256": "0250f8b5548f9e718d1f2b3fb60c39dc0c171fe31615442628c1af274cb8cd8c"
     },
     "node/src/native/service.rs": {
-      "after_sha256": "d1ff8b44736d420765eca69e18d141b819d2185a82596f31767ffc697364025b",
+      "after_sha256": "625b162c864ab0a8e63b3a178e62c34c43ccd862a19f726108cae66b57ea505a",
       "before_sha256": "6a495fc0d0adb765800df9b3ee5d84b0be362843f0e03ef816bff6dd78dd55e0"
     },
     "node/src/native/tests.rs": {
-      "after_sha256": "ea434fe24dcc7c13b0a6b8b690cecf178ff994d4d3f960e0853f9de556a1a16c",
+      "after_sha256": "87d7cc3f27d285ae547a05ba0fe96d589e1adc9f640ab88e7a71f13f05d02f19",
       "before_sha256": "9ce2b15b592f82403f451f9fc76974c98cc7bdf74f6c421c7bf91228bc1b0e31"
     },
     "node/src/native/util.rs": {
@@ -656,9 +664,21 @@
       "bytes": 41029,
       "sha256": "31175e46be0807ee25880070780417e0a6e26e6ba613a57ed5254449dec7ea6f"
     },
+    "node/src/native/fork_recovery_qualification_tests.rs": {
+      "bytes": 12180,
+      "sha256": "d17db4c80a6d195745e92d695fb6db9fa7eead48fc955fda63a9ba4125dd0f45"
+    },
+    "node/src/native/mining_recovery_qualification_tests.rs": {
+      "bytes": 18480,
+      "sha256": "e3439137080b1e22727044ffbac838c34b37e581203a1bd2e7f23b944a25a247"
+    },
     "node/src/native/sync_liveness_tests.rs": {
       "bytes": 16321,
       "sha256": "1b7efdcc135ca16754365412e122c0ce36663b62126c58d4a7c45d1cc2213577"
+    },
+    "node/src/native/sync_queue_qualification_tests.rs": {
+      "bytes": 13570,
+      "sha256": "f92f65e53cec13459bcd213e87d0dec41d098334b953d083c644022dc08ec523"
     },
     "wallet/src/private_spend_balance.rs": {
       "bytes": 10268,
@@ -668,7 +688,7 @@
   "runtime_files_compared": 598,
   "runtime_inventory_sha256": "dfd71b6a265e954261ed209c2ad3c34c97285016557f0f003f7f17f39ff541d0",
   "schema": "hegemon.private-spend.release-authorization.v2",
-  "source_successor_config_sha256": "2c33e22ced0b067cf9fb5a69829891b7c6bf34828338796ca0f7094de3ac7385",
+  "source_successor_config_sha256": "2e9e14aa8c78f505d165907600e503c6f68a41ee48ac5ed6a72fe0fecd2d115e",
   "state_admission_verified": false,
   "status": "PASS_EXACT_SOURCE_CURRENT_BINARY_BACKEND_AND_H0",
   "target_triple": "synthetic-unit-test",
