@@ -37,7 +37,9 @@ and submission remain outstanding in the parent protocol plan.
 - [x] (2026-11-05 ET) Update Receive, Send, Contacts and mining setup without breaking legacy use.
 - [x] (2026-11-05 ET) Verify UI rendering, data errors, snapshot/lock races,
   typecheck, production build and focused real-proof Rust checks.
-- [ ] Publish and verify commits on the existing branch.
+- [x] (2026-11-05 ET) Publish implementation commit `91c9f3906e6055d9a064361fa06be43b6ecc0448`
+  on the existing branch; remote-ref equality and immutable GitHub document
+  readback both verify publication.
 
 ## Surprises & Discoveries
 
@@ -225,3 +227,8 @@ epoch and sequence values from the new public APIs remain decimal strings.
 Revision note (2026-11-05 ET): implement the user's requested desktop/wallet UX
 scope while preserving the separate explorer and native activation
 requirements.
+
+Publication note (2026-11-05 ET): wallet UX implementation
+[91c9f390](https://github.com/Pauli-Group/Hegemon/commit/91c9f3906e6055d9a064361fa06be43b6ecc0448)
+is published. The user then supplied the explorer source; its separate branch
+work continues without merging, deploying or resetting nodes.
