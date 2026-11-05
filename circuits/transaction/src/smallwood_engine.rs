@@ -134,7 +134,7 @@ const SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_DECS_DOMAIN: &[u8] =
     b"hegemon.smallwood.native-private-spend.smzl.compact.compff01.decs-fixed-sampling.v1";
 
 /// Inactive reward-account successor; numeric parameters do not grant security or release authority.
-pub const REWARD_ACCOUNTS_SMZR_SMALLWOOD_NO_GRINDING_PROFILE: SmallwoodNoGrindingProfileV1 =
+pub const REWARD_ACCOUNTS_SMZT_SMALLWOOD_NO_GRINDING_PROFILE: SmallwoodNoGrindingProfileV1 =
     SmallwoodNoGrindingProfileV1 {
         rho: 5,
         nb_opened_evals: 6,
@@ -145,17 +145,17 @@ pub const REWARD_ACCOUNTS_SMZR_SMALLWOOD_NO_GRINDING_PROFILE: SmallwoodNoGrindin
         decs_eta: 5,
         decs_pow_bits: 0,
     };
-pub const SMALLWOOD_PROOF_WIRE_MAGIC_REWARD_ACCOUNTS_SMZR: [u8; 4] = *b"SMZR";
-pub const SMALLWOOD_REWARD_ACCOUNTS_SMZR_FIXED_INNER_PROOF_BYTES: usize = 171_505;
-pub const SMALLWOOD_REWARD_ACCOUNTS_SMZR_MAX_INNER_PROOF_BYTES: usize = 171_505;
-pub const SMALLWOOD_REWARD_ACCOUNTS_SMZR_SHA512_PROFILE_DOMAIN: &[u8] =
-    b"hegemon.smallwood.reward-accounts.smzr.sha512.profile.v1";
-const SMALLWOOD_REWARD_ACCOUNTS_SMZR_LEAF_STATEMENT_WORDS: usize = 147;
+pub const SMALLWOOD_PROOF_WIRE_MAGIC_REWARD_ACCOUNTS_SMZT: [u8; 4] = *b"SMZT";
+pub const SMALLWOOD_REWARD_ACCOUNTS_SMZT_FIXED_INNER_PROOF_BYTES: usize = 171_505;
+pub const SMALLWOOD_REWARD_ACCOUNTS_SMZT_MAX_INNER_PROOF_BYTES: usize = 171_505;
+pub const SMALLWOOD_REWARD_ACCOUNTS_SMZT_SHA512_PROFILE_DOMAIN: &[u8] =
+    b"hegemon.smallwood.reward-accounts.smzt.sha512.profile.v1";
+const SMALLWOOD_REWARD_ACCOUNTS_SMZT_LEAF_STATEMENT_WORDS: usize = 147;
 const SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_REWARD_ACCOUNTS: &[u8] =
     b"hegemon.smallwood.strict-zk.merkle-leaf.reward-accounts.v1";
-pub const SMALLWOOD_REWARD_ACCOUNTS_SMZR_FIXED_DECS_CANDIDATE_COUNT: usize = 80;
-const SMALLWOOD_REWARD_ACCOUNTS_SMZR_FIXED_DECS_DOMAIN: &[u8] =
-    b"hegemon.smallwood.reward-accounts.smzr.decs-fixed-sampling.v1";
+pub const SMALLWOOD_REWARD_ACCOUNTS_SMZT_FIXED_DECS_CANDIDATE_COUNT: usize = 80;
+const SMALLWOOD_REWARD_ACCOUNTS_SMZT_FIXED_DECS_DOMAIN: &[u8] =
+    b"hegemon.smallwood.reward-accounts.smzt.decs-fixed-sampling.v1";
 
 /// Inactive asset candidate, identical numeric parameters to native SMZD.
 /// Qualification and release authority remain separate protocol obligations.
@@ -537,7 +537,7 @@ pub enum SmallwoodArithmetization {
     /// Candidate common private-spend relation; appended to preserve prior encodings.
     DirectPacked64NativePrivateSpendSha512Smzd,
     DirectPacked64AssetSpendSha512Smze,
-    DirectPacked64RewardAccountsSha512Smzr,
+    DirectPacked64RewardAccountsSha512Smzt,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -579,7 +579,7 @@ fn decs_challenge_format_for_arithmetization(
             | SmallwoodArithmetization::DirectPacked64NativeHtlcSha512Smzc
             | SmallwoodArithmetization::DirectPacked64AssetSpendSha512Smze
             | SmallwoodArithmetization::DirectPacked64NativePrivateSpendSha512Smzd
-            | SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzr
+            | SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzt
             | SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate
     ) {
         SmallwoodDecsChallengeFormat::Uniform
@@ -627,8 +627,8 @@ pub fn smallwood_no_grinding_profile_for_arithmetization(
         SmallwoodArithmetization::DirectPacked64NativePrivateSpendSha512Smzd => {
             NATIVE_PRIVATE_SPEND_SMZD_SMALLWOOD_NO_GRINDING_PROFILE
         }
-        SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzr => {
-            REWARD_ACCOUNTS_SMZR_SMALLWOOD_NO_GRINDING_PROFILE
+        SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzt => {
+            REWARD_ACCOUNTS_SMZT_SMALLWOOD_NO_GRINDING_PROFILE
         }
         SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate => {
             HX512_SMALLWOOD_NO_GRINDING_PROFILE_V1
@@ -681,7 +681,7 @@ pub enum SmallwoodTranscriptBackend {
     Sha512NativeHtlcSmzc,
     Sha512NativePrivateSpendSmzd,
     Sha512AssetSpendSmze,
-    Sha512RewardAccountsSmzr,
+    Sha512RewardAccountsSmzt,
 }
 
 impl SmallwoodTranscriptBackend {
@@ -698,7 +698,7 @@ impl SmallwoodTranscriptBackend {
             | Self::Sha512NativeHtlcSmzc
             | Self::Sha512AssetSpendSmze
             | Self::Sha512NativePrivateSpendSmzd
-            | Self::Sha512RewardAccountsSmzr => DIGEST_BYTES,
+            | Self::Sha512RewardAccountsSmzt => DIGEST_BYTES,
             Self::Sha512Poseidon2V8Compact448Smc7 | Self::Sha512Poseidon2V8Compact448Q20Smc8 => {
                 SMALLWOOD_POSEIDON2_V8_COMPACT448_DIGEST_BYTES
             }
@@ -724,7 +724,7 @@ impl SmallwoodTranscriptBackend {
                 | Self::Sha512NativeHtlcSmzc
                 | Self::Sha512AssetSpendSmze
                 | Self::Sha512NativePrivateSpendSmzd
-                | Self::Sha512RewardAccountsSmzr
+                | Self::Sha512RewardAccountsSmzt
                 | Self::Sha512Poseidon2V8Compact448Smc7
                 | Self::Sha512Poseidon2V8Compact448Q20Smc8
         )
@@ -753,8 +753,8 @@ impl SmallwoodTranscriptBackend {
             Self::Sha512NativePrivateSpendSmzd => {
                 Some(SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_SHA512_PROFILE_DOMAIN)
             }
-            Self::Sha512RewardAccountsSmzr => {
-                Some(SMALLWOOD_REWARD_ACCOUNTS_SMZR_SHA512_PROFILE_DOMAIN)
+            Self::Sha512RewardAccountsSmzt => {
+                Some(SMALLWOOD_REWARD_ACCOUNTS_SMZT_SHA512_PROFILE_DOMAIN)
             }
             Self::Sha512Poseidon2V8Compact448Smc7 => {
                 Some(SMALLWOOD_POSEIDON2_V8_COMPACT448_SHA512_PROFILE_DOMAIN)
@@ -1743,7 +1743,7 @@ pub enum SmallwoodProofWireIdentityV1 {
     StrictZkSha512NativeHtlcSmzc,
     StrictZkSha512NativePrivateSpendSmzd,
     StrictZkSha512AssetSpendSmze,
-    StrictZkSha512RewardAccountsSmzr,
+    StrictZkSha512RewardAccountsSmzt,
 }
 
 impl SmallwoodProofWireIdentityV1 {
@@ -1759,7 +1759,7 @@ impl SmallwoodProofWireIdentityV1 {
                 | Self::StrictZkSha512NativeHtlcSmzc
                 | Self::StrictZkSha512AssetSpendSmze
                 | Self::StrictZkSha512NativePrivateSpendSmzd
-                | Self::StrictZkSha512RewardAccountsSmzr
+                | Self::StrictZkSha512RewardAccountsSmzt
                 | Self::StrictZkSha512Poseidon2V8Compact448Smc7
                 | Self::StrictZkSha512Poseidon2V8Compact448Q20Smc8
                 | Self::FreshHx512Candidate
@@ -1794,7 +1794,7 @@ impl SmallwoodProofWireIdentityV1 {
             Self::StrictZkSha512NativePrivateSpendSmzd => {
                 Some((38, SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES))
             }
-            Self::StrictZkSha512RewardAccountsSmzr => {
+            Self::StrictZkSha512RewardAccountsSmzt => {
                 Some((38, SMALLWOOD_STRICT_ZK_DECS_LEAF_TAPE_BYTES))
             }
             Self::StrictZkSha512Poseidon2V8Compact448Smc7 => Some((
@@ -1823,7 +1823,7 @@ impl SmallwoodProofWireIdentityV1 {
             | Self::StrictZkSha512NativeHtlcSmzc
             | Self::StrictZkSha512AssetSpendSmze
             | Self::StrictZkSha512NativePrivateSpendSmzd
-            | Self::StrictZkSha512RewardAccountsSmzr
+            | Self::StrictZkSha512RewardAccountsSmzt
             | Self::StrictZkSha512Poseidon2V8Compact448Smc7
             | Self::StrictZkSha512Poseidon2V8Compact448Q20Smc8 => Some(23),
             Self::FreshHx512Candidate => Some(20),
@@ -1878,8 +1878,8 @@ fn proof_wire_identity_for_backend_and_domain(
             SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd => {
                 Ok(SmallwoodProofWireIdentityV1::StrictZkSha512NativePrivateSpendSmzd)
             }
-            SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr => {
-                Ok(SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzr)
+            SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt => {
+                Ok(SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzt)
             }
             SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 => {
                 Ok(SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Compact448Smc7)
@@ -1940,9 +1940,9 @@ fn proof_wire_identity_for_backend_and_domain(
                 "SMZD requires its exact disjoint-coset wire",
             ))
         }
-        SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr => {
+        SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt => {
             Err(TransactionCircuitError::ConstraintViolation(
-                "SMZR requires its exact disjoint-coset wire",
+                "SMZT requires its exact disjoint-coset wire",
             ))
         }
         SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 => {
@@ -2716,7 +2716,7 @@ impl SmallwoodProofWireIdentityV1 {
             | Self::StrictZkSha512NativeHtlcSmzc
             | Self::StrictZkSha512AssetSpendSmze
             | Self::StrictZkSha512NativePrivateSpendSmzd
-            | Self::StrictZkSha512RewardAccountsSmzr
+            | Self::StrictZkSha512RewardAccountsSmzt
             | Self::FreshHx512Candidate => DIGEST_BYTES,
             Self::StrictZkSha512Poseidon2V8Compact448Smc7
             | Self::StrictZkSha512Poseidon2V8Compact448Q20Smc8 => {
@@ -2743,8 +2743,8 @@ impl SmallwoodProofWireIdentityV1 {
             Self::StrictZkSha512NativePrivateSpendSmzd => {
                 &SMALLWOOD_PROOF_WIRE_MAGIC_NATIVE_PRIVATE_SPEND_SMZD
             }
-            Self::StrictZkSha512RewardAccountsSmzr => {
-                &SMALLWOOD_PROOF_WIRE_MAGIC_REWARD_ACCOUNTS_SMZR
+            Self::StrictZkSha512RewardAccountsSmzt => {
+                &SMALLWOOD_PROOF_WIRE_MAGIC_REWARD_ACCOUNTS_SMZT
             }
             Self::StrictZkSha512Poseidon2V8Compact448Smc7 => {
                 &SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_COMPACT448_SMC7
@@ -3279,16 +3279,16 @@ fn encode_smallwood_proof_bytes_v1(
             0,
         );
     }
-    if proof.wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzr {
-        if SMALLWOOD_REWARD_ACCOUNTS_SMZR_FIXED_INNER_PROOF_BYTES
-            > SMALLWOOD_REWARD_ACCOUNTS_SMZR_MAX_INNER_PROOF_BYTES
-            || out.len() > SMALLWOOD_REWARD_ACCOUNTS_SMZR_FIXED_INNER_PROOF_BYTES
+    if proof.wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzt {
+        if SMALLWOOD_REWARD_ACCOUNTS_SMZT_FIXED_INNER_PROOF_BYTES
+            > SMALLWOOD_REWARD_ACCOUNTS_SMZT_MAX_INNER_PROOF_BYTES
+            || out.len() > SMALLWOOD_REWARD_ACCOUNTS_SMZT_FIXED_INNER_PROOF_BYTES
         {
             return Err(TransactionCircuitError::ConstraintViolation(
-                "SMZR payload exceeds its fixed candidate frame",
+                "SMZT payload exceeds its fixed candidate frame",
             ));
         }
-        out.resize(SMALLWOOD_REWARD_ACCOUNTS_SMZR_FIXED_INNER_PROOF_BYTES, 0);
+        out.resize(SMALLWOOD_REWARD_ACCOUNTS_SMZT_FIXED_INNER_PROOF_BYTES, 0);
     }
     Ok(out)
 }
@@ -3465,8 +3465,8 @@ fn decode_smallwood_proof_bytes_prefix_v1(
         SmallwoodProofWireIdentityV1::StrictZkSha512AssetSpendSmze
     } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_NATIVE_PRIVATE_SPEND_SMZD {
         SmallwoodProofWireIdentityV1::StrictZkSha512NativePrivateSpendSmzd
-    } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_REWARD_ACCOUNTS_SMZR {
-        SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzr
+    } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_REWARD_ACCOUNTS_SMZT {
+        SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzt
     } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_COMPACT448_SMC7 {
         SmallwoodProofWireIdentityV1::StrictZkSha512Poseidon2V8Compact448Smc7
     } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_POSEIDON2_V8_COMPACT448_Q20_SMC8 {
@@ -3541,20 +3541,20 @@ fn decode_smallwood_proof_bytes_prefix_v1(
                 .ok_or(TransactionCircuitError::ConstraintViolation(
                     "SMZD fixed frame is truncated",
                 ))?
-        } else if wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzr {
+        } else if wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzt {
             // The cap applies to this proof frame, not an enclosing buffer.
             // Full decoding separately rejects every unconsumed suffix.
-            if SMALLWOOD_REWARD_ACCOUNTS_SMZR_FIXED_INNER_PROOF_BYTES
-                > SMALLWOOD_REWARD_ACCOUNTS_SMZR_MAX_INNER_PROOF_BYTES
+            if SMALLWOOD_REWARD_ACCOUNTS_SMZT_FIXED_INNER_PROOF_BYTES
+                > SMALLWOOD_REWARD_ACCOUNTS_SMZT_MAX_INNER_PROOF_BYTES
             {
                 return Err(TransactionCircuitError::ConstraintViolation(
-                    "SMZR fixed proof frame exceeds its compact cap",
+                    "SMZT fixed proof frame exceeds its compact cap",
                 ));
             }
             proof_bytes
-                .get(..SMALLWOOD_REWARD_ACCOUNTS_SMZR_FIXED_INNER_PROOF_BYTES)
+                .get(..SMALLWOOD_REWARD_ACCOUNTS_SMZT_FIXED_INNER_PROOF_BYTES)
                 .ok_or(TransactionCircuitError::ConstraintViolation(
-                    "SMZR fixed frame is truncated",
+                    "SMZT fixed frame is truncated",
                 ))?
         } else {
             proof_bytes
@@ -3585,18 +3585,18 @@ fn decode_smallwood_proof_bytes_prefix_v1(
             ));
         }
     }
-    if wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzr {
-        let reserved_len = SMALLWOOD_REWARD_ACCOUNTS_SMZR_FIXED_INNER_PROOF_BYTES
+    if wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzt {
+        let reserved_len = SMALLWOOD_REWARD_ACCOUNTS_SMZT_FIXED_INNER_PROOF_BYTES
             .checked_sub(cursor)
             .ok_or(TransactionCircuitError::ConstraintViolation(
-                "SMZR payload exceeds its fixed candidate frame",
+                "SMZT payload exceeds its fixed candidate frame",
             ))?;
         if read_exact_v1(proof_bytes, &mut cursor, reserved_len)?
             .iter()
             .any(|byte| *byte != 0)
         {
             return Err(TransactionCircuitError::ConstraintViolation(
-                "SMZR reserved suffix must be canonical zero bytes",
+                "SMZT reserved suffix must be canonical zero bytes",
             ));
         }
     }
@@ -4646,7 +4646,7 @@ pub fn ensure_row_polynomial_arithmetization(
         | SmallwoodArithmetization::DirectPacked64NativeHtlcSha512Smzc
         | SmallwoodArithmetization::DirectPacked64AssetSpendSha512Smze
         | SmallwoodArithmetization::DirectPacked64NativePrivateSpendSha512Smzd
-        | SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzr
+        | SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzt
         | SmallwoodArithmetization::DirectRadix4Packed1024Hx512Candidate => Ok(()),
     }
 }
@@ -4955,7 +4955,7 @@ fn transcript_xof_words(
         | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
         | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
         | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
-        | SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr
+        | SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Q20Smc8 => {
             update_verifier_operation_profile_v1(|profile| {
@@ -5018,7 +5018,7 @@ fn transcript_xof_digest(
         | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
         | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
         | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
-        | SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr
+        | SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7
         | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Q20Smc8 => {
             sha512_commitment_domain_digest(backend, domain, words, 0)
@@ -5325,14 +5325,14 @@ fn validate_native_private_spend_smzd_binding(
     Ok(())
 }
 
-fn validate_reward_accounts_smzr_binding(binding: &[u8]) -> Result<(), TransactionCircuitError> {
-    if binding.len() != SMALLWOOD_REWARD_ACCOUNTS_SMZR_LEAF_STATEMENT_WORDS * 8
+fn validate_reward_accounts_smzt_binding(binding: &[u8]) -> Result<(), TransactionCircuitError> {
+    if binding.len() != SMALLWOOD_REWARD_ACCOUNTS_SMZT_LEAF_STATEMENT_WORDS * 8
         || binding
             .chunks_exact(8)
             .any(|b| u64::from_le_bytes(b.try_into().unwrap()) >= FIELD_ORDER)
     {
         return Err(TransactionCircuitError::ConstraintViolation(
-            "SMZR requires exactly147 canonical binding words",
+            "SMZT requires exactly147 canonical binding words",
         ));
     }
     let tail = &binding[crate::reward_account_spend::PUBLIC_WORDS * 8..];
@@ -5340,7 +5340,7 @@ fn validate_reward_accounts_smzr_binding(binding: &[u8]) -> Result<(), Transacti
     let expected_bytes: Vec<u8> = expected.into_iter().flat_map(u64::to_le_bytes).collect();
     if tail != expected_bytes {
         return Err(TransactionCircuitError::ConstraintViolation(
-            "SMZR source/domain identity mismatch",
+            "SMZT source/domain identity mismatch",
         ));
     }
     Ok(())
@@ -5374,20 +5374,20 @@ fn ensure_native_private_spend_smzd_profile(
     Ok(())
 }
 
-fn ensure_reward_accounts_smzr_profile(
+fn ensure_reward_accounts_smzt_profile(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
     profile: SmallwoodNoGrindingProfileV1,
     domain: SmallwoodDecsEvaluationDomain,
 ) -> Result<(), TransactionCircuitError> {
     if statement.arithmetization()
-        != SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzr
+        != SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzt
         || statement.packing_factor() != 64
         || statement.constraint_degree() != 7
         || statement.row_count() != 840
-        || profile != REWARD_ACCOUNTS_SMZR_SMALLWOOD_NO_GRINDING_PROFILE
+        || profile != REWARD_ACCOUNTS_SMZT_SMALLWOOD_NO_GRINDING_PROFILE
         || domain != SmallwoodDecsEvaluationDomain::Radix2DisjointCoset
     {
-        return Err(TransactionCircuitError::ConstraintViolation("SMZR requires reward-account/K64/degree7/rows=840/rho5/open6/beta2/N2^23/q38/eta5/disjointcoset profile"));
+        return Err(TransactionCircuitError::ConstraintViolation("SMZT requires reward-account/K64/degree7/rows=840/rho5/open6/beta2/N2^23/q38/eta5/disjointcoset profile"));
     }
     // Check the actual adapter on every prover/verifier profile entry. The
     // projector measures raw fields before framing, so shrinkage also fails.
@@ -5396,7 +5396,7 @@ fn ensure_reward_accounts_smzr_profile(
         &cfg,
         profile,
         statement.auxiliary_witness_words().len(),
-        SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr,
+        SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt,
         domain,
     )?;
     Ok(())
@@ -5494,8 +5494,8 @@ fn transcript_binding_words_for_domain(
     if transcript_backend == SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd {
         validate_native_private_spend_smzd_binding(binded_data)?;
     }
-    if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr {
-        validate_reward_accounts_smzr_binding(binded_data)?;
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt {
+        validate_reward_accounts_smzt_binding(binded_data)?;
     }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512AssetSpendSmze {
         validate_asset_spend_smze_binding(binded_data)?;
@@ -5594,10 +5594,10 @@ fn strict_zk_leaf_statement_binding<'a>(
         }
         return Ok(binding_words);
     }
-    if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr {
-        if binding_words.len() != SMALLWOOD_REWARD_ACCOUNTS_SMZR_LEAF_STATEMENT_WORDS {
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt {
+        if binding_words.len() != SMALLWOOD_REWARD_ACCOUNTS_SMZT_LEAF_STATEMENT_WORDS {
             return Err(TransactionCircuitError::ConstraintViolation(
-                "SMZR requires its exact 147-word reward-account leaf statement",
+                "SMZT requires its exact 147-word reward-account leaf statement",
             ));
         }
         return Ok(binding_words);
@@ -5624,7 +5624,7 @@ fn strict_zk_merkle_leaf_domain(transcript_backend: SmallwoodTranscriptBackend) 
     if transcript_backend == SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd {
         return SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_PRIVATE_SPEND;
     }
-    if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr {
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt {
         return SMALLWOOD_STRICT_ZK_MERKLE_LEAF_DOMAIN_REWARD_ACCOUNTS;
     }
     if matches!(
@@ -5725,9 +5725,9 @@ pub(crate) fn prove_statement_with_transcript_backend_profile_and_domain(
         ensure_native_private_spend_smzd_profile(statement, profile, decs_evaluation_domain)?;
         validate_native_private_spend_smzd_binding(binded_data)?;
     }
-    if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr {
-        ensure_reward_accounts_smzr_profile(statement, profile, decs_evaluation_domain)?;
-        validate_reward_accounts_smzr_binding(binded_data)?;
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt {
+        ensure_reward_accounts_smzt_profile(statement, profile, decs_evaluation_domain)?;
+        validate_reward_accounts_smzt_binding(binded_data)?;
     }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 {
         ensure_poseidon2_v8_compact448_profile(statement, profile, decs_evaluation_domain)?;
@@ -5747,7 +5747,7 @@ pub(crate) fn prove_statement_with_transcript_backend_profile_and_domain(
                 | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
                 | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
                 | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
-                | SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr
+                | SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt
                 | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7
                 | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Q20Smc8
         )
@@ -5821,9 +5821,9 @@ pub(crate) fn prove_statement_core_with_transcript_backend_profile_and_domain(
         ensure_native_private_spend_smzd_profile(statement, profile, decs_evaluation_domain)?;
         validate_native_private_spend_smzd_binding(binded_data)?;
     }
-    if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr {
-        ensure_reward_accounts_smzr_profile(statement, profile, decs_evaluation_domain)?;
-        validate_reward_accounts_smzr_binding(binded_data)?;
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt {
+        ensure_reward_accounts_smzt_profile(statement, profile, decs_evaluation_domain)?;
+        validate_reward_accounts_smzt_binding(binded_data)?;
     }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 {
         ensure_poseidon2_v8_compact448_profile(statement, profile, decs_evaluation_domain)?;
@@ -5911,7 +5911,7 @@ pub(crate) fn prove_statement_core_with_transcript_backend_profile_and_domain(
             | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
             | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
             | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
-            | SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr
+            | SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt
     ) {
         // Hx512's fresh RNG budget is thread-local and sequence-exact. SMZA
         // likewise samples complete witness rows in canonical order, including
@@ -6189,9 +6189,9 @@ pub(crate) fn verify_statement_with_transcript_backend_profile_and_domain_and_di
         ensure_native_private_spend_smzd_profile(statement, profile, decs_evaluation_domain)?;
         validate_native_private_spend_smzd_binding(binded_data)?;
     }
-    if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr {
-        ensure_reward_accounts_smzr_profile(statement, profile, decs_evaluation_domain)?;
-        validate_reward_accounts_smzr_binding(binded_data)?;
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt {
+        ensure_reward_accounts_smzt_profile(statement, profile, decs_evaluation_domain)?;
+        validate_reward_accounts_smzt_binding(binded_data)?;
     }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 {
         ensure_poseidon2_v8_compact448_profile(statement, profile, decs_evaluation_domain)?;
@@ -6260,9 +6260,9 @@ pub(crate) fn verify_statement_core_with_transcript_backend_profile_and_domain(
         ensure_native_private_spend_smzd_profile(statement, profile, decs_evaluation_domain)?;
         validate_native_private_spend_smzd_binding(binded_data)?;
     }
-    if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr {
-        ensure_reward_accounts_smzr_profile(statement, profile, decs_evaluation_domain)?;
-        validate_reward_accounts_smzr_binding(binded_data)?;
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt {
+        ensure_reward_accounts_smzt_profile(statement, profile, decs_evaluation_domain)?;
+        validate_reward_accounts_smzt_binding(binded_data)?;
     }
     if transcript_backend == SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7 {
         ensure_poseidon2_v8_compact448_profile(statement, profile, decs_evaluation_domain)?;
@@ -8466,7 +8466,7 @@ pub fn sample_smallwood_strict_whole_view_coins_v1<R: CryptoRng + RngCore + ?Siz
             | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
             | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
             | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
-            | SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr
+            | SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt
     );
     Ok(SmallwoodStrictZkWholeViewSampleV1 {
         coins,
@@ -8625,7 +8625,7 @@ pub fn simulate_smallwood_strict_whole_view_v1(
             | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
             | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
             | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
-            | SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr
+            | SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt
             | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Smc7
             | SmallwoodTranscriptBackend::Sha512Poseidon2V8Compact448Q20Smc8
     ) {
@@ -8675,8 +8675,8 @@ pub fn simulate_smallwood_strict_whole_view_v1(
             SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
         )?;
     }
-    if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr {
-        ensure_reward_accounts_smzr_profile(
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt {
+        ensure_reward_accounts_smzt_profile(
             statement,
             profile,
             SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
@@ -9533,8 +9533,8 @@ pub fn report_smallwood_lvcs_planner_projection_v1(
             SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd,
             SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
         ),
-        SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzr => (
-            SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr,
+        SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzt => (
+            SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt,
             SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
         ),
         SmallwoodArithmetization::DirectPacked64CompressedLevel5FullSha512First48CommitmentV3 => (
@@ -12430,7 +12430,7 @@ fn decs_commit(
             | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
             | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
             | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
-            | SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr
+            | SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt
     ) && decs_evaluation_domain == SmallwoodDecsEvaluationDomain::Radix2DisjointCoset
     {
         return decs_commit_strict_bounded(
@@ -13571,7 +13571,7 @@ fn serialized_proof_size_hint_with_profile(
             | SmallwoodProofWireIdentityV1::StrictZkSha512NativeHtlcSmzc
             | SmallwoodProofWireIdentityV1::StrictZkSha512AssetSpendSmze
             | SmallwoodProofWireIdentityV1::StrictZkSha512NativePrivateSpendSmzd
-            | SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzr
+            | SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzt
     ) {
         let opened_leaf_count = profile.decs_nb_opened_evals;
         let total_nodes = maximum_smallwood_compact_authentication_nodes_v1(
@@ -13635,8 +13635,8 @@ fn serialized_proof_size_hint_with_profile(
     if wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512NativePrivateSpendSmzd {
         ensure_native_private_spend_smzd_frame_projection(projected)?;
     }
-    if wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzr {
-        ensure_reward_accounts_smzr_frame_projection(projected)?;
+    if wire_identity == SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzt {
+        ensure_reward_accounts_smzt_frame_projection(projected)?;
     }
     Ok(projected)
 }
@@ -13656,16 +13656,16 @@ fn ensure_native_private_spend_smzd_frame_projection(
     Ok(())
 }
 
-fn ensure_reward_accounts_smzr_frame_projection(
+fn ensure_reward_accounts_smzt_frame_projection(
     projected: usize,
 ) -> Result<(), TransactionCircuitError> {
-    if projected != SMALLWOOD_REWARD_ACCOUNTS_SMZR_FIXED_INNER_PROOF_BYTES
-        || projected > SMALLWOOD_REWARD_ACCOUNTS_SMZR_MAX_INNER_PROOF_BYTES
+    if projected != SMALLWOOD_REWARD_ACCOUNTS_SMZT_FIXED_INNER_PROOF_BYTES
+        || projected > SMALLWOOD_REWARD_ACCOUNTS_SMZT_MAX_INNER_PROOF_BYTES
     {
         return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
-            "SMZR projected frame {projected} differs from fixed frame {} or exceeds cap {}",
-            SMALLWOOD_REWARD_ACCOUNTS_SMZR_FIXED_INNER_PROOF_BYTES,
-            SMALLWOOD_REWARD_ACCOUNTS_SMZR_MAX_INNER_PROOF_BYTES,
+            "SMZT projected frame {projected} differs from fixed frame {} or exceeds cap {}",
+            SMALLWOOD_REWARD_ACCOUNTS_SMZT_FIXED_INNER_PROOF_BYTES,
+            SMALLWOOD_REWARD_ACCOUNTS_SMZT_MAX_INNER_PROOF_BYTES,
         )));
     }
     Ok(())
@@ -13949,13 +13949,13 @@ pub(crate) fn native_private_spend_smzd_payload_size(
     Ok(encode_smallwood_proof_payload_v1(&proof)?.len())
 }
 
-pub(crate) fn reward_accounts_smzr_payload_size(
+pub(crate) fn reward_accounts_smzt_payload_size(
     proof_bytes: &[u8],
 ) -> Result<usize, TransactionCircuitError> {
     let proof = decode_smallwood_proof_bytes_v1(proof_bytes)?;
-    if proof.wire_identity != SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzr {
+    if proof.wire_identity != SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzt {
         return Err(TransactionCircuitError::ConstraintViolation(
-            "native payload readback requires exact SMZR",
+            "native payload readback requires exact SMZT",
         ));
     }
     Ok(encode_smallwood_proof_payload_v1(&proof)?.len())
@@ -13981,12 +13981,12 @@ pub(crate) fn projected_native_private_spend_smzd_inner_proof_bytes(
     )
 }
 
-pub(crate) fn projected_reward_accounts_smzr_inner_proof_bytes(
+pub(crate) fn projected_reward_accounts_smzt_inner_proof_bytes(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
 ) -> Result<usize, TransactionCircuitError> {
     // Sizing only. Same-bound q38 qualification and actual proof/lifecycle evidence are separate release gates.
-    let profile = REWARD_ACCOUNTS_SMZR_SMALLWOOD_NO_GRINDING_PROFILE;
-    ensure_reward_accounts_smzr_profile(
+    let profile = REWARD_ACCOUNTS_SMZT_SMALLWOOD_NO_GRINDING_PROFILE;
+    ensure_reward_accounts_smzt_profile(
         statement,
         profile,
         SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
@@ -13996,7 +13996,7 @@ pub(crate) fn projected_reward_accounts_smzr_inner_proof_bytes(
         &cfg,
         profile,
         statement.auxiliary_witness_words().len(),
-        SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr,
+        SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt,
         SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
     )
 }
@@ -14617,10 +14617,10 @@ pub fn xof_decs_opening_fixed_no_grinding(
                 SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_DECS_CANDIDATE_COUNT,
                 SMALLWOOD_NATIVE_PRIVATE_SPEND_SMZD_FIXED_DECS_DOMAIN,
             )
-        } else if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr {
+        } else if transcript_backend == SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt {
             (
-                SMALLWOOD_REWARD_ACCOUNTS_SMZR_FIXED_DECS_CANDIDATE_COUNT,
-                SMALLWOOD_REWARD_ACCOUNTS_SMZR_FIXED_DECS_DOMAIN,
+                SMALLWOOD_REWARD_ACCOUNTS_SMZT_FIXED_DECS_CANDIDATE_COUNT,
+                SMALLWOOD_REWARD_ACCOUNTS_SMZT_FIXED_DECS_DOMAIN,
             )
         } else {
             (
@@ -20934,12 +20934,12 @@ mod native_private_spend_smzd_identity_tests {
     use super::*;
 
     #[test]
-    fn reward_accounts_smzr_keeps_legacy_frames_and_domains_distinct() {
+    fn reward_accounts_smzt_keeps_legacy_frames_and_domains_distinct() {
         assert_eq!(
-            SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzr as u32,
+            SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzt as u32,
             23
         );
-        let backend = SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr;
+        let backend = SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt;
         assert!(proof_wire_identity_for_backend_and_domain(
             backend,
             SmallwoodDecsEvaluationDomain::Radix2Subgroup
@@ -20954,10 +20954,10 @@ mod native_private_spend_smzd_identity_tests {
             strict_zk_merkle_leaf_domain(SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd)
         );
         let mut trace = minimal_smzd_trace();
-        trace.wire_identity = SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzr;
+        trace.wire_identity = SmallwoodProofWireIdentityV1::StrictZkSha512RewardAccountsSmzt;
         let bytes = encode_smallwood_proof_trace_v1(&trace).unwrap();
         assert_eq!(bytes.len(), 171_505);
-        assert_eq!(&bytes[..4], b"SMZR");
+        assert_eq!(&bytes[..4], b"SMZT");
         assert_eq!(decode_smallwood_proof_trace_v1(&bytes).unwrap(), trace);
         assert!(decode_smallwood_proof_bytes_prefix_v1(&bytes[..bytes.len() - 1]).is_err());
         let mut bad = bytes.clone();
@@ -20973,9 +20973,12 @@ mod native_private_spend_smzd_identity_tests {
         let mut alias = bytes;
         alias[..4].copy_from_slice(b"SMZL");
         assert!(decode_smallwood_proof_bytes_v1(&alias).is_err());
-        assert!(ensure_reward_accounts_smzr_frame_projection(171_281).is_err());
-        assert!(ensure_reward_accounts_smzr_frame_projection(171_504).is_err());
-        assert!(ensure_reward_accounts_smzr_frame_projection(171_506).is_err());
+        // SMZR belongs to asset recovery's versioned outer envelope.
+        alias[..4].copy_from_slice(b"SMZR");
+        assert!(decode_smallwood_proof_bytes_prefix_v1(&alias).is_err());
+        assert!(ensure_reward_accounts_smzt_frame_projection(171_281).is_err());
+        assert!(ensure_reward_accounts_smzt_frame_projection(171_504).is_err());
+        assert!(ensure_reward_accounts_smzt_frame_projection(171_506).is_err());
         let sample = |backend| {
             xof_decs_opening_fixed_no_grinding(1 << 23, 38, 0, &[0; DIGEST_BYTES], backend).unwrap()
         };
@@ -20987,18 +20990,18 @@ mod native_private_spend_smzd_identity_tests {
     }
 
     #[test]
-    fn reward_accounts_smzr_binding_requires_canonical_inputs_and_exact_source_identity() {
+    fn reward_accounts_smzt_binding_requires_canonical_inputs_and_exact_source_identity() {
         let mut words = vec![0u64; crate::reward_account_spend::PUBLIC_WORDS];
         words.extend(crate::reward_account_spend::identity_binding_words());
         let bytes: Vec<_> = words.iter().flat_map(|v| v.to_le_bytes()).collect();
-        validate_reward_accounts_smzr_binding(&bytes).unwrap();
-        assert!(validate_reward_accounts_smzr_binding(&bytes[..bytes.len() - 8]).is_err());
+        validate_reward_accounts_smzt_binding(&bytes).unwrap();
+        assert!(validate_reward_accounts_smzt_binding(&bytes[..bytes.len() - 8]).is_err());
         let mut wrong = bytes.clone();
         *wrong.last_mut().unwrap() ^= 1;
-        assert!(validate_reward_accounts_smzr_binding(&wrong).is_err());
+        assert!(validate_reward_accounts_smzt_binding(&wrong).is_err());
         wrong = bytes;
         wrong[..8].copy_from_slice(&FIELD_ORDER.to_le_bytes());
-        assert!(validate_reward_accounts_smzr_binding(&wrong).is_err());
+        assert!(validate_reward_accounts_smzt_binding(&wrong).is_err());
     }
 
     #[test]

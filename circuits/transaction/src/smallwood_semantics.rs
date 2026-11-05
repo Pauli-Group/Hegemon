@@ -491,7 +491,7 @@ impl PackedRowLayout {
             }
             SmallwoodArithmetization::DirectPacked64NativeHtlcSha512Smzc
             | SmallwoodArithmetization::DirectPacked64NativePrivateSpendSha512Smzd
-            | SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzr
+            | SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzt
             | SmallwoodArithmetization::DirectPacked64AssetSpendSha512Smze => {
                 panic!("the native HTLC adapter must use its dedicated arithmetic graph row layout")
             }

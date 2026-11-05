@@ -1,6 +1,8 @@
 //! Native account persistence. These helpers do not activate a network or
 //! grant proof authority. A source-verified block planner must bind both account
 //! and note roots before installing a journal in the shared canonical transaction.
+pub(crate) mod wire;
+
 use anyhow::{anyhow, ensure, Context, Result};
 use codec::{Decode, Encode};
 use protocol_reward_accounts::{

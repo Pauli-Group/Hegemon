@@ -52,7 +52,7 @@ chain reset remain separate later operator actions.
 - [ ] Integrate account state with real proof verification and node persistence
   (pure accounting fixture tests do not qualify proofs or running-chain behavior).
 - [x] (2026-11-05 UTC) Implement explicit donation/claim constraints, a distinct
-  SMZR proof identity, bounded carriers and encrypted wallet builders; generate
+  SMZT proof identity, bounded carriers and encrypted wallet builders; generate
   and verify real claim/donation proofs with note recovery and 5-of-7 approvals.
 - [ ] Qualify those proofs against authenticated running-node references and
   complete the node admission, persistence and lifecycle evidence.
@@ -61,6 +61,8 @@ chain reset remain separate later operator actions.
 - [x] (2026-11-05 UTC) Qualify the native same-tree storage adapter with actual
   shared-note plans: atomic abort, disk restart, epoch-boundary suffix replacement
   and tampered-row recovery rejection (three focused node tests pass).
+- [x] (2026-11-05 UTC) Define closed native claim/donation/certificate frames
+  and fixed mandatory reward records; seven native storage/framing tests pass.
 - [ ] Wire mandatory reward records, source admission, account journals and
   authenticated storage into actual native startup, sync and reorg paths.
 - [x] (2026-11-05 UTC) Build offline reward-account genesis/address CLI and
@@ -110,7 +112,7 @@ approval handling for an authorized remote operation rather than bypassing it.
 The existing SMZL private-spend proof frame is exactly 171,281 bytes. Trying
 to use it for the new statement correctly failed its fixed-frame check: the
 new graph projects to 171,505 bytes. Preserve that rejection. The successor
-uses its own SMZR wire, transcript, leaf and sampling domains, 123 relation
+uses its own SMZT wire, transcript, leaf and sampling domains, 123 relation
 inputs plus 24 immutable source/domain binding words, and an exact 171,505-byte
 frame. Numeric proof parameters do not supply cryptographic qualification or
 production source authority. Source changes require fresh manifests and evidence.
@@ -740,3 +742,58 @@ Revision note (2026-11-05 UTC): implement and qualify bounded public-account
 journals and the native shared-tree atomic storage adapter. Source-profile
 selection, mandatory reward records, operational codecs, RPC/CLI integration
 and actual native lifecycle qualification remain outstanding.
+
+Proof-namespace correction (2026-11-05 UTC): repository-wide source review
+found an existing, unrelated asset-recovery outer envelope named SMZR. Although
+its header and inner SMZE frame differ, reusing those four bytes is unnecessary
+and makes format separation harder to audit. Supersede the treasury's provisional
+SMZR name with unused SMZT throughout its arithmetization, wire, transcript, leaf
+and sampling domains. Preserve recovery's existing SMZR unchanged. Earlier
+6b179d2a proof logs remain historical evidence for that exact source and are not
+SMZT qualification. Regenerate current real proofs and test rejection in both
+format decoders before source admission. Numeric parameters and graph geometry
+remain unchanged; no production proof authority is added.
+
+SMZT and native wire validation (2026-11-05 UTC): four current circuit tests
+pass with fresh genuine SMZT claim/donation proofs and rejection by the recovery
+SMZR parser; prefix aliases reject in the opposite direction too. Three current
+wallet checks pass, including the real encrypted 5-of-7 claim/donation cycle.
+Each proof remains exactly 171,505 bytes. Evidence is in reward-smzt-real-
+{circuit,wallet}.log under /workspace/work/environment-setup. Earlier provisional
+SMZR evidence is historical only. Recovery's existing SMZR envelope remains
+unchanged; no recovery parser or production gate was widened.
+
+node/src/native/reward_accounts/wire.rs reserves shielded-family actions
+20 claim, 21 donation, 22 certified fork and 23 final public reward record,
+with circuit/profile 15 and domain 11. HGRACC01 account frames cap at 512 KiB
+and contain only claims, donations or certificates: the internal PrivateFee
+accounting variant is not a network transaction. HGREWD01 reward frames are
+exactly 392 bytes including an exact compiled native source commitment. They
+bind chain/genesis, height, miner, before/after account roots, resulting shared
+note root, subsidy and total miner fees, with no memo or private mint proof.
+All fields must match the independently verified account/pool candidate; header
+supply must advance by subsidy alone, not fee recycling.
+
+The native wire adapter checks canonical field words, exact ciphertext framing,
+SMZT frame size/magic, operation/amount/fee/memo/payout bindings and bounded
+approval shape. Decoding remains syntax only. Seven selected native tests pass:
+three shared-storage tests plus four framing/binding/adoption-negative tests.
+A valid-looking fake donation frame is recognized syntactically but rejected by
+a proof verifier that accepts nothing, leaving the parent state unchanged. No
+account-to-account grammar exists. Node compilation and whitespace checks pass.
+The native registry and manifests still do not select these routes.
+
+Interface decision (2026-11-05 UTC): keep this node wire adapter node-owned.
+Wallets submit the already proof/signature-bound public components (canonical
+claim/donation intent bytes, policy, approvals and payout carrier) through a
+specialized RPC, and the node constructs its own exact frame before normal
+admission. This avoids a wallet-to-node Rust dependency or duplicated wire
+schemas. A node cannot alter a signed/proven fee, recipient, memo, output or
+chain context by reframing those components. The wallet must still pin the
+expected network/genesis and compiled proof source and reconcile inclusion.
+The RPC and native source selection are not implemented yet.
+
+Revision note (2026-11-05 UTC): correct the provisional proof-magic collision
+with asset recovery, requalify the new SMZT proofs, and add tested native wire
+and mandatory-record primitives. Actual block orchestration, startup source
+selection, operational addresses, RPCs and two-node qualification remain open.

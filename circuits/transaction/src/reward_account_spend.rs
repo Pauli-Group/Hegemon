@@ -4,7 +4,7 @@
 use crate::smallwood_engine::{
     prove_statement_with_transcript_backend_profile_and_domain,
     verify_statement_with_transcript_backend_profile_and_domain, SmallwoodDecsEvaluationDomain,
-    SmallwoodTranscriptBackend, REWARD_ACCOUNTS_SMZR_SMALLWOOD_NO_GRINDING_PROFILE,
+    SmallwoodTranscriptBackend, REWARD_ACCOUNTS_SMZT_SMALLWOOD_NO_GRINDING_PROFILE,
 };
 use crate::{
     private_spend::{Digest, PrivateSpendAdapter, PrivateSpendPublic, PrivateSpendWitness},
@@ -20,7 +20,7 @@ pub const PUBLIC_WORDS: usize = crate::private_spend::PUBLIC_WORDS + EXTENSION_W
 pub const CARRIER_MAGIC: [u8; 8] = *b"HGRAC001";
 pub const CIPHERTEXT_BYTES: usize = 2608;
 pub const PROOF_BYTES: usize =
-    crate::smallwood_engine::SMALLWOOD_REWARD_ACCOUNTS_SMZR_FIXED_INNER_PROOF_BYTES;
+    crate::smallwood_engine::SMALLWOOD_REWARD_ACCOUNTS_SMZT_FIXED_INNER_PROOF_BYTES;
 pub const MAX_CARRIER_BYTES: usize = PROOF_BYTES + 8192;
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
@@ -182,7 +182,7 @@ pub fn prove_candidate(
     witness: &PrivateSpendWitness,
 ) -> Result<Vec<u8>, TransactionCircuitError> {
     let (adapter, packed) = compile(public, witness)?;
-    let hint = crate::smallwood_engine::projected_reward_accounts_smzr_inner_proof_bytes(&adapter)?;
+    let hint = crate::smallwood_engine::projected_reward_accounts_smzt_inner_proof_bytes(&adapter)?;
     if hint != PROOF_BYTES || hint > MAX_REWARD_PROOF_BYTES {
         return Err(error("reward-account projected proof exceeds cap"));
     }
@@ -190,8 +190,8 @@ pub fn prove_candidate(
         &adapter,
         &packed,
         &public.binding_bytes(),
-        REWARD_ACCOUNTS_SMZR_SMALLWOOD_NO_GRINDING_PROFILE,
-        SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr,
+        REWARD_ACCOUNTS_SMZT_SMALLWOOD_NO_GRINDING_PROFILE,
+        SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt,
         SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
     )
 }
@@ -199,7 +199,7 @@ pub fn verify_candidate(
     public: &RewardSpendPublic,
     proof: &[u8],
 ) -> Result<(), TransactionCircuitError> {
-    if proof.len() != PROOF_BYTES || proof.get(..4) != Some(b"SMZR") {
+    if proof.len() != PROOF_BYTES || proof.get(..4) != Some(b"SMZT") {
         return Err(error("reward-account proof format or cap"));
     }
     let adapter = PrivateSpendAdapter::from_reward_public(public)?;
@@ -207,8 +207,8 @@ pub fn verify_candidate(
         &adapter,
         &public.binding_bytes(),
         proof,
-        REWARD_ACCOUNTS_SMZR_SMALLWOOD_NO_GRINDING_PROFILE,
-        SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr,
+        REWARD_ACCOUNTS_SMZT_SMALLWOOD_NO_GRINDING_PROFILE,
+        SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt,
         SmallwoodDecsEvaluationDomain::Radix2DisjointCoset,
     )
 }
@@ -335,6 +335,10 @@ mod tests {
             let proof = prove_candidate(&public, &witness).unwrap();
             eprintln!("reward kind {} proof bytes {}", public.claim, proof.len());
             verify_candidate(&public, &proof).unwrap();
+            assert!(crate::asset_recovery_backend_v1::wire_receipt(&proof).is_err());
+            let mut recovery_alias = proof.clone();
+            recovery_alias[..4].copy_from_slice(b"SMZR");
+            assert!(verify_candidate(&public, &recovery_alias).is_err());
             let mut wrong = public.clone();
             wrong.amount += 1;
             assert!(verify_candidate(&wrong, &proof).is_err());

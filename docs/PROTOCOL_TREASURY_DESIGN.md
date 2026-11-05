@@ -38,7 +38,7 @@ running nodes, deploy a network or select real launch keys or sale recipients.
 ## Current implementation and successor boundary
 
 The branch implements shared account accounting, policy authorization, typed
-addresses, fork certificates and offline intent signing. A successor-only SMZR
+addresses, fork certificates and offline intent signing. A successor-only SMZT
 relation and encrypted wallet builders now pass genuine claim/donation proof
 tests. A persistent account trie commits balances and caches supply totals;
 recovery checks its root against the enclosing authenticated block commitment.

@@ -255,7 +255,7 @@ pub fn ensure_row_polynomial_arithmetization(
         | SmallwoodArithmetization::DirectPacked64NativeHtlcSha512Smzc
         | SmallwoodArithmetization::DirectPacked64NativePrivateSpendSha512Smzd
         | SmallwoodArithmetization::DirectPacked64AssetSpendSha512Smze
-        | SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzr => {
+        | SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzt => {
             Err(TransactionCircuitError::ConstraintViolation(
                 "historical block recursion does not accept Level-5 transaction proofs",
             ))
@@ -405,7 +405,7 @@ fn transcript_xof_words(
         | SmallwoodTranscriptBackend::Sha512NativeHtlcSmzc
         | SmallwoodTranscriptBackend::Sha512NativePrivateSpendSmzd
         | SmallwoodTranscriptBackend::Sha512AssetSpendSmze
-        | SmallwoodTranscriptBackend::Sha512RewardAccountsSmzr => {
+        | SmallwoodTranscriptBackend::Sha512RewardAccountsSmzt => {
             panic!("block-recursion local verifier only supports Poseidon2")
         }
     }

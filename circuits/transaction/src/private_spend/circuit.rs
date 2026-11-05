@@ -773,7 +773,7 @@ pub fn compile(
 impl SmallwoodConstraintAdapter for PrivateSpendAdapter {
     fn arithmetization(&self) -> SmallwoodArithmetization {
         if self.reward_extension.is_some() {
-            SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzr
+            SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzt
         } else {
             SmallwoodArithmetization::DirectPacked64NativePrivateSpendSha512Smzd
         }
