@@ -17,6 +17,11 @@ HGN is a shielded-only monetary protocol built for a quantum-adversarial future.
 3. **Proof of disclosure** – Proofs of disclosure and scoped disclosures let users prove a payment, balance claim, or source-of-funds fact without revealing unrelated history.
 
 ### Protocol overview
+
+A [proposed protocol treasury](docs/PROTOCOL_TREASURY_DESIGN.md) would replace
+the funding wallet on a fresh-genesis successor with a public pot, transparent
+donations and fixed-quorum governance keys. This design is under development;
+the following describes the existing implementation.
 The HGN protocol consists of four tightly-coupled subsystems:
 
 The HGN launch candidate uses the native-only

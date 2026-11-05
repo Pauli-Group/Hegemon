@@ -1,5 +1,14 @@
 ## 1. What a “shielded spend” proves (ZK statement)
 
+**Proposed protocol treasury methods.** The
+[fresh-genesis treasury design](docs/PROTOCOL_TREASURY_DESIGN.md) requires a new
+donation proof equation (`inputs = change + donation + fee`), a payout proof
+binding the debited public amount to a shielded output, and genuine ML-DSA quorum
+authorization. These are new implementation and qualification obligations;
+existing v4 spend proofs do not establish them. Treasury transfers must conserve
+total issued HGN across the pot and private pool. No changed proof or runtime
+method is claimed implemented by this design document.
+
 Moving-chain native asset integration uses a finite Development qualification. The spend relation
 has a fresh v3 source identity; its 134-word public schema, the administrator
 relation and the SMZE backend parameters are retained. `HGANSP01` and `HGANAD01`

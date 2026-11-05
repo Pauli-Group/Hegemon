@@ -1,5 +1,13 @@
 ## 0. Design goals (what we’re optimizing for)
 
+**Proposed fresh-genesis treasury successor.**
+[Protocol treasury design](docs/PROTOCOL_TREASURY_DESIGN.md) specifies a public
+protocol pot, compiled 1/5 subsidy allocation, permissionless donations with
+public memos, fixed-quorum ML-DSA withdrawals and quorum-certified signer changes
+at hard forks. It is a design for the reset branch, not implemented behavior of
+the current wallet-funded network. Track implementation and qualification in
+[the treasury execution plan](.agent/PROTOCOL_TREASURY_GOVERNANCE_EXECPLAN.md).
+
 The controlled-asset Development integration uses the existing V8 note tree,
 canonical positions and global spent-nullifier set. Its separate typed asset
 authority is constructed from the exact fresh Development manifest and compiled
