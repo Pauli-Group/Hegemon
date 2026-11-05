@@ -18,7 +18,9 @@ The immutable source manifest includes the shared account and governance code.
 These tests supply neither running-node lifecycle evidence nor production
 proof/security authority. Fixture callbacks in pure ledger tests remain
 accounting-only. Node admission and two-node qualification remain outstanding. Current legacy behavior below is
-unchanged.
+unchanged. Shared account journals and the native same-tree
+storage adapter now pass atomic-abort, disk-restart and boundary-suffix tests.
+They are not yet wired into native block admission or synchronization.
 
 Moving-chain native asset integration uses a finite Development qualification. The spend relation
 has a fresh v3 source identity; its 134-word public schema, the administrator

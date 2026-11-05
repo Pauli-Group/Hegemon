@@ -1273,6 +1273,7 @@ dependencies = [
  "parking_lot 0.12.5",
  "pq-noise",
  "protocol-kernel",
+ "protocol-reward-accounts",
  "protocol-shielded-pool",
  "protocol-versioning",
  "rand 0.8.7",

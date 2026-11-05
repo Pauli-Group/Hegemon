@@ -586,3 +586,90 @@ fn reward_accounts_global_epoch_totals_match_independent_replay_and_boundary_for
     assert_eq!(fork.issued(), chain[8].issued());
     assert_eq!(chain[3].height(), 3);
 }
+
+#[test]
+fn reward_accounts_bounded_journals_recover_and_reverse_epoch_claim_histories() {
+    let (initial, key, policy, _, _) = setup();
+    let miner = policy.identifier().unwrap();
+    let mut state = initial.clone();
+    let mut journals = Vec::new();
+    for height in 1..=7 {
+        let actions = match height {
+            1 => vec![claim(&state, &key, &policy, 10 * COIN, 2, 0)],
+            2 => vec![RewardAccountAction::Donation {
+                donation: TreasuryDonation {
+                    context: state.context().clone(),
+                    amount: COIN,
+                    fee: 2,
+                    memo: BoundedVec::new(b"journal donation".to_vec()).unwrap(),
+                },
+                proof: proof(),
+            }],
+            5 => vec![claim(&state, &key, &policy, COIN, 3, 1)],
+            _ => vec![],
+        };
+        let (next, journal) = state
+            .apply_block_journaled(height, miner, &actions, &FixtureProofs, None)
+            .unwrap();
+        assert!(journal.rows().len() <= 2);
+        assert_eq!(
+            state
+                .apply_block(height, miner, &actions, &FixtureProofs)
+                .unwrap()
+                .state_root(),
+            next.state_root()
+        );
+        let replayed = state
+            .replay_journal(&journal, RewardJournalDirection::Forward, next.state_root())
+            .unwrap();
+        replayed.validate().unwrap();
+        assert_eq!(replayed, next);
+        let rows = next
+            .checkpoint_rows()
+            .map(|(id, a)| (id, a.clone()))
+            .collect::<Vec<_>>();
+        let recovered = RewardAccountLedger::restore_checkpoint(
+            next.genesis().clone(),
+            next.checkpoint(),
+            rows.clone(),
+            next.state_root(),
+        )
+        .unwrap();
+        assert_eq!(recovered, next);
+        assert!(RewardAccountLedger::restore_checkpoint(
+            next.genesis().clone(),
+            next.checkpoint(),
+            rows.into_iter().skip(1),
+            next.state_root()
+        )
+        .is_err());
+        let mut bytes = journal.encode();
+        let end = bytes.len() - 1;
+        bytes[end] ^= 1;
+        if let Ok(mutated) = RewardAccountJournal::decode(&mut bytes.as_slice()) {
+            assert!(state
+                .replay_journal(&mutated, RewardJournalDirection::Forward, next.state_root())
+                .is_err());
+        }
+        assert!(state
+            .replay_journal(
+                &journal,
+                RewardJournalDirection::Forward,
+                RewardAccountsRoot48::ZERO
+            )
+            .is_err());
+        journals.push(journal);
+        state = next;
+    }
+    for journal in journals.iter().rev() {
+        state = state
+            .replay_journal(
+                journal,
+                RewardJournalDirection::Reverse,
+                journal.before_root(),
+            )
+            .unwrap();
+        state.validate().unwrap();
+    }
+    assert_eq!(state, initial);
+}

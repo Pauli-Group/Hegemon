@@ -724,3 +724,263 @@ impl RewardAccountLedger {
         Ok(())
     }
 }
+
+/// Persisted metadata excludes the account table and immutable genesis rows.
+/// This is a recovery/checkpoint codec, never an authorized transaction.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+pub struct RewardAccountCheckpoint {
+    schema: u16,
+    genesis_commitment: RulesHash48,
+    context: AccountChainContext,
+    height: u64,
+    issued: u64,
+    shielded_value: u64,
+    available_total: u64,
+    pending_epoch_totals: BTreeMap<u64, u64>,
+    treasury: AccountPolicyId48,
+    treasury_policy: AccountPolicy,
+    policy_generation: u64,
+    pending_fork: Option<Arc<TreasuryForkCertificate>>,
+    retired_treasuries: Arc<BTreeSet<AccountPolicyId48>>,
+}
+impl RewardAccountCheckpoint {
+    pub fn height(&self) -> u64 {
+        self.height
+    }
+    pub fn context(&self) -> &AccountChainContext {
+        &self.context
+    }
+}
+
+pub const MAX_REWARD_ACCOUNT_JOURNAL_CHANGES: usize =
+    protocol_versioning::SMALLWOOD_POSEIDON2_PRODUCTION_MAX_PROOF_ACTIONS_PER_BLOCK as usize + 3;
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+pub struct RewardAccountRowMutation {
+    pub account: AccountPolicyId48,
+    pub before: Option<RewardAccount>,
+    pub after: Option<RewardAccount>,
+}
+/// Produced alongside a verified block transition. Disk decoding alone does
+/// not authenticate it; replay requires the enclosing canonical block roots.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+pub struct RewardAccountJournal {
+    before_root: RewardAccountsRoot48,
+    after_root: RewardAccountsRoot48,
+    before: RewardAccountCheckpoint,
+    after: RewardAccountCheckpoint,
+    rows: BoundedVec<RewardAccountRowMutation, MAX_REWARD_ACCOUNT_JOURNAL_CHANGES>,
+}
+impl RewardAccountJournal {
+    pub fn before_root(&self) -> RewardAccountsRoot48 {
+        self.before_root
+    }
+    pub fn after_root(&self) -> RewardAccountsRoot48 {
+        self.after_root
+    }
+    pub fn before(&self) -> &RewardAccountCheckpoint {
+        &self.before
+    }
+    pub fn after(&self) -> &RewardAccountCheckpoint {
+        &self.after
+    }
+    pub fn rows(&self) -> &[RewardAccountRowMutation] {
+        &self.rows
+    }
+    pub fn validate_shape(&self) -> Result<(), RewardAccountsError> {
+        if self.before.schema != 1
+            || self.after.schema != 1
+            || self.before.context != self.after.context
+            || self.before.genesis_commitment != self.after.genesis_commitment
+            || self.before.height.checked_add(1) != Some(self.after.height)
+            || self.rows.windows(2).any(|p| p[0].account >= p[1].account)
+            || self
+                .rows
+                .iter()
+                .any(|r| r.account == AccountPolicyId48::ZERO || r.before == r.after)
+        {
+            return Err(RewardAccountsError::InvalidState);
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RewardJournalDirection {
+    Forward,
+    Reverse,
+}
+
+impl RewardAccountLedger {
+    pub fn checkpoint(&self) -> RewardAccountCheckpoint {
+        RewardAccountCheckpoint {
+            schema: 1,
+            genesis_commitment: self.genesis_commitment,
+            context: self.context.clone(),
+            height: self.height,
+            issued: self.issued,
+            shielded_value: self.shielded_value,
+            available_total: self.available_total,
+            pending_epoch_totals: self.pending_epoch_totals.clone(),
+            treasury: self.treasury,
+            treasury_policy: self.treasury_policy.clone(),
+            policy_generation: self.policy_generation,
+            pending_fork: self.pending_fork.clone(),
+            retired_treasuries: self.retired_treasuries.clone(),
+        }
+    }
+    /// Stream table rows at genesis or startup; normal blocks use journals.
+    pub fn checkpoint_rows(&self) -> impl Iterator<Item = (AccountPolicyId48, &RewardAccount)> {
+        self.accounts.iter().map(|(key, row)| (*key, row))
+    }
+    fn install_checkpoint(
+        &mut self,
+        c: RewardAccountCheckpoint,
+    ) -> Result<(), RewardAccountsError> {
+        if c.schema != 1
+            || c.genesis_commitment != self.genesis_commitment
+            || c.context != self.context
+        {
+            return Err(RewardAccountsError::InvalidContext);
+        }
+        self.height = c.height;
+        self.issued = c.issued;
+        self.shielded_value = c.shielded_value;
+        self.available_total = c.available_total;
+        self.pending_epoch_totals = c.pending_epoch_totals;
+        self.treasury = c.treasury;
+        self.treasury_policy = c.treasury_policy;
+        self.policy_generation = c.policy_generation;
+        self.pending_fork = c.pending_fork;
+        self.retired_treasuries = c.retired_treasuries;
+        Ok(())
+    }
+    /// Recovery only: the expected root must come from a verified canonical
+    /// block record. All rows and cached aggregates are reconstructed/audited.
+    pub fn restore_checkpoint(
+        genesis: RewardAccountsGenesis,
+        checkpoint: RewardAccountCheckpoint,
+        rows: impl IntoIterator<Item = (AccountPolicyId48, RewardAccount)>,
+        expected: RewardAccountsRoot48,
+    ) -> Result<Self, RewardAccountsError> {
+        let mut ledger = Self::new(genesis, checkpoint.context.clone())?;
+        ledger.accounts = AccountTree::default();
+        let mut previous = None;
+        for (id, row) in rows {
+            if previous.is_some_and(|p| p >= id) {
+                return Err(RewardAccountsError::InvalidState);
+            }
+            ledger.accounts.insert(id, row)?;
+            previous = Some(id);
+        }
+        ledger.install_checkpoint(checkpoint)?;
+        ledger.validate()?;
+        if ledger.state_root() != expected {
+            return Err(RewardAccountsError::InvalidState);
+        }
+        Ok(ledger)
+    }
+    /// The same real proof/signature checks as apply_block_with_fork, with a
+    /// bounded changed-row journal for the node's shared atomic transaction.
+    pub fn apply_block_journaled<V: RewardAccountProofVerifier>(
+        &self,
+        height: u64,
+        miner: AccountPolicyId48,
+        actions: &[RewardAccountAction],
+        verifier: &V,
+        compiled_fork: Option<&CompiledTreasuryFork>,
+    ) -> Result<(Self, RewardAccountJournal), RewardAccountsError> {
+        let next = self.apply_block_with_fork(height, miner, actions, verifier, compiled_fork)?;
+        let mut touched = BTreeSet::from([miner, self.treasury, next.treasury]);
+        for action in actions {
+            if let RewardAccountAction::Claim { claim, .. } = action {
+                touched.insert(claim.account);
+            }
+        }
+        let mut rows = Vec::new();
+        for account in touched {
+            let before = self.accounts.get(&account).cloned();
+            let after = next.accounts.get(&account).cloned();
+            if before != after {
+                rows.push(RewardAccountRowMutation {
+                    account,
+                    before,
+                    after,
+                });
+            }
+        }
+        let journal = RewardAccountJournal {
+            before_root: self.state_root(),
+            after_root: next.state_root(),
+            before: self.checkpoint(),
+            after: next.checkpoint(),
+            rows: BoundedVec::new(rows).map_err(|_| RewardAccountsError::InvalidState)?,
+        };
+        journal.validate_shape()?;
+        // No scan: applying the bounded changed paths must recreate exactly
+        // the resulting authenticated trie. This also catches omitted rows.
+        let rebuilt = self.replay_journal(
+            &journal,
+            RewardJournalDirection::Forward,
+            journal.after_root,
+        )?;
+        if rebuilt.state_root() != next.state_root() {
+            return Err(RewardAccountsError::InvalidState);
+        }
+        Ok((next, journal))
+    }
+    /// Replays only a previously verified, canonically authenticated journal.
+    /// This does not establish proof authority for an unverified network block.
+    pub fn replay_journal(
+        &self,
+        journal: &RewardAccountJournal,
+        direction: RewardJournalDirection,
+        canonical_destination_root: RewardAccountsRoot48,
+    ) -> Result<Self, RewardAccountsError> {
+        journal.validate_shape()?;
+        let forward = direction == RewardJournalDirection::Forward;
+        let (source, destination, source_root, destination_root) = if forward {
+            (
+                &journal.before,
+                &journal.after,
+                journal.before_root,
+                journal.after_root,
+            )
+        } else {
+            (
+                &journal.after,
+                &journal.before,
+                journal.after_root,
+                journal.before_root,
+            )
+        };
+        if self.checkpoint() != *source
+            || self.state_root() != source_root
+            || canonical_destination_root != destination_root
+        {
+            return Err(RewardAccountsError::InvalidState);
+        }
+        let mut next = self.clone();
+        for mutation in journal.rows.iter() {
+            let (before, after) = if forward {
+                (&mutation.before, &mutation.after)
+            } else {
+                (&mutation.after, &mutation.before)
+            };
+            if next.accounts.get(&mutation.account) != before.as_ref() {
+                return Err(RewardAccountsError::InvalidState);
+            }
+            match after {
+                Some(row) => next.accounts.insert(mutation.account, row.clone())?,
+                None => {
+                    next.accounts.remove(&mutation.account);
+                }
+            }
+        }
+        next.install_checkpoint(destination.clone())?;
+        next.validate_conservation()?;
+        if next.state_root() != canonical_destination_root {
+            return Err(RewardAccountsError::InvalidState);
+        }
+        Ok(next)
+    }
+}

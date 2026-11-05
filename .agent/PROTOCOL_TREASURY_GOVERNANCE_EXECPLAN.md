@@ -56,7 +56,13 @@ chain reset remain separate later operator actions.
   and verify real claim/donation proofs with note recovery and 5-of-7 approvals.
 - [ ] Qualify those proofs against authenticated running-node references and
   complete the node admission, persistence and lifecycle evidence.
-- [ ] Integrate rewards, authenticated storage, replay, startup, sync and reorg.
+- [x] (2026-11-05 UTC) Add bounded account journals, thin metadata checkpoints,
+  authenticated row recovery and forward/reverse replay; protocol tests pass.
+- [x] (2026-11-05 UTC) Qualify the native same-tree storage adapter with actual
+  shared-note plans: atomic abort, disk restart, epoch-boundary suffix replacement
+  and tampered-row recovery rejection (three focused node tests pass).
+- [ ] Wire mandatory reward records, source admission, account journals and
+  authenticated storage into actual native startup, sync and reorg paths.
 - [x] (2026-11-05 UTC) Build offline reward-account genesis/address CLI and
   verify funded disposable genesis, supply budget, quorum, network rejection
   and exclusive file creation.
@@ -675,3 +681,62 @@ two-node qualification has passed. Frozen-source logs are retained under
 /workspace/work/environment-setup/reward-frozen-{circuit,wallet,core,clippy}.log;
 CLI/provider/node logs use reward-qualified-{cli,keys,node}.log. This evidence
 qualifies the shared proof/governance milestone only. No node was deployed or reset.
+
+Publication checkpoint (2026-11-05 UTC): commit
+6b179d2a3440c8bde4a448357a450953d1a666dd was pushed to the existing branch;
+git ls-remote confirms that exact head and GitHub readback of governance.rs
+confirms compiled adoption at scheduling and activation. That committed source
+is the reproducible shared proof/governance milestone, not native activation.
+
+Journal integration in progress (2026-11-05 UTC): RewardAccountCheckpoint
+excludes immutable genesis allocations and the account table. apply_block_journaled
+runs the real normal transition and produces at most 515 changed rows (the
+existing 512-proof ceiling plus miner and both treasury identifiers), then
+rebuilds only those paths and checks the resulting root. Forward/reverse
+replay checks both source metadata and authenticated destination roots. Startup
+streams canonical table rows, fully validates supply/epochs/policy and compares
+the reconstructed account root with its enclosing canonical record.
+
+node/src/native/reward_accounts.rs implements a distinct reward-accounts/v1/
+namespace in the existing shared V8 sled tree. Its metadata binds height, block
+hash, account root and note root. Immutable before/after journals, exact row
+comparisons and canonical metadata update in the caller's transaction; no
+independent canonical commit method exists. The source network still does not
+open this adapter: manifest selection, mandatory record validation and the
+canonical planners must be wired before activating it. Reward-only storage
+tests use the actual shared note-state plan and a verifier that rejects every
+private proof. Those tests are storage evidence, not mined-node qualification.
+The first test invocation found uncached reqwest 0.12.28 in the existing node
+dev-dependency lockfile; rerun with authorized network access fetches locked
+packages without changing versions.
+
+Storage milestone validation (2026-11-05 UTC): the protocol suite now passes
+15 tests, including bounded journal recovery and full reversal of a partial-claim/
+donation history across reward releases. Targeted protocol Clippy with -D warnings
+passes. The native node compiles, and all three selected reward_accounts_native
+release tests pass using the real shared-note canonical plan and the same sled
+transaction as account rows. Forced failure after both writes leaves both tips at
+genesis and stores no journal; a successful commit survives closing/reopening the
+DB; replacing a suffix across release boundaries and switching back restores exact
+roots; tampered rows fail authenticated recovery. These are storage integration
+tests, not full-node PoW, source admission, transaction relay or two-node evidence.
+
+Reproduce from the repository root with the installed toolchain:
+
+    cargo test -p protocol-reward-accounts --release --offline
+    cargo clippy -p protocol-reward-accounts --all-targets --release --offline --no-deps -- -D warnings
+    cargo test -p hegemon-node --no-default-features --release --lib reward_accounts_native --offline
+
+Logs are reward-journal-core-tests.log, reward-journal-clippy.log and
+reward-native-store-tests.log under /workspace/work/environment-setup. The first
+node test build needed the existing locked dev dependencies fetched online and
+one test-only verifier needed its required closed native_leaf_profile method;
+the corrected rerun passed. No production verifier or authority was widened.
+The shared ledger source changed, so the broad SMZR source commitment changes;
+the next real-proof/native qualification must generate fresh source-bound proofs.
+The published 6b179d2a proof evidence remains tied to that exact committed source.
+
+Revision note (2026-11-05 UTC): implement and qualify bounded public-account
+journals and the native shared-tree atomic storage adapter. Source-profile
+selection, mandatory reward records, operational codecs, RPC/CLI integration
+and actual native lifecycle qualification remain outstanding.

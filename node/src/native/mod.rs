@@ -4734,6 +4734,7 @@ pub use network_profile::{NativeNetworkIdentity, NativeNetworkManifest, NativeNe
 mod pow;
 #[cfg(test)]
 mod reorg_wal;
+mod reward_accounts;
 mod rpc;
 mod service;
 pub(crate) mod smallwood_v8_lifetime;

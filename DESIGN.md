@@ -17,7 +17,9 @@ certificates require current-quorum approval plus separate compiled adoption.
 A persistent account trie and cached epoch totals support bounded candidate
 updates. Node admission, atomic persistence and running-chain qualification
 remain outstanding. Current legacy behavior below remains unmodified. Track progress in
-[the treasury execution plan](.agent/PROTOCOL_TREASURY_GOVERNANCE_EXECPLAN.md).
+[the treasury execution plan](.agent/PROTOCOL_TREASURY_GOVERNANCE_EXECPLAN.md). Shared account journals and the native same-tree
+storage adapter now pass atomic-abort, disk-restart and boundary-suffix tests.
+They are not yet wired into native block admission or synchronization.
 
 The controlled-asset Development integration uses the existing V8 note tree,
 canonical positions and global spent-nullifier set. Its separate typed asset
