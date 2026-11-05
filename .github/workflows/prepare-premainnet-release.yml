@@ -33,8 +33,19 @@ jobs:
           cargo build --locked --release -p hegemon-node --bin hegemon-node --no-default-features
       - name: Bind exact source and executable bytes
         run: |
-          python3 -B scripts/release_artifact_manifest.py create --output target/release/emergency-node-manifest.json --target-triple x86_64-unknown-linux-gnu --artifact hegemon-node:hegemon-node:target/release/hegemon-node
-          python3 -B scripts/release_artifact_manifest.py verify --manifest target/release/emergency-node-manifest.json --expect hegemon-node:hegemon-node:target/release/hegemon-node
+          python3 -B - <<'PY'
+          import hashlib, json, pathlib, subprocess, sys
+          sys.path.insert(0, 'scripts')
+          import release_artifact_manifest as m
+          root = pathlib.Path.cwd()
+          git = lambda *a: subprocess.check_output(['git', *a], text=True).strip()
+          identity = dict(source_head=git('rev-parse', 'HEAD'), source_index_tree=git('rev-parse', 'HEAD^{tree}'), source_tree_sha256=m.source_tree_sha256(root), cargo_lock_sha256=hashlib.sha256((root/'Cargo.lock').read_bytes()).hexdigest())
+          expected = dict(source_head='e2fcbe4df99025d3b955d5053ebc1f21436db6f2', source_index_tree='d01d1838af535ab84dc4e1f414dafdc6c0b3c0b4', source_tree_sha256='33a33e89d19c17e37b0567066252452e04382a2c399e1885baedeb48c8acdcd7', cargo_lock_sha256='1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719')
+          assert identity == expected
+          artifact = m.inspect_artifact(root, 'hegemon-node', 'hegemon-node', root/'target/release/hegemon-node', 'target/release/hegemon-node', 'x86_64-unknown-linux-gnu')
+          record = dict(schema='hegemon.emergency-linux-node-build.v1', source=identity, target_triple='x86_64-unknown-linux-gnu', binary=artifact, full_ci_qualified=False)
+          (root/'target/release/emergency-node-manifest.json').write_text(json.dumps(record, indent=2)+'\n')
+          PY
           mkdir -p target/emergency-release
           cp target/release/hegemon-node target/emergency-release/hegemon-node-linux-x86_64
           cp target/release/emergency-node-manifest.json target/emergency-release/
