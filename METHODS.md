@@ -1,13 +1,16 @@
 ## 1. What a “shielded spend” proves (ZK statement)
 
-**Proposed protocol treasury methods.** The
-[fresh-genesis treasury design](docs/PROTOCOL_TREASURY_DESIGN.md) requires a new
-donation proof equation (`inputs = change + donation + fee`), a payout proof
-binding the debited public amount to a shielded output, and genuine ML-DSA quorum
-authorization. These are new implementation and qualification obligations;
-existing v4 spend proofs do not establish them. Treasury transfers must conserve
-total issued HGN across the pot and private pool. No changed proof or runtime
-method is claimed implemented by this design document.
+**Proposed reward-account and treasury methods.** The
+[fresh-genesis design](docs/PROTOCOL_TREASURY_DESIGN.md) requires a donation proof
+(`inputs = change + donation + fee`), account-claim payout proofs and real ML-DSA
+single-key/threshold signatures checked against policy hashes. Rewards earned
+in N release at N+2 under genesis-configured 1,440-block epochs; claims have no
+additional coinbase delay. Shielded value plus available and pending accounts
+must equal genesis allocation plus cumulative mining issuance, within 21 million
+HGN. Network-aware Bech32m codecs check type, HRP and binary class/discriminator
+for both account and shielded addresses. Existing v4 proofs and context-free
+`shca` decoding do not establish these new methods. They remain implementation
+and qualification obligations; current legacy behavior below is unchanged.
 
 Moving-chain native asset integration uses a finite Development qualification. The spend relation
 has a fresh v3 source identity; its 134-word public schema, the administrator

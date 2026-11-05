@@ -1,11 +1,16 @@
 ## 0. Design goals (what we’re optimizing for)
 
-**Proposed fresh-genesis treasury successor.**
-[Protocol treasury design](docs/PROTOCOL_TREASURY_DESIGN.md) specifies a public
-protocol pot, compiled 1/5 subsidy allocation, permissionless donations with
-public memos, fixed-quorum ML-DSA withdrawals and quorum-certified signer changes
-at hard forks. It is a design for the reset branch, not implemented behavior of
-the current wallet-funded network. Track implementation and qualification in
+**Proposed fresh-genesis reward-account successor.**
+[Protocol treasury design](docs/PROTOCOL_TREASURY_DESIGN.md) specifies public
+miner/treasury accounts with genesis-configured 1,440-block reward epochs:
+rewards earned in N become available at the start of N+2 and can be claimed into
+one shielded note. Optional genesis allocations reduce the mining budget within
+the 21-million-HGN cap. Compiled 1/5 treasury allocation, policy-hash ownership,
+genesis-configured quorum and quorum-certified hard-fork signer replacement are
+explicit. Bech32m account prefixes are `heg`/`heg_test`; shielded prefixes are
+`heg_shield`/`heg_shield_test`, with binary network/type validation. This proposal
+replaces rolling 120-block maturity and per-block reward notes only on the reset
+network; current legacy behavior below remains unmodified. Track implementation in
 [the treasury execution plan](.agent/PROTOCOL_TREASURY_GOVERNANCE_EXECPLAN.md).
 
 The controlled-asset Development integration uses the existing V8 note tree,
