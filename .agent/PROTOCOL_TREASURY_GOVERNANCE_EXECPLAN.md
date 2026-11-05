@@ -38,7 +38,8 @@ implementation, deployment and reset are subsequent milestones.
   references for epoch accounts, genesis budgets and typed address validation.
 - [x] (2026-11-05 UTC) Validate links, terminology, six milestones, source
   paths, whitespace, boundary arithmetic and allocation/supply equations.
-- [ ] Publish revised documentation and verify remote commit.
+- [x] (2026-11-05 UTC) Publish revised documentation in eedd8da6 and verify
+  the network-aware address specification through GitHub readback.
 - [ ] Implement genesis identities, addresses, allocations and adjusted issuance.
 - [ ] Implement account transitions, reward epochs and real ML-DSA authorization.
 - [ ] Implement and qualify donation and account-claim proofs/carriers.
@@ -142,8 +143,9 @@ milestones remain outstanding, and no build, node lifecycle or chain reset is
 claimed for a documentation revision. Documentation checks passed: relative links, required headings and six milestones,
 source paths, terminology, README structure, release examples, exact supply
 budgets and completed-block conservation arithmetic. Runtime tests were not run
-for these documentation-only edits. Remote publication is recorded below once
-verified.
+for these documentation-only edits. Revision eedd8da6 was pushed successfully;
+GitHub readback confirmed the new account/shielded HRPs and binary network
+validation specification.
 
 ## Context and Orientation
 
@@ -462,3 +464,6 @@ miner notes and zero-only genesis with the accepted epoch-account/allocation
 plan; added policy-hash ownership and the requested mainnet/testnet Bech32m
 address distinction for both public and shielded families. Runtime work remains
 future scope; only documentation is implemented in this revision.
+
+Revision note (2026-11-05 UTC): recorded completed documentation validation and
+successful publication/readback of eedd8da6. Runtime milestones remain unchecked.
