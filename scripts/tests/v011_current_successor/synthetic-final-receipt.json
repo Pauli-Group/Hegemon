@@ -32,6 +32,9 @@
     "config/poseidon2-width16-v1.json",
     "experimental/htlc-prototype/proof-backend/Cargo.lock",
     "network/src/lib.rs",
+    "network/src/p2p.rs",
+    "network/src/peer_manager.rs",
+    "network/src/service.rs",
     "node/src/bin/native_node.rs",
     "node/src/native/admission.rs",
     "node/src/native/asset_native.rs",
@@ -534,6 +537,18 @@
       "after_sha256": "a3776bf15654a5a3e7c2acc3e29acde25de0f157d8c534b191414e5be2a6ef3f",
       "before_sha256": "d930d38df3cb5c09684e7196d60d1f4b4e3b17caff36e98fc0e03267566b9682"
     },
+    "network/src/p2p.rs": {
+      "after_sha256": "2e3d5766f25a4f7bc2d8e626a7c96056ad7aeb5af68665cec3260e61b824b927",
+      "before_sha256": "e691907c5abbf68d77d750bc87237ff81bd078bcbd1aebd40c51eb6939941816"
+    },
+    "network/src/peer_manager.rs": {
+      "after_sha256": "8f4165b5c3cd46102280aec9be4287d918ef3ff56167c8f79dc414164110f15e",
+      "before_sha256": "0ecf977d52c41340cfce4d09abaebdcc6e25bdca5e37211e5113c812de51e984"
+    },
+    "network/src/service.rs": {
+      "after_sha256": "a438de3e70e6dd648b5df281b6307c9772dffb81939d54fb6e64f361838b1587",
+      "before_sha256": "85dfaa5b7e5fd44837313050478f47dc39758c9ca704aa0310f8a6cc8354ec7b"
+    },
     "node/src/bin/native_node.rs": {
       "after_sha256": "1b8382135f934f82191357d4e783f81779885bf51499ea5cd6a96229fdb3ff41",
       "before_sha256": "236cfb18659ba1ad624f3c2f25f03bc45601221ff19f586c83094ddadff8ac96"
@@ -688,7 +703,7 @@
   "runtime_files_compared": 598,
   "runtime_inventory_sha256": "dfd71b6a265e954261ed209c2ad3c34c97285016557f0f003f7f17f39ff541d0",
   "schema": "hegemon.private-spend.release-authorization.v2",
-  "source_successor_config_sha256": "2e9e14aa8c78f505d165907600e503c6f68a41ee48ac5ed6a72fe0fecd2d115e",
+  "source_successor_config_sha256": "f72dfad7f27e186655496d27874a8c81068e3877f4764daebdf9865bc5b3779f",
   "state_admission_verified": false,
   "status": "PASS_EXACT_SOURCE_CURRENT_BINARY_BACKEND_AND_H0",
   "target_triple": "synthetic-unit-test",

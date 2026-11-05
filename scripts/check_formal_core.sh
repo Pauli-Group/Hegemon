@@ -976,6 +976,14 @@ cargo test -p network --lib pq_connection_info_and_relay_config_do_not_change_wi
 cargo test -p network oversized_handshake_frame_is_rejected --lib -- --nocapture
 cargo test -p network record_addresses_filters_and_caps_per_peer_entries --lib -- --nocapture
 cargo test -p network peer_sends_do_not_await_full_queues --lib -- --nocapture
+run_exact_lib_test network p2p::tests::split_connection_drains_simultaneous_large_frames_and_preserves_nonce_state
+run_exact_lib_test network p2p::tests::cancelled_partial_split_write_poisoned_session_cannot_reuse_nonce
+run_exact_lib_test network peer_manager::tests::rejected_duplicate_does_not_refresh_stale_active_session
+run_exact_lib_test network peer_manager::tests::closed_session_can_be_replaced_without_old_disconnect_removing_new_session
+run_exact_lib_test network service::tests::bounded_peer_deliveries_preserve_fifo_without_blocking_other_peers
+run_exact_lib_test network service::tests::bounded_peer_delivery_cap_and_failed_session_release_all_retained_messages
+run_exact_lib_test network service::tests::full_protocol_handler_does_not_suspend_other_protocols
+run_exact_lib_test network service::tests::peer_driver_receives_while_its_large_frame_write_is_backpressured
 HEGEMON_LEAN_NETWORK_SECURE_CHANNEL_VECTORS="$LEAN_NETWORK_SECURE_CHANNEL_VECTORS" \
   cargo test -p network lean_generated_secure_channel_vectors_match_production -- --nocapture
 HEGEMON_LEAN_PQ_NOISE_VECTORS="$LEAN_PQ_NOISE_VECTORS" \

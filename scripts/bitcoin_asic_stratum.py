@@ -35,6 +35,9 @@ MAX_RPC_RESPONSE = 65536
 MAX_SEEN_SHARES = 262144
 MAX_JOBS = 64
 MAX_NETWORK_SUCCESS = 4096
+MAX_BUSY_SUBMISSION_ATTEMPTS = 241
+BUSY_SUBMISSION_DELAY_SECONDS = 0.5
+BUSY_SUBMISSION_MESSAGE = "ASIC block import busy; retry solution"
 MAX_OUTBOUND_MESSAGES = 8
 DIFF1_TARGET = int("00000000ffff" + "00" * 26, 16)
 MAX_TARGET = (1 << 256) - 1
@@ -173,6 +176,14 @@ class Job:
         return header
 
 
+class NodeRPCError(ValueError):
+    """An authoritative JSON-RPC rejection, distinct from transport ambiguity."""
+
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code, self.message = code, message
+
+
 class NodeRPC:
     def __init__(self, url: str, token: str | None = None) -> None:
         if token:
@@ -189,8 +200,14 @@ class NodeRPC:
         if len(raw) > MAX_RPC_RESPONSE:
             raise ValueError("node RPC response too large")
         message = json.loads(raw)
-        if not isinstance(message, dict) or message.get("error") is not None:
-            raise ValueError(f"node RPC error: {message.get('error') if isinstance(message, dict) else 'malformed'}")
+        if not isinstance(message, dict):
+            raise ValueError("malformed node RPC response")
+        error = message.get("error")
+        if error is not None:
+            if (isinstance(error, dict) and type(error.get("code")) is int
+                    and isinstance(error.get("message"), str)):
+                raise NodeRPCError(error["code"], error["message"])
+            raise ValueError("malformed node RPC error")
         return message.get("result")
 
 
@@ -258,11 +275,16 @@ class Pool:
         if not math.isfinite(self.difficulty_float) or self.difficulty_float <= 0:
             raise ValueError("share difficulty is not representable")
         self.lock = threading.RLock()
+        # Serialize the RPC snapshot, state publication and miner notifications.
+        # Retry handlers and the main poller must not publish reordered work.
+        self.poll_lock = threading.Lock()
         self.clients: set[Client] = set()
         self.jobs: dict[str, Job] = {}
         self.current: Job | None = None
         self.seen: OrderedDict[tuple[str, bytes, str, str], None] = OrderedDict()
         self.network_pending: set[tuple[str, bytes, str, str]] = set()
+        self.network_pending_tokens: dict[tuple[str, bytes, str, str], object] = {}
+        self.work_epoch = 0
         self.network_success: OrderedDict[tuple[str, bytes, str, str], None] = OrderedDict()
         self.slots = threading.BoundedSemaphore(max_clients)
         self.max_clients = max_clients
@@ -272,7 +294,22 @@ class Pool:
             return self.difficulty_float
         return min(self.difficulty_float, DIFF1_TARGET / job.network_target)
 
-    def poll_once(self) -> None:
+    def poll_once(self, deadline: float | None = None) -> bool:
+        if deadline is None:
+            self.poll_lock.acquire()
+        else:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not self.poll_lock.acquire(timeout=remaining):
+                return False
+        try:
+            if deadline is not None and time.monotonic() >= deadline:
+                return False
+            self._poll_once()
+            return True
+        finally:
+            self.poll_lock.release()
+
+    def _poll_once(self) -> None:
         new = Job.from_rpc(self.rpc.call("hegemon_poolWork"), time.time())
         with self.lock:
             if new is None:
@@ -280,6 +317,8 @@ class Pool:
                 self.jobs.clear()
                 self.seen.clear()
                 self.network_pending.clear()
+                self.network_pending_tokens.clear()
+                self.work_epoch += 1
                 self.network_success.clear()
                 for client in self.clients:
                     client.job_ids.clear()
@@ -290,6 +329,8 @@ class Pool:
                 self.jobs.clear()
                 self.seen.clear()
                 self.network_pending.clear()
+                self.network_pending_tokens.clear()
+                self.work_epoch += 1
                 self.network_success.clear()
                 for client in self.clients:
                     client.job_ids.clear()
@@ -325,6 +366,61 @@ class Pool:
                 LOG.debug("could not notify disconnected miner", exc_info=True)
                 client.close()
                 self.stop_client(client)
+
+    @staticmethod
+    def _work_bytes(job: Job) -> tuple[Any, ...]:
+        return (job.parent_hash, job.version, job.ntime, job.nbits,
+                job.network_target, job.coinbase_prefix, job.coinbase_suffix)
+
+    def _submit_network_solution(self, key: tuple[str, bytes, str, str],
+                                 job: Job, token: object, epoch: int,
+                                 payload: dict[str, str]) -> tuple[bool, str | None]:
+        # A bounded client handler owns this retry and keeps its server slot
+        # even if an epoch change clears the reservation maps. No worker/timer
+        # is created. The first job expiry remains fixed across work refreshes.
+        # The deadline bounds retry admission; an in-flight RPC retains its
+        # existing socket timeout and may finish after that deadline.
+        deadline = time.monotonic() + min(120.0, max(0.0, job.expires_at - time.time()))
+        for attempt in range(MAX_BUSY_SUBMISSION_ATTEMPTS):
+            with self.lock:
+                cached = self.jobs.get(job.job_id)
+                if (self.work_epoch != epoch
+                        or self.network_pending_tokens.get(key) is not token
+                        or self.current is None or cached is None
+                        or self.current.parent_hash != job.parent_hash
+                        or self._work_bytes(cached) != self._work_bytes(job)
+                        or cached.expires_at <= time.time()
+                        or job.expires_at <= time.time()
+                        or time.monotonic() >= deadline):
+                    return False, "stale job"
+            try:
+                result = self.rpc.call("hegemon_submitPoolShare", dict(payload))
+            except NodeRPCError as exc:
+                if exc.code != -32602 or exc.message != BUSY_SUBMISSION_MESSAGE:
+                    return False, exc.message
+                if attempt + 1 == MAX_BUSY_SUBMISSION_ATTEMPTS:
+                    return False, "node import busy; retry budget exhausted"
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False, "stale job"
+                time.sleep(min(BUSY_SUBMISSION_DELAY_SECONDS, remaining))
+                # Refresh availability, parent and retained-job cache before
+                # every retry. Same-parent older snapshots remain eligible.
+                try:
+                    if time.monotonic() >= deadline or not self.poll_once(deadline):
+                        return False, "stale job"
+                except Exception as error:
+                    LOG.warning("solution retry work refresh failed: %s", error)
+                    return False, "node RPC unavailable"
+                continue
+            except Exception as exc:
+                LOG.warning("node rejected solution RPC: %s", exc)
+                return False, "node RPC unavailable"
+            if not isinstance(result, dict) or result.get("accepted") is not True:
+                reason = result.get("error") if isinstance(result, dict) else None
+                return False, str(reason or "node rejected solution")
+            return True, None
+        return False, "node import busy; retry budget exhausted"
 
     def start_client(self, client: Client) -> None:
         with self.lock:
@@ -403,31 +499,29 @@ class Pool:
                     if len(self.network_pending) >= self.max_clients:
                         return reply(False, "network submission capacity reached")
                     self.network_pending.add(key)
+                    token, epoch = object(), self.work_epoch
+                    self.network_pending_tokens[key] = token
                 else:
                     self.seen[key] = None
                     if len(self.seen) > MAX_SEEN_SHARES:
                         self.seen.popitem(last=False)
             if is_network_solution:
-                try:
-                    result = self.rpc.call("hegemon_submitPoolShare", {
-                        "job_id": job_id, "nonce": nonce, "extranonce": extranonce.hex(),
-                        "ntime": ntime,
-                    })
-                except Exception as exc:
-                    LOG.warning("node rejected solution RPC: %s", exc)
-                    with self.lock:
-                        self.network_pending.discard(key)
-                    return reply(False, "node RPC unavailable")
-                if not isinstance(result, dict) or result.get("accepted") is not True:
-                    reason = result.get("error") if isinstance(result, dict) else None
-                    with self.lock:
-                        self.network_pending.discard(key)
-                    return reply(False, str(reason or "node rejected solution"))
+                accepted, reason = self._submit_network_solution(key, job, token, epoch, {
+                    "job_id": job_id, "nonce": nonce, "extranonce": extranonce.hex(),
+                    "ntime": ntime,
+                })
                 with self.lock:
-                    self.network_pending.discard(key)
-                    self.network_success[key] = None
-                    if len(self.network_success) > MAX_NETWORK_SUCCESS:
-                        self.network_success.popitem(last=False)
+                    # A parent/unavailable transition may have cleared the old
+                    # reservation during RPC. Never populate the new epoch.
+                    if self.network_pending_tokens.get(key) is token:
+                        self.network_pending_tokens.pop(key)
+                        self.network_pending.discard(key)
+                        if accepted and self.work_epoch == epoch:
+                            self.network_success[key] = None
+                            if len(self.network_success) > MAX_NETWORK_SUCCESS:
+                                self.network_success.popitem(last=False)
+                if not accepted:
+                    return reply(False, reason)
             return reply(True)
         if method in ("mining.extranonce.subscribe", "mining.suggest_difficulty"):
             return reply(False)

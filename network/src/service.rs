@@ -1,6 +1,8 @@
 use crate::nat::{NatTraversal, NatTraversalConfig, NatTraversalResult};
 use crate::p2p::{CompactAddress, Connection, CoordinationMessage, WireMessage};
-use crate::peer_manager::{AddPeerResult, PeerManager, PeerSessionId, QueuedWireMessage};
+use crate::peer_manager::{
+    AddPeerResult, PeerManager, PeerQueueError, PeerSessionId, PreparedPeerSend, QueuedWireMessage,
+};
 use crate::peer_store::PeerStore;
 use crate::queue_budget::{ByteBudget, BytePermit};
 use crate::{
@@ -8,7 +10,8 @@ use crate::{
     wire,
 };
 use crypto::hashes::sha256;
-use futures::stream::{BoxStream, SelectAll, StreamExt as FuturesStreamExt};
+use futures::future::BoxFuture;
+use futures::stream::{BoxStream, FuturesUnordered, SelectAll, StreamExt as FuturesStreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -16,6 +19,7 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream, lookup_host};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval, sleep, timeout};
@@ -142,6 +146,94 @@ struct QueuedDirectedProtocolMessage {
     _permit: BytePermit,
 }
 
+// Preserve FIFO order within each session without allowing a slow peer's queue
+// to suspend the service loop. Retained deliveries keep both byte permits, and
+// intake stops before dequeueing at the global cap. A smaller per-peer cap
+// rejects local excess work so one stalled target cannot occupy every slot.
+const MAX_PENDING_PEER_DELIVERIES: usize = 64;
+const MAX_PENDING_DELIVERIES_PER_PEER: usize = 8;
+const PEER_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+const PEER_INBOUND_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+
+type PeerDeliveryResult = (PeerId, PeerSessionId, Result<(), PeerQueueError>);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PeerDeliveryAdmissionError {
+    GlobalFull,
+    PeerFull,
+}
+
+#[derive(Default)]
+struct PendingPeerDeliveries {
+    queued: HashMap<PeerId, VecDeque<(PreparedPeerSend, BytePermit)>>,
+    active: HashSet<PeerId>,
+    completions: FuturesUnordered<BoxFuture<'static, PeerDeliveryResult>>,
+    retained: usize,
+}
+
+impl PendingPeerDeliveries {
+    fn has_capacity(&self) -> bool {
+        self.retained < MAX_PENDING_PEER_DELIVERIES
+    }
+
+    fn enqueue(
+        &mut self,
+        send: PreparedPeerSend,
+        permit: BytePermit,
+    ) -> Result<(), PeerDeliveryAdmissionError> {
+        if !self.has_capacity() {
+            return Err(PeerDeliveryAdmissionError::GlobalFull);
+        }
+        let peer = send.peer_id;
+        let retained_for_peer = self.queued.get(&peer).map_or(0, VecDeque::len)
+            + usize::from(self.active.contains(&peer));
+        if retained_for_peer >= MAX_PENDING_DELIVERIES_PER_PEER {
+            // Dropping both arguments releases both byte reservations. Local
+            // overload neither attributes a fault to the peer nor disconnects it.
+            return Err(PeerDeliveryAdmissionError::PeerFull);
+        }
+        self.queued
+            .entry(peer)
+            .or_default()
+            .push_back((send, permit));
+        self.retained += 1;
+        self.start_next(peer);
+        Ok(())
+    }
+
+    fn start_next(&mut self, peer: PeerId) {
+        if self.active.contains(&peer) {
+            return;
+        }
+        let Some((send, permit)) = self.queued.get_mut(&peer).and_then(VecDeque::pop_front) else {
+            self.queued.remove(&peer);
+            return;
+        };
+        self.active.insert(peer);
+        self.completions.push(Box::pin(async move {
+            let session = send.session_id;
+            let _protocol_permit = permit;
+            let result = timeout(PEER_WRITE_TIMEOUT, send.send())
+                .await
+                .unwrap_or(Err(PeerQueueError::Full));
+            (peer, session, result)
+        }));
+    }
+
+    fn finish(&mut self, peer: PeerId, failed_session: Option<PeerSessionId>) {
+        self.active.remove(&peer);
+        self.retained -= 1;
+        if let Some(session) = failed_session {
+            if let Some(queue) = self.queued.get_mut(&peer) {
+                let before = queue.len();
+                queue.retain(|(send, _)| send.session_id != session);
+                self.retained -= before - queue.len();
+            }
+        }
+        self.start_next(peer);
+    }
+}
+
 struct QueuedInboundProtocolMessage {
     message: (PeerId, ProtocolMessage),
     _permit: BytePermit,
@@ -215,15 +307,26 @@ impl ProtocolMultiplexer {
                 );
                 return;
             };
-            if handler
-                .send(QueuedInboundProtocolMessage {
-                    message: (peer_id, msg),
-                    _permit: permit,
-                })
-                .await
-                .is_err()
-            {
-                warn!("dropping protocol message because handler queue is closed");
+            let protocol = msg.protocol;
+            let payload_bytes = msg.payload.len();
+            if let Err(error) = handler.try_send(QueuedInboundProtocolMessage {
+                message: (peer_id, msg),
+                _permit: permit,
+            }) {
+                let reason = match &error {
+                    mpsc::error::TrySendError::Full(_) => "full",
+                    mpsc::error::TrySendError::Closed(_) => "closed",
+                };
+                // Drop releases this message's byte reservation. Native sync
+                // requests/rebroadcasts own retries; this is not an ACK.
+                drop(error);
+                warn!(
+                    ?peer_id,
+                    protocol,
+                    payload_bytes,
+                    reason,
+                    "dropped inbound protocol delivery; handler queue unavailable"
+                );
             }
         } else {
             warn!(
@@ -564,6 +667,7 @@ impl P2PService {
         discovery_refresh.tick().await;
         let inbound_handshakes = Arc::new(Semaphore::new(self.inbound_handshake_backlog_limit()));
         let mut pending_inbound_handshakes = 0usize;
+        let mut pending_deliveries = PendingPeerDeliveries::default();
 
         loop {
             tokio::select! {
@@ -792,8 +896,8 @@ impl P2PService {
                 }
 
                 // Handle protocol messages from registered components
-                Some(outbound) = self.protocol_mux.next_outbound(), if self.protocol_mux.has_protocols() => {
-                    let outbound = outbound.message;
+                Some(outbound) = self.protocol_mux.next_outbound(), if self.protocol_mux.has_protocols() && pending_deliveries.has_capacity() => {
+                    let QueuedDirectedProtocolMessage { message: outbound, _permit } = outbound;
                     debug!(
                         protocol = outbound.message.protocol,
                         target = ?outbound.target,
@@ -802,15 +906,33 @@ impl P2PService {
                     );
                     match outbound.target {
                         Some(peer_id) => {
-                            self
-                                .peer_manager
-                                .send_to_reliable(&peer_id, WireMessage::Proto(outbound.message))
-                                .await;
+                            match self.peer_manager.prepare_reliable_send(
+                                &peer_id, WireMessage::Proto(outbound.message),
+                            ) {
+                                Ok(send) => {
+                                    if let Err(reason) = pending_deliveries.enqueue(send, _permit) {
+                                        warn!(?peer_id, ?reason, "rejected directed protocol delivery at local pending capacity");
+                                    }
+                                }
+                                Err(err) => warn!(?peer_id, ?err, "could not retain directed protocol delivery"),
+                            }
                         }
                         None => {
                             self.peer_manager.broadcast(WireMessage::Proto(outbound.message)).await;
                         }
                     }
+                }
+
+                Some((peer_id, session_id, result)) = pending_deliveries.completions.next(), if !pending_deliveries.completions.is_empty() => {
+                    let failed = result.is_err();
+                    if let Err(err) = result {
+                        warn!(?peer_id, session_id, ?err, "bounded directed protocol delivery failed; closing its peer session");
+                        if let Some(addr) = self.peer_manager.remove_peer_session(&peer_id, session_id) {
+                            self.peer_store.record_disconnected(addr)?;
+                            self.publish_peer_state();
+                        }
+                    }
+                    pending_deliveries.finish(peer_id, failed.then_some(session_id));
                 }
 
                 _ = heartbeat.tick() => {
@@ -946,8 +1068,8 @@ impl P2PService {
         });
     }
 
-    async fn run_peer_loop(
-        mut connection: Connection<TcpStream>,
+    async fn run_peer_loop<S: AsyncRead + AsyncWrite + Unpin + Send>(
+        connection: Connection<S>,
         addr: SocketAddr,
         peer_id: PeerId,
         session_id: PeerSessionId,
@@ -976,34 +1098,52 @@ impl P2PService {
             return PeerRunOutcome::AdmissionRejected;
         }
 
-        loop {
-            tokio::select! {
-                outbound = rx.recv() => {
-                    match outbound {
-                        Some(msg) => {
-                            if let Err(e) = connection.send(msg.msg).await {
-                                if is_expected_peer_disconnect(&e) {
-                                    warn!("peer disconnected while sending to {}: {}", addr, e);
-                                } else {
-                                    error!("failed to send to {}: {}", addr, e);
-                                }
-                                break;
+        let (mut writer, mut reader) = match connection.into_split() {
+            Ok(halves) => halves,
+            Err(error) => {
+                warn!(%addr, %error, "could not split authenticated peer session");
+                let _ = cmd_tx
+                    .send(P2PCommand::PeerDisconnected {
+                        peer_id,
+                        addr,
+                        session_id,
+                        inbound,
+                    })
+                    .await;
+                return PeerRunOutcome::Disconnected;
+            }
+        };
+        // Keep each receive future alive across outbound activity. Cancellation
+        // of a partially read/written frame is only allowed when BOTH halves are
+        // discarded; the cipher counters/session must never be reused afterward.
+        {
+            let sending = async move {
+                while let Some(msg) = rx.recv().await {
+                    match timeout(PEER_WRITE_TIMEOUT, writer.send(msg.msg)).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => {
+                            if is_expected_peer_disconnect(&error) {
+                                warn!(%addr, %error, "peer disconnected while sending");
+                            } else {
+                                error!(%addr, %error, "failed to send peer frame");
                             }
+                            break;
                         }
-                        None => break,
+                        Err(_) => {
+                            warn!(%addr, "peer frame write deadline elapsed; closing both session halves");
+                            break;
+                        }
                     }
                 }
-                result = connection.recv() => {
-                    match result {
-                        Ok(Some(msg)) => {
+            };
+            let command_tx = cmd_tx.clone();
+            let receiving = async move {
+                loop {
+                    match timeout(PEER_INBOUND_IDLE_TIMEOUT, reader.recv()).await {
+                        Ok(Ok(Some(msg))) => {
                             let bytes = wire_message_queue_bytes(&msg);
                             let Some(permit) = inbound_message_budget.try_acquire(bytes) else {
-                                warn!(
-                                    %addr,
-                                    ?peer_id,
-                                    bytes,
-                                    "dropping inbound p2p message over command byte budget"
-                                );
+                                warn!(%addr, ?peer_id, bytes, "dropping inbound p2p message over command byte budget");
                                 continue;
                             };
                             let queued = QueuedP2PMessage {
@@ -1012,21 +1152,38 @@ impl P2PService {
                                 msg,
                                 _permit: permit,
                             };
-                            if cmd_tx.send(P2PCommand::Message { queued }).await.is_err() {
+                            if !matches!(
+                                timeout(
+                                    PEER_WRITE_TIMEOUT,
+                                    command_tx.send(P2PCommand::Message { queued })
+                                )
+                                .await,
+                                Ok(Ok(()))
+                            ) {
+                                warn!(%addr, "peer command queue deadline/closure; closing session");
                                 break;
                             }
                         }
-                        Ok(None) => break,
-                        Err(e) => {
-                            if is_expected_peer_disconnect(&e) {
-                                warn!("peer disconnected while receiving from {}: {}", addr, e);
+                        Ok(Ok(None)) => break,
+                        Ok(Err(error)) => {
+                            if is_expected_peer_disconnect(&error) {
+                                warn!(%addr, %error, "peer disconnected while receiving");
                             } else {
-                                error!("error receiving from {}: {}", addr, e);
+                                error!(%addr, %error, "error receiving peer frame");
                             }
+                            break;
+                        }
+                        Err(_) => {
+                            warn!(%addr, "peer inbound idle deadline elapsed; closing both session halves");
                             break;
                         }
                     }
                 }
+            };
+            tokio::pin!(sending, receiving);
+            tokio::select! {
+                _ = &mut sending => {},
+                _ = &mut receiving => {},
             }
         }
 
@@ -2077,6 +2234,313 @@ mod tests {
             RelayConfig::default(),
             NatTraversalConfig::disabled(addr),
         )
+    }
+
+    #[tokio::test]
+    async fn bounded_peer_deliveries_preserve_fifo_without_blocking_other_peers() {
+        let mut peers = PeerManager::new(2);
+        let protocol_bytes = (MAX_PENDING_DELIVERIES_PER_PEER + 1) * 128;
+        let outbound_bytes = (MAX_PENDING_DELIVERIES_PER_PEER + 1) * (128 + 16 + 1) + 128;
+        let protocol_budget = ByteBudget::new(protocol_bytes);
+        let outbound_budget = ByteBudget::new(outbound_bytes);
+        peers.set_outbound_budget_for_test(outbound_budget.clone());
+        let a = [91; 32];
+        let b = [92; 32];
+        let (atx, mut arx) = mpsc::channel(1);
+        let (btx, mut brx) = mpsc::channel(1);
+        assert_eq!(
+            peers.try_add_peer(a, "127.0.0.1:9101".parse().unwrap(), atx, 1, true),
+            AddPeerResult::Accepted
+        );
+        assert_eq!(
+            peers.try_add_peer(b, "127.0.0.1:9102".parse().unwrap(), btx, 2, true),
+            AddPeerResult::Accepted
+        );
+        peers
+            .prepare_reliable_send(&a, WireMessage::Ping)
+            .unwrap()
+            .send()
+            .await
+            .unwrap();
+        let mut pending = PendingPeerDeliveries::default();
+        for tag in 0..MAX_PENDING_DELIVERIES_PER_PEER {
+            pending
+                .enqueue(
+                    peers
+                        .prepare_reliable_send(
+                            &a,
+                            WireMessage::Proto(ProtocolMessage {
+                                protocol: 71,
+                                payload: vec![tag as u8],
+                            }),
+                        )
+                        .unwrap(),
+                    protocol_budget.try_acquire(128).unwrap(),
+                )
+                .unwrap();
+        }
+        assert_eq!(pending.retained, MAX_PENDING_DELIVERIES_PER_PEER);
+        assert!(pending.has_capacity());
+        // A has reached its local pending cap while its wire queue is full.
+        // Rejection must release both reservations so B can use the same budgets.
+        assert_eq!(
+            pending.enqueue(
+                peers
+                    .prepare_reliable_send(
+                        &a,
+                        WireMessage::Proto(ProtocolMessage {
+                            protocol: 71,
+                            payload: vec![255],
+                        }),
+                    )
+                    .unwrap(),
+                protocol_budget.try_acquire(128).unwrap(),
+            ),
+            Err(PeerDeliveryAdmissionError::PeerFull)
+        );
+        assert!(peers.is_active_session(&a, 1));
+        pending
+            .enqueue(
+                peers.prepare_reliable_send(&b, WireMessage::Pong).unwrap(),
+                protocol_budget.try_acquire(128).unwrap(),
+            )
+            .unwrap();
+        let (peer, _, result) = timeout(Duration::from_secs(1), pending.completions.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            peer, b,
+            "a blocked peer cannot suspend delivery to another peer"
+        );
+        result.unwrap();
+        pending.finish(peer, None);
+        assert!(matches!(brx.recv().await.unwrap().msg, WireMessage::Pong));
+        assert!(matches!(arx.recv().await.unwrap().msg, WireMessage::Ping));
+        for tag in 0..MAX_PENDING_DELIVERIES_PER_PEER {
+            let (peer, _, result) = pending.completions.next().await.unwrap();
+            assert_eq!(peer, a);
+            result.unwrap();
+            pending.finish(peer, None);
+            let WireMessage::Proto(message) = arx.recv().await.unwrap().msg else {
+                panic!("expected ordered protocol payload")
+            };
+            assert_eq!(message.payload, vec![tag as u8]);
+        }
+        assert_eq!(pending.retained, 0);
+        assert!(protocol_budget.try_acquire(protocol_bytes).is_some());
+        assert!(outbound_budget.try_acquire(outbound_bytes).is_some());
+    }
+
+    #[tokio::test]
+    async fn bounded_peer_delivery_cap_and_failed_session_release_all_retained_messages() {
+        let peer_count = MAX_PENDING_PEER_DELIVERIES / MAX_PENDING_DELIVERIES_PER_PEER;
+        let mut peers = PeerManager::new(peer_count);
+        let budget_bytes = MAX_PENDING_PEER_DELIVERIES * 128;
+        let protocol_budget = ByteBudget::new(budget_bytes);
+        let outbound_budget = ByteBudget::new(budget_bytes);
+        peers.set_outbound_budget_for_test(outbound_budget.clone());
+        let mut receivers = Vec::new();
+        let mut pending = PendingPeerDeliveries::default();
+        for index in 0..peer_count {
+            let peer = [index as u8; 32];
+            let (tx, rx) = mpsc::channel(1);
+            assert_eq!(
+                peers.try_add_peer(
+                    peer,
+                    "127.0.0.1:9103".parse().unwrap(),
+                    tx,
+                    index as u64 + 7,
+                    true,
+                ),
+                AddPeerResult::Accepted
+            );
+            receivers.push(rx);
+            for _ in 0..MAX_PENDING_DELIVERIES_PER_PEER {
+                pending
+                    .enqueue(
+                        peers
+                            .prepare_reliable_send(&peer, WireMessage::Ping)
+                            .unwrap(),
+                        protocol_budget.try_acquire(128).unwrap(),
+                    )
+                    .unwrap();
+            }
+        }
+        assert!(!pending.has_capacity());
+        assert_eq!(pending.retained, MAX_PENDING_PEER_DELIVERIES);
+        assert_eq!(pending.active.len(), peer_count);
+        assert!(protocol_budget.try_acquire(1).is_none());
+        assert!(outbound_budget.try_acquire(1).is_none());
+        drop(receivers);
+        for _ in 0..peer_count {
+            let (peer, session, result) = pending.completions.next().await.unwrap();
+            assert_eq!(result, Err(PeerQueueError::Closed));
+            pending.finish(peer, Some(session));
+        }
+        assert_eq!(pending.retained, 0);
+        assert!(pending.has_capacity());
+        assert!(pending.active.is_empty());
+        assert!(protocol_budget.try_acquire(budget_bytes).is_some());
+        assert!(outbound_budget.try_acquire(budget_bytes).is_some());
+    }
+
+    #[tokio::test]
+    async fn full_protocol_handler_does_not_suspend_other_protocols() {
+        let mut mux = ProtocolMultiplexer::new();
+        let _blocked = mux.register(71);
+        let mut responsive = mux.register(72);
+        for _ in 0..PROTOCOL_CHANNEL_CAPACITY {
+            mux.dispatch_inbound(
+                [94; 32],
+                ProtocolMessage {
+                    protocol: 71,
+                    payload: vec![],
+                },
+            )
+            .await;
+        }
+        timeout(
+            Duration::from_secs(1),
+            mux.dispatch_inbound(
+                [94; 32],
+                ProtocolMessage {
+                    protocol: 71,
+                    payload: vec![1],
+                },
+            ),
+        )
+        .await
+        .unwrap();
+        mux.dispatch_inbound(
+            [95; 32],
+            ProtocolMessage {
+                protocol: 72,
+                payload: vec![2],
+            },
+        )
+        .await;
+        let (peer, message) = responsive.recv().await.unwrap();
+        assert_eq!(peer, [95; 32]);
+        assert_eq!(message.payload, vec![2]);
+    }
+
+    struct ObservedWrite<S> {
+        stream: S,
+        written: Arc<AtomicUsize>,
+        progress: Arc<tokio::sync::Notify>,
+    }
+
+    impl<S: AsyncRead + Unpin> AsyncRead for ObservedWrite<S> {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::pin::Pin::new(&mut self.stream).poll_read(cx, buf)
+        }
+    }
+
+    impl<S: AsyncWrite + Unpin> AsyncWrite for ObservedWrite<S> {
+        fn poll_write(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            bytes: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            let result = std::pin::Pin::new(&mut self.stream).poll_write(cx, bytes);
+            if let std::task::Poll::Ready(Ok(count)) = result {
+                self.written.fetch_add(count, Ordering::SeqCst);
+                self.progress.notify_one();
+            }
+            result
+        }
+        fn poll_flush(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::pin::Pin::new(&mut self.stream).poll_flush(cx)
+        }
+        fn poll_shutdown(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::pin::Pin::new(&mut self.stream).poll_shutdown(cx)
+        }
+    }
+
+    #[tokio::test]
+    async fn peer_driver_receives_while_its_large_frame_write_is_backpressured() {
+        let (a, b) = tokio::io::duplex(4096);
+        let written = Arc::new(AtomicUsize::new(0));
+        let progress = Arc::new(tokio::sync::Notify::new());
+        let mut a = Connection::new(ObservedWrite {
+            stream: a,
+            written: Arc::clone(&written),
+            progress: Arc::clone(&progress),
+        });
+        let mut b = Connection::new(b);
+        let ai = PeerIdentity::generate(b"service-duplex-a");
+        let bi = PeerIdentity::generate(b"service-duplex-b");
+        let (remote, _) =
+            tokio::try_join!(a.handshake_initiator(&ai), b.handshake_responder(&bi)).unwrap();
+        written.store(0, Ordering::SeqCst);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(8);
+        let driver = tokio::spawn(P2PService::run_peer_loop(
+            a,
+            "127.0.0.1:9201".parse().unwrap(),
+            remote,
+            11,
+            cmd_tx,
+            false,
+            ByteBudget::new(MAX_P2P_COMMAND_QUEUE_BYTES),
+        ));
+        let P2PCommand::NewPeer { tx, admit, .. } = cmd_rx.recv().await.unwrap() else {
+            panic!("expected admission")
+        };
+        let mut peers = PeerManager::new(1);
+        peers.try_add_peer(remote, "127.0.0.1:9201".parse().unwrap(), tx, 11, true);
+        admit.send(true).unwrap();
+        peers
+            .prepare_reliable_send(
+                &remote,
+                WireMessage::Proto(ProtocolMessage {
+                    protocol: 71,
+                    payload: vec![3; 128 * 1024],
+                }),
+            )
+            .unwrap()
+            .send()
+            .await
+            .unwrap();
+        // Do not read the remote direction. Observe that the local driver has
+        // filled the 4 KiB wire buffer with its much larger encrypted frame.
+        // The old single-loop driver is now stuck awaiting that send.
+        timeout(Duration::from_secs(2), async {
+            while written.load(Ordering::SeqCst) < 4096 {
+                progress.notified().await;
+            }
+        })
+        .await
+        .unwrap();
+        let (mut writer, reader) = b.into_split().unwrap();
+        writer.send(WireMessage::Ping).await.unwrap();
+        let command = timeout(Duration::from_secs(2), cmd_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(command, P2PCommand::Message { queued } if matches!(queued.msg, WireMessage::Ping))
+        );
+        // Closing the remote reader/writer terminates both local halves.
+        drop(writer);
+        drop(reader);
+        assert_eq!(
+            timeout(Duration::from_secs(2), driver)
+                .await
+                .unwrap()
+                .unwrap(),
+            PeerRunOutcome::Disconnected
+        );
     }
 
     #[test]

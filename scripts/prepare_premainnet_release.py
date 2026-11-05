@@ -52,6 +52,8 @@ jobs:
         run: /usr/bin/python3 -I -B scripts/test_premainnet_launcher.py
       - name: Bounded predecessor archive rejection controls
         run: /usr/bin/python3 -I -B scripts/test_materialize_v011_predecessor.py
+      - name: ASIC adapter solution-retention regressions
+        run: python3 -I -B scripts/test_bitcoin_asic_stratum.py
 
 """
 ASSEMBLE = """
@@ -86,6 +88,37 @@ BUILD_JOBS = (
     "build-macos-arm",
     "build-windows",
 )
+TRANSPORT_REGRESSIONS = (
+    "p2p::tests::split_connection_drains_simultaneous_large_frames_and_preserves_nonce_state",
+    "p2p::tests::cancelled_partial_split_write_poisoned_session_cannot_reuse_nonce",
+    "peer_manager::tests::rejected_duplicate_does_not_refresh_stale_active_session",
+    "peer_manager::tests::closed_session_can_be_replaced_without_old_disconnect_removing_new_session",
+    "service::tests::bounded_peer_deliveries_preserve_fifo_without_blocking_other_peers",
+    "service::tests::bounded_peer_delivery_cap_and_failed_session_release_all_retained_messages",
+    "service::tests::full_protocol_handler_does_not_suspend_other_protocols",
+    "service::tests::peer_driver_receives_while_its_large_frame_write_is_backpressured",
+)
+
+
+def adapt_transport_regressions(builds: str) -> str:
+    """Require the repaired transport paths on PR and full preparation runs."""
+    prefix, security = builds.split("  security-gates:\n", 1)
+    security, suffix = security.split("\n  app-no-ssh-e2e:\n", 1)
+    marker = "      - name: Formal-core checker controls for PR review\n"
+    if security.count(marker) != 1:
+        raise ValueError("review changed security formal steps before preparing transport checks")
+    step = (
+        "      - name: Network transport progress regressions\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        + "".join(
+            f"          ./scripts/run_exact_cargo_lib_test.sh network {name}\n"
+            for name in TRANSPORT_REGRESSIONS
+        )
+        + "\n"
+    )
+    security = security.replace(marker, step + marker, 1)
+    return prefix + "  security-gates:\n" + security + "\n  app-no-ssh-e2e:\n" + suffix
 
 
 def adapt_version_only_successor(builds: str) -> str:
@@ -179,7 +212,7 @@ def expected_workflow(release: str) -> str:
         raise ValueError(f"review new release job set before preparing: {names!r}")
     marker = "  transaction-proof-authorization:\n"
     builds = builds.replace(marker, marker + "    needs: preparation-policy\n", 1)
-    builds = adapt_pr_formal_scope(adapt_version_only_successor(builds))
+    builds = adapt_transport_regressions(adapt_pr_formal_scope(adapt_version_only_successor(builds)))
     output = HEADER + builds.rstrip() + "\n" + ASSEMBLE
     return "\n".join(line.rstrip() for line in output.splitlines()) + "\n"
 

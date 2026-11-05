@@ -92,6 +92,50 @@ class PreparationWorkflowTests(unittest.TestCase):
             with self.subTest(mutation=mutation[:60]), self.assertRaises(ValueError):
                 preparation.verify_preparation(self.release, mutation)
 
+    def test_transport_and_adapter_regressions_run_unconditionally_before_release_gates(self) -> None:
+        policy = self.workflow.split("  preparation-policy:\n", 1)[1].split("\n  transaction-proof-authorization:\n", 1)[0]
+        adapter = (
+            "      - name: ASIC adapter solution-retention regressions\n"
+            "        run: python3 -I -B scripts/test_bitcoin_asic_stratum.py\n"
+        )
+        self.assertEqual(policy.count(adapter), 1)
+        security = self.workflow.split("  security-gates:\n", 1)[1].split("\n  app-no-ssh-e2e:\n", 1)[0]
+        transport = security.split("      - name: Network transport progress regressions\n", 1)[1].split("\n      - name: ", 1)[0]
+        self.assertTrue(transport.startswith("        run: |\n          set -euo pipefail\n"))
+        self.assertNotIn("        if:", transport)
+        self.assertNotIn("continue-on-error", transport)
+        self.assertEqual(len(preparation.TRANSPORT_REGRESSIONS), 8)
+        for name in preparation.TRANSPORT_REGRESSIONS:
+            command = f"./scripts/run_exact_cargo_lib_test.sh network {name}"
+            self.assertEqual(transport.count(command + "\n"), 1)
+            self.assertLess(security.index(command), security.index("Formal-core checker controls for PR review"))
+        self.assertLess(security.index('toolchain: "1.91.1"'), security.index("Network transport progress regressions"))
+
+    def test_transport_and_adapter_gate_removal_or_soft_failure_rejects(self) -> None:
+        commands = ["python3 -I -B scripts/test_bitcoin_asic_stratum.py"] + [
+            f"./scripts/run_exact_cargo_lib_test.sh network {name}"
+            for name in preparation.TRANSPORT_REGRESSIONS
+        ]
+        for command in commands:
+            for replacement in ("true", command + " || true", "# " + command):
+                with self.subTest(command=command, replacement=replacement), self.assertRaises(ValueError):
+                    preparation.verify_preparation(self.release, self.workflow.replace(command, replacement, 1))
+        for name in ("ASIC adapter solution-retention regressions", "Network transport progress regressions"):
+            marker = f"      - name: {name}\n"
+            for bypass in ("        continue-on-error: true\n", "        if: github.event_name != 'pull_request'\n"):
+                with self.subTest(name=name, bypass=bypass), self.assertRaises(ValueError):
+                    preparation.verify_preparation(self.release, self.workflow.replace(marker, marker + bypass, 1))
+
+    def test_transport_gate_reordering_rejects(self) -> None:
+        start = self.workflow.index("      - name: Network transport progress regressions\n")
+        end = self.workflow.index("      - name: Formal-core checker controls for PR review\n", start)
+        step = self.workflow[start:end]
+        reordered = self.workflow[:start] + self.workflow[end:]
+        marker = "      - name: Formal-crypto isolation release gate\n"
+        reordered = reordered.replace(marker, step + marker, 1)
+        with self.assertRaises(ValueError):
+            preparation.verify_preparation(self.release, reordered)
+
     def test_publication_or_write_permissions_reject(self) -> None:
         self.assertNotIn("softprops/action-gh-release", self.workflow)
         self.assertNotIn("contents: write", self.workflow)

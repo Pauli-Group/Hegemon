@@ -1,11 +1,13 @@
 use crate::{
-    wire, GossipMessage, HandshakeAcceptance, HandshakeConfirmation, HandshakeOffer, NetworkError,
-    PeerId, PeerIdentity, ProtocolMessage, SecureChannel,
+    GossipMessage, HandshakeAcceptance, HandshakeConfirmation, HandshakeOffer, NetworkError,
+    PeerId, PeerIdentity, ProtocolMessage, SecureChannel, wire,
 };
 use crypto::hashes::sha256;
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -131,6 +133,106 @@ pub struct Connection<S> {
     channel: Option<SecureChannel>,
 }
 
+// Exactly one writer and one reader share the original directional channel.
+// The mutex protects only synchronous AEAD state transitions, never socket I/O.
+struct SplitSecureChannel {
+    channel: Mutex<SecureChannel>,
+    failed: AtomicBool,
+}
+
+fn encrypt_split_connection_frame(
+    shared: &SplitSecureChannel,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, NetworkError> {
+    let mut channel = shared
+        .channel
+        .lock()
+        .map_err(|_| NetworkError::Handshake("encrypted session lock poisoned"))?;
+    let encrypted = encrypt_connection_frame(&mut channel, plaintext)?;
+    Ok(encrypted)
+}
+
+fn decrypt_split_connection_frame(
+    shared: &SplitSecureChannel,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, NetworkError> {
+    let mut channel = shared
+        .channel
+        .lock()
+        .map_err(|_| NetworkError::Handshake("encrypted session lock poisoned"))?;
+    let decrypted = decrypt_connection_frame(&mut channel, ciphertext)?;
+    Ok(decrypted)
+}
+
+struct SplitFrameGuard {
+    shared: Arc<SplitSecureChannel>,
+    complete: bool,
+}
+
+impl Drop for SplitFrameGuard {
+    fn drop(&mut self) {
+        if !self.complete {
+            self.shared.failed.store(true, Ordering::Release);
+        }
+    }
+}
+
+pub(crate) struct ConnectionWriter<S: AsyncRead + AsyncWrite + Unpin> {
+    sink: futures::stream::SplitSink<Framed<S, LengthDelimitedCodec>, Bytes>,
+    shared: Arc<SplitSecureChannel>,
+}
+
+pub(crate) struct ConnectionReader<S: AsyncRead + AsyncWrite + Unpin> {
+    stream: futures::stream::SplitStream<Framed<S, LengthDelimitedCodec>>,
+    shared: Arc<SplitSecureChannel>,
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> ConnectionWriter<S> {
+    /// Cancellation or failure poisons the whole session: the owner must drop
+    /// both halves, since a partial frame and consumed nonce cannot be retried.
+    pub(crate) async fn send(&mut self, msg: WireMessage) -> Result<(), NetworkError> {
+        if self.shared.failed.load(Ordering::Acquire) {
+            return Err(NetworkError::Handshake("encrypted session failed"));
+        }
+        let mut guard = SplitFrameGuard {
+            shared: Arc::clone(&self.shared),
+            complete: false,
+        };
+        let bytes = wire::encode(&msg, wire::MAX_WIRE_FRAME_LEN)?;
+        let encrypted = encrypt_split_connection_frame(&self.shared, &bytes)?;
+        if encrypted.len() > wire::MAX_WIRE_FRAME_LEN {
+            return Err(NetworkError::Handshake("encrypted frame too large"));
+        }
+        self.sink.send(Bytes::from(encrypted)).await?;
+        guard.complete = true;
+        Ok(())
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> ConnectionReader<S> {
+    pub(crate) async fn recv(&mut self) -> Result<Option<WireMessage>, NetworkError> {
+        if self.shared.failed.load(Ordering::Acquire) {
+            return Err(NetworkError::Handshake("encrypted session failed"));
+        }
+        let mut guard = SplitFrameGuard {
+            shared: Arc::clone(&self.shared),
+            complete: false,
+        };
+        let frame = match self.stream.next().await {
+            Some(Ok(frame)) => frame,
+            Some(Err(error)) => return Err(error.into()),
+            None => return Ok(None),
+        };
+        if self.shared.failed.load(Ordering::Acquire) {
+            return Err(NetworkError::Handshake("encrypted session failed"));
+        }
+        let decrypted = decrypt_split_connection_frame(&self.shared, &frame)?;
+        let msg = wire::decode(&decrypted, wire::MAX_WIRE_FRAME_LEN)?;
+        guard.complete = true;
+        Ok(Some(msg))
+    }
+}
+
 impl<S> Connection<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -140,6 +242,28 @@ where
             stream: Framed::new(socket, handshake_codec()),
             channel: None,
         }
+    }
+
+    /// Consume the connection after its authenticated handshake. No channel
+    /// clone or fresh counter is created, including after prior send/recv calls.
+    pub(crate) fn into_split(
+        self,
+    ) -> Result<(ConnectionWriter<S>, ConnectionReader<S>), NetworkError> {
+        let channel = self
+            .channel
+            .ok_or(NetworkError::Handshake("connection not encrypted"))?;
+        let shared = Arc::new(SplitSecureChannel {
+            channel: Mutex::new(channel),
+            failed: AtomicBool::new(false),
+        });
+        let (sink, stream) = self.stream.split();
+        Ok((
+            ConnectionWriter {
+                sink,
+                shared: Arc::clone(&shared),
+            },
+            ConnectionReader { stream, shared },
+        ))
     }
 
     fn promote_to_secure_wire_codec(&mut self) {
@@ -554,6 +678,100 @@ mod tests {
         assert!(
             err.contains("handshake frame too large") || err.contains("frame"),
             "unexpected handshake rejection: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn split_connection_drains_simultaneous_large_frames_and_preserves_nonce_state() {
+        let (a, b) = duplex(4096);
+        let mut a = Connection::new(a);
+        let mut b = Connection::new(b);
+        let ai = PeerIdentity::generate(b"split-duplex-a");
+        let bi = PeerIdentity::generate(b"split-duplex-b");
+        tokio::try_join!(a.handshake_initiator(&ai), b.handshake_responder(&bi)).unwrap();
+        // Splitting must retain counters already consumed by the legacy API.
+        a.send(WireMessage::Ping).await.unwrap();
+        assert!(matches!(b.recv().await.unwrap(), Some(WireMessage::Ping)));
+        b.send(WireMessage::Pong).await.unwrap();
+        assert!(matches!(a.recv().await.unwrap(), Some(WireMessage::Pong)));
+        let (mut aw, mut ar) = a.into_split().unwrap();
+        let (mut bw, mut br) = b.into_split().unwrap();
+        let exchange = async {
+            tokio::try_join!(
+                async {
+                    for tag in 0..3u8 {
+                        aw.send(WireMessage::Proto(ProtocolMessage {
+                            protocol: 7,
+                            payload: vec![tag; 65536],
+                        }))
+                        .await?;
+                    }
+                    Ok::<_, NetworkError>(())
+                },
+                async {
+                    for tag in 10..13u8 {
+                        bw.send(WireMessage::Proto(ProtocolMessage {
+                            protocol: 8,
+                            payload: vec![tag; 65536],
+                        }))
+                        .await?;
+                    }
+                    Ok::<_, NetworkError>(())
+                },
+                async {
+                    for tag in 10..13u8 {
+                        let Some(WireMessage::Proto(msg)) = ar.recv().await? else {
+                            panic!("expected authenticated protocol frame")
+                        };
+                        assert_eq!(msg.protocol, 8);
+                        assert_eq!(msg.payload, vec![tag; 65536]);
+                    }
+                    Ok::<_, NetworkError>(())
+                },
+                async {
+                    for tag in 0..3u8 {
+                        let Some(WireMessage::Proto(msg)) = br.recv().await? else {
+                            panic!("expected authenticated protocol frame")
+                        };
+                        assert_eq!(msg.protocol, 7);
+                        assert_eq!(msg.payload, vec![tag; 65536]);
+                    }
+                    Ok::<_, NetworkError>(())
+                }
+            )
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), exchange)
+            .await
+            .expect("both saturated directions must drain concurrently")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelled_partial_split_write_poisoned_session_cannot_reuse_nonce() {
+        let (a, b) = duplex(4096);
+        let mut a = Connection::new(a);
+        let mut b = Connection::new(b);
+        let ai = PeerIdentity::generate(b"split-cancel-a");
+        let bi = PeerIdentity::generate(b"split-cancel-b");
+        tokio::try_join!(a.handshake_initiator(&ai), b.handshake_responder(&bi)).unwrap();
+        let (mut aw, mut ar) = a.into_split().unwrap();
+        let (_bw, _br) = b.into_split().unwrap();
+        let write = aw.send(WireMessage::Proto(ProtocolMessage {
+            protocol: 9,
+            payload: vec![42; 65536],
+        }));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), write)
+                .await
+                .is_err()
+        );
+        assert!(
+            aw.send(WireMessage::Ping).await.is_err(),
+            "partial encrypted write cannot be retried on this session"
+        );
+        assert!(
+            ar.recv().await.is_err(),
+            "the opposite direction must also fail closed"
         );
     }
 

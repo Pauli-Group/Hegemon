@@ -242,8 +242,17 @@ class RuntimePostimageChecks(unittest.TestCase):
         with self.assertRaises(CHECKER.SuccessorError):
             self.validate('node/Cargo.toml', b'before', b'after')
 
+    def test_transport_repair_has_exactly_three_additional_network_postimages(self):
+        network_paths = {path for path in SOURCE_CONFIG_DATA['reviewed_runtime_deltas']
+                         if path.startswith('network/')}
+        self.assertEqual(network_paths, {
+            'network/src/lib.rs', 'network/src/p2p.rs',
+            'network/src/peer_manager.rs', 'network/src/service.rs',
+        })
+        self.assertTrue(network_paths.issubset(CHECKER.CURRENT_RUNTIME_DELTAS))
+
     def test_a_reviewed_path_does_not_allow_an_arbitrary_postimage(self):
-        for relative in ('protocol/versioning/src/lib.rs', 'node/src/native/node_impl.rs', 'node/src/native/mining.rs', 'node/src/native/mod.rs', 'node/src/native/service.rs', 'node/src/native/tests.rs', 'wallet/src/bin/private_spend.rs', 'wallet/src/poseidon2_v8_sync.rs', 'wallet/src/store.rs'):
+        for relative in ('network/src/p2p.rs', 'network/src/peer_manager.rs', 'network/src/service.rs', 'protocol/versioning/src/lib.rs', 'node/src/native/node_impl.rs', 'node/src/native/mining.rs', 'node/src/native/mod.rs', 'node/src/native/service.rs', 'node/src/native/tests.rs', 'wallet/src/bin/private_spend.rs', 'wallet/src/poseidon2_v8_sync.rs', 'wallet/src/store.rs'):
             with self.subTest(relative=relative):
                 before = (PREDECESSOR / relative).read_bytes()
                 after = (SOURCE_ROOT / relative).read_bytes()

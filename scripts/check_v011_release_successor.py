@@ -303,7 +303,7 @@ def validate_replay(replay, node_sha, artifact_sha):
 CURRENT_NEW_VERSION = '0.11.2'
 CURRENT_SCOPE = 'exact_current_source_current_binary_backend_and_h0'
 CURRENT_SOURCE_KIND = 'reviewed_source_successor_ci'
-CURRENT_CONFIG_SHA256 = '2e9e14aa8c78f505d165907600e503c6f68a41ee48ac5ed6a72fe0fecd2d115e'
+CURRENT_CONFIG_SHA256 = 'f72dfad7f27e186655496d27874a8c81068e3877f4764daebdf9865bc5b3779f'
 CURRENT_RUNNER_SHA256 = 'd2f0fae819828482093676f831a5d6c621013c02368cdddafcdf491d294eb2f2'
 CURRENT_FIXTURE_SHA256 = '50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c'
 CURRENT_NETWORK_MANIFEST_SHA256 = '386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754'
@@ -369,6 +369,12 @@ CURRENT_RUNTIME_DELTAS = {'Cargo.lock': ['bae447660a12610766620cb7e2afacb6b0ad92
                                                           'ed8d205e44df98040490e7d3270d9ffbbfe242f1b5e5b9460ffbc238d3b72a0b'],
  'network/src/lib.rs': ['d930d38df3cb5c09684e7196d60d1f4b4e3b17caff36e98fc0e03267566b9682',
                         'a3776bf15654a5a3e7c2acc3e29acde25de0f157d8c534b191414e5be2a6ef3f'],
+ 'network/src/p2p.rs': ['e691907c5abbf68d77d750bc87237ff81bd078bcbd1aebd40c51eb6939941816',
+                        '2e3d5766f25a4f7bc2d8e626a7c96056ad7aeb5af68665cec3260e61b824b927'],
+ 'network/src/peer_manager.rs': ['0ecf977d52c41340cfce4d09abaebdcc6e25bdca5e37211e5113c812de51e984',
+                        '8f4165b5c3cd46102280aec9be4287d918ef3ff56167c8f79dc414164110f15e'],
+ 'network/src/service.rs': ['85dfaa5b7e5fd44837313050478f47dc39758c9ca704aa0310f8a6cc8354ec7b',
+                        'a438de3e70e6dd648b5df281b6307c9772dffb81939d54fb6e64f361838b1587'],
  'node/src/bin/native_node.rs': ['236cfb18659ba1ad624f3c2f25f03bc45601221ff19f586c83094ddadff8ac96',
                                  '1b8382135f934f82191357d4e783f81779885bf51499ea5cd6a96229fdb3ff41'],
  'node/src/native/admission.rs': ['9f9e66d240facd9bd74b24d579734b41ea940154cb2722f14f3bb963e96dd0c1',

@@ -40,6 +40,30 @@ pub struct QueuedWireMessage {
     _permit: BytePermit,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PeerQueueError {
+    UnknownPeer,
+    Full,
+    Closed,
+}
+
+pub(crate) struct PreparedPeerSend {
+    pub(crate) peer_id: PeerId,
+    pub(crate) session_id: PeerSessionId,
+    tx: mpsc::Sender<QueuedWireMessage>,
+    queued: QueuedWireMessage,
+}
+
+impl PreparedPeerSend {
+    /// Success means admitted to this session's queue, not delivered on wire.
+    pub(crate) async fn send(self) -> Result<(), PeerQueueError> {
+        self.tx
+            .send(self.queued)
+            .await
+            .map_err(|_| PeerQueueError::Closed)
+    }
+}
+
 pub struct PeerManager {
     peers: HashMap<PeerId, PeerEntry>,
     address_book: HashMap<PeerId, HashSet<SocketAddr>>,
@@ -56,6 +80,11 @@ impl Default for PeerManager {
 }
 
 impl PeerManager {
+    #[cfg(test)]
+    pub(crate) fn set_outbound_budget_for_test(&mut self, budget: ByteBudget) {
+        self.outbound_budget = budget;
+    }
+
     pub fn new(max_peers: usize) -> Self {
         Self {
             peers: HashMap::new(),
@@ -82,9 +111,13 @@ impl PeerManager {
         if dialable_addr {
             self.record_addresses(peer_id, [addr]);
         }
-        if let Some(entry) = self.peers.get_mut(&peer_id) {
-            entry.last_seen = Instant::now();
-            return AddPeerResult::Duplicate(entry.session_id);
+        if let Some(entry) = self.peers.get(&peer_id) {
+            // A rejected connection says nothing about the admitted session's
+            // liveness. Replace only a receiver which has actually closed.
+            if !entry.tx.is_closed() {
+                return AddPeerResult::Duplicate(entry.session_id);
+            }
+            self.remove_peer(&peer_id);
         }
 
         if self.max_peers > 0 && self.peers.len() >= self.max_peers {
@@ -187,6 +220,32 @@ impl PeerManager {
         if let Some(entry) = self.peers.get(peer_id) {
             self.try_queue_to_entry(entry, msg);
         }
+    }
+
+    /// Reserve bytes before returning a bounded scheduler-owned send. Dropping
+    /// this value or its future releases the reservation without queue admission.
+    pub(crate) fn prepare_reliable_send(
+        &self,
+        peer_id: &PeerId,
+        msg: WireMessage,
+    ) -> Result<PreparedPeerSend, PeerQueueError> {
+        let entry = self.peers.get(peer_id).ok_or(PeerQueueError::UnknownPeer)?;
+        if entry.tx.is_closed() {
+            return Err(PeerQueueError::Closed);
+        }
+        let permit = self
+            .outbound_budget
+            .try_acquire(wire_message_queue_bytes(&msg))
+            .ok_or(PeerQueueError::Full)?;
+        Ok(PreparedPeerSend {
+            peer_id: *peer_id,
+            session_id: entry.session_id,
+            tx: entry.tx.clone(),
+            queued: QueuedWireMessage {
+                msg,
+                _permit: permit,
+            },
+        })
     }
 
     pub async fn send_to_reliable(&self, peer_id: &PeerId, msg: WireMessage) {
@@ -623,6 +682,63 @@ mod tests {
             Ok(WireMessage::Ping)
         ));
         assert!(rx_b.try_recv().is_err());
+    }
+
+    #[test]
+    fn rejected_duplicate_does_not_refresh_stale_active_session() {
+        let mut manager = PeerManager::new(1);
+        let peer = [9u8; 32];
+        let addr = "127.0.0.1:9503".parse().unwrap();
+        let (old_tx, _old_rx) = mpsc::channel(1);
+        assert_eq!(
+            manager.try_add_peer(peer, addr, old_tx, 1, true),
+            AddPeerResult::Accepted
+        );
+        let old_seen = Instant::now() - Duration::from_secs(120);
+        manager.peers.get_mut(&peer).unwrap().last_seen = old_seen;
+        for session in 2..5 {
+            let (tx, _rx) = mpsc::channel(1);
+            assert_eq!(
+                manager.try_add_peer(peer, addr, tx, session, true),
+                AddPeerResult::Duplicate(1)
+            );
+            assert_eq!(manager.peers[&peer].last_seen, old_seen);
+        }
+        assert_eq!(
+            manager.prune_stale(Duration::from_secs(60)),
+            vec![(peer, addr)]
+        );
+    }
+
+    #[tokio::test]
+    async fn closed_session_can_be_replaced_without_old_disconnect_removing_new_session() {
+        let mut manager = PeerManager::new(1);
+        let peer = [10u8; 32];
+        let old_addr = "127.0.0.1:9504".parse().unwrap();
+        let new_addr = "127.0.0.1:9505".parse().unwrap();
+        let (old_tx, old_rx) = mpsc::channel(1);
+        assert_eq!(
+            manager.try_add_peer(peer, old_addr, old_tx, 11, true),
+            AddPeerResult::Accepted
+        );
+        drop(old_rx);
+        let (new_tx, mut new_rx) = mpsc::channel(1);
+        assert_eq!(
+            manager.try_add_peer(peer, new_addr, new_tx, 12, true),
+            AddPeerResult::Accepted
+        );
+        assert_eq!(manager.remove_peer_session(&peer, 11), None);
+        assert!(manager.is_active_session(&peer, 12));
+        manager
+            .prepare_reliable_send(&peer, WireMessage::Ping)
+            .unwrap()
+            .send()
+            .await
+            .unwrap();
+        assert!(matches!(
+            new_rx.recv().await.unwrap().msg,
+            WireMessage::Ping
+        ));
     }
 
     #[tokio::test]

@@ -36,6 +36,8 @@ jobs:
         run: /usr/bin/python3 -I -B scripts/test_premainnet_launcher.py
       - name: Bounded predecessor archive rejection controls
         run: /usr/bin/python3 -I -B scripts/test_materialize_v011_predecessor.py
+      - name: ASIC adapter solution-retention regressions
+        run: python3 -I -B scripts/test_bitcoin_asic_stratum.py
 
   transaction-proof-authorization:
     needs: preparation-policy
@@ -114,6 +116,18 @@ jobs:
 
       - name: Dependency audit waiver gate
         run: ./scripts/dependency-audit-gate.sh
+
+      - name: Network transport progress regressions
+        run: |
+          set -euo pipefail
+          ./scripts/run_exact_cargo_lib_test.sh network p2p::tests::split_connection_drains_simultaneous_large_frames_and_preserves_nonce_state
+          ./scripts/run_exact_cargo_lib_test.sh network p2p::tests::cancelled_partial_split_write_poisoned_session_cannot_reuse_nonce
+          ./scripts/run_exact_cargo_lib_test.sh network peer_manager::tests::rejected_duplicate_does_not_refresh_stale_active_session
+          ./scripts/run_exact_cargo_lib_test.sh network peer_manager::tests::closed_session_can_be_replaced_without_old_disconnect_removing_new_session
+          ./scripts/run_exact_cargo_lib_test.sh network service::tests::bounded_peer_deliveries_preserve_fifo_without_blocking_other_peers
+          ./scripts/run_exact_cargo_lib_test.sh network service::tests::bounded_peer_delivery_cap_and_failed_session_release_all_retained_messages
+          ./scripts/run_exact_cargo_lib_test.sh network service::tests::full_protocol_handler_does_not_suspend_other_protocols
+          ./scripts/run_exact_cargo_lib_test.sh network service::tests::peer_driver_receives_while_its_large_frame_write_is_backpressured
 
       - name: Formal-core checker controls for PR review
         if: github.event_name == 'pull_request'
