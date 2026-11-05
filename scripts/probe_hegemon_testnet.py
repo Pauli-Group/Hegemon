@@ -31,6 +31,10 @@ PUBLIC_EXPLORER = 'https://hegemonprotocol.com'
 MAX_TIP_GAP = 12
 MAX_REFERENCE_AGE = 120
 MAX_REFERENCE_FUTURE = 30
+# A recently refreshed explorer response can still describe a stalled chain.
+# This conservative testnet readiness heuristic is not a finality guarantee.
+MAX_TIP_IDLE = 20 * 60
+MAX_BLOCK_FUTURE = 120
 HASH32 = re.compile(r'0x[0-9a-fA-F]{64}\Z')
 
 
@@ -90,28 +94,43 @@ def compare_public_tip(url, node, read=None, fetch=public_json, now=None):
     status = fetch('/testnet/status.json')
     if (not isinstance(status, dict) or status.get('network') != 'pre-mainnet-v0.11'
             or status.get('genesis_hash') != node.get('genesis')
-            or status.get('chain_id') != node.get('chain_id')
-            or status.get('available') is not True or status.get('syncing') is not False
-            or status.get('error') is not None or type(status.get('peers')) is not int
-            or status['peers'] < 1):
-        raise ValueError('Public explorer is unavailable or reports the wrong network')
+            or status.get('chain_id') != node.get('chain_id')):
+        raise ValueError('Public explorer reports the wrong network')
+    if (status.get('available') is not True or status.get('error') is not None
+            or type(status.get('peers')) is not int or status['peers'] < 1):
+        raise ValueError('Public explorer is unavailable or has no connected peers')
+    if type(status.get('syncing')) is not bool:
+        raise ValueError('Invalid public explorer sync status')
     height = status.get('height')
     reference_hash = status.get('hash')
+    tip_timestamp = status.get('block_timestamp_ms')
     if (type(height) is not int or not 1 <= height < 10**15
-            or not isinstance(reference_hash, str) or not HASH32.fullmatch(reference_hash)):
+            or not isinstance(reference_hash, str) or not HASH32.fullmatch(reference_hash)
+            or type(tip_timestamp) is not int or not 0 < tip_timestamp < 2**53):
         raise ValueError('Invalid public explorer tip')
     updated = status.get('updated_at')
+    current_time = time.time() if now is None else now
     try:
         if not isinstance(updated, str) or len(updated) > 64:
             raise ValueError
         stamp = datetime.datetime.fromisoformat(updated.replace('Z', '+00:00'))
         if stamp.tzinfo is None:
             raise ValueError
-        age = (time.time() if now is None else now) - stamp.timestamp()
+        age = current_time - stamp.timestamp()
     except (ValueError, OverflowError, OSError):
         raise ValueError('Invalid public explorer update time') from None
     if not -MAX_REFERENCE_FUTURE <= age <= MAX_REFERENCE_AGE:
         raise ValueError('Public explorer status is stale or has a future timestamp')
+    tip_idle = current_time - tip_timestamp / 1000
+    if tip_idle < -MAX_BLOCK_FUTURE:
+        raise ValueError('Public explorer tip block has a future timestamp')
+    problems = []
+    if status['syncing']:
+        problems.append('reports syncing')
+    if tip_idle > MAX_TIP_IDLE:
+        problems.append(f'latest block is {int(tip_idle)} seconds old (limit {MAX_TIP_IDLE})')
+    if problems:
+        raise ValueError('Public explorer ' + '; '.join(problems))
     gap = node['height'] - height
     if abs(gap) > MAX_TIP_GAP:
         raise ValueError(f'Node and public explorer differ by {abs(gap)} blocks')
@@ -121,12 +140,19 @@ def compare_public_tip(url, node, read=None, fetch=public_json, now=None):
     if (not isinstance(local_hash, str) or not HASH32.fullmatch(local_hash)
             or not isinstance(block, dict) or type(block.get('height')) is not int
             or block['height'] != common or not isinstance(block.get('hash'), str)
-            or not HASH32.fullmatch(block['hash'])):
+            or not HASH32.fullmatch(block['hash'])
+            or type(block.get('timestamp_ms')) is not int
+            or not 0 < block['timestamp_ms'] < 2**53):
         raise ValueError('Invalid common-height block response')
     if local_hash.lower() != block['hash'].lower():
         raise ValueError('Node and public explorer disagree on the common block hash')
     if common == height and reference_hash.lower() != block['hash'].lower():
         raise ValueError('Public explorer tip changed during comparison')
+    if common == height and tip_timestamp != block['timestamp_ms']:
+        raise ValueError('Public explorer tip timestamp changed during comparison')
+    common_idle = current_time - block['timestamp_ms'] / 1000
+    if common_idle < -MAX_BLOCK_FUTURE or common_idle > MAX_TIP_IDLE:
+        raise ValueError('Common block timestamp is outside the recent testnet window')
     after = read(url, 'chain_getBlockHash', [common])
     if not isinstance(after, str) or after.lower() != local_hash.lower():
         raise ValueError('Local node reorganized during comparison')
@@ -134,6 +160,11 @@ def compare_public_tip(url, node, read=None, fetch=public_json, now=None):
             'reference_height': height, 'height_difference': gap,
             'common_height': common, 'common_hash': local_hash.lower(),
             'reference_updated_at': updated, 'max_tip_gap': MAX_TIP_GAP,
+            'reference_block_timestamp_ms': tip_timestamp,
+            'reference_block_age_seconds': round(tip_idle, 3),
+            'common_block_timestamp_ms': block['timestamp_ms'],
+            'common_block_age_seconds': round(common_idle, 3),
+            'max_block_age_seconds': MAX_TIP_IDLE,
             'source': PUBLIC_EXPLORER}
 
 

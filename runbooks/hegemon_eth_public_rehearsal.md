@@ -10,10 +10,13 @@ provider are trusted. Do not use mainnet funds or valuable assets.
 The separate Development rehearsal starts its own isolated nodes and must not
 be pointed at the public Hegemon node. This runner never starts a node or
 enables mining. It uses the operator's existing Hegemon node at a loopback
-address and signs locally with the copied disposable test wallets. It needs the
-official Linux x86_64 `private-spend` 0.11.2 release executable, SHA-256
-`389eb1a09e943f7b56b68cce6da5806b8566bd54e248162f19bb38f6da15243e`.
-The wallet file and passphrase files must be private, user-owned regular files.
+address and signs locally with the copied disposable test wallets. It needs a
+`private-spend` 0.11.2 executable built from this branch: the official v0.11.2
+release executable does not include this branch's `verify-htlc` command. The
+runner checks the version and command at initialization, records the binary's
+SHA-256 and refuses a changed executable in later steps. This checksum does not
+prove its origin; the operator must build from trusted, reviewed source. The
+wallet file and passphrase files must be private, user-owned regular files.
 
 Alice locks 100,000 HGN atoms (0.001 HGN) for Bob. Bob locks 0.0001 Sepolia ETH
 for Alice. Alice's Ethereum claim reveals the preimage, and Bob's Hegemon claim
@@ -27,14 +30,16 @@ its gas. Other participants and assets are outside this particular test.
 
 Work from a checkout containing this runbook and the current branch. Preserve
 any unrelated local edits. Set `TEST_WALLETS` to the private directory with
-`addresses.json`, `alice/`, `bob/`, and `hegemon-pre-mainnet/`; set
-`WALLET_BIN` to the verified release executable. The transferred archive
+`addresses.json`, `alice/`, `bob/`, and `hegemon-pre-mainnet/`. The transferred archive
 normally contains those paths below a `testnet-wallets` directory. Use only
 one copy of the test wallets at a time.
 
-For example, after choosing the two paths in a private terminal:
+For example, after choosing the wallet directory in a private terminal, build
+the branch's wallet in the separate checkout and create a Python environment:
 
 ```bash
+cargo build --locked --release -p wallet --no-default-features --features rpc-client --bin private-spend
+WALLET_BIN="$PWD/target/release/private-spend"
 python3 -m venv "$HOME/.local/share/hegemon-swap-test-venv"
 "$HOME/.local/share/hegemon-swap-test-venv/bin/python" -m pip install -r scripts/requirements-htlc-public.txt
 SWAP_PYTHON="$HOME/.local/share/hegemon-swap-test-venv/bin/python"
@@ -43,8 +48,10 @@ SWAP_PYTHON="$HOME/.local/share/hegemon-swap-test-venv/bin/python"
 
 The probe must report `public_testnet_ready: true`. The wallet control RPC
 must remain bound to loopback, and the existing node must have wallet methods
-enabled. A matching explorer snapshot does not independently validate the
-chain. Check both HGN and Sepolia balances before proceeding. Do not print or
+enabled. The public tip and common block timestamps must also be less than 20
+minutes old. This clock-dependent threshold can reject a slow but healthy chain;
+a matching explorer snapshot does not independently validate the chain. Check
+both HGN and Sepolia balances before proceeding. Do not print or
 paste wallet passphrases, private keys, or unrevealed preimages.
 
 ## Run one step at a time

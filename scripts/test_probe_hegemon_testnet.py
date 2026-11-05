@@ -128,8 +128,10 @@ class PublicReferenceTest(unittest.TestCase):
         self.status = {'network': 'pre-mainnet-v0.11', 'genesis_hash': self.node['genesis'],
                        'chain_id': self.node['chain_id'], 'available': True, 'syncing': False,
                        'error': None, 'peers': 3, 'height': 100, 'hash': self.hash,
+                       'block_timestamp_ms': int(self.when.timestamp() * 1000),
                        'updated_at': self.when.isoformat()}
-        self.block = {'block': {'height': 100, 'hash': self.hash}}
+        self.block = {'block': {'height': 100, 'hash': self.hash,
+                                'timestamp_ms': int(self.when.timestamp() * 1000)}}
         self.calls = []
 
     def read(self, url, method, params):
@@ -151,6 +153,8 @@ class PublicReferenceTest(unittest.TestCase):
         result = self.compare()
         self.assertTrue(result['matches'])
         self.assertEqual(result['common_height'], 100)
+        self.assertEqual(result['reference_block_age_seconds'], 0)
+        self.assertEqual(result['common_block_age_seconds'], 0)
         self.assertEqual(self.calls, [('chain_getBlockHash', [100])] * 2)
         self.node['height'] = 103
         self.assertEqual(self.compare()['height_difference'], 3)
@@ -170,6 +174,39 @@ class PublicReferenceTest(unittest.TestCase):
                 self.status = dict(original, **{name: value})
                 with self.assertRaises(ValueError):
                     self.compare()
+
+    def test_fresh_status_does_not_hide_a_stalled_chain(self):
+        self.status['block_timestamp_ms'] -= (probe.MAX_TIP_IDLE + 1) * 1000
+        with self.assertRaisesRegex(ValueError, 'latest block is .* seconds old'):
+            self.compare()
+        self.status['syncing'] = True
+        with self.assertRaisesRegex(ValueError, 'reports syncing; latest block is'):
+            self.compare()
+
+    def test_syncing_and_network_identity_have_distinct_diagnostics(self):
+        self.status['syncing'] = True
+        with self.assertRaisesRegex(ValueError, 'Public explorer reports syncing'):
+            self.compare()
+        self.status['network'] = 'wrong'
+        with self.assertRaisesRegex(ValueError, 'wrong network'):
+            self.compare()
+
+    def test_block_timestamps_must_be_valid_fresh_and_consistent(self):
+        original = self.status['block_timestamp_ms']
+        for value in (None, True, -1, str(original), original + 121_000):
+            with self.subTest(value=value):
+                self.status['block_timestamp_ms'] = value
+                with self.assertRaises(ValueError):
+                    self.compare()
+        self.status['block_timestamp_ms'] = original
+        self.block['block']['timestamp_ms'] = original - 1
+        with self.assertRaisesRegex(ValueError, 'timestamp changed'):
+            self.compare()
+        self.node['height'] = 99
+        self.block['block']['height'] = 99
+        self.block['block']['timestamp_ms'] = original - (probe.MAX_TIP_IDLE + 1) * 1000
+        with self.assertRaisesRegex(ValueError, 'Common block timestamp'):
+            self.compare()
 
     def test_large_gap_fork_and_inconsistent_explorer_are_rejected(self):
         self.node['height'] = 87

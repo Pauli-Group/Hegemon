@@ -112,8 +112,14 @@ class FakeRehearsal:
 
     def patches(self):
         node = {'height': 101, 'chain_id': '0x' + self.chain.hex()}
+        def checked(path, expected=None):
+            digest = 'ab' * 32
+            if expected is not None and expected != digest:
+                raise ValueError('Wallet executable changed since rehearsal initialization')
+            return rehearsal.hgn.CheckedBinary(Path(path), digest)
         return [patch.object(rehearsal, '_actors', return_value=self.actors),
                 patch.object(rehearsal, '_wallet', side_effect=self.wallet),
+                patch.object(rehearsal.hgn, 'check_binary', side_effect=checked),
                 patch.object(rehearsal.hgn, 'ready', return_value=(node, {'matches': True})),
                 patch.object(rehearsal.hgn, 'confirmed_action', side_effect=self.confirmed),
                 patch.object(rehearsal, 'verify_network'),
@@ -184,6 +190,15 @@ class PublicHegemonEthRehearsalTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Uncertain action'):
                 self.advance()
         self.assertEqual(rehearsal._state(self.root / 'hegemon-eth')['phase'], 'hgn_lock_prepare_inflight')
+
+    def test_changed_wallet_binary_stops_before_any_wallet_action(self):
+        self.init()
+        count = len(self.fake.calls)
+        with patch.object(rehearsal.hgn, 'check_binary', side_effect=ValueError('wallet changed')):
+            with self.assertRaisesRegex(ValueError, 'wallet changed'):
+                self.advance()
+        self.assertEqual(len(self.fake.calls), count)
+        self.assertEqual(rehearsal._state(self.root / 'hegemon-eth')['phase'], 'created')
 
     def test_lost_ethereum_submission_is_not_retried(self):
         self.init()

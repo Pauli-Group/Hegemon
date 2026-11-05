@@ -31,6 +31,9 @@ counts and fixed testnet time margins are not finality or production safety.
 - [x] (2026-11-05 00:03Z) Implemented and synthetically tested the staged
   Ethereum-first HGN/ETH workflow, including refund material, uncertain-action
   refusal and explicit testnet timing limits. Refund execution is manual.
+- [x] (2026-11-05 01:00Z) Corrected the incompatible executable requirement:
+  the official v0.11.2 binary lacks the branch's `verify-htlc` command. The
+  runner now checks a trusted branch build's capability and pins its digest.
 - [ ] Run the funded rehearsal on the operator's computer when available, and
   record only public receipts and measured proof time and peak memory.
 - [ ] Implement and independently test the Hegemon-first observer binding and
@@ -48,6 +51,9 @@ must not authorize the other leg. Ethereum-first disclosure avoids using it.
 The wallet's refund import binds its handoff to the exact canonical lock
 statement and note occurrence. Importing it before verifying Bob's view gives
 Alice an authenticated recovery record even if Bob's verification fails.
+The earlier runner pinned the official release executable while invoking a
+verification command added only in this branch. No live rehearsal was started;
+the corrected runner requires a branch build and checks it before wallet use.
 
 ## Decision Log
 
@@ -62,6 +68,11 @@ Alice an authenticated recovery record even if Bob's verification fails.
   confirmed claim before claiming HGN. Rationale: this avoids treating the
   incomplete Hegemon observer as proof of a particular note's spend.
   Date/Author: 2026-11-04 / Codex.
+- Decision: require an operator-trusted branch-built `private-spend` with
+  `verify-htlc`, and pin its digest when the rehearsal starts. Rationale: the
+  official v0.11.2 executable cannot perform the necessary verification and a
+  locally recorded digest prevents accidental replacement, but proves no build
+  provenance. Date/Author: 2026-11-05 / Codex.
 
 ## Outcomes & Retrospective
 
@@ -74,8 +85,8 @@ remains manual. Existing public Bitcoin, Ethereum and Cardano results are in
 ## Context and Orientation
 
 `scripts/probe_hegemon_testnet.py` pins the release manifest, network, wallet
-methods and, optionally, a trusted recent public explorer tip. The separately
-packaged `private-spend` 0.11.2 wallet syncs against the operator's loopback
+methods and, optionally, a trusted recent public explorer tip. The branch-built
+`private-spend` 0.11.2 wallet syncs against the operator's loopback
 node, keeps HGN notes and prepared actions in encrypted wallet files and can
 prepare, export, submit, verify or refund an HTLC. Its prompts require a
 private terminal; its `status` output includes private note positions and must
@@ -135,10 +146,13 @@ resident memory when possible; record if a platform cannot measure them.
 
 ## Interfaces and Dependencies
 
-Use the existing v0.11.2 `private-spend` executable, the frozen manifest and
+Use a trusted branch-built v0.11.2 `private-spend` executable, the frozen manifest and
 release identity, and existing Python public-testnet utilities. The new runner
 must run on the operator's machine and never request private keys through chat.
 The public Hegemon observer remains a separate experimental component.
 
 Revision 2026-11-05: recorded the tested adapter and Ethereum-first driver;
 actual public Hegemon validation and automated refunds remain outstanding.
+
+Revision 2026-11-05: replaced the incompatible official executable requirement
+with a source-build capability check and per-rehearsal digest pin.

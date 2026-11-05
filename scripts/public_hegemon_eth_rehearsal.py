@@ -156,6 +156,7 @@ def _ethereum_funds(actors):
 
 def _initialize(root, binary, url):
     root = _directory(root)
+    binary = hgn.check_binary(binary)
     node, _ = hgn.ready(url)
     actors = _actors(root)
     _check_hgn_identity(root, binary, url, actors)
@@ -179,6 +180,7 @@ def _initialize(root, binary, url):
                  'alice_initial_htlc_positions': [p for p, _ in hgn.notes(alice, 'htlc')],
                  'hgn_amount_atoms': HGN_AMOUNT, 'hgn_fee_atoms': HGN_FEE,
                  'eth_amount_wei': str(ETH_AMOUNT), 'initial_hgn_height': node['height'],
+                 'wallet_binary_sha256': binary.sha256,
                  'proofs': {}}
         _save(work, state, True)
     finally:
@@ -267,6 +269,10 @@ def _advance(root, binary, url):
     root = _directory(root)
     work = _directory(root / 'hegemon-eth')
     state = _state(work)
+    expected_binary = state.get('wallet_binary_sha256')
+    if not isinstance(expected_binary, str) or not re.fullmatch(r'[0-9a-f]{64}', expected_binary):
+        raise ValueError('Saved wallet executable digest is absent or invalid')
+    binary = hgn.check_binary(binary, expected_binary)
     if state.get('actors') != _actors(root):
         raise ValueError('Rehearsal participant identities changed')
     phase = state.get('phase')
@@ -461,7 +467,8 @@ def main():
         with _locked(args.directory) as root:
             state = _state(_directory(root / 'hegemon-eth'))
             allowed = ('phase', 'hashlock', 'hgn_lock_action_id', 'hgn_lock_block_height',
-                       'hgn_claim_action_id', 'hgn_claim_block_height', 'eth_lock', 'eth_claim', 'proofs')
+                       'hgn_claim_action_id', 'hgn_claim_block_height', 'eth_lock', 'eth_claim',
+                       'wallet_binary_sha256', 'proofs')
             result = {key: state[key] for key in allowed if key in state}
     print(json.dumps(result, indent=2))
 

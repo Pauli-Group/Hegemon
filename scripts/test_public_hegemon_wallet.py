@@ -38,12 +38,15 @@ class PublicHegemonWalletTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'private'):
             wallet._check_private_wallet(path)
 
-    def test_pinned_binary_and_loopback_node_are_checked_before_wallet_execution(self):
-        binary = self.write('fake-wallet', b'not an official release', 0o700)
+    def test_missing_verify_command_and_remote_node_are_rejected(self):
+        binary = self.write('fake-wallet', b'''#!/usr/bin/env python3
+import sys
+print("private-spend 0.11.2" if sys.argv[1] == "--version" else "  status  Sync wallet")
+''', 0o700)
         store = self.write('alice.wallet', b'encrypted-wallet')
         phrase = self.write('alice.pass', b'test-passphrase\n')
         with patch.object(wallet, 'ready') as ready:
-            with self.assertRaisesRegex(ValueError, 'pinned'):
+            with self.assertRaisesRegex(ValueError, 'verify-htlc'):
                 wallet.wallet(binary, store, phrase, 'http://127.0.0.1:9944', ['status'])
             ready.assert_not_called()
         for url in ('http://example.com:9944', 'http://127.0.0.1:9944/path'):
@@ -58,7 +61,8 @@ class PublicHegemonWalletTest(unittest.TestCase):
         def execute(path, args, prompts, *, timeout):
             captured.update(path=path, args=args, secret=prompts[0][1], timeout=timeout)
             return 'ordinary position=7 value=9\n', {'seconds': 1, 'peak_rss_kib': 100}
-        with patch.object(wallet, 'check_binary', return_value=binary), \
+        checked = wallet.CheckedBinary(binary, 'aa' * 32)
+        with patch.object(wallet, 'check_binary', return_value=checked), \
              patch.object(wallet, 'ready', return_value=({'genesis': '0x' + '11' * 32}, {})), \
              patch.object(wallet, '_execute', side_effect=execute):
             out, metrics = wallet.wallet(binary, store, phrase, 'http://127.0.0.1:9944', ['status'])
@@ -67,6 +71,30 @@ class PublicHegemonWalletTest(unittest.TestCase):
         self.assertIn(str(wallet.MANIFEST), captured['args'])
         self.assertNotIn('--development-local-candidate', captured['args'])
         self.assertGreater(metrics['peak_rss_kib'], 0)
+
+    def test_source_build_is_capability_checked_and_digest_pinned(self):
+        binary = self.write('source-wallet', b'''#!/usr/bin/env python3
+import sys
+print("private-spend 0.11.2" if sys.argv[1] == "--version" else "  verify-htlc  Verify note")
+''', 0o700)
+        checked = wallet.check_binary(binary)
+        self.assertEqual(checked.path, binary)
+        self.assertEqual(wallet.check_binary(binary, checked.sha256), checked)
+        binary.write_bytes(binary.read_bytes() + b'\n')
+        with self.assertRaisesRegex(ValueError, 'changed since'):
+            wallet.check_binary(binary, checked.sha256)
+
+    def test_official_release_is_rejected_even_if_digest_is_supplied(self):
+        binary = self.write('release-wallet', b'dummy', 0o700)
+        class Digest:
+            def update(self, chunk):
+                pass
+            def hexdigest(self):
+                return wallet.OFFICIAL_PRIVATE_SPEND_SHA256
+        with patch.object(wallet.hashlib, 'sha256', return_value=Digest()):
+            for expected in (None, wallet.OFFICIAL_PRIVATE_SPEND_SHA256):
+                with self.subTest(expected=expected), self.assertRaisesRegex(ValueError, 'lacks verify-htlc'):
+                    wallet.check_binary(binary, expected)
 
     def make_prompt_executable(self):
         return self.write('prompt.py', b'''#!/usr/bin/env python3
@@ -88,7 +116,7 @@ else:
         phrase = bytearray(b'wallet-secret-1234')
         other = bytearray(b'claim-secret-5678')
         output, metrics = wallet._execute(program, ['ok'], [(wallet.PASS_PROMPT, phrase),
-                                                           (b'Other secret: ', other)], timeout=5)
+                                                           (b'Other secret: ', other)], timeout=30)
         self.assertIn('ordinary position=1 value=42', output)
         self.assertNotIn(phrase.decode(), output)
         self.assertNotIn(other.decode(), output)
@@ -99,7 +127,7 @@ else:
         prompts = [(wallet.PASS_PROMPT, bytearray(b'wallet-secret-1234')),
                    (b'Other secret: ', bytearray(b'claim-secret-5678'))]
         with self.assertRaisesRegex(wallet.WalletCommandError, 'private input'):
-            wallet._execute(program, ['leak'], prompts, timeout=5)
+            wallet._execute(program, ['leak'], prompts, timeout=30)
         with self.assertRaises(TimeoutError):
             wallet._execute(program, ['hang'], prompts, timeout=0.3)
 

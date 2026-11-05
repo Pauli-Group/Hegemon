@@ -16,14 +16,15 @@ import stat
 import subprocess
 import termios
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from check_native_asset_lifecycle import canonical_body
 from probe_hegemon_testnet import MANIFEST, compare_public_tip, endpoint, probe, rpc
 
 
-# The public release's Linux x86_64 executable, verified against its release checksum.
-PRIVATE_SPEND_SHA256 = '389eb1a09e943f7b56b68cce6da5806b8566bd54e248162f19bb38f6da15243e'
+# The official release lacks the branch's verify-htlc subcommand.
+OFFICIAL_PRIVATE_SPEND_SHA256 = '389eb1a09e943f7b56b68cce6da5806b8566bd54e248162f19bb38f6da15243e'
 PASS_PROMPT = b'Encrypted wallet passphrase: '
 MAX_OUTPUT = 2 * 1024 * 1024
 MAX_ACTION = 10 * 1024 * 1024
@@ -35,6 +36,12 @@ COMMANDS = frozenset(('status', 'address', 'verify-htlc', 'lock', 'import-refund
 
 class WalletCommandError(RuntimeError):
     """A local wallet operation failed; its private output is not exposed."""
+
+
+@dataclass(frozen=True)
+class CheckedBinary:
+    path: Path
+    sha256: str
 
 
 def _private_read(path, limit):
@@ -75,7 +82,12 @@ def _password(path):
     return secret
 
 
-def check_binary(path):
+def check_binary(path, expected_sha256=None):
+    """Pin an operator-trusted branch build and check required CLI support.
+
+    The digest prevents accidental changes between steps; it does not prove
+    where a binary came from. The operator must build it from reviewed source.
+    """
     path = Path(path)
     if path.is_symlink():
         raise ValueError('Wallet executable cannot be a symlink')
@@ -86,9 +98,29 @@ def check_binary(path):
     with path.open('rb') as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b''):
             digest.update(chunk)
-    if digest.hexdigest() != PRIVATE_SPEND_SHA256:
-        raise ValueError('Wallet executable does not match the pinned v0.11.2 Linux release')
-    return path
+    actual = digest.hexdigest()
+    if actual == OFFICIAL_PRIVATE_SPEND_SHA256:
+        raise ValueError('Official v0.11.2 wallet lacks verify-htlc; build private-spend from this branch')
+    if expected_sha256 is not None:
+        if not isinstance(expected_sha256, str) or not re.fullmatch(r'[0-9a-f]{64}', expected_sha256):
+            raise ValueError('Invalid saved wallet executable digest')
+        if actual != expected_sha256:
+            raise ValueError('Wallet executable changed since rehearsal initialization')
+    else:
+        try:
+            version = subprocess.run([str(path), '--version'], stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     check=True, timeout=15).stdout
+            help_text = subprocess.run([str(path), '--help'], stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       check=True, timeout=15).stdout
+        except (OSError, subprocess.SubprocessError) as error:
+            raise ValueError('Could not inspect the source-built wallet executable') from error
+        if (len(version) > 4096 or version.strip() != b'private-spend 0.11.2'
+                or len(help_text) > 65536
+                or not re.search(rb'(?m)^\s+verify-htlc\s', help_text)):
+            raise ValueError('Wallet must be a v0.11.2 branch build with verify-htlc')
+    return CheckedBinary(path, actual)
 
 
 def ready(url):
@@ -204,14 +236,17 @@ def wallet(binary, wallet_path, passphrase_path, url, command, *, extra_prompts=
             or any(not isinstance(x, (str, Path)) for x in command)
             or '--development-local-candidate' in command):
         raise ValueError('Unsupported public Hegemon wallet command')
-    binary = check_binary(binary)
+    if isinstance(binary, CheckedBinary):
+        binary = check_binary(binary.path, binary.sha256)
+    else:
+        binary = check_binary(binary)
     _check_private_wallet(wallet_path)
     node, _ = ready(url)
     secret = _password(passphrase_path)
     try:
         args = ['--wallet', str(wallet_path), '--manifest', str(MANIFEST),
                 '--genesis', node['genesis'], '--rpc', endpoint(url), *command]
-        return _execute(binary, args, [(PASS_PROMPT, secret), *extra_prompts], timeout=timeout)
+        return _execute(binary.path, args, [(PASS_PROMPT, secret), *extra_prompts], timeout=timeout)
     finally:
         secret[:] = b'\0' * len(secret)
 

@@ -21,12 +21,17 @@ observation, not a light client or independent proof of consensus.
   handling, while preserving offline probe behavior.
 - [x] (2026-11-04 17:50Z) Exercised the explorer request with a synthetic local RPC view and documented
   the result and limitations in `DESIGN.md` and `METHODS.md`.
+- [x] (2026-11-05 00:57Z) Distinguished syncing from wrong-network failures,
+  and rejected old or inconsistent tip and common-block timestamps. Tested
+  the stalled-chain case with synthetic fixtures and current explorer data.
 
 ## Surprises & Discoveries
 
 The `system_health` sync flag and peer count are node-local observations. In the
 reported case both looked healthy even though the public tip was 812 blocks
 ahead, so they must not alone establish current public-testnet readiness.
+On 2026-11-05 the explorer was refreshing its status while its tip remained at
+height 9831 for over an hour. A fresh status update is not a recent block.
 
 ## Decision Log
 
@@ -42,13 +47,19 @@ ahead, so they must not alone establish current public-testnet readiness.
   local RPC. Fail closed if the requested comparison cannot be completed.
   Rationale: The check must not submit transactions or expose wallet secrets.
   Date/Author: 2026-11-04 / Codex.
+- Decision: require both the trusted explorer tip and the compared common block
+  to have timestamps within 20 minutes, with a bounded future allowance.
+  Rationale: a freshly polled but stalled chain is unsuitable for timed swap
+  tests. The threshold can reject a slow healthy chain and relies on the local
+  clock and reported block timestamps. Date/Author: 2026-11-05 / Codex.
 
 ## Outcomes & Retrospective
 
-The optional check is implemented and the probe suite passed 16 tests. A live
-public explorer snapshot was compared with a synthetic local RPC view; no real
-Hegemon node was accessed from this workspace. The operator's real node and a
-funded public-testnet swap still require separate validation.
+The optional check is implemented and the probe suite passed 19 tests. Current
+public explorer data rejected the reported syncing and hour-old tip, even when
+the syncing flag was synthetically cleared. No real Hegemon node was accessed
+from this workspace. The operator's node and a funded public-testnet swap still
+require separate validation.
 
 ## Context and Orientation
 
@@ -100,6 +111,8 @@ weaken the check or change the node. No wallet or node data are modified.
 
 The live public-explorer format check reported a matching synthetic common
 height of 9524 on `pre-mainnet-v0.11`; no actual local node was represented.
+The subsequent live format check observed height 9831, reported syncing, and
+rejected a block more than 3,900 seconds old. These are trusted explorer data.
 
 ## Interfaces and Dependencies
 
@@ -107,3 +120,6 @@ Use Python's standard library. Keep `probe(url, read=...)` compatible. Add a
 public-reference comparison callable with injectable reader, fetcher and clock
 for deterministic tests; add one explicit probe CLI flag. The HTTPS reader uses
 the environment's configured proxy and standard certificate verification.
+
+Revision 2026-11-05: added the block timestamp liveness gate after the public
+explorer returned freshly updated status for an hour-old block.
