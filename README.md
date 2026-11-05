@@ -29,6 +29,11 @@ and encrypted claim/donation builders are implemented. Real candidate proofs
 verify in wallet/account tests; native admission, persistence and two-node
 qualification remain in progress.
 
+Read-only [explorer APIs](docs/PROTOCOL_TREASURY_EXPLORER_API.md) now describe
+canonical public balances, reward release buckets, genesis/supply and governance
+activity. They report unavailable state until canonical account publication is
+integrated. Existing explorer UI/indexer work is paused pending its source location.
+
 The treasury keeps one fixed protocol identity and address. A certified hard
 fork changes only its signer policy and generation; balances, pending epochs
 and claim sequence stay in place. Ordinary accounts owned by either committee

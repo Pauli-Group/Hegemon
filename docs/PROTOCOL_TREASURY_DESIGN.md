@@ -287,8 +287,8 @@ credits and sequences together and can make an orphaned claim eligible again.
 ## Genesis allocation and the issuance budget
 
 Genesis specifies an optional sorted distribution of distinct policy identifiers
-and positive integer balances. A treasury row must identify the active treasury
-policy; other rows initialize ordinary accounts. Reject duplicates, invalid
+and positive integer balances. A treasury row names the fixed protocol treasury
+identity; a committee policy hash names its separate ordinary account. Reject duplicates, invalid
 amounts, overflow and totals above MAX_SUPPLY. Empty is canonical for no
 allocation. Balances begin available with sequence zero and no reward-epoch
 delay. Defaults allocate nothing to anyone, including the treasury. Development
@@ -444,3 +444,10 @@ identifiers. The reserved treasury identifier hashes the current-committee
 lookup policy, not the committee keys; it is network-scoped by address payload
 and chain/genesis authorization. Genesis allocations may name that fixed pot.
 All epoch, supply, donation, quorum and no-general-transfer rules are unchanged.
+
+Explorer extension (2026-11-05 UTC): the read-only
+[explorer API contract](PROTOCOL_TREASURY_EXPLORER_API.md) covers canonical
+balances, epoch availability, supply/genesis and public governance/activity.
+Unavailable state is distinct from zero balances. Actual successor activation
+remains open work, and the user paused existing explorer UI/indexer changes
+until its separate source location is supplied.

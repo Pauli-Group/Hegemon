@@ -620,6 +620,7 @@ mod tests {
         .unwrap();
         action.tx_hash = pending_action_hash(&action);
         let mut state = NativeState {
+            reward_accounts: None,
             best: genesis_meta(0x207f_ffff).unwrap(),
             header_mmr_peaks: Vec::new(),
             pending_actions: std::collections::BTreeMap::new(),

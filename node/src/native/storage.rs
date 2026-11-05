@@ -2197,6 +2197,7 @@ pub(crate) fn build_validated_startup_state_with_limits_and_source(
     source: Option<native_proof_binding::NativeProofBinding>,
 ) -> Result<NativeState> {
     let mut state = NativeState {
+        reward_accounts: None,
         best,
         header_mmr_peaks,
         pending_actions: BTreeMap::new(),

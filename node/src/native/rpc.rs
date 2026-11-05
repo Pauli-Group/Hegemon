@@ -271,6 +271,10 @@ pub(crate) fn dispatch_rpc_method(
         ));
     }
 
+    if reward_accounts::rpc::METHODS.contains(&method) {
+        return reward_accounts::rpc::dispatch(node, method, params);
+    }
+
     if let Some(recovery) = controlled_asset_rpc_route(method) {
         node.require_development_controlled_asset_route(recovery)?;
     }

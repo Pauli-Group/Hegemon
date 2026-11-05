@@ -2,6 +2,8 @@
 //! grant proof authority. A source-verified block planner must bind both account
 //! and note roots before installing a journal in the shared canonical transaction.
 pub(crate) mod profile;
+pub(crate) mod read_model;
+pub(crate) mod rpc;
 pub(crate) mod wire;
 
 use anyhow::{anyhow, ensure, Context, Result};

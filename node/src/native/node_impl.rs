@@ -6530,6 +6530,7 @@ impl NativeNode {
                 );
             }
             NativeState {
+                reward_accounts: state.reward_accounts.clone(),
                 best: state.best.clone(),
                 header_mmr_peaks: state.header_mmr_peaks.clone(),
                 pending_actions: BTreeMap::new(),
@@ -6872,6 +6873,7 @@ impl NativeNode {
 
     fn canonical_state_snapshot(state: &NativeState) -> NativeState {
         NativeState {
+            reward_accounts: state.reward_accounts.clone(),
             best: state.best.clone(),
             header_mmr_peaks: state.header_mmr_peaks.clone(),
             pending_actions: BTreeMap::new(),
@@ -7201,6 +7203,7 @@ impl NativeNode {
         let (parent_state, branch_checkpoint_rows) = if parent.hash == snapshot.best.hash {
             (
                 NativeState {
+                    reward_accounts: snapshot.reward_accounts.clone(),
                     best: snapshot.best.clone(),
                     header_mmr_peaks: snapshot.header_mmr_peaks.clone(),
                     pending_actions: BTreeMap::new(),
@@ -8900,6 +8903,7 @@ impl NativeNode {
 
     fn replay_state_from_genesis(genesis: NativeBlockMeta) -> NativeState {
         NativeState {
+            reward_accounts: None,
             header_mmr_peaks: header_mmr_peaks_from_hashes(&[genesis.hash]),
             best: genesis,
             pending_actions: BTreeMap::new(),

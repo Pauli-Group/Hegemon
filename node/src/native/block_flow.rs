@@ -1746,6 +1746,7 @@ fn revalidate_pending_actions_with_limits(
     max_pending_action_bytes: usize,
 ) -> BTreeMap<ActionId48, PendingAction> {
     let mut staged_state = NativeState {
+        reward_accounts: canonical_state.reward_accounts.clone(),
         best: canonical_state.best.clone(),
         header_mmr_peaks: canonical_state.header_mmr_peaks.clone(),
         pending_actions: BTreeMap::new(),

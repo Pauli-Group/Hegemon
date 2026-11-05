@@ -4370,6 +4370,9 @@ pub(crate) struct NativePagination {
 
 #[derive(Clone, Debug)]
 pub(crate) struct NativeState {
+    /// Installed only by canonical account-aware block publication. RPC never
+    /// initializes or accepts a caller-supplied replacement for this ledger.
+    reward_accounts: Option<protocol_reward_accounts::RewardAccountLedger>,
     best: NativeBlockMeta,
     header_mmr_peaks: Vec<Hash32>,
     pending_actions: BTreeMap<ActionId48, PendingAction>,

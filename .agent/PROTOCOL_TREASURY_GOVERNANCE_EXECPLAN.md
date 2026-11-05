@@ -82,6 +82,13 @@ chain reset remain separate later operator actions.
   and quorum combination commands with explicit chain/genesis checks.
 - [ ] Integrate treasury fork adoption, offline workflow, RPC/claims and
   development tooling with running nodes.
+- [x] (2026-11-05 UTC) Implement read-only explorer projections and four safe
+  RPCs for status/accounts, genesis and canonical public activity; document the
+  [API contract](../docs/PROTOCOL_TREASURY_EXPLORER_API.md). Active data still
+  requires the outstanding canonical account integration.
+- [ ] Paused by user pending Pierre's source location: existing explorer UI and
+  indexer integration, followed by canonical reorg qualification, as specified
+  in the [explorer plan](PROTOCOL_TREASURY_EXPLORER_EXECPLAN.md).
 - [ ] Run property, adversarial, real-proof and two-node qualification.
 - [ ] Publish tested runtime implementation on this branch.
 
@@ -445,6 +452,10 @@ T=floor(S/5), credit treasury T and miner S-T+F to the earning epoch. Zero-subsi
 blocks still execute this transition. Ordinary donations become available only
 in the next block. Current-block fees/rewards cannot fund a claim in that block.
 
+Install the verified ledger in NativeState.reward_accounts in the same canonical
+publication as the block and notes. Read-only explorer APIs require this state
+and matching committed roots; configuration or an RPC cannot create it.
+
 Extend active NativeState, authenticated commitments, checkpoints, atomic sled
 publication, supply digest, mining templates, mempool simulation, startup replay,
 live import, historical/fork replay and sync through one transition routine.
@@ -489,6 +500,11 @@ rotate signers. Admission on software without the exact installed row rejects
 immediately. Broader rule/proof upgrades require a versioned supported-source
 catalog and historical replay tests; do not claim that the present exact-source
 Development pins already provide that upgrade mechanism.
+
+The companion [explorer plan](PROTOCOL_TREASURY_EXPLORER_EXECPLAN.md) specifies
+read-only API and explorer implementation, including unavailable-state handling,
+exact atom formatting, fixed-treasury history and canonical index rollback.
+Implement and test those views as part of this milestone.
 
 Expose canonical height/hash, supply breakdown, reward epoch, account policies,
 sequences and available/pending balances with release heights through read-only
@@ -929,3 +945,25 @@ choice, supersede the earlier destination-reservation design explicitly, update
 offline review and qualify the changed proof source. Add tested v2 manifest data
 without enabling incomplete runtime dispatch. Keep the compiled signer-schedule
 hook and actual node orchestration in the outstanding implementation milestones.
+
+Explorer scope revision (2026-11-05 UTC): the user explicitly requested all
+treasury, reward-account, genesis/supply and governance explorer views and their
+node APIs. The companion explorer ExecPlan records implementation details and
+end-to-end acceptance; this work does not authorize deployment or a chain reset.
+
+Explorer location update (2026-11-05 UTC): the user contacted Pierre for the
+existing explorer source and asked to pause that UI work pending his reply.
+Continue the node read APIs, tests and integration specification. The backend
+contract is docs/PROTOCOL_TREASURY_EXPLORER_API.md; native account publication
+remains necessary before active balances can be served. No explorer deployment
+or replacement application is included.
+
+Explorer backend qualification (2026-11-05 UTC): four safe read RPCs and canonical
+read models are implemented. Nineteen account tests, thirteen network-profile
+regressions and one safe-policy test pass, with default node cargo check and
+scoped formatting/whitespace checks. The production HTTP path on a real legacy
+node returns unavailable data and changes no database rows. Root field words,
+heights, epochs, amounts and sequences are encoded without JavaScript integer
+rounding. Active account/note publication, actual chain qualification and the
+user-deferred existing explorer UI/indexer remain outstanding. The companion
+explorer plan contains exact commands and acceptance boundaries.

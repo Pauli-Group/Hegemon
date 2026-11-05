@@ -22,6 +22,11 @@ unchanged. Shared account journals and the native same-tree
 storage adapter now pass atomic-abort, disk-restart and boundary-suffix tests.
 They are not yet wired into native block admission or synchronization.
 
+Read-only [explorer APIs](docs/PROTOCOL_TREASURY_EXPLORER_API.md) now describe
+canonical public balances, reward release buckets, genesis/supply and governance
+activity. They report unavailable state until canonical account publication is
+integrated. Existing explorer UI/indexer work is paused pending its source location.
+
 The treasury keeps one fixed protocol identity and address. A certified hard
 fork changes only its signer policy and generation; balances, pending epochs
 and claim sequence stay in place. Ordinary accounts owned by either committee

@@ -38708,6 +38708,7 @@ fn persist_test_pow_chain(
 fn test_state(best: NativeBlockMeta) -> NativeState {
     let header_mmr_peaks = header_mmr_peaks_from_hashes(&[best.hash]);
     NativeState {
+        reward_accounts: None,
         best,
         header_mmr_peaks,
         pending_actions: BTreeMap::new(),
@@ -40536,4 +40537,63 @@ fn lean_generated_genesis_monetary_policy_vectors_match_production() {
             case["expected_genesis_subsidy"].as_str().expect("subsidy")
         );
     }
+}
+
+#[test]
+fn reward_accounts_explorer_legacy_rpc_unavailable_never_fabricates_zero_accounts() {
+    let dir = tempfile::tempdir().unwrap();
+    let node =
+        NativeNode::open(test_config(dir.path(), NATIVE_DEV_POW_BITS, "safe", false)).unwrap();
+    let before = snapshot_native_database_trees(&node.db);
+    let status =
+        rpc::dispatch_rpc_method(&node, "hegemon_rewardAccountsStatus", json!([])).unwrap();
+    assert_eq!(status["configured"], false);
+    assert_eq!(status["active"], false);
+    for key in ["supply", "treasury", "governance"] {
+        assert!(status[key].is_null());
+    }
+    let methods = rpc::dispatch_rpc_method(&node, "rpc_methods", json!([])).unwrap();
+    for method in reward_accounts::rpc::METHODS {
+        assert!(methods["methods"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(method)));
+    }
+    assert!(rpc::dispatch_rpc_method(
+        &node,
+        "hegemon_rewardAccount",
+        json!([{"address":"heg_test1invalid"}])
+    )
+    .is_err());
+    assert!(rpc::dispatch_rpc_method(&node, "hegemon_rewardAccountsGenesis", json!([])).is_err());
+    assert!(rpc::dispatch_rpc_method(&node, "hegemon_rewardAccountsActivity", json!([])).is_err());
+    assert!(rpc::dispatch_rpc_method(
+        &node,
+        "hegemon_rewardAccountsStatus",
+        json!([{"at":"ff".repeat(32)}])
+    )
+    .is_err());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let response = rpc::rpc_handler(
+            State(Arc::clone(&node)),
+            rpc_http_json_request(json!({
+                "jsonrpc":"2.0","id":42,"method":"hegemon_rewardAccountsStatus","params":[]
+            })),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["id"], 42);
+        assert_eq!(body["result"]["active"], false);
+        assert!(body["result"]["treasury"].is_null());
+    });
+    assert!(node.state.read().reward_accounts.is_none());
+    assert_eq!(before, snapshot_native_database_trees(&node.db));
 }
