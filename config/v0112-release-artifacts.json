@@ -4,15 +4,15 @@
   "network_release": "v0.11",
   "software_release": "v0.11.2",
   "software_version": "0.11.2",
-  "release_source_head": "d86cb2ee898857e22a2e64a94956f39a0435679a",
-  "build_source_head": "38ecd61099cbabd83d629bdcf074e7f62e9d65cf",
-  "build_index_tree": "1e7c075c2536456341e7c399e3ff58cdee609447",
-  "source_tree_sha256": "a5843ff2f8c2fadce76f17d5b04ea69f3ffc36943fa427274152db043ad46f07",
+  "release_source_head": "0d055b910a2b03b5403fb3f16c06450a77e38ec5",
+  "build_source_head": "0d055b910a2b03b5403fb3f16c06450a77e38ec5",
+  "build_index_tree": "fc89e0b36894d4d2e281e95a28cbd0cf13ea14e5",
+  "source_tree_sha256": "dc5bbaa7f1c75bac6277d21c733b693a7dc66eee598e3135218ea8b1ab5cd3ac",
   "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
   "platform_manifests_sha256": {
-    "linux-x86_64": "233405336a66510c9ba4a1bf70f7dc69608be3abf46554a35de355eb9668ee77",
-    "macos-arm64": "091ce1ce482977121dd9d94890a86cc3a277d0b4bd4e4c281e8db4af6faa32ba",
-    "macos-x86_64": "2e9fd6d7a18ea43298da10e800b5645324f38c392dfba51b7dd7cbdfaf461aca",
-    "windows-x86_64": "90add239dcf749004f7f1dd4b04ca9ff7bc5a4f64629cb2e976f111469900ff2"
+    "linux-x86_64": "675c70d6d9ebc5b528586932c627de2b547d4fa1b51fadfb59d266af407acd0a",
+    "macos-arm64": "68250fdcbe39776e8d2c25810f8c9c6686fc45015801e9f048de3448cc5abcb7",
+    "macos-x86_64": "4387db0ee2b2224b9586a605186ac24d395a098ab49ecf8998b97bdb0b1d3760",
+    "windows-x86_64": "8e69dd6a892c8d5f021f8493f9705348ce1c6a051e040dea296d0fea957f292b"
   }
 }
