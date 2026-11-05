@@ -11,8 +11,12 @@ explicit. Bech32m account prefixes are `heg`/`heg_test`; shielded prefixes are
 `heg_shield`/`heg_shield_test`, with binary network/type validation. This proposal
 replaces rolling 120-block maturity and per-block reward notes only on the reset
 network. The shared `protocol/reward-accounts` foundation and typed wallet codec
-are implemented and unit-tested; node admission and proof integration remain
-outstanding. Current legacy behavior below remains unmodified. Track progress in
+are implemented and unit-tested. The explicit claim/donation relation and
+encrypted wallet builders generate genuine candidate proofs; shared fork
+certificates require current-quorum approval plus separate compiled adoption.
+A persistent account trie and cached epoch totals support bounded candidate
+updates. Node admission, atomic persistence and running-chain qualification
+remain outstanding. Current legacy behavior below remains unmodified. Track progress in
 [the treasury execution plan](.agent/PROTOCOL_TREASURY_GOVERNANCE_EXECPLAN.md).
 
 The controlled-asset Development integration uses the existing V8 note tree,

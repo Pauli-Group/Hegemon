@@ -32,7 +32,7 @@ fn fixture(p: &[u8]) -> Result<(), RewardAccountsError> {
         Err(RewardAccountsError::InvalidProof)
     }
 }
-fn proof() -> BoundedVec<u8, MAX_REWARD_PROOF_BYTES> {
+fn proof() -> BoundedVec<u8, MAX_REWARD_CARRIER_BYTES> {
     BoundedVec::new(b"accounting-unit-fixture".to_vec()).unwrap()
 }
 fn setup() -> (
@@ -225,4 +225,364 @@ fn reward_accounts_bad_proof_signature_context_and_replay_leave_parent_unchanged
         .unwrap();
     assert!(l.apply_block(2, id, &[action], &FixtureProofs).is_err());
     assert!(l.apply_block(3, id, &[], &FixtureProofs).is_err());
+}
+
+#[test]
+fn reward_accounts_treasury_fork_needs_certificate_and_compiled_adoption() {
+    use crypto::hash384::RulesHash48;
+    let (l, _, miner_policy, old_key, old_policy) = setup();
+    let miner = miner_policy.identifier().unwrap();
+    let successor_key = MlDsaSecretKey::generate_deterministic(b"successor treasury fixture");
+    let successor = AccountPolicy::single(&successor_key.verify_key());
+    let target = successor.identifier().unwrap();
+    let intent = TreasuryForkIntent {
+        context: l.context().clone(),
+        current_generation: 0,
+        activation_height: 5,
+        successor_rules: RulesHash48::new([27; 48]),
+        successor_policy: successor.clone(),
+    };
+    let certificate = TreasuryForkCertificate {
+        approvals: BoundedVec::new(vec![AccountApproval::sign(
+            0,
+            &old_key,
+            &intent.authorization_digest(),
+        )])
+        .unwrap(),
+        intent,
+    };
+    let action = RewardAccountAction::TreasuryFork {
+        certificate: certificate.clone(),
+    };
+    let compiled = CompiledTreasuryFork {
+        activation_height: 5,
+        successor_rules: certificate.intent.successor_rules,
+        successor_policy: target,
+    };
+    assert!(l
+        .apply_block(1, miner, std::slice::from_ref(&action), &FixtureProofs)
+        .is_err());
+    // Unadopted certificates grant neither a reservation nor a future halt.
+    let mut ordinary = l.clone();
+    for h in 1..=6 {
+        ordinary = ordinary.apply_block(h, miner, &[], &FixtureProofs).unwrap();
+    }
+    assert_eq!(ordinary.treasury(), old_policy.identifier().unwrap());
+    let scheduled = l
+        .apply_block_with_fork(
+            1,
+            miner,
+            std::slice::from_ref(&action),
+            &FixtureProofs,
+            Some(&compiled),
+        )
+        .unwrap();
+    assert!(scheduled
+        .apply_block(2, target, &[], &FixtureProofs)
+        .is_err());
+    assert!(scheduled
+        .apply_block(2, miner, &[action], &FixtureProofs)
+        .is_err());
+    let scheduled = (2..=4).fold(scheduled, |s, h| {
+        s.apply_block(h, miner, &[], &FixtureProofs).unwrap()
+    });
+    let root_before = scheduled.state_root();
+    assert_eq!(
+        scheduled
+            .apply_block(5, miner, &[], &FixtureProofs)
+            .unwrap_err(),
+        RewardAccountsError::InvalidTreasuryFork
+    );
+    let mut wrong = compiled.clone();
+    wrong.successor_rules = RulesHash48::new([28; 48]);
+    assert!(scheduled
+        .apply_block_with_fork(5, miner, &[], &FixtureProofs, Some(&wrong))
+        .is_err());
+    assert_eq!(scheduled.state_root(), root_before);
+    let prior = scheduled.account_at(scheduled.treasury(), 5).unwrap();
+    let activated = scheduled
+        .apply_block_with_fork(5, miner, &[], &FixtureProofs, Some(&compiled))
+        .unwrap();
+    assert_eq!(activated.treasury(), target);
+    assert_eq!(activated.policy_generation(), 1);
+    assert_eq!(
+        activated.account_at(target, 5).unwrap().available(),
+        prior.available()
+    );
+    assert!(activated.account_at(target, 5).unwrap().total().unwrap() > prior.total().unwrap());
+    assert!(activated.pending_fork().is_none());
+    let mut fresh_claim = claim(&activated, &successor_key, &successor, 1, 0, 0);
+    if let RewardAccountAction::Claim {
+        claim, approvals, ..
+    } = &mut fresh_claim
+    {
+        claim.policy_generation = 1;
+        *approvals = BoundedVec::new(vec![AccountApproval::sign(
+            0,
+            &successor_key,
+            &claim.authorization_digest(),
+        )])
+        .unwrap();
+    }
+    let spent = activated
+        .apply_block(6, miner, &[fresh_claim], &FixtureProofs)
+        .unwrap();
+    assert_eq!(spent.account_at(target, 6).unwrap().next_sequence(), 1);
+    let stale = claim(&activated, &old_key, &old_policy, 1, 0, 0);
+    assert!(activated
+        .apply_block(6, miner, &[stale], &FixtureProofs)
+        .is_err());
+    assert!(activated
+        .apply_block(6, old_policy.identifier().unwrap(), &[], &FixtureProofs)
+        .is_err());
+    let bytes = activated.encode();
+    let restored = RewardAccountLedger::decode(&mut bytes.as_slice()).unwrap();
+    restored.validate().unwrap();
+    assert_eq!(restored.state_root(), activated.state_root());
+    // Replaying the competing branch from the retained parent restores the old
+    // policy and its exact pending epoch buckets; no activation is irreversible.
+    let alternate = l.apply_block(1, miner, &[], &FixtureProofs).unwrap();
+    assert_eq!(alternate.treasury(), old_policy.identifier().unwrap());
+    assert_eq!(alternate.policy_generation(), 0);
+    assert!(alternate.pending_fork().is_none());
+}
+
+#[test]
+fn reward_accounts_fork_rejects_occupied_target_changed_quorum_and_altered_intent() {
+    let (l, _, miner_policy, old_key, _) = setup();
+    let miner = miner_policy.identifier().unwrap();
+    let next_key = MlDsaSecretKey::generate_deterministic(b"fork rejection next key");
+    let mut intent = TreasuryForkIntent {
+        context: l.context().clone(),
+        current_generation: 0,
+        activation_height: 2,
+        successor_rules: RulesHash48::new([19; 48]),
+        successor_policy: miner_policy,
+    };
+    let schedule = |i: TreasuryForkIntent, signature_for: &TreasuryForkIntent| {
+        RewardAccountAction::TreasuryFork {
+            certificate: TreasuryForkCertificate {
+                intent: i,
+                approvals: BoundedVec::new(vec![AccountApproval::sign(
+                    0,
+                    &old_key,
+                    &signature_for.authorization_digest(),
+                )])
+                .unwrap(),
+            },
+        }
+    };
+    let rejected = |i: TreasuryForkIntent, signed_for: &TreasuryForkIntent| {
+        let compiled = CompiledTreasuryFork {
+            activation_height: i.activation_height,
+            successor_rules: i.successor_rules,
+            successor_policy: i.successor_policy.identifier().unwrap(),
+        };
+        l.apply_block_with_fork(
+            1,
+            miner,
+            &[schedule(i, signed_for)],
+            &FixtureProofs,
+            Some(&compiled),
+        )
+        .is_err()
+    };
+    assert!(rejected(intent.clone(), &intent));
+    intent.successor_policy = AccountPolicy::threshold(
+        1,
+        vec![
+            account_key_hash(&next_key.verify_key()),
+            account_key_hash(&old_key.verify_key()),
+        ],
+    )
+    .unwrap();
+    assert!(rejected(intent.clone(), &intent));
+    intent.successor_policy = AccountPolicy::single(&next_key.verify_key());
+    let signed = intent.clone();
+    intent.activation_height += 1;
+    assert!(rejected(intent.clone(), &signed));
+    intent.activation_height = 1;
+    assert!(rejected(intent.clone(), &intent));
+}
+
+#[test]
+fn reward_accounts_five_of_seven_fork_activates_at_release_boundary() {
+    let keys: Vec<_> = (0..14u8)
+        .map(|i| MlDsaSecretKey::generate_deterministic(&[i + 70; 32]))
+        .collect();
+    let policy = |keys: &[MlDsaSecretKey]| {
+        AccountPolicy::threshold(
+            5,
+            keys.iter()
+                .map(|k| account_key_hash(&k.verify_key()))
+                .collect(),
+        )
+        .unwrap()
+    };
+    let old = policy(&keys[..7]);
+    let new = policy(&keys[7..]);
+    let genesis = RewardAccountsGenesis {
+        network: AddressNetwork {
+            class: NetworkClass::Testnet,
+            discriminator: [8; 32],
+        },
+        reward_epoch_blocks: 1,
+        treasury_policy: old.clone(),
+        allocations: BoundedVec::default(),
+    };
+    let context = AccountChainContext {
+        chain_id: [1; 32],
+        genesis_hash: [2; 32],
+        genesis_config_hash: RulesHash48::new(genesis.commitment().unwrap()),
+    };
+    let l = RewardAccountLedger::new(genesis, context).unwrap();
+    let miner = AccountPolicyId48::new([8; 48]);
+    let intent = TreasuryForkIntent {
+        context: l.context().clone(),
+        current_generation: 0,
+        activation_height: 3,
+        successor_rules: RulesHash48::new([27; 48]),
+        successor_policy: new.clone(),
+    };
+    let approve = |policy: &AccountPolicy, keys: &[MlDsaSecretKey], digest: &[u8; 48]| {
+        let mut approvals: Vec<_> = keys
+            .iter()
+            .take(5)
+            .map(|k| {
+                let index = policy
+                    .signer_hashes()
+                    .iter()
+                    .position(|h| *h == account_key_hash(&k.verify_key()))
+                    .unwrap();
+                AccountApproval::sign(index as u8, k, digest)
+            })
+            .collect();
+        approvals.sort_by_key(|a| a.signer_index);
+        approvals
+    };
+    let approvals = approve(&old, &keys[..7], &intent.authorization_digest());
+    let mut certificate = TreasuryForkCertificate {
+        intent,
+        approvals: BoundedVec::new(approvals[..4].to_vec()).unwrap(),
+    };
+    let compiled = CompiledTreasuryFork {
+        activation_height: 3,
+        successor_rules: certificate.intent.successor_rules,
+        successor_policy: new.identifier().unwrap(),
+    };
+    assert!(l
+        .apply_block_with_fork(
+            1,
+            miner,
+            &[RewardAccountAction::TreasuryFork {
+                certificate: certificate.clone()
+            }],
+            &FixtureProofs,
+            Some(&compiled)
+        )
+        .is_err());
+    certificate.approvals = BoundedVec::new(approvals).unwrap();
+    let l = l
+        .apply_block_with_fork(
+            1,
+            miner,
+            &[RewardAccountAction::TreasuryFork {
+                certificate: certificate.clone(),
+            }],
+            &FixtureProofs,
+            Some(&compiled),
+        )
+        .unwrap();
+    let l = l.apply_block(2, miner, &[], &FixtureProofs).unwrap();
+    let recipient =
+        encode_address_bytes(AddressKind::Shielded, l.genesis().network, &[1; 32]).unwrap();
+    let claim = AccountClaim {
+        context: l.context().clone(),
+        account: new.identifier().unwrap(),
+        policy_generation: 1,
+        sequence: 0,
+        amount: 1,
+        fee: 2,
+        recipient: BoundedVec::new(recipient).unwrap(),
+        payout_binding: ProofCommitment48::new([3; 48]),
+    };
+    let action = RewardAccountAction::Claim {
+        approvals: BoundedVec::new(approve(&new, &keys[7..], &claim.authorization_digest()))
+            .unwrap(),
+        claim,
+        policy: new.clone(),
+        proof: proof(),
+    };
+    let l = l
+        .apply_block_with_fork(3, miner, &[action], &FixtureProofs, Some(&compiled))
+        .unwrap();
+    l.validate().unwrap();
+    assert_eq!(l.policy_generation(), 1);
+    assert_eq!(l.shielded_value(), 1);
+    assert_eq!(l.account_at(l.treasury(), 3).unwrap().next_sequence(), 1);
+    let snapshot = l.encode();
+    assert_eq!(
+        RewardAccountLedger::decode_exact(&snapshot, l.state_root()).unwrap(),
+        l
+    );
+    assert!(
+        RewardAccountLedger::decode_exact(&snapshot, RewardAccountsRoot48::new([7; 48])).is_err()
+    );
+    let mut suffix = snapshot;
+    suffix.push(0);
+    assert!(RewardAccountLedger::decode_exact(&suffix, l.state_root()).is_err());
+}
+
+#[test]
+fn reward_accounts_global_epoch_totals_match_independent_replay_and_boundary_forks() {
+    let (initial, _, miner, _, _) = setup();
+    let main_miner = miner.identifier().unwrap();
+    let mut chain = vec![initial.clone()];
+    let mut rewards = std::collections::BTreeMap::<u64, u64>::new();
+    for height in 1..=30 {
+        let parent = chain.last().unwrap();
+        let epoch = parent.genesis().epochs().unwrap().epoch_at(height).unwrap();
+        let subsidy = parent.genesis().issuance().unwrap().subsidy(height);
+        *rewards.entry(epoch).or_default() += subsidy;
+        let next = parent
+            .apply_block(height, main_miner, &[], &FixtureProofs)
+            .unwrap();
+        let pending: u64 = rewards
+            .iter()
+            .filter(|(e, _)| {
+                initial
+                    .genesis()
+                    .epochs()
+                    .unwrap()
+                    .release_height(**e)
+                    .unwrap()
+                    > height
+            })
+            .map(|(_, a)| *a)
+            .sum();
+        assert_eq!(next.pending_epoch_totals().values().sum::<u64>(), pending);
+        assert_eq!(next.available_total() + pending, 100 * COIN + next.issued());
+        next.validate().unwrap();
+        chain.push(next);
+    }
+    let mut replay = initial;
+    for height in 1..=30 {
+        replay = replay
+            .apply_block(height, main_miner, &[], &FixtureProofs)
+            .unwrap();
+        assert_eq!(replay.state_root(), chain[height as usize].state_root());
+    }
+    let alternate_miner = AccountPolicyId48::new([7; 48]);
+    let mut fork = chain[3].clone();
+    for height in 4..=8 {
+        fork = fork
+            .apply_block(height, alternate_miner, &[], &FixtureProofs)
+            .unwrap();
+        fork.validate().unwrap();
+    }
+    assert_ne!(fork.state_root(), chain[8].state_root());
+    assert_eq!(fork.available_total(), chain[8].available_total());
+    assert_eq!(fork.pending_epoch_totals(), chain[8].pending_epoch_totals());
+    assert_eq!(fork.issued(), chain[8].issued());
+    assert_eq!(chain[3].height(), 3);
 }

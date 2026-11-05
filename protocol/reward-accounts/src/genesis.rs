@@ -18,6 +18,7 @@ pub struct RewardAccountsGenesis {
     pub network: AddressNetwork,
     pub reward_epoch_blocks: u64,
     pub treasury_policy: AccountPolicy,
+    #[serde(default)]
     pub allocations: BoundedVec<GenesisAllocation, MAX_GENESIS_ALLOCATIONS>,
 }
 impl RewardAccountsGenesis {
@@ -58,6 +59,13 @@ impl RewardAccountsGenesis {
             [
                 REWARD_GENESIS_SCHEMA.as_bytes(),
                 REWARD_ACCOUNTS_RULES_ID,
+                &(
+                    MAX_SUPPLY,
+                    ISSUANCE_ERA_BLOCKS,
+                    TREASURY_SUBSIDY_NUMERATOR,
+                    TREASURY_SUBSIDY_DENOMINATOR,
+                )
+                    .encode(),
                 self.encode().as_slice(),
             ],
         ))

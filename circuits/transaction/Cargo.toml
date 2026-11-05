@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+zeroize = { version = "1.8", features = ["alloc"] }
+codec = { workspace = true }
 thiserror = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -22,11 +24,11 @@ num-bigint = "0.4"
 rayon = "1"
 rand_core = "0.9"
 protocol-versioning = { path = "../../protocol/versioning" }
+protocol-reward-accounts = { path = "../../protocol/reward-accounts" }
 transaction-core = { path = "../transaction-core", features = ["serde"] }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
-codec = { workspace = true }
 proptest = "1"
 protocol-shielded-pool = { path = "../../protocol/shielded-pool" }
 

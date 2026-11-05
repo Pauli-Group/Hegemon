@@ -9,10 +9,15 @@ additional coinbase delay. Shielded value plus available and pending accounts
 must equal genesis allocation plus cumulative mining issuance, within 21 million
 HGN. Network-aware Bech32m codecs check type, HRP and binary class/discriminator
 for both account and shielded addresses. Existing v4 proofs and context-free
-`shca` decoding do not establish these new methods. They remain implementation
-and qualification obligations. Shared accounting and authorization code plus the
-typed network codec now have foundation tests; fixture proof callbacks in ledger
-unit tests supply no proof-security evidence. Current legacy behavior below is
+`shca` decoding do not establish these new methods. The successor now has a distinct SMZR candidate relation: 123 public inputs,
+24 immutable source/domain binding words and exact 171,505-byte proof frames.
+Its 840-row, degree-7, packing-64 graph permits explicit public credit/debit
+only in this fresh relation. Real encrypted claims and donations verify in
+wallet/shared-ledger tests, including ordinary note recovery and 5-of-7 signing.
+The immutable source manifest includes the shared account and governance code.
+These tests supply neither running-node lifecycle evidence nor production
+proof/security authority. Fixture callbacks in pure ledger tests remain
+accounting-only. Node admission and two-node qualification remain outstanding. Current legacy behavior below is
 unchanged.
 
 Moving-chain native asset integration uses a finite Development qualification. The spend relation

@@ -41,6 +41,10 @@ pub fn relation_digest() -> [u8; 64] {
         let files: &[(&str, &[u8])] = &[
             ("private_spend.rs", include_bytes!("private_spend.rs")),
             (
+                "reward_account_spend.rs",
+                include_bytes!("reward_account_spend.rs"),
+            ),
+            (
                 "private_spend/types.rs",
                 include_bytes!("private_spend/types.rs"),
             ),

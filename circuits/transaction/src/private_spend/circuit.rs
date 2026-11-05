@@ -290,10 +290,27 @@ pub(crate) fn constrain_release_bytes(flag: Word, released: &[Word], secret: [Wo
 
 pub struct PrivateSpendAdapter {
     inner: HtlcAdapter,
+    reward_extension: Option<[u64; crate::reward_account_spend::EXTENSION_WORDS]>,
 }
 impl PrivateSpendAdapter {
     pub fn from_public(public: &PrivateSpendPublic) -> Result<Self, TransactionCircuitError> {
-        let words = public.words();
+        Self::build(public, None)
+    }
+    pub(crate) fn from_reward_public(
+        public: &crate::reward_account_spend::RewardSpendPublic,
+    ) -> Result<Self, TransactionCircuitError> {
+        public.validate()?;
+        Self::build(&public.base, Some(public.extension_words()))
+    }
+    fn build(
+        public: &PrivateSpendPublic,
+        reward_extension: Option<[u64; crate::reward_account_spend::EXTENSION_WORDS]>,
+    ) -> Result<Self, TransactionCircuitError> {
+        let base_words = public.words();
+        let mut words = base_words.to_vec();
+        if let Some(extension) = reward_extension {
+            words.extend(extension);
+        }
         if words
             .iter()
             .any(|x| *x >= hegemon_field::GOLDILOCKS_MODULUS)
@@ -308,6 +325,16 @@ impl PrivateSpendAdapter {
         }
         let scope = Scope::start();
         let p: [Word; PUBLIC_WORDS] = arr();
+        let reward: Option<[Word; crate::reward_account_spend::EXTENSION_WORDS]> =
+            reward_extension.map(|_| arr());
+        if let Some(extra) = reward {
+            boolean(extra[0]);
+            range(extra[1], 56);
+            nonzero(extra[1]);
+            for &word in &extra[2..26] {
+                range(word, 32);
+            }
+        }
         for &w in &p[..16] {
             range(w, 32);
         }
@@ -631,7 +658,30 @@ impl PrivateSpendAdapter {
         let balance_left = values[0] + values[1];
         let balance_first = outs[0][0] + outs[1][0];
         let balance_right = balance_first + p[24];
-        equal(balance_left, balance_right);
+        if let Some(extra) = reward {
+            let claim = extra[0];
+            let amount = extra[1];
+            equal(ordinary_mode, Word::ONE);
+            equal(policy_create, Word::ZERO);
+            equal(policy_spend, Word::ZERO);
+            // No HTLC secret release. Claims credit amount+fee from the public
+            // account; donations debit their explicit amount plus miner fee.
+            equal(p[77], Word::ZERO);
+            let credit = claim * (amount + p[24]);
+            let debit = (Word::ONE - claim) * amount;
+            equal(balance_left + credit, balance_right + debit);
+            for n in &ins {
+                gate(claim, n.occupied, Word::ZERO);
+            }
+            gate(claim, outs[0][0], amount);
+            gate(claim, outs[1][0], Word::ZERO);
+            gates(claim, recipients[0], extra[26..33].try_into().unwrap());
+            for j in 0..4 {
+                gate(claim, outs[0][2 + j], extra[33 + j]);
+            }
+        } else {
+            equal(balance_left, balance_right);
+        }
         // Locked value is delivered in full. Input1 funds fee/change; changing
         // the locked value allocation requires a new reviewed relation version.
         gate(unlocked, outs[0][0], values[0]);
@@ -650,16 +700,39 @@ impl PrivateSpendAdapter {
         let mut inner = HtlcAdapter::from_graph_with_public_bindings(scope.finish(), &words);
         inner.require_private_spend_packed_poseidon_schedule()?;
         inner.require_private_spend_compact_sha_schedule()?;
-        for (wire, target) in p.iter().copied().zip(words) {
-            inner.bind_public(wire, target);
+        if let Some(extra) = reward {
+            let public_wires: [Word; crate::reward_account_spend::PUBLIC_WORDS] = p
+                .into_iter()
+                .chain(extra)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap();
+            let public_values: [u64; crate::reward_account_spend::PUBLIC_WORDS] =
+                words.try_into().unwrap();
+            for (wire, target) in public_wires.iter().copied().zip(public_values) {
+                inner.bind_public(wire, target);
+            }
+            inner
+                .check_source_lowering(&public_wires, &public_values)
+                .map_err(|_| error("reward account source lowering certificate mismatch"))?;
+            // The reward route has its own explicit credit/debit equality above;
+            // the legacy arithmetic-role certificate describes only zero external
+            // value and must not be presented as a certificate for this successor.
+        } else {
+            for (wire, target) in p.iter().copied().zip(base_words) {
+                inner.bind_public(wire, target);
+            }
+            inner
+                .check_source_lowering(&p, &base_words)
+                .map_err(|_| error("private spend source lowering certificate mismatch"))?;
+            inner
+                .check_arithmetic_roles(&arithmetic_roles)
+                .map_err(|_| error("private spend arithmetic topology mismatch"))?;
         }
-        inner
-            .check_source_lowering(&p, &words)
-            .map_err(|_| error("private spend source lowering certificate mismatch"))?;
-        inner
-            .check_arithmetic_roles(&arithmetic_roles)
-            .map_err(|_| error("private spend arithmetic topology mismatch"))?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            reward_extension,
+        })
     }
     #[cfg(test)]
     pub(crate) fn adversarial_probe_indices(&self) -> Vec<usize> {
@@ -681,6 +754,9 @@ impl PrivateSpendAdapter {
         w: &PrivateSpendWitness,
     ) -> Result<Vec<u64>, TransactionCircuitError> {
         let mut inputs = p.words().to_vec();
+        if let Some(extension) = self.reward_extension {
+            inputs.extend(extension);
+        }
         inputs.extend(w.words()?);
         self.inner.evaluate(&inputs)
     }
@@ -696,7 +772,11 @@ pub fn compile(
 }
 impl SmallwoodConstraintAdapter for PrivateSpendAdapter {
     fn arithmetization(&self) -> SmallwoodArithmetization {
-        SmallwoodArithmetization::DirectPacked64NativePrivateSpendSha512Smzd
+        if self.reward_extension.is_some() {
+            SmallwoodArithmetization::DirectPacked64RewardAccountsSha512Smzr
+        } else {
+            SmallwoodArithmetization::DirectPacked64NativePrivateSpendSha512Smzd
+        }
     }
     fn row_count(&self) -> usize {
         self.inner.row_count()

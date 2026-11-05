@@ -4019,6 +4019,7 @@ dependencies = [
  "postcard",
  "proptest",
  "protocol-kernel",
+ "protocol-reward-accounts",
  "protocol-shielded-pool",
  "protocol-versioning",
  "rand_core 0.9.5",
@@ -4030,6 +4031,7 @@ dependencies = [
  "synthetic-crypto",
  "thiserror 1.0.69",
  "transaction-core",
+ "zeroize",
 ]
 
 [[package]]

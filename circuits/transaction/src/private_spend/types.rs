@@ -18,7 +18,7 @@ pub use transaction_core::bounded_policy::{Branch as PolicyBranch, Policy as Bou
 pub const ACCUMULATOR_DOMAIN: u64 = 0x5053_4143_4355_0001;
 pub const INTENT_DOMAIN: u64 = 0x5053_494e_544e_0001;
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, codec::Encode, codec::Decode)]
 pub struct PrivateSpendPublic {
     pub chain_id: [u8; 32],
     pub reference_parent_hash: [u8; 32],

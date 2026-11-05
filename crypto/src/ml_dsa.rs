@@ -118,7 +118,7 @@ impl VerifyKey for MlDsaPublicKey {
 }
 
 /// ML-DSA-65 Secret Key (signing key)
-#[derive(Clone)]
+#[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct MlDsaSecretKey {
     bytes: [u8; ML_DSA_SECRET_KEY_LEN],
 }

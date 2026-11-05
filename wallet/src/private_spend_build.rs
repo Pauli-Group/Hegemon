@@ -73,8 +73,8 @@ pub struct SpendReference {
 }
 /// Secret-bearing typed input. No serde or Debug implementation.
 pub struct SpendInput {
-    inner: relation::PrivateInput,
-    chain_id: Option<[u8; 32]>,
+    pub(crate) inner: relation::PrivateInput,
+    pub(crate) chain_id: Option<[u8; 32]>,
 }
 impl SpendInput {
     pub fn stored(
@@ -142,7 +142,7 @@ impl SpendInput {
         })
     }
 }
-fn wipe_input(i: &mut relation::PrivateInput) {
+pub(crate) fn wipe_input(i: &mut relation::PrivateInput) {
     i.spend_key.zeroize();
     i.dummy_secret.zeroize();
     i.note.rho.zeroize();
@@ -253,7 +253,7 @@ pub struct OutputRequest {
     pub recipient: ShieldedAddress,
     pub value: u64,
 }
-fn recipient(a: &ShieldedAddress) -> Result<([u64; 4], relation::Digest), WalletError> {
+pub(crate) fn recipient(a: &ShieldedAddress) -> Result<([u64; 4], relation::Digest), WalletError> {
     ShieldedAddress::from_bytes(&a.to_bytes())?;
     if a.version != crate::address::POSEIDON2_V8_ADDRESS_VERSION || a.crypto_suite != 7 {
         return Err(invalid(
@@ -391,18 +391,18 @@ pub enum SpendOperation {
     PolicyLock(relation::BoundedPolicy),
     PolicySpend { policy: relation::BoundedPolicy, branch: usize, secret: [u8; 32] },
 }
-struct StoredCiphertext([u8; 2608]);
+pub(crate) struct StoredCiphertext([u8; 2608]);
 impl StoredCiphertext {
-    fn as_bytes(&self) -> &[u8; 2608] {
+    pub(crate) fn as_bytes(&self) -> &[u8; 2608] {
         &self.0
     }
 }
-struct Outputs {
-    notes: [relation::Note; 2],
-    authorities: [relation::Digest; 2],
-    ciphertexts: [StoredCiphertext; 2],
-    commitments: [relation::Digest; 2],
-    bindings: [[u8; 48]; 2],
+pub(crate) struct Outputs {
+    pub(crate) notes: [relation::Note; 2],
+    pub(crate) authorities: [relation::Digest; 2],
+    pub(crate) ciphertexts: [StoredCiphertext; 2],
+    pub(crate) commitments: [relation::Digest; 2],
+    pub(crate) bindings: [[u8; 48]; 2],
 }
 impl Drop for Outputs {
     fn drop(&mut self) {
@@ -413,7 +413,7 @@ impl Drop for Outputs {
         }
     }
 }
-fn encrypted_outputs(
+pub(crate) fn encrypted_outputs(
     reference: SpendReference,
     requests: [OutputRequest; 2],
     mode: usize,
@@ -520,7 +520,7 @@ fn empty_treasury() -> relation::TreasuryOpening {
         ..Default::default()
     }
 }
-fn statement(r: SpendReference, fee: u64, outputs: &Outputs) -> relation::PrivateSpendPublic {
+pub(crate) fn statement(r: SpendReference, fee: u64, outputs: &Outputs) -> relation::PrivateSpendPublic {
     relation::PrivateSpendPublic {
         chain_id: r.chain_id,
         reference_parent_hash: r.parent_hash,

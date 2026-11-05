@@ -36,6 +36,7 @@ pub mod keys;
 pub mod note;
 pub mod private_multisig_accumulator;
 pub mod private_spend;
+pub mod reward_account_spend;
 mod private_spend_packed_poseidon;
 pub use transaction_core::asset_recovery_v1;
 #[cfg(feature = "private-spend-dev-artifacts")]

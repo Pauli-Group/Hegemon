@@ -51,13 +51,21 @@ chain reset remain separate later operator actions.
   availability, partial claims, deferred donations and real ML-DSA approvals.
 - [ ] Integrate account state with real proof verification and node persistence
   (pure accounting fixture tests do not qualify proofs or running-chain behavior).
-- [ ] Implement and qualify donation and account-claim proofs/carriers.
+- [x] (2026-11-05 UTC) Implement explicit donation/claim constraints, a distinct
+  SMZR proof identity, bounded carriers and encrypted wallet builders; generate
+  and verify real claim/donation proofs with note recovery and 5-of-7 approvals.
+- [ ] Qualify those proofs against authenticated running-node references and
+  complete the node admission, persistence and lifecycle evidence.
 - [ ] Integrate rewards, authenticated storage, replay, startup, sync and reorg.
 - [x] (2026-11-05 UTC) Build offline reward-account genesis/address CLI and
   verify funded disposable genesis, supply budget, quorum, network rejection
   and exclusive file creation.
-- [ ] Implement certified treasury forks, offline signing, node RPC/claims and
-  running-chain development tooling.
+- [x] (2026-11-05 UTC) Implement quorum-certified treasury replacement in the
+  shared ledger, reserved successor identifiers and separately compiled adoption.
+- [x] (2026-11-05 UTC) Add offline typed-intent review, key generation, signing
+  and quorum combination commands with explicit chain/genesis checks.
+- [ ] Integrate treasury fork adoption, offline workflow, RPC/claims and
+  development tooling with running nodes.
 - [ ] Run property, adversarial, real-proof and two-node qualification.
 - [ ] Publish tested runtime implementation on this branch.
 
@@ -92,6 +100,23 @@ which itself contains encoded addresses.
 Earlier sandbox git fetch failed to reach proxy:8080; the standard escalated
 execution path succeeded. Preserve configured proxy/credentials and use normal
 approval handling for an authorized remote operation rather than bypassing it.
+
+The existing SMZL private-spend proof frame is exactly 171,281 bytes. Trying
+to use it for the new statement correctly failed its fixed-frame check: the
+new graph projects to 171,505 bytes. Preserve that rejection. The successor
+uses its own SMZR wire, transcript, leaf and sampling domains, 123 relation
+inputs plus 24 immutable source/domain binding words, and an exact 171,505-byte
+frame. Numeric proof parameters do not supply cryptographic qualification or
+production source authority. Source changes require fresh manifests and evidence.
+
+The initial ledger cloned an entire BTreeMap and scanned genesis allocations
+and account state for every block. The candidate now shares a compressed
+384-bit account trie and immutable genesis, hashes only changed account paths,
+and uses checked cached supply totals. Global epoch buckets release before
+transactions; individual leaves normalize on access. Startup validation still
+reconstructs and audits all totals. Full snapshot encoding is for recovery,
+not a scalable per-block persistence strategy: node integration still needs
+bounded journal/checkpoint writes in the shared atomic transaction.
 
 ## Decision Log
 
@@ -146,6 +171,26 @@ Rationale: those capabilities were discussed but not included in the accepted
 documentation plan; they must not become unrequested runtime features.
 Date/Author: 2026-11-05 UTC, scope recorded by Codex.
 
+Decision: Give the successor relation a disjoint SMZR proof identity instead
+of widening historical SMZL guards. Claims require empty private inputs and
+one positive ordinary output equal to the credited amount; donations prove
+inputs = change + explicit donation + fee. Bind the complete operation, public
+memo, payout and immutable source identity. The source manifest includes the
+actual shared account, policy, governance, genesis, schedule and trie modules.
+Rationale: real proof generation exposed incompatible fixed geometry; keeping
+identities separate prevents historical proof/profile reinterpretation.
+Date/Author: 2026-11-05 UTC, Codex implementation evidence.
+
+Decision: A valid treasury certificate reserves an unused successor policy and
+authenticates a future replacement, but cannot activate software rules. At its
+height the integrating node must provide a matching compiled fork identity.
+Move all balances, epoch buckets and sequence, increment policy generation,
+and reject retired treasury identifiers and claims. Preserve N and M exactly.
+Rationale: the current quorum must approve replacement without gaining an
+ordinary mutable governance/mint authority; the transition remains reversible
+when replaying a competing branch.
+Date/Author: 2026-11-05 UTC, Codex implementation of the accepted fork policy.
+
 ## Outcomes & Retrospective
 
 
@@ -153,8 +198,10 @@ The initial design is already published. This revision replaces its maturity,
 miner-note and zero-genesis assumptions and adds network-aware public/shielded
 addresses. The initial documentation revision changed no runtime. Runtime work now adds
 the shared protocol-reward-accounts crate and typed wallet address codec.
-Native reward routes, shared-note proof integration, runtime deployment and
-the chain reset are not yet implemented or claimed. Documentation checks passed: relative links, required headings and six milestones,
+The shared relation and encrypted wallet/account proof integration now exist,
+including genuine claim and donation proofs. Native reward routes, authenticated
+node persistence, real-chain reorg/synchronization, runtime deployment and the
+chain reset are not yet implemented or claimed. Documentation checks passed: relative links, required headings and six milestones,
 source paths, terminology, README structure, release examples, exact supply
 budgets and completed-block conservation arithmetic. Runtime tests were not run
 for these documentation-only edits. Revision eedd8da6 was pushed successfully;
@@ -283,6 +330,53 @@ do not reuse v4 evidence as qualification. Acceptance requires actual proof
 verification, normal spending of a claimed note, and rejection of tampered data.
 
 ### Milestone 4: block rewards, storage, replay and reorg
+
+
+The shared foundation is not the native integration. Implement a dedicated
+`node/src/native/reward_accounts.rs` source adapter and a fresh manifest schema
+in `node/src/native/network_profile.rs`; it must pin the actual reward relation,
+genesis account configuration and compiled monetary rules. Do not reinterpret
+legacy funded manifests, use an asset registry slot for native money, or borrow
+an existing PrivateSpend proof authority for the new relation. A finite,
+explicit Development source is the qualification route; production authority
+still requires its own existing release/security gates.
+
+Require exactly one public reward record in each successor block. Its committed
+bytes identify the including miner and bind height/context, parent and resulting
+account roots, resulting shared note root, subsidy and exact miner fee total.
+The normal PoW action commitment authenticates that record. Recompute every
+field and the account transition during import; it is not a sender-provided
+state setter. Genesis authenticates the initial account root. Never make account
+acceptance depend on the presence of an optional old coinbase action. Reject all
+legacy mint bundles in this fresh profile, including zero-valued variants.
+
+Extend shared-note planning through a distinct account route rather than relaxing
+the closed controlled-asset shape: a claim appends only its first, positive
+output and consumes no private input nullifiers; a donation consumes its proven
+input nullifiers and appends its two change outputs. Both retain ciphertext
+bindings and real proof verification. Existing private spends retain their exact
+route and credit their fee only once. No claimed note enters the old pending
+coinbase vector. The node, not a wallet-provided callback, supplies checked
+canonical block hashes and note roots for the permitted reference window.
+
+Persist a bounded journal of changed account leaves and before/after metadata
+alongside the shared note/nullifier checkpoint in the same sled transaction.
+Use the known touched identifiers (miner, current/new treasury and claim owners)
+and the persistent trie to avoid scanning or rewriting the account table.
+Maintain one canonical account table plus authenticated metadata; retain undo
+and redo rows for the adopted block. A snapshot can be built and fully validated
+on startup, but full per-block snapshots are not the storage strategy. A reorg
+must restore account leaves, epoch totals, treasury policy/reservations, sequence,
+notes and nullifiers together before applying the replacement suffix. A failed
+transaction publishes neither pool. Compare recovered roots with authenticated
+block records, never a second unauthenticated root stored beside the snapshot.
+
+Signer certificates require a matching compiled fork descriptor at scheduling
+and activation. Unknown certificates are invalid transactions, not delayed
+halt conditions. The node owns that descriptor; neither JSON/RPC configuration
+nor a certificate can supply the adopting software's authority. Keep the same
+N/M and preserve the complete account balance and sequence on replacement.
+
 
 
 Remove per-block reward-note creation from the successor admission path. At
@@ -512,3 +606,72 @@ required-features declaration. Added required-features=[rpc-client], matching
 its actual requirements and the other RPC binaries. The offline reward-account
 CLI integration suite then passes (2 tests). Its source is force-added because
 the repository's generic bin/ ignore rule otherwise hides new Rust entrypoints.
+
+Proof/governance milestone (2026-11-05 UTC): real circuit claim/donation proofs
+and the wallet encrypted claim-then-donate test pass at 171,505 bytes per proof.
+The wallet test uses a constructed authenticated-note fixture and the real
+proof verifier, not mined nodes; it supplies no two-node lifecycle receipt.
+Use these commands from the repository root (source the local environment first):
+
+    cargo test -p protocol-reward-accounts --release --offline
+    cargo clippy -p protocol-reward-accounts --all-targets --release --offline --no-deps -- -D warnings
+    cargo test -p transaction-circuit --release --lib --features private-spend-dev-artifacts reward_accounts --offline -- --include-ignored --nocapture
+    cargo test -p transaction-circuit --release --lib --features private-spend-dev-artifacts native_private_spend_smzd_identity_tests --offline
+    cargo test -p wallet --release --no-default-features --lib reward_accounts_actual_claim_then_donate_real_proofs --offline -- --ignored --nocapture
+    cargo test -p wallet --release --no-default-features --test reward_account_cli --offline
+
+Offline signing takes a canonical SCALE AccountClaim or TreasuryForkIntent,
+a public policy JSON file and a genesis JSON file. Run reward-account
+intent-review, intent-sign and intent-combine with --kind claim|treasury-fork,
+--intent PATH --policy PATH --genesis PATH --expected-chain-id HEX32
+--expected-genesis-hash HEX32. Signing additionally takes --secret-key PATH
+--signer-index N --out NEWFILE; combination takes one --approval PATH per
+signer and --out NEWFILE. keygen --secret-out NEWFILE emits public policy JSON
+on stdout. Keys and intermediate byte buffers are wiped on drop; output files
+are created exclusively with Unix mode 0600. Offline review cannot establish
+canonical inclusion, available balance or current generation; node admission
+must check these against its authenticated state. No RPC submission is implied.
+
+Revision note (2026-11-05 UTC): implement and record the shared proof, encrypted
+wallet, persistent account-state, fork-certificate and offline-signing milestone.
+Keep native block admission, bounded atomic persistence, operational codecs,
+RPC workflows and two-node qualification explicitly outstanding.
+
+Genesis commitment detail (2026-11-05 UTC): hash the actual compiled supply cap,
+issuance-era length and treasury numerator/denominator alongside the named rules
+and canonical genesis. Changing a monetary constant must change the authenticated
+configuration even if a developer forgets to rename the human-readable rules ID.
+
+Documentation validation (2026-11-05 UTC): all new relative links, required
+ExecPlan sections, all six milestones and the 1/1,440/2,881 boundary arithmetic
+pass. The overview files retain nine pre-existing links to absent historical
+.agent artifacts; none were introduced by this change. No missing historical
+artifact was fabricated to make the check green. git diff --check passes.
+
+Fork-admission clarification (2026-11-05 UTC): the adopting software must
+already contain the exact fork height, successor policy identifier and rules
+identity before a certificate can be scheduled. Check that identity again at
+activation. Reject unknown certificates immediately; accepting one and then
+halting at its requested height would give the quorum a forbidden pause power.
+The certificate cannot introduce a new rule or force software adoption.
+
+Parser bound detail (2026-11-05 UTC): SMZR carrier decoding bounds its nested
+proof at the exact 171,505-byte frame before allocation, not merely the shared
+2 MiB account-proof budget. Its whole carrier is capped at that frame plus
+8,192 bytes. Verification requires the exact frame length and magic.
+
+Final source validation for this milestone (2026-11-05 UTC): 14 protocol tests
+pass (one persistent-trie case, six foundation/property/signature cases and
+seven accounting/governance/replay cases); targeted protocol Clippy with -D
+warnings passes. Four successor circuit tests pass including two genuine proofs,
+mutation rejection, source binding and disjoint wire framing. Nine legacy/profile
+regressions pass (including the two new SMZR codec/domain tests). Three wallet
+checks pass including a real encrypted claim-then-donate cycle; three offline
+CLI tests and three ML-DSA provider tests pass. A focused wallet recovery check
+also passes after wiping both owned output-opening copies on drop. The native
+node compiles with its default inactive successor routes. Compiler warnings in
+unrelated legacy modules remain; this is not a claim that workspace-wide CI or
+two-node qualification has passed. Frozen-source logs are retained under
+/workspace/work/environment-setup/reward-frozen-{circuit,wallet,core,clippy}.log;
+CLI/provider/node logs use reward-qualified-{cli,keys,node}.log. This evidence
+qualifies the shared proof/governance milestone only. No node was deployed or reset.

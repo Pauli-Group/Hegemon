@@ -37,6 +37,15 @@ running nodes, deploy a network or select real launch keys or sale recipients.
 
 ## Current implementation and successor boundary
 
+The branch implements shared account accounting, policy authorization, typed
+addresses, fork certificates and offline intent signing. A successor-only SMZR
+relation and encrypted wallet builders now pass genuine claim/donation proof
+tests. A persistent account trie commits balances and caches supply totals;
+recovery checks its root against the enclosing authenticated block commitment.
+These components do not activate node routes. Native mandatory rewards, atomic
+persistence, operational address migration and two-node lifecycle qualification
+remain outstanding in the execution plan.
+
 Current legacy implementation in `wallet/src/address.rs` encodes shielded
 addresses with Bech32m and a network-independent `shca` prefix. Its V8 payload
 contains full recipient/authorization material and an ML-KEM encryption key,
@@ -413,3 +422,10 @@ shielded address tooling must be exercised. A demo or foundation-only module is
 not completion. Until those milestones pass, the shared accounting and codec implementation
 is a foundation for the successor, not an activated or qualified node route.
 Foundation unit tests do not imply running-chain acceptance or launch readiness.
+
+Fork-admission clarification (2026-11-05 UTC): the adopting software must
+already contain the exact fork height, successor policy identifier and rules
+identity before a certificate can be scheduled. Check that identity again at
+activation. Reject unknown certificates immediately; accepting one and then
+halting at its requested height would give the quorum a forbidden pause power.
+The certificate cannot introduce a new rule or force software adoption.

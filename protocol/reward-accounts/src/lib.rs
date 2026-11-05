@@ -1,9 +1,11 @@
 //! Fresh-genesis reward accounts. These rules do not activate a node route.
 #![forbid(unsafe_code)]
 
+mod account_tree;
 mod address;
 mod bounded;
 mod genesis;
+mod governance;
 mod ledger;
 mod policy;
 mod schedule;
@@ -12,6 +14,7 @@ pub use address::*;
 pub use bounded::BoundedVec;
 pub use crypto::hash384::{AccountKeyHash48, AccountPolicyId48, RewardAccountsRoot48};
 pub use genesis::*;
+pub use governance::*;
 pub use ledger::*;
 pub use policy::*;
 pub use protocol_versioning::{
@@ -55,6 +58,8 @@ pub enum RewardAccountsError {
     InvalidProof,
     #[error("account ledger failed conservation or structural validation")]
     InvalidState,
+    #[error("invalid, occupied, stale or unadopted treasury hard fork")]
+    InvalidTreasuryFork,
     #[error("address encoding: {0}")]
     Address(String),
     #[error("address belongs to another network or address family")]
