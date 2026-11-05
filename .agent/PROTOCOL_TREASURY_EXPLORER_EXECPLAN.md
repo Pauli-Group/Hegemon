@@ -37,8 +37,10 @@ a prerequisite in the parent implementation plan.
   pagination and committed body/context binding. Thirty-three selected tests pass.
 - [x] (2026-11-05 ET) Locate the user-supplied `hegemon-website` repository;
   clone its `main` and create new branch `codex/explorer-treasury-rewards`.
-- [ ] Integrate that explorer's client, indexer and views, preserving existing
-  block and legacy reward views.
+- [x] (2026-11-05 ET) Integrate that explorer's client, read-only facade and
+  explicit network profile/index binding; preserve default legacy block/reward
+  behavior. Publish [83aea325](https://github.com/Pauli-Group/hegemon-website/commit/83aea3259d35450aa9a785cb0f8568a86af15368) on the required new website branch;
+  verify its remote hash and immutable GitHub module readback.
 - [ ] Qualify the explorer against an activated disposable node, including a
   boundary reorg, restart and fresh synchronization; parent runtime work is open.
 - [x] (2026-11-05 UTC) Commit/push backend preparation as a58b2757 and verify
@@ -80,8 +82,10 @@ Date/Author: 2026-11-05 UTC, Codex.
 
 Backend preparation is implemented and tested: four read APIs and canonical
 projections, with an explicit unavailable-state result until the native runtime
-installs a verified canonical account ledger. The user paused
-explorer UI/indexer work pending Pierre's source location.
+installs a verified canonical account ledger. The user initially paused
+explorer UI/indexer work pending Pierre's source location, then supplied the
+separate repository and required a new branch. That source/UI work is now
+implemented, tested and published as described below.
 No activation, two-node acceptance, deployment or reset is claimed. Backend
 commit [a58b2757](https://github.com/Pauli-Group/Hegemon/commit/a58b2757b8ffc592ce72a175bcccf78ae765a741)
 is published on codex/protocol-treasury-governance. Remote-head comparison and
@@ -285,3 +289,26 @@ any changes there. Source is now cloned at `/workspace/hegemon-website`, based
 on `main` commit `c40a2b5`, with branch `codex/explorer-treasury-rewards`.
 This resumes the paused UI/indexer phase; no deployment or native activation
 is implied. The website repository will carry its own implementation/check log.
+
+
+Completed explorer source/UI revision (2026-11-05 ET):
+[83aea325](https://github.com/Pauli-Group/hegemon-website/commit/83aea3259d35450aa9a785cb0f8568a86af15368)
+adds Treasury, Reward Accounts, Genesis/Supply, Governance and bounded canonical
+public activity routes in the existing explorer. Its read-only facade pins an
+explicit future network/profile, validates exact projections and canonical
+anchors, and never shadows the monetary ledger. The old-chain default stays
+pinned; mismatched SQLite data rejects and orphaned block pages are removed.
+Unknown successor binary frames are explicitly opaque; successor private-note
+commitment decoding still requires completed native-runtime qualification.
+
+Qualification passes 12 current decoder tests, 6 current service tests, 14 new
+account/profile/reorg/restart/HTTP tests, 17 JS tests, 54 historical service tests
+and 36 deployment-helper regression tests (the helpers were not deployed).
+Chromium passes 25 real-route checks including memo escaping, full long-recipient
+copy, paging, epoch release and rollback, discarded orphan pages, inactive state
+and route races. Inspected desktop/390px fixtures have no horizontal overflow.
+The website's .agent/REWARD_ACCOUNTS_EXECPLAN.md and
+[guide](https://github.com/Pauli-Group/hegemon-website/blob/codex/explorer-treasury-rewards/docs/REWARD_ACCOUNTS_EXPLORER.md)
+record exact commands. Remote head and immutable module readback verify the
+published source. This is not actual two-node/native-proof qualification, and
+nothing was merged, deployed or reset.

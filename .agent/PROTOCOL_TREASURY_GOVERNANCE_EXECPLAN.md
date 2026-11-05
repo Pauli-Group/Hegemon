@@ -86,10 +86,12 @@ chain reset remain separate later operator actions.
   RPCs for status/accounts, genesis and canonical public activity; document the
   [API contract](../docs/PROTOCOL_TREASURY_EXPLORER_API.md). Active data still
   requires the outstanding canonical account integration.
-- [ ] Resume explorer UI/indexer integration in the user-supplied
-  [hegemon-website](https://github.com/Pauli-Group/hegemon-website) repository
-  on new branch `codex/explorer-treasury-rewards`, then qualify canonical reorg
-  handling, as specified in the [explorer plan](PROTOCOL_TREASURY_EXPLORER_EXECPLAN.md).
+- [x] (2026-11-05 ET) Integrate existing explorer UI/read-only service in the
+  user-supplied website repository, published as [83aea325](https://github.com/Pauli-Group/hegemon-website/commit/83aea3259d35450aa9a785cb0f8568a86af15368)
+  on new branch `codex/explorer-treasury-rewards`; exact-value, profile, orphan,
+  restart, fresh-index and browser regressions pass. Source/UI completion is
+  distinct from activated-node qualification in the
+  [explorer plan](PROTOCOL_TREASURY_EXPLORER_EXECPLAN.md).
 - [x] (2026-11-05 ET) Add desktop reward/treasury and genesis views, strict typed
   address/amount entry, root-derived identities/recovery, real claim preparation
   and verified offline approvals; see the [desktop plan](PROTOCOL_TREASURY_DESKTOP_EXECPLAN.md).

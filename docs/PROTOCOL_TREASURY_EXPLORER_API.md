@@ -4,8 +4,10 @@ Status: backend read models and RPC dispatch are implemented on
 `codex/protocol-treasury-governance`. Native account-aware publication and the
 successor network's activation are still open work in the
 [protocol execution plan](../.agent/PROTOCOL_TREASURY_GOVERNANCE_EXECPLAN.md).
-The existing explorer's UI and indexer integration are paused pending its source
-repository location, at the user's request. The
+The existing explorer UI and read-only service integration are implemented on
+[hegemon-website's new branch](https://github.com/Pauli-Group/hegemon-website/tree/codex/explorer-treasury-rewards)
+as [83aea325](https://github.com/Pauli-Group/hegemon-website/commit/83aea3259d35450aa9a785cb0f8568a86af15368). Native activation and
+live two-node lifecycle qualification remain outstanding. The
 [explorer execution plan](../.agent/PROTOCOL_TREASURY_EXPLORER_EXECPLAN.md)
 records that remaining work. No explorer was deployed or public chain reset.
 

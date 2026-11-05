@@ -24,8 +24,9 @@ They are not yet wired into native block admission or synchronization.
 Read-only [explorer APIs](docs/PROTOCOL_TREASURY_EXPLORER_API.md) now describe
 canonical public balances, reward release buckets, genesis/supply and governance
 activity. They report unavailable state until canonical account publication is
-integrated. Explorer UI/indexer work now continues in [hegemon-website](https://github.com/Pauli-Group/hegemon-website)
-on the separate `codex/explorer-treasury-rewards` branch.
+integrated. Explorer UI/indexer changes are implemented and tested on the separate
+[hegemon-website branch](https://github.com/Pauli-Group/hegemon-website/tree/codex/explorer-treasury-rewards), with deployment and
+activated-node qualification still outstanding.
 
 The desktop now provides [reward-account wallet tools](docs/PROTOCOL_TREASURY_WALLET_UX.md):
 network-aware Receive/mining entry, exact HGN amounts, public reward/treasury and

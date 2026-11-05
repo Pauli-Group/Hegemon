@@ -5,9 +5,9 @@ The `Rewards & treasury` desktop workspace reads the four bounded, read-only
 can derive public identities, prepare actual claim payout proofs, review public
 intents and collect signatures. **Native successor startup/admission and
 submission remain unfinished.** A prepared package is not a submitted payment,
-a confirmed withdrawal or an activated hard fork. The explorer UI/indexer now continues separately in
-[hegemon-website](https://github.com/Pauli-Group/hegemon-website), on its new
-`codex/explorer-treasury-rewards` branch.
+a confirmed withdrawal or an activated hard fork. The explorer UI/read-only service changes are separately implemented and tested
+on [hegemon-website's new branch](https://github.com/Pauli-Group/hegemon-website/tree/codex/explorer-treasury-rewards);
+no deployment or activated-node qualification is implied.
 
 ## Receiving, mining and balances
 
