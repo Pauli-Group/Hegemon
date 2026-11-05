@@ -61,10 +61,12 @@ is the Linux process high-water mark, not a system-wide memory measurement.
 "$SWAP_PYTHON" scripts/public_hegemon_eth_rehearsal.py status --directory "$TEST_WALLETS" --wallet-binary "$WALLET_BIN"
 ```
 
-`complete` means the runner observed both transactions with its configured
-confirmation thresholds and Bob's wallet recovered the expected HGN payout.
-Save public transaction IDs, block hashes and proof metrics separately from
-private wallet records. The secret may be disclosed to the Sepolia provider
+`complete` means the runner observed both claims with its configured
+confirmation thresholds and Bob's wallet reported a new ordinary note of the
+expected value. The payout-output association relies on the trusted wallet's
+construction and no concurrent wallet activity; it is not independently bound
+to the exact claim output. Save public transaction IDs, block hashes and proof
+metrics separately from private wallet records. The secret may be disclosed to the Sepolia provider
 during gas estimation before a claim is broadcast; it cannot be made private
 again after that point.
 

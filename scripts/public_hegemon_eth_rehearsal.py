@@ -423,6 +423,10 @@ def _advance(root, binary, url):
         old = set(state['bob_ordinary_before_claim'])
         if not any(p not in old and value == HGN_AMOUNT for p, value in hgn.notes(bob, 'ordinary')):
             raise ValueError('Expected Hegemon payout was not recovered by Bob')
+        if _receipt(state['eth_claim']) is None:
+            raise ValueError('Ethereum claim no longer has the required confirmations')
+        observed, _ = ethereum_claim(state['eth_claim'], state['eth_contract'], state['hashlock'])
+        observed[:] = b'\0' * len(observed)
         state.update(phase='complete', hgn_claim_block_height=inclusion['block_height'],
                      hgn_claim_block_hash=inclusion['block_hash'])
         _save(work, state)

@@ -160,7 +160,7 @@ class PublicHegemonEthRehearsalTest(unittest.TestCase):
                          'hgn_lock_confirmed', 'refund_ready', 'eth_lock_submitted', 'both_verified',
                          'eth_claim_submitted', 'hgn_claim_prepared', 'hgn_claim_exported',
                          'hgn_claim_submitted', 'complete'])
-        self.assertEqual(self.fake.observed, 1)
+        self.assertEqual(self.fake.observed, 2)
         self.assertEqual(self.fake.sends[0][1], 'bob')
         self.assertEqual(self.fake.sends[1][1], 'alice')
         self.assertEqual([call for call in self.fake.calls if call[1] == 'submit'],
@@ -235,6 +235,14 @@ class PublicHegemonEthRehearsalTest(unittest.TestCase):
                 self.advance()
         self.assertEqual(len(self.fake.sends), 1)
         self.assertEqual(rehearsal._state(self.root / 'hegemon-eth')['phase'], 'eth_lock_submitted')
+
+    def test_ethereum_claim_is_rechecked_before_marking_swap_complete(self):
+        self.init()
+        self.advance_until('hgn_claim_submitted')
+        with patch.object(rehearsal, '_receipt', return_value=None):
+            with self.assertRaisesRegex(ValueError, 'no longer'):
+                self.advance()
+        self.assertEqual(rehearsal._state(self.root / 'hegemon-eth')['phase'], 'hgn_claim_submitted')
 
     def test_short_ethereum_deadline_stops_before_secret_disclosure(self):
         self.init()
