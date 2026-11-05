@@ -30,7 +30,8 @@ branch is reported as implementing the protocol.
   and create local/GitHub branch codex/protocol-treasury-governance.
 - [x] (2026-11-05 UTC) Write protocol design, accounting invariants and phased
   implementation/validation plan.
-- [ ] Commit and publish the design milestone and verify remote file contents.
+- [x] (2026-11-05 UTC) Commit and publish the design milestone; GitHub readback
+  confirms the design and genesis-configured 5-of-7 policy.
 - [ ] Implement deterministic treasury transitions and real ML-DSA approvals.
 - [ ] Implement and qualify donation and payout proof relations/carriers.
 - [ ] Integrate state, mandatory rewards, action admission, persistence and replay.
@@ -113,7 +114,8 @@ Date/Author: 2026-11-05 UTC, user scope recorded by Codex.
 ## Outcomes & Retrospective
 
 
-The design milestone specifies the proposed state machine, privacy surface,
+The design milestone is published on the requested GitHub branch. It specifies
+the proposed state machine, privacy surface,
 quorum/fork authority, accounting equations and acceptance evidence. No runtime
 code has changed. Proof implementation, node/wallet integration and end-to-end
 qualification remain outstanding; this branch must not yet be described as a
@@ -274,7 +276,7 @@ is not completion of the requested implementation.
 Initial research was performed with `git fetch origin main`, `git rev-parse
 origin/main`, source reads and registry searches. The fetched base is
 74910ff86514c2cbd93d7a7039e6b90b6e4600b6. Local work is on
-`codex/protocol-treasury-governance` and the remote branch exists at that base.
+`codex/protocol-treasury-governance` and the remote branch contains the design milestone on that base.
 
 Before runtime code changes, honor first-run instructions in AGENTS.md using
 `make setup`, then `make node`. Inspect setup requirements and available
@@ -370,3 +372,7 @@ Revision note (2026-11-05 UTC): created the design-first implementation plan to
 capture the user's agreed scope and identify proof/accounting integration work
 before runtime edits. The user confirmed 5-of-7 with genesis-configured threshold and keys; the
 16-signer maximum bounds decoding and signature-verification work.
+
+Revision note (2026-11-05 UTC): recorded successful design publication and GitHub
+readback. Documentation links, required plan sections and git whitespace checks
+passed. Runtime implementation and qualification remain outstanding.
