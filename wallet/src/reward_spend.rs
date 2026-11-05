@@ -418,7 +418,7 @@ mod tests {
                 .collect(),
         )
         .unwrap();
-        let id = policy.identifier().unwrap();
+        let id = protocol_treasury_account_id();
         let genesis = RewardAccountsGenesis {
             network: AddressNetwork {
                 class: NetworkClass::Testnet,

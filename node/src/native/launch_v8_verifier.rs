@@ -1449,6 +1449,7 @@ mod tests {
             .root()
             .limbs();
         let network = NativeNetworkIdentity::from_manifest(NativeNetworkManifest {
+            reward_accounts: None,
             schema: "hegemon.native.network-manifest.v1".into(),
             profile: NativeNetworkProfile::Development,
             genesis_timestamp_ms: super::super::NATIVE_GENESIS_TIMESTAMP_MS,

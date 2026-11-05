@@ -27,8 +27,14 @@ Bech32m `heg`/`heg_test`; shielded addresses use `heg_shield`/`heg_shield_test`,
 with binary network checks. Shared accounting, typed codecs, fork certificates
 and encrypted claim/donation builders are implemented. Real candidate proofs
 verify in wallet/account tests; native admission, persistence and two-node
-qualification remain in progress. The following
-describes the existing network implementation.
+qualification remain in progress.
+
+The treasury keeps one fixed protocol identity and address. A certified hard
+fork changes only its signer policy and generation; balances, pending epochs
+and claim sequence stay in place. Ordinary accounts owned by either committee
+remain separate, so pre-funding the successor policy cannot block rotation.
+
+The following describes the existing network implementation.
 
 The HGN protocol consists of four tightly-coupled subsystems:
 

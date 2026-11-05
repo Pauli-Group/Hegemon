@@ -5,7 +5,8 @@ fresh-genesis successor is developed on `codex/protocol-treasury-governance`,
 based on main commit `74910ff86514c2cbd93d7a7039e6b90b6e4600b6`. Follow the
 [execution plan](../.agent/PROTOCOL_TREASURY_GOVERNANCE_EXECPLAN.md) for runtime
 implementation and qualification. Shared protocol/accounting rules and the typed
-wallet address codec are implemented; proof/node integration remains pending.
+wallet address codec and genuine claim/donation proofs are implemented; native
+block admission and lifecycle integration remain pending.
 
 ## Purpose and agreed scope
 
@@ -105,17 +106,17 @@ storage optimization; status readback computes availability at its snapshot.
 
 ## Authorization policies and account ownership
 
-An account identifier is a versioned, domain-separated 48-byte hash of a
-canonical authorization policy. Support single-key and threshold policies using
-ML-DSA-65. Single-key policies commit to the signature-scheme identifier and a
-48-byte key hash. Threshold policies commit to N, M and an ordered list of
+An ordinary miner/genesis account identifier is a versioned, domain-separated
+48-byte hash of a canonical authorization policy. Support single-key and
+threshold policies using ML-DSA-65. Single-key policies commit to the
+signature-scheme identifier and a 48-byte key hash. Threshold policies commit to N, M and an ordered list of
 M distinct key hashes, with 1 <= N <= M <= 16. Use the existing consensus
 48-byte domain-hashing framework, with separate key, policy, claim and fork
 authorization domains. No elliptic-curve primitive is introduced.
 
-A claim supplies its policy descriptor and the selected full public keys and
-signatures. Recompute the descriptor hash and key hashes, check canonical order,
-distinct signer indices and at least N valid signatures, and compare them to
+An ordinary claim supplies its policy descriptor and the selected full public
+keys and signatures. Recompute the descriptor hash and key hashes, check
+canonical order, distinct signer indices and at least N valid signatures, and compare them to
 the credited account. Public keys need not be disclosed merely to receive a
 reward or genesis credit. Actual supplied keys must parse under the declared
 scheme. No registration or signer permission is required to credit an account;
@@ -127,10 +128,15 @@ hide that public activity, and signing reveals the relevant public keys. A
 policy hash is an authorization identifier, not a shielded encryption address.
 Shielded payouts still require the recipient's full encryption information.
 
-The treasury has a reserved ledger role with one active policy identifier.
-Only its active policy can claim the treasury balance. The owner of an ordinary
-reward/genesis account cannot rotate that account policy through a new recovery
-command in v1; it can claim to a new shielded recipient. Treasury replacement
+The treasury has one fixed protocol identity: the domain-separated 48-byte
+hash of a versioned authorization policy that looks up the current treasury
+committee. Its address uses the same network-aware heg/heg_test envelope.
+That identity is independent of the committee's current single-key/threshold
+policy hash. Treasury claims name this fixed identity and supply the actual
+current policy descriptor and policy generation; validate both against state
+before verifying the quorum. Only that current authority can claim the pot.
+The owner of an ordinary reward/genesis account cannot rotate that account
+policy through a new recovery command in v1; it can claim to a new shielded recipient. Treasury replacement
 uses only the hard-fork procedure below. No general account transfer or policy
 replacement authority is implied.
 
@@ -314,24 +320,26 @@ accounts and treasury claims use the same claim machinery, but only a certified
 hard fork can replace treasury authority.
 
 A replacement preserves N/M and requires N distinct current signers to approve
-a domain-separated certificate binding the current chain/genesis, policy hash
-and generation, successor descriptor, activation height and compiled successor
-rules identity. Include it canonically before a future activation height; allow
-one pending replacement. Scheduling rejects an identifier already occupied by
-an unrelated account and reserves the successor identifier until activation or
-reorg rollback. Reject unrelated reward credits or account creation using that
-reserved identifier, so later activity cannot force an activation collision.
-Signatures cannot install unimplemented software or execute arbitrary governance
-commands. No claim approval is a fork approval.
+a domain-separated certificate binding the chain/genesis, current generation,
+successor authority descriptor, activation height and compiled successor rules.
+Allow one pending replacement, admitted only when that exact fork is already
+compiled into the adopting software. Reject unknown certificates immediately;
+never accept one and then halt later at its requested height. No claim approval
+is a fork approval, and a signature cannot install unimplemented software.
 
-At activation, installed matching software checks the certificate, atomically
-moves the complete treasury state to its new active policy identifier, preserves
-available and pending balances and the next sequence, and increments policy
-generation. Old-policy claims reject. This reserved-role transition is not a
-general account-transfer action. Reject a successor identifier already occupied
-by an unrelated ordinary account, so activation cannot merge balances or lose
-sequence history. Fork replay restores the whole transition together. Changing
-N/M itself requires a separately specified hard fork, not this replacement path.
+At activation, atomically replace only the treasury's current authority and
+increment its policy generation. The fixed treasury identity, address, balance,
+pending epoch buckets and next claim sequence stay in place. Claims using the
+previous generation or an obsolete committee reject. Reorg restores authority,
+generation and certificate state alongside balances and notes.
+
+The successor authority hash is not a destination account. It may already own
+an ordinary account, receive mining rewards or have its own claim history;
+none of those activities can block a treasury signer replacement. Those ordinary
+balances and sequences are never merged, moved, retired or frozen by the fork.
+There are no successor-address reservations. This supersedes the earlier
+proposed migration between signer-policy account identifiers, which allowed a
+miner to pre-fund the intended destination and prevent the rotation.
 
 Compatible software and operator adoption remain necessary. A different network
 can deliberately rewrite these requirements; the quorum guarantee describes
@@ -429,3 +437,10 @@ identity before a certificate can be scheduled. Check that identity again at
 activation. Reject unknown certificates immediately; accepting one and then
 halting at its requested height would give the quorum a forbidden pause power.
 The certificate cannot introduce a new rule or force software adoption.
+
+Fixed-pot revision (2026-11-05 UTC): the user selected a fixed protocol treasury
+identity with changing signer authority. Ordinary accounts retain policy-hash
+identifiers. The reserved treasury identifier hashes the current-committee
+lookup policy, not the committee keys; it is network-scoped by address payload
+and chain/genesis authorization. Genesis allocations may name that fixed pot.
+All epoch, supply, donation, quorum and no-general-transfer rules are unchanged.

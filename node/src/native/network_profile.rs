@@ -6,6 +6,18 @@ use clap::ValueEnum;
 const NETWORK_MANIFEST_SCHEMA: &str = "hegemon.native.network-manifest.v1";
 const NETWORK_ID_DOMAIN: &[u8] = b"hegemon.native.network-id.v1\0";
 
+/// Header/PoW format is retained; successor admission has a distinct rules pin.
+pub(crate) fn compiled_reward_accounts_reference_rules_hash() -> [u8; 32] {
+    hash32_with_parts(&[
+        b"hegemon.native.reward-account-reference-rules.v1\0",
+        &HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
+        protocol_reward_accounts::REWARD_ACCOUNTS_RULES_ID,
+        &super::reward_accounts::wire::source_digest(),
+        &protocol_versioning::launch_reference_policy::LAUNCH_REFERENCE_WINDOW.to_le_bytes(),
+        b"mandatory-public-reward-record/no-legacy-mint/claim-note-immediate/v1\0",
+    ])
+}
+
 /// Separate launch-admission rules commitment. It does not alter legacy header
 /// rules bytes and cannot enable a proof capability or widen its finite lifetime.
 pub(crate) fn compiled_launch_reference_rules_hash() -> [u8; 32] {
@@ -38,6 +50,7 @@ pub(crate) fn development_candidate_manifest(
         .root()
         .limbs();
     let manifest = NativeNetworkManifest {
+        reward_accounts: None,
         schema: NETWORK_MANIFEST_SCHEMA.into(),
         profile: NativeNetworkProfile::Development,
         genesis_timestamp_ms: NATIVE_GENESIS_TIMESTAMP_MS,
@@ -116,6 +129,9 @@ impl NativeNetworkProfile {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeNetworkManifest {
+    /// Fresh account-ledger genesis. Omission preserves every v1 manifest byte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reward_accounts: Option<super::reward_accounts::profile::RewardAccountsProfile>,
     pub schema: String,
     pub profile: NativeNetworkProfile,
     pub genesis_timestamp_ms: u64,
@@ -373,6 +389,7 @@ impl NativeNetworkIdentity {
 
     pub fn development() -> Self {
         Self::from_manifest(NativeNetworkManifest {
+            reward_accounts: None,
             schema: NETWORK_MANIFEST_SCHEMA.into(),
             profile: NativeNetworkProfile::Development,
             genesis_timestamp_ms: NATIVE_GENESIS_TIMESTAMP_MS,
@@ -388,7 +405,12 @@ impl NativeNetworkIdentity {
     }
 
     pub fn from_manifest(mut manifest: NativeNetworkManifest) -> Result<Self> {
-        if manifest.schema != NETWORK_MANIFEST_SCHEMA {
+        let expected_schema = if manifest.reward_accounts.is_some() {
+            super::reward_accounts::profile::NETWORK_SCHEMA
+        } else {
+            NETWORK_MANIFEST_SCHEMA
+        };
+        if manifest.schema != expected_schema {
             return Err(anyhow!("unsupported native network manifest schema"));
         }
         if manifest.profile == NativeNetworkProfile::Legacy {
@@ -401,7 +423,12 @@ impl NativeNetworkIdentity {
                 "network manifest rules_hash does not match compiled consensus rules"
             ));
         }
-        if manifest.launch_reference_rules_hash != hex32(&compiled_launch_reference_rules_hash()) {
+        let expected_reference = if manifest.reward_accounts.is_some() {
+            compiled_reward_accounts_reference_rules_hash()
+        } else {
+            compiled_launch_reference_rules_hash()
+        };
+        if manifest.launch_reference_rules_hash != hex32(&expected_reference) {
             return Err(anyhow!("network manifest launch_reference_rules_hash does not match compiled launch admission rules"));
         }
         if manifest.genesis_timestamp_ms == 0 {
@@ -418,7 +445,9 @@ impl NativeNetworkIdentity {
                 "development candidate source is permitted only on the Development profile"
             ));
         }
-        if matches!(
+        if manifest.reward_accounts.is_some() {
+            super::reward_accounts::profile::validate_manifest(&manifest)?;
+        } else if matches!(
             manifest.profile,
             NativeNetworkProfile::PreMainnet | NativeNetworkProfile::Mainnet
         ) {
@@ -527,14 +556,34 @@ impl NativeNetworkIdentity {
     }
 
     pub fn load(path: &Path, expected_profile: NativeNetworkProfile) -> Result<Self> {
-        let bytes =
-            fs::read(path).with_context(|| format!("read network manifest {}", path.display()))?;
+        use std::io::Read;
+        const MAX_REWARD_MANIFEST_BYTES: u64 = 32 * 1024 * 1024;
+        let file = fs::File::open(path)
+            .with_context(|| format!("read network manifest {}", path.display()))?;
+        if !file.metadata()?.is_file() {
+            return Err(anyhow!("network manifest must be a regular file"));
+        }
+        let mut bytes = Vec::new();
+        file.take(MAX_REWARD_MANIFEST_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > MAX_REWARD_MANIFEST_BYTES {
+            return Err(anyhow!("reward network manifest exceeds 32 MiB"));
+        }
         if bytes.len() > 64 * 1024 {
-            return Err(anyhow!("native network manifest exceeds 64 KiB"));
+            #[derive(Deserialize)]
+            struct SchemaOnly {
+                schema: String,
+            }
+            let schema: SchemaOnly =
+                serde_json::from_slice(&bytes).context("decode native network manifest schema")?;
+            if schema.schema != super::reward_accounts::profile::NETWORK_SCHEMA {
+                return Err(anyhow!("native network manifest exceeds 64 KiB"));
+            }
         }
         let manifest: NativeNetworkManifest =
             serde_json::from_slice(&bytes).context("decode native network manifest")?;
         if bytes.len() > 16 * 1024
+            && manifest.reward_accounts.is_none()
             && manifest
                 .development_candidate
                 .as_ref()
@@ -560,6 +609,12 @@ impl NativeNetworkIdentity {
         hasher.update(b"hegemon.native.network-manifest.sha512.v1\0");
         hasher.update(canonical);
         Some(hasher.finalize().into())
+    }
+
+    pub(crate) fn reward_accounts(
+        &self,
+    ) -> Option<&super::reward_accounts::profile::RewardAccountsProfile> {
+        self.manifest.as_ref()?.reward_accounts.as_ref()
     }
 
     pub fn profile(&self) -> NativeNetworkProfile {
@@ -661,6 +716,7 @@ mod tests {
 
     fn manifest(profile: NativeNetworkProfile, seed: u8) -> NativeNetworkManifest {
         NativeNetworkManifest {
+            reward_accounts: None,
             schema: NETWORK_MANIFEST_SCHEMA.into(),
             profile,
             genesis_timestamp_ms: NATIVE_GENESIS_TIMESTAMP_MS,

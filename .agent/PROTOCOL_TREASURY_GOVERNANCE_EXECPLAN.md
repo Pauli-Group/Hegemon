@@ -46,7 +46,8 @@ chain reset remain separate later operator actions.
   issuance, policy hashes/quorum verification, and network-aware account codecs.
 - [x] (2026-11-05 UTC) Add typed network-aware full-length shielded address codec.
 - [ ] Integrate genesis and typed codecs into native manifests and all operational
-  callsites (shared library and wallet codec completed; node activation pending).
+  callsites (shared library, wallet codec and source-pinned v2 manifest data completed;
+  native activation and operational callsites pending).
 - [x] (2026-11-05 UTC) Implement candidate account transitions, lazy epoch
   availability, partial claims, deferred donations and real ML-DSA approvals.
 - [ ] Integrate account state with real proof verification and node persistence
@@ -63,13 +64,20 @@ chain reset remain separate later operator actions.
   and tampered-row recovery rejection (three focused node tests pass).
 - [x] (2026-11-05 UTC) Define closed native claim/donation/certificate frames
   and fixed mandatory reward records; seven native storage/framing tests pass.
+- [x] (2026-11-05 UTC) Replace moving treasury accounts with a fixed protocol
+  identity, preserving balances, epoch buckets and sequence across certified
+  signer rotation. Protocol regressions and fresh genuine payout proofs pass.
+- [x] (2026-11-05 UTC) Validate v2 reward manifest data/source pins and retain
+  an explicit startup rejection until account-aware runtime dispatch exists;
+  eleven native account tests and thirteen existing network regressions pass.
 - [ ] Wire mandatory reward records, source admission, account journals and
   authenticated storage into actual native startup, sync and reorg paths.
 - [x] (2026-11-05 UTC) Build offline reward-account genesis/address CLI and
   verify funded disposable genesis, supply budget, quorum, network rejection
   and exclusive file creation.
 - [x] (2026-11-05 UTC) Implement quorum-certified treasury replacement in the
-  shared ledger, reserved successor identifiers and separately compiled adoption.
+  shared ledger and separately compiled adoption (the later fixed-pot decision
+  supersedes successor reservations and account migration).
 - [x] (2026-11-05 UTC) Add offline typed-intent review, key generation, signing
   and quorum combination commands with explicit chain/genesis checks.
 - [ ] Integrate treasury fork adoption, offline workflow, RPC/claims and
@@ -179,7 +187,8 @@ Rationale: those capabilities were discussed but not included in the accepted
 documentation plan; they must not become unrequested runtime features.
 Date/Author: 2026-11-05 UTC, scope recorded by Codex.
 
-Decision: Give the successor relation a disjoint SMZR proof identity instead
+Superseded proof-magic decision (SMZT correction below): give the successor
+relation an SMZR proof identity instead
 of widening historical SMZL guards. Claims require empty private inputs and
 one positive ordinary output equal to the credited amount; donations prove
 inputs = change + explicit donation + fee. Bind the complete operation, public
@@ -189,7 +198,14 @@ Rationale: real proof generation exposed incompatible fixed geometry; keeping
 identities separate prevents historical proof/profile reinterpretation.
 Date/Author: 2026-11-05 UTC, Codex implementation evidence.
 
-Decision: A valid treasury certificate reserves an unused successor policy and
+Decision: Use SMZT for reward-account proofs and preserve recovery's existing
+SMZR envelope unchanged. The old SMZL private-spend relation remains separate.
+Rationale: recovery already owns SMZR; distinct exact magics, domains and profile
+identities prevent cross-format proof acceptance. Real SMZT proofs are required
+for the current source; historical provisional SMZR receipts do not qualify it.
+Date/Author: 2026-11-05 UTC, Codex parser and real-proof evidence.
+
+Superseded decision (fixed-pot user revision below): a valid treasury certificate reserves an unused successor policy and
 authenticates a future replacement, but cannot activate software rules. At its
 height the integrating node must provide a matching compiled fork identity.
 Move all balances, epoch buckets and sequence, increment policy generation,
@@ -199,6 +215,28 @@ ordinary mutable governance/mint authority; the transition remains reversible
 when replaying a competing branch.
 Date/Author: 2026-11-05 UTC, Codex implementation of the accepted fork policy.
 
+Decision: Keep a fixed treasury protocol identity and rotate only its signer
+policy under the certified hard-fork rules. Its identifier hashes a versioned
+current-committee authorization reference; its address still enforces the
+network. Ordinary miner/genesis accounts remain policy-hash accounts. Do not
+move balances, reset sequence, reserve a successor account or retire ordinary
+accounts belonging to current or former committees.
+Rationale: the user selected the recommended fix after learning that a miner
+could pre-fund a future policy address and block the proposed migration. A
+fixed pot removes that collision and separates treasury governance from the
+committee's ordinary funds. Supply, epochs and signature quorum are unchanged.
+Date/Author: 2026-11-05 UTC, explicit user answer recorded by Codex.
+
+Decision: Keep future signer-only schedule rows separate from the immutable
+genesis/proof algorithm digest. The compiled parser and all validation logic
+remain source-bound; each schedule entry and its current-quorum certificate
+bind the exact chain and generation. This hook remains required before runtime
+activation. Rationale: hashing future release data into the original genesis
+identity would turn a signer replacement into a different chain, invalidating
+historical proof support. Exact Development source pins do not establish an
+upgrade catalog for arbitrary future algorithm changes.
+Date/Author: 2026-11-05 UTC, Codex implementation-plan clarification.
+
 ## Outcomes & Retrospective
 
 
@@ -207,14 +245,25 @@ miner-note and zero-genesis assumptions and adds network-aware public/shielded
 addresses. The initial documentation revision changed no runtime. Runtime work now adds
 the shared protocol-reward-accounts crate and typed wallet address codec.
 The shared relation and encrypted wallet/account proof integration now exist,
-including genuine claim and donation proofs. Native reward routes, authenticated
-node persistence, real-chain reorg/synchronization, runtime deployment and the
+including genuine claim and donation proofs. Native reward routes, canonical
+node publication, real-chain reorg/synchronization, runtime deployment and the
 chain reset are not yet implemented or claimed. Documentation checks passed: relative links, required headings and six milestones,
 source paths, terminology, README structure, release examples, exact supply
 budgets and completed-block conservation arithmetic. Runtime tests were not run
 for these documentation-only edits. Revision eedd8da6 was pushed successfully;
 GitHub readback confirmed the new account/shielded HRPs and binary network
 validation specification.
+
+The fixed-pot revision now preserves one treasury identity while rotating only
+its current signer policy/generation. Pre-funding the successor's separate
+ordinary account no longer blocks adoption. Fifty selected tests pass: sixteen
+protocol tests, four circuit tests, three encrypted-wallet tests, three offline
+CLI tests, eleven native storage/framing/profile tests and thirteen existing
+network-profile regressions. Circuit and wallet tests each generated actual
+claim/donation SMZT proofs. Targeted protocol Clippy, formatting of changed
+Rust files, documentation checks and whitespace checks pass. These results do
+not qualify account-aware running-node admission, synchronization, RPCs or the
+required two-node lifecycle, which remain open milestones.
 
 ## Context and Orientation
 
@@ -258,7 +307,8 @@ intermediates. Genesis is immediately available; all future rewards sum to B.
 Conservation is P+A+U=G+I<=MAX_SUPPLY, with P shielded value, A all available
 accounts, U all pending accounts and I cumulative mining issuance.
 
-Address HRPs are heg/heg_test for policy-hash accounts and
+Address HRPs are heg/heg_test for ordinary policy-hash accounts and the fixed
+treasury lookup-policy identity, and
 heg_shield/heg_shield_test for shielded recipients. Bech32m envelopes include
 version, kind, class, independent 32-byte genesis network discriminator and
 body. Account body is a 48-byte policy identifier; shielded body retains full
@@ -277,7 +327,7 @@ Add genesis-committed reward_epoch_blocks (reset default 1,440), independent
 network class/discriminator, canonical initial treasury policy and optional
 sorted allocation rows. Validate positive E, nonzero discriminator, policy
 hashes, distinct recipients, positive amounts, checked sum G<=MAX_SUPPLY and
-N/M bounds. Treasury allocations must name the active treasury policy. Default
+N/M bounds. Treasury allocations must name the fixed protocol treasury identity. Default
 to no allocations and no inferred real launch keys. Bind the adjusted budget
 and all new rules into a fresh manifest/network identity.
 
@@ -369,12 +419,12 @@ canonical block hashes and note roots for the permitted reference window.
 
 Persist a bounded journal of changed account leaves and before/after metadata
 alongside the shared note/nullifier checkpoint in the same sled transaction.
-Use the known touched identifiers (miner, current/new treasury and claim owners)
+Use the known touched identifiers (miner, fixed treasury and claim owners)
 and the persistent trie to avoid scanning or rewriting the account table.
 Maintain one canonical account table plus authenticated metadata; retain undo
 and redo rows for the adopted block. A snapshot can be built and fully validated
 on startup, but full per-block snapshots are not the storage strategy. A reorg
-must restore account leaves, epoch totals, treasury policy/reservations, sequence,
+must restore account leaves, epoch totals, treasury policy/generation, sequence,
 notes and nullifiers together before applying the replacement suffix. A failed
 transaction publishes neither pool. Compare recovered roots with authenticated
 block records, never a second unauthenticated root stored beside the snapshot.
@@ -412,13 +462,33 @@ an unauthenticated account table beside an unchanged state root.
 
 
 Add one pending signer-replacement certificate approved by current N-of-M,
-binding successor policy, unchanged N/M, generation, height and compiled rules.
-Schedule before activation, reserve the new policy identifier, reject occupied
-ordinary-account targets and unrelated use of the reserved target. Activation
-moves the whole treasury account to its new policy with balances/sequence
-preserved and generation incremented; old-policy claims reject. Reorg restores
-policy, reservation, certificate, balances and sequence together. A signature
-cannot install unimplemented rules or substitute for hard-fork software adoption.
+binding unchanged N/M, generation, successor authority, height and compiled
+rules. Admission and activation both require a matching installed fork identity;
+unknown certificates cannot create a future halt. Keep the treasury identifier,
+address, balances, epoch buckets and sequence fixed. Activation changes only the
+current signer policy, increments generation and consumes the certificate.
+Old-generation treasury claims reject. Reorg restores all corresponding state.
+Do not reserve, move to or freeze the successor policy's ordinary account: it
+may have already received funds or spent with its own sequence. Ordinary public
+accounts still use their own single-key/threshold policy hashes and generation
+zero; treasury claims resolve the reserved current-committee authorization
+reference against actual current state. A certificate cannot install software
+rules or act as a general-purpose governance/mint command.
+
+Before enabling native runtime dispatch, install a parser for an initially
+empty compiled signer-fork schedule at
+`node/src/native/reward_accounts/compiled_forks.json`. Each canonical row binds
+network/genesis, current generation, activation height, successor policy and
+rules identity. Treat this file as public software-release data, never as an
+operator path or mutable RPC configuration. Keep the parser and validation
+algorithm in the source commitment, but keep future approved schedule rows out
+of the genesis/proof algorithm digest. Updating only a quorum-certified signer
+schedule must not change the original genesis identity or strand historical
+proofs. The current certificate is still mandatory; compiled data alone cannot
+rotate signers. Admission on software without the exact installed row rejects
+immediately. Broader rule/proof upgrades require a versioned supported-source
+catalog and historical replay tests; do not claim that the present exact-source
+Development pins already provide that upgrade mechanism.
 
 Expose canonical height/hash, supply breakdown, reward epoch, account policies,
 sequences and available/pending balances with release heights through read-only
@@ -461,17 +531,18 @@ From `/workspace/Hegemon`, inspect branch/status and the complete current design
 The original main base is 74910ff86514c2cbd93d7a7039e6b90b6e4600b6. Keep the
 existing branch and its history; do not recreate it or force-push.
 
-For this documentation revision run `git diff --check`, validate relative links,
+For the historical documentation-only revision, run `git diff --check`, validate relative links,
 all required ExecPlan headings, terminology and source references. Check the
 release examples mathematically and the subsidy telescoping for G=0, a partial
 G and G=MAX_SUPPLY. Inspect that only documentation files changed. Record the
 actual result, commit, push and verify the remote head. No runtime build or node
 test is necessary or claimed for these prose changes.
 
-Before later runtime code changes, honor AGENTS.md first-run instructions with
+The first-run setup milestone already honored AGENTS.md with
 `make setup` then `make node`; inspect toolchain/setup failures and record them.
 Use `work/` for intermediate logs and disposable noncommitted fixtures. Proposed
-focused test selectors, to be backed by actual named tests, are:
+focused selectors below are historical suggestions; the current exact reward
+commands and measured results follow in Artifacts and Notes:
 
     cargo test -p consensus reward_accounts
     cargo test -p wallet address
@@ -515,7 +586,7 @@ Exercise node/miner configuration, CLI, desktop/walletd, manifests and offline
 signing rather than checking the codec in isolation.
 
 Signer-fork tests cover absent/insufficient/mismatched certificates, unimplemented
-successor rules, target collision/reservation, old policy after activation,
+successor rules, fixed treasury identity, pre-funded successor authority, stale treasury generation after activation,
 sequence preservation and reorg through scheduling/activation. End-to-end
 acceptance includes real signatures and proofs, normal spend of a claim,
 restart, fresh sync and agreement through boundary reorganizations on two nodes.
@@ -528,7 +599,7 @@ commit and push without force or merge. Runtime tests later use fresh disposable
 base paths and stop only their own processes. Preserve old databases and wallet
 backups; do not delete pre-mainnet state to satisfy identity checks. Block
 publication is all-or-nothing. Reorg must restore accounts, epoch releases,
-notes, supply, sequences, policy generation, reservations and certificates.
+notes, supply, sequences, policy generation and certificates.
 Broadcast retries reconcile canonical identity and sequence; they do not create
 duplicate payments. Legacy address inspection never silently converts networks.
 
@@ -797,3 +868,64 @@ Revision note (2026-11-05 UTC): correct the provisional proof-magic collision
 with asset recovery, requalify the new SMZT proofs, and add tested native wire
 and mandatory-record primitives. Actual block orchestration, startup source
 selection, operational addresses, RPCs and two-node qualification remain open.
+
+Fixed-pot implementation (2026-11-05 UTC): the shared genesis identity, claim
+authorization, rotation and checkpoint codecs now follow the explicit
+user decision. The treasury uses a reserved versioned governance-policy hash;
+ordinary account claims still require their descriptor hash. Rotation changes
+only the current policy and generation, preserving the pot's entire state.
+The regression pre-funds the successor's ordinary account, advances both its
+sequence and the treasury sequence, performs the fork with claims from both,
+and reverses the journal. Sixteen protocol tests and targeted Clippy pass.
+Wallet fixtures and offline review now distinguish the stable treasury identity
+from its current authority hash. Fresh source-bound circuit and encrypted-wallet
+claim/donation proofs pass; both raw proof frames are exactly 171,505 bytes.
+The checkpoint schema is now 2 and rules ID names fixed-treasury v2; these are
+unreleased reset changes, not an on-disk migration of a running chain.
+
+The new v2 native manifest data validates compiled proof/native pins, the
+allocation-adjusted budget, test-network tags and an isolated finite Development
+scope. Legacy manifests omit the new field byte-for-byte and retain their old
+funding rules. Distribution manifests may be up to 32 MiB with bounded reads;
+v1 keeps its 16/64 KiB limits. Runtime source dispatch still explicitly rejects
+v2 until the actual account-aware source and block orchestration are installed.
+A development-feature node test build exposed existing recovery tests' extra
+wallet feature requirements: use --features development-candidate,wallet/rpc-client,wallet/private-spend-dev-artifacts
+for that harness, rather than widening the default node build.
+
+Fixed-pot qualification (2026-11-05 UTC): after updating the wallet fixtures,
+offline review and native syntax, rerun the exact source-bound proofs. Both
+wallet and circuit claim/donation proofs are 171,505 bytes and pass. The v2
+manifest constructor initially omitted the existing 0x prefix on consensus
+hashes; native tests caught the mismatch. It now uses the shared hex32 formatter,
+and all eleven native tests pass, including the greater-than-64-KiB bounded
+distribution and startup-rejection cases. Thirteen existing network-profile
+regressions also pass. The offline test signs a fixed-treasury claim and checks
+that its displayed address differs from its committee's ordinary account.
+
+From /workspace/Hegemon, load the installed workspace environment with
+`source /workspace/toolchains/env.sh`, then run:
+
+    cargo test -p protocol-reward-accounts --offline
+    cargo clippy -p protocol-reward-accounts --all-targets --offline --no-deps -- -D warnings
+    cargo test -p transaction-circuit --release --features private-spend-dev-artifacts reward_accounts --offline -- --include-ignored --nocapture
+    cargo test -p wallet --release --no-default-features --lib reward_accounts --offline -- --include-ignored --nocapture
+    cargo test -p wallet --release --no-default-features --test reward_account_cli --offline
+    cargo test -p hegemon-node --no-default-features --features development-candidate,wallet/rpc-client,wallet/private-spend-dev-artifacts --release --lib reward_accounts_native --offline
+    cargo test -p hegemon-node --no-default-features --features development-candidate,wallet/rpc-client,wallet/private-spend-dev-artifacts --release --lib network_profile::tests --offline
+
+Expect nonzero selected pass counts 16, 4, 3, 3, 11 and 13 respectively; Clippy
+exits successfully. The circuit command also reports zero matches in unrelated
+integration binaries; the four library tests are the qualifying matches. Use
+--lib for a library-only repeat. Local logs are reward-fixed-pot-{regression,
+clippy,real-circuit,real-wallet,cli-tests,native-tests,network-regressions}.log
+under /workspace/work/environment-setup. No new relative-link failures were
+introduced; nine pre-existing overview links to absent historical artifacts
+remain unchanged. All required plan sections, six milestones, epoch examples,
+supply arithmetic and changed-file formatting/whitespace checks pass.
+
+Revision note (2026-11-05 UTC): implement the user's fixed treasury identity
+choice, supersede the earlier destination-reservation design explicitly, update
+offline review and qualify the changed proof source. Add tested v2 manifest data
+without enabling incomplete runtime dispatch. Keep the compiled signer-schedule
+hook and actual node orchestration in the outstanding implementation milestones.

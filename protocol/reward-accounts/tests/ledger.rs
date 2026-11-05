@@ -84,7 +84,11 @@ fn claim(
         encode_address_bytes(AddressKind::Shielded, ledger.genesis().network, &[1; 32]).unwrap();
     let claim = AccountClaim {
         context: ledger.context().clone(),
-        account: policy.identifier().unwrap(),
+        account: if policy == ledger.treasury_policy() {
+            ledger.treasury()
+        } else {
+            policy.identifier().unwrap()
+        },
         policy_generation: 0,
         sequence,
         amount,
@@ -267,7 +271,8 @@ fn reward_accounts_treasury_fork_needs_certificate_and_compiled_adoption() {
     for h in 1..=6 {
         ordinary = ordinary.apply_block(h, miner, &[], &FixtureProofs).unwrap();
     }
-    assert_eq!(ordinary.treasury(), old_policy.identifier().unwrap());
+    assert_eq!(ordinary.treasury(), protocol_treasury_account_id());
+    assert_eq!(ordinary.treasury_policy(), &old_policy);
     let scheduled = l
         .apply_block_with_fork(
             1,
@@ -279,7 +284,7 @@ fn reward_accounts_treasury_fork_needs_certificate_and_compiled_adoption() {
         .unwrap();
     assert!(scheduled
         .apply_block(2, target, &[], &FixtureProofs)
-        .is_err());
+        .is_ok());
     assert!(scheduled
         .apply_block(2, miner, &[action], &FixtureProofs)
         .is_err());
@@ -303,13 +308,24 @@ fn reward_accounts_treasury_fork_needs_certificate_and_compiled_adoption() {
     let activated = scheduled
         .apply_block_with_fork(5, miner, &[], &FixtureProofs, Some(&compiled))
         .unwrap();
-    assert_eq!(activated.treasury(), target);
+    assert_eq!(activated.treasury(), protocol_treasury_account_id());
+    assert_eq!(activated.treasury_policy().identifier().unwrap(), target);
     assert_eq!(activated.policy_generation(), 1);
     assert_eq!(
-        activated.account_at(target, 5).unwrap().available(),
+        activated
+            .account_at(activated.treasury(), 5)
+            .unwrap()
+            .available(),
         prior.available()
     );
-    assert!(activated.account_at(target, 5).unwrap().total().unwrap() > prior.total().unwrap());
+    assert!(
+        activated
+            .account_at(activated.treasury(), 5)
+            .unwrap()
+            .total()
+            .unwrap()
+            > prior.total().unwrap()
+    );
     assert!(activated.pending_fork().is_none());
     let mut fresh_claim = claim(&activated, &successor_key, &successor, 1, 0, 0);
     if let RewardAccountAction::Claim {
@@ -327,14 +343,20 @@ fn reward_accounts_treasury_fork_needs_certificate_and_compiled_adoption() {
     let spent = activated
         .apply_block(6, miner, &[fresh_claim], &FixtureProofs)
         .unwrap();
-    assert_eq!(spent.account_at(target, 6).unwrap().next_sequence(), 1);
-    let stale = claim(&activated, &old_key, &old_policy, 1, 0, 0);
+    assert_eq!(
+        spent
+            .account_at(spent.treasury(), 6)
+            .unwrap()
+            .next_sequence(),
+        1
+    );
+    let stale = claim(&scheduled, &old_key, &old_policy, 1, 0, 0);
     assert!(activated
         .apply_block(6, miner, &[stale], &FixtureProofs)
         .is_err());
     assert!(activated
         .apply_block(6, old_policy.identifier().unwrap(), &[], &FixtureProofs)
-        .is_err());
+        .is_ok());
     let bytes = activated.encode();
     let restored = RewardAccountLedger::decode(&mut bytes.as_slice()).unwrap();
     restored.validate().unwrap();
@@ -342,13 +364,14 @@ fn reward_accounts_treasury_fork_needs_certificate_and_compiled_adoption() {
     // Replaying the competing branch from the retained parent restores the old
     // policy and its exact pending epoch buckets; no activation is irreversible.
     let alternate = l.apply_block(1, miner, &[], &FixtureProofs).unwrap();
-    assert_eq!(alternate.treasury(), old_policy.identifier().unwrap());
+    assert_eq!(alternate.treasury(), protocol_treasury_account_id());
+    assert_eq!(alternate.treasury_policy(), &old_policy);
     assert_eq!(alternate.policy_generation(), 0);
     assert!(alternate.pending_fork().is_none());
 }
 
 #[test]
-fn reward_accounts_fork_rejects_occupied_target_changed_quorum_and_altered_intent() {
+fn reward_accounts_fork_rejects_same_policy_changed_quorum_and_altered_intent() {
     let (l, _, miner_policy, old_key, _) = setup();
     let miner = miner_policy.identifier().unwrap();
     let next_key = MlDsaSecretKey::generate_deterministic(b"fork rejection next key");
@@ -357,7 +380,7 @@ fn reward_accounts_fork_rejects_occupied_target_changed_quorum_and_altered_inten
         current_generation: 0,
         activation_height: 2,
         successor_rules: RulesHash48::new([19; 48]),
-        successor_policy: miner_policy,
+        successor_policy: l.treasury_policy().clone(),
     };
     let schedule = |i: TreasuryForkIntent, signature_for: &TreasuryForkIntent| {
         RewardAccountAction::TreasuryFork {
@@ -498,7 +521,7 @@ fn reward_accounts_five_of_seven_fork_activates_at_release_boundary() {
         encode_address_bytes(AddressKind::Shielded, l.genesis().network, &[1; 32]).unwrap();
     let claim = AccountClaim {
         context: l.context().clone(),
-        account: new.identifier().unwrap(),
+        account: protocol_treasury_account_id(),
         policy_generation: 1,
         sequence: 0,
         amount: 1,
@@ -672,4 +695,113 @@ fn reward_accounts_bounded_journals_recover_and_reverse_epoch_claim_histories() 
         state.validate().unwrap();
     }
     assert_eq!(state, initial);
+}
+
+#[test]
+fn reward_accounts_fixed_treasury_prefunded_successor_cannot_block_rotation() {
+    let (initial, miner_key, miner_policy, old_key, old_policy) = setup();
+    let pot = protocol_treasury_account_id();
+    let miner = miner_policy.identifier().unwrap();
+    let mut genesis = initial.genesis().clone();
+    let mut rows = genesis.allocations.clone().into_inner();
+    rows.push(GenesisAllocation {
+        account: pot,
+        amount: 10 * COIN,
+    });
+    rows.sort_by_key(|r| r.account);
+    genesis.allocations = BoundedVec::new(rows).unwrap();
+    let mut context = initial.context().clone();
+    context.genesis_config_hash = RulesHash48::new(genesis.commitment().unwrap());
+    let initial = RewardAccountLedger::new(genesis, context).unwrap();
+    let intent = TreasuryForkIntent {
+        context: initial.context().clone(),
+        current_generation: 0,
+        activation_height: 3,
+        successor_rules: RulesHash48::new([39; 48]),
+        successor_policy: miner_policy.clone(),
+    };
+    let certificate = TreasuryForkCertificate {
+        approvals: BoundedVec::new(vec![AccountApproval::sign(
+            0,
+            &old_key,
+            &intent.authorization_digest(),
+        )])
+        .unwrap(),
+        intent,
+    };
+    let compiled = CompiledTreasuryFork {
+        activation_height: 3,
+        successor_rules: certificate.intent.successor_rules,
+        successor_policy: miner,
+    };
+    // The proposed signer policy already owns an ordinary account funded at
+    // genesis. Both that account and the logical pot advance their own nonce.
+    let ordinary = claim(&initial, &miner_key, &miner_policy, 5 * COIN, 1, 0);
+    let treasury = claim(&initial, &old_key, &old_policy, COIN, 2, 0);
+    let state = initial
+        .apply_block_with_fork(
+            1,
+            miner,
+            &[
+                ordinary,
+                treasury,
+                RewardAccountAction::TreasuryFork { certificate },
+            ],
+            &FixtureProofs,
+            Some(&compiled),
+        )
+        .unwrap();
+    let state = state.apply_block(2, miner, &[], &FixtureProofs).unwrap();
+    assert_eq!(state.account_at(miner, 3).unwrap().next_sequence(), 1);
+    assert_eq!(state.account_at(pot, 3).unwrap().next_sequence(), 1);
+    let old_claim = claim(&state, &old_key, &old_policy, COIN, 0, 1);
+    let ordinary_claim = claim(&state, &miner_key, &miner_policy, COIN, 1, 1);
+    let mut treasury_claim = claim(&state, &miner_key, &miner_policy, 2 * COIN, 1, 1);
+    if let RewardAccountAction::Claim {
+        claim, approvals, ..
+    } = &mut treasury_claim
+    {
+        claim.account = pot;
+        claim.policy_generation = 1;
+        *approvals = BoundedVec::new(vec![AccountApproval::sign(
+            0,
+            &miner_key,
+            &claim.authorization_digest(),
+        )])
+        .unwrap();
+    }
+    assert!(state
+        .apply_block_with_fork(3, miner, &[old_claim], &FixtureProofs, Some(&compiled))
+        .is_err());
+    let (after, journal) = state
+        .apply_block_journaled(
+            3,
+            miner,
+            &[treasury_claim, ordinary_claim],
+            &FixtureProofs,
+            Some(&compiled),
+        )
+        .unwrap();
+    assert_eq!(after.treasury(), pot);
+    assert_eq!(after.treasury_policy(), &miner_policy);
+    assert_eq!(after.policy_generation(), 1);
+    assert_eq!(after.account_at(pot, 3).unwrap().available(), 7 * COIN - 3);
+    assert_eq!(
+        after.account_at(miner, 3).unwrap().available(),
+        94 * COIN - 2
+    );
+    assert_eq!(after.account_at(pot, 3).unwrap().next_sequence(), 2);
+    assert_eq!(after.account_at(miner, 3).unwrap().next_sequence(), 2);
+    after.validate().unwrap();
+    let reversed = after
+        .replay_journal(
+            &journal,
+            RewardJournalDirection::Reverse,
+            state.state_root(),
+        )
+        .unwrap();
+    assert_eq!(reversed, state);
+    assert!(after
+        .apply_block(4, old_policy.identifier().unwrap(), &[], &FixtureProofs)
+        .is_ok());
 }

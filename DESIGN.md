@@ -21,6 +21,14 @@ remain outstanding. Current legacy behavior below remains unmodified. Track prog
 storage adapter now pass atomic-abort, disk-restart and boundary-suffix tests.
 They are not yet wired into native block admission or synchronization.
 
+The treasury keeps one fixed protocol identity and address. A certified hard
+fork changes only its signer policy and generation; balances, pending epochs
+and claim sequence stay in place. Ordinary accounts owned by either committee
+remain separate, so pre-funding the successor policy cannot block rotation.
+A separate v2 native manifest commits account genesis, epoch parameters and
+exact proof/native sources; runtime selection still rejects that profile until
+the account-aware dispatcher and canonical block publication are installed.
+
 The controlled-asset Development integration uses the existing V8 note tree,
 canonical positions and global spent-nullifier set. Its separate typed asset
 authority is constructed from the exact fresh Development manifest and compiled

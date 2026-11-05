@@ -182,7 +182,6 @@ pub struct RewardAccountLedger {
     treasury_policy: AccountPolicy,
     policy_generation: u64,
     pending_fork: Option<Arc<TreasuryForkCertificate>>,
-    retired_treasuries: Arc<BTreeSet<AccountPolicyId48>>,
     accounts: AccountTree,
 }
 impl RewardAccountLedger {
@@ -217,7 +216,6 @@ impl RewardAccountLedger {
             treasury,
             policy_generation: 0,
             pending_fork: None,
-            retired_treasuries: Arc::new(BTreeSet::new()),
             accounts,
         };
         result.validate()?;
@@ -274,7 +272,7 @@ impl RewardAccountLedger {
     }
     pub fn state_root(&self) -> RewardAccountsRoot48 {
         RewardAccountsRoot48::new(hash48(
-            b"hegemon.reward-accounts.authenticated-state.v1",
+            b"hegemon.reward-accounts.authenticated-state.v2",
             &(
                 self.genesis_commitment,
                 &self.context,
@@ -287,7 +285,6 @@ impl RewardAccountLedger {
                 &self.treasury_policy,
                 self.policy_generation,
                 &self.pending_fork,
-                &self.retired_treasuries,
                 self.accounts.root_hash(),
             )
                 .encode(),
@@ -335,20 +332,12 @@ impl RewardAccountLedger {
             next.pending_epoch_totals.remove(&epoch);
         }
         next.activate_fork(height, compiled_fork)?;
-        if next.retired_treasuries.contains(&miner)
-            || next
-                .pending_fork
-                .as_ref()
-                .is_some_and(|c| c.intent.successor_policy.identifier().ok() == Some(miner))
-        {
-            return Err(RewardAccountsError::InvalidTreasuryFork);
-        }
         let mut fee_total = 0u64;
         let mut donation_total = 0u64;
         for action in actions {
             let fee = match action {
                 RewardAccountAction::TreasuryFork { certificate } => {
-                    next.schedule_fork(height, miner, certificate, compiled_fork)?;
+                    next.schedule_fork(height, certificate, compiled_fork)?;
                     0
                 }
                 RewardAccountAction::Claim {
@@ -360,7 +349,7 @@ impl RewardAccountLedger {
                     if claim.context != self.context
                         || claim.amount == 0
                         || claim.payout_binding == ProofCommitment48::ZERO
-                        || policy.identifier()? != claim.account
+                        || (claim.account != next.treasury && policy.identifier()? != claim.account)
                     {
                         return Err(RewardAccountsError::InvalidContext);
                     }
@@ -369,13 +358,6 @@ impl RewardAccountLedger {
                         AddressKind::Shielded,
                         self.genesis.network,
                     )?;
-                    if next.retired_treasuries.contains(&claim.account)
-                        || next.pending_fork.as_ref().is_some_and(|c| {
-                            c.intent.successor_policy.identifier().ok() == Some(claim.account)
-                        })
-                    {
-                        return Err(RewardAccountsError::InvalidTreasuryFork);
-                    }
                     let generation = if claim.account == next.treasury {
                         next.policy_generation
                     } else {
@@ -506,7 +488,6 @@ impl RewardAccountLedger {
     fn schedule_fork(
         &mut self,
         height: u64,
-        miner: AccountPolicyId48,
         certificate: &TreasuryForkCertificate,
         compiled: Option<&CompiledTreasuryFork>,
     ) -> Result<(), RewardAccountsError> {
@@ -522,7 +503,7 @@ impl RewardAccountLedger {
         };
         // Unknown certificates must not create a future halt/pause power.
         // Adoption is necessary at scheduling, as well as at activation.
-        if target == miner || compiled != Some(&expected) {
+        if compiled != Some(&expected) {
             return Err(RewardAccountsError::InvalidTreasuryFork);
         }
         self.pending_fork = Some(Arc::new(certificate.clone()));
@@ -542,9 +523,7 @@ impl RewardAccountLedger {
             || intent.successor_policy.required() != self.treasury_policy.required()
             || intent.successor_policy.signer_hashes().len()
                 != self.treasury_policy.signer_hashes().len()
-            || target == self.treasury
-            || self.accounts.contains_key(&target)
-            || self.retired_treasuries.contains(&target)
+            || target == self.treasury_policy.identifier()?
         {
             return Err(RewardAccountsError::InvalidTreasuryFork);
         }
@@ -585,10 +564,8 @@ impl RewardAccountLedger {
             .policy_generation
             .checked_add(1)
             .ok_or(RewardAccountsError::Overflow)?;
-        let balance = self.accounts.remove(&self.treasury).unwrap_or_default();
-        Arc::make_mut(&mut self.retired_treasuries).insert(self.treasury);
-        self.accounts.insert(target, balance)?;
-        self.treasury = target;
+        // The protocol pot, balances, epoch buckets and sequence remain in
+        // place. The successor policy hash is authority, not a destination.
         self.treasury_policy = intent.successor_policy;
         self.policy_generation = generation;
         self.pending_fork = None;
@@ -603,22 +580,12 @@ impl RewardAccountLedger {
             return Err(RewardAccountsError::InvalidState);
         }
         self.treasury_policy.validate()?;
-        if self.treasury_policy.identifier()? != self.treasury
+        if self.treasury != self.genesis.treasury_account()?
             || self.treasury_policy.required() != self.genesis.treasury_policy.required()
             || self.treasury_policy.signer_hashes().len()
                 != self.genesis.treasury_policy.signer_hashes().len()
-            || (self.policy_generation == 0 && self.treasury != self.genesis.treasury_account()?)
-            || (self.policy_generation != 0
-                && !self
-                    .retired_treasuries
-                    .contains(&self.genesis.treasury_account()?))
+            || (self.policy_generation == 0 && self.treasury_policy != self.genesis.treasury_policy)
             || self.issued != self.genesis.issuance()?.issued_through(self.height)
-            || self.retired_treasuries.contains(&self.treasury)
-            || self.retired_treasuries.len() as u64 != self.policy_generation
-            || self
-                .retired_treasuries
-                .iter()
-                .any(|id| self.accounts.contains_key(id))
         {
             return Err(RewardAccountsError::InvalidState);
         }
@@ -741,7 +708,6 @@ pub struct RewardAccountCheckpoint {
     treasury_policy: AccountPolicy,
     policy_generation: u64,
     pending_fork: Option<Arc<TreasuryForkCertificate>>,
-    retired_treasuries: Arc<BTreeSet<AccountPolicyId48>>,
 }
 impl RewardAccountCheckpoint {
     pub fn height(&self) -> u64 {
@@ -788,8 +754,8 @@ impl RewardAccountJournal {
         &self.rows
     }
     pub fn validate_shape(&self) -> Result<(), RewardAccountsError> {
-        if self.before.schema != 1
-            || self.after.schema != 1
+        if self.before.schema != 2
+            || self.after.schema != 2
             || self.before.context != self.after.context
             || self.before.genesis_commitment != self.after.genesis_commitment
             || self.before.height.checked_add(1) != Some(self.after.height)
@@ -813,7 +779,7 @@ pub enum RewardJournalDirection {
 impl RewardAccountLedger {
     pub fn checkpoint(&self) -> RewardAccountCheckpoint {
         RewardAccountCheckpoint {
-            schema: 1,
+            schema: 2,
             genesis_commitment: self.genesis_commitment,
             context: self.context.clone(),
             height: self.height,
@@ -825,7 +791,6 @@ impl RewardAccountLedger {
             treasury_policy: self.treasury_policy.clone(),
             policy_generation: self.policy_generation,
             pending_fork: self.pending_fork.clone(),
-            retired_treasuries: self.retired_treasuries.clone(),
         }
     }
     /// Stream table rows at genesis or startup; normal blocks use journals.
@@ -836,7 +801,7 @@ impl RewardAccountLedger {
         &mut self,
         c: RewardAccountCheckpoint,
     ) -> Result<(), RewardAccountsError> {
-        if c.schema != 1
+        if c.schema != 2
             || c.genesis_commitment != self.genesis_commitment
             || c.context != self.context
         {
@@ -851,7 +816,6 @@ impl RewardAccountLedger {
         self.treasury_policy = c.treasury_policy;
         self.policy_generation = c.policy_generation;
         self.pending_fork = c.pending_fork;
-        self.retired_treasuries = c.retired_treasuries;
         Ok(())
     }
     /// Recovery only: the expected root must come from a verified canonical

@@ -46,6 +46,9 @@ impl NativeProofBinding {
         network: &NativeNetworkIdentity,
         genesis_hash: [u8; 32],
     ) -> Result<Option<Self>, String> {
+        if network.reward_accounts().is_some() {
+            return Err("reward-account runtime source dispatch is not installed yet".into());
+        }
         if network.profile() == NativeNetworkProfile::Legacy {
             Poseidon2V8ProductionBinding::from_source_for_replay()
                 .map(|binding| binding.map(Self::Historical))

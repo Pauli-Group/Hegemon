@@ -248,6 +248,40 @@ fn reward_accounts_offline_review_sign_combine_and_replay_bindings() {
         .assert()
         .failure();
     assert!(!std::path::Path::new(rejected).exists());
+    // The treasury's fixed identity differs from the committee's ordinary
+    // policy-hash account, but uses the configured committee for generation 0.
+    let mut treasury_claim = claim.clone();
+    treasury_claim.account = protocol_treasury_account_id();
+    fs::write(&intent_path, treasury_claim.encode()).unwrap();
+    let review = run(&[&["intent-review"][..], &base].concat());
+    assert_eq!(
+        review["account"],
+        PublicAccountAddress {
+            network: g.network,
+            policy: protocol_treasury_account_id(),
+        }
+        .encode()
+        .unwrap()
+    );
+    let treasury_out = dir.path().join("treasury-approval.json");
+    run(&[
+        &["intent-sign"][..],
+        &base,
+        &[
+            "--secret-key",
+            secret,
+            "--signer-index",
+            "0",
+            "--out",
+            treasury_out.to_str().unwrap(),
+        ],
+    ]
+    .concat());
+    let treasury_approval: AccountApproval =
+        serde_json::from_slice(&fs::read(treasury_out).unwrap()).unwrap();
+    policy
+        .verify(&treasury_claim.authorization_digest(), &[treasury_approval])
+        .unwrap();
     // The fork uses a distinct signing domain and retains the configured N/M.
     let next = AccountPolicy::single(
         &MlDsaSecretKey::generate_deterministic(b"new offline fork test").verify_key(),

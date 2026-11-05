@@ -6,6 +6,16 @@ use crate::*;
 use codec::{Decode, Encode};
 use crypto::hash384::RulesHash48;
 
+/// Hash of the reserved, versioned authorization policy that looks up the
+/// current protocol treasury committee. It is independent of committee keys;
+/// binary address network tags distinguish networks with this same script.
+pub fn protocol_treasury_account_id() -> AccountPolicyId48 {
+    AccountPolicyId48::new(hash48(
+        b"hegemon.reward-account.protocol-authorization-policy.v1",
+        b"fixed-treasury/current-genesis-or-certified-hard-fork-committee",
+    ))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct TreasuryForkIntent {
     pub context: AccountChainContext,

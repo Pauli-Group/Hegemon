@@ -22,6 +22,13 @@ unchanged. Shared account journals and the native same-tree
 storage adapter now pass atomic-abort, disk-restart and boundary-suffix tests.
 They are not yet wired into native block admission or synchronization.
 
+The treasury keeps one fixed protocol identity and address. A certified hard
+fork changes only its signer policy and generation; balances, pending epochs
+and claim sequence stay in place. Ordinary accounts owned by either committee
+remain separate, so pre-funding the successor policy cannot block rotation.
+The v2 manifest authenticates reward genesis and exact source pins separately
+from legacy funded-note profiles; validating that data grants no proof authority.
+
 Moving-chain native asset integration uses a finite Development qualification. The spend relation
 has a fresh v3 source identity; its 134-word public schema, the administrator
 relation and the SMZE backend parameters are retained. `HGANSP01` and `HGANAD01`

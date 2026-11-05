@@ -30,7 +30,7 @@ pub const MAX_PUBLIC_MEMO_BYTES: usize = 256;
 pub const TREASURY_SUBSIDY_NUMERATOR: u64 = 1;
 pub const TREASURY_SUBSIDY_DENOMINATOR: u64 = 5;
 pub const REWARD_ACCOUNTS_RULES_ID: &[u8] =
-    b"hegemon.reward-accounts.epoch-n-plus-two.policy-hash.genesis-budget.v1";
+    b"hegemon.reward-accounts.epoch-n-plus-two.policy-hash.fixed-treasury.genesis-budget.v2";
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RewardAccountsError {

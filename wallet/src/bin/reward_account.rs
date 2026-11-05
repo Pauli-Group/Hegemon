@@ -163,11 +163,11 @@ fn reviewed(args: &IntentArgs) -> Result<(AccountPolicy, [u8; 48], serde_json::V
     let genesis: [u8; 32] = hex::decode(&args.expected_genesis_hash)?
         .try_into()
         .map_err(|_| anyhow::anyhow!("expected genesis hash must contain 32 bytes"))?;
-    let (context, digest, details) = match args.kind {
+    let (context, digest, details, display_account) = match args.kind {
         IntentKind::Claim => {
             let claim: AccountClaim = exact_scale(&args.intent)?;
             ensure!(
-                claim.account == account,
+                claim.account == account || claim.account == g.treasury_account()?,
                 "claim account differs from authorization policy"
             );
             ensure!(
@@ -182,12 +182,18 @@ fn reviewed(args: &IntentArgs) -> Result<(AccountPolicy, [u8; 48], serde_json::V
                 claim.payout_binding != synthetic_crypto::hash384::ProofCommitment48::ZERO,
                 "claim has no payout binding"
             );
+            if claim.account == g.treasury_account()? && claim.policy_generation == 0 {
+                ensure!(
+                    policy == g.treasury_policy,
+                    "initial treasury claim requires genesis committee policy"
+                );
+            }
             let recipient = NetworkShieldedAddress::from_bytes(&claim.recipient, g.network)?;
             let digest = claim.authorization_digest();
             let details = json!({"kind":"claim","amount_atoms":claim.amount,"fee_atoms":claim.fee,
                 "sequence":claim.sequence,"policy_generation":claim.policy_generation,
                 "recipient":recipient.encode()?,"payout_binding":hex::encode(claim.payout_binding.as_bytes())});
-            (claim.context, digest, details)
+            (claim.context, digest, details, claim.account)
         }
         IntentKind::TreasuryFork => {
             let fork: TreasuryForkIntent = exact_scale(&args.intent)?;
@@ -210,8 +216,8 @@ fn reviewed(args: &IntentArgs) -> Result<(AccountPolicy, [u8; 48], serde_json::V
             let digest = fork.authorization_digest();
             let details = json!({"kind":"treasury-fork","activation_height":fork.activation_height,
                 "current_generation":fork.current_generation,"successor_rules":hex::encode(fork.successor_rules.as_bytes()),
-                "successor_address":PublicAccountAddress{network:g.network,policy:successor}.encode()?,"successor_policy":fork.successor_policy});
-            (fork.context, digest, details)
+                "successor_authorization_policy_hash":hex::encode(successor.as_bytes()),"successor_policy":fork.successor_policy});
+            (fork.context, digest, details, g.treasury_account()?)
         }
     };
     context.validate(&g)?;
@@ -219,7 +225,7 @@ fn reviewed(args: &IntentArgs) -> Result<(AccountPolicy, [u8; 48], serde_json::V
         context.chain_id == chain && context.genesis_hash == genesis,
         "intent differs from independently expected chain/genesis"
     );
-    let review = json!({"account":PublicAccountAddress{network:g.network,policy:account}.encode()?,
+    let review = json!({"account":PublicAccountAddress{network:g.network,policy:display_account}.encode()?,"authorization_policy_hash":hex::encode(account.as_bytes()),
         "chain_id":hex::encode(chain),"genesis_hash":hex::encode(genesis),"network":g.network,
         "intent_digest":hex::encode(digest),"policy":policy,"details":details,
         "canonical_inclusion_checked":false});

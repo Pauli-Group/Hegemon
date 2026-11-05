@@ -26,6 +26,7 @@ pub(crate) fn source_digest() -> [u8; 48] {
             [
                 proof::source_digest().as_slice(),
                 include_bytes!("wire.rs").as_slice(),
+                include_bytes!("profile.rs").as_slice(),
                 include_bytes!("../reward_accounts.rs").as_slice(),
                 include_bytes!("../network_profile.rs").as_slice(),
                 include_bytes!("../node_impl.rs").as_slice(),
@@ -158,7 +159,8 @@ impl AccountNativeAction {
                 carrier: bytes,
             } => {
                 ensure!(
-                    policy.identifier()? == claim.account
+                    (policy.identifier()? == claim.account
+                        || claim.account == protocol_treasury_account_id())
                         && claim.amount > 0
                         && claim
                             .amount

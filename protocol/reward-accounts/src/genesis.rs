@@ -43,7 +43,8 @@ impl RewardAccountsGenesis {
         })
     }
     pub fn treasury_account(&self) -> Result<AccountPolicyId48, RewardAccountsError> {
-        self.treasury_policy.identifier()
+        self.treasury_policy.validate()?;
+        Ok(protocol_treasury_account_id())
     }
     pub fn issuance(&self) -> Result<IssuanceSchedule, RewardAccountsError> {
         IssuanceSchedule::new(self.validate()?)
