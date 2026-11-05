@@ -2086,6 +2086,12 @@ impl NativeNode {
             sync_target_peer: Mutex::new(None),
             sync_target_hash: Mutex::new(None),
             sync_target_unverified_peer_hint: AtomicBool::new(false),
+            #[cfg(test)]
+            sync_hint_gate_close_observer: Mutex::new(None),
+            #[cfg(test)]
+            sync_hint_gate_close_observations: AtomicU64::new(0),
+            #[cfg(test)]
+            sync_known_loser_classification_observer: Mutex::new(None),
             sync_unverified_target_deferred_during_import: Mutex::new(None),
             sync_unverified_target_cooldowns: Mutex::new(BTreeMap::new()),
             sync_reorg_backfill_blocks: AtomicU64::new(NATIVE_SYNC_REORG_BACKFILL_BLOCKS),
@@ -2568,6 +2574,80 @@ impl NativeNode {
         true
     }
 
+    #[cfg(test)]
+    fn observe_known_loser_classification_for_test(&self, target_meta: &NativeBlockMeta) {
+        // Release the state read guard before the callback: a test may install
+        // another target or advance canonical state. The production resolver
+        // must subsequently reacquire state and repeat its fork-choice check.
+        let nonwinning = {
+            let state = self.state.read();
+            !native_meta_better_than(target_meta, &state.best)
+        };
+        if nonwinning {
+            let observer = self.sync_known_loser_classification_observer.lock().take();
+            if let Some(observer) = observer {
+                observer(self);
+            }
+        }
+    }
+
+    /// Handle an exact durable non-winning hint before admitting it as an
+    /// unverified target. A different unresolved target retains all its state.
+    pub(crate) fn ignore_stored_nonwinning_sync_hint(
+        &self,
+        expected_target: (u64, [u8; 32]),
+    ) -> Result<bool> {
+        let Some(target_meta) = self.header_by_hash(&expected_target.1)? else {
+            return Ok(false);
+        };
+        if target_meta.height != expected_target.0 {
+            return Err(anyhow!(
+                "stored native sync target height mismatch for {}: expected {}, observed {}",
+                hex32(&expected_target.1),
+                expected_target.0,
+                target_meta.height
+            ));
+        }
+
+        #[cfg(test)]
+        self.observe_known_loser_classification_for_test(&target_meta);
+        // Recheck current fork choice after any test interleaving and keep the
+        // canonical state stable until the selected target has been inspected.
+        let state = self.state.read();
+        if native_meta_better_than(&target_meta, &state.best) {
+            return Ok(false);
+        }
+        let best_height = state.best.height;
+        let mut target_hash = self.sync_target_hash.lock();
+        let mut target_peer = self.sync_target_peer.lock();
+        let target_height = self.sync_target_height.load(Ordering::Relaxed);
+        let exact = target_height == expected_target.0 && *target_hash == Some(expected_target.1);
+        let unanchored_resolved_or_startup = target_hash.is_none()
+            && target_height <= best_height
+            && !self
+                .sync_target_unverified_peer_hint
+                .load(Ordering::Relaxed);
+        if !exact && !unanchored_resolved_or_startup {
+            return Ok(true);
+        }
+
+        self.sync_target_height
+            .store(best_height, Ordering::Relaxed);
+        *target_hash = None;
+        *target_peer = None;
+        self.sync_target_unverified_peer_hint
+            .store(false, Ordering::Relaxed);
+        self.sync_target_observed.store(true, Ordering::SeqCst);
+        self.reset_sync_reorg_backfill();
+        // Replacing verified non-winning evidence with the verified local tip
+        // preserves readiness; do not publish a false unavailable-work window.
+        drop(target_peer);
+        drop(target_hash);
+        drop(state);
+        self.refresh_mining_sync_gate();
+        Ok(true)
+    }
+
     pub(crate) fn clear_stored_nonwinning_sync_target_to_local_tip(
         &self,
         peer_best_height: u64,
@@ -2588,6 +2668,8 @@ impl NativeNode {
             ));
         }
 
+        #[cfg(test)]
+        self.observe_known_loser_classification_for_test(&target_meta);
         let state = self.state.read();
         if native_meta_better_than(&target_meta, &state.best) {
             return Ok(false);
@@ -2752,6 +2834,9 @@ impl NativeNode {
 
         self.sync_target_observed.store(true, Ordering::SeqCst);
         self.mining_sync_gate_open.store(false, Ordering::SeqCst);
+        #[cfg(test)]
+        self.sync_hint_gate_close_observations
+            .fetch_add(1, Ordering::SeqCst);
         self.sync_target_height
             .store(peer_best_height, Ordering::Relaxed);
         let next_unverified_peer_hint = if peer_best_height > target_before
@@ -2789,6 +2874,16 @@ impl NativeNode {
         }
         drop(target_peer);
         drop(target_hash);
+        #[cfg(test)]
+        {
+            // Observe the actual admission close only after all target locks
+            // are released. Taking the one-shot also releases its mutex before
+            // invoking a callback which may poll the real ASIC work path.
+            let observer = self.sync_hint_gate_close_observer.lock().take();
+            if let Some(observer) = observer {
+                observer(self);
+            }
+        }
         true
     }
 

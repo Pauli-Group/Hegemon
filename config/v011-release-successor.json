@@ -267,7 +267,7 @@
       "before_sha256": "2442d53d868de9c4e24bee24fd43b331f9ffa2bdcb65883aea0adb0f84deaf1b"
     },
     "node/src/native/mod.rs": {
-      "after_sha256": "b98f9c404570836faf3cace7f67b4528158c1f92667c844a5acd593721ddf409",
+      "after_sha256": "216495b34c27c4530ec985def5bca1c5edb0884233bd7b2fab64d72a1a263294",
       "before_sha256": "6be69238c26189dd48d921a5a9c8b2aa2a9057af05060ba62edd9f7d8234bfa9"
     },
     "node/src/native/network_profile.rs": {
@@ -275,7 +275,7 @@
       "before_sha256": "d1f5276aa03bd5f591a8fcb185761ca2edc26515b60ee1104f94127c9db33a7c"
     },
     "node/src/native/node_impl.rs": {
-      "after_sha256": "5aa59dd107444416232f4889b5441801bd55a1a00a8dccfebc05d430b6016b8d",
+      "after_sha256": "d1b451214cec69435049cce237e8863a84e62f0522038424091034bd30691fe6",
       "before_sha256": "05f84c22738c43c937201470a27649a3d73e4b8ce9dfbc87c7d6e95abd462e3c"
     },
     "node/src/native/poseidon2_v8_pending.rs": {
@@ -291,7 +291,7 @@
       "before_sha256": "0250f8b5548f9e718d1f2b3fb60c39dc0c171fe31615442628c1af274cb8cd8c"
     },
     "node/src/native/service.rs": {
-      "after_sha256": "625b162c864ab0a8e63b3a178e62c34c43ccd862a19f726108cae66b57ea505a",
+      "after_sha256": "107b18ca430f3fb8dcebf407ed8c1d31d33f623139cce19504f79307a3af5ba3",
       "before_sha256": "6a495fc0d0adb765800df9b3ee5d84b0be362843f0e03ef816bff6dd78dd55e0"
     },
     "node/src/native/tests.rs": {
@@ -365,12 +365,12 @@
       "sha256": "d17db4c80a6d195745e92d695fb6db9fa7eead48fc955fda63a9ba4125dd0f45"
     },
     "node/src/native/mining_recovery_qualification_tests.rs": {
-      "bytes": 18480,
-      "sha256": "e3439137080b1e22727044ffbac838c34b37e581203a1bd2e7f23b944a25a247"
+      "bytes": 23851,
+      "sha256": "2c35c77c770c2870d8496816f990903d2db6916e5de9dfaaf88552705841e8e5"
     },
     "node/src/native/sync_liveness_tests.rs": {
-      "bytes": 16321,
-      "sha256": "1b7efdcc135ca16754365412e122c0ce36663b62126c58d4a7c45d1cc2213577"
+      "bytes": 19458,
+      "sha256": "dc7da2b06aa5dcb3a227bcc2e20aaae5f6fad796272015207f64ad916c0dd5a1"
     },
     "node/src/native/sync_queue_qualification_tests.rs": {
       "bytes": 13570,

@@ -129,6 +129,13 @@ jobs:
           ./scripts/run_exact_cargo_lib_test.sh network service::tests::full_protocol_handler_does_not_suspend_other_protocols
           ./scripts/run_exact_cargo_lib_test.sh network service::tests::peer_driver_receives_while_its_large_frame_write_is_backpressured
 
+      - name: Known-loser announcement admission regressions
+        run: |
+          set -euo pipefail
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::mining_recovery_qualification_tests::duplicate_stored_loser_compact_hints_never_close_gate_for_retained_asic_solution --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::mining_recovery_qualification_tests::unknown_equal_height_and_higher_hints_keep_retained_asic_solution_gated_without_write --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::sync_liveness_tests::stored_loser_classification_preserves_a_newer_unknown_target_and_backfill --no-default-features
+
       - name: Formal-core checker controls for PR review
         if: github.event_name == 'pull_request'
         run: bash scripts/check_formal_core.sh checker

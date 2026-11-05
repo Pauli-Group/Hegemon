@@ -6421,6 +6421,25 @@ pub(crate) async fn request_missing_blocks(
     announced_hash: Option<[u8; 32]>,
     unverified_peer_hint: bool,
 ) {
+    if unverified_peer_hint {
+        if let Some(announced_hash) = announced_hash {
+            match node.ignore_stored_nonwinning_sync_hint((announced_height, announced_hash)) {
+                Ok(true) => return,
+                Ok(false) => {}
+                Err(err) => {
+                    // A failed durable lookup supplies no validity authority.
+                    // Retain the existing unverified, fail-closed admission.
+                    warn!(
+                        peer = %hex32(&peer_id),
+                        announced_height,
+                        announced_hash = %hex32(&announced_hash),
+                        error = %err,
+                        "failed known native sync hint preflight; retaining unverified admission"
+                    );
+                }
+            }
+        }
+    }
     let target_observed = if unverified_peer_hint {
         node.observe_pending_sync_peer_tip(Some(peer_id), announced_height, announced_hash)
     } else {

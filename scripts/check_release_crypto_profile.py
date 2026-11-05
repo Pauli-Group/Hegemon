@@ -279,7 +279,7 @@ PRIVATE_LAUNCH_SCOPE = "source-owned-current86-private-spend-launch"
 
 
 CURRENT_NEW_VERSION = '0.11.2'
-V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': 'f72dfad7f27e186655496d27874a8c81068e3877f4764daebdf9865bc5b3779f',
+V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': '94bd9591a8232292d1928198b3d4778a27f7cc4c8fc560c0ff87ac3bfa22fadb',
  'release-evidence/v0.11-current-proof-fixture/manifest.json': '50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c',
  'release-evidence/v0.11-predecessor/manifest.json': 'dbec7e35d7402e687c3a3aa19f70c45425a127a915c74185eb0054ed57aa76fc',
  'release-evidence/v0.11-public-chain-fixture/manifest.json': '16ce37d08a3bcfecca0f8dbe4c323f1f319d1da565ea5473d695a5c13c4676c0',
@@ -288,7 +288,7 @@ V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': 'f72dfad7f27e1866
  'scripts/check_release_launcher_policy.py': '51700e93ac457574f262bff05f48e5e55fa328e37da30f665721a312de9d826e',
  'scripts/check_v011_current_binary_proofs.py': 'd2f0fae819828482093676f831a5d6c621013c02368cdddafcdf491d294eb2f2',
  'scripts/check_v011_public_chain_replay.py': '29c6655f1d8ced3ffa5a042e3c66f0567fc0ef465eda70de473e7a35054159dc',
- 'scripts/check_v011_release_successor.py': 'd33a0e623d63a1bce29dd82ba0fdde17e9913215f7ff3f668f6e569117b9d585',
+ 'scripts/check_v011_release_successor.py': '390f5cbc69e877e29302db4af7b7382bbf6db9bdeccada01942ccba384b0fc67',
  'scripts/materialize_v011_predecessor.py': '0dc2b129332bf1276e5790a2db2682946e54f5af6b6850eaca50ca9e17b4dee5',
  'scripts/release_artifact_manifest.py': '0f41da8be0536335978ed42d2f93f930b2c9ee078f3ecbeb6293e44ce20c42cb',
  'scripts/security-audit.sh': 'd2e5f5d954ef2de1b11399bd16549982a301fa988a38951c364cb6709e81fdc0'}

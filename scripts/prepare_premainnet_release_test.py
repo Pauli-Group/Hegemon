@@ -14,6 +14,12 @@ assert SPEC and SPEC.loader
 preparation = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(preparation)
 
+KNOWN_LOSER_REGRESSIONS = (
+    "native::tests::mining_recovery_qualification_tests::duplicate_stored_loser_compact_hints_never_close_gate_for_retained_asic_solution",
+    "native::tests::mining_recovery_qualification_tests::unknown_equal_height_and_higher_hints_keep_retained_asic_solution_gated_without_write",
+    "native::tests::sync_liveness_tests::stored_loser_classification_preserves_a_newer_unknown_target_and_backfill",
+)
+
 
 class PreparationWorkflowTests(unittest.TestCase):
     @classmethod
@@ -135,6 +141,91 @@ class PreparationWorkflowTests(unittest.TestCase):
         reordered = reordered.replace(marker, step + marker, 1)
         with self.assertRaises(ValueError):
             preparation.verify_preparation(self.release, reordered)
+
+    def test_known_loser_regressions_are_exact_unconditional_and_ordered(self) -> None:
+        self.assertEqual(preparation.KNOWN_LOSER_REGRESSIONS, KNOWN_LOSER_REGRESSIONS)
+        security = self.workflow.split("  security-gates:\n", 1)[1].split("\n  app-no-ssh-e2e:\n", 1)[0]
+        marker = "      - name: Known-loser announcement admission regressions\n"
+        self.assertEqual(security.count(marker), 1)
+        step = security.split(marker, 1)[1].split("\n      - name: ", 1)[0]
+        expected = "        run: |\n          set -euo pipefail\n" + "".join(
+            f"          ./scripts/run_exact_cargo_lib_test.sh hegemon-node {name} --no-default-features\n"
+            for name in KNOWN_LOSER_REGRESSIONS
+        )
+        self.assertEqual(step, expected)
+        self.assertLess(security.index('toolchain: "1.91.1"'), security.index("Network transport progress regressions"))
+        self.assertLess(security.index("Network transport progress regressions"), security.index(marker))
+        self.assertLess(security.index(marker), security.index("Formal-core checker controls for PR review"))
+
+    def test_known_loser_gate_removal_rename_or_soft_failure_rejects(self) -> None:
+        marker = "      - name: Known-loser announcement admission regressions\n"
+        for name in KNOWN_LOSER_REGRESSIONS:
+            command = f"./scripts/run_exact_cargo_lib_test.sh hegemon-node {name} --no-default-features"
+            for replacement in (
+                "", "true", "# " + command, command + " || true",
+                command.replace(name, name + "_renamed"),
+                command.replace(" --no-default-features", ""),
+                command.replace("run_exact_cargo_lib_test.sh", "unreviewed_test_runner.sh"),
+            ):
+                with self.subTest(name=name, replacement=replacement), self.assertRaises(ValueError):
+                    preparation.verify_preparation(self.release, self.workflow.replace(command, replacement, 1))
+        for replacement in ("", marker.replace("regressions", "renamed regressions")):
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                preparation.verify_preparation(self.release, self.workflow.replace(marker, replacement, 1))
+
+    def test_known_loser_gate_event_guards_or_reordering_rejects(self) -> None:
+        marker = "      - name: Known-loser announcement admission regressions\n"
+        for bypass in (
+            "        continue-on-error: true\n",
+            "        if: github.event_name == 'pull_request'\n",
+            "        if: github.event_name != 'pull_request'\n",
+        ):
+            with self.subTest(bypass=bypass), self.assertRaises(ValueError):
+                preparation.verify_preparation(self.release, self.workflow.replace(marker, marker + bypass, 1))
+        start = self.workflow.index(marker)
+        end = self.workflow.index("      - name: Formal-core checker controls for PR review\n", start)
+        step = self.workflow[start:end]
+        without = self.workflow[:start] + self.workflow[end:]
+        for before in (
+            "      - name: Install build dependencies\n",
+            "      - name: Network transport progress regressions\n",
+            "      - name: Formal-crypto isolation release gate\n",
+        ):
+            with self.subTest(before=before), self.assertRaises(ValueError):
+                preparation.verify_preparation(self.release, without.replace(before, step + before, 1))
+
+    def test_known_loser_generator_rejects_changed_security_step_order(self) -> None:
+        jobs = self.release.split("\njobs:\n", 1)[1].split("\n  create-release:\n", 1)[0]
+        inherited = preparation.adapt_transport_regressions(
+            preparation.adapt_pr_formal_scope(preparation.adapt_version_only_successor(jobs))
+        )
+        prefix, security = inherited.split("  security-gates:\n", 1)
+        security, suffix = security.split("\n  app-no-ssh-e2e:\n", 1)
+        for anchor in (
+            "      - name: Network transport progress regressions\n",
+            "      - name: Formal-core checker controls for PR review\n",
+            '          toolchain: "1.91.1"\n',
+        ):
+            with self.subTest(anchor=anchor), self.assertRaises(ValueError):
+                preparation.adapt_known_loser_regressions(
+                    prefix + "  security-gates:\n" + security.replace(anchor, "", 1)
+                    + "\n  app-no-ssh-e2e:\n" + suffix
+                )
+        start = inherited.index("      - name: Network transport progress regressions\n")
+        end = inherited.index("      - name: Formal-core checker controls for PR review\n", start)
+        step = inherited[start:end]
+        without = inherited[:start] + inherited[end:]
+        for before in ("      - name: Install build dependencies\n", "      - name: Formal-crypto isolation release gate\n"):
+            with self.subTest(before=before), self.assertRaises(ValueError):
+                preparation.adapt_known_loser_regressions(without.replace(before, step + before, 1))
+
+    def test_full_formal_gate_keeps_each_exact_known_loser_selector(self) -> None:
+        formal = (ROOT / "scripts/check_formal_core.sh").read_text()
+        for name in KNOWN_LOSER_REGRESSIONS:
+            command = f"run_exact_lib_test \\\n  hegemon-node \\\n  {name} \\\n  --no-default-features\n"
+            with self.subTest(name=name):
+                self.assertEqual(formal.count(command), 1)
+                self.assertEqual(formal.count(name), 1)
 
     def test_publication_or_write_permissions_reject(self) -> None:
         self.assertNotIn("softprops/action-gh-release", self.workflow)

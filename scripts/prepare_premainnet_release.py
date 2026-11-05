@@ -99,6 +99,40 @@ TRANSPORT_REGRESSIONS = (
     "service::tests::peer_driver_receives_while_its_large_frame_write_is_backpressured",
 )
 
+KNOWN_LOSER_REGRESSIONS = (
+    "native::tests::mining_recovery_qualification_tests::duplicate_stored_loser_compact_hints_never_close_gate_for_retained_asic_solution",
+    "native::tests::mining_recovery_qualification_tests::unknown_equal_height_and_higher_hints_keep_retained_asic_solution_gated_without_write",
+    "native::tests::sync_liveness_tests::stored_loser_classification_preserves_a_newer_unknown_target_and_backfill",
+)
+
+
+def adapt_known_loser_regressions(builds: str) -> str:
+    """Require exact known-loser admission checks on every preparation event."""
+    prefix, security = builds.split("  security-gates:\n", 1)
+    security, suffix = security.split("\n  app-no-ssh-e2e:\n", 1)
+    marker = "      - name: Formal-core checker controls for PR review\n"
+    transport = "      - name: Network transport progress regressions\n"
+    rust = '          toolchain: "1.91.1"\n'
+    if (
+        security.count(marker) != 1
+        or security.count(transport) != 1
+        or security.count(rust) != 1
+        or not security.index(rust) < security.index(transport) < security.index(marker)
+    ):
+        raise ValueError("review changed security step order before preparing known-loser checks")
+    step = (
+        "      - name: Known-loser announcement admission regressions\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        + "".join(
+            f"          ./scripts/run_exact_cargo_lib_test.sh hegemon-node {name} --no-default-features\n"
+            for name in KNOWN_LOSER_REGRESSIONS
+        )
+        + "\n"
+    )
+    security = security.replace(marker, step + marker, 1)
+    return prefix + "  security-gates:\n" + security + "\n  app-no-ssh-e2e:\n" + suffix
+
 
 def adapt_transport_regressions(builds: str) -> str:
     """Require the repaired transport paths on PR and full preparation runs."""
@@ -212,7 +246,10 @@ def expected_workflow(release: str) -> str:
         raise ValueError(f"review new release job set before preparing: {names!r}")
     marker = "  transaction-proof-authorization:\n"
     builds = builds.replace(marker, marker + "    needs: preparation-policy\n", 1)
-    builds = adapt_transport_regressions(adapt_pr_formal_scope(adapt_version_only_successor(builds)))
+    builds = adapt_version_only_successor(builds)
+    builds = adapt_pr_formal_scope(builds)
+    builds = adapt_transport_regressions(builds)
+    builds = adapt_known_loser_regressions(builds)
     output = HEADER + builds.rstrip() + "\n" + ASSEMBLE
     return "\n".join(line.rstrip() for line in output.splitlines()) + "\n"
 

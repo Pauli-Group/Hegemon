@@ -226,6 +226,85 @@ async fn known_losing_compact_tip_preserves_an_unrelated_higher_target() {
     assert_eq!(node.best_meta(), winner);
 }
 
+#[tokio::test]
+async fn stored_loser_classification_preserves_a_newer_unknown_target_and_backfill() {
+    let tmp = tempfile::tempdir().unwrap();
+    let node = liveness_node(tmp.path());
+    let (winner, loser) = stored_losing_sibling(&node);
+    let (_network, handle) = liveness_network(tmp.path());
+    let new_peer = [0xe1; 32];
+    let new_height = winner.height + 2;
+    let new_hash = [0xe2; 32];
+    let expected_target = NativeSyncTargetSnapshot {
+        height: new_height,
+        peer_id: Some(new_peer),
+        hash: Some(new_hash),
+        unverified_peer_hint: true,
+    };
+    let new_cursor = NativeSyncRecoveryCursor {
+        peer_id: Some(new_peer),
+        target_height: new_height,
+        target_hash: Some(new_hash),
+        range: NativeSyncRange {
+            from_height: winner.height,
+            to_height: new_height,
+        },
+        expected_parent_hash: Some(winner.parent_hash),
+    };
+    let new_backfill = NATIVE_SYNC_REORG_BACKFILL_BLOCKS * 4;
+    let invoked = Arc::new(AtomicBool::new(false));
+    let observed_requests = Arc::new(Mutex::new(None));
+    let hook_invoked = Arc::clone(&invoked);
+    let hook_requests = Arc::clone(&observed_requests);
+    *node.sync_known_loser_classification_observer.lock() = Some(Arc::new(move |node| {
+        // The seam holds no state, target, or observer mutex guards. Install a
+        // new target plus its traversal state before the resolver takes locks.
+        assert!(node.observe_pending_sync_peer_tip(Some(new_peer), new_height, Some(new_hash)));
+        assert!(node.begin_outbound_sync_request_with_context(
+            Some(new_peer),
+            new_cursor.range,
+            NativeOutboundSyncRequestContext {
+                recovery_page: true,
+                expected_parent_hash: new_cursor.expected_parent_hash,
+                target_tip: Some((new_height, new_hash)),
+            },
+        ));
+        *node.sync_recovery_cursor.lock() = Some(new_cursor);
+        node.sync_reorg_backfill_blocks
+            .store(new_backfill, Ordering::Relaxed);
+        *hook_requests.lock() = Some(node.outbound_sync_requests.lock().clone());
+        hook_invoked.store(true, Ordering::SeqCst);
+    }));
+
+    process_native_sync_tip_announcement(
+        &node,
+        &handle,
+        [0xe3; 32],
+        NativeSyncTipAnnouncement {
+            best_height: loser.height,
+            best_hash: loser.hash,
+        },
+    )
+    .await
+    .expect("stored loser interleaving");
+
+    assert!(invoked.load(Ordering::SeqCst));
+    assert_eq!(node.sync_target_evidence_snapshot(), expected_target);
+    assert!(node.sync_target_observed.load(Ordering::SeqCst));
+    assert!(!node.mining_sync_gate_allows_work());
+    assert_eq!(*node.sync_recovery_cursor.lock(), Some(new_cursor));
+    assert_eq!(node.sync_reorg_backfill_blocks(), new_backfill);
+    assert_eq!(
+        *node.outbound_sync_requests.lock(),
+        observed_requests
+            .lock()
+            .clone()
+            .expect("new request snapshot"),
+        "an ignored losing hint must not enqueue an obsolete request"
+    );
+    assert_eq!(node.best_meta(), winner);
+}
+
 async fn equal_height_large_body_recovery(defer_during_import: bool, peer_wins: bool) {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)

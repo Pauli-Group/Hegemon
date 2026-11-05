@@ -4567,6 +4567,9 @@ impl Default for NativePendingActionGroupCommitTestControl {
     }
 }
 
+#[cfg(test)]
+type NativeSyncTestObserver = Arc<dyn Fn(&NativeNode) + Send + Sync>;
+
 pub struct NativeNode {
     config: NativeConfig,
     db: sled::Db,
@@ -4597,6 +4600,12 @@ pub struct NativeNode {
     sync_target_peer: Mutex<Option<PeerId>>,
     sync_target_hash: Mutex<Option<[u8; 32]>>,
     sync_target_unverified_peer_hint: AtomicBool,
+    #[cfg(test)]
+    sync_hint_gate_close_observer: Mutex<Option<NativeSyncTestObserver>>,
+    #[cfg(test)]
+    sync_hint_gate_close_observations: AtomicU64,
+    #[cfg(test)]
+    sync_known_loser_classification_observer: Mutex<Option<NativeSyncTestObserver>>,
     sync_unverified_target_deferred_during_import: Mutex<Option<NativeSyncTargetSnapshot>>,
     sync_unverified_target_cooldowns: Mutex<BTreeMap<PeerId, Instant>>,
     sync_reorg_backfill_blocks: AtomicU64,

@@ -122,6 +122,123 @@ async fn announce_recovery_tip(
 }
 
 #[tokio::test]
+async fn duplicate_stored_loser_compact_hints_never_close_gate_for_retained_asic_solution() {
+    let tmp = tempfile::tempdir().unwrap();
+    let node = NativeNode::open(recovery_config(tmp.path())).unwrap();
+    let (winner, loser) = recovery_fork(&node);
+    assert_eq!(winner.parent_hash, loser.parent_hash);
+    assert_eq!(winner.height, loser.height);
+    assert_eq!(
+        node.import_announced_block_with_outcome(loser.clone())
+            .unwrap(),
+        NativeAnnouncedBlockImportOutcome::StoredNoncanonical
+    );
+    node.db.flush().unwrap();
+    assert_eq!(
+        node.header_by_hash(&loser.hash).unwrap(),
+        Some(loser.clone())
+    );
+    let (solution, work, hash) = solved_recovery_job(&node);
+    assert_eq!(work.parent_hash, winner.hash);
+    let before_target = node.sync_target_evidence_snapshot();
+    let before_rows = snapshot_native_database_trees(&node.db);
+    let before_closures = node
+        .sync_hint_gate_close_observations
+        .load(Ordering::SeqCst);
+    let observed_work = Arc::new(parking_lot::Mutex::new(Vec::<Value>::new()));
+    let callback_work = Arc::clone(&observed_work);
+    let callback_solution = solution.clone();
+    *node.sync_hint_gate_close_observer.lock() = Some(Arc::new(move |node: &NativeNode| {
+        // Observe the actual closed-gate window without panicking inside the
+        // callback, so the regression reports the complete call's evidence.
+        let available = match node.bitcoin_asic_work() {
+            Ok(response) => response.get("available").cloned().unwrap_or(Value::Null),
+            Err(error) => json!({"error": error.to_string()}),
+        };
+        let before_submission = snapshot_native_database_trees(&node.db);
+        let submission = match node.bitcoin_asic_submit(callback_solution.clone()) {
+            Ok(response) => json!({"accepted_result": response}),
+            Err(error) => json!({"error": error.to_string()}),
+        };
+        let database_unchanged = snapshot_native_database_trees(&node.db) == before_submission;
+        callback_work.lock().push(json!({
+            "available": available,
+            "submission": submission,
+            "database_unchanged": database_unchanged,
+        }));
+    }));
+    let (_network, handle) = recovery_network(tmp.path());
+    for peer in [[0xd1; 32], [0xd1; 32], [0xd2; 32]] {
+        announce_recovery_tip(&node, &handle, peer, &loser).await;
+    }
+    node.sync_hint_gate_close_observer.lock().take();
+    let observed_work = observed_work.lock().clone();
+    assert_eq!(
+        node.sync_hint_gate_close_observations
+            .load(Ordering::SeqCst),
+        before_closures,
+        "a durable losing hint must never close the gate; poolWork.available observed at closure: {observed_work:?}"
+    );
+    assert!(
+        observed_work.is_empty(),
+        "a durable losing hint must never reach the closed-gate observer: {observed_work:?}"
+    );
+    assert!(node.mining_sync_gate_allows_work());
+    assert_eq!(node.sync_target_evidence_snapshot(), before_target);
+    assert!(node.outbound_sync_requests.lock().is_empty());
+    assert_eq!(node.best_meta(), winner);
+    assert_eq!(snapshot_native_database_trees(&node.db), before_rows);
+    assert_eq!(
+        node.bitcoin_asic_work().unwrap()["job_id"],
+        solution["job_id"]
+    );
+    accept_recovery_solution(&node, solution, &work, hash);
+}
+
+#[tokio::test]
+async fn unknown_equal_height_and_higher_hints_keep_retained_asic_solution_gated_without_write() {
+    let tmp = tempfile::tempdir().unwrap();
+    let node = NativeNode::open(recovery_config(tmp.path())).unwrap();
+    let (winner, loser) = recovery_fork(&node);
+    let (solution, _, _) = solved_recovery_job(&node);
+    assert!(node.header_by_hash(&loser.hash).unwrap().is_none());
+    let genesis = node.header_by_hash(&loser.parent_hash).unwrap().unwrap();
+    let higher = mined_empty_child_for_chain(&[genesis, loser.clone()], RECOVERY_POW_BITS, 109);
+    assert!(node.header_by_hash(&higher.hash).unwrap().is_none());
+    let (_network, handle) = recovery_network(tmp.path());
+    let peer = [0xd3; 32];
+
+    announce_recovery_tip(&node, &handle, peer, &loser).await;
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (loser.height, Some(peer), Some(loser.hash))
+    );
+    assert!(node.sync_target_evidence_snapshot().unverified_peer_hint);
+    assert_gate_rejects_solution_without_write(&node, &solution);
+
+    // The same peer may advance its exact unresolved target while retaining
+    // ordinary request pacing. Neither unknown row is mining authority.
+    announce_recovery_tip(&node, &handle, peer, &higher).await;
+    let higher_target = node.sync_target_evidence_snapshot();
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (higher.height, Some(peer), Some(higher.hash))
+    );
+    assert!(higher_target.unverified_peer_hint);
+    assert_gate_rejects_solution_without_write(&node, &solution);
+
+    assert_eq!(
+        node.import_announced_block_with_outcome(loser.clone())
+            .unwrap(),
+        NativeAnnouncedBlockImportOutcome::StoredNoncanonical
+    );
+    announce_recovery_tip(&node, &handle, [0xd4; 32], &loser).await;
+    assert_eq!(node.sync_target_evidence_snapshot(), higher_target);
+    assert_eq!(node.best_meta(), winner);
+    assert_gate_rejects_solution_without_write(&node, &solution);
+}
+
+#[tokio::test]
 async fn asic_cached_solution_rejects_closed_gate_then_survives_durable_loser_resolution() {
     let tmp = tempfile::tempdir().unwrap();
     let node = NativeNode::open(recovery_config(tmp.path())).unwrap();

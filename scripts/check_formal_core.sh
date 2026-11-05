@@ -966,6 +966,19 @@ run_exact_lib_test \
   hegemon-node \
   native::service::sync_queue_qualification_tests::live_blocked_queue_old_completion_preserves_new_target_and_continues \
   --no-default-features
+# Require exact known-loser announcement admission and retained-work regressions.
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::mining_recovery_qualification_tests::duplicate_stored_loser_compact_hints_never_close_gate_for_retained_asic_solution \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::mining_recovery_qualification_tests::unknown_equal_height_and_higher_hints_keep_retained_asic_solution_gated_without_write \
+  --no-default-features
+run_exact_lib_test \
+  hegemon-node \
+  native::tests::sync_liveness_tests::stored_loser_classification_preserves_a_newer_unknown_target_and_backfill \
+  --no-default-features
 HEGEMON_LEAN_SYNC_BLOCK_RANGE_PUBLICATION_ADMISSION_VECTORS="$LEAN_SYNC_BLOCK_RANGE_PUBLICATION_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_sync_block_range_publication_admission_vectors_match_production --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node native_sync_response_count_uses_bounded_request_item_gate --lib --no-default-features -- --nocapture
