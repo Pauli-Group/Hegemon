@@ -40,7 +40,8 @@ a prerequisite in the parent implementation plan.
   and legacy reward views.
 - [ ] Qualify the explorer against an activated disposable node, including a
   boundary reorg, restart and fresh synchronization; parent runtime work is open.
-- [ ] Commit, push and verify the scoped branch changes without deployment.
+- [x] (2026-11-05 UTC) Commit/push backend preparation as a58b2757 and verify
+  the remote branch hash and immutable GitHub API-contract readback. No deployment.
 
 ## Surprises & Discoveries
 
@@ -68,8 +69,7 @@ numbers cannot represent every u64 exactly, and mixing responses from different
 forks produces incorrect balances and governance history.
 Date/Author: 2026-11-05 UTC, Codex.
 
-Decision: Use the existing explorer once its source is supplied, rather than
-adding a second explorer inside the wallet or marketing site. Continue the
+Decision: Integrate the existing explorer once its source is supplied. Continue the
 independent backend work while that location is pending. Rationale: preserve the
 user's existing product and avoid an unsupported parallel indexer.
 Date/Author: 2026-11-05 UTC, Codex.
@@ -81,8 +81,10 @@ Backend preparation is implemented and tested: four read APIs and canonical
 projections, with an explicit unavailable-state result until the native runtime
 installs a verified canonical account ledger. The user paused
 explorer UI/indexer work pending Pierre's source location.
-No activation, two-node acceptance, deployment or reset is claimed. Record exact tests and published commits here
-as each independently reviewable result is completed.
+No activation, two-node acceptance, deployment or reset is claimed. Backend
+commit [a58b2757](https://github.com/Pauli-Group/Hegemon/commit/a58b2757b8ffc592ce72a175bcccf78ae765a741)
+is published on codex/protocol-treasury-governance. Remote-head comparison and
+GitHub readback confirmed the four API methods and the deferred UI scope.
 
 ## Context and Orientation
 
@@ -268,3 +270,9 @@ Revision note (2026-11-05 UTC): complete and qualify backend preparation while
 honoring the user's pause on the actual explorer UI/indexer. Preserve the v2
 runtime startup guard; API reads cannot substitute for source-owned native
 account publication, proof qualification or two-node visual acceptance.
+
+Publication record (2026-11-05 UTC): a58b2757b8ffc592ce72a175bcccf78ae765a741
+is the tested backend/API commit. GitHub's branch head matched that exact hash;
+immutable API-contract readback confirmed all four method names and the paused
+UI integration. This follow-up records completed publication only and changes
+no runtime source or validation claims.
