@@ -1,9 +1,7 @@
 //! Native service entry point, P2P startup, and sync loop.
 
 use super::*;
-mod sync_body_backpressure {
-    include!("sync_body_backpressure.rs");
-}
+mod sync_body_backpressure;
 #[cfg(test)]
 mod sync_queue_qualification_tests {
     include!("sync_queue_qualification_tests.rs");

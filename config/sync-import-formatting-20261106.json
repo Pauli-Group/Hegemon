@@ -3,7 +3,7 @@
   "direct_module_checks": {
     "edition": "2021",
     "files": {
-      "node/src/native/sync_body_backpressure.rs": "f78c7b4dcb1d6d3365b8e69c65c8bf3dbcaecd98e9df02015defc50824c8c3ab",
+      "node/src/native/service/sync_body_backpressure.rs": "f78c7b4dcb1d6d3365b8e69c65c8bf3dbcaecd98e9df02015defc50824c8c3ab",
       "node/src/native/sync_control_backpressure_tests.rs": "eda6eec5184fc7d01b7f31110e983bbe610b462f7bbbcd9a84ee8a15a65a57af"
     },
     "scope": "workspace invocation requires direct rustfmt --check success; no debt allowance",

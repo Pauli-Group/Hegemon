@@ -295,8 +295,8 @@ V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': '94bd9591a8232292
 
 SYNC_IMPORT_SCOPE = 'exact_sync_import_source_current_binary_backend_and_h0'
 SYNC_IMPORT_AUTHORITY_SHA256 = {
-    'config/v011-sync-import-successor-20261106.json': 'd512860fa457588f119562cd515f718170826318ffb5571b4392623d50229aa7',
-    'scripts/check_v011_sync_import_successor.py': '7635a5ae405401b9cba51c60a702cd6ff1bdb6379a9e8c6cb197d067b9766200',
+    'config/v011-sync-import-successor-20261106.json': '9cc53dc52975d3f9cd5edd3caaaf11d971a77f773430b637377e64561aecd9d6',
+    'scripts/check_v011_sync_import_successor.py': 'ceceb9f281343f9c730422684b44819ab8e9c2ed973a551de641992153303f0f',
 }
 
 

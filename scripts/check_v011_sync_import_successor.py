@@ -18,7 +18,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = 'config/v011-sync-import-successor-20261106.json'
-CONFIG_SHA256 = 'd512860fa457588f119562cd515f718170826318ffb5571b4392623d50229aa7'
+CONFIG_SHA256 = '9cc53dc52975d3f9cd5edd3caaaf11d971a77f773430b637377e64561aecd9d6'
 PARENT_CHECKER = 'scripts/check_v011_release_successor.py'
 PARENT_CHECKER_SHA256 = '390f5cbc69e877e29302db4af7b7382bbf6db9bdeccada01942ccba384b0fc67'
 PARENT_CONFIG = 'config/v011-release-successor.json'
@@ -29,9 +29,9 @@ SOURCE_STATUS = 'PASS_EXACT_REVIEWED_SYNC_IMPORT_SOURCE_SUCCESSOR_ONLY'
 FINAL_STATUS = 'PASS_EXACT_SYNC_IMPORT_SOURCE_CURRENT_BINARY_BACKEND_AND_H0'
 OVERLAY = {
     'node/src/native/node_impl.rs': {'before_sha256': 'd1b451214cec69435049cce237e8863a84e62f0522038424091034bd30691fe6', 'after_sha256': 'c588a5dcc5987e2c3f94ca03fae643ae9425dcd0c3abe27f465f6961abbd0a65', 'bytes': 616181},
-    'node/src/native/service.rs': {'before_sha256': '107b18ca430f3fb8dcebf407ed8c1d31d33f623139cce19504f79307a3af5ba3', 'after_sha256': '976b07843afc6e87d28430ac8e16bdb98dd120f24b66552c63a51de88ee1b22f', 'bytes': 290014},
+    'node/src/native/service.rs': {'before_sha256': '107b18ca430f3fb8dcebf407ed8c1d31d33f623139cce19504f79307a3af5ba3', 'after_sha256': '8c9593876583aa40c38a8d77362aeaa2c1eb390b9ac7edf7510d81af0f2750e6', 'bytes': 289968},
     'node/src/native/sync_control_backpressure_tests.rs': {'before_sha256': None, 'after_sha256': 'eda6eec5184fc7d01b7f31110e983bbe610b462f7bbbcd9a84ee8a15a65a57af', 'bytes': 17408},
-    'node/src/native/sync_body_backpressure.rs': {'before_sha256': None, 'after_sha256': 'f78c7b4dcb1d6d3365b8e69c65c8bf3dbcaecd98e9df02015defc50824c8c3ab', 'bytes': 15808},
+    'node/src/native/service/sync_body_backpressure.rs': {'before_sha256': None, 'after_sha256': 'f78c7b4dcb1d6d3365b8e69c65c8bf3dbcaecd98e9df02015defc50824c8c3ab', 'bytes': 15808},
 }
 
 

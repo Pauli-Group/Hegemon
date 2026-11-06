@@ -89,7 +89,7 @@ class FormattingSuccessorTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(original[gate.HISTORICAL_CHECKER]).hexdigest(), gate.HISTORICAL_CHECKER_SHA256)
         self.assertEqual(hashlib.sha256(original[gate.HISTORICAL_BASELINE]).hexdigest(), gate.HISTORICAL_BASELINE_SHA256)
 
-    def test_changed_included_module_rejects_even_with_clean_cargo_formatting(self):
+    def test_changed_direct_module_rejects_even_with_clean_cargo_formatting(self):
         self.alter(next(iter(gate.DIRECT_MODULES)))
         with self.assertRaisesRegex(ValueError, 'input pin differs'):
             gate.verify_observed_failures(self.root, set())
@@ -105,7 +105,7 @@ class FormattingSuccessorTests(unittest.TestCase):
                 gate.run(self.root, 'workspace')
             return run.call_args_list
 
-    def test_workspace_requires_exact_direct_rustfmt_for_both_included_modules(self):
+    def test_workspace_requires_exact_direct_rustfmt_for_production_and_test_modules(self):
         calls = self.run_mocked_workspace(self.mocked_formatter_results())
         self.assertEqual(len(calls), 3)
         self.assertEqual(calls[0].args[0], ['cargo', '+1.91.1', 'fmt', '--version'])
@@ -116,15 +116,15 @@ class FormattingSuccessorTests(unittest.TestCase):
         self.assertEqual(calls[2].kwargs['cwd'], self.root)
 
     def test_direct_module_formatting_debt_is_not_waived_after_cargo_success(self):
-        with self.assertRaisesRegex(ValueError, 'included modules must pass'):
+        with self.assertRaisesRegex(ValueError, 'new modules must pass'):
             self.run_mocked_workspace(self.mocked_formatter_results(direct_code=1, direct_stdout='Diff in included module'))
 
     def test_direct_module_stderr_fails_closed(self):
-        with self.assertRaisesRegex(ValueError, 'included modules must pass'):
+        with self.assertRaisesRegex(ValueError, 'new modules must pass'):
             self.run_mocked_workspace(self.mocked_formatter_results(direct_stderr='unexpected diagnostic'))
 
     def test_direct_module_unexpected_success_output_fails_closed(self):
-        with self.assertRaisesRegex(ValueError, 'included modules must pass'):
+        with self.assertRaisesRegex(ValueError, 'new modules must pass'):
             self.run_mocked_workspace(self.mocked_formatter_results(direct_stdout='unexpected output'))
 
     def test_nonworkspace_invocation_keeps_original_manifest_command(self):

@@ -18,7 +18,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = 'config/sync-import-formatting-20261106.json'
-CONFIG_SHA256 = 'a39deb3b9eb482879e1a95c5f039d7387b2ca9bbe72235f998b41d3a40fc02c6'
+CONFIG_SHA256 = '28e9014a449626affa4016cccae0db93fc191eb3442c1acde9924566b5962fe3'
 HISTORICAL_CHECKER = 'scripts/check_qualified_formatting.py'
 HISTORICAL_CHECKER_SHA256 = 'be7732c0e30f9b770ef5395be762ec9ea133d39f7fc52170d17639e2579a71a9'
 HISTORICAL_BASELINE = 'config/qualified-formatting-baseline.json'
@@ -26,7 +26,7 @@ HISTORICAL_BASELINE_SHA256 = '76a60a213994ee887c854cdd33031667a18472611efc7cf16c
 NODE_IMPL = 'node/src/native/node_impl.rs'
 NODE_IMPL_SHA256 = 'c588a5dcc5987e2c3f94ca03fae643ae9425dcd0c3abe27f465f6961abbd0a65'
 DIRECT_MODULES = {
-    'node/src/native/sync_body_backpressure.rs':
+    'node/src/native/service/sync_body_backpressure.rs':
         'f78c7b4dcb1d6d3365b8e69c65c8bf3dbcaecd98e9df02015defc50824c8c3ab',
     'node/src/native/sync_control_backpressure_tests.rs':
         'eda6eec5184fc7d01b7f31110e983bbe610b462f7bbbcd9a84ee8a15a65a57af',
@@ -138,15 +138,15 @@ def run(root, manifest):
     failures = old.parse_failure(root, process.returncode, process.stdout, process.stderr)
     old.verify_failures(root, failures, baseline)
     if manifest == 'workspace':
-        # These files are included with include!, which cargo fmt need not
-        # traverse. Directly check both and grant no historical debt exception.
+        # Cargo traverses the ordinary production body module. The test-only
+        # include! is checked directly too; neither module gains a debt exception.
         direct = ['rustup', 'run', '1.91.1', 'rustfmt', '--check', '--edition',
                   '2021', '--color', 'never',
                   *(str(root/name) for name in sorted(DIRECT_MODULES))]
         checked = subprocess.run(direct, cwd=root, stdin=subprocess.DEVNULL,
                                  capture_output=True, text=True, timeout=180)
         require(checked.returncode == 0 and not checked.stdout and not checked.stderr,
-                'included modules must pass direct pinned rustfmt without formatting debt')
+                'new modules must pass direct pinned rustfmt without formatting debt')
     # Reauthenticate originals and the postimage after subprocess execution too.
     load_authorized(root)
     migrated = sum(hashlib.sha256((root/name).read_bytes()).hexdigest() != baseline[name]

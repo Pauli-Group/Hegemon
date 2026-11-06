@@ -19,11 +19,11 @@ import tempfile
 import unittest
 
 WRAPPER = 'scripts/check_v011_sync_import_successor.py'
-WRAPPER_SHA256 = '7635a5ae405401b9cba51c60a702cd6ff1bdb6379a9e8c6cb197d067b9766200'
+WRAPPER_SHA256 = 'ceceb9f281343f9c730422684b44819ab8e9c2ed973a551de641992153303f0f'
 HISTORICAL_TEST = 'scripts/tests/v011_current_successor/test_successor_scope.py'
 HISTORICAL_TEST_SHA256 = 'bc00483a0671fe41d9b69f37c2b0bdf27d65f4879263b9b8dcbea915a876fc15'
 NEW_MODULES = (
-    'node/src/native/sync_body_backpressure.rs',
+    'node/src/native/service/sync_body_backpressure.rs',
     'node/src/native/sync_control_backpressure_tests.rs',
 )
 
