@@ -10,15 +10,20 @@ import subprocess
 from pathlib import Path
 import cbor2
 from public_cardano_transactions import CLI,_assets
+from swap_engine.timelock_policy import load_timing,leg_requirements
 from public_testnet_probe import CARDANO,request
 from public_testnet_submit import verify_network
 from public_testnet_utxos import cardano_utxos
 
 ROOT=Path(__file__).resolve().parents[1]
-AIKEN=Path('/workspace/chain-tools/aiken/aiken-x86_64-unknown-linux-musl/aiken')
+from swap_engine.tools import find_tool
+AIKEN=find_tool('aiken') or Path('/workspace/chain-tools/aiken/aiken-x86_64-unknown-linux-musl/aiken')  # HEGEMON_CHAIN_TOOLS or HEGEMON_TOOL_AIKEN override the legacy path
 
 
-def verify_preview(script_file,outref,hashlock,claimant,refundee,expiry_ms,lovelace,assets,confirmations=2,minimum_remaining_ms=60000,allow_expired=False):
+def verify_preview(script_file,outref,hashlock,claimant,refundee,expiry_ms,lovelace,assets,confirmations=None,minimum_remaining_ms=None,allow_expired=False):
+    need=leg_requirements(load_timing(),'cardano')
+    confirmations=max(2,need['confirmations']) if confirmations is None else confirmations
+    minimum_remaining_ms=max(60000,need['minClaimWindowSeconds']*1000) if minimum_remaining_ms is None else minimum_remaining_ms
     if not isinstance(outref,str) or not re.fullmatch('[0-9a-f]{64}#(0|[1-9][0-9]{0,9})',outref):raise ValueError('Invalid Cardano output reference')
     for value,length in ((hashlock,64),(claimant,56),(refundee,56)):
         if not isinstance(value,str) or not re.fullmatch('[0-9a-f]{'+str(length)+'}',value):raise ValueError('Invalid Cardano escrow terms')

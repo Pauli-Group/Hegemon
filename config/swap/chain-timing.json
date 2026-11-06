@@ -1,0 +1,179 @@
+{
+ "version": 1,
+ "status": "testnet policy; measured from public chains; not a real-funds safety guarantee",
+ "policy": {
+  "reactionSeconds": 600,
+  "gapFactor": 1.5,
+  "gapFloorSeconds": 600,
+  "maxHorizonSeconds": 2592000,
+  "maxObservationAgeSeconds": 600,
+  "minShortWindowSeconds": 3600
+ },
+ "chains": {
+  "bitcoin": {
+   "kind": "height",
+   "network": "testnet4",
+   "confirmations": 2,
+   "clockSkewSeconds": 0,
+   "slowFactor": 1.25,
+   "fastFactor": 0.5,
+   "outageAllowanceSeconds": 7200,
+   "providerLagBlocks": 2,
+   "refundOffsetBlocks": 1,
+   "windows": {
+    "1": {
+     "min": 0,
+     "max": 5955
+    },
+    "2": {
+     "min": 0,
+     "max": 7156
+    },
+    "3": {
+     "min": 0,
+     "max": 3605
+    },
+    "6": {
+     "min": 0,
+     "max": 7206
+    },
+    "12": {
+     "min": 0,
+     "max": 14412
+    },
+    "24": {
+     "min": 2699,
+     "max": 28824
+    },
+    "48": {
+     "min": 10973,
+     "max": 57648
+    },
+    "96": {
+     "min": 27963,
+     "max": 108091
+    },
+    "144": {
+     "min": 46275,
+     "max": 151329
+    },
+    "288": {
+     "min": 105491,
+     "max": 287242
+    }
+   },
+   "measurement": {
+    "chain": "bitcoin-testnet4",
+    "measured_at": 1793935508,
+    "from_height": 157300,
+    "to_height": 159299,
+    "blocks": 2000,
+    "mean_seconds": 1068.68,
+    "outage_threshold_seconds": 7200,
+    "outages": [],
+    "largest_gaps": [
+     5955,
+     1203,
+     1202,
+     1201,
+     1201
+    ]
+   }
+  },
+  "hegemon": {
+   "kind": "height",
+   "network": "pre-mainnet public testnet",
+   "confirmations": 2,
+   "clockSkewSeconds": 0,
+   "slowFactor": 1.25,
+   "fastFactor": 0.5,
+   "outageAllowanceSeconds": 7200,
+   "providerLagBlocks": 2,
+   "refundOffsetBlocks": 1,
+   "minLockBlocks": 14,
+   "proveSeconds": 300,
+   "windows": {
+    "1": {
+     "min": 1,
+     "max": 913
+    },
+    "2": {
+     "min": 4,
+     "max": 1442
+    },
+    "3": {
+     "min": 8,
+     "max": 1572
+    },
+    "6": {
+     "min": 36,
+     "max": 1691
+    },
+    "12": {
+     "min": 124,
+     "max": 2351
+    },
+    "24": {
+     "min": 714,
+     "max": 3735
+    },
+    "48": {
+     "min": 2378,
+     "max": 5379
+    },
+    "96": {
+     "min": 5495,
+     "max": 9461
+    },
+    "144": {
+     "min": 8572,
+     "max": 13449
+    },
+    "288": {
+     "min": 19124,
+     "max": 24330
+    }
+   },
+   "measurement": {
+    "chain": "hegemon-pre-mainnet",
+    "measured_at": 1793935431,
+    "from_height": 7065,
+    "to_height": 10064,
+    "blocks": 3000,
+    "mean_seconds": 75.83,
+    "outage_threshold_seconds": 7200,
+    "outages": [
+     {
+      "after_height": 9831,
+      "seconds": 81258
+     }
+    ],
+    "largest_gaps": [
+     81258,
+     913,
+     908,
+     903,
+     891
+    ]
+   }
+  },
+  "ethereum": {
+   "kind": "time",
+   "network": "sepolia",
+   "confirmations": 2,
+   "clockSkewSeconds": 60,
+   "inclusionSeconds": 180,
+   "slowBlockSeconds": 24,
+   "maxHeadAgeSeconds": 600
+  },
+  "cardano": {
+   "kind": "time",
+   "network": "preview",
+   "confirmations": 2,
+   "clockSkewSeconds": 60,
+   "inclusionSeconds": 300,
+   "slowBlockSeconds": 200,
+   "maxHeadAgeSeconds": 600
+  }
+ }
+}

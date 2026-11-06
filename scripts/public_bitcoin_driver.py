@@ -10,6 +10,16 @@ import re
 import stat
 from pathlib import Path
 from embit import ec,networks,script
+from swap_engine.timelock_policy import load_timing,leg_requirements
+
+BITCOIN_FLOOR_BLOCKS_TO_REFUND=6  # absolute floor; the swap policy in config/swap/chain-timing.json is stricter
+BITCOIN_FLOOR_CONFIRMATIONS=2
+
+
+def policy_limits():
+    """Blocks from tip to refund eligibility and confirmations a funded leg must have, from the timelock policy."""
+    need=leg_requirements(load_timing(),'bitcoin')
+    return max(BITCOIN_FLOOR_BLOCKS_TO_REFUND,need['minBlocksToExpiry']),max(BITCOIN_FLOOR_CONFIRMATIONS,need['confirmations'])
 from public_bitcoin_transactions import contract,funding,spend
 from public_testnet_probe import BITCOIN,BITCOIN_GENESIS,request
 from public_testnet_submit import submit,verify_network
@@ -47,7 +57,8 @@ def fund(journal,key_file,hashlock,claimant,refund_height,amount):
     if type(amount) is not int or not 546<=amount<=2100000000000000:raise ValueError('Invalid Bitcoin escrow amount')
     key=load_test_key(key_file);refund=key.get_public_key().sec().hex();_,output=contract(hashlock,claimant,refund,refund_height)
     verify_network('bitcoin-testnet4');height=int(request(BITCOIN+'/blocks/tip/height'))
-    if type(refund_height) is not int or refund_height-height<6:raise ValueError('Bitcoin refund height too close')
+    minimum_blocks,_=policy_limits()
+    if type(refund_height) is not int or refund_height-height<minimum_blocks:raise ValueError('Bitcoin refund height too close; the timelock policy needs at least '+str(minimum_blocks)+' blocks')
     fee=_fee()
     if amount-fee<546:raise ValueError('Bitcoin escrow would be dust after the current spend fee')
     address=script.p2wpkh(key.get_public_key()).address(networks.NETWORKS['test'])
@@ -65,7 +76,7 @@ def spend_contract(journal,key_file,txid,vout,amount,hashlock,claimant,refund,re
     if preimage is None and tip<refund_height:raise ValueError('Bitcoin refund is not yet eligible')
     if preimage is not None and tip>=refund_height:raise ValueError('Bitcoin escrow is already refundable; refusing claim')
     tx=json.loads(request(BITCOIN+'/tx/'+txid));status=tx.get('status',{});height=status.get('block_height');block=status.get('block_hash');outputs=tx.get('vout')
-    if tx.get('txid')!=txid or status.get('confirmed') is not True or type(height) is not int or tip-height+1<2 or not isinstance(block,str) or request(BITCOIN+'/block-height/'+str(height)).decode().strip()!=block:raise ValueError('Bitcoin escrow lacks canonical confirmations')
+    if tx.get('txid')!=txid or status.get('confirmed') is not True or type(height) is not int or tip-height+1<policy_limits()[1] or not isinstance(block,str) or request(BITCOIN+'/block-height/'+str(height)).decode().strip()!=block:raise ValueError('Bitcoin escrow lacks canonical confirmations')
     if not isinstance(outputs,list) or vout>=len(outputs) or outputs[vout].get('value')!=amount or outputs[vout].get('scriptpubkey')!=output.data.hex():raise ValueError('Bitcoin escrow terms do not match output')
     if json.loads(request(BITCOIN+'/tx/'+txid+'/outspend/'+str(vout))).get('spent') is not False:raise ValueError('Bitcoin escrow is spent or unknown')
     fee=_fee();destination=script.p2wpkh(key.get_public_key())

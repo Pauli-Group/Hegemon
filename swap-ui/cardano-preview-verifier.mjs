@@ -21,17 +21,22 @@ export function parseCardanoAssets(text){
     if(!m||Object.hasOwn(out,m[1])||BigInt(m[2])>=(1n<<63n))throw Error('Invalid Cardano assets.');out[m[1]]=m[2];
   }return out;
 }
-export async function verifyCardanoPreviewEscrow(terms,read){
+/** `limits` come from legRequirements() of the timelock policy; the defaults are
+ * absolute floors, not the swap policy. `allowExpired` is only for a refund, which
+ * needs the escrow confirmed and unspent but is due after the deadline. */
+export const CARDANO_FLOOR_CONFIRMATIONS=2,CARDANO_FLOOR_REMAINING_SECONDS=600;
+export async function verifyCardanoPreviewEscrow(terms,read,limits={}){
+  const needConfirmations=Math.max(CARDANO_FLOOR_CONFIRMATIONS,limits.confirmations??0),needRemainingMs=1000*Math.max(CARDANO_FLOOR_REMAINING_SECONDS,limits.minClaimWindowSeconds??0);
   if(!terms||typeof terms.outref!=='string'||!/^[0-9a-f]{64}#(0|[1-9][0-9]{0,9})$/.test(terms.outref)||Number(terms.outref.split('#')[1])>0xffffffff||typeof terms.hashlock!=='string'||!/^[0-9a-f]{64}$/.test(terms.hashlock)||typeof terms.claimant!=='string'||!/^[0-9a-f]{56}$/.test(terms.claimant)||typeof terms.refundee!=='string'||!/^[0-9a-f]{56}$/.test(terms.refundee)||terms.claimant===terms.refundee||!Number.isSafeInteger(terms.expiry_ms)||terms.expiry_ms<=0||typeof terms.lovelace!=='string'||!/^[1-9][0-9]{0,18}$/.test(terms.lovelace)||BigInt(terms.lovelace)>=(1n<<63n))throw Error('Invalid Cardano escrow terms.');
   const expectedAssets=parseCardanoAssets(terms.assets);if(typeof read!=='function')throw Error('Cardano provider unavailable.');
   const s=await read(terms.outref),row=s?.output,[txid,index]=terms.outref.split('#');
-  if(s?.network!=='preview'||s?.magic!==2||s?.system_start!==1666656000||!Number.isSafeInteger(s.slot)||s.slot<0||!Number.isSafeInteger(s.confirmations)||s.confirmations<2)throw Error('Cardano escrow lacks confirmed preview data.');
+  if(s?.network!=='preview'||s?.magic!==2||s?.system_start!==1666656000||!Number.isSafeInteger(s.slot)||s.slot<0||!Number.isSafeInteger(s.confirmations)||s.confirmations<needConfirmations)throw Error('Cardano escrow lacks confirmed preview data.');
   if(!row||row.tx_hash!==txid||row.tx_index!==Number(index)||row.address!==PREVIEW_HTLC_ADDRESS||row.is_spent!==false)throw Error('Cardano escrow is spent or does not match the validator.');
   if(row.value!==terms.lovelace||!Array.isArray(row.asset_list))throw Error('Cardano escrow value does not match.');
   const actual={};for(const a of row.asset_list){const name=String(a.policy_id)+'.'+String(a.asset_name),quantity=a.quantity;if(!/^[0-9a-f]{56}\.(?:[0-9a-f]{2}){0,32}$/.test(name)||typeof quantity!=='string'||!/^[1-9][0-9]{0,18}$/.test(quantity)||BigInt(quantity)>=(1n<<63n)||Object.hasOwn(actual,name))throw Error('Invalid Cardano asset snapshot.');actual[name]=quantity;}
   const order=x=>JSON.stringify(Object.entries(x).sort(([a],[b])=>a.localeCompare(b)));if(order(actual)!==order(expectedAssets))throw Error('Cardano escrow assets do not match.');
   const value=row.inline_datum?.value,fields=value?.fields,raw=datumBytes(row.inline_datum?.bytes);
   if(value?.constructor!==0||!Array.isArray(fields)||fields.length!==4||fields[0]?.bytes!==terms.hashlock||fields[1]?.bytes!==terms.claimant||fields[2]?.bytes!==terms.refundee||fields[3]?.int!==terms.expiry_ms||raw.hashlock!==terms.hashlock||raw.claimant!==terms.claimant||raw.refundee!==terms.refundee||raw.expiry_ms!==terms.expiry_ms)throw Error('Cardano escrow datum does not match.');
-  if(terms.expiry_ms-(s.system_start+s.slot)*1000<600000)throw Error('Cardano escrow deadline is too close.');
-  return {slot:s.slot,confirmations:s.confirmations,outref:terms.outref};
+  if(!limits.allowExpired&&terms.expiry_ms-(s.system_start+s.slot)*1000<needRemainingMs)throw Error('Cardano escrow deadline is too close.');
+  return {slot:s.slot,confirmations:s.confirmations,outref:terms.outref,headTimestamp:s.system_start+s.slot};
 }

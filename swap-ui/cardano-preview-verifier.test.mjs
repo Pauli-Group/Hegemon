@@ -15,3 +15,23 @@ test('matches a preview HTLC datum and exact native assets, and rejects mutation
  for(const [,mutate,reason] of mutations){const value=structuredClone(s);mutate(value);await assert.rejects(verifyCardanoPreviewEscrow(terms,async()=>value),reason);}
  assert.throws(()=>parseCardanoAssets(terms.assets+'\n'+terms.assets),/Invalid/);
 });
+
+test('policy limits tighten the confirmation and remaining-time floors and report the head time',async()=>{
+ const s=snapshot();s.slot=(terms.expiry_ms/1000)-s.system_start-1000;
+ const result=await verifyCardanoPreviewEscrow(terms,async()=>s,{minClaimWindowSeconds:1000,confirmations:2});
+ assert.equal(result.headTimestamp,s.system_start+s.slot);
+ await assert.rejects(verifyCardanoPreviewEscrow(terms,async()=>s,{minClaimWindowSeconds:1001}),/too close/);
+ await assert.rejects(verifyCardanoPreviewEscrow(terms,async()=>s,{confirmations:3}),/confirmed preview data/);
+ assert.equal((await verifyCardanoPreviewEscrow(terms,async()=>s,{minClaimWindowSeconds:1,confirmations:1})).confirmations,2,'limits below the floors are ignored');
+});
+
+test('a refund may verify an escrow past its deadline, but spent or mismatched escrows still fail',async()=>{
+ const s=snapshot();s.slot=(terms.expiry_ms/1000)-s.system_start+500;
+ await assert.rejects(verifyCardanoPreviewEscrow(terms,async()=>s),/too close/);
+ const result=await verifyCardanoPreviewEscrow(terms,async()=>s,{allowExpired:true});
+ assert.equal(result.slot,s.slot);
+ const spent=snapshot();spent.slot=s.slot;spent.output={...spent.output,is_spent:true};
+ await assert.rejects(verifyCardanoPreviewEscrow(terms,async()=>spent,{allowExpired:true}),/spent or does not match/);
+ const poor=snapshot();poor.slot=s.slot;poor.confirmations=0;
+ await assert.rejects(verifyCardanoPreviewEscrow(terms,async()=>poor,{allowExpired:true}),/confirmed preview data/);
+});

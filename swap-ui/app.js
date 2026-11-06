@@ -3,7 +3,7 @@ import {newMessageKey,encryptMessage,decryptMessage} from './crypto.mjs';
 import {createInbox,inboxPrivateKey,inboxFingerprint,sealPublicSession,openPublicSession,parsePublicSession} from './public-inbox.mjs';
 import {verifyTokenEscrow,verifyEtherEscrow} from './ethereum-escrow.mjs';
 import {verifySepoliaEscrow} from './sepolia-verifier.mjs';
-import {deploySepoliaEscrow,tokenSepoliaStep,refundSepoliaEscrow} from './sepolia-actions.mjs';
+import {deploySepoliaEscrow,tokenSepoliaStep,refundSepoliaEscrow,claimSepoliaEscrow} from './sepolia-actions.mjs';
 import {verifyBitcoinTestnetEscrow} from './bitcoin-testnet-verifier.mjs';
 import {verifyCardanoPreviewEscrow} from './cardano-preview-verifier.mjs';
 import {submitLocalEscrowDeployment,submitLocalTokenFundingStep,submitLocalEscrowRefund,submitLocalEscrowClaim,observeLocalEthereumClaim} from './ethereum-actions.mjs';
@@ -12,7 +12,12 @@ import {createRecovery,encryptRecovery,unlockRecovery,validateRecoveryEnvelope} 
 import {vaultLabel,listVault,addVault,removeVault} from './vault-store.mjs';
 import {listActions,beginAction,finishAction,uncertainAction,removeAction,importActions} from './action-journal.mjs';
 import {comparePair} from './pair-check.mjs';
+import {legRequirements,validateTiming,actionSeconds} from './timelock-policy.mjs';
 import {cardanoOfferValue,checkPublicPair} from './public-pair.mjs';
+import {initCardanoWalletActions} from './cardano-ui.mjs';
+import {initBitcoinWalletActions} from './bitcoin-ui.mjs';
+import {initObserver} from './observer-ui.mjs';
+import {initGuided} from './guided-ui.mjs';
 const types=[['ethereum:eth','Ethereum · ETH'],['ethereum:erc20','Ethereum · ERC-20'],['ethereum:erc721','Ethereum · ERC-721'],['ethereum:erc1155','Ethereum · ERC-1155'],['cardano:ada','Cardano · ADA'],['cardano:native','Cardano · native token'],['bitcoin:btc','Bitcoin · BTC'],['hegemon:hgn','Hegemon · HGN']];
 const $=id=>document.getElementById(id);
 for(const name of ['give-type','receive-type']) for(const [value,label] of types) document.querySelector(`[name="${name}"]`).add(new Option(label,value));
@@ -53,21 +58,53 @@ const sepoliaActionForm=$('sepolia-action-form');let sepoliaActionBusy=false;
 function toggleSepoliaActionFields(){const kind=sepoliaActionForm.elements.kind.value,native=kind==='eth';for(const name of ['token','tokenId']){sepoliaActionForm.elements[name].disabled=native;sepoliaActionForm.elements[name].required=!native;}$('sepolia-approve').hidden=native;$('sepolia-fund').hidden=native;$('sepolia-revoke').hidden=kind!=='2';}
 sepoliaActionForm.elements.kind.addEventListener('change',toggleSepoliaActionFields);toggleSepoliaActionFields();
 async function sepoliaAction(operation){
- if(sepoliaActionBusy)return;
+ if(sepoliaActionBusy)return;let secret;
  try{if(!sepoliaActionForm.reportValidity())return;if(!activeEthereumProvider)throw Error('Connect an Ethereum wallet first.');
   const data=new FormData(sepoliaActionForm),terms={};for(const name of ['kind','contract','token','tokenId','amount','hashlock','claimant','refundee','expiry'])terms[name]=String(data.get(name)||'').trim();
   if(operation!=='deploy'&&!/^0x[0-9a-fA-F]{40}$/.test(terms.contract))throw Error('Enter the deployed escrow address.');
   const provider=activeEthereumProvider,guarded={request:args=>{if(provider!==activeEthereumProvider)throw Error('Wallet changed. Reconnect and check wallet history before retrying.');return provider.request(args);}};
   sepoliaActionBusy=true;for(const button of sepoliaActionForm.querySelectorAll('button'))button.disabled=true;$('sepolia-action-result').textContent='';msg($('sepolia-action-status'),'Checking Sepolia and requesting wallet approval.');
   const response=await fetch(terms.kind==='eth'?'/ether-escrow-template.json':'/token-escrow-template.json');if(!response.ok)throw Error('Escrow template unavailable.');const template=await response.json();
-  const action=()=>operation==='deploy'?deploySepoliaEscrow(guarded,template,terms):operation==='refund'?refundSepoliaEscrow(guarded,template,terms):tokenSepoliaStep(guarded,template,terms,operation);
+  const action=async()=>{
+   if(operation==='claim'){
+    const selected=$('sepolia-claim-backup').value,phrase=$('sepolia-claim-passphrase').value;$('sepolia-claim-passphrase').value='';
+    if(!selected||!phrase)throw Error('Select an encrypted backup and enter its passphrase.');
+    const entry=(await listVault()).find(item=>item.envelope.hashlock===selected);if(!entry)throw Error('Encrypted backup not found.');
+    if('0x'+selected!==terms.hashlock.toLowerCase())throw Error('The selected backup is for a different hashlock.');
+    const config=await loadTiming();secret=await unlockRecovery(entry.envelope,phrase);
+    return claimSepoliaEscrow(guarded,template,terms,secret,{cutoffSeconds:actionSeconds(config.chains.ethereum),confirmations:legRequirements(config,'ethereum').confirmations});
+   }
+   return operation==='deploy'?deploySepoliaEscrow(guarded,template,terms):operation==='refund'?refundSepoliaEscrow(guarded,template,terms):tokenSepoliaStep(guarded,template,terms,operation);
+  };
+  if(operation==='claim'&&!window.confirm('This claim does not check the other swap leg unless you started it from a guided swap. Your wallet receives the preimage as soon as the request is made, even if you reject it. Continue only after verifying the other leg and its deadlines.'))return;
   const {result,warning}=await recordedAction('ethereum',operation,terms,action);$('sepolia-action-result').textContent=JSON.stringify(result,null,2);
   msg($('sepolia-action-status'),warning||(operation==='deploy'&&terms.kind!=='eth'?'Deployment submitted. Check its receipt, then approve and fund the token escrow.':'Transaction submitted. Check its receipt and confirmations.'),!!warning);
- }catch(e){msg($('sepolia-action-status'),e.message,true);}finally{sepoliaActionBusy=false;for(const button of sepoliaActionForm.querySelectorAll('button'))button.disabled=false;}
+ }catch(e){msg($('sepolia-action-status'),e.message,true);}finally{secret?.fill(0);sepoliaActionBusy=false;for(const button of sepoliaActionForm.querySelectorAll('button'))button.disabled=false;}
 }
 sepoliaActionForm.addEventListener('submit',event=>{event.preventDefault();sepoliaAction('deploy');});
-for(const operation of ['approve','fund','revoke','refund'])$('sepolia-'+operation).addEventListener('click',()=>sepoliaAction(operation));
+for(const operation of ['approve','fund','revoke','refund','claim'])$('sepolia-'+operation).addEventListener('click',()=>sepoliaAction(operation));
 async function readBitcoinTestnet(txid,vout){const response=await fetch('/bitcoin-testnet4/escrow?'+new URLSearchParams({txid,vout:String(vout)}));const value=await response.json();if(!response.ok)throw Error(value.error||'Bitcoin testnet service unavailable.');return value;}
+async function readJson(path,fallback){const response=await fetch(path);const value=await response.json();if(!response.ok)throw Error(value.error||fallback);return value;}
+const cardanoRead={params:()=>readJson('/cardano-preview/params','Cardano preview service unavailable.'),utxos:refs=>readJson('/cardano-preview/utxos?'+new URLSearchParams({refs:refs.join(',')}),'Cardano preview service unavailable.')};
+initCardanoWalletActions({$,msg,getApi:()=>activeCardanoApi,loadTiming:()=>loadTiming(),legRequirements,actionSeconds,listVault,unlockRecovery,
+ verifyEscrow:(terms,limits)=>verifyCardanoPreviewEscrow(terms,readCardanoPreview,limits),read:cardanoRead,refresh:()=>refreshActionViews(),
+ journal:{begin:beginAction,finish:finishAction,uncertain:uncertainAction,remove:removeAction}});
+class BroadcastRejected extends Error{constructor(m){super(m);this.rejected=true;}}
+const bitcoinRead={
+ utxos:address=>readJson('/bitcoin-testnet4/utxos?'+new URLSearchParams({address}),'Bitcoin testnet service unavailable.'),
+ async broadcast(tx){const response=await fetch('/bitcoin-testnet4/broadcast',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({tx})});const value=await response.json();
+  if(response.status===400)throw new BroadcastRejected(value.reason||value.error||'rejected');if(!response.ok)throw Error(value.error||'Bitcoin testnet service unavailable.');return value;}};
+initBitcoinWalletActions({$,msg,loadTiming:()=>loadTiming(),legRequirements,listVault,unlockRecovery,verifyEscrow:(terms,limits)=>verifyBitcoinTestnetEscrow(terms,readBitcoinTestnet,limits),read:bitcoinRead,refresh:()=>refreshActionViews(),
+ journal:{begin:beginAction,finish:finishAction,uncertain:uncertainAction,remove:removeAction}});
+initObserver({$,msg,loadTiming:()=>loadTiming(),legRequirements,vaultLabel,encryptRecovery,addVault,listVault,notifyVault:()=>notifyVault(),renderVault:()=>renderVault(),
+ read:{bitcoin:(txid,vout)=>readJson('/bitcoin-testnet4/spend?'+new URLSearchParams({txid,vout:String(vout)}),'Bitcoin testnet service unavailable.'),
+  ethereum:(contract,from)=>readJson('/sepolia/escrow-events?'+new URLSearchParams({contract,from_block:String(from)}),'Sepolia service unavailable.'),
+  cardano:outref=>readJson('/cardano-preview/spend?'+new URLSearchParams({outref}),'Cardano preview service unavailable.')}});
+const sepoliaReader={async request({method,params}){const response=await fetch('/sepolia/rpc',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({method,params})});const value=await response.json();if(!response.ok)throw Error(value.error||'Sepolia service unavailable.');return value.result;}};
+initGuided({$,msg,loadTiming:()=>loadTiming(),listVault,listActions,template:async()=>{const response=await fetch('/ether-escrow-template.json');if(!response.ok)throw Error('Escrow template unavailable.');return response.json();},
+ readers:{bitcoin:{head:()=>readJson('/bitcoin-testnet4/head','Bitcoin testnet service unavailable.'),escrow:(txid,vout)=>readBitcoinTestnet(txid,vout),spend:(txid,vout)=>readJson('/bitcoin-testnet4/spend?'+new URLSearchParams({txid,vout:String(vout)}),'Bitcoin testnet service unavailable.')},
+  cardano:{params:()=>cardanoRead.params(),escrow:outref=>readCardanoPreview(outref),spend:outref=>readJson('/cardano-preview/spend?'+new URLSearchParams({outref}),'Cardano preview service unavailable.')},
+  ethereum:{provider:sepoliaReader,events:(contract,from)=>readJson('/sepolia/escrow-events?'+new URLSearchParams({contract,from_block:String(from)}),'Sepolia service unavailable.')}}});
 async function readCardanoPreview(outref){const response=await fetch('/cardano-preview/escrow?'+new URLSearchParams({outref}));const value=await response.json();if(!response.ok)throw Error(value.error||'Cardano preview service unavailable.');return value;}
 $('bitcoin-testnet-form').addEventListener('submit',async event=>{event.preventDefault();
  try{const data=new FormData(event.currentTarget),terms={};for(const name of ['txid','hashlock','claimant_key','refund_key'])terms[name]=String(data.get(name)||'').trim();
@@ -105,9 +142,11 @@ $('verify-form').addEventListener('submit',async event=>{event.preventDefault();
   msg($('verify-status'),'Verified funded and unspent at block '+result.blockNumber+' ('+result.blockHash+'). The node and token issuer remain trust assumptions.');
  }catch(e){msg($('verify-status'),e.message,true);}
 });
+let activeCardanoApi=null;
 $('connect-cardano').addEventListener('click',async()=>{
  try{const id=$('cardano-wallet').value,wallet=window.cardano?.[id];if(!wallet||typeof wallet.enable!=='function')throw Error('Select an available Cardano browser wallet.');
-  const api=await wallet.enable(),network=await api.getNetworkId();if(network!==0&&network!==1)throw Error('Wallet returned an invalid network.');
+  activeCardanoApi=null;const api=await wallet.enable(),network=await api.getNetworkId();if(network!==0&&network!==1)throw Error('Wallet returned an invalid network.');
+  if(network===0)activeCardanoApi=api;
   msg($('wallet-status'),'Cardano connected: '+String(wallet.name||id)+' · '+(network===1?'mainnet':'testnet')+'. No transaction has been requested.');
  }catch(e){msg($('wallet-status'),e.message,true);}
 });
@@ -366,24 +405,49 @@ for(const side of ['give','receive'])$('public-pair-capture-'+side).addEventList
  if(publicPairBusy||!pairContext||currentOffer()!==pairContext.id)throw Error('Select an offer first.');const chain=pairContext[side].chain;
  publicPairLegs[side]={chain,terms:capturePublicTerms(chain)};$('public-pair-result').textContent='';msg($('public-pair-status'),'Captured owner-'+side+' '+chain+' terms. Capture the other side, then check both.');
  }catch(e){msg($('public-pair-status'),e.message,true);}});
+let publicTimingConfig=null;
+async function loadTiming(){
+ if(publicTimingConfig)return publicTimingConfig;const response=await fetch('/chain-timing.json');if(!response.ok)throw Error('Timing policy unavailable.');
+ publicTimingConfig=validateTiming(await response.json());return publicTimingConfig;
+}
+function formatSeconds(value){
+ if(!Number.isFinite(value))return 'unknown';const sign=value<0?'-':'',total=Math.abs(Math.round(value)),d=Math.floor(total/86400),h=Math.floor(total%86400/3600),m=Math.floor(total%3600/60);
+ return sign+(d?d+'d ':'')+(d||h?h+'h ':'')+m+'m';
+}
+function renderTiming(element,verdict,config){
+ element.replaceChildren();element.hidden=false;element.className='timing '+(verdict.ok?'ok':'fail');
+ const title=document.createElement('h3');title.textContent=verdict.ok?'Timing check passed':'Timing check failed';element.append(title);
+ const m=verdict.metrics||{};
+ if(Number.isFinite(m.gapSeconds)){
+  const list=document.createElement('dl');
+  for(const [label,value] of [['Later-expiring leg',verdict.long==='give'?'owner gives':'owner receives'],['Time between the other leg\u2019s last safe claim and this leg\u2019s earliest refund',formatSeconds(m.gapSeconds)+' (needs '+formatSeconds(m.gapRequiredSeconds)+')'],['Time to claim the earlier-expiring leg',formatSeconds(m.shortClaimWindowSeconds)+' (needs '+formatSeconds(m.shortClaimRequiredSeconds)+')'],['Longest funds could stay locked',formatSeconds(Math.max(m.longLockUpperSeconds,m.shortLockUpperSeconds))]]){
+   const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;list.append(dt,dd);
+  }
+  element.append(list);
+ }
+ if(verdict.reasons.length){const ul=document.createElement('ul');for(const reason of verdict.reasons){const li=document.createElement('li');li.textContent=reason.message;ul.append(li);}element.append(ul);}
+ const note=document.createElement('p');
+ note.textContent='Testnet policy from measured block times. It assumes no Bitcoin or Hegemon stall longer than '+formatSeconds(Math.max(config.chains.bitcoin.outageAllowanceSeconds,config.chains.hegemon.outageAllowanceSeconds))+' and honest clocks. It is not a guarantee for real funds.';
+ element.append(note);
+}
 async function checkPublicLeg(leg){
- const t=leg.terms;
+ const t=leg.terms,limits=publicTimingConfig?legRequirements(publicTimingConfig,leg.chain):{};
  if(leg.chain==='ethereum'){
   if(!activeEthereumProvider)throw Error('Connect an Ethereum wallet first.');const provider=activeEthereumProvider,response=await fetch(t.kind==='eth'?'/ether-escrow-template.json':'/token-escrow-template.json');if(!response.ok)throw Error('Escrow template unavailable.');
-  const snapshot=await verifySepoliaEscrow(provider,await response.json(),t);if(provider!==activeEthereumProvider)throw Error('Ethereum wallet changed during verification.');return {chain:'ethereum',snapshot};
+  const snapshot=await verifySepoliaEscrow(provider,await response.json(),t,limits);if(provider!==activeEthereumProvider)throw Error('Ethereum wallet changed during verification.');return {chain:'ethereum',snapshot};
  }
- if(leg.chain==='bitcoin')return {chain:'bitcoin',snapshot:await verifyBitcoinTestnetEscrow({...t,vout:Number(t.vout),amount_sats:Number(t.amount_sats),refund_height:Number(t.refund_height)},readBitcoinTestnet)};
- if(leg.chain==='cardano')return {chain:'cardano',snapshot:await verifyCardanoPreviewEscrow({...t,expiry_ms:Number(t.expiry_ms)},readCardanoPreview)};
+ if(leg.chain==='bitcoin')return {chain:'bitcoin',snapshot:await verifyBitcoinTestnetEscrow({...t,vout:Number(t.vout),amount_sats:Number(t.amount_sats),refund_height:Number(t.refund_height)},readBitcoinTestnet,limits)};
+ if(leg.chain==='cardano')return {chain:'cardano',snapshot:await verifyCardanoPreviewEscrow({...t,expiry_ms:Number(t.expiry_ms)},readCardanoPreview,limits)};
  throw Error('Hegemon public-testnet verification is not available yet.');
 }
 $('public-pair-verify').addEventListener('click',async()=>{if(publicPairBusy)return;publicPairBusy=true;for(const button of document.querySelectorAll('#public-pair button'))button.disabled=true;
  try{if(!pairContext||!publicPairLegs.give||!publicPairLegs.receive||currentOffer()!==pairContext.id)throw Error('Capture both escrow terms for the selected offer.');
   const context=structuredClone(pairContext),legs=structuredClone(publicPairLegs),before=await api('/offers/'+context.id);checkOwnerInbox(context.id,before);
   if(JSON.stringify(before.give)!==JSON.stringify(context.give)||JSON.stringify(before.receive)!==JSON.stringify(context.receive))throw Error('Offer terms changed. Select it again.');
-  msg($('public-pair-status'),'Checking both public-testnet escrow snapshots.');const result=await checkPublicPair(context,legs.give,legs.receive,checkPublicLeg);
+  const timingConfig=await loadTiming();$('public-pair-timing').hidden=true;msg($('public-pair-status'),'Checking both public-testnet escrow snapshots.');const result=await checkPublicPair(context,legs.give,legs.receive,checkPublicLeg,{config:timingConfig,now:Math.floor(Date.now()/1000)});
   const after=await api('/offers/'+context.id);checkOwnerInbox(context.id,after);if(currentOffer()!==context.id||JSON.stringify(after.give)!==JSON.stringify(context.give)||JSON.stringify(after.receive)!==JSON.stringify(context.receive))throw Error('Offer changed during verification.');
-  $('public-pair-result').textContent=JSON.stringify(result,null,2);msg($('public-pair-status'),'Both escrow terms match the offer at separate snapshots. Verify counterparty identity, safe deadlines and recovery independently.');
- }catch(e){$('public-pair-result').textContent='';msg($('public-pair-status'),e.message,true);}finally{publicPairBusy=false;for(const button of document.querySelectorAll('#public-pair button'))button.disabled=false;}
+  $('public-pair-result').textContent=JSON.stringify(result,null,2);renderTiming($('public-pair-timing'),result.timing,timingConfig);msg($('public-pair-status'),'Both escrow terms match the offer at separate snapshots and the deadlines pass the testnet timing policy. Verify counterparty identity and recovery independently.');
+ }catch(e){if(e.verdict){$('public-pair-result').textContent=JSON.stringify(e.result,null,2);renderTiming($('public-pair-timing'),e.verdict,publicTimingConfig);}else $('public-pair-result').textContent='';msg($('public-pair-status'),e.message,true);}finally{publicPairBusy=false;for(const button of document.querySelectorAll('#public-pair button'))button.disabled=false;}
 });
 async function refresh(){try{const {offers}=await api('/offers');$('board').replaceChildren();if(!offers.length){$('board').textContent='No public offers right now.';return;}
  for(const offer of offers){const row=document.createElement('div');row.className='offer';const text=document.createElement('p');text.textContent=describe(offer.give)+' → '+describe(offer.receive);const button=document.createElement('button');button.type='button';button.textContent='View offer';button.addEventListener('click',()=>selectOffer(offer.id));row.append(text,button);$('board').append(row);}}
@@ -471,7 +535,7 @@ function notifyVault(){vaultChannel?.postMessage('changed');}
 let vaultRenderVersion=0;
 async function renderVault(){const version=++vaultRenderVersion;let entries;
  try{entries=await listVault();}catch(e){if(version===vaultRenderVersion){$('vault-list').replaceChildren();msg($('vault-status'),e.message,true);}return;}
- if(version!==vaultRenderVersion)return;const choice=$('ethereum-claim-backup'),previous=choice.value;choice.replaceChildren(new Option('Select encrypted backup',''));for(const entry of entries)choice.add(new Option(entry.label+' · '+entry.envelope.hashlock,entry.envelope.hashlock));choice.value=Array.from(choice.options).some(option=>option.value===previous)?previous:'';
+ if(version!==vaultRenderVersion)return;for(const choice of [$('ethereum-claim-backup'),$('sepolia-claim-backup'),$('cardano-claim-backup'),$('bitcoin-claim-backup')]){const previous=choice.value;choice.replaceChildren(new Option('Select encrypted backup',''));for(const entry of entries)choice.add(new Option(entry.label+' · '+entry.envelope.hashlock,entry.envelope.hashlock));choice.value=Array.from(choice.options).some(option=>option.value===previous)?previous:'';}
  $('vault-list').replaceChildren();if(!entries.length){$('vault-list').textContent='No encrypted secrets saved.';return;}
  for(const entry of entries){const row=document.createElement('div');row.className='offer';const text=document.createElement('p');text.textContent=entry.label+' · hashlock '+entry.envelope.hashlock;
   const exportButton=document.createElement('button');exportButton.type='button';exportButton.textContent='Show encrypted backup';exportButton.addEventListener('click',()=>{$('vault-backup').value=JSON.stringify(entry);msg($('vault-status'),'Encrypted backup ready to copy and save.');});

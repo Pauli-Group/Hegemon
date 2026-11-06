@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from embit import ec,transaction
-from public_bitcoin_driver import _fee,fund,spend_contract
+from public_bitcoin_driver import _fee,fund,spend_contract,policy_limits
 from public_testnet_probe import BITCOIN_GENESIS
 
 class PublicBitcoinDriverTest(unittest.TestCase):
@@ -22,7 +22,7 @@ class PublicBitcoinDriverTest(unittest.TestCase):
                 tx=transaction.Transaction.parse(raw);self.assertEqual(network,'bitcoin-testnet4');self.assertEqual(tx.vout[0].value,30000);self.assertEqual(len(tx.vin[0].witness.items),2)
                 return {'txid':tx.txid().hex(),'confirmed':False}
             with patch('public_bitcoin_driver.verify_network'),patch('public_bitcoin_driver.request',return_value=b'100'),patch('public_bitcoin_driver._fee',return_value=250),patch('public_bitcoin_driver.bitcoin_utxos',return_value=[{'txid':'33'*32,'vout':0,'amount_sats':50000}]),patch('public_bitcoin_driver.submit',side_effect=broadcast):
-                self.assertFalse(fund(d,key,'44'*32,claimant,200,30000)['confirmed'])
+                self.assertFalse(fund(d,key,'44'*32,claimant,100+policy_limits()[0],30000)['confirmed'])
     def test_refuses_early_refund_without_submission(self):
         alice=ec.PrivateKey(b'\x11'*32);bob=ec.PrivateKey(b'\x22'*32)
         with tempfile.TemporaryDirectory() as d:
@@ -36,7 +36,16 @@ class PublicBitcoinDriverTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             key=Path(d)/'key';key.write_text(bob.secret.hex());os.chmod(key,0o600)
             with patch('public_bitcoin_driver.verify_network'),patch('public_bitcoin_driver.request',return_value=b'100'),patch('public_bitcoin_driver._fee',return_value=1000),patch('public_bitcoin_driver.submit') as sent:
-                with self.assertRaisesRegex(ValueError,'dust'):fund(d,key,'44'*32,alice.get_public_key().sec().hex(),200,1500)
+                with self.assertRaisesRegex(ValueError,'dust'):fund(d,key,'44'*32,alice.get_public_key().sec().hex(),100+policy_limits()[0],1500)
+                sent.assert_not_called()
+
+    def test_refuses_funding_inside_the_policy_margin(self):
+        alice=ec.PrivateKey(b'\x11'*32);bob=ec.PrivateKey(b'\x22'*32)
+        with tempfile.TemporaryDirectory() as d:
+            key=Path(d)/'key';key.write_text(bob.secret.hex());os.chmod(key,0o600)
+            with patch('public_bitcoin_driver.verify_network'),patch('public_bitcoin_driver.request',return_value=b'100'),patch('public_bitcoin_driver.submit') as sent:
+                with self.assertRaisesRegex(ValueError,'timelock policy needs at least'):
+                    fund(d,key,'44'*32,alice.get_public_key().sec().hex(),100+policy_limits()[0]-1,30000)
                 sent.assert_not_called()
 
 if __name__=='__main__':unittest.main()

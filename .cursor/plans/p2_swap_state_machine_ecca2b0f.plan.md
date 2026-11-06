@@ -4,31 +4,31 @@ overview: Plan 2 of 8. Build one reusable, crash-safe two-party swap engine with
 todos:
   - id: p2-execplan
     content: Write .agent/SWAP_ENGINE_EXECPLAN.md
-    status: pending
+    status: completed
   - id: p2-survey
     content: Catalogue driver calls and known failure modes to wrap
-    status: pending
+    status: completed
   - id: p2-core
     content: Implement adapter interface, durable store and pure transition engine
-    status: pending
+    status: completed
   - id: p2-faults
     content: Simulated-chain fault-injection and crash-at-every-state tests
-    status: pending
+    status: completed
   - id: p2-adapters
     content: Wrap Bitcoin, Sepolia, Cardano drivers; add Hegemon stub and fake
-    status: pending
+    status: completed
   - id: p2-local
     content: Local-fixture swaps for all pairs and same-chain cases through the engine
-    status: pending
+    status: completed
   - id: p2-public
     content: One real public-testnet swap via the engine
-    status: pending
+    status: completed
   - id: p2-cli-docs
     content: CLI, DESIGN.md and METHODS.md updates
-    status: pending
+    status: completed
   - id: p2-revise
     content: Revise plans P3..P7 based on what was learned
-    status: pending
+    status: completed
 isProject: false
 ---
 
@@ -97,6 +97,13 @@ Revision from P0 (2026-11-05):
 - The public acceptance run (step 6) uses fresh disposable wallets unless P0's private-state decryption succeeds and leftover funds are sufficient. P0 shows no known live escrows, so there is no recovery pressure.
 - Second revision from P0 (2026-11-05): the private journals are recovered at `~/.hegemon-private/restore/historical-testnet-journals-20261102` (0700, secrets inside). Use their shapes (86 `prepared_or_submitted` records, `state.json` phases `complete`/`submitted`) as ground truth for the store and fault-injection tests, copying only structure, never secrets. The existing public wallets hold about 0.15 ETH, about 19,977 ADA and 94,748 satoshis, enough for the public acceptance run, so no new faucet funds are needed; the active wallet directory is `~/.local/share/hegemon-testnet-wallets-20261104`.
 - Bitcoin claim and refund transactions observed on testnet4 are the reference shapes for the Bitcoin adapter: claim witness is signature, 32-byte preimage, true selector, script; refund witness is signature, empty selector, script, with locktime set.
+
+Revision from P1 (2026-11-05):
+- The policy module already exists: `scripts/swap_engine/__init__.py` and `scripts/swap_engine/timelock_policy.py` (tests: `cd scripts && PYTHONPATH=.:$HOME/.local/opt/hegemon-swap-python python3 -m unittest swap_engine.test_timelock_policy`). Do not recreate the package. The engine's "policy ok" gates call `check_pair` / `check_ordered` before funding and before claiming, `plan_timeouts` to choose the expiries of a new swap, and `leg_requirements` for single-leg verification. Config is `config/swap/chain-timing.json`; read it with `load_timing()`.
+- Expiry units the engine must pass: Bitcoin `refund_height`, Hegemon `timeout` (block heights); Ethereum `expiry` and Cardano `expiry_ms // 1000` (integer seconds, Cardano must be a whole number of seconds). Heads: `{observedAt, height}` for height chains and `{observedAt, timestamp}` for time chains, so `ChainAdapter.head()` must return the block height or the latest block timestamp plus the local observation time. Verdict codes the engine must handle: `bad-input`, `head-stale`, `clock-drift`, `leg-expired`, `claim-window-too-short`, `insufficient-gap`, `horizon-too-long`.
+- Add a claim cutoff to the engine: refuse a claim when `leg_window(...)['firstRefund'] < action_seconds(chain)` for that leg, because the counterparty could refund first. Bitcoin and Hegemon accept a late claim until a refund lands, so the engine, not the chain, must enforce the cutoff.
+- Step 6 (first real public run) should use Ethereum with Cardano, not Bitcoin: the policy plans that pair in about 1.5 to 2 hours. A swap with a Bitcoin testnet4 leg needs a short-leg window of 14.7 hours to 5 days, and a Hegemon leg needs 8 to 35 hours, because those chains' block times vary so widely. Plan the Bitcoin and Hegemon runs for later and budget the waiting.
+- The Python rehearsal scripts keep their own literal margins; the engine replaces them rather than editing them. `public_bitcoin_driver.fund` and `public_cardano_verify.verify_preview` now read the policy and the former rejects a refund height under 145 blocks from the tip, so adapters that wrap them inherit the stricter floor.
 
 ## Last step: revise later plans
 

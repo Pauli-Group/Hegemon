@@ -86,6 +86,27 @@ flowchart LR
 - Low disk (25 GB) and memory pressure during a proof next to the node.
 - A PoW reorg can orphan a Hegemon claim or lock; confirmation depth and refund timing must absorb it.
 
+## Revisions from earlier plans
+
+Revision from P1 (2026-11-05):
+- Step 5 (timing calibration) is largely done. P1 measured 3,000 public Hegemon blocks (explorer `/testnet-api/v1/blocks?limit=50`, paged with `next_before`): mean 75.8 s outside outages, 12 blocks as quick as 124 s, 144 blocks between 8,572 s and 13,449 s, and one 81,258 s (22.6 hour) stall. Remaining here: rerun `python3 scripts/measure_chain_timing.py hegemon-pre-mainnet 3000 --update config/swap/chain-timing.json` after the local node is synced and compare against its own block timestamps, then replace `proveSeconds` (300 now) with real measured proof times.
+- The expectation "minimum lock of roughly 20 minutes" is for a lone lock only. For a swap, the policy needs a Hegemon leg to have at least 577 blocks (about 12 hours typical, 4.8 hours at the fast bound) before timeout, and a Hegemon long leg paired with an Ethereum or Cardano short leg needs about 865 blocks. A Hegemon long leg with a Bitcoin short leg needs about 14,400 blocks. Budget hours to a day per refund case. Only the single-leg smoke tests in step 7 may use the relation minimum plus a margin (about 17 blocks) and must be labelled outside the policy.
+- Pass `--min-confirmations` and `--min-remaining-blocks` to `private-spend verify-htlc` from `legRequirements`, and report the head as `{observedAt, height}`. The claim cutoff must be enforced by the engine: Hegemon accepts a late claim until the refund lands.
+- Risk: the 22.6 hour stall exceeds the policy's 2 hour outage allowance. A swap with a Hegemon short leg is exposed to a repeat; say so in the runbook and prefer Hegemon as the long leg when pairing with a time-based chain.
+- Choose pairs in this order: HGN with Ethereum or Cardano first (policy windows of hours), HGN with Bitcoin last (windows of days).
+
+Revision from P2 (2026-11-06):
+- Run these swaps through the P2 engine (`scripts/swap_engine_cli.py`), not new one-off scripts. The engine, planner, store, journal recovery and CLI are done and a real public Ethereum/Cardano swap ran end to end in about seven minutes (see `.agent/SWAP_ENGINE_EXECPLAN.md` Artifacts). P6 supplies the real Hegemon adapter; until then `build_adapter('hegemon')` returns the stub, which refuses every write.
+- Expiries must come from `planner.plan_with_margin` on live heads, not raw `plan_timeouts`. Allow for proving time in the Hegemon leg (`proveSeconds` is 300 in the config) and for the 22.6 hour stall the outage allowance does not cover; if a stall occurs mid-swap the engine waits, and a refund that becomes due while the chain is down is taken only when the head shows it is due.
+- Pair order stays Ethereum and Cardano first, Bitcoin last. Bitcoin/Hegemon needs days; the planner refuses any pair whose horizon exceeds 30 days (Bitcoin/Bitcoin already fails).
+- Public wallets (read 2026-11-06): Sepolia Alice about 0.1478 ETH and Bob about 0.0022 ETH (a claim costs under 0.00001 ETH at current gas); Cardano Alice and Bob each have several ADA-only outputs of at least 5 ADA, which the adapter needs for fee and collateral; Bitcoin Bob's outputs are only 1,250 sats each (see P4).
+- Provider behaviour to plan around: Koios intermittently answers `[]` for confirmed transactions and the Cardano adapter treats that as unavailable; the public Ethereum RPC cannot show mempool claims and sometimes returns no receipt for a mined transaction; the engine treats both as "wait".
+- Refund cases: simulated chains and local Anvil, bitcoind and Cardano clusters already cover refund after the counterparty never funds, and both-sides-refund after the initiator vanishes. The public Hegemon refund cases still need real runs.
+
+Revision from P3 (2026-11-06):
+- The hosted UI step (`p8-ui`) is small: the guided view already labels the Hegemon leg "unavailable on public testnet" and reports a leg with no reader as not readable. To make the Hegemon leg observable in the page, add `readers.hegemon` in `swap-ui/app.js` backed by a Worker route or the loopback companion and remove the label; the Worker's CSP forbids direct node access. The observer section needs a Hegemon option only if the page should find a Hegemon preimage; the existing Python observers (`public_hegemon_preimage_observer.py`) remain the reference.
+- Public-testnet pairs through the page exist for Sepolia, Cardano preview and Bitcoin testnet4 (qualified 2026-11-06 with stand-in wallets), so HGN/ETH, HGN/ADA and HGN/BTC swaps can have their non-Hegemon leg verified, claimed and refunded from the hosted page while the Hegemon leg runs through the engine and companion.
+
 ## Last step: revise later plans
 
 Update the master ExecPlan and edit the plans that remain:

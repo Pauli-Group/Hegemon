@@ -10,7 +10,12 @@ export async function assertSepoliaIdentity(provider){
   if(typeof chain!=='string'||!/^0x[0-9a-f]+$/i.test(chain)||BigInt(chain)!==BigInt(SEPOLIA_CHAIN_ID)||String(genesis?.hash||'').toLowerCase()!==SEPOLIA_GENESIS)throw Error('Wallet is not connected to Ethereum Sepolia.');
 }
 
-export async function verifySepoliaEscrow(provider,template,terms){
+/** `limits` come from legRequirements() of the timelock policy; the defaults are
+ * absolute floors, not the swap policy. A claim passes `remainingFloorSeconds: 1`: the 10-minute floor
+ * protects someone about to fund, not someone claiming with their own cutoff. */
+export const SEPOLIA_FLOOR_CONFIRMATIONS=2,SEPOLIA_FLOOR_REMAINING_SECONDS=600;
+export async function verifySepoliaEscrow(provider,template,terms,limits={}){
+  const confirmations=Math.max(SEPOLIA_FLOOR_CONFIRMATIONS,limits.confirmations??0),remaining=Math.max(limits.remainingFloorSeconds??SEPOLIA_FLOOR_REMAINING_SECONDS,limits.minClaimWindowSeconds??0);
   if(!terms||!['eth','0','1','2'].includes(terms.kind))throw Error('Invalid escrow type.');
   await assertSepoliaIdentity(provider);
   const checked={...terms,chainId:SEPOLIA_CHAIN_ID};
@@ -18,7 +23,7 @@ export async function verifySepoliaEscrow(provider,template,terms){
   // A bounded read-only restart preserves the verifier's stable-head rule.
   for(let attempt=0;attempt<3;attempt++){
     try{
-      const result=await (terms.kind==='eth'?verifyEtherEscrow(provider,template,checked,2,600):verifyTokenEscrow(provider,template,checked,2,600));
+      const result=await (terms.kind==='eth'?verifyEtherEscrow(provider,template,checked,confirmations,remaining):verifyTokenEscrow(provider,template,checked,confirmations,remaining));
       await assertSepoliaIdentity(provider);return result;
     }catch(error){
       const message=String(error?.message||'');

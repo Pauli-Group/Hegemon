@@ -61,6 +61,33 @@ async function bitcoinEscrow(url){
   if(canonical.trim()!==hash||JSON.parse(again).spent!==outspend.spent)throw Error('Bitcoin chain or output changed');
   return reply(200,{genesis:BITCOIN_GENESIS,txid,vout,tip,confirmed:true,confirmations:tip-height+1,block_height:height,block_hash:hash,spent:outspend.spent,amount_sats:output.value,script:output.scriptpubkey});
 }
+const BITCOIN_ADDRESS=/^tb1q(?:[02-9ac-hj-np-z]{38}|[02-9ac-hj-np-z]{58})$/;
+async function bitcoinUtxos(url){
+  const address=url.searchParams.get('address');
+  if(url.searchParams.size!==1||!BITCOIN_ADDRESS.test(address||''))return reply(400,{error:'invalid Bitcoin testnet address'});
+  const [genesis,tipText,listText]=await Promise.all([bitcoinRead('/block-height/0'),bitcoinRead('/blocks/tip/height'),bitcoinRead('/address/'+address+'/utxo')]);
+  const tip=Number(tipText.trim()),list=JSON.parse(listText);
+  if(genesis.trim()!==BITCOIN_GENESIS||!Number.isSafeInteger(tip)||tip<0||!Array.isArray(list)||list.length>1000)throw Error('Bitcoin provider returned inconsistent data');
+  const utxos=[];
+  for(const item of list){
+    if(!hex.test(item?.txid||'')||!Number.isSafeInteger(item.vout)||item.vout<0||!Number.isSafeInteger(item.value)||item.value<0||typeof item.status?.confirmed!=='boolean')throw Error('Bitcoin provider returned an invalid output');
+    if(item.status.confirmed!==true)continue;
+    const height=item.status.block_height;
+    if(!Number.isSafeInteger(height)||height<0||height>tip||!hex.test(item.status.block_hash||''))throw Error('Invalid Bitcoin confirmation');
+    utxos.push({txid:item.txid,vout:item.vout,amount_sats:item.value,confirmations:tip-height+1,block_hash:item.status.block_hash});
+  }
+  utxos.sort((a,b)=>b.amount_sats-a.amount_sats||(a.txid<b.txid?-1:a.txid>b.txid?1:a.vout-b.vout));
+  return reply(200,{genesis:BITCOIN_GENESIS,address,tip,utxos:utxos.slice(0,100)});
+}
+async function bitcoinBroadcast(req){
+  let data;try{data=await body(req);}catch{return reply(400,{error:'invalid request'});}
+  if(keys(data)!=='tx'||typeof data.tx!=='string'||!/^(?:[0-9a-f]{2}){60,8000}$/.test(data.tx))return reply(400,{error:'invalid transaction'});
+  const response=await fetch(BITCOIN_API+'/tx',{method:'POST',headers:{'content-type':'text/plain',accept:'text/plain'},body:data.tx,signal:AbortSignal.timeout(15000)});
+  const text=(await response.text()).slice(0,300).trim();
+  if(response.ok){if(!hex.test(text))throw Error('Bitcoin provider returned an invalid transaction id');return reply(200,{txid:text});}
+  if(response.status>=400&&response.status<500)return reply(400,{error:'rejected by the Bitcoin network',reason:text.replace(/[^\x20-\x7e]/g,'?')});
+  throw Error('Bitcoin provider unavailable');
+}
 const CARDANO_API='https://preview.koios.rest/api/v1';
 async function cardanoRead(path,body){
   const response=await fetch(CARDANO_API+path,{method:body?'POST':'GET',headers:{accept:'application/json',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(12000)});
@@ -82,6 +109,183 @@ async function cardanoEscrow(url){
   if(!Array.isArray(again)||again.length!==1||JSON.stringify(again[0])!==JSON.stringify(row)||!Array.isArray(againStatus)||againStatus.length!==1||againStatus[0]?.tx_hash!==txid||!Number.isSafeInteger(againStatus[0]?.num_confirmations))throw Error('Cardano escrow changed during observation');
   return reply(200,{network:'preview',magic:2,system_start:1666656000,slot:tip[0].abs_slot,confirmations:Math.min(status[0].num_confirmations,againStatus[0].num_confirmations),output:row});
 }
+
+// Decimal prices from the provider become exact fractions so the page never does floating-point fee arithmetic.
+function ratioOf(x){
+  const text=typeof x==='number'?String(x):x;
+  const m=typeof text==='string'?/^(\d{1,12})(?:\.(\d{1,18}))?(?:e(-?\d{1,3}))?$/i.exec(text):null;
+  if(!m)throw Error('Invalid Cardano price');
+  let digits=m[1]+(m[2]||''),scale=(m[2]||'').length-Number(m[3]||0);
+  if(scale<0){digits+='0'.repeat(-scale);scale=0;}
+  if(scale>40)throw Error('Invalid Cardano price');
+  return [BigInt(digits).toString(),(10n**BigInt(scale)).toString()];
+}
+const decimalText=x=>{const n=typeof x==='string'?Number(x):x;if(!Number.isSafeInteger(n)||n<0)throw Error('Invalid Cardano parameter');return n;};
+async function cardanoNetwork(){
+  const [genesis,tip]=await Promise.all([cardanoRead('/genesis'),cardanoRead('/tip')]);
+  if(!Array.isArray(genesis)||genesis.length!==1||genesis[0]?.networkmagic!=='2'||genesis[0]?.networkid!=='Testnet'||genesis[0]?.systemstart!==1666656000||!Array.isArray(tip)||tip.length!==1||!Number.isSafeInteger(tip[0]?.abs_slot)||!Number.isSafeInteger(tip[0]?.block_no)||!Number.isSafeInteger(tip[0]?.epoch_no))throw Error('Cardano provider returned inconsistent data');
+  return {network:'preview',magic:2,system_start:1666656000,slot:tip[0].abs_slot,block:tip[0].block_no,epoch:tip[0].epoch_no};
+}
+async function cardanoParams(){
+  const net=await cardanoNetwork(),rows=await cardanoRead('/epoch_params?_epoch_no='+net.epoch);
+  if(!Array.isArray(rows)||rows.length!==1||rows[0]?.epoch_no!==net.epoch)throw Error('Cardano provider returned inconsistent data');
+  const r=rows[0],model=r.cost_models?.PlutusV3;
+  if(!Array.isArray(model)||model.length<200||model.length>1000||!model.every(Number.isSafeInteger))throw Error('Cardano provider returned an invalid cost model');
+  return {...net,minFeeA:decimalText(r.min_fee_a),minFeeB:decimalText(r.min_fee_b),coinsPerUtxoByte:decimalText(r.coins_per_utxo_size),maxTxSize:decimalText(r.max_tx_size),priceMem:ratioOf(r.price_mem),priceStep:ratioOf(r.price_step),collateralPercent:decimalText(r.collateral_percent),maxCollateralInputs:decimalText(r.max_collateral_inputs),maxTxExMem:decimalText(r.max_tx_ex_mem),maxTxExSteps:decimalText(r.max_tx_ex_steps),costModelV3:model};
+}
+async function cardanoUtxos(url){
+  const text=url.searchParams.get('refs');
+  const refs=typeof text==='string'?text.split(','):[];
+  if(url.searchParams.size!==1||refs.length<1||refs.length>24||new Set(refs).size!==refs.length||!refs.every(ref=>/^[0-9a-f]{64}#(0|[1-9][0-9]{0,9})$/.test(ref)&&Number(ref.split('#')[1])<=0xffffffff))return reply(400,{error:'invalid Cardano output list'});
+  const [net,rows]=await Promise.all([cardanoNetwork(),cardanoRead('/utxo_info',{_utxo_refs:refs,_extended:true})]);
+  if(!Array.isArray(rows)||rows.length>refs.length)throw Error('Cardano provider returned inconsistent data');
+  const byRef=new Map();
+  for(const row of rows){
+    const ref=row?.tx_hash+'#'+row?.tx_index;
+    if(!refs.includes(ref)||byRef.has(ref)||typeof row.address!=='string'||typeof row.is_spent!=='boolean'||typeof row.value!=='string'||!Array.isArray(row.asset_list))throw Error('Cardano provider returned a different output');
+    byRef.set(ref,row);
+  }
+  return reply(200,{...net,outputs:refs.map(ref=>byRef.get(ref)??null)});
+}
+// ---- read proxies for the counterparty's spend (the page decodes and verifies; these only fetch)
+async function bitcoinHead(url){
+  if(url.searchParams.size!==0)return reply(400,{error:'invalid request'});
+  const [genesis,tipText]=await Promise.all([bitcoinRead('/block-height/0'),bitcoinRead('/blocks/tip/height')]);
+  const tip=Number(tipText.trim());
+  if(genesis.trim()!==BITCOIN_GENESIS||!Number.isSafeInteger(tip)||tip<0)throw Error('Bitcoin provider returned inconsistent data');
+  return reply(200,{genesis:BITCOIN_GENESIS,tip});
+}
+async function bitcoinSpend(url){
+  const txid=url.searchParams.get('txid'),voutText=url.searchParams.get('vout');
+  if(!hex.test(txid||'')||!/^(0|[1-9][0-9]{0,4})$/.test(voutText||'')||url.searchParams.size!==2)return reply(400,{error:'invalid Bitcoin output'});
+  const vout=Number(voutText);
+  const [genesis,tipText,txText,outText]=await Promise.all([bitcoinRead('/block-height/0'),bitcoinRead('/blocks/tip/height'),bitcoinRead('/tx/'+txid),bitcoinRead('/tx/'+txid+'/outspend/'+vout)]);
+  const tip=Number(tipText.trim()),tx=JSON.parse(txText),outspend=JSON.parse(outText);
+  if(genesis.trim()!==BITCOIN_GENESIS||!Number.isSafeInteger(tip)||tip<0||tx?.txid!==txid||!Array.isArray(tx.vout)||vout>=tx.vout.length||typeof outspend.spent!=='boolean')throw Error('Bitcoin provider returned inconsistent data');
+  if(!outspend.spent)return reply(200,{genesis:BITCOIN_GENESIS,txid,vout,tip,spent:false});
+  if(!hex.test(outspend.txid||'')||!Number.isSafeInteger(outspend.vin)||outspend.vin<0)throw Error('Bitcoin provider returned an invalid spend');
+  const spend=JSON.parse(await bitcoinRead('/tx/'+outspend.txid)),input=Array.isArray(spend?.vin)?spend.vin[outspend.vin]:undefined;
+  if(spend?.txid!==outspend.txid||input?.txid!==txid||input.vout!==vout||!Array.isArray(input.witness)||input.witness.length>20||!input.witness.every(w=>typeof w==='string'&&/^(?:[0-9a-f]{2})*$/.test(w)&&w.length<=20000))throw Error('Bitcoin provider returned a different spend');
+  const status=spend.status;let confirmations=0,height,hash;
+  if(status?.confirmed===true){
+    height=status.block_height;hash=status.block_hash;
+    if(!Number.isSafeInteger(height)||height<0||height>tip||!hex.test(hash||''))throw Error('Invalid Bitcoin confirmation');
+    const [canonical,again]=await Promise.all([bitcoinRead('/block-height/'+height),bitcoinRead('/tx/'+txid+'/outspend/'+vout)]);
+    if(canonical.trim()!==hash||JSON.parse(again).txid!==outspend.txid)throw Error('Bitcoin chain or output changed');
+    confirmations=tip-height+1;
+  }else if(JSON.parse(await bitcoinRead('/tx/'+txid+'/outspend/'+vout)).txid!==outspend.txid)throw Error('Bitcoin output changed');
+  return reply(200,{genesis:BITCOIN_GENESIS,txid,vout,tip,spent:true,spend:{txid:outspend.txid,vin:outspend.vin,confirmed:confirmations>0,confirmations,...(confirmations>0?{block_height:height,block_hash:hash}:{}),witness:input.witness}});
+}
+
+const SEPOLIA_RPC='https://ethereum-sepolia-rpc.publicnode.com',SEPOLIA_BLOCKSCOUT='https://eth-sepolia.blockscout.com/api/v2';
+const ESCROW_TOPICS={
+  '0x0508a8b4117d9a7b3d8f5895f6413e61b4f9a2df35afbfb41e78d0ecfff1843f':'claimed','0xeddf608ef698454af2fb41c1df7b7e5154ff0d46969f895e0f39c7dfe7e6380a':'claimed',
+  '0xd7dee2702d63ad89917b6a4da9981c90c4d24f8c2bdfd64c604ecae57d8d0651':'refunded','0x8616bbbbad963e4e65b1366f1d75dfb63f9e9704bbbf91fb01bec70849906cf7':'refunded'};
+const EVENT_WINDOW=45000,EVENT_SCAN_BLOCKS=8*EVENT_WINDOW;
+const SPENT_CALL='0x7ab71b7a3502d664db0bed48697e7443eff59e6af3c7c97d19d72b6a75aee66d';
+async function limited(response,max){
+  if(!response.ok||!response.body)throw Error('provider unavailable');
+  const reader=response.body.getReader(),parts=[];let size=0;
+  for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>max){await reader.cancel();throw Error('provider response too large');}parts.push(value);}
+  const data=new Uint8Array(size);let offset=0;for(const part of parts){data.set(part,offset);offset+=part.length;}
+  return JSON.parse(new TextDecoder().decode(data));
+}
+async function sepoliaRpc(method,params){
+  const answer=await limited(await fetch(SEPOLIA_RPC,{method:'POST',headers:{'content-type':'application/json',accept:'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params}),signal:AbortSignal.timeout(12000)}),1024*1024);
+  if(answer.error||!('result' in answer))throw Error('Sepolia provider error');
+  return answer.result;
+}
+const quantity=v=>{if(typeof v!=='string'||!/^0x(?:0|[1-9a-f][0-9a-f]{0,14})$/.test(v))throw Error('Invalid Sepolia quantity');return Number(BigInt(v));};
+function eventRow(row,contract){
+  const topics=Array.isArray(row?.topics)?row.topics.map(t=>String(t).toLowerCase()):[],kind=ESCROW_TOPICS[topics[0]],txHash=String(row?.transactionHash??row?.transaction_hash??'').toLowerCase();
+  const block=typeof row?.blockNumber==='string'?quantity(row.blockNumber):Number(row?.block_number),data=String(row?.data??'0x').toLowerCase();
+  if(!kind||!/^0x[0-9a-f]{64}$/.test(txHash)||!Number.isSafeInteger(block)||block<0||!/^0x(?:[0-9a-f]{2})*$/.test(data)||data.length>2+64*8)return null;
+  if(row.address!==undefined&&String(row.address?.hash??row.address).toLowerCase()!==contract)return null;
+  return {kind,topic:topics[0],tx_hash:txHash,block_number:block,block_hash:typeof row.blockHash==='string'&&/^0x[0-9a-f]{64}$/.test(row.blockHash)?row.blockHash.toLowerCase():undefined,data};
+}
+async function sepoliaEvents(url){
+  const contract=url.searchParams.get('contract'),fromText=url.searchParams.get('from_block')??'0';
+  if(!/^0x[0-9a-f]{40}$/.test(contract||'')||!/^(0|[1-9][0-9]{0,9})$/.test(fromText)||[...url.searchParams.keys()].some(k=>!['contract','from_block'].includes(k)))return reply(400,{error:'invalid Sepolia escrow'});
+  const [chain,tipHex]=await Promise.all([sepoliaRpc('eth_chainId',[]),sepoliaRpc('eth_blockNumber',[])]);
+  if(chain!=='0xaa36a7')throw Error('Wrong Ethereum network');
+  const tip=quantity(tipHex);
+  const [spentRaw,code]=await Promise.all([sepoliaRpc('eth_call',[{to:contract,data:SPENT_CALL},'latest']),sepoliaRpc('eth_getCode',[contract,'latest'])]);
+  if(typeof code!=='string'||code==='0x'||!/^0x[0-9a-f]{64}$/.test(spentRaw||''))return reply(200,{chain_id:11155111,contract,tip,deployed:false,spent:false,events:[]});
+  const spent=BigInt(spentRaw)!==0n,scannedFrom=Math.max(Number(fromText),tip-EVENT_SCAN_BLOCKS+1,0);let rows,source='rpc';
+  try{
+    // Public RPC providers cap an eth_getLogs range (publicnode: 50000 blocks), so scan in bounded windows and never further
+    // back than EVENT_SCAN_BLOCKS from the tip. A deployment block from the caller narrows the scan.
+    rows=[];
+    for(let a=scannedFrom;a<=tip;a+=EVENT_WINDOW){
+      const part=await sepoliaRpc('eth_getLogs',[{address:contract,fromBlock:'0x'+a.toString(16),toBlock:'0x'+Math.min(a+EVENT_WINDOW-1,tip).toString(16),topics:[Object.keys(ESCROW_TOPICS)]}]);
+      if(!Array.isArray(part))throw Error('bad logs');
+      rows.push(...part);if(rows.length>50)throw Error('bad logs');
+    }
+  }catch{
+    source='blockscout';
+    const page=await limited(await fetch(SEPOLIA_BLOCKSCOUT+'/addresses/'+contract+'/logs',{headers:{accept:'application/json'},signal:AbortSignal.timeout(12000)}),1024*1024);
+    rows=Array.isArray(page?.items)?page.items.slice(0,50):[];
+  }
+  const events=[];
+  for(const row of rows){
+    const item=eventRow(row,contract);if(!item||item.block_number<Number(fromText))continue;
+    if(source==='rpc'){
+      // The receipt must agree: same block, success status, and the log is really in it.
+      const receipt=await sepoliaRpc('eth_getTransactionReceipt',[item.tx_hash]);
+      if(receipt?.status!=='0x1'||String(receipt.blockHash).toLowerCase()!==item.block_hash||quantity(receipt.blockNumber)!==item.block_number||!receipt.logs?.some(l=>String(l.address).toLowerCase()===contract&&String(l.topics?.[0]).toLowerCase()===item.topic&&String(l.data).toLowerCase()===item.data))throw Error('Sepolia receipt disagrees with the event');
+    }
+    events.push({...item,confirmations:tip>=item.block_number?tip-item.block_number+1:0});
+  }
+  return reply(200,{chain_id:11155111,contract,tip,deployed:true,spent,source,scanned_from:source==='rpc'?scannedFrom:null,events});
+}
+
+// A read-only window onto Sepolia for the page's own verifiers. Fixed methods with strict parameter shapes; nothing that
+// writes, signs or reveals the provider's account state.
+const RPC_ADDRESS=/^0x[0-9a-f]{40}$/,RPC_HASH=/^0x[0-9a-f]{64}$/,RPC_QUANTITY=/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/;
+const RPC_BLOCK=v=>v==='latest'||RPC_QUANTITY.test(v);
+const RPC_METHODS={
+  eth_chainId:p=>p.length===0,
+  eth_blockNumber:p=>p.length===0,
+  eth_getBlockByNumber:p=>p.length===2&&RPC_BLOCK(p[0])&&p[1]===false,
+  eth_getTransactionByHash:p=>p.length===1&&RPC_HASH.test(p[0]),
+  eth_getTransactionReceipt:p=>p.length===1&&RPC_HASH.test(p[0]),
+  eth_getCode:p=>p.length===2&&RPC_ADDRESS.test(p[0])&&RPC_BLOCK(p[1]),
+  eth_getBalance:p=>p.length===2&&RPC_ADDRESS.test(p[0])&&RPC_BLOCK(p[1]),
+  eth_call:p=>p.length===2&&p[0]&&typeof p[0]==='object'&&keys(p[0])==='data,to'&&RPC_ADDRESS.test(p[0].to)&&p[0].data==='0x7ab71b7a'&&RPC_BLOCK(p[1])
+};
+async function sepoliaProxy(req){
+  let data;try{data=await body(req);}catch{return reply(400,{error:'invalid request'});}
+  if(keys(data)!=='method,params'||typeof data.method!=='string'||!Object.hasOwn(RPC_METHODS,data.method)||!Array.isArray(data.params)||!RPC_METHODS[data.method](data.params))return reply(400,{error:'method or parameters not allowed'});
+  const result=await sepoliaRpc(data.method,data.params);
+  if(data.method==='eth_chainId'&&result!=='0xaa36a7')throw Error('Wrong Ethereum network');
+  return reply(200,{result});
+}
+
+const CARDANO_HTLC='addr_test1wqmp4fms223lnjljntag8vk9frl0l8pygsp2pt75tv2llsgmwwmyv';
+async function cardanoSpend(url){
+  const ref=url.searchParams.get('outref');
+  if(typeof ref!=='string'||!/^[0-9a-f]{64}#(0|[1-9][0-9]{0,9})$/.test(ref)||url.searchParams.size!==1||Number(ref.split('#')[1])>0xffffffff)return reply(400,{error:'invalid Cardano output'});
+  const [txid]=ref.split('#');
+  const [net,rows]=await Promise.all([cardanoNetwork(),cardanoRead('/utxo_info',{_utxo_refs:[ref],_extended:true})]);
+  if(!Array.isArray(rows)||rows.length!==1||rows[0]?.tx_hash!==txid||`${rows[0].tx_hash}#${rows[0].tx_index}`!==ref||typeof rows[0].is_spent!=='boolean')throw Error('Cardano provider returned a different output');
+  const row=rows[0];
+  if(row.address!==CARDANO_HTLC)return reply(400,{error:'not an HTLC output'});
+  if(!row.is_spent)return reply(200,{...net,outref:ref,spent:false});
+  const pending=extra=>reply(200,{...net,outref:ref,spent:true,indexed:false,...extra});
+  const created=Number.isSafeInteger(row.block_height)?row.block_height:0;
+  const listed=await cardanoRead('/address_txs',{_addresses:[CARDANO_HTLC],_after_block_height:Math.max(0,created-1)});
+  const candidates=Array.isArray(listed)?[...new Set(listed.map(r=>r?.tx_hash).filter(h=>typeof h==='string'&&hex.test(h)&&h!==txid))].slice(0,200):[];
+  if(!candidates.length)return pending({});
+  const info=await cardanoRead('/tx_info',{_tx_hashes:candidates,_inputs:true,_metadata:false,_assets:false,_withdrawals:false,_certs:false,_scripts:false,_bytecode:false});
+  if(!Array.isArray(info)||new Set(info.map(i=>i?.tx_hash)).size!==candidates.length||!info.every(i=>candidates.includes(i?.tx_hash)))return pending({});
+  const spender=info.find(i=>Array.isArray(i.inputs)&&i.inputs.some(x=>`${x?.tx_hash}#${x?.tx_index}`===ref));
+  if(!spender)return pending({});
+  const cbor=await cardanoRead('/tx_cbor',{_tx_hashes:[spender.tx_hash]});
+  if(Array.isArray(cbor)&&cbor.length===0)return pending({spender:spender.tx_hash});
+  if(!Array.isArray(cbor)||cbor.length!==1||cbor[0]?.tx_hash!==spender.tx_hash||cbor[0].valid_contract!==true||typeof cbor[0].cbor!=='string'||cbor[0].cbor.length>200000||!/^(?:[0-9a-f]{2})+$/.test(cbor[0].cbor))throw Error('Cardano provider returned an invalid spend');
+  const height=spender.block_height;
+  return reply(200,{...net,outref:ref,spent:true,indexed:true,spender:spender.tx_hash,confirmations:Number.isSafeInteger(height)&&net.block>=height?net.block-height+1:0,cbor:cbor[0].cbor});
+}
 async function api(req,env){
   const url=new URL(req.url),t=now(),db=env.DB,origin=req.headers.get('origin');
   if(origin&&origin!==url.origin)return reply(403,{error:'cross-origin request denied'});
@@ -100,8 +304,35 @@ async function api(req,env){
   if(req.method==='GET'&&url.pathname==='/bitcoin-testnet4/escrow'){
     try{return await bitcoinEscrow(url);}catch{console.error('Bitcoin testnet provider unavailable or inconsistent');return reply(502,{error:'Bitcoin testnet service unavailable or inconsistent'});}
   }
+  if(req.method==='GET'&&url.pathname==='/bitcoin-testnet4/utxos'){
+    try{return await bitcoinUtxos(url);}catch{console.error('Bitcoin testnet provider unavailable or inconsistent');return reply(502,{error:'Bitcoin testnet service unavailable or inconsistent'});}
+  }
+  if(req.method==='POST'&&url.pathname==='/bitcoin-testnet4/broadcast'&&url.searchParams.size===0){
+    try{return await bitcoinBroadcast(req);}catch{console.error('Bitcoin testnet broadcast unavailable or inconsistent');return reply(502,{error:'Bitcoin testnet service unavailable or inconsistent'});}
+  }
+  if(req.method==='GET'&&url.pathname==='/bitcoin-testnet4/head'){
+    try{return await bitcoinHead(url);}catch{console.error('Bitcoin testnet provider unavailable or inconsistent');return reply(502,{error:'Bitcoin testnet service unavailable or inconsistent'});}
+  }
+  if(req.method==='GET'&&url.pathname==='/bitcoin-testnet4/spend'){
+    try{return await bitcoinSpend(url);}catch{console.error('Bitcoin testnet provider unavailable or inconsistent');return reply(502,{error:'Bitcoin testnet service unavailable or inconsistent'});}
+  }
+  if(req.method==='GET'&&url.pathname==='/sepolia/escrow-events'){
+    try{return await sepoliaEvents(url);}catch{console.error('Sepolia provider unavailable or inconsistent');return reply(502,{error:'Sepolia service unavailable or inconsistent'});}
+  }
+  if(req.method==='POST'&&url.pathname==='/sepolia/rpc'&&url.searchParams.size===0){
+    try{return await sepoliaProxy(req);}catch{console.error('Sepolia provider unavailable or inconsistent');return reply(502,{error:'Sepolia service unavailable or inconsistent'});}
+  }
+  if(req.method==='GET'&&url.pathname==='/cardano-preview/spend'){
+    try{return await cardanoSpend(url);}catch{console.error('Cardano preview provider unavailable or inconsistent');return reply(502,{error:'Cardano preview service unavailable or inconsistent'});}
+  }
   if(req.method==='GET'&&url.pathname==='/cardano-preview/escrow'){
     try{return await cardanoEscrow(url);}catch{console.error('Cardano preview provider unavailable or inconsistent');return reply(502,{error:'Cardano preview service unavailable or inconsistent'});}
+  }
+  if(req.method==='GET'&&url.pathname==='/cardano-preview/params'&&url.searchParams.size===0){
+    try{return reply(200,await cardanoParams());}catch{console.error('Cardano preview provider unavailable or inconsistent');return reply(502,{error:'Cardano preview service unavailable or inconsistent'});}
+  }
+  if(req.method==='GET'&&url.pathname==='/cardano-preview/utxos'){
+    try{return await cardanoUtxos(url);}catch{console.error('Cardano preview provider unavailable or inconsistent');return reply(502,{error:'Cardano preview service unavailable or inconsistent'});}
   }
   if(req.method==='POST'&&url.pathname==='/offers'){
     const d=await body(req),k=keys(d);
@@ -155,7 +386,7 @@ async function api(req,env){
 export default {async fetch(req,env){
   try{
     const url=new URL(req.url);
-    if(url.pathname==='/health'||url.pathname==='/offers'||url.pathname.startsWith('/offers/')||url.pathname==='/bitcoin-testnet4/escrow'||url.pathname==='/cardano-preview/escrow')return await api(req,env);
+    if(url.pathname==='/health'||url.pathname==='/offers'||url.pathname.startsWith('/offers/')||url.pathname==='/bitcoin-testnet4/escrow'||url.pathname==='/bitcoin-testnet4/utxos'||url.pathname==='/bitcoin-testnet4/broadcast'||url.pathname==='/bitcoin-testnet4/spend'||url.pathname==='/bitcoin-testnet4/head'||url.pathname==='/sepolia/escrow-events'||url.pathname==='/sepolia/rpc'||url.pathname==='/cardano-preview/spend'||url.pathname==='/cardano-preview/escrow'||url.pathname==='/cardano-preview/params'||url.pathname==='/cardano-preview/utxos')return await api(req,env);
     if(req.method!=='GET'&&req.method!=='HEAD')return reply(404,{error:'not found'});
     const result=await env.ASSETS.fetch(req),h=new Headers(result.headers);
     h.set('cache-control','no-store');h.set('x-content-type-options','nosniff');h.set('referrer-policy','no-referrer');
@@ -173,7 +404,11 @@ export default {async fetch(req,env){
         .on('#sepolia-section',{element(e){e.removeAttribute('hidden');}})
         .on('#sepolia-action-section',{element(e){e.removeAttribute('hidden');}})
         .on('#bitcoin-testnet-section',{element(e){e.removeAttribute('hidden');}})
-        .on('#cardano-preview-section',{element(e){e.removeAttribute('hidden');}});
+        .on('#cardano-preview-section',{element(e){e.removeAttribute('hidden');}})
+        .on('#cardano-wallet-section',{element(e){e.removeAttribute('hidden');}})
+        .on('#bitcoin-wallet-section',{element(e){e.removeAttribute('hidden');}})
+        .on('#observer-section',{element(e){e.removeAttribute('hidden');}})
+        .on('#guided-section',{element(e){e.removeAttribute('hidden');}});
       for(const id of hidden)rewrite=rewrite.on(`section[aria-labelledby="${id}"]`,{element(e){e.setAttribute('hidden','');}});
       response=rewrite.transform(response);
     }

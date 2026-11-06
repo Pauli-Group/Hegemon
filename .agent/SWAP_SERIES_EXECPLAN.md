@@ -8,7 +8,7 @@ The branch `local-private-spend-htlc` builds a hash-time-locked-contract (HTLC) 
 
 After this series, two people can find each other through the hosted offer board, verify each other's escrows with deadline margins that are actually reasoned about, and complete or refund a swap through a crash-safe engine, on Bitcoin testnet4, Ethereum Sepolia and Cardano preview. Hegemon swaps are proven on isolated local chains only, because the Hegemon public testnet is stalled; the series prepares the Hegemon adapter so public swaps can resume when the testnet returns.
 
-The series has eight plans, executed in this order. Each plan's last step revises the plans after it, and each revision is recorded in the Plan Revisions section below.
+The series has nine plans, P0 to P8, executed in this order: P0 to P6, then P8, then P7. P8 was added after P0 when the Hegemon public testnet resumed; P7 stays last and closes the series. Each plan's last step revises the plans after it, and each revision is recorded in the Plan Revisions section below.
 
 - P0, baseline and private-state recovery: trustworthy tests and an inventory of what is live on public testnets.
 - P1, deadline policy: one tested rule for cross-chain timeouts, shared by Python and JavaScript.
@@ -17,6 +17,7 @@ The series has eight plans, executed in this order. Each plan's last step revise
 - P4, Bitcoin public cases: finish and verify the remaining public Bitcoin cases.
 - P5, relay identity and integrity: wallet-signed identities, inbox key backup, verifiable client code.
 - P6, Hegemon offline adapter: a real local Hegemon adapter, a remote gateway design, and a proving-cost investigation on a separate branch.
+- P8, public Hegemon swaps: a synced public node, the wallet binary, calibration of Hegemon timing, and real public swaps of HGN with Ethereum, Bitcoin and Cardano. Runs after P6 and before P7.
 - P7, cleanup, docs and CI: one test entry point, indexes, design documents, secret scan, PR split.
 
 The repository rules apply to every plan: consult `DESIGN.md` and `METHODS.md` before code changes and update them when methods change; use `BRAND.md` for visual changes; mining or node runbooks must name `HEGEMON_SEEDS` with the approved seed list and the NTP or chrony requirement.
@@ -31,12 +32,13 @@ The repository rules apply to every plan: consult `DESIGN.md` and `METHODS.md` b
 - [x] (2026-11-05) P0 step 7: hosted Worker responds and serves the repository's client code.
 - [x] (2026-11-05) P0 step 8: this baseline report.
 - [x] (2026-11-05) P0 last step: revised P1 to P7 (see Plan Revisions).
-- [ ] P1 deadline policy.
-- [ ] P2 swap state machine.
-- [ ] P3 UI wallet integrations.
+- [x] (2026-11-05) P1 deadline policy: `.agent/SWAP_TIMELOCK_POLICY_EXECPLAN.md`; `config/swap/chain-timing.json` (measured), `swap-ui/timelock-policy.mjs` and `scripts/swap_engine/timelock_policy.py` sharing `config/swap/timelock-vectors.json`; unit, property and mutation tests in both languages (11 JavaScript policy tests, 7 Python policy tests, every mutation killed); `comparePair` and the public pair check reject insufficient spacing and the page shows the verdict; hosted verifiers and the Bitcoin and Cardano Python drivers take per-leg limits from the policy; `DESIGN.md`, `METHODS.md` and `swap-service/README.md` updated; plans P2 to P8 revised.
+- [x] (2026-11-06) P2 swap state machine: `.agent/SWAP_ENGINE_EXECPLAN.md`; `scripts/swap_engine/` (engine, durable store, journal-based crash recovery, planner margin, simulated chains, Bitcoin, Ethereum and Cardano adapters, Hegemon stub, local profiles) and `scripts/swap_engine_cli.py`; 97 chain-free tests pass; all eight plannable ordered pairs among Bitcoin, Ethereum and Cardano and three refund scenarios pass on Anvil, bitcoind regtest and a private Cardano cluster; one real Sepolia/Cardano preview swap completed through the CLI (transaction ids in the ExecPlan); `DESIGN.md` and `METHODS.md` updated; plans P3 to P8 revised.
+- [x] (2026-11-06) P3 UI wallet integrations: `.agent/SWAP_UI_WALLETS_EXECPLAN.md`; the hosted page performs Sepolia claim, Cardano CIP-30 fund/claim/refund and Bitcoin PSBT fund/claim/refund, observes counterparty preimages on all three chains, and has a guided view; Worker read and relay routes; vendored pinned libraries; 133 unit tests, six Playwright suites and real-software Cardano and Bitcoin tests; public-testnet qualification with stand-in wallets recorded in `PUBLIC_TESTNET_RESULTS.md`.
 - [ ] P4 Bitcoin public cases.
 - [ ] P5 relay identity and integrity.
 - [ ] P6 Hegemon offline adapter and proving cost.
+- [ ] P8 public Hegemon swaps.
 - [ ] P7 cleanup, docs, CI, PR split.
 
 ## Surprises & Discoveries
@@ -52,6 +54,16 @@ The work did not stop when the repository's last commit was made (2026-11-03 18:
 The served hosted client is byte-identical to the repository for `app.js`, `style.css` and `crypto.mjs`. The served root page differs from `swap-ui/index.html` only through the Worker's `HTMLRewriter` (title, eyebrow, note, hidden local-node sections), and `/index.html` redirects with HTTP 307. A manifest of served files in P5 must account for that rewrite. The public Sepolia RPC at publicnode prunes history older than about 12,000 blocks (event logs and receipts for the 2026-11-03 transactions return empty or null); an explorer API (Blockscout) is needed to read old Sepolia history.
 
 The journals archive is a snapshot of the cloud task's private directory and includes preimage files named `secret`, signed transactions (`.signed`) and Cardano script bodies. Its `README.txt` states the Alice/Bob wallets, the Hegemon wallet directory and `addresses.json` were deliberately omitted and exist only on this PC, so the archive must never be extracted over the active wallets. Journal records (`.json`) carry the state `prepared_or_submitted` by design and are never updated to `confirmed`, so their state field cannot be used to learn confirmation; chain reads are required. Evidence: all 11 Bitcoin, 23 Cardano and 52 Sepolia journaled transactions read as confirmed or successful on public providers.
+
+P1 found that deadlines measured in blocks are far less certain than they look. On Bitcoin testnet4 (2,000 blocks) the mean interval is 1,069 s, and spans of 144 blocks ran from 46,275 s to 151,329 s. On Hegemon (3,000 public blocks) 12 blocks have taken 124 s, so the 14-block minimum lock enforced by the relation is not a wall-clock guarantee, and one 22.6 hour stall occurred. Under a policy built on those measurements, a swap with a Bitcoin leg locks funds for 14.7 hours to 5 days and one with a Hegemon leg for 8 to 35 hours; only Ethereum and Cardano pairs finish in about two hours.
+
+P1 found that the four contracts have different claim semantics. Ethereum and Cardano refuse a claim at or after the deadline; Bitcoin and Hegemon accept a claim until a refund lands, so the engine must enforce the claim cutoff (recorded in P2).
+
+P1's earlier P0 revision said the existing public cases used very short margins. That overgeneralized: only the Bitcoin refund-case scenario used +6 blocks; the other scenarios used +144 blocks or timestamp margins. The +144 margin fails the measured policy by one block (145 are needed).
+
+Swap-service tests on Node 24: `browser.test.mjs` aborts with a Node internal assertion after passing, and `desktop.test.mjs` and `desktop-node-profile.test.mjs` need the unbuilt `hegemon-app/out/renderer/index.html`. Both fail on the baseline without P1's changes. P7 owns them.
+
+P3 found that the hosted Worker could not be exercised as deployed from this host (no Wrangler), so qualification hosts `worker.mjs` in Node; doing so exposed that Node's default 250 ms per-address connect attempt makes the Worker's own Blockstream and publicnode reads fail with ETIMEDOUT here, and that `/sepolia/escrow-events` could never have worked on a real escrow with its default `from_block=0` because publicnode caps `eth_getLogs` at 50000 blocks. P3 also found that a Plutus claim's validity upper bound must stay inside the ledger horizon (3600 slots here), that the Cardano HTLC needs only 250000 memory and 100000000 steps, that Koios returns empty or partial `tx_info` (empty inputs and `plutus_contracts`) for a confirmed transaction while a backend lags, and that Bitcoin testnet4 block arrival was uneven on 2026-11-06 (tip 159444 at about 16:20 UTC, 159456 at about 17:14, 159457 between 17:22 and 17:32, 159464 by about 18:08; header timestamps are not a reliable clock there), so waiting for two confirmations took roughly 12 to 50 minutes and a refund at tip+3 about 45 minutes, which is why waits are written as tens of minutes to hours and not as a fixed number of blocks times ten minutes.
 
 ## Decision Log
 
@@ -91,6 +103,8 @@ Leftover public balances (read-only, 2026-11-05): Sepolia Alice `0xb4fB793C4dd30
 
 Conclusion: nothing known is live on any chain, so there is no refund deadline pressure. What remains for P4 is verification and recording, not rescue: verify the three Bitcoin claims against their hashlocks and paired legs, identify and verify the ERC-20 and Cardano-token legs, record everything in `PUBLIC_TESTNET_RESULTS.md`, and confirm the private wallets' leftover balances. Go for P4, with decryption still needed to finish the inventory and to recover leftover wallet funds.
 
+P2 found that the P1 planner's expiries have zero slack (they sit on a step edge of the measured tables), so a one-block head advance breaks a plan; `scripts/swap_engine/planner.py` adds `plan_with_margin`, and any other port (the browser in P3) needs it too. Bitcoin/Bitcoin is unplannable under the real 30-day horizon. The public Ethereum RPC and Koios both return inconsistent answers for confirmed data (null receipts, empty `tx_info`/`tx_cbor`), so the adapters treat lag as unavailable rather than absent. The engine's recovery path was exercised accidentally by a bug in the local Cardano profile (a failure after journaling), and held the swap `inflight` as designed.
+
 ## Resolved gate
 
 The private-state gate is resolved. The user could not remember the key passphrase, and the earlier session's passphrase file (`~/.config/cursor/gpg/cursor-bob.passphrase`) was used instead. To repeat the extraction on another machine, the same file and the private key in the local GPG keyring are required; without them, the archive cannot be opened. Keep an offline backup of that passphrase file and the key (`gpg --export-secret-keys`), because losing either makes `hidden/hegemon-historical-testnet-journals-20261105.tar.gz.gpg` and the wallets archive unrecoverable.
@@ -121,6 +135,54 @@ P2 (state machine): reuse the recovered journals as ground truth for fault-injec
 
 P7 (cleanup): add to the secret scan that `hidden/` holds an encrypted archive of private journals and that decrypted copies live only under `~/.hegemon-private`. Document key and passphrase backup (see Resolved gate), since the archive depends on a passphrase file the user did not remember.
 
+Revision 2026-11-05, from P1:
+
+P2: the policy modules, config and vectors already exist under `scripts/swap_engine/`. The engine calls `check_pair`, `plan_timeouts` and `leg_requirements`, takes heads as `{observedAt, height}` or `{observedAt, timestamp}`, enforces the claim cutoff itself, and runs its first real public swap on Ethereum with Cardano (windows of hours) rather than Bitcoin (windows of days).
+
+P3: the hosted page already renders the timing verdict in `#public-pair-timing`; reuse `timelock-policy.mjs` and `formatSeconds`, show "submit claim by", and keep the local regtest flow outside the testnet policy.
+
+P4: the +144 block Bitcoin margin fails the measured policy by one block; new Bitcoin runs must use `plan_timeouts`, accept waits of days, or add a time-based Bitcoin timelock variant after its own design note.
+
+P5: the served `swap-ui/timelock-policy.mjs` and `chain-timing.json` belong in the verifiable-client manifest; surface stale-head and provider-lag incidents.
+
+P6: Hegemon timing data lives in `chains.hegemon`; the 14-block minimum is not wall-clock; the adapter tags profiles `local` or `public` and passes policy limits to `verify-htlc`.
+
+P8: step 5 is largely done by P1's measurement; the "20 minute minimum lock" holds only for lone smoke locks, while swaps need at least 577 Hegemon blocks; choose pairs Ethereum or Cardano first, Bitcoin last; the 22.6 hour stall exceeds the outage allowance and goes into the runbook.
+
+P7: test entry points, the baseline failures noted above, the P1 documentation index, and a backlog entry for refreshing the measured tables.
+
+Revision 2026-11-06, from P2:
+
+P3: do not port the signing engine to the browser; port only `decide`/`explain` for display and `planner.plan_with_margin` for expiries, with JSON vectors generated from the Python engine. Identity strings and escrow references have fixed per-chain forms (listed in the P3 plan).
+
+P4: Bitcoin swap legs run through the engine's `BitcoinAdapter`; Bitcoin/Bitcoin is unplannable; Bob's Bitcoin outputs are too small (1,250 sats) to fund a normal escrow.
+
+P5: the relay carries terms and escrow references only, never a preimage; bind offers to the exact per-chain identity strings and `terms_digest`.
+
+P6: the exact `ChainAdapter` contract, error contract and journal format are in the P6 plan; the Hegemon stub is in `scripts/swap_engine/adapters/hegemon_stub.py`.
+
+P7: new test commands (97 chain-free tests in about 18 seconds; the real-chains suite needs `HEGEMON_LOCAL_CHAINS=1`), superseded rehearsal scripts, secret-scan additions for swap stores and journals, and the PR split for the uncommitted P1 and P2 work.
+
+P8: run through the engine, use `plan_with_margin`, allow for proving time and stalls, Ethereum and Cardano pairs first.
+
+Revision 2026-11-06, from P3:
+
+P4: the page can now fund, claim and refund Bitcoin testnet4 escrows through PSBTs, so a Bitcoin case no longer needs a script for those steps (splits, refund rehearsals and token legs still do); `scripts/qualification_signer.py btc-sign` is an independent PSBT signer to reuse; Worker Bitcoin reads have no mempool.space fallback; plan for hours-long confirmation waits and a refund height at least 145 blocks out for any UI claim.
+
+P5: the files the page loads (vendored bundles, twelve new modules, four data files) and the import-map or single-bundle need for integrity, `server.ts`'s hand-maintained allow-list, the unused CIP-30 `signData` primitive for Cardano identity binding, no Ethereum message-signing verifier or keccak in the bundle, no Bitcoin message-signing path, the provider incidents to surface, and the abuse budget for the new unauthenticated Worker routes including broadcast.
+
+P6: the Hegemon leg is only a placeholder in the page (`readers.hegemon` absent, leg labelled unavailable); the reader shape is `{escrow, spend}` returning the engine's observation fields and heads as `{observedAt, height}`, and the page must reach Hegemon through a Worker route or the loopback companion. Regenerate `config/swap/flow-vectors.json` if the engine's observation schema changes.
+
+P7: new test commands and dependencies, the qualification harness that must stay out of CI, the Worker change that is undeployed, the documentation touched and the file list for the PR split.
+
+P8: the UI work is a reader and removing a label; non-Hegemon legs of HGN/ETH, HGN/ADA and HGN/BTC swaps can be verified, claimed and refunded from the page.
+
 ## Outcomes & Retrospective
 
 P0 is complete. Outcomes: a verified Node 24 baseline (23 of 23 JavaScript tests, 25 of 31 Python test files without chain tools), a clear list of missing tools and hard-coded paths, a healthy hosted Worker, the private journals recovered into a 0700 directory and reconciled with public chains (86 of 86 journaled transactions confirmed, every escrow spent, four Bitcoin claim preimages matching their hashlocks), and the identity of every paired leg. No escrow is live and nothing needs rescuing. Lessons: results files in the repository had drifted behind the chain; the journal `prepared_or_submitted` state never advances, so chain reads are mandatory; a randomly generated passphrase stored in one file is a single point of failure and should be backed up.
+
+P1 is complete. Outcomes: one measured, tested cross-chain deadline policy shared by the browser and Python; per-leg floors enforced by the hosted verifiers and the Bitcoin and Cardano drivers; a pair check that rejects insufficient spacing and shows why; documentation. Test results: JavaScript 33 of 33 in `swap-ui`, 7 of 7 Python policy tests, 6 of 6 Python Bitcoin driver tests, the Chromium test of the served page passes. Gaps: the Python rehearsal scripts still carry their own literal margins until the P2 engine replaces them; the Cardano Python verifier test cannot run here because Aiken and cardano-cli sit at hard-coded `/workspace` paths; the policy has no protection against a chain stall longer than two hours, and Hegemon has had one of 22.6 hours; the hosted verifiers cannot check Hegemon legs yet (P8).
+
+P2 is complete. Outcomes: a crash-safe two-party engine behind one adapter contract and a CLI; 97 chain-free tests (store, engine, planner, simulated-chain faults and crash sweeps, adapters, policy); real-software local swaps for every plannable pair among Bitcoin, Ethereum and Cardano plus refund scenarios; one real public Sepolia/Cardano preview swap in about seven minutes with all four transaction ids recorded. Gaps: no Hegemon adapter yet (stub), no automatic rebroadcast or fee bump, public refund paths exercised only on local and simulated chains, Bitcoin/Bitcoin unplannable, the Cardano spender lookup depends on Koios indexing, and the P1 and P2 work is uncommitted.
+
+P3 is complete. Outcomes: the hosted page performs Sepolia claim from an encrypted backup, Cardano CIP-30 fund, claim and refund, Bitcoin PSBT fund, claim and refund, observes counterparty preimages on all three chains, and shows a read-only guided view that reuses the P1 policy verdict and the P2 decision rules (held equal to Python by shared vectors). Evidence: 133 JavaScript unit tests, Playwright suites with mocked wallets, real-software local Cardano and bitcoind tests, and a public-testnet run on Sepolia, Cardano preview and Bitcoin testnet4 covering fund, claim, observer, lost-response and refund with transaction ids in `PUBLIC_TESTNET_RESULTS.md`. Gaps: stand-in software wallets and not browser-extension wallets; the Worker was hosted in Node and not redeployed (operator must deploy it before the page works on the hosted domain); stale-head and declined cases are mock-only; the guided view has not driven a live engine swap; Hegemon is labelled unavailable; the Bitcoin legs came from two runs; eight disposable stray escrows (six Sepolia, one Cardano, one Bitcoin) remain from aborted harness runs, listed in the results file; `swap-service/browser.test.mjs` aborts at exit after its assertions pass.

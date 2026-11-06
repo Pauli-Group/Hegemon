@@ -24,3 +24,31 @@ test('asset matching covers every supported chain and token kind with exact unit
  for(const [asset,leg] of cases){assert.equal(matchesOfferAsset(asset,leg),true,asset.chain+' '+asset.kind);assert.equal(matchesOfferAsset({...asset,amount:'10'},leg),false);}
  const [ada,leg]=cases.at(-1);assert.equal(matchesOfferAsset(ada,{...leg,terms:{expected_value:{lovelace:'9',[policy]:{'':'1'}}}}),false);
 });
+
+import {readFileSync} from 'node:fs';
+import {planTimeouts} from './timelock-policy.mjs';
+import {policyLeg,policyHead,judgeTiming,TimingError} from './pair-check.mjs';
+const timingConfig=JSON.parse(readFileSync(new URL('../config/swap/chain-timing.json',import.meta.url),'utf8'));
+test('timing policy rejects pairs whose deadlines leave too little time between legs',()=>{
+ const now=1_793_935_000,offer={give:{chain:'ethereum',kind:'eth',id:'',amount:'4'},receive:{chain:'cardano',kind:'ada',id:'',amount:'9'}};
+ const heads={long:{observedAt:now,timestamp:now-10},short:{observedAt:now,timestamp:now-10}};
+ const plan=planTimeouts(timingConfig,{longChain:'ethereum',shortChain:'cardano',heads,now});
+ const make=(longExpiry,shortExpiry)=>[{chain:'ethereum',terms:{kind:'eth',amount:'4',hashlock:'0x'+digest,contract,expiry:String(longExpiry)}},{chain:'cardano',terms:{outref:'c'.repeat(64)+'#0',hashlock:digest,expected_value:{lovelace:'9'},expiry_ms:shortExpiry*1000}}];
+ const timing={config:timingConfig,now,heads:{give:{observedAt:now,timestamp:now-10},receive:{observedAt:now,timestamp:now-10}}};
+ const [give,receive]=make(plan.long.expiry,plan.short.expiry);
+ const ok=comparePair(offer,give,receive,timing);assert.equal(ok.timing.ok,true);assert.equal(ok.timing.long,'give');
+ const [tooTight]=make(plan.long.expiry-3600,plan.short.expiry);
+ assert.throws(()=>comparePair(offer,tooTight,receive,timing),error=>error instanceof TimingError&&error.verdict.reasons.some(r=>r.code==='insufficient-gap')&&/Unsafe deadlines/.test(error.message));
+ // Roles are not needed: the same pair swapped between give and receive is judged the same way.
+ const swappedOffer={give:offer.receive,receive:offer.give},swappedTiming={...timing,heads:{give:timing.heads.receive,receive:timing.heads.give}};
+ assert.equal(comparePair(swappedOffer,receive,give,swappedTiming).timing.long,'receive');
+ assert.equal(comparePair(offer,give,receive).timing,undefined,'without timing the comparison stays point-in-time only');
+});
+test('timing inputs come straight from verifier snapshots and terms',()=>{
+ assert.deepEqual(policyLeg({chain:'bitcoin',terms:{refund_height:'159000'}}),{chain:'bitcoin',expiry:159000});
+ assert.deepEqual(policyLeg({chain:'cardano',terms:{expiry_ms:1793935000000}}),{chain:'cardano',expiry:1793935000});
+ assert.throws(()=>policyLeg({chain:'cardano',terms:{expiry_ms:1793935000500}}),/whole number of seconds/);
+ assert.deepEqual(policyHead('bitcoin',{tip:7},5),{observedAt:5,height:7});
+ assert.deepEqual(policyHead('ethereum',{headTimestamp:9},5),{observedAt:5,timestamp:9});
+ assert.throws(()=>judgeTiming({chain:'bitcoin',terms:{refund_height:1}},{chain:'ethereum',terms:{expiry:'1'}},{}),/required/);
+});

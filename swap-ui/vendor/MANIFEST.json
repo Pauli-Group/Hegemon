@@ -1,0 +1,35 @@
+{
+  "generated_by": "swap-../../swap-service/vendor-src/build.mjs",
+  "direct_dependencies": {
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "@scure/base": "2.4.0",
+    "@scure/btc-signer": "2.4.1"
+  },
+  "bundles": {
+    "btc-signer.mjs": "entry-btc.mjs",
+    "hash.mjs": "entry-hash.mjs"
+  },
+  "packages": {
+    "@noble/curves": {
+      "version": "2.4.0",
+      "integrity": "sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew=="
+    },
+    "@noble/hashes": {
+      "version": "2.4.0",
+      "integrity": "sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA=="
+    },
+    "@scure/base": {
+      "version": "2.4.0",
+      "integrity": "sha512-thZ1TuJwFwBblOhgsjDKvvGirBxNp+wSvY/DR6tJBJOTDhdAAcHJ8Vbr2eFnqaxeca4+t0i9KBf+uHYGWwZORg=="
+    },
+    "@scure/btc-signer": {
+      "version": "2.4.1",
+      "integrity": "sha512-ch6h66o9nPhEoe/KciMMUJeH2MBPB8UAJI1if35Fxl6885lKTsc9YoCRqTW0/RjI0Vv9GSg1tmKtHHODyAw81g=="
+    },
+    "micro-packed": {
+      "version": "0.11.1",
+      "integrity": "sha512-agQGBnBCw8OoKQZMUxcaQPaOowdfxyEmBsq4CNAXAXCyB8KxlRG0lTl5GADJIsMEDaFb0trhXBHKYsjTWa5kuw=="
+    }
+  }
+}

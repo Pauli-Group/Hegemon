@@ -2,14 +2,14 @@
  * These actions do not verify the other leg or implement a complete swap. */
 import {buildLocalEscrowDeployment} from './ethereum-actions.mjs';
 import {expectedEtherRuntime,expectedTokenRuntime} from './ethereum-escrow.mjs';
-import {assertSepoliaIdentity} from './sepolia-verifier.mjs';
+import {assertSepoliaIdentity,verifySepoliaEscrow} from './sepolia-verifier.mjs';
 
 function addr(value){if(typeof value!=='string'||!/^0x[0-9a-fA-F]{40}$/.test(value)||/^0x0{40}$/i.test(value))throw Error('Invalid Ethereum address.');return value.toLowerCase();}
 function wordAddress(value){return addr(value).slice(2).padStart(64,'0');}
 function wordNumber(value){if(typeof value!=='string'||!/^(0|[1-9][0-9]{0,77})$/.test(value)||BigInt(value)>=(1n<<256n))throw Error('Invalid token amount or ID.');return BigInt(value).toString(16).padStart(64,'0');}
-async function context(provider,from){
+async function context(provider,from,owner='refund'){
  await assertSepoliaIdentity(provider);const request=(method,params=[])=>provider.request({method,params});
- const accounts=await request('eth_accounts');if(!Array.isArray(accounts)||!accounts.some(a=>typeof a==='string'&&a.toLowerCase()===from))throw Error('The connected wallet does not control the refund address.');
+ const accounts=await request('eth_accounts');if(!Array.isArray(accounts)||!accounts.some(a=>typeof a==='string'&&a.toLowerCase()===from))throw Error('The connected wallet does not control the '+owner+' address.');
  const head=await request('eth_getBlockByNumber',['latest',false]);
  if(!head||!/^0x[0-9a-f]+$/i.test(head.number||'')||!/^0x[0-9a-f]{64}$/i.test(head.hash||'')||!/^0x[0-9a-f]+$/i.test(head.timestamp||''))throw Error('Invalid Sepolia head.');
  return {request,head};
@@ -24,7 +24,9 @@ async function send(request,tx){
  if(typeof id!=='string'||!/^0x[0-9a-f]{64}$/i.test(id))throw Error('Wallet returned no usable transaction ID. Check wallet history before retrying.');
  return {txid:id.toLowerCase(),submitted:true,confirmed:false,from:tx.from};
 }
-function requireTime(terms,head){if(BigInt(terms.expiry)-BigInt(head.timestamp)<1200n)throw Error('Allow at least 20 minutes before the Sepolia refund deadline.');}
+/** Absolute floor for wallet actions. The swap policy (timelock-policy.mjs) is judged separately when two escrows are compared. */
+export const SEPOLIA_ACTION_FLOOR_SECONDS=1200n;
+function requireTime(terms,head){if(BigInt(terms.expiry)-BigInt(head.timestamp)<SEPOLIA_ACTION_FLOOR_SECONDS)throw Error('Allow at least 20 minutes before the Sepolia refund deadline.');}
 async function contractState(request,head,terms,template,{funded}){
  const contract=addr(terms.contract),expected=terms.kind==='eth'?expectedEtherRuntime(template,terms):expectedTokenRuntime(template,terms);
  const code=await request('eth_getCode',[contract,head.number]);if(typeof code!=='string'||code.toLowerCase()!==expected)throw Error('Escrow bytecode or terms do not match.');
@@ -56,4 +58,31 @@ export async function refundSepoliaEscrow(provider,template,terms){
  const contract=await contractState(request,head,terms,template,{funded:true}),tx={from,to:contract,data:'0x590e1ae3',value:'0x0'};
  const simulation=await request('eth_call',[tx,head.number]);if(typeof simulation!=='string'||!/^0x(?:[0-9a-f]{2})*$/i.test(simulation))throw Error('Refund simulation failed.');
  await beforeSend(provider,request,head,from);return {...await send(request,tx),step:'refund'};
+}
+/** Claim a Sepolia escrow with the preimage from an unlocked encrypted backup.
+ *
+ * Checks, in order: the preimage hashes to the escrow's hashlock; the wallet is on Sepolia and controls the
+ * claimant address; the pinned runtime, terms, funded and unspent state at a confirmed snapshot and at the
+ * head; at least `cutoffSeconds` (the policy's action time) remain before the deadline; the caller's
+ * `verify(snapshot)` hook (the swap-level gate: the other leg and the claim cutoff) accepts; and the head
+ * did not move between the checks and the wallet request.
+ *
+ * The preimage reaches the wallet when `eth_sendTransaction` is called, even if the user then rejects it, and a
+ * submitted claim is public. This function therefore never simulates the claim with `eth_call`: a simulation
+ * would send the preimage to the wallet's RPC provider before the user has approved anything.
+ * `options` = `{cutoffSeconds, confirmations, verify}`. The secret is not modified or retained. */
+export async function claimSepoliaEscrow(provider,template,terms,secret,options={}){
+ if(!terms||!['eth','0','1','2'].includes(terms.kind))throw Error('Invalid escrow type.');
+ if(!(secret instanceof Uint8Array)||secret.length!==32)throw Error('Invalid preimage.');
+ const cutoff=options.cutoffSeconds??60;if(!Number.isSafeInteger(cutoff)||cutoff<1||cutoff>86400)throw Error('Invalid claim cutoff.');
+ const digest='0x'+Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',secret)),b=>b.toString(16).padStart(2,'0')).join('');
+ if(digest!==String(terms.hashlock).toLowerCase())throw Error('The backup does not match the escrow hashlock.');
+ const from=addr(terms.claimant);
+ const snapshot=await verifySepoliaEscrow(provider,template,terms,{confirmations:options.confirmations,minClaimWindowSeconds:cutoff,remainingFloorSeconds:1});
+ const {request,head}=await context(provider,from,'claimant');
+ if(BigInt(terms.expiry)-BigInt(head.timestamp)<BigInt(cutoff))throw Error('Too close to the Sepolia deadline to claim safely.');
+ if(typeof options.verify==='function')await options.verify({...snapshot,headTimestamp:Number(BigInt(head.timestamp))});
+ const tx={from,to:addr(terms.contract),data:'0xbd66528a'+Array.from(secret,b=>b.toString(16).padStart(2,'0')).join(''),value:'0x0'};
+ await beforeSend(provider,request,head,from);
+ return {...await send(request,tx),step:'claim'};
 }

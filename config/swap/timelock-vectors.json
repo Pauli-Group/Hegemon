@@ -1,0 +1,619 @@
+{
+ "comment": "Shared by swap-ui/timelock-policy.test.mjs and scripts/swap_engine/test_timelock_policy.py. Cases 1-5 are hand-derived; see .agent/SWAP_TIMELOCK_POLICY_EXECPLAN.md.",
+ "config": {
+  "policy": {
+   "reactionSeconds": 600,
+   "gapFactor": 1.5,
+   "gapFloorSeconds": 600,
+   "maxHorizonSeconds": 604800,
+   "maxObservationAgeSeconds": 600,
+   "minShortWindowSeconds": 3600
+  },
+  "chains": {
+   "fast": {
+    "kind": "time",
+    "confirmations": 2,
+    "clockSkewSeconds": 10,
+    "inclusionSeconds": 100,
+    "slowBlockSeconds": 10,
+    "maxHeadAgeSeconds": 300
+   },
+   "slow": {
+    "kind": "height",
+    "confirmations": 2,
+    "clockSkewSeconds": 0,
+    "slowFactor": 1.25,
+    "fastFactor": 0.5,
+    "outageAllowanceSeconds": 0,
+    "providerLagBlocks": 0,
+    "refundOffsetBlocks": 1,
+    "windows": {
+     "1": {
+      "min": 60,
+      "max": 1200
+     },
+     "6": {
+      "min": 600,
+      "max": 4800
+     }
+    }
+   },
+   "lagged": {
+    "kind": "height",
+    "confirmations": 2,
+    "clockSkewSeconds": 0,
+    "slowFactor": 1.25,
+    "fastFactor": 0.5,
+    "outageAllowanceSeconds": 1000,
+    "providerLagBlocks": 2,
+    "refundOffsetBlocks": 1,
+    "minLockBlocks": 14,
+    "proveSeconds": 200,
+    "windows": {
+     "1": {
+      "min": 60,
+      "max": 1200
+     },
+     "6": {
+      "min": 600,
+      "max": 4800
+     }
+    }
+   },
+   "locked": {
+    "kind": "height",
+    "confirmations": 2,
+    "clockSkewSeconds": 0,
+    "slowFactor": 1.25,
+    "fastFactor": 0.5,
+    "outageAllowanceSeconds": 0,
+    "providerLagBlocks": 0,
+    "refundOffsetBlocks": 1,
+    "windows": {
+     "1": {
+      "min": 60,
+      "max": 1200
+     },
+     "6": {
+      "min": 600,
+      "max": 4800
+     }
+    },
+    "minLockBlocks": 500
+   }
+  }
+ },
+ "cases": [
+  {
+   "name": "time/time exactly at the required gap",
+   "long": {
+    "chain": "fast",
+    "expiry": 1005029
+   },
+   "short": {
+    "chain": "fast",
+    "expiry": 1003600
+   },
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    },
+    "short": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "ok": true,
+    "codes": [],
+    "metrics": {
+     "gapSeconds": 1410,
+     "gapRequiredSeconds": 1410,
+     "shortClaimWindowSeconds": 3590,
+     "shortClaimRequiredSeconds": 1300,
+     "shortLastClaimIn": 3609,
+     "longFirstRefundIn": 5019
+    }
+   }
+  },
+  {
+   "name": "time/time one second below the required gap",
+   "long": {
+    "chain": "fast",
+    "expiry": 1005028
+   },
+   "short": {
+    "chain": "fast",
+    "expiry": 1003600
+   },
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    },
+    "short": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "ok": false,
+    "codes": [
+     "insufficient-gap"
+    ],
+    "metrics": {
+     "gapSeconds": 1409,
+     "gapRequiredSeconds": 1410
+    }
+   }
+  },
+  {
+   "name": "short leg leaves too little time to claim",
+   "long": {
+    "chain": "fast",
+    "expiry": 1010000
+   },
+   "short": {
+    "chain": "fast",
+    "expiry": 1001000
+   },
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    },
+    "short": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "ok": false,
+    "codes": [
+     "claim-window-too-short"
+    ],
+    "metrics": {
+     "shortClaimWindowSeconds": 990,
+     "shortClaimRequiredSeconds": 1300,
+     "gapSeconds": 8981
+    }
+   }
+  },
+  {
+   "name": "short claim window exactly at its minimum",
+   "long": {
+    "chain": "fast",
+    "expiry": 1010000
+   },
+   "short": {
+    "chain": "fast",
+    "expiry": 1001310
+   },
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    },
+    "short": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "ok": true,
+    "codes": [],
+    "metrics": {
+     "shortClaimWindowSeconds": 1300,
+     "shortClaimRequiredSeconds": 1300
+    }
+   }
+  },
+  {
+   "name": "short claim window one second below its minimum",
+   "long": {
+    "chain": "fast",
+    "expiry": 1010000
+   },
+   "short": {
+    "chain": "fast",
+    "expiry": 1001309
+   },
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    },
+    "short": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "ok": false,
+    "codes": [
+     "claim-window-too-short"
+    ],
+    "metrics": {
+     "shortClaimWindowSeconds": 1299,
+     "shortClaimRequiredSeconds": 1300
+    }
+   }
+  },
+  {
+   "name": "height short leg accepted exactly at its claim minimum",
+   "long": {
+    "chain": "fast",
+    "expiry": 1071560
+   },
+   "short": {
+    "chain": "slow",
+    "expiry": 1065
+   },
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    },
+    "short": {
+     "observedAt": 1000000,
+     "height": 1000
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "ok": true,
+    "codes": [],
+    "metrics": {
+     "shortFirstRefundIn": 3300,
+     "shortClaimRequiredSeconds": 3150,
+     "shortLastClaimIn": 66000,
+     "gapSeconds": 5550,
+     "gapRequiredSeconds": 5550,
+     "shortLockUpperSeconds": 66000
+    }
+   }
+  },
+  {
+   "name": "height short leg one block below its claim minimum",
+   "long": {
+    "chain": "fast",
+    "expiry": 1071560
+   },
+   "short": {
+    "chain": "slow",
+    "expiry": 1064
+   },
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    },
+    "short": {
+     "observedAt": 1000000,
+     "height": 1000
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "ok": false,
+    "codes": [
+     "claim-window-too-short"
+    ],
+    "metrics": {
+     "shortFirstRefundIn": 3000,
+     "shortLastClaimIn": 66000,
+     "gapSeconds": 5550
+    }
+   }
+  },
+  {
+   "name": "short leg already expired",
+   "long": {
+    "chain": "fast",
+    "expiry": 1010000
+   },
+   "short": {
+    "chain": "fast",
+    "expiry": 999999
+   },
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    },
+    "short": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "ok": false,
+    "codes": [
+     "leg-expired"
+    ],
+    "metrics": {}
+   }
+  },
+  {
+   "name": "stale chain head observation",
+   "long": {
+    "chain": "fast",
+    "expiry": 1010000
+   },
+   "short": {
+    "chain": "fast",
+    "expiry": 1003600
+   },
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    },
+    "short": {
+     "observedAt": 999399,
+     "timestamp": 999995
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "ok": false,
+    "codes": [
+     "head-stale"
+    ],
+    "metrics": {}
+   }
+  },
+  {
+   "name": "device clock disagrees with chain head",
+   "long": {
+    "chain": "fast",
+    "expiry": 1010000
+   },
+   "short": {
+    "chain": "fast",
+    "expiry": 1003600
+   },
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    },
+    "short": {
+     "observedAt": 1000000,
+     "timestamp": 999000
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "ok": false,
+    "codes": [
+     "clock-drift"
+    ],
+    "metrics": {}
+   }
+  },
+  {
+   "name": "malformed expiry",
+   "long": {
+    "chain": "fast",
+    "expiry": 1010000
+   },
+   "short": {
+    "chain": "fast",
+    "expiry": 0
+   },
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    },
+    "short": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "ok": false,
+    "codes": [
+     "bad-input"
+    ],
+    "metrics": {}
+   }
+  },
+  {
+   "name": "unknown chain",
+   "long": {
+    "chain": "fast",
+    "expiry": 1010000
+   },
+   "short": {
+    "chain": "nope",
+    "expiry": 1003600
+   },
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    },
+    "short": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "ok": false,
+    "codes": [
+     "bad-input"
+    ],
+    "metrics": {}
+   }
+  },
+  {
+   "name": "lock horizon above the limit",
+   "long": {
+    "chain": "fast",
+    "expiry": 1700000
+   },
+   "short": {
+    "chain": "fast",
+    "expiry": 1003600
+   },
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    },
+    "short": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "ok": false,
+    "codes": [
+     "horizon-too-long"
+    ],
+    "metrics": {
+     "gapSeconds": 696381
+    }
+   }
+  }
+ ],
+ "plans": [
+  {
+   "name": "time long, time short",
+   "longChain": "fast",
+   "shortChain": "fast",
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    },
+    "short": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "long": 1005039,
+    "short": 1003610
+   }
+  },
+  {
+   "name": "time long, height short",
+   "longChain": "fast",
+   "shortChain": "slow",
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    },
+    "short": {
+     "observedAt": 1000000,
+     "height": 1000
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "long": 1143560,
+    "short": 1137
+   }
+  },
+  {
+   "name": "height long, time short",
+   "longChain": "slow",
+   "shortChain": "fast",
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "height": 1000
+    },
+    "short": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "long": 1167,
+    "short": 1005020
+   }
+  },
+  {
+   "name": "height long with provider lag, time short",
+   "longChain": "lagged",
+   "shortChain": "fast",
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "height": 50
+    },
+    "short": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "long": 279,
+    "short": 1006020
+   }
+  },
+  {
+   "name": "lock minimum binds the long expiry",
+   "longChain": "locked",
+   "shortChain": "fast",
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "height": 1000
+    },
+    "short": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "long": 1501,
+    "short": 1005020
+   }
+  }
+ ],
+ "requirements": [
+  {
+   "chain": "fast",
+   "expect": {
+    "confirmations": 2,
+    "minClaimWindowSeconds": 1300
+   }
+  },
+  {
+   "chain": "slow",
+   "expect": {
+    "confirmations": 2,
+    "minClaimWindowSeconds": 3150,
+    "minBlocksToExpiry": 65
+   }
+  },
+  {
+   "chain": "lagged",
+   "expect": {
+    "confirmations": 2,
+    "minClaimWindowSeconds": 4950,
+    "minBlocksToExpiry": 103
+   }
+  }
+ ]
+}

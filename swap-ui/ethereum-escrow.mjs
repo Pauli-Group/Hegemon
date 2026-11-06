@@ -76,7 +76,7 @@ export async function verifyEtherEscrow(provider,template,terms,confirmations=2,
   const latestBlock=await request('eth_getBlockByNumber',['latest',false]);
   if(!latestBlock||BigInt(terms.expiry)-BigInt(latestBlock.timestamp)<BigInt(minimumRemainingSeconds))throw Error('escrow deadline too close');
   if(latestBlock.hash!==current.hash)throw Error('snapshot or chain changed');
-  return {chainId:terms.chainId,blockNumber:tag,blockHash:block.hash,confirmations,contract,balance:balance.toString()};
+  return {chainId:terms.chainId,blockNumber:tag,blockHash:block.hash,confirmations,contract,balance:balance.toString(),headTimestamp:Number(latestBlock.timestamp)};
 }
 export async function verifyTokenEscrow(provider,template,terms,confirmations=2,minimumRemainingSeconds=60){
   if(!provider||typeof provider.request!=='function'||!Number.isSafeInteger(confirmations)||confirmations<1||confirmations>10000||!Number.isSafeInteger(minimumRemainingSeconds)||minimumRemainingSeconds<1)throw Error('invalid provider or verification limits');
@@ -116,5 +116,5 @@ export async function verifyTokenEscrow(provider,template,terms,confirmations=2,
   const latestBlock=await request('eth_getBlockByNumber',['latest',false]);
   if(!latestBlock||BigInt(terms.expiry)-BigInt(latestBlock.timestamp)<BigInt(minimumRemainingSeconds))throw Error('escrow deadline too close');
   if(latestBlock.hash!==current.hash)throw Error('snapshot or chain changed');
-  return {chainId:terms.chainId,blockNumber:tag,blockHash:block.hash,confirmations,contract,token,balance:balance.toString()};
+  return {chainId:terms.chainId,blockNumber:tag,blockHash:block.hash,confirmations,contract,token,balance:balance.toString(),headTimestamp:Number(latestBlock.timestamp)};
 }

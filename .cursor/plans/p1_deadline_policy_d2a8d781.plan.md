@@ -4,28 +4,28 @@ overview: Plan 1 of 8. Replace the ad hoc timeout thresholds with one tested cro
 todos:
   - id: p1-audit
     content: Audit and list all hard-coded timing thresholds in verifiers, drivers and docs
-    status: pending
+    status: completed
   - id: p1-execplan
     content: Write .agent/SWAP_TIMELOCK_POLICY_EXECPLAN.md
-    status: pending
+    status: completed
   - id: p1-config
     content: Add config/swap/chain-timing.json with sourced per-chain parameters
-    status: pending
+    status: completed
   - id: p1-impl
     content: Implement JS and Python policy modules with shared vectors
-    status: pending
+    status: completed
   - id: p1-tests
     content: Unit, property (adversarial timing) and mutation tests
-    status: pending
+    status: completed
   - id: p1-wire
     content: Wire into pair-check and hosted verifiers; show verdict in UI per BRAND.md
-    status: pending
+    status: completed
   - id: p1-docs
     content: Update DESIGN.md and METHODS.md
-    status: pending
+    status: completed
   - id: p1-revise
     content: Revise plans P2..P7 based on what was learned
-    status: pending
+    status: completed
 isProject: false
 ---
 

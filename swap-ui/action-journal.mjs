@@ -17,7 +17,7 @@ function publicRequest(chain,operation,request){
  }else if(chain==='bitcoin'){
   const names=['operation','hashlock','claimant_key','refund_key','refund_height','amount_sats',...(operation==='lock'?[]:['txid','vout','destination'])];
   if(!['lock','claim','refund'].includes(operation)||!keys(request,names)||request.operation!==operation||!hex(request.hashlock,64)||![request.claimant_key,request.refund_key].every(x=>typeof x==='string'&&/^(02|03)[0-9a-f]{64}$/.test(x))||!decimal(request.refund_height)||!decimal(request.amount_sats))throw Error('Invalid Bitcoin action terms.');
-  if(operation!=='lock'&&(!hex(request.txid,64)||!decimal(request.vout)||typeof request.destination!=='string'||!(/^(?:bcrt1[023456789acdefghjklmnpqrstuvwxyz]{10,90}|BCRT1[023456789ACDEFGHJKLMNPQRSTUVWXYZ]{10,90}|[mn2][1-9A-HJ-NP-Za-km-z]{25,34})$/.test(request.destination))))throw Error('Invalid Bitcoin spend terms.');
+  if(operation!=='lock'&&(!hex(request.txid,64)||!decimal(request.vout)||typeof request.destination!=='string'||!(/^(?:bcrt1[023456789acdefghjklmnpqrstuvwxyz]{10,90}|tb1[023456789acdefghjklmnpqrstuvwxyz]{10,90}|BCRT1[023456789ACDEFGHJKLMNPQRSTUVWXYZ]{10,90}|[mn2][1-9A-HJ-NP-Za-km-z]{25,34})$/.test(request.destination))))throw Error('Invalid Bitcoin spend terms.');
  }else if(chain==='cardano'){
   const names=['operation','hashlock','claimant','refundee','expiry_ms','expected_value',...(operation==='lock'?['inputs']:['outref','fee_input','collateral'])];
   if(!['lock','claim','refund'].includes(operation)||!keys(request,names)||request.operation!==operation||!hex(request.hashlock,64)||!hex(request.claimant,56)||!hex(request.refundee,56)||!decimal(request.expiry_ms))throw Error('Invalid Cardano action terms.');
