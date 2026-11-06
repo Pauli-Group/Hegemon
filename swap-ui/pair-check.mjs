@@ -52,11 +52,45 @@ export function judgeTiming(give,receive,timing){
  return {...verdict,long:verdict.long==='a'?'give':'receive'};
 }
 export class TimingError extends Error{constructor(verdict){super('Unsafe deadlines: '+(verdict.reasons[0]?.message||'timing check failed'));this.verdict=verdict;}}
-export function comparePair(offer,give,receive,timing){
+/** The participants an escrow's terms name, in the engine's identity format (lowercase). Hegemon has no scheme yet. */
+export function legParticipants(leg){
+ const t=leg?.terms;if(!t)throw Error('Escrow terms are missing.');
+ const lower=value=>typeof value==='string'?value.toLowerCase():'';
+ if(leg.chain==='ethereum'||leg.chain==='cardano')return {claimant:lower(t.claimant),refundee:lower(t.refundee)};
+ if(leg.chain==='bitcoin')return {claimant:lower(t.claimant_key),refundee:lower(t.refund_key)};
+ if(leg.chain==='hegemon')return null;
+ throw Error('Unsupported chain.');
+}
+/** Require both escrows to name exactly the signed identities. `identities` is `{owner, taker}`, each the result of
+ * `verifyIdentity` (identity.mjs). The owner's `give` leg is the offer's give escrow (owner refunds, taker claims); the
+ * owner's `receive` leg is the other escrow (taker refunds, owner claims). Returns what was matched; throws on any
+ * difference, on a missing identity and on statements for another offer or chain. A Hegemon leg is reported in
+ * `unverified` and never counted as matched. */
+export function checkIdentities(offer,give,receive,identities){
+ const owner=identities?.owner,taker=identities?.taker;
+ if(!owner||!taker||owner.role!=='owner'||taker.role!=='taker')throw Error('Signed identity statements from both participants are required.');
+ if(owner.statement.offer!==offer?.id||taker.statement.offer!==offer?.id)throw Error('Identity statements are for a different offer.');
+ const legs={give,receive},unverified=[],matched=[];
+ for(const side of ['give','receive']){
+  const leg=legs[side],chain=leg?.chain;
+  if(owner.statement.legs[side].chain!==chain||taker.statement.legs[side].chain!==chain)throw Error('Identity statements are for a different '+side+' chain.');
+  const want=side==='give'?{claimant:taker.addresses.give,refundee:owner.addresses.give}:{claimant:owner.addresses.receive,refundee:taker.addresses.receive};
+  const have=legParticipants(leg);
+  if(!have){unverified.push(side);continue;}
+  if(have.claimant!==want.claimant.toLowerCase())throw Error('The '+side+' escrow claimant is not the signed identity.');
+  if(have.refundee!==want.refundee.toLowerCase())throw Error('The '+side+' escrow refund address is not the signed identity.');
+  matched.push(side);
+ }
+ const unproven=[];
+ for(const side of ['give','receive']){if(!owner.proven[side])unproven.push('owner.'+side);if(!taker.proven[side])unproven.push('taker.'+side);}
+ return {matched,unverified,unproven,owner:{code:owner.code},taker:{code:taker.code}};
+}
+export function comparePair(offer,give,receive,timing,identities){
  if(!offer||!matchesOfferAsset(offer.give,give)||!matchesOfferAsset(offer.receive,receive))throw Error('Escrow assets or amounts do not match the selected offer.');
  const digest=hashlock(give);if(!/^[0-9a-f]{64}$/.test(digest)||digest!==hashlock(receive))throw Error('Both escrow hashlocks must match.');
  if(give.chain===receive.chain&&reference(give)===reference(receive))throw Error('The two legs must be different escrows.');
  const result={hashlock:digest,giveChain:give.chain,receiveChain:receive.chain};
+ if(identities)result.identities=checkIdentities(offer,give,receive,identities);
  if(timing){const verdict=judgeTiming(give,receive,timing);if(!verdict.ok)throw new TimingError(verdict);result.timing=verdict;}
  return result;
 }

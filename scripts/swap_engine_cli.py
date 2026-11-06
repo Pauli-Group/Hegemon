@@ -120,6 +120,14 @@ def cmd_init(args):
                       'note': 'Send the terms to the counterparty, who runs init --role responder with them.' if args.role == 'initiator' else 'Created.'}, indent=1))
 
 
+def cmd_identities(args):
+    store = open_store(args)
+    context = {'offer': args.offer, 'reservation': args.reservation, 'owner_inbox': args.owner_inbox, 'taker_inbox': args.taker_inbox}
+    with store.locked(args.swap_id) as swap:
+        value = swap.attach_identities(Path(args.owner).read_text(), Path(args.taker).read_text(), context, args.give_leg, int(time.time()))
+    print(json.dumps(value, indent=1))
+
+
 def cmd_status(args):
     store = open_store(args)
     ids = [args.swap_id] if args.swap_id else store.list()
@@ -204,6 +212,16 @@ def parser():
     p.add_argument('--new-preimage', action='store_true')
     p.add_argument('--swap-id')
     p.set_defaults(run=cmd_init)
+    p = sub.add_parser('identities', help='verify both signed relay identity statements against the swap terms and record them')
+    p.add_argument('swap_id')
+    p.add_argument('--owner', required=True, help='file with the owner identity blob from the relay')
+    p.add_argument('--taker', required=True, help='file with the taker identity blob from the relay')
+    p.add_argument('--offer', required=True)
+    p.add_argument('--reservation', required=True)
+    p.add_argument('--owner-inbox', required=True, help='inbox fingerprint (sha256 of the raw public key) the owner statement must name')
+    p.add_argument('--taker-inbox', required=True)
+    p.add_argument('--give-leg', choices=('long', 'short'), required=True, help="the engine leg that is the offer owner's give leg")
+    p.set_defaults(run=cmd_identities)
     p = sub.add_parser('status')
     p.add_argument('swap_id', nargs='?')
     p.set_defaults(run=cmd_status)

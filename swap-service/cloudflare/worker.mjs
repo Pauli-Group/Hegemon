@@ -1,4 +1,6 @@
 /* Public testnet offer directory. Wallets and swap secrets stay with users. */
+import {HOSTED_CSP,HOSTED_ROOT,SERVED_FILES} from './client-policy.mjs';
+const SERVED=new Set(SERVED_FILES);
 const chains={ethereum:['eth','erc20','erc721','erc1155'],cardano:['ada','native'],bitcoin:['btc'],hegemon:['hgn']};
 const hex=/^[0-9a-f]{64}$/;
 const now=()=>Math.floor(Date.now()/1000);
@@ -25,7 +27,26 @@ async function body(req){
   const data=new Uint8Array(size);let offset=0;for(const part of parts){data.set(part,offset);offset+=part.length;}
   return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(data));
 }
-function presentation(row,t){return {id:row.id,visibility:row.public?'public':'private',...JSON.parse(row.offer),expires:row.expires,closed:!!row.closed,...(row.reservation_id&&row.reservation_expires>t?{reservationId:row.reservation_id}:{})};}
+function presentation(row,t){
+  const reserved=!!row.reservation_id&&row.reservation_expires>t;
+  return {id:row.id,visibility:row.public?'public':'private',...JSON.parse(row.offer),expires:row.expires,closed:!!row.closed,...(reserved?{reservationId:row.reservation_id}:{}),
+    ...(row.owner_identity?{ownerIdentity:row.owner_identity}:{}),...(reserved&&row.reservation_identity?{reservationIdentity:row.reservation_identity}:{})};
+}
+// Signed identity statements (swap-ui/identity.mjs). The relay checks structure, size and that the ids inside belong to this
+// row so garbage cannot be stored; it does NOT verify signatures and clients never trust it to: they verify locally.
+const IDENTITY_MAX=8192,IDENTITY_FIELD=/^[0-9a-f]{64}$/;
+async function inboxFingerprint(publicKey){const raw=Uint8Array.from(publicKey.match(/../g),x=>parseInt(x,16));return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',raw)),x=>x.toString(16).padStart(2,'0')).join('');}
+async function identityError(blob,row,role,reservationId){
+  if(typeof blob!=='string'||blob.length>IDENTITY_MAX)return 'invalid identity statement';
+  let value;try{value=JSON.parse(blob);}catch{return 'invalid identity statement';}
+  const st=value?.statement;
+  if(keys(value)!=='proofs,statement'||!Array.isArray(value.proofs)||value.proofs.length<1||value.proofs.length>4||!value.proofs.every(p=>p&&typeof p==='object'&&!Array.isArray(p))||!st||typeof st!=='object'||st.version!==1||st.kind!=='hegemon.swap.identity'||st.role!==role)return 'invalid identity statement';
+  if(st.offer!==row.id||st.reservation!==(role==='owner'?'':reservationId))return 'identity statement is for a different offer or reservation';
+  if(typeof st.inbox!=='string'||!IDENTITY_FIELD.test(st.inbox))return 'invalid identity statement';
+  const inbox=JSON.parse(row.offer).ownerPublicKey;
+  if(role==='owner'&&(!inbox||st.inbox!==await inboxFingerprint(inbox)))return 'identity statement names a different inbox key';
+  return null;
+}
 async function get(db,id){return db.prepare('SELECT * FROM offers WHERE id=?').bind(id).first();}
 function participant(row,hash,t){if(!hash)return null;if(hash===row.owner_hash)return 'owner';return hash===row.reservation_hash&&row.reservation_expires>t?'taker':null;}
 async function quota(req,env,t){
@@ -299,7 +320,7 @@ async function api(req,env){
       db.prepare('DELETE FROM offers WHERE expires<? AND NOT EXISTS (SELECT 1 FROM messages WHERE offer_id=offers.id) AND id IN (SELECT id FROM offers WHERE expires<? LIMIT 100)').bind(t-604800,t-604800)
     ]);
   }
-  const match=url.pathname.match(/^\/offers\/([0-9a-f]{64})(?:\/(reserve|messages|close))?$/);
+  const match=url.pathname.match(/^\/offers\/([0-9a-f]{64})(?:\/(reserve|messages|close|identity))?$/);
   if(req.method==='GET'&&url.pathname==='/health')return reply(200,{status:'ok'});
   if(req.method==='GET'&&url.pathname==='/bitcoin-testnet4/escrow'){
     try{return await bitcoinEscrow(url);}catch{console.error('Bitcoin testnet provider unavailable or inconsistent');return reply(502,{error:'Bitcoin testnet service unavailable or inconsistent'});}
@@ -350,7 +371,7 @@ async function api(req,env){
   if(req.method==='GET'&&!op)return reply(200,presentation(row,t));
   if(req.method==='POST'&&op==='reserve'){
     const secret=random(),reservationId=random(),expiry=Math.min(t+86400,row.expires);
-    const result=await db.prepare('UPDATE offers SET reservation_hash=?,reservation_id=?,reservation_expires=? WHERE id=? AND closed=0 AND expires>? AND (reservation_expires IS NULL OR reservation_expires<=?) RETURNING id').bind(await digest(secret),reservationId,expiry,id,t,t).first();
+    const result=await db.prepare('UPDATE offers SET reservation_hash=?,reservation_id=?,reservation_expires=?,reservation_identity=NULL WHERE id=? AND closed=0 AND expires>? AND (reservation_expires IS NULL OR reservation_expires<=?) RETURNING id').bind(await digest(secret),reservationId,expiry,id,t,t).first();
     if(!result)return reply(409,{error:row.closed||row.expires<=t?'offer unavailable':'already reserved'});
     return reply(201,{reservationToken:secret,reservationId,expires:expiry});
   }
@@ -359,6 +380,18 @@ async function api(req,env){
   if(req.method==='POST'&&op==='close'){
     if(who!=='owner')return reply(403,{error:'owner only'});
     await db.prepare('UPDATE offers SET closed=1 WHERE id=? AND owner_hash=?').bind(id,hash).run();return reply(200,{closed:true});
+  }
+  if(op==='identity'&&req.method==='POST'){
+    if(row.expires<=t||row.closed)return reply(409,{error:'offer unavailable'});
+    const data=await body(req);
+    if(keys(data)!==(who==='owner'?'identity':'identity,reservationId')||who==='taker'&&(typeof data.reservationId!=='string'||!hex.test(data.reservationId)))return reply(400,{error:'invalid identity request'});
+    const problem=await identityError(data.identity,row,who,data.reservationId);
+    if(problem)return reply(400,{error:problem});
+    const result=who==='owner'
+      ?await db.prepare('UPDATE offers SET owner_identity=? WHERE id=? AND owner_hash=? AND owner_identity IS NULL RETURNING id').bind(data.identity,id,hash).first()
+      :await db.prepare('UPDATE offers SET reservation_identity=? WHERE id=? AND reservation_hash=? AND reservation_id=? AND reservation_expires>? AND reservation_identity IS NULL RETURNING id').bind(data.identity,id,hash,data.reservationId,t).first();
+    if(!result){row=await get(db,id);if(!row||participant(row,hash,now())!==who)return reply(401,{error:'unauthorized'});return reply(409,{error:who==='taker'&&row.reservation_id!==data.reservationId?'reservation changed':'identity already published'});}
+    return reply(201,{published:true});
   }
   if(op==='messages'&&req.method==='POST'){
     if(row.expires<=t)return reply(409,{error:'offer unavailable'});
@@ -388,30 +421,14 @@ export default {async fetch(req,env){
     const url=new URL(req.url);
     if(url.pathname==='/health'||url.pathname==='/offers'||url.pathname.startsWith('/offers/')||url.pathname==='/bitcoin-testnet4/escrow'||url.pathname==='/bitcoin-testnet4/utxos'||url.pathname==='/bitcoin-testnet4/broadcast'||url.pathname==='/bitcoin-testnet4/spend'||url.pathname==='/bitcoin-testnet4/head'||url.pathname==='/sepolia/escrow-events'||url.pathname==='/sepolia/rpc'||url.pathname==='/cardano-preview/spend'||url.pathname==='/cardano-preview/escrow'||url.pathname==='/cardano-preview/params'||url.pathname==='/cardano-preview/utxos')return await api(req,env);
     if(req.method!=='GET'&&req.method!=='HEAD')return reply(404,{error:'not found'});
-    const result=await env.ASSETS.fetch(req),h=new Headers(result.headers);
+    // The hosted page is a file in the manifest (swap-ui/hosted.html, built by scripts/build_client_manifest.mjs), not a rewrite
+    // of index.html at the edge, so the served bytes are reproducible. Only files in the manifest are served.
+    const root=url.pathname==='/'||url.pathname==='/index.html';
+    const path=root?'/'+HOSTED_ROOT:url.pathname;
+    if(!SERVED.has(path.slice(1)))return reply(404,{error:'not found'});
+    const result=await env.ASSETS.fetch(root?new Request(new URL(path,url),req):req),h=new Headers(result.headers);
     h.set('cache-control','no-store');h.set('x-content-type-options','nosniff');h.set('referrer-policy','no-referrer');
-    h.set('content-security-policy',"default-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
-    let response=new Response(result.body,{status:result.status,headers:h});
-    if(url.pathname==='/'||url.pathname==='/index.html'){
-      const hidden=['verify-title','companion-title','ethereum-actions-title','bitcoin-title','bitcoin-actions-title','cardano-title','cardano-actions-title','hegemon-title','hegemon-actions-title','watch-title'];
-      let rewrite=new HTMLRewriter()
-        .on('html',{element(e){e.setAttribute('data-hosted-testnet','');}})
-        .on('title',{element(e){e.setInnerContent('Hegemon Swap · Testnet offer preview');}})
-        .on('header .eyebrow',{element(e){e.setInnerContent('Hegemon · testnet offer preview');}})
-        .on('main > aside',{element(e){e.setInnerContent('Testnet preview. Manual Sepolia escrow actions are available; complete swaps and recovery are still being built.');}})
-        .on('#vault-description',{element(e){e.setInnerContent('Create a random secret and its public hashlock locally. Export the encrypted backup and protect its separate passphrase. This backup stores the secret only, not wallet keys or the complete swap.');}})
-        .on('#pair-check',{element(e){e.setAttribute('hidden','');}})
-        .on('#sepolia-section',{element(e){e.removeAttribute('hidden');}})
-        .on('#sepolia-action-section',{element(e){e.removeAttribute('hidden');}})
-        .on('#bitcoin-testnet-section',{element(e){e.removeAttribute('hidden');}})
-        .on('#cardano-preview-section',{element(e){e.removeAttribute('hidden');}})
-        .on('#cardano-wallet-section',{element(e){e.removeAttribute('hidden');}})
-        .on('#bitcoin-wallet-section',{element(e){e.removeAttribute('hidden');}})
-        .on('#observer-section',{element(e){e.removeAttribute('hidden');}})
-        .on('#guided-section',{element(e){e.removeAttribute('hidden');}});
-      for(const id of hidden)rewrite=rewrite.on(`section[aria-labelledby="${id}"]`,{element(e){e.setAttribute('hidden','');}});
-      response=rewrite.transform(response);
-    }
-    return response;
+    h.set('content-security-policy',HOSTED_CSP);
+    return new Response(result.body,{status:result.status,headers:h});
   }catch(error){if(error instanceof SyntaxError||error instanceof TypeError&&error.message.includes('encoded data'))return reply(400,{error:'invalid request body'});console.error('offer relay request failed');return reply(500,{error:'internal error'});}
 }};

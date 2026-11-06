@@ -10,6 +10,11 @@ function anumber(n, title = "") {
     throw new RangeError(atitle(title) + "expected integer >= 0, got " + n);
   return n;
 }
+function abool(value, title = "") {
+  if (typeof value !== "boolean")
+    throw new TypeError(atitle(title) + "expected boolean, got type=" + typeof value);
+  return value;
+}
 function abytes(value, length, title = "") {
   if (isBytes(value) && (length === void 0 || value.length === length))
     return value;
@@ -1037,13 +1042,13 @@ var SHA2_32B = class extends HashMD {
     this.H = IV[7] | 0;
   }
   get() {
-    const { A, B, C, D, E, F, G, H } = this;
-    return [A, B, C, D, E, F, G, H];
+    const { A, B: B2, C, D, E, F, G, H } = this;
+    return [A, B2, C, D, E, F, G, H];
   }
   // prettier-ignore
-  set(A, B, C, D, E, F, G, H) {
+  set(A, B2, C, D, E, F, G, H) {
     this.A = A | 0;
-    this.B = B | 0;
+    this.B = B2 | 0;
     this.C = C | 0;
     this.D = D | 0;
     this.E = E | 0;
@@ -1065,30 +1070,30 @@ var SHA2_32B = class extends HashMD {
       const s1 = rotr(W2, 17) ^ rotr(W2, 19) ^ W2 >>> 10;
       SHA256_W[i] = s1 + SHA256_W[i - 7] + s0 + SHA256_W[i - 16] | 0;
     }
-    let { A, B, C, D, E, F, G, H } = this;
+    let { A, B: B2, C, D, E, F, G, H } = this;
     for (let i = 0; i < 64; i++) {
       const sigma1 = rotr(E, 6) ^ rotr(E, 11) ^ rotr(E, 25);
       const T1 = H + sigma1 + Chi(E, F, G) + SHA256_K[i] + SHA256_W[i] | 0;
       const sigma0 = rotr(A, 2) ^ rotr(A, 13) ^ rotr(A, 22);
-      const T2 = sigma0 + Maj(A, B, C) | 0;
+      const T2 = sigma0 + Maj(A, B2, C) | 0;
       H = G;
       G = F;
       F = E;
       E = D + T1 | 0;
       D = C;
-      C = B;
-      B = A;
+      C = B2;
+      B2 = A;
       A = T1 + T2 | 0;
     }
     A = A + this.A | 0;
-    B = B + this.B | 0;
+    B2 = B2 + this.B | 0;
     C = C + this.C | 0;
     D = D + this.D | 0;
     E = E + this.E | 0;
     F = F + this.F | 0;
     G = G + this.G | 0;
     H = H + this.H | 0;
-    this.set(A, B, C, D, E, F, G, H);
+    this.set(A, B2, C, D, E, F, G, H);
   }
   roundClean() {
     clean(SHA256_W);
@@ -1371,7 +1376,7 @@ var randomBytes2 = (bytesLength) => randomBytes(bytesLength);
 var _0n = /* @__PURE__ */ BigInt(0);
 var _1n = /* @__PURE__ */ BigInt(1);
 var atitle2 = (title) => title ? `"${title}" ` : "";
-function abool(value, title = "") {
+function abool2(value, title = "") {
   if (typeof value !== "boolean")
     throw new TypeError(atitle2(title) + "expected boolean, got type=" + typeof value);
   return value;
@@ -1707,7 +1712,7 @@ function validateField(field) {
 function FpInvertBatch(Fp2, nums, passZero = false) {
   validateField(Fp2);
   aarray(nums, "nums");
-  abool(passZero, "passZero");
+  abool2(passZero, "passZero");
   const F = Fp2;
   const inverted = new Array(nums.length).fill(passZero ? F.ZERO : void 0);
   const multipliedAcc = nums.reduce((acc, num, i) => {
@@ -1883,7 +1888,7 @@ var _Field = class {
   // We can't move this out because Fp6, Fp12 implement it
   // and it's unclear what to return in there.
   cmov(a, b, condition) {
-    abool(condition, "condition");
+    abool2(condition, "condition");
     return condition ? b : a;
   }
 };
@@ -2231,7 +2236,7 @@ var ScalarMultiplier = class {
 function mulAddUnsafe(c, points, scalars, allowOversized = false) {
   validatePointCons(c);
   validateMSMPoints(points, c);
-  abool(allowOversized, "allowOversized");
+  abool2(allowOversized, "allowOversized");
   validateMSMScalars(scalars, c.Fn, allowOversized ? c.Fn.ORDER ** _4n2 : void 0);
   if (points.length !== scalars.length)
     throw new Error("arrays of points and scalars must have equal length");
@@ -2369,7 +2374,7 @@ function edwards(params, extraOpts = {}) {
       const len = Fp2.BYTES;
       const { a, d } = CURVE;
       bytes = copyBytes2(abytes2(bytes, len, "point"));
-      abool(zip215, "zip215");
+      abool2(zip215, "zip215");
       const normed = copyBytes2(bytes);
       const lastByte = bytes[len - 1];
       normed[len - 1] = lastByte & ~128;
@@ -2449,14 +2454,14 @@ function edwards(params, extraOpts = {}) {
     double() {
       const { X: X1, Y: Y1, Z: Z1 } = this;
       const A = Fp2.sqr(X1);
-      const B = Fp2.sqr(Y1);
+      const B2 = Fp2.sqr(Y1);
       const C = Fp2.mul(Fp2.sqr(Z1), _2n2);
       const D = mulA(A);
       const x1y1 = Fp2.addN(X1, Y1);
-      const E = Fp2.sub(Fp2.subN(Fp2.sqr(x1y1), A), B);
-      const G = Fp2.addN(D, B);
+      const E = Fp2.sub(Fp2.subN(Fp2.sqr(x1y1), A), B2);
+      const G = Fp2.addN(D, B2);
       const F = Fp2.subN(G, C);
-      const H = Fp2.subN(D, B);
+      const H = Fp2.subN(D, B2);
       const X3 = Fp2.mul(E, F);
       const Y3 = Fp2.mul(G, H);
       const T3 = Fp2.mul(E, H);
@@ -2472,13 +2477,13 @@ function edwards(params, extraOpts = {}) {
       const { X: X1, Y: Y1, Z: Z1, T: T1 } = this;
       const { X: X2, Y: Y2, Z: Z2, T: T2 } = other;
       const A = Fp2.mul(X1, X2);
-      const B = Fp2.mul(Y1, Y2);
+      const B2 = Fp2.mul(Y1, Y2);
       const C = Fp2.mul(Fp2.mulN(T1, d), T2);
       const D = Fp2.mul(Z1, Z2);
-      const E = Fp2.sub(Fp2.subN(Fp2.mulN(Fp2.addN(X1, Y1), Fp2.addN(X2, Y2)), A), B);
+      const E = Fp2.sub(Fp2.subN(Fp2.mulN(Fp2.addN(X1, Y1), Fp2.addN(X2, Y2)), A), B2);
       const F = Fp2.subN(D, C);
       const G = Fp2.addN(D, C);
-      const H = Fp2.sub(B, mulA(A));
+      const H = Fp2.sub(B2, mulA(A));
       const X3 = Fp2.mul(E, F);
       const Y3 = Fp2.mul(G, H);
       const T3 = Fp2.mul(E, H);
@@ -2604,7 +2609,7 @@ function eddsa(Point, cHash, eddsaOpts = {}) {
   const toMontgomerySecret2 = opts.toMontgomerySecret;
   const adjustScalarBytes2 = opts.adjustScalarBytes === void 0 ? (bytes) => bytes : opts.adjustScalarBytes;
   const domain = opts.domain === void 0 ? (data, ctx, phflag) => {
-    abool(phflag, "phflag");
+    abool2(phflag, "phflag");
     if (ctx.length || phflag)
       throw new Error("Contexts/pre-hash are not supported");
     return data;
@@ -2661,7 +2666,7 @@ function eddsa(Point, cHash, eddsaOpts = {}) {
     msg = abytes2(msg, void 0, "message");
     publicKey = abytes2(publicKey, lengths.publicKey, "publicKey");
     if (zip215 !== void 0)
-      abool(zip215, "zip215");
+      abool2(zip215, "zip215");
     if (prehash)
       msg = prehash(msg);
     const mid = len / 2;
@@ -3149,9 +3154,233 @@ function genBech32(encoding) {
   };
 }
 var bech32 = /* @__PURE__ */ freeze(() => genBech32("bech32"));
+
+// node_modules/@noble/hashes/sha3.js
+var _0n5 = BigInt(0);
+var _1n6 = BigInt(1);
+var _2n4 = BigInt(2);
+var _7n2 = BigInt(7);
+var _256n = BigInt(256);
+var _0x71n = BigInt(113);
+var SHA3_PI = [];
+var SHA3_ROTL = [];
+var _SHA3_IOTA = [];
+for (let round = 0, R = _1n6, x = 1, y = 0; round < 24; round++) {
+  [x, y] = [y, (2 * x + 3 * y) % 5];
+  SHA3_PI.push(2 * (5 * y + x));
+  SHA3_ROTL.push((round + 1) * (round + 2) / 2 % 64);
+  let t = _0n5;
+  for (let j = 0; j < 7; j++) {
+    R = (R << _1n6 ^ (R >> _7n2) * _0x71n) % _256n;
+    if (R & _2n4)
+      t ^= _1n6 << (_1n6 << BigInt(j)) - _1n6;
+  }
+  _SHA3_IOTA.push(t);
+}
+var IOTAS = split(_SHA3_IOTA, true);
+var SHA3_IOTA_H = IOTAS[0];
+var SHA3_IOTA_L = IOTAS[1];
+var rotlSH = (h, l, s) => h << s | l >>> 32 - s;
+var rotlSL = (h, l, s) => l << s | h >>> 32 - s;
+var rotlBH = (h, l, s) => l << s - 32 | h >>> 64 - s;
+var rotlBL = (h, l, s) => h << s - 32 | l >>> 64 - s;
+var rotlH = (h, l, s) => s > 32 ? rotlBH(h, l, s) : rotlSH(h, l, s);
+var rotlL = (h, l, s) => s > 32 ? rotlBL(h, l, s) : rotlSL(h, l, s);
+var B = new Uint32Array(5 * 2);
+function keccakP(s, rounds = 24) {
+  if (!(s instanceof Uint32Array))
+    throw new TypeError('"s" expected Uint32Array(50), got type=' + typeof s);
+  if (s.length !== 50)
+    throw new RangeError('"s" expected Uint32Array(50), got length=' + s.length);
+  anumber(rounds, "rounds");
+  if (rounds < 1 || rounds > 24)
+    throw new Error('"rounds" expected integer 1..24');
+  for (let round = 24 - rounds; round < 24; round++) {
+    for (let x = 0; x < 10; x++)
+      B[x] = s[x] ^ s[x + 10] ^ s[x + 20] ^ s[x + 30] ^ s[x + 40];
+    for (let x = 0; x < 10; x += 2) {
+      const idx1 = (x + 8) % 10;
+      const idx0 = (x + 2) % 10;
+      const B0 = B[idx0];
+      const B1 = B[idx0 + 1];
+      const Th = rotlH(B0, B1, 1) ^ B[idx1];
+      const Tl = rotlL(B0, B1, 1) ^ B[idx1 + 1];
+      for (let y = 0; y < 50; y += 10) {
+        s[x + y] ^= Th;
+        s[x + y + 1] ^= Tl;
+      }
+    }
+    let curH = s[2];
+    let curL = s[3];
+    for (let t = 0; t < 24; t++) {
+      const shift = SHA3_ROTL[t];
+      const Th = rotlH(curH, curL, shift);
+      const Tl = rotlL(curH, curL, shift);
+      const PI = SHA3_PI[t];
+      curH = s[PI];
+      curL = s[PI + 1];
+      s[PI] = Th;
+      s[PI + 1] = Tl;
+    }
+    for (let y = 0; y < 50; y += 10) {
+      const b0 = s[y], b1 = s[y + 1], b2 = s[y + 2], b3 = s[y + 3];
+      s[y] ^= ~s[y + 2] & s[y + 4];
+      s[y + 1] ^= ~s[y + 3] & s[y + 5];
+      s[y + 2] ^= ~s[y + 4] & s[y + 6];
+      s[y + 3] ^= ~s[y + 5] & s[y + 7];
+      s[y + 4] ^= ~s[y + 6] & s[y + 8];
+      s[y + 5] ^= ~s[y + 7] & s[y + 9];
+      s[y + 6] ^= ~s[y + 8] & b0;
+      s[y + 7] ^= ~s[y + 9] & b1;
+      s[y + 8] ^= ~b0 & b2;
+      s[y + 9] ^= ~b1 & b3;
+    }
+    s[0] ^= SHA3_IOTA_H[round];
+    s[1] ^= SHA3_IOTA_L[round];
+  }
+  clean(B);
+}
+var Keccak = class _Keccak {
+  state;
+  pos = 0;
+  posOut = 0;
+  finished = false;
+  state32;
+  destroyed = false;
+  blockLen;
+  suffix;
+  outputLen;
+  canXOF;
+  enableXOF = false;
+  rounds;
+  // NOTE: we accept arguments in bytes instead of bits here.
+  constructor(blockLen, suffix, outputLen, enableXOF = false, rounds = 24) {
+    anumber(blockLen, "blockLen");
+    anumber(suffix, "suffix");
+    anumber(rounds, "rounds");
+    abool(enableXOF, "enableXOF");
+    this.blockLen = blockLen;
+    this.suffix = suffix;
+    this.outputLen = outputLen;
+    this.enableXOF = enableXOF;
+    this.canXOF = enableXOF;
+    this.rounds = rounds;
+    anumber(outputLen, "outputLen");
+    if (!(0 < blockLen && blockLen < 200))
+      throw new Error('"blockLen" must be 1..199');
+    this.state = new Uint8Array(200);
+    this.state32 = u32(this.state);
+  }
+  clone() {
+    return this._cloneInto();
+  }
+  keccak() {
+    swap32IfBE(this.state32);
+    keccakP(this.state32, this.rounds);
+    swap32IfBE(this.state32);
+    this.posOut = 0;
+    this.pos = 0;
+  }
+  update(data) {
+    aexists(this);
+    abytes(data);
+    const { blockLen, state, state32 } = this;
+    const len = data.length;
+    const canUseU32 = blockLen % 4 === 0 && data.byteOffset % 4 === 0;
+    const blockLen32 = blockLen / 4;
+    const data32 = canUseU32 && len >= blockLen ? u32(data) : void 0;
+    for (let pos = 0; pos < len; ) {
+      if (data32 !== void 0 && this.pos === 0 && pos % 4 === 0 && len - pos >= blockLen) {
+        for (let i = 0, o = pos / 4; i < blockLen32; i++)
+          state32[i] ^= data32[o + i];
+        pos += blockLen;
+        this.pos = blockLen;
+        this.keccak();
+        continue;
+      }
+      const take = Math.min(blockLen - this.pos, len - pos);
+      for (let i = 0; i < take; i++)
+        state[this.pos++] ^= data[pos++];
+      if (this.pos === blockLen)
+        this.keccak();
+    }
+    return this;
+  }
+  finish() {
+    if (this.finished)
+      return;
+    this.finished = true;
+    const { state, suffix, pos, blockLen } = this;
+    state[pos] ^= suffix;
+    if ((suffix & 128) !== 0 && pos === blockLen - 1)
+      this.keccak();
+    state[blockLen - 1] ^= 128;
+    this.keccak();
+  }
+  writeInto(out) {
+    aexists(this, false);
+    abytes(out);
+    this.finish();
+    const bufferOut = this.state;
+    const { blockLen } = this;
+    for (let pos = 0, len = out.length; pos < len; ) {
+      if (this.posOut >= blockLen)
+        this.keccak();
+      const take = Math.min(blockLen - this.posOut, len - pos);
+      out.set(bufferOut.subarray(this.posOut, this.posOut + take), pos);
+      this.posOut += take;
+      pos += take;
+    }
+    return out;
+  }
+  xofInto(out) {
+    if (!this.enableXOF)
+      throw new Error("XOF is not enabled");
+    return this.writeInto(out);
+  }
+  xof(bytes) {
+    anumber(bytes);
+    return this.xofInto(new Uint8Array(bytes));
+  }
+  digestInto(out) {
+    aoutput(out, this);
+    if (this.finished)
+      throw new Error("digest() was already called");
+    this.writeInto(out.length === this.outputLen ? out : out.subarray(0, this.outputLen));
+    this.destroy();
+  }
+  digest() {
+    const out = new Uint8Array(this.outputLen);
+    this.digestInto(out);
+    return out;
+  }
+  destroy() {
+    this.destroyed = true;
+    clean(this.state);
+  }
+  _cloneInto(to) {
+    const { blockLen, suffix, outputLen, rounds, enableXOF } = this;
+    to ||= new _Keccak(blockLen, suffix, outputLen, enableXOF, rounds);
+    to.blockLen = blockLen;
+    to.state32.set(this.state32);
+    to.pos = this.pos;
+    to.posOut = this.posOut;
+    to.finished = this.finished;
+    to.rounds = rounds;
+    to.suffix = suffix;
+    to.outputLen = outputLen;
+    to.enableXOF = enableXOF;
+    to.canXOF = this.canXOF;
+    to.destroyed = this.destroyed;
+    return to;
+  }
+};
+var genKeccak = (suffix, blockLen, outputLen, info = {}) => createHasher(() => new Keccak(blockLen, suffix, outputLen), info);
+var keccak_256 = /* @__PURE__ */ genKeccak(1, 136, 32);
 export {
   bech32,
   blake2b,
   ed25519,
+  keccak_256,
   sha256
 };

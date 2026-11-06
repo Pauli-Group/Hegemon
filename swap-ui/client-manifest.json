@@ -1,0 +1,200 @@
+{
+ "version": 1,
+ "generated_by": "scripts/build_client_manifest.mjs",
+ "roots": {
+  "hosted": "hosted.html",
+  "local": "index.html"
+ },
+ "import_map": {
+  "source": "sha256-k6tA6B0Jef7lZwNhMJqeUcZtJtGk0X+rsW516G13+q8=",
+  "modules": 35
+ },
+ "csp": {
+  "hosted": "default-src 'self'; script-src 'self' 'sha256-k6tA6B0Jef7lZwNhMJqeUcZtJtGk0X+rsW516G13+q8='; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "local": "default-src 'self'; script-src 'self' 'sha256-k6tA6B0Jef7lZwNhMJqeUcZtJtGk0X+rsW516G13+q8='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+ },
+ "headers": {
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "no-referrer",
+  "cache-control": "no-store"
+ },
+ "chain_timing_sha256": "fe3e6fd8a78d4d2191468074afcf44e679f21458d87a1fc266396548fef6924d",
+ "files": {
+  "action-journal.mjs": {
+   "sha256": "778f4f3f3bd3e8e65773c9d75798011a6e34dcb2c7bac5cf12f85c984d89edd5",
+   "bytes": 10074
+  },
+  "app.js": {
+   "sha256": "a756f505d0d319f606bec0033e30f01136c21ddf00d05f503b03f7ce3f0beeb8",
+   "bytes": 77245
+  },
+  "bitcoin-psbt.mjs": {
+   "sha256": "1409022bea941c40ff8d9583648c661a4eecaa362359e64a05e9071deddebcff",
+   "bytes": 15565
+  },
+  "bitcoin-testnet-verifier.mjs": {
+   "sha256": "a1e923f0c1b442da6978323e12e7e8ca6f4a83cc6e3efc406d7b613d2db190af",
+   "bytes": 4095
+  },
+  "bitcoin-ui.mjs": {
+   "sha256": "1e71a8691b30a7b60011bb485d101def4ad557cd00baa01c84a74a0f62631617",
+   "bytes": 5843
+  },
+  "bitcoin-wallet.mjs": {
+   "sha256": "45ac1e69506496d2d2a6fa4ff372c04e90fe74bfddb6542fa8433bd1f5c85cb8",
+   "bytes": 6399
+  },
+  "cardano-htlc-script.json": {
+   "sha256": "4d05272c456a72c1ab34f23d1a82da90bd0e7d6fd8d49a7c88ed4fc8c0234815",
+   "bytes": 1779
+  },
+  "cardano-preview-verifier.mjs": {
+   "sha256": "a22dc03d37a175a9876003a0d22ebd5787e073ceaa7239fa00d9b8f8a6f9aeb4",
+   "bytes": 5239
+  },
+  "cardano-tx.mjs": {
+   "sha256": "7efeb937b4a3e7a6394ba10e48a942c61527685a27d9ef3355e4ab6a1fc01e90",
+   "bytes": 35593
+  },
+  "cardano-ui.mjs": {
+   "sha256": "9b72882ec1bb069f6b281a10c69fb51c1a0a007e7cb7c3201f5f6a2fa80596b6",
+   "bytes": 5143
+  },
+  "cardano-wallet.mjs": {
+   "sha256": "ffc38e1e9d81b856604b0d2532e195f63701c9ada39365ed7099c826f31a0acf",
+   "bytes": 10359
+  },
+  "cbor.mjs": {
+   "sha256": "15b1fdae1c4ac728fc89b8467e4a69c802866dc05d5eee62ff08c4d3d5d938ea",
+   "bytes": 9742
+  },
+  "chain-timing.json": {
+   "sha256": "fe3e6fd8a78d4d2191468074afcf44e679f21458d87a1fc266396548fef6924d",
+   "bytes": 3108
+  },
+  "crypto.mjs": {
+   "sha256": "ce2e54157990526d7dc5b38d20cf653d2fe059ced47273adefed93713c1ba48d",
+   "bytes": 1639
+  },
+  "deadlines.mjs": {
+   "sha256": "8dc369a10953552ea9e67cdd0a1c1ad83beeac7624039c3d52ac38b02047f698",
+   "bytes": 1440
+  },
+  "ether-escrow-template.json": {
+   "sha256": "97585b9d365114e8ba76961ffd9a3f904ec450964dc60744f3a9cc7718c7dfcf",
+   "bytes": 8882
+  },
+  "ethereum-actions.mjs": {
+   "sha256": "e0969d68c451b4216cf94f23d4376dd47c99d64234b6f7a9057f6876ed451362",
+   "bytes": 13451
+  },
+  "ethereum-escrow.mjs": {
+   "sha256": "6aa3a5dc08b8e5fbb82068240fff9f4909d957124cb6c06de0e9c537758b377c",
+   "bytes": 10674
+  },
+  "guided-ui.mjs": {
+   "sha256": "9d628630f8a7c15e647637e96addd8cdf6e9115dd96d9ebc2b571e9484ad2d36",
+   "bytes": 5027
+  },
+  "guided.mjs": {
+   "sha256": "66f279656816735d1b314166cfdaa90206502d5d88ee1c5250974371f7c7ae3f",
+   "bytes": 16260
+  },
+  "hosted.html": {
+   "sha256": "1fd36d7f2ad01125106bdfa27e6fc0bd85596e563065514d313013eb8b87af10",
+   "bytes": 52305
+  },
+  "identity-flow.mjs": {
+   "sha256": "887417777f3780141cc89670e0252af511c10a323f5b523d4a5c60f368c5d7c6",
+   "bytes": 6579
+  },
+  "identity-proofs.mjs": {
+   "sha256": "4350933dadae1b4be457f7d84a95454bd09284705910d7bb431aa5c34bb35b55",
+   "bytes": 8526
+  },
+  "identity-ui.mjs": {
+   "sha256": "1cb804603a4045a4c617f1932ef109865eaa7c3fe5c9f03e4ee96e8ab79bc4d2",
+   "bytes": 13016
+  },
+  "identity.mjs": {
+   "sha256": "c103cd7deb84bd564b4336873c7ed3d55d28340d3ce4548ac484c7607d71d9eb",
+   "bytes": 8434
+  },
+  "inbox-backup.mjs": {
+   "sha256": "c30696b1b48e9fa46bb25f085f86542481a2a1f6c4f451b266ac571cd1691f62",
+   "bytes": 3697
+  },
+  "index.html": {
+   "sha256": "7522e8bbe8ad45e587fe10d111be22a12a1c84369812098534a4b7215cd960e6",
+   "bytes": 52604
+  },
+  "observer-ui.mjs": {
+   "sha256": "0add2433d57e126ce8684b4666ac9792b072b67659c4674288c8946c3a07a06d",
+   "bytes": 4458
+  },
+  "observers.mjs": {
+   "sha256": "ac036fab9ca7a72c0abce4826f02f95b97756e2c26aa740513339947e61b79a2",
+   "bytes": 9468
+  },
+  "pair-check.mjs": {
+   "sha256": "533bcf166e2407ee3e372f270afcb13a8511eff9dfb49039f3ce7652eae6559f",
+   "bytes": 7501
+  },
+  "public-inbox.mjs": {
+   "sha256": "e1803c619d29f6398749271a2ca6720320320d8150b26e2751b6b1f0dd26294e",
+   "bytes": 9544
+  },
+  "public-pair.mjs": {
+   "sha256": "51f2bb529ba7e30fefa6f04771dfb904ee04e1b7a2fe96d026b90082176dfb93",
+   "bytes": 1734
+  },
+  "recovery.mjs": {
+   "sha256": "14c68b646dccfb827565239ae5c1f1b7bcbdb788d6ce518601e5d3fc22c8c2c5",
+   "bytes": 3150
+  },
+  "sepolia-actions.mjs": {
+   "sha256": "d963f4aa34cd8dbd65f205cfc6c31eab1f958913ea5c92f88a7414e98f479676",
+   "bytes": 8521
+  },
+  "sepolia-verifier.mjs": {
+   "sha256": "e7e7c1b2032758893a59cc070dd3c06834bbc76b37553df85a4f8eec7f2078bb",
+   "bytes": 2497
+  },
+  "style.css": {
+   "sha256": "571bd2b8c3d3629c532aa83a951a53da4894df692fe30db98fb4e3aa34719739",
+   "bytes": 2624
+  },
+  "swap-flow.mjs": {
+   "sha256": "7bda82e920f1311b3d81103068822ab02899665591e0196d97f3cbf2aabff707",
+   "bytes": 23553
+  },
+  "timelock-policy.mjs": {
+   "sha256": "4f81f1796ebfe590fa888b93776f049bc07e1f24d5c91a9204be3f93e681f7e2",
+   "bytes": 13836
+  },
+  "token-escrow-template.json": {
+   "sha256": "3c3da32a49315dd7524d9e1e6475f812356ae5a1bf3725b43f844d09576830a0",
+   "bytes": 43126
+  },
+  "vault-store.mjs": {
+   "sha256": "d16318fb303d310eb34d3c55fcdb67e20afb0dc495360758c62e9640bcd8358c",
+   "bytes": 4259
+  },
+  "vendor/MANIFEST.json": {
+   "sha256": "91c773e9486551a0d62b55949dd654d7e1504ee11e1db47836480611c1e6a18b",
+   "bytes": 1201
+  },
+  "vendor/SHA256SUMS": {
+   "sha256": "e510e91b520d1ec3e13376e39b752865c9da10028d64522785fdcf0c3b201866",
+   "bytes": 236
+  },
+  "vendor/btc-signer.mjs": {
+   "sha256": "bd9736827050ae26a5296a114168e0adb36e561692c226ee35c8500ebc7d3908",
+   "bytes": 278219
+  },
+  "vendor/hash.mjs": {
+   "sha256": "bed5db8262f8576f5a2d283b8c96d0f8d8589f60ba388634829bc71b95a7a46c",
+   "bytes": 101097
+  }
+ }
+}

@@ -1,6 +1,7 @@
 'use strict';
 import {newMessageKey,encryptMessage,decryptMessage} from './crypto.mjs';
-import {createInbox,inboxPrivateKey,inboxFingerprint,sealPublicSession,openPublicSession,parsePublicSession} from './public-inbox.mjs';
+import {createInbox,createInboxWithBackup,restoreInbox,inboxPrivateKey,inboxFingerprint,sealPublicSession,openPublicSession,parsePublicSession} from './public-inbox.mjs';
+import {initIdentity} from './identity-ui.mjs';
 import {verifyTokenEscrow,verifyEtherEscrow} from './ethereum-escrow.mjs';
 import {verifySepoliaEscrow} from './sepolia-verifier.mjs';
 import {deploySepoliaEscrow,tokenSepoliaStep,refundSepoliaEscrow,claimSepoliaEscrow} from './sepolia-actions.mjs';
@@ -318,33 +319,36 @@ function messageKey(id){return localStorage.getItem('offer-message-key:'+id);}
 function sessionId(id){return localStorage.getItem('offer-session:'+id);}
 function checkOwnerInbox(id,offer){const known=localStorage.getItem('offer-inbox:'+id);if(credential(id)&&known&&known!==offer.ownerPublicKey)throw Error('Offer inbox key changed. Verify the offer independently.');}
 function participantToken(id){return credential(id)||localStorage.getItem('offer-reservation:'+id);}
+const identityUi=initIdentity({$,msg,api,getEthereum:()=>activeEthereumProvider,getCardano:()=>activeCardanoApi,credential,participantToken,messageKey,reservationToken:id=>localStorage.getItem('offer-reservation:'+id),currentOffer});
 function selectOffer(id){location.hash=id;return loadSelected();}
 let chatRenderVersion=0,selectionVersion=0;
 function updateChat(id){$('chat').hidden=!participantToken(id);$('chat-form').querySelector('button').disabled=true;$('chat-form').elements.message.disabled=true;if(!$('chat').hidden)refreshChat();else chatRenderVersion++;}
 async function refreshChat(){const version=++chatRenderVersion,id=currentOffer(),token=participantToken(id);if(!token)return;
  try{const offer=await api('/offers/'+id),{messages}=await api('/offers/'+id+'/messages',{headers:{authorization:'Bearer '+token}});if(version!==chatRenderVersion||id!==currentOffer())return;checkOwnerInbox(id,offer);
+  const identity=await identityUi.render(id,offer,messages);if(version!==chatRenderVersion||id!==currentOffer())return;
   let key=messageKey(id),bound=sessionId(id);const reservation=offer.reservationId;
   const handshake=offer.ownerPublicKey&&reservation?messages.find(item=>item.sender==='taker'&&parsePublicSession(item.ciphertext)?.reservation===reservation):null;
   if(credential(id)&&offer.ownerPublicKey&&reservation&&bound!==reservation){
-   if(handshake){const privateKey=await inboxPrivateKey(offer.ownerPublicKey);key=await openPublicSession(privateKey,offer.ownerPublicKey,id,reservation,handshake.ciphertext);localStorage.setItem('offer-message-key:'+id,key);localStorage.setItem('offer-session:'+id,reservation);bound=reservation;}
+   if(handshake&&!identity.blocked){const privateKey=await inboxPrivateKey(offer.ownerPublicKey);key=await openPublicSession(privateKey,offer.ownerPublicKey,id,reservation,handshake.ciphertext);localStorage.setItem('offer-message-key:'+id,key);localStorage.setItem('offer-session:'+id,reservation);bound=reservation;}
   }
   const ownerFingerprint=offer.ownerPublicKey?await inboxFingerprint(offer.ownerPublicKey):'',sessionFingerprint=handshake?await inboxFingerprint(parsePublicSession(handshake.ciphertext).ephemeral):'';
   if(version!==chatRenderVersion||id!==currentOffer())return;
   $('chat-fingerprints').textContent=ownerFingerprint?'Owner inbox SHA-256: '+ownerFingerprint+(sessionFingerprint?' · Reservation key SHA-256: '+sessionFingerprint:''):'This older offer has no public inbox fingerprint.';
-  const ready=!!key&&(!offer.ownerPublicKey||(!!reservation&&bound===reservation)),readable=ready||!!(key&&offer.ownerPublicKey&&!reservation&&bound);$('chat-form').querySelector('button').disabled=!ready;$('chat-form').elements.message.disabled=!ready;$('chat-list').replaceChildren();
+  const ready=!identity.blocked&&!!key&&(!offer.ownerPublicKey||(!!reservation&&bound===reservation)),readable=ready||!!(key&&offer.ownerPublicKey&&!reservation&&bound);$('chat-form').querySelector('button').disabled=!ready;$('chat-form').elements.message.disabled=!ready;$('chat-list').replaceChildren();
   for(const item of messages){if(parsePublicSession(item.ciphertext))continue;const p=document.createElement('p');try{if(!readable)throw Error();p.textContent=item.sender+': '+await decryptMessage(key,id,item.ciphertext);}catch{p.textContent=item.sender+': [unable to decrypt message]';}if(version!==chatRenderVersion||id!==currentOffer())return;$('chat-list').append(p);}
   $('retry-handshake').hidden=!localStorage.getItem('offer-handshake:'+id);
-  msg($('chat-status'),ready?(messages.length?'':'No messages yet.'):readable?'Reservation expired; retained messages remain available.':'Waiting for a reserved participant to establish the encrypted conversation.');
+  msg($('chat-status'),identity.blocked?'Blocked: the other participant\'s signed identity failed verification. See Signed identity above.':ready?(messages.length?'':'No messages yet.'):readable?'Reservation expired; retained messages remain available.':'Waiting for a reserved participant to establish the encrypted conversation.');
  }catch(e){if(version===chatRenderVersion&&id===currentOffer()){$('chat-form').querySelector('button').disabled=true;$('chat-form').elements.message.disabled=true;msg($('chat-status'),e.message,true);}}}
 async function loadSelected(){
- const version=++selectionVersion,[id,key]=location.hash.slice(1).split('.');if(!/^[0-9a-f]{64}$/.test(id)){$('selected').hidden=true;$('chat').hidden=true;$('public-pair').hidden=true;return;}
+ const version=++selectionVersion,[id,key]=location.hash.slice(1).split('.');if(!/^[0-9a-f]{64}$/.test(id)){$('selected').hidden=true;$('chat').hidden=true;$('public-pair').hidden=true;$('identity').hidden=true;return;}
  if(key&&/^[0-9a-f]{64}$/.test(key))localStorage.setItem('offer-message-key:'+id,key);
  try{const offer=await api('/offers/'+id);if(version!==selectionVersion||currentOffer()!==id)return;checkOwnerInbox(id,offer);$('selected').hidden=false;$('details').replaceChildren();
   if(pairContext?.id!==id){pairContext={id,give:structuredClone(offer.give),receive:structuredClone(offer.receive)};pairLegs={give:null,receive:null};publicPairLegs={give:null,receive:null};$('public-pair-result').textContent='';msg($('public-pair-status'),'Capture both escrow terms from the checks above.');$('pair-result').textContent='';msg($('pair-status'),'Capture both escrow terms from the verification forms.');}
   $('public-pair').hidden=!document.documentElement.hasAttribute('data-hosted-testnet');
   for(const line of ['Give: '+describe(offer.give),'Receive: '+describe(offer.receive),'Expires: '+new Date(offer.expires*1000).toLocaleString(),offer.closed?'Closed':'Open']){const p=document.createElement('p');p.textContent=line;$('details').append(p);}
   $('reserve').disabled=offer.closed||offer.expires*1000<=Date.now();$('close').hidden=!credential(id)||offer.closed;msg($('detail-status'),'');updateChat(id);
- }catch(e){if(version!==selectionVersion||currentOffer()!==id)return;chatRenderVersion++;pairContext=null;pairLegs={give:null,receive:null};publicPairLegs={give:null,receive:null};$('public-pair').hidden=true;$('pair-result').textContent='';$('selected').hidden=false;msg($('details'),e.message,true);$('reserve').disabled=true;$('close').hidden=true;$('chat').hidden=true;}
+  if(!participantToken(id))identityUi.render(id,offer,[]).catch(e=>msg($('identity-status'),e.message,true));
+ }catch(e){if(version!==selectionVersion||currentOffer()!==id)return;chatRenderVersion++;pairContext=null;pairLegs={give:null,receive:null};publicPairLegs={give:null,receive:null};$('public-pair').hidden=true;$('identity').hidden=true;$('pair-result').textContent='';$('selected').hidden=false;msg($('details'),e.message,true);$('reserve').disabled=true;$('close').hidden=true;$('chat').hidden=true;}
 }
 function capturedPairTerms(chain){
  const form={ethereum:$('verify-form'),bitcoin:$('bitcoin-form'),cardano:$('cardano-form'),hegemon:$('hegemon-form')}[chain];
@@ -444,9 +448,9 @@ $('public-pair-verify').addEventListener('click',async()=>{if(publicPairBusy)ret
  try{if(!pairContext||!publicPairLegs.give||!publicPairLegs.receive||currentOffer()!==pairContext.id)throw Error('Capture both escrow terms for the selected offer.');
   const context=structuredClone(pairContext),legs=structuredClone(publicPairLegs),before=await api('/offers/'+context.id);checkOwnerInbox(context.id,before);
   if(JSON.stringify(before.give)!==JSON.stringify(context.give)||JSON.stringify(before.receive)!==JSON.stringify(context.receive))throw Error('Offer terms changed. Select it again.');
-  const timingConfig=await loadTiming();$('public-pair-timing').hidden=true;msg($('public-pair-status'),'Checking both public-testnet escrow snapshots.');const result=await checkPublicPair(context,legs.give,legs.receive,checkPublicLeg,{config:timingConfig,now:Math.floor(Date.now()/1000)});
+  const {identities}=await identityUi.requireIdentities(context.id);const timingConfig=await loadTiming();$('public-pair-timing').hidden=true;msg($('public-pair-status'),'Checking both public-testnet escrow snapshots against the signed identities.');const result=await checkPublicPair(context,legs.give,legs.receive,checkPublicLeg,{config:timingConfig,now:Math.floor(Date.now()/1000)},identities);
   const after=await api('/offers/'+context.id);checkOwnerInbox(context.id,after);if(currentOffer()!==context.id||JSON.stringify(after.give)!==JSON.stringify(context.give)||JSON.stringify(after.receive)!==JSON.stringify(context.receive))throw Error('Offer changed during verification.');
-  $('public-pair-result').textContent=JSON.stringify(result,null,2);renderTiming($('public-pair-timing'),result.timing,timingConfig);msg($('public-pair-status'),'Both escrow terms match the offer at separate snapshots and the deadlines pass the testnet timing policy. Verify counterparty identity and recovery independently.');
+  $('public-pair-result').textContent=JSON.stringify(result,null,2);renderTiming($('public-pair-timing'),result.timing,timingConfig);msg($('public-pair-status'),'Both escrow terms match the offer and the signed identities at separate snapshots and the deadlines pass the testnet timing policy. Identities marked asserted were not signed with that chain key; verify them and recovery independently.');
  }catch(e){if(e.verdict){$('public-pair-result').textContent=JSON.stringify(e.result,null,2);renderTiming($('public-pair-timing'),e.verdict,publicTimingConfig);}else $('public-pair-result').textContent='';msg($('public-pair-status'),e.message,true);}finally{publicPairBusy=false;for(const button of document.querySelectorAll('#public-pair button'))button.disabled=false;}
 });
 async function refresh(){try{const {offers}=await api('/offers');$('board').replaceChildren();if(!offers.length){$('board').textContent='No public offers right now.';return;}
@@ -454,7 +458,7 @@ async function refresh(){try{const {offers}=await api('/offers');$('board').repl
  catch(e){msg($('board'),e.message,true);}}
 $('offer-form').addEventListener('submit',async event=>{event.preventDefault();const data=new FormData(event.currentTarget);
  const read=side=>{const [chain,kind]=String(data.get(side+'-type')).split(':');return {chain,kind,id:String(data.get(side+'-id')).trim(),amount:String(data.get(side+'-amount')).trim()};};
- try{const ownerPublicKey=await createInbox();const result=await api('/offers',{method:'POST',body:JSON.stringify({give:read('give'),receive:read('receive'),visibility:data.get('visibility'),expires:Math.floor(Date.now()/1000)+Number(data.get('lifetime')),ownerPublicKey})});
+ try{const passphrase=String(data.get('backup-passphrase')||''),created=passphrase?await createInboxWithBackup(passphrase):{publicKey:await createInbox(),backup:null},ownerPublicKey=created.publicKey;$('inbox-backup').hidden=!created.backup;$('inbox-backup-text').value=created.backup?JSON.stringify(created.backup):'';const result=await api('/offers',{method:'POST',body:JSON.stringify({give:read('give'),receive:read('receive'),visibility:data.get('visibility'),expires:Math.floor(Date.now()/1000)+Number(data.get('lifetime')),ownerPublicKey})});
   localStorage.setItem('offer-owner:'+result.id,result.ownerToken);localStorage.setItem('offer-inbox:'+result.id,ownerPublicKey);const key=newMessageKey();localStorage.setItem('offer-message-key:'+result.id,key);await refresh();await selectOffer(result.id);$('share-link').value=location.origin+'/#'+result.id+'.'+key;$('share').hidden=false;msg($('create-result'),'Offer created.');
  }catch(e){msg($('create-result'),e.message,true);}});
 $('copy-link').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('share-link').value);msg($('create-result'),'Link copied.');}catch{msg($('create-result'),'Select and copy the link above.');}});
@@ -465,7 +469,7 @@ async function sendPendingHandshake(id){const raw=localStorage.getItem('offer-ha
  if(!parsePublicSession(item.ciphertext))throw Error('Invalid pending conversation setup.');
  await api('/offers/'+id+'/messages',{method:'POST',headers:{authorization:'Bearer '+token},body:JSON.stringify({ciphertext:item.ciphertext,reservationId:item.reservation})});
  localStorage.setItem('offer-session:'+id,item.reservation);localStorage.removeItem('offer-handshake:'+id);await refreshChat();}
-$('reserve').addEventListener('click',async()=>{const id=currentOffer();try{const offer=await api('/offers/'+id),result=await api('/offers/'+id+'/reserve',{method:'POST'});localStorage.setItem('offer-reservation:'+id,result.reservationToken);msg($('detail-status'),'Reserved until '+new Date(result.expires*1000).toLocaleString()+'. No funds have been locked.');$('reserve').disabled=true;
+$('reserve').addEventListener('click',async()=>{const id=currentOffer();try{const offer=await api('/offers/'+id),identityNote=await identityUi.checkOwnerBeforeReserve(id,offer),result=await api('/offers/'+id+'/reserve',{method:'POST'});localStorage.setItem('offer-reservation:'+id,result.reservationToken);msg($('detail-status'),'Reserved until '+new Date(result.expires*1000).toLocaleString()+'. No funds have been locked. '+identityNote);$('reserve').disabled=true;
   if(offer.ownerPublicKey){const fragment=location.hash.slice(1).split('.')[1],key=/^[0-9a-f]{64}$/.test(fragment||'')?fragment:newMessageKey();localStorage.setItem('offer-message-key:'+id,key);localStorage.removeItem('offer-session:'+id);
    localStorage.setItem('offer-handshake:'+id,JSON.stringify({reservation:result.reservationId,ownerPublicKey:offer.ownerPublicKey,ciphertext:null}));updateChat(id);
    try{await sendPendingHandshake(id);}catch{await refreshChat();msg($('chat-status'),'Conversation setup was not confirmed. Use retry; the reservation remains active.',true);$('retry-handshake').hidden=false;}
@@ -560,3 +564,10 @@ renderVault();
 window.addEventListener('storage',event=>{if(event.key===VAULT_KEY)renderVault();if(event.key===WATCH_KEY)refreshWatches();});
 window.addEventListener('hashchange',loadSelected);
 refresh();loadSelected();
+
+$('inbox-backup-copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('inbox-backup-text').value);msg($('create-result'),'Backup copied.');}catch{msg($('create-result'),'Select and copy the backup above.');}});
+$('restore-form').addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector('button');button.disabled=true;
+ try{let envelope;try{envelope=JSON.parse(form.elements.backup.value);}catch{throw Error('The backup is not valid JSON.');}
+  const result=await restoreInbox(envelope,form.elements.passphrase.value);form.elements.passphrase.value='';
+  msg($('restore-result'),result.restored?'Inbox key restored. Fingerprint '+await inboxFingerprint(result.publicKey)+'. Offers that use this key can now open new conversation setup messages in this browser.':'This browser already holds that inbox key; nothing was changed.');
+ }catch(e){msg($('restore-result'),e.message,true);}finally{button.disabled=false;}});

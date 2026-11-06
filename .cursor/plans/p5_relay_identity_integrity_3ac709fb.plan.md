@@ -4,28 +4,28 @@ overview: Plan 5 of 8. Authenticate counterparties with wallet signatures, back 
 todos:
   - id: p5-execplan
     content: Write .agent/SWAP_RELAY_IDENTITY_EXECPLAN.md with threat model
-    status: pending
+    status: completed
   - id: p5-identity
     content: Signed identity statements with per-chain verifiers and negative tests
-    status: pending
+    status: completed
   - id: p5-pair
     content: Extend pair check to bind escrow addresses to signed identities
-    status: pending
+    status: completed
   - id: p5-backup
     content: Encrypted inbox key backup and restore
-    status: pending
+    status: completed
   - id: p5-integrity
     content: Build manifest, CSP, SRI and verify_hosted_client script
-    status: pending
+    status: completed
   - id: p5-worker
     content: Additive D1 migration, Worker changes, tests and deploy dry run
-    status: pending
+    status: completed
   - id: p5-docs
     content: Update README, DESIGN.md, METHODS.md
-    status: pending
+    status: completed
   - id: p5-revise
     content: Revise plans P6 and P7 based on what was learned
-    status: pending
+    status: completed
 isProject: false
 ---
 

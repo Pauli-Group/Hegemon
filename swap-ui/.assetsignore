@@ -1,0 +1,4 @@
+.assetsignore
+*.test.mjs
+test-*.mjs
+fixtures/

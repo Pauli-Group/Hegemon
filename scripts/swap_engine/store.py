@@ -138,6 +138,37 @@ class Swap:
     def log(self, at, event, **detail):
         self.record['history'].append({'at': at, 'seq': self.record['seq'], 'event': event, **detail})
 
+    def attach_identities(self, owner_blob, taker_blob, context, give_leg, now):
+        """Verify both signed identity statements and record them, only if every leg of the terms names them.
+
+        `context` is `{offer, reservation, owner_inbox, taker_inbox}` as this process knows them. Nothing is stored unless
+        both statements verify (signatures, bindings, expiry) and the terms' claimants and refundees equal the signed
+        addresses. A Hegemon leg has no identity scheme yet and is recorded as unverified. Attaching again is allowed only
+        with identical statements."""
+        from . import identity
+        receive_leg = 'short' if give_leg == 'long' else 'long'
+        chains = {'give': {'chain': self.terms['legs'][give_leg]['chain']}, 'receive': {'chain': self.terms['legs'][receive_leg]['chain']}}
+        owner = identity.verify_identity(owner_blob, {'offer': context['offer'], 'role': 'owner', 'reservation': '', 'inbox': context['owner_inbox'], **chains}, now)
+        taker = identity.verify_identity(taker_blob, {'offer': context['offer'], 'role': 'taker', 'reservation': context['reservation'], 'inbox': context['taker_inbox'], **chains}, now)
+        checked = identity.check_terms(self.terms, owner, taker, give_leg)
+
+        def summary(item):
+            return {'code': item['code'], 'statement_digest': hashlib.sha256(identity.canonical(item['statement']).encode()).hexdigest(),
+                    'addresses': item['addresses'], 'proven': item['proven'], 'unverified': item['unverified'], 'proofs': item['proofs'],
+                    'expires': item['statement']['expires']}
+
+        value = {'offer': context['offer'], 'reservation': context['reservation'], 'give_leg': give_leg, 'owner': summary(owner),
+                 'taker': summary(taker), 'unverified_legs': checked['unverified']}
+        existing = self.record.get('identities')
+        if existing is not None:
+            if existing != value:
+                raise ValueError('Different identities are already recorded for this swap')
+            return existing
+        self.record['identities'] = value
+        self.log(now, 'identities_verified', owner=value['owner']['code'], taker=value['taker']['code'], unverified=checked['unverified'])
+        self.save()
+        return value
+
     def write_secret(self, name, data):
         if name not in SECRET_NAMES or len(data) != 32:
             raise ValueError('Secrets are 32 bytes under a fixed name')

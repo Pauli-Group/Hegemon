@@ -284,3 +284,81 @@ test('Sepolia read proxy forwards only fixed read methods with strict parameters
     assert.deepEqual(await call('/bitcoin-testnet4/head'),[200,{genesis,tip:321}]);assert.equal((await call('/bitcoin-testnet4/head?x=1'))[0],400);
   }finally{globalThis.fetch=original;db.raw.close();}
 });
+
+async function fingerprint(publicKey){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',Uint8Array.from(publicKey.match(/../g),x=>parseInt(x,16)))),x=>x.toString(16).padStart(2,'0')).join('');}
+// The relay does not verify signatures (clients do), so the proofs here are placeholders; structure and bindings are real.
+function identityBlob({id,role,reservation='',inbox,proofs=[{chain:'bitcoin',scheme:'bip137',signer:'02'+'a'.repeat(64),signature:'AAAA'}]}){
+  return JSON.stringify({statement:{version:1,kind:'hegemon.swap.identity',role,offer:id,reservation,inbox,legs:{},nonce:'a'.repeat(32),issued:1,expires:2},proofs});
+}
+
+test('signed identity statements: stored once, bound to the offer and reservation, replaced with the reservation',async()=>{
+  const db=database(),call=client(db),ownerKey='04'+'a'.repeat(128),inbox=await fingerprint(ownerKey);
+  const [,a]=await call('/offers',{method:'POST',data:offer()});
+  const owner=identityBlob({id:a.id,role:'owner',inbox});
+  assert.equal((await call('/offers/'+a.id+'/identity',{method:'POST',data:{identity:owner}}))[0],401);
+  assert.equal((await call('/offers/'+a.id+'/identity',{method:'POST',token:a.ownerToken,data:{identity:owner}}))[0],201);
+  assert.equal((await call('/offers/'+a.id+'/identity',{method:'POST',token:a.ownerToken,data:{identity:owner}}))[0],409);
+  assert.equal((await call('/offers/'+a.id))[1].ownerIdentity,owner);
+  assert.equal((await call('/offers'))[1].offers[0].ownerIdentity,owner);
+  const [,b]=await call('/offers/'+a.id+'/reserve',{method:'POST'});
+  const taker=identityBlob({id:a.id,role:'taker',reservation:b.reservationId,inbox:'c'.repeat(64)});
+  // Only the reservation holder, for the current reservation, once.
+  assert.equal((await call('/offers/'+a.id+'/identity',{method:'POST',token:a.ownerToken,data:{identity:taker,reservationId:b.reservationId}}))[0],400);
+  assert.equal((await call('/offers/'+a.id+'/identity',{method:'POST',token:b.reservationToken,data:{identity:taker,reservationId:'0'.repeat(64)}}))[0],400);
+  assert.equal((await call('/offers/'+a.id+'/identity',{method:'POST',token:b.reservationToken,data:{identity:taker}}))[0],400);
+  assert.equal((await call('/offers/'+a.id+'/identity',{method:'POST',token:b.reservationToken,data:{identity:taker,reservationId:b.reservationId}}))[0],201);
+  assert.equal((await call('/offers/'+a.id+'/identity',{method:'POST',token:b.reservationToken,data:{identity:taker,reservationId:b.reservationId}}))[0],409);
+  assert.equal((await call('/offers/'+a.id))[1].reservationIdentity,taker);
+  // A new reservation clears the previous taker's identity; the old holder can no longer publish.
+  db.raw.prepare('UPDATE offers SET reservation_expires=0 WHERE id=?').run(a.id);
+  assert.equal((await call('/offers/'+a.id))[1].reservationIdentity,undefined);
+  const [,c]=await call('/offers/'+a.id+'/reserve',{method:'POST'});
+  assert.equal((await call('/offers/'+a.id))[1].reservationIdentity,undefined);
+  assert.equal((await call('/offers/'+a.id+'/identity',{method:'POST',token:b.reservationToken,data:{identity:taker,reservationId:b.reservationId}}))[0],401);
+  const again=identityBlob({id:a.id,role:'taker',reservation:c.reservationId,inbox:'d'.repeat(64)});
+  assert.equal((await call('/offers/'+a.id+'/identity',{method:'POST',token:c.reservationToken,data:{identity:again,reservationId:c.reservationId}}))[0],201);
+  assert.equal((await call('/offers/'+a.id))[1].reservationIdentity,again);
+  assert.equal(db.raw.prepare('SELECT owner_identity FROM offers WHERE id=?').get(a.id).owner_identity,owner);
+  db.raw.close();
+});
+
+test('identity statements the relay refuses: other offer, wrong role, wrong inbox, other reservation, malformed, oversized',async()=>{
+  const db=database(),call=client(db),inbox=await fingerprint('04'+'a'.repeat(128));
+  const [,a]=await call('/offers',{method:'POST',data:offer()});const [,b]=await call('/offers/'+a.id+'/reserve',{method:'POST'});
+  const post=(token,data)=>call('/offers/'+a.id+'/identity',{method:'POST',token,data});
+  for(const bad of [
+    identityBlob({id:'f'.repeat(64),role:'owner',inbox}),identityBlob({id:a.id,role:'taker',inbox}),identityBlob({id:a.id,role:'owner',inbox:'e'.repeat(64)}),
+    identityBlob({id:a.id,role:'owner',reservation:b.reservationId,inbox}),identityBlob({id:a.id,role:'owner',inbox,proofs:[]}),
+    identityBlob({id:a.id,role:'owner',inbox,proofs:Array(5).fill({})}),'{',JSON.stringify({statement:{},proofs:[{}]}),'x'.repeat(9000),12
+  ])assert.equal((await post(a.ownerToken,{identity:bad}))[0],400,String(bad).slice(0,60));
+  assert.equal((await post(a.ownerToken,{identity:identityBlob({id:a.id,role:'owner',inbox}),extra:1}))[0],400);
+  assert.equal((await post(b.reservationToken,{identity:identityBlob({id:a.id,role:'taker',reservation:'0'.repeat(64),inbox:'c'.repeat(64)}),reservationId:b.reservationId}))[0],400);
+  assert.equal(db.raw.prepare('SELECT owner_identity,reservation_identity FROM offers WHERE id=?').get(a.id).owner_identity,null);
+  assert.equal((await call('/offers/'+a.id+'/close',{method:'POST',token:a.ownerToken}))[0],200);
+  assert.equal((await post(a.ownerToken,{identity:identityBlob({id:a.id,role:'owner',inbox})}))[0],409);
+  db.raw.close();
+});
+
+test('offers without an inbox key cannot publish an owner identity bound to one',async()=>{
+  const db=database(),call=client(db),data=offer();delete data.ownerPublicKey;
+  const [,a]=await call('/offers',{method:'POST',data});
+  assert.equal((await call('/offers/'+a.id+'/identity',{method:'POST',token:a.ownerToken,data:{identity:identityBlob({id:a.id,role:'owner',inbox:'a'.repeat(64)})}}))[0],400);
+  db.raw.close();
+});
+
+test('migration 0002 adds the identity columns to a pre-P5 database and nothing else',()=>{
+  const old=new DatabaseSync(':memory:');
+  old.exec(`CREATE TABLE offers (id TEXT PRIMARY KEY, owner_hash TEXT NOT NULL, public INTEGER NOT NULL, offer TEXT NOT NULL, expires INTEGER NOT NULL, closed INTEGER NOT NULL DEFAULT 0, reservation_hash TEXT, reservation_id TEXT, reservation_expires INTEGER);`);
+  old.prepare('INSERT INTO offers(id,owner_hash,public,offer,expires) VALUES(?,?,?,?,?)').run('x','h',1,'{}',5);
+  const before=old.prepare('PRAGMA table_info(offers)').all().map(c=>c.name);
+  const sql=readFileSync(new URL('./migrations/0002_identity.sql',import.meta.url),'utf8');
+  assert.doesNotMatch(sql.replace(/^--.*$/gm,''),/\b(DROP|DELETE|UPDATE|INSERT|TRUNCATE|REPLACE)\b/i);
+  old.exec(sql);
+  const after=old.prepare('PRAGMA table_info(offers)').all().map(c=>c.name);
+  assert.deepEqual(after,[...before,'owner_identity','reservation_identity']);
+  assert.deepEqual({...old.prepare('SELECT * FROM offers').get()},{id:'x',owner_hash:'h',public:1,offer:'{}',expires:5,closed:0,reservation_hash:null,reservation_id:null,reservation_expires:null,owner_identity:null,reservation_identity:null});
+  assert.throws(()=>old.exec(sql),/duplicate column/);
+  const fresh=new DatabaseSync(':memory:');fresh.exec(readFileSync(new URL('./schema.sql',import.meta.url),'utf8'));
+  assert.deepEqual(fresh.prepare('PRAGMA table_info(offers)').all().map(c=>c.name),after);
+  old.close();fresh.close();
+});

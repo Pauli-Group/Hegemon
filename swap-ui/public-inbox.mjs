@@ -1,5 +1,7 @@
-/** Encrypted public-offer key handoff. This does not authenticate wallet
- * identities or protect against a relay that substitutes keys or client code. */
+/** Encrypted public-offer key handoff. This module alone does not authenticate anyone: identity.mjs binds the inbox key
+ * fingerprint to a wallet-signed statement so a relay substituting keys is detected, and it cannot protect against a
+ * relay that serves modified client code (see the integrity manifest and scripts/verify_hosted_client.mjs). */
+import {sealInboxKey,openInboxBackup} from './inbox-backup.mjs';
 const enc=new TextEncoder(),dec=new TextDecoder('utf-8',{fatal:true});
 const DB='hegemon.local.offer-inbox.v1',STORE='keys';
 const hex=bytes=>Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
@@ -19,6 +21,24 @@ async function derive(privateKey,other,offer,reservation){
 function aad(offer,reservation,owner,ephemeral){return enc.encode(['hegemon.swap.public-inbox.v1',offer,reservation,owner,ephemeral].join(':'));}
 export async function makeInboxKeyPair(){const pair=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},false,['deriveBits']);
  const publicBytes=new Uint8Array(await crypto.subtle.exportKey('raw',pair.publicKey));return {publicKey:hex(publicBytes),privateKey:pair.privateKey};}
+const ECDH_P256={name:'ECDH',namedCurve:'P-256'};
+/** True only if `privateKey` is the private half of the raw public key `publicKeyHex`: both sides derive the same secret
+ * with a fresh ephemeral key. */
+export async function keyMatches(privateKey,publicKeyHex){
+ try{
+  const ephemeral=await crypto.subtle.generateKey(ECDH_P256,false,['deriveBits']);
+  const [a,b]=await Promise.all([crypto.subtle.deriveBits({name:'ECDH',public:await publicKey(publicKeyHex)},ephemeral.privateKey,256),crypto.subtle.deriveBits({name:'ECDH',public:ephemeral.publicKey},privateKey,256)]);
+  return hex(new Uint8Array(a))===hex(new Uint8Array(b));
+ }catch{return false;}
+}
+/** A fresh inbox key pair that can be backed up once: generated extractable, its PKCS#8 bytes returned for sealing, and the
+ * private key re-imported non-extractable for storage. The caller zeroes `pkcs8`. */
+export async function makeBackedInboxKeyPair(){
+ const pair=await crypto.subtle.generateKey(ECDH_P256,true,['deriveBits']);
+ const pkcs8=new Uint8Array(await crypto.subtle.exportKey('pkcs8',pair.privateKey)),raw=new Uint8Array(await crypto.subtle.exportKey('raw',pair.publicKey));
+ const privateKey=await crypto.subtle.importKey('pkcs8',pkcs8,ECDH_P256,false,['deriveBits']);
+ return {publicKey:hex(raw),privateKey,pkcs8};
+}
 export async function inboxFingerprint(value){if(!pub(value))throw Error('Invalid inbox public key.');return hex(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes(value))));}
 export async function sealPublicSession(owner,offer,reservation,sessionKey){
  checkIds(offer,reservation);if(!pub(owner)||!id(sessionKey))throw Error('Invalid public offer key.');
@@ -52,5 +72,33 @@ function transaction(db,mode,run){return new Promise((resolve,reject)=>{const tx
  req.onsuccess=()=>{try{result=req.result;}catch(e){failure=e;tx.abort();}};tx.oncomplete=()=>resolve(result);tx.onabort=()=>reject(failure||Error('Offer inbox storage transaction failed.'));tx.onerror=()=>{};
 });}
 export async function createInbox(){const pair=await makeInboxKeyPair();await locked(db=>transaction(db,'readwrite',store=>store.add(pair)));return pair.publicKey;}
+/** Create an owner inbox key that can be restored: seals it under `passphrase` first (so a bad passphrase creates nothing),
+ * stores the non-extractable key, and returns `{publicKey, backup}` where `backup` is the encrypted envelope to save. */
+export async function createInboxWithBackup(passphrase){
+ const pair=await makeBackedInboxKeyPair();
+ try{
+  const backup=await sealInboxKey(pair.pkcs8,pair.publicKey,passphrase);
+  await locked(db=>transaction(db,'readwrite',store=>store.add({publicKey:pair.publicKey,privateKey:pair.privateKey})));
+  return {publicKey:pair.publicKey,backup};
+ }finally{pair.pkcs8.fill(0);}
+}
+/** Restore a backed-up inbox key into this browser. Fails closed on a wrong passphrase or altered envelope, on a key that
+ * does not match its public key, and when a different key is already stored under that public key (never overwritten).
+ * Restoring a key that is already present changes nothing. */
+export async function restoreInbox(envelope,passphrase){
+ const {publicKey:owner,pkcs8}=await openInboxBackup(envelope,passphrase);
+ let privateKey;
+ try{privateKey=await crypto.subtle.importKey('pkcs8',pkcs8,ECDH_P256,false,['deriveBits']);}catch{throw Error('The inbox key backup does not contain a valid key.');}finally{pkcs8.fill(0);}
+ if(!await keyMatches(privateKey,owner))throw Error('The inbox key backup does not match its public key.');
+ return locked(async db=>{
+  const existing=await transaction(db,'readonly',store=>store.get(owner));
+  if(existing){
+   if(existing.publicKey!==owner||!existing.privateKey||existing.privateKey.extractable||!await keyMatches(existing.privateKey,owner))throw Error('A different inbox key is already stored for this public key; it was not replaced.');
+   return {publicKey:owner,restored:false};
+  }
+  await transaction(db,'readwrite',store=>store.add({publicKey:owner,privateKey}));
+  return {publicKey:owner,restored:true};
+ });
+}
 export async function inboxPrivateKey(owner){if(!pub(owner))throw Error('Invalid inbox public key.');const item=await locked(db=>transaction(db,'readonly',store=>store.get(owner)));
  if(!item||item.publicKey!==owner||!item.privateKey||item.privateKey.type!=='private'||item.privateKey.extractable||item.privateKey.algorithm?.name!=='ECDH'||item.privateKey.algorithm?.namedCurve!=='P-256')throw Error('Private offer inbox key is unavailable in this browser.');return item.privateKey;}

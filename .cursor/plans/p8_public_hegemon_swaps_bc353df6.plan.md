@@ -112,6 +112,12 @@ Revision from P4 (2026-11-06):
 - Record the full terms and hashlock of every escrow before funding it, in the engine store and in the run's results file; P4 found two Bitcoin escrows from earlier qualification runs that can never be spent because the hashlock was lost with the browser session.
 - After each public Hegemon swap, re-verify it from public data in the style of `scripts/verify_public_btc_cases.py` (terms from the record, hashlock match, claim order against both deadlines, the retroactive policy verdict), and record `observedAt` and the chain head with every observation because testnet4 header times cannot reconstruct the order later.
 
+Revision from P5 (2026-11-06):
+- Identity for the Hegemon leg stays `pending` (unverified, never reported as verified) until a Hegemon identity scheme exists; the statement format, the validators and the pair check already carry the slot, and the work to fill it is listed in the P6 revision. A public HGN/ETH, HGN/BTC or HGN/ADA swap run through the hosted page therefore has both participants publish a statement whose non-Hegemon leg is proven by a wallet signature and whose Hegemon leg is shown as unverified. Record the identity codes and the `identities` engine record in the run's results file and say that the Hegemon side was unauthenticated.
+- The hosted public pair check now refuses to run until both signed identities exist and match the escrow addresses (Bitcoin keys, Ethereum addresses, Cardano key hashes). Escrow terms for the non-Hegemon leg must therefore use the same addresses the participants signed, and the Hegemon leg is still not compared because `check_terms` returns no participants for it.
+- The new Worker and the D1 migration are not deployed. Before any public run that uses the hosted relay, the operator applies `migrations/0002_identity.sql` and deploys the Worker (runbook in `swap-service/README.md`), then runs `scripts/verify_hosted_client.mjs`; runs against the local relay need nothing.
+- The hosted page's content security policy is `connect-src 'self'`: the `p8-ui` Hegemon reader in the hosted page has to go through a fixed Worker route, not a direct node URL. After any change to a file in `swap-ui/`, run `node scripts/build_client_manifest.mjs` or the browser will refuse to load the page.
+
 ## Last step: revise later plans
 
 Update the master ExecPlan and edit the plans that remain:

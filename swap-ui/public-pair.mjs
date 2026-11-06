@@ -5,15 +5,16 @@ import {parseCardanoAssets} from './cardano-preview-verifier.mjs';
 export function cardanoOfferValue(lovelace,assets){
  const value={lovelace};for(const [id,quantity] of Object.entries(parseCardanoAssets(assets))){const [policy,name]=id.split('.');value[policy]??={};value[policy][name]=quantity;}return value;
 }
-/** `timing` is `{config, now}`; when given, both snapshots must carry a chain head and the
+/** `identities` is `{owner, taker}` from `verifyIdentity`; when given, both escrows must name exactly the signed addresses.
+ * `timing` is `{config, now}`; when given, both snapshots must carry a chain head and the
  * deadlines are judged by the timelock policy. A failing verdict throws a TimingError that
  * carries the verdict and the checked snapshots so callers can show both. */
-export async function checkPublicPair(offer,give,receive,check,timing){
- const match=comparePair(offer,give,receive);
+export async function checkPublicPair(offer,give,receive,check,timing,identities){
+ const match=comparePair(offer,give,receive,undefined,identities);
  if(typeof check!=='function')throw Error('Escrow verification is unavailable.');
  const first=await check(structuredClone(give)),second=await check(structuredClone(receive));
  if(!first||!second)throw Error('An escrow check did not return a snapshot.');
- const result={hashlock:match.hashlock,give:first,receive:second};
+ const result={hashlock:match.hashlock,give:first,receive:second,...(match.identities?{identities:match.identities}:{})};
  if(timing){
   const heads={give:policyHead(give.chain,first.snapshot??first,timing.now),receive:policyHead(receive.chain,second.snapshot??second,timing.now)};
   result.timing=judgeTiming(give,receive,{...timing,heads});

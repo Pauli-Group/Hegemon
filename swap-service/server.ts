@@ -3,6 +3,9 @@ import {createServer, type IncomingMessage, type ServerResponse} from 'node:http
 import {DatabaseSync} from 'node:sqlite';
 import {createHash, randomBytes, timingSafeEqual} from 'node:crypto';
 import {readFileSync} from 'node:fs';
+import {LOCAL_CSP,LOCAL_ROOT,SERVED_FILES} from './cloudflare/client-policy.mjs';
+// Served files and the CSP come from the generated manifest policy (scripts/build_client_manifest.mjs), the same list the hosted Worker serves.
+const SERVED=new Set(SERVED_FILES);
 
 const db = new DatabaseSync(process.env.SWAP_DB ?? 'swap-offers.sqlite');
 db.exec(`PRAGMA journal_mode=WAL;
@@ -11,6 +14,9 @@ CREATE TABLE IF NOT EXISTS reservations (offer_id TEXT PRIMARY KEY REFERENCES of
 CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, offer_id TEXT NOT NULL REFERENCES offers(id), sender TEXT NOT NULL, payload TEXT NOT NULL, created INTEGER NOT NULL);`);
 const reservationColumns=db.prepare('PRAGMA table_info(reservations)').all() as {name:string}[];
 if(!reservationColumns.some(column=>column.name==='reservation_id'))db.exec('ALTER TABLE reservations ADD COLUMN reservation_id TEXT');
+// P5 signed identity statements: additive columns only. A new reservation replaces its row, which clears the taker's identity.
+if(!reservationColumns.some(column=>column.name==='identity'))db.exec('ALTER TABLE reservations ADD COLUMN identity TEXT');
+if(!(db.prepare('PRAGMA table_info(offers)').all() as {name:string}[]).some(column=>column.name==='owner_identity'))db.exec('ALTER TABLE offers ADD COLUMN owner_identity TEXT');
 const token=()=>randomBytes(32).toString('hex');
 const digest=(s:string)=>createHash('sha256').update(s).digest('hex');
 const equals=(a:string,b:string)=>a.length===b.length && timingSafeEqual(Buffer.from(a),Buffer.from(b));
@@ -50,23 +56,37 @@ function participant(id:string,secret:string):string|null {
     const reservation=db.prepare('SELECT token_hash FROM reservations WHERE offer_id=? AND expires>?').get(id,now()) as {token_hash:string}|undefined;
     return reservation && equals(hash,reservation.token_hash) ? 'taker' : null;
 }
-function getOffer(id:string) {return db.prepare('SELECT id,public,offer,expires,closed FROM offers WHERE id=?').get(id) as {id:string,public:number,offer:string,expires:number,closed:number}|undefined;}
+function getOffer(id:string) {return db.prepare('SELECT id,public,offer,expires,closed,owner_identity FROM offers WHERE id=?').get(id) as {id:string,public:number,offer:string,expires:number,closed:number,owner_identity:string|null}|undefined;}
 function present(row:NonNullable<ReturnType<typeof getOffer>>) {
-    const active=db.prepare('SELECT reservation_id FROM reservations WHERE offer_id=? AND expires>?').get(row.id,now()) as {reservation_id:string|null}|undefined;
-    return {id:row.id,visibility:row.public?'public':'private',...JSON.parse(row.offer),expires:row.expires,closed:!!row.closed,...(active?.reservation_id?{reservationId:active.reservation_id}:{})};
+    const active=db.prepare('SELECT reservation_id,identity FROM reservations WHERE offer_id=? AND expires>?').get(row.id,now()) as {reservation_id:string|null,identity:string|null}|undefined;
+    return {id:row.id,visibility:row.public?'public':'private',...JSON.parse(row.offer),expires:row.expires,closed:!!row.closed,...(active?.reservation_id?{reservationId:active.reservation_id}:{}),
+        ...(row.owner_identity?{ownerIdentity:row.owner_identity}:{}),...(active?.reservation_id&&active.identity?{reservationIdentity:active.identity}:{})};
+}
+// Signed identity statements (swap-ui/identity.mjs). Structure, size and ids only: the relay never verifies signatures and
+// clients do not rely on it to. Mirrors swap-service/cloudflare/worker.mjs.
+function identityError(blob:unknown,offer:{id:string,offer:string},role:'owner'|'taker',reservationId:string):string|null {
+    if(typeof blob!=='string'||blob.length>8192) return 'invalid identity statement';
+    let value:any;try{value=JSON.parse(blob);}catch{return 'invalid identity statement';}
+    const st=value?.statement;
+    if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join(',')!=='proofs,statement'||!Array.isArray(value.proofs)||value.proofs.length<1||value.proofs.length>4||!value.proofs.every((p:unknown)=>p&&typeof p==='object'&&!Array.isArray(p))||!st||typeof st!=='object'||st.version!==1||st.kind!=='hegemon.swap.identity'||st.role!==role) return 'invalid identity statement';
+    if(st.offer!==offer.id||st.reservation!==(role==='owner'?'':reservationId)) return 'identity statement is for a different offer or reservation';
+    if(typeof st.inbox!=='string'||!/^[0-9a-f]{64}$/.test(st.inbox)) return 'invalid identity statement';
+    const inbox=JSON.parse(offer.offer).ownerPublicKey;
+    if(role==='owner'&&(!inbox||st.inbox!==createHash('sha256').update(Buffer.from(inbox,'hex')).digest('hex'))) return 'identity statement names a different inbox key';
+    return null;
 }
 
 const server=createServer(async (req,res)=>{
     try {
         const url=new URL(req.url ?? '/', 'http://localhost');
-        if(req.method==='GET' && ['/', '/app.js', '/crypto.mjs', '/public-inbox.mjs', '/pair-check.mjs', '/public-pair.mjs', '/deadlines.mjs', '/recovery.mjs', '/vault-store.mjs', '/action-journal.mjs', '/ethereum-escrow.mjs', '/ethereum-actions.mjs', '/sepolia-actions.mjs', '/sepolia-verifier.mjs', '/bitcoin-testnet-verifier.mjs', '/cardano-preview-verifier.mjs', '/timelock-policy.mjs', '/chain-timing.json', '/token-escrow-template.json', '/ether-escrow-template.json', '/swap-flow.mjs', '/cbor.mjs', '/cardano-ui.mjs', '/cardano-tx.mjs', '/cardano-wallet.mjs', '/cardano-htlc-script.json', '/bitcoin-psbt.mjs', '/bitcoin-wallet.mjs', '/bitcoin-ui.mjs', '/observers.mjs', '/observer-ui.mjs', '/guided.mjs', '/guided-ui.mjs', '/style.css'].includes(url.pathname) || /^\/vendor\/(?:btc-signer|hash)\.mjs$/.test(url.pathname)) {
-            const file=url.pathname==='/'?'index.html':url.pathname.slice(1);
+        if(req.method==='GET' && (url.pathname==='/' || SERVED.has(url.pathname.slice(1)))) {
+            const file=url.pathname==='/'?LOCAL_ROOT:url.pathname.slice(1);
             const type=file.endsWith('.html')?'text/html':file.endsWith('.js')||file.endsWith('.mjs')?'text/javascript':file.endsWith('.json')?'application/json':'text/css';
             const content=readFileSync(new URL('../swap-ui/'+file,import.meta.url));
-            res.writeHead(200,{'content-type':type+'; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer','content-security-policy':"default-src 'self'; connect-src 'self' http://127.0.0.1:8788; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"});
+            res.writeHead(200,{'content-type':type+'; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer','content-security-policy':LOCAL_CSP});
             res.end(content);return;
         }
-        const match=url.pathname.match(/^\/offers\/([0-9a-f]{64})(?:\/(reserve|messages|close))?$/);
+        const match=url.pathname.match(/^\/offers\/([0-9a-f]{64})(?:\/(reserve|messages|close|identity))?$/);
         if(req.method==='GET' && url.pathname==='/health') return reply(res,200,{status:'ok'});
         if(req.method==='POST' && url.pathname==='/offers') {
             const data=await body(req);
@@ -103,6 +123,27 @@ const server=createServer(async (req,res)=>{
             if(who!=='owner') return reply(res,403,{error:'owner only'});
             db.prepare('UPDATE offers SET closed=1 WHERE id=?').run(id);
             return reply(res,200,{closed:true});
+        }
+        if(op==='identity' && req.method==='POST') {
+            if(offer.expires<=now()||offer.closed) return reply(res,409,{error:'offer unavailable'});
+            const data=await body(req);
+            if(!data||Object.keys(data).sort().join(',')!==(who==='owner'?'identity':'identity,reservationId')||(who==='taker'&&(typeof data.reservationId!=='string'||!/^[0-9a-f]{64}$/.test(data.reservationId)))) return reply(res,400,{error:'invalid identity request'});
+            const problem=identityError(data.identity,offer,who as 'owner'|'taker',data.reservationId);
+            if(problem) return reply(res,400,{error:problem});
+            db.exec('BEGIN IMMEDIATE');
+            try {
+                const current=participant(id,credentials(req));
+                if(current!==who){db.exec('ROLLBACK');return reply(res,401,{error:'unauthorized'});}
+                const result=who==='owner'
+                    ?db.prepare('UPDATE offers SET owner_identity=? WHERE id=? AND owner_identity IS NULL').run(data.identity,id)
+                    :db.prepare('UPDATE reservations SET identity=? WHERE offer_id=? AND reservation_id=? AND expires>? AND identity IS NULL').run(data.identity,id,data.reservationId,now());
+                if(!result.changes){
+                    const active=db.prepare('SELECT reservation_id FROM reservations WHERE offer_id=? AND expires>?').get(id,now()) as {reservation_id:string|null}|undefined;
+                    db.exec('ROLLBACK');
+                    return reply(res,409,{error:who==='taker'&&active?.reservation_id!==data.reservationId?'reservation changed':'identity already published'});
+                }
+                db.exec('COMMIT');return reply(res,201,{published:true});
+            } catch(e) {db.exec('ROLLBACK');throw e;}
         }
         if(op==='messages' && req.method==='POST') {
             if(offer.expires<=now()) return reply(res,409,{error:'offer unavailable'});
