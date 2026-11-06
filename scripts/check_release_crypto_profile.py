@@ -291,7 +291,7 @@ V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': '94bd9591a8232292
  'scripts/check_v011_release_successor.py': '390f5cbc69e877e29302db4af7b7382bbf6db9bdeccada01942ccba384b0fc67',
  'scripts/materialize_v011_predecessor.py': '0dc2b129332bf1276e5790a2db2682946e54f5af6b6850eaca50ca9e17b4dee5',
  'scripts/release_artifact_manifest.py': '0f41da8be0536335978ed42d2f93f930b2c9ee078f3ecbeb6293e44ce20c42cb',
- 'scripts/security-audit.sh': 'd2e5f5d954ef2de1b11399bd16549982a301fa988a38951c364cb6709e81fdc0'}
+ 'scripts/security-audit.sh': 'f338b9f1df3fa2be259fc714bb99710eec28869e5c6fcda3a9648381202d53b1'}
 
 SYNC_IMPORT_SCOPE = 'exact_sync_import_source_current_binary_backend_and_h0'
 SYNC_IMPORT_AUTHORITY_SHA256 = {

@@ -70,6 +70,36 @@ class PreparationWorkflowTests(unittest.TestCase):
             (ROOT / ".github/workflows/prepare-premainnet-release.yml").read_text(),
         )
 
+    def test_preparation_arm_runner_override_preserves_tag_workflow(self) -> None:
+        old = "  build-macos-arm:\n    runs-on: macos-14\n"
+        new = "  build-macos-arm:\n    runs-on: macos-15\n"
+        self.assertEqual(self.release.count(old), 1)
+        self.assertEqual(self.workflow.count(new), 1)
+        self.assertNotIn(old, self.workflow)
+        self.assertEqual(preparation.adapt_preparation_arm_runner(self.release),
+                         self.release.replace(old, new, 1))
+        self.assertEqual((ROOT / ".github/workflows/release.yml").read_text(), self.release)
+        for runner in ("macos-14", "self-hosted", "macos-15-intel"):
+            with self.subTest(runner=runner), self.assertRaises(ValueError):
+                preparation.verify_preparation(
+                    self.release, self.workflow.replace(new, new.replace("macos-15", runner), 1)
+                )
+
+    def test_preparation_arm_runner_anchor_is_exact_and_unique(self) -> None:
+        old = "  build-macos-arm:\n    runs-on: macos-14\n"
+        for changed in (
+            self.release.replace(old, "", 1),
+            self.release + old,
+            self.release.replace(old, old.replace("macos-14", "macos-15"), 1),
+            self.release.replace(old, old.replace("macos-14", "self-hosted"), 1),
+        ):
+            with self.subTest(changed=changed[-80:]), self.assertRaises(ValueError):
+                preparation.adapt_preparation_arm_runner(changed)
+        with self.assertRaises(ValueError):
+            preparation.expected_workflow(
+                self.release.replace(old, old.replace("macos-14", "macos-15"), 1)
+            )
+
     def test_pr_scope_defers_only_exhaustive_formal_steps(self) -> None:
         security = self.workflow.split("  security-gates:\n", 1)[1].split("\n  app-no-ssh-e2e:\n", 1)[0]
         for mode in ("checker", "policy"):

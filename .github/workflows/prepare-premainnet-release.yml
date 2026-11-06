@@ -352,7 +352,7 @@ jobs:
           path: release/
 
   build-macos-arm:
-    runs-on: macos-14
+    runs-on: macos-15
     needs:
       - security-gates
       - app-no-ssh-e2e

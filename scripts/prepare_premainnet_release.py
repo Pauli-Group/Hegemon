@@ -342,6 +342,15 @@ def adapt_pr_formal_scope(builds: str) -> str:
     return prefix + "  security-gates:\n" + security + "\n  app-no-ssh-e2e:\n" + suffix
 
 
+def adapt_preparation_arm_runner(builds: str) -> str:
+    # macOS 14 is retired; leave the reviewed tag workflow and policy unchanged.
+    old = "  build-macos-arm:\n    runs-on: macos-14\n"
+    new = "  build-macos-arm:\n    runs-on: macos-15\n"
+    if builds.count(old) != 1:
+        raise ValueError("review changed ARM preparation runner anchor")
+    return builds.replace(old, new, 1)
+
+
 def expected_workflow(release: str) -> str:
     if release.count("\njobs:\n") != 1:
         raise ValueError("release workflow must have one canonical jobs block")
@@ -352,6 +361,7 @@ def expected_workflow(release: str) -> str:
     names = tuple(re.findall(r"(?m)^  ([A-Za-z0-9_-]+):$", builds))
     if names != BUILD_JOBS:
         raise ValueError(f"review new release job set before preparing: {names!r}")
+    builds = adapt_preparation_arm_runner(builds)
     marker = "  transaction-proof-authorization:\n"
     builds = builds.replace(marker, marker + "    needs: preparation-policy\n", 1)
     builds = adapt_version_only_successor(builds)

@@ -19,11 +19,18 @@ import unittest
 from unittest import mock
 
 
-def current_backend():
+CURRENT_BACKEND_PAIRS = (
+    ('executed-exact-source-backend-h0',
+     'exact-current-source-current-binary-backend-and-h0-only'),
+    ('executed-exact-sync-import-source-backend-h0',
+     'exact-sync-import-source-current-binary-backend-and-h0-only'),
+)
+
+
+def current_backend(pair=CURRENT_BACKEND_PAIRS[0]):
     return {'passed': True, 'production_authority': False,
         'private_spend_launch_authority': False,
-        'mode': 'executed-exact-source-backend-h0',
-        'authorization_scope': 'exact-current-source-current-binary-backend-and-h0-only',
+        'mode': pair[0], 'authorization_scope': pair[1],
         'actual_new_binary_proof_verification': True,
         'current_network_G8_qualified': False, 'fresh_network_lifecycle_verified': False,
         'state_admission_verified': False, 'public_cutover_authorized': False,
@@ -40,45 +47,74 @@ def classify(payload):
 class SecurityAuditScopeControls(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if classify(current_backend()) != 'current-backend':
-            raise AssertionError('canonical current-backend base must pass before mutations')
+        for pair in CURRENT_BACKEND_PAIRS:
+            if classify(current_backend(pair)) != 'current-backend':
+                raise AssertionError('each exact current-backend pair must pass before mutations')
 
     def test_canonical_current_backend_is_distinct_from_launch_authority(self):
-        self.assertEqual(classify(current_backend()), 'current-backend')
+        for pair in CURRENT_BACKEND_PAIRS:
+            with self.subTest(pair=pair):
+                self.assertEqual(classify(current_backend(pair)), 'current-backend')
 
     def test_source_only_or_h0_only_cannot_replace_actual_proof_verification(self):
-        for value in (False, 1, 'true', None):
-            with self.subTest(value=value):
-                payload = current_backend()
-                payload['actual_new_binary_proof_verification'] = value
-                with self.assertRaises(SystemExit):
-                    classify(payload)
+        for pair in CURRENT_BACKEND_PAIRS:
+            for value in (False, 1, 'true', None):
+                with self.subTest(pair=pair, value=value):
+                    payload = current_backend(pair)
+                    payload['actual_new_binary_proof_verification'] = value
+                    with self.assertRaises(SystemExit):
+                        classify(payload)
 
     def test_each_required_false_boundary_is_enforced(self):
-        for field in ('production_authority', 'private_spend_launch_authority', 'current_network_G8_qualified', 'fresh_network_lifecycle_verified', 'state_admission_verified', 'public_cutover_authorized', 'predecessor_lifecycle_reexecuted'):
-            for value in (True, 0, 'false', None):
-                with self.subTest(field=field, value=value):
-                    payload = current_backend()
-                    payload[field] = value
-                    with self.assertRaises(SystemExit):
-                        classify(payload)
+        for pair in CURRENT_BACKEND_PAIRS:
+            for field in ('production_authority', 'private_spend_launch_authority', 'current_network_G8_qualified', 'fresh_network_lifecycle_verified', 'state_admission_verified', 'public_cutover_authorized', 'predecessor_lifecycle_reexecuted'):
+                for value in (True, 0, 'false', None):
+                    with self.subTest(pair=pair, field=field, value=value):
+                        payload = current_backend(pair)
+                        payload[field] = value
+                        with self.assertRaises(SystemExit):
+                            classify(payload)
 
     def test_pass_and_historical_reuse_are_strict_booleans(self):
-        for field in ('passed', 'historical_G8_reused'):
-            for value in (False, 1, 'true', None):
-                with self.subTest(field=field, value=value):
-                    payload = current_backend()
-                    payload[field] = value
+        for pair in CURRENT_BACKEND_PAIRS:
+            for field in ('passed', 'historical_G8_reused'):
+                for value in (False, 1, 'true', None):
+                    with self.subTest(pair=pair, field=field, value=value):
+                        payload = current_backend(pair)
+                        payload[field] = value
+                        with self.assertRaises(SystemExit):
+                            classify(payload)
+
+    def test_each_missing_required_flag_rejects_for_both_pairs(self):
+        for pair in CURRENT_BACKEND_PAIRS:
+            base = current_backend(pair)
+            for field in set(base) - {'mode', 'authorization_scope'}:
+                with self.subTest(pair=pair, missing=field):
+                    payload = dict(base)
+                    del payload[field]
                     with self.assertRaises(SystemExit):
                         classify(payload)
 
-    def test_source_and_h0_modes_cannot_use_current_backend_scope(self):
-        for mode in ('reviewed-source-successor-ci', 'source-only', 'H0-only', 'executed-private-spend-launch'):
-            with self.subTest(mode=mode):
-                payload = current_backend()
-                payload['mode'] = mode
-                with self.assertRaises(SystemExit):
+    def test_mode_and_scope_cannot_be_crossed_or_partial(self):
+        for index, pair in enumerate(CURRENT_BACKEND_PAIRS):
+            payload = current_backend(pair)
+            payload['authorization_scope'] = CURRENT_BACKEND_PAIRS[1 - index][1]
+            with self.subTest(pair=pair, mutation='crossed'), self.assertRaises(SystemExit):
+                classify(payload)
+            for field in ('mode', 'authorization_scope'):
+                payload = current_backend(pair)
+                del payload[field]
+                with self.subTest(pair=pair, missing=field), self.assertRaises(SystemExit):
                     classify(payload)
+
+    def test_source_and_h0_modes_cannot_use_current_backend_scope(self):
+        for pair in CURRENT_BACKEND_PAIRS:
+            for mode in ('reviewed-source-successor-ci', 'source-only', 'H0-only', 'executed-private-spend-launch'):
+                with self.subTest(pair=pair, mode=mode):
+                    payload = current_backend(pair)
+                    payload['mode'] = mode
+                    with self.assertRaises(SystemExit):
+                        classify(payload)
 
     def test_legacy_private_launch_branch_is_preserved(self):
         payload = {'passed': True, 'production_authority': False,
